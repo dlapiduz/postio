@@ -80,13 +80,13 @@ red. A test that is green on arrival is a guard and says so.
 
 ### The registry (now-phase rows only)
 
-- [ ] T012 Write failing cases in `crates/postio-core/src/registry.rs`'s tests for:
+- [x] T012 Write failing cases in `crates/postio-core/src/registry.rs`'s tests for:
   - every **Now** row in `data-model.md`'s registry table;
   - no collision in `Composer` or `Everywhere` (FR-005);
   - every terminal-offered id having a `legacy_deliverable` binding;
   - no **Held** id registered.
-- [ ] T013 Add the ids to `crates/postio-core/src/command.rs` and the rows to `crates/postio-core/src/registry.rs`. If #1485 has landed one `heading` command, reshape it here (D3).
-- [ ] T014 Put the new `Composer` ids in `M::Format` in `crates/postio-core/src/menu.rs`, with the menu test red first. Regenerate `docs/keybindings.md` (`POSTIO_UPDATE_DOCS=1 cargo test -p postio-ui --test ui_suite keybindings_doc`).
+- [x] T013 Add the ids to `crates/postio-core/src/command.rs` and the rows to `crates/postio-core/src/registry.rs`. If #1485 has landed one `heading` command, reshape it here (D3).
+- [x] T014 Put the new `Composer` ids in `M::Format` in `crates/postio-core/src/menu.rs`, with the menu test red first. Regenerate `docs/keybindings.md` (`POSTIO_UPDATE_DOCS=1 cargo test -p postio-ui --test ui_suite keybindings_doc`).
 
 ### The sequence table, as a contract
 

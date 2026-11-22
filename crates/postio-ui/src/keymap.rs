@@ -219,6 +219,9 @@ const PUNCTUATION_NAMES: &[(&str, char)] = &[
     ("grave", '`'),
     ("apostrophe", '\''),
     ("quotedbl", '"'),
+    // Strikethrough's and the table's terminal keys (spec 014).
+    ("asciitilde", '~'),
+    ("bar", '|'),
 ];
 
 /// One key on the keyboard.
