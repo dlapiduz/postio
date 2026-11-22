@@ -47,7 +47,7 @@ def main() -> int:
         )
         return 0
     # Every directory but `vendor/`: those are upstream crates carried with
-    # a patch (`patches/blitz/`), their manifests are upstream's, and
+    # a patch queue (`patches/`), their manifests are upstream's, and
     # machete does not read the workspace's `exclude`.
     #
     # And every crate but the workspace-hack, whose dependencies are all

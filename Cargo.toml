@@ -339,9 +339,11 @@ turso_sdk_kit_macros = { git = "https://github.com/dlapiduz/turso", rev = "451ec
 turso_sync_engine = { git = "https://github.com/dlapiduz/turso", rev = "451ec071e70d41005255cd72dea8533a926fc42a" }
 turso_sync_sdk_kit = { git = "https://github.com/dlapiduz/turso", rev = "451ec071e70d41005255cd72dea8533a926fc42a" }
 
-# Blitz 0.3.0-beta.4 with Postio's patch queue applied (`patches/blitz/`,
-# checked by `scripts/blitz-patches.sh verify`): the reading renderer's
-# engine, carried in-tree so a patch is reviewed as a diff in the same pull
-# request that needs it, and dropped when upstream takes it.
+# Upstream crates with Postio's patch queues applied (`patches/<queue>/`,
+# checked by `scripts/vendor-patches.sh verify`), carried in-tree so a patch
+# is reviewed as a diff in the same pull request that needs it, and dropped
+# when upstream takes it.
+#
+# Blitz 0.3.0-beta.4: the reading renderer's engine.
 blitz-dom = { path = "vendor/blitz-dom" }
 blitz-paint = { path = "vendor/blitz-paint" }
