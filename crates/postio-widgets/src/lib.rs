@@ -1,6 +1,5 @@
 //! The GTK the desktop app draws with: shared widgets, the composer, the list model and the
-//! presenters that join them to
-//! `postio-client`. Nothing here opens the store (ADR 0043).
+//! presenters that join them to `postio-client`. Nothing here opens the store (ADR 0043).
 
 pub mod body_view;
 pub mod capture;

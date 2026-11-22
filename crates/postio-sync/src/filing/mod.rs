@@ -35,8 +35,8 @@ pub trait FilingPass: Send + Sync + std::fmt::Debug {
 }
 
 /// Runs `pass` in a scope of its own inside `transaction`. Errors never lose mail (ADR 0008 Q6,
-/// FR-112): a failed pass rolls back its own writes,
-/// the messages stay where sync filed them, and the failure is logged by ids and outcome only.
+/// FR-112): a failed pass rolls back its own writes, the messages stay where sync filed them, and
+/// the failure is logged by ids and outcome only.
 pub(crate) async fn file_arrivals(
     transaction: &Connection,
     pass: &dyn FilingPass,

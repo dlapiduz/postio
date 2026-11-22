@@ -25,8 +25,7 @@ pub fn register(context: &WebContext, source: Rc<dyn BlobSource>) {
 }
 
 /// Serves the static face table: the engine fetches only the faces a page draws with instead of
-/// re-reading ~1.21 MB of
-/// base64 on every render (#768).
+/// re-reading ~1.21 MB of base64 on every render (#768).
 fn register_fonts(context: &WebContext) {
     context.register_uri_scheme(FONT_SCHEME, respond_with_font);
 }
@@ -80,10 +79,8 @@ fn respond(request: &URISchemeRequest, source: &dyn BlobSource) {
 }
 
 /// `postio-cid:<id>` for a single-message document (message `None`), `postio-cid:<scope>/<id>` for
-/// a conversation document.
-/// Split on the first `/` only: `percent_encode` escapes `/`, so an id's slash arrives as `%2F`,
-/// and splitting elsewhere
-/// would let a sender grow their own scope.
+/// a conversation document. Split on the first `/` only: `percent_encode` escapes `/`, so an id's
+/// slash arrives as `%2F`, and splitting elsewhere would let a sender grow their own scope.
 fn reference_from_uri(uri: &str) -> (Option<String>, String) {
     let rest = uri
         .strip_prefix(CID_SCHEME)

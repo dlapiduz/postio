@@ -41,9 +41,8 @@ impl ViewMode {
 }
 
 /// A predicate, not a `Vec<MessageId>`: a mailbox is never loaded into memory (docs/PRODUCT.md
-/// §18), so the
-/// store resolves "select all" in one statement. `open_mailbox` clears it because "everything"
-/// changes with the list.
+/// §18), so the store resolves "select all" in one statement. `open_mailbox` clears it because
+/// "everything" changes with the list.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Selection {
@@ -131,8 +130,7 @@ pub enum Resolved {
 }
 
 /// Until #52 only a folder could be "everything"; `mailbox` answers `None` for a smart folder
-/// because
-/// nothing can be filed there.
+/// because nothing can be filed there.
 ///
 /// `Unified` carries the accounts it could show, fixed when the gesture is made, so an account
 /// reconnecting between `Ctrl+A` and the verb cannot join a selection the user was never shown

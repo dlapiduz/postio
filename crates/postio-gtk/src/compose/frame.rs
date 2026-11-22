@@ -1,6 +1,5 @@
 //! The frame around the composer: header bar, action row (Send first) and Labels row. Every control
-//! calls one of the
-//! composer's verbs, and every key shown is read from the keymap in force.
+//! calls one of the composer's verbs, and every key shown is read from the keymap in force.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;

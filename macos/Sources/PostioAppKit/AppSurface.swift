@@ -7,8 +7,7 @@ import PostioKit
 /// token, and scaling a neutral keeps it neutral. #1588 replaces this with a designed dark palette.
 public enum AppSurface {
     /// Steps, not a ratio: the same proportion is half a unit at the dark end, below what eight
-    /// bits
-    /// can express, and the card would flatten.
+    /// bits can express, and the card would flatten.
     static let stepsBelowPaper: CGFloat = 3.0 / 255.0
 
     public static let background = NSColor(name: nil) { appearance in

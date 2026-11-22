@@ -3,8 +3,7 @@ import PostioFFI
 import SwiftUI
 
 /// Heights are arithmetic (`DropdownView.height`), so the panel's size needs no measuring. Matched
-/// words get the find
-/// highlight, never the accent; the accent is the focused row's ring and fill.
+/// words get the find highlight, never the accent; the accent is the focused row's ring and fill.
 public struct DropdownView: View {
     let model: DropdownModel
     let run: (UInt64) -> Void

@@ -109,8 +109,7 @@ impl Keymap {
 
         for spec in registry::every_action() {
             // No key for a command this platform does not offer: it would claim the key and hold
-            // `g`
-            // open as a prefix.
+            // `g` open as a prefix.
             if keymap.binding(spec.id).is_some() || !registry::offered_on(spec.id, platform) {
                 continue;
             }

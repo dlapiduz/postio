@@ -1,8 +1,6 @@
 //! Recipient completion for the Mac's composer: `postio_ui::recipients::suggest_ranked` over the
-//! account's directory.
-//! The directory is kept for a minute so a keystroke runs no query; what Contacts lends is used for
-//! one
-//! answer and never stored or logged.
+//! account's directory. The directory is kept for a minute so a keystroke runs no query; what
+//! Contacts lends is used for one answer and never stored or logged.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
@@ -105,8 +103,7 @@ pub struct RecipientSuggestionFfi {
 #[uniffi::export]
 impl Session {
     /// Made now from stored mail if the background catch-up has not reached them. `None` for an
-    /// address
-    /// the store never saw, the user's own, or while there is no host.
+    /// address the store never saw, the user's own, or while there is no host.
     pub fn contact_for_address(&self, address: String) -> Option<ContactFfi> {
         let client = self.client()?;
         match crate::session::blocking(client.contact_for_address(&address)) {
@@ -119,8 +116,7 @@ impl Session {
     }
 
     /// `extra` is what the platform's address book lends for this keystroke; an address the
-    /// directory
-    /// has is offered once. None until enough is typed.
+    /// directory has is offered once. None until enough is typed.
     pub fn recipient_suggestions(
         &self,
         account: i64,

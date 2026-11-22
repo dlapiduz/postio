@@ -750,8 +750,7 @@ mod tests {
     #[test]
     fn an_anchor_cannot_break_out_of_the_attribute_it_sits_in() {
         // Against `entry_html`, not a whole document: `conversation_document` bumps a global
-        // counter in
-        // `reader::cost`, and assembling one here races that test (#1390).
+        // counter in `reader::cost`, and assembling one here races that test (#1390).
         let hostile = r#"1" onmouseover="steal()"#;
         let anchor = message_anchor(hostile);
         assert!(

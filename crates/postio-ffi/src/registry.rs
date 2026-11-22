@@ -75,8 +75,8 @@ impl From<postio_core::Context> for UiContext {
 
 impl From<UiContext> for postio_core::Context {
     /// The way back, written out rather than derived and checked by
-    /// `every_context_survives_the_round_trip`: a mapping
-    /// that sent two surfaces to one would resolve keys against the wrong context.
+    /// `every_context_survives_the_round_trip`: a mapping that sent two surfaces to one would
+    /// resolve keys against the wrong context.
     fn from(context: UiContext) -> Self {
         use postio_core::Context;
         match context {
@@ -104,8 +104,7 @@ impl From<UiContext> for postio_core::Context {
 }
 
 /// A top-level menu, in menu-bar order. The grouping is `postio_core::menu`'s (#657), so a command
-/// added in Rust reaches
-/// the macOS menu with no Swift change.
+/// added in Rust reaches the macOS menu with no Swift change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum MenuSectionFfi {
     /// Present only where the platform has one; `menus()` leaves it out elsewhere and its commands
@@ -147,8 +146,7 @@ pub struct MenuFfi {
 #[uniffi::export]
 pub fn menus() -> Vec<MenuFfi> {
     // The Mac's (`crate::PLATFORM`), whatever the host: macOS gets an application menu first and
-    // the commands fold
-    // accordingly (`postio_core::menu::section_on`).
+    // the commands fold accordingly (`postio_core::menu::section_on`).
     postio_core::menu::MenuSection::bar_for(crate::PLATFORM)
         .into_iter()
         .map(|section| MenuFfi {
@@ -249,8 +247,8 @@ pub const INTERCEPTED: &[postio_core::CommandId] = {
         // the boundary so both frontends mean the same thing by them.
         C::ScheduleSend,
         // The settings window's account verbs act on the row its keyboard is on, a cursor no
-        // session holds; adding an
-        // account, replacing a credential and opening `config.toml` need a surface besides.
+        // session holds; adding an account, replacing a credential and opening `config.toml` need a
+        // surface besides.
         C::AddAccount,
         C::EditConfig,
         C::ToggleAccountEnabled,
@@ -277,8 +275,7 @@ pub const INTERCEPTED: &[postio_core::CommandId] = {
         // document only the window holds (#1571).
         C::InsertImage,
         // ⌘H in the composer: the draft's own reminder, which only its window holds until saved. On
-        // the list and the
-        // open message `h` is the controller's picker.
+        // the list and the open message `h` is the controller's picker.
         C::RemindIfNoReply,
         // The panels for a vCard: a file is read or written only through a
         // panel the user used, which this frontend presents (spec 011 S11).
@@ -343,8 +340,7 @@ mod tests {
     #[test]
     fn every_context_survives_the_round_trip() {
         // Both directions are hand-written matches: the compiler checks exhaustiveness but not that
-        // they are inverses, and
-        // a mismatch reads as bindings that do not work.
+        // they are inverses, and a mismatch reads as bindings that do not work.
         for context in postio_core::Context::ALL {
             let crossed = UiContext::from(*context);
             assert_eq!(

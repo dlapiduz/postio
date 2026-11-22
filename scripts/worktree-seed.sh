@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Seed a worktree's target/debug from the newest sibling's, so its first build compiles what changed
-# (#1717). `issue-claim.sh` does this for claimed
-# trees (#1102); this is the same seeding (lib/seed-target.sh) for a tree made another way, such as
-# a spec branch or a parallel lane:
+# (#1717). `issue-claim.sh` does this for claimed trees (#1102); this is the same seeding
+# (lib/seed-target.sh) for a tree made another way, such as a spec branch or a parallel lane:
 #
 #     git worktree add ~/src/postio-worktrees/<name> -b <branch> origin/main
 #     scripts/worktree-seed.sh ~/src/postio-worktrees/<name>

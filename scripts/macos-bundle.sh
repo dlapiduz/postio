@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# Assemble Postio.app around the binary `macos-build.sh` produced: SwiftPM cannot emit a bundle.
-# The signature is ad-hoc by default (`codesign -s -`, no Apple account; ADR 0019 Q8), so each
-# rebuild is a different application to the
-# Keychain and "Always Allow" does not stick. `POSTIO_CODESIGN_IDENTITY` signs with a real
-# certificate (any code-signing one, even self-signed),
+# Assemble Postio.app around the binary `macos-build.sh` produced: SwiftPM cannot emit a bundle. The
+# signature is ad-hoc by default (`codesign -s -`, no Apple account; ADR 0019 Q8), so each rebuild
+# is a different application to the Keychain and "Always Allow" does not stick.
+# `POSTIO_CODESIGN_IDENTITY` signs with a real certificate (any code-signing one, even self-signed),
 # which binds the Keychain ACL to the identity; opt-in, so the artifact is not changed by whatever
 # certificate is in the keychain.
 #
@@ -73,9 +72,8 @@ fi
 rm -rf "$(dirname "$ICONSET")"
 
 # The executable loads `libpostio_ffi.dylib` from the cargo target directory by absolute path, so a
-# bundle would launch only on the machine
-# that built it (#1723). Copy the library in, point the executable at it, and fail if anything still
-# reaches outside.
+# bundle would launch only on the machine that built it (#1723). Copy the library in, point the
+# executable at it, and fail if anything still reaches outside.
 scripts/macos-self-contained.sh "$APP"
 
 # `-s -` is an ad-hoc signature with the local entitlements, which disable library validation. Sign
@@ -89,9 +87,8 @@ if [ -d "$APP/Contents/Frameworks" ]; then
     done
 fi
 # The helper is nested code: signed with the same identity before the bundle, under its own
-# identifier, with no entitlements
-# (it loads only system libraries; if the app is ever sandboxed it needs
-# `com.apple.security.inherit`).
+# identifier, with no entitlements (it loads only system libraries; if the app is ever sandboxed it
+# needs `com.apple.security.inherit`).
 codesign --force --sign "$IDENTITY" \
     --identifier dev.postio.Postio.extract-helper \
     "$APP/Contents/MacOS/postio-extract-helper"

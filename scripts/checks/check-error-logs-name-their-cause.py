@@ -38,11 +38,9 @@ from pathlib import Path
 
 CALL = re.compile(r"\btracing::error!\s*\(")
 # A bare field (`%error`, `?error`), where the field's name and the captured local are the same.
-# `name = %expression` is not
-# matched: `{error}` captures the local, so interpolating it would put an unredacted value in
-# MESSAGE (postio-account/src/imap/pool.rs).
-# `\\[\\s\\S]` rather than `\\.`, so a literal broken across lines with a trailing backslash is one
-# literal.
+# `name = %expression` is not matched: `{error}` captures the local, so interpolating it would put
+# an unredacted value in MESSAGE (postio-account/src/imap/pool.rs). `\\[\\s\\S]` rather than `\\.`,
+# so a literal broken across lines with a trailing backslash is one literal.
 STRING = re.compile(r'"(?:[^"\\]|\\[\s\S])*"')
 
 

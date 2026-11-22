@@ -111,9 +111,8 @@ default-filter = 'not (binary(cache_pressure) + (binary(focus_suite) & (test(/^e
 fail-fast = false
 
 # The accessibility sweep stalls on shared runners while opening the composer's editor WebView
-# (#1677). A stall is
-# killed at two minutes and retried; `test-with-flake-retry.sh` only retries failures nextest
-# reports per test.
+# (#1677). A stall is killed at two minutes and retried; `test-with-flake-retry.sh` only retries
+# failures nextest reports per test.
 [[profile.ci-full.overrides]]
 filter = 'binary(focus_suite) & test(/^a11y_sweep::/)'
 slow-timeout = { period = "60s", terminate-after = 2 }

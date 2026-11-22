@@ -27,11 +27,10 @@ fn own_process(case: &str) -> bool {
 }
 
 /// For a case that reads something the whole process shares (a counter, a slot, the tracing
-/// dispatch a callsite cached): `cargo test`
-/// runs a suite's cases as threads of one process (#1976). Where the process is already the case's
-/// own (nextest, or the child) it returns
-/// `false`; elsewhere it reruns this binary with `case` alone, fails if that did, and returns
-/// `true`: the caller returns at once.
+/// dispatch a callsite cached): `cargo test` runs a suite's cases as threads of one process
+/// (#1976). Where the process is already the case's own (nextest, or the child) it returns `false`;
+/// elsewhere it reruns this binary with `case` alone, fails if that did, and returns `true`: the
+/// caller returns at once.
 pub fn alone(case: &str) -> bool {
     if own_process(case) {
         return false;

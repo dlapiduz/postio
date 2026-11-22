@@ -33,8 +33,8 @@ pub fn version_line(version: &str, commit: Option<&str>) -> String {
 
 pub fn application() -> adw::Application {
     // GNOME matches a window to its desktop entry by the Wayland `app_id`, which GDK takes from the
-    // program name (the binary's,
-    // `postio`, unless set); without this the 0.4.2 Flatpak drew a generic icon.
+    // program name (the binary's, `postio`, unless set); without this the 0.4.2 Flatpak drew a
+    // generic icon.
     glib::set_prgname(Some(APP_ID));
     adw::Application::builder()
         .application_id(APP_ID)

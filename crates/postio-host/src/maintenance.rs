@@ -4,8 +4,8 @@
 use postio_session::Wiring;
 
 /// Every body reaches the search index through the indexer and nothing else
-/// (`postio_session::spawn_body_indexer`),
-/// so a store with no account or network still becomes searchable.
+/// (`postio_session::spawn_body_indexer`), so a store with no account or network still becomes
+/// searchable.
 pub fn spawn_idle_passes(wiring: &Wiring) {
     postio_session::spawn_body_indexer(
         wiring.database.clone(),
@@ -117,11 +117,10 @@ pub fn build_contacts(wiring: &Wiring) {
 }
 
 /// `BLOB_GRACE_PERIOD`, never `Duration::ZERO`: a blob is written before the row that references it
-/// commits, so a healthy blob inside that window looks like an orphan.
-/// The cheap debris purge runs inline; the whole-tree garbage collection goes on a worker.
-/// `evict_to_fit` runs last,
-/// so it never evicts a blob that an orphan of the same size could replace for free (#862). Once
-/// per start.
+/// commits, so a healthy blob inside that window looks like an orphan. The cheap debris purge runs
+/// inline; the whole-tree garbage collection goes on a worker. `evict_to_fit` runs last, so it
+/// never evicts a blob that an orphan of the same size could replace for free (#862). Once per
+/// start.
 pub fn reclaim_disk(wiring: &Wiring) {
     let (database, blobs) = (wiring.database.clone(), wiring.blobs.clone());
     let ceiling = wiring.storage_ceiling;

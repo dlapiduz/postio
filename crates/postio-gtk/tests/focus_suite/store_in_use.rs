@@ -1,7 +1,6 @@
 //! Both Postios are this suite run again over a scratch store (`POSTIO_STORE`), as two processes:
-//! the engine's lock is a POSIX record lock,
-//! which a process never conflicts with itself on, and the store's path comes from the environment,
-//! which this process may not set.
+//! the engine's lock is a POSIX record lock, which a process never conflicts with itself on, and
+//! the store's path comes from the environment, which this process may not set.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;

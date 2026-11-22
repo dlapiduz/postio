@@ -334,10 +334,9 @@ impl Host {
     }
 
     /// `Err` is a sentence for a person and the way past it: a keyring that will not answer, a
-    /// store another Postio
-    /// has open (trying again gets past), or a schema no migration reaches (only starting over
-    /// does).
-    /// `report` hears each wait before it starts. Blocks the calling thread.
+    /// store another Postio has open (trying again gets past), or a schema no migration reaches
+    /// (only starting over does). `report` hears each wait before it starts. Blocks the calling
+    /// thread.
     pub fn open(
         config_path: Option<&std::path::Path>,
         secrets: Arc<dyn postio_account::secret::SecretStore>,
@@ -1776,9 +1775,8 @@ impl Inner {
     }
 
     /// What the probe offered for JMAP is kept for the submission that follows. `stop` cancels the
-    /// probe's token on the spot,
-    /// so a probe the person has moved on from holds no socket open (#57); it answers as one that
-    /// found nothing.
+    /// probe's token on the spot, so a probe the person has moved on from holds no socket open
+    /// (#57); it answers as one that found nothing.
     async fn discover(
         &self,
         address: &str,
@@ -1955,8 +1953,7 @@ impl Inner {
     }
 
     /// Proves the credentials before saving, so a refused sign-in writes nothing. `then` says
-    /// whether the host
-    /// starts the account's sync or leaves it to the frontend.
+    /// whether the host starts the account's sync or leaves it to the frontend.
     async fn add_account(
         &self,
         submission: postio_ui::onboarding::Submission,
@@ -2079,8 +2076,7 @@ impl Inner {
     }
 
     /// "Offline" is not told apart from "not fetched yet": the host has no reachability signal, and
-    /// saying
-    /// "downloading" wrongly is the milder mistake.
+    /// saying "downloading" wrongly is the milder mistake.
     async fn body(&self, message: postio_model::MessageId) -> Resp {
         let connection = match self.wiring.database.read().await {
             Ok(connection) => connection,
@@ -2112,9 +2108,8 @@ impl Inner {
     }
 
     /// Filed under the list's `List-Id`, else the sender's domain (#971). The answer names what the
-    /// offer after it
-    /// acts on: the `List-Id`, else the sender's exact address (#1952), so the log needs no
-    /// address. Only answered for a deliberate act.
+    /// offer after it acts on: the `List-Id`, else the sender's exact address (#1952), so the log
+    /// needs no address. Only answered for a deliberate act.
     async fn unsubscribe(&self, message: postio_model::MessageId) -> Resp {
         use postio_model::listing::StoreError;
         use postio_storage::repository::{MessageRepository, UnsubscribeRepository};
@@ -2271,9 +2266,8 @@ impl Transport for Local {
         let client = self.client;
         if request.cancellable() {
             // A search whose caller has gone stops at its next await: a superseded keystroke's
-            // future is dropped
-            // and its replacement should not wait behind it. Dropping a read mid-match leaves its
-            // connection clean.
+            // future is dropped and its replacement should not wait behind it. Dropping a read
+            // mid-match leaves its connection clean.
             let family = request.family();
             self.inner.runtime().spawn(async move {
                 let resp = tokio::select! {

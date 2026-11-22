@@ -96,8 +96,7 @@ final class FirstMouseHostingView<Content: View>: NSHostingView<Content> {
 }
 
 /// A click into the field opens the bar, as `/` does; typing into a field with no bar under it
-/// would
-/// be words the controller never hears.
+/// would be words the controller never hears.
 public final class BarSearchField: NSSearchField {
     /// The box around the field draws the magnifier and keycap, and a cell's own would draw a
     /// second.
@@ -226,9 +225,8 @@ public final class BarSearchField: NSSearchField {
         ghostLabel.sizeToFit()
         let size = ghostLabel.frame.size
         // The ghost follows the last glyph where the field editor laid it out; without an editor,
-        // two points in
-        // (line fragment padding). The label's text is inset in its frame, which is taken back so
-        // "at" and "las" read as one word.
+        // two points in (line fragment padding). The label's text is inset in its frame, which is
+        // taken back so "at" and "las" read as one word.
         let end = lastGlyphEnd() ?? (text.minX + 2 + width)
         let inset = ghostLabel.cell?.titleRect(forBounds: ghostLabel.bounds).minX ?? 0
         let x = end - inset

@@ -1,6 +1,5 @@
 //! Logs and counts WebKit web-process deaths under this crate's views, so test waits fail within
-//! one loop turn instead
-//! of running to their deadline.
+//! one loop turn instead of running to their deadline.
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};

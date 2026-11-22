@@ -167,8 +167,7 @@ pub struct Plan {
     /// Always empty: a delete is never automatic.
     pub deletes: Vec<Delete>,
     /// Records on the other side that stay there: out of scope, without an address or name, or a
-    /// second
-    /// record for an address another already brings in.
+    /// second record for an address another already brings in.
     pub left_alone: usize,
 }
 
@@ -324,8 +323,7 @@ pub fn plan(
     }
 
     // By any shared address, then by name and phone. One candidate on both sides is a match; more
-    // than
-    // one on either is a question.
+    // than one on either is a question.
     let free_locals: Vec<&LocalRecord> = locals
         .iter()
         .filter(in_scope)

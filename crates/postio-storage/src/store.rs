@@ -44,8 +44,7 @@ struct GateInner {
     /// A blocking `std::sync::Mutex`: nothing awaits while it is held.
     state: Mutex<GateState>,
     /// `Notify`, not a `Condvar`: a condvar blocks the worker thread, and waiters would deadlock
-    /// the
-    /// task that releases the permit.
+    /// the task that releases the permit.
     free: tokio::sync::Notify,
     interactive_done: tokio::sync::Notify,
 }
@@ -263,8 +262,7 @@ impl Store {
     }
 
     /// Writes a store at `path` from `text` rather than `HEAD`, stamped as the build whose schema
-    /// it
-    /// was, for migration and refusal tests. `rows` is SQL run after it.
+    /// it was, for migration and refusal tests. `rows` is SQL run after it.
     #[cfg(feature = "test-support")]
     pub async fn create_at_schema(
         path: impl AsRef<Path>,
@@ -591,8 +589,7 @@ impl Store {
 
     /// Truncates the write-ahead log; returns its size before. A call, not `journal_size_limit`,
     /// which this engine lacks: a 676 MB WAL slowed every launch (#1175). Housekeeping calls it,
-    /// off
-    /// the startup and interaction paths.
+    /// off the startup and interaction paths.
     pub async fn truncate_log(&self) -> Result<u64> {
         let before = self
             .path
@@ -604,8 +601,7 @@ impl Store {
 
         let connection = self.connect().await?;
         // A query: it answers (busy, log, checkpointed) and the engine refuses a statement whose
-        // rows
-        // nobody reads.
+        // rows nobody reads.
         #[allow(clippy::disallowed_methods)]
         let mut rows = connection
             .query("PRAGMA wal_checkpoint(TRUNCATE)", ())

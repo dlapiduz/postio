@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
 # Does a scheduled workflow have anything new to test? Compares the head under test with the head
-# the workflow's last
-# completed run tested and says `run=false` when they match.
-# Only a schedule is ever skipped (dispatch and workflow_call are someone asking), and it fails
-# towards running when the API has no answer.
-# `--rerun-failed`: `ci.yml`'s `Nightly is green` reads the last completed run, and an all-skipped
-# run concludes green,
-# so a red nightly must run again over an unchanged tree.
-# Shared by nightly, bench and mutants (#1710); tested by `scripts/tests/test-ci-anything-new.py`.
+# the workflow's last completed run tested and says `run=false` when they match. Only a schedule is
+# ever skipped (dispatch and workflow_call are someone asking), and it fails towards running when
+# the API has no answer. `--rerun-failed`: `ci.yml`'s `Nightly is green` reads the last completed
+# run, and an all-skipped run concludes green, so a red nightly must run again over an unchanged
+# tree. Shared by nightly, bench and mutants (#1710); tested by
+# `scripts/tests/test-ci-anything-new.py`.
 #
 # Usage: scripts/ci-anything-new.sh <workflow-file> [--rerun-failed]
 #   Reads GITHUB_REPOSITORY, GITHUB_EVENT_NAME and GITHUB_SHA, which every

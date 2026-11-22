@@ -1,7 +1,6 @@
 //! The composer's seams, answered through Focus's client (ADR 0041). Most are the shared ones
-//! (`shared`); Focus's own send notes
-//! to the frame's subtitle. A composer seam is one slot, not a signal, so `reply_source` and
-//! `label_names` cannot be the plainer shared version.
+//! (`shared`); Focus's own send notes to the frame's subtitle. A composer seam is one slot, not a
+//! signal, so `reply_source` and `label_names` cannot be the plainer shared version.
 
 use std::rc::Rc;
 

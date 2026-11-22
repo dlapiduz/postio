@@ -25,8 +25,7 @@ pub use transport::{LocalTransport, Stream, TIMEOUT, Transport};
 #[cfg(test)]
 mod manifest {
     //! Cargo unifies features workspace-wide, so the resolved graph shows io-http's TLS however
-    //! this
-    //! crate asks for it; this reads what it asks for.
+    //! this crate asks for it; this reads what it asks for.
 
     fn manifest() -> String {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");

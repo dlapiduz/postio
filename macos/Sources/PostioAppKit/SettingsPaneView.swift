@@ -367,9 +367,8 @@ public struct SettingsPaneView: View {
                     }
                     Spacer(minLength: 0)
                     // Inline, beside the account. Which repair is the boundary's answer, not a
-                    // guess from the provider's
-                    // name: a password where consent is wanted, or a browser for an app password,
-                    // sends the person somewhere with no field to use.
+                    // guess from the provider's name: a password where consent is wanted, or a
+                    // browser for an app password, sends the person somewhere with no field to use.
                     if let offer = repairOffer(account), let label = offer.button {
                         Button(label) {
                             Task { await repair.begin(account, through: session) }
@@ -798,9 +797,8 @@ public struct SettingsPaneView: View {
     ]
 
     /// Every word is `postio_ui::agent_access`'s and every edit goes through the boundary's
-    /// patchers. Revoking removes the
-    /// account's `[mcp]` table only, so it bites on the agent's next call; the note says a running
-    /// call finishes.
+    /// patchers. Revoking removes the account's `[mcp]` table only, so it bites on the agent's next
+    /// call; the note says a running call finishes.
     @ViewBuilder private var agents: some View {
         let words = settingsAgentWords()
         ScrollView {
@@ -1040,10 +1038,9 @@ public struct SettingsPaneView: View {
     }
 
     /// No Save: settings are the config file, with no second store. The footer says whether it
-    /// parses. Monospaced because
-    /// alignment carries meaning in TOML, a point under the panes' text since monospaced reads
-    /// larger; autocorrection and
-    /// smart quotes are off because a curly quote in a TOML string is a parse error.
+    /// parses. Monospaced because alignment carries meaning in TOML, a point under the panes' text
+    /// since monospaced reads larger; autocorrection and smart quotes are off because a curly quote
+    /// in a TOML string is a parse error.
     @ViewBuilder private var configFile: some View {
         TextEditor(text: configBinding)
             .font(.system(.subheadline, design: .monospaced))

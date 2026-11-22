@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # File an issue, after checking whether it has already been filed. Searching first and stopping when
-# something is found
-# prevents duplicates filed straight off a fresh reproduction (#332, #392, #406).
+# something is found prevents duplicates filed straight off a fresh reproduction (#332, #392, #406).
 #
 # Usage:
 #   scripts/issue-file.sh --title "..." --body-file notes.md [--label ready,p2]
@@ -64,9 +63,8 @@ search() {
 }
 
 # Three terms, then two, then one: three is precise but misses a prior issue worded differently
-# (#332 vs #392). Widening only when
-# the narrower search found nothing costs one extra call. A heuristic: prior art becomes likely to
-# surface, never certain.
+# (#332 vs #392). Widening only when the narrower search found nothing costs one extra call. A
+# heuristic: prior art becomes likely to surface, never certain.
 FOUND=""
 TERMS=""
 for width in 3 2 1; do

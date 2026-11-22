@@ -8,11 +8,10 @@ use postio_model::MessageId;
 use postio_runtime::Engine;
 use postio_storage::{BlobStore, Store};
 
-/// Writes each message's raw source to its path, in order; answers the paths written.
-/// May reach the network because the user asked: a message whose raw source is not backfilled is
-/// requested from the
-/// engine and awaited. With no engine that message is an error, not an empty file, and the export
-/// stops.
+/// Writes each message's raw source to its path, in order; answers the paths written. May reach the
+/// network because the user asked: a message whose raw source is not backfilled is requested from
+/// the engine and awaited. With no engine that message is an error, not an empty file, and the
+/// export stops.
 pub async fn write_messages(
     database: &Store,
     blobs: &BlobStore,

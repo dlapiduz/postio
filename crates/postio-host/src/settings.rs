@@ -25,9 +25,8 @@ const ROLES: [postio_model::MailboxRole; 5] = [
 ];
 
 /// `list()` rather than the enabled ones: settings is where a disabled account is enabled again. A
-/// row pending removal
-/// is on its way out and showing it would let it be removed twice. A frontend asks for weights only
-/// while the panel is on screen (#871).
+/// row pending removal is on its way out and showing it would let it be removed twice. A frontend
+/// asks for weights only while the panel is on screen (#871).
 pub async fn accounts(database: &Store, weights: bool) -> Result<Vec<AccountSettings>, StoreError> {
     let connection = database.read().await?;
     let accounts = AccountRepository::new(&connection).list().await?;

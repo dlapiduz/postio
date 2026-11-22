@@ -71,9 +71,8 @@ pub struct MailboxFfi {
     /// finished one.
     pub last_synced_at: Option<i64>,
     /// Whether this row belongs in the sidebar's special-use section: not simply "has a role",
-    /// since an account that has
-    /// been through more than one client holds two folders per role and only the primary gets the
-    /// treatment (#501).
+    /// since an account that has been through more than one client holds two folders per role and
+    /// only the primary gets the treatment (#501).
     pub special: bool,
     /// How many messages carry `\Flagged`: the Flagged row's badge shows this rather than `unread`.
     pub flagged: u32,
@@ -104,8 +103,7 @@ impl From<Mailbox> for MailboxFfi {
 }
 
 /// What Postio calls a role, with no folder in hand; empty for an ordinary folder. For sentences
-/// like "this account has
-/// no Drafts folder", where there is no folder to ask.
+/// like "this account has no Drafts folder", where there is no folder to ask.
 #[uniffi::export]
 pub fn mailbox_role_name(role: MailboxRoleFfi) -> String {
     postio_ui::sidebar::role_name(role.into())

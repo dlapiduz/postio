@@ -99,8 +99,7 @@ base_is_on_origin() {
 }
 
 # Branches whose pull request has merged, asked of GitHub once; POSTIO_MERGED_BRANCHES stands in for
-# the self-test. No answer is an empty list,
-# so rule 2 never applies and the others still do.
+# the self-test. No answer is an empty list, so rule 2 never applies and the others still do.
 if [ -n "${POSTIO_MERGED_BRANCHES+set}" ]; then
     MERGED=$(printf '%b' "$POSTIO_MERGED_BRANCHES")
 else

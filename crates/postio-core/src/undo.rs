@@ -178,8 +178,7 @@ impl UndoEntry {
     }
 
     /// An invitation answer's reply waits seconds in the outbox, so the entry goes with its window
-    /// or it
-    /// shadows the archive beneath with "too late". It never folds into another unit.
+    /// or it shadows the archive beneath with "too late". It never folds into another unit.
     #[must_use]
     pub fn lasting(mut self, window: Duration) -> Self {
         self.window = Some(window);

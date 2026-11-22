@@ -73,9 +73,8 @@ pub struct EgressEvent {
 }
 
 /// Object-safe and synchronous: called from async transports and a blocking discovery probe, so
-/// `record` must
-/// return immediately, handing the event to a channel and never a database. `postio-session` owns
-/// the persisting implementation.
+/// `record` must return immediately, handing the event to a channel and never a database.
+/// `postio-session` owns the persisting implementation.
 pub trait EgressSink: Send + Sync {
     fn record(&self, event: EgressEvent);
 }

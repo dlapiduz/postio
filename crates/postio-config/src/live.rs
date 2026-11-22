@@ -44,8 +44,7 @@ impl LiveConfig {
     }
 
     /// The watcher parses off the UI thread and hands the `Checked` over, so the UI thread only
-    /// does this
-    /// comparison.
+    /// does this comparison.
     pub fn apply(&mut self, checked: Checked) -> Reload {
         self.status = checked.validation;
         let Some(config) = checked.config.filter(|_| self.status.is_valid()) else {

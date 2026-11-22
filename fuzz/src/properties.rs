@@ -58,9 +58,8 @@ fn check_parsed_invariants(parsed: &ParsedMessage, raw: &[u8]) {
     }
 
     // Attachment filenames are not checked for path separators here: `mime::parse` reports what the
-    // sender wrote,
-    // and making it safe to write to disk is `postio_ui::reader::parts::save_name`'s promise,
-    // tested there.
+    // sender wrote, and making it safe to write to disk is `postio_ui::reader::parts::save_name`'s
+    // promise, tested there.
     let _ = &parsed.parts;
 }
 
@@ -97,9 +96,8 @@ fn check_sanitized(sanitized: &Sanitized, remote: RemoteImages) {
     let html = &sanitized.html;
 
     // Tag names only, not scheme names: ammonia decodes `&#x6a;avascript&colon;` in text to inert
-    // literal `javascript:`, and a
-    // substring scan called that a bypass. A literal `<script` in the output can only be an
-    // element.
+    // literal `javascript:`, and a substring scan called that a bypass. A literal `<script` in the
+    // output can only be an element.
     for banned in ["<script", "<iframe", "<object", "<embed"] {
         assert!(
             !html.to_ascii_lowercase().contains(banned),
@@ -138,8 +136,8 @@ fn check_sanitized(sanitized: &Sanitized, remote: RemoteImages) {
 const FETCHED_ON_SIGHT: &[&str] = &["src", "srcset", "poster", "background"];
 
 /// Parse `input` as a query and check the result. The grammar is total, so a panic is a find, and
-/// so is a span that does not
-/// describe its input: `ParsedQuery::remove_token` slices on those offsets.
+/// so is a span that does not describe its input: `ParsedQuery::remove_token` slices on those
+/// offsets.
 pub fn check_parse_query(input: &str) {
     let parsed = postio_search::parse(input, fixed_today());
 

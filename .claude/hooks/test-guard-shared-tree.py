@@ -110,8 +110,7 @@ def decide(
         body["session_id"] = session
     payload = json.dumps(body)
     # Set CLAUDE_PROJECT_DIR: without it the "not our repository" branch can never be taken and the
-    # rule that
-    # a `cd` cannot carry a command out of scrutiny is untestable.
+    # rule that a `cd` cannot carry a command out of scrutiny is untestable.
     env = dict(os.environ, CLAUDE_PROJECT_DIR=SHARED)
     if worktrees:
         # Claim cases build their worktrees somewhere disposable: a stray `.git` file under the real

@@ -1,6 +1,5 @@
 //! Compiling is most of what a small statement costs this engine; counted, not timed, this holds
-//! the
-//! storage layer to the per-connection statement cache.
+//! the storage layer to the per-connection statement cache.
 
 use chrono::{TimeZone, Utc};
 use postio_model::{BodyState, EmailAddress, Message};

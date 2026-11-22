@@ -34,8 +34,8 @@ import sys
 from pathlib import Path
 
 # A very small YAML reader: PyYAML is not on the CI image. It must handle anchors and aliases,
-# because ci.yml defines its
-# prose ignore list once as `&prose`; skipping the alias would claim every prose PR runs CI.
+# because ci.yml defines its prose ignore list once as `&prose`; skipping the alias would claim
+# every prose PR runs CI.
 
 
 class YamlError(Exception):
@@ -190,8 +190,7 @@ def load_workflow(path: Path) -> dict[str, object]:
 
 
 # GitHub filter patterns, not shell globs or gitignore: `*` and `?` stop at a slash, `**` crosses,
-# patterns match the whole path,
-# and a leading `!` reverses an earlier match.
+# patterns match the whole path, and a leading `!` reverses an earlier match.
 
 
 def _pattern_to_regex(pattern: str) -> re.Pattern[str]:

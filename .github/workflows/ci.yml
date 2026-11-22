@@ -1,13 +1,12 @@
 name: CI
 
 # The compile jobs run on ubuntu-26.04: the GTK crates pin gtk4 `v4_20`, libadwaita `v1_7` and pango
-# `v1_56`,
-# which check the system library version at build time. Fallback if the label is withdrawn: a
-# `container: fedora:44` with the dnf line from CLAUDE.md.
+# `v1_56`, which check the system library version at build time. Fallback if the label is withdrawn:
+# a `container: fedora:44` with the dnf line from CLAUDE.md.
 
 # The `changes` job decides what to build, not a workflow-level `paths-ignore`: a workflow that does
-# not run
-# reports no check, so a required check would never merge (#1107). A skipped job counts as passed.
+# not run reports no check, so a required check would never merge (#1107). A skipped job counts as
+# passed.
 on:
   push:
     branches: [main]
@@ -58,8 +57,8 @@ jobs:
       - uses: ./.github/actions/python
 
       # The diff comes from the API, not a deep clone. A range GitHub cannot answer leaves the list
-      # empty,
-      # and an empty list builds everything: `scripts/ci-changes.sh` fails that way on purpose.
+      # empty, and an empty list builds everything: `scripts/ci-changes.sh` fails that way on
+      # purpose.
       - name: Classify the diff
         id: classify
         env:
@@ -255,8 +254,7 @@ jobs:
       - name: Assert CI never runs the network-touching tests
         run: |
           # Live-server tests stay out of CI. The pattern is split so this guard does not match
-          # itself,
-          # and it covers both the cargo test and the nextest spelling of the flag.
+          # itself, and it covers both the cargo test and the nextest spelling of the flag.
           flag="--ign""ored"
           if grep -rnE -- "$flag|--run-ign""ored" .github/workflows; then
             echo "::error::CI must not run the ignored tests; they talk to a live mail server."
@@ -268,13 +266,11 @@ jobs:
         if: ${{ !cancelled() }}
         uses: ./.github/actions/build-cache-save
 
-  # The lock: nothing merges while the latest full run on `main` is red.
-  # `Last nightly` reads the latest `nightly.yml` conclusion on `main`; `Nightly is green`
-  # (required) fails every PR
-  # while it is red, except one labelled `fixes-nightly`. Its merge runs the suite again, and a
-  # green run unlocks
-  # the rest (`unlock.yml` re-asks the check). The label is a social rule: a PR wearing it that does
-  # not fix `main` leaves it red.
+  # The lock: nothing merges while the latest full run on `main` is red. `Last nightly` reads the
+  # latest `nightly.yml` conclusion on `main`; `Nightly is green` (required) fails every PR while it
+  # is red, except one labelled `fixes-nightly`. Its merge runs the suite again, and a green run
+  # unlocks the rest (`unlock.yml` re-asks the check). The label is a social rule: a PR wearing it
+  # that does not fix `main` leaves it red.
   nightly-status:
     name: Last nightly
     runs-on: ubuntu-latest
@@ -422,8 +418,7 @@ jobs:
           rust-version: ${{ steps.pin.outputs.channel }}
 
   # Three jobs (#818), not one: clippy, test and doc ran in sequence for 16.9 minutes on average.
-  # They share one
-  # cache (`test` writes it, the other two restore it) and the setup in
+  # They share one cache (`test` writes it, the other two restore it) and the setup in
   # .github/actions/rust-workspace.
   clippy:
     name: Clippy
@@ -534,11 +529,9 @@ jobs:
         run: scripts/restore-mtimes.py
 
       # Test files that skip when there is no display would pass having run nothing (#114);
-      # `.cargo/config.toml`'s runner
-      # needs `mutter` on PATH and an `XDG_RUNTIME_DIR`. There is no Xvfb fallback: X11 is
-      # unsupported, and a silent
-      # fallback made a green run unreadable. If the compositor fails, `gtk_display_required.rs`
-      # fails the run.
+      # `.cargo/config.toml`'s runner needs `mutter` on PATH and an `XDG_RUNTIME_DIR`. There is no
+      # Xvfb fallback: X11 is unsupported, and a silent fallback made a green run unreadable. If the
+      # compositor fails, `gtk_display_required.rs` fails the run.
       - name: Give the GTK suites a runtime directory
         run: |
           runtime="${RUNNER_TEMP:-/tmp}/xdg"
@@ -546,9 +539,8 @@ jobs:
           echo "XDG_RUNTIME_DIR=$runtime" >> "$GITHUB_ENV"
 
       # The version, checksum and reasoning live in `scripts/install-nextest.sh` (#1092). The cache
-      # is keyed on the
-      # script; a wrong-version restore is harmless because the script checks `cargo nextest
-      # --version`.
+      # is keyed on the script; a wrong-version restore is harmless because the script checks `cargo
+      # nextest --version`.
       - name: Cache cargo-nextest
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -558,23 +550,18 @@ jobs:
       - name: Install cargo-nextest
         run: scripts/install-nextest.sh
 
-      # The default suite never touches the network.
-      # `dbus-run-session` is required: mutter dies on a runner without a session bus
-      # (`set_gnome_env: assertion failed: (session_bus)`).
-      # A shared runner is slower than the workstation, so `POSTIO_TEST_PATIENCE` is raised here,
-      # costing nothing when tests pass (#842).
-      # `--no-fail-fast`: plain cargo abandons the remaining targets at the first failure.
-      # `--profile ci` also sets the retry override (#957).
-      # One process per test and binaries in parallel: 3,462 tests in 118s against ~500s for `cargo
-      # test --workspace`.
-      # Everything but the two GTK crates, which run in the two jobs below so a web-process flake
-      # reruns one job.
-      # The sanity tier: unit tests plus the integration suites whose tests enumerate a vocabulary
-      # (golden binding tables,
-      # `[keys]`, `docs/keybindings.md`, `docs/config.md`), which neither `--lib` nor clippy can
-      # fail (#1047).
-      # The rest run nightly and as the release gate; the `nightly` job below refuses to go green
-      # while the last run failed.
+      # The default suite never touches the network. `dbus-run-session` is required: mutter dies on
+      # a runner without a session bus (`set_gnome_env: assertion failed: (session_bus)`). A shared
+      # runner is slower than the workstation, so `POSTIO_TEST_PATIENCE` is raised here, costing
+      # nothing when tests pass (#842). `--no-fail-fast`: plain cargo abandons the remaining targets
+      # at the first failure. `--profile ci` also sets the retry override (#957). One process per
+      # test and binaries in parallel: 3,462 tests in 118s against ~500s for `cargo test
+      # --workspace`. Everything but the two GTK crates, which run in the two jobs below so a
+      # web-process flake reruns one job. The sanity tier: unit tests plus the integration suites
+      # whose tests enumerate a vocabulary (golden binding tables, `[keys]`, `docs/keybindings.md`,
+      # `docs/config.md`), which neither `--lib` nor clippy can fail (#1047). The rest run nightly
+      # and as the release gate; the `nightly` job below refuses to go green while the last run
+      # failed.
       - name: cargo nextest run (sanity tier)
         env:
           POSTIO_TEST_PATIENCE: "3"
@@ -583,8 +570,8 @@ jobs:
           -E 'not (package(postio-widgets) + package(postio-gtk))'
 
       # No test on the merge path waits on the clock (CLAUDE.md, Tests). Each nextest run leaves a
-      # report and this
-      # refuses any case over the tier's budget: 10 s, or 20 s for one that opens a GTK window.
+      # report and this refuses any case over the tier's budget: 10 s, or 20 s for one that opens a
+      # GTK window.
       - name: Every test under its budget
         if: ${{ !cancelled() }}
         run: scripts/ci-test-budget.py target/nextest/ci/junit.xml 10
@@ -608,10 +595,9 @@ jobs:
         run: dbus-run-session -- cargo test --workspace --doc
 
       # Drop the workspace's own artifacts before the save, keeping the ~400 third-party crates:
-      # `actions/cache` cannot
-      # overwrite a key, so kept artifacts went stale within hours and cost 1.7 GB of the 10 GB
-      # quota (#2004).
-      # `scripts/lib/drop-workspace-artifacts.sh` is the one copy of what "ours" means.
+      # `actions/cache` cannot overwrite a key, so kept artifacts went stale within hours and cost
+      # 1.7 GB of the 10 GB quota (#2004). `scripts/lib/drop-workspace-artifacts.sh` is the one copy
+      # of what "ours" means.
       - name: Drop workspace artifacts before caching
         if: always()
         run: scripts/ci-drop-workspace-artifacts.sh
@@ -621,14 +607,11 @@ jobs:
         uses: ./.github/actions/build-cache-save
 
   # The frontend suites: compiled once in `frontend-build`, shipped as a nextest archive, run on six
-  # shards.
-  # A shard restores no build cache and compiles nothing; `--workspace-remap` lets tests find
-  # fixtures in the checkout,
-  # and the runner in `.cargo/config.toml` still gives each shard its own headless compositor.
-  # Apart from the workspace job, a flake reruns one job; `postio_widgets::composer::web_process`
-  # makes a dying web process fail fast.
-  # Six shards run ~1.4 minutes each; the `count` partition deals cases round-robin by binary and
-  # name.
+  # shards. A shard restores no build cache and compiles nothing; `--workspace-remap` lets tests
+  # find fixtures in the checkout, and the runner in `.cargo/config.toml` still gives each shard its
+  # own headless compositor. Apart from the workspace job, a flake reruns one job;
+  # `postio_widgets::composer::web_process` makes a dying web process fail fast. Six shards run ~1.4
+  # minutes each; the `count` partition deals cases round-robin by binary and name.
   frontend-build:
     name: Build the frontend tests
     runs-on: ubuntu-26.04
@@ -713,11 +696,9 @@ jobs:
         run: scripts/ci-test-budget.py target/nextest/ci/junit.xml 20
 
   # The one required check for the GTK suites. The shards have matrix names and are skipped when no
-  # Rust changed, so
-  # they cannot be required directly. It fails unless they succeeded or `changes` said no Rust
-  # changed;
-  # `scripts/ci-frontends-gate.sh` refuses any other skip. No label bypasses it. `macos` is gated
-  # separately.
+  # Rust changed, so they cannot be required directly. It fails unless they succeeded or `changes`
+  # said no Rust changed; `scripts/ci-frontends-gate.sh` refuses any other skip. No label bypasses
+  # it. `macos` is gated separately.
   frontends:
     name: Frontends
     runs-on: ubuntu-latest
@@ -778,8 +759,8 @@ jobs:
       # order-dependent ways, hence the script.
       - name: Build the macOS application
         # `--with-tests` builds the test bundle in the same pass. `swift test` does not relink a
-        # bundle when only a
-        # `-Xlinker` library changed, so the demo stores must be linked here too (PR #2124).
+        # bundle when only a `-Xlinker` library changed, so the demo stores must be linked here too
+        # (PR #2124).
         env:
           POSTIO_FFI_FEATURES: demo
         run: scripts/macos-build.sh --with-tests
@@ -805,11 +786,9 @@ jobs:
         uses: ./.github/actions/build-cache-save
 
   # The tooling self-tests on macOS (#1151): `scripts/` is mostly shell, where portability breaks
-  # live (BSD rejects `sleep infinity`).
-  # Its own job, not a step in `macos`: `ci-changes.sh` answers `no` for `scripts/tests/`,
-  # `scripts/checks/` and
-  # `scripts/issue-*.sh`, exactly the changes these exist for. The Linux job keeps its own copy of
-  # the decision.
+  # live (BSD rejects `sleep infinity`). Its own job, not a step in `macos`: `ci-changes.sh` answers
+  # `no` for `scripts/tests/`, `scripts/checks/` and `scripts/issue-*.sh`, exactly the changes these
+  # exist for. The Linux job keeps its own copy of the decision.
   macos-tooling:
     name: Tooling self-tests (macOS)
     runs-on: macos-latest

@@ -1,8 +1,6 @@
 //! Layer 3: files a message away before its body exists, from structure and headers, asked in
-//! order:
-//! the server's `$Junk`, the automated-senders table, then headers. An invitation is never filed on
-//! a
-//! guess and anything else stays in the inbox; a header not yet known is no evidence.
+//! order: the server's `$Junk`, the automated-senders table, then headers. An invitation is never
+//! filed on a guess and anything else stays in the inbox; a header not yet known is no evidence.
 
 use postio_model::Flag;
 use postio_model::promoted::{AUTO_SUBMITTED, PRECEDENCE_BULK, PRECEDENCE_JUNK};

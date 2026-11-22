@@ -3,8 +3,8 @@ import Observation
 import PostioFFI
 
 /// Decides one thing, the arrows' highlight (009 FR-004): kept on the same row while a new view
-/// still draws it, else the
-/// view's default; moved wherever a run said (`select`). No AppKit (#1264).
+/// still draws it, else the view's default; moved wherever a run said (`select`). No AppKit
+/// (#1264).
 @MainActor
 @Observable
 public final class DropdownModel {

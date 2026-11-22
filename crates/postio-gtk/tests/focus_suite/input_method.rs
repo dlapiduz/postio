@@ -1,7 +1,6 @@
 //! The suite types through GTK's own input method, never the compositor's: GTK 4.22 can leave its
-//! per-display context pointer
-//! dangling when a field is focused before text-input-v3 binds, and the compositor's next enter or
-//! leave crashes (#2155, #2192).
+//! per-display context pointer dangling when a field is focused before text-input-v3 binds, and the
+//! compositor's next enter or leave crashes (#2155, #2192).
 
 use gtk::prelude::*;
 

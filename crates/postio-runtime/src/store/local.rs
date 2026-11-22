@@ -43,10 +43,9 @@ pub struct LocalStore {
 }
 
 /// The count is a correlated subquery (786 ms on a 60,907-message Archive); `witness` is the cheap
-/// trigger-maintained
-/// column it follows. An arrival plus a removal between two reads can leave `total_count` equal
-/// while the thread count
-/// moved: a row count briefly off by one, against every page paying the full count (#1534).
+/// trigger-maintained column it follows. An arrival plus a removal between two reads can leave
+/// `total_count` equal while the thread count moved: a row count briefly off by one, against every
+/// page paying the full count (#1534).
 #[derive(Debug, Clone, Copy)]
 struct CountedFolder {
     witness: Witness,
@@ -54,9 +53,8 @@ struct CountedFolder {
 }
 
 /// Both facts, because `total_count` alone misses a sync that re-threads without changing the
-/// count: stale marks would
-/// seek past the end and return an empty page. `highest_mod_seq` moves on any server-side change,
-/// which is when threading changes.
+/// count: stale marks would seek past the end and return an empty page. `highest_mod_seq` moves on
+/// any server-side change, which is when threading changes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Witness {
     messages: u32,
@@ -71,9 +69,8 @@ fn witness_of(mailbox: &Mailbox) -> Witness {
 }
 
 /// A thread count is a correlated subquery (786 ms on a 60,907-message Archive), so what matters is
-/// how many are issued
-/// per folder (#1534). An atomic, not `postio_storage`'s thread-local: these reads run on the
-/// blocking pool.
+/// how many are issued per folder (#1534). An atomic, not `postio_storage`'s thread-local: these
+/// reads run on the blocking pool.
 static FOLDERS_COUNTED: AtomicU64 = AtomicU64::new(0);
 
 #[doc(hidden)]
@@ -121,8 +118,8 @@ async fn inbox_witness(connection: &Checkout) -> Result<UnifiedWitness, postio_s
 }
 
 /// The unified witness plus one row for what Focus holds back: holding mail moves no folder, so a
-/// count kept against
-/// folder state alone would outlive the rows it counted, and the seek marks with it (spec 007).
+/// count kept against folder state alone would outlive the rows it counted, and the seek marks with
+/// it (spec 007).
 async fn focus_witness(connection: &Checkout) -> Result<UnifiedWitness, postio_storage::Error> {
     postio_storage::sql::all(
         connection,
@@ -167,8 +164,7 @@ async fn focus_inbox(
 }
 
 /// Per inbox, because the list is the inboxes (#1692): an archive moves a message out of an inbox
-/// and leaves the
-/// summed totals unchanged, and turning an account off moves no folder at all.
+/// and leaves the summed totals unchanged, and turning an account off moves no folder at all.
 type UnifiedWitness = Vec<(i64, i64, i64)>;
 
 async fn unified_total(
@@ -218,8 +214,7 @@ async fn counted_total(
         .map(witness_of);
 
     // Subtract what the app said left this folder (an archive moved the witness) instead of paying
-    // the count again
-    // (#1607); taken out of the queue before any await.
+    // the count again (#1607); taken out of the queue before any await.
     let pending: Vec<Vec<MessageId>> = {
         let mut removals = removals.lock().expect("not poisoned");
         let (ours, others): (Vec<_>, Vec<_>) = removals
@@ -263,11 +258,9 @@ async fn counted_total(
 }
 
 /// `OFFSET` walks the rows it skips (24 ms halfway down 100,000 messages), so the store remembers
-/// where each read page
-/// began and seeks. A jump to an unvisited page falls back to the nearest mark below it.
-/// The total is checked on every read and a change drops every mark; one arrival plus one deletion
-/// leaves it equal and a
-/// page off by a row, as plain `OFFSET` would.
+/// where each read page began and seeks. A jump to an unvisited page falls back to the nearest mark
+/// below it. The total is checked on every read and a change drops every mark; one arrival plus one
+/// deletion leaves it equal and a page off by a row, as plain `OFFSET` would.
 #[derive(Debug)]
 struct Marks<C> {
     total: Option<u32>,
@@ -479,8 +472,7 @@ impl LocalStore {
                 .await?;
 
             // An empty page in a list that says it has rows means the seek mark lied (#1534); marks
-            // are only an
-            // optimisation, so stop trusting all of them and read without them, once.
+            // are only an optimisation, so stop trusting all of them and read without them, once.
             if rows.is_empty() && seek.is_some() && request.offset < total {
                 marks.lock().expect("not poisoned").forget();
                 rows = threads.page_at(&query, request.offset).await?;
@@ -747,12 +739,9 @@ impl LocalStore {
 }
 
 /// A single mailbox answers from its trigger-maintained count, not `count(*)`, which is linear and
-/// was paid on every
-/// page; Flagged and Snoozed sum per-folder counts (#1614).
-/// Zero is not taken at its word: a `GtkListView` over a model of length zero asks for no pages, so
-/// a count wrong
-/// low shows an empty mailbox. Counting an empty folder is free; being wrong shows nothing on
-/// screen.
+/// was paid on every page; Flagged and Snoozed sum per-folder counts (#1614). Zero is not taken at
+/// its word: a `GtkListView` over a model of length zero asks for no pages, so a count wrong low
+/// shows an empty mailbox. Counting an empty folder is free; being wrong shows nothing on screen.
 async fn count(
     connection: &Checkout,
     scope: ListScope,

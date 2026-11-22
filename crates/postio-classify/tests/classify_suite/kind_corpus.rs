@@ -1,6 +1,5 @@
 //! A person filtered away as automated is mail the user does not see: the worse error, so the
-//! corpus
-//! holds that to zero.
+//! corpus holds that to zero.
 
 use postio_classify::kind::{self, KindRules};
 use postio_model::{ContactKind, KindSignals};

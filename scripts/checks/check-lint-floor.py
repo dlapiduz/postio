@@ -38,8 +38,7 @@ import tomllib
 from pathlib import Path
 
 # Crates that cannot inherit the floor; the value is the weakest `unsafe_code` setting allowed.
-# `deny` still fails the build
-# except at a site with `#[allow(unsafe_code)]` and a reason.
+# `deny` still fails the build except at a site with `#[allow(unsafe_code)]` and a reason.
 EXCEPTIONS: dict[str, str] = {
     # `tests/imap_body_memory.rs` installs a counting `GlobalAlloc` (an `unsafe impl`); a test
     # target cannot opt out of `forbid`. No library code uses `unsafe`.

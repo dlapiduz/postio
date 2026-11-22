@@ -1,9 +1,8 @@
 # Refuses to run against a `gh` too old for this workflow, in one sentence: `gh issue list --json
-# blockedBy` needs gh 2.94.0, and older
-# versions leave an empty stream that dies as a `JSONDecodeError` (#558). `mise.toml` pins gh but
-# mise is optional, so this is the runtime
-# backstop every `scripts/issue-*.sh` sources.
-# Sourced, not executed: `exit` ends the caller's process.
+# blockedBy` needs gh 2.94.0, and older versions leave an empty stream that dies as a
+# `JSONDecodeError` (#558). `mise.toml` pins gh but mise is optional, so this is the runtime
+# backstop every `scripts/issue-*.sh` sources. Sourced, not executed: `exit` ends the caller's
+# process.
 
 REQUIRE_GH_VERSION="2.94.0"
 

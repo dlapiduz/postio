@@ -1,7 +1,6 @@
 //! The reading pane's notices, native GTK chrome rather than inside the `WebView`: the pane they
-//! sit above is what they
-//! report on. Each is a one-line [`NoticeBar`] that never wraps (#1002); the long action lives in
-//! the overflow.
+//! sit above is what they report on. Each is a one-line [`NoticeBar`] that never wraps (#1002); the
+//! long action lives in the overflow.
 
 use std::rc::Rc;
 
@@ -71,8 +70,7 @@ impl RemoteImageBanner {
     }
 
     /// Called once a render has settled how many references were held back: a notice that guessed
-    /// would be a privacy claim
-    /// without evidence.
+    /// would be a privacy claim without evidence.
     pub fn set_held_back(&self, held_back: postio_ui::reader::document::HeldBack) {
         let summary = held_back.summary();
         if !summary.is_empty() {
@@ -108,8 +106,7 @@ impl RemoteImageBanner {
     }
 
     /// Rebuilt rather than mutated because [`NoticeBar::set_menu`] replaces the whole menu, and the
-    /// previous message's
-    /// entries would offer to always-allow the wrong sender.
+    /// previous message's entries would offer to always-allow the wrong sender.
     fn rebuild_menu(&self) {
         let Some(sender) = self.sender.borrow().clone() else {
             self.notice.set_menu(Vec::new());
@@ -153,10 +150,9 @@ impl Default for RemoteImageBanner {
 }
 
 /// Native for the same reason as [`RemoteImageBanner`]: it reports on the document below it. It
-/// offers no way out, since
-/// re-decoding with another guess would invent a second answer. It says little on purpose: the
-/// words below may not be the
-/// words that were sent, so check the original before acting on it.
+/// offers no way out, since re-decoding with another guess would invent a second answer. It says
+/// little on purpose: the words below may not be the words that were sent, so check the original
+/// before acting on it.
 pub struct DecodeNotice {
     notice: Rc<NoticeBar>,
 }
@@ -190,9 +186,8 @@ impl Default for DecodeNotice {
 }
 
 /// Native like its siblings: the activation log outlives the reader, so it cannot be markup inside
-/// the document. It takes no
-/// local action (leaving a list is a storage write this crate cannot reach); it only asks, and
-/// whoever wires the reader decides what that means.
+/// the document. It takes no local action (leaving a list is a storage write this crate cannot
+/// reach); it only asks, and whoever wires the reader decides what that means.
 pub struct UnsubscribeBanner {
     /// A [`NoticeBar`] like its siblings, so it matches their height, which the reader's single
     /// notice slot requires.
@@ -211,8 +206,7 @@ impl UnsubscribeBanner {
     }
 
     /// Whether it is on screen is the reader's notice slot's to decide. The sentence is
-    /// `postio_ui::unsubscribe::summary`'s,
-    /// so macOS says the same thing (#1585).
+    /// `postio_ui::unsubscribe::summary`'s, so macOS says the same thing (#1585).
     pub fn set_list(&self, list: Option<&str>) {
         match list {
             Some(list) => self.notice.set_text(&postio_ui::unsubscribe::summary(list)),

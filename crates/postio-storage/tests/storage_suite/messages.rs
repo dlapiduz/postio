@@ -305,8 +305,7 @@ async fn deleting_messages_takes_their_recipients_and_attachments() {
 }
 
 /// The body is stored on the row (ADR 0020) but not carried on the `Message` a `get` returns, or
-/// the
-/// list would put the mailbox in memory.
+/// the list would put the mailbox in memory.
 #[tokio::test]
 async fn a_read_message_does_not_carry_its_body_and_the_raw_blob_key_survives() {
     let database = test_support::memory().await;
@@ -1617,8 +1616,7 @@ async fn a_message_synced_before_the_text_sections_existed_reads_back_as_none() 
 #[tokio::test]
 async fn a_message_whose_text_is_local_is_not_queued_for_backfill_again() {
     // `partial` is a settled state for the background lane: asking for `body_state <> 'full'` made
-    // the
-    // backfill spin on one message for ever and starve new mail.
+    // the backfill spin on one message for ever and starve new mail.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -1706,8 +1704,7 @@ async fn a_fetched_payload_is_recorded_against_the_part_that_asked_for_it() {
 #[tokio::test]
 async fn a_payload_key_for_a_part_the_message_does_not_have_writes_nothing() {
     // A `part_id` from a structure the server has since changed answers `false`, not an error, so
-    // the
-    // caller treats the part as gone.
+    // the caller treats the part as gone.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -1731,8 +1728,7 @@ async fn a_payload_key_for_a_part_the_message_does_not_have_writes_nothing() {
 #[tokio::test]
 async fn what_explains_a_payloads_bytes_is_kept_beside_it() {
     // `BODY[2]` returns a part's encoded bytes with no headers, so whether they are base64 is kept
-    // from
-    // `BODYSTRUCTURE` at header-sync time.
+    // from `BODYSTRUCTURE` at header-sync time.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -2197,8 +2193,7 @@ async fn the_stored_block_comes_back_as_headers_rather_than_being_parsed_and_dro
                     concat!(
                         "Received: from a.example.com\r\n",
                         // No leading whitespace: a continuation line folds one value across two
-                        // lines, so an
-                        // indented "X-Mailer:" would be part of the Received.
+                        // lines, so an indented "X-Mailer:" would be part of the Received.
                         "X-Mailer: mutt 1.5.24\r\n",
                         "Received: from b.example.com",
                     )
@@ -2251,8 +2246,7 @@ async fn a_message_with_no_stored_block_has_no_headers_rather_than_an_error() {
 #[tokio::test]
 async fn a_fetched_message_with_no_stored_block_is_offered_for_repair() {
     // `body_headers` was NULL since migration 0001; the pass must find those rows and stop finding
-    // them
-    // once done, or it spins (#500).
+    // them once done, or it spins (#500).
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("a connection");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -2364,8 +2358,7 @@ async fn writing_a_repaired_block_leaves_the_body_beside_it_readable() {
 async fn a_fetched_message_adopts_the_local_copy_we_wrote_before_the_server_had_one() {
     // #942: a sent message is written into Sent before its APPEND gives it a server identity, so a
     // resync of Sent inserted a second row. The reserved `Message-ID` (ADR 0021) ties them,
-    // consulted
-    // only for a local row with no server identity.
+    // consulted only for a local row with no server identity.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, sent) = test_support::account_with_inbox(&connection).await;
@@ -2423,8 +2416,7 @@ async fn a_fetched_message_adopts_the_local_copy_we_wrote_before_the_server_had_
 #[tokio::test]
 async fn a_fetched_message_does_not_adopt_a_local_row_that_already_has_an_identity() {
     // Adoption is only right for a row the server has not named; a row with a `remote_id` is a
-    // different
-    // message sharing a `Message-ID`, such as a list copy of one's own post.
+    // different message sharing a `Message-ID`, such as a list copy of one's own post.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -2456,8 +2448,7 @@ async fn a_fetched_message_does_not_adopt_a_local_row_that_already_has_an_identi
 #[tokio::test]
 async fn a_body_an_older_parser_got_wrong_is_fetched_again_once() {
     // Raw bytes are not kept, so a parser fix reaches a stored body only by refetching, and only
-    // rows
-    // the older parser got wrong; `messages.body_parsed_with` says which parser wrote a row.
+    // rows the older parser got wrong; `messages.body_parsed_with` says which parser wrote a row.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -2534,8 +2525,7 @@ async fn a_body_an_older_parser_got_wrong_is_fetched_again_once() {
 #[tokio::test]
 async fn a_stored_body_is_smaller_than_its_text_and_reads_back_whole() {
     // Bodies are plain text in a column (ADR 0020); the full-text index reads its own folded table,
-    // so
-    // the column need not be a compressed frame.
+    // so the column need not be a compressed frame.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -2586,9 +2576,8 @@ async fn a_stored_body_is_smaller_than_its_text_and_reads_back_whole() {
 #[tokio::test]
 async fn set_body_leaves_the_search_index_to_the_indexer() {
     // The body's full-text row is the indexer's, not written in the body's transaction: a segment
-    // merge
-    // would stall the sync lane (`fts_merge_stall`), so a body is searchable a moment after it
-    // lands.
+    // merge would stall the sync lane (`fts_merge_stall`), so a body is searchable a moment after
+    // it lands.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;

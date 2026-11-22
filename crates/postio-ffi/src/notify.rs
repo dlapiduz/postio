@@ -1,9 +1,7 @@
 //! New-mail notifications at the boundary: the decision, not the delivery. `decide_notification` is
-//! `postio_ui::notify`'s
-//! rule with the macOS wording: ids and counts only, since a notification is a log the lock screen
-//! reads out.
-//! The role gate (`[sync] notify_roles`) is decided here; the master switch crosses as
-//! `Session::notices`.
+//! `postio_ui::notify`'s rule with the macOS wording: ids and counts only, since a notification is
+//! a log the lock screen reads out. The role gate (`[sync] notify_roles`) is decided here; the
+//! master switch crosses as `Session::notices`.
 
 use postio_model::{MailboxId, MessageId};
 
@@ -41,8 +39,8 @@ pub enum NotificationDecisionFfi {
 }
 
 /// `showing` is the folder the list has open and `active` whether Postio is frontmost, both needed
-/// to suppress. An
-/// arrival in a folder whose `role` is not in `notify_roles` is `SuppressedFfi::NotWatched`.
+/// to suppress. An arrival in a folder whose `role` is not in `notify_roles` is
+/// `SuppressedFfi::NotWatched`.
 #[uniffi::export]
 pub fn decide_notification(
     arrival: MailArrivalFfi,

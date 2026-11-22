@@ -1,9 +1,7 @@
 //! The search dropdown: draws `DropdownView` and decides nothing; every word is the controller's,
-//! every keycap the keymap's.
-//! The arrows' highlight is the toolkit's selection, kept by token: a redraw leaves it where a
-//! person moved it, a run's `select` moves it,
-//! otherwise the view's default `highlight` takes it. Matched words get the find highlight, never
-//! the accent.
+//! every keycap the keymap's. The arrows' highlight is the toolkit's selection, kept by token: a
+//! redraw leaves it where a person moved it, a run's `select` moves it, otherwise the view's
+//! default `highlight` takes it. Matched words get the find highlight, never the accent.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;

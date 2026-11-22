@@ -6,15 +6,11 @@ import WebKit
 
 /// The message window's body: the engine's treated document in a hardened `WKWebView`
 /// (`ReaderConfiguration.focus`): page script off, non-persistent store, no base URL, the
-/// document's CSP,
-/// and a content rule list blocking every load off Postio's schemes, so a wrong policy still
-/// fetches nothing.
-/// Sized to its document so the window's one scroll view scrolls header and body together;
-/// transparent
-/// until it has its height and has painted (`messageBodyDrawn`), since a new web view paints white
-/// first.
-/// The height, fit and mark are Postio's own script in the client's content world; the sender's
-/// never runs.
+/// document's CSP, and a content rule list blocking every load off Postio's schemes, so a wrong
+/// policy still fetches nothing. Sized to its document so the window's one scroll view scrolls
+/// header and body together; transparent until it has its height and has painted
+/// (`messageBodyDrawn`), since a new web view paints white first. The height, fit and mark are
+/// Postio's own script in the client's content world; the sender's never runs.
 public struct MessageBodyView: View {
     let message: Int64
     let document: FocusReaderDocumentFfi
@@ -82,9 +78,8 @@ public struct MessageBodyView: View {
 }
 
 /// A `<details>` fold opens inside the page with its script off, so the frame kept the closed
-/// height and
-/// clipped the quote. `toggle` does not bubble, hence the capture listener. Postio's own script, in
-/// the client's content world.
+/// height and clipped the quote. `toggle` does not bubble, hence the capture listener. Postio's own
+/// script, in the client's content world.
 @MainActor
 final class FoldWatcher {
     static let name = "postioFoldToggled"
@@ -130,8 +125,7 @@ public enum MessageBodyMeasure {
     }
 
     /// The page's own width is not it: the reader's body box scrolls sideways itself (`overflow-x:
-    /// auto`),
-    /// so the width is the page's plus what the widest scrolling box holds beyond its own.
+    /// auto`), so the width is the page's plus what the widest scrolling box holds beyond its own.
     public static func layoutWidth(of view: WKWebView) async throws -> Double? {
         let answer = try await view.evaluateJavaScript(
             """
@@ -404,8 +398,7 @@ struct MessageWebView: NSViewRepresentable {
 }
 
 /// Hands a vertical wheel to the scroll view around it, since it is sized to its whole document. A
-/// paper
-/// sheet wider than its column keeps the sideways wheel.
+/// paper sheet wider than its column keeps the sideways wheel.
 final class MessageBodySurface: ReaderSurface {
     var onWidth: ((CGFloat) -> Void)?
 

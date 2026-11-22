@@ -1,7 +1,6 @@
 //! The engine reads both homes of a correspondent's decisions: the file, and
-//! `FocusConfig::with_contacts`,
-//! which adds them as the entries the file would have held, so every decision function answers for
-//! both.
+//! `FocusConfig::with_contacts`, which adds them as the entries the file would have held, so every
+//! decision function answers for both.
 
 use postio_model::{ContactSettings, DigestSetting, StoppedMarker};
 

@@ -1,7 +1,6 @@
 //! Ids are opaque and local: only storage constructs meaningful ones, and a local id means nothing
-//! outside its
-//! database (server ids are `ServerIdentifiers`). `0` is `UNASSIGNED`; assigned ids are always `>
-//! 0`, so use `is_assigned()`.
+//! outside its database (server ids are `ServerIdentifiers`). `0` is `UNASSIGNED`; assigned ids are
+//! always `> 0`, so use `is_assigned()`.
 
 use std::fmt;
 
@@ -149,8 +148,7 @@ scalar_id!(
 );
 
 /// The server's own name for a message (#543, ADR 0018 Q2). Opaque above the backend seam: the IMAP
-/// adapter packs
-/// generation and uid into one; nothing else reads structure into it.
+/// adapter packs generation and uid into one; nothing else reads structure into it.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct RemoteId(String);
@@ -192,10 +190,9 @@ impl fmt::Display for BlobId {
 }
 
 /// Stored trimmed and always in angle brackets, so `a@b` and `<a@b>` are equal; construction,
-/// including `Deserialize`,
-/// normalizes. Equality, ordering and hashing are case-insensitive so JWZ threading matches headers
-/// rewritten in
-/// transit; the case is kept. Not unique locally: the local identity is `MessageId`.
+/// including `Deserialize`, normalizes. Equality, ordering and hashing are case-insensitive so JWZ
+/// threading matches headers rewritten in transit; the case is kept. Not unique locally: the local
+/// identity is `MessageId`.
 #[derive(Debug, Clone)]
 pub struct RfcMessageId(String);
 
@@ -215,10 +212,8 @@ impl RfcMessageId {
     }
 
     /// Lowercased lookup key for `thread_links` (#1587): `COLLATE NOCASE` forced a collated index,
-    /// which Turso's planner
-    /// will not bind an equality through. Only the key: `as_str` keeps the case, because an emitted
-    /// `References` must
-    /// quote the parent byte-for-byte.
+    /// which Turso's planner will not bind an equality through. Only the key: `as_str` keeps the
+    /// case, because an emitted `References` must quote the parent byte-for-byte.
     pub fn folded(&self) -> String {
         self.0.to_ascii_lowercase()
     }
@@ -275,8 +270,7 @@ mod tests {
     use super::*;
 
     // `Ord` and `Hash` are hand-written: derived ones compare case-preserved bytes and would
-    // disagree with the
-    // case-insensitive `Eq`, silently breaking a `HashSet`.
+    // disagree with the case-insensitive `Eq`, silently breaking a `HashSet`.
     #[test]
     fn case_variants_of_the_same_id_order_as_equal() {
         let lower = RfcMessageId::new("<abc123@example.com>");

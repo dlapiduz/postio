@@ -299,9 +299,8 @@ impl Places {
     }
 
     /// Drawing tears every row down, and a click landing across that is a click on a row that no
-    /// longer exists. The guard is here,
-    /// on the one thing every redraw calls (the entry's delayed `search-changed`, a read landing,
-    /// the filtered count moving).
+    /// longer exists. The guard is here, on the one thing every redraw calls (the entry's delayed
+    /// `search-changed`, a read landing, the filtered count moving).
     fn draw(&self, force: bool) {
         let source = self.source.borrow().clone();
         let (tokens, shown): (Vec<u64>, Vec<Entry>) = source

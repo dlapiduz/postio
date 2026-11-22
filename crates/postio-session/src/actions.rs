@@ -195,8 +195,8 @@ impl Actions {
         match command {
             Command::Undo => self.undo(events).await,
             // A rejection is silent here: `set_flag` rejects "Already set" when nothing changes,
-            // which is
-            // the ordinary case once a mailbox is worked through. A `Failed` still gets through.
+            // which is the ordinary case once a mailbox is worked through. A `Failed` still gets
+            // through.
             dwell @ Command::MarkReadOnDwell { .. } => {
                 match self
                     .act_again_if_busy(dwell, events, Recording::Incidental)

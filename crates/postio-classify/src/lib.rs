@@ -1,9 +1,7 @@
 //! Classification for Postio Focus: one fixed-schema answer per message, decided in layers with the
 //! guards first. This crate cannot send mail: nothing that sends is in its dependency closure (ADR
-//! 0009).
-//! [`at_filing`] and [`at_body`] are the two moments a message is classified; [`ModelLayer`] is
-//! where
-//! the user's own model answers, with the built-in detector as fallback.
+//! 0009). [`at_filing`] and [`at_body`] are the two moments a message is classified; [`ModelLayer`]
+//! is where the user's own model answers, with the built-in detector as fallback.
 
 /// Raise it when a rule change should classify stored mail again: every record at an older version
 /// is then due.

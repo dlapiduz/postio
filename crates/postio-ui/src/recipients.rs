@@ -107,9 +107,8 @@ pub fn suggest_ranked(
 }
 
 /// Order: more letters written, then a contact the user made or imported over one only seen in
-/// mail,
-/// then the more lately seen (never seen last), then the more often seen.
-/// Until letters are counted every count is zero and this is the store's order.
+/// mail, then the more lately seen (never seen last), then the more often seen. Until letters are
+/// counted every count is zero and this is the store's order.
 fn rank(a: &Correspondent, b: &Correspondent, by_kind: bool) -> Ordering {
     let band = |row: &Correspondent| row.contact.source == ContactSource::Mail;
     let demoted = |row: &Correspondent| {

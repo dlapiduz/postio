@@ -112,8 +112,7 @@ pub struct OAuthConfig {
     /// Space-joined, per RFC 6749 §3.3.
     pub scopes: String,
     /// Days the provider says the refresh grant lives, copied from the preset at sign-in so launch
-    /// needs no
-    /// preset table. `None` means no early deadline (#954).
+    /// needs no preset table. `None` means no early deadline (#954).
     #[serde(default)]
     pub refresh_token_lifetime_days: Option<u32>,
 }
@@ -185,8 +184,7 @@ pub struct Account {
     pub outgoing: ServerConfig,
     pub auth: AuthMethod,
     /// `None` on password accounts and external-broker accounts. Never a secret: the client secret
-    /// and
-    /// refresh token live in the keyring.
+    /// and refresh token live in the keyring.
     pub oauth: Option<OAuthConfig>,
     #[serde(default)]
     pub backend: Backend,
@@ -204,16 +202,13 @@ pub struct Account {
     pub default_signature_id: Option<SignatureId>,
     pub created_at: DateTime<Utc>,
     /// The account new messages come from when the message does not say (#960). It orders nothing
-    /// and
-    /// reply, reply-all and forward never read it: the replied-to message decides the address
-    /// ([`crate::reply`]).
-    /// At most one account carries it (`AccountRepository::set_default`); none is the ordinary
-    /// state.
+    /// and reply, reply-all and forward never read it: the replied-to message decides the address
+    /// ([`crate::reply`]). At most one account carries it (`AccountRepository::set_default`); none
+    /// is the ordinary state.
     #[serde(default)]
     pub is_default: bool,
     /// Set by Remove in settings (undoable). The cascade delete runs at next startup, before any
-    /// engine
-    /// exists (`AccountRepository::reap_pending_deletions`) (#464).
+    /// engine exists (`AccountRepository::reap_pending_deletions`) (#464).
     #[serde(default)]
     pub pending_deletion: bool,
 }
@@ -260,10 +255,9 @@ impl Account {
     }
 
     /// The identity a message sent to `recipients` was addressed to: a reply must come from the
-    /// address the
-    /// mail arrived at. First match wins (`To` before `Cc`); an identity's `Reply-To` counts as its
-    /// address.
-    /// Falls back to the default identity, since mail can arrive by routes absent from headers.
+    /// address the mail arrived at. First match wins (`To` before `Cc`); an identity's `Reply-To`
+    /// counts as its address. Falls back to the default identity, since mail can arrive by routes
+    /// absent from headers.
     pub fn identity_for(&self, recipients: &[EmailAddress]) -> Option<&Identity> {
         recipients
             .iter()
@@ -286,8 +280,7 @@ impl Account {
 }
 
 /// How many accounts a view is about: one, or all. Not an `Option<AccountId>`, whose `None` meant
-/// both
-/// "none chosen" and "all". `Account` can be a destination; `Unified` is a view and never one.
+/// both "none chosen" and "all". `Account` can be a destination; `Unified` is a view and never one.
 /// Lives here so list state and `SearchRequest.account` share one type and cannot disagree (ADR
 /// 0005 Q10, #186).
 #[derive(

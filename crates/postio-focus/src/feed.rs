@@ -223,8 +223,7 @@ impl Feed {
             Plan::Ignore if !surfaced_moved => {}
             _ if self.splices_now() => {
                 // What is surfaced may have moved with the mail (an archived reminder's row goes
-                // with
-                // its conversation): read it before the pages.
+                // with its conversation): read it before the pages.
                 effects.push(Step::Ask(Request::Surfaced));
             }
             Plan::Ignore => {}
@@ -301,8 +300,7 @@ impl Feed {
     }
 
     /// True once per opening, so the cursor goes to the new list's first row once and a later
-    /// re-read
-    /// leaves it.
+    /// re-read leaves it.
     pub(crate) fn take_opened(&mut self) -> bool {
         self.landed && std::mem::take(&mut self.opened)
     }

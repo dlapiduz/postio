@@ -1,6 +1,6 @@
 //! The shared settings window over a real store through Focus's host. An account row's menu is
-//! opened through the panel's `test_open_account_menu`,
-//! since a test cannot send a secondary click that a gesture's state machine accepts.
+//! opened through the panel's `test_open_account_menu`, since a test cannot send a secondary click
+//! that a gesture's state machine accepts.
 
 use gtk::glib;
 use gtk::prelude::*;

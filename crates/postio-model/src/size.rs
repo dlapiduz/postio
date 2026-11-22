@@ -1,7 +1,6 @@
 //! A draft over the provider's limit used to be queued, sent and rejected after the composer had
-//! closed. The limit comes from account
-//! configuration, never the SMTP `SIZE` capability (`postio-smtp` relies on no capability list).
-//! Inline images and attached files share one total.
+//! closed. The limit comes from account configuration, never the SMTP `SIZE` capability
+//! (`postio-smtp` relies on no capability list). Inline images and attached files share one total.
 
 use std::fmt;
 
@@ -35,8 +34,8 @@ pub fn of_body(draft: &Draft) -> u64 {
 }
 
 /// An estimate of content, not encoded bytes (base64 adds a third), so it never refuses mail the
-/// server would take and may pass
-/// one it will not: a false refusal puts Postio between someone and their mail.
+/// server would take and may pass one it will not: a false refusal puts Postio between someone and
+/// their mail.
 pub fn of(draft: &Draft) -> u64 {
     of_body(draft) + draft.attachments.iter().map(|part| part.size).sum::<u64>()
 }

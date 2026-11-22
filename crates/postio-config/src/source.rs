@@ -73,8 +73,7 @@ impl SourceMap {
     }
 
     /// Falls back to the nearest written ancestor, then the top of the file: a key the user needs
-    /// to add
-    /// is not in the file yet, but its table is.
+    /// to add is not in the file yet, but its table is.
     pub(crate) fn locate_key(&self, path: &str) -> (usize, usize) {
         self.locate(path, |(key, _)| *key)
     }

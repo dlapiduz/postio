@@ -399,8 +399,8 @@ fn the_release_checks_the_bundle_carries_postio() {
 }
 
 /// An image loader sniffs for `<svg` within the first 257 bytes (shared-mime-info): an opening tag
-/// behind a long comment header is not an image to it,
-/// and the shipped app icon once carried a 680-byte comment before its `<svg>`.
+/// behind a long comment header is not an image to it, and the shipped app icon once carried a
+/// 680-byte comment before its `<svg>`.
 #[test]
 fn every_bundled_svg_is_recognised_where_a_sniffer_looks() {
     const SNIFF_WINDOW: usize = 257;

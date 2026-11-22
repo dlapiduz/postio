@@ -1,9 +1,7 @@
 //! The account form joined to the store's host through `postio-client` (ADR 0043). It asks the host
-//! to save and wait
-//! (`AfterSave::Wait`) and never starts the new account's sync, which is the app's to do from
-//! [`Presenter::connect_saved`].
-//! A consent link comes back unopened and is opened once, because the person pressed "Sign in with
-//! your browser".
+//! to save and wait (`AfterSave::Wait`) and never starts the new account's sync, which is the app's
+//! to do from [`Presenter::connect_saved`]. A consent link comes back unopened and is opened once,
+//! because the person pressed "Sign in with your browser".
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -16,8 +14,7 @@ use postio_client::protocol::{AfterSave, Stop};
 use crate::onboarding::{BrowserSignIn, Onboarding, Status, Submission};
 
 /// A probe opens connections to servers the person has not named yet, so the one before is stopped
-/// when another starts,
-/// when Connect is pressed, and when the form is left (#57, ADR 0012 Q3).
+/// when another starts, when Connect is pressed, and when the form is left (#57, ADR 0012 Q3).
 #[derive(Clone, Default)]
 pub struct ProbeCancellation(Rc<RefCell<Option<Stop>>>);
 
@@ -280,8 +277,8 @@ pub fn open_in_browser(parent: &impl IsA<gtk::Widget>) -> impl Fn(&str) + 'stati
 }
 
 /// Closed by every way out: `Esc`, the close button and its parent going away; closing stops the
-/// probe it started. The
-/// sheet is as tall as its form, and the form's body scrolls, never its header.
+/// probe it started. The sheet is as tall as its form, and the form's body scrolls, never its
+/// header.
 fn dialog(screen: &Onboarding, title: &str, presenter: &Presenter) -> adw::Dialog {
     let dialog = adw::Dialog::builder()
         .title(title)

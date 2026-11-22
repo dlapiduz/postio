@@ -1,7 +1,6 @@
 //! Feeds the privacy pane's unsubscribe-activation log (#971) and read-receipt count (#970),
-//! refreshed whenever the panel
-//! comes on screen. Neither is account-scoped: the remote-image allow list is one file shared by
-//! every account.
+//! refreshed whenever the panel comes on screen. Neither is account-scoped: the remote-image allow
+//! list is one file shared by every account.
 
 use gtk::glib;
 use gtk::prelude::*;
@@ -28,10 +27,9 @@ pub async fn install(panel: &SettingsPanel, client: Client) {
 
 async fn refresh(panel: &SettingsPanel, client: &Client) {
     // Only when the pane is on screen: `read_receipt_requested_count` is `count(*)` over every
-    // message with no index to narrow
-    // it, and an app installs this while its window is still being fed (#1479: 1249.7 ms to a first
-    // frame against a 500 ms
-    // budget). Nothing is lost by waiting: `map` reads fresh the moment somebody looks.
+    // message with no index to narrow it, and an app installs this while its window is still being
+    // fed (#1479: 1249.7 ms to a first frame against a 500 ms budget). Nothing is lost by waiting:
+    // `map` reads fresh the moment somebody looks.
     if !panel.is_visible() {
         return;
     }

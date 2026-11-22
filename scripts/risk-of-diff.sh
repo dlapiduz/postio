@@ -7,14 +7,12 @@
 #     crates/postio-focus: the shared controller
 #
 # The bugs here live between layers that each pass, so a change's blast radius can exceed its diff:
-# seeded mail (`seed.rs`, the `.eml` corpus),
-# postio-focus (the shared controller), migrations, postio-sync, or 3+ crates.
-# Build env (`rust-toolchain.toml`, `mise.toml`, `.cargo/config.toml`, `flatpak/*.json`) is not left
-# to the author: a Rust bump to 1.100 passed every local
-# gate and only the full suite saw Cargo move test binaries out of `deps/`, so line three,
-# `full-suite`, makes `issue-land.sh` ask for it.
-# Fails safe: an empty list is `high`, the same direction `ci-changes.sh` fails. Tested by
-# `scripts/tests/test-risk-of-diff.py`.
+# seeded mail (`seed.rs`, the `.eml` corpus), postio-focus (the shared controller), migrations,
+# postio-sync, or 3+ crates. Build env (`rust-toolchain.toml`, `mise.toml`, `.cargo/config.toml`,
+# `flatpak/*.json`) is not left to the author: a Rust bump to 1.100 passed every local gate and only
+# the full suite saw Cargo move test binaries out of `deps/`, so line three, `full-suite`, makes
+# `issue-land.sh` ask for it. Fails safe: an empty list is `high`, the same direction
+# `ci-changes.sh` fails. Tested by `scripts/tests/test-risk-of-diff.py`.
 set -euo pipefail
 
 files=$(cat)

@@ -77,8 +77,7 @@ fn phrase_at<Tz: TimeZone>(
             return None;
         }
         // Read from the start of the day, so a phrase whose time has passed is still known for a
-        // date
-        // and not cut down to a shorter one that means something else.
+        // date and not cut down to a shorter one that means something else.
         parse_when(&phrase, start_of_day.clone())?;
         Some(parse_when(&phrase, sent.clone()))
     })

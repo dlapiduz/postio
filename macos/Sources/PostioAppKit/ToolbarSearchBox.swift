@@ -2,10 +2,9 @@ import AppKit
 import PostioKit
 
 /// Postio's own view in a plain `NSToolbarItem`: `NSSearchToolbarItem` ignored every width it was
-/// given and stayed
-/// about 327 wide, so the dropdown hung from a field a third of its width.
-/// Opening grows it leftward to `CommandBarGeometry`'s width, right edge fixed. Not animated: the
-/// panel hangs from where the field ends up.
+/// given and stayed about 327 wide, so the dropdown hung from a field a third of its width. Opening
+/// grows it leftward to `CommandBarGeometry`'s width, right edge fixed. Not animated: the panel
+/// hangs from where the field ends up.
 @MainActor
 public final class ToolbarSearchBox: NSView {
     public let field = BarSearchField()

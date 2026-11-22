@@ -31,9 +31,8 @@ pub fn start_logging() {
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "postio starting");
 
     // First run: write `config.toml` so the Config file pane, `⌘E` and a file manager find
-    // something to edit; defaults
-    // apply either way. Here, not in `Session::open`, because the settings window works with no
-    // session.
+    // something to edit; defaults apply either way. Here, not in `Session::open`, because the
+    // settings window works with no session.
     if let Some(path) = config_path.as_deref() {
         match postio_config::Config::seed_if_missing(path) {
             Ok(true) => tracing::info!(path = %path.display(), "seeded a starter config.toml"),

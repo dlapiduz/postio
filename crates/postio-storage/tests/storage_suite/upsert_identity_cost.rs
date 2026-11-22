@@ -1,7 +1,6 @@
 //! `upsert_batch` once read every local copy awaiting a server identity into a map per batch, a
-//! full scan
-//! (#942); the rows a batch reads are the instrument: the fix reads none for a message the server
-//! can place by uid.
+//! full scan (#942); the rows a batch reads are the instrument: the fix reads none for a message
+//! the server can place by uid.
 
 use chrono::{TimeZone, Utc};
 use postio_model::{MailboxId, Message, RemoteId, RfcMessageId, Uid, UidValidity};

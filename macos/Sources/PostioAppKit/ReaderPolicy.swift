@@ -26,8 +26,8 @@ public final class ReaderNavigationPolicy: NSObject, WKNavigationDelegate, WKUID
     }
 
     /// Async form deliberately: under Swift 6 the completion-handler overload only "nearly matches"
-    /// (a warning),
-    /// and a nearly-matching delegate method is never called, leaving no navigation policy.
+    /// (a warning), and a nearly-matching delegate method is never called, leaving no navigation
+    /// policy.
     public func webView(
         _ webView: WKWebView,
         decidePolicyFor navigationAction: WKNavigationAction,

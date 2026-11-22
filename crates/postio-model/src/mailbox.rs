@@ -14,8 +14,8 @@ pub enum RoleKind {
 }
 
 /// Routed by role, never name, since names differ per provider (iCloud reports `Sent Messages` with
-/// no RFC 6154
-/// `SPECIAL-USE`). Use `resolve`: the server attribute first, name matching as fallback.
+/// no RFC 6154 `SPECIAL-USE`). Use `resolve`: the server attribute first, name matching as
+/// fallback.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
 )]
@@ -56,8 +56,7 @@ impl MailboxRole {
     }
 
     /// For servers that advertise no `SPECIAL-USE`, notably iCloud. Full path first, then the leaf
-    /// segment, so
-    /// `INBOX/Drafts` resolves but `Projects/Postio` stays `Regular`.
+    /// segment, so `INBOX/Drafts` resolves but `Projects/Postio` stays `Regular`.
     pub fn guess_from_name(name: &str) -> Self {
         let name = name.trim();
         if name.eq_ignore_ascii_case("inbox") {
@@ -129,9 +128,8 @@ impl MailboxRole {
     ];
 
     /// Exhaustive with no fallback arm, so a new role fails to compile until classified. A `View`
-    /// must never be
-    /// stored (`MailboxRepository` refuses it; the schema's `CHECK` lists only folders) nor offered
-    /// as a destination.
+    /// must never be stored (`MailboxRepository` refuses it; the schema's `CHECK` lists only
+    /// folders) nor offered as a destination.
     pub fn kind(self) -> RoleKind {
         match self {
             Self::Inbox
@@ -168,11 +166,9 @@ impl MailboxRole {
 }
 
 /// Folder paths the user assigned a role by hand: a third tier above `resolve`, for self-hosted
-/// servers that advertise
-/// nothing and name folders in an unlisted language, where every role verb would refuse permanently
-/// (#164). Keyed by the
-/// full server path, not the leaf, since two folders can share a leaf. An empty set resolves
-/// exactly as `MailboxRole::resolve`.
+/// servers that advertise nothing and name folders in an unlisted language, where every role verb
+/// would refuse permanently (#164). Keyed by the full server path, not the leaf, since two folders
+/// can share a leaf. An empty set resolves exactly as `MailboxRole::resolve`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RoleOverrides {
     /// Path to role, inverted from the config's `role = "path"` because resolution asks what a
@@ -233,8 +229,8 @@ impl RoleOverrides {
     }
 
     /// Precedence: override, then `SPECIAL-USE`, then the name; the user looked at their own server
-    /// and disagreed. Called
-    /// from folder reconciliation, not the IMAP edge, which must not read user configuration.
+    /// and disagreed. Called from folder reconciliation, not the IMAP edge, which must not read
+    /// user configuration.
     pub fn resolve<I, S>(&self, attributes: I, path: &str) -> MailboxRole
     where
         I: IntoIterator<Item = S>,
@@ -244,15 +240,14 @@ impl RoleOverrides {
     }
 
     /// Over a role the backend already settled (server claim, shallowest name, alphabet):
-    /// re-deriving from the name
-    /// would hand a look-alike its role back, giving one account two `sent` folders (#943).
+    /// re-deriving from the name would hand a look-alike its role back, giving one account two
+    /// `sent` folders (#943).
     pub fn settle(&self, natural: MailboxRole, path: &str) -> MailboxRole {
         if let Some(role) = self.role_for(path) {
             return role;
         }
         // A role pinned to another folder is spoken for: otherwise two rows wear it and `by_role`
-        // returns an
-        // arbitrary one, varying between runs. Demoted to `Regular`.
+        // returns an arbitrary one, varying between runs. Demoted to `Regular`.
         if self.claims(natural) {
             return MailboxRole::Regular;
         }
@@ -292,9 +287,8 @@ pub struct Mailbox {
     #[serde(default)]
     pub signature_id: Option<SignatureId>,
     /// Excludes this folder from the background backfill lane, both axes (ADR 0016, 0017, #350).
-    /// Survives a resync because
-    /// `discover::reconcile` copies across only what `LIST` said. Deletes nothing already pulled;
-    /// interactive on-open fetches still run.
+    /// Survives a resync because `discover::reconcile` copies across only what `LIST` said. Deletes
+    /// nothing already pulled; interactive on-open fetches still run.
     #[serde(default)]
     pub backfill_excluded: bool,
     pub counts: MailboxCounts,

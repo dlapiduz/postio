@@ -405,9 +405,8 @@ impl ParsedQuery {
     }
 
     /// Every term is a quoted FTS5 literal, so `AND`, `NEAR` and `*` match literally. A query whose
-    /// only free text is
-    /// negated yields `None` (a `NOT` group needs a left side); the executor excludes those terms
-    /// itself.
+    /// only free text is negated yields `None` (a `NOT` group needs a left side); the executor
+    /// excludes those terms itself.
     pub fn fts_match(&self) -> Option<String> {
         let mut positive = Vec::new();
         let mut negative = Vec::new();

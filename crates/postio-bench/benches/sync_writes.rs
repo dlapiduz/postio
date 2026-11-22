@@ -60,9 +60,8 @@ async fn filled(stored: usize) -> (TempStore, Account, Mailbox) {
 }
 
 /// `run` makes each batch write new UIDs and `Message-ID`s: an insert and an update are not the
-/// same
-/// write. Every fourth message replies to the previous, so threading joins a thread as it does in
-/// the wild.
+/// same write. Every fourth message replies to the previous, so threading joins a thread as it does
+/// in the wild.
 fn batch(account: &Account, mailbox: &Mailbox, run: u32) -> Vec<Message> {
     let base = run * BATCH as u32;
     (0..BATCH as u32)

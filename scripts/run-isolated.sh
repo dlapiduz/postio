@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Build and run Postio without touching the shared working tree: a worktree pinned to a commit, with
-# its own target directory and XDG dirs, so the
-# running app is a known commit, `cargo build` cannot poison the shared target/ (stale artifacts
-# with a baked-in CARGO_MANIFEST_DIR once caused nine
+# its own target directory and XDG dirs, so the running app is a known commit, `cargo build` cannot
+# poison the shared target/ (stale artifacts with a baked-in CARGO_MANIFEST_DIR once caused nine
 # unrelated test failures), and the app reads and writes a throwaway store.
 #
 # Usage:
@@ -72,8 +71,8 @@ export CARGO_TARGET_DIR="$TARGET"
 export XDG_DATA_HOME="$STATE/data"
 export XDG_CONFIG_HOME="$STATE/config"
 # XDG_STATE_HOME was missed until #215: `remote-images.ini` there is the standing "always allow
-# images" list, and a click while viewing the demo store
-# wrote a real exception that changed what the GTK tests saw.
+# images" list, and a click while viewing the demo store wrote a real exception that changed what
+# the GTK tests saw.
 export XDG_STATE_HOME="$STATE/state"
 
 # POSTIO_LOG takes an EnvFilter directive (`debug`, or `postio_sync=debug,postio_runtime=debug`);
@@ -100,8 +99,8 @@ if [ "$PROVISION" = 1 ]; then
 fi
 
 # A scratch store an earlier build wrote at a schema this one cannot carry forward: set it aside
-# (state/data/postio/set-aside/<when>/) and start fresh
-# with the accounts carried across. `postio-store status` says first whether this is needed.
+# (state/data/postio/set-aside/<when>/) and start fresh with the accounts carried across.
+# `postio-store status` says first whether this is needed.
 if [ "$RESET_STORE" = 1 ]; then
     cargo run --release -p postio-session --bin postio-store -- status
     exec cargo run --release -p postio-session --bin postio-store -- reset

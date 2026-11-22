@@ -1,8 +1,7 @@
 //! The wall clock Postio reads, which a harness can `freeze` so storyboard frames are identical.
-//! Code that
-//! stamps or draws a time asks `now`, not `Local::now()`. Process-wide, because readers share no
-//! handle.
-//! Lives at the bottom of the graph so model stamps can read it; `postio_ui::clock` re-exports it.
+//! Code that stamps or draws a time asks `now`, not `Local::now()`. Process-wide, because readers
+//! share no handle. Lives at the bottom of the graph so model stamps can read it;
+//! `postio_ui::clock` re-exports it.
 
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;

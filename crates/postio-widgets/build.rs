@@ -1,6 +1,6 @@
 //! Generates the shared metrics, spacing and reader-token files from the design system's `:root`
-//! tokens
-//! (checked in, so a build without `Design/` works), then compiles `data/widgets.gresource.xml`.
+//! tokens (checked in, so a build without `Design/` works), then compiles
+//! `data/widgets.gresource.xml`.
 
 use std::path::{Path, PathBuf};
 

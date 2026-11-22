@@ -53,16 +53,14 @@ pub struct ReaderNoticeFfi {
 }
 
 /// An address with its middle elided: `notices_at_…@relay.example.net`. Both ends identify the
-/// sender, so the middle goes
-/// (`postio_ui::format::middle_truncate`).
+/// sender, so the middle goes (`postio_ui::format::middle_truncate`).
 #[uniffi::export]
 pub fn middle_truncate(text: String, width: u32) -> String {
     postio_ui::format::middle_truncate(&text, width as usize)
 }
 
 /// Who an open message was addressed to, rendered by `postio_ui::reader::header` so both readers
-/// abbreviate alike. Read per
-/// open message, not carried on every list row.
+/// abbreviate alike. Read per open message, not carried on every list row.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct RecipientsFfi {
     /// The whole `To:` line, label included, or `None` when the message names no recipient the
@@ -75,8 +73,8 @@ pub struct RecipientsFfi {
 }
 
 /// One verb the reading pane offers under a message. Which, and in what order, is
-/// `postio_ui::reader::header::ReaderAction`'s
-/// call. No key travels with it: the chord is `Session::binding_for`.
+/// `postio_ui::reader::header::ReaderAction`'s call. No key travels with it: the chord is
+/// `Session::binding_for`.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct ReaderActionFfi {
     /// The registry command it runs, never a local implementation: undo would not know about it.
@@ -87,9 +85,8 @@ pub struct ReaderActionFfi {
 }
 
 /// One verb of a conversation's header bar. Reply, Reply all and Forward go to the latest message
-/// and Archive takes the whole
-/// thread, so `description` says so before either is pressed: the tooltip and accessible name
-/// (`ReaderAction::describe`).
+/// and Archive takes the whole thread, so `description` says so before either is pressed: the
+/// tooltip and accessible name (`ReaderAction::describe`).
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct ConversationActionFfi {
     pub command: String,
@@ -101,8 +98,7 @@ pub struct ConversationActionFfi {
 }
 
 /// Where a page turn lands, given where the reader is now. JavaScript is off in that view (ADR
-/// 0003), so the only scroll
-/// primitive is a fragment navigation to the document's markers.
+/// 0003), so the only scroll primitive is a fragment navigation to the document's markers.
 #[uniffi::export]
 pub fn reader_page_after(current: u32, forward: bool) -> u32 {
     postio_ui::reader::document::page_after(current, forward)

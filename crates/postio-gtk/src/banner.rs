@@ -1,7 +1,6 @@
 //! Which banner, and what it says, is `postio_ui::focus_state`'s. The banner is always revealed and
-//! its slot shown or hidden,
-//! so it appears at once (motion budget). Markup is escaped: a server's name is not ours to
-//! interpret.
+//! its slot shown or hidden, so it appears at once (motion budget). Markup is escaped: a server's
+//! name is not ours to interpret.
 
 use std::cell::RefCell;
 use std::rc::Rc;

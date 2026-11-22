@@ -1,6 +1,6 @@
 //! The label picker: `l` lists the account's labels; `Space` puts a label on or off and keeps the
-//! picker open; a name nobody has
-//! is offered as "Create label". Every change is one `add_label`, so `Ctrl+Z` takes each back.
+//! picker open; a name nobody has is offered as "Create label". Every change is one `add_label`, so
+//! `Ctrl+Z` takes each back.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};

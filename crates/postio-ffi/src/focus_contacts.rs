@@ -1,7 +1,6 @@
 //! The known-sender popover and the Contacts view. The Mac draws `FocusContactPopover` whole and
-//! reports what is not a key
-//! (a click on a sender's name or an arrival segment); the keys are commands `key` resolves and
-//! `invoke` runs.
+//! reports what is not a key (a click on a sender's name or an arrival segment); the keys are
+//! commands `key` resolves and `invoke` runs.
 
 use crate::session::Session;
 
@@ -551,8 +550,7 @@ impl From<postio_ui::contacts_view::CardView> for ContactCardViewFfi {
 #[uniffi::export]
 impl Session {
     /// The Contacts list's row at `index`, or `None` while its page is on its way: a miss asks for
-    /// the page, and
-    /// `FocusContactsRows` says when to draw it. Synchronous.
+    /// the page, and `FocusContactsRows` says when to draw it. Synchronous.
     pub fn focus_contacts_row(&self, index: u32) -> Option<ContactRowViewFfi> {
         self.focus_driver().contacts_row(index).map(Into::into)
     }

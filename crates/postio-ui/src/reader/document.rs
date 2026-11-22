@@ -1,7 +1,6 @@
 //! Assembling the document a message renders as: one implementation for every frontend (#567, ADR
-//! 0019 Q6),
-//! so the CSP and link policy cannot fork. Frontends keep only the glue that hands the string to a
-//! web view.
+//! 0019 Q6), so the CSP and link policy cannot fork. Frontends keep only the glue that hands the
+//! string to a web view.
 
 use std::sync::OnceLock;
 
@@ -125,8 +124,8 @@ pub const SCROLL_MARKERS: u32 = 60;
 pub const SCROLL_MARKER_STEP_VH: u32 = 90;
 
 /// The markers are the only scroll primitive a hardened web view leaves (JavaScript is off).
-/// Clamped at both
-/// ends rather than wrapping: a `space` that jumped to the top would lose the reader's place.
+/// Clamped at both ends rather than wrapping: a `space` that jumped to the top would lose the
+/// reader's place.
 pub fn page_after(current: u32, forward: bool) -> u32 {
     if forward {
         (current + 1).min(SCROLL_MARKERS - 1)
@@ -141,10 +140,8 @@ pub fn page_fragment(page: u32) -> String {
 }
 
 /// Invisible anchors `#pos-0`, `#pos-1`, ... for `page_down`/`page_up`: with JavaScript off, a
-/// same-document
-/// fragment navigation is the one scroll primitive left. Placed in `vh` so they land a fixed
-/// fraction of a screen
-/// apart on any window; they add nothing to the scrollable height.
+/// same-document fragment navigation is the one scroll primitive left. Placed in `vh` so they land
+/// a fixed fraction of a screen apart on any window; they add nothing to the scrollable height.
 pub fn scroll_markers() -> String {
     let mut markers = String::with_capacity(SCROLL_MARKERS as usize * 48);
     for position in 0..SCROLL_MARKERS {
@@ -230,9 +227,8 @@ fn paper_palette_css() -> String {
 }
 
 /// Needed outside the document: between documents a web view has no colour to take, and the engine
-/// default
-/// shows as a black frame on every message change under the GTK4 GL path (#749). Read from the
-/// generated CSS (#296).
+/// default shows as a black frame on every message change under the GTK4 GL path (#749). Read from
+/// the generated CSS (#296).
 pub fn reader_ground(dark: bool) -> &'static str {
     let (light, dark_block) = PALETTE
         .split_once(DARK_BLOCK)
@@ -353,10 +349,8 @@ pub fn font_bytes(name: &str) -> Option<&'static [u8]> {
 pub const FONT_MIME: &str = "font/ttf";
 
 /// `font-display: block` because the fetch is asynchronous: otherwise text paints in a fallback
-/// face and reflows,
-/// and `optional` could leave the reader in system sans for good. The document names the faces so
-/// the engine
-/// fetches only those drawn with (#768, ADR 0023). Computed once.
+/// face and reflows, and `optional` could leave the reader in system sans for good. The document
+/// names the faces so the engine fetches only those drawn with (#768, ADR 0023). Computed once.
 fn embedded_font_faces() -> &'static str {
     static RULES: OnceLock<String> = OnceLock::new();
     RULES.get_or_init(build_font_faces)
@@ -556,8 +550,7 @@ impl Rendered {
 }
 
 /// Bulk mail only: correspondence opening reduced would be the failure that makes the feature
-/// hated, so the question
-/// is "was this laid out by a template". No HTML part is never a candidate.
+/// hated, so the question is "was this laid out by a template". No HTML part is never a candidate.
 pub fn suits_reader_view(body: &MessageBody) -> bool {
     body.html
         .as_deref()
@@ -600,8 +593,7 @@ fn escape_into(out: &mut String, text: &str) {
 }
 
 /// Reader view prefers the sender's plain part over reducing the HTML; reduction is the fallback
-/// for HTML-only bulk
-/// mail. It never uses the plain part in `Rendering::Original`.
+/// for HTML-only bulk mail. It never uses the plain part in `Rendering::Original`.
 pub fn body_html(body: &MessageBody, remote: RemoteImages, rendering: Rendering) -> Rendered {
     body_html_in(body, remote, rendering, None)
 }
@@ -732,8 +724,8 @@ fn sets_page_margin(canvas: &sanitize::Canvas) -> bool {
 }
 
 /// `chosen` is the person's choice (`⇧O`, or "Always for this sender") and wins over the rule;
-/// `None` lets
-/// `treatment::classify` decide. Plain text is always app colours. Always `Rendering::Original`.
+/// `None` lets `treatment::classify` decide. Plain text is always app colours. Always
+/// `Rendering::Original`.
 pub fn body_html_treated(
     body: &MessageBody,
     remote: RemoteImages,
@@ -817,8 +809,7 @@ fn treat_sanitized(sanitized: &sanitize::Sanitized, chosen: Option<Treatment>) -
 pub const ORIGINAL_CLASS: &str = "postio-original";
 
 /// The sanitizer's output is a fragment, so what `<html>` and `<body>` said about the page arrives
-/// as a `Canvas`
-/// and is put back as `.postio-canvas`. A sender who styled no page gets no wrapper.
+/// as a `Canvas` and is put back as `.postio-canvas`. A sender who styled no page gets no wrapper.
 pub fn on_canvas(content: &str, sanitized: &sanitize::Sanitized) -> String {
     let canvas = &sanitized.canvas;
     if canvas.style.is_empty() && sanitized.color_scheme.is_none() {
@@ -867,9 +858,8 @@ pub fn contain_body_in(content: &str, scope: Option<&str>) -> String {
 }
 
 /// Bounds the sender's markup in `.postio-body`, appends the scroll markers and wraps in the
-/// hardened template, in one
-/// place so no frontend forgets a step: forgetting `contain_body` loses a security affordance
-/// (#323). Quote folds get their ids.
+/// hardened template, in one place so no frontend forgets a step: forgetting `contain_body` loses a
+/// security affordance (#323). Quote folds get their ids.
 pub fn document_for(content: &str, styles: &str, remote: RemoteImages, sheet: Sheet) -> String {
     wrap_document(
         &format!(
@@ -1525,9 +1515,8 @@ mod tests {
     }
 
     /// `style-src` must never name a host (#1383): `@import url(https://tracker/…)` is a request
-    /// made when the stylesheet
-    /// parses, an open-rate beacon with no `<img>`. Unreachable today; this locks it for when
-    /// `<style>` blocks are admitted.
+    /// made when the stylesheet parses, an open-rate beacon with no `<img>`. Unreachable today;
+    /// this locks it for when `<style>` blocks are admitted.
     #[test]
     fn a_stylesheet_has_nowhere_to_fetch_from() {
         for remote in [RemoteImages::Blocked, RemoteImages::Allowed] {
@@ -1564,9 +1553,8 @@ mod tests {
     }
 
     /// A document must not carry identical bulk (#1341): ~1.21 MB of base64 fonts were re-decoded
-    /// on every switch (#749)
-    /// until ADR 0023 moved them behind `postio-font:`. Re-inlining looks like a tidy-up and keeps
-    /// every other test green.
+    /// on every switch (#749) until ADR 0023 moved them behind `postio-font:`. Re-inlining looks
+    /// like a tidy-up and keeps every other test green.
     #[test]
     fn a_document_carries_font_references_and_not_font_bytes() {
         let before = crate::test_support::largest_document();

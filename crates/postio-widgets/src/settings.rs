@@ -1,13 +1,10 @@
 //! The settings panel (canvas 3f): `config.toml` is the settings UI, with no second store and no
-//! OK/Cancel. The raw-text view
-//! writes the buffer verbatim; structured panes (Filters, Composing, Sync & storage) patch only
-//! their own table with
-//! `toml_edit`'s format-preserving model and never reserialize, which would reorder keys and drop
-//! comments.
-//! [`Section::Privacy`] manages the remote-image allow list, which lives outside `config.toml`.
-//! [`SettingsPanel::revert`]
-//! writes the last configuration that loaded cleanly back; the panel's footer raises
-//! `CommandId::EditConfig` rather than spawning an editor.
+//! OK/Cancel. The raw-text view writes the buffer verbatim; structured panes (Filters, Composing,
+//! Sync & storage) patch only their own table with `toml_edit`'s format-preserving model and never
+//! reserialize, which would reorder keys and drop comments. [`Section::Privacy`] manages the
+//! remote-image allow list, which lives outside `config.toml`. [`SettingsPanel::revert`] writes the
+//! last configuration that loaded cleanly back; the panel's footer raises `CommandId::EditConfig`
+//! rather than spawning an editor.
 
 use std::cell::{Cell, OnceCell, RefCell};
 use std::path::{Path, PathBuf};
@@ -66,8 +63,7 @@ type AccountActionHandler = Box<dyn Fn(AccountId, AccountAction)>;
 type AccountEnabledHandler = Box<dyn Fn(AccountId, bool)>;
 
 /// An account is database state, not `config.toml` preference (ADR 0005 Q6b), so this only reports
-/// what changed; the
-/// presenter has the host write it.
+/// what changed; the presenter has the host write it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AccountEdit {
     DisplayName(String),
@@ -92,8 +88,8 @@ pub struct AccountMailboxes {
     pub chosen: Vec<(MailboxRole, String)>,
     pub resolved: Vec<(MailboxRole, String)>,
     /// Distinct from "not resolved": a role can lack a folder because nobody has synced yet, which
-    /// fixes itself, or because
-    /// the server said no. Only the second has words worth showing, the server's own.
+    /// fixes itself, or because the server said no. Only the second has words worth showing, the
+    /// server's own.
     pub refused: Vec<(MailboxRole, String)>,
 }
 
@@ -105,9 +101,8 @@ type SignatureSavedHandler = Box<dyn Fn(AccountId, &SignatureDraft)>;
 type SignatureDeletedHandler = Box<dyn Fn(AccountId, SignatureId)>;
 
 /// `id` is `None` for one that does not exist yet: the store assigns it, and reporting a new
-/// signature with an id would
-/// make saving an edit create a second one. No `html`: a rich editor is the composer toolbar's
-/// problem (#339).
+/// signature with an id would make saving an edit create a second one. No `html`: a rich editor is
+/// the composer toolbar's problem (#339).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SignatureDraft {
     pub id: Option<SignatureId>,
@@ -211,9 +206,8 @@ fn two_columns(left: &impl IsA<gtk::Widget>, right: &impl IsA<gtk::Widget>) -> g
     right_box.append(right);
 
     // Equal halves through a size group, not `set_homogeneous`: that shares width across every
-    // child, and the third is
-    // the 1px rule, which took a third of the pane. `hexpand` alone leaves the wordier column its
-    // larger natural width.
+    // child, and the third is the 1px rule, which took a third of the pane. `hexpand` alone leaves
+    // the wordier column its larger natural width.
     let columns = gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal);
     columns.add_widget(&left_box);
     columns.add_widget(&right_box);
@@ -225,8 +219,7 @@ fn two_columns(left: &impl IsA<gtk::Widget>, right: &impl IsA<gtk::Widget>) -> g
 }
 
 /// Removes rows only: a list can hold a popover too (the account rows' menu), which `remove_all`
-/// would try to remove as a
-/// row forever. Stops at a row the list no longer parents.
+/// would try to remove as a row forever. Stops at a row the list no longer parents.
 fn clear_rows(list: &gtk::ListBox) {
     while let Some(row) = list.row_at_index(0) {
         if row.parent().as_ref() != Some(list.upcast_ref::<gtk::Widget>()) {
@@ -271,8 +264,7 @@ fn display_path_under(path: &Path, home: Option<&Path>) -> String {
 }
 
 // `write_atomically` is a contract with `postio_config::watch`, built to see a scratch file and a
-// rename rather than an
-// in-place write; both frontends save through it.
+// rename rather than an in-place write; both frontends save through it.
 use postio_config::save::write_atomically;
 
 fn row_account_id(row: &gtk::ListBoxRow) -> AccountId {
@@ -358,8 +350,8 @@ fn fill_listed(
 }
 
 /// Held so the pane is updated from a fresh read, not rebuilt: repopulating a `DropDown` fires
-/// `selected-notify`
-/// indistinguishable from a choice, which `SegmentedControl` and `CheckRow` avoid.
+/// `selected-notify` indistinguishable from a choice, which `SegmentedControl` and `CheckRow`
+/// avoid.
 pub struct SyncControls {
     pub check_for_mail: SegmentedControl,
     /// The minutes the chosen mode means, which the segmented control does not carry.
@@ -446,9 +438,8 @@ mod imp {
         pub contacts_view: RefCell<Option<postio_ui::contacts_settings::SuggestionsView>>,
         pub config_pane: gtk::Box,
         /// Built on first draw and updated after, never rebuilt. Lazy (#873): constructing certain
-        /// controls while the host
-        /// window is still wiring its shortcut controllers corrupts keyboard routing for the
-        /// window's life.
+        /// controls while the host window is still wiring its shortcut controllers corrupts
+        /// keyboard routing for the window's life.
         pub sync_controls: OnceCell<SyncControls>,
         pub composing_controls: OnceCell<ComposingControls>,
         pub filtering_controls: OnceCell<FilteringControls>,
@@ -481,8 +472,8 @@ mod imp {
         pub weights: RefCell<Vec<(AccountId, postio_core::event::MailFootprint)>>,
         pub attachments_included: std::cell::Cell<bool>,
         /// An id present with `None` is a real answer (a token on file with no `expires_in`); an id
-        /// absent is a password
-        /// account or a broker-fed one, so the row shows no validity line rather than a wrong one.
+        /// absent is a password account or a broker-fed one, so the row shows no validity line
+        /// rather than a wrong one.
         pub token_expiries: RefCell<Vec<(AccountId, Option<std::time::SystemTime>)>>,
         pub reindex_progress: RefCell<Vec<(AccountId, (u32, u32))>>,
         /// Per account so it cannot follow the selection to another row (#1584).
@@ -544,8 +535,7 @@ mod imp {
         pub unsubscribe_empty: gtk::Label,
         pub unsubscribe_activations: RefCell<Vec<UnsubscribeActivation>>,
         /// A count, not a toggle: Postio never sends a read receipt automatically, so there is only
-        /// a fact to state. Always
-        /// visible: zero is itself the answer.
+        /// a fact to state. Always visible: zero is itself the answer.
         pub read_receipt_count: gtk::Label,
         pub keys_list: gtk::ListBox,
         pub keys_scroller: gtk::ScrolledWindow,
@@ -758,8 +748,7 @@ impl SettingsPanel {
     }
 
     /// Test seam. Redraws explicitly: a fresh buffer is already empty, so `set_text("")` never
-    /// fires `changed` and a
-    /// structured pane would stay unpopulated.
+    /// fires `changed` and a structured pane would stay unpopulated.
     pub fn set_text(&self, text: &str) {
         self.imp().buffer.set_text(text);
         self.refresh_validity();
@@ -786,10 +775,9 @@ impl SettingsPanel {
     }
 
     /// Deliberately does not feed [`SettingsPanel::revert`]'s target: `gtk::TextBuffer::set_text`
-    /// fires `changed` for the
-    /// delete and the insert, so mid-edit this sees a transiently empty buffer, which is valid TOML
-    /// and would overwrite the
-    /// real last-good. [`note_known_good`] sees only text that reached disk.
+    /// fires `changed` for the delete and the insert, so mid-edit this sees a transiently empty
+    /// buffer, which is valid TOML and would overwrite the real last-good. [`note_known_good`] sees
+    /// only text that reached disk.
     ///
     /// [`note_known_good`]: SettingsPanel::note_known_good
     fn refresh_validity(&self) {
@@ -837,9 +825,8 @@ impl SettingsPanel {
     }
 
     /// `attachments_included` is `[sync] attachment_fetch == "eager"`: global, while the figures
-    /// are per account, so they
-    /// land on rows. Order-independent with [`set_accounts`](Self::set_accounts): whichever arrives
-    /// second redraws.
+    /// are per account, so they land on rows. Order-independent with
+    /// [`set_accounts`](Self::set_accounts): whichever arrives second redraws.
     pub fn set_mail_weights(
         &self,
         weights: &[(AccountId, postio_core::event::MailFootprint)],
@@ -884,8 +871,7 @@ impl SettingsPanel {
     }
 
     /// `TokenStanding::Unknown` for a password account, a broker-fed one, or one not yet told
-    /// about. The arithmetic and
-    /// wording live in `postio_ui::account` so macOS shares them (#1584).
+    /// about. The arithmetic and wording live in `postio_ui::account` so macOS shares them (#1584).
     fn token_standing(&self, account: AccountId) -> postio_ui::account::TokenStanding {
         let expiry = self
             .imp()
@@ -1259,14 +1245,12 @@ impl SettingsPanel {
     fn redraw_accounts(&self) {
         let imp = self.imp();
         // The handler stands down for the whole rebuild: removing and re-adding rows fires
-        // `row-selected`, which as gestures
-        // would close the form mid-edit, clear the account id an edit needs, and reload the fields
-        // over what was typed.
+        // `row-selected`, which as gestures would close the form mid-edit, clear the account id an
+        // edit needs, and reload the fields over what was typed.
         imp.redrawing.set(true);
         let open_on = *imp.account_detail_id.borrow();
         // The keyboard goes with the removed row and GTK hands it to another: the next `Return` or
-        // `Delete` would act on
-        // another account (#1787). It goes back to the same account's row.
+        // `Delete` would act on another account (#1787). It goes back to the same account's row.
         let keyboard_on = self.focused_account();
         clear_rows(&imp.accounts_list);
         for account in imp.accounts.borrow().iter() {
@@ -1296,8 +1280,7 @@ impl SettingsPanel {
         }
         imp.redrawing.set(false);
         // A refresh can land after this redraw found the open account gone (removed in another
-        // window); an editable form
-        // over it would let an edit resurrect a deleted account.
+        // window); an editable form over it would let an edit resurrect a deleted account.
         let open_on = *imp.account_detail_id.borrow();
         if let Some(id) = open_on
             && !imp.accounts.borrow().iter().any(|account| account.id == id)
@@ -1507,8 +1490,7 @@ impl SettingsPanel {
     }
 
     /// Focus, not selection: account rows are not selectable. `None` is a real answer: a command
-    /// that guessed a row would
-    /// remove an account on a keystroke aimed at nothing.
+    /// that guessed a row would remove an account on a keystroke aimed at nothing.
     pub fn focused_account(&self) -> Option<AccountId> {
         let row = self
             .imp()
@@ -1770,9 +1752,9 @@ impl SettingsPanel {
     }
 
     /// Built on first use, never in `build()` (#873): `SettingsPanel` is built as a hidden overlay
-    /// child while `Window::new` still wires its
-    /// shortcut controllers, and a widget with internal event controllers (`gtk::DropDown`,
-    /// `gtk::Entry`'s `GtkText`) built then corrupted keyboard routing.
+    /// child while `Window::new` still wires its shortcut controllers, and a widget with internal
+    /// event controllers (`gtk::DropDown`, `gtk::Entry`'s `GtkText`) built then corrupted keyboard
+    /// routing.
     fn ensure_account_detail_fields(&self) {
         let imp = self.imp();
         if imp.account_detail_display_name.get().is_some() {
@@ -2165,8 +2147,8 @@ impl SettingsPanel {
     }
 
     /// The panel writes nothing (this layer may not link SQLite): the app persists it and hands
-    /// back a refreshed account list or, when the
-    /// store refused, [`set_signature_error`](Self::set_signature_error).
+    /// back a refreshed account list or, when the store refused,
+    /// [`set_signature_error`](Self::set_signature_error).
     pub fn connect_signature_saved(&self, handler: impl Fn(AccountId, &SignatureDraft) + 'static) {
         self.imp()
             .signature_saved
@@ -2356,8 +2338,8 @@ impl SettingsPanel {
     }
 
     /// The panel never connects to anything: it reports the gesture and the app runs
-    /// `postio_session::reachability::test_connection`,
-    /// answering through [`set_connection_status`](Self::set_connection_status).
+    /// `postio_session::reachability::test_connection`, answering through
+    /// [`set_connection_status`](Self::set_connection_status).
     pub fn connect_test_connection(&self, handler: impl Fn(AccountId) + 'static) {
         self.imp()
             .test_connection
@@ -2419,8 +2401,7 @@ impl SettingsPanel {
     }
 
     /// Does nothing while `open_account_detail` is populating the fields or when the detail view is
-    /// open on nothing: a stray signal
-    /// during a redraw is cheaper to ignore than to chase.
+    /// open on nothing: a stray signal during a redraw is cheaper to ignore than to chase.
     fn commit_account_edit(&self, edit: AccountEdit) {
         let imp = self.imp();
         if imp.account_detail_loading.get() {
@@ -2641,10 +2622,9 @@ impl SettingsPanel {
     }
 
     /// Built lazily (#873): building certain controls while the host window wires its shortcut
-    /// controllers corrupts keyboard routing.
-    /// The middle segment says `Every 5 min` and sets `check_for_mail = "poll"` with
-    /// `poll_interval_secs = 300`; an interval that is not
-    /// five minutes still selects it, and the stat line says what it is. A number is typed in the
+    /// controllers corrupts keyboard routing. The middle segment says `Every 5 min` and sets
+    /// `check_for_mail = "poll"` with `poll_interval_secs = 300`; an interval that is not five
+    /// minutes still selects it, and the stat line says what it is. A number is typed in the
     /// `Config file` pane.
     fn ensure_sync_controls(&self) -> &SyncControls {
         let imp = self.imp();
@@ -2849,8 +2829,8 @@ impl SettingsPanel {
     }
 
     /// Built on first `redraw_keys`, not `build()`: #873/#880 found widgets with their own event
-    /// controllers, built while `Window::new`
-    /// wires its shortcuts, corrupting keyboard routing. Deferred on the same precaution.
+    /// controllers, built while `Window::new` wires its shortcuts, corrupting keyboard routing.
+    /// Deferred on the same precaution.
     fn ensure_capture_controller(&self) {
         let imp = self.imp();
         if imp.capture_controller_installed.get() {
@@ -2859,8 +2839,8 @@ impl SettingsPanel {
         imp.capture_controller_installed.set(true);
 
         // Capture phase: it must see a keypress before the row's own rebind `Button`, or the
-        // Space/Enter pressing that button would be
-        // swallowed by its activation. Stops propagation only while capturing.
+        // Space/Enter pressing that button would be swallowed by its activation. Stops propagation
+        // only while capturing.
         let capture = gtk::EventControllerKey::new();
         capture.set_propagation_phase(gtk::PropagationPhase::Capture);
         capture.connect_key_pressed(glib::clone!(
@@ -3029,8 +3009,7 @@ impl SettingsPanel {
     }
 
     /// Test seam: a window's own key handling resolves a synthetic keypress directly and never
-    /// reaches this panel's capture
-    /// controller, so this exercises the logic it calls.
+    /// reaches this panel's capture controller, so this exercises the logic it calls.
     #[doc(hidden)]
     pub fn test_capture_key(&self, keyval: gtk::gdk::Key, state: gtk::gdk::ModifierType) {
         self.resolve_capture(keyval, state);
@@ -3812,9 +3791,8 @@ impl SettingsPanel {
     }
 
     /// The panel raises `CommandId`s and runs none: the window already has the one dispatch every
-    /// keystroke and menu goes through, and a
-    /// second path from a button to the runtime is how surfaces disagree about what `Refresh`
-    /// means.
+    /// keystroke and menu goes through, and a second path from a button to the runtime is how
+    /// surfaces disagree about what `Refresh` means.
     pub fn connect_command(&self, handler: impl Fn(CommandId) + 'static) {
         self.imp().command.borrow_mut().push(Box::new(handler));
     }
@@ -4176,9 +4154,8 @@ impl SettingsPanel {
         self.refresh_validity();
         self.redraw_filters();
         // Not `redraw_sync()` here: `Window::new` builds this panel as a hidden child while wiring
-        // its shortcut controllers, and building
-        // certain controls then corrupted keyboard routing (#873). Panes populate from
-        // `show_section`, which cannot run before the window is up.
+        // its shortcut controllers, and building certain controls then corrupted keyboard routing
+        // (#873). Panes populate from `show_section`, which cannot run before the window is up.
         self.show_section(Section::Accounts);
     }
 

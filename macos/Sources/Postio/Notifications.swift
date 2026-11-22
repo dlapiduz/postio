@@ -48,8 +48,7 @@ final class MailNotifications: NSObject, UNUserNotificationCenterDelegate {
     }
 
     /// Needs no notification permission. `setBadgeCount` draws on this same tile and needs
-    /// permission,
-    /// so it is not a second writer.
+    /// permission, so it is not a second writer.
     private func drawBadge() {
         let label = MailBadge.label(unread: unread, enabled: badgeOn, system: system)
         guard NSApp.dockTile.badgeLabel != label else { return }

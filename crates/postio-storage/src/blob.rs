@@ -1,8 +1,7 @@
 //! Content-addressed store for raw messages and attachments: files named by BLAKE3 digest, the
-//! database keeps the digest.
-//! Bodies are not here (ADR 0020). No reference counts: `collect_garbage` sweeps, skipping blobs
-//! younger than
-//! `min_age` because bytes land before their row commits.
+//! database keeps the digest. Bodies are not here (ADR 0020). No reference counts:
+//! `collect_garbage` sweeps, skipping blobs younger than `min_age` because bytes land before their
+//! row commits.
 
 mod format;
 pub(crate) use format::LEVEL as format_level;

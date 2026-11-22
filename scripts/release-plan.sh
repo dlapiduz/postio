@@ -1,14 +1,11 @@
 #!/usr/bin/env bash
 # Is this push a release, and what does the release workflow need to know? `release.yml` runs on
-# every push to `main` (#1714); only the push that
-# merges a release PR names a version with no tag yet, so every other push answers "nothing to
-# build".
-# A version is released at most once, and one older than the newest tag is refused out loud (a
-# mistake in a release PR).
-# Nothing ships without the full suite, but a green nightly at this exact commit is that answer
-# already; anything short of the exact commit, or no API answer, is not green.
-# `--skip-suite` is honoured only for a dispatch, which publishes nothing and builds every package
-# versioned `<version>-dev.<sha>`.
+# every push to `main` (#1714); only the push that merges a release PR names a version with no tag
+# yet, so every other push answers "nothing to build". A version is released at most once, and one
+# older than the newest tag is refused out loud (a mistake in a release PR). Nothing ships without
+# the full suite, but a green nightly at this exact commit is that answer already; anything short of
+# the exact commit, or no API answer, is not green. `--skip-suite` is honoured only for a dispatch,
+# which publishes nothing and builds every package versioned `<version>-dev.<sha>`.
 #
 # Usage: scripts/release-plan.sh [--skip-suite]
 #   Run from the repository root; asks origin for its tags. Reads

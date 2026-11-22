@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # Has the full suite passed on this release commit? Wait for the run on `main` that is already
-# answering: the push that merged the release
-# started `nightly.yml` on the same commit with the same suite, and running it twice cost the slower
-# copy's time.
-# Only that run's `Full suite` and `Storyboard passes` jobs count. The answer is one of
+# answering: the push that merged the release started `nightly.yml` on the same commit with the same
+# suite, and running it twice cost the slower copy's time. Only that run's `Full suite` and
+# `Storyboard passes` jobs count. The answer is one of
 #
 #   green     every one of those jobs passed: the release may publish.
 # red       one failed: nothing publishes. Re-run the nightly's failed jobs, then this job; it reads

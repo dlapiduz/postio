@@ -70,11 +70,9 @@ fn distance_within(a: &str, b: &str, limit: usize) -> Option<usize> {
 const SHORTEST_BEGINNING: usize = 3;
 
 /// `typed~N` reaches terms that begin within `N` edits of the word (mistyped, unfinished, or both)
-/// and `typed*` only
-/// those that begin with it, for a word too short to correct. Unquoted, which is the point: the
-/// index reads a quoted
-/// term exactly. Only ever a single word of letters and digits, so nothing typed reaches the index
-/// as syntax.
+/// and `typed*` only those that begin with it, for a word too short to correct. Unquoted, which is
+/// the point: the index reads a quoted term exactly. Only ever a single word of letters and digits,
+/// so nothing typed reaches the index as syntax.
 pub fn widened(typed: &str) -> Option<String> {
     let typed = typed.to_lowercase();
     if typed.chars().count() < SHORTEST_BEGINNING || !typed.chars().all(char::is_alphanumeric) {
@@ -87,9 +85,8 @@ pub fn widened(typed: &str) -> Option<String> {
 }
 
 /// A term that begins with what was typed is the word left unfinished and outranks every
-/// correction. Past that, a
-/// term within `tolerance` edits, closest first; between equally close terms the one more of the
-/// mailbox holds.
+/// correction. Past that, a term within `tolerance` edits, closest first; between equally close
+/// terms the one more of the mailbox holds.
 pub fn suggest<'a>(typed: &str, vocabulary: impl Iterator<Item = Term<'a>>) -> Option<Suggestion> {
     let typed = typed.to_lowercase();
     let limit = tolerance(&typed);
@@ -136,11 +133,9 @@ pub fn suggest<'a>(typed: &str, vocabulary: impl Iterator<Item = Term<'a>>) -> O
     })
 }
 /// The word itself when the vocabulary holds it, then the words it begins, then the words it is a
-/// misspelling of, at
-/// most `most`. The one place a query is widened rather than answered with an offer, only for the
-/// command bar's
-/// interactive search (ADR 0037). A word the vocabulary holds is not corrected: `your`, one edit
-/// from `tour`, would drown it.
+/// misspelling of, at most `most`. The one place a query is widened rather than answered with an
+/// offer, only for the command bar's interactive search (ADR 0037). A word the vocabulary holds is
+/// not corrected: `your`, one edit from `tour`, would drown it.
 pub fn near<'a>(
     typed: &str,
     vocabulary: impl Iterator<Item = Term<'a>>,

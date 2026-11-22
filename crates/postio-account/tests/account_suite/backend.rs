@@ -1221,8 +1221,7 @@ fn a_fetched_message_with_no_body_structure_names_no_text_sections() {
 #[test]
 fn a_part_rebuilds_the_mime_headers_that_explain_its_bytes() {
     // `BODY[1.1]` returns encoded bytes without headers, so the charset and encoding from
-    // `BODYSTRUCTURE`
-    // are kept to avoid a `[1.1.MIME]` round trip per part.
+    // `BODYSTRUCTURE` are kept to avoid a `[1.1.MIME]` round trip per part.
     let part = PartNode::new("1.1", "text/plain", 512)
         .with_charset("iso-8859-1")
         .with_encoding("quoted-printable");

@@ -1,16 +1,12 @@
 name: Release
 
 # A release is the push that merges a release pull request (#1714): `scripts/release-prepare.sh
-# X.Y.Z` bumps the version
-# and writes docs/releases/X.Y.Z.md. This workflow runs on every push to `main`; the first job stops
-# it unless
-# `Cargo.toml` names a version with no tag yet, newer than the newest one.
-# `.github/release-variants.json` lists what ships, one row per package; each kind is one job run
-# per row, with an SBOM and provenance attestation.
-# Nothing is published until everything is built and the full suite passed: `publish` makes a draft,
-# attaches every
-# asset and `SHA256SUMS`, checks the list against the variants file, then publishes, which creates
-# the tag.
+# X.Y.Z` bumps the version and writes docs/releases/X.Y.Z.md. This workflow runs on every push to
+# `main`; the first job stops it unless `Cargo.toml` names a version with no tag yet, newer than the
+# newest one. `.github/release-variants.json` lists what ships, one row per package; each kind is
+# one job run per row, with an SBOM and provenance attestation. Nothing is published until
+# everything is built and the full suite passed: `publish` makes a draft, attaches every asset and
+# `SHA256SUMS`, checks the list against the variants file, then publishes, which creates the tag.
 # `workflow_dispatch` builds every package as an artifact versioned `<version>-dev.<sha>` and
 # publishes nothing.
 on:
@@ -77,11 +73,10 @@ jobs:
           } | tee -a "$GITHUB_OUTPUT"
 
   # The full suite, and nothing ships without it. The push that merged the release started
-  # `nightly.yml` on this commit with
-  # the identical suite, so this job waits for that answer (`scripts/release-await-nightly.sh`). Red
-  # stops the release.
-  # `suite` and `storyboards` below run only when there is no answer (cancelled or never started),
-  # and are skipped when `plan` found a green nightly.
+  # `nightly.yml` on this commit with the identical suite, so this job waits for that answer
+  # (`scripts/release-await-nightly.sh`). Red stops the release. `suite` and `storyboards` below run
+  # only when there is no answer (cancelled or never started), and are skipped when `plan` found a
+  # green nightly.
   nightly:
     name: Full suite on main
     needs: plan
@@ -102,8 +97,8 @@ jobs:
         run: scripts/release-await-nightly.sh >> "$GITHUB_OUTPUT"
 
   # The suite here, when the nightly gave no answer, or for a dispatch. `--profile ci-full` omits
-  # the stopwatch measurement
-  # and the storyboard passes (run by `storyboards`); `.config/nextest.toml` says why.
+  # the stopwatch measurement and the storyboard passes (run by `storyboards`);
+  # `.config/nextest.toml` says why.
   suite:
     name: Full suite
     needs: [plan, nightly]
@@ -289,8 +284,8 @@ jobs:
             https://flathub.org/repo/flathub.flatpakrepo
 
       # The runtime and SDK come from the manifest. The SDK extensions do not: `rust-stable` follows
-      # freedesktop's branches, not GNOME's,
-      # so `flatpak-builder --install-deps-from` below installs what is required.
+      # freedesktop's branches, not GNOME's, so `flatpak-builder --install-deps-from` below installs
+      # what is required.
       - name: Install the runtime the manifest asks for
         run: |
           RUNTIME=$(jq -r '.runtime + "//" + (."runtime-version"|tostring)' "$MANIFEST")
@@ -623,11 +618,9 @@ jobs:
           cat release-notes.md
 
       # A 0.x is a pre-release on the release page too, and marks the AppStream entry
-      # `type="development"`.
-      # A re-run fills its own draft again. An already-published release is refused even though
-      # `plan` should never get here
-      # (it once could not see the tags): the step that writes, with `--clobber`, must not trust its
-      # inputs.
+      # `type="development"`. A re-run fills its own draft again. An already-published release is
+      # refused even though `plan` should never get here (it once could not see the tags): the step
+      # that writes, with `--clobber`, must not trust its inputs.
       - name: Draft, attach, publish
         run: |
           flags=()

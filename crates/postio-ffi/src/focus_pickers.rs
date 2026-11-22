@@ -1,7 +1,6 @@
 //! Focus's pickers at the row. The controller (`postio_focus`, ADR 0045) decides which opens, what
-//! it lists and what each
-//! row does; the Mac draws it and reports typing, a chosen row or a toggle. Number keys, `Tab`,
-//! Return and Esc are commands.
+//! it lists and what each row does; the Mac draws it and reports typing, a chosen row or a toggle.
+//! Number keys, `Tab`, Return and Esc are commands.
 
 use crate::session::Session;
 

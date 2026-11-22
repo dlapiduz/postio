@@ -79,12 +79,10 @@ pub struct Instead {
 }
 
 /// Ten thousand; lowering it was tried and reverted. The count is the costliest statement in a
-/// broad search, but
-/// `RANK_BY_RELEVANCE_LIMIT` (2,000) and `PROBED_FORM_LIMIT` (8,000) read it to choose a query
-/// plan, and a cap below
-/// either pins every broad search to one side: at 1,000 `the` went from 74ms to 1.26s. Any future
-/// attempt has to
-/// separate a cheap "how broad" signal for the planner from a display cap.
+/// broad search, but `RANK_BY_RELEVANCE_LIMIT` (2,000) and `PROBED_FORM_LIMIT` (8,000) read it to
+/// choose a query plan, and a cap below either pins every broad search to one side: at 1,000 `the`
+/// went from 74ms to 1.26s. Any future attempt has to separate a cheap "how broad" signal for the
+/// planner from a display cap.
 pub const TOTAL_HITS_CAP: u64 = 10_000;
 
 /// Its own constant rather than [`TOTAL_HITS_CAP`] lowered, because the two bound different work:

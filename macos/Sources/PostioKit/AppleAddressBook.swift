@@ -3,9 +3,8 @@ import Foundation
 import PostioFFI
 
 /// Read only: `CNSaveRequest` is never used. Constructed only when a person presses Turn on and
-/// preview, and it refuses
-/// to touch the store in a demo or under a test runner (`refusesHere`), so a mistake elsewhere
-/// cannot reach anyone's real address book.
+/// preview, and it refuses to touch the store in a demo or under a test runner (`refusesHere`), so
+/// a mistake elsewhere cannot reach anyone's real address book.
 @MainActor
 public final class AppleAddressBook: SyncAddressBook {
     private let store = CNContactStore()

@@ -83,9 +83,8 @@ pub fn note_surface_released() {
 }
 
 /// A bound, not a measurement: opening a folder should cost the pages a screen needs, whatever it
-/// holds
-/// (#1534 saw 49 distinct pages in 20 s through an eight-page cache). Storage counters cannot see
-/// it, each being an ordinary query.
+/// holds (#1534 saw 49 distinct pages in 20 s through an eight-page cache). Storage counters cannot
+/// see it, each being an ordinary query.
 pub fn note_page_requested() {
     bump(&PAGES_REQUESTED, 1);
 }

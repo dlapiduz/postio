@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Remove this workspace's own compiled artifacts from `target/` before CI hands it to
-# `actions/cache`: they are stale next run,
-# while the ~470 third-party crates are worth keeping. A script, not a copy per job, to avoid drift
-# (#818).
+# `actions/cache`: they are stale next run, while the ~470 third-party crates are worth keeping. A
+# script, not a copy per job, to avoid drift (#818).
 set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib/drop-workspace-artifacts.sh"

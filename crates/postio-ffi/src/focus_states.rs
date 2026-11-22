@@ -1,6 +1,5 @@
 //! What Focus says about its own state: the banner, the toolbar's sync label and the empty-list
-//! page, worded by
-//! `postio_ui::focus_state` and crossing as events only when they change.
+//! page, worded by `postio_ui::focus_state` and crossing as events only when they change.
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct BannerFfi {

@@ -92,8 +92,7 @@ fn validating_a_config_costs_a_bounded_amount_of_work() {
     );
 
     // It has to stay linear: a quadratic validation passes the ceiling on a small config and makes
-    // the
-    // panel unusable on a large one.
+    // the panel unusable on a large one.
     let few = allocations_per_validation(&with_filters(FEW), 10);
     let many = allocations_per_validation(&with_filters(MANY), 10);
     let growth = many / few.max(1);

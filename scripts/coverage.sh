@@ -39,9 +39,8 @@ for name in floors:
 fi
 
 # Measure against this tree: a target dir from another commit (a CI `restore-keys` hit) mixes stale
-# region maps and profiles,
-# giving 94.25% vs 91.56% on the same branch (#781). Only workspace artifacts are cleared, so the
-# dependency cache still pays.
+# region maps and profiles, giving 94.25% vs 91.56% on the same branch (#781). Only workspace
+# artifacts are cleared, so the dependency cache still pays.
 echo "clearing stale coverage artifacts for this workspace..."
 env -u RUSTUP_TOOLCHAIN cargo llvm-cov clean --workspace
 

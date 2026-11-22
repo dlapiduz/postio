@@ -1,6 +1,5 @@
 //! Focus's reader document on the Mac: GTK's treated document, plus the contrast guard on kept
-//! colours and the message
-//! window's geometry. Swift hands the HTML to a hardened web view.
+//! colours and the message window's geometry. Swift hands the HTML to a hardened web view.
 
 use postio_body::treatment::Treatment;
 use postio_ui::reader::document::{
@@ -116,8 +115,7 @@ impl Session {
     }
 
     /// `message` as the window opens on it, from one read of the store: `focus_message_view` and
-    /// `focus_reader_document`
-    /// together, so a body is not decoded twice (#1609).
+    /// `focus_reader_document` together, so a body is not decoded twice (#1609).
     pub fn focus_message_open(
         &self,
         message: i64,
@@ -142,8 +140,7 @@ impl Session {
     }
 
     /// `message`'s raw RFC 822 source. Read from this machine when it is here, otherwise fetched
-    /// from the server on this
-    /// call, so never from the main actor.
+    /// from the server on this call, so never from the main actor.
     pub fn raw_source(&self, message: i64) -> Result<Vec<u8>, crate::SessionError> {
         let client = self
             .client()
@@ -164,8 +161,7 @@ impl Session {
     }
 
     /// Always draw `sender`'s mail in `treatment`, or forget the choice with `None`. Kept on the
-    /// person the sender is
-    /// (ADR 0048), so every address of theirs draws alike.
+    /// person the sender is (ADR 0048), so every address of theirs draws alike.
     pub fn always_treatment(&self, sender: String, treatment: Option<TreatmentFfi>) {
         let Some(client) = self.client() else {
             return;
@@ -322,17 +318,15 @@ const MAC_FLOW_PALETTE: &str = ":root { --flow-ground: transparent; \
     --r-hairline: -apple-system-separator; --r-hairline-strong: -apple-system-grid; }\n";
 
 /// `document` as the message window's column flows it: the column's ground and the Mac's palette,
-/// and for
-/// correspondence no frame.
+/// and for correspondence no frame.
 fn flow(document: &str, shown: Treatment) -> String {
     use postio_ui::reader::document::{FLOW_CSS, FLOW_FLAT_CSS};
     let mut css = String::from(MAC_FLOW_PALETTE);
     css.push_str(FLOW_CSS);
     if shown == Treatment::AppColours {
         // WebKit resolves system colours and form controls as dark only for a page that says it can
-        // be; without this
-        // the ink was light-appearance black on a dark window. Paper says nothing: its web view is
-        // light.
+        // be; without this the ink was light-appearance black on a dark window. Paper says nothing:
+        // its web view is light.
         css.push_str(":root { color-scheme: light dark; }\n");
         css.push_str(FLOW_FLAT_CSS);
     }

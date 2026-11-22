@@ -1000,9 +1000,8 @@ fn empty_shown(window: &FocusWindow) -> bool {
 const HERMETIC: &str = "POSTIO_FOCUS_SHOT_HERMETIC";
 
 /// GTK reads the person's `gtk-4.0/gtk.css`, and a desktop can put its whole palette there (COSMIC
-/// writes dark `@define-color`s
-/// whatever the scheme). A child gets an empty config dir; setting the variable here would need
-/// `unsafe`, which the workspace forbids.
+/// writes dark `@define-color`s whatever the scheme). A child gets an empty config dir; setting the
+/// variable here would need `unsafe`, which the workspace forbids.
 fn hermetic(args: &[String]) -> Option<glib::ExitCode> {
     if std::env::var_os(HERMETIC).is_some() {
         return None;

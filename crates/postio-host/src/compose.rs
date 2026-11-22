@@ -201,8 +201,7 @@ impl DraftWriter {
                     } => {
                         id_for(&current, generation, &mut draft);
                         // Taken on failure too: a failed queue write leaves the autosaved row
-                        // recoverable,
-                        // and the close after a send must not delete it.
+                        // recoverable, and the close after a send must not delete it.
                         if current.is_some_and(|(saved_for, _)| saved_for == generation) {
                             current = None;
                         }
@@ -382,11 +381,9 @@ pub async fn drafts_of(database: &Store, account: AccountId) -> postio_storage::
 }
 
 /// Records that a session began; answers the draft `account` was writing if the last session died
-/// uncleanly (#491).
-/// Only after a crash: `Editing` alone is not evidence (Esc parks drafts so), and an untouched
-/// buffer is not
-/// recovered, since reopening it autosaves another empty row. Asked once per process:
-/// `begin_session` marks this one open.
+/// uncleanly (#491). Only after a crash: `Editing` alone is not evidence (Esc parks drafts so), and
+/// an untouched buffer is not recovered, since reopening it autosaves another empty row. Asked once
+/// per process: `begin_session` marks this one open.
 pub async fn recover(database: &Store, account: AccountId) -> Option<Draft> {
     if !postio_session::begin_session(database).await {
         return None;
@@ -751,8 +748,7 @@ pub fn inline_attachment(blobs: &BlobStore, bytes: Vec<u8>, mime_type: &str) -> 
 }
 
 /// For a process without shared-mime-info. Unknown types are the generic "some bytes": a type that
-/// claims
-/// too much is the only harmful answer.
+/// claims too much is the only harmful answer.
 pub fn guess_mime_type(path: &std::path::Path) -> String {
     let mut head = [0u8; 16];
     let read = std::fs::File::open(path)

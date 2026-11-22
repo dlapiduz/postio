@@ -133,8 +133,8 @@ fn every_command_with_a_default_key_reports_it() {
 #[test]
 fn starting_the_log_seeds_a_config_file_when_there_is_none() {
     // macOS never seeded a config, so the Config file pane opened blank. Asserted on the seeder
-    // because `start_logging`
-    // installs a process-global subscriber and cannot run twice in one binary.
+    // because `start_logging` installs a process-global subscriber and cannot run twice in one
+    // binary.
     let scratch = tempfile::tempdir().expect("a scratch directory");
     let path = scratch.path().join("config.toml");
 

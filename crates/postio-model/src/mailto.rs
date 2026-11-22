@@ -28,8 +28,7 @@ impl Mailto {
             .filter(|scheme| scheme.eq_ignore_ascii_case("mailto:"))
             .and_then(|_| uri.trim().get(7..))?;
         // RFC 6068 has no authority, but GIO gives every URI one (`mailto:///ada@example.com`),
-        // which is what the
-        // desktop hands over for a clicked link; `mailto://` is the same by hand.
+        // which is what the desktop hands over for a clicked link; `mailto://` is the same by hand.
         let rest = rest.trim_start_matches('/');
         let (path, query) = match rest.split_once('?') {
             Some((path, query)) => (path, Some(query)),

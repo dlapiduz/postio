@@ -99,9 +99,8 @@ async fn build_corpus() -> Corpus {
         .expect("start bulk load transaction");
     for i in 0..MESSAGE_COUNT {
         // Uncorrelated with `i % 100` (which places `UNCOMMON_WORD`): `i % SENDER_COUNT` would pin
-        // each
-        // sender to one residue mod 100 and the composed query would match nothing.
-        // Message 0 is forced onto sender 42 so `from:sender42 quarterly` has at least one hit.
+        // each sender to one residue mod 100 and the composed query would match nothing. Message 0
+        // is forced onto sender 42 so `from:sender42 quarterly` has at least one hit.
         let sender = if i == 0 { 42 } else { rng.below(SENDER_COUNT) };
         let received_at = base + chrono::Duration::minutes(i as i64);
         let mut message = Message::new(account.id, mailbox, received_at);
@@ -309,8 +308,7 @@ async fn build_multi_account_corpus() -> MultiAccount {
         first.get_or_insert(account.id);
         for i in 0..PER_ACCOUNT {
             // Interleaved in time across accounts, so a unified recency order cannot be served from
-            // one
-            // account's index.
+            // one account's index.
             let received_at = base + chrono::Duration::minutes((i * ACCOUNTS + a) as i64);
             let mut message = Message::new(account.id, mailbox, received_at);
             message.from = vec![EmailAddress::new(

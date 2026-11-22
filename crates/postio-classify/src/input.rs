@@ -32,8 +32,7 @@ impl<'a> OwnText<'a> {
     }
 
     /// At most [`EXCERPT_CHARS`] of them, a plain prefix with no ellipsis added, since the reader
-    /// finds
-    /// the sentence again by its excerpt. A span past the end is cut at the end.
+    /// finds the sentence again by its excerpt. A span past the end is cut at the end.
     pub fn excerpt(&self, span: &Span) -> String {
         self.text
             .chars()

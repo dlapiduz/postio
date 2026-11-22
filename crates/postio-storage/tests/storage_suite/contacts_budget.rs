@@ -232,8 +232,7 @@ async fn a_contacts_page_is_one_statement_and_no_more_rows_than_it_shows() {
     );
 
     // `accounts` and `identities` are a handful of the user's own addresses, scanned to keep them
-    // out
-    // of the list; scanning people is not expected.
+    // out of the list; scanning people is not expected.
     for (name, scanned) in list_plans(&connection).await {
         let people: Vec<&String> = scanned
             .iter()

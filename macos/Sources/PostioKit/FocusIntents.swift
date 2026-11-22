@@ -3,9 +3,8 @@ import Observation
 import PostioFFI
 
 /// The controller owns the cursor, selection, `!` heading and toast; this decides nothing: a field
-/// changed here that the
-/// event did not name would be the Mac keeping its own opinion of where the keyboard is. No AppKit
-/// (#1264).
+/// changed here that the event did not name would be the Mac keeping its own opinion of where the
+/// keyboard is. No AppKit (#1264).
 @MainActor
 @Observable
 public final class FocusIntents {
@@ -150,8 +149,8 @@ public final class FocusIntents {
     }
 
     /// Not a move of the controller's: until its first `FocusCursor` lands the ring stands on row 0
-    /// (C30), and a cursor past the
-    /// end of a shorter list is drawn on its last row until the controller says where it went.
+    /// (C30), and a cursor past the end of a shorter list is drawn on its last row until the
+    /// controller says where it went.
     public func listResized(count: Int) {
         cursor = count == 0 ? nil : min(cursor ?? 0, count - 1)
     }

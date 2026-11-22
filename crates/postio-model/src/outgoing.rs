@@ -61,13 +61,11 @@ pub struct BuiltMessage {
 }
 
 /// An attachment is embedded inline via `cid:` when it is `Disposition::Inline` with a
-/// `content_id`. `in_reply_to`'s `Message-ID`
-/// becomes `In-Reply-To` and its chain plus that id becomes `References`; a parent with no
-/// `Message-ID` contributes no `In-Reply-To`.
-/// The `Message-ID` comes from `Draft::rfc_message_id` when reserved, else fresh (ADR 0021): a
-/// `Send` is rebuilt on every
-/// drain attempt, so generating one unconditionally made a retried send a distinct message.
-/// `calendar` joins the text and HTML in the `multipart/alternative`.
+/// `content_id`. `in_reply_to`'s `Message-ID` becomes `In-Reply-To` and its chain plus that id
+/// becomes `References`; a parent with no `Message-ID` contributes no `In-Reply-To`. The
+/// `Message-ID` comes from `Draft::rfc_message_id` when reserved, else fresh (ADR 0021): a `Send`
+/// is rebuilt on every drain attempt, so generating one unconditionally made a retried send a
+/// distinct message. `calendar` joins the text and HTML in the `multipart/alternative`.
 pub fn build(
     draft: &Draft,
     identity: &Identity,
@@ -86,9 +84,8 @@ pub fn build(
 }
 
 /// Identical to `build` except it carries `Bcc`: the copy in the user's own Drafts reaches nobody,
-/// and dropping `Bcc` there would
-/// lose typed recipients. Separate entry points, not a boolean, because the wrong answer discloses
-/// a bcc'd address to every recipient.
+/// and dropping `Bcc` there would lose typed recipients. Separate entry points, not a boolean,
+/// because the wrong answer discloses a bcc'd address to every recipient.
 pub fn build_draft(
     draft: &Draft,
     identity: &Identity,
@@ -139,11 +136,9 @@ fn assemble(
     match recipient_list(&draft.to) {
         Some(to) => builder = builder.to(to),
         // A message whose only recipients are bcc'd would have no `To` and read as broken (a
-        // missing `To` is a spam signal),
-        // so it gets the empty group `undisclosed-recipients:;`. Only when nothing else names a
-        // recipient, and only for
-        // `Bcc::Omit`: beside a real `To` it would announce a hidden recipient, and the Drafts copy
-        // keeps its real `Bcc`.
+        // missing `To` is a spam signal), so it gets the empty group `undisclosed-recipients:;`.
+        // Only when nothing else names a recipient, and only for `Bcc::Omit`: beside a real `To` it
+        // would announce a hidden recipient, and the Drafts copy keeps its real `Bcc`.
         None if bcc == Bcc::Omit && draft.cc.is_empty() && !draft.bcc.is_empty() => {
             // A raw header, not `Address::new_group`, which quotes the name: that is not the
             // spelling clients recognise on sight.
@@ -155,8 +150,8 @@ fn assemble(
         builder = builder.cc(cc);
     }
     // Bcc is written only for the Drafts copy: DATA's bytes reach every envelope recipient, so a
-    // Bcc header would hand
-    // them the bcc'd list. A bcc'd address is still a `RCPT TO` the caller adds to the envelope.
+    // Bcc header would hand them the bcc'd list. A bcc'd address is still a `RCPT TO` the caller
+    // adds to the envelope.
     if bcc == Bcc::Include
         && let Some(addresses) = recipient_list(&draft.bcc)
     {
@@ -190,8 +185,8 @@ fn assemble(
 }
 
 /// mail-builder has no place for a third alternative, so this builds the same tree it would with
-/// the calendar in
-/// the `multipart/alternative` (RFC 6047 §2.4). Without a calendar none of this runs.
+/// the calendar in the `multipart/alternative` (RFC 6047 §2.4). Without a calendar none of this
+/// runs.
 fn with_calendar<'x>(
     mut builder: MessageBuilder<'x>,
     calendar: CalendarPart<'_>,
@@ -252,9 +247,8 @@ fn header_text(value: &str) -> String {
 }
 
 /// Structured, so folding is wrong: a space inside `<...>` makes a different invalid id. Dropping
-/// loses nothing (a malformed id threads
-/// nothing) and closes the same injection, which reaches `In-Reply-To` and `References` from one
-/// hostile value.
+/// loses nothing (a malformed id threads nothing) and closes the same injection, which reaches
+/// `In-Reply-To` and `References` from one hostile value.
 fn usable_message_id(id: &RfcMessageId) -> Option<String> {
     let text = id.without_brackets();
     (!text.contains(['\r', '\n'])).then(|| text.to_owned())
@@ -302,8 +296,8 @@ fn add_attachment<'x>(
 }
 
 /// Unconditional, not detected: `postio-model` has no HTML parser or wrapping logic, and
-/// `postio_body::render` is the only
-/// path that fills `draft.body.text` (#333), so this only has to say so on the wire.
+/// `postio_body::render` is the only path that fills `draft.body.text` (#333), so this only has to
+/// say so on the wire.
 fn flowed_text_part(text: String) -> MbMimePart<'static> {
     MbMimePart::new(
         MbContentType::new("text/plain")
@@ -348,8 +342,8 @@ pub fn reserve_message_id(domain: Option<&str>) -> RfcMessageId {
 }
 
 /// Built from `make_boundary` rather than a UUID dependency or this machine's hostname, which
-/// mail-builder's own `Message-ID`
-/// would carry: nothing leaves the machine that the user did not ask for.
+/// mail-builder's own `Message-ID` would carry: nothing leaves the machine that the user did not
+/// ask for.
 fn generate_message_id(domain: &str) -> RfcMessageId {
     RfcMessageId::new(format!("{}@{domain}", make_boundary(".")))
 }

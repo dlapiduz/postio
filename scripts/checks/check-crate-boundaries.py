@@ -165,11 +165,10 @@ NETWORK_CRATES = [
 ]
 
 # What no interface may depend on directly: the store engine and the mail protocol (constitution
-# VII, ADR 0041). The engine is
-# in each interface's graph through the engine crates; this list is checked against the interface's
-# own manifest only.
-# `rusqlite` and `libsqlite3-sys` stay listed: a rule keyed on a name stops holding when the name
-# changes (docs/archive/specs/004-turso-store T002).
+# VII, ADR 0041). The engine is in each interface's graph through the engine crates; this list is
+# checked against the interface's own manifest only. `rusqlite` and `libsqlite3-sys` stay listed: a
+# rule keyed on a name stops holding when the name changes (docs/archive/specs/004-turso-store
+# T002).
 INTERFACE_DIRECT = [
     "rusqlite",
     "libsqlite3-sys",
@@ -282,9 +281,8 @@ RULES: dict[str, dict[str, object]] = {
             "webkit6",
             "webkit6-sys",
             # Every other HTTP client. io-http's TLS is in the resolved graph through workspace-wide
-            # feature unification; the crate's
-            # manifest test holds it to `client`. The connection is std's, to loopback or a local
-            # socket.
+            # feature unification; the crate's manifest test holds it to `client`. The connection is
+            # std's, to loopback or a local socket.
             *[
                 name
                 for name in NETWORK_CRATES

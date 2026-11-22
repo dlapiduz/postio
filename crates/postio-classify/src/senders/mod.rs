@@ -1,6 +1,5 @@
 //! The automated-senders table: who sends mail no person wrote, as data (constitution VII).
-//! Embedded
-//! `data/senders.toml`, generic forms only, never a provider's domain.
+//! Embedded `data/senders.toml`, generic forms only, never a provider's domain.
 
 mod table;
 
@@ -344,8 +343,7 @@ mod tests {
     }
 
     /// Comments are prose, `include_str!`'s path is a file, and the reasons' spellings are the
-    /// store's
-    /// vocabulary, which two of the table's patterns happen to share.
+    /// store's vocabulary, which two of the table's patterns happen to share.
     fn provider_constants(source: &str, patterns: &[String]) -> Vec<String> {
         literals(&code_of(source))
             .into_iter()

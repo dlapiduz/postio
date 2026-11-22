@@ -1,6 +1,5 @@
 //! The reader's remote images, fetched for it. This crate reaches no network: [`remote_fetch`]
-//! joins the reader to the
-//! fetcher the composition root owns, on that root's runtime.
+//! joins the reader to the fetcher the composition root owns, on that root's runtime.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -14,8 +13,7 @@ use crate::reader::view::RemoteArrived;
 pub type Fetched = Vec<(url::Url, Option<Vec<u8>>)>;
 
 /// The reader looks images up by the document's own spelling of each URL, so the answer is mapped
-/// back to it. A URL that
-/// does not parse is never asked for.
+/// back to it. A URL that does not parse is never asked for.
 pub fn remote_fetch<F, Fut>(
     runtime: tokio::runtime::Handle,
     fetch_all: F,

@@ -176,8 +176,7 @@ async fn build() -> Corpus {
                 body.push_str(&format!("{SECOND_WORD} numbers "));
             }
             // The body is stored, then indexed (storing drops its index row), so passages are cut
-            // from
-            // text rather than read as nothing.
+            // from text rather than read as nothing.
             messages
                 .set_body(
                     message.id,

@@ -49,8 +49,7 @@ struct Reading {
 }
 
 /// `caught_up` is set once the catch-up has taken everything it found. With events going to a
-/// single
-/// reader rather than a hub, nothing is heard: the stage catches up and ends.
+/// single reader rather than a hub, nothing is heard: the stage catches up and ends.
 pub(super) fn spawn(
     inner: &Inner,
     config: Arc<RwLock<FocusConfig>>,
@@ -377,10 +376,9 @@ async fn invitation_of(blobs: &BlobStore, row: &Message) -> Option<Invitation> {
 }
 
 /// Marks every message carrying the same event (same `UID` and occurrence) with the newest word,
-/// per
-/// `postio_calendar::supersedes`, so read order does not matter: a cancellation read before its
-/// request still cancels it.
-/// Invitations are re-read from each calendar part because the store keeps no `RECURRENCE-ID`.
+/// per `postio_calendar::supersedes`, so read order does not matter: a cancellation read before its
+/// request still cancels it. Invitations are re-read from each calendar part because the store
+/// keeps no `RECURRENCE-ID`.
 async fn mark_invitation(
     transaction: &Connection,
     blobs: &BlobStore,

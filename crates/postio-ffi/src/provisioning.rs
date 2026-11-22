@@ -1,6 +1,5 @@
 //! Adding an account. Providers are data: what an address is recognised as comes from the preset
-//! table in `postio-account`,
-//! so neither frontend names a provider in a condition.
+//! table in `postio-account`, so neither frontend names a provider in a condition.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum RouteFfi {
@@ -92,8 +91,7 @@ pub fn provider_hint(address: String) -> ProviderHintFfi {
 }
 
 /// What a sign-in is doing, for the sheet while somebody is away in their browser. The loopback
-/// port is the only evidence a
-/// mail client can offer that the waiting thing is Postio.
+/// port is the only evidence a mail client can offer that the waiting thing is Postio.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct SignInProgressFfi {
     pub waiting: bool,
@@ -248,8 +246,7 @@ pub fn sync_window_choices() -> Vec<SyncWindowChoiceFfi> {
 }
 
 /// Write the chosen window to `[sync]` in the installed `config.toml`: `None` when written, a
-/// sentence when not. A failure
-/// costs the size picked, not the account.
+/// sentence when not. A failure costs the size picked, not the account.
 #[uniffi::export]
 pub fn write_initial_sync_window(window: SyncWindowFfi) -> Option<String> {
     postio_ui::onboarding::write_sync_window(window.into())

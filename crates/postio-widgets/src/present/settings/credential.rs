@@ -1,7 +1,6 @@
 //! Updating an account's credential reuses the account form's presenter
-//! ([`crate::present::onboarding`]). It is a dialog
-//! over the running shell, not a window-content swap (ADR 0012 Q1), and `on_saved` only closes: the
-//! engine is already syncing.
+//! ([`crate::present::onboarding`]). It is a dialog over the running shell, not a window-content
+//! swap (ADR 0012 Q1), and `on_saved` only closes: the engine is already syncing.
 
 use gtk::prelude::IsA;
 use postio_client::Client;

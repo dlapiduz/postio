@@ -1,8 +1,7 @@
 //! Focus's list at the boundary. The controller (`postio_focus`, ADR 0045) holds the rules;
-//! `FocusDriver` runs its
-//! requests on the session's runtime, keeps rows in a `ListWindow` the table reads synchronously,
-//! and tells Swift
-//! what to redraw. Rows carry words from the same presenters as GTK's.
+//! `FocusDriver` runs its requests on the session's runtime, keeps rows in a `ListWindow` the table
+//! reads synchronously, and tells Swift what to redraw. Rows carry words from the same presenters
+//! as GTK's.
 
 use std::sync::{Arc, Mutex};
 
@@ -159,8 +158,8 @@ pub struct LabelPillFfi {
 }
 
 /// The colour a label's dot is drawn in, `#rrggbb`: `stored` when the label has one, else derived
-/// from its name,
-/// kept off the accent whose hue is `accent_hue` degrees (`postio_ui::label_colour`).
+/// from its name, kept off the accent whose hue is `accent_hue` degrees
+/// (`postio_ui::label_colour`).
 #[uniffi::export]
 pub fn label_dot_colour(name: String, stored: Option<String>, accent_hue: f64) -> String {
     use postio_ui::label_colour::{Rgb, label_colour};
@@ -429,8 +428,7 @@ pub(crate) struct FocusDriver {
     /// Conversation searches that ran to the end, so a test can count what typing quickly cost.
     search_reads: std::sync::atomic::AtomicUsize,
     /// Each search lane's task in flight: a newer request aborts it, which drops the client's call,
-    /// and the host stops
-    /// the read when its reply channel closes.
+    /// and the host stops the read when its reply channel closes.
     lanes: Mutex<std::collections::HashMap<postio_focus::Lane, tokio::task::AbortHandle>>,
     config_path: Mutex<Option<std::path::PathBuf>>,
     /// The thread open in place, read by the table through display positions. A leaf lock: nothing
@@ -563,8 +561,7 @@ impl FocusDriver {
     }
 
     /// The Mac's chevron click on `position` (a display position): the cursor goes to the row and
-    /// the thread opens,
-    /// or folds when open.
+    /// the thread opens, or folds when open.
     pub(crate) fn chevron_clicked(self: &Arc<Self>, position: u32) {
         self.input(Input::Point(position));
         let open = self.splice().is_some_and(
@@ -682,8 +679,7 @@ impl FocusDriver {
     }
 
     /// The result at `position`, or `None` while its page is on its way: a miss asks for the page,
-    /// and
-    /// `FocusResultsPage` says when.
+    /// and `FocusResultsPage` says when.
     pub(crate) fn result_row(self: &Arc<Self>, position: u64) -> Option<postio_focus::ResultRow> {
         let effects = {
             let mut focus = self.focus.lock().expect("focus lock");
@@ -886,8 +882,7 @@ impl FocusDriver {
             }
             Intent::RefreshList => {
                 // Re-read the pages held in place: each keeps drawing until its page returns;
-                // blanking them first made
-                // the list collapse and regrow on every delete.
+                // blanking them first made the list collapse and regrow on every delete.
                 let (held, stamp) = {
                     let mut list = self.list.lock().expect("list lock");
                     let held: Vec<u32> = list
@@ -1241,8 +1236,7 @@ impl FocusDriver {
     }
 
     /// Hand the controller `Input::Timer(token)` once `after` has passed (the composer's autosave).
-    /// A superseded
-    /// token changes nothing, so no timer is cancelled.
+    /// A superseded token changes nothing, so no timer is cancelled.
     fn timer(self: &Arc<Self>, token: u64, after: std::time::Duration) {
         let driver = Arc::clone(self);
         self.runtime.spawn(async move {

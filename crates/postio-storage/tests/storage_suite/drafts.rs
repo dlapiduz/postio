@@ -967,8 +967,7 @@ async fn a_uid_that_matches_a_draft_in_a_different_folder_is_an_ordinary_message
 #[tokio::test]
 async fn a_draft_whose_append_was_never_located_hides_nothing() {
     // No `UIDPLUS`: the copy's location is unknown, and guessing which Drafts message is ours is
-    // what
-    // `postio-sync` refuses to do.
+    // what `postio-sync` refuses to do.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, drafts) = account_with_drafts(&connection).await;
@@ -1017,8 +1016,7 @@ async fn a_draft_recorded_under_an_older_generation_hides_nothing() {
 #[tokio::test]
 async fn a_message_row_that_beat_the_draft_to_its_uid_is_taken_back_out() {
     // A sync pass can fetch the appended copy before `set_server_copy` records it; claiming the
-    // copy
-    // also removes that duplicate.
+    // copy also removes that duplicate.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, drafts) = account_with_drafts(&connection).await;
@@ -1660,8 +1658,7 @@ async fn saving_and_loading_a_draft_costs_a_fixed_number_of_statements() {
         loading_large.statements, loading.statements
     );
     // Budgets the rate: about four statements per row measured, so six leaves room for an
-    // incidental
-    // change and none for a doubling.
+    // incidental change and none for a doubling.
     let extra_rows = (16 - 1) + 8;
     assert!(
         saving_large.statements <= saving.statements + extra_rows * 6,

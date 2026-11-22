@@ -1,10 +1,8 @@
 //! A `GListModel` windowed over paged storage, for any row type: a mailbox is never loaded into
-//! memory.
-//! The model asks a [`PageSource`] for the page it needs and waits; whoever implements it calls
-//! [`WindowedModel::deliver`]
-//! on the main thread. Paging and generation bookkeeping live in `postio-ui`; here is what GTK's
-//! contract demands: row
-//! `GObject` identity, `items_changed` emission and the `reading`/`hold` re-entrancy guard.
+//! memory. The model asks a [`PageSource`] for the page it needs and waits; whoever implements it
+//! calls [`WindowedModel::deliver`] on the main thread. Paging and generation bookkeeping live in
+//! `postio-ui`; here is what GTK's contract demands: row `GObject` identity, `items_changed`
+//! emission and the `reading`/`hold` re-entrancy guard.
 
 use std::cell::{Cell, Ref, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -30,8 +28,7 @@ pub trait PageSource {
 }
 
 /// Filled in place, not replaced, so the same object stays where it is and a page landing tells
-/// only the rows it fills
-/// rather than rebuilding every widget in range (#1216).
+/// only the rows it fills rather than rebuilding every widget in range (#1216).
 pub trait ModelRow: ListRow + IsA<glib::Object> + Clone + 'static {
     type Data: Clone + PartialEq + 'static;
 
@@ -53,10 +50,8 @@ pub trait ModelRow: ListRow + IsA<glib::Object> + Clone + 'static {
 }
 
 /// `filled`: rows that already existed now have contents; not `items_changed`, which costs a
-/// rebuilt widget per row in range.
-/// `splicing`: a refresh is about to tell the view what moved (`true`) or has finished (`false`);
-/// whoever keeps the cursor
-/// holds it still across the pair.
+/// rebuilt widget per row in range. `splicing`: a refresh is about to tell the view what moved
+/// (`true`) or has finished (`false`); whoever keeps the cursor holds it still across the pair.
 pub fn signals() -> Vec<glib::subclass::Signal> {
     vec![
         glib::subclass::Signal::builder("filled").build(),
@@ -90,11 +85,9 @@ pub struct Windowed<R: ModelRow> {
     /// `hold`).
     reading: Cell<bool>,
     /// The row each position answers with while that position means the same thing. A page landing
-    /// on existing positions is
-    /// filled in on the object the view holds: `items_changed` makes `GtkListView` build a widget
-    /// per item in range (a page
-    /// of fifty built fifty, #1216). Dropped when a position stops meaning what it did (new scope,
-    /// insertion at the top, eviction).
+    /// on existing positions is filled in on the object the view holds: `items_changed` makes
+    /// `GtkListView` build a widget per item in range (a page of fifty built fifty, #1216). Dropped
+    /// when a position stops meaning what it did (new scope, insertion at the top, eviction).
     handed: RefCell<HashMap<u32, R>>,
     refresh: RefCell<Option<Refresh<R::Data>>>,
     /// A position asked for in between answers without asking the source: the next step may fill
@@ -142,8 +135,7 @@ pub trait WindowedModel: IsA<gtk::gio::ListModel> + IsA<glib::Object> + Clone + 
     fn windowed(&self) -> &Windowed<Self::Row>;
 
     /// `row_at` may ask the source for a page, and a source that answers before returning would
-    /// change the model inside this
-    /// call: marking the read holds those changes until it is over.
+    /// change the model inside this call: marking the read holds those changes until it is over.
     fn list_item(&self, position: u32) -> Option<glib::Object> {
         let state = self.windowed();
         let outer = state.reading.replace(true);
@@ -162,13 +154,11 @@ pub trait WindowedModel: IsA<gtk::gio::ListModel> + IsA<glib::Object> + Clone + 
     }
 
     /// `PageSource::request` runs inside `item()`, so a source that delivers before returning
-    /// changes the model mid-read, which
-    /// segfaults `GtkListView` far from the mistake: the change is held one main-loop turn.
-    /// Above GDK's redraw band on purpose: `idle_add_local_once` runs at priority 200 and GDK
-    /// paints at
-    /// `GDK_PRIORITY_REDRAW` (120), so a window painting every turn starves it (#1015: a list at
-    /// zero resident rows for
-    /// five seconds). `HIGH_IDLE` lands before the frame that would draw the state it corrects.
+    /// changes the model mid-read, which segfaults `GtkListView` far from the mistake: the change
+    /// is held one main-loop turn. Above GDK's redraw band on purpose: `idle_add_local_once` runs
+    /// at priority 200 and GDK paints at `GDK_PRIORITY_REDRAW` (120), so a window painting every
+    /// turn starves it (#1015: a list at zero resident rows for five seconds). `HIGH_IDLE` lands
+    /// before the frame that would draw the state it corrects.
     fn hold(&self, action: impl FnOnce(&Self) + 'static) {
         let list = self.clone();
         // `_full` because only it takes a priority; the `Option` lets an `FnOnce` fit its `FnMut`.
@@ -182,8 +172,7 @@ pub trait WindowedModel: IsA<gtk::gio::ListModel> + IsA<glib::Object> + Clone + 
     }
 
     /// Stamp it on a request and pass it back to `deliver_for`/`deliver_page`: a reply with an
-    /// older generation is dropped,
-    /// since the scope changed in flight.
+    /// older generation is dropped, since the scope changed in flight.
     fn generation(&self) -> u64 {
         let state = self.windowed();
         if let Some(next) = state.next.borrow().as_ref() {
@@ -294,8 +283,7 @@ pub trait WindowedModel: IsA<gtk::gio::ListModel> + IsA<glib::Object> + Clone + 
     }
 
     /// Assumes the page answers the scope in view, for callers with no generation to compare.
-    /// Resident rows for the same
-    /// message keep their `GObject` ([`ListRow::reconcile`]).
+    /// Resident rows for the same message keep their `GObject` ([`ListRow::reconcile`]).
     fn deliver(&self, page: u32, rows: Vec<<Self::Row as ModelRow>::Data>) {
         let generation = self.generation();
         self.deliver_for(generation, page, rows);
@@ -415,8 +403,7 @@ pub trait WindowedModel: IsA<gtk::gio::ListModel> + IsA<glib::Object> + Clone + 
     }
 
     /// A refresh holding its other pages for this one applies what it has, and a change-over
-    /// waiting on a first page that
-    /// never comes changes over to the count the source knows.
+    /// waiting on a first page that never comes changes over to the count the source knows.
     fn give_up(&self, generation: u64, page: u32) {
         let state = self.windowed();
         if state.reading.get() {
@@ -437,8 +424,7 @@ pub trait WindowedModel: IsA<gtk::gio::ListModel> + IsA<glib::Object> + Clone + 
         }
         state.window.borrow_mut().abandon(generation, page);
         // Nothing is the answer, which ends the wait as an empty first page does: a search with no
-        // hits has no page 0, and the
-        // pane withheld "nothing matched" for good.
+        // hits has no page 0, and the pane withheld "nothing matched" for good.
         if generation == self.generation() && state.loading.replace(false) {
             self.emit_by_name::<()>("filled", &[]);
         }
@@ -465,8 +451,7 @@ pub trait WindowedModel: IsA<gtk::gio::ListModel> + IsA<glib::Object> + Clone + 
             return;
         }
         // Bound first: a temporary borrowed in an `if let` condition lives for the whole statement,
-        // and `items_changed` below
-        // re-enters `item()` synchronously.
+        // and `items_changed` below re-enters `item()` synchronously.
         let change = state.window.borrow_mut().set_total(total);
         state
             .handed
@@ -495,8 +480,7 @@ pub trait WindowedModel: IsA<gtk::gio::ListModel> + IsA<glib::Object> + Clone + 
     }
 
     /// A call made while the model is answering `item()` is held and reports `false`. A message not
-    /// on screen needs no
-    /// update: its page is fetched fresh.
+    /// on screen needs no update: its page is fetched fresh.
     fn update_row(&self, row: <Self::Row as ModelRow>::Data) -> bool {
         let state = self.windowed();
         if state.reading.get() {
@@ -510,8 +494,7 @@ pub trait WindowedModel: IsA<gtk::gio::ListModel> + IsA<glib::Object> + Clone + 
             return false;
         };
         // Same position and message: the row announces itself and the model stays quiet; only a row
-        // nothing holds goes through
-        // `items_changed`.
+        // nothing holds goes through `items_changed`.
         let held = state.handed.borrow().get(&position).cloned();
         match held {
             Some(held) => held.fill(row),
@@ -534,12 +517,10 @@ pub trait WindowedModel: IsA<gtk::gio::ListModel> + IsA<glib::Object> + Clone + 
     }
 
     /// Re-reads the pages holding a row the view or selection holds; until all land the list
-    /// answers with what it had. Each
-    /// run is then compared by message id ([`postio_ui::list::splices`]) and only removals and
-    /// insertions at their position
-    /// are emitted, so the view keeps its scroll anchor and other rows' widgets. Asked again while
-    /// one is out, it runs once
-    /// more after it lands.
+    /// answers with what it had. Each run is then compared by message id
+    /// ([`postio_ui::list::splices`]) and only removals and insertions at their position are
+    /// emitted, so the view keeps its scroll anchor and other rows' widgets. Asked again while one
+    /// is out, it runs once more after it lands.
     fn refresh(&self) {
         let state = self.windowed();
         if state.reading.get() {
@@ -585,8 +566,7 @@ pub trait WindowedModel: IsA<gtk::gio::ListModel> + IsA<glib::Object> + Clone + 
                 .retain(|_, row| row.ref_count() > 1);
             if pending {
                 // A read out since before what this refresh is for: mail written while the empty
-                // inbox was being read stayed
-                // unlisted (#2152).
+                // inbox was being read stayed unlisted (#2152).
                 state.top_again.set(true);
             } else {
                 request(self, 0);
@@ -623,9 +603,8 @@ pub trait WindowedModel: IsA<gtk::gio::ListModel> + IsA<glib::Object> + Clone + 
     }
 
     /// `false`, with nothing changed, unless every one is resident and removable; the caller
-    /// reloads then. Removed
-    /// bottom-up, one `items_changed(position, 1, 0)` each, so the view keeps every other row's
-    /// widget.
+    /// reloads then. Removed bottom-up, one `items_changed(position, 1, 0)` each, so the view keeps
+    /// every other row's widget.
     fn remove_in_place(&self, messages: &[MessageId]) -> bool {
         let state = self.windowed();
         if state.reading.get() {
@@ -689,8 +668,7 @@ pub trait WindowedModel: IsA<gtk::gio::ListModel> + IsA<glib::Object> + Clone + 
     }
 
     /// `None` covers both "not in this mailbox" and "resident but not fetched yet"; callers treat
-    /// them the same: ask for the
-    /// page and retry.
+    /// them the same: ask for the page and retry.
     fn position_of(&self, message: MessageId) -> Option<u32> {
         self.windowed().window.borrow().position_of(message)
     }
@@ -700,8 +678,7 @@ pub trait WindowedModel: IsA<gtk::gio::ListModel> + IsA<glib::Object> + Clone + 
     }
 
     /// Unlike [`list_item`](Self::list_item), asks the source for nothing: a Shift-click across ten
-    /// thousand rows must not
-    /// request ten thousand.
+    /// thousand rows must not request ten thousand.
     fn peek(&self, position: u32) -> Option<MessageId> {
         self.windowed().window.borrow().peek(position)
     }
@@ -794,10 +771,9 @@ fn change_over<M: WindowedModel>(
 }
 
 /// Two steps: `GtkSingleSelection`, told its selected row was replaced, looks for it among every
-/// added row with one `item()`
-/// each (opening a 3,618-conversation folder asked for 73 pages). So the replace covers only the
-/// rows already held from
-/// the top and the rest is an insertion at the end.
+/// added row with one `item()` each (opening a 3,618-conversation folder asked for 73 pages). So
+/// the replace covers only the rows already held from the top and the rest is an insertion at the
+/// end.
 fn swap_in<M: WindowedModel>(model: &M, removed: u32, total: u32) {
     let head = {
         let mut window = model.windowed().window.borrow_mut();
@@ -985,8 +961,7 @@ fn shift_handed<M: WindowedModel>(model: &M, position: u32, removed: u32, added:
 }
 
 /// The one place a page is asked for, so the place to count from (#1534). Deduplication against
-/// cached or pending pages
-/// happens in [`ListWindow`].
+/// cached or pending pages happens in [`ListWindow`].
 fn request<M: WindowedModel>(model: &M, page: u32) {
     postio_ui::reader::cost::note_page_requested();
     let source = model.windowed().source.borrow().clone();

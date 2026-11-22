@@ -206,8 +206,8 @@ impl ContactSettings {
     }
 
     /// Takes what `other` decided where this one decided nothing, so a pin or digest is never
-    /// silently dropped
-    /// by a merge. Where both decided, this one stands. A marker kind is a gap per kind.
+    /// silently dropped by a merge. Where both decided, this one stands. A marker kind is a gap per
+    /// kind.
     pub fn absorb(&mut self, other: &ContactSettings) {
         if self.arrival.is_none() && other.arrival.is_some() {
             self.arrival = other.arrival;

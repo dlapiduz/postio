@@ -237,8 +237,8 @@ async fn a_list_that_changed_length_throws_the_remembered_boundaries_away() {
 #[tokio::test]
 async fn a_cached_count_of_zero_is_checked_rather_than_believed() {
     // The total is the list model's `n_items`, and a `GtkListView` over length zero asks for no
-    // pages, so a count
-    // wrong low draws an empty mailbox; the read must degrade to slow, not invisible.
+    // pages, so a count wrong low draws an empty mailbox; the read must degrade to slow, not
+    // invisible.
     let database = test_support::memory().await;
     let report = seed_small(&database, 5).await;
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;

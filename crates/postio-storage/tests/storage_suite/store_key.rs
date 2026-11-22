@@ -82,8 +82,7 @@ fn the_three_purposes_are_cryptographically_separated() {
 #[test]
 fn the_derivation_contexts_are_the_ones_the_adr_named() {
     // Test vectors, pinned: these strings are part of the on-disk format, and changing one stops
-    // every
-    // existing store opening. Computed from BLAKE3's `derive_key`, not pasted.
+    // every existing store opening. Computed from BLAKE3's `derive_key`, not pasted.
     let key = fixed();
     for (purpose, context) in [
         (Purpose::Database, "postio db"),

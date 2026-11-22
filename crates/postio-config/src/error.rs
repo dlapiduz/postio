@@ -29,8 +29,7 @@ pub enum ConfigError {
     Parse { path: String, message: String },
 
     /// The watcher error is kept as text: `notify` is an implementation detail of `watch` and does
-    /// not
-    /// belong in the public API.
+    /// not belong in the public API.
     #[error("cannot watch {path}: {message}")]
     Watch { path: PathBuf, message: String },
 

@@ -1,13 +1,11 @@
-# Sourced by scripts/install-{nextest,hakari,machete,cargo-deny}.sh.
-# The pins install side by side: sessions on different commits share ~/.cargo/bin, and a branch
-# bumping a pin made them swap versions until it merged.
-# Each version gets ${POSTIO_TOOLS_DIR:-~/.local/share/postio-tools}/<cargo-tool>/<version>/bin/ and
-# ~/.cargo/bin/<cargo-tool> becomes `cargo-tool-shim.sh`,
-# which reads the pin from the checkout it runs in. `cargo nextest` is looked up on PATH as
-# `cargo-nextest`, so callers need no cooperation;
-# mise cannot pin nextest and aliases cannot name per-commit versions.
-# CI (GITHUB_ACTIONS set) keeps the plain install, with no shim, so ci.yml's cache keyed on the
-# install script is unchanged.
+# Sourced by scripts/install-{nextest,hakari,machete,cargo-deny}.sh. The pins install side by side:
+# sessions on different commits share ~/.cargo/bin, and a branch bumping a pin made them swap
+# versions until it merged. Each version gets
+# ${POSTIO_TOOLS_DIR:-~/.local/share/postio-tools}/<cargo-tool>/<version>/bin/ and
+# ~/.cargo/bin/<cargo-tool> becomes `cargo-tool-shim.sh`, which reads the pin from the checkout it
+# runs in. `cargo nextest` is looked up on PATH as `cargo-nextest`, so callers need no cooperation;
+# mise cannot pin nextest and aliases cannot name per-commit versions. CI (GITHUB_ACTIONS set) keeps
+# the plain install, with no shim, so ci.yml's cache keyed on the install script is unchanged.
 
 PT_LIB=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 

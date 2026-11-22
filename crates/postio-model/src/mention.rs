@@ -1,7 +1,6 @@
 //! Did they say "attached" and attach nothing? Fires only on the user's own words: a quoted
-//! original is somebody
-//! else's writing and a signature is boilerplate. Plain text, so the check stays in `postio-model`
-//! where every frontend reaches it.
+//! original is somebody else's writing and a signature is boilerplate. Plain text, so the check
+//! stays in `postio-model` where every frontend reaches it.
 
 use crate::Draft;
 use crate::signature;

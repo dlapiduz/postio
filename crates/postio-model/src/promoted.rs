@@ -1,7 +1,6 @@
 //! The three headers Focus reads before a body arrives: `List-Unsubscribe`, `Precedence`,
-//! `Auto-Submitted`. Promoted (ADR 0025)
-//! so the filing pass can tell bulk and automated mail at arrival; one reading here keeps the
-//! fetch, the body and `is:bulk`/`is:automated` in agreement.
+//! `Auto-Submitted`. Promoted (ADR 0025) so the filing pass can tell bulk and automated mail at
+//! arrival; one reading here keeps the fetch, the body and `is:bulk`/`is:automated` in agreement.
 
 use serde::{Deserialize, Serialize};
 

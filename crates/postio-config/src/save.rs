@@ -1,12 +1,11 @@
 //! A contract with `watch`: the watcher sees a create-or-modify of a scratch file followed by a
-//! rename,
-//! so an in-place write would be invisible to the running app. Both frontends save through here.
+//! rename, so an in-place write would be invisible to the running app. Both frontends save through
+//! here.
 
 use std::path::Path;
 
 /// The watcher is built to see exactly this shape of save, so the panel's edits reach the app the
-/// way
-/// `$EDITOR`'s do.
+/// way `$EDITOR`'s do.
 pub fn write_atomically(path: &Path, text: &str) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;

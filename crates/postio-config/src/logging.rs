@@ -1,7 +1,6 @@
 //! `[logging]`: a setting as well as `POSTIO_LOG` because the config is watched and applied live,
-//! so a
-//! running, misbehaving process can be made louder. `POSTIO_LOG` wins over `[logging]`. No level
-//! unlocks message content; `postio-runtime`'s `logging_privacy` test holds that.
+//! so a running, misbehaving process can be made louder. `POSTIO_LOG` wins over `[logging]`. No
+//! level unlocks message content; `postio-runtime`'s `logging_privacy` test holds that.
 
 use serde::{Deserialize, Serialize};
 
@@ -32,8 +31,7 @@ pub enum LogLevel {
 
 impl LogLevel {
     /// A string rather than a `tracing` type: this crate is the schema and must not drag a
-    /// subscriber into
-    /// everything that reads a config file.
+    /// subscriber into everything that reads a config file.
     pub const fn as_str(self) -> &'static str {
         match self {
             LogLevel::Off => "off",
@@ -57,8 +55,7 @@ pub struct LoggingConfig {
     #[serde(default)]
     pub level: LogLevel,
     /// Kept as an unparsed string: a directive this build cannot parse has to survive a round trip
-    /// like
-    /// any other hand-edit.
+    /// like any other hand-edit.
     #[serde(default)]
     pub filter: String,
     #[serde(default = "crate::yes")]

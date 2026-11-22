@@ -8,11 +8,9 @@ pub mod properties;
 /// Let a contained panic be contained instead of aborting the process.
 ///
 /// `fuzz_target!` installs a hook that aborts before unwinding, so `catch_unwind` never runs and a
-/// panic
-/// `postio_model::mime::parse` contains on purpose (#277) would look like a crash. This replaces
-/// the hook
-/// with a no-op. An uncaught panic still aborts at libFuzzer's `extern "C"` frame, so assertion
-/// failures are still found.
+/// panic `postio_model::mime::parse` contains on purpose (#277) would look like a crash. This
+/// replaces the hook with a no-op. An uncaught panic still aborts at libFuzzer's `extern "C"`
+/// frame, so assertion failures are still found.
 pub fn allow_contained_panics() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {

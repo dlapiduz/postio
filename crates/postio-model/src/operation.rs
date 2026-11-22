@@ -60,9 +60,8 @@ impl OperationTarget {
 }
 
 /// The undo handle for a bulk enqueue: one row per message (each carries its UID) but never one id
-/// each in a human-scale
-/// structure. Inclusive and exact: `first` is the highest id before the statement and `last` where
-/// it ended, so another writer's row cannot widen it.
+/// each in a human-scale structure. Inclusive and exact: `first` is the highest id before the
+/// statement and `last` where it ended, so another writer's row cannot widen it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OperationRange {
     pub first: OperationId,
@@ -155,24 +154,21 @@ pub enum Operation {
         draft: DraftId,
     },
     /// Carries no bytes: a draft is autosaved as the user types and building its RFC 5322 form
-    /// reads every attachment from the
-    /// blob store, so the bytes are built once, when this drains, from the draft as it then is.
-    /// That is also what lets two of these fold into one.
+    /// reads every attachment from the blob store, so the bytes are built once, when this drains,
+    /// from the draft as it then is. That is also what lets two of these fold into one.
     SaveDraft {
         mailbox: MailboxId,
     },
     /// Names its message because the local draft row is gone by the time it drains. The identity is
-    /// the backend's `RemoteId`
-    /// (#543), which for IMAP packs the generation, so a copy uploaded under a renumbered mailbox
-    /// cannot be confused with another message.
+    /// the backend's `RemoteId` (#543), which for IMAP packs the generation, so a copy uploaded
+    /// under a renumbered mailbox cannot be confused with another message.
     DiscardDraft {
         mailbox: MailboxId,
         remote_id: RemoteId,
     },
     /// Phases 1-2 of a cross-account move (#188, ADR 0005 Q9). Runs on the target account's queue;
-    /// the source blob,
-    /// target mailbox and phase live on the saga row, the state the two queues share instead of a
-    /// transaction.
+    /// the source blob, target mailbox and phase live on the saga row, the state the two queues
+    /// share instead of a transaction.
     CrossAccountCopy {
         saga: CrossAccountMoveId,
     },
@@ -203,12 +199,11 @@ impl Operation {
     }
 
     /// No inverse: `Expunge` destroys mail, and an undo that silently did nothing is worse than
-    /// none. `Append` and `Send` have no
-    /// server identity at enqueue time; undoing a send cancels the queued row. `SaveDraft` would
-    /// need the prior text, which is not kept;
-    /// `DiscardDraft` destroys the server's only copy. The cross-account phases are saga steps:
-    /// undo is the inverse saga (ADR 0005 Q9),
-    /// never a per-operation inverse, which could delete before anything copied.
+    /// none. `Append` and `Send` have no server identity at enqueue time; undoing a send cancels
+    /// the queued row. `SaveDraft` would need the prior text, which is not kept; `DiscardDraft`
+    /// destroys the server's only copy. The cross-account phases are saga steps: undo is the
+    /// inverse saga (ADR 0005 Q9), never a per-operation inverse, which could delete before
+    /// anything copied.
     pub fn inverse(&self) -> Option<Self> {
         match self {
             Self::SetFlags { flags } => Some(Self::ClearFlags {

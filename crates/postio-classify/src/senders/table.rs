@@ -1,7 +1,6 @@
 //! Parsed here and compiled a second time by `build.rs` through `#[path]`, so the parser that
-//! validates
-//! the shipped table at build time is the one the classifier loads. It names nothing else in the
-//! crate.
+//! validates the shipped table at build time is the one the classifier loads. It names nothing else
+//! in the crate.
 
 use std::fmt;
 

@@ -741,8 +741,7 @@ def main() -> int:
     session = payload.get("session_id") or ""
 
     # A `cd` into a private worktree can only grant the exemption. A `cd` elsewhere leaves `where`
-    # as the
-    # session's own directory, so `cd .. && git reset --hard` stays refused.
+    # as the session's own directory, so `cd .. && git reset --hard` stays refused.
     destination = cd_destination(command, cwd)
     where = destination if is_worktree(worktrees, destination) else cwd
 

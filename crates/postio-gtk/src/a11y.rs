@@ -1,6 +1,5 @@
 //! Keycaps as a screen reader meets them: a cap inside a button gives that button its key as
-//! `KeyShortcuts` (ARIA spelling),
-//! never as text; a free-standing cap is content and is left alone.
+//! `KeyShortcuts` (ARIA spelling), never as text; a free-standing cap is content and is left alone.
 
 use gtk::prelude::*;
 

@@ -3,13 +3,10 @@ import os
 import PostioKit
 
 /// Every item shows its accelerator and none has a key equivalent: dispatch is `KeyMonitor`'s, and
-/// two
-/// things claiming one keystroke is a race (ADR 0019 Q4). The accelerator is drawn in an attributed
-/// title, so it can be absent for `g g`.
-/// SwiftUI mutates the existing `mainMenu` in place, dropping submenus it does not know, so
-/// identity is no
-/// test; the shape is. No notification fires late enough, so the menu is watched for items arriving
-/// and leaving (#1262).
+/// two things claiming one keystroke is a race (ADR 0019 Q4). The accelerator is drawn in an
+/// attributed title, so it can be absent for `g g`. SwiftUI mutates the existing `mainMenu` in
+/// place, dropping submenus it does not know, so identity is no test; the shape is. No notification
+/// fires late enough, so the menu is watched for items arriving and leaving (#1262).
 @MainActor
 public enum MenuBar {
     public static func install(
@@ -43,11 +40,10 @@ public enum MenuBar {
     private static var recipe: Recipe?
 
     /// AppKit's own items (Undo, Redo, Cut, Copy, Paste, Select All, Hide, Close, Minimize) carry
-    /// real key
-    /// equivalents: on this platform those keys reach a text field or window only through a menu
-    /// item (#1262, #1298).
-    /// No race with Postio's keys: `KeyMonitor` runs before menu key equivalents, and in a text
-    /// field `KeyDisposition.belongsToText` hands ⌘A, ⌘C, ⌘V, ⌘X, ⌘Z to the field.
+    /// real key equivalents: on this platform those keys reach a text field or window only through
+    /// a menu item (#1262, #1298). No race with Postio's keys: `KeyMonitor` runs before menu key
+    /// equivalents, and in a text field `KeyDisposition.belongsToText` hands ⌘A, ⌘C, ⌘V, ⌘X, ⌘Z to
+    /// the field.
     private static func mount() {
         guard let recipe else { return }
         let target = CommandTarget(run: recipe.run, available: recipe.available)
@@ -157,9 +153,8 @@ public enum MenuBar {
     public private(set) static var remounts = 0
 
     /// Key-value observation on the menu rather than the notifications around it: every one fires
-    /// before
-    /// the rebuild that matters, so reasserting there restored a bar SwiftUI then replaced again.
-    /// The pointer check in `reassert` makes this terminate.
+    /// before the rebuild that matters, so reasserting there restored a bar SwiftUI then replaced
+    /// again. The pointer check in `reassert` makes this terminate.
     private static func watch() {
         guard observers.isEmpty else { return }
         for name in [NSMenu.didAddItemNotification, NSMenu.didRemoveItemNotification] {
@@ -168,8 +163,8 @@ public enum MenuBar {
                     forName: name, object: nil, queue: .main
                 ) { _ in
                     // Any menu: the notification's object is not `Sendable`, and the shape check in
-                    // `reassert`
-                    // answers "was that the bar?". Async, so SwiftUI finishes its edit first.
+                    // `reassert` answers "was that the bar?". Async, so SwiftUI finishes its edit
+                    // first.
                     DispatchQueue.main.async { reassert() }
                 }
             )
@@ -193,8 +188,7 @@ public enum MenuBar {
         if let shortcut = planned.shortcut {
             item.attributedTitle = attributed(planned.title, shortcut: shortcut)
             // An attributed title becomes the accessibility name, tab and glyph included (VoiceOver
-            // read
-            // "Command palette tab ⌘K"), so the plain title is set.
+            // read "Command palette tab ⌘K"), so the plain title is set.
             item.setAccessibilityTitle(planned.title)
         }
         return item

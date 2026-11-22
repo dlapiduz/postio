@@ -1,6 +1,6 @@
 //! The RFC 3676 §4.3 `-- ` separator means everything after it is signature, so it must be last.
-//! `apply` replaces
-//! rather than appends: idempotent, and an identity switch swaps one signature for the other.
+//! `apply` replaces rather than appends: idempotent, and an identity switch swaps one signature for
+//! the other.
 
 pub const SEPARATOR: &str = "-- ";
 

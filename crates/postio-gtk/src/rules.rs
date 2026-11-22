@@ -1,6 +1,5 @@
 //! The digest rules list, `g r`, in Filtered's full-view frame. Removing asks first, because it
-//! releases what the rule held into the inbox
-//! and no undo takes a rule's mail back into it.
+//! releases what the rule held into the inbox and no undo takes a rule's mail back into it.
 
 use std::cell::RefCell;
 use std::rc::Rc;

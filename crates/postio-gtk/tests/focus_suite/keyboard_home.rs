@@ -223,8 +223,7 @@ pub fn a_list_that_opens_takes_the_keyboard_from_a_row_to_the_first() {
             pane.cursor().selected()
         );
         // The list view rebuilds its rows on the next layout and the row holding the keyboard goes
-        // with the old ones, so for a turn or more
-        // nothing has focus; wait for `scroll_to(FOCUS)`.
+        // with the old ones, so for a turn or more nothing has focus; wait for `scroll_to(FOCUS)`.
         let on_the_first_row = || {
             let first = pane.rows_on_screen().into_iter().next()?;
             let item = first.ancestor(gtk::glib::Type::from_name("GtkListItemWidget")?)?;

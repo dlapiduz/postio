@@ -59,8 +59,7 @@ pub use validate::{Checked, ErrorKind, Validation, ValidationError};
 pub use watch::{ConfigWatcher, WatchOptions};
 
 /// `Inbox` is not overridable: IMAP names that folder itself (RFC 3501), so remapping it would
-/// disagree
-/// with every other client. `Regular` is the absence of a role.
+/// disagree with every other client. `Regular` is the absence of a role.
 pub(crate) fn overridable(role: MailboxRole) -> bool {
     !matches!(role, MailboxRole::Inbox | MailboxRole::Regular)
 }
@@ -89,8 +88,8 @@ pub struct Config {
     #[serde(default, rename = "saved_searches")]
     pub filters: BTreeMap<String, FilterConfig>,
     /// A `String` rather than a parsed role: an unknown key has to survive to validation, which
-    /// reports it
-    /// with a line number; parsing here would drop a typo silently (see `Config::role_overrides`).
+    /// reports it with a line number; parsing here would drop a typo silently (see
+    /// `Config::role_overrides`).
     #[serde(default)]
     pub mailboxes: BTreeMap<String, String>,
     #[serde(default)]
@@ -117,9 +116,8 @@ pub struct Config {
 
 impl Config {
     /// Keys that are not roles are dropped, never guessed: a typo resolved to the nearest role
-    /// would file
-    /// mail somewhere nobody chose. `inbox` is dropped because IMAP names that folder itself.
-    /// Validation reports both.
+    /// would file mail somewhere nobody chose. `inbox` is dropped because IMAP names that folder
+    /// itself. Validation reports both.
     pub fn role_overrides(&self) -> RoleOverrides {
         RoleOverrides::from_pairs(self.mailboxes.iter().filter_map(|(role, path)| {
             let role = MailboxRole::from_name(role)?;
@@ -159,8 +157,7 @@ impl Config {
     }
 
     /// Keeps the `toml` error: validation needs its span and key path to point the validity line at
-    /// the
-    /// right character.
+    /// the right character.
     pub(crate) fn parse_raw(text: &str) -> std::result::Result<Self, toml::de::Error> {
         let mut table: Table = toml::from_str(text)?;
         let rejected_secrets = secrets::strip_secrets(&mut table);
@@ -176,8 +173,7 @@ impl Config {
     }
 
     /// Secret-bearing keys are stripped again on the way out, so a secret cannot reach disk even if
-    /// one
-    /// was injected into an `Extras` map.
+    /// one was injected into an `Extras` map.
     pub fn to_toml_string(&self) -> Result<String> {
         let value = Value::try_from(self).map_err(|err| ConfigError::Serialize(err.to_string()))?;
         let Value::Table(mut table) = value else {

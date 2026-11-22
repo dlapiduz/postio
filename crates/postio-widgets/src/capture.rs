@@ -1,8 +1,7 @@
-//! Renders a window to a texture, waiting on a condition rather than a frame count.
-//! GTK will not snapshot a widget with a pending resize, and a compositor that stopped presenting
-//! never
-//! services one, so the layout is forced here. A compositor is still required: an unmapped window
-//! has no picture.
+//! Renders a window to a texture, waiting on a condition rather than a frame count. GTK will not
+//! snapshot a widget with a pending resize, and a compositor that stopped presenting never services
+//! one, so the layout is forced here. A compositor is still required: an unmapped window has no
+//! picture.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -23,8 +22,7 @@ pub struct Written {
     pub width: i32,
     pub height: i32,
     /// The compositor had stopped presenting this window. The picture is still the widgets' own,
-    /// but a WebKit
-    /// view composites through the compositor and renders black on a stalled surface.
+    /// but a WebKit view composites through the compositor and renders black on a stalled surface.
     pub stalled: bool,
 }
 
@@ -80,8 +78,7 @@ pub fn texture_within(
     let started = Instant::now();
 
     // A blocking iteration lets the frame clock tick; a non-blocking one returns at once when
-    // nothing is
-    // pending. The heartbeat guarantees the blocking one returns.
+    // nothing is pending. The heartbeat guarantees the blocking one returns.
     let context = glib::MainContext::default();
     let heartbeat =
         glib::timeout_add_local(Duration::from_millis(10), || glib::ControlFlow::Continue);
@@ -119,8 +116,7 @@ pub fn texture_within(
 }
 
 /// Renders `widget` as it is this instant, without waiting for the compositor: for callers already
-/// watching
-/// frames (storyboard settle sampling), who would pay the wait every time.
+/// watching frames (storyboard settle sampling), who would pay the wait every time.
 pub fn texture_now(widget: &impl IsA<gtk::Widget>) -> Result<gdk::Texture, Error> {
     render_now(widget.as_ref(), None::<fn(&gtk::Snapshot)>)
 }
@@ -163,11 +159,9 @@ fn render_now<F: FnOnce(&gtk::Snapshot)>(
 }
 
 /// `None` for a widget with no allocation as well as one GTK will not snapshot: a zero-sized window
-/// renders a blank PNG, not an error.
-/// GTK refuses to snapshot a widget with a pending resize, which only the frame clock's layout
-/// phase services and a stalled
-/// compositor never runs, so `allocate` re-runs the queued pass on every capture. The window's own
-/// CSS background is not in the picture.
+/// renders a blank PNG, not an error. GTK refuses to snapshot a widget with a pending resize, which
+/// only the frame clock's layout phase services and a stalled compositor never runs, so `allocate`
+/// re-runs the queued pass on every capture. The window's own CSS background is not in the picture.
 fn drawn(widget: &gtk::Widget) -> Option<gtk::gsk::RenderNode> {
     if widget.width() <= 0 || widget.height() <= 0 {
         return None;
@@ -193,8 +187,7 @@ fn drawn(widget: &gtk::Widget) -> Option<gtk::gsk::RenderNode> {
 }
 
 /// Every popover open over `window`, outermost first. A popover is a surface of its own, so the
-/// window's child drawn alone
-/// leaves it out; it is found as a child of the widget it hangs from.
+/// window's child drawn alone leaves it out; it is found as a child of the widget it hangs from.
 fn open_popovers(window: &gtk::Window) -> Vec<gtk::Popover> {
     let mut found = Vec::new();
     let mut stack: Vec<gtk::Widget> = GtkWindowExt::child(window).into_iter().collect();
@@ -214,8 +207,7 @@ fn open_popovers(window: &gtk::Window) -> Vec<gtk::Popover> {
 }
 
 /// Draws `popover` where the compositor shows it: its popup surface's offset from the window's,
-/// less where each widget sits
-/// within its own surface (shadow, margin).
+/// less where each widget sits within its own surface (shadow, margin).
 fn over(window: &gtk::Window, popover: &gtk::Popover, snapshot: &gtk::Snapshot) {
     let Some(popup) = popover
         .surface()
@@ -238,10 +230,9 @@ fn over(window: &gtk::Window, popover: &gtk::Popover, snapshot: &gtk::Snapshot) 
 }
 
 /// A `GtkWidgetPaintable` over a native widget is empty exactly when the surface has no presented
-/// frame, so it answers this
-/// question but is the wrong way to take a picture. `GDK_TOPLEVEL_STATE_SUSPENDED` is not set by
-/// mutter for a window that
-/// merely stopped receiving frame callbacks, and the frame clock is throttled by the same thing.
+/// frame, so it answers this question but is the wrong way to take a picture.
+/// `GDK_TOPLEVEL_STATE_SUSPENDED` is not set by mutter for a window that merely stopped receiving
+/// frame callbacks, and the frame clock is throttled by the same thing.
 fn presenting(widget: &gtk::Widget) -> bool {
     let paintable = gtk::WidgetPaintable::new(Some(widget));
     let snapshot = gtk::Snapshot::new();

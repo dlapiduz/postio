@@ -1,9 +1,7 @@
 //! Postio's domain model: the types every other crate speaks. Pure: no SQL, IMAP, GTK or I/O, so a
-//! second protocol
-//! or frontend needs no reshaping; CI enforces it. See `ids` for identifier rules and `Flag` for
-//! flag invariants.
-//! The `test-corpus` feature ships the `.eml` fixture corpus and its loader; it is dev-dependency
-//! only.
+//! second protocol or frontend needs no reshaping; CI enforces it. See `ids` for identifier rules
+//! and `Flag` for flag invariants. The `test-corpus` feature ships the `.eml` fixture corpus and
+//! its loader; it is dev-dependency only.
 
 pub mod account;
 pub mod address;

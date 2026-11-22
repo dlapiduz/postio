@@ -5,8 +5,8 @@ import PostioKit
 @MainActor
 final class URLHandler: NSObject, NSApplicationDelegate {
     /// Installed from `Engine.init`, inside `App.init()` before SwiftUI builds anything, so
-    /// SwiftUI's
-    /// menu lands on top. The `async` hop puts this after the scene's first update (#1262).
+    /// SwiftUI's menu lands on top. The `async` hop puts this after the scene's first update
+    /// (#1262).
     func applicationDidFinishLaunching(_: Notification) {
         switch DemoMode.appearance {
         case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)

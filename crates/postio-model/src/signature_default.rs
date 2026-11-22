@@ -1,7 +1,6 @@
 //! Which signature a new draft starts on: mailbox override, then account default, then the
-//! identity's own (#394). The identity's own
-//! is the picker's resting state, so `None` from `resolve` means exactly that. A mailbox override
-//! must outrank an account-wide choice.
+//! identity's own (#394). The identity's own is the picker's resting state, so `None` from
+//! `resolve` means exactly that. A mailbox override must outrank an account-wide choice.
 
 use crate::ids::SignatureId;
 

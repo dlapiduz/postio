@@ -80,11 +80,10 @@ print(int((now - since).total_seconds()) // 86400)' "$since")
 fi
 
 # Delete the issue's branch from `origin` if its landing did not get to it: `issue-land.sh` deletes
-# it as its last step, a killed run leaves it,
-# and `issue-claim.sh` refuses an issue with a remote branch, so a reopened issue would be
-# unclaimable.
-# `git cherry`, not "the issue is closed": only a patch-id comparison says whether this branch's
-# commits are upstream; a `+` line is somebody's unlanded work and stays.
+# it as its last step, a killed run leaves it, and `issue-claim.sh` refuses an issue with a remote
+# branch, so a reopened issue would be unclaimable. `git cherry`, not "the issue is closed": only a
+# patch-id comparison says whether this branch's commits are upstream; a `+` line is somebody's
+# unlanded work and stays.
 sweep_remote_branch() {
     local num=$1 base=$2 branch unlanded
     # `|| true`: there may be no `origin` (a sandbox), and pipefail would abort a cleanup that already worked.

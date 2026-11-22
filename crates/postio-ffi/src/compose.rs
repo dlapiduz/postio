@@ -115,8 +115,7 @@ pub(crate) fn to_ffi(draft: &Draft, from: String, path: String) -> DraftFfi {
         subject: draft.subject.clone(),
         body: draft.body.text.clone().unwrap_or_default(),
         // The editing shell's form: stored `cid:` is `postio-cid:` to the surface, whose handler
-        // answers
-        // that scheme (#1571).
+        // answers that scheme (#1571).
         body_html: draft
             .body
             .html

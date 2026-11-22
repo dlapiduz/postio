@@ -51,10 +51,9 @@ public struct ConfirmQuestion: Equatable {
 }
 
 /// A click moves nothing here: the focus moves when the next view says so. It reads the email
-/// `view.email` names when it names
-/// a new one (header and treated body, off the main actor), dropping an answer for an email since
-/// left. The email page is never
-/// a second window (M4). No AppKit (#1264).
+/// `view.email` names when it names a new one (header and treated body, off the main actor),
+/// dropping an answer for an email since left. The email page is never a second window (M4). No
+/// AppKit (#1264).
 @MainActor
 @Observable
 public final class DigestModel {

@@ -19,8 +19,7 @@ pub struct ConfigChanged {
 
 impl ConfigChanged {
     /// A save that only touches a top-level key this build does not recognise compares equal on
-    /// every
-    /// field and must not repaint anything.
+    /// every field and must not repaint anything.
     pub fn any(&self) -> bool {
         self.ui
             || self.keys

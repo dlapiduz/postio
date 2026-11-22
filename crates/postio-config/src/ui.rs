@@ -47,8 +47,7 @@ impl Default for UiConfig {
 }
 
 /// The Appearance pane's write path (#873). `[ui]` is regenerated whole, so a comment on its header
-/// or
-/// keys does not survive; `Config::to_toml_string` would drop comments anywhere.
+/// or keys does not survive; `Config::to_toml_string` would drop comments anywhere.
 pub fn patch_ui(text: &str, ui: &UiConfig) -> Result<String> {
     crate::splice::replace_section(text, "ui", &UiOnly { ui })
 }

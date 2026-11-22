@@ -81,9 +81,8 @@ check_build_dependencies() {
 }
 
 # The three top-level libraries the app links; each names glib, pango and gdk-pixbuf in its
-# `Requires:`, so pkg-config resolves those
-# transitively. Nothing else: the store engine is pure Rust, so no system sqlite3 or OpenSSL is
-# involved (#646).
+# `Requires:`, so pkg-config resolves those transitively. Nothing else: the store engine is pure
+# Rust, so no system sqlite3 or OpenSSL is involved (#646).
 PKG_CONFIG_LIBS=(gtk4 libadwaita-1 webkitgtk-6.0)
 
 if [ -z "${POSTIO_SKIP_DEP_CHECK:-}" ]; then

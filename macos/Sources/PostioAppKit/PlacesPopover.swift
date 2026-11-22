@@ -64,8 +64,7 @@ public final class PlacesPopover: NSObject, NSPopoverDelegate, NSSearchFieldDele
         resize()
         if !popover.isShown {
             // No arrow: it would point at the middle of the rect rather than the button. From the
-            // window's
-            // content view, since AppKit clips the rect to the view it is given.
+            // window's content view, since AppKit clips the rect to the view it is given.
             hideArrow()
             let host = anchor.window?.contentView ?? anchor
             let button = host.convert(anchor.bounds, from: anchor)

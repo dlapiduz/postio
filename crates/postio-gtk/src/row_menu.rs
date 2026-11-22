@@ -1,7 +1,7 @@
 //! The list row's right-click menu: the row's verbs, each with its key. The menu runs nothing
-//! itself: a press hands the command to the window,
-//! which runs it through the same `act` its key reaches. Verbs, order and what a right-click does
-//! to the cursor are in `specs/007-postio-focus/screens.md`.
+//! itself: a press hands the command to the window, which runs it through the same `act` its key
+//! reaches. Verbs, order and what a right-click does to the cursor are in
+//! `specs/007-postio-focus/screens.md`.
 
 use std::cell::RefCell;
 use std::rc::Rc;

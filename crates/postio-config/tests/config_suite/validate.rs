@@ -133,8 +133,7 @@ zoom = "ctrl+shift+plus"
 #[test]
 fn two_commands_on_one_key_is_a_conflict() {
     // Two `[keys]` entries on one key: a mistake with no principled winner. An override landing on
-    // a
-    // default's key is not an error: `Keymap::resolve_on` reports the displaced command.
+    // a default's key is not an error: `Keymap::resolve_on` reports the displaced command.
     let text = "[keys]\nreply = \"a\"\narchive_thread = \"a\"\n";
     let checked = check(text);
     let err = checked.validation.first_error().expect("a conflict");

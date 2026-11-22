@@ -41,8 +41,7 @@ pub fn view_scope(scope: ListScope, reachable: &[AccountId]) -> Option<ViewScope
         ListScope::Mailbox(mailbox) => Some(ViewScope::Mailbox(mailbox)),
         ListScope::Flagged(account) => Some(ViewScope::Flagged(account)),
         // `reachable` is required: a frontend that has not decided which accounts its list shows
-        // has
-        // no whole-view meaning. Empty means no view to be relative to (#811).
+        // has no whole-view meaning. Empty means no view to be relative to (#811).
         ListScope::Unified if reachable.is_empty() => None,
         ListScope::Unified => Some(ViewScope::Unified {
             accounts: reachable.to_vec(),

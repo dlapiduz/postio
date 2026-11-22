@@ -3,8 +3,7 @@ use std::path::PathBuf;
 use crate::error::{ConfigError, Result};
 
 /// A parameter rather than a `#[cfg]` so both layouts are asserted from either host; the macOS
-/// answer
-/// is the one most sessions cannot check.
+/// answer is the one most sessions cannot check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Platform {
     Freedesktop,
@@ -34,10 +33,8 @@ pub const CONFIG_FILE_NAME: &str = "config.toml";
 pub const CONFIG_PATH_ENV: &str = "POSTIO_CONFIG";
 
 /// Inside a Flatpak the sandbox points every XDG variable at the app's own directory, which would
-/// give
-/// the desktop and terminal packages a store and a config each. They share both, so the host's
-/// value is
-/// read from `HOST_<name>`, which Flatpak sets.
+/// give the desktop and terminal packages a store and a config each. They share both, so the host's
+/// value is read from `HOST_<name>`, which Flatpak sets.
 pub fn shared_xdg<F>(env: &F, name: &str) -> Option<String>
 where
     F: Fn(&str) -> Option<String>,
@@ -52,8 +49,7 @@ where
 }
 
 /// `$XDG_CONFIG_HOME` still wins on Apple: someone who set it meant it, and it lets one
-/// configuration
-/// be shared with a Linux VM.
+/// configuration be shared with a Linux VM.
 pub fn config_dir_from<F>(env: F, platform: Platform) -> Result<PathBuf>
 where
     F: Fn(&str) -> Option<String>,

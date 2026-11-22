@@ -4,9 +4,8 @@
 use postio_storage::Store;
 
 /// Called once at the top of [`route`], before anything picks an account or starts an engine (ADR
-/// 0005 Q6a), so a crash
-/// before the undo toast expires leaves the row as marked. A failed reap is logged and retried next
-/// launch.
+/// 0005 Q6a), so a crash before the undo toast expires leaves the row as marked. A failed reap is
+/// logged and retried next launch.
 async fn reap_pending_accounts(database: &Store) {
     let Ok(connection) = database.connect().await else {
         return;
@@ -27,8 +26,8 @@ pub enum StartupRoute {
 }
 
 /// Async because the keyring read reaches the Secret Service over D-Bus: poll it on the engine
-/// runtime, never on a frontend's
-/// main loop. The timeout inside `retrieve` turns silence into an error, which means onboarding.
+/// runtime, never on a frontend's main loop. The timeout inside `retrieve` turns silence into an
+/// error, which means onboarding.
 pub async fn route(
     database: &Store,
     secrets: &dyn postio_account::secret::SecretStore,

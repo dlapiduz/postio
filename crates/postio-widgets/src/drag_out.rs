@@ -1,10 +1,8 @@
 //! Dragging mail out: a lazy content provider that offers a file list and writes nothing until the
-//! drop lands, since a
-//! drag is speculative and a selection can be a predicate over a whole mailbox.
+//! drop lands, since a drag is speculative and a selection can be a predicate over a whole mailbox.
 //! It advertises the `gdk::FileList` type, not `message/rfc822`, so GDK offers every spelling,
-//! including the portal file
-//! transfer that carries files out of Flatpak. The widgets may not open the store: [`Materialise`]
-//! is the seam the app fills.
+//! including the portal file transfer that carries files out of Flatpak. The widgets may not open
+//! the store: [`Materialise`] is the seam the app fills.
 
 use std::cell::RefCell;
 use std::future::Future;
@@ -52,10 +50,9 @@ mod imp {
     impl ContentProviderImpl for LazyFiles {
         fn formats(&self) -> gdk::ContentFormats {
             // Start from the type and let GDK name the mime types: a provider advertising only a
-            // GType is never asked for
-            // `text/uri-list` inside a `GdkContentProviderUnion`, which routes writes to the child
-            // whose formats name the
-            // mime type, so every drop outside the app would fail.
+            // GType is never asked for `text/uri-list` inside a `GdkContentProviderUnion`, which
+            // routes writes to the child whose formats name the mime type, so every drop outside
+            // the app would fail.
             gdk::ContentFormats::builder()
                 .add_type(gdk::FileList::static_type())
                 .build()

@@ -1,7 +1,7 @@
 //! Feeds NetworkManager's opinion to the supervisor, only moving the link between `Up` and `Down`:
-//! the attempt count
-//! stays the supervisor's, or every Wi-Fi re-association during an outage would reset the backoff.
-//! Anything short of fully connected is `Unknown`; with no NetworkManager `follow` returns quietly.
+//! the attempt count stays the supervisor's, or every Wi-Fi re-association during an outage would
+//! reset the backoff. Anything short of fully connected is `Unknown`; with no NetworkManager
+//! `follow` returns quietly.
 
 use postio_sync::NetworkState;
 use tokio::sync::watch;

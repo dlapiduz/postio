@@ -1,9 +1,7 @@
 //! A model endpoint on this computer and nothing else: `ModelEndpoint::parse` is the one reading of
-//! the
-//! address and refuses anything else with a sentence, so a client cannot be pointed at another
-//! host.
-//! Nothing is looked up: `localhost` is read as the loopback addresses, since a resolver could
-//! answer with another machine.
+//! the address and refuses anything else with a sentence, so a client cannot be pointed at another
+//! host. Nothing is looked up: `localhost` is read as the loopback addresses, since a resolver
+//! could answer with another machine.
 
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
@@ -14,10 +12,8 @@ use serde::{Deserialize, Serialize};
 use crate::Extras;
 
 /// Absent means off: with no section there is nothing to connect to and Postio looks for no
-/// runtime. A
-/// section that cannot be used (no endpoint, no model, or an endpoint on another computer) is
-/// reported
-/// by validation and used by no feature, and the file still loads.
+/// runtime. A section that cannot be used (no endpoint, no model, or an endpoint on another
+/// computer) is reported by validation and used by no feature, and the file still loads.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FocusModel {
     #[serde(default)]
@@ -124,9 +120,8 @@ const WRITE_IT_AS: &str = "write it as http://127.0.0.1:<port>/v1, http://[::1]:
 
 impl ModelEndpoint {
     /// `http://` to a loopback address (`127.0.0.0/8`, `::1`) or `localhost`, with a port and a
-    /// base path
-    /// such as `/v1`; or `unix:` and an absolute socket path. Anything else is refused, with the
-    /// reason.
+    /// base path such as `/v1`; or `unix:` and an absolute socket path. Anything else is refused,
+    /// with the reason.
     pub fn parse(text: &str) -> Result<Self, EndpointRefused> {
         let text = text.trim();
         if let Some(path) = text.strip_prefix("unix:") {

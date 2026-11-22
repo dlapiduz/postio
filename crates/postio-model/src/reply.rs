@@ -1,7 +1,6 @@
 //! Builds a reply, reply-all or forward `Draft`. A wrong `In-Reply-To` is noticed only by the
-//! person on the other end, whose
-//! client starts a new conversation. Signing is `Draft::start_as`'s, against the text already
-//! quoted here, so quoting first never doubles up.
+//! person on the other end, whose client starts a new conversation. Signing is `Draft::start_as`'s,
+//! against the text already quoted here, so quoting first never doubles up.
 
 use crate::account::Account;
 use crate::address::{self, EmailAddress};
@@ -12,8 +11,7 @@ use crate::message::{Message, MessageBody};
 use crate::subject;
 
 /// The quote arrives rather than being computed (ADR 0003 Q3): rich quoting parses untrusted markup
-/// in `postio-body`,
-/// which depends on this crate. A caller with nothing better uses `plain_quote`.
+/// in `postio-body`, which depends on this crate. A caller with nothing better uses `plain_quote`.
 pub fn reply(source: &Message, account: &Account, quote: MessageBody) -> Draft {
     build_reply(source, account, false, quote)
 }
@@ -125,9 +123,8 @@ fn exclude_self_and_seen(
 }
 
 /// Leads with a blank line so the caret lands above the quote. Every line is prefixed `> `, so an
-/// original signature's `-- ` becomes
-/// `> -- ` and `signature::split` never mistakes it for this draft's. Plain text only: markup needs
-/// `postio-body`, which depends on this crate.
+/// original signature's `-- ` becomes `> -- ` and `signature::split` never mistakes it for this
+/// draft's. Plain text only: markup needs `postio-body`, which depends on this crate.
 fn quote_body(source: &Message) -> String {
     let attribution = attribution(source);
     match source.body.text.as_deref() {
@@ -197,9 +194,9 @@ fn forward_body(source: &Message) -> String {
 }
 
 /// `id` and `message_id` are reset to unassigned: `write_attachments` decides insert-or-update by
-/// whether `id` is assigned, so a
-/// copied id would corrupt the row it was borrowed from. `blob_id` is kept when present; otherwise
-/// `part_id` and `Draft::forwarded_from` say where to fetch from (#1686).
+/// whether `id` is assigned, so a copied id would corrupt the row it was borrowed from. `blob_id`
+/// is kept when present; otherwise `part_id` and `Draft::forwarded_from` say where to fetch from
+/// (#1686).
 pub fn carried_attachments(source: &Message) -> Vec<Attachment> {
     source
         .attachments

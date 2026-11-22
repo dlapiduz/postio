@@ -36,8 +36,8 @@ import subprocess
 import sys
 
 # A domain is reserved if any label is exactly "example" or the TLD is reserved; requiring
-# "example.com" flagged good ccTLD-shaped
-# fixtures and pushed a session into weakening an address parser's test data.
+# "example.com" flagged good ccTLD-shaped fixtures and pushed a session into weakening an address
+# parser's test data.
 RESERVED = re.compile(
     r"@(?:[A-Za-z0-9-]+\.)*example(?:\.[A-Za-z0-9-]+)*$"
     r"|@(?:[A-Za-z0-9-]+\.)*(?:test|invalid|localhost)$",

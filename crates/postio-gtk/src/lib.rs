@@ -1,7 +1,6 @@
 //! Postio Focus: a dense, keyboard-first inbox. It runs `postio-host` in this process and reaches
-//! mail only through
-//! `postio-client` (ADR 0041); it draws with `postio-widgets` (ADR 0043). The binary is a thin
-//! `main` over [`app::run`] so `tests/focus_suite` drives the same startup.
+//! mail only through `postio-client` (ADR 0041); it draws with `postio-widgets` (ADR 0043). The
+//! binary is a thin `main` over [`app::run`] so `tests/focus_suite` drives the same startup.
 
 pub mod a11y;
 pub mod app;

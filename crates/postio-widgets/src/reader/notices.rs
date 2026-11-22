@@ -1,8 +1,7 @@
 //! The one slot above a message where the reader says something about it: always the same height,
-//! showing the most important
-//! notice that applies, so the body does not move between messages raising different numbers of
-//! notices. Order: decode
-//! caveat, reader view (a rewrite is never silent, #1009), remote images, unsubscribe.
+//! showing the most important notice that applies, so the body does not move between messages
+//! raising different numbers of notices. Order: decode caveat, reader view (a rewrite is never
+//! silent, #1009), remote images, unsubscribe.
 
 use std::cell::Cell;
 
@@ -66,8 +65,8 @@ impl NoticeSlot {
     }
 
     /// For a reader flowing in its owner's column, where an empty slot would be a gap. An empty
-    /// collapsing slot is hidden, not
-    /// zero tall, so a margin set on [`widget`](Self::widget) goes with it.
+    /// collapsing slot is hidden, not zero tall, so a margin set on [`widget`](Self::widget) goes
+    /// with it.
     pub(crate) fn set_collapsing(&self, collapsing: bool) {
         self.collapsing.set(collapsing);
         self.stack.set_vhomogeneous(!collapsing);

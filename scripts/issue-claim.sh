@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Claim a GitHub issue and get a private worktree to do it in. Inside it `git add -A`, `git commit
-# -a`, `git stash` and
-# `cargo fmt --all` are safe, because nothing else edits those files.
+# -a`, `git stash` and `cargo fmt --all` are safe, because nothing else edits those files.
 #
 # Usage:
 #   scripts/issue-claim.sh                    # take the next ready issue
@@ -17,8 +16,8 @@
 #   scripts/issue-claim.sh --ready-label ready-mac   # a different queue
 #
 # Run from inside a landed worktree, a plain claim reuses it and falls back to a fresh tree, saying
-# why, when reuse would
-# strand something. A fresh tree's target/debug is seeded by copying the newest sibling's (#1102).
+# why, when reuse would strand something. A fresh tree's target/debug is seeded by copying the
+# newest sibling's (#1102).
 set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib/require-gh.sh"
@@ -33,28 +32,24 @@ WORKTREES="${POSTIO_WORKTREES:-$HOME/src/postio-worktrees}"
 CLAIMS="${POSTIO_CLAIMS:-$HOME/.cache/postio/claims}"
 
 # The label that marks an issue claimable. The macOS initiative uses `ready-mac`, so a Linux session
-# skips its issues; claim locks
-# are per-machine, so the label is what keeps two hosts off the same work (#552). The default comes
-# from `lib/ready-labels.sh`,
-# shared with `issue-release.sh` (#621); `--ready-label`/`$POSTIO_READY_LABEL` can name any queue.
+# skips its issues; claim locks are per-machine, so the label is what keeps two hosts off the same
+# work (#552). The default comes from `lib/ready-labels.sh`, shared with `issue-release.sh` (#621);
+# `--ready-label`/`$POSTIO_READY_LABEL` can name any queue.
 READY_LABEL="${POSTIO_READY_LABEL:-${READY_LABELS[0]}}"
 
 # A claim lock is a directory, so `mkdir` is the atomic take. Beside it, `issue-<n>.owner` names the
-# worktree the claim created,
-# so a refusal can say which tree holds an issue and `--resume` can tell a live claim from a
-# finished session's lock (#1218).
-# Beside the lock, not inside it (#1230): every worktree carries its own copy of these scripts, so a
-# lock's format must be one every
-# version can drop; an older release's `rmdir` failed on a file inside it and orphaned a lock.
+# worktree the claim created, so a refusal can say which tree holds an issue and `--resume` can tell
+# a live claim from a finished session's lock (#1218). Beside the lock, not inside it (#1230): every
+# worktree carries its own copy of these scripts, so a lock's format must be one every version can
+# drop; an older release's `rmdir` failed on a file inside it and orphaned a lock.
 drop_lock() {
     rmdir "$1" 2>/dev/null || true
     rm -f "$1.owner" 2>/dev/null || true
 }
 
 # The lock this run holds but has not finished earning. `mkdir` takes it before the worktree is cut,
-# and under `set -e` any step between
-# can end the script; nothing released it, so a failed claim left an issue permanently unclaimable
-# (#1255).
+# and under `set -e` any step between can end the script; nothing released it, so a failed claim
+# left an issue permanently unclaimable (#1255).
 HELD_LOCK=""
 
 release_held_lock() {
@@ -159,9 +154,8 @@ if [ -n "$RESUME" ]; then
         git -C "$REPO_ROOT" worktree add --quiet --track -b "$RESUME_BRANCH" "$RESUME_TREE" "origin/$RESUME_BRANCH"
     fi
     # The base comes from the open PR, not `$BASE`: nobody passes `--base` to `--resume`, and
-    # defaulting to `main` made `issue-land.sh`
-    # refuse a branch claimed from `feature/x` after every gate had run (#1401). Without a PR,
-    # `$BASE` is all there is.
+    # defaulting to `main` made `issue-land.sh` refuse a branch claimed from `feature/x` after every
+    # gate had run (#1401). Without a PR, `$BASE` is all there is.
     RESUME_BASE="$(gh pr list --head "$RESUME_BRANCH" --state open \
                    --json baseRefName --jq '.[0].baseRefName // empty' 2>/dev/null || true)"
     printf '%s\n' "${RESUME_BASE:-$BASE}" > "$(git -C "$RESUME_TREE" rev-parse --git-dir)/postio-base"
@@ -181,13 +175,11 @@ if [ -n "$RESUME" ]; then
 fi
 
 # --reuse: work the next issue in the worktree this session is already in, instead of a fresh one
-# with a cold `target/`
-# (twelve minutes on #860). It is safe because it is one workspace: sharing a `CARGO_TARGET_DIR`
-# between worktrees hands each other stale libraries (#76).
-# Reuse is the default for a plain claim from inside a worktree under $WORKTREES (#1102); when reuse
-# refuses (dirty tree, unlanded commits,
-# base gone from origin) it says so and claims a fresh tree. `--reuse` stays strict, `--fresh` opts
-# out, a dry run never moves anything.
+# with a cold `target/` (twelve minutes on #860). It is safe because it is one workspace: sharing a
+# `CARGO_TARGET_DIR` between worktrees hands each other stale libraries (#76). Reuse is the default
+# for a plain claim from inside a worktree under $WORKTREES (#1102); when reuse refuses (dirty tree,
+# unlanded commits, base gone from origin) it says so and claims a fresh tree. `--reuse` stays
+# strict, `--fresh` opts out, a dry run never moves anything.
 if [ "$REUSE" = 0 ] && [ "$FRESH" = 0 ] && [ "$DRY" = 0 ]; then
     case "$(git rev-parse --show-toplevel 2>/dev/null || true)" in
         "$WORKTREES"/*) REUSE=1; REUSE_IMPLICIT=1 ;;
@@ -219,12 +211,10 @@ vet_reuse() {
         return 1
     fi
     # Nothing unlanded: a reuse that carried away unmerged commits would lose them behind a branch
-    # switch (#1054).
-    # Against the base this tree was cut from (recorded by `--base`), not `main`, or initiative
-    # worktrees always read as unlanded.
-    # By patch id, not sha: `issue-land.sh` merges by rebase, so shas differ. `git cherry` prefixes
-    # `-` for a patch already upstream
-    # and `+` for one that is not; only `+` is work a branch switch would strand.
+    # switch (#1054). Against the base this tree was cut from (recorded by `--base`), not `main`, or
+    # initiative worktrees always read as unlanded. By patch id, not sha: `issue-land.sh` merges by
+    # rebase, so shas differ. `git cherry` prefixes `-` for a patch already upstream and `+` for one
+    # that is not; only `+` is work a branch switch would strand.
     REUSE_BASE="$(cat "$(git -C "$REUSE_TREE" rev-parse --git-dir)/postio-base" 2>/dev/null \
                   || echo main)"
     REUSE_BASE="${REUSE_BASE%%[[:space:]]*}"
@@ -285,9 +275,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/seed-target.sh"
 git -C "$REPO_ROOT" config core.hooksPath .githooks
 
 # Candidates: open, labelled `$READY_LABEL`, unclaimed, not blocked by anything open. `epic`,
-# `icebox`, `needs-architecture` and
-# `needs-maintainer` are never agent work (a container, deferred, the architect's call, the
-# maintainer's call).
+# `icebox`, `needs-architecture` and `needs-maintainer` are never agent work (a container, deferred,
+# the architect's call, the maintainer's call).
 args=(issue list --state open --limit 200
       --json number,title,labels,assignees,blockedBy,milestone)
 [ -n "$MILESTONE" ] && args+=(--milestone "$MILESTONE")
@@ -385,12 +374,10 @@ for pr in prs:
 CANDIDATES=$(fetch_candidates)
 
 # The ready queue only shrinks unless something reclaims a dead session's lock, assignee and
-# `in-progress` label (#924). This is the one
-# moment "nothing is ready" is about to be the answer, so sweep here and only here.
-# `issue-release.sh --stale`'s worktree-existence
-# check keeps a live claim untouched.
-# Skipped for `--dry-run` (the sweep mutates) and for a named `WANT`: that failure means something
-# else.
+# `in-progress` label (#924). This is the one moment "nothing is ready" is about to be the answer,
+# so sweep here and only here. `issue-release.sh --stale`'s worktree-existence check keeps a live
+# claim untouched. Skipped for `--dry-run` (the sweep mutates) and for a named `WANT`: that failure
+# means something else.
 if [ -z "$CANDIDATES" ] && [ -z "$WANT" ] && [ "$DRY" = 0 ]; then
     STALE_OUTPUT=$("$(dirname "${BASH_SOURCE[0]}")/issue-release.sh" --stale 2>&1) || true
     # The literal sentinel `issue-release.sh --stale` prints when it swept nothing; anything else
@@ -439,8 +426,7 @@ while IFS=$'\t' read -r NUM TITLE; do
     fi
 
     # Atomic claim: `mkdir` creates the directory or fails. All agents share this machine, so a
-    # local lock is real; an assignee cannot be one,
-    # because every session is the same GitHub user.
+    # local lock is real; an assignee cannot be one, because every session is the same GitHub user.
     if ! mkdir "$CLAIMS/issue-$NUM" 2>/dev/null; then
         HOLDER="$(cat "$CLAIMS/issue-$NUM.owner" 2>/dev/null || true)"
         echo "#$NUM is claimed by another session${HOLDER:+ (working in $HOLDER)}, trying the next one." >&2
@@ -450,11 +436,10 @@ while IFS=$'\t' read -r NUM TITLE; do
     HELD_LOCK="$CLAIMS/issue-$NUM"
     printf '%s\n' "$TREE" > "$CLAIMS/issue-$NUM.owner"
     # Cross-machine backstop: someone already pushed a branch for it. Locks are per-machine, and
-    # `issue-land.sh` deletes the branch it merges,
-    # so a leftover is usually a killed landing; refusing on existence alone made issues unclaimable
-    # (#1063).
-    # So ask whether the branch holds unlanded work by patch id (a landing rebases): `git cherry`
-    # shows `+` for a commit not upstream.
+    # `issue-land.sh` deletes the branch it merges, so a leftover is usually a killed landing;
+    # refusing on existence alone made issues unclaimable (#1063). So ask whether the branch holds
+    # unlanded work by patch id (a landing rebases): `git cherry` shows `+` for a commit not
+    # upstream.
     STALE_BRANCH="$(git -C "$REPO_ROOT" ls-remote --heads origin "issue-$NUM-*" 2>/dev/null \
                     | sed 's|.*refs/heads/||' | head -1 || true)"
     if [ -n "$STALE_BRANCH" ]; then

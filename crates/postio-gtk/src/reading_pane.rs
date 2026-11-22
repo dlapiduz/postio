@@ -1,7 +1,6 @@
 //! The reading pane: where an open message is drawn when read beside the list. It holds the message
-//! dialog's one message view,
-//! the composer's surface when a reply takes the pane over, and else the empty page. Which shows is
-//! the window's to compute, never each occupant's.
+//! dialog's one message view, the composer's surface when a reply takes the pane over, and else the
+//! empty page. Which shows is the window's to compute, never each occupant's.
 
 use std::rc::Rc;
 

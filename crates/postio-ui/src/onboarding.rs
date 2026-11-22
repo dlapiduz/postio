@@ -114,8 +114,7 @@ pub enum Status {
     WaitingForBrowser,
     Failed(String),
     /// The keyring will not give up the account's password. The screen arrives filled in; it
-    /// carries
-    /// the servers because the form is empty until something fills it.
+    /// carries the servers because the form is empty until something fills it.
     Reauthenticate(Settings),
     SyncWindow,
     Saved,

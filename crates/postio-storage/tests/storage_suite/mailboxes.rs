@@ -621,8 +621,7 @@ async fn a_view_role_cannot_be_stored_by_updating_a_folder_into_one() {
         Ok(()) => panic!("a stored folder was re-roled into a view"),
     };
     // Tightened: SQLite's `CHECK` already refuses this, so `is_err()` would pass with the
-    // repository
-    // doing nothing; the caller must be told which role was wrong.
+    // repository doing nothing; the caller must be told which role was wrong.
     assert!(
         message.contains("outbox"),
         "the error has to name the role rather than report a constraint: {message}"
@@ -649,8 +648,7 @@ async fn every_reserved_role_still_stores() {
 #[tokio::test]
 async fn recording_a_sync_sets_the_time_and_leaves_the_counts_alone() {
     // The counts are maintained by `messages_count_*` triggers; writing the whole row back from a
-    // stale
-    // `Mailbox` would overwrite them, hence a narrow UPDATE.
+    // stale `Mailbox` would overwrite them, hence a narrow UPDATE.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;

@@ -41,8 +41,7 @@ fn server(messages: u32) -> MockBackend {
 async fn stop_returns_inside_the_grace_while_a_backfill_is_pumping() {
     let captured = Captured::default();
     // Global, not per-thread: the engine's thread would have no subscriber. Warnings only: at DEBUG
-    // the
-    // store's per-statement traces slowed the stop being measured (#2167).
+    // the store's per-statement traces slowed the stop being measured (#2167).
     let subscriber = tracing_subscriber::fmt()
         .with_writer(captured.clone())
         .with_max_level(tracing::Level::WARN)

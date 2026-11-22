@@ -1,7 +1,6 @@
 //! The list and the reading pane, side by side, in a layout manager of its own: widths come from
-//! the allocation, never from a size request,
-//! which a window would refuse to shrink below, so it could never be narrowed past the point where
-//! the pane should give way to the dialog.
+//! the allocation, never from a size request, which a window would refuse to shrink below, so it
+//! could never be narrowed past the point where the pane should give way to the dialog.
 
 use std::cell::RefCell;
 
@@ -102,8 +101,7 @@ fn children(widget: &gtk::Widget) -> (Option<gtk::Widget>, Option<gtk::Widget>) 
 }
 
 /// Kept at least `pane_min` and, beyond that, short of the list's own `list_min`. When a window
-/// narrows past the pane's room
-/// and before the pane gives way, the pane keeps its floor.
+/// narrows past the pane's room and before the pane gives way, the pane keeps its floor.
 fn split(width: i32, pane_min: i32, list_min: i32) -> i32 {
     focus_dialog::pane_width(width)
         .unwrap_or(focus_dialog::PANE_MIN)

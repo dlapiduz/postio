@@ -5,8 +5,8 @@ import WebKit
 import PostioKit
 
 /// Builds a hardened configuration, hands it a string, refuses navigations. The CSP, fonts,
-/// sanitized body and
-/// scroll markers arrive from the engine as one document, the same one GTK renders.
+/// sanitized body and scroll markers arrive from the engine as one document, the same one GTK
+/// renders.
 public struct ReaderView: NSViewRepresentable {
     private let source: any ReaderSource
     private let message: Int64?
@@ -18,9 +18,8 @@ public struct ReaderView: NSViewRepresentable {
     private let onHeight: ((CGFloat) -> Void)?
     private let onAnswers: ((ReaderNoticeFfi?, String?) -> Void)?
     /// A hardened web view has no scroll-by-amount call (message script is off, ADR 0003), so
-    /// paging jumps between
-    /// the document's anchors (`ReaderPaging`). The token, not the page: paging down at the last
-    /// anchor leaves the number where it was.
+    /// paging jumps between the document's anchors (`ReaderPaging`). The token, not the page:
+    /// paging down at the last anchor leaves the number where it was.
     private let page: UInt32
     private let pageToken: Int
 
@@ -146,9 +145,8 @@ public struct ReaderView: NSViewRepresentable {
         }
 
         /// Built off the main actor: a SQLite read, sanitise and wrap on the cursor's thread would
-        /// make every `j` a disk
-        /// read (16 ms budget). Results can arrive out of order, so each render carries a token and
-        /// a stale one is dropped (#70).
+        /// make every `j` a disk read (16 ms budget). Results can arrive out of order, so each
+        /// render carries a token and a stale one is dropped (#70).
         func load(
             into view: WKWebView,
             message: Int64?,
@@ -200,8 +198,7 @@ public struct ReaderView: NSViewRepresentable {
 }
 
 /// Counted from the view's own `init` and `deinit`, not `makeNSView`/`dismantleNSView`: the content
-/// process
-/// goes when the view does, whenever ARC gets round to it (#1586). A stacked body's
+/// process goes when the view does, whenever ARC gets round to it (#1586). A stacked body's
 /// `PassingWebView` does not scroll its own page.
 public class ReaderSurface: WKWebView {
     override public init(frame: CGRect, configuration: WKWebViewConfiguration) {
@@ -220,9 +217,8 @@ public class ReaderSurface: WKWebView {
 }
 
 /// A body sized to its whole document has nothing of its own to scroll, but `WKWebView` consumes
-/// every wheel
-/// event over its frame. If a body ever scrolls internally (past `BodyHeight.maximum`), forwarding
-/// must become conditional.
+/// every wheel event over its frame. If a body ever scrolls internally (past `BodyHeight.maximum`),
+/// forwarding must become conditional.
 final class PassingWebView: ReaderSurface {
     override func scrollWheel(with event: NSEvent) {
         nextResponder?.scrollWheel(with: event)

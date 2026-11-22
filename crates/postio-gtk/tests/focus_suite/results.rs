@@ -680,8 +680,8 @@ pub fn escape_closes_a_dropdown_over_the_results_then_leaves_them() {
 }
 
 /// A row drawn again is a new widget, and a keyboard on the old one went to nothing or to the next
-/// control GTK found
-/// (the results' Back button, where Space presses it). The keyboard stays in the list (#2136).
+/// control GTK found (the results' Back button, where Space presses it). The keyboard stays in the
+/// list (#2136).
 pub fn checking_and_walking_the_results_keeps_the_keyboard_in_their_list() {
     crate::gtk_case(async {
         if !support::display() {

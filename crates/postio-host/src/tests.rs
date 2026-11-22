@@ -238,8 +238,7 @@ fn file_threaded(
 #[test]
 fn archiving_a_focus_row_received_at_two_addresses_archives_both_copies() {
     // One inbox across accounts: archiving a row has to archive both copies, as a unified row's
-    // group does,
-    // or the other copy is still in its inbox and the row comes straight back.
+    // group does, or the other copy is still in its inbox and the row comes straight back.
     let world = World::new();
     let (second, second_inbox, second_archive) = world.rt.block_on(async {
         let connection = world.database.connect().await.expect("a connection");

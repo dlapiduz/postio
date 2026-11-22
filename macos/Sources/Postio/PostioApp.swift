@@ -27,9 +27,9 @@ struct PostioApp: App {
         }
         .onChange(of: phase) { _, now in
             // Not on `.background`: `⌘W`, `⌘H` and minimising all produce it, and ending the
-            // session there
-            // stopped every sync and IDLE connection with no way back (the session opens once).
-            // Shutdown lives in `applicationWillTerminate`; `SessionLifetime` is the rule.
+            // session there stopped every sync and IDLE connection with no way back (the session
+            // opens once). Shutdown lives in `applicationWillTerminate`; `SessionLifetime` is the
+            // rule.
             if SessionLifetime.shouldEnd(on: SessionPhase(now)) { engine.shutdown() }
         }
         .defaultSize(width: 1440, height: 900)
@@ -39,8 +39,7 @@ struct PostioApp: App {
         .windowResizability(.contentMinSize)
 
         // `Window`, not the `Settings` scene: the scene opens only by a selector that reached no
-        // handler here (#1261),
-        // while `openWindow` is a call.
+        // handler here (#1261), while `openWindow` is a call.
         Window("Settings", id: WindowId.settings) {
             SettingsWindow(engine: engine, settings: settings)
         }

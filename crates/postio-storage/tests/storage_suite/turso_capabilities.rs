@@ -16,8 +16,7 @@ fn a_key() -> postio_storage::key::Subkey {
 }
 
 /// The `drop` matters: a `Rows` holds its connection until dropped, and the next statement fails
-/// with
-/// "connection is busy with another operation".
+/// with "connection is busy with another operation".
 async fn count(connection: &postio_storage::Connection, sql: &str) -> i64 {
     let mut rows = connection.query(sql, ()).await.expect("query");
     let row = rows.next().await.expect("row").expect("a count row");
@@ -171,8 +170,7 @@ async fn r1_an_fts_index_can_be_built_over_a_generated_column() {
 }
 
 /// The fold (NFD, then drop combining marks) has no SQL spelling here, so `body_search` is written
-/// by
-/// the application via `postio_index::fold`. If a normalising function appears this fails.
+/// by the application via `postio_index::fold`. If a normalising function appears this fails.
 #[tokio::test]
 async fn fold_cannot_be_expressed_in_sql() {
     let (_dir, path) = temp("fold.db");
@@ -198,8 +196,7 @@ async fn fold_cannot_be_expressed_in_sql() {
 }
 
 /// The analyzer behind `USING fts` is tantivy's `SimpleTokenizer` + `LowerCaser`: `CAFÉ` finds
-/// `café`
-/// and `cafe` does not, which is why `fold` exists.
+/// `café` and `cafe` does not, which is why `fold` exists.
 #[tokio::test]
 async fn the_engine_folds_case_but_not_diacritics() {
     let (_dir, path) = temp("accents.db");
@@ -305,8 +302,7 @@ async fn the_documented_cipher_is_one_the_engine_accepts() {
 }
 
 /// The planner will not read through a partial index (it enforces one correctly), so `schema.rs`
-/// dropped
-/// the non-unique predicates. When this starts failing, that work can be undone.
+/// dropped the non-unique predicates. When this starts failing, that work can be undone.
 #[tokio::test]
 async fn the_planner_does_not_use_a_partial_index() {
     let (_dir, path) = temp("partial.db");
@@ -447,9 +443,8 @@ async fn scores(connection: &postio_storage::Connection, sql: &str) -> Vec<(i64,
 }
 
 /// `fts_score` answers `0.0` unless the call is the whole select expression: the same rows come
-/// back
-/// and only ranking flattens. If this passes with the wrapped form, `HITS_JOIN` can project the
-/// negation again.
+/// back and only ranking flattens. If this passes with the wrapped form, `HITS_JOIN` can project
+/// the negation again.
 #[tokio::test]
 async fn the_score_is_lost_to_any_arithmetic_around_it() {
     let (_dir, connection) = a_scored_corpus().await;
@@ -492,9 +487,8 @@ async fn the_score_is_lost_to_any_arithmetic_around_it() {
 }
 
 /// `fts_score` answers `0.0` unless its term is the same expression as the `fts_match` that
-/// selected the
-/// row: two parameters bound to one string are two expressions, so `HITS_JOIN` writes `?1` and `?2`
-/// twice.
+/// selected the row: two parameters bound to one string are two expressions, so `HITS_JOIN` writes
+/// `?1` and `?2` twice.
 #[tokio::test]
 async fn the_score_needs_the_same_parameter_as_the_match() {
     let (_dir, connection) = a_scored_corpus().await;
@@ -580,9 +574,8 @@ async fn the_whole_match(connection: &postio_storage::Connection) -> Vec<i64> {
 }
 
 /// R8: a search whose caller has gone is dropped at its next await, mid-read; that is safe only if
-/// a read
-/// over an fts match, dropped with rows to come, gives its connection back clean (not busy, no
-/// leftovers).
+/// a read over an fts match, dropped with rows to come, gives its connection back clean (not busy,
+/// no leftovers).
 #[tokio::test]
 async fn r8_a_read_dropped_mid_match_leaves_its_connection_usable() {
     let (_dir, store) = a_matching_store().await;

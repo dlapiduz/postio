@@ -1,7 +1,6 @@
 # The PR title against CLAUDE.md's commit rules. PRs merge squashed, so the title is the subject on
-# main, and a title
-# edited on GitHub bypasses the commit-msg hook. Its own workflow so `edited` does not re-run all of
-# ci.yml.
+# main, and a title edited on GitHub bypasses the commit-msg hook. Its own workflow so `edited` does
+# not re-run all of ci.yml.
 name: PR title
 
 on:

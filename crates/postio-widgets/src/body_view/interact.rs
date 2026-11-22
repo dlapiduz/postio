@@ -1,6 +1,5 @@
 //! Selection and copy over the snapshot: positions in the text index, drawn as overlay rectangles
-//! so a
-//! selection change rasterises nothing.
+//! so a selection change rasterises nothing.
 
 use gtk::gdk;
 use gtk::prelude::*;
@@ -155,8 +154,7 @@ impl BodyView {
     }
 
     /// Holds `range` as the selection and takes the keyboard: Ctrl+C is the view's shortcut, and a
-    /// drag
-    /// moves no focus by itself.
+    /// drag moves no focus by itself.
     pub(super) fn set_selection(&self, range: Option<std::ops::Range<usize>>) {
         if range.is_some() && !self.is_focus() {
             self.take_keyboard();
@@ -167,8 +165,7 @@ impl BodyView {
     }
 
     /// Takes the keyboard without moving the page: a flowing view's column scrolls to whatever
-    /// takes focus,
-    /// which would carry the selection away from the pointer.
+    /// takes focus, which would carry the selection away from the pointer.
     fn take_keyboard(&self) {
         let viewport = self
             .ancestor(gtk::Viewport::static_type())

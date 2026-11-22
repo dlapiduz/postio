@@ -1,6 +1,6 @@
 //! A day heading over the list. GTK names a section's heading by its first row, which can be a
-//! placeholder when the heading is bound,
-//! so the heading follows the row and names the day the moment its page lands.
+//! placeholder when the heading is bound, so the heading follows the row and names the day the
+//! moment its page lands.
 
 use std::cell::RefCell;
 

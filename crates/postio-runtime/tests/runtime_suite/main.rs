@@ -1,7 +1,6 @@
 //! One binary for the integration tests, to cut link time (#1128). `shutdown.rs` and
-//! `logging_privacy.rs` stay out: each sets
-//! the global tracing subscriber. A case reading shared state starts with
-//! `postio_test_support::alone!` (#1976).
+//! `logging_privacy.rs` stay out: each sets the global tracing subscriber. A case reading shared
+//! state starts with `postio_test_support::alone!` (#1976).
 
 mod concurrent_accounts;
 mod engine;

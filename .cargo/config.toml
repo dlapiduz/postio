@@ -1,6 +1,5 @@
 # `jobs = 2` is only the fallback: the machine-wide jobserver (`scripts/jobserver.sh`, via
-# MAKEFLAGS)
-# is the real limit and makes cargo ignore it (#1104).
+# MAKEFLAGS) is the real limit and makes cargo ignore it (#1104).
 [build]
 jobs = 2
 # The wrapper execs plain rustc when sccache is absent; an explicit RUSTC_WRAPPER wins.
@@ -15,8 +14,7 @@ rustc-wrapper = "scripts/rustc-wrapper.sh"
 linker = "postio-linker"
 rustflags = [
     # `gcc`, not the default `gnu-lld-cc`: rustc appends its own `-fuse-ld=lld` after the script's
-    # flags,
-    # which silently ignores mold. `scripts/linker.sh` restores lld when mold is absent.
+    # flags, which silently ignores mold. `scripts/linker.sh` restores lld when mold is absent.
     "-C", "linker-flavor=gcc",
     "-C", "link-arg=-Wl,--threads=4",
 ]
@@ -27,12 +25,10 @@ rustflags = [
 linker = "postio-linker"
 
 # Every Linux test binary runs on a private headless compositor. A `cfg`, not a triple: a triple
-# skipped
-# aarch64 and every GTK test took its "no display" branch (#551). The runner fails open;
-# POSTIO_HEADLESS=0 bypasses it.
-# `aes` and `polyval` use ARMv8 AES/PMULL only with these cfgs (37.6 us vs 3.6 us per page in
-# software).
-# A cfg table, so ARM Linux gets it too; it sets no other rustflags.
+# skipped aarch64 and every GTK test took its "no display" branch (#551). The runner fails open;
+# POSTIO_HEADLESS=0 bypasses it. `aes` and `polyval` use ARMv8 AES/PMULL only with these cfgs (37.6
+# us vs 3.6 us per page in software). A cfg table, so ARM Linux gets it too; it sets no other
+# rustflags.
 [target.'cfg(target_arch = "aarch64")']
 rustflags = ["--cfg", "aes_armv8", "--cfg", "polyval_armv8"]
 

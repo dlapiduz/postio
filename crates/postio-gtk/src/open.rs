@@ -1,9 +1,8 @@
 //! The open-email dialog: `Enter` opens the conversation under the cursor over the list. Its
-//! message view is one view moved between two hosts,
-//! the dialog and the reading pane ([`OpenMessage::place`]), so they cannot drift. One dialog and
-//! one [`Reader`] for the window's life: the header
-//! is drawn from the row already in hand, and the body is drawn only if it is still the message on
-//! screen when it lands.
+//! message view is one view moved between two hosts, the dialog and the reading pane
+//! ([`OpenMessage::place`]), so they cannot drift. One dialog and one [`Reader`] for the window's
+//! life: the header is drawn from the row already in hand, and the body is drawn only if it is
+//! still the message on screen when it lands.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -100,8 +99,8 @@ pub struct OpenMessage {
     inline: Inline,
     generation: Rc<Cell<u64>>,
     /// Raised when the message being prepared off the interface thread is no longer the one on
-    /// screen: a worker still queued does nothing,
-    /// so `j` held down prepares the message it lands on and not every one it passed.
+    /// screen: a worker still queued does nothing, so `j` held down prepares the message it lands
+    /// on and not every one it passed.
     preparing: RefCell<Arc<AtomicBool>>,
     /// One reading at a time (#1609): `j` held over the pane reads the message it lands on; the
     /// latest asked for waits here.
@@ -160,9 +159,8 @@ impl OpenMessage {
         runtime: Option<tokio::runtime::Handle>,
     ) -> Rc<Self> {
         // The reader asks for inline (`cid:`) images synchronously while it lays the document out,
-        // so the message's inline parts are
-        // read before render and the reader is answered from them: never a blocking call on the
-        // main thread (#1608).
+        // so the message's inline parts are read before render and the reader is answered from
+        // them: never a blocking call on the main thread (#1608).
         let shown: Rc<Cell<Option<MessageId>>> = Rc::default();
         let inline: Inline = Rc::default();
         let source = {
@@ -717,8 +715,8 @@ impl OpenMessage {
     }
 
     /// The handoff's 760px rule assumes its narrower face, so a row that would not fit folds too,
-    /// rather than widening the dialog
-    /// past its window's rule. Measured once on screen and kept: only its words and keys change it.
+    /// rather than widening the dialog past its window's rule. Measured once on screen and kept:
+    /// only its words and keys change it.
     fn full_row_width(&self) -> i32 {
         if let Some(width) = self.row_width.get() {
             return width;
@@ -1091,8 +1089,7 @@ impl OpenMessage {
     }
 
     /// Only the open message is read, never the list. Same generation, nothing cleared first and
-    /// the view left where it is,
-    /// so "Downloading this message" goes straight to the body (#1788).
+    /// the view left where it is, so "Downloading this message" goes straight to the body (#1788).
     pub fn body_landed(&self, message: MessageId) {
         if !self.is_open() || self.shown.get() != Some(message) || self.body.borrow().is_some() {
             return;
@@ -1198,8 +1195,8 @@ impl OpenMessage {
     }
 
     /// A message left open in a window that is not the active one is not being read: the clock
-    /// stops, and restarts from the top
-    /// when the window is back, unless it has already finished with that message.
+    /// stops, and restarts from the top when the window is back, unless it has already finished
+    /// with that message.
     pub fn set_window_active(&self, active: bool) {
         tracing::debug!(active, "the window's focus changed under an open message");
         self.away.set(!active);

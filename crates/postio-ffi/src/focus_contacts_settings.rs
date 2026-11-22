@@ -1,6 +1,5 @@
 //! Settings > Contacts: the pane's words, the Suggestions switches and the sync section. Rust
-//! decides what each
-//! switch stops; the Mac draws it and sends a click.
+//! decides what each switch stops; the Mac draws it and sends a click.
 
 use postio_ui::contacts_settings::{
     Device, ModeChoice, SuggestionsView, SyncSection, SyncStatus, intro, sync_section,

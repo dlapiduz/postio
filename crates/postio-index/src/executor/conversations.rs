@@ -941,8 +941,8 @@ struct Hydrated {
 }
 
 /// Ordered and filtered as the thread's own read does (`ThreadRepository::members`). The outer side
-/// of the thread match is an expression
-/// so the engine keeps this a seek per row (docs/gotchas.md, "group-first").
+/// of the thread match is an expression so the engine keeps this a seek per row (docs/gotchas.md,
+/// "group-first").
 const NUMBER: &str = "(SELECT count(*) FROM messages x
                         WHERE x.thread_id = m.thread_id + 0
                           AND x.received_at <= m.received_at

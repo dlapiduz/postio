@@ -4,8 +4,7 @@ import PostioKit
 import SwiftUI
 
 /// A view-based `NSTableView` for the inbox's reasons (009 R10). Its own selection is off: the
-/// focus ring is
-/// the controller's and a click is told to it, moving nothing here.
+/// focus ring is the controller's and a click is told to it, moving nothing here.
 @MainActor
 public final class ResultsTable: NSObject {
     public let model: ResultsModel

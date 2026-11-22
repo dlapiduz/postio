@@ -1,8 +1,7 @@
 //! The composer's editing surface: the one `WebView` where JavaScript runs (ADR 0003).
-//! `enable_javascript_markup` stays off,
-//! so a `<script>` in edited or pasted content is inert while the host's injected bridge runs.
-//! The network is closed: an ephemeral session, a scheme resolving only `postio-cid:` locally, and
-//! a CSP naming no remote origin.
+//! `enable_javascript_markup` stays off, so a `<script>` in edited or pasted content is inert while
+//! the host's injected bridge runs. The network is closed: an ephemeral session, a scheme resolving
+//! only `postio-cid:` locally, and a CSP naming no remote origin.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -16,8 +15,7 @@ use crate::reader::BlobSource;
 use postio_ui::editor::document as editor_document;
 
 /// A fixed non-`http(s)` base so edited content is never same-origin with anything real.
-/// Re-exported, not restated: two
-/// copies of a security-relevant string can drift (#567).
+/// Re-exported, not restated: two copies of a security-relevant string can drift (#567).
 pub use postio_ui::editor::document::EDITOR_BASE_URI;
 
 /// Compiled in with `include_str!` (ADR 0003: shipped in the bundle), so no test depends on a
@@ -56,8 +54,7 @@ fn markdown_table_js() -> String {
 const EDITED_MESSAGE: &str = "postioEdited";
 
 /// Separate from [`EDITED_MESSAGE`]: this edit begins a new undo step. Coalesced into the typing
-/// run, one undo would take
-/// back the whole sentence.
+/// run, one undo would take back the whole sentence.
 const CONVERTED_MESSAGE: &str = "postioConverted";
 
 const FORMAT_MESSAGE: &str = "postioFormat";
@@ -120,8 +117,8 @@ fn view_with(
 }
 
 /// `inner_html` must already be canonical-subset markup. Quoted material goes through
-/// `postio_body::parse` before it can
-/// appear here, which is what makes running script beside it acceptable (ADR 0003).
+/// `postio_body::parse` before it can appear here, which is what makes running script beside it
+/// acceptable (ADR 0003).
 pub fn seed(view: &webkit6::WebView, inner_html: &str) {
     let shell = editor_document::wrap_document(inner_html, presentation());
     view.load_html(&shell, Some(EDITOR_BASE_URI));
@@ -318,15 +315,14 @@ struct EditorState {
 }
 
 /// The column's additions to the editing sheet: text at the column's edge on a 24px line,
-/// paragraphs 12px apart. No colour
-/// is written; the column's own are read from its probes at each restyle.
+/// paragraphs 12px apart. No colour is written; the column's own are read from its probes at each
+/// restyle.
 const FLOW_CSS: &str =
     "\nbody { padding-left: 0; padding-right: 0; line-height: 24px; }\np { margin: 0 0 12px 0; }\n";
 
 /// The DOM is a working copy, never the record (ADR 0004): each reported edit is parsed back into
-/// the canonical [`Document`],
-/// which is the sanitisation on the way out. Undo is the document's own ([`EditHistory`]), not the
-/// widget's.
+/// the canonical [`Document`], which is the sanitisation on the way out. Undo is the document's own
+/// ([`EditHistory`]), not the widget's.
 pub struct Editor {
     view: webkit6::WebView,
     state: Rc<EditorState>,
@@ -417,8 +413,7 @@ impl Editor {
     }
 
     /// Draws the document in a host's column: each of `probes` is a reader palette variable and a
-    /// widget whose CSS `color`
-    /// is the host's token for it. Read again whenever the scheme changes.
+    /// widget whose CSS `color` is the host's token for it. Read again whenever the scheme changes.
     pub fn flow_in(&self, probes: Vec<(&'static str, gtk::Widget)>) {
         let first = self.state.flow.borrow().is_empty();
         self.state.flow.replace(
@@ -451,8 +446,7 @@ impl Editor {
             }
         });
         // Also when the view comes on screen: probes are dressed only once in the host's window,
-        // and a draft loads
-        // before its dialog is presented.
+        // and a draft loads before its dialog is presented.
         let state = Rc::downgrade(&self.state);
         self.view.connect_map(move |view| {
             if let Some(state) = state.upgrade() {
@@ -568,8 +562,7 @@ impl Editor {
 }
 
 /// A free function over the shared state: the script-message handler holds only the `Rc`, so
-/// dropping the editor drops
-/// the state once WebKit lets go of the closure.
+/// dropping the editor drops the state once WebKit lets go of the closure.
 fn absorb(state: &Rc<EditorState>, html: &str) {
     let now = Instant::now();
     let within_run = state
@@ -726,8 +719,7 @@ impl Editor {
     /// Each fires an `input` event so the edit crosses the bridge like any keystroke.
     pub fn format(&self, format: Format) {
         // WebKit dispatches `input` for some commands and not others (bold yes, insertUnorderedList
-        // no), so the
-        // report is dispatched here; a duplicate is absorbed as a no-change.
+        // no), so the report is dispatched here; a duplicate is absorbed as a no-change.
         let command = match format {
             Format::Bold => "document.execCommand('bold');",
             Format::Italic => "document.execCommand('italic');",

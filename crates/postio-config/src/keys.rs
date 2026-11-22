@@ -1,8 +1,7 @@
 //! The file holds overrides only, as does `KeyBindings`: the defaults live in `postio-core`'s
-//! command
-//! registry, which this crate cannot read (core depends on config), so ask
-//! `postio_core::config::Keymap`
-//! (#1227). Binding syntax is untyped here, so a binding for an unknown command is preserved.
+//! command registry, which this crate cannot read (core depends on config), so ask
+//! `postio_core::config::Keymap` (#1227). Binding syntax is untyped here, so a binding for an
+//! unknown command is preserved.
 
 use std::collections::BTreeMap;
 
@@ -136,11 +135,9 @@ pub struct KeyBindings {
 }
 
 /// `mod` is Postio's platform-neutral modifier: Control on freedesktop, Command on macOS. Resolved
-/// once,
-/// when bindings are read, so a synced `config.toml` means the same on both and menu and resolver
-/// agree (#586).
-/// `Delete` becomes BackSpace on Apple, the key a Mac labels delete. `ctrl` stays literal: whoever
-/// writes it means Control.
+/// once, when bindings are read, so a synced `config.toml` means the same on both and menu and
+/// resolver agree (#586). `Delete` becomes BackSpace on Apple, the key a Mac labels delete. `ctrl`
+/// stays literal: whoever writes it means Control.
 pub fn expand_mod(binding: &str, platform: Platform) -> String {
     let primary = match platform {
         Platform::Apple => "cmd",
@@ -152,10 +149,9 @@ pub fn expand_mod(binding: &str, platform: Platform) -> String {
             chord
                 .split('+')
                 // Case-insensitive like every other modifier: `chord_problem` lowercases before
-                // checking, so
-                // `Ctrl+k` already works and `Mod` must too. The key half is untouched: shift is
-                // written into the
-                // character, so lowercasing the chord would turn `mod+K` into another binding.
+                // checking, so `Ctrl+k` already works and `Mod` must too. The key half is
+                // untouched: shift is written into the character, so lowercasing the chord would
+                // turn `mod+K` into another binding.
                 .map(|part| {
                     if part.eq_ignore_ascii_case("mod") {
                         primary

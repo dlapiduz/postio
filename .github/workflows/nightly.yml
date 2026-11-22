@@ -1,19 +1,15 @@
 name: Nightly
 
 # Work worth doing daily and not on the merge path: nobody is blocked on learning it within the
-# hour.
-# Coverage drift is a trend, and the noisiest job here (#818). `doc` is the exception (#833): a
-# broken intra-doc link is a
-# per-commit fact, but the workspace doc build was 23m35s of every PR; clippy already denies
-# `missing_docs`.
-# `workflow_dispatch` is for when you want the number now.
+# hour. Coverage drift is a trend, and the noisiest job here (#818). `doc` is the exception (#833):
+# a broken intra-doc link is a per-commit fact, but the workspace doc build was 23m35s of every PR;
+# clippy already denies `missing_docs`. `workflow_dispatch` is for when you want the number now.
 on:
   schedule:
     - cron: "0 7 * * *"
   # Also every push to `main`: nothing waits on it, and it lets the merge-path tier stay at minutes.
-  # `ci.yml`'s
-  # `Nightly is green` reads the latest completed run and locks merges while it is red; `unlock.yml`
-  # reopens them.
+  # `ci.yml`'s `Nightly is green` reads the latest completed run and locks merges while it is red;
+  # `unlock.yml` reopens them.
   push:
     branches: [main]
   workflow_dispatch:
@@ -56,11 +52,9 @@ env:
 
 jobs:
   # A scheduled run skips when `main`'s head matches the head the last run tested; only a schedule
-  # is ever skipped.
-  # `--rerun-failed`: a red nightly re-runs over an unchanged tree, because an all-skipped run would
-  # read as green
-  # to `Nightly is green`. The script's header has the argument; bench.yml and mutants.yml share it
-  # without the flag (#1710).
+  # is ever skipped. `--rerun-failed`: a red nightly re-runs over an unchanged tree, because an
+  # all-skipped run would read as green to `Nightly is green`. The script's header has the argument;
+  # bench.yml and mutants.yml share it without the flag (#1710).
   changed:
     name: Anything to test
     runs-on: ubuntu-latest
@@ -195,23 +189,18 @@ jobs:
         run: scripts/install-nextest.sh
 
       # Every test in the workspace, integration binaries and measurements included. This job is the
-      # first reader of the
-      # integration suites (the PR run is the sanity tier), so `ci.yml`'s `nightly` job goes red on
-      # every PR while it fails (#847).
-      # `--profile ci-full` runs the measurement files `profile.default` holds off the merge path
-      # (#1450), with fail-fast off.
+      # first reader of the integration suites (the PR run is the sanity tier), so `ci.yml`'s
+      # `nightly` job goes red on every PR while it fails (#847). `--profile ci-full` runs the
+      # measurement files `profile.default` holds off the merge path (#1450), with fail-fast off.
       # `cache_pressure` is the one test no shared runner runs: it asserts a larger cache is
-      # measurably faster, a timing
-      # CLAUDE.md does not ask of a shared runner, and it timed out at 240s, 720s and 1200s. Run it
-      # with
-      # `cargo nextest run --profile nightly -E 'binary(cache_pressure)'` on a workstation.
-      # The exclusion is `profile.ci-full`, not an `-E` here, because `release.yml`'s gate must hold
-      # out the same thing.
-      # Through the flake-retry script (#1710): a test that fails again alone still fails the run; a
-      # forgiven flake is a `::warning::`.
-      # Tests that fail twice go to `nightly-failed-tests`, which `scripts/ci-nightly-rerun.py`
-      # turns into `inputs.tests`.
-      # That script recognises this step by its name: keep the prefix `cargo nextest run`.
+      # measurably faster, a timing CLAUDE.md does not ask of a shared runner, and it timed out at
+      # 240s, 720s and 1200s. Run it with `cargo nextest run --profile nightly -E
+      # 'binary(cache_pressure)'` on a workstation. The exclusion is `profile.ci-full`, not an `-E`
+      # here, because `release.yml`'s gate must hold out the same thing. Through the flake-retry
+      # script (#1710): a test that fails again alone still fails the run; a forgiven flake is a
+      # `::warning::`. Tests that fail twice go to `nightly-failed-tests`, which
+      # `scripts/ci-nightly-rerun.py` turns into `inputs.tests`. That script recognises this step by
+      # its name: keep the prefix `cargo nextest run`.
       - name: cargo nextest run --profile ci-full
         if: ${{ !inputs.only || contains(format(' {0} ', inputs.only), ' tests ') }}
         env:
@@ -249,8 +238,7 @@ jobs:
           retention-days: 14
 
       # nextest does not run doctests and does not say so (#1440). Runs even when the suite failed,
-      # so a red nightly says
-      # whether the doctests were red too.
+      # so a red nightly says whether the doctests were red too.
       - name: cargo test --doc
         if: ${{ !cancelled() && (!inputs.only || contains(format(' {0} ', inputs.only), ' doctests ')) }}
         env:
@@ -258,9 +246,8 @@ jobs:
         run: dbus-run-session -- cargo test --workspace --doc
 
   # Focus's two storyboard passes, beside the full suite: `every_command` (~411 s) and
-  # `storyboard_catalogue` (~275 s) each take every test
-  # thread, which held the suite for twelve minutes. `profile.ci-storyboards` selects what
-  # `profile.ci-full` holds out;
+  # `storyboard_catalogue` (~275 s) each take every test thread, which held the suite for twelve
+  # minutes. `profile.ci-storyboards` selects what `profile.ci-full` holds out;
   # `check-measurement-tier.py` keeps the two in step.
   #
   # The test binary, built once for the four shards, which restore the `build-app` cache that ci.yml
@@ -315,8 +302,7 @@ jobs:
     if: needs.changed.outputs.run == 'true'
     runs-on: ubuntu-26.04
     # Each pass is one test that plays hundreds of windows, so nextest cannot split it; the tests
-    # split themselves by
-    # `POSTIO_STORYBOARD_SHARD`.
+    # split themselves by `POSTIO_STORYBOARD_SHARD`.
     strategy:
       fail-fast: false
       matrix:

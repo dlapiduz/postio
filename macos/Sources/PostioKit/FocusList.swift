@@ -37,11 +37,10 @@ public struct LabelColour: Equatable, Sendable {
 }
 
 /// A shifted letter says its Shift (`⇧X`) because `e` and `E` are different keys, and a cap drawing
-/// both as `E` would teach a different
-/// keyboard from the one the resolver reads. A sequence is one cap, presses spaced (`g o`); a chord
-/// uses the Mac's glyphs; bare arrows run together.
-/// An FFI gap: C22 asks for `postio_ui::hints::short` to spell every cap and the boundary does not
-/// export it, so this is the one Swift spelling.
+/// both as `E` would teach a different keyboard from the one the resolver reads. A sequence is one
+/// cap, presses spaced (`g o`); a chord uses the Mac's glyphs; bare arrows run together. An FFI
+/// gap: C22 asks for `postio_ui::hints::short` to spell every cap and the boundary does not export
+/// it, so this is the one Swift spelling.
 public enum KeyCapSpelling {
     public static func cap(_ binding: String?) -> String? {
         guard let binding, !binding.isEmpty else { return nil }
@@ -276,11 +275,9 @@ public enum FocusRowMetrics {
 }
 
 /// Holds no array of rows, only what drawing needs without asking: each row's shape once seen, so
-/// `heightOfRow` is answered
-/// without a page fetch, and the day each row is on. Day headings are a band on a row, not rows of
-/// their own: separate rows
-/// would need every page's days to count the table, and a 10k inbox would have to be read to be
-/// counted.
+/// `heightOfRow` is answered without a page fetch, and the day each row is on. Day headings are a
+/// band on a row, not rows of their own: separate rows would need every page's days to count the
+/// table, and a 10k inbox would have to be read to be counted.
 @MainActor
 public final class FocusListModel {
     public static let pageSize: UInt32 = 50
@@ -312,10 +309,9 @@ public final class FocusListModel {
     public private(set) var open: Splice?
 
     /// Whether the list was re-read while a thread was open and none has been opened since. The
-    /// session draws its rows by its own
-    /// splice, so by the time a re-read is drawn here `open` names the old thread; until a splice
-    /// reconciles them the fold and splice
-    /// redraw the list rather than slide rows (#2134).
+    /// session draws its rows by its own splice, so by the time a re-read is drawn here `open`
+    /// names the old thread; until a splice reconciles them the fold and splice redraw the list
+    /// rather than slide rows (#2134).
     public private(set) var rereadWhileOpen = false
 
     /// A binding lookup clones the whole keymap on the other side, and the table draws a row's
@@ -333,9 +329,9 @@ public final class FocusListModel {
     }
 
     /// A re-read is not a new list: measured rows are measured again from whatever is resident
-    /// before anything is drawn, since a
-    /// table that forgot every shape laid out once at one-line heights. A shape whose row is not
-    /// resident keeps its last answer; none is asked for, so nothing is paged.
+    /// before anything is drawn, since a table that forgot every shape laid out once at one-line
+    /// heights. A shape whose row is not resident keeps its last answer; none is asked for, so
+    /// nothing is paged.
     public func reset(total: UInt32) {
         count = Int(total)
         if open != nil { rereadWhileOpen = true }

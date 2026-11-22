@@ -1,6 +1,6 @@
 //! A pure function from a message's words to what its signature says: title, company, phone
-//! numbers,
-//! websites. Reads only the block at the tail, never the sentences above it or quoted text.
+//! numbers, websites. Reads only the block at the tail, never the sentences above it or quoted
+//! text.
 
 use postio_model::SignatureDetails;
 

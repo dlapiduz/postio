@@ -1,7 +1,6 @@
 //! Its own binary because it needs a second process: the engine's lock is a POSIX record lock,
-//! which
-//! a process never conflicts with itself on. The child is this binary rerun with `HOLD` naming the
-//! store.
+//! which a process never conflicts with itself on. The child is this binary rerun with `HOLD`
+//! naming the store.
 
 #![allow(clippy::disallowed_methods)] // the crate's own code prepares through `sql::statement`; a test may reach the engine directly
 

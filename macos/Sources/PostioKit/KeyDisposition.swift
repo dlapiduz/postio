@@ -1,11 +1,10 @@
 import PostioFFI
 
 /// `KeyMonitor` runs ahead of the responder chain, and what it swallows never reaches AppKit.
-/// Swallowing every key the resolver claimed
-/// made a command with no handler worse than a no-op: `space` resolved to `scroll_reader_down`, was
-/// swallowed, and never reached the
-/// scroll view that would have paged it. Claiming a key and acting on it are two things; only
-/// acting earns the swallow.
+/// Swallowing every key the resolver claimed made a command with no handler worse than a no-op:
+/// `space` resolved to `scroll_reader_down`, was swallowed, and never reached the scroll view that
+/// would have paged it. Claiming a key and acting on it are two things; only acting earns the
+/// swallow.
 public enum KeyDisposition {
     public static func swallows(outcome: KeyOutcomeFfi, acted: Bool) -> Bool {
         switch outcome {
@@ -21,18 +20,16 @@ public enum KeyDisposition {
     }
 
     /// Every key but a Command chord: an input method builds a character over several presses, and
-    /// swallowing one would break every
-    /// keyboard that composes. AppKit hands a Command chord to the menus first, and marked text
-    /// also holds inline predictive text,
-    /// which left ⌘↩ unsent from the compose body.
+    /// swallowing one would break every keyboard that composes. AppKit hands a Command chord to the
+    /// menus first, and marked text also holds inline predictive text, which left ⌘↩ unsent from
+    /// the compose body.
     public static func belongsToInputMethod(_ key: KeyEvent.Reduced, composing: Bool) -> Bool {
         composing && !key.modifiers.command
     }
 
     /// The resolver lets typing win over bare characters only, so ⌘A in a text field resolved to
-    /// "select all messages" and the field
-    /// never selected its text. These chords are the platform's in a field whatever `[keys]` says;
-    /// other chords (⌘K) still reach their command.
+    /// "select all messages" and the field never selected its text. These chords are the platform's
+    /// in a field whatever `[keys]` says; other chords (⌘K) still reach their command.
     public static func belongsToText(_ key: KeyEvent.Reduced, typing: Bool) -> Bool {
         guard typing, key.modifiers.command, !key.modifiers.control, !key.modifiers.option,
               let character = key.character?.lowercased()

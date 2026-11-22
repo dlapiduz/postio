@@ -39,9 +39,8 @@ impl ContactSource {
 }
 
 /// One mechanism for deletion, restore and exact undo. A `Deleted` person keeps its addresses so
-/// new mail
-/// does not bring them back; a `Merged` person keeps its fields and memberships so the join can be
-/// undone.
+/// new mail does not bring them back; a `Merged` person keeps its fields and memberships so the
+/// join can be undone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum ContactState {
     #[default]

@@ -13,11 +13,9 @@ use crate::invitation::{Answer, EventTime, Invitation};
 const PRODID: &str = "-//Postio//Postio//EN";
 
 /// The bytes are the `text/calendar; method=REPLY` body, CRLF and folding included. Only the
-/// replying
-/// attendee is listed (RFC 5546 §3.2.3). Whether `attendee` may answer is the caller's decision;
-/// when
-/// the invitation lists the address, the reply spells it as the invitation does so the organiser
-/// matches it.
+/// replying attendee is listed (RFC 5546 §3.2.3). Whether `attendee` may answer is the caller's
+/// decision; when the invitation lists the address, the reply spells it as the invitation does so
+/// the organiser matches it.
 pub fn reply(invitation: &Invitation, attendee: &EmailAddress, answer: Answer) -> Vec<u8> {
     reply_at(invitation, attendee, answer, Utc::now())
 }

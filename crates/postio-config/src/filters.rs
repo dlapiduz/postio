@@ -11,8 +11,7 @@ pub struct FilterConfig {
     #[serde(default)]
     pub pinned: bool,
     /// The key stays a stable TOML-safe identity (#292); this is what the user chose to call it.
-    /// `None`
-    /// means nobody has renamed it, so it shows as the key.
+    /// `None` means nobody has renamed it, so it shows as the key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// `None` sorts after every filter that has one, by key.
@@ -46,8 +45,7 @@ impl Config {
     }
 
     /// Pinned, it takes the next free place after every pinned filter (the next ⌥ number) and the
-    /// others
-    /// are given explicit places, as `move_filter` does, so "no order, by key" cannot put it
+    /// others are given explicit places, as `move_filter` does, so "no order, by key" cannot put it
     /// elsewhere.
     pub fn save_filter_as(
         &mut self,
@@ -128,9 +126,8 @@ impl Config {
     }
 
     /// Assigns an explicit `order` to every pinned filter, not only the one that moved: an
-    /// unordered
-    /// filter would keep sorting by key and could land anywhere among the now-explicit ones.
-    /// Returns false if `key` is not a pinned filter or was already at the end.
+    /// unordered filter would keep sorting by key and could land anywhere among the now-explicit
+    /// ones. Returns false if `key` is not a pinned filter or was already at the end.
     pub fn move_filter(&mut self, key: &str, direction: Reorder) -> bool {
         let mut ordered = self.ordered_filter_keys();
         let Some(at) = ordered.iter().position(|k| k == key) else {
@@ -167,8 +164,8 @@ impl Config {
 }
 
 /// Format-preserving (`toml_edit`): only the `[saved_searches]` table is touched, so comments
-/// elsewhere
-/// survive (#869). The table is regenerated whole, so a comment on a changed filter entry does not.
+/// elsewhere survive (#869). The table is regenerated whole, so a comment on a changed filter entry
+/// does not.
 pub fn patch_filters(text: &str, filters: &BTreeMap<String, FilterConfig>) -> Result<String> {
     // An empty map serializes as a bare dangling header, so the empty case only removes the
     // section.

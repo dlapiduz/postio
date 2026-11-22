@@ -1,8 +1,7 @@
 //! The keymap resolver: single keys, chords, sequences and contexts, with no widget in it (not GTK
-//! accelerators).
-//! A `g g` sequence needs a visible pending state, `Esc` means different things per context, and
-//! typing must always
-//! win over a single-key binding; none of that fits `gtk::ShortcutController`.
+//! accelerators). A `g g` sequence needs a visible pending state, `Esc` means different things per
+//! context, and typing must always win over a single-key binding; none of that fits
+//! `gtk::ShortcutController`.
 
 use std::fmt;
 use std::str::FromStr;
@@ -219,9 +218,8 @@ impl Chord {
     }
 
     /// From the character the key types, its name when it types nothing (GDK reports `Return` as
-    /// `\r`), and the
-    /// modifiers. `None` for a key with no name here. Deliberately not a key code: GTK and AppKit
-    /// disagree on those.
+    /// `\r`), and the modifiers. `None` for a key with no name here. Deliberately not a key code:
+    /// GTK and AppKit disagree on those.
     pub fn from_platform_key(
         character: Option<char>,
         name: Option<&str>,

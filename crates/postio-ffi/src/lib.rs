@@ -186,8 +186,8 @@ pub use settings::{
 pub use unsubscribe::{ListMailOfferFfi, UnsubscribeActivationFfi, UnsubscribeOfferFfi};
 
 /// Every command the registry knows, in cheat-sheet order. A free function so the palette and menu
-/// bar are built before a
-/// session opens: opening one reads the keyring and can raise a Keychain prompt (ADR 0014).
+/// bar are built before a session opens: opening one reads the keyring and can raise a Keychain
+/// prompt (ADR 0014).
 #[uniffi::export]
 pub fn commands() -> Vec<CommandSpecFfi> {
     registry::commands()
@@ -207,8 +207,7 @@ pub fn intercepted_commands() -> Vec<String> {
 pub const FRONTEND: postio_core::Frontend = postio_core::Frontend::Focus;
 
 /// Which platform's design the boundary serves: Apple's, whatever host it was built on, so the
-/// Linux gate (ADR 0019 Q7)
-/// runs the composition the Mac runs. Never ask `Platform::host()`.
+/// Linux gate (ADR 0019 Q7) runs the composition the Mac runs. Never ask `Platform::host()`.
 pub const PLATFORM: postio_config::paths::Platform = postio_config::paths::Platform::Apple;
 
 uniffi::setup_scaffolding!();

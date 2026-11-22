@@ -3,14 +3,11 @@ import PostioFFI
 import PostioKit
 
 /// One at a time (M4): another kind closes the first, the same kind replaces the content and keeps
-/// the frame, so
-/// `j`/`k` never resize it. A child of the main window, so it moves and closes with it; no
-/// minimise, since a
-/// minimised message is one the list no longer knows is open. Every close is reported once through
-/// `onClosed`,
-/// which puts the keyboard back on the list. AppKit rather than `openWindow`: a `WindowGroup`
-/// offers no parent,
-/// no placement against the main frame and no close from an engine intent.
+/// the frame, so `j`/`k` never resize it. A child of the main window, so it moves and closes with
+/// it; no minimise, since a minimised message is one the list no longer knows is open. Every close
+/// is reported once through `onClosed`, which puts the keyboard back on the list. AppKit rather
+/// than `openWindow`: a `WindowGroup` offers no parent, no placement against the main frame and no
+/// close from an engine intent.
 @MainActor
 public final class SecondaryWindowController: NSObject, NSWindowDelegate {
     public static let heightInset: CGFloat = 80

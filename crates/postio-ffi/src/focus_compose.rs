@@ -1,6 +1,5 @@
 //! Writing and replying at the boundary. The controller decides which composer opens and when to
-//! save; the
-//! draft's words stay the Mac's, saved with `save_draft` on `FocusSaveDraft`.
+//! save; the draft's words stay the Mac's, saved with `save_draft` on `FocusSaveDraft`.
 
 use crate::session::Session;
 
@@ -219,8 +218,7 @@ impl Session {
     }
 
     /// The composer's draft as `FocusComposerDraftWanted { edit }` asked, with what was typed. The
-    /// controller
-    /// answers with `FocusComposerDraft`.
+    /// controller answers with `FocusComposerDraft`.
     pub fn focus_composer_draft(&self, edit: DraftEditFfi, draft: crate::DraftFfi) {
         let Some((database, _)) = self.store_and_blobs() else {
             return;

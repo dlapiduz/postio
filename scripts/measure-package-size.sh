@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # Is the terminal package small enough beside the desktop one? (docs/archive/specs/005-tui-frontend
-# SC-004: binaries under half, Flatpak under two-thirds)
-# Measured form for form from one commit: binaries with the shared libraries they load (each counted
-# once per side), and each installed Flatpak
-# with the runtime it names (the app alone would compare the wrong things). The release workflow
-# runs both after the packages are built.
-# `scripts/tests/test-measure-package-size.py` is what tests this.
+# SC-004: binaries under half, Flatpak under two-thirds) Measured form for form from one commit:
+# binaries with the shared libraries they load (each counted once per side), and each installed
+# Flatpak with the runtime it names (the app alone would compare the wrong things). The release
+# workflow runs both after the packages are built. `scripts/tests/test-measure-package-size.py` is
+# what tests this.
 #
 # Usage:
 #   scripts/measure-package-size.sh binaries TUI_BIN... -- DESKTOP_BIN...

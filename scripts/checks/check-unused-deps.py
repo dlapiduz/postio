@@ -47,8 +47,7 @@ def main() -> int:
         )
         return 0
     # Not `vendor/` (upstream crates with a patch queue; machete ignores the workspace `exclude`),
-    # and not the workspace-hack,
-    # whose dependencies are unused by design (ADR 0047).
+    # and not the workspace-hack, whose dependencies are unused by design (ADR 0047).
     paths = sorted(
         p.name
         for p in root.iterdir()

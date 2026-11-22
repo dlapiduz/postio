@@ -1,7 +1,7 @@
 //! The results' filter popovers and their month chart. The controller holds which popover is open
-//! and its rows; every check, preset and word goes down
-//! and the next `Intent::Popover` redraws it whole. A close the controller made is never said back;
-//! one the toolkit made (Escape, a click away) is, once.
+//! and its rows; every check, preset and word goes down and the next `Intent::Popover` redraws it
+//! whole. A close the controller made is never said back; one the toolkit made (Escape, a click
+//! away) is, once.
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};

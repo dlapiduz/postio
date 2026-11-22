@@ -1,8 +1,6 @@
 //! A thread never spans accounts (ADR 0005 Q2); the unified list folds threads from different
-//! accounts into
-//! one row when their roots share an `RfcMessageId` or, roots missing, their subjects match within
-//! the
-//! coalescing window. Dedupe is display-only, and the view is the inboxes (#1692).
+//! accounts into one row when their roots share an `RfcMessageId` or, roots missing, their subjects
+//! match within the coalescing window. Dedupe is display-only, and the view is the inboxes (#1692).
 
 use chrono::{DateTime, TimeDelta, TimeZone, Utc};
 use postio_model::ids::{AccountId, MailboxId, MessageId, ThreadId};
@@ -228,8 +226,7 @@ async fn a_partner_already_shown_is_never_a_second_row_across_pages() {
 }
 
 /// The total must equal the rows the walk produces, so it cannot be a thread count: a grouped pair
-/// is two
-/// threads and one row. Asserted against the walk, not a literal.
+/// is two threads and one row. Asserted against the walk, not a literal.
 #[tokio::test]
 async fn the_group_count_is_what_walking_every_page_produces() {
     let database = test_support::memory().await;
@@ -401,8 +398,7 @@ async fn an_offset_window_is_the_walk_from_that_row_on() {
 }
 
 /// A disabled account drops out silently (ADR 0005 Q10), in the partner search too: a disabled
-/// thread that
-/// absorbed an enabled partner would fold a visible row into one the user cannot see.
+/// thread that absorbed an enabled partner would fold a visible row into one the user cannot see.
 #[tokio::test]
 async fn a_disabled_account_is_not_in_the_unified_view_at_all() {
     let database = test_support::memory().await;
@@ -486,8 +482,7 @@ async fn a_disabled_account_is_not_in_the_unified_view_at_all() {
 }
 
 /// Unified is every enabled account's inbox, not all its mail, so a filed-away conversation leaves
-/// the
-/// view as in a folder (#1692).
+/// the view as in a folder (#1692).
 #[tokio::test]
 async fn unified_lists_the_inboxes_of_every_account_and_nothing_filed_away() {
     let database = test_support::memory().await;

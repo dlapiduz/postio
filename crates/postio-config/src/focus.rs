@@ -134,8 +134,7 @@ pub(crate) fn stays_inside(path: &std::path::Path) -> bool {
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct FocusFilter {
     /// Each entry is an address or a whole domain (`@example.org`); one that is neither is reported
-    /// by
-    /// validation and pins nobody.
+    /// by validation and pins nobody.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub never: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

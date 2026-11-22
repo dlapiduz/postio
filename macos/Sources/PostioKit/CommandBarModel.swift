@@ -26,8 +26,8 @@ public enum BarCommand {
 }
 
 /// The one thing decided here is the arrows' highlight, which the controller leaves to the toolkit:
-/// `FocusBarLines` names a
-/// line only when a run moved it there. No AppKit, so iOS stays reachable (#1264).
+/// `FocusBarLines` names a line only when a run moved it there. No AppKit, so iOS stays reachable
+/// (#1264).
 @MainActor
 @Observable
 public final class CommandBarModel {

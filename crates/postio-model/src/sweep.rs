@@ -1,9 +1,8 @@
 //! A server's `CHANGEDSINCE` feed is only as good as its bookkeeping: iCloud, Yahoo and Exchange
-//! under-report changes and iCloud never
-//! pushes flag changes to `IDLE`, so a missed flag is missed for good once `HIGHESTMODSEQ`
-//! advances. The cure is a flags-only listing of the
-//! whole folder compared with the store; `SweepPolicy::decide` trades its cost, with thresholds as
-//! data. Separate from `SyncState::plan`, which is about the mailbox.
+//! under-report changes and iCloud never pushes flag changes to `IDLE`, so a missed flag is missed
+//! for good once `HIGHESTMODSEQ` advances. The cure is a flags-only listing of the whole folder
+//! compared with the store; `SweepPolicy::decide` trades its cost, with thresholds as data.
+//! Separate from `SyncState::plan`, which is about the mailbox.
 
 use serde::{Deserialize, Serialize};
 
@@ -39,9 +38,9 @@ impl SweepPolicy {
     };
 
     /// `exists` is the folder's message count as just reported; `passes_since_sweep` is 0 right
-    /// after a sweep. A `Reliable` server is never
-    /// swept, since the sweep would be paid on every folder to guard against a fault it does not
-    /// have. A large folder of an unreliable server sweeps once per `larger_every` passes.
+    /// after a sweep. A `Reliable` server is never swept, since the sweep would be paid on every
+    /// folder to guard against a fault it does not have. A large folder of an unreliable server
+    /// sweeps once per `larger_every` passes.
     pub fn decide(&self, exists: u32, passes_since_sweep: u32, feed: ChangeFeed) -> FlagPass {
         match feed {
             ChangeFeed::Reliable => FlagPass::Trust,

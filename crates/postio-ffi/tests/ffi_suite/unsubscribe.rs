@@ -15,8 +15,7 @@ use postio_storage::test_support;
 #[derive(Default)]
 struct Seed {
     /// The activation log is stamped with an account; with one account a wrong stamp equals the
-    /// right one,
-    /// so anything asserting on the stamp puts its message under `1`.
+    /// right one, so anything asserting on the stamp puts its message under `1`.
     account: usize,
     sender: &'static str,
     list_id: Option<&'static str>,

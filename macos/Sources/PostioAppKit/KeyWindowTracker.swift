@@ -2,8 +2,7 @@ import AppKit
 import PostioKit
 
 /// Driven by notifications, not a read of `NSApp.keyWindow` at key time: a menu-bar accelerator
-/// fires
-/// while the menu owns the event stream, and `keyWindow` is nil there.
+/// fires while the menu owns the event stream, and `keyWindow` is nil there.
 @MainActor
 public final class KeyWindowTracker {
     public private(set) var current: KeyWindow = .main

@@ -3,9 +3,8 @@ import PostioFFI
 import PostioKit
 
 /// The results' query field: an `NSTextView` whose chips are text attachments, because
-/// `NSTokenField`
-/// can neither hold free words between tokens nor strike an excluded one through. It draws what
-/// `FocusQuery` said and never edits the query itself.
+/// `NSTokenField` can neither hold free words between tokens nor strike an excluded one through. It
+/// draws what `FocusQuery` said and never edits the query itself.
 @MainActor
 public final class ChipQueryField: NSTextView {
     public var onRemove: ((UInt32) -> Void)?

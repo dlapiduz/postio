@@ -1,7 +1,6 @@
 //! Keystrokes, resolved by the core: Swift owns no keymap (ADR 0019 Q4). A frontend reduces its key
-//! event to the character,
-//! the key's name and the modifiers held, and `postio_ui::keymap` owns bindings, chords, sequences
-//! and the leader timeout.
+//! event to the character, the key's name and the modifiers held, and `postio_ui::keymap` owns
+//! bindings, chords, sequences and the leader timeout.
 
 /// The three answers of `postio_ui::keymap::Outcome`; only `Unhandled` lets the key propagate to
 /// AppKit.

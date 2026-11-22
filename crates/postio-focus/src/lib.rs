@@ -1693,8 +1693,7 @@ impl FocusController {
             _ => {}
         }
         // A message open that is on no cursor row (a search hit, a digest's email) is what a verb
-        // is
-        // about.
+        // is about.
         if let Some(shown) = self.shown_apart(rows) {
             if pickers::opens_picker(id) {
                 return self.picker_on_message(id, shown, rows).unwrap_or_default();

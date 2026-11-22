@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
 # The C compiler cargo hands to build scripts (`[env] CC`): puts ccache in front of every
-# build-script C compile, and is plain `cc` without it.
-# ccache, not sccache, measured: openssl-src compiles inside each target dir so paths differ;
-# sccache hit 0.17%, ccache with
-# `base_dir` and `hash_dir = false` hit 1193 of 1196 (#736).
-# Unlike a RUSTC_WRAPPER, `$CC` is the compiler rather than handed it, so this stands in for `cc`
-# and prepends `ccache cc`.
-# An exported CC wins over cargo's `[env]`. ccache runs in-process, so there is no daemon-TMPDIR
-# hazard (#359); cargo's TMPDIR still needs creating (#613).
+# build-script C compile, and is plain `cc` without it. ccache, not sccache, measured: openssl-src
+# compiles inside each target dir so paths differ; sccache hit 0.17%, ccache with `base_dir` and
+# `hash_dir = false` hit 1193 of 1196 (#736). Unlike a RUSTC_WRAPPER, `$CC` is the compiler rather
+# than handed it, so this stands in for `cc` and prepends `ccache cc`. An exported CC wins over
+# cargo's `[env]`. ccache runs in-process, so there is no daemon-TMPDIR hazard (#359); cargo's
+# TMPDIR still needs creating (#613).
 if [ -n "${TMPDIR:-}" ]; then
     mkdir -p "$TMPDIR" 2>/dev/null || true
 fi

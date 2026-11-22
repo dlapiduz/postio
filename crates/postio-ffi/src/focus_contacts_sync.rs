@@ -201,8 +201,7 @@ impl Session {
     }
 
     /// What a sync would do, from a snapshot of the Mac's side the person allowed it to read. A dry
-    /// run: nothing is
-    /// written, and nothing reaches a log.
+    /// run: nothing is written, and nothing reaches a log.
     pub fn contacts_sync_plan(
         &self,
         records: Vec<ExternalRecordFfi>,
@@ -234,8 +233,8 @@ impl Session {
     }
 
     /// Applies the Postio side of the plan shown, under its `fingerprint`: saved contacts for the
-    /// records only Contacts
-    /// has, and the fields Contacts changed. Writes Postio's database and nothing else.
+    /// records only Contacts has, and the fields Contacts changed. Writes Postio's database and
+    /// nothing else.
     pub fn contacts_sync_bring_in(
         &self,
         records: Vec<ExternalRecordFfi>,

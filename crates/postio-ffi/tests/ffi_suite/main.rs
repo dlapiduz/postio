@@ -1,7 +1,6 @@
-//! One binary for `postio-ffi`'s integration tests, so the dependency stack links once (#1128).
-//! A case that sets a process-global must move out. One that only reads shared state (a count, a
-//! slot, a log callsite)
-//! starts with `postio_test_support::alone!` (#1976).
+//! One binary for `postio-ffi`'s integration tests, so the dependency stack links once (#1128). A
+//! case that sets a process-global must move out. One that only reads shared state (a count, a
+//! slot, a log callsite) starts with `postio_test_support::alone!` (#1976).
 
 mod account_repair;
 mod account_switches;

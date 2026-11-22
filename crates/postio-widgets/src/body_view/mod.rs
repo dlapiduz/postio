@@ -1,6 +1,5 @@
 //! The reading surface: a `gtk::Scrollable` that paints a `postio-render` snapshot as tiles. It
-//! never
-//! touches the engine; a render thread lays the message out.
+//! never touches the engine; a render thread lays the message out.
 
 mod a11y;
 pub mod find;
@@ -262,9 +261,8 @@ impl BodyView {
     }
 
     /// Shows `content` from its top, with nothing of the last message drawn over it: a darkening is
-    /// scoped to
-    /// one message and a single message's scope is the empty string, so a kept one would darken
-    /// every later one.
+    /// scoped to one message and a single message's scope is the empty string, so a kept one would
+    /// darken every later one.
     pub fn set_content_from_top(&self, content: Content) {
         let imp = self.imp();
         imp.to_top.set(true);
@@ -281,8 +279,7 @@ impl BodyView {
     }
 
     /// Shows `content`, keeping the character at the top of the view in place so a late body or
-    /// image above it
-    /// does not move the words being read.
+    /// image above it does not move the words being read.
     pub fn set_content(&self, content: Content) {
         if !self.imp().to_top.get() {
             self.keep_place();
@@ -656,8 +653,8 @@ impl BodyView {
     }
 
     /// Lays the view out inside `scroller`: as tall as its document and never scrolling itself, so
-    /// only the
-    /// tiles under the scroller's window are rasterised. Keys and finds scroll the scroller.
+    /// only the tiles under the scroller's window are rasterised. Keys and finds scroll the
+    /// scroller.
     pub fn flow_in(&self, scroller: &gtk::ScrolledWindow) {
         let imp = self.imp();
         imp.flow.replace(Some(scroller.downgrade()));
@@ -674,8 +671,7 @@ impl BodyView {
     }
 
     /// Takes a sideways scroll for a paper page wider than the column (drawn at `PAPER_FIT_FLOOR`);
-    /// the column
-    /// only scrolls down, so the view moves its own sideways adjustment.
+    /// the column only scrolls down, so the view moves its own sideways adjustment.
     fn scroll_sideways(&self) {
         let scroll = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::BOTH_AXES);
         scroll.connect_scroll({
@@ -720,16 +716,14 @@ impl BodyView {
     }
 
     /// Reads the document's ground from `probe`, a widget whose CSS `color` is the column's ground
-    /// token. The
-    /// renderer has no style context, so it is resolved at each render and passed as
+    /// token. The renderer has no style context, so it is resolved at each render and passed as
     /// `--flow-ground`.
     pub fn set_ground(&self, probe: &impl IsA<gtk::Widget>) {
         self.imp().ground.replace(Some(probe.as_ref().downgrade()));
     }
 
     /// Reads reader palette `variable` (such as `--r-ink`) from `probe`, as `set_ground` does, so
-    /// the body is
-    /// drawn in the column's own colours.
+    /// the body is drawn in the column's own colours.
     pub fn add_palette_probe(&self, variable: &'static str, probe: &impl IsA<gtk::Widget>) {
         self.imp()
             .palette
@@ -965,8 +959,7 @@ impl BodyView {
         self.keep_place();
         self.request_render();
         // The style manager signals before the stylesheet is in place, so the ground read now can
-        // be the old
-        // scheme's: read it again once the main loop has turned.
+        // be the old scheme's: read it again once the main loop has turned.
         if self.imp().ground.borrow().is_some() || !self.imp().palette.borrow().is_empty() {
             let view = self.downgrade();
             glib::idle_add_local_once(move || {

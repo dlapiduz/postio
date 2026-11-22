@@ -1,7 +1,6 @@
 //! The Contacts view: `g c` puts a people list, a card and a strip where the inbox was. What it
-//! says and what a key does are the
-//! controller's; a click is reported as the input a key would have been, so pointer and keyboard
-//! reach the same rule.
+//! says and what a key does are the controller's; a click is reported as the input a key would have
+//! been, so pointer and keyboard reach the same rule.
 
 mod avatar;
 mod card;

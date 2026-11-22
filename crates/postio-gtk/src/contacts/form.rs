@@ -1,6 +1,6 @@
 //! The Edit and New contact form, in the card's place. The controller owns the text: the form is
-//! drawn whole on every change
-//! with the keyboard and caret put back, and nothing here keeps a copy that could differ.
+//! drawn whole on every change with the keyboard and caret put back, and nothing here keeps a copy
+//! that could differ.
 
 use std::rc::Rc;
 

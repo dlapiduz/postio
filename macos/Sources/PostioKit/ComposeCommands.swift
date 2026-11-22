@@ -2,10 +2,9 @@ import Foundation
 import PostioFFI
 
 /// Registry commands drawn in the Message and Format menus reached nothing until an id turned into
-/// a call. A draft is in a
-/// window this frontend owns, unsaved and unknown to the store, so these are `Intercepted` and the
-/// coverage sweep counts them as answered.
-/// The four verbs that write: the controller's, named for the toolbar's compose button and its tip.
+/// a call. A draft is in a window this frontend owns, unsaved and unknown to the store, so these
+/// are `Intercepted` and the coverage sweep counts them as answered. The four verbs that write: the
+/// controller's, named for the toolbar's compose button and its tip.
 public enum WritingCommand {
     public static let compose = "compose"
     public static let reply = "reply"

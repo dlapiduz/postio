@@ -1,9 +1,7 @@
 //! The settings window joined to the store's host through `postio-client` (ADR 0041, ADR 0043): the
-//! presenters both desktop
-//! apps feed [`crate::settings::SettingsPanel`] with. The app answers some things itself, as an
-//! [`Outside`]: the connection
-//! test and token-expiry line (they dial out or read the keyring in its process), a removal's undo
-//! toast, role-mapping commands.
+//! presenters both desktop apps feed [`crate::settings::SettingsPanel`] with. The app answers some
+//! things itself, as an [`Outside`]: the connection test and token-expiry line (they dial out or
+//! read the keyring in its process), a removal's undo toast, role-mapping commands.
 
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -22,8 +20,7 @@ pub mod egress;
 pub mod privacy;
 
 /// Shared between [`accounts`], which adds and removes membership as a rebuild runs, and whatever
-/// reads it, such as a search
-/// raising a corpus caveat (#981).
+/// reads it, such as a search raising a corpus caveat (#981).
 pub type Reindexing = Rc<RefCell<HashSet<AccountId>>>;
 
 pub type Later<T> = Pin<Box<dyn Future<Output = T>>>;

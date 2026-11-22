@@ -1,8 +1,7 @@
 //! Opening the store behind a window. One Postio at a time has the store (ADR 0041); Focus opens it
-//! on a thread while its window is already on screen,
-//! then starts the host and shows the inbox. Sync starts after the first frame, since startup must
-//! never wait on a server.
-//! If another Postio has the store, the window says so and "Try again" opens it once it is closed.
+//! on a thread while its window is already on screen, then starts the host and shows the inbox.
+//! Sync starts after the first frame, since startup must never wait on a server. If another Postio
+//! has the store, the window says so and "Try again" opens it once it is closed.
 
 use std::cell::Cell;
 use std::path::PathBuf;
@@ -264,8 +263,8 @@ pub fn adopt_from(
             })
         },
     });
-    // Focus's notifications follow the `[sync]` settings,
-    // and are only ever about mail that stayed in its inbox (FR-153).
+    // Focus's notifications follow the `[sync]` settings, and are only ever about mail that stayed
+    // in its inbox (FR-153).
     host.notify_with(config.sync.clone());
     window.set_notifier({
         // Weakly: the session owns the host, and a notification decided

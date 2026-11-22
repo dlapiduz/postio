@@ -1,6 +1,5 @@
 //! The message view Postio draws (ADR 0043): [`Reader`] in [`view`] is the one public entry point;
-//! the notices, banners and
-//! chips around the body live in the sibling modules.
+//! the notices, banners and chips around the body live in the sibling modules.
 
 pub mod banner;
 pub mod chips;
@@ -31,8 +30,7 @@ thread_local! {
 }
 
 /// Loaded the first time anything asks, then held and keyed by the file: an "Always allow" or
-/// revoke reaches every reader,
-/// open ones included.
+/// revoke reaches every reader, open ones included.
 pub fn shared_allowlist(path: &Path) -> Rc<RefCell<RemoteImageAllowList>> {
     SHARED.with(|shared| {
         Rc::clone(

@@ -5,11 +5,10 @@ import WebKit
 import PostioKit
 
 /// The composer's editing surface: a `contenteditable` document in the one web view Postio runs
-/// script
-/// in (#1271). `session.editorScript()` is the engine's script, the same bytes WebKitGTK injects; a
-/// Swift copy would be a second dialect that `parse` narrows differently.
-/// Only Postio's bridge runs here. Message-borne script never executes: the shell's CSP names no
-/// remote origin, so a pasted `<script>` is inert, and the store is non-persistent (ADR 0003).
+/// script in (#1271). `session.editorScript()` is the engine's script, the same bytes WebKitGTK
+/// injects; a Swift copy would be a second dialect that `parse` narrows differently. Only Postio's
+/// bridge runs here. Message-borne script never executes: the shell's CSP names no remote origin,
+/// so a pasted `<script>` is inert, and the store is non-persistent (ADR 0003).
 public struct ComposeEditor: NSViewRepresentable {
     private let session: PostioSession
     private let model: ComposeModel
@@ -79,10 +78,8 @@ public struct ComposeEditor: NSViewRepresentable {
     }
 
     /// Pictures come from the draft's own parts only (#1571): the shell's CSP names `postio-cid:`
-    /// as
-    /// the one image source. The shell's own base is refused like the reader's
-    /// (`ClosedSchemeHandler`);
-    /// without a handler WebKit never started the load.
+    /// as the one image source. The shell's own base is refused like the reader's
+    /// (`ClosedSchemeHandler`); without a handler WebKit never started the load.
     static func answerSchemes(in configuration: WKWebViewConfiguration, cid: CidSchemeHandler) {
         configuration.setURLSchemeHandler(cid, forURLScheme: "postio-cid")
         configuration.setURLSchemeHandler(ClosedSchemeHandler(), forURLScheme: Coordinator.baseScheme)
@@ -114,8 +111,7 @@ public struct ComposeEditor: NSViewRepresentable {
         private var keyboardGranted = 0
 
         /// On the next turn of the run loop: a surface made in this update has no window yet, and
-        /// one
-        /// made by the Rich switch replaces the plain editor that still has it.
+        /// one made by the Rich switch replaces the plain editor that still has it.
         func takeKeyboard(_ request: Int, in view: WKWebView) {
             guard request != keyboardGranted else { return }
             keyboardGranted = request
@@ -177,8 +173,7 @@ public struct ComposeEditor: NSViewRepresentable {
         }
 
         /// The clipboard's HTML is narrowed once, in front of the person with a sentence: the store
-        /// holds
-        /// the dialect, so it would be narrowed at the next save anyway with no explanation.
+        /// holds the dialect, so it would be narrowed at the next save anyway with no explanation.
         /// `postio_body` does the narrowing and writes the sentence, so both composers agree.
         func paste(_ html: String) {
             let pasted = session.narrowPaste(html)
@@ -205,8 +200,7 @@ public struct ComposeEditor: NSViewRepresentable {
         }
 
         /// The script is the boundary's (`postio_ui::compose::mark_script`). A command with no
-        /// script is
-        /// not an error: `insert_link` needs an href and takes the other path.
+        /// script is not an error: `insert_link` needs an href and takes the other path.
         func applyPendingMark(in view: WKWebView) {
             guard let request = model.markRequest, request.serial != appliedMark else { return }
             appliedMark = request.serial
@@ -314,9 +308,8 @@ public final class PastingWebView: WKWebView {
 
     /// `@objc`, not `override`: `WKWebView` implements `paste:` for the responder chain without
     /// exposing it to Swift, so this claims the selector. No `super` call: every branch inserts. A
-    /// picture
-    /// is checked last: a word processor's copy carries a rendered image of the selection beside
-    /// its text.
+    /// picture is checked last: a word processor's copy carries a rendered image of the selection
+    /// beside its text.
     @objc public func paste(_ sender: Any?) {
         let board = NSPasteboard.general
         if let html = board.string(forType: .html) {

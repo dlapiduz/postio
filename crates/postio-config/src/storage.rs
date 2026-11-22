@@ -1,8 +1,7 @@
 //! `[storage]`: a disk ceiling on the blob store. Exceeding it is safe: only refetchable data is
-//! evicted
-//! (raw source, then attachment payloads, oldest first), never message text (ADR 0014, 0016).
-//! Unset means unbounded: a default that binds would throw away attachments someone downloaded on
-//! purpose.
+//! evicted (raw source, then attachment payloads, oldest first), never message text (ADR 0014,
+//! 0016). Unset means unbounded: a default that binds would throw away attachments someone
+//! downloaded on purpose.
 
 use serde::{Deserialize, Serialize};
 
@@ -11,8 +10,7 @@ use crate::Extras;
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct StorageConfig {
     /// Ceiling on the blob store, in bytes. `None` means unbounded: a default that binds would
-    /// throw away
-    /// attachments someone downloaded on purpose.
+    /// throw away attachments someone downloaded on purpose.
     #[serde(default)]
     pub max_bytes: Option<u64>,
     #[serde(flatten)]

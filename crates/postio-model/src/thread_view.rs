@@ -51,9 +51,8 @@ pub struct ThreadView {
 }
 
 /// A stored preview is one line, so this looks for the cue that ends an attribution ("wrote:", "a
-/// écrit :", "schrieb:",
-/// "escribió:") and steps back to where its introducing words start. A cue with no such start loses
-/// the whole sentence it ends.
+/// écrit :", "schrieb:", "escribió:") and steps back to where its introducing words start. A cue
+/// with no such start loses the whole sentence it ends.
 pub fn before_attribution(preview: &str) -> &str {
     const CUES: [&str; 5] = ["wrote:", "a écrit :", "a écrit:", "schrieb:", "escribió:"];
     const STARTS: [&str; 4] = ["On ", "Le ", "Am ", "El "];

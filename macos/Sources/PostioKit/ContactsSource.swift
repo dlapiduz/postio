@@ -20,9 +20,8 @@ public protocol ContactBook: AnyObject {
 }
 
 /// Asked once, on the first keystroke in a recipient field, never at launch; denied is an answer.
-/// Lent, not kept: each answer
-/// reads the book again and nothing is stored, cached or logged (constitution VI). Mail completes
-/// regardless of what the book says.
+/// Lent, not kept: each answer reads the book again and nothing is stored, cached or logged
+/// (constitution VI). Mail completes regardless of what the book says.
 @MainActor
 public final class ContactsSource {
     private let book: ContactBook

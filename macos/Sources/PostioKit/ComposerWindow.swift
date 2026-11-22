@@ -14,10 +14,9 @@ public protocol ComposerEngine: AnyObject {
 extension PostioSession: ComposerEngine {}
 
 /// The controller decides when what is written is saved (`FocusSaveDraft`, after a 1500 ms quiet
-/// period or at once when the
-/// composition ends); this side saves it and says how it went. The model is kept after the window
-/// closes because the save
-/// that closing asks for comes after the close. No AppKit, so iOS stays reachable (#1264).
+/// period or at once when the composition ends); this side saves it and says how it went. The model
+/// is kept after the window closes because the save that closing asks for comes after the close. No
+/// AppKit, so iOS stays reachable (#1264).
 @MainActor
 @Observable
 public final class ComposerWindow {

@@ -1,7 +1,6 @@
 //! Focus's search at the boundary. The dropdown is the controller's (`postio_focus`, ADR 0045); the
-//! Mac draws the
-//! `FocusDropdown` it is told. A highlight crosses as runs of words, so no offset is counted in one
-//! encoding and drawn in another.
+//! Mac draws the `FocusDropdown` it is told. A highlight crosses as runs of words, so no offset is
+//! counted in one encoding and drawn in another.
 
 use crate::session::Session;
 use crate::settings::KeyHintFfi;
@@ -1228,8 +1227,8 @@ impl Session {
     }
 
     /// The system's Quick Look on a file, or its save panel, is gone (closed, saved or cancelled):
-    /// the copy it was handed
-    /// is removed. A panel the controller closed (`FocusFileCopy` with none) needs no report.
+    /// the copy it was handed is removed. A panel the controller closed (`FocusFileCopy` with none)
+    /// needs no report.
     pub fn focus_search_file_done(&self) {
         self.focus_driver().input(postio_focus::Input::FileCopyDone);
     }

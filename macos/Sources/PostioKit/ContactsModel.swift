@@ -20,8 +20,7 @@ public protocol ContactsEngine: AnyObject {
 extension PostioSession: ContactsEngine {}
 
 /// The controller holds the tab, filter, pages and card, and says every word; this holds the last
-/// frame whole and hands
-/// back clicks. No AppKit (#1264).
+/// frame whole and hands back clicks. No AppKit (#1264).
 @MainActor
 @Observable
 public final class ContactsModel {

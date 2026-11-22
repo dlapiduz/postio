@@ -63,8 +63,7 @@ async fn an_upsert_batch_reads_no_whole_table() {
 }
 
 /// The top-up runs after every few hundred bodies; newest first puts fetched rows at the front, so
-/// a
-/// query that walks and filters walks more each time.
+/// a query that walks and filters walks more each time.
 #[tokio::test]
 async fn the_backfill_top_up_does_not_walk_the_bodies_it_already_has() {
     let database = test_support::memory().await;

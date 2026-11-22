@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Install the pinned `cargo-deny` side by side with its other versions. Idempotent. Versions live in
-# ~/.local/share/postio-tools/
-# (scripts/lib/pinned-tool.sh says why); CI installs plain into ~/.cargo/bin.
-# `check-dependency-policy.py` and two self-test cases need it; `ci.yml` caches
+# ~/.local/share/postio-tools/ (scripts/lib/pinned-tool.sh says why); CI installs plain into
+# ~/.cargo/bin. `check-dependency-policy.py` and two self-test cases need it; `ci.yml` caches
 # ~/.cargo/bin/cargo-deny on this file's hash (#1290).
 set -euo pipefail
 

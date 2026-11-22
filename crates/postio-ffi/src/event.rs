@@ -42,9 +42,8 @@ impl From<postio_core::ConnectionState> for ConnectionStateFfi {
 }
 
 /// The optional tier (ADR 0019 Q2): append variants at the end and never remove or reorder, since
-/// frontends
-/// are not rebuilt in step. Every variant must be ignorable; fields are ids and counts, never
-/// content.
+/// frontends are not rebuilt in step. Every variant must be ignorable; fields are ids and counts,
+/// never content.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum UiEvent {
     MailboxesChanged {
@@ -178,15 +177,13 @@ pub enum UiEvent {
         delivery: i64,
     },
     /// Show the known-sender popover, or draw it again whole. The controller has put it on the
-    /// stack as
-    /// `ContactPopover`; it closes on `FocusCloseSurface`, and any other way is
+    /// stack as `ContactPopover`; it closes on `FocusCloseSurface`, and any other way is
     /// `focus_surface_closed(ContactPopover)`.
     FocusContactPopover {
         view: crate::focus_contacts::ContactPopoverViewFfi,
     },
     /// Draw the Contacts frame whole in the list's place; read rows with `focus_contacts_row` and
-    /// the card with
-    /// `focus_contacts_card`. Closes on `FocusCloseSurface { kind: Contacts }`.
+    /// the card with `focus_contacts_card`. Closes on `FocusCloseSurface { kind: Contacts }`.
     FocusContacts {
         view: crate::focus_contacts::ContactsViewFfi,
     },
@@ -263,9 +260,8 @@ pub enum UiEvent {
     },
     FocusKeyboardHome,
     /// Show the command bar, opened `mode`'s way, its field holding `text` with `select` selected,
-    /// or the caret
-    /// at the end. Said again while up, it is only new words. Say `focus_surface_opened(Bar)` once
-    /// it shows.
+    /// or the caret at the end. Said again while up, it is only new words. Say
+    /// `focus_surface_opened(Bar)` once it shows.
     FocusOpenBar {
         mode: crate::focus_bar::BarModeFfi,
         text: String,
@@ -288,9 +284,8 @@ pub enum UiEvent {
         command: String,
     },
     /// Show this picker in a transient popover hung from its anchor. Say
-    /// `focus_surface_opened(Picker)` once
-    /// shown; it closes on `FocusCloseSurface { kind: Picker }`, and any other way is
-    /// `focus_surface_closed(Picker)`.
+    /// `focus_surface_opened(Picker)` once shown; it closes on `FocusCloseSurface { kind: Picker
+    /// }`, and any other way is `focus_surface_closed(Picker)`.
     FocusOpenPicker {
         view: crate::focus_pickers::PickerViewFfi,
     },
@@ -328,14 +323,12 @@ pub enum UiEvent {
         sheet: crate::focus_keymap::KeyMapSheetFfi,
     },
     /// Draw Filtered whole in the list's place, after `FocusShowFiltered` and whenever its tabs,
-    /// rows or focus
-    /// change. Closes on `FocusCloseSurface { kind: Filtered }`.
+    /// rows or focus change. Closes on `FocusCloseSurface { kind: Filtered }`.
     FocusFiltered {
         view: crate::focus_surfaces::FilteredViewFfi,
     },
     /// A thread opened under Filtered's row at `anchor` (an index into its rows): draw `children`
-    /// after it,
-    /// replacing any it had.
+    /// after it, replacing any it had.
     FocusFilteredSplice {
         anchor: u32,
         children: Vec<crate::ChildRowFfi>,
@@ -365,8 +358,7 @@ pub enum UiEvent {
         confirm: crate::focus_surfaces::ConfirmFfi,
     },
     /// Show the digest-this-sender sheet. Closes on `FocusCloseSurface { kind: Dialog }` (say
-    /// nothing back); any
-    /// other way is `focus_surface_closed(Dialog)`.
+    /// nothing back); any other way is `focus_surface_closed(Dialog)`.
     FocusOpenRule {
         view: crate::focus_surfaces::RuleViewFfi,
     },
@@ -382,19 +374,16 @@ pub enum UiEvent {
         view: crate::focus_surfaces::CaptureViewFfi,
     },
     /// Open the composer, or while open replace its content (the controller saved it first), on a
-    /// draft of `kind`
-    /// answering `message`: `newDraft()`, `replyDraft`, `forwardDraft`, or `draftForMessage` for
-    /// `Draft`.
-    /// Say `focus_surface_closed(Composer)` only for a close the toolkit made, and
-    /// `focus_composer_edited()` on every edit.
+    /// draft of `kind` answering `message`: `newDraft()`, `replyDraft`, `forwardDraft`, or
+    /// `draftForMessage` for `Draft`. Say `focus_surface_closed(Composer)` only for a close the
+    /// toolkit made, and `focus_composer_edited()` on every edit.
     FocusComposer {
         kind: crate::focus_compose::ComposerKindFfi,
         /// The message it answers, or the draft's own message.
         message: Option<i64>,
     },
     /// Draw the *What to forward* chooser above To, or redraw it with the chosen card ringed. While
-    /// it holds the
-    /// keyboard, `1` `2` `3` resolve in `UiContext::ForwardChooser`.
+    /// it holds the keyboard, `1` `2` `3` resolve in `UiContext::ForwardChooser`.
     FocusForwardChooser {
         view: crate::focus_compose::ChooserFfi,
     },
@@ -462,8 +451,7 @@ pub enum UiEvent {
         position: u64,
     },
     /// A result opened in place: draw its matching messages and the lines between them after the
-    /// row at `anchor`,
-    /// or none to take them away. Results after it keep their positions.
+    /// row at `anchor`, or none to take them away. Results after it keep their positions.
     FocusResultSplice {
         splice: Option<crate::ResultSpliceFfi>,
     },
@@ -493,8 +481,7 @@ pub enum UiEvent {
         view: Option<crate::focus_search::SaveViewFfi>,
     },
     /// The results found nothing: draw this page in the rows' place; `None` takes it away. A way
-    /// out is run by
-    /// invoking `pick_relaxation_<n>`.
+    /// out is run by invoking `pick_relaxation_<n>`.
     FocusRelaxations {
         view: Option<crate::focus_search::NoResultsViewFfi>,
     },

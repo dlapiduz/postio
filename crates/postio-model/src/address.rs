@@ -61,9 +61,8 @@ impl EmailAddress {
 }
 
 /// Deliberately forgiving: this runs on every keystroke of a `To` field, where text is mid-edit far
-/// more often than finished. `,` and `;` separate
-/// addresses unless inside a quoted name or angle brackets; a quoted display name comes back
-/// unquoted; whitespace-only entries vanish.
+/// more often than finished. `,` and `;` separate addresses unless inside a quoted name or angle
+/// brackets; a quoted display name comes back unquoted; whitespace-only entries vanish.
 /// Deliverability is `EmailAddress::is_plausible`'s question.
 pub fn parse_list(input: &str) -> Vec<EmailAddress> {
     split_list(input)
@@ -177,9 +176,8 @@ impl fmt::Display for EmailAddress {
 }
 
 /// For logs only: an error carrying an address is right on screen and wrong in a file pasted into
-/// bug reports. The domain survives because it
-/// makes the line diagnostic. Deliberately crude and over-matching: finds every `@` and walks left
-/// over characters an address can contain.
+/// bug reports. The domain survives because it makes the line diagnostic. Deliberately crude and
+/// over-matching: finds every `@` and walks left over characters an address can contain.
 pub fn redact_addresses(text: &str) -> String {
     if !text.contains('@') {
         return text.to_owned();

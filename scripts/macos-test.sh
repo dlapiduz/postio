@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run the Swift tests with the Rust library where the linker can find it: the staticlib is in
-# cargo's target directory, and Package.swift
-# cannot name it without barring the package from being a dependency.
+# cargo's target directory, and Package.swift cannot name it without barring the package from being
+# a dependency.
 set -euo pipefail
 
 REPO_ROOT=$(git -C "$(dirname "${BASH_SOURCE[0]}")/.." rev-parse --show-toplevel)

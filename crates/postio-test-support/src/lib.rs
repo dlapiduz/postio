@@ -65,9 +65,8 @@ pub fn wait_until(label: &str, condition: impl FnMut() -> bool) {
 }
 
 /// `pump` is called before each test of the condition; GTK callers pass a main-loop turn. The
-/// condition is tested after
-/// pumping and once more after the deadline, so one that becomes true during the final pump is not
-/// reported as a timeout.
+/// condition is tested after pumping and once more after the deadline, so one that becomes true
+/// during the final pump is not reported as a timeout.
 ///
 /// # Panics
 ///

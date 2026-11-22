@@ -1,7 +1,6 @@
 //! Filtered, the digest window, the rule sheet and capture. The controller (`postio_focus`) decides
-//! what each holds and
-//! does; the Mac draws each as a whole view and reports clicks, typed text and chosen days. Keys
-//! are commands `key` resolves.
+//! what each holds and does; the Mac draws each as a whole view and reports clicks, typed text and
+//! chosen days. Keys are commands `key` resolves.
 
 use crate::session::{Session, SessionError, blocking};
 
@@ -205,8 +204,7 @@ pub struct DigestViewFfi {
     pub rule_key: Option<String>,
     pub tabs: bool,
     pub list_tab: String,
-    /// The key that switches: a click on a tab is
-    /// `invoke("toggle_digest_summary")`.
+    /// The key that switches: a click on a tab is `invoke("toggle_digest_summary")`.
     pub tab_key: Option<String>,
     pub rows: Vec<DigestLineFfi>,
     /// Its row with the keyboard: what `D` and `U` act on.
@@ -403,8 +401,7 @@ pub struct RuleViewFfi {
     /// when it differs.
     pub query: Option<String>,
     pub placeholder: String,
-    /// "Match a list or a search instead…": a click is
-    /// `focus_rule_match_instead()`.
+    /// "Match a list or a search instead…": a click is `focus_rule_match_instead()`.
     pub match_instead: Option<String>,
     /// "Digest mail like this": a click is `focus_rule_like_this()`.
     pub like_this: Option<String>,

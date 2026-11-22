@@ -1,24 +1,20 @@
 #!/usr/bin/env bash
 # Cargo's test runner: put every test binary on a compositor of its own. Wired up as `runner` in
-# .cargo/config.toml.
-# It sits in front of EVERY binary cargo executes for this target, so it must be invisible: if
-# anything is wrong (no mutter,
-# no XDG_RUNTIME_DIR, a compositor that will not start) it execs the binary unchanged.
-# POSTIO_HEADLESS=0 bypasses it.
-# Only test and bench binaries (16-hex metadata suffix, like deps/gtk_list-0123456789abcdef) go to
-# the compositor;
-# `cargo run` and examples get the real display (#315).
+# .cargo/config.toml. It sits in front of EVERY binary cargo executes for this target, so it must be
+# invisible: if anything is wrong (no mutter, no XDG_RUNTIME_DIR, a compositor that will not start)
+# it execs the binary unchanged. POSTIO_HEADLESS=0 bypasses it. Only test and bench binaries (16-hex
+# metadata suffix, like deps/gtk_list-0123456789abcdef) go to the compositor; `cargo run` and
+# examples get the real display (#315).
 set -uo pipefail
 
 # "The runner ran." Exported on every path, fail-open ones included: it answers whether cargo routed
-# this binary here at all,
-# not whether a compositor started (#551). `widgets_suite`'s `display_required` reads it.
+# this binary here at all, not whether a compositor started (#551). `widgets_suite`'s
+# `display_required` reads it.
 export POSTIO_TEST_RUNNER=headless-runner
 
 # `.cargo/config.toml` points TMPDIR at `target/tmp` and nothing creates it, so the first `tempfile`
-# in a fresh tree fails with an
-# unexplained `NotFound` (#613). Done before the bail-outs, on every path; a directory that cannot
-# be created costs the pinning, never the run.
+# in a fresh tree fails with an unexplained `NotFound` (#613). Done before the bail-outs, on every
+# path; a directory that cannot be created costs the pinning, never the run.
 if [ -n "${TMPDIR:-}" ]; then
     mkdir -p "$TMPDIR" 2>/dev/null || true
 fi
@@ -49,26 +45,23 @@ shot|surface) ;;
 esac
 
 # One compositor per nextest slot unless a display is pinned (#2027): a shared one ran at 85% of a
-# core and its queue caused the
-# suite's flakes; per slot the same run took 191 s instead of 278 s.
+# core and its queue caused the suite's flakes; per slot the same run took 191 s instead of 278 s.
 DISPLAY_NAME="${POSTIO_TEST_DISPLAY:-postio-headless${NEXTEST_TEST_GLOBAL_SLOT:+-$NEXTEST_TEST_GLOBAL_SLOT}}"
 SOCKET="$XDG_RUNTIME_DIR/$DISPLAY_NAME"
 UNAVAILABLE="$XDG_RUNTIME_DIR/$DISPLAY_NAME.unavailable"
 
 # Whether a compositor is behind the socket, not just a socket file: mutter can bind and exit (no
-# DRM device, as on every GitHub runner),
-# and committing to that unsets DISPLAY so every GTK test skips (#781). Asked of the socket, not the
-# process table:
-# `pgrep -f` matches other XDG_RUNTIME_DIRs and any shell mentioning the name. Without `ss` the old
-# behaviour is kept.
+# DRM device, as on every GitHub runner), and committing to that unsets DISPLAY so every GTK test
+# skips (#781). Asked of the socket, not the process table: `pgrep -f` matches other
+# XDG_RUNTIME_DIRs and any shell mentioning the name. Without `ss` the old behaviour is kept.
 compositor_alive() {
     command -v ss >/dev/null 2>&1 || return 0
     [ -n "$(ss -lxH src "$SOCKET" 2>/dev/null)" ]
 }
 
 # One binary learning the compositor will not come up saves the next twenty from waiting. The marker
-# expires: XDG_RUNTIME_DIR lives as long as
-# the login session, and a permanent one would demote every later suite to the session's display.
+# expires: XDG_RUNTIME_DIR lives as long as the login session, and a permanent one would demote
+# every later suite to the session's display.
 if [ -e "$UNAVAILABLE" ]; then
     # `find -mmin +N` prints the file only when it is older than N minutes.
     if [ -z "$(find "$UNAVAILABLE" -mmin +"${POSTIO_UNAVAILABLE_MINUTES:-5}" 2>/dev/null)" ]; then
@@ -142,10 +135,10 @@ export WEBKIT_DISABLE_DMABUF_RENDERER="${WEBKIT_DISABLE_DMABUF_RENDERER:-1}"
 case "$(basename "${1:-}")" in
 e2e-*|widgets_suite-*|focus_suite-*)
     # The WebKit binaries (shared widgets' suite, desktop app) run under a watchdog: own process
-    # group, hard deadline, kernel-state dump before the kill (#272).
-    # 900s, scaled by POSTIO_TEST_PATIENCE (#842) with `awk` (POSIX sh, fractional). It bounds a
-    # hang, which never finishes, so a generous limit costs
-    # only how long a wedged run takes to fail; 300 killed a healthy suite at 142 cases.
+    # group, hard deadline, kernel-state dump before the kill (#272). 900s, scaled by
+    # POSTIO_TEST_PATIENCE (#842) with `awk` (POSIX sh, fractional). It bounds a hang, which never
+    # finishes, so a generous limit costs only how long a wedged run takes to fail; 300 killed a
+    # healthy suite at 142 cases.
     LIMIT="${POSTIO_TEST_WATCHDOG:-900}"
     LIMIT=$(awk -v base="$LIMIT" -v factor="${POSTIO_TEST_PATIENCE:-1}" \
         'BEGIN { if (factor + 0 <= 0) factor = 1; printf "%d", base * factor }')

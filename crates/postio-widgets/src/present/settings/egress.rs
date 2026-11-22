@@ -11,8 +11,7 @@ const EGRESS_ROWS: u32 = postio_ui::privacy::CONNECTION_ROWS;
 
 pub fn install(panel: &SettingsPanel, client: Client) {
     // Not read now: the panel is hidden at startup and `map` reads it when shown; a read here made
-    // the first frame wait on
-    // fifty invisible rows. Weak: the panel owns this handler (#1072).
+    // the first frame wait on fifty invisible rows. Weak: the panel owns this handler (#1072).
     let weak = panel.downgrade();
     panel.connect_map(move |_| {
         let weak: glib::WeakRef<SettingsPanel> = weak.clone();

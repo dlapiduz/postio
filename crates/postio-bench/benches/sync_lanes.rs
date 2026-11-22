@@ -1,9 +1,7 @@
 //! Does the second sync lane still earn its place? Measured: extra lanes never lose; at or below 20
-//! ms
-//! latency they make no difference, at 50 ms the second is worth ~11%, at 120 ms ~30% and the third
-//! ~12% more. A pool larger than the shipped one and no concurrent reads bound the table, so it
-//! does
-//! not license raising `MAX_SYNC_LANES` (#729).
+//! ms latency they make no difference, at 50 ms the second is worth ~11%, at 120 ms ~30% and the
+//! third ~12% more. A pool larger than the shipped one and no concurrent reads bound the table, so
+//! it does not license raising `MAX_SYNC_LANES` (#729).
 
 use std::time::{Duration, Instant};
 
@@ -99,8 +97,7 @@ async fn run(lanes: usize, latency: Duration) -> Duration {
         backend.connect().await.expect("connect");
 
         // Connections are taken up front, sequentially: the pool blocks the OS thread when
-        // exhausted and
-        // the engine is single threaded, so two waiting passes would deadlock.
+        // exhausted and the engine is single threaded, so two waiting passes would deadlock.
         let mut connections: Vec<Checkout> = Vec::with_capacity(lanes);
         for _ in 0..lanes {
             connections.push(database.connect().await.expect("a connection"));

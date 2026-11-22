@@ -1,26 +1,22 @@
 #!/usr/bin/env bash
 # Runs the full workspace test suite under nextest, and treats a failing test as real only if it
-# still fails on its own (#886).
-# Full-suite runs threw failures never the same twice and none touching the diff; rerunning each
-# target alone passed. It uses nextest, not `cargo test`,
-# which ignores `.config/nextest.toml`'s `default-filter` (so a slow measurement ran) and has no
-# `slow-timeout` backstop.
-# A test that fails in isolation too is not a flake, and fails the run.
+# still fails on its own (#886). Full-suite runs threw failures never the same twice and none
+# touching the diff; rerunning each target alone passed. It uses nextest, not `cargo test`, which
+# ignores `.config/nextest.toml`'s `default-filter` (so a slow measurement ran) and has no
+# `slow-timeout` backstop. A test that fails in isolation too is not a flake, and fails the run.
 #
 # Usage: scripts/test-with-flake-retry.sh [profile] [package]
 #
 # The profile defaults to `ci`; the release gate asks for `ci-full`. An isolated retry uses the
-# run's profile, or "it passed alone" answers a different question.
-# A `package` narrows the first run, and each retry builds the same scope: a bare `cargo nextest
-# run` builds only default members, and a retry of a
-# postio-ffi test ran nothing and was called a second failure (#2154).
-# The retry exists because the GTK editor cases flake on a shared runner (a WebKit message that
-# never arrives with no GPU). It weakens nothing: a test that fails twice still fails.
-# Further arguments are cargo target selection used by the first run and each retry;
-# `POSTIO_NEXTEST_FILTER`, when set, is a filterset narrowing the first run.
-# Together they let a PR re-run only what a red nightly failed (`scripts/ci-nightly-rerun.py`).
-# `POSTIO_FAILED_TESTS_FILE`, when set, receives the tests that failed twice, one `<binary_id> <test
-# name>` per line.
+# run's profile, or "it passed alone" answers a different question. A `package` narrows the first
+# run, and each retry builds the same scope: a bare `cargo nextest run` builds only default members,
+# and a retry of a postio-ffi test ran nothing and was called a second failure (#2154). The retry
+# exists because the GTK editor cases flake on a shared runner (a WebKit message that never arrives
+# with no GPU). It weakens nothing: a test that fails twice still fails. Further arguments are cargo
+# target selection used by the first run and each retry; `POSTIO_NEXTEST_FILTER`, when set, is a
+# filterset narrowing the first run. Together they let a PR re-run only what a red nightly failed
+# (`scripts/ci-nightly-rerun.py`). `POSTIO_FAILED_TESTS_FILE`, when set, receives the tests that
+# failed twice, one `<binary_id> <test name>` per line.
 #
 # Exit status: 0 if the suite passed, or every failure was confirmed a
 # flake by an isolated rerun. 1 if any test failed twice.

@@ -90,9 +90,8 @@ impl<'a> IntoIterator for &'a Headers {
 }
 
 /// Longest normalized value stored or matched; the index holds a row per header occurrence (ADR
-/// 0025). A correctness
-/// hazard, not a cost knob: the index holds the prefix, so both sides must pass `normalize_value`
-/// or disagree on longer headers.
+/// 0025). A correctness hazard, not a cost knob: the index holds the prefix, so both sides must
+/// pass `normalize_value` or disagree on longer headers.
 pub const VALUE_LIMIT: usize = 512;
 
 /// Lowercased, because the name is matched exactly (`header:x-mail` must not find `X-Mailer`) and
@@ -102,10 +101,9 @@ pub fn normalize_name(name: &str) -> String {
 }
 
 /// Both sides of a `header:` match must run this. In order: unfold and decode RFC 2047 words
-/// (`decode_header_text`, which
-/// catches parser panics because senders choose the bytes, #277); collapse whitespace; truncate to
-/// `VALUE_LIMIT` on a char
-/// boundary, since a byte slice would panic inside the indexing pass.
+/// (`decode_header_text`, which catches parser panics because senders choose the bytes, #277);
+/// collapse whitespace; truncate to `VALUE_LIMIT` on a char boundary, since a byte slice would
+/// panic inside the indexing pass.
 pub fn normalize_value(value: &str) -> String {
     let decoded = crate::mime::decode_header_text(value.as_bytes());
     let mut collapsed = decoded.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -262,9 +260,8 @@ pub struct Block {
 }
 
 /// Everything before the first empty line (RFC 5322 §2.1), CRLF or bare LF, since mail through a
-/// Unix mailbox loses
-/// its carriage returns. `None` when there is no separator: bytes that are not a message must not
-/// become index content.
+/// Unix mailbox loses its carriage returns. `None` when there is no separator: bytes that are not a
+/// message must not become index content.
 pub fn block_of(raw: &[u8]) -> Option<Block> {
     let block = match find_separator(raw) {
         Some(end) => &raw[..end],
@@ -321,9 +318,8 @@ fn cut_to_limit(block: &[u8]) -> Option<&[u8]> {
 }
 
 /// The other half of `block_of`. The block is stored without its terminating blank line, and a
-/// parser handed an
-/// unterminated block drops the last field, so this appends it. Uses `parse_headers`, the hardened
-/// entry point (#277).
+/// parser handed an unterminated block drops the last field, so this appends it. Uses
+/// `parse_headers`, the hardened entry point (#277).
 pub fn parse_block(block: &str) -> Headers {
     let mut terminated = block.to_owned().into_bytes();
     terminated.extend_from_slice(b"\r\n\r\n");

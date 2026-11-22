@@ -3,9 +3,8 @@ use postio_storage::Connection;
 const MESSAGES: usize = 20_000;
 
 /// The query `MessageRepository::wake_due` runs, verbatim. It has no `ORDER BY`, which would make
-/// the
-/// planner decline this index for `idx_messages_list`; `wake_due` sorts in Rust, and this must stay
-/// in step.
+/// the planner decline this index for `idx_messages_list`; `wake_due` sorts in Rust, and this must
+/// stay in step.
 const DUE: &str = "SELECT DISTINCT mailbox_id FROM messages
      WHERE account_id = 1 AND snoozed_until IS NOT NULL AND snoozed_until <= 1700000500";
 

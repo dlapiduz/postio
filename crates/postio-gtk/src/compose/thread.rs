@@ -1,7 +1,6 @@
 //! What a thread adds to the composer: the *What to forward* chooser above To, the older-reply bar
-//! under the title, and the
-//! newer messages read-only below what is written. The controller composes the words; these draw
-//! them and hand back a click.
+//! under the title, and the newer messages read-only below what is written. The controller composes
+//! the words; these draw them and hand back a click.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;

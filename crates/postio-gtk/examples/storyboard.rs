@@ -1,8 +1,7 @@
 //! Focus's storyboard runner (specs/008-storyboards); driven by `scripts/storyboards.sh run`.
 //! Frames are compared byte for byte, so the process re-executes itself with TZ=UTC, a C UTF-8
-//! locale, a fontconfig of Postio's own faces,
-//! `GSK_RENDERER=cairo`, throwaway XDG dirs and `GTK_A11Y=test`. Exit: 0 passed, 1 a run failed, 2
-//! a load or runner error.
+//! locale, a fontconfig of Postio's own faces, `GSK_RENDERER=cairo`, throwaway XDG dirs and
+//! `GTK_A11Y=test`. Exit: 0 passed, 1 a run failed, 2 a load or runner error.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;

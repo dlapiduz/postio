@@ -1,8 +1,6 @@
 //! `[mcp]`: off by default, opt-in per account and per folder (ADR 0010 Q6). An account with no
-//! table is
-//! invisible to every tool; one whose table names no folder shares nothing. The server rereads this
-//! on
-//! every tool call, so revoking takes effect on the next call.
+//! table is invisible to every tool; one whose table names no folder shares nothing. The server
+//! rereads this on every tool call, so revoking takes effect on the next call.
 
 use std::collections::BTreeMap;
 

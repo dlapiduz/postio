@@ -1,9 +1,7 @@
 //! First run: an address and a password, then how far back to sync. It does not probe, connect or
-//! write: `postio-widgets`
-//! may not link `io-imap` or the store, so [`Onboarding::connect_probe`] and
-//! [`Onboarding::connect_submit`] are the seams.
-//! The probe runs when the address is committed, not per keystroke: it contacts servers the user
-//! has not named yet.
+//! write: `postio-widgets` may not link `io-imap` or the store, so [`Onboarding::connect_probe`]
+//! and [`Onboarding::connect_submit`] are the seams. The probe runs when the address is committed,
+//! not per keystroke: it contacts servers the user has not named yet.
 
 use std::cell::{Cell, RefCell};
 
@@ -167,8 +165,7 @@ impl Onboarding {
         let details = imp.browser_sign_in.borrow().clone();
 
         // The provider line sits here, not in a title bar: this widget is hosted in dialogs and in
-        // the first-run screen, and
-        // only one of those has a title bar.
+        // the first-run screen, and only one of those has a title bar.
         let mut lines = Vec::new();
         if !details.provider.is_empty() {
             lines.push(format!("signing in to {}", details.provider));
@@ -187,8 +184,7 @@ impl Onboarding {
                 .append(&scope_line("object-select-symbolic", &plain_scope(scope)));
         }
         // Said out loud because the absence is the point: every scope in the preset table is a mail
-        // scope, and a consenting
-        // user may assume otherwise.
+        // scope, and a consenting user may assume otherwise.
         imp.browser_scopes.append(&scope_line(
             "window-close-symbolic",
             "Not requested: contacts, calendar, files",
@@ -317,8 +313,8 @@ impl Onboarding {
     }
 
     /// A field grabs the keyboard only while mapped, and the dialog gives its first focusable
-    /// widget (the close X) the
-    /// keyboard as it opens. Nothing moves when every field shown is filled.
+    /// widget (the close X) the keyboard as it opens. Nothing moves when every field shown is
+    /// filled.
     pub fn focus_first_empty(&self) {
         let imp = self.imp();
         let fields: [&gtk::Widget; 10] = [
@@ -509,9 +505,8 @@ impl Onboarding {
     }
 
     /// Walks up from the toplevel's focus widget: a `gtk::Entry`'s real focus is an internal
-    /// `GtkText`, so `is_focus` on the
-    /// entry is always false, and `has_focus` needs an active toplevel, which a headless window
-    /// never is.
+    /// `GtkText`, so `is_focus` on the entry is always false, and `has_focus` needs an active
+    /// toplevel, which a headless window never is.
     #[doc(hidden)]
     pub fn test_name_has_focus(&self) -> bool {
         self.root()
@@ -676,8 +671,7 @@ impl Onboarding {
         }
 
         // iCloud's is why this exists: an Apple ID password will not work, and a user not told that
-        // types theirs and is told it
-        // is wrong.
+        // types theirs and is told it is wrong.
         let note = settings.as_ref().and_then(|s| s.note.clone());
         imp.note.set_visible(note.is_some());
         imp.note.set_text(note.as_deref().unwrap_or_default());
@@ -843,8 +837,7 @@ impl Onboarding {
         ));
 
         // The plate's own Escape rather than a registry command: this screen exists before any
-        // account, outside the keymap's
-        // contexts, and is not rebindable.
+        // account, outside the keymap's contexts, and is not rebindable.
         let screen = self.downgrade();
         crate::widgets::plate::connect_escape(self, move || {
             let Some(screen) = screen.upgrade() else {

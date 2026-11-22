@@ -2,12 +2,9 @@ import AppKit
 import PostioKit
 
 /// The engine's `UndoStack` is the only stack; mirroring actions with `registerUndo(withTarget:)`
-/// was rejected
-/// (R7) because the mirror drifts when the toast's Undo, an expiry or another window changes the
-/// stack.
-/// The words are cached because AppKit asks synchronously during menu validation and the engine's
-/// answer is a
-/// store read that may not run on the main actor. There is no redo.
+/// was rejected (R7) because the mirror drifts when the toast's Undo, an expiry or another window
+/// changes the stack. The words are cached because AppKit asks synchronously during menu validation
+/// and the engine's answer is a store read that may not run on the main actor. There is no redo.
 @MainActor
 public final class PostioUndoManager: UndoManager {
     private let sendUndo: () -> Void
@@ -59,11 +56,9 @@ public final class PostioUndoManager: UndoManager {
 }
 
 /// Not `windowWillReturnUndoManager`: SwiftUI's window asks for its undo manager while being built,
-/// and an
-/// `NSWindow` that made its own never asks its delegate again.
-/// In the main window, while nothing takes text, Undo is the engine's; anywhere else it goes down
-/// the responder
-/// chain as AppKit's `undo:` would, so typing still undoes typing.
+/// and an `NSWindow` that made its own never asks its delegate again. In the main window, while
+/// nothing takes text, Undo is the engine's; anywhere else it goes down the responder chain as
+/// AppKit's `undo:` would, so typing still undoes typing.
 @MainActor
 public final class UndoRouter: NSObject, NSMenuItemValidation {
     public let manager: PostioUndoManager

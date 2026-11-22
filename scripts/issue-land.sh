@@ -24,14 +24,12 @@
 set -euo pipefail
 
 # Which runner the integration gates use: `cargo nextest` runs test binaries concurrently (the
-# workspace ~500s -> 118.6s) but spawns a
-# process per test, so the ~1,459 unit tests are 2.2x slower than `cargo test`. The default tier is
-# the changed crates' units through nextest
-# so the merge path's filter in `.config/nextest.toml` applies (#1976); `scripts/test-fast.sh` and
-# `test-sanity.sh` stay on `cargo test`.
-# Fail open: without nextest it runs `cargo test` and gets the same answer, slower.
-# Defined here, not sourced from `lib/`: the self-tests copy this file into a sandbox alone, and a
-# `source` line would fail them all.
+# workspace ~500s -> 118.6s) but spawns a process per test, so the ~1,459 unit tests are 2.2x slower
+# than `cargo test`. The default tier is the changed crates' units through nextest so the merge
+# path's filter in `.config/nextest.toml` applies (#1976); `scripts/test-fast.sh` and
+# `test-sanity.sh` stay on `cargo test`. Fail open: without nextest it runs `cargo test` and gets
+# the same answer, slower. Defined here, not sourced from `lib/`: the self-tests copy this file into
+# a sandbox alone, and a `source` line would fail them all.
 if cargo nextest --version >/dev/null 2>&1; then
     POSTIO_TEST_RUNNER="${POSTIO_TEST_RUNNER:-nextest}"
 else
@@ -41,9 +39,8 @@ fi
 run_tests() {
     if [ "$POSTIO_TEST_RUNNER" = "nextest" ]; then
         # `--no-tests=pass`: nextest exits 4 when a run selects nothing, but a crate with no tests
-        # (`postio-bench`) must still land (#1308), as
-        # under `cargo test`. "No tests" and "tests failed" are different answers; the self-test
-        # asserts both on both runners.
+        # (`postio-bench`) must still land (#1308), as under `cargo test`. "No tests" and "tests
+        # failed" are different answers; the self-test asserts both on both runners.
         cargo nextest run --no-tests=pass "$@"
     else
         cargo test "$@"
@@ -69,10 +66,9 @@ run_rustdoc() {
 TREE=$(git rev-parse --show-toplevel)
 
 # --detach: run this script in a session of its own and return (#1129). A landing run from a tool
-# call is killed when the call's cap runs
-# out, committing nothing. `setsid` (`nohup` on macOS) keeps it out of the tool's reach; the log is
-# in the worktree's private git dir for
-# `--status`. The PreToolUse hook refuses a foreground landing and names this flag.
+# call is killed when the call's cap runs out, committing nothing. `setsid` (`nohup` on macOS) keeps
+# it out of the tool's reach; the log is in the worktree's private git dir for `--status`. The
+# PreToolUse hook refuses a foreground landing and names this flag.
 LAND_LOG="$(git rev-parse --absolute-git-dir)/postio-land.log"
 LAND_PID="$(git rev-parse --absolute-git-dir)/postio-land.pid"
 case " $* " in
@@ -222,15 +218,13 @@ if [ -z "$ISSUE" ] && [ "$SMALL" != 1 ]; then
 fi
 
 # The branch this work belongs to, recorded by `issue-claim.sh`; the crate list, the rebase and the
-# PR's base follow it. Defaulting to
-# `main` keeps ordinary landings unchanged, and a flag somebody forgets would merge initiative work
-# into `main` (#290).
+# PR's base follow it. Defaulting to `main` keeps ordinary landings unchanged, and a flag somebody
+# forgets would merge initiative work into `main` (#290).
 BASE=$(cat "$(git rev-parse --git-dir)/postio-base" 2>/dev/null || echo main)
 
 # A branch stacked on another open PR's branch outlives that PR: PRs merge squashed, so a plain
-# rebase would replay the base's commits as
-# conflicts. Rebase only what this branch added on top of the base's tip onto `main`, record `main`,
-# and retarget the PR.
+# rebase would replay the base's commits as conflicts. Rebase only what this branch added on top of
+# the base's tip onto `main`, record `main`, and retarget the PR.
 STACKED_ON_OPEN=0
 if [ "$BASE" != main ] && [ "$WIP" != 1 ]; then
     # gh is first needed here for a stacked base, so its version is checked here too; a WIP push
@@ -283,8 +277,8 @@ if ! git ls-remote --exit-code --heads origin "$BASE" >/dev/null 2>&1; then
 fi
 
 # Fetch the base, retrying when the fetch loses a ref lock: every worktree shares
-# `refs/remotes/origin/*`, so another session's fetch can
-# move the ref under this one (#2029). A fetch that keeps failing still fails.
+# `refs/remotes/origin/*`, so another session's fetch can move the ref under this one (#2029). A
+# fetch that keeps failing still fails.
 fetch_base() {
     local attempt
     for attempt in 1 2 3; do
@@ -318,20 +312,18 @@ if [ "$STACKED_ON_OPEN" = 1 ]; then
 fi
 echo "crates: ${CRATES:-none}"
 # Each worktree has its own target/ (#178): sharing one compiled a crate against a sibling's. These
-# gates are the run a merge is staked on,
-# so they share nothing; a caller who wants a directory of their own still gets it (#253).
+# gates are the run a merge is staked on, so they share nothing; a caller who wants a directory of
+# their own still gets it (#253).
 echo "target: ${CARGO_TARGET_DIR:-$TREE/target (this worktree)}"
 echo
 
 # What this host cannot build. On a host missing system libraries a gate over the changed crates
-# proves nothing and the work would land
-# anyway (a macOS session cannot build the GTK crates: no webkitgtk bottle), so it is refused
-# outright (#555).
-# Derived, not named: the unbuildable roots plus everything that reaches them (`postio-bench`
-# dev-depends on the desktop app) (#1152);
-# see `scripts/unbuildable-crates.sh`. Keyed on what the host can build, not `uname`.
-# Guarded: the self-test sandboxes copy this script without the rest of `scripts/`; absent, it falls
-# back to the roots inline.
+# proves nothing and the work would land anyway (a macOS session cannot build the GTK crates: no
+# webkitgtk bottle), so it is refused outright (#555). Derived, not named: the unbuildable roots
+# plus everything that reaches them (`postio-bench` dev-depends on the desktop app) (#1152); see
+# `scripts/unbuildable-crates.sh`. Keyed on what the host can build, not `uname`. Guarded: the
+# self-test sandboxes copy this script without the rest of `scripts/`; absent, it falls back to the
+# roots inline.
 if [ -x scripts/unbuildable-crates.sh ]; then
     MISSING_LIBS=$(scripts/unbuildable-crates.sh --libs)
     UNBUILDABLE=$(scripts/unbuildable-crates.sh | tr '\n' ' ')
@@ -363,8 +355,8 @@ if [ -n "$BLOCKED" ]; then
 fi
 
 # A crate the unbuildable ones depend on still lands, so a macOS session can work, but the gap goes
-# on the PR: the desktop app depends on
-# most crates, so a changed crate is unproven against the frontend.
+# on the PR: the desktop app depends on most crates, so a changed crate is unproven against the
+# frontend.
 VERIFY_LABEL=""
 VERIFY_NOTE=""
 if [ -n "$UNBUILDABLE" ] && [ -n "$CRATES" ]; then
@@ -376,14 +368,14 @@ if [ -n "$UNBUILDABLE" ] && [ -n "$CRATES" ]; then
 fi
 
 # `RUSTUP_TOOLCHAIN` in the environment beats rust-toolchain.toml (this workstation's mise sets it),
-# so every gate would run on the wrong
-# compiler while looking green. Capture it for the diagnostic below, then clear it (#112).
+# so every gate would run on the wrong compiler while looking green. Capture it for the diagnostic
+# below, then clear it (#112).
 HOST_RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-}"
 unset RUSTUP_TOOLCHAIN
 
 # Whether the session had committed everything before this script touched the tree: after `cargo
-# fmt` "uncommitted changes" can no longer
-# tell forgotten work from whitespace this script rewrote (see the amend below).
+# fmt` "uncommitted changes" can no longer tell forgotten work from whitespace this script rewrote
+# (see the amend below).
 WORK_WAS_COMMITTED=0
 [ -z "$(git status --porcelain)" ] && WORK_WAS_COMMITTED=1
 
@@ -396,17 +388,15 @@ echo "[timing] rustfmt: $(( $(date +%s) - PHASE_START ))s"
 GATES_START=$PHASE_START
 
 # Stage now, before the invariants: `check-no-personal-data.py` and others read `git ls-files`, so
-# an untracked file was invisible until it
-# was already on `main` (#269, #270).
+# an untracked file was invisible until it was already on `main` (#269, #270).
 git add -A
 
 # Settle who owns the staged changes before the gates, not after: a session that committed then ran
-# this had `cargo fmt` rewrite whitespace
-# and was asked for a message for changes it did not make, so the formatter's output is amended into
-# HEAD; a session that forgot to commit
-# learns that in ten seconds, not after ten minutes of gates. `git write-tree` hashes the staged
-# tree, so the gates cache key is unchanged.
-# `--gates-only` is exempt: it promises to commit nothing, and leaves rustfmt's changes staged.
+# this had `cargo fmt` rewrite whitespace and was asked for a message for changes it did not make,
+# so the formatter's output is amended into HEAD; a session that forgot to commit learns that in ten
+# seconds, not after ten minutes of gates. `git write-tree` hashes the staged tree, so the gates
+# cache key is unchanged. `--gates-only` is exempt: it promises to commit nothing, and leaves
+# rustfmt's changes staged.
 if [ "$GATES_ONLY" != 1 ] && [ -n "$(git status --porcelain)" ] && [ -z "$MSG" ]; then
     OWN_COMMITS=$(git rev-list --count "origin/$BASE..HEAD" 2>/dev/null || echo 0)
     if [ "$WORK_WAS_COMMITTED" = 1 ] && [ "$OWN_COMMITS" -gt 0 ]; then
@@ -427,10 +417,9 @@ if [ "$GATES_ONLY" != 1 ] && [ -n "$(git status --porcelain)" ] && [ -z "$MSG" ]
 fi
 
 # Green gates are recorded against the exact content they proved, so a byte-identical tree is not
-# re-proven after a killed landing (#742).
-# The key is `git write-tree` plus rust-toolchain.toml, so an edit, rebase, `cargo fmt` rewrite or
-# toolchain bump invalidates it. The invariants
-# (`check.sh`, seconds) still run every time.
+# re-proven after a killed landing (#742). The key is `git write-tree` plus rust-toolchain.toml, so
+# an edit, rebase, `cargo fmt` rewrite or toolchain bump invalidates it. The invariants (`check.sh`,
+# seconds) still run every time.
 GATES_STAMP="$(git rev-parse --git-dir)/postio-gates-green"
 GATES_KEY="$(git write-tree) tier:$FULL crates:$(printf '%s' "$CRATES" | tr '\n' ' ')"
 GATES_GREEN=0
@@ -458,16 +447,13 @@ if [ "$GATES_GREEN" != 1 ]; then
     done
 
     # The test tier: by default the changed crates' unit tests through nextest (so the merge path's
-    # filter applies); `--full` adds their
-    # integration suites. The default was cut twice (#847, 2026-10-23) because the pull request's
-    # checks prove the combination, and a landing
-    # waits for them anyway; locally it proves only what is cheap: formatting, clippy and rustdoc on
-    # the crates touched, their units and doctests,
-    # and the invariants.
-    # This is safe only because the checks run on every PR and the full suite on `main` after every
-    # merge: layers that each pass and are not
-    # joined up are what unit tests cannot see. If the pull-request suite ever goes away, this
-    # default goes back with it (#847).
+    # filter applies); `--full` adds their integration suites. The default was cut twice (#847,
+    # 2026-10-23) because the pull request's checks prove the combination, and a landing waits for
+    # them anyway; locally it proves only what is cheap: formatting, clippy and rustdoc on the
+    # crates touched, their units and doctests, and the invariants. This is safe only because the
+    # checks run on every PR and the full suite on `main` after every merge: layers that each pass
+    # and are not joined up are what unit tests cannot see. If the pull-request suite ever goes
+    # away, this default goes back with it (#847).
     if [ "$FULL" = 1 ]; then
         for crate in $CRATES; do
             [ -d "$TREE/crates/$crate" ] || continue
@@ -482,9 +468,8 @@ if [ "$GATES_GREEN" != 1 ]; then
         done
     else
         # The default tier: the unit tests of the crates this branch changed, in one invocation (one
-        # dependency graph, binaries side by side).
-        # Through nextest so the merge path's filter applies (#1976). Every changed crate is
-        # buildable here (#555); a branch that changes no
+        # dependency graph, binaries side by side). Through nextest so the merge path's filter
+        # applies (#1976). Every changed crate is buildable here (#555); a branch that changes no
         # crate runs no Rust, and the pull request's checks are the judge.
         UNIT_CRATES=()
         for crate in $CRATES; do
@@ -534,11 +519,10 @@ PHASE_START=$(date +%s)
 echo "[timing] invariants: $(( $(date +%s) - PHASE_START ))s"
 
 # What the whole chain cost against what it may cost. Reported, not enforced: refusing a slow branch
-# helps nobody, and the fix is in the
-# chain. It names the worst phase so a person can see whether a suite has crept onto the merge path
-# that belongs on the nightly timer.
-# The line moves when a crate's units grow. `.config/nextest.toml` holds
-# the tier for a test that is slow: the nightly's default-filter, with a
+# helps nobody, and the fix is in the chain. It names the worst phase so a person can see whether a
+# suite has crept onto the merge path that belongs on the nightly timer. The line moves when a
+# crate's units grow. `.config/nextest.toml` holds the tier for a test that is slow: the nightly's
+# default-filter, with a
 # `POSTIO-MEASUREMENT` marker on the case.
 GATES_TOTAL=$(( $(date +%s) - GATES_START ))
 echo "[timing] TOTAL: ${GATES_TOTAL}s (budget ${GATE_BUDGET_SECONDS}s)"
@@ -640,13 +624,11 @@ if [ "$BEHIND" -gt 0 ]; then
     echo "rebased."
 
     # This script just rebased the tree it lives in, so the copy bash has open no longer matches the
-    # disk (bash reads by byte offset); that is
-    # how #50 merged without waiting for CI. So hand over: exec the machinery the rebase brought in,
-    # from the top, with the same arguments.
-    # The commit is made and the tree is zero behind, so the new run re-runs the gates on the
-    # combination CI will see. Nothing has been pushed,
-    # so a handover cannot double anything. The decision lives inside this `if`, which bash parsed
-    # before the rebase.
+    # disk (bash reads by byte offset); that is how #50 merged without waiting for CI. So hand over:
+    # exec the machinery the rebase brought in, from the top, with the same arguments. The commit is
+    # made and the tree is zero behind, so the new run re-runs the gates on the combination CI will
+    # see. Nothing has been pushed, so a handover cannot double anything. The decision lives inside
+    # this `if`, which bash parsed before the rebase.
     AFTER_SCRIPTS=$(git rev-parse "HEAD:scripts" 2>/dev/null || echo none)
     if [ "$BEFORE_SCRIPTS" != "$AFTER_SCRIPTS" ]; then
         DEPTH="${POSTIO_LAND_REEXEC_DEPTH:-0}"
@@ -671,15 +653,13 @@ if [ "$BEHIND" -gt 0 ]; then
 fi
 
 # Leased force, not a plain push: the script rebases onto origin/$BASE, so the second push of a
-# branch is necessarily non-fast-forward (#781).
-# Leased rather than bare: it compares against the remote-tracking ref this worktree last pushed, so
-# it refuses if the remote moved for any
-# other reason; the guard hook refuses a bare --force everywhere.
-# And leased only when the remote has the branch: `--force-with-lease` without an explicit <expect>
-# turns on `--force-if-includes`, which
+# branch is necessarily non-fast-forward (#781). Leased rather than bare: it compares against the
+# remote-tracking ref this worktree last pushed, so it refuses if the remote moved for any other
+# reason; the guard hook refuses a bare --force everywhere. And leased only when the remote has the
+# branch: `--force-with-lease` without an explicit <expect> turns on `--force-if-includes`, which
 # rejected three green first pushes as "stale info" (#860). A plain push of a branch the remote has
-# never seen cannot clobber anything,
-# and if somebody creates it in the window it is rejected as non-fast-forward.
+# never seen cannot clobber anything, and if somebody creates it in the window it is rejected as
+# non-fast-forward.
 if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
     git push -u --force-with-lease origin "$BRANCH"
 else
@@ -694,13 +674,12 @@ fi
 source "$(dirname "${BASH_SOURCE[0]}")/lib/require-gh.sh"
 
 # Storyboards (specs/008-storyboards): a branch that changes the app's interaction should arrive
-# with a `/ux-review` of the tree it lands.
-# Advisory, never a refusal: a current review's summary goes on the PR, a missing or stale one is a
-# warning and a label. "Current" is the
-# review key, built from the app crates' and catalogue's git tree ids, so a rebase that leaves them
-# alone keeps it (research R13).
-# Only the shipped code of postio-gtk and postio-widgets counts, not their `tests/`: labelling a
-# change that alters no filmed interaction trains people to ignore the label (#2025).
+# with a `/ux-review` of the tree it lands. Advisory, never a refusal: a current review's summary
+# goes on the PR, a missing or stale one is a warning and a label. "Current" is the review key,
+# built from the app crates' and catalogue's git tree ids, so a rebase that leaves them alone keeps
+# it (research R13). Only the shipped code of postio-gtk and postio-widgets counts, not their
+# `tests/`: labelling a change that alters no filmed interaction trains people to ignore the label
+# (#2025).
 STORYBOARD_REVIEWED=0
 if { git diff --name-only "origin/$BASE...HEAD"; git status --porcelain | sed 's/^...//'; } \
     | grep -E '^crates/postio-(gtk|widgets)/' | grep -vqE '^crates/postio-(gtk|widgets)/tests/'; then
@@ -735,8 +714,8 @@ if [ "$STORYBOARD_REVIEWED" = 1 ]; then
 fi
 
 # The state of the PR for this head branch, not its existence: `gh pr view` resolves the most recent
-# PR in any state, and a reused branch name
-# resolves to somebody else's merged PR, so adopting it merges nothing and reports success (#312).
+# PR in any state, and a reused branch name resolves to somebody else's merged PR, so adopting it
+# merges nothing and reports success (#312).
 PR_STATE=$(gh pr view --json state -q .state 2>/dev/null || echo "")
 if [ "$PR_STATE" = "OPEN" ]; then
     echo "PR already open for $BRANCH; the push updated it."
@@ -774,9 +753,8 @@ else
         echo "         pass --title to say what the whole branch does." >&2
     fi
     # `Closes` auto-closes the issue when this merges, right for a PR that meets its acceptance in
-    # full. `--refs-only` is for a PR that does
-    # not finish it; with auto-merge (#1107) the session that knows the work is partial must say so
-    # here, not edit the PR afterwards (#1189).
+    # full. `--refs-only` is for a PR that does not finish it; with auto-merge (#1107) the session
+    # that knows the work is partial must say so here, not edit the PR afterwards (#1189).
     if [ "$FEATURE" = 1 ]; then
         SPEC=$(git log "origin/$BASE..HEAD" --format=%b \
             | sed -n 's|^Refs: \(specs/[0-9][0-9]*-[a-z0-9-]*\).*|\1|p' | sort | uniq -c | sort -rn | awk 'NR==1 {print $2}')
@@ -812,13 +790,11 @@ URL=$(gh pr view --json url -q .url)
 echo "$URL"
 
 # `--full-suite`: the nightly's whole run on this PR (.github/workflows/full-suite.yml); the label
-# asks, and the required `Full suite on request`
-# check then passes only if that run does. Added with this session's own token, since a label the
-# workflow token adds triggers nothing.
-# Asked for by the author, never added automatically for a risky diff: that made 8 of 20 PRs wait 40
-# to 135 minutes (2026-10-23). The risk is still named.
-# The exception is the build environment (toolchain pin, mise.toml, .cargo/config.toml,
-# flatpak/*.json), which no author can judge from the diff;
+# asks, and the required `Full suite on request` check then passes only if that run does. Added with
+# this session's own token, since a label the workflow token adds triggers nothing. Asked for by the
+# author, never added automatically for a risky diff: that made 8 of 20 PRs wait 40 to 135 minutes
+# (2026-10-23). The risk is still named. The exception is the build environment (toolchain pin,
+# mise.toml, .cargo/config.toml, flatpak/*.json), which no author can judge from the diff;
 # `risk-of-diff.sh` says so on its third line.
 if [ "$FULL_SUITE" = 0 ]; then
     RISK=$(git diff --name-only "origin/$BASE...HEAD" | scripts/risk-of-diff.sh || true)
@@ -882,16 +858,13 @@ LANDING=$(git log "origin/$BASE..HEAD" --format=%s)
 [ "$MERGE" = 1 ] || { echo "left open at your request (--no-merge)."; exit 0; }
 
 # Hand the merge to GitHub and go (#1107): PR open to merged was p50 10 min, spent by the session
-# waiting in wait-for-checks.sh. A ruleset requires the CI
-# checks, so `--auto` cannot merge before they are green. Asked of the repository: one with
-# auto-merge off (a sandbox, a fork) takes the watching
-# path, and `--wait` asks for it. A red check is found by the next claim, /steward's sweep and
-# `issue-claim.sh --resume <n>`.
-# The REST field, not `gh repo view --json`, which has no auto-merge field and answers empty,
-# reading as "no" (#1136).
-# `gh pr merge --auto` fails for reasons that are not failures of this landing, so every branch
-# returns 0 because the work landed; what differs is the
-# line saying whether anything will merge it.
+# waiting in wait-for-checks.sh. A ruleset requires the CI checks, so `--auto` cannot merge before
+# they are green. Asked of the repository: one with auto-merge off (a sandbox, a fork) takes the
+# watching path, and `--wait` asks for it. A red check is found by the next claim, /steward's sweep
+# and `issue-claim.sh --resume <n>`. The REST field, not `gh repo view --json`, which has no
+# auto-merge field and answers empty, reading as "no" (#1136). `gh pr merge --auto` fails for
+# reasons that are not failures of this landing, so every branch returns 0 because the work landed;
+# what differs is the line saying whether anything will merge it.
 arm_auto_merge() {
     local attempt=1 output=""
     while [ "$attempt" -le 3 ]; do
@@ -974,9 +947,9 @@ if ! "$TREE/scripts/wait-for-checks.sh" "$URL"; then
 fi
 
 # Squash. Not --delete-branch: it deletes the local branch too, so `gh` switches this worktree to
-# `main`, which is checked out in the shared
-# checkout, and `gh pr merge` reports failure after the merge went through (#167).
-# `issue-release.sh` deletes the local branch; only the remote copy is left here.
+# `main`, which is checked out in the shared checkout, and `gh pr merge` reports failure after the
+# merge went through (#167). `issue-release.sh` deletes the local branch; only the remote copy is
+# left here.
 gh pr merge --squash
 
 # Believe it only after checking: `gh pr merge` exits 0 when the PR was already merged, so the
@@ -1042,9 +1015,8 @@ if [ -n "$MISSING" ]; then
         [ -n "$MISSING" ] || echo "the commits are on origin/$BASE now."
 
         # Still nothing: ask the remote, which cannot be stale. Four landings failed here for work
-        # that was on `main` (#818, #830, #833),
-        # and a longer timeout did not help. The merge is identified by SHA, not a subject a
-        # reworded commit could duplicate, so #312 still fails.
+        # that was on `main` (#818, #830, #833), and a longer timeout did not help. The merge is
+        # identified by SHA, not a subject a reworded commit could duplicate, so #312 still fails.
         if [ -n "$MISSING" ]; then
             MERGE_SHA=$(gh pr view --json mergeCommit --jq '.mergeCommit.oid // empty' 2>/dev/null || true)
             if [ -n "$MERGE_SHA" ]; then

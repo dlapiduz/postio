@@ -1,6 +1,6 @@
 //! Hand-written SQL proving the columns exist and round-trip every field of a populated `Message`.
-//! The
-//! body columns are compressed (ADR 0020), so `tests/body.rs` covers them through the repository.
+//! The body columns are compressed (ADR 0020), so `tests/body.rs` covers them through the
+//! repository.
 
 use chrono::{TimeZone, Utc};
 use postio_storage::Connection;

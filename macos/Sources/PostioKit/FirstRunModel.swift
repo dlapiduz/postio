@@ -2,10 +2,8 @@ import Foundation
 import PostioFFI
 
 /// The looking-up and the proof are the boundary's (shared onboarding with the desktop); this holds
-/// when to look an address
-/// up, when `Connect` may be pressed, and what a refusal does to the form. The boundary arrives as
-/// three closures so those
-/// decisions are tested without a network or store.
+/// when to look an address up, when `Connect` may be pressed, and what a refusal does to the form.
+/// The boundary arrives as three closures so those decisions are tested without a network or store.
 @MainActor
 @Observable
 public final class FirstRunModel {

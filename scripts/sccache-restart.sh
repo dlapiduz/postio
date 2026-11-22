@@ -1,16 +1,14 @@
 #!/usr/bin/env bash
 # Notice a wedged sccache daemon, and restart it without breaking the cache. It has stalled every
 # build on this box twice
-# (docs/notes/2026-09-03-the-compile-cache-was-full-and-had-been-for-a-long-time.md, #1184).
-# A wedge is invisible: builds never finish and print nothing. The tell is the daemon's `Compile
-# requests executed` counter frozen across two readings
-# while `rustc` processes sit for minutes using no CPU; both halves are required.
-# Restarting by hand re-created the other failure: sccache reads its settings when the server
-# STARTS, so a bare `sccache --show-stats` starts a daemon at the default
+# (docs/notes/2026-09-03-the-compile-cache-was-full-and-had-been-for-a-long-time.md, #1184). A wedge
+# is invisible: builds never finish and print nothing. The tell is the daemon's `Compile requests
+# executed` counter frozen across two readings while `rustc` processes sit for minutes using no CPU;
+# both halves are required. Restarting by hand re-created the other failure: sccache reads its
+# settings when the server STARTS, so a bare `sccache --show-stats` starts a daemon at the default
 # 10 GiB cap. The restart goes through `rustc-wrapper.sh`, which knows the size, idle timeout and
-# logging, and the size is read back.
-# A restart does not reach clients parked on the old daemon, which hold `target/`'s lock and
-# `~/.cargo/.package-cache` for ever; `--reap` kills those compiles
+# logging, and the size is read back. A restart does not reach clients parked on the old daemon,
+# which hold `target/`'s lock and `~/.cargo/.package-cache` for ever; `--reap` kills those compiles
 # still parked past `STALLED_AFTER`. A flag, not the default, since it kills somebody's build and
 # names every pid.
 #

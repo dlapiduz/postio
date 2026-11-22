@@ -168,8 +168,8 @@ def blank_comments_and_strings(text: str) -> str:
                     end += 1
         elif char == "'":
             # A char literal or a lifetime: `'"'` holds one double quote, so reading it as a string
-            # inverts quote parity for the rest
-            # of the file and callers silently disappear. A lifetime falls through untouched.
+            # inverts quote parity for the rest of the file and callers silently disappear. A
+            # lifetime falls through untouched.
             end = index + 1
             if end < length and text[end] == "\\":
                 end += 2

@@ -90,9 +90,9 @@ pub fn start(
     .map_err(|error| format!("the host did not start: {error}"))?;
     let sink = sink.take().ok_or("the host kept its events to itself")?;
     // Index every body and file before the first frame: left to the idle passes, a word was found
-    // or not by how far they had got,
-    // and a count grew between frames of one storyboard. Run on the host's runtime and waited for
-    // here: the runner calls this from inside another, where a `block_on` may not run.
+    // or not by how far they had got, and a count grew between frames of one storyboard. Run on the
+    // host's runtime and waited for here: the runner calls this from inside another, where a
+    // `block_on` may not run.
     let (indexed, done) = std::sync::mpsc::channel();
     host.runtime().spawn({
         let store = store.clone();

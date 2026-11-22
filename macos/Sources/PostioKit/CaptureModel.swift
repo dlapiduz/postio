@@ -23,8 +23,8 @@ public enum CaptureCommand {
 }
 
 /// The text and the filter are set from the view only when the controller's words differ from the
-/// field's, so typing is never
-/// overwritten by its own echo. No AppKit, so iOS stays reachable (#1264).
+/// field's, so typing is never overwritten by its own echo. No AppKit, so iOS stays reachable
+/// (#1264).
 @MainActor
 @Observable
 public final class CaptureModel {

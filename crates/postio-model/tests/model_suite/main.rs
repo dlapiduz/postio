@@ -1,6 +1,6 @@
 //! One binary for the integration tests, so the dependency stack links once (#1128). Nothing here
-//! may set a process-global
-//! (`set_var`, crate attributes): a case that needs its own process belongs outside.
+//! may set a process-global (`set_var`, crate attributes): a case that needs its own process
+//! belongs outside.
 
 mod corpus_loader;
 mod invariants;

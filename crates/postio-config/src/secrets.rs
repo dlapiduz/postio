@@ -1,7 +1,6 @@
 //! Passwords and tokens live in the Secret Service keyring; `config.toml` only holds a
-//! `keyring_entry`
-//! reference. Secret-looking keys are stripped before deserialization and again on the way out, and
-//! parser errors are redacted (`redact_secret_lines`).
+//! `keyring_entry` reference. Secret-looking keys are stripped before deserialization and again on
+//! the way out, and parser errors are redacted (`redact_secret_lines`).
 
 use std::borrow::Cow;
 

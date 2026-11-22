@@ -1,8 +1,6 @@
 //! Frames that miss their budget, attributed to the last action dispatched within
-//! [`ATTRIBUTION_WINDOW`].
-//! Enable with `POSTIO_LOG=postio_widgets::jank=debug` before the window is built; off, it costs
-//! nothing, and retuning
-//! `[logging]` does not install it on a running window.
+//! [`ATTRIBUTION_WINDOW`]. Enable with `POSTIO_LOG=postio_widgets::jank=debug` before the window is
+//! built; off, it costs nothing, and retuning `[logging]` does not install it on a running window.
 
 use std::cell::{Cell, RefCell};
 use std::fmt::Display;

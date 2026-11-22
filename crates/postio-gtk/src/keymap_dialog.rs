@@ -1,7 +1,6 @@
 //! The key map: an `AdwDialog`, 1100x760, generated from the registry. Nothing here names a key:
-//! every row is
-//! `postio_ui::keymap_sheet::key_map` under the keymap in force. `?` or `Escape` closes it; the
-//! window's keyboard sends both here.
+//! every row is `postio_ui::keymap_sheet::key_map` under the keymap in force. `?` or `Escape`
+//! closes it; the window's keyboard sends both here.
 
 use gtk::prelude::*;
 use postio_core::Keymap;

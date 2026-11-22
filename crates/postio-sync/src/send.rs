@@ -37,9 +37,8 @@ use crate::drain::{Outcome, Result};
 pub struct SmtpContext<'a> {
     pub connector: &'a dyn SmtpConnector,
     /// The same instance the IMAP pool holds (ADR 0006 Q5): one per account, so a rejection is seen
-    /// by both sides
-    /// and two refreshes cannot race on a provider that rotates refresh tokens. A `TokenSource`
-    /// because an OAuth account's keyring entry is a refresh token.
+    /// by both sides and two refreshes cannot race on a provider that rotates refresh tokens. A
+    /// `TokenSource` because an OAuth account's keyring entry is a refresh token.
     pub tokens: &'a dyn TokenSource,
     pub blobs: &'a BlobStore,
 }

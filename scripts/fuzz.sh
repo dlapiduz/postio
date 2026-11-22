@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Run a fuzz target from a shell that cannot run one unaided. The workstation exports
-# RUSTUP_TOOLCHAIN, which rustup reads
-# before rust-toolchain.toml, so the nightly pin is ignored; the script unsets it.
-# scripts/fuzz-seed.sh runs first (idempotent).
+# RUSTUP_TOOLCHAIN, which rustup reads before rust-toolchain.toml, so the nightly pin is ignored;
+# the script unsets it. scripts/fuzz-seed.sh runs first (idempotent).
 #
 #   scripts/fuzz.sh parse_query                 # until you stop it
 #   scripts/fuzz.sh parse_message -- -max_total_time=300

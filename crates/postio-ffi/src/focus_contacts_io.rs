@@ -1,6 +1,5 @@
 //! Importing and exporting contacts: the Mac presents the open and save panels; parsing, applying,
-//! writing and every
-//! word are Rust's. An import has no undo and never merges people.
+//! writing and every word are Rust's. An import has no undo and never merges people.
 
 use postio_ui::contacts_io::IoSheetView;
 

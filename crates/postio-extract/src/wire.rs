@@ -8,25 +8,18 @@
 //!
 //! # The format
 //!
-//! Hand-rolled, little-endian, every variable part length-prefixed, and
-//! versioned twice: [`WIRE_VERSION`] for the shape of the frame, and the
-//! reply's [`EXTRACTOR_VERSION`](crate::EXTRACTOR_VERSION) so a helper left
-//! over from another build is told apart from a broken one
-//! ([`Error::Extractor`]) rather than recorded as if this build had read
+//! Hand-rolled, little-endian, every variable part length-prefixed, and versioned twice:
+//! [`WIRE_VERSION`] for the shape of the frame, and the reply's
+//! [`EXTRACTOR_VERSION`](crate::EXTRACTOR_VERSION) so a helper left over from another build is told
+//! apart from a broken one ([`Error::Extractor`]) rather than recorded as if this build had read
 //! the file.
 //!
 //! ```text
-//! request = "PXRQ" u16:wire
-//!           str:mime  u8:has-name [str:name]
-//!           u64:max_input u64:max_text u64:max_units u64:max_time_ms
-//!           u64:max_entry u32:max_ratio
-//!           u64:length bytes
-//! reply   = "PXRS" u16:wire u32:extractor
-//!           u8:outcome u8:detail
-//!           u32:count { location str:text }*count
-//! location = u8:kind, then u32 (page, slide, paragraph, line),
-//!            str u32 (sheet name, row), u32 u32 (table, row), or nothing
-//! str     = u32:length utf-8
+//! request = "PXRQ" u16:wire str:mime  u8:has-name [str:name] u64:max_input u64:max_text
+//! u64:max_units u64:max_time_ms u64:max_entry u32:max_ratio u64:length bytes reply   = "PXRS"
+//! u16:wire u32:extractor u8:outcome u8:detail u32:count { location str:text }*count location =
+//! u8:kind, then u32 (page, slide, paragraph, line), str u32 (sheet name, row), u32 u32 (table,
+//! row), or nothing str     = u32:length utf-8
 //! ```
 //!
 //! # A reply is read as hostile

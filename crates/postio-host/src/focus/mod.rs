@@ -1,8 +1,7 @@
 //! Focus mode: what the Focus apps (`postio-gtk`, `postio-tui`) switch on in the host via
-//! [`Host::enable_focus`]; the classic app never does.
-//! It installs a filing pass in every sync engine, a body stage ([`body`]) and one due timer
-//! ([`due`]) for the store,
-//! which first sorts what another app filed while Focus was closed ([`catch_up`]).
+//! [`Host::enable_focus`]; the classic app never does. It installs a filing pass in every sync
+//! engine, a body stage ([`body`]) and one due timer ([`due`]) for the store, which first sorts
+//! what another app filed while Focus was closed ([`catch_up`]).
 
 mod body;
 mod catch_up;
@@ -281,8 +280,8 @@ pub(crate) async fn yield_to_reads(database: &postio_storage::Store) {
 }
 
 /// Before its first tick, once the body stage has caught up, it sorts what another app filed while
-/// Focus was
-/// closed ([`catch_up`]), so a digest due at once holds that mail too. The first tick is at once.
+/// Focus was closed ([`catch_up`]), so a digest due at once holds that mail too. The first tick is
+/// at once.
 fn due_timer(
     inner: &Arc<Inner>,
     config: Arc<RwLock<FocusConfig>>,

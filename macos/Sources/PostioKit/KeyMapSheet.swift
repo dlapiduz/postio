@@ -178,8 +178,8 @@ public struct KeyMapPanel: View {
             }
             .padding(.bottom, 22)
             // The columns scroll inside the panel while the heading and footers stay put. A Mac
-            // hides an idle scroller, so while rows
-            // lie below the scroller stays drawn and the last rows fade under a "more below" line.
+            // hides an idle scroller, so while rows lie below the scroller stays drawn and the last
+            // rows fade under a "more below" line.
             ScrollViewReader { reader in
                 ScrollView {
                     HStack(alignment: .top, spacing: 24) {

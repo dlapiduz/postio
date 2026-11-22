@@ -58,10 +58,8 @@ where
 }
 
 /// A reminder due while Focus was closed fires at the first tick, offline too. It is never fired
-/// over a reply:
-/// a reply can reach the store by a way the filing pass never sees (another app's folder, a first
-/// sync), so
-/// the timer checks who has written since and cancels instead.
+/// over a reply: a reply can reach the store by a way the filing pass never sees (another app's
+/// folder, a first sync), so the timer checks who has written since and cancels instead.
 pub(crate) async fn fire_reminders(database: &Store, now: DateTime<Utc>) -> Result<usize, Failure> {
     let due = {
         let reader = database.read().await?;
@@ -99,9 +97,8 @@ pub(crate) async fn fire_reminders(database: &Store, now: DateTime<Utc>) -> Resu
 }
 
 /// The person's own reply is filed in Sent, which the filing pass does not read, and another app's
-/// folder
-/// can bring any reply; so each tick checks the surfaced conversations (one seek each, a few at
-/// most).
+/// folder can bring any reply; so each tick checks the surfaced conversations (one seek each, a few
+/// at most).
 pub(crate) async fn settle_replied(database: &Store, now: DateTime<Utc>) -> Result<usize, Failure> {
     let surfaced = {
         let reader = database.read().await?;

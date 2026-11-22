@@ -393,8 +393,7 @@ struct Entry(BodyRequest);
 impl Ord for Entry {
     fn cmp(&self, other: &Self) -> Ordering {
         // Max-heap: greater means fetch sooner. Rank is reversed (lower `sync_priority` is sooner)
-        // and first,
-        // or newer mail in an archive outranks the inbox.
+        // and first, or newer mail in an archive outranks the inbox.
         other
             .0
             .rank

@@ -4,9 +4,8 @@ const PREFIXES: &[&str] = &[
 ];
 
 /// How far apart, in days, two rootless conversations can be and still be the same to the unified
-/// list's subject fallback
-/// (#184, ADR 0005 Q2): across accounts a bare subject match would fold every "Weekly digest" into
-/// one conversation.
+/// list's subject fallback (#184, ADR 0005 Q2): across accounts a bare subject match would fold
+/// every "Weekly digest" into one conversation.
 pub const COALESCING_WINDOW_DAYS: i64 = 7;
 
 /// Groups messages whose `References` were broken in transit. Conservative: a leading `[list]` tag

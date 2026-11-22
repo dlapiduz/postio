@@ -1,17 +1,13 @@
 #!/usr/bin/env bash
 # Install the pinned `cargo-nextest` side by side with its other versions. Idempotent. A branch that
-# bumps the pin does not unseat
-# everyone else's (scripts/lib/pinned-tool.sh says why); CI installs plain into ~/.cargo/bin.
-# A script, not README text: `issue-land.sh` falls open to `cargo test` without nextest and says
-# nothing, which hid a 4x slower landing (#1092);
-# the pin and checksum live here once.
-# The published binary, not `cargo install`, which compiles the tool's ~200 dependencies a second
-# time in its own target dir.
-# A checksum, not `--locked`: the asset is immutable, so a changed digest means stop. Two checksums,
-# one per host, because the
-# tooling self-tests run on macOS too and `scripts/lib/prereq.py` fails a missing prerequisite under
-# CI.
-# To bump: change the version, download both tarballs, and put their `sha256sum` here.
+# bumps the pin does not unseat everyone else's (scripts/lib/pinned-tool.sh says why); CI installs
+# plain into ~/.cargo/bin. A script, not README text: `issue-land.sh` falls open to `cargo test`
+# without nextest and says nothing, which hid a 4x slower landing (#1092); the pin and checksum live
+# here once. The published binary, not `cargo install`, which compiles the tool's ~200 dependencies
+# a second time in its own target dir. A checksum, not `--locked`: the asset is immutable, so a
+# changed digest means stop. Two checksums, one per host, because the tooling self-tests run on
+# macOS too and `scripts/lib/prereq.py` fails a missing prerequisite under CI. To bump: change the
+# version, download both tarballs, and put their `sha256sum` here.
 set -euo pipefail
 
 VERSION="0.9.152"

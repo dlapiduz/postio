@@ -1,6 +1,5 @@
 //! Priority, not arrival order, decides who writes next (#425). `busy_timeout` is a retry loop with
-//! no
-//! ordering, so "interactive first" has to be arranged above SQLite.
+//! no ordering, so "interactive first" has to be arranged above SQLite.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -10,8 +9,7 @@ use postio_storage::{WriteGate, WritePriority, test_support};
 const ENOUGH_TO_BLOCK: Duration = Duration::from_millis(50);
 
 /// Waits on the gate's own observable to establish arrival order without a sleep; the yield keeps
-/// it safe
-/// on a single-worker runtime.
+/// it safe on a single-worker runtime.
 async fn until_interactive_is_waiting(gate: &WriteGate) {
     while !gate.interactive_is_waiting() {
         tokio::task::yield_now().await;
@@ -103,8 +101,7 @@ async fn a_background_writer_waits_for_a_queued_interactive_one() {
 #[tokio::test(flavor = "multi_thread")]
 async fn two_interactive_writers_do_not_hold_the_lock_at_once() {
     // The gate is a lock as well as a queue: two permits at once would put a sync batch and a
-    // keystroke both
-    // inside `BEGIN IMMEDIATE` (#79).
+    // keystroke both inside `BEGIN IMMEDIATE` (#79).
     let gate = gate().await;
     let holders = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let peak = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -142,9 +139,8 @@ async fn two_interactive_writers_do_not_hold_the_lock_at_once() {
 }
 
 /// The gate wakes every waiter on release, which stopped being harmless when the body backfill took
-/// a permit
-/// per body: a folder sync's single acquisition raced a continuous stream and starved. The loop is
-/// the backfill's shape.
+/// a permit per body: a folder sync's single acquisition raced a continuous stream and starved. The
+/// loop is the backfill's shape.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_lone_writer_is_not_starved_by_a_busy_one() {
     let gate = gate().await;
@@ -188,8 +184,7 @@ async fn a_lone_writer_is_not_starved_by_a_busy_one() {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_gate_records_what_it_did_for_the_load_gate_to_read() {
     // `gate_log` is the instrument behind the interaction-under-load gate in `postio-sync`, which
-    // needs the gate
-    // to say in order who asked and who was served.
+    // needs the gate to say in order who asked and who was served.
     use postio_storage::test_support::gate_log::{self, Event};
     let gate = gate().await;
     gate_log::reset();

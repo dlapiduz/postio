@@ -1,6 +1,6 @@
 //! The reading pane's header (#319): native GTK, not markup in the body's document, so Postio's own
-//! chrome stays outside
-//! anything a sender's markup could imitate and the header stays fixed while the body scrolls.
+//! chrome stays outside anything a sender's markup could imitate and the header stays fixed while
+//! the body scrolls.
 
 use adw::prelude::*;
 use chrono::{DateTime, Utc};
@@ -89,9 +89,8 @@ impl MessageHeader {
         identity.append(&top_row);
 
         // The row is always there at the same height whoever the message went to, or the body moved
-        // 16-18px between two
-        // messages. What is absent is not drawn (`set_child_visible`) rather than taken out of the
-        // layout.
+        // 16-18px between two messages. What is absent is not drawn (`set_child_visible`) rather
+        // than taken out of the layout.
         let recipients_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         let to_label = field_label("To");
         to_label.set_child_visible(false);
@@ -173,10 +172,8 @@ impl MessageHeader {
     }
 
     /// Every string comes from [`HeaderLines`], including the shortened recipient line and `Cc (n)`
-    /// title: the macOS header
-    /// writes the same two, and a label composed in each frontend drifts (#1259, #1285). Field
-    /// names are the exception:
-    /// `field_label` draws each word once, in `new`.
+    /// title: the macOS header writes the same two, and a label composed in each frontend drifts
+    /// (#1259, #1285). Field names are the exception: `field_label` draws each word once, in `new`.
     pub fn set_message(
         &self,
         from: &[EmailAddress],
@@ -206,8 +203,7 @@ impl MessageHeader {
                 self.to.set_child_visible(true);
                 self.to.set_label(&line);
                 // The full list stays reachable here because "who exactly is on this" decides
-                // whether reply-all is a mistake
-                // (#1332). Only when they differ.
+                // whether reply-all is a mistake (#1332). Only when they differ.
                 self.to.set_tooltip_text(
                     lines
                         .to
@@ -238,10 +234,9 @@ impl MessageHeader {
     }
 
     /// The line is here, not on the list row: "whose is this?" is asked about the message in front
-    /// of you (ADR 0005 Q4, #185).
-    /// `None` hides it (the single-account case). `hue` indexes the generated palette
-    /// (`ACCOUNT_HUES`); the name is beside
-    /// it, so colour is never the only signal.
+    /// of you (ADR 0005 Q4, #185). `None` hides it (the single-account case). `hue` indexes the
+    /// generated palette (`ACCOUNT_HUES`); the name is beside it, so colour is never the only
+    /// signal.
     pub fn set_account(&self, name: Option<&str>, hue: usize) {
         let Some(name) = name else {
             self.account_row.set_visible(false);

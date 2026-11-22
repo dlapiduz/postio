@@ -3,10 +3,9 @@ import Foundation
 import PostioFFI
 
 /// `POSTIO_DEMO=<seed>` opens postio-demo's in-memory store instead of the one on disk, so no
-/// Keychain is read and nobody's
-/// mail is shown; only a build with the FFI `demo` feature can. `POSTIO_WINDOW_SIZE`,
-/// `POSTIO_DEMO_KEYS`, `POSTIO_DEMO_STATE`
-/// and `POSTIO_DEMO_SNAPSHOT` also apply, in a demo only.
+/// Keychain is read and nobody's mail is shown; only a build with the FFI `demo` feature can.
+/// `POSTIO_WINDOW_SIZE`, `POSTIO_DEMO_KEYS`, `POSTIO_DEMO_STATE` and `POSTIO_DEMO_SNAPSHOT` also
+/// apply, in a demo only.
 public enum DemoMode {
     public static var seed: String? { seed(in: ProcessInfo.processInfo.environment) }
 

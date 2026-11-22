@@ -1,7 +1,6 @@
 //! Walking a thread in the message window: `[` `]` `{` `}` and `g u` are decided here and both
 //! frontends only draw. A message shown by stepping is marked read by the frontend's dwell, never
-//! at
-//! once.
+//! at once.
 
 use chrono::Local;
 use postio_core::CommandId;
@@ -303,8 +302,7 @@ impl FocusController {
                 vec![Step::Ask(Request::ReadThread(walk.view.thread))]
             }
             // A member changed in place (marked read by the dwell): the bar's count and dots say
-            // what
-            // the list's row says.
+            // what the list's row says.
             postio_core::Event::MessagesChanged { messages, .. } => {
                 let Some(walk) = walk.filter(|walk| {
                     walk.view

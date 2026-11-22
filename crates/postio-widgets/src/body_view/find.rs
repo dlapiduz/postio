@@ -1,6 +1,5 @@
 //! Find in the message on screen: matches are computed over the snapshot's text index and
-//! recomputed on
-//! every snapshot, so a find survives a re-render.
+//! recomputed on every snapshot, so a find survives a re-render.
 
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
@@ -394,8 +393,8 @@ impl BodyView {
 const UNDERLINE: f32 = 1.5;
 
 /// Where a reveal takes the scroll, or `None` to leave it. The sentence goes a third of the way
-/// down; with
-/// `keep` (the furthest scroll that still shows a header) nothing moves unless that fits (#2125).
+/// down; with `keep` (the furthest scroll that still shows a header) nothing moves unless that fits
+/// (#2125).
 fn reveal_to(sentence: (f64, f64), value: f64, page: f64, keep: Option<f64>) -> Option<f64> {
     let (y0, y1) = sentence;
     if y0 >= value && y1 <= value + page {

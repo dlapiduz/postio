@@ -1,7 +1,6 @@
 //! Focus answers `M` (`CommandId::Unsubscribe`) in a digest, on the message the digest's cursor is
-//! on. The open message's own notice is not wired in Focus
-//! (`Reader::set_unsubscribe` is never called and `act` has no arm for the command), so its case is
-//! held out in `IGNORED`.
+//! on. The open message's own notice is not wired in Focus (`Reader::set_unsubscribe` is never
+//! called and `act` has no arm for the command), so its case is held out in `IGNORED`.
 
 use postio_model::BodyState;
 use postio_storage::repository::{MessageRepository, StoredBody, UnsubscribeRepository};

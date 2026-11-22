@@ -7,13 +7,10 @@
 #     macos=yes
 #
 # Gated at job level so every check still reports (#1107, #1127). Fails safe: `rust=yes` unless
-# every changed path is known
-# not to reach a compile; an empty list, an unknown path and an event without a diff build
-# everything.
-# `macos` is a different question (#666): the Swift half and its link need a runner when either half
-# changes, but only
-# `postio-ffi`'s dependency closure can change the bindings (#1449). `scripts/lib/ffi-closure.py`
-# computes the outside set each run.
+# every changed path is known not to reach a compile; an empty list, an unknown path and an event
+# without a diff build everything. `macos` is a different question (#666): the Swift half and its
+# link need a runner when either half changes, but only `postio-ffi`'s dependency closure can change
+# the bindings (#1449). `scripts/lib/ffi-closure.py` computes the outside set each run.
 set -euo pipefail
 
 event=${1:-}

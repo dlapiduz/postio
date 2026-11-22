@@ -54,8 +54,7 @@ import sys
 from pathlib import Path
 
 # Spelled as they appear in code; header names match case-insensitively. The browser-launch entry
-# matches the spawn call, not the
-# bare program name, which `postio-gtk` prints as a keybinding hint.
+# matches the spawn call, not the bare program name, which `postio-gtk` prints as a keybinding hint.
 
 TRACKING: dict[str, str] = {
     "disposition-notification-to": "read receipt (MDN)",

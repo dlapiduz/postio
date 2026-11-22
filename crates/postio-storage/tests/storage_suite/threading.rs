@@ -600,8 +600,8 @@ async fn file_fixture(
 }
 
 /// `file_fixture`, optionally as if the message were not list mail: list mail stays out of the
-/// subject
-/// fallback, so the rethreading cases need the same message minus its `List-Id` and `Precedence`.
+/// subject fallback, so the rethreading cases need the same message minus its `List-Id` and
+/// `Precedence`.
 async fn file_fixture_as(
     connection: &Connection,
     account: AccountId,
@@ -697,8 +697,7 @@ async fn arriving_newest_first_still_gathers_everything_the_chain_names() {
     );
 
     // `list-thread-06-reply-subject-only` has no references, so only its subject could place it,
-    // but
-    // newest-first it is filed before the messages sharing that subject: the honest limit of
+    // but newest-first it is filed before the messages sharing that subject: the honest limit of
     // incremental threading (postio-tn9.2).
     let (_, stranded) = placed
         .iter()

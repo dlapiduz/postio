@@ -1,6 +1,5 @@
 //! The built-in needs-action detector: plain code over a message's own text and headers. When
-//! unsure
-//! it marks nothing, because a marker that is often wrong is worse than none.
+//! unsure it marks nothing, because a marker that is often wrong is worse than none.
 
 mod deadline;
 mod lexicon;
@@ -53,8 +52,7 @@ pub fn considered(message: &BodyMessage<'_>, rules: &dyn Rules) -> bool {
 }
 
 /// Such a message is asked nothing by either detector: once it addresses an assistant, any ask in
-/// it
-/// may be the attacker's (ADR 0009 Q4).
+/// it may be the attacker's (ADR 0009 Q4).
 pub(crate) fn speaks_to_a_machine(text: &OwnText<'_>) -> bool {
     let lower = straightened(text.as_str())
         .split_whitespace()
@@ -188,8 +186,7 @@ fn straightened(text: &str) -> String {
 }
 
 /// A question ends in `?` and is put to the reader in the second person. A request phrased as one
-/// is
-/// a question too, with no due date.
+/// is a question too, with no due date.
 fn is_question(lower: &str) -> bool {
     ends_in_question_mark(lower)
         && lexicon::SECOND_PERSON

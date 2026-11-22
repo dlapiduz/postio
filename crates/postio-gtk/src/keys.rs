@@ -1,7 +1,6 @@
 //! Focus binds only the commands it offers, so a key the keymap keeps for another frontend
-//! (`ctrl+shift+e` hands the terminal's
-//! composer to an editor) does what an unbound key does here, rather than reaching a command Focus
-//! would refuse.
+//! (`ctrl+shift+e` hands the terminal's composer to an editor) does what an unbound key does here,
+//! rather than reaching a command Focus would refuse.
 
 use postio_core::{Frontend, Keymap};
 use postio_ui::keymap::Resolver;

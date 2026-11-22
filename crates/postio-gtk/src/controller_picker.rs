@@ -1,7 +1,6 @@
 //! The move picker the controller drives: `MoveThisMessage` aims a move at one message, which GTK's
-//! own `MovePicker`
-//! (aimed at the cursor's row and the selection) cannot say. The controller owns what it acts on
-//! and lists.
+//! own `MovePicker` (aimed at the cursor's row and the selection) cannot say. The controller owns
+//! what it acts on and lists.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;

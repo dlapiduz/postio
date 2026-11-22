@@ -4,11 +4,9 @@ import PostioKit
 
 extension KeyEvent {
     /// `charactersIgnoringModifiers`, not `characters`: it applies Shift and ignores Option and
-    /// Command,
-    /// as `Chord::from_platform_key` expects (`shift+a` is `A`, `alt+a` stays `a`, not `å`). `nil`
-    /// for a
-    /// modifier-only press and a dead key mid-composition: swallowing them would break non-Latin
-    /// keyboards.
+    /// Command, as `Chord::from_platform_key` expects (`shift+a` is `A`, `alt+a` stays `a`, not
+    /// `å`). `nil` for a modifier-only press and a dead key mid-composition: swallowing them would
+    /// break non-Latin keyboards.
     public static func reduce(_ event: NSEvent) -> Reduced? {
         let modifiers = held(event.modifierFlags)
         guard let scalar = event.charactersIgnoringModifiers?.unicodeScalars.first else {
@@ -35,8 +33,7 @@ extension KeyEvent {
     }
 
     /// The spellings are `postio_ui::keymap`'s alias table (GDK's), so one `[keys]` file describes
-    /// both
-    /// platforms (ADR 0019 Q4). `nil` for ordinary characters including Space, which
+    /// both platforms (ADR 0019 Q4). `nil` for ordinary characters including Space, which
     /// `from_platform_key` handles itself.
     static func name(for scalar: Unicode.Scalar) -> String? {
         switch scalar.value {

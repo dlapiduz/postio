@@ -1,7 +1,6 @@
 //! The render-mode line above an HTML body: names the treatment it is drawn in, says why, and
-//! offers the other (a rewrite
-//! nobody can see is what #1009 forbids). Native chrome, never inside the document; the words are
-//! `postio_ui::reader::document::render_mode_words`.
+//! offers the other (a rewrite nobody can see is what #1009 forbids). Native chrome, never inside
+//! the document; the words are `postio_ui::reader::document::render_mode_words`.
 
 use std::rc::Rc;
 

@@ -673,8 +673,7 @@ async fn a_bulk_flag_write_marks_its_rows_as_ahead_of_the_server() {
 #[tokio::test]
 async fn the_rows_a_flag_write_would_change_are_a_set_of_their_own() {
     // The queue must carry the rows that disagree with the write, or undo takes back rows the
-    // action
-    // never touched; asking which they are stays a count.
+    // action never touched; asking which they are stays a count.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("a connection");
     let world = world(&connection).await;

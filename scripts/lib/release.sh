@@ -7,9 +7,8 @@ release_as_number() {
 }
 
 # Every vX.Y.Z tag on origin, not the local list: the workflow checkout has no tags, and an empty
-# list once set out to publish v0.4.2 over the
-# published one. `ls-remote` fails rather than answering "none" when it cannot ask, which the caller
-# must treat as a refusal.
+# list once set out to publish v0.4.2 over the published one. `ls-remote` fails rather than
+# answering "none" when it cannot ask, which the caller must treat as a refusal.
 release_tags() {
     git ls-remote --tags --refs origin 'refs/tags/v*' | sed 's#^.*refs/tags/##'
 }

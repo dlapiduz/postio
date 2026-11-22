@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Regenerate the Swift bindings for `postio-ffi`. They are a build product, not tracked: the
-# generator and the `uniffi` runtime
-# must be the same version, so both are built from this workspace.
+# generator and the `uniffi` runtime must be the same version, so both are built from this
+# workspace.
 #
 # Usage:
 #   scripts/ffi-bindgen.sh [--release] [out-dir]   # default: target/ffi-bindings

@@ -140,9 +140,8 @@ pub struct Message {
     /// ingest like `list_id`.
     pub read_receipt_requested: bool,
     /// `None` while not known. Known at filing when an incremental sync asked for the three fields,
-    /// else from the
-    /// body's headers: a first sync does not ask, since every enumerated message would pay for it
-    /// (ADR 0025).
+    /// else from the body's headers: a first sync does not ask, since every enumerated message
+    /// would pay for it (ADR 0025).
     #[serde(default)]
     pub promoted: Option<crate::promoted::PromotedHeaders>,
 
@@ -161,21 +160,20 @@ pub struct Message {
 
     pub body: MessageBody,
     /// Whether the text part declared `format=flowed` (RFC 3676): `body.text`'s lines are
-    /// soft-wrapped, not typed
-    /// breaks. Callers quoting it choose between undoing the wrap and taking lines at face value
-    /// (#456).
+    /// soft-wrapped, not typed breaks. Callers quoting it choose between undoing the wrap and
+    /// taking lines at face value (#456).
     pub text_is_flowed: bool,
     pub preview: Option<String>,
     pub attachments: Vec<Attachment>,
     /// `BODYSTRUCTURE`'s root type, not any part's. `None` before a structure is parsed.
     pub content_type: Option<String>,
     /// The `BODYSTRUCTURE` section of the plain-text body (`1`, `1.1`), or `None`. Recorded so
-    /// backfill can fetch
-    /// `BODY.PEEK[<section>]` instead of the whole message, attachments included (ADR 0017).
+    /// backfill can fetch `BODY.PEEK[<section>]` instead of the whole message, attachments included
+    /// (ADR 0017).
     pub text_part_id: Option<String>,
     /// That part's MIME headers rebuilt from `BODYSTRUCTURE`: `BODY[1.1]` returns encoded bytes
-    /// with no headers,
-    /// so prepending this lets `mime::parse` decode it without a second round trip.
+    /// with no headers, so prepending this lets `mime::parse` decode it without a second round
+    /// trip.
     pub text_part_headers: Option<String>,
     pub html_part_id: Option<String>,
     pub html_part_headers: Option<String>,
@@ -183,8 +181,7 @@ pub struct Message {
     pub flags: FlagSet,
     pub labels: Vec<LabelId>,
     /// Local only, like `LocalSyncState::deleted_locally`: no sync pass sets it. A user preference
-    /// like `flags`,
-    /// not sync bookkeeping, so it lives here rather than in `LocalSyncState`.
+    /// like `flags`, not sync bookkeeping, so it lives here rather than in `LocalSyncState`.
     pub snoozed_until: Option<DateTime<Utc>>,
     pub size: u64,
     pub headers: Headers,

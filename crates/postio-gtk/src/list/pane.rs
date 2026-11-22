@@ -327,11 +327,10 @@ impl std::fmt::Debug for ListPane {
 }
 
 /// GTK anchors a list on its first row and lays that row's section header out above it, off screen:
-/// when rows arrive or change height
-/// the view is put back one heading down (33 px), hiding the day. While pinned, a move that only
-/// hides the first heading is taken back.
-/// Pinned on open, on wholesale row replacement, at 0 and when the cursor goes to the first row;
-/// unpinned by the person's scrolling or any move past the heading.
+/// when rows arrive or change height the view is put back one heading down (33 px), hiding the day.
+/// While pinned, a move that only hides the first heading is taken back. Pinned on open, on
+/// wholesale row replacement, at 0 and when the cursor goes to the first row; unpinned by the
+/// person's scrolling or any move past the heading.
 fn hold_the_top(
     list: &super::model::FocusList,
     view: &gtk::ListView,
@@ -385,10 +384,9 @@ fn hold_the_top(
 }
 
 /// Without autoselect, a `GtkSingleSelection` whose row is removed selects nothing, so after an
-/// archive the next `e` acted on nothing (#1746):
-/// the row that slides into its place takes the cursor, by `cursor_after_change`. Handlers run in
-/// connection order, so the one connected
-/// to `list` before the selection exists sees the cursor as it was before the change.
+/// archive the next `e` acted on nothing (#1746): the row that slides into its place takes the
+/// cursor, by `cursor_after_change`. Handlers run in connection order, so the one connected to
+/// `list` before the selection exists sees the cursor as it was before the change.
 fn keep_the_cursor(list: &super::spliced::SplicedList) -> gtk::SingleSelection {
     let weak: Rc<glib::WeakRef<gtk::SingleSelection>> = Rc::default();
     let before = Rc::new(Cell::new(gtk::INVALID_LIST_POSITION));

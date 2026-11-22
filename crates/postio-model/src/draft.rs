@@ -46,13 +46,12 @@ pub enum DraftState {
     Sending,
     Sent,
     /// Failed before the payload went (auth, rejected sender/recipient/message, config, retries
-    /// exhausted),
-    /// so "nothing was delivered" is true; the draft is editable again. The indeterminate case is
-    /// `Unconfirmed`.
+    /// exhausted), so "nothing was delivered" is true; the draft is editable again. The
+    /// indeterminate case is `Unconfirmed`.
     Failed,
     /// The connection died after the payload began going out, so delivery cannot be told from
-    /// failure. Retrying could
-    /// duplicate mail that cannot be recalled; `Failed` would claim too much (ADR 0021 Decision 3,
+    /// failure. Retrying could duplicate mail that cannot be recalled; `Failed` would claim too
+    /// much (ADR 0021 Decision 3,
     /// #674).
     /// The next sync of Sent finding the draft's reserved `Message-ID` resolves it to `Sent`
     /// (#461).
@@ -94,10 +93,8 @@ pub struct Draft {
     pub kind: DraftKind,
     pub in_reply_to: Option<MessageId>,
     /// Not `in_reply_to`, which a forward leaves empty: it drives threading headers, and a forward
-    /// starts a new
-    /// conversation. This lets the sender fetch an attachment's missing bytes from the original via
-    /// `part_id`
-    /// rather than refuse to send (#1686).
+    /// starts a new conversation. This lets the sender fetch an attachment's missing bytes from the
+    /// original via `part_id` rather than refuse to send (#1686).
     #[serde(default)]
     pub forwarded_from: Option<MessageId>,
     pub thread_id: Option<ThreadId>,
@@ -107,38 +104,32 @@ pub struct Draft {
     pub subject: String,
     pub body: MessageBody,
     /// Stored, not derived from `body.html`: turning rich off keeps the marks in case it is turned
-    /// back on, which
-    /// "has an HTML part" cannot express (#1271). Decides what leaves: `text/html` plus a
-    /// `text/plain`
-    /// alternative always, or `text/plain` alone, wrapped and flowed.
+    /// back on, which "has an HTML part" cannot express (#1271). Decides what leaves: `text/html`
+    /// plus a `text/plain` alternative always, or `text/plain` alone, wrapped and flowed.
     pub rich: bool,
     /// The Markdown typed in the terminal composer, `None` if another frontend saved last. Kept
-    /// beside `body` so the
-    /// terminal reopens exactly what was typed and the text part is sent `format=fixed` (see
-    /// [`outgoing::build`](crate::outgoing::build)).
+    /// beside `body` so the terminal reopens exactly what was typed and the text part is sent
+    /// `format=fixed` (see [`outgoing::build`](crate::outgoing::build)).
     #[serde(default)]
     pub body_markdown: Option<String>,
     /// Applied to its conversation when sent; a reply starts with its conversation's own.
     #[serde(default)]
     pub labels: Vec<LabelId>,
     /// A `METHOD:REPLY` object as `postio-calendar` writes it, which `outgoing::build` places as
-    /// the
-    /// `text/calendar` alternative. `None` for everything a person writes.
+    /// the `text/calendar` alternative. `None` for everything a person writes.
     #[serde(default)]
     pub calendar_reply: Option<String>,
     /// When set, sending sets a reminder on the conversation, due then; if nobody else has written
-    /// by then it
-    /// returns to the top of the Focus inbox as "No reply since".
+    /// by then it returns to the top of the Focus inbox as "No reply since".
     #[serde(default)]
     pub remind_at: Option<DateTime<Utc>>,
     /// Owned by `MessageId::UNASSIGNED` until the draft becomes a sent message.
     pub attachments: Vec<Attachment>,
     pub state: DraftState,
     /// Reserved by `DraftRepository::queue_send` in the write that enqueues `Operation::Send`, so
-    /// every attempt is
-    /// the same message (ADR 0021). Cleared on return to `Editing`: an edited resend is a different
-    /// message, and a
-    /// receiver deduplicating on `Message-ID` would drop the correction.
+    /// every attempt is the same message (ADR 0021). Cleared on return to `Editing`: an edited
+    /// resend is a different message, and a receiver deduplicating on `Message-ID` would drop the
+    /// correction.
     pub rfc_message_id: Option<RfcMessageId>,
     pub server: ServerIdentifiers,
     pub created_at: DateTime<Utc>,
@@ -178,19 +169,16 @@ impl Draft {
     }
 
     /// A header change only; the body is left alone. Re-running `signature::apply` rewrote prose
-    /// the user had edited,
-    /// since `split` finds the RFC 3676 separator, not intent, so no heuristic avoids destroying
-    /// work.
-    /// The signature is inserted only by `start_as`.
+    /// the user had edited, since `split` finds the RFC 3676 separator, not intent, so no heuristic
+    /// avoids destroying work. The signature is inserted only by `start_as`.
     pub fn use_identity(&mut self, identity: &Identity) {
         self.identity_id = Some(identity.id);
     }
 
     /// For the moment a draft comes into existence, not a later change of mind (`use_identity`):
-    /// nothing is typed yet.
-    /// Replaces rather than appends, so resuming a draft does not stack a second copy. Plain text
-    /// only: an HTML
-    /// signature waits for an HTML composer body (`postio-z3b.3`).
+    /// nothing is typed yet. Replaces rather than appends, so resuming a draft does not stack a
+    /// second copy. Plain text only: an HTML signature waits for an HTML composer body
+    /// (`postio-z3b.3`).
     pub fn start_as(&mut self, identity: &Identity) {
         self.use_identity(identity);
         let signature = identity
@@ -222,8 +210,8 @@ pub enum Closing {
 }
 
 /// Anything the user typed makes the draft worth keeping (`Esc` never silently discards content).
-/// Neither
-/// whitespace nor the composer's own signature counts, or every abandoned composer would persist.
+/// Neither whitespace nor the composer's own signature counts, or every abandoned composer would
+/// persist.
 pub fn closing(draft: &Draft) -> Closing {
     let body = draft.body.text.as_deref().unwrap_or_default();
     let written = crate::signature::split(body).0;
@@ -235,9 +223,8 @@ pub fn closing(draft: &Draft) -> Closing {
 }
 
 /// A reply or forward still exactly as it opened has nothing the person wrote and is dropped. Only
-/// app-built
-/// compositions count: a new message opened with content (a link, an undone send) or a resumed
-/// draft is kept.
+/// app-built compositions count: a new message opened with content (a link, an undone send) or a
+/// resumed draft is kept.
 pub fn closing_since(draft: &Draft, opened: &Draft) -> Closing {
     if closing(draft) == Closing::Drop {
         return Closing::Drop;

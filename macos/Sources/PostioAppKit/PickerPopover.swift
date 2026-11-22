@@ -4,12 +4,10 @@ import PostioKit
 import SwiftUI
 
 /// An `NSPopover` with `.transient` behaviour. The filter (label, move) holds the keyboard from the
-/// start; the
-/// date field (snooze, remind) takes it only when the controller says (Tab), until then
-/// `PickerKeyView` has it
-/// so number keys, Space, Return and Tab resolve as the picker's commands.
-/// A close by the controller is not reported back; any other is the toolkit's, and
-/// `closedByToolkit` is called once.
+/// start; the date field (snooze, remind) takes it only when the controller says (Tab), until then
+/// `PickerKeyView` has it so number keys, Space, Return and Tab resolve as the picker's commands. A
+/// close by the controller is not reported back; any other is the toolkit's, and `closedByToolkit`
+/// is called once.
 @MainActor
 public final class PickerPopover: NSObject, NSPopoverDelegate, NSSearchFieldDelegate {
     private let model: PickerModel

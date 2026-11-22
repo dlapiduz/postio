@@ -1,9 +1,7 @@
 //! Whether a message is who it says it is (#1928). `verdict` trusts only the topmost
-//! `Authentication-Results` whose
-//! authserv-id belongs to the account's provider; none is `Unknown`, which shows nothing.
-//! `impersonation` catches a
-//! display name that is itself an address or another domain. Headers come from the downloaded body,
-//! not the envelope fetch.
+//! `Authentication-Results` whose authserv-id belongs to the account's provider; none is `Unknown`,
+//! which shows nothing. `impersonation` catches a display name that is itself an address or another
+//! domain. Headers come from the downloaded body, not the envelope fetch.
 
 use postio_model::{EmailAddress, Headers};
 

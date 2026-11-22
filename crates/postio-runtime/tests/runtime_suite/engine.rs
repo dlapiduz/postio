@@ -39,8 +39,8 @@ async fn engine_with_backend() -> (
 }
 
 /// `prepare` runs on the mock before `Engine::spawn`: a fault installed after races the
-/// supervisor's first
-/// connection, and a drain with an empty queue then makes no backend call (#330).
+/// supervisor's first connection, and a drain with an empty queue then makes no backend call
+/// (#330).
 async fn engine_with(
     prepare: impl FnOnce(&MockBackend),
 ) -> (
@@ -120,8 +120,7 @@ async fn an_empty_queue_drains_to_nothing() {
 #[tokio::test]
 async fn a_drain_settles_the_rows_it_finds() {
     // Asserts the plumbing: a session opens, the queue is read, no row is left pending. The mock
-    // holds no
-    // matching message, so the row settles as obsolete.
+    // holds no matching message, so the row settles as obsolete.
     let (engine, database, report, _events, _directory) = engine().await;
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox");
 
@@ -532,8 +531,7 @@ async fn replies_arriving_into_a_thread_are_announced_once_for_the_thread() {
 #[tokio::test]
 async fn a_modseq_less_resync_that_finds_new_mail_announces_it() {
     // A server with no MODSEQ re-reads the folder every pass, so its steady-state pass is a full
-    // one and its
-    // deliveries must still announce (#1704); the first pass announces nothing.
+    // one and its deliveries must still announce (#1704); the first pass announces nothing.
     let database = test_support::memory().await;
     let account =
         postio_storage::test_support::account(&database.connect().await.expect("a connection"))
@@ -730,8 +728,7 @@ async fn mail_that_arrives_during_a_long_download_is_still_noticed() {
     assert!(synced > 0);
 
     // A queue long enough to outlast the slice on a slow server. The rows name uids the mock lacks
-    // on
-    // purpose: it charges latency on entry, so each costs a round trip.
+    // on purpose: it charges latency on entry, so each costs a round trip.
     {
         let connection = database.connect().await.expect("a connection");
         let mut message = postio_model::Message::new(account.id, mailbox.id, chrono::Utc::now());
@@ -946,8 +943,7 @@ async fn a_failing_connection_says_which_account_the_error_is_about() {
 #[tokio::test]
 async fn a_refused_password_blocks_and_a_new_one_unblocks() {
     // Only `retry_now` retries a refused password. The fault is persistent and pre-spawn: the
-    // engine's own
-    // calls interleave, and a late fault races the supervisor (#210, #330).
+    // engine's own calls interleave, and a late fault races the supervisor (#210, #330).
     let (engine, _database, _report, events, backend, _directory) =
         engine_with(|backend| backend.fail_all(Fault::AuthFailed)).await;
 
@@ -1052,8 +1048,7 @@ async fn settle(database: &postio_storage::Store, mailbox: postio_model::ids::Ma
 }
 
 /// Retries while the store is locked, since the engine writes during these tests. Takes the
-/// connection by
-/// value because an async closure cannot borrow its argument here.
+/// connection by value because an async closure cannot borrow its argument here.
 async fn with_store<T, F, Fut>(database: &postio_storage::Store, what: &str, work: F) -> T
 where
     F: Fn(postio_storage::Checkout) -> Fut,
@@ -1430,8 +1425,7 @@ async fn a_fresh_account_learns_its_folders_from_the_server() {
 #[tokio::test]
 async fn a_requested_body_does_not_wait_for_the_supervisors_first_tick() {
     // #109: a job queued before the loop's first iteration must not delay the first connection by a
-    // full
-    // `POLL_INTERVAL`; 2 s is generous against ~20-40 ms.
+    // full `POLL_INTERVAL`; 2 s is generous against ~20-40 ms.
     let (engine, database, report, _events, _directory) = engine().await;
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox");
     give_the_inbox_uids(&database, inbox.id).await;
@@ -1485,8 +1479,7 @@ async fn a_requested_body_does_not_wait_for_the_supervisors_first_tick() {
 }
 
 /// The body a person asked for reaches the index too, not only a backfill's (#327): the engine's
-/// half is the
-/// body landing in the indexer's queue; one indexer batch then makes it findable.
+/// half is the body landing in the indexer's queue; one indexer batch then makes it findable.
 #[tokio::test]
 async fn a_body_the_user_asked_for_is_indexed_as_well_as_stored() {
     // The background lane is off, or both lanes chase the same message and `request_body` correctly
@@ -1809,8 +1802,7 @@ async fn mail_arriving_after_startup_is_backfilled_without_being_opened() {
 }
 
 /// The top-up must not get around the policy: with the lane paused it would pull in an archive, and
-/// a message over
-/// `max_body_bytes` must be counted skipped once.
+/// a message over `max_body_bytes` must be counted skipped once.
 ///
 /// POSTIO-MEASUREMENT: it sleeps two seconds for a late re-seed to have its chance, so
 /// it runs on the nightly timer.
@@ -1880,8 +1872,7 @@ async fn the_top_up_does_not_outrank_the_policy_it_runs_under() {
     );
 
     // A delivery makes the test bite: the sync re-runs the top-up and every over-cap row comes back
-    // out of
-    // `needing_backfill`, each to be left alone rather than skipped again.
+    // out of `needing_backfill`, each to be left alone rather than skipped again.
     backend
         .append(
             "INBOX",
@@ -2286,8 +2277,8 @@ where
 #[tokio::test(flavor = "multi_thread")]
 async fn a_queued_action_does_not_wait_out_a_sync_wave() {
     // #944: the backfill loops and idle watcher yield to queued work but the sync wave did not, so
-    // an action taken
-    // mid-wave waited for every folder. Latency makes the wave long enough to see into.
+    // an action taken mid-wave waited for every folder. Latency makes the wave long enough to see
+    // into.
     let database = test_support::memory().await;
     let report = seed_small(&database, 11).await;
     let directory = tempfile::tempdir().expect("a blob directory");
@@ -2360,8 +2351,8 @@ async fn an_idle_engine_does_not_poll_the_queue() {
         return;
     }
     // The engine once polled the store every 500 ms and its channel every 50 ms on an idle app; a
-    // person's action and a
-    // job now wake it. No background body lane: a backfill is something to do.
+    // person's action and a job now wake it. No background body lane: a backfill is something to
+    // do.
     let (engine, database, report, _events, _backend, _directory) = engine_with_backfill(
         |_| {},
         postio_sync::BackfillPolicy {

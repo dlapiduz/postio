@@ -36,13 +36,11 @@
 #
 #
 # Frame pointers, not DWARF, measured: the burn lands in `sha512_block_data_order_avx2` (OpenSSL
-# assembly with no frame pointer), which neither
-# unwinder gets out of, so the profile is flat either way, and frame pointers give ~125x the samples
-# per MB (7,000 in 0.9 MB vs 248 in 4.2 MB).
-# Naming the query wants SQLite's trace hook (`postio_storage::test_support::counting`), not a third
-# unwinder. ptrace samplers (`eu-stack`, `gdb`)
-# stop the target at a syscall boundary and reported it parked in `epoll_wait` while it burned a
-# core.
+# assembly with no frame pointer), which neither unwinder gets out of, so the profile is flat either
+# way, and frame pointers give ~125x the samples per MB (7,000 in 0.9 MB vs 248 in 4.2 MB). Naming
+# the query wants SQLite's trace hook (`postio_storage::test_support::counting`), not a third
+# unwinder. ptrace samplers (`eu-stack`, `gdb`) stop the target at a syscall boundary and reported
+# it parked in `epoll_wait` while it burned a core.
 #
 # Usage:
 #   scripts/profile-burst.sh [--out DIR] [--threshold PERCENT] [--seconds N]

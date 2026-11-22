@@ -1,6 +1,5 @@
 //! The Contacts view's widgets: strip, "Worth a look" line, list beside the card, and footer. It
-//! draws what the controller
-//! says and reports each click as the input a key would have been.
+//! draws what the controller says and reports each click as the input a key would have been.
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};

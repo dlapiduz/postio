@@ -47,8 +47,7 @@ fn folder(path: &str, attributes: &[&str], messages: u32) -> MockMailbox {
 }
 
 /// File-backed, not `test_support::memory()`: in-memory SQLite uses shared-cache locking, which
-/// blocks a writer
-/// behind a reader and serialises the lanes on the engine's one thread (#79).
+/// blocks a writer behind a reader and serialises the lanes on the engine's one thread (#79).
 async fn engine_over(backend: Arc<MockBackend>) -> (TempStore, Engine, BlobDir) {
     engine_over_with(backend, Default::default()).await
 }
@@ -265,9 +264,8 @@ async fn the_inbox_finishes_while_a_large_archive_is_still_going() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_job_is_served_without_waiting_out_the_wave_it_arrived_during() {
     // A wave is background work and the user's request must not queue behind it (#122). Causal:
-    // archive fetches must still be served
-    // after the answer, which fails if the wave ran to completion first. The archive's pass is
-    // parked inside its second header fetch.
+    // archive fetches must still be served after the answer, which fails if the wave ran to
+    // completion first. The archive's pass is parked inside its second header fetch.
     let backend = Arc::new(
         MockBackend::builder()
             .mailbox(folder("INBOX", &[], 10))
@@ -317,8 +315,7 @@ async fn a_job_is_served_without_waiting_out_the_wave_it_arrived_during() {
 #[tokio::test(flavor = "multi_thread")]
 async fn inbox_bodies_start_before_the_archive_s_headers_finish() {
     // #631: INBOX's bodies must not wait for the archive's headers. The archive's pass is parked
-    // inside its
-    // second header fetch so its headers cannot finish first.
+    // inside its second header fetch so its headers cannot finish first.
     let backend = Arc::new(
         MockBackend::builder()
             .mailbox(folder("INBOX", &[], 10))
@@ -394,9 +391,8 @@ async fn inbox_bodies_keep_arriving_while_the_archive_s_headers_run() {
 #[tokio::test(flavor = "multi_thread")]
 async fn new_inbox_mail_is_synced_while_the_archive_s_headers_run() {
     // Nothing looked for new mail while a wave ran, because `keep_watch` sits below the wave loop.
-    // Causal: the
-    // archive's fetch count when the message lands must be below its final count; its pass is
-    // parked until then (#2166).
+    // Causal: the archive's fetch count when the message lands must be below its final count; its
+    // pass is parked until then (#2166).
     let backend = Arc::new(
         MockBackend::builder()
             .mailbox(folder("INBOX", &[], 10))
@@ -594,11 +590,9 @@ async fn new_mail_and_its_attachments_come_down_ahead_of_the_backlog() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_slow_pass_does_not_hold_the_folders_queued_behind_the_wave() {
     // A slow high-priority folder shares the first wave and regular folders queue behind it; a wave
-    // that returned only when every
-    // pass finished left a lane free all that time. Creates are refused so reserved-role folders do
-    // not outrank the regular ones.
-    // Causal: when the last regular folder finishes its first sync the slow pass must still be
-    // running.
+    // that returned only when every pass finished left a lane free all that time. Creates are
+    // refused so reserved-role folders do not outrank the regular ones. Causal: when the last
+    // regular folder finishes its first sync the slow pass must still be running.
     let backend = Arc::new(
         MockBackend::builder()
             .mailbox(folder("INBOX", &[], 10))
@@ -723,9 +717,8 @@ async fn body_is_local(database: &Store, message: MessageId) -> bool {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_body_requested_during_the_wave_does_not_restart_its_lanes() {
     // #1593: a body request cancelled every lane and restarted first-sync passes once per message
-    // opened. Causal on the
-    // mock's call log: a pass lists its UIDs once at start, so a second listing is the restart; the
-    // body must land while the archive is still fetching (#944).
+    // opened. Causal on the mock's call log: a pass lists its UIDs once at start, so a second
+    // listing is the restart; the body must land while the archive is still fetching (#944).
     let backend = Arc::new(
         MockBackend::builder()
             .mailbox(folder("INBOX", &[], 10))
@@ -878,8 +871,8 @@ async fn a_queued_write_during_the_wave_is_drained_without_restarting_its_lanes(
 #[tokio::test(flavor = "multi_thread")]
 async fn the_inbox_syncs_its_headers_and_newest_bodies_before_any_other_mailbox() {
     // #1709: Focus's whole screen is the inbox. As an order on the server's call log: every INBOX
-    // header fetch precedes every other
-    // fetch, and INBOX's seed-batch bodies precede every other mailbox's header and body fetch.
+    // header fetch precedes every other fetch, and INBOX's seed-batch bodies precede every other
+    // mailbox's header and body fetch.
     const INBOX: u32 = 300;
     const OTHERS: [(&str, &[&str], u32); 5] = [
         ("Archive", &["\\Archive"], 1_500),

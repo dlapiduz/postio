@@ -272,8 +272,8 @@ fn push(
 }
 
 /// `[accounts.<id>]` parses and is read by nothing (#470): a schema that round-trips and does
-/// nothing
-/// looks editable. `Semantic`, so the file still loads, and the section is preserved on round-trip.
+/// nothing looks editable. `Semantic`, so the file still loads, and the section is preserved on
+/// round-trip.
 fn check_retired_accounts(map: &SourceMap, errors: &mut Vec<ValidationError>) {
     let mut seen: Vec<&str> = Vec::new();
     for path in map.paths() {
@@ -331,10 +331,8 @@ fn check_keys(config: &Config, map: &SourceMap, errors: &mut Vec<ValidationError
     }
 
     // Two `[keys]` entries on one key: no principled winner. An override landing on a registry
-    // default
-    // is not an error here: `Keymap::resolve_on` gives the key to the override and reports the
-    // loser;
-    // an error here would reject the whole file.
+    // default is not an error here: `Keymap::resolve_on` gives the key to the override and reports
+    // the loser; an error here would reject the whole file.
     let overrides = config.keys.overrides();
     let mut by_binding: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     for (command, binding) in overrides {
@@ -495,8 +493,7 @@ fn check_stop_markers(config: &Config, map: &SourceMap, errors: &mut Vec<Validat
 }
 
 /// Semantic: a rule that fails is not applied, and the others still are (ADR 0008 Q6). Whether a
-/// query
-/// reads in full is `postio_ui::digest`'s, since this crate keeps queries as text.
+/// query reads in full is `postio_ui::digest`'s, since this crate keeps queries as text.
 fn check_digests(config: &Config, map: &SourceMap, errors: &mut Vec<ValidationError>) {
     let mut named: Vec<&str> = Vec::new();
     for (index, rule) in config.focus.digests.iter().enumerate() {

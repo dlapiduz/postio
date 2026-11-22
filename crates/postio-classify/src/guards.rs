@@ -192,8 +192,7 @@ mod tests {
     #[test]
     fn the_conversation_is_the_one_filing_says_it_joined() {
         // Sync threads an arrival after it is stored, so the row has no `thread_id`; a guard that
-        // read
-        // the row would guard every arrival and nothing would be filtered.
+        // read the row would guard every arrival and nothing would be filtered.
         let mut arrival = from(&["deals@shop.example"]);
         arrival.thread_id = None;
 

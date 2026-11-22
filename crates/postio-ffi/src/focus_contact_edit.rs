@@ -1,6 +1,5 @@
 //! The Edit and New contact form: its content, rules and Esc ladder are Rust's. The frontend draws
-//! `ContactEditViewFfi`,
-//! reports each `EditChangeFfi`, and presses Cmd-S and Escape as commands.
+//! `ContactEditViewFfi`, reports each `EditChangeFfi`, and presses Cmd-S and Escape as commands.
 
 use postio_focus::EditChange;
 use postio_model::{AddressLabel, ShowAs};

@@ -1,7 +1,6 @@
 //! The thread menu and the outline: the two popovers hung from the message window's Thread button.
-//! The controller composes both
-//! (`postio_ui::thread_outline`) and says when to draw them; these draw what they are given and
-//! hand back what was pressed.
+//! The controller composes both (`postio_ui::thread_outline`) and says when to draw them; these
+//! draw what they are given and hand back what was pressed.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;

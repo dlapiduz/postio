@@ -281,8 +281,7 @@ mod tests {
     #[test]
     fn most_of_the_registry_reaches_a_menu() {
         // Guards a table that fell out of date and answers `None` broadly. Contacts' own commands
-        // are
-        // excluded: they act on a focused row, which a global menu cannot name.
+        // are excluded: they act on a focused row, which a global menu cannot name.
         let counted = || {
             crate::registry::all().filter(|spec| spec.contexts != crate::Context::Contacts.as_set())
         };

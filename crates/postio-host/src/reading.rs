@@ -9,8 +9,8 @@ use postio_storage::repository::{MessageRepository, ThreadRepository};
 use postio_ui::reader::document::Absent;
 
 /// A frontend cannot say whether a request can run, so the host keeps the last link word per
-/// account; when an account
-/// comes back it tells the panes that showed the offline plate to read again (#1986).
+/// account; when an account comes back it tells the panes that showed the offline plate to read
+/// again (#1986).
 #[derive(Default)]
 pub(crate) struct Links {
     state: std::sync::Mutex<LinkState>,
@@ -166,19 +166,16 @@ pub(crate) async fn thread_readings(
 const ASKED_PATIENCE: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// Short, because the person opening it again is the retry; not nothing, because the failure itself
-/// makes a pane
-/// read again and a link that fails at once would loop (#1985).
+/// makes a pane read again and a link that fails at once would loop (#1985).
 #[cfg(not(test))]
 const ASKED_RETRY: std::time::Duration = std::time::Duration::from_secs(5);
 #[cfg(test)]
 const ASKED_RETRY: std::time::Duration = std::time::Duration::from_millis(200);
 
 /// A pane drawn as "Downloading this message" is a promise: reading it is the person opening it,
-/// the one thing allowed to reach
-/// for its words ahead of the backfill (`ARCHITECTURE.md` §11). A pane reads again on every repaint
-/// and a second ask while the
-/// first is on the wire is a second fetch, so each message is asked for once until its body lands
-/// (#1788).
+/// the one thing allowed to reach for its words ahead of the backfill (`ARCHITECTURE.md` §11). A
+/// pane reads again on every repaint and a second ask while the first is on the wire is a second
+/// fetch, so each message is asked for once until its body lands (#1788).
 #[derive(Default)]
 pub(crate) struct AskedBodies {
     asked: std::sync::Mutex<std::collections::HashMap<MessageId, Asked>>,

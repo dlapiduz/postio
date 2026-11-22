@@ -1,6 +1,6 @@
 //! Materialising mail as `.eml` files for a drag out. An export is a copy of the stored raw source,
-//! not a serialisation; the
-//! laziness is upstream in [`crate::drag_out`], which calls here only when a drop asks.
+//! not a serialisation; the laziness is upstream in [`crate::drag_out`], which calls here only when
+//! a drop asks.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -13,8 +13,7 @@ use postio_model::listing::MailStore;
 const MAX_STEM: usize = 96;
 
 /// Anything that could steer where the file lands is removed rather than escaped: a subject of
-/// `../../.bashrc` must stay
-/// inside its directory.
+/// `../../.bashrc` must stay inside its directory.
 pub fn eml_name(subject: Option<&str>) -> String {
     let stem = subject.map(sanitize).filter(|stem| !stem.is_empty());
     match stem {
@@ -54,8 +53,7 @@ fn truncate_chars(text: &str, limit: usize) -> String {
 }
 
 /// Twelve messages in one thread share a subject, so unsuffixed names would write one file twelve
-/// times. The suffix counts
-/// within this export only.
+/// times. The suffix counts within this export only.
 pub fn unique_names<'a>(subjects: impl IntoIterator<Item = Option<&'a str>>) -> Vec<String> {
     let mut seen: HashMap<String, usize> = HashMap::new();
     let mut names = Vec::new();
@@ -88,10 +86,8 @@ pub fn message_targets(
 }
 
 /// Returns the files in the order asked for, so the receiver's `text/uri-list` follows the
-/// selection order. A message whose
-/// raw source is not backfilled is fetched by the host and waited on: the user dragged it by name.
-/// With no engine that
-/// message is an error, not an empty file.
+/// selection order. A message whose raw source is not backfilled is fetched by the host and waited
+/// on: the user dragged it by name. With no engine that message is an error, not an empty file.
 pub async fn export_messages(
     client: &Client,
     into: &Path,
@@ -119,11 +115,9 @@ pub async fn export_messages(
 }
 
 /// Registered once when the window is fed; a build that skips it drags inside Postio and offers
-/// nothing to the desktop.
-/// A receiver reads the path after the drop, so the files go in the cache directory (`export_dir`),
-/// where the system may
-/// reclaim them. `runtime` awaits the writes off the main loop: the host may be another process and
-/// may wait on a backfill.
+/// nothing to the desktop. A receiver reads the path after the drop, so the files go in the cache
+/// directory (`export_dir`), where the system may reclaim them. `runtime` awaits the writes off the
+/// main loop: the host may be another process and may wait on a backfill.
 pub fn materialiser(
     runtime: tokio::runtime::Handle,
     client: Client,

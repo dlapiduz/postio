@@ -165,8 +165,7 @@ fn parses_the_sync_section() {
 #[test]
 fn attachments_are_fetched_on_open_unless_the_file_says_otherwise() {
     // ADR 0017: ~90% of a mailbox by weight is attachment bytes nothing can index, so the default
-    // leaves
-    // them where they are, for a file that never mentions `[sync]`.
+    // leaves them where they are, for a file that never mentions `[sync]`.
     let cfg = Config::from_toml_str("").unwrap();
     assert_eq!(
         cfg.sync.attachment_fetch,

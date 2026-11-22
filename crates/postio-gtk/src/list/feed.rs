@@ -1,8 +1,7 @@
 //! The GTK driver for the controller (`postio_focus`, ADR 0045): hands it what happened, runs each
-//! request through `postio_focus::perform`
-//! on GTK's loop (the client's in-process transport answers through a oneshot, so the loop is never
-//! inside a query), and applies the result to the list model.
-//! Staleness is the model's: a page is asked for under its generation.
+//! request through `postio_focus::perform` on GTK's loop (the client's in-process transport answers
+//! through a oneshot, so the loop is never inside a query), and applies the result to the list
+//! model. Staleness is the model's: a page is asked for under its generation.
 
 use std::cell::RefCell;
 use std::rc::Rc;

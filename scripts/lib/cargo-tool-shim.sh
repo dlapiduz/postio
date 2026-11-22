@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # The `cargo-nextest` / `cargo-hakari` / `cargo-machete` / `cargo-deny` in ~/.cargo/bin: a resolver,
-# copied there by `scripts/lib/pinned-tool.sh`,
-# that picks its job from `basename "$0"`. It runs the version pinned by the
-# `scripts/install-<tool>.sh` of the checkout the caller is in
-# (installing it first if missing), or the newest installed outside one.
+# copied there by `scripts/lib/pinned-tool.sh`, that picks its job from `basename "$0"`. It runs the
+# version pinned by the `scripts/install-<tool>.sh` of the checkout the caller is in (installing it
+# first if missing), or the newest installed outside one.
 set -euo pipefail
 
 name=$(basename "$0")

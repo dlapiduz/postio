@@ -1,17 +1,14 @@
 #!/usr/bin/env bash
 # Make a .app bundle carry every non-system library it loads, and refuse one that still reaches
-# outside itself (#1714, #1723).
-# `postio-ffi` builds a cdylib and a staticlib, ld64 prefers the `.dylib`, and cargo gives it its
-# absolute build path as install name,
-# so the bundle would launch only on the machine that built it. Copying the linked library beats
-# reproducing every native dependency by hand.
-# Each load command in a Mach-O under Contents/MacOS and Contents/Frameworks that is neither a
-# system path nor bundle-relative must name an
-# existing file; it is copied into Contents/Frameworks with an @rpath install name, the reference
-# rewritten, and brought-in libraries walked in turn.
-# Then everything is checked again; anything still outside is a failure.
-# It does not sign: rewriting a load command invalidates the signature, so the caller
-# (`macos-bundle.sh`) signs afterwards.
+# outside itself (#1714, #1723). `postio-ffi` builds a cdylib and a staticlib, ld64 prefers the
+# `.dylib`, and cargo gives it its absolute build path as install name, so the bundle would launch
+# only on the machine that built it. Copying the linked library beats reproducing every native
+# dependency by hand. Each load command in a Mach-O under Contents/MacOS and Contents/Frameworks
+# that is neither a system path nor bundle-relative must name an existing file; it is copied into
+# Contents/Frameworks with an @rpath install name, the reference rewritten, and brought-in libraries
+# walked in turn. Then everything is checked again; anything still outside is a failure. It does not
+# sign: rewriting a load command invalidates the signature, so the caller (`macos-bundle.sh`) signs
+# afterwards.
 #
 # Usage: scripts/macos-self-contained.sh <path/to/App.app>
 # Exit status: 0 self-contained, 1 something outside the bundle could not be

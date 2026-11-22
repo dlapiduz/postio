@@ -155,8 +155,7 @@ impl Session {
     }
 
     /// The message window opened from a search has no more find matches in this direction: the
-    /// controller goes
-    /// on to the next matched message, or says it is the last.
+    /// controller goes on to the next matched message, or says it is the last.
     pub fn focus_match_edge(&self, forward: bool) {
         self.focus_driver()
             .input(postio_focus::Input::MatchEdge { forward });

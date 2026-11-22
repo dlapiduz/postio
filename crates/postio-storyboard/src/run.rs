@@ -104,11 +104,9 @@ pub struct Run {
 }
 
 /// A run fails when any check failed, any step was unbound, dropped or had nowhere to type, or any
-/// frame went blank.
-/// Jumps and unsettled steps are reported but do not fail it, because a late load can be
-/// legitimate. A step not covered
-/// by its delivery mode makes the run not covered, never passed, unless something already failed
-/// it.
+/// frame went blank. Jumps and unsettled steps are reported but do not fail it, because a late load
+/// can be legitimate. A step not covered by its delivery mode makes the run not covered, never
+/// passed, unless something already failed it.
 pub fn status(steps: &[StepRun]) -> Status {
     let failed = steps.iter().any(|step| {
         matches!(

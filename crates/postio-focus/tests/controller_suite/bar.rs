@@ -937,8 +937,7 @@ fn back_closes_the_bar() {
     let _ = bar_open(&mut focus, CommandId::Search, &rows);
     assert!(focus.answers(CommandId::Back));
     // Off the stack here, as a line run takes it off: an echoed `SurfaceClosed(Bar)` could land
-    // after
-    // the bar was reopened.
+    // after the bar was reopened.
     assert_eq!(
         shown(&run(&mut focus, CommandId::Back, &rows)),
         vec![Intent::CloseSurface(SurfaceKind::Bar), Intent::KeyboardHome]

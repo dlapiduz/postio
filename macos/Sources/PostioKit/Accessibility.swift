@@ -1,10 +1,8 @@
 import PostioFFI
 
 /// Commands this frontend presents a surface for rather than sending to `invoke`. Named, not
-/// literals at the `switch`: a
-/// literal that no longer matches the registry is a key that silently does nothing
-/// (`everyInterceptedCommandIsInTheRegistry`
-/// catches it). Keep the list short (#657).
+/// literals at the `switch`: a literal that no longer matches the registry is a key that silently
+/// does nothing (`everyInterceptedCommandIsInTheRegistry` catches it). Keep the list short (#657).
 public enum Intercepted {
     public static let back = "back"
     public static let settings = "settings"

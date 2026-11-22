@@ -44,9 +44,8 @@ public struct MailNotification: Equatable, Sendable {
 /// Delivery is `MailNotifications`, because `UNUserNotificationCenter` needs an authorised bundle.
 public enum MailNotifier {
     /// Both `showing` and `isActive` are required to suppress: a folder left open behind another
-    /// application is not one the user is
-    /// watching, and treating the open mailbox as sufficient swallows a notification somebody
-    /// needed.
+    /// application is not one the user is watching, and treating the open mailbox as sufficient
+    /// swallows a notification somebody needed.
     public static func decide(
         _ arrival: MailArrival,
         showing: Int64?,

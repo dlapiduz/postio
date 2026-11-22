@@ -1,7 +1,6 @@
 //! One type for what filing knows, shared by `postio-sync` and `postio-classify`: separate copies
-//! lost the
-//! conversation field, and a message with no conversation is never filtered. Only what is known at
-//! filing; no body.
+//! lost the conversation field, and a message with no conversation is never filtered. Only what is
+//! known at filing; no body.
 
 use crate::promoted::PromotedHeaders;
 use crate::{MailboxRole, Message, ThreadId};

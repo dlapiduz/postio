@@ -1,7 +1,6 @@
 //! `[compose]`: where a signature goes, and which editor a draft hands off to. Top- and
-//! bottom-posting
-//! are both in wide use, so placement is the user's. New mail has no quote, so there is no
-//! `signature_on_new`: a key that can never change the output only invites a bug report.
+//! bottom-posting are both in wide use, so placement is the user's. New mail has no quote, so there
+//! is no `signature_on_new`: a key that can never change the output only invites a bug report.
 
 use serde::{Deserialize, Serialize};
 
@@ -35,8 +34,7 @@ pub struct ComposeConfig {
     #[serde(default)]
     pub signature_on_reply: SignaturePlacement,
     /// Separate because a reply answers a fragment and a forward hands the whole message on; people
-    /// who
-    /// bottom-post replies often still top-post forwards.
+    /// who bottom-post replies often still top-post forwards.
     #[serde(default)]
     pub signature_on_forward: SignaturePlacement,
     /// Empty means the platform's own idea of what opens a text file. Not `$EDITOR`: an application
@@ -48,8 +46,7 @@ pub struct ComposeConfig {
 }
 
 /// The Composing pane's write path (#1179). `[compose]` is regenerated whole, so a comment on its
-/// own
-/// header does not survive; every other section and comment is untouched.
+/// own header does not survive; every other section and comment is untouched.
 pub fn patch_compose(text: &str, compose: &ComposeConfig) -> crate::Result<String> {
     crate::splice::replace_section(text, "compose", &ComposeOnly { compose })
 }

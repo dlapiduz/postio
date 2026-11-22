@@ -139,8 +139,7 @@ pub enum Event {
         total: u32,
     },
     /// Per mailbox, since other folders keep syncing and `ConnectionState` stays `Online`. Sent
-    /// only
-    /// on a change; a cancelled pass sends nothing (#1731).
+    /// only on a change; a cancelled pass sends nothing (#1731).
     MailboxSyncChanged {
         account: AccountId,
         mailbox: MailboxId,
@@ -149,8 +148,7 @@ pub enum Event {
         failure: Option<String>,
     },
     /// Distinct from `SyncProgress` (the list): a mailbox with an incomplete list cannot be read,
-    /// one
-    /// with bodies arriving is usable. Pushed because pulling was the only way (#74).
+    /// one with bodies arriving is usable. Pushed because pulling was the only way (#74).
     BackfillProgress {
         account: AccountId,
         done: u32,

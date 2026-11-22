@@ -1,6 +1,5 @@
 //! Dragging messages out of Focus's list as `.eml` files. Nothing is written until a drop somewhere
-//! asks,
-//! so picking mail up and putting it back writes nothing.
+//! asks, so picking mail up and putting it back writes nothing.
 
 use adw::subclass::prelude::ObjectSubclassIsExt;
 use gtk::gdk;
@@ -12,10 +11,9 @@ use crate::window::FocusWindow;
 
 impl FocusWindow {
     /// `None` where there is nothing to offer. Only a selection that can be named is offered:
-    /// select-all is a predicate over the
-    /// whole mailbox, and resolving it would write an `.eml` for every message in the folder, so a
-    /// select-all drag offers nothing.
-    /// A conversation's row stands for the message it shows.
+    /// select-all is a predicate over the whole mailbox, and resolving it would write an `.eml` for
+    /// every message in the folder, so a select-all drag offers nothing. A conversation's row
+    /// stands for the message it shows.
     pub fn drag_offer(&self, position: u32) -> Option<gdk::ContentProvider> {
         let imp = self.imp();
         let pane = self.pane()?;

@@ -13,9 +13,8 @@ public final class AccountActions {
     public private(set) var failed = false
     public private(set) var confirmingRemoval: AccountFfi?
     /// Keyed by account because one model serves every row: a finding that followed the selection
-    /// would tell the next
-    /// account it has no password. Kept across other actions because it stays true until a repair
-    /// says otherwise.
+    /// would tell the next account it has no password. Kept across other actions because it stays
+    /// true until a repair says otherwise.
     private var finding: (account: Int64, trouble: CredentialTrouble)?
 
     public func trouble(for account: Int64) -> CredentialTrouble? {

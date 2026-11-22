@@ -72,8 +72,8 @@ pub struct RowFfi {
     pub flagged: bool,
     pub answered: bool,
     /// The draft's send state as the stored spelling (`"editing"`, `"queued"`, `"sending"`,
-    /// `"failed"`, `"unconfirmed"`),
-    /// or `None` for ordinary mail. A string, not a mirrored enum: the frontend only renders it.
+    /// `"failed"`, `"unconfirmed"`), or `None` for ordinary mail. A string, not a mirrored enum:
+    /// the frontend only renders it.
     pub send_state: Option<String>,
     pub has_attachments: bool,
     /// How many messages the conversation holds; the badge appears above one.
@@ -90,8 +90,7 @@ impl ListRow for RowFfi {
 
     fn thread(&self) -> Option<ThreadId> {
         // Both conditions, as the GTK row applies them: a conversation row with no thread id is not
-        // one verbs can name,
-        // and a message row in a thread is not standing for it.
+        // one verbs can name, and a message row in a thread is not standing for it.
         self.is_thread
             .then(|| self.thread.map(Into::into))
             .flatten()

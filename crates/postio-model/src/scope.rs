@@ -1,6 +1,5 @@
 //! One type for every reader of the message list (#670). `AccountScope` answers a different
-//! question (which accounts),
-//! and `postio_core::state::ViewScope` is deliberately not this type.
+//! question (which accounts), and `postio_core::state::ViewScope` is deliberately not this type.
 
 use crate::ids::{AccountId, MailboxId, ThreadId};
 
@@ -9,9 +8,8 @@ pub enum ListScope {
     Mailbox(MailboxId),
     Account(AccountId),
     /// The inboxes, not all mail: a message archived, moved, snoozed or deleted leaves the view as
-    /// it leaves a folder, so triage can walk
-    /// down it (ADR 0005 Q4, #1692). A view, never a destination. One row can stand for two threads
-    /// received at two addresses.
+    /// it leaves a folder, so triage can walk down it (ADR 0005 Q4, #1692). A view, never a
+    /// destination. One row can stand for two threads received at two addresses.
     Unified,
     Flagged(AccountId),
     Snoozed(AccountId),
@@ -30,9 +28,8 @@ pub enum ListScope {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum FocusScope {
     /// Its membership is the unified inbox's, but it is its own scope because it will not stay
-    /// that: mail held for a digest and
-    /// conversations whose reminder has surfaced leave it. Every read asks the store's one Focus
-    /// membership test so rows, count and seek marks agree.
+    /// that: mail held for a digest and conversations whose reminder has surfaced leave it. Every
+    /// read asks the store's one Focus membership test so rows, count and seek marks agree.
     Inbox,
     /// Rows that draw a marker, which `!` narrows to; read from the markers, which are few, rather
     /// than by walking the inbox.
@@ -59,13 +56,11 @@ impl ListScope {
     }
 
     /// A list reacts only when the event can change its own membership or order, and inserts at the
-    /// top only when its own order guarantees the
-    /// new rows belong there; everything else reloads. `Flagged`, `Snoozed` and `Outbox` span every
-    /// folder, so they never insert, and
+    /// top only when its own order guarantees the new rows belong there; everything else reloads.
+    /// `Flagged`, `Snoozed` and `Outbox` span every folder, so they never insert, and
     /// `MessagesChanged` is `Reload` since a refetch cannot express a row leaving. `Thread` never
-    /// reaches a feed. `inbox` is whether
-    /// `mailbox` is an inbox, `None` when the caller cannot place it, which is always safe; only
-    /// `Unified` asks (#1692).
+    /// reaches a feed. `inbox` is whether `mailbox` is an inbox, `None` when the caller cannot
+    /// place it, which is always safe; only `Unified` asks (#1692).
     pub fn reaction(
         self,
         arrival: Arrival,
@@ -90,9 +85,8 @@ impl ListScope {
                 _ => Ignore,
             },
             // Every account's inbox (#1692). A delivery never inserts: a unified row is a
-            // conversation grouped across accounts, so mail
-            // at a second address folds into a row on screen and an insert would draw it twice; a
-            // reload re-runs the walk. Focus's inbox
+            // conversation grouped across accounts, so mail at a second address folds into a row on
+            // screen and an insert would draw it twice; a reload re-runs the walk. Focus's inbox
             // never inserts either: Focus may hold an arrival for a digest or file it away before
             // it is a row.
             ListScope::Focus(FocusScope::Snoozed | FocusScope::Flagged) => match arrival {

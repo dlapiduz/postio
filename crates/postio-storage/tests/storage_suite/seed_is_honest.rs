@@ -1,8 +1,7 @@
 //! A fixture must not supply what the application produces: `seed` once called `recount_account`,
-//! so
-//! seeded stores listed while a real account's counts were never maintained (`postio-bl2`). Counts
-//! now
-//! come from migration 0003's triggers, so a seeded store lists only if the production path works.
+//! so seeded stores listed while a real account's counts were never maintained (`postio-bl2`).
+//! Counts now come from migration 0003's triggers, so a seeded store lists only if the production
+//! path works.
 
 use postio_model::MailboxRole;
 use postio_storage::seed::{seed_large, seed_small};
@@ -87,10 +86,8 @@ async fn a_seeded_inbox_is_not_empty() {
 #[tokio::test]
 async fn the_seed_is_the_corpus_the_storyboards_were_pinned_on() {
     // The storyboards count rows and name message ids on this seed, a stream of random draws over
-    // the
-    // corpus in file order: one more fixture re-deals every mailbox after it (#1869).
-    // Hostile-header
-    // fixtures go in `UNSEEDED` in `seed.rs`.
+    // the corpus in file order: one more fixture re-deals every mailbox after it (#1869).
+    // Hostile-header fixtures go in `UNSEEDED` in `seed.rs`.
     let database = test_support::memory().await;
     let report = seed_small(&database, 1).await;
 

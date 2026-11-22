@@ -52,8 +52,8 @@ impl Accounts {
     ) -> Accounts {
         let accounts = Accounts::over(panel, client, outside, reindexing);
         // Not on the startup path: `refresh` reads every account's `footprint` (a count and sum
-        // over every message), 1.48s on a
-        // real store, for a panel that may never open. Read fresh on every open instead (#871).
+        // over every message), 1.48s on a real store, for a panel that may never open. Read fresh
+        // on every open instead (#871).
         accounts.refresh().await;
         panel.connect_visible_notify({
             let accounts = accounts.clone();
@@ -107,8 +107,7 @@ impl Accounts {
                 postio_core::blocking::now(async move {
                     match edit {
                         // A role mapping re-roles the account's folders, is undoable, and announces
-                        // itself so folder lists
-                        // relabel: the command owns all of that (ADR 0035).
+                        // itself so folder lists relabel: the command owns all of that (ADR 0035).
                         AccountEdit::MailboxRole(role, path) => {
                             accounts.outside.run(postio_core::Command::MapMailboxRole {
                                 account: Some(id),
@@ -159,8 +158,7 @@ impl Accounts {
     }
 
     /// A rebuild's progress arrives as `BackfillProgress` on the account's own id and is drawn only
-    /// while a rebuild of that
-    /// account is outstanding (#981).
+    /// while a rebuild of that account is outstanding (#981).
     pub fn hear(&self, event: &postio_core::Event) {
         match event {
             postio_core::Event::MailboxesChanged { .. } => {
@@ -186,13 +184,12 @@ impl Accounts {
             return;
         };
         // Weights are read only when the panel is on screen: `footprint` is `count(*)` and
-        // `sum(size)` over every message, 1.48s
-        // on a real store; `install` refreshes again when it is shown. `Event::BackfillProgress`
-        // carries the figure only during a backfill (#411).
+        // `sum(size)` over every message, 1.48s on a real store; `install` refreshes again when it
+        // is shown. `Event::BackfillProgress` carries the figure only during a backfill (#411).
         let showing = panel.is_visible();
         // One call for the whole panel: every account shown (a disabled one included, one pending
-        // removal left out), with its
-        // folders and role map (ADR 0035), and its weight when `showing`.
+        // removal left out), with its folders and role map (ADR 0035), and its weight when
+        // `showing`.
         // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
         // answers on its own runtime.
         let shown = match self.client.account_settings(showing).await {
@@ -247,8 +244,7 @@ impl Accounts {
     }
 
     /// A refused write goes back to the editor in the store's words: `idx_signatures_name` is
-    /// unique on `(account_id, name)`,
-    /// whose own words are no answer anybody can act on.
+    /// unique on `(account_id, name)`, whose own words are no answer anybody can act on.
     async fn save_signature(&self, id: AccountId, draft: &SignatureDraft) {
         // One call: the host keeps the rich variant this text-only editor does not show (#1086).
         // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
@@ -390,8 +386,7 @@ impl Accounts {
 }
 
 /// An account is database state, not `config.toml` preference (ADR 0005 Q6b), so the store's owner
-/// reads the row, changes
-/// the one field and writes the whole thing back.
+/// reads the row, changes the one field and writes the whole thing back.
 async fn edit_account(client: &Client, id: AccountId, edit: AccountEdit) {
     let field = match edit {
         AccountEdit::DisplayName(value) => AccountField::DisplayName(value),

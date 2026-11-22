@@ -1,7 +1,7 @@
 //! What the list view draws: the paged rows with an expanded thread's children spliced in under
-//! their row. The paged model never
-//! holds a child, since putting a thread's messages into the paged query would shift every page's
-//! offsets. Children appear and go in one change, with no transition.
+//! their row. The paged model never holds a child, since putting a thread's messages into the paged
+//! query would shift every page's offsets. Children appear and go in one change, with no
+//! transition.
 
 use std::cell::{Cell, RefCell};
 
@@ -188,8 +188,8 @@ impl SplicedList {
         } else {
             if position + removed <= splice.anchor {
                 // Rows above the thread's (new mail at the top): its row moves, and its children go
-                // with it. Left where it was, the anchor
-                // would hang them from another row and the view would keep the old ones too.
+                // with it. Left where it was, the anchor would hang them from another row and the
+                // view would keep the old ones too.
                 let anchor = splice.anchor - removed + added;
                 self.imp().splice.set(Some(Splice { anchor, ..splice }));
                 if is && let Some(row) = self.rows().item(anchor).and_downcast::<RowObject>() {

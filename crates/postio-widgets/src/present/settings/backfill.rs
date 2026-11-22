@@ -1,6 +1,6 @@
 //! Skipping or resuming a folder's backfill (ADR 0016). Nothing emits `Event::MailboxesChanged`
-//! here (no sync pass), so
-//! the write's answer is the account's folders, handed to whatever drew them at once.
+//! here (no sync pass), so the write's answer is the account's folders, handed to whatever drew
+//! them at once.
 
 use gtk::glib;
 use gtk::prelude::*;

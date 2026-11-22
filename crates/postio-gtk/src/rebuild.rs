@@ -1,7 +1,6 @@
 //! Redrawing a list without losing the keyboard: a list that clears and rebuilds its rows destroys
-//! the row holding the keyboard,
-//! leaving the window a focus widget with no parents, so `j`, `Delete` or `Esc` do nothing until a
-//! click.
+//! the row holding the keyboard, leaving the window a focus widget with no parents, so `j`,
+//! `Delete` or `Esc` do nothing until a click.
 
 use gtk::prelude::*;
 
@@ -48,10 +47,9 @@ pub(crate) fn keeping_focus(list: &gtk::ListBox, rebuild: impl FnOnce()) {
 }
 
 /// A list view draws a changed row as a new widget and destroys the old one, so the keyboard would
-/// be left on nothing, or handed by GTK
-/// to whatever control came next (#2136, #2150). Hooked on the model itself, before and after the
-/// view's own handler, so it holds for
-/// every change however many loop turns the rows take to land.
+/// be left on nothing, or handed by GTK to whatever control came next (#2136, #2150). Hooked on the
+/// model itself, before and after the view's own handler, so it holds for every change however many
+/// loop turns the rows take to land.
 pub(crate) fn keeping_keyboard(
     model: &impl IsA<gtk::gio::ListModel>,
     build: impl FnOnce() -> gtk::ListView,

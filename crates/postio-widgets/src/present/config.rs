@@ -1,7 +1,6 @@
 //! `config.toml` applied live: the watcher reparses and validates on its own thread, so a broken
-//! file never costs a frame,
-//! and [`follow`] hands the `Checked` result to the main loop. A failed reload leaves the last good
-//! configuration and keymap.
+//! file never costs a frame, and [`follow`] hands the `Checked` result to the main loop. A failed
+//! reload leaves the last good configuration and keymap.
 
 use std::ops::ControlFlow;
 
@@ -12,8 +11,7 @@ use postio_core::Event;
 use postio_core::config::{ConfigService, ConfigUpdate};
 
 /// `on_update` answers whether to keep following. Returns `false`, having followed nothing, when
-/// the file cannot be
-/// watched: edits then need a restart.
+/// the file cannot be watched: edits then need a restart.
 pub fn follow(
     mut service: ConfigService,
     mut on_update: impl FnMut(&ConfigService, &ConfigUpdate) -> ControlFlow<()> + 'static,

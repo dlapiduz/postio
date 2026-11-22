@@ -1,9 +1,7 @@
 //! The composer's seams answered through [`postio_client::Client`], never `postio-session` or
-//! `postio-host` directly (ADR 0043).
-//! Focus's Labels row and reminder footer use their own handlers on `connect_reply_source` and
-//! `connect_opened`, which this
-//! module does not register: a seam is a single slot, so the app's chrome keeps its own reply
-//! source.
+//! `postio-host` directly (ADR 0043). Focus's Labels row and reminder footer use their own handlers
+//! on `connect_reply_source` and `connect_opened`, which this module does not register: a seam is a
+//! single slot, so the app's chrome keeps its own reply source.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -65,8 +63,7 @@ pub async fn install_identities(
 }
 
 /// A mailbox's signature overrides the account's default, which overrides the identity's.
-/// `selected` is read fresh on every
-/// compose; Focus has no folder selected and answers `None`.
+/// `selected` is read fresh on every compose; Focus has no folder selected and answers `None`.
 pub fn install_signature_default(
     composer: &Composer,
     client: &Client,
@@ -85,9 +82,8 @@ pub fn install_signature_default(
             // resolves the rest.
             let resolved = resolving.await.ok().flatten();
             // A default the composer has not been told about (made in Settings since it read the
-            // account's signatures, or the
-            // first compose before its read landed): read them again first, or the draft signs with
-            // the identity's own.
+            // account's signatures, or the first compose before its read landed): read them again
+            // first, or the draft signs with the identity's own.
             if let (Some(id), Some(composer)) = (resolved, weak.upgrade())
                 && !composer.has_signature(id)
             {
@@ -102,8 +98,7 @@ pub fn install_signature_default(
 pub type OnSaved = Rc<dyn Fn(DraftId)>;
 
 /// Crash recovery is not here: reopening a draft is a composition-root decision, since Focus's
-/// dialog is built lazily and
-/// opening one nobody asked for would surprise. See [`recover_draft`].
+/// dialog is built lazily and opening one nobody asked for would surprise. See [`recover_draft`].
 pub fn install_autosave(
     composer: &Composer,
     client: &Client,
@@ -181,9 +176,8 @@ pub async fn recover_draft(
 }
 
 /// Nothing here waits for SMTP or opens a connection: the write is one local transaction (ADR
-/// 0021). `last_id` is taken on
-/// send too, or [`install_autosave`]'s close handler (`Composer::send` closes with `Closing::Drop`)
-/// would discard the draft just queued.
+/// 0021). `last_id` is taken on send too, or [`install_autosave`]'s close handler (`Composer::send`
+/// closes with `Closing::Drop`) would discard the draft just queued.
 pub fn install_send(
     composer: &Composer,
     client: &Client,
@@ -205,8 +199,7 @@ pub fn install_send(
             };
             last_id.set(None);
             // Through the host's writer, after every save this composition handed it: a send racing
-            // a first save in flight would
-            // insert a second row.
+            // a first save in flight would insert a second row.
             let queued = client.queue_send(composer.generation(), draft.clone(), None);
             if announce.is_none() && on_queued.is_none() {
                 drop(queued);
@@ -349,9 +342,8 @@ async fn resume_found(
 }
 
 /// The composer asks for candidates on every keystroke, synchronously on the GTK thread, so the
-/// directory is read when this
-/// is installed and each time the composer opens, then ranked by `postio_ui::recipients::suggest`
-/// with no call or query.
+/// directory is read when this is installed and each time the composer opens, then ranked by
+/// `postio_ui::recipients::suggest` with no call or query.
 pub fn install_recipients(composer: &Composer, client: &Client, account: AccountId) {
     let directory: Rc<RefCell<Rc<RecipientDirectory>>> = Rc::default();
     let reload = {
@@ -423,10 +415,9 @@ fn mime_type_of(path: &std::path::Path) -> String {
 }
 
 /// The editing surface's `cid:` resolver is a synchronous callback, so this answers from memory
-/// rather than wait on the
-/// store on the drawing thread (`check-blocking-now-sites.py`). A composition's inline images may
-/// have just been pasted or
-/// need reading first, so a cache filled ahead of render is the only shape that works.
+/// rather than wait on the store on the drawing thread (`check-blocking-now-sites.py`). A
+/// composition's inline images may have just been pasted or need reading first, so a cache filled
+/// ahead of render is the only shape that works.
 type InlineBytes = Rc<RefCell<HashMap<BlobId, Vec<u8>>>>;
 
 pub fn install_inline_images(composer: &Composer, client: &Client) {

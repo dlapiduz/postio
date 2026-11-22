@@ -4,8 +4,7 @@ use postio_model::{EmailAddress, ThreadId};
 /// message.
 ///
 /// **An implementation that cannot answer says `true`.** Every question is a reason not to act, so
-/// a
-/// failed read keeps the mail in the inbox.
+/// a failed read keeps the mail in the inbox.
 pub trait Facts {
     fn wrote_to(&self, address: &EmailAddress) -> bool;
 

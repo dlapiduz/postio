@@ -168,8 +168,7 @@ public struct ComposeView: View {
             if model.isHandedOff { model.takeBack(through: session) }
         }
         // On a pause rather than a keystroke: the controller waits out the quiet period
-        // (`FocusSaveDraft`)
-        // and saves at once on close.
+        // (`FocusSaveDraft`) and saves at once on close.
         .onChange(of: model.edited) { _, _ in edited() }
         // Only typing completes: a reply opens with no list showing.
         .onChange(of: model.to) { _, text in complete(.to, text) }
@@ -584,8 +583,7 @@ public struct ComposeView: View {
     }
 
     /// In the setter rather than an `onChange`: that runs after the body is drawn, and the rich
-    /// surface
-    /// seeds itself once when made, so it would show the stale document (#1293).
+    /// surface seeds itself once when made, so it would show the stale document (#1293).
     private var richSwitch: Binding<Bool> {
         Binding(
             get: { model.rich },

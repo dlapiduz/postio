@@ -1,6 +1,5 @@
 //! Search as the frontend sees it: an excerpt as text plus ranges, and a query as chips. One query
-//! language: `postio-search`
-//! parses, and Swift does not re-implement operator parsing.
+//! language: `postio-search` parses, and Swift does not re-implement operator parsing.
 
 /// **Ranges, not marked-up text** (#568): each frontend marks them its own way.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]

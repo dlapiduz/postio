@@ -15,10 +15,8 @@ pub(super) struct Clause {
 const VOCATIVE_WORDS: usize = 3;
 
 /// Paragraphs split at blank lines (one indented as code is not prose); a `>` line is quoted and
-/// never
-/// read; a sentence ends at `.`, `?`, `!` or `…` before whitespace, not at a URL query, a decimal
-/// or a
-/// common abbreviation; clauses split at `;` and `—`.
+/// never read; a sentence ends at `.`, `?`, `!` or `…` before whitespace, not at a URL query, a
+/// decimal or a common abbreviation; clauses split at `;` and `—`.
 pub(super) fn clauses(own: &str) -> Vec<Clause> {
     let chars: Vec<char> = own.chars().collect();
     let mut out = Vec::new();

@@ -1,8 +1,7 @@
 //! Opens `config.toml` in the person's editor: `[compose] editor`, else `$VISUAL`, else `$EDITOR`.
-//! None is run in a
-//! terminal, so a terminal-only editor has nothing to attach to. Under Flatpak there is no host
-//! editor binary and no
-//! portal that launches one; the settings window is the sandboxed fallback.
+//! None is run in a terminal, so a terminal-only editor has nothing to attach to. Under Flatpak
+//! there is no host editor binary and no portal that launches one; the settings window is the
+//! sandboxed fallback.
 
 use std::ffi::OsString;
 use std::path::Path;
@@ -16,13 +15,11 @@ pub fn chosen(lookup: impl Fn(&str) -> Option<OsString>) -> Option<OsString> {
 }
 
 /// Returns at once: the editor is its own process. Nothing is launched, and a warning is logged,
-/// when none names an
-/// editor or the one named will not start.
+/// when none names an editor or the one named will not start.
 pub fn open(path: &Path) {
     // `path` is `config.toml` itself, read live so a `[compose]` edit is not stale. This platform
-    // cannot tell a terminal
-    // program from a windowed one, so it never reports `TerminalProgram`; it can tell a name not on
-    // `PATH` (a typo).
+    // cannot tell a terminal program from a windowed one, so it never reports `TerminalProgram`; it
+    // can tell a name not on `PATH` (a typo).
     let configured = postio_config::Config::load_from_path(path)
         .unwrap_or_default()
         .compose

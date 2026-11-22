@@ -2,8 +2,8 @@ import CoreGraphics
 import Foundation
 
 /// A measurement is a number from outside the program: zero before layout, absurd if a sender says
-/// so, or `NaN` before there is a
-/// document. `NaN` in a layout constraint crashes, so it is caught here.
+/// so, or `NaN` before there is a document. `NaN` in a layout constraint crashes, so it is caught
+/// here.
 public enum BodyHeight {
     public static let minimum: CGFloat = 32
 

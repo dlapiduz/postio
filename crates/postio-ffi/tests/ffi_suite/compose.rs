@@ -599,8 +599,8 @@ async fn the_editing_bridge_crosses_so_the_two_composers_run_one_dialect() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_draft_sent_as_plain_puts_no_html_on_the_wire_even_while_it_keeps_its_marks() {
     // Storage keeps the marks, but `postio_model::outgoing` builds multipart/alternative from
-    // `body.html.is_some()`,
-    // so a Plain draft that kept them would send HTML under a text/plain footer.
+    // `body.html.is_some()`, so a Plain draft that kept them would send HTML under a text/plain
+    // footer.
     let (session, database, _) = a_message_to_answer().await;
     let mut draft = session.new_draft().await.expect("a draft");
     draft.to = "bo@example.com".to_owned();

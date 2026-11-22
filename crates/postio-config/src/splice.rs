@@ -1,6 +1,5 @@
 //! Every structured pane drops its table, serializes a fresh one and splices it in at the end; one
-//! copy
-//! fixes the missing blank line above the fresh table.
+//! copy fixes the missing blank line above the fresh table.
 
 use serde::Serialize;
 

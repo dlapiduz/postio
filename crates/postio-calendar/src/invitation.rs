@@ -97,8 +97,7 @@ impl EventTime {
 }
 
 /// A skipped time is read three hours earlier, which is always before the gap: no zone's clocks
-/// jump
-/// by more.
+/// jump by more.
 pub(crate) fn local_instant<Z: TimeZone>(zone: &Z, local: NaiveDateTime) -> DateTime<Utc> {
     if let Some(instant) = zone.from_local_datetime(&local).earliest() {
         return instant.with_timezone(&Utc);
@@ -114,14 +113,12 @@ pub(crate) fn local_instant<Z: TimeZone>(zone: &Z, local: NaiveDateTime) -> Date
 pub enum Zone {
     Utc,
     /// By IANA name, from the `VTIMEZONE`, an IANA `TZID` or a mapped Windows name. A numeric
-    /// offset,
-    /// which RFC 5545 disallows but some generators write, is named by the offset alone:
+    /// offset, which RFC 5545 disallows but some generators write, is named by the offset alone:
     /// `UTC+05:30`.
     Named(String),
     Floating,
     /// A `TZID` nothing could resolve, verbatim; carried as `Floating` because a guessed offset
-    /// would
-    /// show a time that looks right and is not.
+    /// would show a time that looks right and is not.
     Unknown(String),
 }
 

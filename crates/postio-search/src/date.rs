@@ -15,15 +15,13 @@ pub(crate) fn parse_date(value: &str, today: NaiveDate) -> Option<NaiveDate> {
     relative(value, today).or_else(|| calendar(value, today))
 }
 
-/// Resolves a typed time forward from `now`: what the text leaves open is the first instant
-/// after `now` that fits (`tue` on a Tuesday afternoon is next week's; `sep 1` in late September
-/// is next year's), and a time pinned to the past is `None`. A day with no time is 08:00; `in N
-/// days`
-/// keeps the typed time of day; a bare number after a day is a 24-hour hour; numeric dates are
-/// month first.
-/// A wall-clock time the clocks skip is pushed forward by the gap and a repeated one is its first
-/// occurrence, never a panic; `now`'s zone is a parameter so tests can use one with transitions.
-/// Pure.
+/// Resolves a typed time forward from `now`: what the text leaves open is the first instant after
+/// `now` that fits (`tue` on a Tuesday afternoon is next week's; `sep 1` in late September is next
+/// year's), and a time pinned to the past is `None`. A day with no time is 08:00; `in N days` keeps
+/// the typed time of day; a bare number after a day is a 24-hour hour; numeric dates are month
+/// first. A wall-clock time the clocks skip is pushed forward by the gap and a repeated one is its
+/// first occurrence, never a panic; `now`'s zone is a parameter so tests can use one with
+/// transitions. Pure.
 pub fn parse_when<Tz: TimeZone>(text: &str, now: DateTime<Tz>) -> Option<DateTime<Tz>> {
     let pieces = pieces(text)?;
     let when = When::read(&pieces)?;

@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 # Make the release pull request for version X.Y.Z (#1714): a branch off `origin/main` with the
-# notes, the bump and the refreshed lockfile in one commit;
-# `issue-land.sh` opens the PR, and merging it is the release. It cannot run in the workflow: an
-# automated push to `main` cannot pass the ruleset
-# and a PR opened by Actions' token triggers no CI.
-# The notes are docs/releases/X.Y.Z.md (also the AppStream changelog, rendered once from it): write
-# it first and land it for words of your own,
-# else this drafts it from commit subjects. To reword a draft, delete the branch and run again.
+# notes, the bump and the refreshed lockfile in one commit; `issue-land.sh` opens the PR, and
+# merging it is the release. It cannot run in the workflow: an automated push to `main` cannot pass
+# the ruleset and a PR opened by Actions' token triggers no CI. The notes are docs/releases/X.Y.Z.md
+# (also the AppStream changelog, rendered once from it): write it first and land it for words of
+# your own, else this drafts it from commit subjects. To reword a draft, delete the branch and run
+# again.
 #
 # Usage: scripts/release-prepare.sh X.Y.Z
 #   From a clean linked worktree -- never the shared checkout, where switching

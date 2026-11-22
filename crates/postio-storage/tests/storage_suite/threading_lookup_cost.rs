@@ -1,15 +1,13 @@
 //! Threading costs the same whatever the account holds: `commit_batch` threads one message at a
-//! time,
-//! so a scanning lookup is charged to every message synced after it. The plan must bind the key's
-//! columns, not merely lack `SCAN`: a one-column `SEARCH` through a `COLLATE NOCASE` index is a
-//! scan (#1587).
+//! time, so a scanning lookup is charged to every message synced after it. The plan must bind the
+//! key's columns, not merely lack `SCAN`: a one-column `SEARCH` through a `COLLATE NOCASE` index is
+//! a scan (#1587).
 
 use postio_storage::test_support;
 use postio_storage::test_support::counting::scans;
 
 /// Written out because the point is the SQL the planner sees: binary equality on the folded key,
-/// since
-/// `COLLATE NOCASE` forced a collated index this planner will not bind through (#1587).
+/// since `COLLATE NOCASE` forced a collated index this planner will not bind through (#1587).
 const THREAD_OF: &str = "SELECT thread_id FROM thread_links \
                           WHERE account_id = ?1 AND rfc_message_id = ?2";
 
@@ -21,8 +19,7 @@ const PER_MESSAGE_LOOKUPS: &[(&str, &str, &[&str])] = &[
     ),
     (
         // `IN` on the second column gets a one-column prefix from this planner; a `UNION ALL` arm
-        // gets
-        // the full key.
+        // gets the full key.
         "thread links by cue",
         "SELECT rfc_message_id, thread_id FROM thread_links \
          WHERE account_id = ?1 AND rfc_message_id = ?2 \

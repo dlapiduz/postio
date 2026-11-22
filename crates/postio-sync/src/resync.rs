@@ -1,9 +1,9 @@
 //! Keeps a synced mailbox current by executing `SyncState::plan`'s answer: up to date, incremental,
-//! or full. Every full reason wipes local rows first,
-//! since an unwiped `UIDVALIDITY` change silently corrupts state (old UID, different message).
-//! Vanished messages are found by count arithmetic (ADR 0001: no `VANISHED`).
-//! Arrivals have a second witness, `UIDNEXT`, so a lying change feed cannot hide new mail; the
-//! server's `HIGHESTMODSEQ` is recorded last so a failed sweep is retried.
+//! or full. Every full reason wipes local rows first, since an unwiped `UIDVALIDITY` change
+//! silently corrupts state (old UID, different message). Vanished messages are found by count
+//! arithmetic (ADR 0001: no `VANISHED`). Arrivals have a second witness, `UIDNEXT`, so a lying
+//! change feed cannot hide new mail; the server's `HIGHESTMODSEQ` is recorded last so a failed
+//! sweep is retried.
 
 use std::collections::BTreeSet;
 

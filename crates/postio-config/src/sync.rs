@@ -95,8 +95,8 @@ fn notify_roles() -> Vec<String> {
 }
 
 /// `Deserialize` is by hand: an existing file may still say `idle = true`/`false` (#867), which
-/// must keep
-/// meaning `Idle`/`Poll`. `Serialize` writes only `check_for_mail`, which retires the old key.
+/// must keep meaning `Idle`/`Poll`. `Serialize` writes only `check_for_mail`, which retires the old
+/// key.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SyncConfig {
     pub check_for_mail: CheckForMail,
@@ -106,10 +106,8 @@ pub struct SyncConfig {
     pub body_fetch: BodyFetch,
     pub attachment_fetch: AttachmentFetch,
     /// ADR 0017: inline parts ride with the text. A `cid:` image is part of the sentence the
-    /// message is
-    /// making and remote images are blocked, so under this figure a part is text; over it, a
-    /// payload.
-    /// `0` turns the rule off.
+    /// message is making and remote images are blocked, so under this figure a part is text; over
+    /// it, a payload. `0` turns the rule off.
     pub max_inline_bytes: u64,
     #[serde(serialize_with = "depth::serialize")]
     pub initial_sync_messages: u32,
@@ -218,8 +216,7 @@ impl Default for SyncConfig {
 }
 
 /// The structured pane's write path (#874). `[sync]` is regenerated whole, so a comment on its
-/// header or
-/// keys does not survive.
+/// header or keys does not survive.
 pub fn patch_sync(text: &str, sync: &SyncConfig) -> crate::Result<String> {
     crate::splice::replace_section(text, "sync", &SyncOnly { sync })
 }

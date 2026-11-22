@@ -397,9 +397,8 @@ fn parse_mailbox(address: &str) -> SmtpResult<SmtpMailbox<'static>> {
     }
 
     // The domain becomes ASCII whatever the server offered (IDNA is a conversion, not a
-    // negotiation). The local part is
-    // untouched: RFC 6531 exists because the only way to carry one is to send the octets, and
-    // `send_message` decides whether the connection may.
+    // negotiation). The local part is untouched: RFC 6531 exists because the only way to carry one
+    // is to send the octets, and `send_message` decides whether the connection may.
     let domain = idna::domain_to_ascii(domain).map_err(|_| invalid())?;
 
     // Through `try_from`, which checks each piece against RFC 5321's grammar (non-ASCII allowed,

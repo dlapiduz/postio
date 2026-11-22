@@ -1058,11 +1058,10 @@ impl Fixture {
 }
 
 /// Press `name` as GTK delivers a key: to the widget the keyboard is on, through each key
-/// controller from the window down in the capture phase,
-/// then the target's own, then back up in the bubble phase, until one claims it. [`press`] calls
-/// the window's handler directly, which cannot see
-/// a controller taking the key first. A widget class's own key bindings cannot run: GTK offers no
-/// way but a real event.
+/// controller from the window down in the capture phase, then the target's own, then back up in the
+/// bubble phase, until one claims it. [`press`] calls the window's handler directly, which cannot
+/// see a controller taking the key first. A widget class's own key bindings cannot run: GTK offers
+/// no way but a real event.
 pub fn deliver(window: &postio_gtk::window::FocusWindow, name: &str) -> bool {
     let state = if name.chars().count() == 1 && name.chars().all(char::is_uppercase) {
         gtk::gdk::ModifierType::SHIFT_MASK
@@ -1083,16 +1082,16 @@ pub fn deliver_with(
     let target: gtk::Widget =
         gtk::prelude::GtkWindowExt::focus(window).unwrap_or_else(|| window.clone().upcast());
     // GTK's key path climbs from the focus through its parents. A focus that left the window (its
-    // row was destroyed in a redraw) has none,
-    // so a person's keyboard is dead until a click: say so rather than let the key find nothing.
+    // row was destroyed in a redraw) has none, so a person's keyboard is dead until a click: say so
+    // rather than let the key find nothing.
     assert!(
         target.root().is_some(),
         "{name}: the keyboard is on a {} that has left the window",
         target.type_().name()
     );
     // GTK runs a key through the widgets from the focus up to the innermost dialog presented over
-    // the window, and no further
-    // (measured with real key presses in the headless compositor, GTK 4.22, libadwaita 1.9).
+    // the window, and no further (measured with real key presses in the headless compositor, GTK
+    // 4.22, libadwaita 1.9).
     let mut chain = vec![target.clone()];
     while !chain
         .last()
@@ -1290,10 +1289,9 @@ fn native_of(widget: &gtk::Widget, window: &postio_gtk::window::FocusWindow) -> 
 }
 
 /// Waits for `widget` to stop moving on `native`: libadwaita opens a dialog by scaling it from 0.8
-/// to 1, so a press and a release a frame later land at two places (#1817).
-/// Whether `widget` is drawn at its own size now: a stalled frame clock draws no frames and stalls
-/// an opening dialog's scale too,
-/// so "no frames" alone clicked Settings at 0.81 of its size (#1817).
+/// to 1, so a press and a release a frame later land at two places (#1817). Whether `widget` is
+/// drawn at its own size now: a stalled frame clock draws no frames and stalls an opening dialog's
+/// scale too, so "no frames" alone clicked Settings at 0.81 of its size (#1817).
 fn drawn_at_own_size(native: &gtk::Widget, widget: &gtk::Widget) -> bool {
     use gtk::prelude::*;
     match (widget.compute_bounds(native), widget.compute_bounds(widget)) {
@@ -1403,10 +1401,10 @@ fn wait_to_be_pickable(window: &gtk::Widget, widget: &gtk::Widget, x: f32, y: f3
 }
 
 /// GTK offers no way to build a button event in-process, so this drives the gestures' `pressed` and
-/// `released` signals in GTK's order and along its path,
-/// to whatever is picked there (a widget under a dialog's scrim, unmapped, clipped or insensitive
-/// cannot be clicked), no further than the innermost dialog or popover surface.
-/// A `GtkButton` claims what reaches it, and nothing above one is run.
+/// `released` signals in GTK's order and along its path, to whatever is picked there (a widget
+/// under a dialog's scrim, unmapped, clipped or insensitive cannot be clicked), no further than the
+/// innermost dialog or popover surface. A `GtkButton` claims what reaches it, and nothing above one
+/// is run.
 pub fn click_at(window: &postio_gtk::window::FocusWindow, x: f64, y: f64, n_press: i32) {
     use gtk::prelude::*;
     click_on(window.upcast_ref::<gtk::Widget>(), x, y, n_press);

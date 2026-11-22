@@ -21,11 +21,9 @@ pub struct Relaxation {
 }
 
 /// Every complete filter can be dropped (a set as one term: dropping a value narrows). A positive
-/// `subject:`
-/// can be looked for anywhere and a positive `label:` can also be a folder; an exclusion is never
-/// turned into
-/// something else, since `-subject:x` as `-x` would exclude more. A free word is dropped only when
-/// there are two or more.
+/// `subject:` can be looked for anywhere and a positive `label:` can also be a folder; an exclusion
+/// is never turned into something else, since `-subject:x` as `-x` would exclude more. A free word
+/// is dropped only when there are two or more.
 pub fn relax(query: &ParsedQuery) -> Vec<Relaxation> {
     let tokens = query.tokens();
     let words = query.text_terms().count();

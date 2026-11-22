@@ -162,9 +162,9 @@ public enum MenuPlan {
 
 extension MenuPlan {
     /// The standard items every Mac application has are put around the registry's menus. Compose is
-    /// titled "New Message"; Close ⌘W is AppKit's
-    /// (a window closes on that chord only through a menu item); Undo is run by `UndoRouter` so a
-    /// text field keeps its own; the registry's Quit replaces AppKit's.
+    /// titled "New Message"; Close ⌘W is AppKit's (a window closes on that chord only through a
+    /// menu item); Undo is run by `UndoRouter` so a text field keeps its own; the registry's Quit
+    /// replaces AppKit's.
     public static func bar(
         commands: [CommandSpecFfi] = PostioRegistry.commands,
         menus: [MenuFfi] = PostioFFI.menus(),

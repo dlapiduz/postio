@@ -1,6 +1,6 @@
 //! The suite's `--list` output is a contract with the runner, and breaking it fails green: a runner
-//! that misreads `--list --ignored`
-//! concludes everything is ignored, runs nothing and reports success (#114, #355, #551, #596).
+//! that misreads `--list --ignored` concludes everything is ignored, runs nothing and reports
+//! success (#114, #355, #551, #596).
 
 use std::process::Command;
 

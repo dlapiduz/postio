@@ -12,8 +12,7 @@ import PostioKit
 final class KeyMonitor {
     private let resolve: (KeyEvent.Reduced, UiContext, Bool) -> KeyOutcomeFfi
     /// The answer decides whether the key is swallowed: this monitor runs ahead of the responder
-    /// chain,
-    /// so a key taken for a command nothing handled never reaches the view underneath.
+    /// chain, so a key taken for a command nothing handled never reaches the view underneath.
     private let run: (String) -> Bool
     private let pending: (String?) -> Void
     private let context: () -> UiContext
@@ -81,8 +80,7 @@ final class KeyMonitor {
     }
 
     /// The flag that makes typing win; wrong, a search field archives mail on `a`. Read from the
-    /// first
-    /// responder, not tracked: a cached copy goes stale exactly when it matters.
+    /// first responder, not tracked: a cached copy goes stale exactly when it matters.
     /// `NSTextInputClient` rather than view classes: a responder adopts it because it accepts text.
     static func isTyping() -> Bool {
         // The rule is `TypingResponder`'s, in `PostioKit` where a test can reach it. Asking whether

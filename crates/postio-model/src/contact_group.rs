@@ -7,8 +7,7 @@ use crate::address::EmailAddress;
 use crate::ids::ContactGroupId;
 
 /// Expanded into its members' preferred addresses when picked in the composer, never referenced by
-/// a group
-/// address: a draft's recipients must not change between saving and sending.
+/// a group address: a draft's recipients must not change between saving and sending.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContactGroup {
     pub id: ContactGroupId,
@@ -29,8 +28,7 @@ impl ContactGroup {
 }
 
 /// Accepting a group inserts every member individually, never a group reference: recipients must
-/// stay visible
-/// (keeps `Bcc` honest) and cannot change when membership is edited after picking.
+/// stay visible (keeps `Bcc` honest) and cannot change when membership is edited after picking.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RecipientCandidate {
     Contact(EmailAddress),

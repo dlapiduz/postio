@@ -1,8 +1,7 @@
 //! Verbs on the list, their aim, and the cursor when mail leaves or comes back. A verb goes to the
 //! selection when there is one and the cursor's row otherwise; an archive or delete hands the
-//! cursor
-//! to the first row below that stays; an undo puts it on the row it brought back once the list has
-//! it.
+//! cursor to the first row below that stays; an undo puts it on the row it brought back once the
+//! list has it.
 
 use postio_core::state::Selection;
 use postio_core::{Command, CommandId, Event, MessageTarget};

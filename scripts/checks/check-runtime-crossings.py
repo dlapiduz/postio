@@ -151,8 +151,8 @@ def blanked(text: str) -> str:
                 index += 1
         elif text[index] == "'":
             # A quote is a char literal or a lifetime. `'"'` holds one double quote, so reading it
-            # as a string inverts quote parity
-            # for the rest of the file; a lifetime falls through with only its own quote blanked.
+            # as a string inverts quote parity for the rest of the file; a lifetime falls through
+            # with only its own quote blanked.
             if text[index : index + 2] == "'\\":
                 out[index] = " "
                 index += 1

@@ -250,11 +250,9 @@ pub async fn mark_seen(
 pub const NEW_CAP: u32 = 99;
 
 /// `total` is capped as a search's count is and a floor past it; `new` counts matches received
-/// after the search was last viewed
-/// ([`mark_seen`]), up to [`NEW_CAP`], zero for a search never viewed. A search that cannot be
-/// counted is zero, so the row stays.
-/// Drops the seen-progress of any saved search not listed: one deleted from `config.toml` leaves an
-/// orphan.
+/// after the search was last viewed ([`mark_seen`]), up to [`NEW_CAP`], zero for a search never
+/// viewed. A search that cannot be counted is zero, so the row stays. Drops the seen-progress of
+/// any saved search not listed: one deleted from `config.toml` leaves an orphan.
 pub async fn saved_counts(
     database: &Store,
     account: AccountScope,

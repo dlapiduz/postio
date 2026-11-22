@@ -6,9 +6,8 @@ public enum RecipientField: Equatable, Sendable {
 }
 
 /// Decides almost nothing: reply addressing, subject and quote are `postio_model::reply`'s, and
-/// what leaves the machine is
-/// `postio_ui::compose`'s sentence. What is local is the unsaved state, which must not be lost, so
-/// it is autosaved.
+/// what leaves the machine is `postio_ui::compose`'s sentence. What is local is the unsaved state,
+/// which must not be lost, so it is autosaved.
 @MainActor
 @Observable
 public final class ComposeModel: Identifiable {
@@ -25,9 +24,8 @@ public final class ComposeModel: Identifiable {
     public var body: String
 
     /// Held beside `body`: the switch does not throw the other away. The editing surface reports it
-    /// on every keystroke and
-    /// the boundary narrows it on the way into the store, so this is a working copy, never the
-    /// record (ADR 0004 Q3).
+    /// on every keystroke and the boundary narrows it on the way into the store, so this is a
+    /// working copy, never the record (ADR 0004 Q3).
     public var bodyHtml: String?
 
     /// The switch is on the document: turning it off changes what is built from the words, not the
@@ -298,11 +296,10 @@ public final class ComposeModel: Identifiable {
     }
 
     /// "Whichever surface is active is authoritative" says nothing about the moment of the switch,
-    /// when the field about to
-    /// become authoritative is stale: everything typed in Rich went into the document, so without
-    /// this Plain then send queued an empty message (#1293).
-    /// Words already in the plain field are kept while the document is as Rich found it; once
-    /// written in, the document is newer and `text` replaces them.
+    /// when the field about to become authoritative is stale: everything typed in Rich went into
+    /// the document, so without this Plain then send queued an empty message (#1293). Words already
+    /// in the plain field are kept while the document is as Rich found it; once written in, the
+    /// document is newer and `text` replaces them.
     public func switchedToPlain(text: String) {
         rich = false
         if body.isEmpty || bodyHtml != htmlAtSwitch {
@@ -313,8 +310,8 @@ public final class ComposeModel: Identifiable {
     }
 
     /// New drafts open plain, so turning Rich on met an empty document with the person's words
-    /// gone. Marks are kept while
-    /// the plain text is as it was; words written in Plain since are newer and replace them.
+    /// gone. Marks are kept while the plain text is as it was; words written in Plain since are
+    /// newer and replace them.
     public func switchedToRich(html: String) {
         rich = true
         if (bodyHtml ?? "").isEmpty || plainText != textAtSwitch {
@@ -510,10 +507,9 @@ public final class ComposeModel: Identifiable {
     }
 
     /// The draft is saved first, since an editor on a body Postio has not written down is one crash
-    /// from being the only copy.
-    /// Not `$EDITOR`: a Finder-launched app has no shell environment (#1288). A refusal takes the
-    /// draft straight back,
-    /// so the window is never left read-only waiting for an editor that never opened.
+    /// from being the only copy. Not `$EDITOR`: a Finder-launched app has no shell environment
+    /// (#1288). A refusal takes the draft straight back, so the window is never left read-only
+    /// waiting for an editor that never opened.
     public func handOff(
         through session: PostioSession?,
         open: (URL) async -> String?

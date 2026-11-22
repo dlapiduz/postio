@@ -27,8 +27,7 @@ pub enum CalendarError {
 }
 
 /// Read as UTF-8; a stray invalid byte is replaced rather than costing the invitation. A series
-/// with
-/// overrides gives the series; only overrides, the first of them.
+/// with overrides gives the series; only overrides, the first of them.
 pub fn parse(ics: &[u8]) -> Result<Invitation, CalendarError> {
     let text = String::from_utf8_lossy(ics);
     let calendar = ICalendar::parse(text.as_ref()).map_err(|_| CalendarError::NotACalendar)?;
@@ -118,8 +117,7 @@ fn series_end(calendar: &ICalendar, event: &ICalendarComponent) -> Option<EventT
         .iter()
         .position(|component| std::ptr::eq(component, event))?;
     // calcard walks a series in its default zone unless the start names a `TZID`, so the default is
-    // the
-    // start's own.
+    // the start's own.
     let own_zone = event
         .property(&ICalendarProperty::Dtstart)
         .and_then(|entry| entry.values.first())
@@ -268,8 +266,7 @@ fn text_of(component: &ICalendarComponent, property: &ICalendarProperty) -> Opti
 }
 
 /// The value is a `mailto:` URI, else the `EMAIL` parameter (RFC 7986); with neither the entry is
-/// left
-/// out. A `CN` that only repeats the address is no name.
+/// left out. A `CN` that only repeats the address is no name.
 fn address(entry: &ICalendarEntry) -> Option<EmailAddress> {
     let value = entry.values.first().and_then(ICalendarValue::as_text);
     let mailto = value.and_then(|value| {

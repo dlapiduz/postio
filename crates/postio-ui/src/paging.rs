@@ -1,9 +1,7 @@
 //! What a windowed list asks for and does when the mail moves, with no toolkit or store: the one
-//! policy for every frontend's list.
-//! A list reacts only to events that can change its membership or order; everything else reloads.
-//! `Flagged`/`Snoozed` reload on
-//! `MessagesChanged` (the flag is the membership predicate) and gate on account, since they span
-//! folders.
+//! policy for every frontend's list. A list reacts only to events that can change its membership or
+//! order; everything else reloads. `Flagged`/`Snoozed` reload on `MessagesChanged` (the flag is the
+//! membership predicate) and gate on account, since they span folders.
 
 use std::collections::HashMap;
 

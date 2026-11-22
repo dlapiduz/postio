@@ -159,8 +159,7 @@ postio-vcard   = { path = "crates/postio-vcard" }
 postio-contact-sync = { path = "crates/postio-contact-sync" }
 
 # Third-party crates shared by two or more members (#1498). A member adds features but cannot take
-# defaults away,
-# so entries turn them off only where every member already had.
+# defaults away, so entries turn them off only where every member already had.
 async-channel = "2.5.0"
 async-trait = "0.1.92"
 base64 = "0.23.1"
@@ -202,11 +201,10 @@ panic = "abort"
 strip = true
 
 # debug = 0: cold test build 282s vs 301s and a 70 MB binary vs 239 MB, measured. `file:line`
-# survives in panic and assertion messages
-# (`#[track_caller]`); only backtrace frames lose it.
-# `strip = "debuginfo"` was measured: a byte-identical binary and 44s slower. Do not add it.
-# Debug info for one run: `CARGO_PROFILE_DEV_DEBUG=line-tables-only cargo test -p <crate>` (rebuilds
-# every unit).
+# survives in panic and assertion messages (`#[track_caller]`); only backtrace frames lose it.
+# `strip = "debuginfo"` was measured: a byte-identical binary and 44s slower. Do not add it. Debug
+# info for one run: `CARGO_PROFILE_DEV_DEBUG=line-tables-only cargo test -p <crate>` (rebuilds every
+# unit).
 [profile.dev]
 debug = 0
 
@@ -217,10 +215,9 @@ debug = 0
 opt-level = 2
 
 # Turso from Postio's fork (branch postio-0.8.4-tantivy-0.27): v0.8.4 plus fuzzy and prefix word
-# expansion in the full-text index,
-# on tantivy 0.27 so zstd is 0.14 (0.26's 0.13 is named by RUSTSEC-2026-0391, -0398, -0403). Every
-# query search runs is quoted and parses as upstream.
-# It names `TursoVecInExt::new_in` in full where Rust 1.100's `Vec::new_in` would win. Every turso
+# expansion in the full-text index, on tantivy 0.27 so zstd is 0.14 (0.26's 0.13 is named by
+# RUSTSEC-2026-0391, -0398, -0403). Every query search runs is quoted and parses as upstream. It
+# names `TursoVecInExt::new_in` in full where Rust 1.100's `Vec::new_in` would win. Every turso
 # crate comes from one commit.
 [patch.crates-io]
 turso = { git = "https://github.com/dlapiduz/turso", rev = "fa342b793f8a8b006da570fb6bca6196cb65dacc" }

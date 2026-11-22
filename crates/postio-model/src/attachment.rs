@@ -62,9 +62,8 @@ pub struct Attachment {
     pub disposition: Disposition,
     pub part_id: Option<String>,
     /// The part's MIME header block from `BODYSTRUCTURE`. `BODY[2.1]` returns encoded bytes with no
-    /// headers,
-    /// so prepending this makes the section decodable without a second round trip. `None` if not
-    /// fetched by section.
+    /// headers, so prepending this makes the section decodable without a second round trip. `None`
+    /// if not fetched by section.
     pub part_headers: Option<String>,
     pub blob_id: Option<BlobId>,
 }
@@ -86,9 +85,8 @@ impl Attachment {
     }
 
     /// Stores a bare `Content-ID` (brackets off) so every ingest path stores the same id:
-    /// `resolve_cid`
-    /// compares with `==`, and a bracketed id never resolved (#751). An id empty once trimmed is no
-    /// id.
+    /// `resolve_cid` compares with `==`, and a bracketed id never resolved (#751). An id empty once
+    /// trimmed is no id.
     pub fn set_content_id(&mut self, raw: Option<&str>) {
         self.content_id = raw.and_then(bare_content_id);
     }

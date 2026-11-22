@@ -186,8 +186,7 @@ fn shutdown_finishes_the_queued_work_and_joins() {
 #[test]
 fn a_handler_slower_than_the_shutdown_timeout_does_not_panic_the_caller() {
     // #817: a merely slow handler must not turn a scheduling delay into a torn-down caller; the
-    // second
-    // `shutdown_timeout` window gives the pump another chance.
+    // second `shutdown_timeout` window gives the pump another chance.
     let (bridge, _events) = Bridge::builder()
         .worker_threads(1)
         .shutdown_timeout(Duration::from_millis(20))

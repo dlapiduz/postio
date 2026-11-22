@@ -1,6 +1,5 @@
 //! The contact popover: a card in the window's own layer, not a separate surface, so the window's
-//! keys reach it and the
-//! controller's commands work as elsewhere. Every word is
+//! keys reach it and the controller's commands work as elsewhere. Every word is
 //! `postio_ui::contact_popover::PopoverView`'s.
 
 use std::rc::Rc;

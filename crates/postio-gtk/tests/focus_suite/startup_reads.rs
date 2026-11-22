@@ -1,6 +1,6 @@
 //! Opening a window reads a bounded amount whatever the mailbox holds (#1479), counted rather than
-//! timed. The counters are thread-local,
-//! so every read `startup::adopt` makes synchronously is a read the first frame waits on.
+//! timed. The counters are thread-local, so every read `startup::adopt` makes synchronously is a
+//! read the first frame waits on.
 //!
 //! POSTIO-MEASUREMENT: it builds a mailbox big enough that an unbounded
 //! startup read would show, 28 s, so it runs on the nightly timer.

@@ -1187,8 +1187,8 @@ impl ResultsPane {
     }
 
     /// Once the redraws already said have been taken: the ring is drawn by replacing its rows, and
-    /// a `scroll_to` asked before a replacement
-    /// of the row it scrolls to was dropped, leaving the ring below the view after a few `j`s.
+    /// a `scroll_to` asked before a replacement of the row it scrolls to was dropped, leaving the
+    /// ring below the view after a few `j`s.
     fn reveal_cursor(&self) {
         let weak = self.me.borrow().clone();
         glib::idle_add_local_once(move || {

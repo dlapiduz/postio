@@ -1,8 +1,7 @@
 //! `UIDVALIDITY`, `HIGHESTMODSEQ` and `UIDNEXT` are only meaningful together: a `MODSEQ` carried
-//! across a `UIDVALIDITY` change would skip
-//! exactly the messages that must be re-fetched. `SyncState` is written and read as a unit, and
-//! `plan` is a pure function of it.
-//! "Never synced" is a state (`never_synced`, `has_synced`), not a missing value.
+//! across a `UIDVALIDITY` change would skip exactly the messages that must be re-fetched.
+//! `SyncState` is written and read as a unit, and `plan` is a pure function of it. "Never synced"
+//! is a state (`never_synced`, `has_synced`), not a missing value.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -81,9 +80,8 @@ impl SyncState {
     }
 
     /// Advances `last_seen_at` but never `last_full_sync_at`: selecting is not synchronizing. A
-    /// `UIDVALIDITY` change drops every
-    /// cached counter, since a `MODSEQ` from the previous UID space is the corruption this type
-    /// prevents.
+    /// `UIDVALIDITY` change drops every cached counter, since a `MODSEQ` from the previous UID
+    /// space is the corruption this type prevents.
     pub fn observe(&mut self, status: &MailboxStatus, at: DateTime<Utc>) {
         if self.generation_changed(status.generation) {
             self.highest_mod_seq = None;
@@ -173,9 +171,8 @@ pub enum FullResyncReason {
     /// protocol says cannot happen — its store was rebuilt.
     ModSeqWentBackwards,
     /// Not reachable from `SyncState::plan`, which sees only protocol state: `resync` decides it
-    /// from the local row count and the operation
-    /// queue. It lets a mailbox recorded as synchronized without ever being enumerated leave that
-    /// state without deleting the store.
+    /// from the local row count and the operation queue. It lets a mailbox recorded as synchronized
+    /// without ever being enumerated leave that state without deleting the store.
     ShortOfExists,
 }
 

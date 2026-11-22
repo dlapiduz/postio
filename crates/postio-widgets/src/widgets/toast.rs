@@ -316,8 +316,8 @@ impl Toast {
         });
         host.add_toast(toast.clone());
         // Buttons are answered by mouse and by their command's key, never keyboard focus, which
-        // would
-        // land on one when nothing else could take it and make the next Return answer the toast.
+        // would land on one when nothing else could take it and make the next Return answer the
+        // toast.
         dress(host.upcast_ref(), key.as_deref());
         let weak = host.downgrade();
         let drawn = key.clone();

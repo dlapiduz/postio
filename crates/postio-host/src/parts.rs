@@ -89,9 +89,8 @@ pub async fn part_path(
 }
 
 /// The person asked for these bytes by name, which justifies fetching. Every byte, not the text
-/// axis: under ADR 0017
-/// the background lane stores no raw source, so `request_body` would leave `raw_blob_id` empty and
-/// the wait would run out its deadline.
+/// axis: under ADR 0017 the background lane stores no raw source, so `request_body` would leave
+/// `raw_blob_id` empty and the wait would run out its deadline.
 pub async fn raw_source(
     database: &Store,
     blobs: &BlobStore,
@@ -126,8 +125,8 @@ pub async fn raw_blob(database: &Store, message: MessageId) -> Result<Option<Blo
 }
 
 /// Never fetched: `None` when the bytes are not here. Written only under `dir`, in a folder
-/// readable by this user alone,
-/// using only the name's last component so a hostile name cannot climb out.
+/// readable by this user alone, using only the name's last component so a hostile name cannot climb
+/// out.
 pub async fn local_copy(
     database: &Store,
     blobs: &BlobStore,
@@ -199,8 +198,8 @@ pub async fn local_copy(
 }
 
 /// UIDs and mailbox paths are scoped to an account, so another account's engine would fetch
-/// unrelated bytes under the
-/// same identity or leave the request waiting forever. One indexed read of the account key.
+/// unrelated bytes under the same identity or leave the request waiting forever. One indexed read
+/// of the account key.
 pub async fn account_of(database: &Store, message: MessageId) -> Option<postio_model::AccountId> {
     let connection = database.read().await.ok()?;
     postio_storage::sql::first(

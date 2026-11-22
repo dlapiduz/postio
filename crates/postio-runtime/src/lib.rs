@@ -1,6 +1,6 @@
 //! The half of the runtime that owns a database and a connection, kept out of `postio-core` so no
-//! feature
-//! union can put SQLite in the view layer's graph (`scripts/checks/check-crate-boundaries.py`).
+//! feature union can put SQLite in the view layer's graph
+//! (`scripts/checks/check-crate-boundaries.py`).
 
 pub mod engine;
 pub mod network;

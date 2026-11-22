@@ -1,6 +1,6 @@
 //! A handler stored on a child widget holding a strong reference back to its window is a cycle
-//! (#794) that a bare `FocusWindow` cannot show,
-//! but the handlers `startup::adopt` registers and the dialogs a person opens can (#1072).
+//! (#794) that a bare `FocusWindow` cannot show, but the handlers `startup::adopt` registers and
+//! the dialogs a person opens can (#1072).
 
 use adw::prelude::*;
 

@@ -1,7 +1,6 @@
 //! The rows and pages a frontend draws, and `MailStore`, the contract for reading them. Plain
-//! serialisable data, so
-//! the store's one owner can answer a frontend in another process behind the same `dyn MailStore`
-//! (ADR 0041).
+//! serialisable data, so the store's one owner can answer a frontend in another process behind the
+//! same `dyn MailStore` (ADR 0041).
 
 use std::fmt;
 use std::future::Future;
@@ -72,9 +71,8 @@ pub struct ThreadSummary {
     #[serde(default)]
     pub marker: Option<MarkerSummary>,
     /// The same conversation in the person's other accounts, folded into this row (ADR 0005 Q2). A
-    /// verb on the row
-    /// must reach these too: one operation in each account's queue. Empty for lists that do not
-    /// fold.
+    /// verb on the row must reach these too: one operation in each account's queue. Empty for lists
+    /// that do not fold.
     #[serde(default)]
     pub copies: Vec<ThreadId>,
     /// Replies filed away since the person muted the conversation; read with the page, for Focus's
@@ -181,8 +179,7 @@ pub struct ThreadPage {
 }
 
 /// Which window answers is the store's decision, not the caller's: a frontend that had to know
-/// would be a second place
-/// to get ADR 0015's folders-thread / views-list line wrong.
+/// would be a second place to get ADR 0015's folders-thread / views-list line wrong.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ListPage {
     Messages(MessagePage),
@@ -259,26 +256,22 @@ pub struct DraftCounts {
 pub type Read<'a, T> = Pin<Box<dyn Future<Output = Result<T, StoreError>> + Send + 'a>>;
 
 /// A trait, not a struct, so the crate owning a database and the one drawing rows need not compile
-/// together: anything
-/// concrete here would put the database engine in the view layer (`check-crate-boundaries.py`).
-/// Which window a scope lists
-/// itself as is the store's decision, answered inside `list_page`. Every method returns a future,
-/// so no UI thread waits on the store.
+/// together: anything concrete here would put the database engine in the view layer
+/// (`check-crate-boundaries.py`). Which window a scope lists itself as is the store's decision,
+/// answered inside `list_page`. Every method returns a future, so no UI thread waits on the store.
 pub trait MailStore: Send + Sync {
     fn list_page(&self, request: PageRequest) -> Read<'_, ListPage>;
 
     fn list_count(&self, scope: ListScope) -> Read<'_, u32>;
 
     /// For search hits, which no `ListScope` describes: ranked, cross-folder, no offset. The caller
-    /// pages by slicing
-    /// the ids. No total comes back; ids the store no longer knows are dropped, so the answer may
-    /// be shorter than the request.
+    /// pages by slicing the ids. No total comes back; ids the store no longer knows are dropped, so
+    /// the answer may be shorter than the request.
     fn message_rows(&self, ids: Vec<MessageId>) -> Read<'_, Vec<MessageSummary>>;
 
     /// Lets a change naming ids be patched into the rows on screen instead of re-reading the page
-    /// (#1607). A store
-    /// that can only read pages answers with an error and the list falls back to the page; this
-    /// default does that.
+    /// (#1607). A store that can only read pages answers with an error and the list falls back to
+    /// the page; this default does that.
     fn rows_in(&self, scope: ListScope, ids: Vec<MessageId>) -> Read<'_, ListRows> {
         let _ = (scope, ids);
         Box::pin(async { Err(StoreError::new("this store reads pages, not rows")) })
@@ -294,8 +287,7 @@ pub trait MailStore: Send + Sync {
     fn mailboxes(&self, account: AccountId) -> Read<'_, Vec<Mailbox>>;
 
     /// Separate from `mailboxes` because the Outbox has no row there to carry a count, and the
-    /// Drafts badge needs a
-    /// number the cached column does not hold.
+    /// Drafts badge needs a number the cached column does not hold.
     fn draft_counts(&self, account: AccountId) -> Read<'_, DraftCounts>;
 }
 

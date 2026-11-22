@@ -3,11 +3,9 @@ import SwiftUI
 import PostioKit
 
 /// A programmatic `FocusState` change on a SwiftUI `TextField` hosted in `NSToolbar` does not cross
-/// into AppKit, and SwiftUI
-/// then re-seats the keyboard on the window's first focusable view (#1260), so the push is made in
-/// AppKit's terms.
-/// "Nearest" climbs from the searcher in the field's background, so it means this item's field, not
-/// whichever the window holds.
+/// into AppKit, and SwiftUI then re-seats the keyboard on the window's first focusable view
+/// (#1260), so the push is made in AppKit's terms. "Nearest" climbs from the searcher in the
+/// field's background, so it means this item's field, not whichever the window holds.
 public enum ViewTreeFocus {
     public static func firstTextField(under root: NSView) -> NSTextField? {
         if let field = root as? NSTextField, field.isEditable {

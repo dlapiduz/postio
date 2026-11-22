@@ -1,6 +1,5 @@
 //! Focus's compose dialog as a `ComposerHost`: taking the pane presents the dialog; giving it back
-//! closes it and returns
-//! the keyboard to the row it left from.
+//! closes it and returns the keyboard to the row it left from.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;

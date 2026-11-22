@@ -70,9 +70,8 @@ async fn an_idle_engine_costs_the_same_whatever_the_store_holds() {
 }
 
 /// The flag says whether the engine still answered afterwards: a dead engine idles perfectly. It is
-/// a delivery
-/// (`push_event` ends a held `IDLE`), not a count of calls, since a healthy engine parked in `IDLE`
-/// makes none.
+/// a delivery (`push_event` ends a held `IDLE`), not a count of calls, since a healthy engine
+/// parked in `IDLE` makes none.
 async fn idle_for(messages: usize, window: Duration) -> (Duration, Duration, bool) {
     let database = test_support::memory().await;
     let report = seed_large(&database, 11, messages).await;

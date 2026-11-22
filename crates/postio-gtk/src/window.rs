@@ -485,9 +485,8 @@ impl FocusWindow {
     }
 
     /// GTK leaves the focus where it was when its widget is removed: the key then starts at a
-    /// widget with no parents and never reaches
-    /// the window, so `j`, `z` and `Esc` do nothing until a click. When the widget holding the
-    /// keyboard leaves, the window takes it.
+    /// widget with no parents and never reaches the window, so `j`, `z` and `Esc` do nothing until
+    /// a click. When the widget holding the keyboard leaves, the window takes it.
     fn drop_focus_that_leaves(&self) {
         let watch: std::rc::Rc<std::cell::RefCell<Option<(gtk::Widget, glib::SignalHandlerId)>>> =
             std::rc::Rc::default();
@@ -666,9 +665,8 @@ impl FocusWindow {
     /// GDK event, which GTK4 gives no supported way to do.
     pub fn handle_key(&self, key: gdk::Key, state: gdk::ModifierType) -> glib::Propagation {
         // A picker at the row has the keyboard: its keys are the picker context's. The row menu has
-        // it while up: Escape closes it,
-        // a verb's key runs that verb, and the arrows and Enter walk and press its items as GTK
-        // does.
+        // it while up: Escape closes it, a verb's key runs that verb, and the arrows and Enter walk
+        // and press its items as GTK does.
         if let Some(menu) = self.row_menu().filter(|menu| menu.is_open()) {
             let command = postio_widgets::keys::chord(key, state).and_then(|chord| {
                 let mut resolver = self.imp().resolver.borrow_mut();
@@ -1668,8 +1666,8 @@ impl FocusWindow {
     }
 
     /// Only the add-account form must not shut the window's close button out: it covers the window
-    /// on a first run, where closing the app is the
-    /// one other thing a person can want, and a modal dialog gives its scrim the click.
+    /// on a first run, where closing the app is the one other thing a person can want, and a modal
+    /// dialog gives its scrim the click.
     pub fn click_through_dialog(&self, x: f64, y: f64) -> bool {
         let imp = self.imp();
         if imp.adding_account.borrow().is_none() {
@@ -4731,9 +4729,8 @@ impl FocusWindow {
     }
 
     /// Linux has no system Quick Look, so Space opens the copy in the desktop's app. The copy stays
-    /// until the controller takes it away,
-    /// since the app may still be reading it; Save writes it elsewhere and lets the copy go either
-    /// way.
+    /// until the controller takes it away, since the app may still be reading it; Save writes it
+    /// elsewhere and lets the copy go either way.
     fn file_copy(&self, copy: Option<&postio_focus::FileCopy>) {
         let Some(copy) = copy else {
             return;

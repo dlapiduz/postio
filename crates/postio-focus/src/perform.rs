@@ -42,8 +42,7 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
         ),
         Request::OpenScope { scope, splices } => {
             // Which folders are inboxes: lets Focus's inbox ignore mail moving elsewhere rather
-            // than
-            // re-read on every arrival.
+            // than re-read on every arrival.
             let mut folders = Vec::new();
             let mut enabled = Vec::new();
             if let Ok(accounts) = client.accounts().await {

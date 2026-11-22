@@ -81,11 +81,10 @@ COUNT="$(wc -l < "$LIST" | tr -d ' ')"
 echo "running $COUNT self-tests, $JOBS at a time"
 
 # One log per test, failures recorded by exit status, not by what they printed. `< "$LIST"`, not
-# `-a`: BSD xargs rejects `-a`, and with stderr
-# discarded this printed "every self-test passed" on every Mac (#1151).
-# A child's exit status says which of three things happened: 0 passed, 77 stood down
-# (`scripts/lib/prereq.py`'s `only_on`), anything else failed.
-# 77 is counted and named, not folded into the passes.
+# `-a`: BSD xargs rejects `-a`, and with stderr discarded this printed "every self-test passed" on
+# every Mac (#1151). A child's exit status says which of three things happened: 0 passed, 77 stood
+# down (`scripts/lib/prereq.py`'s `only_on`), anything else failed. 77 is counted and named, not
+# folded into the passes.
 NOT_APPLICABLE_EXIT=77
 FAILED="$LOGS/.failed"
 STOOD_DOWN="$LOGS/.not-applicable"

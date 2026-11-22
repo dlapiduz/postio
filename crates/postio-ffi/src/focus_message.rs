@@ -1,6 +1,5 @@
 //! What surrounds the body in the Mac's message window, composed by the functions GTK's open
-//! message uses so the two
-//! windows word a message alike. Swift lays it out and words nothing.
+//! message uses so the two windows word a message alike. Swift lays it out and words nothing.
 
 use postio_core::CommandId;
 use postio_model::listing::MailStore as _;
@@ -42,8 +41,7 @@ pub struct FocusAttachmentFfi {
     pub name: String,
     /// Its size, in the words the reader uses: "48 KB".
     pub size: String,
-    /// The name a save offers it under, made safe to write
-    /// (`postio_ui::reader::parts::save_name`).
+    /// The name a save offers it under, made safe to write (`postio_ui::reader::parts::save_name`).
     pub save_name: String,
 }
 
@@ -70,8 +68,7 @@ pub struct FocusMessageViewFfi {
 #[uniffi::export]
 impl Session {
     /// Shown from row `index` of `total`; `message` is the row's own or one `[` or `]` stepped to.
-    /// A store read, so never
-    /// on the main actor.
+    /// A store read, so never on the main actor.
     pub fn focus_message_view(&self, message: i64, index: u32, total: u32) -> FocusMessageViewFfi {
         let row = self.focus_row_of(message);
         crate::session::blocking(async {
@@ -85,8 +82,7 @@ impl Session {
 impl Session {
     pub(crate) fn focus_row_of(&self, message: i64) -> Option<crate::FocusRowFfi> {
         // The marker is the list row's: found by the message, not by `index`, which counts messages
-        // where the list also
-        // draws digest rows.
+        // where the list also draws digest rows.
         self.focus_driver()
             .row_of(message)
             .filter(|row| row.id == message)

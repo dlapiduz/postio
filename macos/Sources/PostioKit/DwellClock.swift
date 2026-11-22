@@ -2,9 +2,8 @@ import Foundation
 import PostioFFI
 
 /// The rule is `postio_ui::dwell`'s and this asks it rather than restating it: this arms a timer
-/// accordingly and decides
-/// nothing. A type rather than lines in `Engine` so that "sweeping marks nothing" is testable with
-/// a fake scheduler.
+/// accordingly and decides nothing. A type rather than lines in `Engine` so that "sweeping marks
+/// nothing" is testable with a fake scheduler.
 @MainActor
 public final class DwellClock {
     private let fired: (Int64) -> Void
@@ -27,8 +26,8 @@ public final class DwellClock {
     }
 
     /// Every move cancels: holding `j` re-arms on each row and rests on none, so it marks none.
-    /// `nil` cancels and starts
-    /// nothing, since a clock armed against an unknown message would mark whichever turned up.
+    /// `nil` cancels and starts nothing, since a clock armed against an unknown message would mark
+    /// whichever turned up.
     public func cursorMoved(to message: Int64?) {
         armed?.cancel()
         armed = nil

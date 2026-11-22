@@ -1,6 +1,6 @@
 //! This engine has no `journal_size_limit` (#1175), so the WAL ceiling is a sweep,
-//! `Store::truncate_log`
-//! from housekeeping: weaker, since a session that never reaches housekeeping never truncates.
+//! `Store::truncate_log` from housekeeping: weaker, since a session that never reaches housekeeping
+//! never truncates.
 
 use postio_storage::test_support;
 

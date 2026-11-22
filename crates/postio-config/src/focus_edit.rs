@@ -1,7 +1,6 @@
 //! Each is a function from the file's text to its new text through `toml_edit`, so every other line
 //! survives. Each answers `None` when the file already says what was asked, so a caller writes
-//! nothing
-//! and records nothing to take back.
+//! nothing and records nothing to take back.
 
 use toml_edit::{Array, ArrayOfTables, DocumentMut, InlineTable, Item, Table, Value};
 
@@ -14,8 +13,7 @@ fn document(text: &str) -> Result<DocumentMut> {
 }
 
 /// A file of only comments holds them as trailing text, which `toml_edit` writes after every table;
-/// such
-/// a file keeps its text on top and the edit follows it.
+/// such a file keeps its text on top and the edit follows it.
 fn render(text: &str, mut doc: DocumentMut) -> String {
     let had_nothing = text
         .parse::<DocumentMut>()
@@ -32,8 +30,7 @@ fn render(text: &str, mut doc: DocumentMut) -> String {
 }
 
 /// `[focus]` is made implicit when it has to be made, so a file that says nothing else of Focus
-/// gains
-/// `[focus.filter]` and not an empty `[focus]`.
+/// gains `[focus.filter]` and not an empty `[focus]`.
 fn filter_table(doc: &mut DocumentMut) -> Result<&mut Table> {
     let focus = doc
         .as_table_mut()
@@ -252,8 +249,7 @@ pub fn digest_rule(text: &str, name: &str) -> Result<Option<(usize, DigestRule)>
 }
 
 /// With `replacing`, the rule of that name is rewritten where it stands, or put at `at` when there
-/// is
-/// none (as undo puts back a removed rule). The file's order is the match order, so a rule keeps
+/// is none (as undo puts back a removed rule). The file's order is the match order, so a rule keeps
 /// its place.
 pub fn put_digest_rule(
     text: &str,

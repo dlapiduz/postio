@@ -1,7 +1,6 @@
 //! A digest's summary: the one place Focus shows text a model wrote. Statements are plain
-//! `String`s, so no markup, link or image can be
-//! live (ADR 0009 Q4); each carries a message reference with a verbatim excerpt, found by byte
-//! search when written and when shown, and an
+//! `String`s, so no markup, link or image can be live (ADR 0009 Q4); each carries a message
+//! reference with a verbatim excerpt, found by byte search when written and when shown, and an
 //! unresolved statement is not kept. A reference's number is its message's place among the
 //! summary's source messages.
 

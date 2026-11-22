@@ -1,6 +1,5 @@
 //! The merge sheet: its words and keys are Rust's. The frontend draws `MergeSheetViewFfi`, reports
-//! a click on a card,
-//! and presses Return, `n` and Escape as commands.
+//! a click on a card, and presses Return, `n` and Escape as commands.
 
 use postio_ui::contact_merge::MergeSheetView;
 

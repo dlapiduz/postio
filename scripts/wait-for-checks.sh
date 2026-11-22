@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # Wait for this branch's CI checks, and say whether it is safe to merge. "No checks reported" means
-# either that the branch schedules no workflow
-# or that GitHub has not registered one yet (#92, #135, #139), so the branch's own diff decides: the
-# workflows' `on.pull_request` path filters
-# (read by ci-expected-workflows.py) say what it schedules, and `gh` is only asked whether the
-# predicted checks have appeared.
+# either that the branch schedules no workflow or that GitHub has not registered one yet (#92, #135,
+# #139), so the branch's own diff decides: the workflows' `on.pull_request` path filters (read by
+# ci-expected-workflows.py) say what it schedules, and `gh` is only asked whether the predicted
+# checks have appeared.
 #
 # Usage:  scripts/wait-for-checks.sh <pr-url>
 #

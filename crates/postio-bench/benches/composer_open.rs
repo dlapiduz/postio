@@ -1,7 +1,6 @@
 //! The 16 ms budget lives in a bench, not a test (#796): a wall-clock assertion in `cargo test`
-//! measured
-//! the machine, failing whenever another worktree was compiling. CI compiles benches and times
-//! nothing.
+//! measured the machine, failing whenever another worktree was compiling. CI compiles benches and
+//! times nothing.
 
 use std::hint::black_box;
 use std::time::Instant;

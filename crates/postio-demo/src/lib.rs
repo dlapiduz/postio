@@ -66,8 +66,7 @@ impl Seed {
 }
 
 /// The store half only: a backfill in flight is an event, which `postio-gtk`'s `demo::storyboard`
-/// says
-/// once the host is up.
+/// says once the host is up.
 pub async fn seeded(seed: Seed) -> (Store, AccountId) {
     match seed {
         Seed::Empty => empty_demo().await,
@@ -519,8 +518,7 @@ pub const TODAY: &[Row] = &[
 ];
 
 /// The rule comes due on the demo's own day, 16:00, so the delivery the seed makes and the row's
-/// "came
-/// due" agree.
+/// "came due" agree.
 pub fn config() -> String {
     let day = today()
         .with_timezone(&Local)
@@ -1321,8 +1319,7 @@ async fn people(connection: &postio_storage::Connection) {
         ("automated", "receipts@shop.example"),
         ("automated", "no-reply@city.example"),
         // Detection calls a role mailbox a company only where the user knows two of its people; the
-        // demo
-        // says what a fuller mailbox would.
+        // demo says what a fuller mailbox would.
         ("company", "office@northfield.example"),
     ] {
         kinds.push((kind, address.to_owned()));

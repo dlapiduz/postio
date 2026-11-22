@@ -94,9 +94,8 @@ pub(super) struct Frame {
 }
 
 /// Where tiles `first..=last` go, as `(index, y, height)` in logical pixels. Every edge is on a
-/// device pixel
-/// and a tile ends where the next begins; fractional edges let the ground show as a line between
-/// tiles.
+/// device pixel and a tile ends where the next begins; fractional edges let the ground show as a
+/// line between tiles.
 pub(super) fn placements(
     first: u32,
     last: u32,

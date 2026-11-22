@@ -2,9 +2,8 @@ import Observation
 import PostioFFI
 
 /// Every app password is eventually rotated and every OAuth grant expires. The route is the
-/// boundary's
-/// (`AccountFfi.repair`): a password asked for where a provider wants browser consent, or a browser
-/// sent to fix an app password, is a dead end.
+/// boundary's (`AccountFfi.repair`): a password asked for where a provider wants browser consent,
+/// or a browser sent to fix an app password, is a dead end.
 public enum CredentialTrouble: Equatable, Sendable {
     case expired
     case rejected

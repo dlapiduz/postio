@@ -1,7 +1,6 @@
 //! The motion budget: a transition takes no more than 100 ms or is absent. Focus's own stylesheet
-//! has none; the toolkit's revealers
-//! and stacks default to 200-250 ms, so `keep_to_budget` shortens them. Reduced motion needs
-//! nothing here: `gtk-enable-animations` off runs no transition at all.
+//! has none; the toolkit's revealers and stacks default to 200-250 ms, so `keep_to_budget` shortens
+//! them. Reduced motion needs nothing here: `gtk-enable-animations` off runs no transition at all.
 
 use gtk::prelude::*;
 

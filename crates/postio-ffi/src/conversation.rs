@@ -1,6 +1,5 @@
 //! A conversation as the pane draws it (ADR 0015 Q4, ADR 0032): rows and where it opens, and the
-//! thread
-//! as one page. Swift computes neither.
+//! thread as one page. Swift computes neither.
 
 use chrono::{DateTime, Local, TimeZone, Utc};
 

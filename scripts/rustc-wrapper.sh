@@ -1,18 +1,16 @@
 #!/usr/bin/env bash
 # Cargo's RUSTC_WRAPPER (`.cargo/config.toml`): use sccache when the machine has it, get out of the
-# way when it does not (`mise use -g sccache` installs it).
-# An explicit RUSTC_WRAPPER in the environment wins.
-# Why TMPDIR is set here (#359): sccache is ONE daemon shared by every session and takes its temp
-# directory from the `TMPDIR` of whichever client spawned it,
-# ignoring later clients. `.cargo/config.toml`'s `TMPDIR = target/tmp` is per worktree, so the first
-# cargo after a restart donated its worktree's `target/tmp`,
-# and when `issue-release.sh` deleted it every build on the machine failed with "Failed to create
-# temp dir". Pinning it beside sccache's own cache outlives
+# way when it does not (`mise use -g sccache` installs it). An explicit RUSTC_WRAPPER in the
+# environment wins. Why TMPDIR is set here (#359): sccache is ONE daemon shared by every session and
+# takes its temp directory from the `TMPDIR` of whichever client spawned it, ignoring later clients.
+# `.cargo/config.toml`'s `TMPDIR = target/tmp` is per worktree, so the first cargo after a restart
+# donated its worktree's `target/tmp`, and when `issue-release.sh` deleted it every build on the
+# machine failed with "Failed to create temp dir". Pinning it beside sccache's own cache outlives
 # every worktree and stays on disk, not the 6 GB tmpfs. Only on the sccache path: without it,
-# cargo's per-worktree TMPDIR keeps scratch off the tmpfs.
-# Cargo's own `target/tmp` is created here, since nothing else does and the first temp file in a
-# fresh clone fails with `NotFound` (#613); done before the
-# branch replaces TMPDIR, on every platform. Fail open, like everything else in this file.
+# cargo's per-worktree TMPDIR keeps scratch off the tmpfs. Cargo's own `target/tmp` is created here,
+# since nothing else does and the first temp file in a fresh clone fails with `NotFound` (#613);
+# done before the branch replaces TMPDIR, on every platform. Fail open, like everything else in this
+# file.
 if [ -n "${TMPDIR:-}" ]; then
     mkdir -p "$TMPDIR" 2>/dev/null || true
 fi

@@ -112,9 +112,8 @@ impl ParsedMessage {
 }
 
 /// The parser gave up entirely (it panicked and `try_parse` caught it), unlike a message with
-/// missing fields, which
-/// `ParsedMessage` represents with `None`s. Carries nothing: callers only need to know not to tell
-/// the user to wait.
+/// missing fields, which `ParsedMessage` represents with `None`s. Carries nothing: callers only
+/// need to know not to tell the user to wait.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Unparseable;
 
@@ -127,18 +126,16 @@ impl std::fmt::Display for Unparseable {
 impl std::error::Error for Unparseable {}
 
 /// Bumped whenever a change makes `parse` yield something different for bytes it already saw. Raw
-/// bytes are not kept
-/// (ADR 0020), so the store stamps each body with its version (`messages.body_parsed_with`) and
-/// backfill fetches again the rows an older version got wrong.
-/// 1: lenient quoted-printable. 2: `mail-parser` 1.0, reading around damaged transfer encodings. 3:
-/// a delimiter line
-/// holds only whitespace after the boundary (`patches/mail-parser/0001`, #899), and a guessed
-/// structure carries the caveat (#287).
+/// bytes are not kept (ADR 0020), so the store stamps each body with its version
+/// (`messages.body_parsed_with`) and backfill fetches again the rows an older version got wrong. 1:
+/// lenient quoted-printable. 2: `mail-parser` 1.0, reading around damaged transfer encodings. 3: a
+/// delimiter line holds only whitespace after the boundary (`patches/mail-parser/0001`, #899), and
+/// a guessed structure carries the caveat (#287).
 pub const PARSER_VERSION: u32 = 3;
 
 /// Infallible; a message that cannot be parsed yields an empty `ParsedMessage` with only its
-/// `size`, the same shape as
-/// a message with nothing in it. Use `try_parse` when the difference matters.
+/// `size`, the same shape as a message with nothing in it. Use `try_parse` when the difference
+/// matters.
 pub fn parse(raw: &[u8]) -> ParsedMessage {
     try_parse(raw).unwrap_or_else(|_| empty(raw, false))
 }
@@ -150,11 +147,10 @@ pub fn parse_headers(raw: &[u8]) -> ParsedMessage {
 }
 
 /// As `parse`, but says so when nothing could be parsed (#277): `mail-parser` 0.11.8 aborted on a
-/// malformed multipart, and
-/// this runs on bytes a sender chose, during sync, so a crash would be re-delivered by every sync.
-/// Caught with `catch_unwind`,
-/// not validated, since no pre-check can predict which inputs reach the dependency. The reading
-/// pane uses it to tell "nothing parsed" from "no body".
+/// malformed multipart, and this runs on bytes a sender chose, during sync, so a crash would be
+/// re-delivered by every sync. Caught with `catch_unwind`, not validated, since no pre-check can
+/// predict which inputs reach the dependency. The reading pane uses it to tell "nothing parsed"
+/// from "no body".
 pub fn try_parse(raw: &[u8]) -> Result<ParsedMessage, Unparseable> {
     contain(|| parse_inner(raw, false))
 }
@@ -164,9 +160,8 @@ pub fn try_parse_headers(raw: &[u8]) -> Result<ParsedMessage, Unparseable> {
 }
 
 /// Decodes RFC 2047 encoded words in an isolated header value (an IMAP `ENVELOPE` subject or
-/// display name). Unreadable
-/// content comes back as surviving raw text, falling back to a lossy UTF-8 decode. Contained like
-/// `try_parse`, as the decoder is hostile-input code (#277).
+/// display name). Unreadable content comes back as surviving raw text, falling back to a lossy
+/// UTF-8 decode. Contained like `try_parse`, as the decoder is hostile-input code (#277).
 pub fn decode_header_text(raw: &[u8]) -> String {
     if raw.is_empty() {
         return String::new();
@@ -185,9 +180,8 @@ pub fn decode_header_text(raw: &[u8]) -> String {
 }
 
 /// One line: runs of line breaks and control characters fold to a single space. An encoded word can
-/// decode to `=0D=0A`,
-/// which no unfolding removes, and a forged `Bcc:` line appeared under a subject (#1770).
-/// Whitespace touching a run joins it.
+/// decode to `=0D=0A`, which no unfolding removes, and a forged `Bcc:` line appeared under a
+/// subject (#1770). Whitespace touching a run joins it.
 pub fn one_line(text: &str) -> String {
     let breaks = |c: char| c.is_control() || c == '\u{2028}' || c == '\u{2029}';
     if !text.chars().any(breaks) {
@@ -292,9 +286,8 @@ fn first_angle_bracketed(raw: &str) -> Option<&str> {
 }
 
 /// `AssertUnwindSafe` is sound: the closure borrows only the input and returns an owned value. The
-/// panic still reaches
-/// the hook, so a contained failure shows on stderr; a caller expecting it should log the outcome
-/// as "handled".
+/// panic still reaches the hook, so a contained failure shows on stderr; a caller expecting it
+/// should log the outcome as "handled".
 fn contain<F>(parse: F) -> Result<ParsedMessage, Unparseable>
 where
     F: FnOnce() -> ParsedMessage,
@@ -328,9 +321,8 @@ fn parse_inner(raw: &[u8], headers_only: bool) -> ParsedMessage {
     };
 
     // `mail_parser` can unwind, which this promises not to (#277). Containment is in `contain`,
-    // wrapping this whole function so
-    // `try_parse` can report `Err`. Silent here: logging would put `tracing` in the crate the
-    // workspace waits on (ADR 0004 Q1).
+    // wrapping this whole function so `try_parse` can report `Err`. Silent here: logging would put
+    // `tracing` in the crate the workspace waits on (ADR 0004 Q1).
     let parser = MessageParser::default();
     let parsed = if headers_only {
         parser.parse_headers(raw)
@@ -435,9 +427,8 @@ fn parse_inner(raw: &[u8], headers_only: bool) -> ParsedMessage {
 }
 
 /// RFC 8621 `parseStructure` treats a named HTML alternative as an attachment and lets plain text
-/// stand as the HTML
-/// body; Postio shows the sender's HTML and does not offer it again as a file. A part disposed
-/// `attachment` stays one.
+/// stand as the HTML body; Postio shows the sender's HTML and does not offer it again as a file. A
+/// part disposed `attachment` stays one.
 fn named_html_alternative<'m>(source: &'m MpMessage<'m>) -> Option<MessagePart<'m>> {
     if source
         .html_body()
@@ -458,10 +449,9 @@ fn named_html_alternative<'m>(source: &'m MpMessage<'m>) -> Option<MessagePart<'
 }
 
 /// `mail-parser` 1.0 recovers from structures 0.11 could not walk and flags the part (#287).
-/// `FALLBACK_DELIMITER` and
-/// `LIMIT_REACHED` mean content was lost. `MISSING_DELIMITER` and `UNTERMINATED` lose nothing, so
-/// they are not flagged:
-/// a caveat on mail that reads in full teaches people to ignore it.
+/// `FALLBACK_DELIMITER` and `LIMIT_REACHED` mean content was lost. `MISSING_DELIMITER` and
+/// `UNTERMINATED` lose nothing, so they are not flagged: a caveat on mail that reads in full
+/// teaches people to ignore it.
 fn structure_guessed(source: &MpMessage<'_>) -> bool {
     source.parts().any(|part| {
         part.flags()
@@ -470,9 +460,8 @@ fn structure_guessed(source: &MpMessage<'_>) -> bool {
 }
 
 /// RFC 2045 §6.4: an unknown encoding (private `x-` tokens included) is `application/octet-stream`;
-/// Postio shows the octets
-/// as text, which beats an empty body but is a guess, so it is flagged. Transfer layer only: a
-/// charset mismatch is `decoded_lossily`'s.
+/// Postio shows the octets as text, which beats an empty body but is a guess, so it is flagged.
+/// Transfer layer only: a charset mismatch is `decoded_lossily`'s.
 fn transfer_encoding_problem(source: &MpMessage<'_>) -> bool {
     source.parts().any(|part| {
         if part.is_multipart() || part.is_message() {
@@ -484,11 +473,9 @@ fn transfer_encoding_problem(source: &MpMessage<'_>) -> bool {
 }
 
 /// Whether charset decoding lost octets (U+FFFD), which is unrecoverable once in the stored body,
-/// index and quoted replies.
-/// `is_encoding_problem` is about the transfer encoding and is false either way on a charset
-/// mismatch (#901). The raw bytes
-/// are the control: a U+FFFD the sender sent is theirs, so a message with both reads clean, the
-/// safe direction to be wrong in.
+/// index and quoted replies. `is_encoding_problem` is about the transfer encoding and is false
+/// either way on a charset mismatch (#901). The raw bytes are the control: a U+FFFD the sender sent
+/// is theirs, so a message with both reads clean, the safe direction to be wrong in.
 fn decoded_lossily(raw: &[u8], body: &crate::MessageBody) -> bool {
     const REPLACEMENT_UTF8: &[u8] = "\u{fffd}".as_bytes();
     let decoded_has_it = [body.text.as_deref(), body.html.as_deref()]
@@ -536,11 +523,9 @@ fn unfold(value: &str) -> String {
 }
 
 /// For the payload axis (ADR 0017): `BODY[2.1]` returns encoded bytes with no headers, so the
-/// `BODYSTRUCTURE` headers kept
-/// on the row are prepended to rebuild an entity. Attachments are content-addressed on the decoded
-/// form, so identical files
-/// share a blob. `None` when the bytes are not an entity or carry no body. Contained like
-/// `try_parse`.
+/// `BODYSTRUCTURE` headers kept on the row are prepended to rebuild an entity. Attachments are
+/// content-addressed on the decoded form, so identical files share a blob. `None` when the bytes
+/// are not an entity or carry no body. Contained like `try_parse`.
 pub fn decode_entity(raw: &[u8]) -> Option<Vec<u8>> {
     // Contained for the reason `parse` is (#277): these bytes were chosen by whoever sent the mail.
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -598,9 +583,8 @@ fn addresses(value: Option<AddressList<'_>>) -> Vec<EmailAddress> {
 }
 
 /// Drops anything that reads as an HTML tag; some senders put markup in `text/plain`. Not a
-/// sanitizer: `postio-model` may not depend on
-/// `ammonia` or `html5ever` (ADR 0004), and the preview is drawn as a label. A tag is `<`, optional
-/// `/`, an ASCII letter, name characters, then
+/// sanitizer: `postio-model` may not depend on `ammonia` or `html5ever` (ADR 0004), and the preview
+/// is drawn as a label. A tag is `<`, optional `/`, an ASCII letter, name characters, then
 /// whitespace, `/` or `>`, which spares `<https://example.com>` and `<ada@example.com>`.
 fn without_tags(text: &str) -> std::borrow::Cow<'_, str> {
     if !text.contains('<') {
@@ -649,9 +633,8 @@ fn tag_ends_at(rest: &str) -> Option<usize> {
 }
 
 /// Unwraps markdown links, so a snippet is words rather than syntax: bulk senders run HTML through
-/// a converter. `[label](url)` becomes `label`
-/// and `[ ](url)` becomes nothing. Only the link form, only in the snippet; anything not a
-/// well-formed link is left as typed.
+/// a converter. `[label](url)` becomes `label` and `[ ](url)` becomes nothing. Only the link form,
+/// only in the snippet; anything not a well-formed link is left as typed.
 fn without_markdown_links(text: &str) -> std::borrow::Cow<'_, str> {
     if !text.contains("](") {
         return std::borrow::Cow::Borrowed(text);
@@ -731,11 +714,9 @@ fn multipart_boundary_fallback(source: &MpMessage<'_>) -> Option<String> {
 }
 
 /// Maps every leaf part to its IMAP body-section path (`2.1`), which a lazy fetch of one attachment
-/// asks the server for:
-/// children number from 1 and nesting extends the path with a dot. Walks an explicit stack:
-/// recursion overflowed on
-/// crafted deep nesting, a `SIGSEGV` that `catch_unwind` cannot catch, and a depth limit would be a
-/// number someone must get right (#277).
+/// asks the server for: children number from 1 and nesting extends the path with a dot. Walks an
+/// explicit stack: recursion overflowed on crafted deep nesting, a `SIGSEGV` that `catch_unwind`
+/// cannot catch, and a depth limit would be a number someone must get right (#277).
 fn part_paths(source: &MpMessage<'_>) -> HashMap<PartId, String> {
     let mut paths = HashMap::new();
     // The root has no path of its own: its children are numbered from 1, as IMAP does.

@@ -1,7 +1,6 @@
 //! A fixed schema with no text of its own (ADR 0009): a model's words are attacker-shaped by the
-//! time
-//! they reach a row. A marker's quote is a `Span` of the message's own text; the names an outcome
-//! carries are newtypes this crate alone constructs.
+//! time they reach a row. A marker's quote is a `Span` of the message's own text; the names an
+//! outcome carries are newtypes this crate alone constructs.
 
 use std::ops::Range;
 

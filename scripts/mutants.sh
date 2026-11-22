@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # Mutation-test the pure/logic crates: postio-model, postio-search, postio-config and postio-sync.
-# Not the GTK crates: mutating widget code gives timeouts and noise.
-# Slow by construction (a full rebuild and test per mutant, ~1900 mutants, hours), so it never gates
-# a PR and belongs on a runner of its own, never a shared
-# workstation. It reports survivors past docs/mutants-baseline.txt (#99).
+# Not the GTK crates: mutating widget code gives timeouts and noise. Slow by construction (a full
+# rebuild and test per mutant, ~1900 mutants, hours), so it never gates a PR and belongs on a runner
+# of its own, never a shared workstation. It reports survivors past docs/mutants-baseline.txt (#99).
 #
 #   scripts/mutants.sh                          # every crate above
 #   scripts/mutants.sh postio-config            # just one

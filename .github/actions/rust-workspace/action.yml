@@ -46,8 +46,8 @@ runs:
   using: composite
   steps:
     # `mold` is the linker `scripts/linker.sh` prefers; installing it puts the runner on the
-    # developer's path
-    # and cuts ~265 MB peak RSS per link, after a debug build once exhausted a runner.
+    # developer's path and cuts ~265 MB peak RSS per link, after a debug build once exhausted a
+    # runner.
     #
     # Ubuntu equivalents of the Fedora packages in README.md:
     #   gtk4-devel        -> libgtk-4-dev

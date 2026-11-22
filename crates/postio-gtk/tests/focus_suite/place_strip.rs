@@ -1,6 +1,6 @@
 //! A place that is not the inbox describes itself: its strip counts what it lists, the has-action
-//! toggle goes with the inbox it narrows,
-//! and an empty place says why and the way out instead of a blank page.
+//! toggle goes with the inbox it narrows, and an empty place says why and the way out instead of a
+//! blank page.
 
 use gtk::prelude::*;
 use postio_core::CommandId;

@@ -1,6 +1,5 @@
 //! The key map sheet for this platform: `postio_ui::keymap_sheet`'s groups and the keys of the
-//! keymap in force,
-//! so the Mac teaches what the Mac answers. `?` is the controller's (ADR 0045).
+//! keymap in force, so the Mac teaches what the Mac answers. `?` is the controller's (ADR 0045).
 
 use crate::session::Session;
 

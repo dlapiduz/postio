@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# Type-check the workspace for another platform, as far as this machine can (#642).
-# `cargo check --target <triple>` over every member, reporting ok, skipped (a C dependency's build
-# script needs a cross-toolchain)
-# or FAILED (rustc rejected the code). Decided per run from the failure, not a crate list, which
-# would go stale.
+# Type-check the workspace for another platform, as far as this machine can (#642). `cargo check
+# --target <triple>` over every member, reporting ok, skipped (a C dependency's build script needs a
+# cross-toolchain) or FAILED (rustc rejected the code). Decided per run from the failure, not a
+# crate list, which would go stale.
 #
 # Usage:
 #   scripts/cross-check.sh                          # aarch64-apple-darwin

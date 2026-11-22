@@ -9,10 +9,9 @@ public enum SyncAccess: Equatable, Sendable {
 }
 
 /// A protocol so every test, the demo and every storyboard use a fake; the real store
-/// (`AppleAddressBook`) is constructed only
-/// when a person turns sync on. It has a snapshot and no write: any write path must sit behind the
-/// build flag and the
-/// person's confirmation of the dry-run plan (`postio_contact_sync::write`).
+/// (`AppleAddressBook`) is constructed only when a person turns sync on. It has a snapshot and no
+/// write: any write path must sit behind the build flag and the person's confirmation of the
+/// dry-run plan (`postio_contact_sync::write`).
 @MainActor
 public protocol SyncAddressBook: AnyObject {
     var access: SyncAccess { get }
@@ -39,8 +38,7 @@ public protocol ContactsSettingsEngine: AnyObject {
 extension PostioSession: ContactsSettingsEngine {}
 
 /// Asks the Mac for access only when the person presses "Turn on and preview". The preview writes
-/// to neither store; "Bring in"
-/// writes Postio's, on the person's click, never the address book.
+/// to neither store; "Bring in" writes Postio's, on the person's click, never the address book.
 @MainActor
 @Observable
 public final class ContactsSettingsModel {

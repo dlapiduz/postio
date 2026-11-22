@@ -145,9 +145,8 @@ public final class FocusListTable: NSObject {
     }
 
     /// Inserted, not reloaded, so only what is below moves. After a re-read with a thread open the
-    /// rows on
-    /// screen were drawn by the session's splice, so the list is drawn again whole rather than
-    /// slid.
+    /// rows on screen were drawn by the session's splice, so the list is drawn again whole rather
+    /// than slid.
     public func splice(anchor: Int, children: Int) {
         let folded = model.open
         let reread = model.rereadWhileOpen
@@ -295,8 +294,7 @@ public final class FocusListTable: NSObject {
     }
 
     /// `noteHeightOfRows` animates by default, so a page landing after a delete re-read slid every
-    /// row
-    /// into place and the list appeared to collapse and grow back.
+    /// row into place and the list appeared to collapse and grow back.
     private func noteHeights(_ rows: IndexSet) {
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0

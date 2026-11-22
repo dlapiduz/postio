@@ -1,7 +1,6 @@
 //! Focus's command bar and folders popover. The controller (`postio_focus`, ADR 0045) decides what
-//! typing means
-//! and what each line does; the Mac draws what it is told and reports the field's words, a line run
-//! by token, and `Tab`.
+//! typing means and what each line does; the Mac draws what it is told and reports the field's
+//! words, a line run by token, and `Tab`.
 
 use crate::mailbox::MailboxRoleFfi;
 use crate::session::Session;

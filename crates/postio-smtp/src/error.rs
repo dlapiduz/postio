@@ -64,11 +64,9 @@ pub enum SmtpError {
     Cancelled,
 
     /// How the `DATA` path carries the one fact SMTP cannot report, that the bytes had started
-    /// leaving, out to
-    /// [`submission_is_indeterminate`](Self::submission_is_indeterminate). Every other predicate
-    /// delegates
-    /// through it, so wrapping an error never changes what a caller already decided. Carries no
-    /// part of the message.
+    /// leaving, out to [`submission_is_indeterminate`](Self::submission_is_indeterminate). Every
+    /// other predicate delegates through it, so wrapping an error never changes what a caller
+    /// already decided. Carries no part of the message.
     #[error("{source}")]
     Indeterminate {
         #[source]
@@ -90,15 +88,12 @@ impl SmtpError {
     }
 
     /// Whether the message payload may already have reached the server (ADR 0021). Asked before
-    /// `is_transient`:
-    /// retrying a send that was in fact accepted delivers a second copy nothing can recall.
-    /// False means nothing can have been submitted: the server answered with a refusal, or the
-    /// transport failed before the
-    /// payload began. True means the client stopped hearing from the server after the first byte of
-    /// the body and before the
-    /// reply to the terminating `.` was read; "never arrived" and "arrived but unacknowledged" are
-    /// indistinguishable there.
-    /// `DATA` itself is not that moment.
+    /// `is_transient`: retrying a send that was in fact accepted delivers a second copy nothing can
+    /// recall. False means nothing can have been submitted: the server answered with a refusal, or
+    /// the transport failed before the payload began. True means the client stopped hearing from
+    /// the server after the first byte of the body and before the reply to the terminating `.` was
+    /// read; "never arrived" and "arrived but unacknowledged" are indistinguishable there. `DATA`
+    /// itself is not that moment.
     /// [`SmtpSession::send_message`](crate::session::SmtpSession::send_message) tags the failures
     /// raised inside it.
     pub fn submission_is_indeterminate(&self) -> bool {

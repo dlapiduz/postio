@@ -1047,8 +1047,8 @@ async fn leaving_held_mail_out_costs_no_statement_and_scans_nothing() {
 #[tokio::test]
 async fn which_conversations_draw_a_marker_is_one_statement_sought_from_the_markers() {
     // Which rows draw a marker is read from the markers, not by walking an inbox;
-    // `idx_markers_open`
-    // cannot be partial because this engine's planner does not read partial indexes.
+    // `idx_markers_open` cannot be partial because this engine's planner does not read partial
+    // indexes.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let inboxes = world(&connection).await;

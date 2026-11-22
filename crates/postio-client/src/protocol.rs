@@ -46,8 +46,7 @@ pub enum Req {
     Send(Command, StateSnapshot),
     SendTracked(Command, StateSnapshot),
     /// A predicate the host walks with the results' own match, in order with every other command,
-    /// so one
-    /// undo takes the whole back.
+    /// so one undo takes the whole back.
     SendMatching {
         command: Command,
         account: postio_model::AccountScope,
@@ -599,8 +598,7 @@ pub struct Reading {
     /// `None` for ordinary mail.
     pub send_state: Option<postio_model::DraftState>,
     /// The one quiet line when the sender may not be who they say: failed authentication, or a
-    /// display
-    /// name that names another address (#1928). `None` for ordinary mail.
+    /// display name that names another address (#1928). `None` for ordinary mail.
     pub sender_warning: Option<String>,
 }
 
@@ -644,8 +642,7 @@ pub struct PrivacyLog {
 }
 
 /// The terminal's first run syncs at once. A desktop app starts the sync itself: a second engine
-/// for
-/// one account, or one started under the wrong sync window, is what `Wait` keeps out.
+/// for one account, or one started under the wrong sync window, is what `Wait` keeps out.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum AfterSave {
     #[default]
@@ -654,10 +651,8 @@ pub enum AfterSave {
 }
 
 /// A discovery probe opens connections to servers the person has not named yet, so one they moved
-/// on
-/// from must stop at once rather than hold a socket open (#57, ADR 0012 Q3). Shared, not sent:
-/// hooks
-/// run inside `stop` on the frontend's own thread before it returns.
+/// on from must stop at once rather than hold a socket open (#57, ADR 0012 Q3). Shared, not sent:
+/// hooks run inside `stop` on the frontend's own thread before it returns.
 #[derive(Clone, Default)]
 pub struct Stop(std::sync::Arc<std::sync::Mutex<Stopping>>);
 

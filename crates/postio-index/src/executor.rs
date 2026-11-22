@@ -46,11 +46,10 @@ const RECENCY_POOL_MULTIPLIER: u32 = 2;
 const RECENCY_POOL_MIN: u32 = 50;
 
 /// Raised with the half-life below; a heavier weight on a term that is zero for every candidate
-/// changes nothing. Calibrated against `bm25()`, then re-measured against `fts_score`,
-/// whose spread is about a quarter of bm25's (0.20 over the whole match set) and often tied at the
-/// top, so the blend is more recency-led than it was.
-/// Unchanged as a decision: #1216 complained of very old mail surfacing. A clearly better match
-/// must still beat a small recency difference
+/// changes nothing. Calibrated against `bm25()`, then re-measured against `fts_score`, whose spread
+/// is about a quarter of bm25's (0.20 over the whole match set) and often tied at the top, so the
+/// blend is more recency-led than it was. Unchanged as a decision: #1216 complained of very old
+/// mail surfacing. A clearly better match must still beat a small recency difference
 /// (`newest_order_answers_in_date_order_however_the_ranking_disagrees`, `ranking_weights`).
 const RECENCY_WEIGHT: f64 = 3.0;
 /// Two years, not fourteen days: on a real store the forty best matches for `invoice` all had a
@@ -62,13 +61,13 @@ const RECENCY_WEIGHT: f64 = 3.0;
 const RECENCY_HALF_LIFE_DAYS: f64 = 730.0;
 
 /// Linear because the store engine has no `exp`, `ln` or `pow`. It decides which candidates enter
-/// the pool, which
-/// `rank_score` only reorders, so raising `RECENCY_WEIGHT` alone would not surface recent mail.
+/// the pool, which `rank_score` only reorders, so raising `RECENCY_WEIGHT` alone would not surface
+/// recent mail.
 const POOL_AGE_WEIGHT_PER_YEAR: f64 = 0.25;
 
 /// The text score separates near-identical mail by noise (three invoices from one template scored
-/// within a few percent),
-/// so within this tolerance matches are one band and recency and the sender decide.
+/// within a few percent), so within this tolerance matches are one band and recency and the sender
+/// decide.
 const TEXT_TIE: f64 = 0.10;
 
 /// Wider for messages whose subject and sender say every word: they read as a dated series, newest
@@ -99,8 +98,7 @@ fn bands(bm25: &[f64], tie: f64) -> Vec<f64> {
 }
 
 /// A prefix, so "invoice" covers "invoices". The free-text score credits subject and sender only
-/// when every term is there,
-/// so this separates a message about something from one that mentions it.
+/// when every term is there, so this separates a message about something from one that mentions it.
 pub fn coverage(terms: &[String], said: &str) -> f64 {
     if terms.is_empty() {
         return 0.0;
@@ -168,9 +166,8 @@ fn relevance_keys(
         candidate.score = rank_score(text, candidate.aged_from, now, candidate.sender_times_seen);
     }
     // Recency and affinity are too weak to order recent mail on their own, so within a band the
-    // message whose
-    // subject and sender say more of the query leads; otherwise a sender's own newsletters came
-    // back in no visible order.
+    // message whose subject and sender say more of the query leads; otherwise a sender's own
+    // newsletters came back in no visible order.
     let terms: Vec<String> = query
         .searchable_terms()
         .filter(|term| !term.negated)
@@ -220,9 +217,8 @@ fn relevance_keys(
 }
 
 /// `received_at` is when it arrived in its folder, so a move or resync re-dates it and last month's
-/// invoice archived this
-/// morning outranked this week's mail. The `Date` header is taken only when earlier: a future date
-/// never lifts a message.
+/// invoice archived this morning outranked this week's mail. The `Date` header is taken only when
+/// earlier: a future date never lifts a message.
 const AGED_FROM: &str = "CASE WHEN m.date IS NOT NULL AND m.date < m.received_at \
      THEN m.date ELSE m.received_at END";
 
@@ -254,8 +250,7 @@ pub async fn search(
 ) -> Result<SearchResults> {
     let exact = search_as(connection, request, now, &Default::default()).await?;
     // The forgiving search the command bar asks for (ADR 0037): exact matches first, then, only if
-    // they do not fill the
-    // page, the words near them. A rule's query is never forgiving.
+    // they do not fill the page, the words near them. A rule's query is never forgiving.
     if !request.query.is_forgiving() || exact.hits.len() >= request.limit as usize {
         return Ok(exact);
     }
@@ -293,9 +288,8 @@ async fn search_as(
     let total_hits = plan.count(connection).await?;
     let total_hits_capped = total_hits >= TOTAL_HITS_CAP;
     // A term matched by most of a large mailbox has no cheap top-K by `bm25` (a full sort cost
-    // several hundred ms, over the
-    // `<100 ms` budget), so past `RANK_BY_RELEVANCE_LIMIT` matches `fetch` orders by recency, which
-    // the list index answers with no sort.
+    // several hundred ms, over the `<100 ms` budget), so past `RANK_BY_RELEVANCE_LIMIT` matches
+    // `fetch` orders by recency, which the list index answers with no sort.
     let rank_by_relevance = request.order == postio_search::ResultOrder::Relevance
         && plan.has_match
         && total_hits <= RANK_BY_RELEVANCE_LIMIT;
@@ -402,8 +396,8 @@ async fn suggestion_for(
 }
 
 /// Empty when `typed` cannot be widened at all. Recovered from the text of at most
-/// [`SUGGESTION_DOCUMENTS`] documents
-/// of each half, since the index answers with rows, not the terms it expanded to.
+/// [`SUGGESTION_DOCUMENTS`] documents of each half, since the index answers with rows, not the
+/// terms it expanded to.
 async fn words_near(
     connection: &Connection,
     typed: &str,
@@ -415,8 +409,8 @@ async fn words_near(
         return Ok(HashMap::new());
     };
     // The words typed beside it, bare, so the index reads one query of bare words (the only kind it
-    // expands `~N` in) and the
-    // documents read best match all of it; without them "trop" never reached the one scout troop.
+    // expands `~N` in) and the documents read best match all of it; without them "trop" never
+    // reached the one scout troop.
     let beside: Vec<String> = beside
         .iter()
         .map(|word| word.to_lowercase())
@@ -606,15 +600,13 @@ const REFINE_FOLDERS: usize = 2;
 const SUGGESTION_DOCUMENTS: i64 = 50;
 
 /// Separate from [`search`] because the facets only need to be right by the time the eye reaches
-/// the column; making every
-/// keystroke pay for four aggregate queries would spend the interaction budget. Every count is
-/// capped like [`SearchResults::total_hits`] ([`TOTAL_HITS_CAP`]).
+/// the column; making every keystroke pay for four aggregate queries would spend the interaction
+/// budget. Every count is capped like [`SearchResults::total_hits`] ([`TOTAL_HITS_CAP`]).
 pub async fn facets(connection: &Connection, request: &SearchRequest<'_>) -> Result<Facets> {
     // Scope counts hold the query and vary the scope: the column says what switching would find.
-    // Refinements are measured inside the
-    // current scope and share its capped walk (#1612); only the other scopes walk the match again,
-    // since one shared walk could let a
-    // broad match in a large folder fill the cap and read another scope as empty.
+    // Refinements are measured inside the current scope and share its capped walk (#1612); only the
+    // other scopes walk the match again, since one shared walk could let a broad match in a large
+    // folder fill the cap and read another scope as empty.
     let here = Plan::build(request).current_scope(connection).await?;
     let mut scopes = Vec::with_capacity(Scope::ALL.len());
     for scope in Scope::ALL {
@@ -660,25 +652,21 @@ pub fn rank_score(
 }
 
 /// Body at half, summed rather than the better of the two, so a message matching in both ranks
-/// first. The two scores share no scale,
-/// so half encodes only the ordering "subject beats body, both beats either"
-/// (`a_subject_match_outranks_a_body_match`).
-/// bm25 is negative-is-better, so a missing side contributes zero.
+/// first. The two scores share no scale, so half encodes only the ordering "subject beats body,
+/// both beats either" (`a_subject_match_outranks_a_body_match`). bm25 is negative-is-better, so a
+/// missing side contributes zero.
 const BODY_SCORE_WEIGHT: f64 = 0.5;
 
 /// `UNION ALL` of two `MATCH`es, not an `OR`: FTS5 needs `MATCH` as an index constraint. No `GROUP
 /// BY`: an aggregate materialises every match first (a 120,000-row temp table, 297 ms against 100
-/// ms),
-/// so a message matching in both appears twice; callers dedupe (the pool in Rust, counts with
+/// ms), so a message matching in both appears twice; callers dedupe (the pool in Rust, counts with
 /// `DISTINCT`, `hydrate` aggregates). The matches are written first and pinned there, or SQLite
-/// drives from `messages` (49 ms against 2.9).
-/// `fts_score` is projected bare and negated outside: inside any arithmetic it answers `0.0`,
-/// silently dropping the ranking (`the_score_is_lost_to_any_arithmetic_around_it` in
-/// `postio-storage` will notice a fix).
-/// It also answers `0.0` unless its query term is the same parameter as the `fts_match` that
-/// selected the row, so the term is `?1`/`?2` once per index and reused (`match_params` binds two
-/// values).
-/// The lookup names `idx_messages_content`: the planner has no statistics and ranks a seek by key
+/// drives from `messages` (49 ms against 2.9). `fts_score` is projected bare and negated outside:
+/// inside any arithmetic it answers `0.0`, silently dropping the ranking
+/// (`the_score_is_lost_to_any_arithmetic_around_it` in `postio-storage` will notice a fix). It also
+/// answers `0.0` unless its query term is the same parameter as the `fts_match` that selected the
+/// row, so the term is `?1`/`?2` once per index and reused (`match_params` binds two values). The
+/// lookup names `idx_messages_content`: the planner has no statistics and ranks a seek by key
 /// columns bound, so `m.received_at >= ?` offered `idx_messages_account_list` and walked every
 /// message in range per hit (#1809); `driven_join_plan` holds it.
 const HITS_JOIN: &str = "FROM (
@@ -695,11 +683,9 @@ const HITS_JOIN: &str = "FROM (
                  ON m.content_id = hits.rid";
 
 /// The conversation search's own: keep the first two arms and the join in step with [`HITS_JOIN`].
-/// The attachment arm is grouped by content,
-/// so a spreadsheet whose every row says the word is one hit; its text is folded like the body and
-/// matched by `?2`.
-/// Every statement looking messages up by content names `idx_messages_content` (#1809), held by
-/// `driven_join_plan`.
+/// The attachment arm is grouped by content, so a spreadsheet whose every row says the word is one
+/// hit; its text is folded like the body and matched by `?2`. Every statement looking messages up
+/// by content names `idx_messages_content` (#1809), held by `driven_join_plan`.
 const HITS_JOIN_WITH_FILES: &str = "FROM (
              SELECT content_id AS rid,
                     fts_score(sender, recipients, subject, filenames, list_id, ?1) AS meta,
@@ -881,8 +867,7 @@ impl Plan {
         as_sets: bool,
     ) -> Self {
         // `Unified` names no account, so the predicate is absent: without `idx_messages_recency`
-        // (migration 0012) the recency path
-        // has no index to supply its ordering (ADR 0005 Q5a).
+        // (migration 0012) the recency path has no index to supply its ordering (ADR 0005 Q5a).
         let mut conditions = vec!["m.deleted_locally = 0".to_string()];
         let mut params: Vec<turso::Value> = Vec::new();
         match request.account.account() {
@@ -1127,8 +1112,8 @@ impl Plan {
     }
 
     /// `CROSS JOIN` pins the join order for a match too broad to rank: a plain `JOIN` had SQLite
-    /// drive from `messages_fts` and sort
-    /// the whole match set in a temp b-tree (0.75 s on postio-y47's "common word").
+    /// drive from `messages_fts` and sort the whole match set in a temp b-tree (0.75 s on
+    /// postio-y47's "common word").
     fn fetch_form(&self, rank_by_relevance: bool, total_hits: u64) -> Form {
         if rank_by_relevance || self.widened || total_hits <= PROBED_FORM_LIMIT {
             Form::Driven
@@ -1295,9 +1280,8 @@ impl Plan {
             "m.received_at DESC"
         };
         // The probed path carries no scores on purpose: it is taken only for a match too broad to
-        // rank, where `bm25` is near-uniform,
-        // and adding any column (even correlated subqueries) loses the plan and costs half a
-        // second.
+        // rank, where `bm25` is near-uniform, and adding any column (even correlated subqueries)
+        // loses the plan and costs half a second.
         let scores = match (self.has_match, form) {
             (true, Form::Driven) => "-hits.meta, -hits.body",
             _ => "NULL, NULL",
@@ -1966,9 +1950,8 @@ mod tests {
         assert_eq!(plan.fetch_form(true, 500), Form::Driven);
 
         // Ordering and join form are separate questions: switching the form on the ordering
-        // threshold made a term scattered
-        // through old mail scan deep (`invoice` at 3,843 hits took 972 ms probed against 142 ms
-        // driven).
+        // threshold made a term scattered through old mail scan deep (`invoice` at 3,843 hits took
+        // 972 ms probed against 142 ms driven).
         assert_eq!(plan.fetch_form(false, 3_843), Form::Driven);
         assert_eq!(plan.fetch_form(false, PROBED_FORM_LIMIT), Form::Driven);
 

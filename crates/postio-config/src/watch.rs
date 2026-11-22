@@ -1,8 +1,6 @@
 //! Watches the containing directory, not the file: editors save to a temporary file and rename it
-//! over
-//! the target, which would leave a watch on the old inode deaf. A debounce coalesces one save's
-//! burst of
-//! events into one reload. Parsing happens on the watcher's thread, never the UI's.
+//! over the target, which would leave a watch on the old inode deaf. A debounce coalesces one
+//! save's burst of events into one reload. Parsing happens on the watcher's thread, never the UI's.
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, RecvTimeoutError};

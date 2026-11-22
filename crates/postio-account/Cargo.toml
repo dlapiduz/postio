@@ -12,8 +12,8 @@ repository.workspace = true
 default = ["imap"]
 
 # The io-imap-backed implementation, on by default. Off leaves the MailBackend seam, mock,
-# autoconfig discovery and keyring,
-# which keeps a pre-1.0 protocol crate out of everything above this one (ADR 0001).
+# autoconfig discovery and keyring, which keeps a pre-1.0 protocol crate out of everything above
+# this one (ADR 0001).
 imap = [
     "dep:io-imap",
     "dep:io-sasl",
@@ -45,10 +45,9 @@ chrono = { workspace = true, features = ["serde", "std"] }
 io-http = { version = "0.8", default-features = false }
 io-imap = { version = "0.11.2", default-features = false, features = ["client"], optional = true }
 # The OAuth 2.0 wire core (#537). `client` is only the random generators; HTTP stays on this crate's
-# cancellable transport,
-# because io-oauth's client wrapper consumes the status the 200-with-error-body shim in
-# `exchange.rs` needs.
-# The DNS wire format for the MX query (#94): `io-pim-discovery` publishes no MX lookup of its own.
+# cancellable transport, because io-oauth's client wrapper consumes the status the
+# 200-with-error-body shim in `exchange.rs` needs. The DNS wire format for the MX query (#94):
+# `io-pim-discovery` publishes no MX lookup of its own.
 domain = { version = "0.12", default-features = false, features = ["alloc", "std", "unstable-new"] }
 io-oauth = { version = "0.7", default-features = false, features = ["client"] }
 io-pim-discovery = { version = "0.13", default-features = false, features = ["autoconfig", "rfc6186", "rfc8414", "rustls-ring"] }
@@ -91,8 +90,7 @@ serde-xml-rs = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util", "time"] }
 
 # Platform sections stay at the foot: a TOML table runs to the next header, so a mid-list one makes
-# everything below it conditional
-# (`check-target-sections-last.py`, #642).
+# everything below it conditional (`check-target-sections-last.py`, #642).
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "3.7.0"
 

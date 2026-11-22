@@ -962,9 +962,8 @@ pub fn a_persons_pin_is_listed_by_name_and_taken_back_in_settings() {
 }
 
 /// libadwaita opens a dialog by scaling it from 0.8 to 1, so until it has opened each row is
-/// smaller and elsewhere every frame,
-/// and a press and a release a frame later land at two places: the press waits for the row to be
-/// drawn still (#1817).
+/// smaller and elsewhere every frame, and a press and a release a frame later land at two places:
+/// the press waits for the row to be drawn still (#1817).
 pub fn a_click_into_settings_as_it_opens_waits_for_it_to_open() {
     crate::gtk_case(async {
         if !support::display() {
