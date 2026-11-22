@@ -6,7 +6,7 @@
 //! cases drive it as a frontend would: a fake list, keys, and the replies a
 //! client would give.
 
-use crate::search_support::{asks, shown};
+use crate::search_support::{asks, footer_of, shown};
 use chrono::{TimeZone, Utc};
 use postio_config::paths::Platform;
 use postio_core::{CommandId, Event};
@@ -695,17 +695,6 @@ fn harbor_expanded(counts: &[u32]) -> (FocusController, List) {
     let (ticket, thread) = read_asked(&effects).expect("a read");
     let _ = answer(&mut focus, ticket, harbor(thread), &rows);
     (focus, rows)
-}
-
-/// The footer an effect list draws last, if any.
-fn footer_of(effects: &[Effect]) -> Option<postio_ui::scope::FooterView> {
-    shown(effects)
-        .into_iter()
-        .rev()
-        .find_map(|intent| match intent {
-            Intent::Footer(view) => Some(view),
-            _ => None,
-        })
 }
 
 /// What `command` pressed on the cursor's row would aim at: the targets of

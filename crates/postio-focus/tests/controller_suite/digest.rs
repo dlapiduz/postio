@@ -10,7 +10,7 @@
 //! only once confirmed; `d` opens the rule dialog filled in. On the Mac a
 //! message from the digest's list opens in the digest's window too (M4).
 
-use crate::search_support::{asks, shown};
+use crate::search_support::{asks, footer_of, shown};
 use chrono::Utc;
 use postio_config::paths::Platform;
 use postio_config::{Config, FocusConfig};
@@ -556,17 +556,6 @@ fn back_on_the_rule_dialog_gives_the_keyboard_back() {
         rule(&run(&mut focus, CommandId::DigestRule)).is_some(),
         "and `d` opens a fresh dialog"
     );
-}
-
-/// The footer an effect list draws last, if any.
-fn footer_of(effects: &[Effect]) -> Option<postio_ui::scope::FooterView> {
-    shown(effects)
-        .into_iter()
-        .rev()
-        .find_map(|intent| match intent {
-            Intent::Footer(view) => Some(view),
-            _ => None,
-        })
 }
 
 /// The footer follows the cursor onto a digest's row and names the digest,
