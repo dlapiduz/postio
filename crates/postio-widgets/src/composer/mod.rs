@@ -2479,6 +2479,12 @@ impl Composer {
         self.refresh();
     }
 
+    /// How many remote images the body names and has not attached: the
+    /// rows under "Not attached yet".
+    pub fn not_attached(&self) -> usize {
+        self.document().remote_images().len()
+    }
+
     /// The rows' words, for a test: alt, then what the row says.
     #[doc(hidden)]
     pub fn test_remote_rows(&self) -> Vec<(String, String)> {

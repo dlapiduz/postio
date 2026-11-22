@@ -175,6 +175,17 @@ impl Fetcher for HttpFetcher {
     }
 }
 
+/// A [`Fetcher`] that answers every request with the same picture and
+/// never dials: for a demo, whose storyboards must not reach the network.
+#[derive(Clone, Debug)]
+pub struct LocalImage(pub Vec<u8>);
+
+impl Fetcher for LocalImage {
+    fn get(&self, _href: &postio_body::WebHref) -> Result<Vec<u8>, FetchError> {
+        Ok(self.0.clone())
+    }
+}
+
 /// Why Download and attach left the image as a link.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FetchRefusal {

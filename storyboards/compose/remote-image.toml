@@ -1,0 +1,43 @@
+# Spec 014 US8: a remote image is attached on purpose, and only then.
+#
+# A picture named by its address in the Markdown view is not fetched: it is
+# a row under the body, "Not attached yet", with its host and Download and
+# attach on ctrl+alt+i, and a line before Send saying it would go as a link.
+# The press is the one request (FR-031); the picture then takes the
+# address's place and the row is gone. The demo answers the request itself,
+# so nothing here reaches the network. Red on the base, which has neither the
+# view nor the command.
+apps   = ["focus"]
+source = { kind = "spec", ref = "specs/014-compose-formatting US8" }
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+check   = { cursor.index = 0 }
+
+[[step]]
+command = "reply"
+check   = { composer.open = true, keyboard.field = "body" }
+expect  = "A reply opens with the caret in the body, above the quote."
+
+[[step]]
+command = "toggle_markdown_source"
+check   = { app.focus.composer.view = "markdown" }
+expect  = "The body is Markdown, the quote a chip line below the caret."
+
+[[step]]
+type    = "The chart: ![weekly chart](https://example.com/chart.png)"
+check   = { app.focus.composer.view = "markdown", app.focus.composer.not_attached = 1 }
+expect  = "The image is still its Markdown, and nothing was downloaded: under the body a row \"Not attached yet\" names \"weekly chart\" from example.com, with Download and attach ctrl+alt+i, and a line before Send says 1 image isn't attached and will be sent as a link."
+
+[[step]]
+command = "toggle_markdown_source"
+check   = { app.focus.composer.view = "rich", app.focus.composer.not_attached = 1 }
+expect  = "In the rich view the address is a link, \"weekly chart\", and the row under the body is the same: nothing has been fetched."
+
+[[step]]
+command = "attach_remote_image"
+
+[[step]]
+wait    = { until = { app.focus.composer.not_attached = 0 } }
+check   = { app.focus.composer.not_attached = 0 }
+expect  = "The press downloads it once: the picture is in the message where the link was, the row and the warning line are gone, and the attachment list holds the inline image."

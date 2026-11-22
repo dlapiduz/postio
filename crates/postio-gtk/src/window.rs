@@ -6931,6 +6931,10 @@ impl FocusWindow {
                 "focus.composer.status".to_owned(),
                 serde_json::json!(composer.status()),
             );
+            app.insert(
+                "focus.composer.not_attached".to_owned(),
+                serde_json::json!(composer.not_attached()),
+            );
         }
         app.insert(
             "focus.bulk".to_owned(),

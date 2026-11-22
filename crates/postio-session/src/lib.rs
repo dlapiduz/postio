@@ -407,6 +407,10 @@ pub struct Wiring {
     /// person's corrections (spec 007): shared and empty for the same
     /// reason as `filing`, and filled by the same switch.
     pub focus: focus::FocusSettings,
+    /// What makes Download and attach's one request (spec 014 D7): the web,
+    /// in the application. A part, like `discovery`, so a demo or a test
+    /// answers without dialing.
+    pub images: Arc<dyn attaching::Fetcher>,
 }
 
 /// A mail transport handed to the engine instead of the account's own.
@@ -457,6 +461,7 @@ impl Wiring {
             mail: None,
             filing: postio_runtime::FilingSlot::default(),
             focus: focus::FocusSettings::default(),
+            images: Arc::new(attaching::HttpFetcher),
         }
     }
 

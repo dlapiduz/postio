@@ -1524,12 +1524,13 @@ impl Inner {
             // holds that this is fetch_remote_image's only caller.
             Req::AttachRemoteImage { draft, href } => {
                 let blobs = self.wiring.blobs.clone();
+                let images = Arc::clone(&self.wiring.images);
                 let outcome = tokio::task::spawn_blocking(move || {
                     let Some(href) = postio_body::WebHref::parse(&href) else {
                         return Err(postio_ui::compose::RemoteRefusal::NotAnImage);
                     };
                     postio_session::attaching::fetch_remote_image(
-                        &postio_session::attaching::HttpFetcher,
+                        images.as_ref(),
                         &blobs,
                         draft,
                         &href,
