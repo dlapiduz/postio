@@ -148,3 +148,15 @@ fn html_only_message() -> postio_model::Message {
     };
     message
 }
+
+/// GTK and the Mac run one editing bridge (spec 014 T001). Two copies of
+/// `editor.js` are two dialects of rich text, and the spec changes the
+/// bridge, so the one GTK injects must be the one `postio-ui` assembles
+/// for every frontend.
+pub fn gtk_injects_the_one_bridge_postio_ui_assembles() {
+    assert_eq!(
+        postio_widgets::composer::editor::editor_script(),
+        postio_ui::compose::editor_script(),
+        "the GTK composer runs a different editing bridge from the Mac's"
+    );
+}

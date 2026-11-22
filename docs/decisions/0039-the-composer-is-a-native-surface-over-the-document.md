@@ -191,7 +191,7 @@ rich document, not a source format.
   `apply(&Document, EditIntent) -> Document`, beside the `EditHistory` that
   already consumes the results. No new dependencies; it stays a pure leaf, and
   `check-crate-boundaries.py` keeps it that way.
-- **`postio-widgets`** loses `composer/editor.js`, the three script-message
+- **`postio-widgets`** loses the WebKit editor (`composer/editor.rs`), the three script-message
   handlers, every `evaluate_javascript` formatting call, and webkit6 from its
   graph; `editable_dialect.rs` goes too — the dialect stops being
   a foreign engine's and becomes Postio's, so the contract is a `postio-body`

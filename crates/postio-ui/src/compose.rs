@@ -110,12 +110,6 @@ pub fn markdown_table_js() -> String {
 mod editor_script_tests {
     use super::EDITOR_SCRIPT;
 
-    /// The classic app `include_str!`d its own copy, because this branch
-    /// is worked from a Mac and `issue-land.sh` will not land a crate whose
-    /// gates cannot run there. Until a Linux session points it here, the two
-    /// files are pinned to each other: this fails the moment either is
-    /// edited alone, which is the only thing that makes a temporary
-    /// duplicate safe.
     /// The body names `POSTIO_MARKDOWN` and does not define it — the table
     /// is generated from [`crate::editor::markdown::SEQUENCES`] so the set of
     /// supported sequences has one source. A frontend handed the body alone
@@ -160,21 +154,6 @@ mod editor_script_tests {
                 "the script never reports {command} as in force"
             );
         }
-    }
-
-    #[test]
-    fn the_gtk_copy_of_the_bridge_has_not_drifted_from_this_one() {
-        // The GTK copy is postio-widgets' since the composer moved there
-        // (ADR 0043).
-        let gtk = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../postio-widgets/src/composer/editor.js");
-        let theirs = std::fs::read_to_string(&gtk)
-            .unwrap_or_else(|error| panic!("reading {}: {error}", gtk.display()));
-        assert_eq!(
-            theirs, EDITOR_SCRIPT,
-            "the two copies of the editing bridge have diverged, which is two \
-             dialects: make them equal, or finish the move and delete the GTK one"
-        );
     }
 }
 
