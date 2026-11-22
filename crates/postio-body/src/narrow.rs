@@ -57,8 +57,12 @@ pub struct Lost {
     /// it, which is the one thing the reader spends its whole design
     /// refusing.
     pub images: usize,
-    /// `<table>` — kept as its text, laid out as nothing.
+    /// `<table>` the document cannot hold (a span, or a block in a cell) —
+    /// kept as its text, laid out as nothing.
     pub tables: usize,
+    /// Cells past a table's header width, which a kept table drops to stay
+    /// rectangular (spec 014).
+    pub cells: usize,
     /// Colours, fonts and sizes: `style=`, `<font>`, `bgcolor`.
     pub styling: usize,
     /// `<a>` pointing somewhere a message may not link to.
@@ -91,6 +95,7 @@ impl Lost {
         };
         say(self.images, "image", "images");
         say(self.tables, "table", "tables");
+        say(self.cells, "table cell", "table cells");
         say(self.links, "link", "links");
         say(self.removed, "embedded element", "embedded elements");
         // Last, and phrased as a mass noun: nobody counts style attributes,
@@ -166,6 +171,15 @@ fn classify(node: &Handle, name: &str, lost: &mut Lost) {
         lost.styling += 1;
     }
 
+    // A table the document holds can still cut cells off to stay
+    // rectangular.
+    if name == "table"
+        && let Some((_, dropped)) = crate::parse::table_of(node)
+    {
+        lost.cells += dropped;
+        return;
+    }
+
     // The parser's own answer, so this cannot drift from the dialect.
     if block_for(node, name).is_some() || inline_for(node, name).is_some() {
         return;
@@ -218,9 +232,23 @@ mod tests {
         // The count is what a person reads. "12 tables" for one table with
         // twelve cells would be worse than saying nothing.
         let lost =
-            narrow("<table><tr><td>a</td><td>b</td></tr><tr><td>c</td><td>d</td></tr></table>")
+            narrow("<table><tr><td colspan=\"2\">a</td></tr><tr><td>c</td><td>d</td></tr></table>")
                 .lost;
         assert_eq!(lost.tables, 1);
+    }
+
+    #[test]
+    fn a_table_the_document_holds_is_no_loss_but_its_cut_cells_are() {
+        let kept =
+            narrow("<table><tr><th>a</th><th>b</th></tr><tr><td>c</td><td>d</td></tr></table>");
+        assert!(kept.lost.is_empty(), "{:?}", kept.lost);
+        let ragged =
+            narrow("<table><tr><th>a</th></tr><tr><td>c</td><td>d</td><td>e</td></tr></table>");
+        assert_eq!(ragged.lost.cells, 2);
+        assert_eq!(
+            ragged.lost.summary().as_deref(),
+            Some("Pasted without 2 table cells.")
+        );
     }
 
     #[test]
@@ -284,6 +312,7 @@ mod tests {
             styling: 4,
             links: 0,
             removed: 0,
+            cells: 0,
         };
         assert_eq!(
             lost.summary().as_deref(),

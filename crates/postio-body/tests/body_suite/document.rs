@@ -855,3 +855,241 @@ fn text_with_no_quote_is_what_from_text_makes() {
     let text = "Line one\nline two\n\nNext.";
     assert_eq!(Document::from_text_quoting(text), Document::from_text(text));
 }
+
+// ---------------------------------------------------------------------------
+// Spec 014: the HTML subset, after it widened (`data-model.md`)
+// ---------------------------------------------------------------------------
+
+mod subset {
+    use postio_body::document::{
+        Alignment, Block, Document, HeadingLevel, Inline, Language, ListItem, ListKind, Table,
+        Task, WebHref,
+    };
+    use postio_body::parse;
+
+    fn text(s: &str) -> Inline {
+        Inline::Text(s.to_owned())
+    }
+
+    fn para(s: &str) -> Block {
+        Block::Paragraph(vec![text(s)])
+    }
+
+    /// Both round trips, for one row of the table: the document writes
+    /// exactly `html`, and `html` reads back as the document.
+    fn row(blocks: Vec<Block>, html: &str) {
+        let document = Document { blocks };
+        assert_eq!(document.to_html(), html, "the normal form moved");
+        assert_eq!(parse(html), document, "{html} did not read back");
+        assert_eq!(parse(html).to_html(), html, "to_html(parse(h)) != h");
+    }
+
+    #[test]
+    fn every_heading_level_is_its_own_tag() {
+        for level in HeadingLevel::ALL {
+            let digit = level.digit();
+            row(
+                vec![Block::Heading {
+                    level,
+                    inlines: vec![text("h")],
+                }],
+                &format!("<h{digit}>h</h{digit}>"),
+            );
+        }
+    }
+
+    #[test]
+    fn strikethrough_is_del_and_reads_s_and_strike() {
+        let struck = vec![Block::Paragraph(vec![Inline::Strikethrough(vec![text(
+            "x",
+        )])])];
+        row(struck.clone(), "<p><del>x</del></p>");
+        assert_eq!(parse("<p><s>x</s></p>").blocks, struck);
+        assert_eq!(parse("<p><strike>x</strike></p>").blocks, struck);
+    }
+
+    #[test]
+    fn an_ordered_list_keeps_its_start() {
+        let list = |kind| {
+            vec![Block::List {
+                kind,
+                items: vec![ListItem::new(vec![para("a")])],
+            }]
+        };
+        row(list(ListKind::Bullet), "<ul><li><p>a</p></li></ul>");
+        row(list(ListKind::NUMBERED), "<ol><li><p>a</p></li></ol>");
+        row(
+            list(ListKind::Ordered { start: 7 }),
+            "<ol start=\"7\"><li><p>a</p></li></ol>",
+        );
+        row(
+            list(ListKind::Ordered { start: 0 }),
+            "<ol start=\"0\"><li><p>a</p></li></ol>",
+        );
+    }
+
+    #[test]
+    fn a_task_list_carries_its_boxes_as_glyphs() {
+        row(
+            vec![Block::List {
+                kind: ListKind::Bullet,
+                items: vec![
+                    ListItem::task(Task::Open, vec![para("open task")]),
+                    ListItem::task(Task::Done, vec![para("done task")]),
+                ],
+            }],
+            "<ul data-postio-task=\"list\" style=\"list-style-type:none\">\
+             <li data-postio-task=\"open\"><p>\u{2610} open task</p></li>\
+             <li data-postio-task=\"done\"><p>\u{2611} done task</p></li></ul>",
+        );
+        // A mixed list keeps its bullets, and only its tasks are marked.
+        row(
+            vec![Block::List {
+                kind: ListKind::Bullet,
+                items: vec![
+                    ListItem::task(Task::Open, vec![para("t")]),
+                    ListItem::new(vec![para("plain")]),
+                ],
+            }],
+            "<ul><li data-postio-task=\"open\"><p>\u{2610} t</p></li><li><p>plain</p></li></ul>",
+        );
+    }
+
+    #[test]
+    fn a_glyph_without_the_marker_is_only_text() {
+        let document = parse("<ul><li><p>\u{2610} not a task</p></li></ul>");
+        let Block::List { items, .. } = &document.blocks[0] else {
+            panic!("{document:?}")
+        };
+        assert_eq!(items[0].task, None);
+        assert_eq!(items[0].blocks, vec![para("\u{2610} not a task")]);
+    }
+
+    #[test]
+    fn a_github_checkbox_list_reads_as_tasks() {
+        let document = parse(
+            "<ul><li><input type=\"checkbox\" disabled> open</li>\
+             <li><input type=\"checkbox\" checked disabled> done</li></ul>",
+        );
+        let Block::List { items, .. } = &document.blocks[0] else {
+            panic!("{document:?}")
+        };
+        assert_eq!(items[0], ListItem::task(Task::Open, vec![para("open")]));
+        assert_eq!(items[1], ListItem::task(Task::Done, vec![para("done")]));
+    }
+
+    #[test]
+    fn a_code_block_keeps_its_language() {
+        row(
+            vec![Block::Code {
+                language: Language::parse("rust"),
+                text: "fn main() {}\n".to_owned(),
+            }],
+            "<pre data-postio-lang=\"rust\">fn main() {}\n</pre>",
+        );
+        row(
+            vec![Block::Code {
+                language: None,
+                text: "x".to_owned(),
+            }],
+            "<pre>x</pre>",
+        );
+        // A language the type refuses is dropped, not carried.
+        assert_eq!(
+            parse("<pre data-postio-lang=\"a&quot; b\">x</pre>").blocks,
+            vec![Block::Code {
+                language: None,
+                text: "x".to_owned()
+            }]
+        );
+    }
+
+    #[test]
+    fn a_table_is_a_table_with_its_layout_attributes() {
+        let table = Table::new(
+            vec![Alignment::Left, Alignment::Right],
+            vec![vec![text("Item")], vec![text("Qty")]],
+            vec![vec![vec![text("Widget")], vec![text("3")]]],
+        );
+        row(
+            vec![Block::Table(table)],
+            "<table border=\"1\" cellpadding=\"6\" cellspacing=\"0\"><thead><tr>\
+             <th align=\"left\">Item</th><th align=\"right\">Qty</th></tr></thead><tbody><tr>\
+             <td align=\"left\">Widget</td><td align=\"right\">3</td></tr></tbody></table>",
+        );
+        let plain = Table::new(
+            vec![Alignment::None, Alignment::Center],
+            vec![vec![text("a")], vec![]],
+            vec![],
+        );
+        row(
+            vec![Block::Table(plain)],
+            "<table border=\"1\" cellpadding=\"6\" cellspacing=\"0\"><thead><tr>\
+             <th>a</th><th align=\"center\"></th></tr></thead><tbody></tbody></table>",
+        );
+    }
+
+    #[test]
+    fn a_pasted_table_without_a_header_reads_its_first_row_as_one() {
+        let document = parse("<table><tr><td>a</td><td>b</td></tr><tr><td>1</td></tr></table>");
+        assert_eq!(
+            document.blocks,
+            vec![Block::Table(Table::new(
+                vec![],
+                vec![vec![text("a")], vec![text("b")]],
+                vec![vec![vec![text("1")], vec![]]],
+            ))]
+        );
+    }
+
+    #[test]
+    fn a_spanning_table_narrows_to_paragraphs() {
+        let document = parse(
+            "<table><tr><td colspan=\"2\">Gate</td></tr><tr><td>a</td><td>b</td></tr></table>",
+        );
+        assert!(
+            document
+                .blocks
+                .iter()
+                .all(|block| matches!(block, Block::Paragraph(_))),
+            "{document:?}"
+        );
+        assert_eq!(document.to_text(), "Gate\n\na b");
+    }
+
+    #[test]
+    fn a_table_with_a_block_in_a_cell_narrows_to_paragraphs() {
+        let document = parse("<table><tr><td><ul><li>x</li></ul></td></tr></table>");
+        assert!(
+            !document
+                .blocks
+                .iter()
+                .any(|block| matches!(block, Block::Table(_))),
+            "{document:?}"
+        );
+    }
+
+    #[test]
+    fn a_remote_image_is_a_marked_link_and_a_remote_img_still_has_no_shape() {
+        let image = Inline::RemoteImage {
+            href: WebHref::parse("https://example.com/x.png").unwrap(),
+            alt: "x".to_owned(),
+        };
+        row(
+            vec![Block::Paragraph(vec![image])],
+            "<p><a href=\"https://example.com/x.png\" data-postio-remote-image=\"\">x</a></p>",
+        );
+        let pasted = parse("<p>a<img src=\"https://example.com/x.png\" alt=\"x\">b</p>");
+        assert_eq!(
+            pasted.to_html(),
+            "<p>ab</p>",
+            "the remote <img> narrowed away"
+        );
+        // A marked link to somewhere not on the web is only a link.
+        assert!(matches!(
+            &parse("<p><a href=\"mailto:ada@example.com\" data-postio-remote-image=\"\">x</a></p>")
+                .blocks[0],
+            Block::Paragraph(inlines) if matches!(inlines[0], Inline::Link { .. })
+        ));
+    }
+}

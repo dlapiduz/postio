@@ -34,7 +34,11 @@ use html5ever::tendril::TendrilSink;
 use html5ever::{LocalName, QualName, ns, parse_fragment};
 use markup5ever_rcdom::{Handle, NodeData, RcDom};
 
-use crate::document::{Block, ContentId, Document, HeadingLevel, Href, Inline, ListItem, ListKind};
+use crate::document::{
+    Alignment, Block, Cell, ContentId, DONE_BOX, Document, HeadingLevel, Href, Inline,
+    LANGUAGE_MARKER, Language, ListItem, ListKind, OPEN_BOX, REMOTE_IMAGE_MARKER, TASK_MARKER,
+    Table, Task, WebHref,
+};
 
 /// Elements whose *contents* go with them.
 ///
@@ -230,9 +234,15 @@ pub(crate) fn block_for(handle: &Handle, name: &str) -> Option<Block> {
             items: items_of(handle),
         }),
         "ol" => Some(Block::List {
-            kind: ListKind::NUMBERED,
+            // `start` as HTML reads it: digits, or the default.
+            kind: ListKind::Ordered {
+                start: attribute(handle, "start")
+                    .and_then(|start| start.trim().parse().ok())
+                    .unwrap_or(1),
+            },
             items: items_of(handle),
         }),
+        "table" => table_of(handle).map(|(table, _)| Block::Table(table)),
         "blockquote" => {
             // A reply quote comes back as one (ADR 0033, FR-046): what is in
             // the editor is what is sent, and narrowing it here would mean
@@ -257,7 +267,7 @@ pub(crate) fn block_for(handle: &Handle, name: &str) -> Option<Block> {
         // Whitespace is the content of a `<pre>`, so it is taken raw rather
         // than collapsed the way flowing text is.
         "pre" => Some(Block::Code {
-            language: None,
+            language: attribute(handle, LANGUAGE_MARKER).and_then(|word| Language::parse(&word)),
             text: raw_text(handle),
         }),
         "hr" => Some(Block::Rule),
@@ -333,10 +343,27 @@ pub(crate) fn inline_for(handle: &Handle, name: &str) -> Option<Inline> {
     match name {
         "strong" | "b" => Some(Inline::Strong(inlines_of(handle))),
         "em" | "i" => Some(Inline::Emphasis(inlines_of(handle))),
+        "del" | "s" | "strike" => Some(Inline::Strikethrough(inlines_of(handle))),
         "code" | "tt" | "kbd" | "samp" => Some(Inline::Code(raw_text(handle))),
         "br" => Some(Inline::Break),
         "a" => {
-            let href = Href::parse(&attribute(handle, "href")?)?;
+            let raw = attribute(handle, "href")?;
+            // The marker this crate writes for a remote image not yet
+            // attached (spec 014 D7). Only a link carries it, so a remote
+            // `<img>` still has no shape.
+            if attribute(handle, REMOTE_IMAGE_MARKER).is_some()
+                && let Some(href) = WebHref::parse(&raw)
+            {
+                let mut alt = crate::Document {
+                    blocks: vec![Block::Paragraph(inlines_of(handle))],
+                }
+                .to_search_text();
+                if alt == href.as_str() {
+                    alt.clear();
+                }
+                return Some(Inline::RemoteImage { href, alt });
+            }
+            let href = Href::parse(&raw)?;
             Some(Inline::Link {
                 href,
                 inlines: inlines_of(handle),
@@ -386,16 +413,150 @@ fn items_of(handle: &Handle) -> Vec<ListItem> {
         .iter()
         .filter(|child| name_of(child).as_deref() == Some("li"))
         .map(|item| {
-            let blocks = blocks_of(item);
+            let task = task_of(item);
+            let mut blocks = blocks_of(item);
+            if task.is_some() && attribute(item, TASK_MARKER).is_some() {
+                strip_box(&mut blocks);
+            }
             // A one-paragraph item is the common case and reads better
             // unwrapped, but the type wants blocks either way.
-            ListItem::new(if blocks.is_empty() {
-                vec![Block::Paragraph(Vec::new())]
-            } else {
-                blocks
-            })
+            if blocks.is_empty() {
+                blocks = vec![Block::Paragraph(Vec::new())];
+            }
+            ListItem { task, blocks }
         })
         .collect()
+}
+
+/// The box on an `<li>`: the marker this crate writes, or, without one,
+/// GitHub's `<input type="checkbox">` as its first element (pasted HTML,
+/// before any sanitiser). Any other leading glyph is text.
+fn task_of(item: &Handle) -> Option<Task> {
+    match attribute(item, TASK_MARKER).as_deref() {
+        Some("open") => return Some(Task::Open),
+        Some("done") => return Some(Task::Done),
+        _ => {}
+    }
+    let children = item.children.borrow();
+    let first = children.iter().find(|child| match &child.data {
+        NodeData::Text { contents } => !contents.borrow().trim().is_empty(),
+        NodeData::Element { .. } => true,
+        _ => false,
+    })?;
+    (name_of(first).as_deref() == Some("input")
+        && attribute(first, "type").is_some_and(|kind| kind.eq_ignore_ascii_case("checkbox")))
+    .then(|| {
+        if attribute(first, "checked").is_some() {
+            Task::Done
+        } else {
+            Task::Open
+        }
+    })
+}
+
+/// Take the generated `☐ ` or `☑ ` off the front of a marked item.
+fn strip_box(blocks: &mut [Block]) {
+    let Some(Block::Paragraph(inlines)) = blocks.first_mut() else {
+        return;
+    };
+    if let Some(Inline::Text(first)) = inlines.first_mut() {
+        let glyphs = [OPEN_BOX, DONE_BOX, OPEN_BOX.trim_end(), DONE_BOX.trim_end()];
+        if let Some(rest) = glyphs.iter().find_map(|glyph| first.strip_prefix(glyph)) {
+            *first = rest.to_owned();
+        }
+        if first.is_empty() {
+            inlines.remove(0);
+        }
+    }
+}
+
+/// A `<table>` the document can hold, and how many cells fitting it to its
+/// header cut off; `None` for one it cannot, which narrows to paragraphs as
+/// before (FR-002).
+///
+/// It cannot hold a span or a block in a cell: the type has nowhere to put
+/// either. The header is the `<thead>` row, or the first row when there is
+/// none, as GFM has no headerless table. Alignment is read from the header
+/// cells' `align`.
+pub(crate) fn table_of(handle: &Handle) -> Option<(Table, usize)> {
+    let mut head = Vec::new();
+    let mut body = Vec::new();
+    for section in handle.children.borrow().iter() {
+        match name_of(section).as_deref() {
+            Some("thead") => head.extend(rows_of(section)),
+            Some("tbody" | "tfoot") => body.extend(rows_of(section)),
+            Some("tr") => body.push(section.clone()),
+            Some("caption" | "colgroup") | None => {}
+            Some(_) => return None,
+        }
+    }
+    let mut rows = head.into_iter().chain(body);
+    let header = rows.next()?;
+    let alignments = cells_of(&header)?
+        .iter()
+        .map(|cell| {
+            match attribute(cell, "align")
+                .as_deref()
+                .map(str::to_ascii_lowercase)
+                .as_deref()
+            {
+                Some("left") => Alignment::Left,
+                Some("center") => Alignment::Center,
+                Some("right") => Alignment::Right,
+                _ => Alignment::None,
+            }
+        })
+        .collect();
+    let read =
+        |row: &Handle| -> Option<Vec<Cell>> { cells_of(row)?.iter().map(cell_inlines).collect() };
+    let header = read(&header)?;
+    let rows = rows.map(|row| read(&row)).collect::<Option<Vec<_>>>()?;
+    Some(Table::counting(alignments, header, rows))
+}
+
+fn rows_of(section: &Handle) -> Vec<Handle> {
+    section
+        .children
+        .borrow()
+        .iter()
+        .filter(|child| name_of(child).as_deref() == Some("tr"))
+        .cloned()
+        .collect()
+}
+
+/// A row's cells, or `None` if one of them spans.
+fn cells_of(row: &Handle) -> Option<Vec<Handle>> {
+    let cells: Vec<Handle> = row
+        .children
+        .borrow()
+        .iter()
+        .filter(|child| matches!(name_of(child).as_deref(), Some("td" | "th")))
+        .cloned()
+        .collect();
+    let spans = |cell: &Handle| {
+        ["colspan", "rowspan"].iter().any(|name| {
+            attribute(cell, name)
+                .is_some_and(|value| value.trim().parse::<u32>().map_or(true, |n| n > 1))
+        })
+    };
+    (!cells.iter().any(spans)).then_some(cells)
+}
+
+/// A cell's inlines, or `None` if a block is inside it.
+fn cell_inlines(cell: &Handle) -> Option<Cell> {
+    fn holds_block(node: &Handle) -> bool {
+        node.children.borrow().iter().any(|child| {
+            name_of(child).is_some_and(|name| {
+                !DROPPED.contains(&name.as_str())
+                    && (matches!(
+                        name.as_str(),
+                        "p" | "div" | "ul" | "ol" | "li" | "table" | "pre" | "blockquote" | "hr"
+                    ) || name.starts_with('h') && name.len() == 2 && name != "hr"
+                        || holds_block(child))
+            })
+        })
+    }
+    (!holds_block(cell)).then(|| inlines_of(cell))
 }
 
 /// The inline content of an element, with block children flattened into it.

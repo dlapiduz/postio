@@ -69,12 +69,12 @@ red. A test that is green on arrival is a guard and says so.
 
   Rewrite `markdown.rs`'s `headings_narrow_to_three_levels` to expect level 4.
 - [x] T007 Implement `data-model.md`'s types in `crates/postio-body/src/document.rs`. `Block::Pre` becomes `Block::Code { language, text }`, and every match in the workspace follows (`grep -rn "Block::Pre\|ordered:" crates/`). The crate doc's closed-set count is updated.
-- [ ] T008 Write failing cases in `crates/postio-body/tests/body_suite/document.rs` for `parse(to_html(d)) == d` and `to_html(parse(h)) == h` over every row of `data-model.md`'s HTML subset table. Include:
+- [x] T008 Write failing cases in `crates/postio-body/tests/body_suite/document.rs` for `parse(to_html(d)) == d` and `to_html(parse(h)) == h` over every row of `data-model.md`'s HTML subset table. Include:
   - the `☐ `/`☑ ` glyph removed on the way in;
   - a GitHub-style checkbox list read as tasks;
   - a `colspan` table narrowing to paragraphs;
   - `data-postio-remote-image` read back as a remote image, while a remote `<img>` still narrows away.
-- [ ] T009 Implement `to_html` and `editor_html` for the new shapes in `crates/postio-body/src/document.rs`, and their reading in `crates/postio-body/src/parse.rs`. Truncated cells go to `crates/postio-body/src/narrow.rs`'s `Lost`.
+- [x] T009 Implement `to_html` and `editor_html` for the new shapes in `crates/postio-body/src/document.rs`, and their reading in `crates/postio-body/src/parse.rs`. Truncated cells go to `crates/postio-body/src/narrow.rs`'s `Lost`.
 - [ ] T010 Widen `harden` in `crates/postio-body/src/outgoing.rs` (research R3), adding `data-postio-remote-image` on `a`. First widen the property generator in `crates/postio-body/tests/body_suite/outgoing.rs` to the new shapes, and see "harden changes nothing" fail.
 - [ ] T011 Write the HTML half of `crates/postio-body/tests/body_suite/formatting_wire.rs` (`contracts/wire.md`), red before T009–T010 and green after. The plain-text half is T019's.
 
