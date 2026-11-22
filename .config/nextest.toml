@@ -347,6 +347,15 @@ slow-timeout = { period = "120s", terminate-after = 6 }
 default-filter = 'binary(focus_suite) & (test(/^every_command::/) | test(/^storyboard_catalogue::/))'
 fail-fast = false
 
+# The attachment text helper rides in the archive beside the test binary's
+# profile directory, where `Extractor::locate` looks: without it every PDF
+# is refused, and a seed file found only by what it says goes missing on
+# the shards while every local run passes (#2178). The build job builds it.
+[profile.ci-storyboards.archive]
+include = [
+    { path = "debug/postio-extract-helper", relative-to = "target", depth = 0, on-missing = "error" },
+]
+
 # The generated pass opens a fresh window for every command in every context
 # -- some 270 of them since Linux took spec 010's search keys (#1825) -- and
 # took 709 s on a workstation, against this profile's twelve minutes. Twenty.

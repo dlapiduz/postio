@@ -220,6 +220,12 @@ jobs:
       - name: Install cargo-nextest
         run: scripts/install-nextest.sh
 
+      # The attachment text helper, which the archive carries to the shards
+      # (`profile.ci-storyboards.archive`): without it a PDF's words are
+      # found nowhere (#2178).
+      - name: cargo build (postio-extract-helper)
+        run: cargo build -p postio-session --bin postio-extract-helper
+
       - name: cargo nextest archive (focus_suite)
         run: >-
           cargo nextest archive -p postio-gtk --test focus_suite
