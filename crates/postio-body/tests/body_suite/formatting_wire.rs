@@ -128,3 +128,69 @@ fn the_backstop_changes_nothing_in_the_golden_document() {
 fn the_golden_html_reads_back_as_the_golden_document() {
     assert_eq!(parse(&GOLDEN_HTML.concat()), golden());
 }
+
+/// The plain-text part, `format=flowed`, as `contracts/wire.md` writes it,
+/// with the one paragraph longer than 72 columns soft-broken as RFC 3676
+/// says: the trailing space is the soft break a reader joins.
+const GOLDEN_TEXT: &str = "\
+Plan
+====
+
+Some bold, italic, ~~struck~~ and code, and a link \n<https://example.com/x>.
+
+Steps
+-----
+
+1. first
+2. second
+    - nested
+
+- [ ] open task
+- [x] done task
+
+7. seventh
+
+> quoted
+>
+>> nested quote
+
+```rust
+fn main() {}
+```
+
+----
+
+| Item   | Qty |
+|:-------|----:|
+| Widget |   3 |
+
+line one
+line two";
+
+#[test]
+fn the_plain_text_part_is_pinned_byte_for_byte() {
+    let (text, _) = postio_body::render(&golden());
+    assert_eq!(text, GOLDEN_TEXT);
+}
+
+#[test]
+fn every_code_line_and_table_row_is_a_fixed_line() {
+    // RFC 3676: a line that ends in a space is soft, and a reader joins it
+    // to the next. Nothing in a fence or a table may be joined.
+    let (text, _) = postio_body::render(&golden());
+    let fixed = |line: &str| line.starts_with('|') || line.starts_with("fn ") || line == "```";
+    for line in text.lines().filter(|line| fixed(line)) {
+        assert!(
+            !line.ends_with(' '),
+            "{line:?} would flow into the next line"
+        );
+    }
+}
+
+#[test]
+fn a_plain_document_is_still_plain() {
+    // FR-018: plain text goes out as text/plain alone. The shape is
+    // `is_plain_text`'s to decide, and the golden document is not plain.
+    assert!(!golden().is_plain_text());
+    assert!(Document::from_text("Hello Ada,\n\nThanks.").is_plain_text());
+}

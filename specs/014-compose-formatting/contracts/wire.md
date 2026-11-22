@@ -109,6 +109,10 @@ line two
 
 - The link form (`label <url>`) is `Links::Spelled` as it is today; T019
   pins whatever today's form is and does not change it.
+- The second paragraph is longer than 72 columns, so on the wire it is
+  soft-broken after "a link " (a trailing space, RFC 3676). The block above
+  shows it unwrapped for reading; `formatting_wire.rs` pins the wrapped
+  bytes.
 - Every code line and table row is a fixed line, with no trailing space.
 - A line in a code block that begins with ` `, `>` or `From ` is
   space-stuffed.
