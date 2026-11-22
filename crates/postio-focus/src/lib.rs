@@ -2324,6 +2324,15 @@ impl FocusController {
                 steps.push(feed::Step::Show(Intent::CloseSurface(SurfaceKind::Message)));
                 steps.push(feed::Step::Show(Intent::KeyboardHome));
             }
+            // A place just opened with nothing in it: the message open over
+            // the list came from the place left, and is not in this one. It
+            // closes, or its verbs would act on mail no longer in view
+            // (#1757: `e` in an empty Snoozed archived the inbox's message).
+            // The thread's walk goes with it, so the footer is no longer
+            // the window's.
+            None if opened && rows.is_empty() && self.surfaces.reading().is_some() => {
+                steps.extend(self.walk_close());
+            }
             None => {}
         }
         steps.extend(self.show_empty());

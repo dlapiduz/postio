@@ -362,6 +362,35 @@ fn archiving_the_last_message_steps_back_and_the_only_one_closes() {
     );
 }
 
+/// A message open from one place, and the list then opening an empty one
+/// (`g b` to Snoozed with nothing snoozed): the message is not in the place
+/// now in view, so it closes rather than stay up with live verbs that would
+/// act on mail the person cannot see (#1757, re-filmed for #1862: `e` there
+/// archived the inbox message). The keyboard goes home, to the empty page.
+#[test]
+fn an_empty_place_opening_closes_the_message_from_the_last() {
+    let rows = List::of(3, &[]);
+    for mut focus in [linux(), mac()] {
+        let _ = reading(&mut focus, &rows);
+        assert_eq!(focus.key_context(), KeyContext::Reader);
+        let effects = focus.landed(&List::of(0, &[]), true);
+        let said = shown(&effects);
+        assert!(
+            said.contains(&Intent::CloseSurface(SurfaceKind::Message))
+                && said.contains(&Intent::KeyboardHome),
+            "the message stayed up over an empty place: {said:?}"
+        );
+        assert_eq!(focus.key_context(), KeyContext::List);
+        assert!(
+            said.iter().any(|intent| matches!(
+                intent,
+                Intent::Footer(footer) if footer.title.is_empty()
+            )),
+            "the footer still names the message that closed: {said:?}"
+        );
+    }
+}
+
 #[test]
 fn stepping_past_gives_up_rather_than_waiting_forever() {
     // The row never leaves (the archive failed): after a few landings the

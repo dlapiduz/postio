@@ -1,0 +1,27 @@
+# Archive as the very first key after launch archives the cursor's row (#1745,
+# re-filmed for #1862).
+#
+# The defect, in the classic app: `a` pressed as the first key, while the
+# window was still settling, sometimes archived nothing and said nothing,
+# yet the cursor walked down a row as if the row had left. The calibration
+# storyboards press `j` first to dodge it.
+#
+# On Focus, archive is `e`, and the window opens with the cursor on the
+# first row. Pressed before anything else, with no wait for the window to
+# settle, it must either archive that row (it leaves, a notice offers Undo)
+# or say why it cannot. Never silence.
+apps   = ["focus"]
+source = { kind = "issue", ref = "#1745" }
+proof  = "pinned"
+
+[[step]]
+id      = "first"
+command = "archive"
+settle  = { until = { notice.undo = true }, watch_ms = 500 }
+check   = { keyboard.region = "list", cursor.index = 0, notice.undo = true, rows.count = 60 }
+expect  = "The first key archives the invitation under the cursor: it leaves the list, the row below takes the cursor ring, and a notice offers Undo."
+
+[[step]]
+command = "undo"
+check   = { cursor.index = 0, cursor.id = "80", notice.undo = false, rows.count = 61 }
+expect  = "Undo brings the invitation back at the top, under the cursor."
