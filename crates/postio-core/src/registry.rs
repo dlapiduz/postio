@@ -4,8 +4,6 @@
 //! Defaults follow Gmail's keys where Postio has the command (docs/PRODUCT.md §8); a destructive
 //! command with no `Recovery` fails the tests.
 
-use std::fmt;
-
 use crate::action::ActionId;
 use crate::command::CommandId;
 use crate::context::{Context, ContextSet};

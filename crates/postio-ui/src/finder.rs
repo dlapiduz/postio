@@ -556,9 +556,7 @@ mod tests {
         };
         let places = places();
         let run = blend("arch", &places, &defaults(), Context::List, an_account()).commands[0].id;
-        let ActionId::Builtin(id) = run else {
-            panic!("{run:?} is not a built-in command");
-        };
+        let ActionId::Builtin(id) = run;
         assert_eq!(
             held.aimed(Command::default_for(id), &Conversations),
             Command::Archive {

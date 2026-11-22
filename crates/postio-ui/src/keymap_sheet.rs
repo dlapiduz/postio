@@ -465,9 +465,8 @@ mod tests {
                     "{} is not Focus's",
                     row.title
                 );
-                if let postio_core::ActionId::Builtin(command) = row.action {
-                    assert_eq!(super::group(command), Some(*group));
-                }
+                let postio_core::ActionId::Builtin(command) = row.action;
+                assert_eq!(super::group(command), Some(*group));
             }
         }
         let rows: Vec<postio_core::ActionId> = map
