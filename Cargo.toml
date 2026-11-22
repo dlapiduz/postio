@@ -339,9 +339,14 @@ turso_sdk_kit_macros = { git = "https://github.com/dlapiduz/turso", rev = "fa342
 turso_sync_engine = { git = "https://github.com/dlapiduz/turso", rev = "fa342b793f8a8b006da570fb6bca6196cb65dacc" }
 turso_sync_sdk_kit = { git = "https://github.com/dlapiduz/turso", rev = "fa342b793f8a8b006da570fb6bca6196cb65dacc" }
 
-# Blitz 0.3.0-beta.4 with Postio's patch queue applied (`patches/blitz/`,
-# checked by `scripts/blitz-patches.sh verify`): the reading renderer's
-# engine, carried in-tree so a patch is reviewed as a diff in the same pull
-# request that needs it, and dropped when upstream takes it.
+# Upstream crates with Postio's patch queues applied (`patches/<queue>/`,
+# checked by `scripts/vendor-patches.sh verify`), carried in-tree so a patch
+# is reviewed as a diff in the same pull request that needs it, and dropped
+# when upstream takes it.
+#
+# Blitz 0.3.0-beta.4: the reading renderer's engine.
 blitz-dom = { path = "vendor/blitz-dom" }
 blitz-paint = { path = "vendor/blitz-paint" }
+# mail-parser 1.0.1: every message Postio reads. calcard and io-maildir
+# still take 0.11 from the registry, which this does not touch.
+mail-parser = { path = "vendor/mail-parser" }

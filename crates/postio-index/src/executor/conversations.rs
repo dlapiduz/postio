@@ -1399,9 +1399,13 @@ fn hit(
     if in_sender {
         reasons.push(RankReason::InSender);
     }
-    // A file found it, by its name or by what it says (research R3).
-    if !named.is_empty() || !read.is_empty() {
+    // A file found it, by its name or else by what it says (research R3):
+    // a name the words are in is said as the name, and a match only inside
+    // is not (#2194).
+    if !named.is_empty() {
         reasons.push(RankReason::InFileName);
+    } else if !read.is_empty() {
+        reasons.push(RankReason::InFileContent);
     }
     reasons.push(RankReason::Matches(
         conversation.shown + u32::from(conversation.by_metadata),

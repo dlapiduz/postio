@@ -88,7 +88,8 @@ conversation's score is its best message's; ties broken by match count, then
 recency. Reasons (D20) come from the fold: `answered` on any matched message
 → Replied; `flagged` → Flagged; two-way frequency (R6) ≥ the finder's
 "frequent" threshold → FrequentSender; the metadata arm matched `subject` →
-InSubject; matched `filenames` or attachment text → InFileName; Matches(n).
+InSubject; matched `filenames` → InFileName, else attachment text →
+InFileContent (#2194); Matches(n).
 Which column matched is learnt per candidate with one `fts_match` per column
 on the page's ≤ 50 ids, not per row of the match.
 

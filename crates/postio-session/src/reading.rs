@@ -186,7 +186,11 @@ pub async fn load_with_row(
         }
     };
 
-    if stored.text.is_none() && stored.html.is_none() {
+    // "No body" only when the parse says nothing went wrong. A structure the
+    // parser had to guess at can come back with no text or HTML part, and
+    // "that is the whole message" would be untrue of it; the decode caveat
+    // over an empty pane is what is true (#287).
+    if stored.text.is_none() && stored.html.is_none() && !stored.encoding_problems {
         return (Body::Absent(Absent::Empty), Some(row));
     }
 

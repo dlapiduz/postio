@@ -171,6 +171,8 @@ const UNSEEDED: &[&str] = &[
     "hostile-remote-srcset-picture",
     "hostile-remote-stylesheet-link",
     "hostile-remote-svg-images",
+    // #899's parser fixture: a body that quotes its own boundary.
+    "multipart-boundary-quoted-in-body",
     // Spec 013's threading-rule fixtures: dated in November 2026 and built for
     // the grouping tests, not for a screenshot.
     "thread-archive-1-parent",

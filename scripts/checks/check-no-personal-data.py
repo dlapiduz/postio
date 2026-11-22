@@ -76,6 +76,11 @@ SKIP_PATHS = (
     # exemption for a different reason: nothing here is text in the first
     # place.
     "site/assets/img/",
+    # Upstream crates exactly as released (`scripts/vendor-patches.sh verify`
+    # proves it), whose doc examples and copyright headers carry upstream's
+    # own addresses. Postio's changes to them are `patches/`, which is
+    # scanned like everything else.
+    "vendor/",
 )
 # Upstream/maintainer addresses that belong in a licence or manifest.
 ALLOW_EXACT = {

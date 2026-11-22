@@ -339,6 +339,7 @@ pub fn reason_line(reasons: &[RankReason]) -> String {
             RankReason::InSubject => "subject",
             RankReason::InSender => "sender",
             RankReason::InFileName => "file name",
+            RankReason::InFileContent => "file contents",
             RankReason::Matches(_) => return None,
         })
     });
@@ -2564,6 +2565,11 @@ mod tests {
         assert_eq!(
             reason_line(&[FrequentSender, InFileName, Matches(1)]),
             "frequent sender · file name"
+        );
+        // Found by what a file says, not by its name (#2194).
+        assert_eq!(
+            reason_line(&[FrequentSender, InFileContent, Matches(1)]),
+            "frequent sender · file contents"
         );
         assert_eq!(
             reason_line(&[Replied, FrequentSender, InSubject, Matches(4)]),

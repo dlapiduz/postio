@@ -1,0 +1,12 @@
+# The crates.io release `vendor/mail-parser` starts from. The checksum is the
+# registry's, so `scripts/vendor-patches.sh verify` knows it patched the
+# release and not something that merely shares its version number.
+version = "1.0.1"
+
+# The library and what its manifest and docs need, not the 600-file mail
+# corpus its own tests read: Postio never runs those tests, and its own
+# corpus is where the cases it cares about live.
+include = ["Cargo.toml", "LICENSES", "README.md", "src"]
+
+[crates.mail-parser]
+sha256 = "3d4ea9311ef3ca6189aa85c5f984bd47b2f12079bcabae28917d900ab26c9ecc"

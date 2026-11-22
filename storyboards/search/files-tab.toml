@@ -22,6 +22,8 @@
 #
 # The Files tab's count is its cards, the same on the Threads tab as once
 # it opens (#2178), and its heading and footer count the files (#2183).
+# A top hit found only inside a file says "file contents", never "file
+# name" (#2194).
 # Space and mod+Down hand the file to the system's previewer and save
 # dialog, which are outside the window the runner films, so those steps
 # are filmed by hand on both apps.
@@ -47,7 +49,7 @@ type    = "fy26"
 id      = "found-inside"
 command = "show_all_results"
 check   = { keyboard.region = "results" }
-expect  = "The results open on Threads with one thread, “Atlas budget template v2”, listed twice: as the one top hit, and again under its month, “April 2026 · 1”, because every thread is in its month, a top hit too. Its source tag is the file's name, “Atlas-budget-template.xlsx”, and its passage reads “Sheet ‘Summary’, row 14: Total Atlas budget FY26 …” with “FY26” marked. The tabs read Threads 1 · Files 1 · People 1."
+expect  = "The results open on Threads with one thread, “Atlas budget template v2”, listed twice: as the one top hit, and again under its month, “April 2026 · 1”, because every thread is in its month, a top hit too. Under the top hit's sender its reason reads “frequent sender · file contents”, not “file name”: the words are inside the file, and its name does not say them. Its source tag is the file's name, “Atlas-budget-template.xlsx”, and its passage reads “Sheet ‘Summary’, row 14: Total Atlas budget FY26 …” with “FY26” marked. The tabs read Threads 1 · Files 1 · People 1."
 
 [[step]]
 id      = "files"
@@ -108,15 +110,19 @@ key     = "mod+Down"
 expect  = "The save key (⌘↓, ctrl+Down off the Mac) offers to save the file: the system's save dialog, with the file's name filled in."
 
 [[step]]
+id      = "open"
 command = "open_message"
 check   = { view = "reader" }
-expect  = "Return opens the message that carries the ringed file, scrolled to its attachments."
+expect  = "Return opens the message that carries the ringed file, scrolled to its attachments. The footer under it is the window's, not the results': the message's subject, reply, forward, archive, and Escape \"back to results\" (#2193)."
 
 [app.macos.step.look]
 skip = { reason = "QLPreviewPanel is the system's own window, outside the app's observation; filmed by hand until the runner can see it" }
 
 [app.macos.step.save]
 skip = { reason = "The save panel is the system's own window, outside the app's observation; filmed by hand until the runner can see it" }
+
+[app.focus.step.open]
+check = { view = "reader", app.focus.footer.title = "Atlas September actuals", app.focus.footer.labels = "reply | forward | archive | back to results" }
 
 [app.focus.step.look]
 skip = { reason = "The desktop's previewer opens the copy outside the window the runner films; filmed by hand until the runner can see it" }
@@ -130,7 +136,7 @@ skip = { reason = "The save dialog is the portal's own window, outside the windo
 # The tabs' words and the count, which only Postio publishes (#2118:
 # Threads, never Conversations).
 [app.focus.step.found-inside]
-check = { keyboard.region = "results", app.focus.results.tab = "Threads", app.focus.results.count_line = "1 thread" }
+check = { keyboard.region = "results", app.focus.results.tab = "Threads", app.focus.results.count_line = "1 thread", app.focus.results.reason = "frequent sender · file contents" }
 
 [app.focus.step.files]
 check = { keyboard.region = "results", app.focus.results.tab = "Files", app.focus.results.count_line = "1 file" }

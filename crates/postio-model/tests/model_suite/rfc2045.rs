@@ -11,8 +11,9 @@
 //! reaches nobody). Its *inputs* are here and in the corpus, so the case the
 //! fix has to handle is pinned even while the behaviour is wrong. #900 (an
 //! unusable boundary loses the body and offers the container as an
-//! attachment) and #899 (a `--boundary` mid-line truncates the body, fixed by
-//! `mail-parser` 1.0) are covered below.
+//! attachment) and #899 (a `--boundary` mid-line, or a line that only starts
+//! with one, truncates the body; fixed by `mail-parser` 1.0 and
+//! `patches/mail-parser/0001`) are covered below.
 
 use postio_model::{mime, test_corpus};
 
@@ -82,6 +83,51 @@ fn a_boundary_quoted_mid_line_does_not_end_the_part() {
         parsed.body.text.as_deref(),
         Some("one\r\nnot --SEP here\r\ntwo")
     );
+}
+
+#[test]
+fn a_line_that_only_starts_with_the_boundary_does_not_end_the_part() {
+    // RFC 2046 §5.1.1: a delimiter is `--boundary`, optional linear
+    // whitespace, and the end of the line; a close delimiter is the same with
+    // `--` after the boundary. A line that merely starts that way is body
+    // text. `mail-parser` 1.0.1 took the whitespace as the end of the check,
+    // so everything after the first of these lines was lost (#899).
+    for body in [
+        "FIRSTLINE\r\n--SEP this is not a delimiter\r\nSECONDLINE",
+        "FIRSTLINE\r\n--SEP\tnor this\r\nSECONDLINE",
+        "FIRSTLINE\r\n--SEP--this is no close either\r\nSECONDLINE",
+        "ALPHA\r\n--SEPX\r\nBETA",
+    ] {
+        assert_eq!(
+            mime::parse(&multipart(body)).body.text.as_deref(),
+            Some(body),
+            "the body was cut short"
+        );
+    }
+}
+
+#[test]
+fn a_body_quoting_its_own_boundary_reads_whole_and_keeps_its_attachment() {
+    // The corpus's version of the cases above, in the shape it arrives in:
+    // mail about MIME, quoting the delimiter mid-line, at a line start
+    // followed by words, and as the prefix of a longer token (#899).
+    let parsed = mime::parse(test_corpus::load("multipart-boundary-quoted-in-body").bytes());
+    let text = parsed.body.text.expect("a text body");
+    for line in [
+        "1. Mid-line, as in: the parts are split on --=_quoted_5e0a here.",
+        "--=_quoted_5e0a is only a delimiter when nothing but spaces follow it.",
+        "--=_quoted_5e0aX is a different boundary altogether.",
+        "All three are body text. This sentence is the end of the message.",
+    ] {
+        assert!(text.contains(line), "lost {line:?} from {text:?}");
+    }
+    assert!(!parsed.encoding_problems, "nothing here was damaged");
+    let names: Vec<_> = parsed
+        .parts
+        .iter()
+        .map(|part| part.attachment.filename.as_deref())
+        .collect();
+    assert_eq!(names, [Some("delimiter-rule.txt")]);
 }
 
 #[test]

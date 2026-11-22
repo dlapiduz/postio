@@ -1211,6 +1211,49 @@ fn the_reproducer_parses_and_recovers_its_parts() {
     );
 }
 
+/// #287: what a release build makes of the reproducer has to say so. The
+/// parser found no delimiter at the start of a line to open the multipart
+/// and opened it on one found mid-line instead, so the parts it returns are
+/// a guess. With no text or HTML part among them, a message that reads as
+/// clean is the reader's "This message has no body", which is untrue.
+#[test]
+fn the_reproducer_is_reported_as_damaged() {
+    assert!(
+        mime::parse(UNPARSEABLE_MULTIPART).encoding_problems,
+        "a guessed structure read as a clean message"
+    );
+}
+
+/// The ordinary way to meet the parser's mid-line fallback: delivery cut off
+/// before the close delimiter, in a body that quotes the boundary. The part
+/// ends at the quote and the rest of the text is gone; that cannot be
+/// recovered, but it can be said rather than shown as the whole message.
+#[test]
+fn a_part_cut_at_a_delimiter_found_mid_line_is_reported() {
+    let raw = b"From: ada@example.com\r\nMIME-Version: 1.0\r\n\
+Content-Type: multipart/mixed; boundary=\"SEP\"\r\n\r\n\
+--SEP\r\nContent-Type: text/plain\r\n\r\none\r\nnot --SEP here\r\ntwo\r\n";
+    let parsed = mime::parse(raw);
+    assert!(
+        parsed.encoding_problems,
+        "a body cut short read as whole: {:?}",
+        parsed.body.text
+    );
+}
+
+/// A multipart that merely lacks its close delimiter loses nothing: its last
+/// part runs to the end of the input. Saying "could not be decoded" about it
+/// would cry wolf on mail that reads in full.
+#[test]
+fn a_multipart_without_its_close_delimiter_is_not_reported() {
+    let raw = b"From: ada@example.com\r\nMIME-Version: 1.0\r\n\
+Content-Type: multipart/mixed; boundary=\"SEP\"\r\n\r\n\
+--SEP\r\nContent-Type: text/plain\r\n\r\none\r\ntwo\r\n";
+    let parsed = mime::parse(raw);
+    assert_eq!(parsed.body.text.as_deref(), Some("one\r\ntwo\r\n"));
+    assert!(!parsed.encoding_problems);
+}
+
 /// The other direction, and the one that would rot silently: every fixture in
 /// the corpus still parses. A containment that started reporting ordinary
 /// mail as unparseable would turn a crash into a blank pane for everyone.
