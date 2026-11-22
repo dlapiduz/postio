@@ -219,6 +219,10 @@ pub struct Wiring {
     /// The filing pass every engine hands incremental arrivals to. Empty until Focus mode fills it.
     pub filing: postio_runtime::FilingSlot,
     pub focus: focus::FocusSettings,
+    /// What makes Download and attach's one request (spec 014 D7): the web,
+    /// in the application. A part, like `discovery`, so a demo or a test
+    /// answers without dialing.
+    pub images: Arc<dyn attaching::Fetcher>,
 }
 
 #[derive(Clone, Debug)]
@@ -259,6 +263,7 @@ impl Wiring {
             mail: None,
             filing: postio_runtime::FilingSlot::default(),
             focus: focus::FocusSettings::default(),
+            images: Arc::new(attaching::HttpFetcher),
         }
     }
 

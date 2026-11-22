@@ -139,6 +139,8 @@ public enum MenuPlan {
         case "grave": return "`"
         case "apostrophe": return "'"
         case "quotedbl": return "\""
+        case "asciitilde": return "~"
+        case "bar": return "|"
         case "return", "enter": return "↩"
         case "escape", "esc": return "⎋"
         case "tab": return "⇥"

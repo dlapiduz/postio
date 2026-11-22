@@ -20,10 +20,21 @@ pub fn a_draft_the_desktop_saves_carries_no_markdown() {
     draft.body_markdown = Some("Half a **sentence**".to_owned());
     composer.open(draft);
     settle();
+    assert_eq!(
+        composer.test_source_text().as_deref(),
+        Some("Half a **sentence**"),
+        "a draft written as Markdown did not open as that Markdown"
+    );
+    assert_eq!(
+        composer.draft().body_markdown.as_deref(),
+        Some("Half a **sentence**")
+    );
 
+    composer.dispatch(postio_core::CommandId::ToggleMarkdownSource);
+    crate::support_compose::settle_until("the rich view", || composer.test_source_text().is_none());
     assert_eq!(
         composer.draft().body_markdown,
         None,
-        "the desktop's copy of the draft still claims the terminal's Markdown"
+        "the rich view's copy of the draft still claims the Markdown"
     );
 }

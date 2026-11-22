@@ -250,6 +250,8 @@ impl Compose {
             CommandId::NumberedList,
             CommandId::QuoteBlock,
             CommandId::InsertLink,
+            // The source view's toggle, at the toolbar's right end.
+            CommandId::ToggleMarkdownSource,
             CommandId::InsertImage,
             CommandId::CopyFields,
             CommandId::ShowNewer,

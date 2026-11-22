@@ -60,6 +60,8 @@ pub const KEY_NAMES: &[&str] = &[
     "grave",
     "apostrophe",
     "quotedbl",
+    "asciitilde",
+    "bar",
     "f1",
     "f2",
     "f3",

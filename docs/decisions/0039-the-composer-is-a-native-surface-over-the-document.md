@@ -11,7 +11,7 @@
 - Spell-check is `libspelling`'s adapter on the buffer. Accessibility is `GtkAccessibleText`.
 - `postio_ui::editor::markdown` stays an input convenience, not a source format. The WYSIWYG decision (ADR 0003) is not reopened.
 - ADR 0003's hardening requirements 1, 3 and 4 hold vacuously. Quoted content is sanitised before insertion, output is parsed into `Document`, and replies carry nothing outward.
-- Removing the WebView composer deletes `editor.js`, the script-message handlers, `evaluate_javascript` formatting, `editable_dialect.rs` and webkit6. One surface, never two behind a flag.
+- Removing the WebView composer deletes the WebKit editor (`composer/editor.rs`), the script-message handlers, `evaluate_javascript` formatting, `editable_dialect.rs` and webkit6. One surface, never two behind a flag.
 - Sequence: (1) `apply` in `postio-body`, proven without a UI; (2) route the existing composer's edits through it; (3) build the `GtkTextView` surface beside it; (4) delete the WebView in one commit. Steps 1 and 2 stand alone.
 
 ## Why
@@ -23,3 +23,6 @@
 ## Revisit when
 - The buffer-offset to `Document` mapping is unstable under IME preedit. Spike typing CJK into a list item before step 3 is locked.
 - `libspelling` fights a re-rendered buffer.
+
+## Waiting on this
+- Spec 014 Part B: the rich surface's typed sequences (its `SEQUENCES` table is the contract), drawing every construct, the new toolbar buttons, the formatting, table and code-language pickers, Paste as Markdown, the Download and attach chip, and `line_break`. Until then GTK and the Mac author those constructs in the Markdown source view. Tables in a native text view need a spike beside the IME.

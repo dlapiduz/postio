@@ -1085,13 +1085,73 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::Heading1,
         title: "Heading 1",
-        // Not the lists' `mod+shift+<n>`: `cmd+shift+3` and `4` are macOS screenshots. A terminal
-        // cannot
-        // send `ctrl+alt+1` (`terminal::legacy_deliverable`).
+        // The editors' `mod+alt+<level>` shelf; not `mod+shift+<n>`, which on a Mac is a screenshot.
+        // A terminal cannot send `ctrl+alt+1` (`terminal::legacy_deliverable`), so it gets `alt+1`.
         default_binding: "mod+alt+1",
         alternate_bindings: &["alt+1"],
         contexts: Context::Composer.as_set(),
         ..BASE
+    },
+    CommandSpec {
+        id: CommandId::Heading2,
+        title: "Heading 2",
+        default_binding: "mod+alt+2",
+        alternate_bindings: &["alt+2"],
+        contexts: Context::Composer.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::Heading3,
+        title: "Heading 3",
+        default_binding: "mod+alt+3",
+        alternate_bindings: &["alt+3"],
+        contexts: Context::Composer.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::Heading4,
+        title: "Heading 4",
+        default_binding: "mod+alt+4",
+        alternate_bindings: &["alt+4"],
+        contexts: Context::Composer.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::Heading5,
+        title: "Heading 5",
+        default_binding: "mod+alt+5",
+        alternate_bindings: &["alt+5"],
+        contexts: Context::Composer.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::Heading6,
+        title: "Heading 6",
+        default_binding: "mod+alt+6",
+        alternate_bindings: &["alt+6"],
+        contexts: Context::Composer.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::NormalText,
+        title: "Normal text",
+        // Docs' paragraph style key, on the heading shelf (spec 014 R7).
+        default_binding: "mod+alt+0",
+        alternate_bindings: &["alt+0"],
+        contexts: Context::Composer.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::BulletList,
@@ -1127,6 +1187,112 @@ static SPECS: &[CommandSpec] = &[
         contexts: Context::Composer.as_set(),
         ..BASE
     },
+    CommandSpec {
+        id: CommandId::Strikethrough,
+        title: "Strikethrough",
+        // Docs' alt+shift+5 is heading 5's terminal key, and Slack's mod+shift+x is Cancel send here (spec 014 R7).
+        default_binding: "mod+shift+s",
+        alternate_bindings: &["alt+asciitilde"],
+        contexts: Context::Composer.as_set(),
+        ..BASE
+    },
+    CommandSpec {
+        id: CommandId::InlineCode,
+        title: "Inline code",
+        // GitHub's.
+        default_binding: "mod+e",
+        alternate_bindings: &["alt+grave"],
+        contexts: Context::Composer.as_set(),
+        ..BASE
+    },
+    CommandSpec {
+        id: CommandId::CodeBlock,
+        title: "Code block",
+        default_binding: "mod+alt+c",
+        alternate_bindings: &["alt+C"],
+        contexts: Context::Composer.as_set(),
+        ..BASE
+    },
+    CommandSpec {
+        id: CommandId::TaskList,
+        title: "Task list",
+        // Beside the lists' and the quote's mod+shift+7 to 9.
+        default_binding: "mod+shift+6",
+        alternate_bindings: &["alt+t"],
+        contexts: Context::Composer.as_set(),
+        ..BASE
+    },
+    CommandSpec {
+        id: CommandId::ToggleTask,
+        title: "Done or not done",
+        default_binding: "mod+alt+x",
+        alternate_bindings: &["alt+X"],
+        contexts: Context::Composer.as_set(),
+        ..BASE
+    },
+    CommandSpec {
+        id: CommandId::Indent,
+        title: "Indent",
+        // Docs' indent keys.
+        default_binding: "mod+bracketright",
+        alternate_bindings: &["alt+greater"],
+        contexts: Context::Composer.as_set(),
+        ..BASE
+    },
+    CommandSpec {
+        id: CommandId::Outdent,
+        title: "Outdent",
+        default_binding: "mod+bracketleft",
+        alternate_bindings: &["alt+less"],
+        contexts: Context::Composer.as_set(),
+        ..BASE
+    },
+    CommandSpec {
+        id: CommandId::Divider,
+        title: "Divider",
+        default_binding: "mod+alt+minus",
+        alternate_bindings: &["alt+minus"],
+        contexts: Context::Composer.as_set(),
+        ..BASE
+    },
+    CommandSpec {
+        id: CommandId::Table,
+        title: "Table",
+        // Not mod+alt+t, which is GNOME's terminal.
+        default_binding: "mod+shift+t",
+        alternate_bindings: &["alt+bar"],
+        contexts: Context::Composer.as_set(),
+        ..BASE
+    },
+    CommandSpec {
+        id: CommandId::ClearFormatting,
+        title: "Clear formatting",
+        // Docs' clear formatting.
+        default_binding: "mod+backslash",
+        alternate_bindings: &["alt+backslash"],
+        contexts: Context::Composer.as_set(),
+        ..BASE
+    },
+    CommandSpec {
+        id: CommandId::ToggleMarkdownSource,
+        title: "Edit as Markdown or rich text",
+        // The terminal's body is Markdown already, so it has nothing to switch to.
+        default_binding: "mod+alt+s",
+        contexts: Context::Composer.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::AttachRemoteImage,
+        title: "Download and attach image",
+        // Fetches only on this press (spec 014 FR-031).
+        default_binding: "mod+alt+i",
+        alternate_bindings: &["alt+I"],
+        contexts: Context::Composer.as_set(),
+        ..BASE
+    },
+    // -- View and application --------------------------------------------
     CommandSpec {
         id: CommandId::Undo,
         title: "Undo",
@@ -2765,6 +2931,118 @@ mod tests {
                     "`{word}` says conversation; Postio says thread"
                 );
             }
+        }
+    }
+
+    // -- spec 014: compose formatting, the now phase (`data-model.md`) ----
+
+    /// Every **Now** row of spec 014's registry table: id, title, keys.
+    const FORMATTING_NOW: [(CommandId, &str, &str, &[&str]); 19] = [
+        (CommandId::Heading1, "Heading 1", "mod+alt+1", &["alt+1"]),
+        (CommandId::Heading2, "Heading 2", "mod+alt+2", &["alt+2"]),
+        (CommandId::Heading3, "Heading 3", "mod+alt+3", &["alt+3"]),
+        (CommandId::Heading4, "Heading 4", "mod+alt+4", &["alt+4"]),
+        (CommandId::Heading5, "Heading 5", "mod+alt+5", &["alt+5"]),
+        (CommandId::Heading6, "Heading 6", "mod+alt+6", &["alt+6"]),
+        (
+            CommandId::NormalText,
+            "Normal text",
+            "mod+alt+0",
+            &["alt+0"],
+        ),
+        (
+            CommandId::Strikethrough,
+            "Strikethrough",
+            "mod+shift+s",
+            &["alt+asciitilde"],
+        ),
+        (
+            CommandId::InlineCode,
+            "Inline code",
+            "mod+e",
+            &["alt+grave"],
+        ),
+        (CommandId::CodeBlock, "Code block", "mod+alt+c", &["alt+C"]),
+        (CommandId::TaskList, "Task list", "mod+shift+6", &["alt+t"]),
+        (
+            CommandId::ToggleTask,
+            "Done or not done",
+            "mod+alt+x",
+            &["alt+X"],
+        ),
+        (
+            CommandId::Indent,
+            "Indent",
+            "mod+bracketright",
+            &["alt+greater"],
+        ),
+        (
+            CommandId::Outdent,
+            "Outdent",
+            "mod+bracketleft",
+            &["alt+less"],
+        ),
+        (
+            CommandId::Divider,
+            "Divider",
+            "mod+alt+minus",
+            &["alt+minus"],
+        ),
+        (CommandId::Table, "Table", "mod+shift+t", &["alt+bar"]),
+        (
+            CommandId::ClearFormatting,
+            "Clear formatting",
+            "mod+backslash",
+            &["alt+backslash"],
+        ),
+        (
+            CommandId::ToggleMarkdownSource,
+            "Edit as Markdown or rich text",
+            "mod+alt+s",
+            &[],
+        ),
+        (
+            CommandId::AttachRemoteImage,
+            "Download and attach image",
+            "mod+alt+i",
+            &["alt+I"],
+        ),
+    ];
+
+    #[test]
+    fn every_now_phase_formatting_command_is_registered_as_the_spec_says() {
+        for (id, title, default, alternates) in FORMATTING_NOW {
+            let spec = get(id);
+            assert_eq!(spec.title, title, "`{id}`");
+            assert_eq!(spec.default_binding, default, "`{id}`");
+            assert_eq!(spec.alternate_bindings, alternates, "`{id}`");
+            assert_eq!(spec.contexts, Context::Composer.as_set(), "`{id}`");
+            assert_eq!(spec.recovery, Recovery::None, "`{id}`");
+            assert!(!spec.destructive, "`{id}`");
+            let expected = if id == CommandId::ToggleMarkdownSource {
+                GRAPHICAL_MAIL
+            } else {
+                MAIL
+            };
+            assert_eq!(spec.requires, expected, "`{id}`");
+        }
+    }
+
+    #[test]
+    fn no_held_formatting_command_is_registered() {
+        // Held for ADR 0039's native composer (spec 014 D8): a row nothing
+        // runs is a key that does nothing.
+        for held in [
+            "code_language",
+            "line_break",
+            "formatting",
+            "paste_markdown",
+            "table_row_below",
+            "table_delete",
+            "picker_choose_0",
+            "picker_choose_9",
+        ] {
+            assert!(held.parse::<CommandId>().is_err(), "`{held}` is registered");
         }
     }
 }

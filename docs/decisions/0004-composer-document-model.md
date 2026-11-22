@@ -5,7 +5,7 @@
 
 ## Rules
 - `postio-body` depends on `postio-model` and `ammonia`, has no SQL and no toolkit. `postio-model::outgoing` keeps taking `MessageBody { text, html }`; the composer renders `Document -> MessageBody`.
-- `Document` is `Vec<Block>` over the ADR 0003 subset. `Image` holds a `ContentId`: a remote image has no representation in a document Postio sends.
+- `Document` is `Vec<Block>` over a closed set: nine inline and eight block kinds since spec 014 added every CommonMark and GFM construct (strikethrough, a remote image not yet attached, tables, code blocks with a language, task items, six heading levels). Presentation attributes are constant, written by the serialiser and ignored by `parse`; no document holds a style. `Image` holds a `ContentId`: a remote image has no representation in a document Postio sends.
 - The canonical HTML string (`drafts.body_html`) is the record; `Document` is the working form. No serialised `Document` is stored.
 - Two properties are tested: `parse(to_html(d)) == d`, and `to_html(parse(h)) == h` for `h` in the subset (the serialiser is the normal form).
 - `parse` never fails; it narrows. Input on the quoting path is attacker-controlled, so an error would be a denial of service on replying.

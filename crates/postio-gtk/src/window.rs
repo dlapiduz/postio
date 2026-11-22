@@ -6024,6 +6024,26 @@ impl FocusWindow {
                 "focus.composer.marks".to_owned(),
                 serde_json::json!(composer.marks_lit().join(" ")),
             );
+            // Which view the body is in (spec 014 US7), what the Markdown
+            // view holds without its quote lines, and the status line the
+            // composer speaks on.
+            let source = composer.source_text();
+            app.insert(
+                "focus.composer.view".to_owned(),
+                serde_json::json!(if source.is_some() { "markdown" } else { "rich" }),
+            );
+            app.insert(
+                "focus.composer.source".to_owned(),
+                serde_json::json!(source.map(|text| postio_ui::editor::source::markdown_of(&text))),
+            );
+            app.insert(
+                "focus.composer.status".to_owned(),
+                serde_json::json!(composer.status()),
+            );
+            app.insert(
+                "focus.composer.not_attached".to_owned(),
+                serde_json::json!(composer.not_attached()),
+            );
         }
         app.insert(
             "focus.bulk".to_owned(),

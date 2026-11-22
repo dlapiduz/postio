@@ -1096,6 +1096,33 @@ fn perform(
                     let _ = inputs.send(Input::InlineStored(stored)).await;
                 });
             }
+            // POSTIO-CONSENT: on a Download and attach press alone; the
+            // host's handler makes the one request (spec 014 FR-031).
+            Effect::AttachRemoteImage {
+                generation,
+                draft,
+                href,
+            } => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    let outcome = client
+                        .attach_remote_image(draft, href.clone())
+                        .await
+                        .unwrap_or_else(|_| {
+                            Err(postio_ui::compose::RemoteRefusal::Unreachable(
+                                "Postio could not ask for it".to_owned(),
+                            ))
+                        });
+                    let _ = inputs
+                        .send(Input::RemoteImage {
+                            generation,
+                            href,
+                            outcome,
+                        })
+                        .await;
+                });
+            }
             Effect::Attach(path) => {
                 let client = client.clone();
                 let inputs = inputs.clone();

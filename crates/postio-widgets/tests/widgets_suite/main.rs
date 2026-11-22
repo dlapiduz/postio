@@ -23,8 +23,10 @@ mod composer_focus;
 mod composer_host;
 mod composer_inline_image;
 mod composer_markdown;
+mod composer_markdown_source;
 mod composer_recipient_select;
 mod composer_recipients;
+mod composer_remote_image;
 mod composer_resume;
 mod composer_schedule_send;
 mod composer_signature_default;
@@ -344,6 +346,14 @@ const CASES: &[(&str, fn())] = &[
         composer_document::the_body_round_trips_through_the_neutral_document as fn(),
     ),
     (
+        "composer_document::gtk_injects_the_one_bridge_postio_ui_assembles",
+        composer_document::gtk_injects_the_one_bridge_postio_ui_assembles as fn(),
+    ),
+    (
+        "composer_document::the_caret_crosses_the_bridge_as_a_place_in_the_document",
+        composer_document::the_caret_crosses_the_bridge_as_a_place_in_the_document as fn(),
+    ),
+    (
         "composer_focus::focus_lands_when_the_composer_opens_before_the_window_is_ever_mapped",
         composer_focus::focus_lands_when_the_composer_opens_before_the_window_is_ever_mapped as fn(),
     ),
@@ -384,12 +394,84 @@ const CASES: &[(&str, fn())] = &[
         composer_recipient_select::return_commits_the_suggestion_the_popover_has_selected as fn(),
     ),
     (
+        "composer_recipient_select::nothing_is_offered_until_four_characters_are_typed",
+        composer_recipient_select::nothing_is_offered_until_four_characters_are_typed as fn(),
+    ),
+    (
+        "composer_markdown_source::switching_there_and_back_changes_nothing",
+        composer_markdown_source::switching_there_and_back_changes_nothing as fn(),
+    ),
+    (
+        "composer_markdown_source::the_caret_keeps_its_character_in_a_struck_word",
+        composer_markdown_source::the_caret_keeps_its_character_in_a_struck_word as fn(),
+    ),
+    (
+        "composer_markdown_source::bold_in_the_view_wraps_the_selection",
+        composer_markdown_source::bold_in_the_view_wraps_the_selection as fn(),
+    ),
+    (
+        "composer_markdown_source::every_now_phase_command_edits_the_markdown_in_the_view",
+        composer_markdown_source::every_now_phase_command_edits_the_markdown_in_the_view as fn(),
+    ),
+    (
+        "composer_markdown_source::the_quote_chip_goes_whole_and_comes_back",
+        composer_markdown_source::the_quote_chip_goes_whole_and_comes_back as fn(),
+    ),
+    (
+        "composer_markdown_source::the_quote_mark_cannot_be_pasted",
+        composer_markdown_source::the_quote_mark_cannot_be_pasted as fn(),
+    ),
+    (
+        "composer_markdown_source::a_ragged_table_is_reported_with_undo",
+        composer_markdown_source::a_ragged_table_is_reported_with_undo as fn(),
+    ),
+    (
+        "composer_markdown_source::a_session_in_the_view_is_one_undo_step",
+        composer_markdown_source::a_session_in_the_view_is_one_undo_step as fn(),
+    ),
+    (
+        "composer_markdown_source::a_draft_saved_in_the_view_reopens_in_it",
+        composer_markdown_source::a_draft_saved_in_the_view_reopens_in_it as fn(),
+    ),
+    (
+        "composer_markdown_source::the_rich_view_says_where_a_waiting_command_is",
+        composer_markdown_source::the_rich_view_says_where_a_waiting_command_is as fn(),
+    ),
+    (
+        "composer_markdown_source::the_strip_says_markdown",
+        composer_markdown_source::the_strip_says_markdown as fn(),
+    ),
+    (
+        "composer_remote_image::a_remote_image_is_a_row_and_nothing_is_fetched_until_the_press",
+        composer_remote_image::a_remote_image_is_a_row_and_nothing_is_fetched_until_the_press as fn(),
+    ),
+    (
+        "composer_remote_image::an_attached_image_takes_the_chips_place",
+        composer_remote_image::an_attached_image_takes_the_chips_place as fn(),
+    ),
+    (
+        "composer_remote_image::a_refusal_says_why_and_the_image_stays_a_link",
+        composer_remote_image::a_refusal_says_why_and_the_image_stays_a_link as fn(),
+    ),
+    (
+        "composer_remote_image::remove_turns_the_chip_into_a_link",
+        composer_remote_image::remove_turns_the_chip_into_a_link as fn(),
+    ),
+    (
+        "composer_remote_image::a_press_with_no_image_says_so",
+        composer_remote_image::a_press_with_no_image_says_so as fn(),
+    ),
+    (
         "composer_resume::resuming_replaces_the_draft_the_composer_was_holding",
         composer_resume::resuming_replaces_the_draft_the_composer_was_holding as fn(),
     ),
     (
         "composer_resume::reopening_restores_the_formatting_and_the_attachments_too",
         composer_resume::reopening_restores_the_formatting_and_the_attachments_too as fn(),
+    ),
+    (
+        "composer_resume::a_draft_holding_every_construct_reopens_as_the_same_document",
+        composer_resume::a_draft_holding_every_construct_reopens_as_the_same_document as fn(),
     ),
     (
         "composer_schedule_send::ctrl_shift_return_opens_the_schedule_send_picker",

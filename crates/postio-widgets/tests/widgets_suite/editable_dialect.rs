@@ -132,7 +132,7 @@ pub fn webkit_editing_gestures_stay_inside_the_canonical_subset() {
     let document = round_trips(&dialect);
     assert!(
         document.blocks.iter().any(
-            |block| matches!(block, Block::List { ordered: false, items } if !items.is_empty())
+            |block| matches!(block, Block::List { kind: postio_body::ListKind::Bullet, items } if !items.is_empty())
         ),
         "no List out of insertUnorderedList; webkit dialect was: {dialect}"
     );

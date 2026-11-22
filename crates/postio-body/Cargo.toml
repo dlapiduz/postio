@@ -8,6 +8,12 @@ license.workspace = true
 publish.workspace = true
 repository.workspace = true
 
+[features]
+# Test-only: spec 014's golden document, for every suite that asserts what a
+# formatted message is. Downstream crates enable it from their
+# dev-dependencies, so nothing ships in a normal build.
+test-golden = []
+
 [dependencies]
 # `ammonia` pulls html5ever and a generated tag table, which is why this is not part of postio-model
 # (ADR 0004).
@@ -21,6 +27,9 @@ pulldown-cmark = { version = "0.13", default-features = false }
 postio-workspace-hack.workspace = true
 
 [dev-dependencies]
+# Self dev-dependency, as postio-model's corpus is, so the body suite sees
+# the golden document without making it a default feature.
+postio-body = { path = ".", features = ["test-golden"] }
 postio-model = { workspace = true, features = ["test-corpus"] }
 
 [lints]

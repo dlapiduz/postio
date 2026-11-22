@@ -317,9 +317,15 @@ held against [`screens.md`](../specs/007-postio-focus/screens.md). §19.
   [ADR 0004](decisions/0004-composer-document-model.md)). Each platform's
   editor is a view over `postio_body::Document`, so a second frontend is a port
   and identical gestures produce identical bytes. The editor is a WebView
-  (`postio_widgets::composer::editor`) with bold, italic, lists, links, quote
-  blocks and inline images. A message that used none of that is sent as plain
-  text.
+  (`postio_widgets::composer::editor`). A message that used no formatting is
+  sent as plain text.
+- **The composer formats everything a Markdown file can** (CommonMark and GFM,
+  [spec 014](../specs/014-compose-formatting/spec.md)): six heading levels;
+  bold, italic, strikethrough; inline code and code blocks with a language;
+  nested quotes; bulleted, numbered and task lists, nested; links, autolinks
+  and inline images; tables with alignment; dividers and line breaks.
+  Markdown is a way in and a view, never the stored format: `mod+alt+s`
+  switches a draft to its Markdown source and back, losing nothing.
 - Outgoing HTML is generated from the document, for a forward too. **A reply's
   quote** carries the original as the reader rendered it
   ([ADR 0033](decisions/0033-a-reply-quotes-what-the-reader-shows.md)),

@@ -11,6 +11,7 @@ mod egress;
 mod engine_patches;
 mod fidelity;
 mod fonts;
+mod formatting;
 mod hostile;
 mod images;
 mod layout;

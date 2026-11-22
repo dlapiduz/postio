@@ -96,7 +96,7 @@ fn has_strong(blocks: &[Block], text: &str) -> bool {
                 _ => false,
             })
         }
-        Block::List { items, .. } => items.iter().any(|item| has_strong(item, text)),
+        Block::List { items, .. } => items.iter().any(|item| has_strong(&item.blocks, text)),
         Block::Quote(inner) => has_strong(inner, text),
         _ => false,
     })
@@ -142,13 +142,19 @@ pub fn typed_markdown_becomes_the_formatting_its_command_produces() {
     settle("the list to cross the bridge", || {
         matches!(
             first_block(&editor),
-            Some(Block::List { ordered: false, .. })
+            Some(Block::List {
+                kind: postio_body::ListKind::Bullet,
+                ..
+            })
         )
     });
     assert!(
         matches!(
             first_block(&editor),
-            Some(Block::List { ordered: false, .. })
+            Some(Block::List {
+                kind: postio_body::ListKind::Bullet,
+                ..
+            })
         ),
         "`- ` did not start a bulleted list: {:?}",
         editor.document()
@@ -164,13 +170,19 @@ pub fn typed_markdown_becomes_the_formatting_its_command_produces() {
     settle("the ordered list to cross the bridge", || {
         matches!(
             first_block(&editor),
-            Some(Block::List { ordered: true, .. })
+            Some(Block::List {
+                kind: postio_body::ListKind::Ordered { .. },
+                ..
+            })
         )
     });
     assert!(
         matches!(
             first_block(&editor),
-            Some(Block::List { ordered: true, .. })
+            Some(Block::List {
+                kind: postio_body::ListKind::Ordered { .. },
+                ..
+            })
         ),
         "`1. ` did not start a numbered list: {:?}",
         editor.document()
