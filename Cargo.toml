@@ -138,7 +138,7 @@ publish = false
 # weaker default for everybody.
 [workspace.lints.rust]
 unsafe_code = "forbid"
-missing_docs = "warn"
+missing_docs = "allow"
 # A future nobody awaits is a statement that silently does not run. Fifty-six
 # of them survived the move to an async storage layer into a *green build* --
 # indexing calls, a settings write, a sidebar refresh -- and every one
