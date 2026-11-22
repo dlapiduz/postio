@@ -1404,6 +1404,12 @@ impl ResultsPane {
         self.count_line.text().to_string()
     }
 
+    /// The first result's reason line, when it is a top hit that has one:
+    /// "frequent sender · file contents".
+    pub fn top_reason(&self) -> Option<String> {
+        self.feed.result_row(0)?.reason
+    }
+
     /// The result the focus ring is on.
     pub fn cursor(&self) -> Option<u64> {
         self.cursor.get()

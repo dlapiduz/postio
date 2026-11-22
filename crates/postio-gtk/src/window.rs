@@ -6973,6 +6973,10 @@ impl FocusWindow {
                 "focus.results.count_line".to_owned(),
                 serde_json::json!(results.count_line()),
             );
+            app.insert(
+                "focus.results.reason".to_owned(),
+                serde_json::json!(results.top_reason()),
+            );
         }
         // What the composer holds of a thread (spec 013 US7).
         if let Some(compose) = self.compose()

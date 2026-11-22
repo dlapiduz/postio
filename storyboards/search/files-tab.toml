@@ -22,6 +22,8 @@
 #
 # The Files tab's count is its cards, the same on the Threads tab as once
 # it opens (#2178), and its heading and footer count the files (#2183).
+# A top hit found only inside a file says "file contents", never "file
+# name" (#2194).
 # Space and mod+Down hand the file to the system's previewer and save
 # dialog, which are outside the window the runner films, so those steps
 # are filmed by hand on both apps.
@@ -46,8 +48,8 @@ type    = "fy26"
 [[step]]
 id      = "found-inside"
 command = "show_all_results"
-check   = { keyboard.region = "results" }
-expect  = "The results open on Threads with one thread, “Atlas budget template v2”, listed twice: as the one top hit, and again under its month, “April 2026 · 1”, because every thread is in its month, a top hit too. Its source tag is the file's name, “Atlas-budget-template.xlsx”, and its passage reads “Sheet ‘Summary’, row 14: Total Atlas budget FY26 …” with “FY26” marked. The tabs read Threads 1 · Files 1 · People 1."
+check   = { keyboard.region = "results", app.focus.results.reason = "frequent sender · file contents" }
+expect  = "The results open on Threads with one thread, “Atlas budget template v2”, listed twice: as the one top hit, and again under its month, “April 2026 · 1”, because every thread is in its month, a top hit too. Under the top hit's sender its reason reads “frequent sender · file contents”, not “file name”: the words are inside the file, and its name does not say them. Its source tag is the file's name, “Atlas-budget-template.xlsx”, and its passage reads “Sheet ‘Summary’, row 14: Total Atlas budget FY26 …” with “FY26” marked. The tabs read Threads 1 · Files 1 · People 1."
 
 [[step]]
 id      = "files"
