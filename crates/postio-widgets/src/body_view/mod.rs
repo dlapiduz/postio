@@ -132,6 +132,9 @@ pub(super) mod imp {
         /// place from that instead of scrolling itself: see
         /// [`super::BodyView::flow_in`].
         pub(super) flow: RefCell<Option<glib::WeakRef<gtk::ScrolledWindow>>>,
+        /// What a highlight's reveal must not scroll off the column's top
+        /// ([`super::BodyView::keep_in_view_on_reveal`]).
+        pub(super) keep: RefCell<Option<glib::WeakRef<gtk::Widget>>>,
         /// What the column's ground is read from, when the view flows: a
         /// widget whose CSS `color` is the column's ground token
         /// ([`super::BodyView::set_ground`]).
@@ -175,6 +178,7 @@ pub(super) mod imp {
                 to_top: Cell::new(false),
                 darkened: RefCell::default(),
                 flow: RefCell::default(),
+                keep: RefCell::default(),
                 ground: RefCell::default(),
                 palette: RefCell::default(),
                 ground_drawn: RefCell::default(),

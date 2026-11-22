@@ -987,6 +987,10 @@ const CASES: &[(&str, fn())] = &[
         open_layout::every_band_starts_at_the_messages_left_edge as fn(),
     ),
     (
+        "open_layout::the_window_opens_with_its_header_in_view_and_the_sentence_marked",
+        open_layout::the_window_opens_with_its_header_in_view_and_the_sentence_marked as fn(),
+    ),
+    (
         "open_layout::the_action_cards_sentence_wraps_and_is_never_cut",
         open_layout::the_action_cards_sentence_wraps_and_is_never_cut as fn(),
     ),

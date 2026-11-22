@@ -1,0 +1,37 @@
+# The message window opens with its header in view (#2125).
+#
+# The defect: a message whose action marker quotes a sentence below the
+# fold opened scrolled down to bring that sentence a third of the way
+# down (FR-035's reveal), which took the kicker, subject, labels and sender
+# block off the top before the person had read who wrote it or what about.
+# The maintainer decided on 2026-11-22: keep the reveal, but keep the
+# header in view; the reveal must not scroll it off.
+#
+# Juno's "Harbor API draft v3" is the fifth row down: its marker quotes
+# "Please leave comments by Wednesday", in the body under the action card.
+# Narrow (900x700), where the sentence is below the fold. Red on the base,
+# which opens it scrolled down to the sentence.
+apps   = ["focus"]
+source = { kind = "issue", ref = "#2125" }
+proof  = "base"
+vary   = { width = ["narrow"] }
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+id      = "on-it"
+command = "next_message"
+check   = { keyboard.region = "list", cursor.index = 4 }
+
+[[step]]
+id      = "open"
+command = "open_message"
+settle  = { until = { view = "reader" }, watch_ms = 500 }
+check   = { view = "reader", keyboard.region = "reader", reading.scroll.offset = 0, cursor.index = { same_as = "on-it" } }
+expect  = "The message opens at the top of its column: the thread marker, the subject, the labels and the sender block are all in view, with the action card quoting the sentence under them. Nothing has scrolled."

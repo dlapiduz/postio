@@ -304,8 +304,9 @@ impl BodyView {
         self.queue_draw();
     }
 
-    /// Bring the highlight into view, a third of the way down. False when
-    /// the scroll could not get there yet.
+    /// Bring the highlight into view, a third of the way down, as far as
+    /// [`keep_in_view_on_reveal`](Self::keep_in_view_on_reveal) lets the
+    /// column go. False when the scroll could not get there yet.
     fn reveal_highlight(&self) -> bool {
         let rects = self.highlight_rects();
         let Some(first) = rects.first() else {
@@ -313,11 +314,50 @@ impl BodyView {
         };
         let y0 = rects.iter().map(|rect| rect.y0).fold(first.y0, f64::min);
         let y1 = rects.iter().map(|rect| rect.y1).fold(first.y1, f64::max);
-        let (top, page) = self.window();
-        if y0 >= top && y1 <= top + page {
-            return true;
+        let kept = self
+            .imp()
+            .keep
+            .borrow()
+            .as_ref()
+            .and_then(|weak| weak.upgrade());
+        if let (Some(kept), Some(scroller)) = (kept, self.flow_scroller()) {
+            // In the column's coordinates, where the header is.
+            let (Some(view), Some(header)) = (
+                self.compute_bounds(&scroller),
+                kept.compute_bounds(&scroller),
+            ) else {
+                return false;
+            };
+            let adjustment = scroller.vadjustment();
+            let value = adjustment.value();
+            let start = value + f64::from(view.y());
+            let limit = value + f64::from(header.y());
+            return match reveal_to(
+                (start + y0, start + y1),
+                value,
+                adjustment.page_size(),
+                Some(limit),
+            ) {
+                None => true,
+                Some(want) => {
+                    adjustment.set_value(want);
+                    (adjustment.value() - want).abs() < 0.5
+                }
+            };
         }
-        self.scroll_document_reaching((y0 - page / 3.0).max(0.0))
+        let (top, page) = self.window();
+        match reveal_to((y0, y1), top, page, None) {
+            None => true,
+            Some(want) => self.scroll_document_reaching(want),
+        }
+    }
+
+    /// Never let a highlight's reveal scroll `widget` off the top of the
+    /// column this view flows in: a message window's header -- its subject
+    /// and who sent it -- stays in view as the window opens (#2125), and
+    /// the sentence is revealed only as far as that allows.
+    pub fn keep_in_view_on_reveal(&self, widget: &impl IsA<gtk::Widget>) {
+        self.imp().keep.replace(Some(widget.as_ref().downgrade()));
     }
 
     /// Try [`reveal_highlight`](Self::reveal_highlight) again each time
@@ -384,3 +424,79 @@ impl BodyView {
 
 /// How thick the highlight's line is.
 const UNDERLINE: f32 = 1.5;
+
+/// Where a highlight's reveal takes the scroll, or `None` to leave it.
+///
+/// `sentence` is the highlight's top and bottom, `value` and `page` what is
+/// in view, all in one coordinate space. The sentence comes a third of the
+/// way down (FR-035). With `keep`, the furthest the scroll may go and keep
+/// a header in view, it comes only as far as that: if a third of the way
+/// down is further, the least scroll that shows the whole sentence, and if
+/// that is further too, nothing moves (#2125).
+fn reveal_to(sentence: (f64, f64), value: f64, page: f64, keep: Option<f64>) -> Option<f64> {
+    let (y0, y1) = sentence;
+    if y0 >= value && y1 <= value + page {
+        return None;
+    }
+    let third = (y0 - page / 3.0).max(0.0);
+    let Some(limit) = keep else {
+        return Some(third);
+    };
+    if third <= limit {
+        return Some(third);
+    }
+    let least = (y1 - page).max(0.0);
+    (least <= limit).then_some(least)
+}
+
+#[cfg(test)]
+mod reveal_tests {
+    use super::reveal_to;
+
+    // A 563px page over a column whose header ends at 579, the sentence
+    // further down (#2125's fixture).
+    const PAGE: f64 = 563.0;
+
+    #[test]
+    fn a_sentence_already_in_view_moves_nothing() {
+        assert_eq!(reveal_to((100.0, 120.0), 0.0, PAGE, None), None);
+        assert_eq!(reveal_to((100.0, 120.0), 0.0, PAGE, Some(0.0)), None);
+    }
+
+    #[test]
+    fn with_nothing_to_keep_the_sentence_comes_a_third_of_the_way_down() {
+        // FR-035 as it was, for a view with no header over it.
+        assert_eq!(
+            reveal_to((900.0, 920.0), 0.0, PAGE, None),
+            Some(900.0 - PAGE / 3.0)
+        );
+    }
+
+    #[test]
+    fn the_reveal_never_scrolls_past_what_keeps_the_header_in_view() {
+        // #2125: the header starts at 40; a third of the way down would
+        // take the column to 712 and the header with it. Nor does it creep
+        // as far as it may and stop short of the sentence: the column stays
+        // at the top, and the marker card says what the sentence is.
+        assert_eq!(reveal_to((900.0, 920.0), 0.0, PAGE, Some(40.0)), None);
+    }
+
+    #[test]
+    fn a_sentence_just_under_the_fold_is_brought_up_as_far_as_the_header_allows() {
+        // The bottom of the sentence 20px under the fold: a third of the
+        // way down is past the header, but the least scroll that shows
+        // the whole sentence is not.
+        assert_eq!(
+            reveal_to((PAGE, PAGE + 20.0), 0.0, PAGE, Some(40.0)),
+            Some(20.0)
+        );
+    }
+
+    #[test]
+    fn where_a_third_of_the_way_down_keeps_the_header_it_is_used() {
+        assert_eq!(
+            reveal_to((PAGE + 100.0, PAGE + 120.0), 0.0, PAGE, Some(500.0)),
+            Some(PAGE + 100.0 - PAGE / 3.0)
+        );
+    }
+}
