@@ -2,8 +2,6 @@
 //! (1.03x from empty to 131 MB), so `cache_size` is not the lever; contention is the open question.
 //! Not criterion: the workload is stateful and criterion's resampling would sweep the store size.
 
-#![allow(missing_docs)]
-
 use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 

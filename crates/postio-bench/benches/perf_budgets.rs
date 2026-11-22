@@ -1,5 +1,3 @@
-#![allow(missing_docs)]
-
 use criterion::{Criterion, criterion_group, criterion_main};
 use postio_core::perf_budget::{INTERACTION_BUDGET, SEARCH_BUDGET, STARTUP_BUDGET, check_budget};
 use std::hint::black_box;

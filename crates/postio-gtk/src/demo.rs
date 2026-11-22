@@ -3,8 +3,6 @@
 //! Behind the `demo` feature, which turns on `postio-storage/test-support`: that code must not
 //! reach a normal build.
 
-#![allow(missing_docs)]
-
 pub mod storyboard;
 
 pub use postio_demo::*;

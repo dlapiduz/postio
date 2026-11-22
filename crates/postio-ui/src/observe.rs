@@ -3,7 +3,6 @@
 
 // Every variant and field is documented once, in data-model.md's table; a
 // second doc line on each would be two homes for one fact.
-#![allow(missing_docs)]
 
 use std::collections::BTreeMap;
 

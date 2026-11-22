@@ -3,8 +3,6 @@
 //! the machine, failing whenever another worktree was compiling. CI compiles benches and times
 //! nothing.
 
-#![allow(missing_docs)]
-
 use std::hint::black_box;
 use std::time::Instant;
 

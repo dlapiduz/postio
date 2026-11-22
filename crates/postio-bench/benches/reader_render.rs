@@ -1,8 +1,6 @@
 //! The reading renderer, warm: a second request on a live `Renderer` per designed corpus fixture,
 //! and the first tile's rasterisation. Reported, never gated: counts gate, timings report.
 
-#![allow(missing_docs)]
-
 use std::hint::black_box;
 use std::sync::Arc;
 

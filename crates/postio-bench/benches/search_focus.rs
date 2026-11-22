@@ -1,5 +1,3 @@
-#![allow(missing_docs)]
-
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 

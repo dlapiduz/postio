@@ -2,8 +2,6 @@
 //! share one seed. Test-support code: an app reaches it only behind its own `demo` feature.
 //! Every name is invented, every address is on a reserved domain, and nothing touches the network.
 
-#![allow(missing_docs)]
-
 mod files;
 mod search;
 mod threads;

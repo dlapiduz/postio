@@ -1,5 +1,3 @@
-#![allow(missing_docs)]
-
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};

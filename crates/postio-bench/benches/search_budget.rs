@@ -1,8 +1,6 @@
 //! The `<100 ms` search budget on 120,000 messages. A date range in the same WHERE once tempted the
 //! planner into walking the range per hit (#1809), so a word plus a date is one of the shapes.
 
-#![allow(missing_docs)]
-
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 

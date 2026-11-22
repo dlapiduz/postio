@@ -5,8 +5,6 @@
 //! does
 //! not license raising `MAX_SYNC_LANES` (#729).
 
-#![allow(missing_docs)]
-
 use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
