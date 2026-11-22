@@ -169,7 +169,7 @@ unit cases, `composer_markdown_source.rs`, and
 - [x] T044 [P] [US8] Add the call-site check: `fetch_remote_image`'s only caller is the `AttachRemoteImage` handler. Put it in `scripts/checks/check-remote-image-fetch-site.py`, wired into `scripts/check.sh`, with its own test in `scripts/tests/`.
 - [x] T045 [US8] Write failing cases in a new `crates/postio-widgets/tests/widgets_suite/composer_remote_image.rs` for "The composer". Then build the "Not attached yet" rows in the attachment list, the button with its keycap, remove-to-link, "Downloading…", and the warning line before Send, in `crates/postio-widgets/src/composer/mod.rs`. The words go in `crates/postio-ui/src/compose.rs`.
 - [x] T046 [US8] Add a log case: the fetch logs the draft id, the outcome and the byte count, and never the address
-- [ ] T047 [P] [US8] Draw the same row in the terminal composer's attachment list, `crates/postio-tui/src/view/composer.rs`, with TUI cases first
+- [x] T047 [P] [US8] Draw the same row in the terminal composer's attachment list, `crates/postio-tui/src/view/composer.rs`, with TUI cases first
 - [ ] T048 [US8] Mac: claim `attach_remote_image` in `ComposeCommands`, expose the fetch through `crates/postio-ffi/src/session.rs`, and draw the row in `macos/Sources/PostioKit/ComposeColumn.swift`, with tests first
 - [ ] T049 [US8] Make `storyboards/compose/remote-image.toml` green, and run `/ux-review`
 

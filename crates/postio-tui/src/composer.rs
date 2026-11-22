@@ -111,6 +111,15 @@ impl Format {
     }
 }
 
+/// Where a remote image's download stands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Remote {
+    /// Running.
+    Downloading,
+    /// Refused, and why.
+    Refused(postio_ui::compose::RemoteRefusal),
+}
+
 /// One draft being written.
 pub struct Composer {
     /// Which composition this is, for the host's draft writer: a save made
@@ -137,6 +146,9 @@ pub struct Composer {
     /// How many times what would be saved has changed, so a save that was
     /// asked for before the last edit knows it is stale.
     edits: u64,
+    /// Remote images whose download is running, or why one was refused,
+    /// by address (spec 014 US8).
+    remote: std::collections::HashMap<String, Remote>,
     /// The first body line the last frame showed: the textarea's own
     /// scroll, mirrored, since it does not say where it scrolled to.
     body_top: std::cell::Cell<u16>,
@@ -227,6 +239,7 @@ impl Composer {
             identities: Vec::new(),
             identity: 0,
             edits: 0,
+            remote: std::collections::HashMap::new(),
             body_top: std::cell::Cell::new(0),
             body_height: std::cell::Cell::new(0),
             suggestions: Vec::new(),
@@ -551,6 +564,77 @@ impl Composer {
     /// The files this draft carries.
     pub fn attachments(&self) -> &[postio_model::Attachment] {
         &self.draft.attachments
+    }
+
+    /// The remote images the body names and has not attached, with their
+    /// words (spec 014 US8).
+    pub fn remote_images(&self) -> Vec<(postio_body::WebHref, String)> {
+        markdown::to_document(&self.markdown()).remote_images()
+    }
+
+    /// Each remote image's row: its words, and its host or what became of
+    /// its download.
+    pub fn remote_rows(&self, key: &str) -> Vec<(String, String)> {
+        self.remote_images()
+            .into_iter()
+            .map(|(href, alt)| {
+                let host = postio_ui::compose::remote_host(href.as_str());
+                let words = match self.remote.get(href.as_str()) {
+                    Some(Remote::Downloading) => postio_ui::compose::DOWNLOADING.to_owned(),
+                    Some(Remote::Refused(refusal)) => {
+                        postio_ui::compose::remote_refusal(refusal, &host, key)
+                    }
+                    None => host,
+                };
+                (alt, words)
+            })
+            .collect()
+    }
+
+    /// The first remote image not already downloading, marked as downloading:
+    /// what one Download and attach press asks for.
+    pub fn start_remote(&mut self) -> Option<postio_body::WebHref> {
+        let href = self
+            .remote_images()
+            .into_iter()
+            .map(|(href, _)| href)
+            .find(|href| self.remote.get(href.as_str()) != Some(&Remote::Downloading))?;
+        self.remote
+            .insert(href.as_str().to_owned(), Remote::Downloading);
+        Some(href)
+    }
+
+    /// A download came back: the picture in the image's place, by its
+    /// content id, or the row saying why it stays a link.
+    pub fn settle_remote(
+        &mut self,
+        href: &str,
+        outcome: Result<postio_model::Attachment, postio_ui::compose::RemoteRefusal>,
+    ) {
+        match outcome {
+            Ok(attachment) => {
+                self.remote.remove(href);
+                if let Some(id) = attachment.content_id.clone() {
+                    let from = format!("]({href})");
+                    let to = format!("](cid:{id})");
+                    self.apply(|text, at| {
+                        let mut edited = text.to_owned();
+                        if let Some(found) = text.find(&from) {
+                            edited.replace_range(found..found + from.len(), &to);
+                        }
+                        postio_ui::editor::markdown_edit::Edit {
+                            text: edited,
+                            selection: at,
+                        }
+                    });
+                }
+                self.attach(attachment);
+            }
+            Err(refusal) => {
+                self.remote
+                    .insert(href.to_owned(), Remote::Refused(refusal));
+            }
+        }
     }
 
     /// Carry `attachment`, already stored by the host.
@@ -974,6 +1058,52 @@ pub(crate) mod tests {
             assert!(composer.format(format), "{format:?}");
             assert_eq!(composer.markdown(), after, "{format:?} over {before:?}");
         }
+    }
+
+    #[test]
+    fn a_remote_image_is_a_row_downloaded_on_a_press_and_put_in_place() {
+        let mut composer = in_body("See ![chart](https://example.com/x.png).");
+        assert_eq!(
+            composer.remote_rows("alt+I"),
+            vec![("chart".to_owned(), "example.com".to_owned())]
+        );
+        let href = composer.start_remote().expect("one to download");
+        assert_eq!(href.as_str(), "https://example.com/x.png");
+        assert_eq!(composer.remote_rows("alt+I")[0].1, "Downloading\u{2026}");
+        assert_eq!(
+            composer.start_remote(),
+            None,
+            "one request at a time for one image"
+        );
+        let mut part = postio_model::Attachment::new(
+            postio_model::ids::MessageId::UNASSIGNED,
+            "image/png",
+            10,
+        );
+        part.content_id = Some("x1@postio.invalid".to_owned());
+        composer.settle_remote(href.as_str(), Ok(part));
+        assert_eq!(composer.markdown(), "See ![chart](cid:x1@postio.invalid).");
+        assert!(composer.remote_rows("alt+I").is_empty());
+        assert_eq!(composer.attachments().len(), 1);
+    }
+
+    #[test]
+    fn a_refused_download_says_why_and_stays_a_link() {
+        let mut composer = in_body("![chart](https://example.com/x.png)");
+        let href = composer.start_remote().expect("one");
+        composer.settle_remote(
+            href.as_str(),
+            Err(postio_ui::compose::RemoteRefusal::TooLarge),
+        );
+        assert_eq!(
+            composer.remote_rows("alt+I")[0].1,
+            "Larger than 10 MB \u{b7} not attached \u{b7} it will be sent as a link"
+        );
+        assert_eq!(composer.markdown(), "![chart](https://example.com/x.png)");
+        assert!(
+            composer.start_remote().is_some(),
+            "a press again asks again"
+        );
     }
 
     #[test]
