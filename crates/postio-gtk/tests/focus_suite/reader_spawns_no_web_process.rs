@@ -48,6 +48,8 @@ fn descends_from(mut pid: i32, ancestor: i32) -> bool {
     false
 }
 
+/// POSTIO-FIXED-DEADLINE: gives a process that should not start, and a render that should not happen,
+/// every chance to.
 async fn spend(duration: Duration) {
     let deadline = std::time::Instant::now() + duration;
     while std::time::Instant::now() < deadline {

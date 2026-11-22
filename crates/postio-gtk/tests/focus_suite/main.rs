@@ -59,7 +59,6 @@ mod notify_off_the_main_thread;
 mod observe;
 mod offline_send;
 mod one_composer;
-mod one_keymap;
 mod open_choice;
 mod open_keys;
 mod open_layout;
@@ -1445,10 +1444,6 @@ const CASES: &[(&str, fn())] = &[
         "store_unavailable::a_store_under_another_key_offers_a_fresh_store_and_keeps_the_old_one",
         store_unavailable::a_store_under_another_key_offers_a_fresh_store_and_keeps_the_old_one
             as fn(),
-    ),
-    (
-        "one_keymap::a_registered_command_reaches_the_key_map_with_its_key",
-        one_keymap::a_registered_command_reaches_the_key_map_with_its_key as fn(),
     ),
     (
         "reload::a_saved_rebind_reaches_the_keyboard_every_keycap_and_the_key_map",

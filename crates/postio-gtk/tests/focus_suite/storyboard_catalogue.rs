@@ -1,3 +1,6 @@
+//! POSTIO-MEASUREMENT: plays the whole storyboard catalogue, several minutes, so it runs nightly
+//! beside `every_command`; `scripts/storyboards.sh run` plays it sharded on demand.
+
 use std::path::Path;
 
 use postio_gtk::demo::storyboard::{Options, run, variants_to_play};
