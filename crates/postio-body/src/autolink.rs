@@ -24,11 +24,18 @@ pub struct Autolink {
 
 /// Every extended autolink in `text`, in order, never overlapping.
 pub fn find(text: &str) -> Vec<Autolink> {
+    find_after(text, None)
+}
+
+/// As [`find`], for text that follows `before` -- a run the parser split
+/// off a longer line, whose first link may start only where the line's
+/// character before it allows.
+pub fn find_after(text: &str, before: Option<char>) -> Vec<Autolink> {
     let mut found = Vec::new();
     let mut at = 0;
     while at < text.len() {
         if text.is_char_boundary(at)
-            && may_start(text, at)
+            && may_start(text, at, before)
             && let Some(link) = link_at(text, at)
         {
             at = link.range.end;
@@ -40,13 +47,21 @@ pub fn find(text: &str) -> Vec<Autolink> {
     found
 }
 
+/// `text` as text and links, the first link starting only where `before`
+/// allows.
+pub fn link_text_after(text: &str, before: Option<char>) -> Vec<Inline> {
+    let mut out = Vec::new();
+    split_text(text, before, &mut out);
+    out
+}
+
 /// `inlines` with every autolink in their text made a link. Text inside a
 /// link or code is left alone, as GFM leaves it.
 pub fn link_inlines(inlines: Vec<Inline>) -> Vec<Inline> {
     let mut out = Vec::with_capacity(inlines.len());
     for inline in inlines {
         match inline {
-            Inline::Text(text) => split_text(&text, &mut out),
+            Inline::Text(text) => split_text(&text, None, &mut out),
             Inline::Strong(inner) => out.push(Inline::Strong(link_inlines(inner))),
             Inline::Emphasis(inner) => out.push(Inline::Emphasis(link_inlines(inner))),
             Inline::Strikethrough(inner) => out.push(Inline::Strikethrough(link_inlines(inner))),
@@ -56,9 +71,9 @@ pub fn link_inlines(inlines: Vec<Inline>) -> Vec<Inline> {
     out
 }
 
-fn split_text(text: &str, out: &mut Vec<Inline>) {
+fn split_text(text: &str, before: Option<char>, out: &mut Vec<Inline>) {
     let mut last = 0;
-    for link in find(text) {
+    for link in find_after(text, before) {
         if link.range.start > last {
             out.push(Inline::Text(text[last..link.range.start].to_owned()));
         }
@@ -75,10 +90,11 @@ fn split_text(text: &str, out: &mut Vec<Inline>) {
 
 /// GFM: an autolink begins a line, or follows whitespace or one of
 /// `*`, `_`, `~`, `(`.
-fn may_start(text: &str, at: usize) -> bool {
+fn may_start(text: &str, at: usize, before: Option<char>) -> bool {
     text[..at]
         .chars()
         .next_back()
+        .or(before)
         .is_none_or(|c| c.is_whitespace() || matches!(c, '*' | '_' | '~' | '('))
 }
 

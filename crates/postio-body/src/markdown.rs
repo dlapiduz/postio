@@ -147,11 +147,19 @@ pub fn to_document(markdown: &str) -> crate::Document {
                 ),
                 Tag::TableHead | Tag::TableRow => Frame::Row(Vec::new()),
                 Tag::TableCell => Frame::Inlines(Holder::Cell, Vec::new()),
+                // A block of HTML: what it holds goes to its container.
+                Tag::HtmlBlock => Frame::Blocks(Vec::new()),
                 // Anything else the parser was not asked to know is not
                 // reached; what is, keeps its words below.
                 _ => Frame::Inlines(Holder::Transparent, Vec::new()),
             }),
             Event::End(_) => {
+                // A mark opened as HTML and never closed ends with what
+                // holds it.
+                while matches!(stack.last(), Some(Frame::Inlines(Holder::Html(..), _))) {
+                    let frame = stack.pop().expect("an open mark");
+                    close(&mut stack, frame);
+                }
                 let Some(frame) = stack.pop() else { break };
                 if stack.is_empty() {
                     stack.push(frame);
@@ -171,23 +179,63 @@ pub fn to_document(markdown: &str) -> crate::Document {
                 // in its source is someone saying "this is text", which is
                 // how `from_document` keeps text text.
                 _ if markdown.get(range.clone()) == Some(&*text) => {
-                    for inline in
-                        crate::autolink::link_inlines(vec![crate::Inline::Text(text.into_string())])
-                    {
+                    let before = markdown[..range.start].chars().next_back();
+                    for inline in crate::autolink::link_text_after(&text, before) {
                         push_inline(&mut stack, inline);
                     }
                 }
                 _ => push_inline(&mut stack, crate::Inline::Text(text.into_string())),
             },
             Event::Code(code) => push_inline(&mut stack, crate::Inline::Code(code.into_string())),
-            Event::Html(html) | Event::InlineHtml(html) => {
-                push_inline(&mut stack, crate::Inline::Text(html.into_string()));
+            // The few tags `from_document` writes where Markdown has no
+            // spelling (spec 014's golden spellings): `<br>`, an empty
+            // comment between two lists, and a mark CommonMark would not
+            // read. Any other HTML is the words that were typed.
+            Event::Html(html) => {
+                let html = html.trim();
+                if html == "<!-- -->" {
+                    continue;
+                }
+                let breaks = html.matches("<br>").count();
+                if breaks > 0 && html.replace("<br>", "").is_empty() {
+                    push_block(
+                        &mut stack,
+                        crate::Block::Paragraph(vec![crate::Inline::Break; breaks - 1]),
+                    );
+                } else {
+                    push_inline(&mut stack, crate::Inline::Text(html.to_owned()));
+                }
             }
+            Event::InlineHtml(html) => match &*html {
+                "<br>" => push_inline(&mut stack, crate::Inline::Break),
+                "<strong>" => stack.push(Frame::Inlines(Holder::Html(Mark::Strong), Vec::new())),
+                "<em>" => stack.push(Frame::Inlines(Holder::Html(Mark::Emphasis), Vec::new())),
+                "<del>" => stack.push(Frame::Inlines(
+                    Holder::Html(Mark::Strikethrough),
+                    Vec::new(),
+                )),
+                "<code>" => stack.push(Frame::Inlines(Holder::Html(Mark::Code), Vec::new())),
+                "</strong>" | "</em>" | "</del>" | "</code>"
+                    if matches!(
+                        stack.last(),
+                        Some(Frame::Inlines(Holder::Html(mark), _)) if mark.closer() == &*html
+                    ) =>
+                {
+                    let frame = stack.pop().expect("the open mark");
+                    close(&mut stack, frame);
+                }
+                _ => push_inline(&mut stack, crate::Inline::Text(html.into_string())),
+            },
             Event::SoftBreak => push_inline(&mut stack, crate::Inline::Text(" ".to_owned())),
             Event::HardBreak => push_inline(&mut stack, crate::Inline::Break),
             Event::Rule => push_block(&mut stack, crate::Block::Rule),
             Event::TaskListMarker(done) => {
-                if let Some(Frame::Item(task, ..)) = stack.last_mut() {
+                // On the item, which in a loose list is under its paragraph.
+                if let Some(Frame::Item(task, ..)) = stack
+                    .iter_mut()
+                    .rev()
+                    .find(|frame| matches!(frame, Frame::Item(..)))
+                {
                     *task = Some(if done {
                         crate::Task::Done
                     } else {
@@ -210,6 +258,110 @@ pub fn to_document(markdown: &str) -> crate::Document {
     crate::Document { blocks }
 }
 
+/// The document in the normal form the Markdown view writes and reads
+/// (spec 014 FR-024): adjacent text runs merged, empty ones dropped,
+/// adjacent code spans and adjacent marks of one kind merged, and a
+/// non-empty code block ending in a line end. Each is a difference no reader can see. Idempotent.
+pub fn normalize(document: crate::Document) -> crate::Document {
+    crate::Document {
+        blocks: document.blocks.into_iter().map(normalize_block).collect(),
+    }
+}
+
+fn normalize_block(block: crate::Block) -> crate::Block {
+    use crate::Block;
+    match block {
+        Block::Paragraph(inlines) => Block::Paragraph(normalize_inlines(inlines)),
+        Block::Heading { level, inlines } => Block::Heading {
+            level,
+            inlines: normalize_inlines(inlines),
+        },
+        Block::List { kind, items } => Block::List {
+            kind,
+            items: items
+                .into_iter()
+                .map(|item| crate::ListItem {
+                    task: item.task,
+                    blocks: item.blocks.into_iter().map(normalize_block).collect(),
+                })
+                .collect(),
+        },
+        Block::Quote(blocks) => Block::Quote(blocks.into_iter().map(normalize_block).collect()),
+        Block::Code { language, mut text } => {
+            if !text.is_empty() && !text.ends_with('\n') {
+                text.push('\n');
+            }
+            Block::Code { language, text }
+        }
+        Block::Table(table) => {
+            let cells = |row: &[crate::Cell]| -> Vec<crate::Cell> {
+                row.iter()
+                    .map(|cell| normalize_inlines(cell.clone()))
+                    .collect()
+            };
+            Block::Table(crate::Table::new(
+                table.alignments().to_vec(),
+                cells(table.header()),
+                table.rows().iter().map(|row| cells(row)).collect(),
+            ))
+        }
+        other @ (Block::Quoted(_) | Block::Rule) => other,
+    }
+}
+
+fn normalize_inlines(inlines: Vec<crate::Inline>) -> Vec<crate::Inline> {
+    use crate::Inline;
+    let mut out: Vec<Inline> = Vec::with_capacity(inlines.len());
+    for inline in inlines {
+        // A mark inside the same mark reads as the one mark.
+        fn flat(
+            inner: Vec<Inline>,
+            same: fn(Inline) -> Result<Vec<Inline>, Inline>,
+        ) -> Vec<Inline> {
+            normalize_inlines(
+                normalize_inlines(inner)
+                    .into_iter()
+                    .flat_map(|inline| same(inline).unwrap_or_else(|other| vec![other]))
+                    .collect(),
+            )
+        }
+        let inline = match inline {
+            Inline::Strong(inner) => Inline::Strong(flat(inner, |i| match i {
+                Inline::Strong(nested) => Ok(nested),
+                other => Err(other),
+            })),
+            Inline::Emphasis(inner) => Inline::Emphasis(flat(inner, |i| match i {
+                Inline::Emphasis(nested) => Ok(nested),
+                other => Err(other),
+            })),
+            Inline::Strikethrough(inner) => Inline::Strikethrough(flat(inner, |i| match i {
+                Inline::Strikethrough(nested) => Ok(nested),
+                other => Err(other),
+            })),
+            Inline::Link { href, inlines } => Inline::Link {
+                href,
+                inlines: normalize_inlines(inlines),
+            },
+            Inline::Text(text) if text.is_empty() => continue,
+            other => other,
+        };
+        match (out.last_mut(), inline) {
+            (Some(Inline::Text(last)), Inline::Text(more)) => last.push_str(&more),
+            (Some(Inline::Code(last)), Inline::Code(more)) => last.push_str(&more),
+            // Two marks of one kind side by side read as one.
+            (Some(Inline::Strong(last)), Inline::Strong(more))
+            | (Some(Inline::Emphasis(last)), Inline::Emphasis(more))
+            | (Some(Inline::Strikethrough(last)), Inline::Strikethrough(more)) => {
+                last.extend(more);
+                let merged = normalize_inlines(std::mem::take(last));
+                *last = merged;
+            }
+            (_, inline) => out.push(inline),
+        }
+    }
+    out
+}
+
 /// The composer's document, as Markdown the terminal composer can edit.
 ///
 /// What opens a draft written in the desktop composer: its HTML, parsed to
@@ -226,22 +378,54 @@ pub fn from_document(document: &crate::Document) -> String {
 
 /// `blocks`, each line after the first of each block prefixed with `indent`
 /// (a list item's continuation, a quote's `> `), a blank line between them.
+///
+/// Two lists of one kind side by side would read as one, so an empty
+/// comment stands between them (spec 014's golden spellings).
 fn write_blocks(out: &mut String, blocks: &[crate::Block], indent: &str) {
-    let mut first = true;
+    let mut previous: Option<&crate::Block> = None;
     for block in blocks {
         let mut text = String::new();
         if !write_block(&mut text, block) {
             continue;
         }
-        if !first {
-            out.push_str(indent.trim_end());
-            out.push('\n');
-            out.push_str(indent);
+        if let Some(previous) = previous {
+            let blank = |out: &mut String| {
+                out.push_str(indent.trim_end());
+                out.push('\n');
+                out.push_str(indent);
+            };
+            blank(out);
+            if same_list_kind(previous, block) {
+                out.push_str("<!-- -->\n");
+                blank(out);
+            }
         }
-        first = false;
+        previous = Some(block);
         out.push_str(&text.replace('\n', &format!("\n{indent}")));
         out.push('\n');
     }
+}
+
+/// Whether two lists would merge into one if nothing stood between them.
+fn same_list_kind(a: &crate::Block, b: &crate::Block) -> bool {
+    match (a, b) {
+        (crate::Block::List { kind: a, .. }, crate::Block::List { kind: b, .. }) => {
+            a.is_ordered() == b.is_ordered()
+        }
+        _ => false,
+    }
+}
+
+/// Where a run of inlines sits, which decides how its edges are spelled.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Place {
+    /// A paragraph: a break is `\` at the end of a line, except where
+    /// Markdown cannot put one.
+    Paragraph,
+    /// A heading or a table cell: one line, so every break is `<br>`.
+    Line,
+    /// Inside a mark or a link: the container spells the edges.
+    Inner,
 }
 
 /// One block, without its trailing newline; `false` for one Markdown does
@@ -249,11 +433,23 @@ fn write_blocks(out: &mut String, blocks: &[crate::Block], indent: &str) {
 fn write_block(out: &mut String, block: &crate::Block) -> bool {
     use crate::Block;
     match block {
-        Block::Paragraph(inlines) => write_inlines(out, inlines),
+        Block::Paragraph(inlines) => {
+            // A paragraph of nothing but breaks has no words to hang them
+            // on, so it is that many `<br>`s and one more (spec 014: an
+            // empty paragraph is a line holding only `<br>`).
+            if inlines
+                .iter()
+                .all(|inline| matches!(inline, crate::Inline::Break))
+            {
+                out.push_str(&"<br>".repeat(inlines.len() + 1));
+            } else {
+                write_inlines(out, inlines, Place::Paragraph);
+            }
+        }
         Block::Heading { level, inlines } => {
             out.push_str(&"#".repeat(usize::from(level.digit())));
             out.push(' ');
-            write_inlines(out, inlines);
+            write_inlines(out, inlines, Place::Line);
         }
         Block::List { kind, items } => {
             for (index, item) in items.iter().enumerate() {
@@ -283,7 +479,7 @@ fn write_block(out: &mut String, block: &crate::Block) -> bool {
             write_blocks(&mut inner, blocks, "");
             let quoted: Vec<String> = inner
                 .trim_end_matches('\n')
-                .lines()
+                .split('\n')
                 .map(|line| {
                     if line.is_empty() {
                         ">".to_owned()
@@ -298,17 +494,20 @@ fn write_block(out: &mut String, block: &crate::Block) -> bool {
             text: code,
             language,
         } => {
-            let fence = if code.contains("```") { "~~~" } else { "```" };
-            out.push_str(fence);
+            // A fence longer than any backtick run inside, so the code
+            // cannot close it.
+            let longest = code.split(|c| c != '`').map(str::len).max().unwrap_or(0);
+            let fence = "`".repeat(longest.max(2) + 1);
+            out.push_str(&fence);
             if let Some(language) = language {
                 out.push_str(language.as_str());
             }
             out.push('\n');
             out.push_str(code);
-            if !code.ends_with('\n') {
+            if !code.is_empty() && !code.ends_with('\n') {
                 out.push('\n');
             }
-            out.push_str(fence);
+            out.push_str(&fence);
         }
         Block::Rule => out.push_str("---"),
         Block::Table(table) => write_table(out, table),
@@ -324,10 +523,7 @@ fn write_table(out: &mut String, table: &crate::Table) {
         out.push('|');
         for cell in cells {
             out.push(' ');
-            let mut text = String::new();
-            write_inlines(&mut text, cell);
-            // A cell is one line: a break inside one is GFM's `<br>`.
-            out.push_str(&text.replace("\\\n", "<br>"));
+            write_inlines(out, cell, Place::Line);
             out.push_str(" |");
         }
     };
@@ -348,49 +544,62 @@ fn write_table(out: &mut String, table: &crate::Table) {
 }
 
 /// A list item: its first block after the marker, the rest indented under
-/// it, tight -- no blank line -- which is how a person types a list.
+/// it, a blank line between them so a second paragraph is not read as the
+/// first one's next line.
 fn write_item(out: &mut String, blocks: &[crate::Block], indent: &str) {
-    for (index, block) in blocks.iter().enumerate() {
+    let mut first = true;
+    for block in blocks {
         let mut text = String::new();
         if !write_block(&mut text, block) {
             continue;
         }
-        if index > 0 {
-            out.push('\n');
+        if !first {
+            out.push_str("\n\n");
             out.push_str(indent);
         }
+        first = false;
         out.push_str(&text.replace('\n', &format!("\n{indent}")));
     }
 }
 
-fn write_inlines(out: &mut String, inlines: &[crate::Inline]) {
+fn write_inlines(out: &mut String, inlines: &[crate::Inline], place: Place) {
     use crate::Inline;
-    for inline in inlines {
+    let last = inlines.len().saturating_sub(1);
+    for (index, inline) in inlines.iter().enumerate() {
+        let before = index.checked_sub(1).map(|at| &inlines[at]);
+        let after = inlines.get(index + 1);
         match inline {
-            Inline::Text(text) => out.push_str(&escape(text)),
-            Inline::Strong(inner) => {
-                out.push_str("**");
-                write_inlines(out, inner);
-                out.push_str("**");
+            Inline::Text(text) => {
+                // A space Markdown would trim: at a paragraph's or a line's
+                // edge, or beside a break.
+                let edge = place != Place::Inner;
+                let opens = edge && (index == 0 || matches!(before, Some(Inline::Break)));
+                let closes = edge && (index == last || matches!(after, Some(Inline::Break)));
+                let line_start = place == Place::Paragraph && opens;
+                let mut escaped = escape(text, line_start);
+                if opens && escaped.starts_with(' ') {
+                    escaped.replace_range(..1, "&#32;");
+                }
+                if closes && escaped.ends_with(' ') {
+                    escaped.truncate(escaped.len() - 1);
+                    escaped.push_str("&#32;");
+                }
+                out.push_str(&escaped);
             }
-            Inline::Emphasis(inner) => {
-                out.push('*');
-                write_inlines(out, inner);
-                out.push('*');
-            }
-            Inline::Strikethrough(inner) => {
-                out.push_str("~~");
-                write_inlines(out, inner);
-                out.push_str("~~");
-            }
-            Inline::RemoteImage { href, alt } => {
-                out.push_str(&format!("![{}]({})", escape(alt), href.as_str()));
-            }
+            Inline::Strong(inner) => write_mark(out, inner, "**", "strong"),
+            Inline::Emphasis(inner) => write_mark(out, inner, "*", "em"),
+            Inline::Strikethrough(inner) => write_mark(out, inner, "~~", "del"),
             Inline::Code(code) => {
-                // A fence longer than any run of backticks inside.
+                if code.is_empty() {
+                    out.push_str("<code></code>");
+                    continue;
+                }
+                // A fence longer than any run of backticks inside, padded
+                // where CommonMark would otherwise strip or merge.
                 let longest = code.split(|c| c != '`').map(str::len).max().unwrap_or(0);
                 let fence = "`".repeat(longest + 1);
-                let pad = if code.starts_with('`') || code.ends_with('`') {
+                let spaced = code.starts_with(' ') && code.ends_with(' ') && code.trim() != "";
+                let pad = if code.starts_with('`') || code.ends_with('`') || spaced {
                     " "
                 } else {
                     ""
@@ -399,14 +608,59 @@ fn write_inlines(out: &mut String, inlines: &[crate::Inline]) {
             }
             Inline::Link { href, inlines } => {
                 out.push('[');
-                write_inlines(out, inlines);
-                out.push_str(&format!("]({})", href.as_str()));
+                write_inlines(out, inlines, Place::Inner);
+                out.push_str(&format!("]({})", destination(href.as_str())));
             }
             Inline::Image { content_id, alt } => {
-                out.push_str(&format!("![{}](cid:{})", escape(alt), content_id.as_str()));
+                out.push_str(&format!(
+                    "![{}](cid:{})",
+                    escape(alt, false),
+                    content_id.as_str()
+                ));
             }
-            Inline::Break => out.push_str("\\\n"),
+            Inline::RemoteImage { href, alt } => {
+                out.push_str(&format!(
+                    "![{}]({})",
+                    escape(alt, false),
+                    destination(href.as_str())
+                ));
+            }
+            Inline::Break => {
+                // `\` at a line's end, where there is a line on both sides
+                // and words before; `<br>` everywhere else.
+                let backslash = place == Place::Paragraph
+                    && index > 0
+                    && index < last
+                    && !matches!(before, Some(Inline::Break))
+                    && !matches!(after, Some(Inline::Break));
+                out.push_str(if backslash { "\\\n" } else { "<br>" });
+            }
         }
+    }
+}
+
+/// A mark as its Markdown delimiters where CommonMark will read them back
+/// -- its words start and end with a letter or a digit -- and as HTML
+/// where it would not: `**x!**y` is not bold, `<strong>x!</strong>y` is.
+fn write_mark(out: &mut String, inner: &[crate::Inline], delimiter: &str, tag: &str) {
+    let mut text = String::new();
+    write_inlines(&mut text, inner, Place::Inner);
+    let word = |c: Option<char>| c.is_some_and(char::is_alphanumeric);
+    if word(text.chars().next()) && word(text.chars().next_back()) {
+        out.push_str(delimiter);
+        out.push_str(&text);
+        out.push_str(delimiter);
+    } else {
+        out.push_str(&format!("<{tag}>{text}</{tag}>"));
+    }
+}
+
+/// A link destination, in angle brackets where a space would end it.
+fn destination(href: &str) -> String {
+    if href.contains([' ', '<', '>']) {
+        format!("<{}>", href.replace('<', "%3C").replace('>', "%3E"))
+    } else {
+        href.to_owned()
     }
 }
 
@@ -414,8 +668,9 @@ fn write_inlines(out: &mut String, inlines: &[crate::Inline]) {
 ///
 /// Including what GFM would read as a bare autolink: a backslash before its
 /// first `.`, `:` or `@` keeps it the text it was, because `to_document`
-/// links only an address typed as it reads.
-fn escape(text: &str) -> String {
+/// links only an address typed as it reads. `line_start` is whether the text
+/// begins a line, where a `#`, `-`, `+`, `=` or a number would start a block.
+fn escape(text: &str, line_start: bool) -> String {
     let breaks: Vec<usize> = crate::autolink::find(text)
         .iter()
         .filter_map(|link| {
@@ -424,29 +679,16 @@ fn escape(text: &str) -> String {
                 .map(|at| link.range.start + at)
         })
         .collect();
+    let digits = text.bytes().take_while(u8::is_ascii_digit).count();
     let mut out = String::with_capacity(text.len());
     for (index, c) in text.char_indices() {
-        if breaks.contains(&index) {
-            out.push('\\');
-            out.push(c);
-            continue;
-        }
-        let at_line_start = index == 0 || text[..index].ends_with('\n');
-        let special = matches!(
-            c,
-            '\\' | '`' | '*' | '_' | '[' | ']' | '<' | '>' | '!' | '|' | '~'
-        ) || (at_line_start && matches!(c, '#' | '-' | '+' | '='))
-            || (c == '.'
-                && text[..index]
-                    .chars()
-                    .rev()
-                    .take_while(char::is_ascii_digit)
-                    .count()
-                    > 0
-                && text[..index]
-                    .trim_start()
-                    .chars()
-                    .all(|c| c.is_ascii_digit()));
+        let special = breaks.contains(&index)
+            || matches!(
+                c,
+                '\\' | '`' | '*' | '_' | '[' | ']' | '<' | '>' | '!' | '|' | '~' | '&' | '#'
+            )
+            || (line_start && index == 0 && matches!(c, '-' | '+' | '='))
+            || (line_start && digits > 0 && index == digits && matches!(c, '.' | ')'));
         if special {
             out.push('\\');
         }
@@ -464,10 +706,32 @@ enum Holder {
     Strikethrough,
     /// One table cell.
     Cell,
+    /// A mark written as HTML, because its delimiters would not read back.
+    Html(Mark),
     /// A link, when its target is one the document can carry.
     Link(Option<crate::Href>),
     /// Something the document has no node for: its words pass through.
     Transparent,
+}
+
+/// The marks `from_document` may write as HTML.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mark {
+    Strong,
+    Emphasis,
+    Strikethrough,
+    Code,
+}
+
+impl Mark {
+    fn closer(self) -> &'static str {
+        match self {
+            Mark::Strong => "</strong>",
+            Mark::Emphasis => "</em>",
+            Mark::Strikethrough => "</del>",
+            Mark::Code => "</code>",
+        }
+    }
 }
 
 /// One open container while the Markdown is read.
@@ -518,9 +782,7 @@ fn push_block(stack: &mut [Frame], block: crate::Block) {
     match stack.last_mut() {
         Some(Frame::Blocks(blocks) | Frame::Quote(blocks)) => blocks.push(block),
         Some(Frame::Item(_, blocks, loose)) => {
-            if !loose.is_empty() {
-                blocks.push(crate::Block::Paragraph(std::mem::take(loose)));
-            }
+            blocks.extend(paragraph_of(std::mem::take(loose)));
             blocks.push(block);
         }
         Some(Frame::List(_, items)) => items.push(crate::ListItem::new(vec![block])),
@@ -540,14 +802,46 @@ fn push_block(stack: &mut [Frame], block: crate::Block) {
     }
 }
 
+/// A paragraph's inlines as the paragraph they spell, or none for none.
+///
+/// `<br><br>` alone is a paragraph of one break: a paragraph of nothing but
+/// breaks is written with one more, since an empty one is `<br>` (spec 014).
+fn paragraph_of(mut inlines: Vec<crate::Inline>) -> Option<crate::Block> {
+    let breaks = !inlines.is_empty()
+        && inlines
+            .iter()
+            .all(|inline| matches!(inline, crate::Inline::Break));
+    if breaks {
+        inlines.pop();
+    }
+    (breaks || !inlines.is_empty()).then_some(crate::Block::Paragraph(inlines))
+}
+
 fn close(stack: &mut [Frame], frame: Frame) {
     use crate::{Block, Inline};
     match frame {
         Frame::Inlines(Holder::Paragraph, inlines) => {
-            if !inlines.is_empty() {
-                push_block(stack, Block::Paragraph(inlines));
+            if let Some(paragraph) = paragraph_of(inlines) {
+                push_block(stack, paragraph);
             }
         }
+        Frame::Inlines(Holder::Html(mark), inlines) => push_inline(
+            stack,
+            match mark {
+                Mark::Strong => Inline::Strong(inlines),
+                Mark::Emphasis => Inline::Emphasis(inlines),
+                Mark::Strikethrough => Inline::Strikethrough(inlines),
+                Mark::Code => Inline::Code(
+                    inlines
+                        .into_iter()
+                        .map(|inline| match inline {
+                            Inline::Text(text) => text,
+                            _ => String::new(),
+                        })
+                        .collect(),
+                ),
+            },
+        ),
         Frame::Inlines(Holder::Heading(level), inlines) => {
             push_block(stack, Block::Heading { level, inlines });
         }
@@ -600,9 +894,7 @@ fn close(stack: &mut [Frame], frame: Frame) {
         Frame::Quote(blocks) => push_block(stack, Block::Quote(blocks)),
         Frame::List(kind, items) => push_block(stack, Block::List { kind, items }),
         Frame::Item(task, mut blocks, loose) => {
-            if !loose.is_empty() {
-                blocks.push(Block::Paragraph(loose));
-            }
+            blocks.extend(paragraph_of(loose));
             if let Some(Frame::List(_, items)) = stack.last_mut() {
                 items.push(crate::ListItem { task, blocks });
             } else {
