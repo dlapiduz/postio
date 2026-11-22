@@ -155,12 +155,23 @@ pub fn going_to_an_empty_place_rests_the_keyboard_on_its_page() {
             "{}",
             said(&window)
         );
+        // Nor does the footer offer verbs on the inbox row left behind.
+        let footer_shown = || {
+            support::with_class(&window, "focus-scope-footer")
+                .first()
+                .is_some_and(|footer| footer.is_mapped())
+        };
+        assert!(
+            !footer_shown(),
+            "the footer still names a row that is not here"
+        );
 
         support::keys(&window, &["g", "i"]);
         assert!(
             crate::settle_until(async || window.place_name() == "Inbox"
                 && support::subjects(&window).len() == 3
-                && in_the_list(&window))
+                && in_the_list(&window)
+                && footer_shown())
             .await,
             "{}: {}",
             window.place_name(),
