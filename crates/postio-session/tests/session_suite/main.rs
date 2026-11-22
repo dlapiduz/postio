@@ -32,6 +32,7 @@ mod body_index_pass;
 mod checkup;
 mod cid_scoping;
 mod correlation;
+mod damaged_body_reading;
 mod drag_reclaim;
 mod event_fanout;
 mod focus_contacts;
