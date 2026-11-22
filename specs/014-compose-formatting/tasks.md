@@ -110,8 +110,8 @@ in the registry where something answers it.
 
 ## Phase A4: User Story 6 — Markdown in and out, and the terminal (P2, now part)
 
-- [ ] T022 [P] [US6] Write failing unit cases for `postio_body::autolink` in `crates/postio-body/src/autolink.rs` (research R2)
-- [ ] T023 [US6] Implement `crates/postio-body/src/autolink.rs`, and export it
+- [x] T022 [P] [US6] Write failing unit cases for `postio_body::autolink` in `crates/postio-body/src/autolink.rs` (research R2)
+- [x] T023 [US6] Implement `crates/postio-body/src/autolink.rs`, and export it
 - [ ] T024 [US6] Write failing cases in `crates/postio-body/src/markdown.rs`'s `writing` and `reopening` modules, and in `crates/postio-body/tests/body_suite/markdown_parity.rs`, covering:
   - every construct;
   - reference links, indented code and entities;

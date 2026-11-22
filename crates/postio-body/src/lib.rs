@@ -35,6 +35,7 @@
 //! [issue #30]: https://github.com/dlapiduz/postio/issues/30
 //! [ADR 0004]: https://github.com/dlapiduz/postio/blob/main/docs/decisions/0004-composer-document-model.md
 
+pub mod autolink;
 pub mod document;
 pub mod edit;
 pub mod flowed;
