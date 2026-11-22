@@ -430,23 +430,18 @@ const UNDERLINE: f32 = 1.5;
 /// `sentence` is the highlight's top and bottom, `value` and `page` what is
 /// in view, all in one coordinate space. The sentence comes a third of the
 /// way down (FR-035). With `keep`, the furthest the scroll may go and keep
-/// a header in view, it comes only as far as that: if a third of the way
-/// down is further, the least scroll that shows the whole sentence, and if
-/// that is further too, nothing moves (#2125).
+/// a header in view, it comes only if a third of the way down is within
+/// that; otherwise nothing moves and the window stays at its top (#2125).
 fn reveal_to(sentence: (f64, f64), value: f64, page: f64, keep: Option<f64>) -> Option<f64> {
     let (y0, y1) = sentence;
     if y0 >= value && y1 <= value + page {
         return None;
     }
     let third = (y0 - page / 3.0).max(0.0);
-    let Some(limit) = keep else {
-        return Some(third);
-    };
-    if third <= limit {
-        return Some(third);
+    match keep {
+        Some(limit) if third > limit => None,
+        _ => Some(third),
     }
-    let least = (y1 - page).max(0.0);
-    (least <= limit).then_some(least)
 }
 
 #[cfg(test)]
@@ -482,14 +477,12 @@ mod reveal_tests {
     }
 
     #[test]
-    fn a_sentence_just_under_the_fold_is_brought_up_as_far_as_the_header_allows() {
-        // The bottom of the sentence 20px under the fold: a third of the
-        // way down is past the header, but the least scroll that shows
-        // the whole sentence is not.
-        assert_eq!(
-            reveal_to((PAGE, PAGE + 20.0), 0.0, PAGE, Some(40.0)),
-            Some(20.0)
-        );
+    fn a_sentence_just_under_the_fold_leaves_the_column_at_the_top_too() {
+        // A third of the way down is past the header, so nothing moves --
+        // not even the few pixels that would show the sentence's last line,
+        // which take the space above the header with them and leave the
+        // window opened somewhere other than its top.
+        assert_eq!(reveal_to((PAGE, PAGE + 20.0), 0.0, PAGE, Some(40.0)), None);
     }
 
     #[test]

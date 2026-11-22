@@ -316,10 +316,11 @@ pub fn switching_the_treatment_leaves_the_column_where_it_was() {
     });
 }
 
-/// `O` keeps the reading position of a marked message too. The column goes
-/// to the marked sentence once, when the message opens; after that the
-/// place is the person's, and a switch redrawing the body must not take
-/// them back to the sentence (found in screen 29's render).
+/// `O` keeps the reading position of a marked message too. The column is
+/// revealed toward the marked sentence at most once, when the message opens
+/// (and not past its header, #2125); after that the place is the person's,
+/// and a switch redrawing the body must not move it (found in screen 29's
+/// render).
 pub fn switching_a_marked_message_keeps_the_reading_position() {
     crate::gtk_case(async {
         if !support::display() {
@@ -338,7 +339,7 @@ pub fn switching_a_marked_message_keeps_the_reading_position() {
         fixture
             .write_html_body(
                 work,
-                // The marked sentence far down, so opening scrolls to it.
+                // The marked sentence far down, below the header's page.
                 &html_of("html-work-black-text").replace(
                     "<p class=\"MsoNormal\"><span style=\"color:black\">Thanks,",
                     &format!(
@@ -365,14 +366,18 @@ pub fn switching_a_marked_message_keeps_the_reading_position() {
             .await,
             "the marked sentence was never highlighted"
         );
-        assert!(
-            reader.scrolled_for_test() > 0.0,
-            "opening did not go to the marked sentence"
+        // The sentence is far below the header, so opening kept the header
+        // in view and stayed at the top (#2125).
+        assert_eq!(
+            reader.scrolled_for_test(),
+            0.0,
+            "opening scrolled the header off to reach the marked sentence"
         );
-        // The person reads back up to the top.
-        reader.view().scroll_to_edge(false);
+        // The person reads down to the foot.
+        reader.view().scroll_to_edge(true);
         crate::settle();
         let before = reader.scrolled_for_test();
+        assert!(before > 0.0, "the message is too short to read down");
         support::keys(&window, &["O"]);
         assert!(
             crate::settle_until(async || reader.treatment() == Treatment::Paper
