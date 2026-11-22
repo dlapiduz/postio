@@ -66,6 +66,7 @@
 
 pub mod editor;
 pub mod scheme;
+pub mod source_view;
 pub mod web_process;
 
 use std::cell::{Cell, RefCell};
@@ -618,6 +619,18 @@ mod imp {
         /// composer holds a view over its record, exactly as ADR 0004
         /// always demanded of the surface.
         pub body: editor::Editor,
+        /// The Markdown source view (spec 014 US7), in the editor's place
+        /// while it is shown.
+        pub source: source_view::SourceView,
+        /// The toolbar's toggle between the rich view and the Markdown one.
+        pub source_toggle: gtk::ToggleButton,
+        /// The line under the editor that says what typed Markdown narrowed
+        /// on return, with its Undo (FR-026).
+        pub source_notice: gtk::Box,
+        pub source_notice_label: gtk::Label,
+        pub source_notice_undo: gtk::Button,
+        /// The Markdown that notice's Undo restores, as it was typed.
+        pub source_typed: RefCell<Option<String>>,
         /// The formatting toolbar's five toggles, in registry order: bold,
         /// italic, bullet list, numbered list, quote block. Toggles because
         /// each reflects the caret — active when the selection already sits
@@ -780,6 +793,12 @@ mod imp {
                             .and_then(|lookup| lookup(content_id))
                     }))
                 },
+                source: source_view::SourceView::new(),
+                source_toggle: gtk::ToggleButton::new(),
+                source_notice: gtk::Box::new(gtk::Orientation::Horizontal, 8),
+                source_notice_label: gtk::Label::new(None),
+                source_notice_undo: gtk::Button::with_label("Undo"),
+                source_typed: RefCell::new(None),
                 format_toggles: std::array::from_fn(|_| gtk::ToggleButton::new()),
                 link_button: gtk::Button::new(),
                 image_button: gtk::Button::new(),
@@ -1127,10 +1146,14 @@ impl Composer {
         }
         draft.subject = imp.subject.text().to_string();
         draft.body = self.body();
-        // This composer writes HTML, not Markdown: once it holds the body, any
-        // Markdown the terminal left describes a message that no longer
-        // exists, and the terminal reopening from it would undo this edit.
-        draft.body_markdown = None;
+        // The rich view writes HTML: once it holds the body, any Markdown
+        // left on the draft describes a message that no longer exists. The
+        // Markdown view keeps the person's own spelling beside the HTML, so
+        // the draft reopens as the text they typed (spec 014 FR-028).
+        draft.body_markdown = imp
+            .source
+            .is_shown()
+            .then(|| postio_ui::editor::source::markdown_of(&imp.source.text()));
         draft
     }
 
@@ -1193,7 +1216,13 @@ impl Composer {
     /// this, never the other way round — ADR 0004, unchanged by the surface
     /// swap that retired the `GtkTextView` (#347).
     pub fn document(&self) -> postio_body::Document {
-        let mut document = self.imp().body.document();
+        let imp = self.imp();
+        let mut document = if imp.source.is_shown() {
+            postio_ui::editor::source::close(&imp.source.text(), &imp.source.quotes(), None)
+                .document
+        } else {
+            imp.body.document()
+        };
         // What is folded away is still the message: it is sent, saved and
         // measured with the rest.
         document
@@ -2128,6 +2157,16 @@ impl Composer {
             CommandId::Reply | CommandId::ReplyAll | CommandId::Forward => {
                 self.set_status(REPLY_BLOCKED);
             }
+            CommandId::ToggleMarkdownSource if self.is_open() => self.toggle_markdown_source(),
+            id if self.is_open() && self.imp().source.is_shown() && self.edit_source(id) => {}
+            id if self.is_open() && WAITS_FOR_MARKDOWN.contains(&id) => {
+                let keymap = self.keymap_now();
+                let key = hints::key(&keymap, CommandId::ToggleMarkdownSource).unwrap_or_default();
+                self.set_status(&postio_ui::compose::in_markdown_view_for_now(
+                    postio_core::registry::get(id).title,
+                    &key,
+                ));
+            }
             CommandId::Bold if self.is_open() => {
                 self.imp().body.format(editor::Format::Bold);
             }
@@ -2149,6 +2188,178 @@ impl Composer {
             CommandId::InsertLink if self.is_open() => self.request_link(),
             _ => {}
         }
+    }
+
+    // -- The Markdown source view (spec 014 US7) ------------------------------
+
+    /// The Markdown view's text without its quote lines -- what the person
+    /// wrote -- or `None` while the body is rich.
+    pub fn source_text(&self) -> Option<String> {
+        let source = &self.imp().source;
+        source.is_shown().then(|| source.text())
+    }
+
+    /// The keymap in force: the host's, or the defaults with none.
+    fn keymap_now(&self) -> Keymap {
+        self.host()
+            .map_or_else(|| Keymap::defaults().clone(), |host| host.keymap())
+    }
+
+    /// Switch the body between the rich view and its Markdown.
+    fn toggle_markdown_source(&self) {
+        if self.imp().source.is_shown() {
+            self.close_source();
+            return;
+        }
+        // The caret first: the rich view says where it is asynchronously.
+        let weak = self.downgrade();
+        self.imp().body.caret(move |caret| {
+            if let Some(composer) = weak.upgrade()
+                && !composer.imp().source.is_shown()
+            {
+                let opened = postio_ui::editor::source::open(
+                    &composer.imp().body.document(),
+                    caret.as_ref(),
+                );
+                composer.show_source(&opened.text, opened.quotes, opened.caret);
+            }
+        });
+    }
+
+    /// Show the Markdown view over `text`, its quote lines standing for
+    /// `quotes`, the caret at byte `caret`.
+    fn show_source(&self, text: &str, quotes: Vec<postio_body::Block>, caret: Option<usize>) {
+        let imp = self.imp();
+        let keymap = self.keymap_now();
+        let key = hints::key(&keymap, CommandId::ToggleMarkdownSource).unwrap_or_default();
+        // The strip shortens in a narrow column: under the width the
+        // toolbar's full row needs.
+        let narrow = self.width() > 0 && self.width() < NARROW_SOURCE;
+        imp.source.show(
+            text,
+            quotes,
+            caret,
+            &postio_ui::compose::source_strip(&key, narrow),
+        );
+        imp.body.widget().set_visible(false);
+        imp.source_toggle.set_active(true);
+        self.hide_source_notice();
+        imp.source.text_view().grab_focus();
+    }
+
+    /// Back to the rich view, the Markdown read into the draft as one
+    /// undo step, the caret on its character (FR-027, FR-028).
+    fn close_source(&self) {
+        let imp = self.imp();
+        let text = imp.source.text();
+        let caret = imp.source.selection().end;
+        let returned = postio_ui::editor::source::close(&text, &imp.source.quotes(), Some(caret));
+        self.hide_source();
+        // A document the view only rewrote is the same document: what the
+        // view loses nothing of is the normal form (FR-024).
+        let before = imp.body.document();
+        let document = if postio_body::markdown::normalize(before.clone()) == returned.document {
+            before
+        } else {
+            returned.document
+        };
+        imp.body.show_at(document, returned.caret.as_ref());
+        match postio_ui::compose::narrowed_notice(returned.lost) {
+            Some(words) => {
+                imp.source_notice_label.set_label(&words);
+                imp.source_notice.set_visible(true);
+                imp.source_typed.replace(Some(text));
+            }
+            None => self.hide_source_notice(),
+        }
+        imp.body.widget().grab_focus();
+        self.refresh();
+    }
+
+    fn hide_source(&self) {
+        let imp = self.imp();
+        imp.source.hide();
+        imp.body.widget().set_visible(true);
+        imp.source_toggle.set_active(false);
+    }
+
+    fn hide_source_notice(&self) {
+        let imp = self.imp();
+        imp.source_notice.set_visible(false);
+        imp.source_typed.take();
+    }
+
+    /// The notice's Undo: the draft as it was before the switch, and the
+    /// Markdown view again with the text as it was typed (FR-026).
+    fn undo_narrowing(&self) {
+        let imp = self.imp();
+        let Some(typed) = imp.source_typed.take() else {
+            return;
+        };
+        imp.body.undo();
+        let quotes = postio_ui::editor::source::open(&imp.body.document(), None).quotes;
+        self.show_source(&typed, quotes, Some(typed.len()));
+        self.refresh();
+    }
+
+    fn build_source_notice(&self) -> gtk::Box {
+        let imp = self.imp();
+        imp.source_notice
+            .add_css_class("postio-compose-source-notice");
+        imp.source_notice.set_visible(false);
+        imp.source_notice_label.set_xalign(0.0);
+        imp.source_notice_label.set_wrap(true);
+        imp.source_notice_label.set_hexpand(true);
+        imp.source_notice
+            .set_accessible_role(gtk::AccessibleRole::Status);
+        imp.source_notice.append(&imp.source_notice_label);
+        imp.source_notice_undo.add_css_class("flat");
+        imp.source_notice_undo.connect_clicked(glib::clone!(
+            #[weak(rename_to = composer)]
+            self,
+            move |_| composer.undo_narrowing()
+        ));
+        imp.source_notice.append(&imp.source_notice_undo);
+        imp.source_notice.clone()
+    }
+
+    /// Run a formatting command on the Markdown view's text, through the
+    /// edits the terminal makes (`markdown_edit`). `false` for a command
+    /// that is not a formatting one.
+    fn edit_source(&self, id: CommandId) -> bool {
+        use postio_ui::editor::markdown_edit as edit;
+        let imp = self.imp();
+        let text = imp.source.text();
+        let at = imp.source.selection();
+        let heading = |level: u8| edit::heading(&text, at.clone(), level);
+        let result = match id {
+            CommandId::Bold => edit::wrap(&text, at, "**", "**"),
+            CommandId::Italic => edit::wrap(&text, at, "*", "*"),
+            CommandId::Strikethrough => edit::strikethrough(&text, at),
+            CommandId::InlineCode => edit::inline_code(&text, at),
+            CommandId::InsertLink => edit::link(&text, at),
+            CommandId::Heading1 => heading(1),
+            CommandId::Heading2 => heading(2),
+            CommandId::Heading3 => heading(3),
+            CommandId::Heading4 => heading(4),
+            CommandId::Heading5 => heading(5),
+            CommandId::Heading6 => heading(6),
+            CommandId::NormalText => edit::normal_text(&text, at),
+            CommandId::BulletList => edit::toggle_prefix(&text, at, "- "),
+            CommandId::NumberedList => edit::toggle_prefix(&text, at, "1. "),
+            CommandId::QuoteBlock => edit::toggle_prefix(&text, at, "> "),
+            CommandId::CodeBlock => edit::code_block(&text, at),
+            CommandId::TaskList => edit::task_list(&text, at),
+            CommandId::ToggleTask => edit::toggle_task(&text, at),
+            CommandId::Indent => edit::indent(&text, at),
+            CommandId::Outdent => edit::outdent(&text, at),
+            CommandId::Divider => edit::divider(&text, at),
+            CommandId::Table => edit::table(&text, at),
+            CommandId::ClearFormatting => edit::clear_formatting(&text, at),
+            _ => return false,
+        };
+        imp.source.apply(result);
+        true
     }
 
     /// Ask for an address, then link the selection to it.
@@ -2786,7 +2997,22 @@ impl Composer {
         // Editor's, so undoing across the swap cannot put one message's
         // words into another's.
         imp.held.take();
+        let quotes = postio_ui::editor::source::open(&document, None).quotes;
         imp.body.load(document);
+        self.hide_source_notice();
+        match draft.body_markdown.as_deref() {
+            // Last edited as Markdown: it opens as the text that was typed,
+            // in the Markdown view (spec 014 FR-028).
+            Some(typed) => {
+                let mut text = typed.to_owned();
+                for _ in &quotes {
+                    text.push_str("\n\n");
+                    text.push_str(&postio_ui::editor::source::quote_line());
+                }
+                self.show_source(&text, quotes, Some(typed.len()));
+            }
+            None => self.hide_source(),
+        }
         imp.heading.set_text(heading(draft.kind));
 
         // Cc and Bcc stay out of the way until there is something in them, or
@@ -3059,6 +3285,14 @@ impl Composer {
             self,
             move |_| composer.body_edited()
         ));
+        imp.source
+            .text_view()
+            .buffer()
+            .connect_changed(glib::clone!(
+                #[weak(rename_to = composer)]
+                self,
+                move |_| composer.body_edited()
+            ));
 
         // Ctrl+Z / Ctrl+Shift+Z, on the body only — and at CAPTURE phase,
         // which is load-bearing: WebKit keeps an editing undo of its own on
@@ -3180,6 +3414,8 @@ impl Composer {
         column.append(&imp.tracking_notice);
         column.append(&self.build_toolbar());
         column.append(imp.body.widget());
+        column.append(imp.source.widget());
+        column.append(&self.build_source_notice());
         column.append(&imp.below_body);
         column.append(&imp.warning);
         column.append(&self.build_attachments());
@@ -3290,6 +3526,24 @@ impl Composer {
             move |_| composer.dispatch(CommandId::AttachFile)
         ));
         toolbar.append(&imp.attach_button);
+
+        // The source view's toggle, at the toolbar's right end (spec 014):
+        // pressed while the body is Markdown.
+        let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        spacer.set_hexpand(true);
+        toolbar.append(&spacer);
+        style_toolbar_button(
+            imp.source_toggle.upcast_ref(),
+            CommandId::ToggleMarkdownSource,
+            "text-x-generic-symbolic",
+            "postio-toolbar-markdown",
+        );
+        imp.source_toggle.connect_clicked(glib::clone!(
+            #[weak(rename_to = composer)]
+            self,
+            move |_| composer.dispatch(CommandId::ToggleMarkdownSource)
+        ));
+        toolbar.append(&imp.source_toggle);
 
         // Reflection: the caret's formatting drives the toggles. Programmatic
         // `set_active` emits `toggled`, not `clicked`, so nothing loops.
@@ -3602,6 +3856,88 @@ impl Composer {
         self.add_inline_image(bytes, "image/png");
     }
 
+    /// The Markdown view's text, or `None` while the body is rich.
+    #[doc(hidden)]
+    pub fn test_source_text(&self) -> Option<String> {
+        self.source_text()
+    }
+
+    /// The Markdown view's caret, a byte offset into its text.
+    #[doc(hidden)]
+    pub fn test_source_caret(&self) -> usize {
+        self.imp().source.selection().end
+    }
+
+    /// Select bytes `from..to` of the Markdown view's text.
+    #[doc(hidden)]
+    pub fn test_source_select(&self, from: usize, to: usize) {
+        self.imp().source.select(from..to);
+    }
+
+    /// A key pressed in the Markdown view.
+    #[doc(hidden)]
+    pub fn test_source_key(&self, key: gdk::Key) {
+        self.imp().source.test_key(key);
+    }
+
+    /// The Markdown view's own undo.
+    #[doc(hidden)]
+    pub fn test_source_undo(&self) {
+        self.imp().source.undo();
+    }
+
+    /// A paste into the Markdown view.
+    #[doc(hidden)]
+    pub fn test_source_paste(&self, text: &str) {
+        self.imp().source.paste(text);
+    }
+
+    /// The Markdown view's whole text, typed.
+    #[doc(hidden)]
+    pub fn test_source_set(&self, text: &str) {
+        self.imp().source.set_text(text);
+    }
+
+    /// The strip over the Markdown view, while it is shown.
+    #[doc(hidden)]
+    pub fn test_source_strip(&self) -> Option<String> {
+        let source = &self.imp().source;
+        source.is_shown().then(|| source.strip())
+    }
+
+    /// The narrowing notice's words, while it shows.
+    #[doc(hidden)]
+    pub fn test_source_notice(&self) -> Option<String> {
+        let imp = self.imp();
+        imp.source_notice
+            .is_visible()
+            .then(|| imp.source_notice_label.label().to_string())
+    }
+
+    /// Press the narrowing notice's Undo.
+    #[doc(hidden)]
+    pub fn test_press_source_notice_undo(&self) {
+        self.imp().source_notice_undo.emit_clicked();
+    }
+
+    /// The rich editor's caret, as a place in the document.
+    #[doc(hidden)]
+    pub fn test_caret(&self) -> Option<postio_body::markdown::DocPosition> {
+        self.imp().body.test_caret()
+    }
+
+    /// Whether the draft's history has a step to undo.
+    #[doc(hidden)]
+    pub fn test_can_undo(&self) -> bool {
+        self.imp().body.can_undo()
+    }
+
+    /// One undo, as `mod+z` in the rich view.
+    #[doc(hidden)]
+    pub fn test_undo(&self) {
+        self.undo_edit();
+    }
+
     /// The formatting the toolbar shows lit, by registry id, left to right:
     /// what a person reads off it about where the caret is.
     pub fn marks_lit(&self) -> Vec<&'static str> {
@@ -3808,6 +4144,31 @@ impl Composer {
 /// The toolbar's formatting toggles, left to right: the command each runs,
 /// its icon and its style class. One list, so the toolbar and what it is
 /// observed to show cannot come to disagree about which toggle is which.
+/// The formatting commands only the Markdown view makes for now (spec 014
+/// D8): in the rich view each says where it is, never nothing (FR-029).
+const WAITS_FOR_MARKDOWN: [CommandId; 17] = [
+    CommandId::Heading2,
+    CommandId::Heading3,
+    CommandId::Heading4,
+    CommandId::Heading5,
+    CommandId::Heading6,
+    CommandId::NormalText,
+    CommandId::Strikethrough,
+    CommandId::InlineCode,
+    CommandId::CodeBlock,
+    CommandId::TaskList,
+    CommandId::ToggleTask,
+    CommandId::Indent,
+    CommandId::Outdent,
+    CommandId::Divider,
+    CommandId::Table,
+    CommandId::ClearFormatting,
+    CommandId::AttachRemoteImage,
+];
+
+/// Under this width the source view's strip says less.
+const NARROW_SOURCE: i32 = 560;
+
 const FORMAT_TOGGLES: [(CommandId, &str, &str); 6] = [
     (
         CommandId::Bold,

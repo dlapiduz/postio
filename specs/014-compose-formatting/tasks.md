@@ -146,11 +146,11 @@ unit cases, `composer_markdown_source.rs`, and
 - [x] T031 [US7] Implement `normalize`, and the spellings in `from_document`/`to_document`, in `crates/postio-body/src/markdown.rs`. This covers `<br>`, a `<br>` line, `<!-- -->`, `&#32;`, and the `U+E001` quote line.
 - [x] T032 [US7] Write failing source-map cases in `crates/postio-body/src/markdown.rs` (`contracts/source-view.md`, "The caret"). Then implement `from_document_mapped` and `to_document_mapped` with `into_offset_iter`.
 - [x] T033 [US7] Report the caret as a `DocPosition`, and set it from one, in `crates/postio-ui/data/editor.js`, with the host side in `crates/postio-widgets/src/composer/editor.rs` (research R14). A `composer_document.rs` case is red first. This is the phase's only bridge change.
-- [ ] T034 [US7] Write failing cases in a new `crates/postio-widgets/tests/widgets_suite/composer_markdown_source.rs` for every row of `contracts/source-view.md`'s surface table, except the Mac
-- [ ] T035 [US7] Build the view in a new `crates/postio-widgets/src/composer/source_view.rs`: a `GtkTextView` in the editor slot, the strip, and formatting commands through `markdown_edit`. Wire `toggle_markdown_source` and the toolbar's toggle button in `crates/postio-widgets/src/composer/mod.rs`.
-- [ ] T036 [US7] Add the quote chip: a `GtkTextChildAnchor` on the `U+E001` line, atomic deletion with undo, and `U+E001` stripped from typed and pasted text (FR-025)
-- [ ] T037 [US7] Add the narrowing notice line with Undo on return (FR-026). Make the view session one undo step in `EditHistory`, and save `body_markdown` from the view and reopen into it (FR-028).
-- [ ] T038 [US7] Answer every now-phase formatting command in the rich view with its reason and the view's key (FR-029), from one word in `crates/postio-ui/src/compose.rs`. The registry's coverage sweep and a `composer_formatting.rs` case are red first.
+- [x] T034 [US7] Write failing cases in a new `crates/postio-widgets/tests/widgets_suite/composer_markdown_source.rs` for every row of `contracts/source-view.md`'s surface table, except the Mac
+- [x] T035 [US7] Build the view in a new `crates/postio-widgets/src/composer/source_view.rs`: a `GtkTextView` in the editor slot, the strip, and formatting commands through `markdown_edit`. Wire `toggle_markdown_source` and the toolbar's toggle button in `crates/postio-widgets/src/composer/mod.rs`.
+- [x] T036 [US7] Add the quote chip: a `GtkTextChildAnchor` on the `U+E001` line, atomic deletion with undo, and `U+E001` stripped from typed and pasted text (FR-025)
+- [x] T037 [US7] Add the narrowing notice line with Undo on return (FR-026). Make the view session one undo step in `EditHistory`, and save `body_markdown` from the view and reopen into it (FR-028).
+- [x] T038 [US7] Answer every now-phase formatting command in the rich view with its reason and the view's key (FR-029), from one word in `crates/postio-ui/src/compose.rs`. The registry's coverage sweep and a `composer_formatting.rs` case are red first.
 - [ ] T039 [US7] Mac:
   - add the now-phase ids to `ComposeCommands.handled` in `macos/Sources/PostioKit/ComposeCommands.swift`, with `ComposeCommandsTests` red first;
   - expose `from_document_mapped`, `to_document_mapped` and `markdown_edit` through `crates/postio-ffi/src/session.rs`;

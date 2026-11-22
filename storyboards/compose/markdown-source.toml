@@ -38,7 +38,7 @@ key     = "Return"
 
 [[step]]
 command = "task_list"
-check   = { app.focus.composer.view = "markdown", app.focus.composer.source = "Thanks, two things:\n\n- [ ] " }
+check   = { app.focus.composer.view = "markdown", app.focus.composer.source = "Thanks, two things:\n\n- [ ]" }
 expect  = "Task list starts a task item, `- [ ] `, with the caret after its box: the same edit the terminal makes."
 
 [[step]]
@@ -54,7 +54,7 @@ expect  = "The rich view is back: the words, then an open task, \"☐ call the v
 
 [[step]]
 command = "strikethrough"
-check   = { app.focus.composer.view = "rich", notice.text = "Strikethrough is in the Markdown view for now · ctrl+alt+s" }
+check   = { app.focus.composer.view = "rich", app.focus.composer.status = "Strikethrough is in the Markdown view for now · ctrl+alt+s" }
 expect  = "In the rich view, Strikethrough says where it is for now, with the key to get there, and nothing in the message changes."
 
 [[step]]

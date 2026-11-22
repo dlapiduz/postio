@@ -53,7 +53,7 @@ pub fn open(document: &Document, caret: Option<&DocPosition>) -> Opened {
     let mut quotes = Vec::new();
     let mut run: Vec<Block> = Vec::new();
     let mut run_start = 0;
-    let mut flush =
+    let flush =
         |text: &mut String, run: &mut Vec<Block>, run_start: usize, at: &mut Option<usize>| {
             if run.is_empty() {
                 return;
@@ -185,6 +185,16 @@ pub fn close(text: &str, quotes: &[Block], caret: Option<usize>) -> Returned {
         caret: found,
         lost,
     }
+}
+
+/// The view's text without its quote lines: the person's Markdown, as a
+/// draft keeps it beside the HTML (spec 014 FR-028).
+pub fn markdown_of(text: &str) -> String {
+    let kept: Vec<&str> = text
+        .split('\n')
+        .filter(|line| !line.starts_with(QUOTE_LINE))
+        .collect();
+    kept.join("\n").trim_end().to_owned()
 }
 
 /// `text` without the quote line's private character: what typing and

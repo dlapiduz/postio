@@ -568,15 +568,9 @@ fn put_caret_inlines(inlines: &mut Vec<crate::Inline>, mut offset: usize) -> Opt
                 offset -= len;
             }
             Inline::Strong(inner) | Inline::Emphasis(inner) | Inline::Strikethrough(inner) => {
-                match put_caret_inlines(inner, offset) {
-                    None => return None,
-                    Some(rest) => offset = rest,
-                }
+                offset = put_caret_inlines(inner, offset)?;
             }
-            Inline::Link { inlines: inner, .. } => match put_caret_inlines(inner, offset) {
-                None => return None,
-                Some(rest) => offset = rest,
-            },
+            Inline::Link { inlines: inner, .. } => offset = put_caret_inlines(inner, offset)?,
             Inline::Break => {
                 if offset == 0 {
                     inlines.insert(index, Inline::Text(CARET.to_string()));

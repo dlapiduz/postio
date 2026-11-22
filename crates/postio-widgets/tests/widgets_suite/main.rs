@@ -39,6 +39,7 @@ mod composer_focus;
 mod composer_host;
 mod composer_inline_image;
 mod composer_markdown;
+mod composer_markdown_source;
 mod composer_recipient_select;
 mod composer_recipients;
 mod composer_resume;
@@ -427,6 +428,50 @@ const CASES: &[(&str, fn())] = &[
     (
         "composer_recipient_select::nothing_is_offered_until_four_characters_are_typed",
         composer_recipient_select::nothing_is_offered_until_four_characters_are_typed as fn(),
+    ),
+    (
+        "composer_markdown_source::switching_there_and_back_changes_nothing",
+        composer_markdown_source::switching_there_and_back_changes_nothing as fn(),
+    ),
+    (
+        "composer_markdown_source::the_caret_keeps_its_character_in_a_struck_word",
+        composer_markdown_source::the_caret_keeps_its_character_in_a_struck_word as fn(),
+    ),
+    (
+        "composer_markdown_source::bold_in_the_view_wraps_the_selection",
+        composer_markdown_source::bold_in_the_view_wraps_the_selection as fn(),
+    ),
+    (
+        "composer_markdown_source::every_now_phase_command_edits_the_markdown_in_the_view",
+        composer_markdown_source::every_now_phase_command_edits_the_markdown_in_the_view as fn(),
+    ),
+    (
+        "composer_markdown_source::the_quote_chip_goes_whole_and_comes_back",
+        composer_markdown_source::the_quote_chip_goes_whole_and_comes_back as fn(),
+    ),
+    (
+        "composer_markdown_source::the_quote_mark_cannot_be_pasted",
+        composer_markdown_source::the_quote_mark_cannot_be_pasted as fn(),
+    ),
+    (
+        "composer_markdown_source::a_ragged_table_is_reported_with_undo",
+        composer_markdown_source::a_ragged_table_is_reported_with_undo as fn(),
+    ),
+    (
+        "composer_markdown_source::a_session_in_the_view_is_one_undo_step",
+        composer_markdown_source::a_session_in_the_view_is_one_undo_step as fn(),
+    ),
+    (
+        "composer_markdown_source::a_draft_saved_in_the_view_reopens_in_it",
+        composer_markdown_source::a_draft_saved_in_the_view_reopens_in_it as fn(),
+    ),
+    (
+        "composer_markdown_source::the_rich_view_says_where_a_waiting_command_is",
+        composer_markdown_source::the_rich_view_says_where_a_waiting_command_is as fn(),
+    ),
+    (
+        "composer_markdown_source::the_strip_says_markdown",
+        composer_markdown_source::the_strip_says_markdown as fn(),
     ),
     (
         "composer_resume::resuming_replaces_the_draft_the_composer_was_holding",

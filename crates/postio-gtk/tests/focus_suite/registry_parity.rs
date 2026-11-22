@@ -85,6 +85,28 @@ const NOT_YET: &[&str] = &[
     "numbered_list",
     "insert_link",
     "quote_block",
+    // Spec 014's composer commands: the composer's, like the six above, so
+    // the bar (which lists the list's) has no row for them. The source
+    // view's toggle and Download and attach have their controls; the
+    // formatting commands get theirs with ADR 0039's toolbar (Part B).
+    "heading_2",
+    "heading_3",
+    "heading_4",
+    "heading_5",
+    "heading_6",
+    "normal_text",
+    "strikethrough",
+    "inline_code",
+    "code_block",
+    "task_list",
+    "toggle_task",
+    "indent",
+    "outdent",
+    "divider",
+    "table",
+    "clear_formatting",
+    "toggle_markdown_source",
+    "attach_remote_image",
     "unsubscribe",
     "update_credential",
     "next_scope",
