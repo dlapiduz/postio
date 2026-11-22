@@ -340,6 +340,9 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
                 .await
                 .map_err(|error| error.to_string()),
         ),
+        // Answered with the recents as they now are, as a forget is: a
+        // dropdown opened while this was being kept read them before it
+        // was, and this answer is what draws it again (#2191).
         Request::RememberSearch {
             query,
             hits,
@@ -348,7 +351,12 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
             if let Err(error) = client.remember_search(query, hits, capped).await {
                 tracing::warn!(%error, "Focus could not keep a recent search");
             }
-            Reply::Noted
+            Reply::RecentSearches(
+                client
+                    .recent_searches()
+                    .await
+                    .map_err(|error| error.to_string()),
+            )
         }
         // Answered with what is left, so the panel needs no second read.
         Request::ForgetSearch { query } => {

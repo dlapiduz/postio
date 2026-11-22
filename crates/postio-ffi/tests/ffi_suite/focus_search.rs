@@ -158,9 +158,10 @@ async fn show_all_keeps_the_query_among_the_recent_searches() {
     .await;
     assert_eq!(view.state, DropdownStateFfi::Words);
     session.focus_search_show_all();
-    // Closed and opened again: the query is the newest recent search.
+    // Closed and opened again at once: the query is the newest recent
+    // search, even when the reopened panel read the recents before the
+    // search was kept (#2191).
     session.invoke("back");
-    tokio::time::sleep(Duration::from_millis(100)).await;
     session.invoke("search");
     let view = dropdown(&session, 10, |view| {
         view.sections
