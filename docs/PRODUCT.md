@@ -764,8 +764,23 @@ is one sentence: **nothing leaves this machine that the user did not ask for.**
   Only the topmost `Authentication-Results` whose authserv-id is in the
   provider's preset row (`authserv_ids`) is believed, because a sender writes
   every header it sends; with none, nothing is known and nothing is shown.
-  There is no "verified" badge. Link and PGP/S/MIME warnings are still
-  unscheduled.
+  A provider's pass draws nothing: it is about a domain, and a lookalike
+  domain passes its own checks.
+- **A valid OpenPGP or S/MIME signature gets one quiet word, "Signed"**, in
+  the reader's header, and **"Signed · accepted"** when the key is the one the
+  person accepted for that address
+  ([`specs/016-message-authenticity`](../specs/016-message-authenticity/spec.md)
+  D4, the maintainer's decision of 2026-11-22). It is a word, never a lock:
+  in mail a lock means encrypted, and this mail was not. "Signed" means the
+  message has not changed since that key signed it, and Postio checked it on
+  this computer. It does not mean the sender is who they say: a key can
+  arrive in the very message it signs. Only "accepted" carries an identity,
+  and that identity is the person's own decision. A bad signature, or a
+  different key than the accepted one, is the warning line instead, and
+  pressing the mark opens what was checked. Keys come only from this
+  machine: Autocrypt headers, attached keys, imported files, and the GnuPG
+  keyring when the person turns it on. No key is ever looked up, and DKIM is
+  never re-checked here.
 - No telemetry, no crash reporting, no update ping.
 - **The local store holds the whole mailbox, and it is encrypted.** §14's
   backfill means this machine ends up with a complete copy of the user's mail
@@ -784,7 +799,9 @@ When adding anything that could make a network request, the question is not
 not ship. `scripts/checks/check-no-silent-tracking.py` refuses the two mechanisms that
 are easiest to add by accident; `ARCHITECTURE.md` §11 is the enforcement story.
 
-Link warnings, PGP and S/MIME are unscheduled.
+Link warnings, decryption and sending signed or encrypted mail are
+unscheduled. Signature verification is specified in
+[`specs/016-message-authenticity`](../specs/016-message-authenticity/spec.md).
 
 ---
 

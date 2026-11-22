@@ -4,8 +4,8 @@
 
 **Created**: 2026-11-22
 
-**Status**: Roadmap draft. Not scheduled; no `tasks.md` until the maintainer
-schedules it and answers the questions under "Clarifications"
+**Status**: Roadmap draft. The maintainer answered Q1 to Q3 on 2026-11-22
+(Clarifications). Not scheduled; no `tasks.md` until it is
 
 **Input**: The maintainer, 2026-11-22: "I want to create roadmap specs/docs
 for: PGP or some other signature validation mechanism, including a way to see
@@ -64,8 +64,8 @@ sending signed or encrypted mail to a later spec (D9).
 ### What this spec supersedes
 
 - **Issue #11, "PGP signature verification badge"**, is folded in and
-  superseded. Its two acceptance criteria are FR-020 and FR-021. Its "badge"
-  is replaced by D4's rule. Its investigation comment (the Pimalaya survey,
+  superseded. Its two acceptance criteria are FR-020 and FR-021. Its badge
+  is D4's "Signed" mark, as the maintainer chose on 2026-11-22. Its investigation comment (the Pimalaya survey,
   the key-source table and the evicted-bytes trap) is the starting point of
   `plan.md`'s research. The issue stays open until this spec lands, and then
   closes.
@@ -104,24 +104,65 @@ So the surface cannot run script or reach the network, by construction and
 not by a setting. A test holds it: the corpus's hostile fixtures open in all
 three tabs with zero connections and zero renderer calls.
 
-**D4. Still no "verified" badge, and the header line stays a warning line.**
-`PRODUCT.md` §21's rule holds:
+**D4. A valid signature gets a "Signed" mark. Provider results still get
+nothing, and a bad signature is the warning line.** The maintainer chose this
+on 2026-11-22 (Q1 = C). The header rule is now:
 
-- a passing SPF, DKIM or DMARC result draws nothing in the reader's header;
-- a good signature draws nothing in the header either, unless the key belongs
-  to the user's own decision (Q1's default, B): the user accepted that key
-  for that address. Then the header carries one neutral fact line, "Signed
-  with the key you accepted for ada@example.com". That line reports something
-  the person established. It is not Postio vouching for anyone;
-- a bad signature, meaning the message changed after it was signed, joins
-  #1928's warning line: "The signature on this message does not match its
-  content." A good signature from a key that is not the accepted one is
-  a warning too: "Signed with a different key than the one you accepted for
-  ada@example.com."
+- **A valid signature over the whole message** draws a quiet word mark,
+  **Signed**, beside the sender in the reader's header. It is drawn in the
+  neutral chip style: not the accent, not green, and with no icon or tick.
+  It applies to OpenPGP and to S/MIME alike, and to a key from any source.
+- **A valid signature by the key the person accepted** for that address
+  reads **Signed · accepted**. The distinction is kept because it is the one
+  state in which the identity claim is the person's own decision (D7). It
+  costs one word, and nothing in any other state. The mark's accessible name
+  spells both out: "Signed. Open verification", and "Signed with the key you
+  accepted for ada@example.com. Open verification".
+- **The mark is a door, not a verdict.** Activating it (a press, or `V`)
+  opens the Verification tab, where D10's words say what it proves.
+- **No mark** for:
+  - a signature that cannot be checked, or whose bytes are not here yet;
+  - a signature over only part of the message (a list footer, a forward's
+    wrapper). A mark there would vouch for text the signature does not
+    cover, so the tab explains instead.
+- **The warning line** (#1928's one quiet line) takes, and the mark is then
+  not drawn:
+  - a bad signature, meaning the message changed after it was signed: "The
+    signature on this message does not match its content.";
+  - a valid signature by a key other than the one the person accepted for
+    that address: "Signed with a different key than the one you accepted for
+    ada@example.com."
+- **Provider SPF, DKIM, DMARC and ARC passes still draw nothing.** A pass is a
+  statement about a *domain*, and a lookalike domain (`paypa1.example`) passes
+  its own checks. A mark for it would make exactly the mail #1928 exists for
+  look vetted. A signature is different in kind. Postio checked it here, over
+  this content, with a key it can show you, and the "accepted" form lets
+  identity be the person's own call.
+- A valid mark and #1928's domain warning can both appear. The mark is a fact
+  about the content, and the line is a fact about the domain. The line is
+  drawn first.
 
-The header carries at most one line, so the parts join as #1928's do. The
-Verification tab is where every positive fact is stated, in words that say
-what it proves and what it does not (D10).
+**D4a. The mark is the word "Signed", not a lock.** Decided 2026-11-22 with
+`/ux-architect`. The maintainer allowed either ("c or a lock"), and the word
+wins for four reasons:
+
+- **A lock already means something else.** In mail clients, Thunderbird,
+  Apple Mail and Outlook among them, a lock means *encrypted*. In the browser
+  every person also uses, it means *TLS*. A signed message is sent in the
+  clear, so a lock would tell the reader it was private when anyone along the
+  way could read it.
+- **An icon alone does not carry meaning.** `PRODUCT.md` §20 says meaning is
+  never carried by colour alone, and an unlabelled glyph needs a tooltip to
+  say what it is. A word is its own label in every frontend, the terminal
+  included, where `Signed` is text in the header line and a glyph is a
+  font-dependent guess.
+- **It matches the Verification tab**, which says "Good signature by …". One
+  idea, one word.
+- **It stays modest.** "Signed" states what happened. A lock, a tick or a
+  shield reads as "safe", which this spec's D10 refuses to say.
+
+"Signed" and "accepted" are new words in the app's vocabulary. They are
+recorded here, and in `PRODUCT.md` §21.
 
 **D5. Exact bytes are kept for signed mail, and fetched from the user's own
 server when they are not here.** ADR 0017 keeps raw source only as a cache.
@@ -147,23 +188,56 @@ it is a beacon:
   which would draw a false alarm on old mail.
 
 The provider checked DKIM when the mail arrived, which is the moment the
-check means something, and the Verification tab shows that result. Whether a
-person may ask Postio to check one message again is Q2.
+check means something, and the Verification tab shows that result. **It is
+the only DKIM result Postio shows. Postio never re-checks DKIM, SPF, DMARC or
+ARC itself, on any action** (the maintainer, 2026-11-22, Q2 = A).
 
-**D7. Keys come from what is already on this machine, and no key is fetched
-unless the person asks.** The first slice takes a public key from three
-sources, none of which reaches the network:
+**D7. Keys come from what is already on this machine, and no key is ever
+fetched.** Postio takes a public key from four sources, none of which
+reaches the network (the maintainer, 2026-11-22, Q3 = C):
 
 - an **Autocrypt** header on mail already downloaded;
 - a key **attached to a message** (`application/pgp-keys`), imported by a
   command;
-- a **file** the person imports.
+- a **file** the person imports;
+- the person's **GnuPG keyring** (D12).
+
+There is no WKD, no keyserver and no other lookup.
 
 A key is never trusted by being present. Each key records where it came from
 and when it was first seen. The person may **accept** a key for an address.
 That acceptance is a per-contact setting (ADR 0048), undoable, and the only
-thing D4's neutral line reports. Looking a key up on the network (WKD, a
-keyserver) is Q3.
+thing that turns D4's mark into "Signed · accepted".
+
+**D12. The GnuPG keyring is read, read-only, when the person turns it on, and
+its trust is not imported.**
+
+- **Off until the person turns it on.** "Use keys from my GnuPG keyring" is
+  in Settings' Privacy section. It reads files outside Postio's own store, and
+  under Flatpak it needs read access to `~/.gnupg`, so it is asked for rather
+  than assumed.
+- **Read-only and in-process.** Postio reads the public keyring files, and
+  respects `GNUPGHOME`. It never runs `gpg`, never starts a GnuPG daemon,
+  never takes GnuPG's lock, never writes there, and never reads secret keys
+  (`private-keys-v1.d` is not opened). The plan's R7 gives the formats and
+  why this is not `gpg --export`.
+- **Re-read** when an app starts and the files have changed, and on "Reload
+  GnuPG keys".
+- **When the format is one Postio cannot read**, Settings says so, and offers
+  the file import with the command to make the file (`gpg --export --armor
+  <address> > keys.asc`). It never fails silently.
+- **GnuPG's ownertrust and web of trust are ignored for the mark.** A key
+  from the keyring is a source like the other three, and gets "Signed" when
+  valid, never "Signed · accepted" by itself. The reasons:
+  - "accepted" must mean one thing for every key: the person decided in
+    Postio;
+  - GnuPG's validity is computed state in its own trust database, by rules
+    (marginal and full trust, certification depth) that Postio would have to
+    re-implement to show faithfully, and would show unfaithfully otherwise.
+
+  The Verification tab says where the key came from ("From your GnuPG
+  keyring"), so the person who keeps their trust in GnuPG can accept it in
+  one key press.
 
 **D8. S/MIME is in scope for verification, after OpenPGP, and behind a
 spike.**
@@ -203,46 +277,45 @@ line says what none of it means: "These checks are about the sending domain
 and the message's integrity. They don't tell you the person is who you
 think." The vocabulary is in "The Verification tab".
 
+The "Signed" mark (D4) is held to the same discipline. Its section on the tab
+opens with what it means:
+
+- "Signed means this message hasn't changed since key 1A2B … signed it. It
+  doesn't tell you who holds that key.";
+- for an accepted key: "You accepted this key for ada@example.com on 3
+  March."
+
+A key's source is always named ("from ada@example.com's Autocrypt header",
+"from your GnuPG keyring", "imported from a file").
+
 **D11. BIMI and sender logos are rejected.** A BIMI logo is a remote image
 and a "verified" badge in disguise. Postio fetches neither.
 
 ## Clarifications
 
-### Open questions for the maintainer
+### Session 2026-11-22 (the maintainer)
 
-- **Q1. What may the reader's header say about a good signature?** D4 takes B
-  as its default.
-  - **A: nothing.** Good signatures appear only on the Verification tab. This
-    is the strictest reading of "no verified badge".
-  - **B: a neutral fact line only for a key the person accepted** for that
-    address ("Signed with the key you accepted for …"). Nothing for any other
-    key. This is the spec's default.
-  - **C: a "Signed" mark for any valid signature**, as issue #11 drew it.
-    That mark is a badge in all but name: a key that arrived in the same
-    message proves nothing about the person.
+- **Q1. What may the reader's header say about a good signature?**
+  → **C, "a 'Signed' mark or a lock", for any valid signature.** This
+  reverses `PRODUCT.md` §21's "no verified badge" for signatures, and §21 is
+  updated on this branch. The mark is the word "Signed" (D4a), with "Signed ·
+  accepted" for a key the person accepted. A bad signature, or a different
+  key than the accepted one, is still the warning line. Provider passes still
+  draw nothing (D4).
 - **Q2. May a person ask Postio to check one message's DKIM again, from this
-  computer?** (D6)
-  - **A: never.** The provider's result at arrival is the only DKIM result
-    Postio shows. This is the spec's default for every slice.
-  - **B: on an explicit per-message action**, "Check DKIM from this
-    computer". It makes one DNS lookup, recorded in the egress log as a new
-    `dns` subsystem. The button says that the sender can see the lookup. It
-    is never automatic and never a setting.
-  - **C: B, plus showing the body-hash check that needs no DNS.** This is
-    rejected in the plan as misleading, and listed only for completeness.
-- **Q3. Where may a public key come from beyond what is on this machine?**
-  (D7)
-  - **A: nowhere.** The only sources are Autocrypt, an attached key and an
-    imported file.
-  - **B: a lookup the person asks for**, one key at a time: "Look up a key
-    for ada@example.com". It tries WKD at the sender's own domain, then the
-    one keyserver named in `config.toml` (none by default). It is
-    egress-logged, and the action says who learns of the lookup. This is the
-    spec's recommendation, for a later slice.
-  - **C: reading the user's GnuPG keyring** (`~/.gnupg`). That is a local
-    file read, with no network. It brings existing keys and their
-    web-of-trust signatures, at the cost of depending on GnuPG's on-disk
-    format or binary. It can be combined with A or B.
+  computer?**
+  → **A, never.** The provider's result at arrival is the only one shown, and
+  no slice adds a local check or a DNS lookup (D6).
+- **Q3. Where may a public key come from beyond Autocrypt, attachments and
+  files?**
+  → **C, the person's GnuPG keyring (`~/.gnupg`), with no network lookup.**
+  There is no WKD and no keyserver (D7, D12).
+
+### Open questions
+
+None that block slice A. The question this answer raises is recorded in
+`plan.md` R7: whether a later slice may treat a key the person *certified* in
+GnuPG with their own key as accepted. D12 says no for now.
 
 ## The Source surface
 
@@ -276,7 +349,8 @@ left out, except section 5.
    - the status: Good, Bad, Can't check, or Not here yet;
    - the signer's key or certificate: fingerprint in mono, user ids or
      subject, where the key came from and when it was first seen;
-   - whether the person accepted this key for the From address;
+   - whether the person accepted this key for the From address, and, for a
+     key from the GnuPG keyring, that it came from there;
    - the actions: "Accept this key for ada@example.com", and "Import key"
      when the key is attached.
 4. **What Postio checked on this computer.** This section lists:
@@ -414,9 +488,8 @@ status on the Verification tab and in the reader's header line.
 
 1. **Given** a signed message and the signer's key from an earlier Autocrypt
    header, **When** the person opens it, **Then** the reader's header shows
-   nothing (Q1 = B, key not accepted), and the Verification tab says "Good
-   signature by key 1A2B … from ada@example.com's Autocrypt header, first
-   seen 3 March".
+   the "Signed" mark, and the Verification tab says "Good signature by key
+   1A2B … from ada@example.com's Autocrypt header, first seen 3 March".
 2. **Given** the same message with one body byte changed, **When** it opens,
    **Then** the header shows "The signature on this message does not match
    its content."
@@ -428,11 +501,18 @@ status on the Verification tab and in the reader's header line.
    from that address arrives signed by key B, **Then** the header warns
    "Signed with a different key than the one you accepted for
    ada@example.com."
-5. **Given** the person accepted a key, **When** they press `z`, **Then** the
-   acceptance is undone.
+5. **Given** the person accepted the signer's key, **When** they open the
+   message, **Then** the mark reads "Signed · accepted". **When** they press
+   `z` after accepting, **Then** the acceptance is undone, and the mark reads
+   "Signed".
 6. **Given** a signed message whose raw source was evicted, and the account
    offline, **When** it opens, **Then** the status is "Not here yet", never
    "Can't check" or "Bad".
+7. **Given** the mark, **When** the person activates it, **Then** the Source
+   surface opens on its Verification tab.
+8. **Given** a mailing-list message whose signed part is wrapped with an
+   unsigned footer, **When** it opens, **Then** no mark appears, and the tab
+   says "Part of this message is signed".
 
 ---
 
@@ -451,9 +531,9 @@ anchor), assert each status.
 **Acceptance Scenarios**:
 
 1. **Given** a message signed with a certificate that chains to a trust
-   anchor on this machine, **When** the Verification tab opens, **Then** it
-   reads "Good signature. Certificate for ada@example.com, issued by <CA>.
-   Revocation not checked."
+   anchor on this machine, **When** it opens, **Then** the header shows
+   "Signed", and the Verification tab reads "Good signature. Certificate for
+   ada@example.com, issued by <CA>. Revocation not checked."
 2. **Given** a certificate that chains to no anchor here, **When** the tab
    opens, **Then** it reads "Can't check: the certificate's issuer isn't
    trusted on this computer", with the chain shown.
@@ -483,6 +563,17 @@ and its undo.
    011 H2).
 2. **Given** a key, **When** the person runs "Forget this key", **Then**
    signatures by it read "Can't check", and `z` restores it.
+3. **Given** "Use keys from my GnuPG keyring" is off, **When** a signed
+   message's key is only in `~/.gnupg`, **Then** the tab reads "Can't check:
+   no key for this signature is on this computer", and no GnuPG file has
+   been opened.
+4. **Given** the setting turned on, **When** the same message opens, **Then**
+   the header shows "Signed", and the tab says "From your GnuPG keyring",
+   with "Accept this key for ada@example.com". A key GnuPG trusts fully is
+   still "Signed", not "Signed · accepted", until the person accepts it.
+5. **Given** a keyring in a format Postio cannot read, **When** the setting is
+   on, **Then** Settings says so and offers the file import, with the
+   `gpg --export` command that makes the file.
 
 ---
 
@@ -495,7 +586,8 @@ and its undo.
   message is signed" and names the part. No header line appears.
 - **Inline PGP** (`-----BEGIN PGP SIGNED MESSAGE-----` in a text part): it is
   verified the same way. The tab says it is inline, and that inline
-  signatures cover only that text.
+  signatures cover only that text. It gets the mark only when that text is
+  the whole message's body.
 - **A signature made before its key's creation time, or after its
   expiry**: "Bad", with the reason in words.
 - **A key that is revoked by a revocation signature already on this
@@ -583,10 +675,16 @@ and its undo.
 - **FR-024**: The body stage MUST keep the raw source of messages whose
   top-level type is signed or encrypted (D5). Eviction MUST take those raw
   sources last among raw sources.
-- **FR-025**: The reader's header MUST warn on a bad signature, and on a good
-  signature from a key or certificate other than the one the person accepted
-  for that address. It MUST say nothing for other good signatures, unless Q1
-  is answered C.
+- **FR-025**: The reader's header MUST draw the word mark "Signed" for a
+  valid signature over the whole message, from a key of any source, and
+  "Signed · accepted" when it is the key the person accepted for the From
+  address (D4, D4a). The mark MUST open the Verification tab, and MUST NOT be
+  a lock, a tick or any icon alone.
+- **FR-025a**: The reader's header MUST draw the warning line, and no mark,
+  for a bad signature, and for a valid signature by a key or certificate
+  other than the one the person accepted for that address. It MUST draw no
+  mark for a signature that cannot be checked, is not here yet, or covers
+  only part of the message.
 - **FR-026**: S/MIME signatures MUST be verified on this computer against the
   trust anchors on this machine, with no revocation check. The tab MUST say
   "Revocation not checked" (D8). This depends on the spike.
@@ -597,13 +695,17 @@ and its undo.
 **Keys**
 
 - **FR-030**: Postio MUST record public keys from Autocrypt headers on mail
-  already downloaded, from attached keys the person imports, and from files
-  the person imports. Each key MUST record its source and when it was first
-  and last seen.
+  already downloaded, from attached keys the person imports, from files the
+  person imports, and from the person's GnuPG keyring when they have turned
+  that on. Each key MUST record its source and when it was first and last
+  seen.
 - **FR-031**: Postio MUST NOT fetch a key, certificate or revocation from the
-  network unless Q3 is answered B. Then a fetch happens only on the person's
-  explicit action for one address, and each fetch is recorded in the egress
-  log.
+  network, by any path (D7).
+- **FR-031a**: The GnuPG keyring MUST be read only when the person has turned
+  it on. It MUST be read in-process, read-only, from the public keyring
+  files, honouring `GNUPGHOME`. Postio MUST NOT run `gpg`, start a GnuPG
+  daemon, write or lock a GnuPG file, or open secret-key files. GnuPG's
+  ownertrust and validity MUST NOT affect the mark (D12).
 - **FR-032**: Accepting a key for an address MUST be a per-contact setting
   (ADR 0048), and MUST be undoable. A key MUST NOT become accepted by any
   other means.
@@ -619,10 +721,7 @@ and its undo.
   a bounded number of statements and no full-mailbox scan.
 - **FR-042**: Verification MUST never run on the UI path. A message MUST be
   listable, openable and actionable before its signature is checked.
-- **FR-043**: This feature MUST NOT make a DNS lookup unless Q2 is answered
-  B. Then a lookup happens only on the person's explicit action for
-  one message, is recorded in the egress log, and is announced as visible to
-  the sender.
+- **FR-043**: This feature MUST NOT make a DNS lookup, on any action (D6).
 
 ### Key Entities
 
@@ -635,8 +734,8 @@ and its undo.
   signer's key or certificate, the signed scope (whole message or one part),
   and the time it was checked.
 - **Public key**: the fingerprint, user ids, the addresses they name, the
-  source (Autocrypt, attachment, file, or lookup if Q3 = B), first seen, last
-  seen, and revocation state.
+  source (Autocrypt, attachment, file, GnuPG keyring), first seen, last seen,
+  and revocation state.
 - **Accepted key**: a per-contact setting holding one fingerprint for one
   address.
 
@@ -660,9 +759,12 @@ and its undo.
   is gated as counts.
 - **SC-006**: A person can find out why #1928's warning line appeared in two
   keystrokes from the open message (`V`, reading the first section).
-- **SC-007**: The reader's header shows no new line for 100% of corpus
-  messages that are ordinary mail: no signature, and no failed or doubted
-  sender.
+- **SC-007**: The reader's header shows no new line and no mark for 100% of
+  corpus messages that are ordinary mail: no signature, and no failed or
+  doubted sender. A provider pass never draws a mark.
+- **SC-008**: Across the signature fixtures, the mark appears for 100% of
+  valid whole-message signatures, and for 0% of bad, uncheckable,
+  not-here-yet, part-scope or different-key ones.
 
 ## Assumptions
 
