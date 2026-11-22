@@ -41,7 +41,7 @@ red. A test that is green on arrival is a guard and says so.
 
 - [ ] T001 Make GTK load the one editing bridge. `crates/postio-widgets/src/composer/editor.rs` uses `postio_ui::compose::editor_script()`, and `crates/postio-widgets/src/composer/editor.js` and its private `markdown_table_js` are deleted. First, a guard in `crates/postio-widgets/tests/widgets_suite/composer_document.rs` asserts the script GTK injects equals `postio_ui::compose::editor_script()`; it is red only if the copies have drifted, so say which.
 - [x] T002 [P] Correct `docs/PRODUCT.md` §10 to this spec's scope (FR-022), citing `specs/014-compose-formatting`
-- [ ] T003 [P] Comment on #1485 with D3 (seven heading commands, `mod+alt+0`–`6`, six levels), so its implementer can land that shape directly (research R8)
+- [x] T003 [P] Comment on #1485 with D3 (seven heading commands, `mod+alt+0`–`6`, six levels), so its implementer can land that shape directly (research R8)
 - [ ] T004 [P] Create `storyboards/compose/formatting-inline.toml`, `formatting-blocks.toml`, `formatting-picker.toml` and `formatting-table.toml` from US1, US2, US4 and US5's acceptance scenarios, and see each red on `main` with `scripts/storyboards.sh`
 
 ---
