@@ -2826,17 +2826,9 @@ impl App {
                     }]
                 })
                 .unwrap_or_default(),
-            "bold" | "italic" | "heading_1" | "bullet_list" | "numbered_list" | "quote_block"
-            | "insert_link" => {
-                use crate::composer::Format;
-                let format = match id {
-                    "bold" => Format::Bold,
-                    "italic" => Format::Italic,
-                    "heading_1" => Format::Heading1,
-                    "bullet_list" => Format::BulletList,
-                    "numbered_list" => Format::NumberedList,
-                    "quote_block" => Format::Quote,
-                    _ => Format::Link,
+            id if crate::composer::Format::for_command(id).is_some() => {
+                let Some(format) = crate::composer::Format::for_command(id) else {
+                    return Vec::new();
                 };
                 let Some(composer) = self.composer.as_mut() else {
                     return Vec::new();
@@ -2852,6 +2844,9 @@ impl App {
                     },
                 ]
             }
+            // The fetch and its row arrive with spec 014 US8 (T042, T047);
+            // until a body can name a remote image there is none to fetch.
+            "attach_remote_image" => self.say(postio_ui::compose::NO_REMOTE_IMAGE),
             "copy_fields" => {
                 if let Some(composer) = self.composer.as_mut() {
                     composer.toggle_copy_fields();
@@ -5736,6 +5731,45 @@ pub(crate) mod tests {
             unanswered.is_empty(),
             "commands this terminal offers and sends to nothing: {unanswered:?}"
         );
+    }
+
+    #[test]
+    fn every_now_phase_formatting_command_edits_the_body_and_autosaves() {
+        // Spec 014 T028: each command the terminal offers reaches the body.
+        for id in [
+            "strikethrough",
+            "inline_code",
+            "heading_2",
+            "heading_6",
+            "normal_text",
+            "code_block",
+            "task_list",
+            "toggle_task",
+            "indent",
+            "outdent",
+            "divider",
+            "table",
+            "clear_formatting",
+        ] {
+            // The caret starts on the first line, which some commands change
+            // and some leave: a heading for `normal_text`, a nested task
+            // for the rest.
+            let changed = ["  - [ ] **two**", "## **Plan**"].iter().any(|body| {
+                let mut app = app((120, 40));
+                composing(&mut app);
+                let composer = app.composer.as_mut().expect("composing");
+                composer.focus_field(crate::composer::Field::Body);
+                composer.replace_body(body);
+                let before = composer.markdown();
+                let effects = app.composer_command(id);
+                let after = app.composer.as_ref().expect("composing").markdown();
+                effects
+                    .iter()
+                    .any(|effect| matches!(effect, Effect::Autosave { .. }))
+                    && after != before
+            });
+            assert!(changed, "`{id}` did not edit the body");
+        }
     }
 
     fn composing(app: &mut App) {

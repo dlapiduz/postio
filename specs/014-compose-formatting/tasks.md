@@ -133,7 +133,7 @@ in the registry where something answers it.
   - clear formatting (markers removed from the selection).
 
   Then implement them.
-- [ ] T028 [US6] Route the new commands to `markdown_edit` in `crates/postio-tui/src/app.rs` and `crates/postio-tui/src/composer.rs`. A TUI case per command is red first (US6 scenario 4).
+- [x] T028 [US6] Route the new commands to `markdown_edit` in `crates/postio-tui/src/app.rs` and `crates/postio-tui/src/composer.rs`. A TUI case per command is red first (US6 scenario 4).
 - [ ] T029 [US6] Write a failing case in `crates/postio-widgets/tests/widgets_suite/composer_resume.rs`: a draft holding the golden document reopens to the same document (FR-003)
 
 ## Phase A5: User Story 7 — the Markdown source view (P1) 🎯 the interim surface

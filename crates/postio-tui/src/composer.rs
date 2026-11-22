@@ -45,8 +45,30 @@ pub enum Format {
     Bold,
     /// `*…*`.
     Italic,
-    /// `# ` at the start of the line.
-    Heading1,
+    /// `~~…~~`.
+    Strikethrough,
+    /// A backtick run around the words.
+    InlineCode,
+    /// One to six `#`s at the start of the line.
+    Heading(u8),
+    /// The line's `#`s taken off.
+    NormalText,
+    /// Fences around the lines.
+    CodeBlock,
+    /// `[ ] ` after each item's marker.
+    TaskList,
+    /// `[ ]` and `[x]` swapped.
+    ToggleTask,
+    /// The item nested under the one above.
+    Indent,
+    /// The item out one level.
+    Outdent,
+    /// `---` below the block.
+    Divider,
+    /// A two-by-two table template.
+    Table,
+    /// The marks taken off the words.
+    ClearFormatting,
     /// `- ` at the start of the line.
     BulletList,
     /// `1. ` at the start of the line.
@@ -55,6 +77,38 @@ pub enum Format {
     Quote,
     /// `[…](…)`.
     Link,
+}
+
+impl Format {
+    /// The formatting command `id` names, if it is one the body answers.
+    pub fn for_command(id: &str) -> Option<Self> {
+        Some(match id {
+            "bold" => Format::Bold,
+            "italic" => Format::Italic,
+            "strikethrough" => Format::Strikethrough,
+            "inline_code" => Format::InlineCode,
+            "heading_1" => Format::Heading(1),
+            "heading_2" => Format::Heading(2),
+            "heading_3" => Format::Heading(3),
+            "heading_4" => Format::Heading(4),
+            "heading_5" => Format::Heading(5),
+            "heading_6" => Format::Heading(6),
+            "normal_text" => Format::NormalText,
+            "bullet_list" => Format::BulletList,
+            "numbered_list" => Format::NumberedList,
+            "quote_block" => Format::Quote,
+            "insert_link" => Format::Link,
+            "code_block" => Format::CodeBlock,
+            "task_list" => Format::TaskList,
+            "toggle_task" => Format::ToggleTask,
+            "indent" => Format::Indent,
+            "outdent" => Format::Outdent,
+            "divider" => Format::Divider,
+            "table" => Format::Table,
+            "clear_formatting" => Format::ClearFormatting,
+            _ => return None,
+        })
+    }
 }
 
 /// One draft being written.
@@ -260,7 +314,18 @@ impl Composer {
             Format::Bold => self.apply(|text, at| edit::wrap(text, at, "**", "**")),
             Format::Italic => self.apply(|text, at| edit::wrap(text, at, "*", "*")),
             Format::Link => self.apply(edit::link),
-            Format::Heading1 => self.apply(|text, at| edit::toggle_prefix(text, at, "# ")),
+            Format::Strikethrough => self.apply(edit::strikethrough),
+            Format::InlineCode => self.apply(edit::inline_code),
+            Format::Heading(level) => self.apply(|text, at| edit::heading(text, at, level)),
+            Format::NormalText => self.apply(edit::normal_text),
+            Format::CodeBlock => self.apply(edit::code_block),
+            Format::TaskList => self.apply(edit::task_list),
+            Format::ToggleTask => self.apply(edit::toggle_task),
+            Format::Indent => self.apply(edit::indent),
+            Format::Outdent => self.apply(edit::outdent),
+            Format::Divider => self.apply(edit::divider),
+            Format::Table => self.apply(edit::table),
+            Format::ClearFormatting => self.apply(edit::clear_formatting),
             Format::BulletList => self.apply(|text, at| edit::toggle_prefix(text, at, "- ")),
             Format::NumberedList => self.apply(|text, at| edit::toggle_prefix(text, at, "1. ")),
             Format::Quote => self.apply(|text, at| edit::toggle_prefix(text, at, "> ")),
@@ -698,20 +763,28 @@ impl Composer {
     }
 }
 
-/// What a body of Markdown, followed by `quote`, sends: the Markdown and
-/// then the quote's text as the text part (FR-021), and the rendering of
-/// both as the HTML part when there is anything to style.
+/// What a body of Markdown, followed by `quote`, sends: the written
+/// document's plain alternative and then the quote's text as the text part,
+/// and the rendering of both as the HTML part when there is anything to
+/// style.
+///
+/// The plain alternative, not the Markdown as typed: `**bold**` in a text
+/// part is the doubled marker spec 002 FR-072 forbids, and spec 014 D6 keeps
+/// exactly the markers that carry meaning, the same from every composer. A
+/// document of plain paragraphs reads as the words typed either way.
 pub fn body_of(markdown: &str, quote: &[Block]) -> MessageBody {
     if markdown.trim().is_empty() && quote.is_empty() {
         return MessageBody::default();
     }
-    let mut document = markdown::to_document(markdown);
+    let written = markdown::to_document(markdown);
+    let written_text = written.to_flowed_text();
+    let mut document = written;
     document.blocks.extend(quote.iter().cloned());
     let quoted = quote_text(quote);
     let text = match (markdown.trim().is_empty(), quoted.is_empty()) {
-        (_, true) => markdown.to_owned(),
+        (_, true) => written_text,
         (true, false) => quoted,
-        (false, false) => format!("{}\n\n{quoted}", markdown.trim_end()),
+        (false, false) => format!("{}\n\n{quoted}", written_text.trim_end()),
     };
     MessageBody {
         text: Some(text),
@@ -850,7 +923,7 @@ pub(crate) mod tests {
     #[test]
     fn headings_lists_and_quotes_prefix_the_line_and_a_second_press_takes_it_off() {
         for (format, prefix) in [
-            (Format::Heading1, "# "),
+            (Format::Heading(1), "# "),
             (Format::BulletList, "- "),
             (Format::NumberedList, "1. "),
             (Format::Quote, "> "),
@@ -860,6 +933,46 @@ pub(crate) mod tests {
             assert_eq!(composer.markdown(), format!("{prefix}one"));
             assert!(composer.format(format));
             assert_eq!(composer.markdown(), "one", "{format:?} again takes it off");
+        }
+    }
+
+    #[test]
+    fn every_now_phase_formatting_command_writes_its_markdown() {
+        // Spec 014 US6 scenario 4: the terminal authors every construct.
+        // The edits are `markdown_edit`'s; this is that the terminal runs
+        // the right one for each command, over the whole line selected.
+        for (format, before, after) in [
+            (Format::Strikethrough, "gone", "~~gone~~"),
+            (Format::InlineCode, "x", "`x`"),
+            (Format::Heading(1), "Plan", "# Plan"),
+            (Format::Heading(4), "Plan", "#### Plan"),
+            (Format::Heading(6), "Plan", "###### Plan"),
+            (Format::NormalText, "## Plan", "Plan"),
+            (Format::CodeBlock, "let x", "```\nlet x\n```"),
+            (Format::TaskList, "- one", "- [ ] one"),
+            (Format::ToggleTask, "- [ ] one", "- [x] one"),
+            (Format::Indent, "- a\n- b", "- a\n  - b"),
+            (Format::Outdent, "- a\n  - b", "- a\n- b"),
+            (Format::Divider, "above", "above\n\n---\n"),
+            (
+                Format::Table,
+                "",
+                "| Column 1 | Column 2 |\n|---|---|\n|  |  |",
+            ),
+            (Format::ClearFormatting, "**b** and *i*", "b and i"),
+        ] {
+            let mut composer = in_body(before);
+            // The last line, selected: what a person would mark.
+            composer
+                .body
+                .move_cursor(ratatui_textarea::CursorMove::Bottom);
+            composer
+                .body
+                .move_cursor(ratatui_textarea::CursorMove::Head);
+            composer.body.start_selection();
+            composer.body.move_cursor(ratatui_textarea::CursorMove::End);
+            assert!(composer.format(format), "{format:?}");
+            assert_eq!(composer.markdown(), after, "{format:?} over {before:?}");
         }
     }
 
@@ -905,7 +1018,9 @@ pub(crate) mod tests {
         );
         assert_eq!(draft.subject, "Tide gate");
         assert_eq!(draft.body_markdown.as_deref(), Some("Some **bold** words"));
-        assert_eq!(draft.body.text.as_deref(), Some("Some **bold** words"));
+        // The text part is the plain alternative every composer sends
+        // (spec 014 D6): bold's stars are dropped, as spec 002 FR-072 has it.
+        assert_eq!(draft.body.text.as_deref(), Some("Some bold words"));
         assert!(
             draft
                 .body

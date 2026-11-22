@@ -108,6 +108,10 @@ pub fn markdown_table_js() -> String {
     out
 }
 
+/// What Download and attach says when the body names no remote image
+/// (spec 014 US8): the press is answered, and nothing is fetched.
+pub const NO_REMOTE_IMAGE: &str = "There's no image to download in this message";
+
 #[cfg(test)]
 mod editor_script_tests {
     use super::EDITOR_SCRIPT;
