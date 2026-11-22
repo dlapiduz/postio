@@ -4831,6 +4831,7 @@ dependencies = [
  "htmd",
  "html5ever",
  "markup5ever_rcdom",
+ "postio-body",
  "postio-model",
  "postio-workspace-hack",
  "pulldown-cmark",

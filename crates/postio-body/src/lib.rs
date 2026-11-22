@@ -39,6 +39,8 @@ pub mod document;
 pub mod edit;
 pub mod flowed;
 pub mod forward;
+#[cfg(feature = "test-golden")]
+pub mod golden;
 mod hints;
 pub mod links;
 pub mod markdown;
