@@ -1,0 +1,41 @@
+# An empty place leaves no message open beside it (#1757, re-filmed for #1862).
+#
+# The defect, in the classic app: going from a place with a message open in
+# the reading pane to an empty place left that message in the pane, with
+# Reply, Archive and the rest live, beside a list that said it was empty.
+#
+# On Focus, an empty place takes the window (screens.md, "The inbox is
+# empty": no pane), so nothing is left open beside it and no verb reaches a
+# message that is not in view.
+apps   = ["focus"]
+source = { kind = "issue", ref = "#1757" }
+proof  = "base"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+command = "toggle_reading_pane"
+
+[[step]]
+command = "next_message"
+
+[[step]]
+command = "next_message"
+
+[[step]]
+id      = "open"
+command = "open_message"
+check   = { view = "reader", reading.id = { changed = true } }
+expect  = "A message is open in the pane beside the list."
+
+[[step]]
+command = "go_to_snoozed"
+settle  = { until = { rows.count = 0 }, watch_ms = 500 }
+check   = { scope = "Snoozed", view = "list", reading.id = { absent = true }, app.focus.empty.heading = "Nothing snoozed", app.focus.footer.title = "", app.focus.keyboard.on_control = false }
+expect  = "Snoozed is empty and says so across the window. The message that was open is gone with the place it was in: no pane beside the empty page, and no Reply or Archive on a message that is not here."
+
+[[step]]
+command = "archive"
+check   = { scope = "Snoozed", reading.id = { absent = true }, app.focus.empty.heading = "Nothing snoozed" }
+expect  = "Archive from the empty page acts on nothing: no message is archived and the page is unchanged."

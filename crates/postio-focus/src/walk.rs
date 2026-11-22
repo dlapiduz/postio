@@ -460,7 +460,7 @@ impl FocusController {
     }
 
     /// The thread has no message left to show: the window closes.
-    fn walk_close(&mut self) -> Vec<Step> {
+    pub(crate) fn walk_close(&mut self) -> Vec<Step> {
         self.walk = None;
         self.walk_asked = None;
         self.bar_up = false;
