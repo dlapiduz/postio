@@ -96,6 +96,13 @@ pub fn a_forwarded_part_reads_downloading_until_its_bytes_land() {
             crate::settle_until(async || window.composer().is_some()).await,
             "Focus mounted no composer"
         );
+        // `f` forwards the cursor's row: a row drawn is not yet a row the
+        // cursor is on, and a press before it lands forwards nothing.
+        assert!(
+            crate::settle_until(async || window.observe().cursor.index == Some(0)).await,
+            "the cursor never landed on the report: {:?}",
+            window.observe().cursor
+        );
 
         support::keys(&window, &["f"]);
         assert!(
