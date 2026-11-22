@@ -10,7 +10,8 @@
 //!
 //! # The set is closed, and that is the security argument
 //!
-//! Six block kinds and seven inline kinds is the whole language. Outgoing
+//! Eight block kinds and nine inline kinds is the whole language (spec 014
+//! widened it from six and seven). Outgoing
 //! HTML is *generated* from this type, never passed through, so:
 //!
 //! * [`Inline::Image`] carries a [`ContentId`] and there is no variant that
@@ -125,7 +126,11 @@ impl ContentId {
     }
 }
 
-/// How deep a heading goes. Three levels; a mail body is not a manual.
+/// How deep a heading goes: `<h1>` to `<h6>`, one to one (spec 014 D3).
+///
+/// Six, because HTML and Markdown have six and the composer offers a command
+/// for each. A level that narrowed on the way in would be a document that
+/// does not read back as it was written.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum HeadingLevel {
     /// `<h1>`.
@@ -134,30 +139,252 @@ pub enum HeadingLevel {
     Two,
     /// `<h3>`.
     Three,
+    /// `<h4>`.
+    Four,
+    /// `<h5>`.
+    Five,
+    /// `<h6>`.
+    Six,
 }
 
 impl HeadingLevel {
+    /// Every level, shallowest first.
+    pub const ALL: [HeadingLevel; 6] = [
+        HeadingLevel::One,
+        HeadingLevel::Two,
+        HeadingLevel::Three,
+        HeadingLevel::Four,
+        HeadingLevel::Five,
+        HeadingLevel::Six,
+    ];
+
     /// The level as its HTML digit.
     pub fn digit(self) -> u8 {
         match self {
             HeadingLevel::One => 1,
             HeadingLevel::Two => 2,
             HeadingLevel::Three => 3,
+            HeadingLevel::Four => 4,
+            HeadingLevel::Five => 5,
+            HeadingLevel::Six => 6,
         }
     }
 
-    /// The level a `<hN>` tag names, if Postio has one for it.
-    ///
-    /// `<h4>` and deeper narrow to [`HeadingLevel::Three`] rather than being
-    /// dropped: the author meant "a heading", and losing the text entirely
-    /// would be worse than losing one level of rank.
+    /// The level a `<hN>` tag names. Nothing narrows: `1` to `6` map one to
+    /// one, and anything else is not a heading.
     pub fn from_digit(digit: u8) -> Option<Self> {
-        match digit {
-            1 => Some(HeadingLevel::One),
-            2 => Some(HeadingLevel::Two),
-            3..=6 => Some(HeadingLevel::Three),
-            _ => None,
+        Self::ALL.get(usize::from(digit).checked_sub(1)?).copied()
+    }
+}
+
+/// What kind of list a [`Block::List`] is.
+///
+/// An enum rather than `ordered: bool` so that a bullet list cannot carry a
+/// start number.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ListKind {
+    /// `<ul>`.
+    Bullet,
+    /// `<ol>`, numbered from `start`. `1` is the default and `0` is allowed,
+    /// as in HTML and CommonMark.
+    Ordered {
+        /// The first item's number.
+        start: u32,
+    },
+}
+
+impl ListKind {
+    /// An ordered list numbered from one.
+    pub const NUMBERED: ListKind = ListKind::Ordered { start: 1 };
+
+    /// Whether the list is numbered.
+    pub fn is_ordered(self) -> bool {
+        matches!(self, ListKind::Ordered { .. })
+    }
+}
+
+/// A task box's state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Task {
+    /// Not done: `- [ ]`.
+    Open,
+    /// Done: `- [x]`.
+    Done,
+}
+
+/// One item of a [`Block::List`].
+///
+/// GFM puts a task box on an item, not on a list, so a list may mix tasks
+/// and ordinary items, and a numbered list may hold tasks too.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ListItem {
+    /// The item's box, if it is a task.
+    pub task: Option<Task>,
+    /// What the item holds: a paragraph, and perhaps a nested list.
+    pub blocks: Vec<Block>,
+}
+
+impl ListItem {
+    /// An ordinary item.
+    pub fn new(blocks: Vec<Block>) -> Self {
+        ListItem { task: None, blocks }
+    }
+
+    /// A task item.
+    pub fn task(task: Task, blocks: Vec<Block>) -> Self {
+        ListItem {
+            task: Some(task),
+            blocks,
         }
+    }
+}
+
+/// A code block's language: the info word after a fence.
+///
+/// Built only by [`Language::parse`], which accepts 1 to 32 characters, each
+/// an ASCII letter, a digit or one of `+ # . _ -`. The same pattern as
+/// [`Href`] and [`ContentId`]: the type cannot hold what the serialiser
+/// would have to escape, so `data-postio-lang` can never carry a quote.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Language(String);
+
+impl Language {
+    /// The longest language word kept.
+    pub const MAX: usize = 32;
+
+    /// Parse `raw`, or refuse it. No trimming: a space is refused, because a
+    /// caller holding a whole info string must choose its first word itself.
+    pub fn parse(raw: &str) -> Option<Self> {
+        let allowed =
+            |c: char| c.is_ascii_alphanumeric() || matches!(c, '+' | '#' | '.' | '_' | '-');
+        (!raw.is_empty() && raw.chars().count() <= Self::MAX && raw.chars().all(allowed))
+            .then(|| Language(raw.to_owned()))
+    }
+
+    /// The word, as it will be written.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// How a table column's cells sit.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Alignment {
+    /// The reader's default.
+    #[default]
+    None,
+    /// `:--`.
+    Left,
+    /// `:-:`.
+    Center,
+    /// `--:`.
+    Right,
+}
+
+/// One table cell: inlines only, so no block can nest in a cell.
+/// [`Inline::Break`] is the line break inside one, as GFM's `<br>` is.
+pub type Cell = Vec<Inline>;
+
+/// A GFM table: a header row, body rows, an alignment per column.
+///
+/// **Rectangular**, which only [`Table::new`] can promise: it pads a short
+/// row with empty cells and truncates a long one, as GFM does. There are no
+/// spans, because the type has nowhere to put one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Table {
+    alignments: Vec<Alignment>,
+    header: Vec<Cell>,
+    rows: Vec<Vec<Cell>>,
+}
+
+impl Table {
+    /// A table `alignments.len()` columns wide, or as wide as `header` when
+    /// no alignment is given, and never narrower than one column.
+    pub fn new(alignments: Vec<Alignment>, header: Vec<Cell>, rows: Vec<Vec<Cell>>) -> Self {
+        Self::counting(alignments, header, rows).0
+    }
+
+    /// As [`Table::new`], with the number of cells truncated to fit: what a
+    /// narrowing reports as lost.
+    pub fn counting(
+        mut alignments: Vec<Alignment>,
+        header: Vec<Cell>,
+        rows: Vec<Vec<Cell>>,
+    ) -> (Self, usize) {
+        if alignments.is_empty() {
+            alignments = vec![Alignment::None; header.len().max(1)];
+        }
+        let width = alignments.len();
+        let mut dropped = 0;
+        let mut fit = |mut row: Vec<Cell>| {
+            dropped += row.len().saturating_sub(width);
+            row.resize_with(width, Vec::new);
+            row
+        };
+        let header = fit(header);
+        let rows = rows.into_iter().map(&mut fit).collect();
+        (
+            Table {
+                alignments,
+                header,
+                rows,
+            },
+            dropped,
+        )
+    }
+
+    /// One alignment per column.
+    pub fn alignments(&self) -> &[Alignment] {
+        &self.alignments
+    }
+
+    /// The header row, one cell per column.
+    pub fn header(&self) -> &[Cell] {
+        &self.header
+    }
+
+    /// The body rows, each one cell per column.
+    pub fn rows(&self) -> &[Vec<Cell>] {
+        &self.rows
+    }
+
+    /// How many columns.
+    pub fn width(&self) -> usize {
+        self.alignments.len()
+    }
+
+    /// Every cell, header first, row by row.
+    pub fn cells(&self) -> impl Iterator<Item = &Cell> {
+        self.header.iter().chain(self.rows.iter().flatten())
+    }
+}
+
+/// The address of an image the person named but has not attached (spec 014
+/// D7): an [`Href`] whose scheme is `http` or `https`.
+///
+/// A `mailto:` image is not an image, so it does not construct. Holding one
+/// fetches nothing: [`Inline::RemoteImage`] is written out as a link, and
+/// only the composer's "Download and attach" press reads it as an address.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct WebHref(Href);
+
+impl WebHref {
+    /// Parse `raw`, or refuse it: [`Href::parse`], then `http` or `https`.
+    pub fn parse(raw: &str) -> Option<Self> {
+        let href = Href::parse(raw)?;
+        let scheme = href.as_str().split(':').next().unwrap_or_default();
+        (scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https"))
+            .then_some(WebHref(href))
+    }
+
+    /// The address, as a link target.
+    pub fn as_href(&self) -> &Href {
+        &self.0
+    }
+
+    /// The address, as it will be written.
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
     }
 }
 
@@ -174,6 +401,8 @@ pub enum Inline {
     Strong(Vec<Inline>),
     /// `<em>`.
     Emphasis(Vec<Inline>),
+    /// `<del>`.
+    Strikethrough(Vec<Inline>),
     /// `<code>`. Holds a string rather than inlines: code is not marked up.
     Code(String),
     /// `<a href>`, to somewhere [`Href`] would accept.
@@ -190,6 +419,18 @@ pub enum Inline {
         /// Alternative text. Empty is allowed; absent is not.
         alt: String,
     },
+    /// An image named by address and not attached (spec 014 D7).
+    ///
+    /// Never an `<img>`: it is written out as a link, so a recipient's
+    /// client fetches nothing, and the composer offers to download and
+    /// attach it. Only Markdown makes one; `parse` reads back the marker
+    /// [`Document::to_html`] writes and never makes one from a remote `<img>`.
+    RemoteImage {
+        /// Where the picture is.
+        href: WebHref,
+        /// Alternative text.
+        alt: String,
+    },
     /// `<br>`.
     Break,
 }
@@ -199,7 +440,7 @@ pub enum Inline {
 pub enum Block {
     /// `<p>`.
     Paragraph(Vec<Inline>),
-    /// `<h1>` to `<h3>`.
+    /// `<h1>` to `<h6>`.
     Heading {
         /// How deep.
         level: HeadingLevel,
@@ -209,10 +450,10 @@ pub enum Block {
     /// `<ul>` or `<ol>`. Each item is itself a run of blocks, so a list can
     /// hold a paragraph and a nested list.
     List {
-        /// `<ol>` when true.
-        ordered: bool,
+        /// Bullets, or numbers from a start.
+        kind: ListKind,
         /// The items.
-        items: Vec<Vec<Block>>,
+        items: Vec<ListItem>,
     },
     /// `<blockquote>` — a quote the *user* made, from the authoring subset.
     Quote(Vec<Block>),
@@ -231,10 +472,17 @@ pub enum Block {
     /// the parser rebuilds through the same constructor on the way back in so
     /// nothing the editor's DOM picked up can widen it.
     Quoted(crate::Quoted),
-    /// `<pre>`. Holds a string: preformatted text is not marked up.
-    Pre(String),
+    /// `<pre>`. Holds a string: code is not marked up.
+    Code {
+        /// The fence's info word, if it had one.
+        language: Option<Language>,
+        /// The lines, verbatim.
+        text: String,
+    },
     /// `<hr>`.
     Rule,
+    /// `<table>`.
+    Table(Table),
 }
 
 /// The attribute that marks a `<blockquote>` as a reply quote rather than one
@@ -535,7 +783,7 @@ fn collect_link_hosts_in_blocks(blocks: &[Block], hosts: &mut Vec<String>) {
             }
             Block::List { items, .. } => {
                 for item in items {
-                    collect_link_hosts_in_blocks(item, hosts);
+                    collect_link_hosts_in_blocks(&item.blocks, hosts);
                 }
             }
             Block::Quote(blocks) => collect_link_hosts_in_blocks(blocks, hosts),
@@ -545,7 +793,12 @@ fn collect_link_hosts_in_blocks(blocks: &[Block], hosts: &mut Vec<String>) {
             // user is about to send on their own behalf, so a quoted
             // newsletter's fifty footer links do not belong in that answer.
             Block::Quoted(_) => {}
-            Block::Pre(_) | Block::Rule => {}
+            Block::Table(table) => {
+                for cell in table.cells() {
+                    collect_link_hosts_in_inlines(cell, hosts);
+                }
+            }
+            Block::Code { .. } | Block::Rule => {}
         }
     }
 }
@@ -561,8 +814,19 @@ fn collect_link_hosts_in_inlines(inlines: &[Inline], hosts: &mut Vec<String>) {
                 }
                 collect_link_hosts_in_inlines(inlines, hosts);
             }
-            Inline::Strong(inlines) | Inline::Emphasis(inlines) => {
+            Inline::Strong(inlines)
+            | Inline::Emphasis(inlines)
+            | Inline::Strikethrough(inlines) => {
                 collect_link_hosts_in_inlines(inlines, hosts);
+            }
+            // A remote image is written as a link to its address, so its
+            // host is one the draft names.
+            Inline::RemoteImage { href, .. } => {
+                if let Some(host) = host_of(href.as_str())
+                    && !hosts.contains(&host)
+                {
+                    hosts.push(host);
+                }
             }
             Inline::Text(_) | Inline::Code(_) | Inline::Image { .. } | Inline::Break => {}
         }
@@ -638,18 +902,7 @@ fn write_block(out: &mut String, block: &Block, scheme: ImageScheme) {
             write_inlines(out, inlines, scheme);
             let _ = write!(out, "</h{}>", level.digit());
         }
-        Block::List { ordered, items } => {
-            let tag = if *ordered { "ol" } else { "ul" };
-            let _ = write!(out, "<{tag}>");
-            for item in items {
-                out.push_str("<li>");
-                for block in item {
-                    write_block(out, block, scheme);
-                }
-                out.push_str("</li>");
-            }
-            let _ = write!(out, "</{tag}>");
-        }
+        Block::List { kind, items } => write_list(out, *kind, items, scheme),
         Block::Quote(blocks) => {
             out.push_str("<blockquote>");
             for block in blocks {
@@ -678,13 +931,124 @@ fn write_block(out: &mut String, block: &Block, scheme: ImageScheme) {
             out.push_str(quoted.html());
             let _ = write!(out, "</{tag}>");
         }
-        Block::Pre(text) => {
-            out.push_str("<pre>");
+        Block::Code { language, text } => {
+            out.push_str("<pre");
+            if let Some(language) = language {
+                // `Language` holds nothing an attribute would need escaped.
+                let _ = write!(out, " {LANGUAGE_MARKER}=\"{}\"", language.as_str());
+            }
+            out.push('>');
             escape_text(out, text);
             out.push_str("</pre>");
         }
         Block::Rule => out.push_str("<hr>"),
+        Block::Table(table) => write_table(out, table, scheme),
     }
+}
+
+/// The attribute a `<pre>` carries its language in (spec 014 R3). Not
+/// `class="language-x"`: ADR 0004 admits no `class`, and no mail client
+/// highlights it anyway.
+pub const LANGUAGE_MARKER: &str = "data-postio-lang";
+
+/// The attribute that marks a task list and each task item (spec 014 R3).
+pub const TASK_MARKER: &str = "data-postio-task";
+
+/// The attribute that marks a link as a remote image not yet attached
+/// (spec 014 D7).
+pub const REMOTE_IMAGE_MARKER: &str = "data-postio-remote-image";
+
+/// The glyph an open task item starts with on the wire, and its space.
+pub const OPEN_BOX: &str = "\u{2610} ";
+
+/// The glyph a done task item starts with on the wire, and its space.
+pub const DONE_BOX: &str = "\u{2611} ";
+
+/// A list, with its task markers (spec 014 R3).
+///
+/// A box is a glyph rather than `<input type=checkbox>`, which Gmail and
+/// Outlook drop and Postio's own reader refuses. It goes inside the item's
+/// first paragraph, so it sits on the line it marks; a `☐` before a `<p>`
+/// would be drawn on a line of its own. A list of nothing but tasks hides
+/// its bullets, so a box is not drawn beside a dot.
+fn write_list(out: &mut String, kind: ListKind, items: &[ListItem], scheme: ImageScheme) {
+    let tag = if kind.is_ordered() { "ol" } else { "ul" };
+    let _ = write!(out, "<{tag}");
+    if let ListKind::Ordered { start } = kind
+        && start != 1
+    {
+        let _ = write!(out, " start=\"{start}\"");
+    }
+    if kind == ListKind::Bullet && !items.is_empty() && items.iter().all(|item| item.task.is_some())
+    {
+        let _ = write!(
+            out,
+            " {TASK_MARKER}=\"list\" style=\"list-style-type:none\""
+        );
+    }
+    out.push('>');
+    for item in items {
+        let (state, glyph) = match item.task {
+            None => {
+                out.push_str("<li>");
+                for block in &item.blocks {
+                    write_block(out, block, scheme);
+                }
+                out.push_str("</li>");
+                continue;
+            }
+            Some(Task::Open) => ("open", OPEN_BOX),
+            Some(Task::Done) => ("done", DONE_BOX),
+        };
+        let _ = write!(out, "<li {TASK_MARKER}=\"{state}\">");
+        match item.blocks.split_first() {
+            Some((Block::Paragraph(inlines), rest)) => {
+                out.push_str("<p>");
+                out.push_str(glyph);
+                write_inlines(out, inlines, scheme);
+                out.push_str("</p>");
+                for block in rest {
+                    write_block(out, block, scheme);
+                }
+            }
+            _ => {
+                out.push_str(glyph);
+                for block in &item.blocks {
+                    write_block(out, block, scheme);
+                }
+            }
+        }
+        out.push_str("</li>");
+    }
+    let _ = write!(out, "</{tag}>");
+}
+
+/// A table, with the layout attributes the Word engine honours (spec 014
+/// D5): constant, generated here, and ignored by `parse`.
+fn write_table(out: &mut String, table: &Table, scheme: ImageScheme) {
+    out.push_str("<table border=\"1\" cellpadding=\"6\" cellspacing=\"0\"><thead><tr>");
+    let row = |out: &mut String, cells: &[Cell], tag: &str| {
+        for (cell, alignment) in cells.iter().zip(table.alignments()) {
+            let _ = write!(out, "<{tag}");
+            match alignment {
+                Alignment::None => {}
+                Alignment::Left => out.push_str(" align=\"left\""),
+                Alignment::Center => out.push_str(" align=\"center\""),
+                Alignment::Right => out.push_str(" align=\"right\""),
+            }
+            out.push('>');
+            write_inlines(out, cell, scheme);
+            let _ = write!(out, "</{tag}>");
+        }
+    };
+    row(out, table.header(), "th");
+    out.push_str("</tr></thead><tbody>");
+    for cells in table.rows() {
+        out.push_str("<tr>");
+        row(out, cells, "td");
+        out.push_str("</tr>");
+    }
+    out.push_str("</tbody></table>");
 }
 
 fn write_inlines(out: &mut String, inlines: &[Inline], scheme: ImageScheme) {
@@ -705,6 +1069,11 @@ fn write_inline(out: &mut String, inline: &Inline, scheme: ImageScheme) {
             out.push_str("<em>");
             write_inlines(out, inlines, scheme);
             out.push_str("</em>");
+        }
+        Inline::Strikethrough(inlines) => {
+            out.push_str("<del>");
+            write_inlines(out, inlines, scheme);
+            out.push_str("</del>");
         }
         Inline::Code(text) => {
             out.push_str("<code>");
@@ -738,6 +1107,15 @@ fn write_inline(out: &mut String, inline: &Inline, scheme: ImageScheme) {
             escape_attribute(out, alt);
             out.push_str("\">");
         }
+        // A link, never an `<img>`: a recipient's client fetches nothing
+        // until the person who wrote it pressed "Download and attach".
+        Inline::RemoteImage { href, alt } => {
+            out.push_str("<a href=\"");
+            escape_attribute(out, href.as_str());
+            let _ = write!(out, "\" {REMOTE_IMAGE_MARKER}=\"\">");
+            escape_text(out, if alt.is_empty() { href.as_str() } else { alt });
+            out.push_str("</a>");
+        }
         Inline::Break => out.push_str("<br>"),
     }
 }
@@ -757,18 +1135,18 @@ fn write_block_text(out: &mut String, block: &Block, depth: usize, links: Links)
             out.push_str(&indent);
             write_inlines_text(out, inlines, &indent, links);
         }
-        Block::List { ordered, items } => {
+        Block::List { kind, items } => {
             for (index, item) in items.iter().enumerate() {
                 if index > 0 {
                     out.push('\n');
                 }
                 out.push_str(&indent);
-                if *ordered {
+                if kind.is_ordered() {
                     let _ = write!(out, "{}. ", index + 1);
                 } else {
                     out.push_str("- ");
                 }
-                for (nth, block) in item.iter().enumerate() {
+                for (nth, block) in item.blocks.iter().enumerate() {
                     if nth > 0 {
                         out.push_str("\n\n");
                     }
@@ -816,7 +1194,7 @@ fn write_block_text(out: &mut String, block: &Block, depth: usize, links: Links)
                 }
             }
         }
-        Block::Pre(text) => {
+        Block::Code { text, .. } => {
             for (index, line) in text.split('\n').enumerate() {
                 if index > 0 {
                     out.push('\n');
@@ -828,6 +1206,22 @@ fn write_block_text(out: &mut String, block: &Block, depth: usize, links: Links)
         Block::Rule => {
             out.push_str(&indent);
             out.push_str("----");
+        }
+        Block::Table(table) => {
+            let rows =
+                std::iter::once(table.header()).chain(table.rows().iter().map(Vec::as_slice));
+            for (index, cells) in rows.enumerate() {
+                if index > 0 {
+                    out.push('\n');
+                }
+                out.push_str(&indent);
+                for (nth, cell) in cells.iter().enumerate() {
+                    if nth > 0 {
+                        out.push(' ');
+                    }
+                    write_inlines_text(out, cell, &indent, links);
+                }
+            }
         }
     }
 }
@@ -860,12 +1254,12 @@ fn write_block_flowed(out: &mut String, block: &Block, depth: usize, width: usiz
             write_inlines_text(&mut text, inlines, "", Links::Spelled);
             write_flowed_lines(out, &text, &prefix, width);
         }
-        Block::List { ordered, items } => {
+        Block::List { kind, items } => {
             for (index, item) in items.iter().enumerate() {
                 if index > 0 {
                     out.push('\n');
                 }
-                let marker = if *ordered {
+                let marker = if kind.is_ordered() {
                     format!("{}. ", index + 1)
                 } else {
                     "- ".to_owned()
@@ -876,7 +1270,7 @@ fn write_block_flowed(out: &mut String, block: &Block, depth: usize, width: usiz
                 // gives a quote -- a marker is just a prefix with an
                 // unusual first line.
                 let hang_prefix = format!("{prefix}{}", " ".repeat(marker.chars().count()));
-                for (nth, block) in item.iter().enumerate() {
+                for (nth, block) in item.blocks.iter().enumerate() {
                     if nth > 0 {
                         out.push_str("\n\n");
                     }
@@ -912,7 +1306,7 @@ fn write_block_flowed(out: &mut String, block: &Block, depth: usize, width: usiz
                 write_block_flowed(out, block, depth + 1, width);
             }
         }
-        Block::Pre(text) => {
+        Block::Code { text, .. } => {
             // Preformatted content is never reflowed -- "not marked up" is
             // this variant's whole point -- but it still shares the wire
             // with flowed lines around it, so a line that would otherwise
@@ -929,6 +1323,17 @@ fn write_block_flowed(out: &mut String, block: &Block, depth: usize, width: usiz
         Block::Rule => {
             out.push_str(&prefix);
             out.push_str("----");
+        }
+        Block::Table(_) => {
+            let mut text = String::new();
+            write_block_text(&mut text, block, 0, Links::Spelled);
+            for (index, line) in text.split('\n').enumerate() {
+                if index > 0 {
+                    out.push('\n');
+                }
+                out.push_str(&prefix);
+                out.push_str(&flowed::stuff_for_display(line));
+            }
         }
     }
 }
@@ -950,9 +1355,16 @@ fn write_inlines_text(out: &mut String, inlines: &[Inline], indent: &str, links:
     for inline in inlines {
         match inline {
             Inline::Text(text) => out.push_str(text),
-            Inline::Strong(inner) | Inline::Emphasis(inner) => {
+            Inline::Strong(inner) | Inline::Emphasis(inner) | Inline::Strikethrough(inner) => {
                 write_inlines_text(out, inner, indent, links)
             }
+            Inline::RemoteImage { href, alt } => match links {
+                Links::LabelOnly => out.push_str(alt),
+                Links::Spelled if alt.trim().is_empty() => out.push_str(href.as_str()),
+                Links::Spelled => {
+                    let _ = write!(out, "{alt} <{}>", href.as_str());
+                }
+            },
             Inline::Code(text) => out.push_str(text),
             // The address is the point of a link in plain text, and dropping
             // it would leave "click here" pointing at nothing. An index is
@@ -986,5 +1398,113 @@ fn write_inlines_text(out: &mut String, inlines: &[Inline], indent: &str, links:
                 out.push_str(indent);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod shapes {
+    //! Spec 014's shapes (`data-model.md`), one rule per case.
+    use super::*;
+
+    fn text(s: &str) -> Inline {
+        Inline::Text(s.to_owned())
+    }
+
+    #[test]
+    fn six_heading_levels_and_none_narrows() {
+        for digit in 1..=6u8 {
+            let level = HeadingLevel::from_digit(digit).expect("a level");
+            assert_eq!(level.digit(), digit);
+        }
+        assert_eq!(HeadingLevel::from_digit(4), Some(HeadingLevel::Four));
+        assert_eq!(HeadingLevel::from_digit(0), None);
+        assert_eq!(HeadingLevel::from_digit(7), None);
+    }
+
+    #[test]
+    fn an_ordered_list_carries_its_start_and_a_bullet_list_cannot() {
+        let list = Block::List {
+            kind: ListKind::Ordered { start: 7 },
+            items: vec![ListItem::new(vec![Block::Paragraph(vec![text("seventh")])])],
+        };
+        let Block::List {
+            kind: ListKind::Ordered { start },
+            ..
+        } = list
+        else {
+            panic!("{list:?}")
+        };
+        assert_eq!(start, 7);
+        assert_eq!(ListKind::NUMBERED, ListKind::Ordered { start: 1 });
+        assert!(!ListKind::Bullet.is_ordered());
+    }
+
+    #[test]
+    fn a_task_is_on_the_item_not_the_list() {
+        let open = ListItem::task(Task::Open, vec![Block::Paragraph(vec![text("a")])]);
+        let plain = ListItem::new(vec![Block::Paragraph(vec![text("b")])]);
+        assert_eq!(open.task, Some(Task::Open));
+        assert_eq!(plain.task, None);
+    }
+
+    #[test]
+    fn a_language_is_one_short_word() {
+        for word in ["rust", "c++", "objective-c", "c#", "x.y_z"] {
+            assert_eq!(
+                Language::parse(word).map(|l| l.as_str().to_owned()),
+                Some(word.to_owned())
+            );
+        }
+        for refused in ["a b", "\"x\"", "", "<x>", &"a".repeat(33)] {
+            assert_eq!(Language::parse(refused), None, "{refused:?}");
+        }
+        assert!(Language::parse(&"a".repeat(32)).is_some());
+    }
+
+    #[test]
+    fn a_table_is_rectangular_by_construction() {
+        let (table, dropped) = Table::counting(
+            vec![Alignment::Left, Alignment::Right],
+            vec![vec![text("Item")], vec![text("Qty")]],
+            vec![
+                vec![vec![text("short")]],
+                vec![vec![text("a")], vec![text("b")], vec![text("c")]],
+            ],
+        );
+        assert_eq!(table.width(), 2);
+        assert_eq!(table.rows()[0], vec![vec![text("short")], vec![]]);
+        assert_eq!(table.rows()[1], vec![vec![text("a")], vec![text("b")]]);
+        assert_eq!(dropped, 1, "the cell past the edge is counted");
+        assert_eq!(
+            Table::new(vec![], vec![vec![text("x")], vec![text("y")]], vec![]).alignments(),
+            &[Alignment::None, Alignment::None],
+            "with no alignments, the header sets the width"
+        );
+        assert_eq!(Table::new(vec![], vec![], vec![]).width(), 1);
+    }
+
+    #[test]
+    fn strikethrough_nests_like_strong() {
+        let inline = Inline::Strikethrough(vec![Inline::Strong(vec![text("x")])]);
+        assert!(matches!(inline, Inline::Strikethrough(inner) if inner.len() == 1));
+    }
+
+    #[test]
+    fn a_remote_image_is_only_ever_on_the_web() {
+        assert!(WebHref::parse("https://example.com/x.png").is_some());
+        assert!(WebHref::parse("HTTP://example.com/x.png").is_some());
+        for refused in [
+            "mailto:ada@example.com",
+            "cid:x@example.com",
+            "javascript:x",
+            "ftp://example.com/x",
+        ] {
+            assert_eq!(WebHref::parse(refused), None, "{refused}");
+        }
+        let image = Inline::RemoteImage {
+            href: WebHref::parse("https://example.com/x.png").unwrap(),
+            alt: "x".to_owned(),
+        };
+        assert!(matches!(image, Inline::RemoteImage { .. }));
     }
 }

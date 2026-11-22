@@ -4,7 +4,9 @@
 //! one is load-bearing for "Postio cannot send a tracking pixel" and a
 //! comment cannot fail.
 
-use postio_body::document::{Block, ContentId, Document, HeadingLevel, Href, Inline};
+use postio_body::document::{
+    Block, ContentId, Document, HeadingLevel, Href, Inline, ListItem, ListKind,
+};
 use postio_body::parse;
 
 /// Every shape the document can take, in one value.
@@ -44,18 +46,20 @@ fn every_shape() -> Document {
                 inlines: vec![Inline::Text("three".to_owned())],
             },
             Block::List {
-                ordered: false,
+                kind: ListKind::Bullet,
                 items: vec![
-                    vec![Block::Paragraph(vec![Inline::Text("first".to_owned())])],
-                    vec![
+                    ListItem::new(vec![Block::Paragraph(vec![Inline::Text(
+                        "first".to_owned(),
+                    )])]),
+                    ListItem::new(vec![
                         Block::Paragraph(vec![Inline::Text("second".to_owned())]),
                         Block::List {
-                            ordered: true,
-                            items: vec![vec![Block::Paragraph(vec![Inline::Text(
+                            kind: ListKind::NUMBERED,
+                            items: vec![ListItem::new(vec![Block::Paragraph(vec![Inline::Text(
                                 "nested".to_owned(),
-                            )])]],
+                            )])])],
                         },
-                    ],
+                    ]),
                 ],
             },
             Block::Quote(vec![
@@ -64,7 +68,10 @@ fn every_shape() -> Document {
                     "and quoted this".to_owned(),
                 )])]),
             ]),
-            Block::Pre("  indented\n    further\n".to_owned()),
+            Block::Code {
+                language: None,
+                text: "  indented\n    further\n".to_owned(),
+            },
             Block::Rule,
         ],
     }
@@ -370,7 +377,10 @@ fn a_plain_document_is_recognised_and_a_structured_one_is_not() {
         },
         Block::Quote(vec![]),
         Block::Rule,
-        Block::Pre("x".to_owned()),
+        Block::Code {
+            language: None,
+            text: "x".to_owned(),
+        },
         Block::Paragraph(vec![Inline::Strong(vec![Inline::Text("b".to_owned())])]),
         Block::Paragraph(vec![Inline::Link {
             href: Href::parse("https://example.com").unwrap(),
@@ -398,11 +408,11 @@ fn link_hosts_finds_a_link_nested_in_a_list_and_a_quote() {
                 inlines: vec![Inline::Text("shop now".to_owned())],
             }]),
             Block::List {
-                ordered: false,
-                items: vec![vec![Block::Paragraph(vec![Inline::Link {
+                kind: ListKind::Bullet,
+                items: vec![ListItem::new(vec![Block::Paragraph(vec![Inline::Link {
                     href: Href::parse("https://cdn.example.org/img").unwrap(),
                     inlines: vec![],
-                }])]],
+                }])])],
             },
             Block::Quote(vec![Block::Paragraph(vec![Inline::Strong(vec![
                 Inline::Link {
@@ -468,10 +478,10 @@ fn an_empty_paragraph_records_nothing_and_is_narrowed_away() {
     assert_eq!(
         document.blocks,
         vec![Block::List {
-            ordered: false,
-            items: vec![vec![Block::Paragraph(vec![Inline::Text(
+            kind: ListKind::Bullet,
+            items: vec![ListItem::new(vec![Block::Paragraph(vec![Inline::Text(
                 "item one".into()
-            )])]],
+            )])])],
         }]
     );
     // A deliberate blank line is `<p><br></p>` — a Break, not empty — and

@@ -53,7 +53,10 @@ pub mod sanitize;
 pub mod styles;
 pub mod treatment;
 
-pub use document::{Block, ContentId, Document, HeadingLevel, Href, Inline, editor_image_src};
+pub use document::{
+    Alignment, Block, Cell, ContentId, Document, HeadingLevel, Href, Inline, Language, ListItem,
+    ListKind, Table, Task, WebHref, editor_image_src,
+};
 pub use edit::{EditHistory, EditStep};
 pub use narrow::{Lost, Narrowed, narrow};
 pub use outgoing::{harden, render};

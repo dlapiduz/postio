@@ -189,7 +189,10 @@ pub fn every_formatting_command_lands_as_canonical_structure() {
     lands(&editor, "a bulleted list", || {
         matches!(
             editor.document().blocks.first(),
-            Some(Block::List { ordered: false, .. })
+            Some(Block::List {
+                kind: postio_body::ListKind::Bullet,
+                ..
+            })
         )
     });
     load_synced(&editor, text_paragraph("first"), "first");
@@ -198,7 +201,10 @@ pub fn every_formatting_command_lands_as_canonical_structure() {
     lands(&editor, "a numbered list", || {
         matches!(
             editor.document().blocks.first(),
-            Some(Block::List { ordered: true, .. })
+            Some(Block::List {
+                kind: postio_body::ListKind::Ordered { .. },
+                ..
+            })
         )
     });
 

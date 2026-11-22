@@ -34,7 +34,7 @@ use html5ever::tendril::TendrilSink;
 use html5ever::{LocalName, QualName, ns, parse_fragment};
 use markup5ever_rcdom::{Handle, NodeData, RcDom};
 
-use crate::document::{Block, ContentId, Document, HeadingLevel, Href, Inline};
+use crate::document::{Block, ContentId, Document, HeadingLevel, Href, Inline, ListItem, ListKind};
 
 /// Elements whose *contents* go with them.
 ///
@@ -225,8 +225,12 @@ pub(crate) fn block_for(handle: &Handle, name: &str) -> Option<Block> {
                 inlines: inlines_of(handle),
             })
         }
-        "ul" | "ol" => Some(Block::List {
-            ordered: name == "ol",
+        "ul" => Some(Block::List {
+            kind: ListKind::Bullet,
+            items: items_of(handle),
+        }),
+        "ol" => Some(Block::List {
+            kind: ListKind::NUMBERED,
             items: items_of(handle),
         }),
         "blockquote" => {
@@ -252,7 +256,10 @@ pub(crate) fn block_for(handle: &Handle, name: &str) -> Option<Block> {
         }
         // Whitespace is the content of a `<pre>`, so it is taken raw rather
         // than collapsed the way flowing text is.
-        "pre" => Some(Block::Pre(raw_text(handle))),
+        "pre" => Some(Block::Code {
+            language: None,
+            text: raw_text(handle),
+        }),
         "hr" => Some(Block::Rule),
         // A forward's carried body, which is a `div` rather than a
         // `blockquote` because a forward is not a quote (#1483). Only when it
@@ -372,7 +379,7 @@ fn blocks_of(handle: &Handle) -> Vec<Block> {
 }
 
 /// One run of blocks per `<li>`; anything not in an `<li>` is not an item.
-fn items_of(handle: &Handle) -> Vec<Vec<Block>> {
+fn items_of(handle: &Handle) -> Vec<ListItem> {
     handle
         .children
         .borrow()
@@ -382,11 +389,11 @@ fn items_of(handle: &Handle) -> Vec<Vec<Block>> {
             let blocks = blocks_of(item);
             // A one-paragraph item is the common case and reads better
             // unwrapped, but the type wants blocks either way.
-            if blocks.is_empty() {
+            ListItem::new(if blocks.is_empty() {
                 vec![Block::Paragraph(Vec::new())]
             } else {
                 blocks
-            }
+            })
         })
         .collect()
 }

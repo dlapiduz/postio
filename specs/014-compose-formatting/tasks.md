@@ -58,7 +58,7 @@ red. A test that is green on arrival is a guard and says so.
 
 ### The document
 
-- [ ] T006 Write failing unit cases in `crates/postio-body/src/document.rs` for:
+- [x] T006 Write failing unit cases in `crates/postio-body/src/document.rs` for:
   - `HeadingLevel` 1–6, with no narrowing;
   - `ListKind::Ordered { start }`;
   - `ListItem.task`;
@@ -68,7 +68,7 @@ red. A test that is green on arrival is a guard and says so.
   - `Inline::RemoteImage` accepting only `http`/`https`.
 
   Rewrite `markdown.rs`'s `headings_narrow_to_three_levels` to expect level 4.
-- [ ] T007 Implement `data-model.md`'s types in `crates/postio-body/src/document.rs`. `Block::Pre` becomes `Block::Code { language, text }`, and every match in the workspace follows (`grep -rn "Block::Pre\|ordered:" crates/`). The crate doc's closed-set count is updated.
+- [x] T007 Implement `data-model.md`'s types in `crates/postio-body/src/document.rs`. `Block::Pre` becomes `Block::Code { language, text }`, and every match in the workspace follows (`grep -rn "Block::Pre\|ordered:" crates/`). The crate doc's closed-set count is updated.
 - [ ] T008 Write failing cases in `crates/postio-body/tests/body_suite/document.rs` for `parse(to_html(d)) == d` and `to_html(parse(h)) == h` over every row of `data-model.md`'s HTML subset table. Include:
   - the `☐ `/`☑ ` glyph removed on the way in;
   - a GitHub-style checkbox list read as tasks;

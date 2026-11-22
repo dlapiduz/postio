@@ -6,7 +6,9 @@
 //! stripped. The ammonia backstop is asserted to be a **no-op** — a backstop
 //! that quietly cleans up after a real bug is one that hides it.
 
-use postio_body::document::{Block, ContentId, Document, HeadingLevel, Href, Inline};
+use postio_body::document::{
+    Block, ContentId, Document, HeadingLevel, Href, Inline, ListItem, ListKind,
+};
 use postio_body::{harden, parse};
 
 /// The corpus fixture written to carry every remote-reference trick at once:
@@ -64,13 +66,18 @@ fn every_shape() -> Document {
                 inlines: vec![Inline::Text("heading".to_owned())],
             },
             Block::List {
-                ordered: true,
-                items: vec![vec![Block::Paragraph(vec![Inline::Text("one".to_owned())])]],
+                kind: ListKind::NUMBERED,
+                items: vec![ListItem::new(vec![Block::Paragraph(vec![Inline::Text(
+                    "one".to_owned(),
+                )])])],
             },
             Block::Quote(vec![Block::Paragraph(vec![Inline::Text(
                 "quoted".to_owned(),
             )])]),
-            Block::Pre("  raw < text\n".to_owned()),
+            Block::Code {
+                language: None,
+                text: "  raw < text\n".to_owned(),
+            },
             Block::Rule,
         ],
     }

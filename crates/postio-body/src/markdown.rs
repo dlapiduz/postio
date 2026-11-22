@@ -99,7 +99,14 @@ pub fn to_document(markdown: &str) -> crate::Document {
                 ),
                 Tag::BlockQuote(_) => Frame::Quote(Vec::new()),
                 Tag::CodeBlock(_) => Frame::Code(String::new()),
-                Tag::List(first) => Frame::List(first.is_some(), Vec::new()),
+                Tag::List(first) => Frame::List(
+                    if first.is_some() {
+                        crate::ListKind::NUMBERED
+                    } else {
+                        crate::ListKind::Bullet
+                    },
+                    Vec::new(),
+                ),
                 Tag::Item => Frame::Item(Vec::new(), Vec::new()),
                 Tag::Emphasis => Frame::Inlines(Holder::Emphasis, Vec::new()),
                 Tag::Strong => Frame::Inlines(Holder::Strong, Vec::new()),
@@ -191,12 +198,12 @@ fn write_block(out: &mut String, block: &crate::Block) -> bool {
             out.push(' ');
             write_inlines(out, inlines);
         }
-        Block::List { ordered, items } => {
+        Block::List { kind, items } => {
             for (index, item) in items.iter().enumerate() {
                 if index > 0 {
                     out.push('\n');
                 }
-                let marker = if *ordered {
+                let marker = if kind.is_ordered() {
                     format!("{}. ", index + 1)
                 } else {
                     "- ".to_owned()
@@ -204,7 +211,7 @@ fn write_block(out: &mut String, block: &crate::Block) -> bool {
                 out.push_str(&marker);
                 let indent = " ".repeat(marker.len());
                 let mut inner = String::new();
-                write_item(&mut inner, item, &indent);
+                write_item(&mut inner, &item.blocks, &indent);
                 out.push_str(inner.trim_end_matches('\n'));
             }
         }
@@ -224,7 +231,7 @@ fn write_block(out: &mut String, block: &crate::Block) -> bool {
                 .collect();
             out.push_str(&quoted.join("\n"));
         }
-        Block::Pre(code) => {
+        Block::Code { text: code, .. } => {
             let fence = if code.contains("```") { "~~~" } else { "```" };
             out.push_str(fence);
             out.push('\n');
@@ -235,9 +242,40 @@ fn write_block(out: &mut String, block: &crate::Block) -> bool {
             out.push_str(fence);
         }
         Block::Rule => out.push_str("---"),
+        Block::Table(table) => write_table(out, table),
         Block::Quoted(_) => return false,
     }
     true
+}
+
+/// A GFM pipe table: the header, the delimiter row, the body rows.
+fn write_table(out: &mut String, table: &crate::Table) {
+    use crate::Alignment;
+    let row = |out: &mut String, cells: &[crate::Cell]| {
+        out.push('|');
+        for cell in cells {
+            out.push(' ');
+            let mut text = String::new();
+            write_inlines(&mut text, cell);
+            // A cell is one line: a break inside one is GFM's `<br>`.
+            out.push_str(&text.replace("\\\n", "<br>"));
+            out.push_str(" |");
+        }
+    };
+    row(out, table.header());
+    out.push_str("\n|");
+    for alignment in table.alignments() {
+        out.push_str(match alignment {
+            Alignment::None => "---|",
+            Alignment::Left => ":--|",
+            Alignment::Center => ":-:|",
+            Alignment::Right => "--:|",
+        });
+    }
+    for cells in table.rows() {
+        out.push('\n');
+        row(out, cells);
+    }
 }
 
 /// A list item: its first block after the marker, the rest indented under
@@ -270,6 +308,14 @@ fn write_inlines(out: &mut String, inlines: &[crate::Inline]) {
                 out.push('*');
                 write_inlines(out, inner);
                 out.push('*');
+            }
+            Inline::Strikethrough(inner) => {
+                out.push_str("~~");
+                write_inlines(out, inner);
+                out.push_str("~~");
+            }
+            Inline::RemoteImage { href, alt } => {
+                out.push_str(&format!("![{}]({})", escape(alt), href.as_str()));
             }
             Inline::Code(code) => {
                 // A fence longer than any run of backticks inside.
@@ -339,7 +385,7 @@ enum Holder {
 enum Frame {
     Blocks(Vec<crate::Block>),
     Quote(Vec<crate::Block>),
-    List(bool, Vec<Vec<crate::Block>>),
+    List(crate::ListKind, Vec<crate::ListItem>),
     /// A list item: its blocks, and the words of a tight item not yet
     /// wrapped in a paragraph.
     Item(Vec<crate::Block>, Vec<crate::Inline>),
@@ -384,7 +430,7 @@ fn push_block(stack: &mut [Frame], block: crate::Block) {
             }
             blocks.push(block);
         }
-        Some(Frame::List(_, items)) => items.push(vec![block]),
+        Some(Frame::List(_, items)) => items.push(crate::ListItem::new(vec![block])),
         // A block inside an inline container: close it into the words.
         Some(Frame::Inlines(..) | Frame::Code(_) | Frame::Image(..)) | None => {
             if let Some(Frame::Blocks(blocks)) = stack.first_mut() {
@@ -423,15 +469,21 @@ fn close(stack: &mut [Frame], frame: Frame) {
                 None => push_inline(stack, Inline::Text(format!("![{alt}]({dest})"))),
             }
         }
-        Frame::Code(code) => push_block(stack, Block::Pre(code)),
+        Frame::Code(code) => push_block(
+            stack,
+            Block::Code {
+                language: None,
+                text: code,
+            },
+        ),
         Frame::Quote(blocks) => push_block(stack, Block::Quote(blocks)),
-        Frame::List(ordered, items) => push_block(stack, Block::List { ordered, items }),
+        Frame::List(kind, items) => push_block(stack, Block::List { kind, items }),
         Frame::Item(mut blocks, loose) => {
             if !loose.is_empty() {
                 blocks.push(Block::Paragraph(loose));
             }
             if let Some(Frame::List(_, items)) = stack.last_mut() {
-                items.push(blocks);
+                items.push(crate::ListItem::new(blocks));
             } else {
                 for block in blocks {
                     push_block(stack, block);
@@ -552,7 +604,7 @@ mod tests {
         }
 
         #[test]
-        fn headings_narrow_to_three_levels() {
+        fn six_heading_levels_and_none_narrows() {
             let document = to_document("# One\n\n#### Four");
             assert!(matches!(
                 &document.blocks[0],
@@ -564,7 +616,7 @@ mod tests {
             assert!(matches!(
                 &document.blocks[1],
                 Block::Heading {
-                    level: HeadingLevel::Three,
+                    level: HeadingLevel::Four,
                     ..
                 }
             ));
@@ -576,7 +628,7 @@ mod tests {
                 "- one\n  - inner\n- two\n\n> quoted\n\n```rust\nfn x() {}\n```\n\n---",
             );
             let Block::List {
-                ordered: false,
+                kind: crate::ListKind::Bullet,
                 items,
             } = &document.blocks[0]
             else {
@@ -585,6 +637,7 @@ mod tests {
             assert_eq!(items.len(), 2);
             assert!(
                 items[0]
+                    .blocks
                     .iter()
                     .any(|block| matches!(block, Block::List { .. })),
                 "{items:?}"
@@ -593,7 +646,13 @@ mod tests {
                 matches!(&document.blocks[1], Block::Quote(_)),
                 "{document:?}"
             );
-            assert_eq!(document.blocks[2], Block::Pre("fn x() {}\n".into()));
+            assert_eq!(
+                document.blocks[2],
+                Block::Code {
+                    language: None,
+                    text: "fn x() {}\n".into()
+                }
+            );
             assert_eq!(document.blocks[3], Block::Rule);
         }
 
@@ -601,7 +660,7 @@ mod tests {
         fn an_ordered_list_is_ordered() {
             let document = to_document("1. first\n2. second");
             assert!(
-                matches!(&document.blocks[0], Block::List { ordered: true, items } if items.len() == 2)
+                matches!(&document.blocks[0], Block::List { kind: crate::ListKind::Ordered { start: 1 }, items } if items.len() == 2)
             );
         }
 
