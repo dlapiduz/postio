@@ -475,5 +475,14 @@ fn an_empty_place_says_why() {
             &EmptyPlace::Snoozed,
             &keymap
         ))]
-    );
+    ); // No row is under the cursor, so the footer names none and offers no
+    // verb on one: the row of the place left behind is not here (#2195).
+    let footers: Vec<_> = effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::Show(Intent::Footer(footer)) => Some(footer.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(footers, vec![postio_ui::scope::FooterView::default()]);
 }

@@ -1,0 +1,39 @@
+# An empty place keeps the keyboard off its shortcut buttons (#2195).
+#
+# The defect: going to a place with nothing in it puts the empty page where
+# the list was, and GTK handed the keyboard to the page's first shortcut
+# button, ring and all, so Space or Return pressed it. The keyboard's home
+# is never a control (keyboard_home.rs): on an empty page it rests on the
+# page itself, which draws no ring, and every key still means what it means
+# in the list. Back in a place with mail, it is on the cursor's row again.
+apps   = ["focus"]
+source = { kind = "issue", ref = "#2195" }
+proof  = "base"
+
+[[step]]
+wait   = { until = { cursor.index = 0 } }
+check  = { keyboard.region = "list", cursor.index = 0, app.focus.keyboard.on_control = false }
+expect = "The inbox opens with the cursor ring on its first row and the keyboard on that row."
+
+[[step]]
+id      = "empty"
+command = "go_to_snoozed"
+settle  = { until = { rows.count = 0 }, watch_ms = 500 }
+check   = { scope = "Snoozed", app.focus.empty.heading = "Nothing snoozed", keyboard.reachable = true, app.focus.keyboard.on_control = false, app.focus.footer.title = "" }
+expect  = "Snoozed is empty and says so. No shortcut button wears a focus ring: the keyboard rests on the page, so Space or Return would press nothing. The footer names no message: the inbox's row is not here, and no verb is offered on it."
+
+[[step]]
+key    = "space"
+check  = { scope = "Snoozed", app.focus.empty.heading = "Nothing snoozed", app.focus.keyboard.on_control = false }
+expect = "Space presses no shortcut: Snoozed is still on screen, unchanged."
+
+[[step]]
+key    = "Return"
+check  = { scope = "Snoozed", app.focus.empty.heading = "Nothing snoozed", app.focus.keyboard.on_control = false, overlay.kind = "none" }
+expect = "Return presses no shortcut and opens nothing: Snoozed is still on screen, unchanged."
+
+[[step]]
+command = "go_to_inbox"
+settle  = { until = { cursor.index = 0 } }
+check   = { scope = "Inbox", keyboard.region = "list", cursor.index = 0, app.focus.keyboard.on_control = false, app.focus.footer.title = "Invitation: Harbor design review" }
+expect  = "`g i` still works from the empty page: the inbox is back, with the keyboard on the cursor's row, and the footer names that row again."

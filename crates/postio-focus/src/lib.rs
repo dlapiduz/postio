@@ -2333,10 +2333,18 @@ impl FocusController {
         // its row read (the page arrived after the cursor did), so the
         // footer is said again from where it is, unless a message window
         // owns the footer.
-        let footer = self.footer_after(&effects, raw).or_else(|| {
-            let position = self.cursor.position().filter(|_| self.walk.is_none())?;
-            thread_expand::footer_at(self.expansion.as_ref(), position, raw, self.keymap())
-        });
+        let footer = self
+            .footer_after(&effects, raw)
+            .or_else(|| {
+                let position = self.cursor.position().filter(|_| self.walk.is_none())?;
+                thread_expand::footer_at(self.expansion.as_ref(), position, raw, self.keymap())
+            })
+            // A list that landed with no rows has no row to name: the
+            // footer of the place left behind would offer verbs on a
+            // message that is not here (#2195).
+            .or_else(|| {
+                (rows.is_empty() && self.walk.is_none()).then(postio_ui::scope::FooterView::default)
+            });
         if let Some(footer) = footer {
             effects.push(Effect::Show(Intent::Footer(footer)));
         }
