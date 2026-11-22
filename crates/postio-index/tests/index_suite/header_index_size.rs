@@ -134,6 +134,7 @@ async fn no_message_may_contribute_more_than_the_two_caps_allow() {
     );
 }
 
+/// POSTIO-MEASUREMENT: indexes a large header corpus to measure bytes per message, 10 s.
 #[tokio::test]
 async fn the_header_index_stays_inside_its_per_message_ceiling() {
     let database = test_support::temp().await;

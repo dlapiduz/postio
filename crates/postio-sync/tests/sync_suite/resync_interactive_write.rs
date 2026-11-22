@@ -32,6 +32,7 @@ fn note(n: u32) -> Vec<u8> {
     .into_bytes()
 }
 
+/// POSTIO-MEASUREMENT: times a resync batch against an interactive write, 14 s.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_resync_batch_does_not_lock_out_an_interactive_write() {
     let database = test_support::temp().await;

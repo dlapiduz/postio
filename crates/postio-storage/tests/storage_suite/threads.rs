@@ -942,6 +942,7 @@ async fn a_hidden_message_is_not_what_a_folder_row_shows() {
     assert_eq!(page[0].unread_count, 1);
 }
 
+/// POSTIO-MEASUREMENT: seeds a large folder to compare statement counts across pages, 28 s.
 #[tokio::test]
 async fn thread_paging_stays_flat_over_a_large_folder() {
     // The claim ADR 0015 rests on: page k of threads costs what page k of messages costs. Counted,

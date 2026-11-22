@@ -58,6 +58,7 @@ async fn listing_a_page_costs_the_same_statements_however_many_rows_it_returns()
 /// loudly, and seeds faster.
 const LARGE: usize = 10_000;
 
+/// POSTIO-MEASUREMENT: seeds 10,000 messages to count the rows a page reads, 13 s.
 #[tokio::test]
 async fn a_large_mailbox_never_materialises_more_rows_than_the_page_shows() {
     // A page of fifty returns fifty rows whether windowed or read whole and sliced in Rust; the

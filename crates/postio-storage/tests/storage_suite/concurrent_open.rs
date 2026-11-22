@@ -7,6 +7,7 @@ const TASKS: usize = 16;
 
 const PER_TASK: usize = 12;
 
+/// POSTIO-MEASUREMENT: opens 192 databases at once, 29 s on the reference machine; its answer is a failure count.
 #[tokio::test(flavor = "multi_thread")]
 async fn many_databases_open_at_once_without_a_key_failure() {
     let failures = Arc::new(AtomicUsize::new(0));
