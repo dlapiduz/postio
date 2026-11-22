@@ -1158,16 +1158,7 @@ impl Composer {
     /// `Message::text_is_flowed`, the fact `#333` could not check yet and
     /// `#456` added.
     fn body(&self) -> MessageBody {
-        let document = self.document();
-        // `html`'s half of `render` costs a real `to_html` and a `harden`
-        // pass; keeping it behind `is_plain_text()`'s check, as before,
-        // means a plain-text draft never pays for HTML it is about to
-        // throw away.
-        let text = document.to_flowed_text();
-        MessageBody {
-            text: (!text.is_empty()).then_some(text),
-            html: (!document.is_plain_text()).then(|| postio_body::render(&document).1),
-        }
+        postio_body::message_body(&self.document())
     }
 
     /// An absorbed edit: the [`Editor`](editor::Editor) has already

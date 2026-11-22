@@ -61,7 +61,7 @@ pub use document::{
 };
 pub use edit::{EditHistory, EditStep};
 pub use narrow::{Lost, Narrowed, narrow};
-pub use outgoing::{harden, render};
+pub use outgoing::{harden, message_body, render};
 pub use own_text::{own_line, own_text};
 pub use parse::parse;
 pub use quote::{fold_html_quotes, text_to_html};

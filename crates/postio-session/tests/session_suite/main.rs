@@ -36,6 +36,7 @@ mod damaged_body_reading;
 mod drag_reclaim;
 mod event_fanout;
 mod focus_contacts;
+mod formatted_send;
 mod handoff;
 mod header_index_pass;
 mod header_repair;

@@ -106,7 +106,7 @@ in the registry where something answers it.
 - [x] T018 [US3] Implement them in `crates/postio-body/src/document.rs`. `to_search_text` drops every marker (one case).
 - [x] T019 [US3] Add the golden plain-text half to `formatting_wire.rs`, red before T018 and green after
 - [x] T020 [P] [US3] Add a `postio-render` snapshot of the golden HTML through the reader's sanitiser, in `crates/postio-render/tests/render_suite/`, with every construct visible
-- [ ] T021 [P] [US3] Add a send case in `crates/postio-session/tests/session_suite/` against the `MailBackend` mock. The golden document goes out as `multipart/alternative`, and a plain document as `text/plain; format=flowed` alone (FR-018).
+- [x] T021 [P] [US3] Add a send case in `crates/postio-session/tests/session_suite/` against the `MailBackend` mock. The golden document goes out as `multipart/alternative`, and a plain document as `text/plain; format=flowed` alone (FR-018).
 
 ## Phase A4: User Story 6 — Markdown in and out, and the terminal (P2, now part)
 

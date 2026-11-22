@@ -137,3 +137,18 @@ pub fn harden(html: &str) -> String {
 pub fn render(document: &Document) -> (String, String) {
     (document.to_flowed_text(), harden(&document.to_html()))
 }
+
+/// A [`Document`] as the body a composer hands to `postio_model::outgoing`.
+///
+/// The flowed text always, and the HTML part only when the document holds
+/// anything beyond paragraphs of text: a plain-text message goes out as
+/// `text/plain; format=flowed` alone (spec 014 FR-018), and never pays for
+/// the HTML it would throw away. One function, so every composer sends the
+/// same shape for the same document.
+pub fn message_body(document: &Document) -> postio_model::MessageBody {
+    let text = document.to_flowed_text();
+    postio_model::MessageBody {
+        text: (!text.is_empty()).then_some(text),
+        html: (!document.is_plain_text()).then(|| harden(&document.to_html())),
+    }
+}
