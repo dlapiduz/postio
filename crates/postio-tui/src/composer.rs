@@ -568,8 +568,15 @@ impl Composer {
 
     /// The remote images the body names and has not attached, with their
     /// words (spec 014 US8).
+    ///
+    /// Asked on every frame, so a body that cannot name one -- no `](http`
+    /// in it -- is not read as Markdown at all.
     pub fn remote_images(&self) -> Vec<(postio_body::WebHref, String)> {
-        markdown::to_document(&self.markdown()).remote_images()
+        let text = self.markdown();
+        if !text.to_ascii_lowercase().contains("](http") {
+            return Vec::new();
+        }
+        markdown::to_document(&text).remote_images()
     }
 
     /// Each remote image's row: its words, and its host or what became of
