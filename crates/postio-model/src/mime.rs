@@ -259,7 +259,13 @@ impl std::error::Error for Unparseable {}
 /// quantum) instead of handing the part back encoded. Rows that carried the
 /// decode caveat under 1 are the ones whose words change, so they are the ones
 /// fetched again.
-pub const PARSER_VERSION: u32 = 2;
+///
+/// 3: a delimiter line holds nothing after the boundary but whitespace
+/// (`patches/mail-parser/0001`, #899), and a structure the parser guessed at
+/// carries the caveat (#287). A body 2 cut short at a line like
+/// `--boundary and more` read cleanly, so it is not among the rows fetched
+/// again; only a caveated row that also held one of those lines is mended.
+pub const PARSER_VERSION: u32 = 3;
 
 /// Parses raw RFC 5322 bytes, body and attachments included.
 ///

@@ -494,6 +494,8 @@ corpus! {
         "The canonical text/plain + text/html pair, with a preamble and an epilogue that must both be discarded.",
     "multipart-boundary-never-appears": [MalformedStructure, MultipartAlternative] =>
         "A multipart whose boundary parameter names a delimiter that appears nowhere in the body, which is what a gateway that rewrote one and not the other leaves behind.",
+    "multipart-boundary-quoted-in-body": [MalformedStructure, MultipartMixed, PlainText, Attachment] =>
+        "A body that quotes its own boundary three ways: mid-line, at a line start followed by words, and as the prefix of a longer token. None is a delimiter, so the whole text survives and the attachment after it is still found.",
     "nested-multipart": [NestedMultipart, MultipartMixed, MultipartAlternative, MultipartRelated, InlineImage, Attachment] =>
         "mixed > alternative > related, three levels deep, with an inline image and a trailing attachment.",
     "pgp-encrypted": [Pgp, MultipartMixed] =>

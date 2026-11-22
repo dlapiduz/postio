@@ -1,0 +1,2 @@
+# Applied in order, with `patch -p0` from the directory holding the crate.
+0001-a-delimiter-line-holds-only-padding.patch
