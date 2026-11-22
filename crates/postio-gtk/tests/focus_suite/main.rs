@@ -2214,8 +2214,9 @@ pub fn gtk_case<F: std::future::Future<Output = ()>>(body: F) {
 /// Destroy every window a case left open, let the teardown run, then drop
 /// what the case kept (`support::keep`): outside every runtime, which is the
 /// one place a host's own runtime may be dropped.
-fn tidy_up() {
+fn tidy_up(name: &str) {
     use gtk::prelude::*;
+    running(&format!("{name}, destroying its windows"));
     if gtk::is_initialized() {
         let toplevels = gtk::Window::toplevels();
         let windows: Vec<gtk::Window> = (0..toplevels.n_items())
@@ -2227,7 +2228,53 @@ fn tidy_up() {
         }
         settle();
     }
+    running(&format!("{name}, dropping what it kept"));
     support::drop_kept();
+    running(&format!("after {name}"));
+}
+
+/// The case running now, and its phase: what a GLib critical is stamped
+/// with, so a process that fails after its case printed "ok" says where
+/// (#2192).
+static RUNNING: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+fn running(now: &str) {
+    now.clone_into(
+        &mut RUNNING
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+    );
+}
+
+/// Print each GTK, GDK and GObject critical with the case and phase it
+/// came in and a backtrace, then as GLib would. #2192 failed on CI after
+/// its body passed, with three criticals and no other word: a widget's
+/// display asked for after the widget was gone, and then the process died.
+/// The criticals did not say whether the case's body, its windows' teardown
+/// or the drop of what it kept was running, nor which code asked. The
+/// default handler prints nothing more, so these are the facts it lacks.
+fn stamp_criticals() {
+    for domain in ["Gtk", "Gdk", "GLib-GObject", "GLib", "Adwaita"] {
+        glib::log_set_handler(
+            Some(domain),
+            glib::LogLevels::LEVEL_CRITICAL,
+            false,
+            false,
+            |domain, _, message| {
+                let running = RUNNING
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone();
+                eprintln!(
+                    "({}): {}-CRITICAL **: {message}\n  while running {running}, on thread {:?}\n{}",
+                    std::process::id(),
+                    domain.unwrap_or("?"),
+                    std::thread::current().name().unwrap_or("unnamed"),
+                    std::backtrace::Backtrace::force_capture()
+                );
+            },
+        );
+    }
 }
 
 /// Set once the suite is running in a configuration of its own.
@@ -2318,6 +2365,7 @@ fn main() {
     // One initialisation for the process, before any case. No display is not
     // an error here; a case that needs one says so itself.
     let _ = adw::init();
+    stamp_criticals();
 
     let mut failed = Vec::new();
     let mut ran = 0usize;
@@ -2335,13 +2383,14 @@ fn main() {
         }
         ran += 1;
         println!("test {name} ...");
+        running(name);
         if std::panic::catch_unwind(case).is_err() {
             println!("test {name} ... FAILED");
             failed.push(*name);
         } else {
             println!("test {name} ... ok");
         }
-        tidy_up();
+        tidy_up(name);
     }
     if failed.is_empty() {
         println!("\ntest result: ok. {ran} passed; 0 failed");
