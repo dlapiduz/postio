@@ -52,7 +52,7 @@ red. A test that is green on arrival is a guard and says so.
 - [x] T002 [P] Correct `docs/PRODUCT.md` §10 to this spec's scope (FR-022), citing `specs/014-compose-formatting`
 - [x] T003 [P] Comment on #1485 with D3 (seven heading commands, `mod+alt+0`–`6`, six levels), so its implementer can land that shape directly (research R8)
 - [x] T004 [P] Update `docs/PRODUCT.md` §10 for the maintainer's answers: the source view, the chip, and the rich editing held for ADR 0039
-- [ ] T005 [P] Write `storyboards/compose/markdown-source.toml` (US7) and `storyboards/compose/remote-image.toml` (US8) from their acceptance scenarios, and see both red on `main` with `scripts/storyboards.sh`
+- [x] T005 [P] Write `storyboards/compose/markdown-source.toml` (US7) and `storyboards/compose/remote-image.toml` (US8) from their acceptance scenarios, and see both red on `main` with `scripts/storyboards.sh`
 
 ## Phase A2: Foundational (blocks every now-phase story)
 

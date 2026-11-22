@@ -1065,7 +1065,10 @@ impl Composer {
             Some(Field::Bcc)
         } else if holds(&focus, imp.subject.upcast_ref()) {
             Some(Field::Subject)
-        } else if holds(&focus, imp.body.widget().upcast_ref()) {
+        } else if holds(&focus, imp.body.widget().upcast_ref())
+            || holds(&focus, imp.source.text_view().upcast_ref())
+        {
+            // The body, in either view.
             Some(Field::Body)
         } else {
             None

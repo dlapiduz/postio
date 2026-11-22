@@ -381,7 +381,11 @@ fn edit_lines(text: &str, selection: Range<usize>, rewrite: impl Fn(&str) -> Str
             .count();
         let moved = |offset: usize| {
             let column = offset - at;
-            let column = if column <= same {
+            // At the line's end, it stays at the end: a box or a prefix put
+            // on an empty line is typed after.
+            let column = if column == line.len() {
+                rewritten.len()
+            } else if column <= same {
                 column
             } else {
                 (column as isize + shift).max(same as isize) as usize
@@ -602,5 +606,11 @@ mod tests {
             "«a \\*literal\\*»",
             "an escape is kept"
         );
+    }
+
+    #[test]
+    fn a_box_on_an_empty_line_is_typed_after() {
+        assert_eq!(run(task_list, "a\n\n|"), "a\n\n- [ ] |");
+        assert_eq!(run(|t, s| heading(t, s, 2), "|"), "## |");
     }
 }
