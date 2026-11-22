@@ -520,14 +520,24 @@ On `main` today the composer has bold, italic, the two kinds of list,
 links, quote blocks and images, and a heading command is in progress
 (#1485).
 
-Markdown is a way to *type* formatting, never the draft's format:
-`~~gone~~` or `## ` runs the command the toolbar runs, and one undo puts
-the characters back. Every construct is also:
-- a command with a key (see [`keybindings.md`](keybindings.md));
-- a row in the formatting picker (`mod+alt+f`, or the toolbar's last
-  button), which shows each one's key and its Markdown.
+Markdown is a way in and a view, never the draft's stored format.
+- **The source view.** `mod+alt+s` switches a draft to edit as Markdown
+  text and back. The round trip loses nothing, and the caret stays on the
+  same character. A reply's quote stays the sender's own, as one chip
+  line. Until the native composer exists (ADR 0039), the source view is
+  how the new constructs are written on Linux and the Mac.
+- **The terminal composer** writes the same constructs as Markdown text.
+- **In the native composer**, typing `~~gone~~` or `## ` will run the
+  command the toolbar runs, and one undo will put the characters back.
+  Every construct will also be a command with a key (see
+  [`keybindings.md`](keybindings.md)), and a row in the formatting picker
+  at the caret, which shows each one's key and its Markdown.
 
-The terminal composer writes the same constructs as Markdown text.
+**A remote image is attached on purpose, or not at all.** Typing
+`![chart](https://…)` makes a "Download and attach" chip. Nothing is
+fetched until the chip is pressed. The press fetches the image once and
+attaches it as a part of the message. A chip never pressed is sent as a
+link.
 
 What leaves is generated for mail, not for a browser:
 - a task list is ☐/☑, never a form control;
