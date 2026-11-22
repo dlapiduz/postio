@@ -165,7 +165,7 @@ impl RemoteImageAllowList {
         migrated
     }
 
-    /// `sender` is a bare address, not a "Name <addr>" mailbox; it is only trimmed and lowercased.
+    /// `sender` is a bare address, not a "Name `<addr>`" mailbox; it is only trimmed and lowercased.
     pub fn is_allowed(&self, sender: &str) -> bool {
         self.inner.is_allowed(sender)
     }
