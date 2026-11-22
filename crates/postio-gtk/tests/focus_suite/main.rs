@@ -62,6 +62,7 @@ mod hit_verbs;
 mod hostile_mail;
 mod icon_buttons;
 mod idle_passes;
+mod input_method;
 mod invitations;
 mod keyboard_home;
 mod keycaps;
@@ -2112,6 +2113,10 @@ const CASES: &[(&str, fn())] = &[
         "forward_carried::a_forwarded_part_reads_downloading_until_its_bytes_land",
         forward_carried::a_forwarded_part_reads_downloading_until_its_bytes_land as fn(),
     ),
+    (
+        "input_method::a_focused_field_uses_gtks_simple_input_method",
+        input_method::a_focused_field_uses_gtks_simple_input_method as fn(),
+    ),
 ];
 
 use gtk::glib;
@@ -2317,6 +2322,10 @@ fn hermetic(arguments: &[String]) {
         // Accessible properties are recorded only with a backend: the test
         // one, so a case can ask what a screen reader would be told (T142).
         .env("GTK_A11Y", "test")
+        // GTK's own input method, not the compositor's: GTK 4.22's Wayland
+        // one can be left pointing at a freed context, and the compositor's
+        // next event then kills the run (`input_method`, #2155, #2192).
+        .env("GTK_IM_MODULE", "gtk-im-context-simple")
         .status()
         .expect("the suite runs again in its own configuration");
     drop(config);
