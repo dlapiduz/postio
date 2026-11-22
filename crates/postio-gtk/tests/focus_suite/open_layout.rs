@@ -1435,3 +1435,60 @@ fn baseline(label: &gtk::Label, root: &impl IsA<gtk::Widget>) -> f32 {
     let top = edges(label, root).1 + label.layout_offsets().1 as f32;
     top + label.layout().baseline() as f32 / gtk::pango::SCALE as f32
 }
+
+/// At 900x700 a long thread's bar folds into a "… N more" chip, and the bar
+/// stays its own height: no taller band with the chips in its middle that
+/// pushes the message down (#2202).
+pub fn a_folded_thread_bar_keeps_its_height_at_a_narrow_window() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        // Read but the latest, as the demo's: only unread chips are kept
+        // whatever the room, so these fold.
+        let ids = fixture.thread_of("Harbor API draft v3", 6, 10).await;
+        fixture.read_all_but_last(&ids).await;
+        let window = opened_at(&fixture, 1, Some((900, 700))).await;
+        let reading = window.reading().expect("open");
+        let dialog = reading.dialog();
+        assert!(
+            crate::settle_until(
+                async || !reading.thread_chip_said().is_empty() && reading.thread_bar_state().1 > 0
+            )
+            .await,
+            "the thread's bar never arrived"
+        );
+        assert!(
+            crate::settle_until(
+                async || support::with_class(&dialog, "focus-thread-chip-more")
+                    .iter()
+                    .any(gtk::Widget::is_mapped)
+            )
+            .await,
+            "six messages fold into a more chip at 900 wide: {} chips",
+            reading.thread_bar_state().1
+        );
+        let bar = || edges(&shown(&dialog, "focus-thread-bar"), &dialog);
+        let last = std::cell::RefCell::new(None);
+        assert!(
+            crate::settle_until(async || {
+                let now = bar();
+                let still = last.borrow().as_ref() == Some(&now);
+                last.replace(Some(now));
+                still
+            })
+            .await,
+            "the bar never came to rest: {:?}",
+            bar()
+        );
+        let (_, top, _, bottom) = bar();
+        assert!(
+            near(bottom - top, 60.0),
+            "the thread bar is {} tall at 900x700, not 60",
+            bottom - top
+        );
+        window.close();
+        crate::settle();
+    });
+}

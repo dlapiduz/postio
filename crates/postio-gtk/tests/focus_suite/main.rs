@@ -2117,6 +2117,10 @@ const CASES: &[(&str, fn())] = &[
         "input_method::a_focused_field_uses_gtks_simple_input_method",
         input_method::a_focused_field_uses_gtks_simple_input_method as fn(),
     ),
+    (
+        "open_layout::a_folded_thread_bar_keeps_its_height_at_a_narrow_window",
+        open_layout::a_folded_thread_bar_keeps_its_height_at_a_narrow_window as fn(),
+    ),
 ];
 
 use gtk::glib;

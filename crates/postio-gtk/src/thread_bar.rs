@@ -66,6 +66,11 @@ impl ThreadBar {
     pub fn new() -> Rc<Self> {
         let root = gtk::Box::new(gtk::Orientation::Horizontal, space::S3);
         root.add_css_class("focus-thread-bar");
+        // Never the column's spare height: a child that expands (the "… N
+        // more" chip's words, which fill their tile) would otherwise make
+        // the bar share it with the message, a tall band with the chips in
+        // its middle at a narrow window (#2202).
+        root.set_vexpand(false);
         root.set_visible(false);
         let title = gtk::Label::new(None);
         title.add_css_class("focus-thread-bar-title");
