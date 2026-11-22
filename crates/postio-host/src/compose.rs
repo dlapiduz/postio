@@ -952,3 +952,18 @@ mod tests {
         assert_eq!(guess_mime_type(&path), "application/octet-stream");
     }
 }
+
+/// Why Download and attach left an image a link, as every frontend's row
+/// says it.
+pub fn remote_refusal(
+    refusal: postio_session::attaching::FetchRefusal,
+) -> postio_ui::compose::RemoteRefusal {
+    use postio_session::attaching::FetchRefusal;
+    use postio_ui::compose::RemoteRefusal;
+    match refusal {
+        FetchRefusal::Unreachable { reason } => RemoteRefusal::Unreachable(reason),
+        FetchRefusal::TooLarge => RemoteRefusal::TooLarge,
+        FetchRefusal::NotAnImage => RemoteRefusal::NotAnImage,
+        FetchRefusal::Offline => RemoteRefusal::Offline,
+    }
+}

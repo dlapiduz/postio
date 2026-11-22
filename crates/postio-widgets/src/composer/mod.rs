@@ -539,6 +539,24 @@ pub type InlineImageReady = Box<dyn FnOnce(Option<Attachment>)>;
 /// it is ready — the same non-blocking contract as [`AttachHandler`].
 type InlineImageHandler = Box<dyn Fn(Vec<u8>, String, InlineImageReady)>;
 
+/// What [`Composer::connect_remote_image`] hands a download's outcome to,
+/// exactly once: the inline part, or why the image stays a link.
+pub type RemoteImageReady = Box<dyn FnOnce(Result<Attachment, postio_ui::compose::RemoteRefusal>)>;
+
+/// Downloads one remote image for a draft, on a Download and attach press
+/// (spec 014 D7), and calls [`RemoteImageReady`] when it knows.
+type RemoteImageHandler =
+    Box<dyn Fn(postio_model::DraftId, postio_body::WebHref, RemoteImageReady)>;
+
+/// Where a remote image's row stands.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum RemoteState {
+    /// Its download is running.
+    Downloading,
+    /// Refused, and what the row says.
+    Refused(String),
+}
+
 /// The slot `build()` fills with the draft-aware `postio-cid:` lookup; the
 /// editor's blob source redirects through it for the composer's whole life.
 type BlobLookup = Rc<RefCell<Option<Box<dyn Fn(&str) -> Option<(Vec<u8>, String)>>>>>;
@@ -717,6 +735,18 @@ mod imp {
         pub attach: RefCell<Option<AttachHandler>>,
         /// Where pasted image bytes become an inline attachment (#341).
         pub inline_image: RefCell<Option<InlineImageHandler>>,
+        /// Downloads a remote image on a Download and attach press.
+        pub(super) remote_image: RefCell<Option<super::RemoteImageHandler>>,
+        /// Each remote image's row state, by address.
+        pub(super) remote_state: RefCell<std::collections::HashMap<String, super::RemoteState>>,
+        /// "Not attached yet": a row per remote image the body names.
+        pub remote_box: gtk::Box,
+        pub remote_list: gtk::ListBox,
+        /// What the rows were last drawn from, so a keystroke that leaves
+        /// them alone does not rebuild them.
+        pub(super) remote_drawn: RefCell<Vec<(String, String, Option<super::RemoteState>)>>,
+        /// The line before Send while images would go as links.
+        pub remote_warning: gtk::Label,
         /// Where an inline attachment's bytes come back from for display.
         pub attachment_bytes: RefCell<Option<AttachmentBytes>>,
         /// What the body's `postio-cid:` requests resolve through — filled
@@ -829,6 +859,12 @@ mod imp {
                 signature_placement: Cell::new((Placement::AboveQuote, Placement::AboveQuote)),
                 attach: RefCell::new(None),
                 inline_image: RefCell::new(None),
+                remote_image: RefCell::new(None),
+                remote_state: RefCell::default(),
+                remote_box: gtk::Box::new(gtk::Orientation::Vertical, 6),
+                remote_list: gtk::ListBox::new(),
+                remote_drawn: RefCell::default(),
+                remote_warning: gtk::Label::new(None),
                 attachment_bytes: RefCell::new(None),
                 blob_lookup,
                 host: RefCell::new(None),
@@ -1820,6 +1856,16 @@ impl Composer {
         *self.imp().inline_image.borrow_mut() = Some(Box::new(handler));
     }
 
+    /// Wires where a Download and attach press goes: one request for one
+    /// remote image (spec 014 FR-031). Same non-blocking contract as
+    /// [`connect_attach`](Self::connect_attach).
+    pub fn connect_remote_image(
+        &self,
+        handler: impl Fn(postio_model::DraftId, postio_body::WebHref, RemoteImageReady) + 'static,
+    ) {
+        *self.imp().remote_image.borrow_mut() = Some(Box::new(handler));
+    }
+
     /// Wires where an attachment's bytes come back from, for the editing
     /// surface to display inline images — this draft's pasted ones and a
     /// resumed draft's alike. Synchronous and local, like a blob-store read.
@@ -2158,6 +2204,7 @@ impl Composer {
                 self.set_status(REPLY_BLOCKED);
             }
             CommandId::ToggleMarkdownSource if self.is_open() => self.toggle_markdown_source(),
+            CommandId::AttachRemoteImage if self.is_open() => self.attach_remote(None),
             id if self.is_open() && self.imp().source.is_shown() && self.edit_source(id) => {}
             id if self.is_open() && WAITS_FOR_MARKDOWN.contains(&id) => {
                 let keymap = self.keymap_now();
@@ -2187,6 +2234,282 @@ impl Composer {
             }
             CommandId::InsertLink if self.is_open() => self.request_link(),
             _ => {}
+        }
+    }
+
+    // -- Remote images: Download and attach (spec 014 US8) --------------------
+
+    /// "Not attached yet", under the body.
+    fn build_remote_rows(&self) -> gtk::Box {
+        let imp = self.imp();
+        let title = gtk::Label::new(Some(postio_ui::compose::NOT_ATTACHED_YET));
+        title.add_css_class("postio-compose-label");
+        title.set_xalign(0.0);
+        imp.remote_box.append(&title);
+        imp.remote_list.add_css_class("postio-compose-attachments");
+        imp.remote_list.set_selection_mode(gtk::SelectionMode::None);
+        imp.remote_box.append(&imp.remote_list);
+        imp.remote_box.set_visible(false);
+        imp.remote_box.clone()
+    }
+
+    /// A row per remote image the body names, and the line before Send.
+    fn render_remote_rows(&self) {
+        let imp = self.imp();
+        let images = self.document().remote_images();
+        let states = imp.remote_state.borrow().clone();
+        let drawn: Vec<_> = images
+            .iter()
+            .map(|(href, alt)| {
+                (
+                    href.as_str().to_owned(),
+                    alt.clone(),
+                    states.get(href.as_str()).cloned(),
+                )
+            })
+            .collect();
+        let key = hints::key(&self.keymap_now(), CommandId::AttachRemoteImage).unwrap_or_default();
+        let waiting = images
+            .iter()
+            .filter(|(href, _)| states.get(href.as_str()) != Some(&RemoteState::Downloading))
+            .count();
+        match postio_ui::compose::remote_images_warning(waiting, &key) {
+            Some(words) => {
+                imp.remote_warning.set_label(&words);
+                imp.remote_warning.set_visible(true);
+            }
+            None => imp.remote_warning.set_visible(false),
+        }
+        if *imp.remote_drawn.borrow() == drawn {
+            return;
+        }
+        while let Some(row) = imp.remote_list.row_at_index(0) {
+            imp.remote_list.remove(&row);
+        }
+        for (href, alt, state) in &drawn {
+            imp.remote_list
+                .append(&self.build_remote_row(href, alt, state.as_ref(), &key));
+        }
+        imp.remote_box.set_visible(!drawn.is_empty());
+        imp.remote_drawn.replace(drawn);
+    }
+
+    /// One row: the words, the host, what happened, Download and attach
+    /// with its key, and remove, which sends it as the link it would be.
+    fn build_remote_row(
+        &self,
+        href: &str,
+        alt: &str,
+        state: Option<&RemoteState>,
+        key: &str,
+    ) -> gtk::Widget {
+        let host = postio_ui::compose::remote_host(href);
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        row.set_margin_top(4);
+        row.set_margin_bottom(4);
+        let words = if alt.is_empty() { "image" } else { alt };
+        row.update_property(&[gtk::accessible::Property::Label(&format!(
+            "Image not attached: {words}, from {host}"
+        ))]);
+        let name = gtk::Label::new(Some(words));
+        name.set_xalign(0.0);
+        name.set_ellipsize(pango::EllipsizeMode::End);
+        let meta = gtk::Label::new(Some(&match state {
+            Some(RemoteState::Downloading) => postio_ui::compose::DOWNLOADING.to_owned(),
+            Some(RemoteState::Refused(words)) => words.clone(),
+            None => host.clone(),
+        }));
+        meta.add_css_class("postio-compose-label");
+        meta.add_css_class("dim-label");
+        meta.set_hexpand(true);
+        meta.set_xalign(0.0);
+        meta.set_wrap(true);
+        let download = gtk::Button::new();
+        download.set_child(Some(&keyhint::labelled(
+            postio_ui::compose::DOWNLOAD_AND_ATTACH,
+            (!key.is_empty()).then_some(key),
+        )));
+        download.add_css_class("postio-compose-remote-download");
+        download.set_sensitive(state != Some(&RemoteState::Downloading));
+        let target = postio_body::WebHref::parse(href);
+        download.connect_clicked(glib::clone!(
+            #[weak(rename_to = composer)]
+            self,
+            #[strong]
+            target,
+            move |_| composer.attach_remote(target.clone())
+        ));
+        let remove =
+            crate::widgets::icon_button("edit-delete-symbolic", &format!("Send {words} as a link"));
+        remove.connect_clicked(glib::clone!(
+            #[weak(rename_to = composer)]
+            self,
+            #[strong]
+            target,
+            move |_| {
+                if let Some(target) = target.as_ref() {
+                    composer.unlink_remote(target);
+                }
+            }
+        ));
+        row.append(&name);
+        row.append(&meta);
+        row.append(&download);
+        row.append(&remove);
+        row.upcast()
+    }
+
+    /// Download and attach: `href`'s image, or the first one not already
+    /// downloading -- one request a press (FR-031).
+    fn attach_remote(&self, href: Option<postio_body::WebHref>) {
+        let imp = self.imp();
+        let images = self.document().remote_images();
+        let target = href.or_else(|| {
+            images.iter().map(|(href, _)| href.clone()).find(|href| {
+                imp.remote_state.borrow().get(href.as_str()) != Some(&RemoteState::Downloading)
+            })
+        });
+        let Some(target) = target else {
+            self.set_status(postio_ui::compose::NO_REMOTE_IMAGE);
+            return;
+        };
+        let handler = imp.remote_image.borrow();
+        let Some(handler) = handler.as_ref() else {
+            self.set_status("Downloading images is not available here.");
+            return;
+        };
+        imp.remote_state
+            .borrow_mut()
+            .insert(target.as_str().to_owned(), RemoteState::Downloading);
+        self.render_remote_rows();
+        let draft = imp.draft.borrow().id;
+        let weak = self.downgrade();
+        let href = target.clone();
+        handler(
+            draft,
+            target,
+            Box::new(move |outcome| {
+                if let Some(composer) = weak.upgrade() {
+                    composer.remote_settled(&href, outcome);
+                }
+            }),
+        );
+    }
+
+    /// A download came back: the image attached in its place, as one undo
+    /// step, or its row saying why it stays a link.
+    fn remote_settled(
+        &self,
+        href: &postio_body::WebHref,
+        outcome: Result<Attachment, postio_ui::compose::RemoteRefusal>,
+    ) {
+        let imp = self.imp();
+        match outcome {
+            Ok(attachment) => {
+                imp.remote_state.borrow_mut().remove(href.as_str());
+                let Some(content_id) = attachment
+                    .content_id
+                    .as_deref()
+                    .and_then(postio_body::ContentId::parse)
+                else {
+                    return;
+                };
+                if imp.source.is_shown() {
+                    let text = imp.source.text();
+                    let from = format!("]({})", href.as_str());
+                    if let Some(at) = text.find(&from) {
+                        let to = format!("](cid:{})", content_id.as_str());
+                        let mut edited = text.clone();
+                        edited.replace_range(at..at + from.len(), &to);
+                        let caret = imp.source.selection();
+                        imp.source.apply(postio_ui::editor::markdown_edit::Edit {
+                            text: edited,
+                            selection: caret,
+                        });
+                    }
+                } else {
+                    let mut document = imp.body.document();
+                    if document.attach_remote(href, &content_id) {
+                        imp.body.show_at(document, None);
+                    }
+                }
+                imp.draft.borrow_mut().attachments.push(attachment);
+                self.render_attachments();
+            }
+            Err(refusal) => {
+                let key = hints::key(&self.keymap_now(), CommandId::AttachRemoteImage)
+                    .unwrap_or_default();
+                let words = postio_ui::compose::remote_refusal(
+                    &refusal,
+                    &postio_ui::compose::remote_host(href.as_str()),
+                    &key,
+                );
+                imp.remote_state
+                    .borrow_mut()
+                    .insert(href.as_str().to_owned(), RemoteState::Refused(words));
+            }
+        }
+        self.refresh();
+    }
+
+    /// Send `href`'s image as the link it would be, and stop offering it.
+    fn unlink_remote(&self, href: &postio_body::WebHref) {
+        let imp = self.imp();
+        imp.remote_state.borrow_mut().remove(href.as_str());
+        if imp.source.is_shown() {
+            let text = imp.source.text();
+            let from = format!("]({})", href.as_str());
+            if let Some(at) = text.find(&from)
+                && let Some(bang) = text[..at].rfind("![")
+            {
+                let mut edited = text.clone();
+                edited.remove(bang);
+                let caret = imp.source.selection();
+                imp.source.apply(postio_ui::editor::markdown_edit::Edit {
+                    text: edited,
+                    selection: caret.start.min(text.len() - 1)..caret.end.min(text.len() - 1),
+                });
+            }
+        } else {
+            let mut document = imp.body.document();
+            if document.unlink_remote(href) {
+                imp.body.show_at(document, None);
+            }
+        }
+        self.refresh();
+    }
+
+    /// The rows' words, for a test: alt, then what the row says.
+    #[doc(hidden)]
+    pub fn test_remote_rows(&self) -> Vec<(String, String)> {
+        let imp = self.imp();
+        let states = imp.remote_state.borrow();
+        self.document()
+            .remote_images()
+            .into_iter()
+            .map(|(href, alt)| {
+                let words = match states.get(href.as_str()) {
+                    Some(RemoteState::Downloading) => postio_ui::compose::DOWNLOADING.to_owned(),
+                    Some(RemoteState::Refused(words)) => words.clone(),
+                    None => postio_ui::compose::remote_host(href.as_str()),
+                };
+                (alt, words)
+            })
+            .collect()
+    }
+
+    /// The line before Send about images that will go as links.
+    #[doc(hidden)]
+    pub fn test_remote_warning(&self) -> Option<String> {
+        let label = &self.imp().remote_warning;
+        label.is_visible().then(|| label.label().to_string())
+    }
+
+    /// Press the `nth` row's remove.
+    #[doc(hidden)]
+    pub fn test_unlink_remote(&self, nth: usize) {
+        if let Some((href, _)) = self.document().remote_images().get(nth) {
+            self.unlink_remote(href);
         }
     }
 
@@ -2997,6 +3320,7 @@ impl Composer {
         // Editor's, so undoing across the swap cannot put one message's
         // words into another's.
         imp.held.take();
+        imp.remote_state.borrow_mut().clear();
         let quotes = postio_ui::editor::source::open(&document, None).quotes;
         imp.body.load(document);
         self.hide_source_notice();
@@ -3137,6 +3461,7 @@ impl Composer {
     fn refresh(&self) {
         let imp = self.imp();
         let draft = self.draft();
+        self.render_remote_rows();
 
         // A problem outranks a count: an address that will bounce is worth
         // more of this one line than a tally of how many people are on the
@@ -3418,7 +3743,15 @@ impl Composer {
         column.append(&self.build_source_notice());
         column.append(&imp.below_body);
         column.append(&imp.warning);
+        column.append(&self.build_remote_rows());
         column.append(&self.build_attachments());
+        imp.remote_warning.add_css_class("postio-compose-warning");
+        imp.remote_warning.set_xalign(0.0);
+        imp.remote_warning.set_wrap(true);
+        imp.remote_warning.set_visible(false);
+        imp.remote_warning
+            .set_accessible_role(gtk::AccessibleRole::Status);
+        column.append(&imp.remote_warning);
         let actions = self.build_actions();
         column.append(&actions);
         imp.chrome
@@ -4146,7 +4479,7 @@ impl Composer {
 /// observed to show cannot come to disagree about which toggle is which.
 /// The formatting commands only the Markdown view makes for now (spec 014
 /// D8): in the rich view each says where it is, never nothing (FR-029).
-const WAITS_FOR_MARKDOWN: [CommandId; 17] = [
+const WAITS_FOR_MARKDOWN: [CommandId; 16] = [
     CommandId::Heading2,
     CommandId::Heading3,
     CommandId::Heading4,
@@ -4163,7 +4496,6 @@ const WAITS_FOR_MARKDOWN: [CommandId; 17] = [
     CommandId::Divider,
     CommandId::Table,
     CommandId::ClearFormatting,
-    CommandId::AttachRemoteImage,
 ];
 
 /// Under this width the source view's strip says less.

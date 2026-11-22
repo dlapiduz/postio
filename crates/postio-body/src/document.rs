@@ -665,6 +665,41 @@ impl Document {
         hosts
     }
 
+    /// Every remote image the document names and has not attached, in
+    /// order, with its alternative text (spec 014 D7): the rows the
+    /// composer offers to download.
+    pub fn remote_images(&self) -> Vec<(WebHref, String)> {
+        let mut found = Vec::new();
+        visit_inlines(&self.blocks, &mut |inline| {
+            if let Inline::RemoteImage { href, alt } = inline {
+                found.push((href.clone(), alt.clone()));
+            }
+        });
+        found
+    }
+
+    /// The first remote image naming `href` made the attached image
+    /// `content_id`, keeping its words. Whether there was one.
+    pub fn attach_remote(&mut self, href: &WebHref, content_id: &ContentId) -> bool {
+        replace_remote(&mut self.blocks, href, &mut |alt| Inline::Image {
+            content_id: content_id.clone(),
+            alt,
+        })
+    }
+
+    /// The first remote image naming `href` made the plain link it is sent
+    /// as, so it is no longer offered for download. Whether there was one.
+    pub fn unlink_remote(&mut self, href: &WebHref) -> bool {
+        replace_remote(&mut self.blocks, href, &mut |alt| Inline::Link {
+            href: href.as_href().clone(),
+            inlines: vec![Inline::Text(if alt.is_empty() {
+                href.as_str().to_owned()
+            } else {
+                alt
+            })],
+        })
+    }
+
     /// Render to the HTML subset.
     ///
     /// The **normal form**: no whitespace between blocks, attributes in a
@@ -769,6 +804,106 @@ enum Links {
     Spelled,
     /// The visible label alone, the way an index needs it.
     LabelOnly,
+}
+
+// ---------------------------------------------------------------------------
+// Remote images (spec 014 D7)
+// ---------------------------------------------------------------------------
+
+fn each_block_inlines(blocks: &[Block], visit: &mut dyn FnMut(&[Inline])) {
+    for block in blocks {
+        match block {
+            Block::Paragraph(inlines) | Block::Heading { inlines, .. } => visit(inlines),
+            Block::List { items, .. } => {
+                for item in items {
+                    each_block_inlines(&item.blocks, visit);
+                }
+            }
+            Block::Quote(blocks) => each_block_inlines(blocks, visit),
+            Block::Table(table) => {
+                for cell in table.cells() {
+                    visit(cell);
+                }
+            }
+            Block::Quoted(_) | Block::Code { .. } | Block::Rule => {}
+        }
+    }
+}
+
+fn visit_inlines(blocks: &[Block], visit: &mut dyn FnMut(&Inline)) {
+    fn walk(inlines: &[Inline], visit: &mut dyn FnMut(&Inline)) {
+        for inline in inlines {
+            visit(inline);
+            match inline {
+                Inline::Strong(inner)
+                | Inline::Emphasis(inner)
+                | Inline::Strikethrough(inner)
+                | Inline::Link { inlines: inner, .. } => walk(inner, visit),
+                _ => {}
+            }
+        }
+    }
+    each_block_inlines(blocks, &mut |inlines| walk(inlines, visit));
+}
+
+fn replace_remote(
+    blocks: &mut [Block],
+    href: &WebHref,
+    with: &mut dyn FnMut(String) -> Inline,
+) -> bool {
+    fn in_inlines(
+        inlines: &mut [Inline],
+        href: &WebHref,
+        with: &mut dyn FnMut(String) -> Inline,
+    ) -> bool {
+        for inline in inlines.iter_mut() {
+            match inline {
+                Inline::RemoteImage { href: at, alt } if at == href => {
+                    *inline = with(std::mem::take(alt));
+                    return true;
+                }
+                Inline::Strong(inner)
+                | Inline::Emphasis(inner)
+                | Inline::Strikethrough(inner)
+                | Inline::Link { inlines: inner, .. } => {
+                    if in_inlines(inner, href, with) {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+    for block in blocks.iter_mut() {
+        let done = match block {
+            Block::Paragraph(inlines) | Block::Heading { inlines, .. } => {
+                in_inlines(inlines, href, with)
+            }
+            Block::List { items, .. } => items
+                .iter_mut()
+                .any(|item| replace_remote(&mut item.blocks, href, with)),
+            Block::Quote(blocks) => replace_remote(blocks, href, with),
+            Block::Table(table) => {
+                let mut header = table.header().to_vec();
+                let mut rows = table.rows().to_vec();
+                let done = header.iter_mut().any(|cell| in_inlines(cell, href, with))
+                    || rows
+                        .iter_mut()
+                        .flatten()
+                        .any(|cell| in_inlines(cell, href, with));
+                if done {
+                    *table = Table::new(table.alignments().to_vec(), header, rows);
+                }
+                done
+            }
+            Block::Quoted(_) | Block::Code { .. } | Block::Rule => false,
+        };
+        if done {
+            return true;
+        }
+    }
+    false
 }
 
 // ---------------------------------------------------------------------------
@@ -1878,5 +2013,35 @@ mod plain_text {
         for word in ["Plan", "gone", "done", "fn x()", "a b", "1 2", "chart"] {
             assert!(search.contains(word), "{word:?} not in {search:?}");
         }
+    }
+
+    #[test]
+    fn a_remote_image_is_offered_then_attached_or_sent_as_a_link() {
+        let href = WebHref::parse("https://example.com/x.png").unwrap();
+        let mut document = Document {
+            blocks: vec![Block::Paragraph(vec![
+                text("see "),
+                Inline::RemoteImage {
+                    href: href.clone(),
+                    alt: "x".to_owned(),
+                },
+            ])],
+        };
+        assert_eq!(
+            document.remote_images(),
+            vec![(href.clone(), "x".to_owned())]
+        );
+        let mut linked = document.clone();
+        assert!(linked.unlink_remote(&href));
+        assert!(linked.remote_images().is_empty());
+        assert!(
+            matches!(&linked.blocks[0], Block::Paragraph(i) if matches!(&i[1], Inline::Link { .. }))
+        );
+        let cid = ContentId::parse("x@postio.invalid").unwrap();
+        assert!(document.attach_remote(&href, &cid));
+        assert!(document.remote_images().is_empty());
+        assert!(matches!(&document.blocks[0], Block::Paragraph(i)
+            if matches!(&i[1], Inline::Image { alt, .. } if alt == "x")));
+        assert!(!document.attach_remote(&href, &cid), "only once");
     }
 }

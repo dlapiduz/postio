@@ -112,6 +112,69 @@ pub fn markdown_table_js() -> String {
 /// (spec 014 US8): the press is answered, and nothing is fetched.
 pub const NO_REMOTE_IMAGE: &str = "There's no image to download in this message";
 
+/// The heading over the rows of remote images not yet attached.
+pub const NOT_ATTACHED_YET: &str = "Not attached yet";
+
+/// The row's button.
+pub const DOWNLOAD_AND_ATTACH: &str = "Download and attach";
+
+/// What a row says while its image downloads.
+pub const DOWNLOADING: &str = "Downloading\u{2026}";
+
+/// Why Download and attach left an image as a link (spec 014
+/// `contracts/remote-image.md`, "The outcomes"), for every frontend's row.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RemoteRefusal {
+    /// It could not be reached, and why, in a few words.
+    Unreachable(String),
+    /// Larger than the limit.
+    TooLarge,
+    /// Not a picture.
+    NotAnImage,
+    /// Offline, so nothing was asked.
+    Offline,
+}
+
+/// What a refused row says. `host` is the address's host, `key` the
+/// Download and attach key.
+pub fn remote_refusal(refusal: &RemoteRefusal, host: &str, key: &str) -> String {
+    match refusal {
+        RemoteRefusal::Unreachable(reason) => {
+            format!("Couldn't download from {host} \u{b7} {reason} \u{b7} Try again {key}")
+        }
+        RemoteRefusal::TooLarge => {
+            "Larger than 10 MB \u{b7} not attached \u{b7} it will be sent as a link".to_owned()
+        }
+        RemoteRefusal::NotAnImage => {
+            format!("{host} sent something that isn't a picture \u{b7} it will be sent as a link")
+        }
+        RemoteRefusal::Offline => "You're offline \u{b7} press again when you're online".to_owned(),
+    }
+}
+
+/// The line before Send while remote images are not attached, or `None`.
+pub fn remote_images_warning(count: usize, key: &str) -> Option<String> {
+    match count {
+        0 => None,
+        1 => Some(format!(
+            "1 image isn't attached and will be sent as a link \u{b7} {key} to attach"
+        )),
+        n => Some(format!(
+            "{n} images aren't attached and will be sent as links \u{b7} {key} to attach"
+        )),
+    }
+}
+
+/// The host a remote image is on, for its row: `example.com`.
+pub fn remote_host(href: &str) -> String {
+    let rest = href.split_once("://").map_or(href, |(_, rest)| rest);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    host.split(':').next().unwrap_or(host).to_ascii_lowercase()
+}
+
 /// The strip at the top of the Markdown source view (spec 014): what mode
 /// the body is in and the key back, short where the column is narrow.
 pub fn source_strip(key: &str, narrow: bool) -> String {
@@ -156,6 +219,45 @@ pub fn narrowed_notice(lost: postio_body::markdown::Lost) -> Option<String> {
         "it names neither an attachment nor the web",
     );
     (!parts.is_empty()).then(|| parts.join("; "))
+}
+
+#[cfg(test)]
+mod remote_words {
+    use super::*;
+
+    #[test]
+    fn each_outcome_says_what_happens_to_the_image() {
+        assert_eq!(
+            remote_refusal(&RemoteRefusal::TooLarge, "example.com", "ctrl+alt+i"),
+            "Larger than 10 MB \u{b7} not attached \u{b7} it will be sent as a link"
+        );
+        assert_eq!(
+            remote_refusal(&RemoteRefusal::NotAnImage, "example.com", "ctrl+alt+i"),
+            "example.com sent something that isn't a picture \u{b7} it will be sent as a link"
+        );
+        assert_eq!(
+            remote_refusal(
+                &RemoteRefusal::Unreachable("it answered 404".into()),
+                "example.com",
+                "ctrl+alt+i"
+            ),
+            "Couldn't download from example.com \u{b7} it answered 404 \u{b7} Try again ctrl+alt+i"
+        );
+        assert_eq!(
+            remote_refusal(&RemoteRefusal::Offline, "example.com", "ctrl+alt+i"),
+            "You're offline \u{b7} press again when you're online"
+        );
+    }
+
+    #[test]
+    fn the_warning_counts_what_will_go_as_a_link() {
+        assert_eq!(remote_images_warning(0, "ctrl+alt+i"), None);
+        assert_eq!(
+            remote_images_warning(1, "ctrl+alt+i").as_deref(),
+            Some("1 image isn't attached and will be sent as a link \u{b7} ctrl+alt+i to attach")
+        );
+        assert_eq!(remote_host("https://example.com/x.png"), "example.com");
+    }
 }
 
 #[cfg(test)]

@@ -42,6 +42,7 @@ mod composer_markdown;
 mod composer_markdown_source;
 mod composer_recipient_select;
 mod composer_recipients;
+mod composer_remote_image;
 mod composer_resume;
 mod composer_schedule_send;
 mod composer_signature_default;
@@ -472,6 +473,26 @@ const CASES: &[(&str, fn())] = &[
     (
         "composer_markdown_source::the_strip_says_markdown",
         composer_markdown_source::the_strip_says_markdown as fn(),
+    ),
+    (
+        "composer_remote_image::a_remote_image_is_a_row_and_nothing_is_fetched_until_the_press",
+        composer_remote_image::a_remote_image_is_a_row_and_nothing_is_fetched_until_the_press as fn(),
+    ),
+    (
+        "composer_remote_image::an_attached_image_takes_the_chips_place",
+        composer_remote_image::an_attached_image_takes_the_chips_place as fn(),
+    ),
+    (
+        "composer_remote_image::a_refusal_says_why_and_the_image_stays_a_link",
+        composer_remote_image::a_refusal_says_why_and_the_image_stays_a_link as fn(),
+    ),
+    (
+        "composer_remote_image::remove_turns_the_chip_into_a_link",
+        composer_remote_image::remove_turns_the_chip_into_a_link as fn(),
+    ),
+    (
+        "composer_remote_image::a_press_with_no_image_says_so",
+        composer_remote_image::a_press_with_no_image_says_so as fn(),
     ),
     (
         "composer_resume::resuming_replaces_the_draft_the_composer_was_holding",

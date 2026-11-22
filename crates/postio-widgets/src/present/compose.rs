@@ -536,6 +536,35 @@ type InlineBytes = Rc<RefCell<HashMap<BlobId, Vec<u8>>>>;
 /// that shows it; a draft that opens with inline images has theirs read.
 pub fn install_inline_images(composer: &Composer, client: &Client) {
     let held: InlineBytes = Rc::default();
+    // Download and attach (spec 014 D7): the press's one request goes to the
+    // host, and the picture's bytes come back for the editor to show.
+    composer.connect_remote_image({
+        let client = client.clone();
+        let held = Rc::clone(&held);
+        move |draft, href, then| {
+            let client = client.clone();
+            let held = Rc::clone(&held);
+            glib::spawn_future_local(async move {
+                // POSTIO-GLIB-SAFE: a client call is a oneshot receive.
+                let outcome = client
+                    .attach_remote_image(draft, href.as_str().to_owned())
+                    .await
+                    .unwrap_or_else(|error| {
+                        tracing::warn!(%error, "the remote image request did not reach the host");
+                        Err(postio_ui::compose::RemoteRefusal::Unreachable(
+                            "Postio could not ask for it".to_owned(),
+                        ))
+                    });
+                if let Ok(part) = &outcome
+                    && let Some(blob) = part.blob_id.clone()
+                    && let Ok(Some(bytes)) = client.attachment_bytes(blob.clone()).await
+                {
+                    held.borrow_mut().insert(blob, bytes);
+                }
+                then(outcome);
+            });
+        }
+    });
     composer.connect_inline_image({
         let client = client.clone();
         let held = Rc::clone(&held);

@@ -156,6 +156,7 @@ impl Req {
             Req::AttachmentBytes(_) => "AttachmentBytes",
             Req::RecoverDraft(_) => "RecoverDraft",
             Req::InlineImage { .. } => "InlineImage",
+            Req::AttachRemoteImage { .. } => "AttachRemoteImage",
             Req::Search(_) => "Search",
             Req::SearchHits { .. } => "SearchHits",
             Req::Facets { .. } => "Facets",
@@ -1287,6 +1288,22 @@ impl Client {
                 _ => None,
             },
         )
+        .await
+    }
+
+    /// Download `href` and attach it to `draft` inline, on a Download and
+    /// attach press: the one request a composer makes (spec 014 FR-031).
+    pub async fn attach_remote_image(
+        &self,
+        draft: postio_model::DraftId,
+        href: String,
+    ) -> Result<Result<postio_model::Attachment, postio_ui::compose::RemoteRefusal>, StoreError>
+    {
+        let request = Req::AttachRemoteImage { draft, href };
+        self.read(request, "a remote image", |answer| match answer {
+            Resp::RemoteImage(outcome) => Some(outcome),
+            _ => None,
+        })
         .await
     }
 
