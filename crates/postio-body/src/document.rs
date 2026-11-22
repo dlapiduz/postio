@@ -1131,9 +1131,16 @@ fn write_block_text(out: &mut String, block: &Block, depth: usize, links: Links)
             out.push_str(&indent);
             write_inlines_text(out, inlines, &indent, links);
         }
-        Block::Heading { inlines, .. } => {
-            out.push_str(&indent);
-            write_inlines_text(out, inlines, &indent, links);
+        Block::Heading { level, inlines } => {
+            let mut text = String::new();
+            write_inlines_text(&mut text, inlines, "", links);
+            for (index, line) in heading_lines(*level, &text, links).iter().enumerate() {
+                if index > 0 {
+                    out.push('\n');
+                }
+                out.push_str(&indent);
+                out.push_str(line);
+            }
         }
         Block::List { kind, items } => {
             for (index, item) in items.iter().enumerate() {
@@ -1141,14 +1148,10 @@ fn write_block_text(out: &mut String, block: &Block, depth: usize, links: Links)
                     out.push('\n');
                 }
                 out.push_str(&indent);
-                if kind.is_ordered() {
-                    let _ = write!(out, "{}. ", index + 1);
-                } else {
-                    out.push_str("- ");
-                }
+                out.push_str(&item_marker(*kind, index, item.task, links));
                 for (nth, block) in item.blocks.iter().enumerate() {
                     if nth > 0 {
-                        out.push_str("\n\n");
+                        out.push_str(item_separator(block));
                     }
                     write_block_text(out, block, if nth > 0 { depth + 1 } else { 0 }, links);
                 }
@@ -1194,8 +1197,11 @@ fn write_block_text(out: &mut String, block: &Block, depth: usize, links: Links)
                 }
             }
         }
-        Block::Code { text, .. } => {
-            for (index, line) in text.split('\n').enumerate() {
+        Block::Code { language, text } => {
+            for (index, line) in code_lines(language.as_ref(), text, links)
+                .iter()
+                .enumerate()
+            {
                 if index > 0 {
                     out.push('\n');
                 }
@@ -1208,22 +1214,143 @@ fn write_block_text(out: &mut String, block: &Block, depth: usize, links: Links)
             out.push_str("----");
         }
         Block::Table(table) => {
-            let rows =
-                std::iter::once(table.header()).chain(table.rows().iter().map(Vec::as_slice));
-            for (index, cells) in rows.enumerate() {
+            for (index, line) in table_lines(table, links).iter().enumerate() {
                 if index > 0 {
                     out.push('\n');
                 }
                 out.push_str(&indent);
-                for (nth, cell) in cells.iter().enumerate() {
-                    if nth > 0 {
-                        out.push(' ');
-                    }
-                    write_inlines_text(out, cell, &indent, links);
-                }
+                out.push_str(line);
             }
         }
     }
+}
+
+/// What goes between two blocks of one list item: a blank line, except
+/// before a nested list, which sits right under the line it belongs to.
+fn item_separator(next: &Block) -> &'static str {
+    if matches!(next, Block::List { .. }) {
+        "\n"
+    } else {
+        "\n\n"
+    }
+}
+
+/// A list item's marker: `- `, a number from the list's start, and its box
+/// (spec 014 R4). The search text keeps the bullet, as it always has, and
+/// drops the box.
+fn item_marker(kind: ListKind, index: usize, task: Option<Task>, links: Links) -> String {
+    let mut marker = match kind {
+        ListKind::Bullet => "- ".to_owned(),
+        ListKind::Ordered { start } => format!("{}. ", u64::from(start) + index as u64),
+    };
+    if links == Links::Spelled {
+        match task {
+            None => {}
+            Some(Task::Open) => marker.push_str("[ ] "),
+            Some(Task::Done) => marker.push_str("[x] "),
+        }
+    }
+    marker
+}
+
+/// A heading's lines: setext underlines for the first two levels, which
+/// read as headings to anyone and are valid Markdown, and hashes for the
+/// rest (spec 014 R4). Only the words, for a search index.
+fn heading_lines(level: HeadingLevel, text: &str, links: Links) -> Vec<String> {
+    if links == Links::LabelOnly {
+        return text.split('\n').map(str::to_owned).collect();
+    }
+    match level {
+        HeadingLevel::One | HeadingLevel::Two => {
+            let underline = if level == HeadingLevel::One { "=" } else { "-" };
+            let mut lines: Vec<String> = text.split('\n').map(str::to_owned).collect();
+            let width = lines
+                .iter()
+                .map(|line| line.chars().count())
+                .max()
+                .unwrap_or(0);
+            lines.push(underline.repeat(width.max(1)));
+            lines
+        }
+        _ => {
+            let hashes = "#".repeat(usize::from(level.digit()));
+            vec![format!("{hashes} {}", text.replace('\n', " "))]
+        }
+    }
+}
+
+/// A code block's lines, between fences carrying its language. The fence
+/// outruns any backtick run in the code. Only the code, for a search index.
+fn code_lines(language: Option<&Language>, text: &str, links: Links) -> Vec<String> {
+    let body = text.strip_suffix('\n').unwrap_or(text);
+    let mut lines: Vec<String> = body.split('\n').map(str::to_owned).collect();
+    if links == Links::LabelOnly {
+        return lines;
+    }
+    let longest = text.split(|c| c != '`').map(str::len).max().unwrap_or(0);
+    let fence = "`".repeat(longest.max(2) + 1);
+    lines.insert(
+        0,
+        format!("{fence}{}", language.map_or("", Language::as_str)),
+    );
+    lines.push(fence);
+    lines
+}
+
+/// A table as a pipe table, every cell padded to its column's widest, with
+/// the alignment row (spec 014 R4). Only the cells' words, a row to a line,
+/// for a search index.
+fn table_lines(table: &Table, links: Links) -> Vec<String> {
+    let render = |cell: &Cell| {
+        let mut text = String::new();
+        write_inlines_text(&mut text, cell, "", links);
+        // A row is one line: a break inside a cell is a space here.
+        text.replace('\n', " ")
+    };
+    let rows: Vec<Vec<String>> = std::iter::once(table.header())
+        .chain(table.rows().iter().map(Vec::as_slice))
+        .map(|cells| cells.iter().map(render).collect())
+        .collect();
+    if links == Links::LabelOnly {
+        return rows.iter().map(|cells| cells.join(" ")).collect();
+    }
+    let widths: Vec<usize> = (0..table.width())
+        .map(|column| {
+            rows.iter()
+                .map(|cells| cells[column].chars().count())
+                .max()
+                .unwrap_or(0)
+                .max(1)
+        })
+        .collect();
+    let line = |cells: &[String]| {
+        let mut out = String::from("|");
+        for ((cell, width), alignment) in cells.iter().zip(&widths).zip(table.alignments()) {
+            let gap = width - cell.chars().count();
+            let (before, after) = match alignment {
+                Alignment::Right => (gap, 0),
+                Alignment::Center => (gap / 2, gap - gap / 2),
+                Alignment::None | Alignment::Left => (0, gap),
+            };
+            let _ = write!(out, " {}{cell}{} |", " ".repeat(before), " ".repeat(after));
+        }
+        out
+    };
+    let mut lines = vec![line(&rows[0])];
+    let mut delimiter = String::from("|");
+    for (width, alignment) in widths.iter().zip(table.alignments()) {
+        let dashes = |n: usize| "-".repeat(n);
+        delimiter.push_str(&match alignment {
+            Alignment::None => dashes(width + 2),
+            Alignment::Left => format!(":{}", dashes(width + 1)),
+            Alignment::Right => format!("{}:", dashes(width + 1)),
+            Alignment::Center => format!(":{}:", dashes(*width)),
+        });
+        delimiter.push('|');
+    }
+    lines.push(delimiter);
+    lines.extend(rows[1..].iter().map(|cells| line(cells)));
+    lines
 }
 
 /// The `> ` (or `>> `, `>>> `, …) RFC 3676 §4.5 gives one quote depth: every
@@ -1247,23 +1374,47 @@ fn quote_prefix(depth: usize) -> String {
 /// need their own alignment worked out from `flowed::wrap`'s prefix rather
 /// than reusing quote depth's meaning for a different purpose.
 fn write_block_flowed(out: &mut String, block: &Block, depth: usize, width: usize) {
-    let prefix = quote_prefix(depth);
+    write_block_flowed_at(out, block, depth, "", width);
+}
+
+/// [`write_block_flowed`], under `indent`: the spaces a nested list sits
+/// behind, inside whatever quote `depth` is.
+fn write_block_flowed_at(
+    out: &mut String,
+    block: &Block,
+    depth: usize,
+    indent: &str,
+    width: usize,
+) {
+    let prefix = format!("{}{indent}", quote_prefix(depth));
+    // A fixed line, never reflowed, stuffed where it would otherwise read
+    // as a quote marker or a soft-break continuation.
+    let fixed = |out: &mut String, lines: &[String]| {
+        for (index, line) in lines.iter().enumerate() {
+            if index > 0 {
+                out.push('\n');
+            }
+            out.push_str(&prefix);
+            out.push_str(&flowed::stuff_for_display(line));
+        }
+    };
     match block {
-        Block::Paragraph(inlines) | Block::Heading { inlines, .. } => {
+        Block::Paragraph(inlines) => {
             let mut text = String::new();
             write_inlines_text(&mut text, inlines, "", Links::Spelled);
             write_flowed_lines(out, &text, &prefix, width);
+        }
+        Block::Heading { level, inlines } => {
+            let mut text = String::new();
+            write_inlines_text(&mut text, inlines, "", Links::Spelled);
+            fixed(out, &heading_lines(*level, &text, Links::Spelled));
         }
         Block::List { kind, items } => {
             for (index, item) in items.iter().enumerate() {
                 if index > 0 {
                     out.push('\n');
                 }
-                let marker = if kind.is_ordered() {
-                    format!("{}. ", index + 1)
-                } else {
-                    "- ".to_owned()
-                };
+                let marker = item_marker(*kind, index, item.task, Links::Spelled);
                 let item_prefix = format!("{prefix}{marker}");
                 // Every continuation line after the marker aligns under it,
                 // the same shape `flowed::wrap`'s own quote prefix already
@@ -1272,26 +1423,35 @@ fn write_block_flowed(out: &mut String, block: &Block, depth: usize, width: usiz
                 let hang_prefix = format!("{prefix}{}", " ".repeat(marker.chars().count()));
                 for (nth, block) in item.blocks.iter().enumerate() {
                     if nth > 0 {
-                        out.push_str("\n\n");
+                        out.push_str(item_separator(block));
                     }
                     let block_prefix = if nth == 0 { &item_prefix } else { &hang_prefix };
                     match block {
-                        Block::Paragraph(inlines) | Block::Heading { inlines, .. } => {
+                        Block::Paragraph(inlines) => {
                             let mut text = String::new();
                             write_inlines_text(&mut text, inlines, "", Links::Spelled);
                             write_flowed_lines(out, &text, block_prefix, width);
                         }
-                        other => write_block_flowed(out, other, depth, width),
+                        other => write_block_flowed_at(
+                            out,
+                            other,
+                            depth,
+                            &format!("{indent}    "),
+                            width,
+                        ),
                     }
                 }
             }
         }
         Block::Quote(blocks) => {
+            // The blank line between a quote's blocks keeps its marker, so
+            // the quote reads as one and not as two.
+            let blank = quote_prefix(depth + 1);
             for (index, block) in blocks.iter().enumerate() {
                 if index > 0 {
-                    out.push_str("\n\n");
+                    let _ = write!(out, "\n{}\n", blank.trim_end());
                 }
-                write_block_flowed(out, block, depth + 1, width);
+                write_block_flowed_at(out, block, depth + 1, indent, width);
             }
         }
         Block::Quoted(quoted) => {
@@ -1303,38 +1463,21 @@ fn write_block_flowed(out: &mut String, block: &Block, depth: usize, width: usiz
                 if index > 0 {
                     out.push_str("\n\n");
                 }
-                write_block_flowed(out, block, depth + 1, width);
+                write_block_flowed_at(out, block, depth + 1, indent, width);
             }
         }
-        Block::Code { text, .. } => {
-            // Preformatted content is never reflowed -- "not marked up" is
-            // this variant's whole point -- but it still shares the wire
-            // with flowed lines around it, so a line that would otherwise
-            // read as a quote marker or a soft-break continuation still
-            // needs stuffing.
-            for (index, line) in text.split('\n').enumerate() {
-                if index > 0 {
-                    out.push('\n');
-                }
-                out.push_str(&prefix);
-                out.push_str(&flowed::stuff_for_display(line));
-            }
+        // Code is never reflowed -- "not marked up" is this variant's whole
+        // point.
+        Block::Code { language, text } => {
+            fixed(out, &code_lines(language.as_ref(), text, Links::Spelled));
         }
         Block::Rule => {
             out.push_str(&prefix);
             out.push_str("----");
         }
-        Block::Table(_) => {
-            let mut text = String::new();
-            write_block_text(&mut text, block, 0, Links::Spelled);
-            for (index, line) in text.split('\n').enumerate() {
-                if index > 0 {
-                    out.push('\n');
-                }
-                out.push_str(&prefix);
-                out.push_str(&flowed::stuff_for_display(line));
-            }
-        }
+        // A row ends in `|`, so it can never read as a soft break, and a
+        // row wider than the wrap width stays whole: RFC 3676 allows 998.
+        Block::Table(table) => fixed(out, &table_lines(table, Links::Spelled)),
     }
 }
 
@@ -1355,8 +1498,20 @@ fn write_inlines_text(out: &mut String, inlines: &[Inline], indent: &str, links:
     for inline in inlines {
         match inline {
             Inline::Text(text) => out.push_str(text),
-            Inline::Strong(inner) | Inline::Emphasis(inner) | Inline::Strikethrough(inner) => {
+            Inline::Strong(inner) | Inline::Emphasis(inner) => {
                 write_inlines_text(out, inner, indent, links)
+            }
+            // Kept, because "~~Tuesday~~ Wednesday" is not "Tuesday
+            // Wednesday" (spec 014 D6). Not in a search index.
+            Inline::Strikethrough(inner) => {
+                let spelled = links == Links::Spelled;
+                if spelled {
+                    out.push_str("~~");
+                }
+                write_inlines_text(out, inner, indent, links);
+                if spelled {
+                    out.push_str("~~");
+                }
             }
             Inline::RemoteImage { href, alt } => match links {
                 Links::LabelOnly => out.push_str(alt),
@@ -1506,5 +1661,222 @@ mod shapes {
             alt: "x".to_owned(),
         };
         assert!(matches!(image, Inline::RemoteImage { .. }));
+    }
+}
+
+#[cfg(test)]
+mod plain_text {
+    //! Spec 014 D6 and research R4: the plain-text alternative keeps a
+    //! marker wherever dropping it would change what the words mean.
+    use super::*;
+
+    fn text(s: &str) -> Inline {
+        Inline::Text(s.to_owned())
+    }
+
+    fn para(s: &str) -> Block {
+        Block::Paragraph(vec![text(s)])
+    }
+
+    fn doc(blocks: Vec<Block>) -> Document {
+        Document { blocks }
+    }
+
+    /// Both renderings, which agree for everything short enough not to wrap.
+    fn both(document: &Document) -> [String; 2] {
+        [document.to_text(), document.to_flowed_text()]
+    }
+
+    #[test]
+    fn strikethrough_keeps_its_tildes_and_bold_does_not_keep_its_stars() {
+        let document = doc(vec![Block::Paragraph(vec![
+            Inline::Strikethrough(vec![text("Tuesday")]),
+            text(" "),
+            Inline::Strong(vec![text("Wednesday")]),
+        ])]);
+        for rendered in both(&document) {
+            assert_eq!(rendered, "~~Tuesday~~ Wednesday");
+        }
+    }
+
+    #[test]
+    fn headings_one_and_two_are_underlined_and_the_rest_are_hashes() {
+        let heading = |level, s: &str| Block::Heading {
+            level,
+            inlines: vec![text(s)],
+        };
+        let document = doc(vec![
+            heading(HeadingLevel::One, "Plan"),
+            heading(HeadingLevel::Two, "Steps"),
+            heading(HeadingLevel::Three, "Three"),
+            heading(HeadingLevel::Six, "Six"),
+        ]);
+        for rendered in both(&document) {
+            assert_eq!(
+                rendered,
+                "Plan\n====\n\nSteps\n-----\n\n### Three\n\n###### Six"
+            );
+        }
+    }
+
+    #[test]
+    fn a_task_keeps_its_box_and_a_list_keeps_its_start() {
+        let document = doc(vec![
+            Block::List {
+                kind: ListKind::Bullet,
+                items: vec![
+                    ListItem::task(Task::Open, vec![para("open task")]),
+                    ListItem::task(Task::Done, vec![para("done task")]),
+                ],
+            },
+            Block::List {
+                kind: ListKind::Ordered { start: 7 },
+                items: vec![
+                    ListItem::new(vec![para("seventh")]),
+                    ListItem::new(vec![para("eighth")]),
+                ],
+            },
+        ]);
+        for rendered in both(&document) {
+            assert_eq!(
+                rendered,
+                "- [ ] open task\n- [x] done task\n\n7. seventh\n8. eighth"
+            );
+        }
+    }
+
+    #[test]
+    fn a_nested_list_sits_under_its_item_without_a_blank_line() {
+        let document = doc(vec![Block::List {
+            kind: ListKind::NUMBERED,
+            items: vec![
+                ListItem::new(vec![para("first")]),
+                ListItem::new(vec![
+                    para("second"),
+                    Block::List {
+                        kind: ListKind::Bullet,
+                        items: vec![ListItem::new(vec![para("nested")])],
+                    },
+                ]),
+            ],
+        }]);
+        for rendered in both(&document) {
+            assert_eq!(rendered, "1. first\n2. second\n    - nested");
+        }
+    }
+
+    #[test]
+    fn a_code_block_is_fenced_with_its_language() {
+        let document = doc(vec![Block::Code {
+            language: Language::parse("rust"),
+            text: "fn main() {}\n".to_owned(),
+        }]);
+        for rendered in both(&document) {
+            assert_eq!(rendered, "```rust\nfn main() {}\n```");
+        }
+        let unnamed = doc(vec![Block::Code {
+            language: None,
+            text: "a\nb".to_owned(),
+        }]);
+        assert_eq!(unnamed.to_text(), "```\na\nb\n```");
+    }
+
+    #[test]
+    fn a_code_line_that_looks_like_a_quote_is_stuffed_on_the_wire() {
+        let document = doc(vec![Block::Code {
+            language: None,
+            text: ">not a quote\nFrom here".to_owned(),
+        }]);
+        assert_eq!(
+            document.to_flowed_text(),
+            "```\n >not a quote\n From here\n```"
+        );
+    }
+
+    #[test]
+    fn a_table_is_a_padded_pipe_table() {
+        let document = doc(vec![Block::Table(Table::new(
+            vec![
+                Alignment::Left,
+                Alignment::Right,
+                Alignment::Center,
+                Alignment::None,
+            ],
+            vec![
+                vec![text("Item")],
+                vec![text("Qty")],
+                vec![text("c")],
+                vec![text("d")],
+            ],
+            vec![vec![
+                vec![text("Widget")],
+                vec![text("3")],
+                vec![text("mid")],
+                vec![],
+            ]],
+        ))]);
+        for rendered in both(&document) {
+            assert_eq!(
+                rendered,
+                "| Item   | Qty |  c  | d |\n\
+                 |:-------|----:|:---:|---|\n\
+                 | Widget |   3 | mid |   |"
+            );
+        }
+    }
+
+    #[test]
+    fn a_quote_keeps_its_marker_on_the_line_between_its_blocks() {
+        let document = doc(vec![Block::Quote(vec![
+            para("quoted"),
+            Block::Quote(vec![para("nested quote")]),
+        ])]);
+        assert_eq!(document.to_flowed_text(), "> quoted\n>\n>> nested quote");
+    }
+
+    #[test]
+    fn a_remote_image_is_its_words_and_its_address() {
+        let document = doc(vec![Block::Paragraph(vec![Inline::RemoteImage {
+            href: WebHref::parse("https://example.com/x.png").unwrap(),
+            alt: "chart".to_owned(),
+        }])]);
+        for rendered in both(&document) {
+            assert_eq!(rendered, "chart <https://example.com/x.png>");
+        }
+    }
+
+    #[test]
+    fn the_search_text_drops_every_marker() {
+        let document = doc(vec![
+            Block::Heading {
+                level: HeadingLevel::One,
+                inlines: vec![text("Plan")],
+            },
+            Block::Paragraph(vec![Inline::Strikethrough(vec![text("gone")])]),
+            Block::List {
+                kind: ListKind::Bullet,
+                items: vec![ListItem::task(Task::Done, vec![para("done")])],
+            },
+            Block::Code {
+                language: Language::parse("rust"),
+                text: "fn x()".to_owned(),
+            },
+            Block::Table(Table::new(
+                vec![],
+                vec![vec![text("a")], vec![text("b")]],
+                vec![vec![vec![text("1")], vec![text("2")]]],
+            )),
+            Block::Paragraph(vec![Inline::RemoteImage {
+                href: WebHref::parse("https://example.com/x.png").unwrap(),
+                alt: "chart".to_owned(),
+            }]),
+        ]);
+        let search = document.to_search_text();
+        for marker in ["====", "~~", "[x]", "```", "|", "rust", "example.com"] {
+            assert!(!search.contains(marker), "{marker:?} in {search:?}");
+        }
+        for word in ["Plan", "gone", "done", "fn x()", "a b", "1 2", "chart"] {
+            assert!(search.contains(word), "{word:?} not in {search:?}");
+        }
     }
 }

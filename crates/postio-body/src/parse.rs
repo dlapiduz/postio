@@ -477,7 +477,8 @@ fn strip_box(blocks: &mut [Block]) {
 /// It cannot hold a span or a block in a cell: the type has nowhere to put
 /// either. The header is the `<thead>` row, or the first row when there is
 /// none, as GFM has no headerless table. Alignment is read from the header
-/// cells' `align`.
+/// cells' `align`. A headerless table one row or one column wide is layout,
+/// not a grid.
 pub(crate) fn table_of(handle: &Handle) -> Option<(Table, usize)> {
     let mut head = Vec::new();
     let mut body = Vec::new();
@@ -490,8 +491,23 @@ pub(crate) fn table_of(handle: &Handle) -> Option<(Table, usize)> {
             Some(_) => return None,
         }
     }
+    let declared = !head.is_empty();
+    let count = head.len() + body.len();
     let mut rows = head.into_iter().chain(body);
     let header = rows.next()?;
+    // A table that names no header and is one row or one column wide is
+    // somebody's layout -- most commercial mail wraps itself in one -- and
+    // reads as its words, as before (#1482), not as a grid.
+    let named = declared
+        || header
+            .children
+            .borrow()
+            .iter()
+            .any(|cell| name_of(cell).as_deref() == Some("th"));
+    let width = cells_of(&header)?.len();
+    if !named && (count < 2 || width < 2) {
+        return None;
+    }
     let alignments = cells_of(&header)?
         .iter()
         .map(|cell| {
