@@ -161,6 +161,85 @@ async fn opened_at(
     window
 }
 
+/// #2125: the message window opens with its header -- the subject, the
+/// labels, the sender block -- in view, though the sentence its marker
+/// quotes is below the fold. The sentence is still highlighted (FR-035);
+/// the reveal stops rather than scroll the header off. Asked once the
+/// column has grown past its page, which is when the reveal acts.
+pub fn the_window_opens_with_its_header_in_view_and_the_sentence_marked() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        every_block(&fixture).await;
+        let window = opened_at(&fixture, 1, WIDE).await;
+        let reading = window.reading().expect("open");
+        let dialog = reading.dialog();
+        let view = reading.reader().view().clone();
+        let scroller = shown(&dialog, "focus-open-scroller")
+            .downcast::<gtk::ScrolledWindow>()
+            .expect("the message's scroller");
+        assert!(
+            crate::settle_until(async || {
+                let adjustment = scroller.vadjustment();
+                view.highlighted().is_some() && adjustment.upper() > adjustment.page_size()
+            })
+            .await,
+            "the sentence was never marked, or the column never grew past its page"
+        );
+        // At rest: two looks at the column agree.
+        let look = || {
+            let adjustment = scroller.vadjustment();
+            (adjustment.value(), adjustment.upper())
+        };
+        let last = std::cell::RefCell::new(None);
+        assert!(
+            crate::settle_until(async || {
+                let now = look();
+                let still = *last.borrow() == Some(now);
+                last.replace(Some(now));
+                still
+            })
+            .await,
+            "the column never came to rest: {:?}",
+            look()
+        );
+        // In the column's own coordinates, which the adjustment scrolls
+        // through: an allocation read off the scroller can lag a scroll by
+        // a frame, and the person sees the adjustment's.
+        let column = shown(&dialog, "focus-open-column")
+            .parent()
+            .expect("the column's clamp");
+        let (value, _) = look();
+        let page = scroller.vadjustment().page_size();
+        let subject = edges(&shown(&dialog, "focus-open-subject"), &column).1 as f64;
+        let sender = edges(&shown(&dialog, "focus-open-header-card"), &column).3 as f64;
+        assert!(
+            value <= subject && sender <= value + page,
+            "the header is scrolled out of view: the column is scrolled to \
+             {value} of {:?}, the subject starts at {subject} and the sender \
+             block ends at {sender}, over a {page}px page",
+            look()
+        );
+        assert!(
+            view.highlighted().is_some(),
+            "the marker's sentence is no longer highlighted"
+        );
+        // And the case is the one the issue is about: the sentence is below
+        // the fold, so a reveal a third of the way down would have scrolled.
+        let sentence = view
+            .highlight_rects()
+            .iter()
+            .map(|rect| rect.y1)
+            .fold(0.0, f64::max);
+        assert!(
+            edges(&view, &column).1 as f64 + sentence > page,
+            "the sentence is on the first screen, so staying at the top proves nothing"
+        );
+    });
+}
+
 /// The dialog's size for `window`'s, by the handoff's rule.
 fn fitted(window: &postio_gtk::window::FocusWindow) -> (i32, i32) {
     (
@@ -499,13 +578,9 @@ pub fn the_blocks_keep_the_handoffs_rhythm() {
             .await,
             "the thread's bar never arrived"
         );
-        // This asks about the column's rhythm, not where it is scrolled to:
-        // the bar sits above the scroller, so a column opened scrolled down
-        // (as it can under load, #2125) moves
-        // every block under it. Read it from its top.
-        let scroller = shown(&dialog, "focus-open-scroller")
-            .downcast::<gtk::ScrolledWindow>()
-            .expect("the message's scroller");
+        // Read as it opens, from its top: the reveal of the marker's
+        // sentence keeps the header in view (#2125), so nothing has moved
+        // the blocks under the bar.
         // The bar's arrival lays the column out again, and on a slow machine
         // over more than one pass: measure once two looks agree.
         let blocks = || {
@@ -521,7 +596,6 @@ pub fn the_blocks_keep_the_handoffs_rhythm() {
         let last = std::cell::RefCell::new(None);
         assert!(
             crate::settle_until(async || {
-                scroller.vadjustment().set_value(0.0);
                 let now = blocks();
                 let still = last.borrow().as_ref() == Some(&now);
                 last.replace(Some(now));

@@ -442,6 +442,9 @@ impl OpenMessage {
             .build();
         scroller.add_css_class("focus-open-scroller");
         reader.flow_in(&scroller);
+        // The marker's sentence is revealed as the message opens (FR-035),
+        // but never by scrolling the subject and sender off (#2125).
+        reader.view().keep_in_view_on_reveal(&subject);
         // The reader's notice -- the list a message came from, images held
         // back, a decode caveat -- is one more block about the message: 12
         // under the action card (or the sender block), as the card is under
