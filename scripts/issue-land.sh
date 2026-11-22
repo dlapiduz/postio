@@ -14,7 +14,7 @@
 #   scripts/issue-land.sh --gates-only          # run the checks, commit nothing
 #   scripts/issue-land.sh --full                # integration suites too, not just units
 #   scripts/issue-land.sh --refs-only           # Refs, not Closes: the issue is not done yet
-#   scripts/issue-land.sh --title "feat(x): y"  # the PR's title, when the last commit's is not it
+#   scripts/issue-land.sh --title "feat(x): y"  # the PR's title, when the first commit's is not it
 #   scripts/issue-land.sh --full-suite          # CI runs the whole nightly on the PR too
 #                                               # (implied by a toolchain/mise/.cargo/flatpak change: scripts/risk-of-diff.sh)
 #   scripts/issue-land.sh --detach [args]       # the same, in a process no tool call can kill
@@ -1086,13 +1086,20 @@ else
         # that is not this work's.
         echo "the previous PR for $BRANCH is $PR_STATE; opening a new one."
     fi
-    # The squash subject. The last commit's is right for a branch of one
-    # change; a spec branch's last commit rarely speaks for the branch, so
-    # it says what the PR is with --title (#2023 went up titled after a CI
-    # workflow, the last of fourteen commits).
-    TITLE="${TITLE_ARG:-$(git log -1 --format=%s)}"
+    # The squash subject: the branch's first commit, which is the claim's
+    # purpose -- found work comes after it, and titling after HEAD put a
+    # found-work fix's name on #2019's squash (#2022). HEAD when the range
+    # is empty. A spec branch's first commit rarely speaks for the branch
+    # either, so it says what the PR is with --title (#2023).
+    SUBJECTS=$(git log --reverse --format=%s "origin/$BASE..HEAD" 2>/dev/null || true)
+    TITLE="${TITLE_ARG:-$(printf '%s\n' "$SUBJECTS" | sed -n 1p)}"
+    TITLE="${TITLE:-$(git log -1 --format=%s)}"
+    if [ -z "$TITLE_ARG" ] && [ "$(printf '%s\n' "$SUBJECTS" | grep -c .)" -gt 1 ]; then
+        echo "The PR is titled after the first of these (--title to say otherwise):"
+        printf '%s\n' "$SUBJECTS" | sed 's/^/    /'
+    fi
     if [ "$FEATURE" = 1 ] && [ -z "$TITLE_ARG" ]; then
-        echo "warning: a feature branch's PR is titled after its last commit ('$TITLE');" >&2
+        echo "warning: a feature branch's PR is titled after its first commit ('$TITLE');" >&2
         echo "         pass --title to say what the whole branch does." >&2
     fi
     # `Closes` auto-closes the issue the moment this merges -- right, for
