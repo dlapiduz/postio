@@ -96,6 +96,13 @@ pub fn a_forwarded_part_reads_downloading_until_its_bytes_land() {
             crate::settle_until(async || window.composer().is_some()).await,
             "Focus mounted no composer"
         );
+        // `f` forwards the cursor's row: a row drawn is not yet a row the
+        // cursor is on, and a press before it lands forwards nothing.
+        assert!(
+            crate::settle_until(async || window.observe().cursor.index == Some(0)).await,
+            "the cursor never landed on the report: {:?}",
+            window.observe().cursor
+        );
 
         support::keys(&window, &["f"]);
         assert!(
@@ -151,17 +158,29 @@ pub fn a_forwarded_part_reads_downloading_until_its_bytes_land() {
             "the part landed and still reads: {:?}",
             attachment_notes(&composer)
         );
-        // Landed, not refused: a refusal would also end "downloading".
+        // Landed, not refused: a refusal (`BodyFailed`) would also end
+        // "downloading". `BodyLoaded` comes only after the write, so a landed
+        // part is readable by then; but the drawing also ends on any answer
+        // to the ask but `Queued`, and `Unreachable` still fetches the part
+        // once the account is up. Read the store until the part is there,
+        // not once (#2206). A fetch that failed never lands, and the message
+        // then says what the server served.
         let original = composer
             .draft()
             .forwarded_from
             .expect("a forward names its original");
-        let parts = client.parts(original).await.expect("the original's parts");
         assert!(
-            parts
+            crate::settle_until(async || client
+                .parts(original)
+                .await
+                .expect("the original's parts")
                 .iter()
-                .any(|part| part.part_id.as_deref() == Some("2") && part.blob_id.is_some()),
-            "the part's bytes are not on this machine"
+                .any(|part| part.part_id.as_deref() == Some("2") && part.blob_id.is_some()))
+            .await,
+            "the part's bytes are not on this machine; the server served {} body \
+             fetches and holds {} parked",
+            backend.body_fetches().len(),
+            backend.parked()
         );
         assert!(composer.is_visible(), "the forward stayed open");
         session.stop();

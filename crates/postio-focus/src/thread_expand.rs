@@ -12,6 +12,7 @@
 use chrono::Local;
 use postio_core::{CommandId, Event};
 use postio_model::{MessageId, ThreadId, ThreadView};
+use postio_ui::focus_list::FocusRow;
 use postio_ui::focus_row::open_at;
 use postio_ui::scope::{self, FooterAbout, FooterView, ScopeFocus};
 use postio_ui::thread_list::{self, ChildRowView, Slot, Splice};
@@ -137,7 +138,18 @@ pub(crate) fn footer_at(
     let splice = expansion.and_then(|x| Some(x.splice(raw.position_of(x.anchor)?)));
     match thread_list::slot(splice, position) {
         Slot::Row(row) => {
-            let facts = raw.facts(row).filter(|facts| !facts.digest)?;
+            let facts = raw.facts(row)?;
+            if facts.digest {
+                // Always a footer on a digest: none would leave the row
+                // before it up, with keys for a message the cursor left
+                // (#2203). A row not read yet says nothing.
+                return Some(match raw.row(row) {
+                    Some(FocusRow::Digest(digest)) => {
+                        scope::digest_footer(&digest.rule, digest.count as usize, keymap)
+                    }
+                    _ => FooterView::default(),
+                });
+            }
             let thread = facts.threads.first().copied().unwrap_or(ThreadId::new(0));
             let summary = raw.row(row)?;
             let summary = &summary.as_conversation()?.summary;

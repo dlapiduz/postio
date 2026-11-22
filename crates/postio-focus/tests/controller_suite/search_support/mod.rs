@@ -79,6 +79,17 @@ pub fn shown(effects: &[Effect]) -> Vec<Intent> {
         .collect()
 }
 
+/// The footer an effect list draws last, if any.
+pub fn footer_of(effects: &[Effect]) -> Option<postio_ui::scope::FooterView> {
+    shown(effects)
+        .into_iter()
+        .rev()
+        .find_map(|intent| match intent {
+            Intent::Footer(view) => Some(view),
+            _ => None,
+        })
+}
+
 pub fn asks(effects: &[Effect]) -> Vec<(Ticket, Request)> {
     effects
         .iter()

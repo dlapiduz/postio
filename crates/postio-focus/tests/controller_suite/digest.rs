@@ -10,7 +10,7 @@
 //! only once confirmed; `d` opens the rule dialog filled in. On the Mac a
 //! message from the digest's list opens in the digest's window too (M4).
 
-use crate::search_support::{asks, shown};
+use crate::search_support::{asks, footer_of, shown};
 use chrono::Utc;
 use postio_config::paths::Platform;
 use postio_config::{Config, FocusConfig};
@@ -556,4 +556,23 @@ fn back_on_the_rule_dialog_gives_the_keyboard_back() {
         rule(&run(&mut focus, CommandId::DigestRule)).is_some(),
         "and `d` opens a fresh dialog"
     );
+}
+
+/// The footer follows the cursor onto a digest's row and names the digest,
+/// with only its keys: the row before it does not stay up with reply,
+/// forward and archive for a message the cursor has left (#2203).
+#[test]
+fn the_footer_on_a_digest_row_names_the_digest_not_the_row_before() {
+    let mut focus = linux();
+    let _ = run(&mut focus, CommandId::FirstMessage);
+    let away = run(&mut focus, CommandId::NextMessage);
+    assert_eq!(focus.cursor(), Some(1));
+    let before = footer_of(&away).expect("a footer on a conversation");
+    assert_ne!(before.title, "");
+    let back = run(&mut focus, CommandId::PrevMessage);
+    assert_eq!(focus.cursor(), Some(0));
+    let footer = footer_of(&back).expect("the footer follows the cursor onto the digest");
+    assert_eq!(footer.title, "Newsletters \u{b7} 3 messages");
+    let said: Vec<&str> = footer.keys.iter().map(|(_, l)| l.as_str()).collect();
+    assert_eq!(said, ["move", "open", "archive digest"]);
 }

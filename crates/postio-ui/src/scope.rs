@@ -213,6 +213,37 @@ pub fn lone(subject: &str, keymap: &Keymap) -> FooterView {
     }
 }
 
+/// The footer on a digest's row: the digest's rule and size, and only the
+/// keys that act on a digest -- move, open (the digest window) and archive
+/// (its delivery). A digest is no message, so there is nothing to reply to
+/// or forward, and no other row's keys may stay up over it (#2203).
+pub fn digest_footer(rule: &str, count: usize, keymap: &Keymap) -> FooterView {
+    let size = if count == 1 {
+        "1 message".to_owned()
+    } else {
+        format!("{count} messages")
+    };
+    let keys = [
+        hints::pair(
+            keymap,
+            CommandId::NextMessage,
+            CommandId::PrevMessage,
+            "move",
+        ),
+        hints::hint(keymap, CommandId::OpenMessage, "open"),
+        hints::hint(keymap, CommandId::Archive, "archive digest"),
+    ]
+    .into_iter()
+    .flatten()
+    .map(|hint| (hints::short(&hint.key), hint.label))
+    .collect();
+    FooterView {
+        title: format!("{rule} \u{b7} {size}"),
+        keys,
+        note: None,
+    }
+}
+
 /// [`footer`] for a window opened over the search results: Escape goes back
 /// to them, as the match banner says, and the footer says so too, where the
 /// results' own footer said "back to inbox" (#2193).
@@ -432,5 +463,15 @@ mod tests {
                 "{said}"
             );
         }
+    }
+
+    #[test]
+    fn a_digest_row_names_its_digest_and_offers_only_what_acts_on_it() {
+        let view = digest_footer("Newsletters", 6, Keymap::defaults());
+        assert_eq!(view.title, "Newsletters \u{b7} 6 messages");
+        assert_eq!(labels(&view), ["move", "open", "archive digest"]);
+        assert_eq!(view.note, None);
+        let one = digest_footer("Receipts", 1, Keymap::defaults());
+        assert_eq!(one.title, "Receipts \u{b7} 1 message");
     }
 }
