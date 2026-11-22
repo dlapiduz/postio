@@ -120,7 +120,7 @@ in the registry where something answers it.
 
   Rewrite `a_table_stays_the_text_that_was_typed` to expect a table.
 - [x] T025 [US6] Implement them in `crates/postio-body/src/markdown.rs`: the `pulldown-cmark` options (research R1), the new events, and the autolink post-pass
-- [ ] T026 [US6] Move the terminal's marker edits (`wrap`, `toggle_prefix`) from `crates/postio-tui/src/composer.rs` into a new `crates/postio-ui/src/editor/markdown_edit.rs`, as pure functions over text and a selection. The TUI's existing cases move with them first, as guards.
+- [x] T026 [US6] Move the terminal's marker edits (`wrap`, `toggle_prefix`) from `crates/postio-tui/src/composer.rs` into a new `crates/postio-ui/src/editor/markdown_edit.rs`, as pure functions over text and a selection. The TUI's existing cases move with them first, as guards.
 - [ ] T027 [US6] Write failing cases in `markdown_edit.rs` for every now-phase formatting command:
   - strikethrough;
   - inline code;

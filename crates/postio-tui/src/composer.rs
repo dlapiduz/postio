@@ -255,81 +255,101 @@ impl Composer {
         if self.field != Field::Body {
             return false;
         }
+        use postio_ui::editor::markdown_edit as edit;
         match format {
-            Format::Bold => self.wrap("**", "**"),
-            Format::Italic => self.wrap("*", "*"),
-            Format::Link => {
-                let words = self.take_selection();
-                if words.is_empty() {
-                    self.body.insert_str("[]()");
-                    self.back(3);
-                } else {
-                    self.body.insert_str(format!("[{words}]()"));
-                    self.back(1);
-                }
-            }
-            Format::Heading1 => self.toggle_prefix("# "),
-            Format::BulletList => self.toggle_prefix("- "),
-            Format::NumberedList => self.toggle_prefix("1. "),
-            Format::Quote => self.toggle_prefix("> "),
+            Format::Bold => self.apply(|text, at| edit::wrap(text, at, "**", "**")),
+            Format::Italic => self.apply(|text, at| edit::wrap(text, at, "*", "*")),
+            Format::Link => self.apply(edit::link),
+            Format::Heading1 => self.apply(|text, at| edit::toggle_prefix(text, at, "# ")),
+            Format::BulletList => self.apply(|text, at| edit::toggle_prefix(text, at, "- ")),
+            Format::NumberedList => self.apply(|text, at| edit::toggle_prefix(text, at, "1. ")),
+            Format::Quote => self.apply(|text, at| edit::toggle_prefix(text, at, "> ")),
         }
         self.edits += 1;
         true
     }
 
-    /// The selected words, taken out of the body; nothing when there is no
-    /// selection. The yank buffer is left as it was.
-    fn take_selection(&mut self) -> String {
-        match self.body.selection_range() {
-            Some((start, end)) if start != end => {
-                let yanked = self.body.yank_text();
-                self.body.cut();
-                let words = self.body.yank_text();
-                self.body.set_yank_text(yanked);
-                words
+    /// Run a Markdown edit (`postio_ui::editor::markdown_edit`) over the
+    /// body: the edit decides, and the text area is brought to match.
+    ///
+    /// Only the span that changed is replaced, so the text area's own undo
+    /// takes the edit back rather than the whole body.
+    fn apply(
+        &mut self,
+        edit: impl FnOnce(&str, std::ops::Range<usize>) -> postio_ui::editor::markdown_edit::Edit,
+    ) {
+        let before = self.body.lines().join("\n");
+        let offset = |row: usize, column: usize| -> usize {
+            let lines = self.body.lines();
+            let above: usize = lines.iter().take(row).map(|line| line.len() + 1).sum();
+            let line = lines.get(row).map_or("", String::as_str);
+            above
+                + line
+                    .char_indices()
+                    .nth(column)
+                    .map_or(line.len(), |(at, _)| at)
+        };
+        let selection = match self.body.selection_range() {
+            Some(((r0, c0), (r1, c1))) => offset(r0, c0)..offset(r1, c1),
+            None => {
+                let ratatui_textarea::DataCursor(row, column) = self.body.cursor();
+                let at = offset(row, column);
+                at..at
             }
-            _ => {
-                self.body.cancel_selection();
-                String::new()
-            }
-        }
-    }
+        };
+        let after = edit(&before, selection);
 
-    fn wrap(&mut self, open: &str, close: &str) {
-        let words = self.take_selection();
-        self.body.insert_str(format!("{open}{words}{close}"));
-        if words.is_empty() {
-            self.back(close.chars().count());
+        // The changed span: what is left once the common start and end are
+        // taken off, on character boundaries.
+        let mut head = before
+            .bytes()
+            .zip(after.text.bytes())
+            .take_while(|(a, b)| a == b)
+            .count();
+        while !before.is_char_boundary(head) || !after.text.is_char_boundary(head) {
+            head -= 1;
         }
-    }
-
-    fn back(&mut self, columns: usize) {
-        for _ in 0..columns {
-            self.body.move_cursor(ratatui_textarea::CursorMove::Back);
+        let mut tail = before[head..]
+            .bytes()
+            .rev()
+            .zip(after.text[head..].bytes().rev())
+            .take_while(|(a, b)| a == b)
+            .count();
+        while !before.is_char_boundary(before.len() - tail)
+            || !after.text.is_char_boundary(after.text.len() - tail)
+        {
+            tail -= 1;
         }
-    }
-
-    /// `prefix` at the start of the caret's line, or taken off it again.
-    fn toggle_prefix(&mut self, prefix: &str) {
-        let ratatui_textarea::DataCursor(row, column) = self.body.cursor();
-        let line = self.body.lines().get(row).cloned().unwrap_or_default();
-        let jump = |row: usize, column: usize| {
+        let jump = |text: &str, at: usize| {
+            let row = text[..at].matches('\n').count();
+            let column = text[text[..at].rfind('\n').map_or(0, |n| n + 1)..at]
+                .chars()
+                .count();
             ratatui_textarea::CursorMove::Jump(
                 u16::try_from(row).unwrap_or(u16::MAX),
                 u16::try_from(column).unwrap_or(u16::MAX),
             )
         };
-        let width = prefix.chars().count();
-        self.body.move_cursor(jump(row, 0));
-        if line.starts_with(prefix) {
-            for _ in 0..width {
-                self.body.delete_next_char();
-            }
+        self.body.cancel_selection();
+        self.body.move_cursor(jump(&before, head));
+        if before.len() - tail > head {
+            self.body.start_selection();
+            self.body.move_cursor(jump(&before, before.len() - tail));
+            let yanked = self.body.yank_text();
+            self.body.cut();
+            self.body.set_yank_text(yanked);
+        }
+        self.body
+            .insert_str(&after.text[head..after.text.len() - tail]);
+        if after.selection.is_empty() {
             self.body
-                .move_cursor(jump(row, column.saturating_sub(width)));
+                .move_cursor(jump(&after.text, after.selection.start));
         } else {
-            self.body.insert_str(prefix);
-            self.body.move_cursor(jump(row, column + width));
+            self.body
+                .move_cursor(jump(&after.text, after.selection.start));
+            self.body.start_selection();
+            self.body
+                .move_cursor(jump(&after.text, after.selection.end));
         }
     }
 
