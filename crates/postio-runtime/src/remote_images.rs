@@ -141,6 +141,14 @@ impl RemoteImageFetcher {
 }
 
 fn fetch_blocking(url: &Url, timeout: Duration) -> Fetched {
+    fetch_one(url, timeout, MAX_BYTES)
+}
+
+/// One image, fetched now on this thread, within `timeout` and `max_bytes`:
+/// the same plain request, redirects and checks as a message's images.
+/// What the composer's Download and attach uses (spec 014 D7), with its own
+/// limits.
+pub fn fetch_one(url: &Url, timeout: Duration, max_bytes: usize) -> Fetched {
     let deadline = Instant::now() + timeout;
     let mut url = url.clone();
     for _ in 0..=MAX_REDIRECTS {
@@ -154,7 +162,7 @@ fn fetch_blocking(url: &Url, timeout: Duration) -> Fetched {
             Ok(stream) => stream,
             Err(failure) => return Fetched::Failed(failure),
         };
-        let guard = Guard::new(stream, deadline);
+        let guard = Guard::new(stream, deadline, max_bytes);
         let over = guard.over.clone();
         let mut client = HttpClientStd::new(guard);
         let request = HttpRequest {
@@ -174,6 +182,9 @@ fn fetch_blocking(url: &Url, timeout: Duration) -> Fetched {
                     return Fetched::Failed(Failure::Status(status));
                 }
                 let body = out.response.body;
+                if body.len() > max_bytes {
+                    return Fetched::Failed(Failure::TooLarge);
+                }
                 return if image_format(&body) {
                     Fetched::Image(Arc::new(body))
                 } else {
@@ -192,8 +203,9 @@ fn fetch_blocking(url: &Url, timeout: Duration) -> Fetched {
     Fetched::Failed(Failure::TooManyRedirects)
 }
 
-/// Whether `bytes` are a png, jpeg, gif or webp, by their own signature.
-fn image_format(bytes: &[u8]) -> bool {
+/// Whether `bytes` are a png, jpeg, gif or webp, by their own signature --
+/// never by what the server said they were. SVG is not: it can carry script.
+pub fn image_format(bytes: &[u8]) -> bool {
     bytes.starts_with(b"\x89PNG\r\n\x1a\n")
         || bytes.starts_with(&[0xff, 0xd8, 0xff])
         || bytes.starts_with(b"GIF87a")
@@ -245,15 +257,17 @@ struct Guard {
     inner: Box<dyn ReadWriteSend>,
     deadline: Instant,
     read: usize,
+    max_bytes: usize,
     over: Arc<Mutex<Option<Failure>>>,
 }
 
 impl Guard {
-    fn new(inner: Box<dyn ReadWriteSend>, deadline: Instant) -> Guard {
+    fn new(inner: Box<dyn ReadWriteSend>, deadline: Instant, max_bytes: usize) -> Guard {
         Guard {
             inner,
             deadline,
             read: 0,
+            max_bytes,
             over: Arc::new(Mutex::new(None)),
         }
     }
@@ -281,7 +295,7 @@ impl Read for Guard {
         })?;
         self.read += n;
         // The headers' allowance on top of the body's.
-        if self.read > MAX_BYTES + 64 * 1024 {
+        if self.read > self.max_bytes + 64 * 1024 {
             return Err(self.refuse(Failure::TooLarge));
         }
         Ok(n)

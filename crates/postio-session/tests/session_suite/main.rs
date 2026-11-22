@@ -49,6 +49,7 @@ mod reachability;
 mod reading_cost;
 mod reclaim;
 mod reindex_account;
+mod remote_image;
 mod search_budget;
 mod search_execution;
 mod search_passages;

@@ -55,6 +55,8 @@ tracing = { workspace = true }
 tracing-journald = "0.3"
 tracing-log = "0.2"
 tracing-subscriber = { workspace = true, features = ["ansi", "env-filter"] }
+# A remote image's address, for Download and attach (spec 014 D7).
+url = { workspace = true }
 postio-workspace-hack.workspace = true
 
 [dev-dependencies]
