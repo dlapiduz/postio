@@ -642,7 +642,40 @@ async fn acting(
         });
     }
     wait_for_first_page(&started.window, seed);
+    if seed == Seed::Search {
+        wait_for_attachment_text(&started.store).await?;
+    }
     Ok(started)
+}
+
+/// Waits until the attachment indexer has read every file on disk, so the
+/// search seed finds what its files say from step 0 however slow the
+/// machine: a file found only by its contents is otherwise a card on one
+/// runner and missing on another (#2178). The indexer is the app's own,
+/// started with the host; only its finish is waited on.
+async fn wait_for_attachment_text(store: &postio_storage::Store) -> Result<(), String> {
+    use postio_storage::sql::RowExt as _;
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let owed: bool = {
+            let reader = store.read().await.map_err(|error| error.to_string())?;
+            postio_storage::sql::one(
+                &reader,
+                "SELECT EXISTS (SELECT 1 FROM attachment_text_owed)",
+                (),
+                |row| row.col(0),
+            )
+            .await
+            .map_err(|error| error.to_string())?
+        };
+        if !owed {
+            return Ok(());
+        }
+        if Instant::now() > deadline {
+            return Err("the search seed's files were still unread after a minute".to_owned());
+        }
+        pump_until(Duration::from_millis(50), || false);
+    }
 }
 
 /// Turns the main loop until the inbox's rows are drawn (or, for the empty
