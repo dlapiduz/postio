@@ -38,7 +38,6 @@ postio-workspace-hack.workspace = true
 
 [build-dependencies]
 glib-build-tools = "0.22.8"
-postio-ui.workspace = true
 
 [dev-dependencies]
 postio-widgets = { path = ".", features = ["test-hooks"] }

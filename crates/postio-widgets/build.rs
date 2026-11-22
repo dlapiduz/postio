@@ -4,10 +4,15 @@
 
 use std::path::{Path, PathBuf};
 
-use postio_ui::tokens;
+// Compiled here by path, not as a build-dependency on postio-ui: an edit anywhere in the UI crate
+// would otherwise rerun this script and force a host build of that crate.
+#[allow(dead_code)]
+#[path = "../postio-ui/src/tokens.rs"]
+mod tokens;
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=../postio-ui/src/tokens.rs");
     println!("cargo:rerun-if-changed=data/widgets.gresource.xml");
     println!("cargo:rerun-if-changed=data/widgets.css");
     println!("cargo:rerun-if-changed=data/metrics.css");
