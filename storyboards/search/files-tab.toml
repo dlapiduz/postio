@@ -110,15 +110,19 @@ key     = "mod+Down"
 expect  = "The save key (⌘↓, ctrl+Down off the Mac) offers to save the file: the system's save dialog, with the file's name filled in."
 
 [[step]]
+id      = "open"
 command = "open_message"
 check   = { view = "reader" }
-expect  = "Return opens the message that carries the ringed file, scrolled to its attachments."
+expect  = "Return opens the message that carries the ringed file, scrolled to its attachments. The footer under it is the window's, not the results': the message's subject, reply, forward, archive, and Escape \"back to results\" (#2193)."
 
 [app.macos.step.look]
 skip = { reason = "QLPreviewPanel is the system's own window, outside the app's observation; filmed by hand until the runner can see it" }
 
 [app.macos.step.save]
 skip = { reason = "The save panel is the system's own window, outside the app's observation; filmed by hand until the runner can see it" }
+
+[app.focus.step.open]
+check = { view = "reader", app.focus.footer.title = "Atlas September actuals", app.focus.footer.labels = "reply | forward | archive | back to results" }
 
 [app.focus.step.look]
 skip = { reason = "The desktop's previewer opens the copy outside the window the runner films; filmed by hand until the runner can see it" }

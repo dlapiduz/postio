@@ -172,7 +172,7 @@ impl FocusController {
         self.walk = None;
         self.walk_asked = None;
         if host != Host::Own || self.surfaces.origin() != Origin::List {
-            return self.walk_unbarred();
+            return self.unbarred_over_results(message);
         }
         // The row the cursor is on, when it is the message shown (or the
         // row a thread opened it from), says which thread it is of.
@@ -183,33 +183,19 @@ impl FocusController {
             .filter(|facts| facts.id == message || self.opened_for(facts.id, Some(message)))
             .or_else(|| self.hit_facts(message));
         let Some(facts) = facts else {
-            return self.walk_unbarred();
+            return self.unbarred_over_results(message);
         };
         let Some(&thread) = facts.threads.first() else {
-            return self.walk_unbarred();
+            return self.unbarred_over_results(message);
         };
-        // A result of one message has no thread to walk, and its window
-        // still says what its keys do: over the results, theirs is not the
-        // window's (#2193).
-        if let Some(subject) = self
+        // A result of one message has no thread to walk.
+        if self
             .results
             .as_ref()
             .and_then(|results| results.lone_subject(message))
+            .is_some()
         {
-            let keymap = self.keymap();
-            let about = FooterAbout {
-                subject: &subject,
-                count: 1,
-                index: 0,
-                sender: "",
-            };
-            let footer = scope::over_results(
-                scope::footer(ScopeFocus::Window { thread, message }, &about, keymap),
-                keymap,
-            );
-            let mut steps = self.walk_unbarred();
-            steps.push(Step::Show(Intent::Footer(footer)));
-            return steps;
+            return self.unbarred_over_results(message);
         }
         // A conversation of one message has no thread to walk: nothing is
         // asked for it.
@@ -222,7 +208,7 @@ impl FocusController {
             .is_some_and(|count| count <= 1)
             && seed.is_none()
         {
-            return self.walk_unbarred();
+            return self.unbarred_over_results(message);
         }
         match seed.filter(|view| view.thread == thread) {
             Some(view) => self.begin_walk(
@@ -270,6 +256,24 @@ impl FocusController {
     /// The bar, kicker and banners of a walk that is over, taken away. Said
     /// once, and only when one is up: a window whose walk never began has
     /// nothing to clear (spec 013 T085).
+    /// [`FocusController::walk_unbarred`] for a window on `message` that
+    /// walks no thread, with its own footer when it is over the results:
+    /// theirs, Escape "back to inbox" among it, is not the window's
+    /// (#2193).
+    fn unbarred_over_results(&mut self, message: MessageId) -> Vec<Step> {
+        let subject = self
+            .results
+            .as_ref()
+            .and_then(|results| results.lone_subject(message));
+        let footer = subject.map(|subject| {
+            let keymap = self.keymap();
+            scope::over_results(scope::lone(&subject, keymap), keymap)
+        });
+        let mut steps = self.walk_unbarred();
+        steps.extend(footer.map(|footer| Step::Show(Intent::Footer(footer))));
+        steps
+    }
+
     pub(crate) fn walk_unbarred(&mut self) -> Vec<Step> {
         if !std::mem::take(&mut self.bar_up) {
             return Vec::new();

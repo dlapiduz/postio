@@ -150,16 +150,6 @@ pub fn footer(focus: ScopeFocus, about: &FooterAbout<'_>, keymap: &Keymap) -> Fo
             }),
             None,
         ),
-        // A window on a message that is a thread of its own: nothing to
-        // number, and nothing but itself to reply to.
-        ScopeFocus::Window { .. } if about.count <= 1 => (
-            about.subject.to_owned(),
-            "reply",
-            "forward",
-            "archive",
-            None,
-            None,
-        ),
         ScopeFocus::Child { .. } | ScopeFocus::Window { .. } => (
             format!(
                 "Message {} of {} \u{b7} {}",
@@ -202,6 +192,25 @@ pub fn footer(focus: ScopeFocus, about: &FooterAbout<'_>, keymap: &Keymap) -> Fo
         push(hints::hint(keymap, command, label));
     }
     FooterView { title, keys, note }
+}
+
+/// The footer of a window on a message that is no thread to walk: its
+/// subject, and plain reply, forward and archive, which reach only it.
+pub fn lone(subject: &str, keymap: &Keymap) -> FooterView {
+    let keys = [
+        (CommandId::Reply, "reply"),
+        (CommandId::Forward, "forward"),
+        (CommandId::Archive, "archive"),
+    ]
+    .into_iter()
+    .filter_map(|(command, label)| hints::hint(keymap, command, label))
+    .map(|hint| (hints::short(&hint.key), hint.label))
+    .collect();
+    FooterView {
+        title: subject.to_owned(),
+        keys,
+        note: None,
+    }
 }
 
 /// [`footer`] for a window opened over the search results: Escape goes back
