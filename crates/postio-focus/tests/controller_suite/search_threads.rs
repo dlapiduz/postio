@@ -497,6 +497,45 @@ fn a_window_opened_from_the_results_says_escape_goes_back_to_them() {
     );
 }
 
+/// A result that is one message, opened over the results: its footer names
+/// the message and says Escape goes back to them too, rather than leaving
+/// no footer at all where the results' own stood (#2193).
+#[test]
+fn a_lone_message_opened_from_the_results_has_a_footer_too() {
+    let rows = List::of(3);
+    let (mut focus, _) = harbor_results(&rows);
+    let mut effects = Vec::new();
+    for _ in 0..8 {
+        let _ = run(&mut focus, CommandId::NextMessage, &rows);
+        effects = run(&mut focus, CommandId::OpenMessage, &rows);
+        effects = flat(&settle_all(&mut focus, effects, &rows));
+        if opened(&effects) == Some(MessageId::new(201)) {
+            break;
+        }
+        let _ = run(&mut focus, CommandId::Back, &rows);
+    }
+    assert_eq!(
+        opened(&effects),
+        Some(MessageId::new(201)),
+        "Gateway opened"
+    );
+    let footer = shown(&effects)
+        .into_iter()
+        .rev()
+        .find_map(|intent| match intent {
+            Intent::Footer(footer) => Some(footer),
+            _ => None,
+        })
+        .expect("the window's footer");
+    assert_eq!(footer.title, "Gateway defaults");
+    let labels: Vec<&str> = footer
+        .keys
+        .iter()
+        .map(|(_, label)| label.as_str())
+        .collect();
+    assert_eq!(labels, ["reply", "forward", "archive", "back to results"]);
+}
+
 fn banner_text(effects: &[Effect]) -> Option<String> {
     shown(effects)
         .into_iter()

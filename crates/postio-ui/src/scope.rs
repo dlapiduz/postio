@@ -150,6 +150,16 @@ pub fn footer(focus: ScopeFocus, about: &FooterAbout<'_>, keymap: &Keymap) -> Fo
             }),
             None,
         ),
+        // A window on a message that is a thread of its own: nothing to
+        // number, and nothing but itself to reply to.
+        ScopeFocus::Window { .. } if about.count <= 1 => (
+            about.subject.to_owned(),
+            "reply",
+            "forward",
+            "archive",
+            None,
+            None,
+        ),
         ScopeFocus::Child { .. } | ScopeFocus::Window { .. } => (
             format!(
                 "Message {} of {} \u{b7} {}",

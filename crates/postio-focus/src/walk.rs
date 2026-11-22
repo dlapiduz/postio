@@ -188,6 +188,29 @@ impl FocusController {
         let Some(&thread) = facts.threads.first() else {
             return self.walk_unbarred();
         };
+        // A result of one message has no thread to walk, and its window
+        // still says what its keys do: over the results, theirs is not the
+        // window's (#2193).
+        if let Some(subject) = self
+            .results
+            .as_ref()
+            .and_then(|results| results.lone_subject(message))
+        {
+            let keymap = self.keymap();
+            let about = FooterAbout {
+                subject: &subject,
+                count: 1,
+                index: 0,
+                sender: "",
+            };
+            let footer = scope::over_results(
+                scope::footer(ScopeFocus::Window { thread, message }, &about, keymap),
+                keymap,
+            );
+            let mut steps = self.walk_unbarred();
+            steps.push(Step::Show(Intent::Footer(footer)));
+            return steps;
+        }
         // A conversation of one message has no thread to walk: nothing is
         // asked for it.
         if self
@@ -553,8 +576,10 @@ impl FocusController {
             steps.push(Step::Show(Intent::MatchBanner(Some(banner))));
         }
         // The footer behind the window says what r acts on from here: the
-        // message on screen, whatever row the window came from.
-        if many {
+        // message on screen, whatever row the window came from. Over the
+        // results a message alone has one too: the results' is not the
+        // window's (#2193).
+        if many || self.results.is_some() {
             let member = &walk.view.members[at];
             let about = FooterAbout {
                 subject: walk.view.subject.as_deref().unwrap_or("(no subject)"),
