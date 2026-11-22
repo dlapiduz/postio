@@ -922,6 +922,10 @@ const CASES: &[(&str, fn())] = &[
         reader_corpus::a_new_reader_loads_nothing_until_it_is_asked_to as fn(),
     ),
     (
+        "list_model::a_refresh_asked_while_the_top_is_on_its_way_reads_it_again",
+        list_model::a_refresh_asked_while_the_top_is_on_its_way_reads_it_again as fn(),
+    ),
+    (
         "list_model::an_empty_list_has_nothing_in_it",
         list_model::an_empty_list_has_nothing_in_it as fn(),
     ),

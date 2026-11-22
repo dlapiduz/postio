@@ -46,15 +46,34 @@ pub fn escape_from_the_bar_returns_the_keyboard_to_the_list() {
     });
 }
 
+/// Both places have mail: an empty place puts its page where the list was,
+/// and where the keyboard goes then is not this case's question.
 pub fn going_to_a_place_leaves_the_keyboard_in_the_list() {
     crate::gtk_case(async {
         if !support::display() {
             return;
         }
-        let (_fixture, window) = support::three_in_the_inbox().await;
+        let fixture = support::Fixture::empty().await;
+        fixture
+            .file(("Ada Moreno", "ada@example.com"), "Inbox mail", "Hello.", 5)
+            .await;
+        let travel = fixture.folder("Travel").await;
+        fixture.file_in(travel, "Train to the coast", 60).await;
+        fixture.file_in(travel, "Hotel booking", 20).await;
+        let (window, _client) = fixture.open().await;
+        assert!(
+            crate::settle_until(async || support::subjects(&window) == ["Inbox mail"]).await,
+            "the inbox never reached the screen"
+        );
         support::keys(&window, &["g", "l"]);
         let places = window.places().expect("g l opened the folders popover");
         assert!(places.is_open(), "the popover is up");
+        assert!(
+            crate::settle_until(async || places.names().contains(&"Travel".to_owned())).await,
+            "the popover never listed Travel: {:?}",
+            places.names()
+        );
+        places.set_filter("trav");
         places.activate();
         assert!(
             crate::settle_until(async || !places.is_open()).await,
@@ -63,15 +82,21 @@ pub fn going_to_a_place_leaves_the_keyboard_in_the_list() {
         // The keyboard comes back once the popover has gone and the list
         // has drawn the place; a loaded machine takes more than one pass.
         assert!(
-            crate::settle_until(async || in_the_list(&window)).await,
-            "{}",
+            crate::settle_until(async || support::subjects(&window)
+                == ["Hotel booking", "Train to the coast"]
+                && in_the_list(&window))
+            .await,
+            "{:?}: {}",
+            support::subjects(&window),
             said(&window)
         );
 
-        window.act(postio_core::CommandId::GoToFlagged);
+        window.act(postio_core::CommandId::GoToInbox);
         assert!(
-            crate::settle_until(async || window.place_name() == "Flagged" && in_the_list(&window))
-                .await,
+            crate::settle_until(async || window.place_name() == "Inbox"
+                && support::subjects(&window) == ["Inbox mail"]
+                && in_the_list(&window))
+            .await,
             "{}: {}",
             window.place_name(),
             said(&window)

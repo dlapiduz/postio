@@ -35,9 +35,11 @@
 # whatever profile the run used -- otherwise "it passed alone" would be
 # evidence about a different question than the one that failed.
 #
-# A `package` narrows the first run to one crate. The isolated retry is
-# already scoped to one binary and one test, so it needs no narrowing of its
-# own.
+# A `package` narrows the first run to one crate, and each isolated retry
+# builds the same scope as the first run: its filter names one binary and
+# one test, but a bare `cargo nextest run` builds only the workspace's
+# default members, and a retry of a postio-ffi test then ran nothing and
+# was called a second failure (#2154).
 #
 # A retry exists for the reason named above: **the GTK editor cases flake
 # on a shared runner often enough to matter.** Two failures of the markdown
@@ -136,7 +138,7 @@ for spec in "${FAILURES[@]}"; do
     binary_id="${spec%% *}"
     test_name="${spec#* }"
     echo "release gate: retrying isolated: $spec" >&2
-    if cargo nextest run ${SELECT[@]+"${SELECT[@]}"} --profile "$PROFILE" -E "binary_id($binary_id) & test(=$test_name)"; then
+    if cargo nextest run ${SCOPE[@]+"${SCOPE[@]}"} ${SELECT[@]+"${SELECT[@]}"} --profile "$PROFILE" -E "binary_id($binary_id) & test(=$test_name)"; then
         echo "release gate: confirmed a flake: $spec" >&2
         # On a runner, an annotation too: the nightly runs through here, and a
         # flake this forgives must still be visible on the green run (#1710).

@@ -200,6 +200,10 @@ pub struct Windowed<R: ModelRow> {
     /// Whether the list has not yet heard from the source it was pointed at.
     /// Not the same as empty: see [`WindowedModel::is_loading`].
     loading: Cell<bool>,
+    /// A refresh with nothing held found the top already on its way: that
+    /// read may predate what the refresh was for, so the top is read again
+    /// once it lands. See [`WindowedModel::refresh`].
+    top_again: Cell<bool>,
 }
 
 impl<R: ModelRow> Default for Windowed<R> {
@@ -214,6 +218,7 @@ impl<R: ModelRow> Default for Windowed<R> {
             next: RefCell::default(),
             stashed: RefCell::default(),
             loading: Cell::default(),
+            top_again: Cell::default(),
         }
     }
 }
@@ -341,6 +346,7 @@ pub trait WindowedModel: IsA<gtk::gio::ListModel> + IsA<glib::Object> + Clone + 
 
         state.next.replace(None);
         state.refresh.replace(None);
+        state.top_again.set(false);
         state.loading.set(true);
         *state.source.borrow_mut() = Some(source);
         state.window.borrow_mut().adopt(total, generation);
@@ -378,6 +384,7 @@ pub trait WindowedModel: IsA<gtk::gio::ListModel> + IsA<glib::Object> + Clone + 
             return;
         }
         state.refresh.replace(None);
+        state.top_again.set(false);
         if !stash {
             state.stashed.replace(None);
         }
@@ -500,6 +507,9 @@ pub trait WindowedModel: IsA<gtk::gio::ListModel> + IsA<glib::Object> + Clone + 
         let delivered = state.window.borrow_mut().deliver(generation, page, items);
         if delivered.stale {
             return;
+        }
+        if page == 0 && state.top_again.replace(false) {
+            request(self, 0);
         }
         // The first answer ends the wait even when it brought no rows: an
         // empty folder is only known to be empty once it has said so, and
@@ -807,7 +817,12 @@ pub trait WindowedModel: IsA<gtk::gio::ListModel> + IsA<glib::Object> + Clone + 
                 .handed
                 .borrow_mut()
                 .retain(|_, row| row.ref_count() > 1);
-            if !pending {
+            if pending {
+                // Out since before what this refresh is for, perhaps: a
+                // first sync's mail written while the read of the empty
+                // inbox was still on its way stayed unlisted (#2152).
+                state.top_again.set(true);
+            } else {
                 request(self, 0);
             }
             return;
