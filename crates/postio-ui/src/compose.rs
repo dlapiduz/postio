@@ -86,36 +86,223 @@ pub fn editor_script() -> &'static str {
 /// being written into source, so they are escaped rather than trusted to
 /// stay that way.
 pub fn markdown_table_js() -> String {
-    use crate::editor::markdown::{SEQUENCES, Trigger};
+    use crate::editor::markdown::{Trigger, bridged};
     use std::fmt::Write as _;
 
     let mut out = String::from("const POSTIO_MARKDOWN = [\n");
-    for sequence in SEQUENCES {
-        let trigger = match sequence.trigger {
+    for (marker, command, trigger) in bridged() {
+        let trigger = match trigger {
             Trigger::LinePrefix => "line_prefix",
             Trigger::Wrapping => "wrapping",
+            Trigger::LineComplete | Trigger::WordComplete => {
+                unreachable!("the bridge recognises no {trigger:?} row")
+            }
         };
         let _ = writeln!(
             out,
-            "    {{ marker: \"{}\", command: \"{}\", trigger: \"{trigger}\" }},",
-            sequence.marker.replace('\\', "\\\\").replace('"', "\\\""),
-            sequence.command,
+            "    {{ marker: \"{}\", command: \"{command}\", trigger: \"{trigger}\" }},",
+            marker.replace('\\', "\\\\").replace('"', "\\\""),
         );
     }
     out.push_str("];\n");
     out
 }
 
+/// What Download and attach says when the body names no remote image
+/// (spec 014 US8): the press is answered, and nothing is fetched.
+pub const NO_REMOTE_IMAGE: &str = "There's no image to download in this message";
+
+/// The heading over the rows of remote images not yet attached.
+pub const NOT_ATTACHED_YET: &str = "Not attached yet";
+
+/// The row's button.
+pub const DOWNLOAD_AND_ATTACH: &str = "Download and attach";
+
+/// What a row says while its image downloads.
+pub const DOWNLOADING: &str = "Downloading\u{2026}";
+
+/// Why Download and attach left an image as a link (spec 014
+/// `contracts/remote-image.md`, "The outcomes"), for every frontend's row.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RemoteRefusal {
+    /// It could not be reached, and why, in a few words.
+    Unreachable(String),
+    /// Larger than the limit.
+    TooLarge,
+    /// Not a picture.
+    NotAnImage,
+    /// Offline, so nothing was asked.
+    Offline,
+}
+
+/// What a refused row says. `host` is the address's host, `key` the
+/// Download and attach key.
+pub fn remote_refusal(refusal: &RemoteRefusal, host: &str, key: &str) -> String {
+    match refusal {
+        RemoteRefusal::Unreachable(reason) => {
+            format!("Couldn't download from {host} \u{b7} {reason} \u{b7} Try again {key}")
+        }
+        RemoteRefusal::TooLarge => {
+            "Larger than 10 MB \u{b7} not attached \u{b7} it will be sent as a link".to_owned()
+        }
+        RemoteRefusal::NotAnImage => {
+            format!("{host} sent something that isn't a picture \u{b7} it will be sent as a link")
+        }
+        RemoteRefusal::Offline => "You're offline \u{b7} press again when you're online".to_owned(),
+    }
+}
+
+/// The line before Send while remote images are not attached, or `None`.
+pub fn remote_images_warning(count: usize, key: &str) -> Option<String> {
+    match count {
+        0 => None,
+        1 => Some(format!(
+            "1 image isn't attached and will be sent as a link \u{b7} {key} to attach"
+        )),
+        n => Some(format!(
+            "{n} images aren't attached and will be sent as links \u{b7} {key} to attach"
+        )),
+    }
+}
+
+/// The host a remote image is on, for its row: `example.com`.
+pub fn remote_host(href: &str) -> String {
+    let rest = href.split_once("://").map_or(href, |(_, rest)| rest);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    host.split(':').next().unwrap_or(host).to_ascii_lowercase()
+}
+
+/// The strip at the top of the Markdown source view (spec 014): what mode
+/// the body is in and the key back, short where the column is narrow.
+pub fn source_strip(key: &str, narrow: bool) -> String {
+    if narrow {
+        format!("Markdown \u{b7} {key}")
+    } else {
+        format!("Editing as Markdown \u{b7} {key} for rich text")
+    }
+}
+
+/// What a formatting command says in the rich view while only the Markdown
+/// view can make it (spec 014 D8, FR-029): its way there, never silence.
+pub fn in_markdown_view_for_now(title: &str, key: &str) -> String {
+    format!("{title} is in the Markdown view for now \u{b7} {key}")
+}
+
+/// The notice under the editor when typed Markdown narrowed (spec 014
+/// FR-026), or `None` when nothing did.
+pub fn narrowed_notice(lost: postio_body::markdown::Lost) -> Option<String> {
+    let mut parts = Vec::new();
+    let mut say = |count: usize, one: &str, many: &str, why: &str| match count {
+        0 => {}
+        1 => parts.push(format!("1 {one} {why}")),
+        n => parts.push(format!("{n} {many} {why}")),
+    };
+    say(
+        lost.cells,
+        "table cell was dropped:",
+        "table cells were dropped:",
+        "their rows are longer than the header",
+    );
+    say(
+        lost.links,
+        "link was kept as its words:",
+        "links were kept as their words:",
+        "mail links only to http, https and mailto",
+    );
+    say(
+        lost.images,
+        "image was kept as its words:",
+        "images were kept as their words:",
+        "it names neither an attachment nor the web",
+    );
+    (!parts.is_empty()).then(|| parts.join("; "))
+}
+
+#[cfg(test)]
+mod remote_words {
+    use super::*;
+
+    #[test]
+    fn each_outcome_says_what_happens_to_the_image() {
+        assert_eq!(
+            remote_refusal(&RemoteRefusal::TooLarge, "example.com", "ctrl+alt+i"),
+            "Larger than 10 MB \u{b7} not attached \u{b7} it will be sent as a link"
+        );
+        assert_eq!(
+            remote_refusal(&RemoteRefusal::NotAnImage, "example.com", "ctrl+alt+i"),
+            "example.com sent something that isn't a picture \u{b7} it will be sent as a link"
+        );
+        assert_eq!(
+            remote_refusal(
+                &RemoteRefusal::Unreachable("it answered 404".into()),
+                "example.com",
+                "ctrl+alt+i"
+            ),
+            "Couldn't download from example.com \u{b7} it answered 404 \u{b7} Try again ctrl+alt+i"
+        );
+        assert_eq!(
+            remote_refusal(&RemoteRefusal::Offline, "example.com", "ctrl+alt+i"),
+            "You're offline \u{b7} press again when you're online"
+        );
+    }
+
+    #[test]
+    fn the_warning_counts_what_will_go_as_a_link() {
+        assert_eq!(remote_images_warning(0, "ctrl+alt+i"), None);
+        assert_eq!(
+            remote_images_warning(1, "ctrl+alt+i").as_deref(),
+            Some("1 image isn't attached and will be sent as a link \u{b7} ctrl+alt+i to attach")
+        );
+        assert_eq!(remote_host("https://example.com/x.png"), "example.com");
+    }
+}
+
+#[cfg(test)]
+mod source_words {
+    use super::*;
+
+    #[test]
+    fn the_strip_shortens_where_it_is_narrow() {
+        assert_eq!(
+            source_strip("ctrl+alt+s", false),
+            "Editing as Markdown \u{b7} ctrl+alt+s for rich text"
+        );
+        assert_eq!(
+            source_strip("ctrl+alt+s", true),
+            "Markdown \u{b7} ctrl+alt+s"
+        );
+    }
+
+    #[test]
+    fn a_command_waiting_for_the_rich_view_says_where_it_is() {
+        assert_eq!(
+            in_markdown_view_for_now("Strikethrough", "ctrl+alt+s"),
+            "Strikethrough is in the Markdown view for now \u{b7} ctrl+alt+s"
+        );
+    }
+
+    #[test]
+    fn the_notice_names_what_narrowed() {
+        use postio_body::markdown::Lost;
+        assert_eq!(narrowed_notice(Lost::default()), None);
+        assert_eq!(
+            narrowed_notice(Lost {
+                cells: 2,
+                ..Lost::default()
+            })
+            .as_deref(),
+            Some("2 table cells were dropped: their rows are longer than the header")
+        );
+    }
+}
+
 #[cfg(test)]
 mod editor_script_tests {
     use super::EDITOR_SCRIPT;
 
-    /// The classic app `include_str!`d its own copy, because this branch
-    /// is worked from a Mac and `issue-land.sh` will not land a crate whose
-    /// gates cannot run there. Until a Linux session points it here, the two
-    /// files are pinned to each other: this fails the moment either is
-    /// edited alone, which is the only thing that makes a temporary
-    /// duplicate safe.
     /// The body names `POSTIO_MARKDOWN` and does not define it — the table
     /// is generated from [`crate::editor::markdown::SEQUENCES`] so the set of
     /// supported sequences has one source. A frontend handed the body alone
@@ -148,33 +335,17 @@ mod editor_script_tests {
         // sequence that consumes the marker and formats nothing; one the
         // reflection never reports is a toolbar toggle that stays off over
         // the very formatting it made (#1485).
-        for sequence in crate::editor::markdown::SEQUENCES {
-            let command = sequence.command;
+        for (marker, command, _) in crate::editor::markdown::bridged() {
             assert!(
                 EDITOR_SCRIPT.contains(&format!("\n    {command}: [")),
                 "the script cannot run {command}, which {:?} reaches",
-                sequence.marker
+                marker
             );
             assert!(
                 EDITOR_SCRIPT.contains(&format!("active.push('{command}')")),
                 "the script never reports {command} as in force"
             );
         }
-    }
-
-    #[test]
-    fn the_gtk_copy_of_the_bridge_has_not_drifted_from_this_one() {
-        // The GTK copy is postio-widgets' since the composer moved there
-        // (ADR 0043).
-        let gtk = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../postio-widgets/src/composer/editor.js");
-        let theirs = std::fs::read_to_string(&gtk)
-            .unwrap_or_else(|error| panic!("reading {}: {error}", gtk.display()));
-        assert_eq!(
-            theirs, EDITOR_SCRIPT,
-            "the two copies of the editing bridge have diverged, which is two \
-             dialects: make them equal, or finish the move and delete the GTK one"
-        );
     }
 }
 

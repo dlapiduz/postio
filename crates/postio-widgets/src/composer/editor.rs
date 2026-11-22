@@ -25,6 +25,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use postio_body::markdown::DocPosition;
 use postio_body::{Document, EditHistory, parse};
 use webkit6::prelude::*;
 
@@ -41,51 +42,13 @@ use postio_ui::editor::document as editor_document;
 /// of a security-relevant string are two that can drift (#567).
 pub use postio_ui::editor::document::EDITOR_BASE_URI;
 
-/// The bridge script — profile settings plus edit reporting.
+/// The bridge script: the markdown table, then profile settings and edit
+/// reporting.
 ///
-/// `include_str!` rather than a runtime resource lookup: compiled into the
-/// binary is the property ADR 0003's "shipped in the bundle" exists for,
-/// and it removes a registration-order dependency from every test that
-/// builds an editor. The file lives beside the other bundled assets in
-/// `data/`.
-const EDITOR_SCRIPT_BODY: &str = include_str!("editor.js");
-
-/// The whole script, table and all.
-///
-/// The markdown table is *generated* from `postio_ui::editor::markdown`
-/// rather than restated in JavaScript, so the set of supported sequences has
-/// one source. A hand-written copy in `editor.js` is a copy that drifts, and
-/// the thing it would drift from is the contract both frontends implement.
-fn editor_script() -> &'static str {
-    static SCRIPT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    SCRIPT.get_or_init(|| format!("{}{EDITOR_SCRIPT_BODY}", markdown_table_js()))
-}
-
-/// `POSTIO_MARKDOWN`, as a JavaScript literal.
-fn markdown_table_js() -> String {
-    use postio_ui::editor::markdown::{SEQUENCES, Trigger};
-    use std::fmt::Write as _;
-
-    let mut out = String::from("const POSTIO_MARKDOWN = [\n");
-    for sequence in SEQUENCES {
-        let trigger = match sequence.trigger {
-            Trigger::LinePrefix => "line_prefix",
-            Trigger::Wrapping => "wrapping",
-        };
-        // The markers are `&'static str` from a table in this workspace, not
-        // anybody's input, and every one of them is punctuation -- but they
-        // are being written into source, so they are escaped rather than
-        // trusted to stay that way.
-        let _ = writeln!(
-            out,
-            "    {{ marker: \"{}\", command: \"{}\", trigger: \"{trigger}\" }},",
-            sequence.marker.replace('\\', "\\\\").replace('"', "\\\""),
-            sequence.command,
-        );
-    }
-    out.push_str("];\n");
-    out
-}
+/// One script for every frontend, assembled by `postio-ui` (spec 014
+/// T001). GTK and the Mac load the same bytes, so the same keystrokes write
+/// the same HTML on both.
+pub use postio_ui::compose::editor_script;
 
 /// The script-message channel the bridge reports edits on.
 const EDITED_MESSAGE: &str = "postioEdited";
@@ -706,6 +669,56 @@ impl Editor {
     /// Whether `Ctrl+Z` has anywhere to go.
     pub fn can_undo(&self) -> bool {
         self.state.history.borrow().can_undo()
+    }
+
+    /// Ask where the caret is, as a place in the document (spec 014 R14),
+    /// and hand it to `done` when the surface answers. `None` when there is
+    /// no caret, or it is in a carried quote.
+    pub fn caret(&self, done: impl FnOnce(Option<DocPosition>) + 'static) {
+        self.view.evaluate_javascript(
+            "window.postioMarkedBody()",
+            None,
+            None,
+            None::<&gtk::gio::Cancellable>,
+            move |outcome| {
+                let marked = outcome
+                    .map(|value| value.to_str().to_string())
+                    .unwrap_or_default();
+                done(postio_body::markdown::take_caret(parse(&marked)).1);
+            },
+        );
+    }
+
+    /// Show `document` with the caret at `at`, as one edit on the record: a
+    /// return from the Markdown view, which is one undo step however much
+    /// was written there (spec 014 FR-028).
+    pub fn show_at(&self, document: Document, at: Option<&DocPosition>) {
+        let before = self.state.document.borrow().clone();
+        if before != document {
+            self.state
+                .history
+                .borrow_mut()
+                .record(before, document.clone());
+        }
+        self.state.last_edit.set(None);
+        let marked = at.map_or_else(
+            || document.clone(),
+            |at| postio_body::markdown::put_caret(&document, at),
+        );
+        self.seed(&marked.editor_html());
+        *self.state.document.borrow_mut() = document;
+        let current = self.state.document.borrow();
+        for handler in self.state.changed.borrow().iter() {
+            handler(&current);
+        }
+    }
+
+    /// [`caret`](Self::caret), waited out. Test plumbing.
+    #[doc(hidden)]
+    pub fn test_caret(&self) -> Option<DocPosition> {
+        self.wait_ready();
+        let marked = self.run_blocking("window.postioMarkedBody()");
+        postio_body::markdown::take_caret(parse(&marked)).1
     }
 
     /// Put `document` on screen and on record, ending any typing run —

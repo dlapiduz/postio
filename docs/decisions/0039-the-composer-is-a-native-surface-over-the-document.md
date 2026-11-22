@@ -191,7 +191,7 @@ rich document, not a source format.
   `apply(&Document, EditIntent) -> Document`, beside the `EditHistory` that
   already consumes the results. No new dependencies; it stays a pure leaf, and
   `check-crate-boundaries.py` keeps it that way.
-- **`postio-widgets`** loses `composer/editor.js`, the three script-message
+- **`postio-widgets`** loses the WebKit editor (`composer/editor.rs`), the three script-message
   handlers, every `evaluate_javascript` formatting call, and webkit6 from its
   graph; `editable_dialect.rs` goes too — the dialect stops being
   a foreign engine's and becomes Postio's, so the contract is a `postio-body`
@@ -236,6 +236,16 @@ than the thing it fixes. So:
 
 Steps 1 and 2 are worth doing even if step 3 is never reached, which is the
 property to preserve if this has to be paused.
+
+**Work waiting on this** (spec 014, `specs/014-compose-formatting`, Part B):
+the rich surface's typed sequences, the drawing of every construct, the new
+toolbar buttons, the formatting, table and code language pickers, Paste as
+Markdown, the inline Download and attach chip and `line_break`. Spec 014's
+structural edits (research R6: tables, tasks, list starts, code languages,
+inline code) are `apply`'s first arms. Its `SEQUENCES` table is the contract
+the native surface must meet. Tables in a native text view are a second
+thing to spike beside the IME. Until then GTK and the Mac author those
+constructs in spec 014's Markdown source view.
 
 ## What would falsify this
 

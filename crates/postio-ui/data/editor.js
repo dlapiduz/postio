@@ -277,13 +277,61 @@ function reportFormat() {
 document.addEventListener('selectionchange', reportFormat);
 document.addEventListener('input', reportFormat);
 
+/* The caret as a place in the document (spec 014 R14). The host asks for a
+ * copy of the body with the caret marked by a private character, U+E002,
+ * which `postio_body::parse` keeps where it was: the document the host
+ * builds from it says where the caret is, so no rule about this DOM's
+ * shape is restated here. The live body is never touched. Nothing is
+ * marked inside a carried quote, whose markup is the sender's. */
+const POSTIO_CARET = '\uE002';
+window.postioMarkedBody = function () {
+    const selection = window.getSelection();
+    const body = document.body;
+    if (!body || !selection || selection.rangeCount === 0) return body ? body.innerHTML : '';
+    const node = selection.focusNode;
+    const offset = selection.focusOffset;
+    if (!node || !body.contains(node)) return body.innerHTML;
+    const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+    if (element && element.closest('[data-postio-quoted], summary')) return body.innerHTML;
+    const path = [];
+    for (let at = node; at !== body; at = at.parentNode) {
+        path.unshift(Array.prototype.indexOf.call(at.parentNode.childNodes, at));
+    }
+    const copy = body.cloneNode(true);
+    let target = copy;
+    for (const index of path) target = target.childNodes[index];
+    if (target.nodeType === Node.TEXT_NODE) {
+        target.data = target.data.slice(0, offset) + POSTIO_CARET + target.data.slice(offset);
+    } else {
+        target.insertBefore(document.createTextNode(POSTIO_CARET), target.childNodes[offset] || null);
+    }
+    return copy.innerHTML;
+};
+
+/* A page loaded with the caret's mark in it puts the caret there and takes
+ * the mark out, before anything reports an edit. */
+function placeMarkedCaret() {
+    if (!document.body) return false;
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    for (let text = walker.nextNode(); text; text = walker.nextNode()) {
+        const at = text.data.indexOf(POSTIO_CARET);
+        if (at < 0) continue;
+        text.data = text.data.slice(0, at) + text.data.slice(at + 1);
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.setPosition(text, at);
+        return true;
+    }
+    return false;
+}
+
 /* A fresh page holds its caret at the start of the body, which is where a
  * reply is written (above the quote) and where a new message starts. Done
  * here rather than by the host after `load`, because loading is
  * asynchronous: a script the host sends straight after it runs against the
  * page being replaced, and the new page then has no selection at all, so
  * typing into it goes nowhere. */
-if (window.getSelection().rangeCount === 0 && document.body) {
+if (!placeMarkedCaret() && window.getSelection().rangeCount === 0 && document.body) {
     const start = document.createRange();
     start.selectNodeContents(document.body);
     start.collapse(true);

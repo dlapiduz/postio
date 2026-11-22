@@ -133,9 +133,14 @@ Four invariants, each of which is a test rather than a comment:
    load-bearing line in the type.
 2. **`Link.href` is parsed, and only `http`, `https` and `mailto` construct.**
    `javascript:` and `data:` fail to parse rather than being filtered later.
-3. **The set is closed.** Ten inline kinds and six block kinds is the whole
-   language. `to_text()` over a closed set is a total function you can read in
-   one screen; over arbitrary HTML it is the reason most mail's plaintext part
+3. **The set is closed.** Nine inline kinds and eight block kinds is the
+   whole language, since spec 014 (`specs/014-compose-formatting`) widened it
+   to every CommonMark and GFM construct: strikethrough, a remote image not
+   yet attached, tables, code blocks with a language, task items and six
+   heading levels. Its generated presentation attributes (spec 014 D5) are
+   constant, written by the serialiser and ignored by `parse`; no document
+   holds a style. The set is still closed: `to_text()` over a closed set is
+   a total function you can read in one screen; over arbitrary HTML it is the reason most mail's plaintext part
    is unreadable. **Do not reach for `html2text`** — convert from `Document`.
 4. **No styling.** No colours, no fonts, no `style`, no `class`. A body Postio
    sends renders in the recipient's client's own typography. This is not

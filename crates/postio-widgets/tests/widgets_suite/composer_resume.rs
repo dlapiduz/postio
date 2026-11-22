@@ -312,3 +312,39 @@ pub fn reopening_restores_the_formatting_and_the_attachments_too() {
         "the emphasised words did not survive at all: {html:?}"
     );
 }
+
+/// Spec 014 FR-003: a draft that holds every construct reopens as that
+/// document, and saves as the same HTML, so reopening a draft never
+/// changes it. The golden document, stored as the HTML a send would carry.
+pub fn a_draft_holding_every_construct_reopens_as_the_same_document() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display");
+        return;
+    }
+    let display = gdk::Display::default().expect("a display");
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let window = Window::default();
+    let composer = window.composer();
+    window.present();
+
+    let golden = postio_body::golden::golden();
+    let mut draft = Draft::new(AccountId::new(1));
+    draft.id = DraftId::new(42);
+    draft.subject = "Plan".to_owned();
+    draft.body = postio_body::message_body(&golden);
+    composer.resume(draft.clone());
+    settle();
+
+    assert_eq!(
+        composer.document(),
+        golden,
+        "the draft reopened as a different document"
+    );
+    assert_eq!(
+        composer.draft().body.html,
+        draft.body.html,
+        "reopening the draft changed the HTML it would save"
+    );
+}

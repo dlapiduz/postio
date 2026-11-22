@@ -88,6 +88,38 @@ const KNOWN_ORPHANS: &[(CommandId, &str)] = &[
     (CommandId::ForwardWhat3, "specs/013-focus-threads"),
     (CommandId::ShowNewer, "specs/013-focus-threads"),
     (CommandId::ExpandQuoted, "specs/013-focus-threads"),
+    // Compose formatting (spec 014): the Mac's composer answers these in
+    // its source view and chip row, which T039 and T048 build on a Mac.
+    (CommandId::Heading2, "specs/014-compose-formatting T039"),
+    (CommandId::Heading3, "specs/014-compose-formatting T039"),
+    (CommandId::Heading4, "specs/014-compose-formatting T039"),
+    (CommandId::Heading5, "specs/014-compose-formatting T039"),
+    (CommandId::Heading6, "specs/014-compose-formatting T039"),
+    (CommandId::NormalText, "specs/014-compose-formatting T039"),
+    (
+        CommandId::Strikethrough,
+        "specs/014-compose-formatting T039",
+    ),
+    (CommandId::InlineCode, "specs/014-compose-formatting T039"),
+    (CommandId::CodeBlock, "specs/014-compose-formatting T039"),
+    (CommandId::TaskList, "specs/014-compose-formatting T039"),
+    (CommandId::ToggleTask, "specs/014-compose-formatting T039"),
+    (CommandId::Indent, "specs/014-compose-formatting T039"),
+    (CommandId::Outdent, "specs/014-compose-formatting T039"),
+    (CommandId::Divider, "specs/014-compose-formatting T039"),
+    (CommandId::Table, "specs/014-compose-formatting T039"),
+    (
+        CommandId::ClearFormatting,
+        "specs/014-compose-formatting T039",
+    ),
+    (
+        CommandId::ToggleMarkdownSource,
+        "specs/014-compose-formatting T039",
+    ),
+    (
+        CommandId::AttachRemoteImage,
+        "specs/014-compose-formatting T048",
+    ),
 ];
 
 /// Whether Focus's controller answers `id` on the Mac: on the list with

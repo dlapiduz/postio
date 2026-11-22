@@ -316,6 +316,24 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::Bold
         | C::Italic
         | C::Heading1
+        | C::Heading2
+        | C::Heading3
+        | C::Heading4
+        | C::Heading5
+        | C::Heading6
+        | C::NormalText
+        | C::Strikethrough
+        | C::InlineCode
+        | C::CodeBlock
+        | C::TaskList
+        | C::ToggleTask
+        | C::Indent
+        | C::Outdent
+        | C::Divider
+        | C::Table
+        | C::ClearFormatting
+        | C::ToggleMarkdownSource
+        | C::AttachRemoteImage
         | C::BulletList
         | C::NumberedList
         | C::InsertLink

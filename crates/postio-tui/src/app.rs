@@ -69,6 +69,15 @@ pub enum Input {
     /// The host stored an [`Effect::InlineImage`]: the inline part, or
     /// nothing when it could not.
     InlineStored(Option<postio_model::Attachment>),
+    /// The host answered an [`Effect::AttachRemoteImage`].
+    RemoteImage {
+        /// Which composition asked.
+        generation: u64,
+        /// The image's address.
+        href: String,
+        /// The inline part, or why the image stays a link.
+        outcome: Result<postio_model::Attachment, postio_ui::compose::RemoteRefusal>,
+    },
     /// `config.toml` came back from the person's editor, and was read again.
     ConfigEdited(Result<(), String>),
     /// The external editor exited: what it saved, or why not.
@@ -483,6 +492,16 @@ pub enum Effect {
     },
     /// Store the file at this path as an attachment of the draft.
     Attach(std::path::PathBuf),
+    /// Download one remote image the draft names and attach it inline: on
+    /// a Download and attach press, never otherwise (spec 014 FR-031).
+    AttachRemoteImage {
+        /// Which composition asked.
+        generation: u64,
+        /// The draft, for the log.
+        draft: postio_model::DraftId,
+        /// The image's address.
+        href: String,
+    },
     /// Save this query as a saved search in `config.toml`, as the desktop's
     /// Ctrl+S does.
     SaveSearch(String),
@@ -2826,17 +2845,9 @@ impl App {
                     }]
                 })
                 .unwrap_or_default(),
-            "bold" | "italic" | "heading_1" | "bullet_list" | "numbered_list" | "quote_block"
-            | "insert_link" => {
-                use crate::composer::Format;
-                let format = match id {
-                    "bold" => Format::Bold,
-                    "italic" => Format::Italic,
-                    "heading_1" => Format::Heading1,
-                    "bullet_list" => Format::BulletList,
-                    "numbered_list" => Format::NumberedList,
-                    "quote_block" => Format::Quote,
-                    _ => Format::Link,
+            id if crate::composer::Format::for_command(id).is_some() => {
+                let Some(format) = crate::composer::Format::for_command(id) else {
+                    return Vec::new();
                 };
                 let Some(composer) = self.composer.as_mut() else {
                     return Vec::new();
@@ -2851,6 +2862,25 @@ impl App {
                         edit: composer.edits(),
                     },
                 ]
+            }
+            // The fetch and its row arrive with spec 014 US8 (T042, T047);
+            // until a body can name a remote image there is none to fetch.
+            // One request a press, for the first image not downloading.
+            "attach_remote_image" => {
+                let Some(composer) = self.composer.as_mut() else {
+                    return Vec::new();
+                };
+                match composer.start_remote() {
+                    Some(href) => vec![
+                        Effect::AttachRemoteImage {
+                            generation: composer.generation(),
+                            draft: composer.draft().id,
+                            href: href.as_str().to_owned(),
+                        },
+                        Effect::Redraw,
+                    ],
+                    None => self.say(postio_ui::compose::NO_REMOTE_IMAGE),
+                }
             }
             "copy_fields" => {
                 if let Some(composer) = self.composer.as_mut() {
@@ -4602,6 +4632,23 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             Ok(None) => app.say("There is no image on the clipboard"),
             Err(reason) => app.say(&reason),
         },
+        Input::RemoteImage {
+            generation,
+            href,
+            outcome,
+        } => match app.composer.as_mut() {
+            Some(composer) if composer.generation() == generation => {
+                composer.settle_remote(&href, outcome);
+                vec![
+                    Effect::Autosave {
+                        generation: composer.generation(),
+                        edit: composer.edits(),
+                    },
+                    Effect::Redraw,
+                ]
+            }
+            _ => Vec::new(),
+        },
         Input::InlineStored(stored) => match (stored, app.composer.as_mut()) {
             (Some(image), Some(composer)) => {
                 let label = image
@@ -5736,6 +5783,93 @@ pub(crate) mod tests {
             unanswered.is_empty(),
             "commands this terminal offers and sends to nothing: {unanswered:?}"
         );
+    }
+
+    #[test]
+    fn download_and_attach_asks_once_a_press_and_puts_the_picture_in() {
+        let mut app = app((120, 40));
+        composing(&mut app);
+        let composer = app.composer.as_mut().expect("composing");
+        composer.focus_field(crate::composer::Field::Body);
+        composer.replace_body("See ![chart](https://example.com/x.png).");
+        let generation = composer.generation();
+        // Drawn as the desktop draws it, under the body.
+        let drawn = crate::test_support::screen(120, 40, &app);
+        assert!(drawn.contains("Not attached yet"), "{drawn}");
+        assert!(
+            drawn.contains("chart  example.com  Download and attach alt+I"),
+            "{drawn}"
+        );
+        let asked = app.composer_command("attach_remote_image");
+        let requests: Vec<_> = asked
+            .iter()
+            .filter(|effect| matches!(effect, Effect::AttachRemoteImage { href, .. } if href == "https://example.com/x.png"))
+            .collect();
+        assert_eq!(requests.len(), 1, "{asked:?}");
+        let mut part = postio_model::Attachment::new(
+            postio_model::ids::MessageId::UNASSIGNED,
+            "image/png",
+            10,
+        );
+        part.content_id = Some("x1@postio.invalid".to_owned());
+        update(
+            &mut app,
+            Input::RemoteImage {
+                generation,
+                href: "https://example.com/x.png".to_owned(),
+                outcome: Ok(part),
+            },
+        );
+        let composer = app.composer.as_ref().expect("composing");
+        assert_eq!(composer.markdown(), "See ![chart](cid:x1@postio.invalid).");
+        let drawn = crate::test_support::screen(120, 40, &app);
+        assert!(!drawn.contains("Not attached yet"), "{drawn}");
+        let again = app.composer_command("attach_remote_image");
+        assert!(
+            !again
+                .iter()
+                .any(|effect| matches!(effect, Effect::AttachRemoteImage { .. })),
+            "nothing left to download, so nothing is asked"
+        );
+    }
+
+    #[test]
+    fn every_now_phase_formatting_command_edits_the_body_and_autosaves() {
+        // Spec 014 T028: each command the terminal offers reaches the body.
+        for id in [
+            "strikethrough",
+            "inline_code",
+            "heading_2",
+            "heading_6",
+            "normal_text",
+            "code_block",
+            "task_list",
+            "toggle_task",
+            "indent",
+            "outdent",
+            "divider",
+            "table",
+            "clear_formatting",
+        ] {
+            // The caret starts on the first line, which some commands change
+            // and some leave: a heading for `normal_text`, a nested task
+            // for the rest.
+            let changed = ["  - [ ] **two**", "## **Plan**"].iter().any(|body| {
+                let mut app = app((120, 40));
+                composing(&mut app);
+                let composer = app.composer.as_mut().expect("composing");
+                composer.focus_field(crate::composer::Field::Body);
+                composer.replace_body(body);
+                let before = composer.markdown();
+                let effects = app.composer_command(id);
+                let after = app.composer.as_ref().expect("composing").markdown();
+                effects
+                    .iter()
+                    .any(|effect| matches!(effect, Effect::Autosave { .. }))
+                    && after != before
+            });
+            assert!(changed, "`{id}` did not edit the body");
+        }
     }
 
     fn composing(app: &mut App) {

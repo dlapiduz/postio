@@ -6,7 +6,10 @@
 //! stripped. The ammonia backstop is asserted to be a **no-op** — a backstop
 //! that quietly cleans up after a real bug is one that hides it.
 
-use postio_body::document::{Block, ContentId, Document, HeadingLevel, Href, Inline};
+use postio_body::document::{
+    Alignment, Block, ContentId, Document, HeadingLevel, Href, Inline, Language, ListItem,
+    ListKind, Table, Task, WebHref,
+};
 use postio_body::{harden, parse};
 
 /// The corpus fixture written to carry every remote-reference trick at once:
@@ -64,14 +67,70 @@ fn every_shape() -> Document {
                 inlines: vec![Inline::Text("heading".to_owned())],
             },
             Block::List {
-                ordered: true,
-                items: vec![vec![Block::Paragraph(vec![Inline::Text("one".to_owned())])]],
+                kind: ListKind::NUMBERED,
+                items: vec![ListItem::new(vec![Block::Paragraph(vec![Inline::Text(
+                    "one".to_owned(),
+                )])])],
             },
             Block::Quote(vec![Block::Paragraph(vec![Inline::Text(
                 "quoted".to_owned(),
             )])]),
-            Block::Pre("  raw < text\n".to_owned()),
+            Block::Code {
+                language: None,
+                text: "  raw < text\n".to_owned(),
+            },
             Block::Rule,
+            // Spec 014's shapes.
+            Block::Heading {
+                level: HeadingLevel::Six,
+                inlines: vec![Inline::Strikethrough(vec![Inline::Text("gone".to_owned())])],
+            },
+            Block::List {
+                kind: ListKind::Ordered { start: 7 },
+                items: vec![ListItem::new(vec![Block::Paragraph(vec![Inline::Text(
+                    "seventh".to_owned(),
+                )])])],
+            },
+            Block::List {
+                kind: ListKind::Bullet,
+                items: vec![
+                    ListItem::task(
+                        Task::Open,
+                        vec![Block::Paragraph(vec![Inline::Text("open".to_owned())])],
+                    ),
+                    ListItem::task(
+                        Task::Done,
+                        vec![Block::Paragraph(vec![Inline::Text("done".to_owned())])],
+                    ),
+                ],
+            },
+            Block::Code {
+                language: Language::parse("c++"),
+                text: "int main() {}\n".to_owned(),
+            },
+            Block::Table(Table::new(
+                vec![
+                    Alignment::Left,
+                    Alignment::Center,
+                    Alignment::Right,
+                    Alignment::None,
+                ],
+                vec![
+                    vec![Inline::Text("a".to_owned())],
+                    vec![Inline::Text("b".to_owned())],
+                    vec![Inline::Text("c".to_owned())],
+                    vec![Inline::Text("d".to_owned())],
+                ],
+                vec![vec![vec![
+                    Inline::Text("1".to_owned()),
+                    Inline::Break,
+                    Inline::Text("2".to_owned()),
+                ]]],
+            )),
+            Block::Paragraph(vec![Inline::RemoteImage {
+                href: WebHref::parse("https://example.com/x.png?a=1&b=2").unwrap(),
+                alt: "a \"chart\"".to_owned(),
+            }]),
         ],
     }
 }

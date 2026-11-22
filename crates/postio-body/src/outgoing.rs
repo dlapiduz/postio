@@ -48,12 +48,15 @@ use crate::document::Document;
 /// every `on*` handler are refused by `ammonia`'s defaults whatever is in
 /// here, and the quote's own content was already through the reader's
 /// sanitiser with remote images blocked. The user's own prose still comes from
-/// the authoring subset, which emits only the first sixteen.
-const EMITTED_TAGS: [&str; 25] = [
+/// the authoring subset, which emits only the first twenty.
+const EMITTED_TAGS: [&str; 29] = [
     "p",
     "h1",
     "h2",
     "h3",
+    "h4",
+    "h5",
+    "h6",
     "ul",
     "ol",
     "li",
@@ -62,6 +65,7 @@ const EMITTED_TAGS: [&str; 25] = [
     "hr",
     "strong",
     "em",
+    "del",
     "code",
     "a",
     "img",
@@ -98,7 +102,15 @@ pub fn harden(html: &str) -> String {
         // The marker that tells `parse` this blockquote is a reply quote and
         // not one the user made. It has to survive for the round trip through
         // the editor to hold (FR-046); it carries no content.
-        .add_tag_attributes("blockquote", [crate::document::QUOTED_MARKER]);
+        .add_tag_attributes("blockquote", [crate::document::QUOTED_MARKER])
+        // Spec 014's markers (R3), each constant and written only by
+        // `to_html`: a list's start, a code block's language, a task's
+        // state, and a link that is a remote image not yet attached.
+        .add_tag_attributes("ol", ["start"])
+        .add_tag_attributes("pre", [crate::document::LANGUAGE_MARKER])
+        .add_tag_attributes("ul", [crate::document::TASK_MARKER])
+        .add_tag_attributes("li", [crate::document::TASK_MARKER])
+        .add_tag_attributes("a", [crate::document::REMOTE_IMAGE_MARKER]);
     for tag in [
         "table", "thead", "tbody", "tfoot", "tr", "td", "th", "colgroup", "col",
     ] {
@@ -124,4 +136,19 @@ pub fn harden(html: &str) -> String {
 /// handed actually is.
 pub fn render(document: &Document) -> (String, String) {
     (document.to_flowed_text(), harden(&document.to_html()))
+}
+
+/// A [`Document`] as the body a composer hands to `postio_model::outgoing`.
+///
+/// The flowed text always, and the HTML part only when the document holds
+/// anything beyond paragraphs of text: a plain-text message goes out as
+/// `text/plain; format=flowed` alone (spec 014 FR-018), and never pays for
+/// the HTML it would throw away. One function, so every composer sends the
+/// same shape for the same document.
+pub fn message_body(document: &Document) -> postio_model::MessageBody {
+    let text = document.to_flowed_text();
+    postio_model::MessageBody {
+        text: (!text.is_empty()).then_some(text),
+        html: (!document.is_plain_text()).then(|| harden(&document.to_html())),
+    }
 }

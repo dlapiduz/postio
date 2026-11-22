@@ -531,13 +531,21 @@ commands! {
     /// Make the selection italic, or straighten it.
     Italic => "italic",
     /// Turn the current block into a first-level heading, or back into a
-    /// paragraph (#1485).
-    ///
-    /// Numbered from the start, though it is the only level with a command:
-    /// `postio_body::HeadingLevel` has three, and the second and third are
-    /// `heading_2` and `heading_3` beside it rather than a renaming of this
-    /// one, which a `[keys]` entry already names.
+    /// paragraph (#1485). One command per level, so each of the six is one
+    /// chord away (spec 014 D3).
     Heading1 => "heading_1",
+    /// A second-level heading, or back.
+    Heading2 => "heading_2",
+    /// A third-level heading, or back.
+    Heading3 => "heading_3",
+    /// A fourth-level heading, or back.
+    Heading4 => "heading_4",
+    /// A fifth-level heading, or back.
+    Heading5 => "heading_5",
+    /// A sixth-level heading, or back.
+    Heading6 => "heading_6",
+    /// Turn the current heading back into a paragraph.
+    NormalText => "normal_text",
     /// Turn the current block into a bulleted list, or back.
     BulletList => "bullet_list",
     /// Turn the current block into a numbered list, or back.
@@ -546,6 +554,34 @@ commands! {
     InsertLink => "insert_link",
     /// Turn the current block into a quote, or back.
     QuoteBlock => "quote_block",
+    /// Strike the selection through, or not (spec 014).
+    Strikethrough => "strikethrough",
+    /// Make the selection inline code, or not.
+    InlineCode => "inline_code",
+    /// Turn the current lines into a code block, or back.
+    CodeBlock => "code_block",
+    /// Turn the current list into a task list, or back.
+    TaskList => "task_list",
+    /// Mark the task at the caret done, or not done.
+    ToggleTask => "toggle_task",
+    /// Move the list item at the caret one level in.
+    Indent => "indent",
+    /// Move the list item at the caret one level out.
+    Outdent => "outdent",
+    /// Put a divider below the current block.
+    Divider => "divider",
+    /// Put a table at the caret: in the Markdown view and the terminal, a
+    /// two-by-two template to type over.
+    Table => "table",
+    /// Take every mark off the selection.
+    ClearFormatting => "clear_formatting",
+    /// Switch the body between rich text and its Markdown (spec 014 US7).
+    /// The draft is still a document: the view is a way to edit it.
+    ToggleMarkdownSource => "toggle_markdown_source",
+    /// Download the remote images the body names and attach them inline
+    /// (spec 014 D7). The one composer gesture that reaches the network,
+    /// and only on this press.
+    AttachRemoteImage => "attach_remote_image",
 
     // -- View and application --------------------------------------------
     /// Undo the last undoable action.

@@ -225,7 +225,25 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         // the attachment it is deliberately not.
         C::InsertImage => Some(M::Format),
         C::InsertLink | C::QuoteBlock => Some(M::Format),
-        C::Heading1 => Some(M::Format),
+        C::Heading1
+        | C::Heading2
+        | C::Heading3
+        | C::Heading4
+        | C::Heading5
+        | C::Heading6
+        | C::NormalText => Some(M::Format),
+        C::Strikethrough
+        | C::InlineCode
+        | C::CodeBlock
+        | C::TaskList
+        | C::ToggleTask
+        | C::Indent
+        | C::Outdent
+        | C::Divider
+        | C::Table
+        | C::ClearFormatting
+        | C::ToggleMarkdownSource
+        | C::AttachRemoteImage => Some(M::Format),
         // The terminal composer's own (`Requirement::Terminal`), and the
         // terminal has no menu bar: no menu anywhere offers them.
         C::EditExternally | C::TogglePreview => None,

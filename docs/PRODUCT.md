@@ -499,12 +499,55 @@ frontend's composer is a port rather than a rewrite and identical gestures
 produce identical bytes on the wire. Rich text is
 [ADR 0003](decisions/0003-rich-text-compose.md); where the document lives is
 [ADR 0004](decisions/0004-composer-document-model.md). **The composer is rich
-text over that model**: its editing surface is a WebView (`postio_widgets::composer::editor`)
-with bold, italic, bulleted
-and numbered lists, links, quote blocks and inserted images — the bindings are
-in [`keybindings.md`](keybindings.md). Plain text is what a message that used
-none of that is sent as, not the only thing the editor can do; deciding the
-model first is what let the editor grow without the wire format moving.
+text over that model**, and its editing surface is a WebView
+(`postio_widgets::composer::editor`).
+
+**The composer formats everything a Markdown file can.** It covers
+CommonMark and GitHub-Flavored Markdown:
+- headings at six levels;
+- bold, italic and strikethrough;
+- inline code, and code blocks with a language;
+- quotes, nested;
+- bulleted, numbered and task lists, nested;
+- links and autolinks, and inline images;
+- tables with alignment;
+- dividers and line breaks.
+
+This is the maintainer's direction of 2026-11-22: more formatting, not
+less. It is specified in
+[`specs/014-compose-formatting`](../specs/014-compose-formatting/spec.md).
+On `main` today the composer has bold, italic, the two kinds of list,
+links, quote blocks and images, and a heading command is in progress
+(#1485).
+
+Markdown is a way in and a view, never the draft's stored format.
+- **The source view.** `mod+alt+s` switches a draft to edit as Markdown
+  text and back. The round trip loses nothing, and the caret stays on the
+  same character. A reply's quote stays the sender's own, as one chip
+  line. Until the native composer exists (ADR 0039), the source view is
+  how the new constructs are written on Linux and the Mac.
+- **The terminal composer** writes the same constructs as Markdown text.
+- **In the native composer**, typing `~~gone~~` or `## ` will run the
+  command the toolbar runs, and one undo will put the characters back.
+  Every construct will also be a command with a key (see
+  [`keybindings.md`](keybindings.md)), and a row in the formatting picker
+  at the caret, which shows each one's key and its Markdown.
+
+**A remote image is attached on purpose, or not at all.** Typing
+`![chart](https://…)` makes a "Download and attach" chip. Nothing is
+fetched until the chip is pressed. The press fetches the image once and
+attaches it as a part of the message. A chip never pressed is sent as a
+link.
+
+What leaves is generated for mail, not for a browser:
+- a task list is ☐/☑, never a form control;
+- a table carries the attributes every client draws.
+
+The plain-text alternative reads as Markdown. It drops the marks that
+only emphasise (bold, italic) and keeps the ones whose loss would change
+what the words say (struck words, a task's state, a table). A message
+that uses no formatting is sent as plain text alone. Deciding the model
+first is what lets the editor grow without the wire format moving.
 
 Outgoing HTML is *generated* from that document for everything the user
 writes, and for a forward. A **reply's quote** is the exception, decided in

@@ -1518,6 +1518,32 @@ impl Inner {
                 .await
                 .map_err(postio_model::listing::StoreError::new),
             ),
+            // POSTIO-CONSENT: the handler of `attach_remote_image`, the one
+            // place a composer's request reaches the network, and only on
+            // its press (spec 014 FR-031). `check-remote-image-fetch-site.py`
+            // holds that this is fetch_remote_image's only caller.
+            Req::AttachRemoteImage { draft, href } => {
+                let blobs = self.wiring.blobs.clone();
+                let images = Arc::clone(&self.wiring.images);
+                let outcome = tokio::task::spawn_blocking(move || {
+                    let Some(href) = postio_body::WebHref::parse(&href) else {
+                        return Err(postio_ui::compose::RemoteRefusal::NotAnImage);
+                    };
+                    postio_session::attaching::fetch_remote_image(
+                        images.as_ref(),
+                        &blobs,
+                        draft,
+                        &href,
+                        true,
+                    )
+                    .map_err(compose::remote_refusal)
+                })
+                .await
+                .unwrap_or(Err(postio_ui::compose::RemoteRefusal::Unreachable(
+                    "the download stopped".to_owned(),
+                )));
+                Resp::RemoteImage(outcome)
+            }
             Req::InlineImage { bytes, mime_type } => {
                 let blobs = self.wiring.blobs.clone();
                 let stored = tokio::task::spawn_blocking(move || {

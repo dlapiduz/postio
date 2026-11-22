@@ -112,7 +112,7 @@ pub fn unwrap(flowed: &str, prefix: &str) -> String {
 ///
 /// Public under a name that says what it is *for* rather than what [`wrap`]
 /// uses it for: a caller emitting a line this module never wrapped —
-/// [`crate::document`]'s `Block::Pre`, which shares the wire with flowed
+/// [`crate::document`]'s `Block::Code`, which shares the wire with flowed
 /// text but must never be reflowed — still needs the exact same escaping,
 /// since the ambiguity is about what the byte stream looks like, not about
 /// how any particular line got there.

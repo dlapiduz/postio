@@ -300,6 +300,8 @@ impl Compose {
             CommandId::NumberedList,
             CommandId::QuoteBlock,
             CommandId::InsertLink,
+            // The source view's toggle, at the toolbar's right end.
+            CommandId::ToggleMarkdownSource,
             CommandId::InsertImage,
             CommandId::CopyFields,
             // The thread's own, over the quote (spec 013): the older-reply

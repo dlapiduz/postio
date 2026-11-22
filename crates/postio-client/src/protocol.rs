@@ -671,6 +671,15 @@ pub enum Req {
         /// Which backend the proof signed in with.
         backend: postio_model::account::Backend,
     },
+    /// Download a remote image a draft names and attach it inline (spec 014
+    /// D7): the one network request a composer makes, on its press alone.
+    /// Answered as the attachment, or why it stays a link.
+    AttachRemoteImage {
+        /// The draft it is for, for the log.
+        draft: postio_model::DraftId,
+        /// The image's address, `http` or `https`.
+        href: String,
+    },
     /// Store pasted image bytes as an inline part.
     InlineImage {
         /// The image.
@@ -979,6 +988,8 @@ pub enum Resp {
     Signature(Option<postio_model::SignatureId>),
     /// A stored attachment, or none when the file could not be read.
     Attached(Option<postio_model::Attachment>),
+    /// A downloaded remote image's part, or why it stays a link.
+    RemoteImage(Result<postio_model::Attachment, postio_ui::compose::RemoteRefusal>),
     /// Stored bytes, or none when they are not here.
     Bytes(Option<Vec<u8>>),
     /// What a search found, or nothing when the store could not be read.

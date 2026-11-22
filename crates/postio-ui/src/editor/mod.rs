@@ -21,3 +21,5 @@
 
 pub mod document;
 pub mod markdown;
+pub mod markdown_edit;
+pub mod source;
