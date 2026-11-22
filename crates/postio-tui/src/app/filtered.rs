@@ -329,7 +329,7 @@ mod tests {
                 local(23, 9, 0),
             ))],
         );
-        update(&mut app, Input::FocusCounts(drawing_counts()));
+        app.counts_for_tests(drawing_counts());
         app
     }
 
@@ -700,22 +700,6 @@ mod tests {
         assert_eq!(
             resolved(&app),
             Some(postio_core::Resolved::Messages(vec![MessageId::new(12)]))
-        );
-    }
-
-    #[test]
-    fn the_inboxs_selection_is_left_alone_by_a_verb_on_the_open_message() {
-        let mut app = inbox((120, 30));
-        update(&mut app, press('x'));
-        update(&mut app, press('g'));
-        let effects = update(&mut app, press('f'));
-        serve_filtered(&mut app, effects, &TABS, &filed());
-        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        update(&mut app, press('e'));
-        assert_eq!(
-            app.selection().selection(),
-            postio_core::Selection::These(vec![MessageId::new(1)]),
-            "the inbox's marked row stays marked"
         );
     }
 

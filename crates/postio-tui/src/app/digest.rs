@@ -21,17 +21,6 @@ impl App {
         self.surfaces.digest.as_ref()
     }
 
-    /// Remember the surfaced rows among `rows`, as the host's read of them
-    /// would have: the harness opens lists without that read.
-    #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn note_surfaced(&mut self, rows: &[postio_ui::focus_list::FocusRow]) {
-        self.surfaced = rows
-            .iter()
-            .filter(|row| matches!(row, postio_ui::focus_list::FocusRow::Digest(_)))
-            .cloned()
-            .collect();
-    }
-
     /// Whether the list's cursor is on a digest.
     pub(super) fn cursor_is_digest(&self) -> bool {
         self.row_at(self.cursor)
@@ -57,12 +46,14 @@ impl App {
             return Vec::new();
         };
         let delivery = DeliveryId::new(-row.id.get());
-        let found = self.surfaced.iter().find_map(|surfaced| match surfaced {
-            postio_ui::focus_list::FocusRow::Digest(digest) if digest.delivery == delivery => {
+        let found = match self.list.resident_at(self.cursor).map(|held| &held.source) {
+            Some(postio_ui::focus_list::FocusRow::Digest(digest))
+                if digest.delivery == delivery =>
+            {
                 Some(digest.clone())
             }
             _ => None,
-        });
+        };
         let window = match found {
             Some(digest) => {
                 let when = self

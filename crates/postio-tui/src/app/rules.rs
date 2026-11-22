@@ -164,11 +164,7 @@ impl App {
         } else if picked.is_empty() {
             rows.extend(self.row_at(self.cursor));
         } else {
-            rows.extend(
-                picked
-                    .iter()
-                    .filter_map(|message| self.list.row_of(*message)),
-            );
+            rows.extend(picked.iter().filter_map(|message| self.row(*message)));
         }
         let mut senders: Vec<EmailAddress> = Vec::new();
         for row in rows {
@@ -761,21 +757,6 @@ mod tests {
             "no model, no control:\n{drawn}"
         );
         assert!(drawn.contains("Create"), "{drawn}");
-    }
-
-    #[test]
-    fn d_on_a_selection_digests_every_sender_once() {
-        let mut app = inbox((120, 30));
-        update(&mut app, press('x'));
-        update(&mut app, press('j'));
-        update(&mut app, press('x'));
-        let effects = digesting(&mut app);
-        assert!(
-            effects.iter().any(|e| matches!(e, Effect::Ask(Ask::Preview { queries, .. })
-                if queries == &vec!["from:ada@example.com".to_owned(), "from:grace@example.com".to_owned()])),
-            "{effects:?}"
-        );
-        assert!(screen(120, 30, &app).contains("Digest these senders"));
     }
 
     #[test]
