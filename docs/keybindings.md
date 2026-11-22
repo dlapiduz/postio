@@ -134,6 +134,7 @@ command from inside a text field.
 | `ctrl+shift+p` or `alt+p` | Toggle preview | Composer (terminal) |  | `toggle_preview` |
 | `ctrl+b` | Bold | Composer |  | `bold` |
 | `ctrl+i` or `alt+i` | Italic | Composer |  | `italic` |
+| `ctrl+alt+1` or `alt+1` | Heading 1 | Composer |  | `heading_1` |
 | `ctrl+shift+8` or `alt+8` | Bulleted list | Composer |  | `bullet_list` |
 | `ctrl+shift+7` or `alt+7` | Numbered list | Composer |  | `numbered_list` |
 | `ctrl+shift+k` or `alt+k` | Insert link… | Composer |  | `insert_link` |

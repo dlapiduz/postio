@@ -530,6 +530,14 @@ commands! {
     Bold => "bold",
     /// Make the selection italic, or straighten it.
     Italic => "italic",
+    /// Turn the current block into a first-level heading, or back into a
+    /// paragraph (#1485).
+    ///
+    /// Numbered from the start, though it is the only level with a command:
+    /// `postio_body::HeadingLevel` has three, and the second and third are
+    /// `heading_2` and `heading_3` beside it rather than a renaming of this
+    /// one, which a `[keys]` entry already names.
+    Heading1 => "heading_1",
     /// Turn the current block into a bulleted list, or back.
     BulletList => "bullet_list",
     /// Turn the current block into a numbered list, or back.

@@ -80,6 +80,7 @@ const NOT_YET: &[&str] = &[
     "insert_image",
     "bold",
     "italic",
+    "heading_1",
     "bullet_list",
     "numbered_list",
     "insert_link",

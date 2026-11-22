@@ -70,6 +70,11 @@ pub const SEQUENCES: &[Sequence] = &[
         trigger: Trigger::Wrapping,
     },
     Sequence {
+        marker: "#",
+        command: "heading_1",
+        trigger: Trigger::LinePrefix,
+    },
+    Sequence {
         marker: "-",
         command: "bullet_list",
         trigger: Trigger::LinePrefix,
@@ -100,9 +105,10 @@ mod tests {
         // FR-068. A sequence with no command behind it would make document
         // structure no other surface can produce or undo -- which is the
         // point at which "markdown input" has quietly become a dialect.
-        const FORMATTING: [&str; 5] = [
+        const FORMATTING: [&str; 6] = [
             "bold",
             "italic",
+            "heading_1",
             "bullet_list",
             "numbered_list",
             "quote_block",
@@ -119,16 +125,24 @@ mod tests {
     }
 
     #[test]
-    fn no_heading_sequence_until_there_is_a_heading_command() {
-        // `# ` is the sequence people reach for first and it is deliberately
-        // absent: the composer's toolbar and the registry have no heading
-        // verb, so `# ` would be the one way to make an `<h1>` in a draft --
-        // unreachable from the palette, unremovable by any control, and
-        // invisible to the `?` sheet. When a heading command exists this
-        // table grows a row and this test changes with it.
-        assert!(
-            !SEQUENCES.iter().any(|s| s.marker.starts_with('#')),
-            "a heading sequence arrived without a heading command"
+    fn a_hash_and_a_space_make_a_heading_and_a_hash_alone_does_not() {
+        // `# ` reaches the heading command (#1485), at the start of a block
+        // only: a `#` anywhere else is a channel, an issue number or a
+        // hashtag. Level one, the one level that has a command; `## ` and
+        // `### ` arrive with theirs, as `heading_2` and `heading_3`, and the
+        // ordering test below keeps them ahead of this row.
+        let hash: Vec<_> = SEQUENCES
+            .iter()
+            .filter(|s| s.marker.starts_with('#'))
+            .collect();
+        assert_eq!(
+            hash,
+            [&Sequence {
+                marker: "#",
+                command: "heading_1",
+                trigger: Trigger::LinePrefix,
+            }],
+            "the heading sequences are not the one the heading command has"
         );
     }
 
@@ -166,6 +180,7 @@ mod tests {
             [
                 "bold",
                 "bullet_list",
+                "heading_1",
                 "italic",
                 "numbered_list",
                 "quote_block"

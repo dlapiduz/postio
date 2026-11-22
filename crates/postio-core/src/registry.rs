@@ -1657,6 +1657,23 @@ static SPECS: &[CommandSpec] = &[
         requires: MAIL,
     },
     CommandSpec {
+        id: CommandId::Heading1,
+        title: "Heading 1",
+        // The heading shelf every editor shares -- Docs, Word, Notion --
+        // `mod+alt+<level>`, so levels two and three have their keys waiting
+        // beside it. Not the lists' `mod+shift+<n>`: on a Mac `cmd+shift+3`
+        // and `4` are the system's screenshots, which would leave the third
+        // level with no key. A terminal cannot send `ctrl+alt+1`
+        // (`terminal::legacy_deliverable`), so the alternate is `alt+1`,
+        // with the lists' `alt+7` to `alt+9` on the same shelf.
+        default_binding: "mod+alt+1",
+        alternate_bindings: &["alt+1"],
+        contexts: Context::Composer.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
+    CommandSpec {
         id: CommandId::BulletList,
         title: "Bulleted list",
         // The Docs/Gmail convention, and shift dodges nothing here — the

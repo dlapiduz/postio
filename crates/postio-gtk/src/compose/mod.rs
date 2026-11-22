@@ -295,6 +295,7 @@ impl Compose {
         commands.extend([
             CommandId::Bold,
             CommandId::Italic,
+            CommandId::Heading1,
             CommandId::BulletList,
             CommandId::NumberedList,
             CommandId::QuoteBlock,

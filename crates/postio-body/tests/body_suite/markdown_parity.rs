@@ -62,3 +62,26 @@ fn a_sentence_typed_in_either_composer_sends_the_same_html() {
     let terminal = to_document("**bold** and a [link](https://example.com)");
     assert_eq!(render(&terminal).1, render(&desktop).1);
 }
+
+#[test]
+fn a_heading_made_in_either_composer_is_the_same_first_level_heading() {
+    use postio_body::{Block, HeadingLevel};
+    // #1485: the desktop's `heading_1` is WebKit's `formatBlock` to `<h1>`,
+    // and the terminal's is `# ` -- the same command, so the same message.
+    // Level one on both sides: a `# ` that sent `<h2>` would be a second
+    // dialect of the one verb.
+    let desktop = parse("<h1>Agenda</h1><p>First, the gate.</p>");
+    let terminal = to_document("# Agenda\n\nFirst, the gate.");
+    assert!(
+        matches!(
+            desktop.blocks.first(),
+            Some(Block::Heading {
+                level: HeadingLevel::One,
+                ..
+            })
+        ),
+        "the desktop's heading is not a first-level one: {desktop:?}"
+    );
+    assert_eq!(terminal, desktop);
+    assert_eq!(render(&terminal).1, render(&desktop).1);
+}

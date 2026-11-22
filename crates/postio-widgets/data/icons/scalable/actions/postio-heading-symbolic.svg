@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <!-- A heading: an H, drawn at the weight of Adwaita's bold and italic
+       glyphs beside it on the composer's toolbar. Adwaita has no heading
+       icon, so this is drawn to the symbolic contract -- 16x16, one
+       colour, GTK recolours it. -->
+
+  <path d="M3 2h2v5h6V2h2v12h-2V9H5v5H3z"/>
+</svg>

@@ -23,7 +23,7 @@ crates/postio-ffi/tests/ffi_suite/reachability.rs 4
 crates/postio-ffi/tests/ffi_suite/thread_document.rs 8
 crates/postio-gtk/tests/focus_suite/bar.rs 17
 crates/postio-gtk/tests/focus_suite/capture.rs 5
-crates/postio-gtk/tests/focus_suite/compose.rs 5
+crates/postio-gtk/tests/focus_suite/compose.rs 6
 crates/postio-gtk/tests/focus_suite/contacts.rs 11
 crates/postio-gtk/tests/focus_suite/cursor.rs 4
 crates/postio-gtk/tests/focus_suite/digest.rs 6

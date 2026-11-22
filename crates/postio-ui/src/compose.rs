@@ -143,6 +143,26 @@ mod editor_script_tests {
     }
 
     #[test]
+    fn every_command_a_sequence_reaches_is_one_the_script_can_run_and_report() {
+        // A row in the table whose command the script has no entry for is a
+        // sequence that consumes the marker and formats nothing; one the
+        // reflection never reports is a toolbar toggle that stays off over
+        // the very formatting it made (#1485).
+        for sequence in crate::editor::markdown::SEQUENCES {
+            let command = sequence.command;
+            assert!(
+                EDITOR_SCRIPT.contains(&format!("\n    {command}: [")),
+                "the script cannot run {command}, which {:?} reaches",
+                sequence.marker
+            );
+            assert!(
+                EDITOR_SCRIPT.contains(&format!("active.push('{command}')")),
+                "the script never reports {command} as in force"
+            );
+        }
+    }
+
+    #[test]
     fn the_gtk_copy_of_the_bridge_has_not_drifted_from_this_one() {
         // The GTK copy is postio-widgets' since the composer moved there
         // (ADR 0043).
@@ -182,7 +202,15 @@ pub fn mark_script(command: &str) -> Option<String> {
         "italic" => "document.execCommand('italic');",
         "bullet_list" => "document.execCommand('insertUnorderedList');",
         "numbered_list" => "document.execCommand('insertOrderedList');",
-        // `formatBlock` toggles nothing on its own; the toggle is ours.
+        // `formatBlock` toggles nothing on its own; the toggle is ours, here
+        // and for the quote.
+        "heading_1" => {
+            "if (document.queryCommandValue('formatBlock') === 'h1') { \
+                 document.execCommand('formatBlock', false, 'p'); \
+             } else { \
+                 document.execCommand('formatBlock', false, 'h1'); \
+             }"
+        }
         "quote_block" => {
             "if (document.queryCommandValue('formatBlock') === 'blockquote') { \
                  document.execCommand('formatBlock', false, 'p'); \
@@ -277,6 +305,7 @@ mod mark_tests {
         for command in [
             "bold",
             "italic",
+            "heading_1",
             "bullet_list",
             "numbered_list",
             "quote_block",
@@ -301,7 +330,7 @@ mod mark_tests {
         // `insertUnorderedList` does not -- and the host's record is only
         // updated by that event. A mark that skipped it would apply on
         // screen and be lost on save.
-        for command in ["bold", "bullet_list", "quote_block"] {
+        for command in ["bold", "bullet_list", "heading_1", "quote_block"] {
             let script = mark_script(command).expect("a script");
             assert!(
                 script.contains("new Event('input')"),
@@ -316,6 +345,21 @@ mod mark_tests {
         // would otherwise nest rather than undo.
         let script = mark_script("quote_block").expect("a script");
         assert!(script.contains("queryCommandValue"), "no toggle: {script}");
+        assert!(
+            script.contains("'p'"),
+            "nothing to toggle back to: {script}"
+        );
+    }
+
+    #[test]
+    fn a_heading_toggles_back_to_a_paragraph_rather_than_only_applying() {
+        // The same `formatBlock` as the quote, so the same missing toggle:
+        // pressing Heading on a heading must give the paragraph back.
+        let script = mark_script("heading_1").expect("a script");
+        assert!(
+            script.contains("queryCommandValue('formatBlock') === 'h1'"),
+            "no toggle: {script}"
+        );
         assert!(
             script.contains("'p'"),
             "nothing to toggle back to: {script}"

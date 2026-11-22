@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use gtk::prelude::*;
 use gtk::{gdk, glib};
-use postio_body::{Block, Document, Inline};
+use postio_body::{Block, Document, HeadingLevel, Inline};
 use postio_widgets::composer::editor::{Editor, Format};
 use webkit6::prelude::*;
 
@@ -200,6 +200,24 @@ pub fn every_formatting_command_lands_as_canonical_structure() {
             editor.document().blocks.first(),
             Some(Block::List { ordered: true, .. })
         )
+    });
+
+    // ── the heading toggles on and back off (#1485) ──────────────────────
+    load_synced(&editor, text_paragraph("Agenda"), "Agenda");
+    select(editor.widget(), 0, 0);
+    editor.format(Format::Heading1);
+    lands(&editor, "a first-level heading", || {
+        matches!(
+            editor.document().blocks.first(),
+            Some(Block::Heading {
+                level: HeadingLevel::One,
+                ..
+            })
+        )
+    });
+    editor.format(Format::Heading1);
+    lands(&editor, "the heading toggled back to a paragraph", || {
+        matches!(editor.document().blocks.first(), Some(Block::Paragraph(_)))
     });
 
     // ── the quote block toggles on and back off ───────────────────────────

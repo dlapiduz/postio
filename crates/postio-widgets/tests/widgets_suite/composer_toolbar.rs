@@ -129,6 +129,14 @@ pub fn the_toolbar_reaches_the_registry_commands_and_reflects_the_caret() {
 
     let bold = toggle(&composer, "postio-toolbar-bold");
     let italic = toggle(&composer, "postio-toolbar-italic");
+    let heading = toggle(&composer, "postio-toolbar-heading");
+    // Postio's own glyph (#1485): Adwaita draws no heading, and a name the
+    // theme cannot find is drawn as the missing-image icon.
+    let glyph = heading.icon_name().expect("the Heading toggle has an icon");
+    assert!(
+        gtk::IconTheme::for_display(&display).has_icon(&glyph),
+        "the icon theme cannot find {glyph}"
+    );
     let bullet = toggle(&composer, "postio-toolbar-bullet-list");
     let numbered = toggle(&composer, "postio-toolbar-numbered-list");
     let quote = toggle(&composer, "postio-toolbar-quote-block");
@@ -142,6 +150,7 @@ pub fn the_toolbar_reaches_the_registry_commands_and_reflects_the_caret() {
     for button in [
         bold.clone().upcast::<gtk::Widget>(),
         italic.clone().upcast(),
+        heading.clone().upcast(),
         bullet.clone().upcast(),
         numbered.clone().upcast(),
         quote.clone().upcast(),
@@ -175,6 +184,7 @@ pub fn the_toolbar_reaches_the_registry_commands_and_reflects_the_caret() {
         )
     });
     assert!(!italic.is_active(), "italic was never applied");
+    assert!(!heading.is_active());
     assert!(!bullet.is_active());
     assert!(!numbered.is_active());
     assert!(!quote.is_active());

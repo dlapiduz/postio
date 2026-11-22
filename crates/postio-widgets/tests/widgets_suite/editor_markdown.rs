@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use gtk::gdk;
 use gtk::prelude::*;
-use postio_body::{Block, Document, Inline};
+use postio_body::{Block, Document, HeadingLevel, Inline};
 use postio_widgets::composer::editor::Editor;
 use postio_widgets::reader::BlobSource;
 use webkit6::prelude::*;
@@ -226,6 +226,56 @@ pub fn typed_markdown_becomes_the_formatting_its_command_produces() {
         "`> ` did not start a quote: {:?}",
         editor.document()
     );
+
+    // ── FR-067: `# ` reaches the heading command (#1485) ─────────────────
+    //
+    // And only the heading: the line after it, once Return is pressed, is
+    // a paragraph again, or every heading would swallow the message below.
+    ready(&editor);
+    type_text(editor.widget(), "# Agenda");
+    settle("the heading to cross the bridge", || {
+        matches!(
+            first_block(&editor),
+            Some(Block::Heading { level: HeadingLevel::One, inlines })
+                if inlines == [Inline::Text("Agenda".to_owned())]
+        )
+    });
+    eval_str(
+        editor.widget(),
+        "(() => { document.execCommand('insertParagraph'); return 'broke'; })()",
+    );
+    type_text(editor.widget(), "First");
+    settle("the line after the heading to cross the bridge", || {
+        editor.document().to_text().contains("First")
+    });
+    // The first two blocks: `ready`'s hand-built empty paragraph leaves a
+    // stray `<br>` behind any block gesture, a quote's as much as this
+    // one, which the composer's own pages do not hold.
+    assert!(
+        matches!(
+            editor.document().blocks.as_slice(),
+            [
+                Block::Heading { level: HeadingLevel::One, .. },
+                Block::Paragraph(words),
+                ..
+            ] if words == &[Inline::Text("First".to_owned())]
+        ),
+        "the line after `# Agenda` is not a paragraph of its own: {:?}",
+        editor.document()
+    );
+
+    // FR-071: a `#` anywhere but the start of a block is a number sign.
+    ready(&editor);
+    type_text(editor.widget(), "see # 4 and #5");
+    settle("the prose to cross the bridge", || {
+        editor.document().to_text().contains("#5")
+    });
+    assert!(
+        matches!(first_block(&editor), Some(Block::Paragraph(_))),
+        "a mid-sentence `# ` made a heading: {:?}",
+        editor.document()
+    );
+    assert_eq!(editor.document().to_text().trim(), "see # 4 and #5");
 
     // ── FR-070: one undo puts the literal characters back ────────────────
     //

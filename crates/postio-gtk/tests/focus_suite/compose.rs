@@ -404,3 +404,110 @@ pub fn a_reply_to_a_message_still_downloading_says_it_is_not_quoted() {
         );
     });
 }
+
+/// The composer's Heading toggle, as a person sees it: lit or not.
+fn heading_toggle(composer: &postio_widgets::composer::Composer) -> gtk::ToggleButton {
+    support::with_class(composer, "postio-toolbar-heading")
+        .into_iter()
+        .next()
+        .and_downcast::<gtk::ToggleButton>()
+        .expect("the toolbar carries a Heading toggle")
+}
+
+/// What the body's `nth` block is drawn as: its tag, and whether its text is
+/// set larger than the body's own.
+fn block_drawn(composer: &postio_widgets::composer::Composer, nth: usize) -> String {
+    composer.test_body_eval(&format!(
+        "(() => {{ const block = document.body.children[{nth}]; \
+           if (!block) return 'none'; \
+           const size = (el) => parseFloat(getComputedStyle(el).fontSize); \
+           return block.tagName + ' ' + block.textContent + ' ' \
+             + (size(block) > size(document.body) ? 'larger' : 'body-sized'); }})()"
+    ))
+}
+
+/// #1485: `ctrl+alt+1` makes the line a heading and takes it back off, and
+/// `# ` at the start of a line does the same. Each is drawn as a heading in
+/// the body and lights the toolbar's Heading toggle, which goes out again on
+/// a line that is not one.
+pub fn the_heading_key_and_its_markdown_make_a_heading_the_toolbar_shows() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (_fixture, window) = support::three_in_the_inbox().await;
+        support::keys(&window, &["c"]);
+        assert!(
+            crate::settle_until(async || window.composer().is_some_and(|c| c.is_open())).await,
+            "c opened no composer"
+        );
+        let composer = window.composer().expect("the composer");
+        let toggle = heading_toggle(&composer);
+        assert!(toggle.icon_name().is_some(), "the Heading toggle is drawn");
+        composer.test_focus_field(postio_widgets::composer::Field::Body);
+        composer.test_set_body("Agenda");
+        assert!(
+            composer.marks_lit().is_empty(),
+            "a paragraph is not a heading"
+        );
+
+        // ── the key, on and off ──────────────────────────────────────────
+        let heading = gtk::gdk::ModifierType::CONTROL_MASK | gtk::gdk::ModifierType::ALT_MASK;
+        support::press(&window, "1", heading);
+        assert!(
+            crate::settle_until(async || block_drawn(&composer, 0) == "H1 Agenda larger").await,
+            "ctrl+alt+1 made no heading of the line: {}",
+            block_drawn(&composer, 0)
+        );
+        // Heading alone: the heading's own weight is not the Bold toggle's.
+        assert!(
+            crate::settle_until(async || composer.marks_lit() == ["heading_1"]).await,
+            "the toolbar shows {:?} over a heading",
+            composer.marks_lit()
+        );
+        support::press(&window, "1", heading);
+        assert!(
+            crate::settle_until(async || block_drawn(&composer, 0) == "P Agenda body-sized").await,
+            "a second ctrl+alt+1 left the heading: {}",
+            block_drawn(&composer, 0)
+        );
+        assert!(
+            crate::settle_until(async || composer.marks_lit().is_empty()).await,
+            "the toolbar shows {:?} over a paragraph",
+            composer.marks_lit()
+        );
+
+        // ── `# `, typed at the start of the next line ────────────────────
+        composer.test_body_eval(
+            "(() => { const sel = window.getSelection(); \
+               sel.selectAllChildren(document.body); sel.collapseToEnd(); \
+               document.execCommand('insertParagraph'); return 'broke'; })()",
+        );
+        for character in "# Next".chars() {
+            composer.test_body_eval(&format!(
+                "(() => {{ document.execCommand('insertText', false, '{character}'); \
+                   return 'typed'; }})()"
+            ));
+        }
+        assert!(
+            crate::settle_until(async || block_drawn(&composer, 1) == "H1 Next larger").await,
+            "`# ` made no heading of the line: {}",
+            block_drawn(&composer, 1)
+        );
+        assert!(
+            crate::settle_until(async || composer.marks_lit() == ["heading_1"]).await,
+            "the toolbar shows {:?} over the typed heading",
+            composer.marks_lit()
+        );
+        assert_eq!(
+            block_drawn(&composer, 0),
+            "P Agenda body-sized",
+            "the line above was touched"
+        );
+        assert_eq!(
+            composer.test_body_eval("String(document.body.children.length)"),
+            "2",
+            "the heading left lines behind it"
+        );
+    });
+}
