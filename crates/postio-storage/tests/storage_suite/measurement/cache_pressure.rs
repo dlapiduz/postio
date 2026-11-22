@@ -1,7 +1,3 @@
-//! POSTIO-MEASUREMENT: its output is numbers a person reads, so it runs on
-//! the nightly timer rather than the merge path. `.config/nextest.toml`'s
-//! `profile.default` filter is what holds it back; `--profile nightly` runs it.
-
 #![allow(clippy::disallowed_methods)] // the crate's own code prepares through `sql::statement`; a test may reach the engine directly
 
 use std::time::{Duration, Instant};

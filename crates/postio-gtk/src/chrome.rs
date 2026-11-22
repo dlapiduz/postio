@@ -497,12 +497,4 @@ impl Chrome {
             .is_visible()
             .then(|| self.filtered_today_label.text().to_string())
     }
-
-    pub fn press_filtered_today(&self) {
-        self.filtered_today_button.emit_clicked();
-    }
-
-    pub fn waiting_counts(&self) -> (&gtk::Box, &gtk::Box) {
-        (&self.filtered_today, &self.digest_rules)
-    }
 }

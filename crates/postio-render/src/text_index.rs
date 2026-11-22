@@ -508,7 +508,7 @@ impl TextIndex {
     /// `None` when the reader does not draw it. When drawn more than once, the
     /// occurrence nearest the excerpt's proportional place in its source wins: the
     /// offset cannot address the index, but its proportion survives well enough
-    /// (`tests/excerpt_locate.rs`).
+    /// (`tests/render_suite/measurement/excerpt_locate.rs`).
     pub fn locate(&self, excerpt: crate::Excerpt<'_>) -> Option<Range<usize>> {
         let wanted = excerpt.offset as f64 / excerpt.source_len.max(1) as f64;
         let drawn = self.text.chars().count().max(1) as f64;

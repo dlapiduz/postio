@@ -481,29 +481,6 @@ pub fn settings_add_filter(
     })
 }
 
-#[uniffi::export]
-pub fn settings_reader_zoom(text: String) -> Option<u16> {
-    Some(Config::from_toml_str(&text).ok()?.reader.zoom)
-}
-
-#[uniffi::export]
-pub fn settings_zoom_steps() -> Vec<u16> {
-    postio_config::ZOOM_STEPS.to_vec()
-}
-
-#[uniffi::export]
-pub fn settings_patch_reader_zoom(text: String, zoom: u16) -> Result<String, SettingsError> {
-    let mut reader = Config::from_toml_str(&text)
-        .map_err(|err| SettingsError::Invalid {
-            message: err.to_string(),
-        })?
-        .reader;
-    reader.zoom = postio_config::nearest_zoom(zoom);
-    postio_config::patch_reader(&text, &reader).map_err(|err| SettingsError::Invalid {
-        message: err.to_string(),
-    })
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct FilteringPageFfi {
     pub switch: String,

@@ -803,10 +803,6 @@ impl Composer {
         imp.filling.set(was);
     }
 
-    pub fn forwarded_folded(&self) -> bool {
-        !self.imp().held.borrow().is_empty()
-    }
-
     pub fn identity(&self) -> Option<Identity> {
         let selected = self.imp().identity.selected() as usize;
         self.imp().identities.borrow().get(selected).cloned()

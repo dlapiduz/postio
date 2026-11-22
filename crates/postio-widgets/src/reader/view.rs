@@ -459,10 +459,6 @@ impl Reader {
         }
     }
 
-    pub fn allowlist_snapshot(&self) -> RemoteImageAllowList {
-        self.allowlist.borrow().clone()
-    }
-
     pub fn banner_visible(&self) -> bool {
         self.notices.shows(Notice::RemoteImages)
     }

@@ -321,8 +321,6 @@ pub fn thread_chip(messages: u32) -> Option<String> {
     (messages > 1).then(|| format!("Latest of {messages} in this thread"))
 }
 
-pub const LATER_MESSAGE: &str = "later message";
-
 pub const EARLIER_MESSAGE: &str = "earlier message";
 
 pub const ADD_LABEL: &str = "+ Label";

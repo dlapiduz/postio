@@ -76,10 +76,6 @@ impl Outcome {
     }
 }
 
-/// Two reasons a shortlist can be empty; which one it is decides the next keystroke.
-pub const NOTHING_MATCHED: &str = "Nothing matched, so there is nothing to narrow.";
-pub const NOTHING_TO_NARROW: &str = "Every match is alike — nothing left to narrow by.";
-
 const MARK_CLASS: &str = "postio-match";
 
 /// `script` and `style` never survive the sanitizer; listed so the highlighter cannot corrupt one

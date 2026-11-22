@@ -195,7 +195,7 @@ jobs:
       # `cache_pressure` is the one test no shared runner runs: it asserts a larger cache is
       # measurably faster, a timing CLAUDE.md does not ask of a shared runner, and it timed out at
       # 240s, 720s and 1200s. Run it with `cargo nextest run --profile nightly -E
-      # 'binary(cache_pressure)'` on a workstation. The exclusion is `profile.ci-full`, not an `-E`
+      # 'test(/^measurement::cache_pressure::/)'` on a workstation. The exclusion is `profile.ci-full`, not an `-E`
       # here, because `release.yml`'s gate must hold out the same thing. Through the flake-retry
       # script (#1710): a test that fails again alone still fails the run; a forgiven flake is a
       # `::warning::`. Tests that fail twice go to `nightly-failed-tests`, which

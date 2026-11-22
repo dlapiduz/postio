@@ -759,8 +759,6 @@ pub async fn rebuild(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
-pub const SCHEMA_FOR_TEST: &str = SCHEMA;
-
 const BODY_INDEX: &str = "CREATE INDEX IF NOT EXISTS messages_body_fts ON message_search_bodies USING fts (body_search);";
 
 const SCHEMA: &str = "\

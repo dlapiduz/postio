@@ -1,15 +1,7 @@
-//! Spike: can a sentence be found again in the rendered body from nothing but its excerpt? Measures
-//! `TextIndex::locate` over the render corpus and fails if a rate falls below its floor.
-//!
-//! POSTIO-MEASUREMENT: its output is a table a person reads, and it renders
-//! the whole corpus three times over (about ninety seconds in a debug
-//! build), so it runs nightly (`--profile nightly`), where its floors still
-//! hold the rates below.
+// Spike: can a sentence be found again in the rendered body from nothing but its excerpt? Measures
+// `TextIndex::locate` over the render corpus and fails if a rate falls below its floor.
 
-// The render suite's shared fonts and requests: this is a binary of its
-// own, so the nightly can run it apart (`POSTIO-MEASUREMENT`).
-#[path = "render_suite/support/mod.rs"]
-mod support;
+use crate::support;
 
 use std::collections::BTreeMap;
 use std::ops::Range;

@@ -1,8 +1,5 @@
-//! Round trips and wall clock for backfilling one folder's bodies when every command takes a round
-//! trip (#1941).
-//!
-//! POSTIO-MEASUREMENT: its output is numbers a person reads and compares
-//! across changes to the backfill, and at 50 ms a command it takes a minute.
+// Round trips and wall clock for backfilling one folder's bodies when every command takes a round
+// trip (#1941).
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};

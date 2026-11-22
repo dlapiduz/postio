@@ -8,6 +8,7 @@ mod last_synced;
 mod list_refresh;
 mod local_store;
 mod mail_store;
+mod measurement;
 mod network;
 mod read_state;
 mod search;

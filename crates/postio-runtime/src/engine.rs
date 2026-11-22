@@ -825,13 +825,6 @@ struct State {
     filing: FilingSlot,
 }
 
-static QUEUE_CHECKS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-#[doc(hidden)]
-pub fn queue_checks() -> u64 {
-    QUEUE_CHECKS.load(std::sync::atomic::Ordering::Relaxed)
-}
-
 /// For tests: waits that woke on their own clock rather than on a send or a write.
 static IDLE_WAKEUPS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
@@ -843,7 +836,6 @@ pub fn idle_wakeups() -> u64 {
 /// Silent about failure: a connection this cannot check out is reported elsewhere, and a skipped
 /// drain costs one tick.
 async fn has_queued_work(parts: &EngineParts, store: &Store) -> bool {
-    QUEUE_CHECKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let Ok(connection) = store.connect_background().await else {
         return false;
     };

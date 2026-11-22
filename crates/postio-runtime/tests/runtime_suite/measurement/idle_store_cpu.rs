@@ -1,8 +1,3 @@
-//! POSTIO-MEASUREMENT: its output is numbers a person reads, and it costs
-//! 44.1 s, so it runs on the nightly timer rather than the merge path
-//! The idle engine's CPU must not follow store size: a per-tick scan is invisible at eleven rows
-//! (#1216).
-
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 

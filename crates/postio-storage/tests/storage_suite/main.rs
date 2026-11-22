@@ -52,6 +52,7 @@ mod mailbox_roles;
 mod mailbox_size;
 mod mailboxes;
 mod markers;
+mod measurement;
 mod messages;
 mod migrations;
 mod operations;

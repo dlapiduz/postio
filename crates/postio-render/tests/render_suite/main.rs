@@ -1,6 +1,7 @@
 //! One test binary: nothing here needs a process of its own. A file runs only if declared below
 //! (`scripts/checks/check-suite-modules.py`).
 
+mod measurement;
 mod support;
 
 mod affordance_sweep;

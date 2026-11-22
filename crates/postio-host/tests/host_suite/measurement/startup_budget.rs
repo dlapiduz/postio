@@ -1,8 +1,3 @@
-//! POSTIO-MEASUREMENT: builds a five-thousand-message store and prints timings a person reads, so
-//! it runs nightly.
-//! Run by hand: `cargo nextest run -p postio-host --profile nightly --test startup_budget
-//! --no-capture`.
-
 use std::time::{Duration, Instant};
 
 use postio_client::protocol::ClientKind;

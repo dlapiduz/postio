@@ -141,14 +141,6 @@ impl SessionOptions {
         self
     }
 
-    /// Read this installation's real `config.toml`: the escape hatch for the rare test about the
-    /// installed file. Other tests want `with_config_for_test`.
-    #[cfg(feature = "testing")]
-    pub fn with_installed_config_for_test(mut self) -> Self {
-        self.config = ConfigSource::Installed;
-        self
-    }
-
     /// Configured by an empty document, not the machine's `config.toml`, so a result means the same
     /// wherever it runs (#1219).
     #[cfg(feature = "testing")]
@@ -4305,18 +4297,6 @@ impl Session {
                 UiEvent::from(event)
             }),
             local = self.local.1.recv() => local.ok(),
-        }
-    }
-
-    /// Test-only: the next event if one is already waiting, rather than a wait; with the channel
-    /// open, a blocking read hangs the binary instead of failing.
-    #[cfg(feature = "testing")]
-    pub fn try_next_event(&self) -> Option<UiEvent> {
-        // Both channels, as `next_event`: a drain reading only the engine's would miss
-        // `ConversationReady` and `ReindexProgress`.
-        match self.events.try_next() {
-            Some(engine) => Some(UiEvent::from(engine)),
-            None => self.local.1.try_recv().ok(),
         }
     }
 
