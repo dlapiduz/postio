@@ -83,8 +83,8 @@ frontends).
 
 **Scale/Scope**:
 - 8 constructs gain document shapes;
-- 29 registry ids (16 in `Composer`, 10 in the table picker, 6 picker
-  choose keys) across the two contexts;
+- 37 registry ids: 21 in `Composer`, 10 in the table picker and 6
+  picker choose keys;
 - about 20 sequence rows;
 - 3 composers;
 - 1 new picker use, plus 2 smaller ones.

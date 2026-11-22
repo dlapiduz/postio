@@ -254,7 +254,7 @@ Mac author every construct.
 
 ## Phase 9: Polish and cross-cutting
 
-- [ ] T055 [P] Add a "Superseded in part" note to spec 002's FR-067 to FR-072 in `docs/archive/specs/002-compose-editor/spec.md`, pointing at this spec for the sequence set. FR-068 itself is unchanged.
+- [ ] T055 [P] Cite this spec beside spec 002 in the module docs of `crates/postio-ui/src/editor/markdown.rs` and `crates/postio-body/src/document.rs`, as the owner of the sequence set and of the closed set's size. `docs/archive/` is frozen (`check-archive-frozen.py`), so spec 002 itself is not edited.
 - [ ] T056 [P] Add ADR 0039 and ADR 0004 cross-references to this spec. ADR 0039's "What would falsify this" gains tables in a native text view as a second thing to spike. ADR 0004's closed-set count is updated, and D5 cited.
 - [ ] T057 [P] Record recipient-client results (`quickstart.md` §7) in `docs/notes/2026-<mm>-<dd>-formatting-in-recipient-clients.md`, and list it in `docs/notes/README.md`. The maintainer runs the send.
 - [ ] T058 Run `quickstart.md` §1–6 end to end, and `scripts/target-sweep.py`. Land with `scripts/issue-land.sh --detach --full-suite --title 'feat(body,ui,widgets): compose every Markdown construct'`.
