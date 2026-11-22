@@ -49,6 +49,7 @@ specs/007-postio-focus T265).
 | `reading.id` | The open message's `shown()`, while the view is `reader` |
 | `reading.scroll` | The open message's `scroll_extent()`. `reading.focused` is not observed: one message is shown at a time (C2) |
 | `composer.*` | `open` as `view`, or a composition in a window of its own; `detached` is that composer's `is_detached()` |
+| `app.focus.composer.marks` | The composer toolbar's formatting toggles that are lit (`Composer::marks_lit`), by command id and space-joined: `heading_1` with the caret in a heading |
 | `back_depth` | `None` (Back is a cascade) |
 | `app.focus.bulk` | Whether the bulk bar is shown, and its summary (`Bulk::summary`) |
 | `app.focus.cursor.unread` | How many messages of the cursor's conversation are unread, as the list row carries it: a message read by the dwell takes one off |

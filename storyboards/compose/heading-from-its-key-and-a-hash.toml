@@ -1,0 +1,43 @@
+# The composer's heading (#1485): a line becomes a first-level heading from
+# its key, `ctrl+alt+1`, or from `# ` typed at the start of the line, and the
+# same key takes it back to a paragraph.
+#
+# The maintainer's decision (2026-11-22) was a heading command together with
+# its `# ` sequence: FR-068 lets a typed sequence reach only formatting a
+# command already makes, so the toolbar shows the heading as a lit toggle
+# whichever way it was made, and the key undoes what the sequence did.
+#
+# Typed above a reply's quote, where a reply's own words go. Red on the
+# base, which has no heading command to press and leaves `# ` as typed.
+apps   = ["focus"]
+source = { kind = "issue", ref = "#1485" }
+proof  = "base"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+check   = { cursor.index = 0 }
+
+[[step]]
+command = "reply"
+check   = { composer.open = true, keyboard.field = "body", keyboard.typing = true, app.focus.composer.marks = "" }
+expect  = "A reply opens with the caret in the body, above the quote. No formatting toggle is lit."
+
+[[step]]
+type    = "# "
+check   = { composer.open = true, keyboard.field = "body", app.focus.composer.marks = "heading_1", app.focus.compose.typed = "" }
+expect  = "The `# ` is gone: the line is a heading now, empty, and the toolbar's Heading toggle is lit."
+
+[[step]]
+type    = "Agenda"
+check   = { keyboard.field = "body", app.focus.composer.marks = "heading_1", app.focus.compose.typed = "Agenda" }
+expect  = "Agenda is written as a heading -- larger and heavier than body text, with no `#` in front of it -- and the Heading toggle stays lit."
+
+[[step]]
+command = "heading_1"
+check   = { keyboard.field = "body", keyboard.typing = true, app.focus.composer.marks = "", app.focus.compose.typed = "Agenda" }
+expect  = "The heading key takes it back to an ordinary line of body text, the toggle goes out, and the caret stays in the body."
+
+[[step]]
+command = "heading_1"
+check   = { keyboard.field = "body", keyboard.typing = true, app.focus.composer.marks = "heading_1", app.focus.compose.typed = "Agenda" }
+expect  = "Pressed again it is a heading again, the toggle lit, and nothing else in the reply moved."

@@ -38,7 +38,7 @@ public enum ComposeCommands {
     /// request and the view performs it. `postio_ui::compose::mark_script`
     /// owns which script, for both frontends.
     nonisolated private static let marks = [
-        "bold", "italic", "bullet_list", "numbered_list", "quote_block",
+        "bold", "italic", "heading_1", "bullet_list", "numbered_list", "quote_block",
     ]
 
     /// Every id this layer claims.

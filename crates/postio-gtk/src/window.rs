@@ -6845,6 +6845,13 @@ impl FocusWindow {
                 "focus.composer.quoted".to_owned(),
                 serde_json::json!(composer.draft().body.text.is_some()),
             );
+            // The formatting the toolbar shows lit where the caret is, as
+            // one string ("heading_1", "bold italic"), since a check
+            // compares a literal.
+            app.insert(
+                "focus.composer.marks".to_owned(),
+                serde_json::json!(composer.marks_lit().join(" ")),
+            );
         }
         app.insert(
             "focus.bulk".to_owned(),

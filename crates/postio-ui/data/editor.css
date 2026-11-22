@@ -35,6 +35,21 @@ p {
   margin: 0 0 0.6em 0;
 }
 
+/* A heading as the app colours treatment reads it (`treatment.css`): the
+   body's face at 600, 20px over a 15px body and a 28px line, so what is
+   written here is what the reader shows. In rem, because this sheet scales
+   from the text-size setting. */
+h1 {
+  font-weight: 600;
+  font-size: 1.3333rem;
+  line-height: 1.4;
+  margin: 0.8em 0 0.3em 0;
+}
+
+h1:first-child {
+  margin-top: 0;
+}
+
 /* The reader's own link rule (#752): colour alone leaves the engine deciding
    the only other cue, and says nothing about hover. */
 a {

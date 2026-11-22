@@ -320,6 +320,9 @@ public struct ComposeEditor: NSViewRepresentable {
                      color: -apple-system-label; caret-color: -apple-system-label;
                      outline: none; overflow-wrap: break-word; }
               a { color: -apple-system-blue; }
+              /* A heading as the reader's app treatment draws one. */
+              h1 { font: 600 20px/28px -apple-system, sans-serif; margin: 12px 0 4px; }
+              h1:first-child { margin-top: 0; }
               blockquote { margin: 0 0 0 12px; padding-left: 8px;
                            border-left: 2px solid rgba(127,127,127,0.5); }
             </style></head>

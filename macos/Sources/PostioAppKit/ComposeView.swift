@@ -863,6 +863,7 @@ public enum ComposeFormat {
     public static let marks: [Mark] = [
         Mark(command: "bold", symbol: "bold", title: "Bold"),
         Mark(command: "italic", symbol: "italic", title: "Italic"),
+        Mark(command: "heading_1", symbol: "textformat.size", title: "Heading 1"),
         Mark(command: "bullet_list", symbol: "list.bullet", title: "Bulleted list"),
         Mark(command: "numbered_list", symbol: "list.number", title: "Numbered list"),
         Mark(command: "quote_block", symbol: "text.quote", title: "Quote"),

@@ -686,6 +686,10 @@ const CASES: &[(&str, fn())] = &[
         compose::a_reply_to_a_message_still_downloading_says_it_is_not_quoted as fn(),
     ),
     (
+        "compose::the_heading_key_and_its_markdown_make_a_heading_the_toolbar_shows",
+        compose::the_heading_key_and_its_markdown_make_a_heading_the_toolbar_shows as fn(),
+    ),
+    (
         "invitations::the_open_invitation_s_card_answers_with_its_keys",
         invitations::the_open_invitation_s_card_answers_with_its_keys as fn(),
     ),

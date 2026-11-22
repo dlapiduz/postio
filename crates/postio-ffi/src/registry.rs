@@ -354,6 +354,7 @@ pub const INTERCEPTED: &[postio_core::CommandId] = {
         // it -- so a session cannot answer these and the window does.
         C::Bold,
         C::Italic,
+        C::Heading1,
         C::BulletList,
         C::NumberedList,
         C::QuoteBlock,

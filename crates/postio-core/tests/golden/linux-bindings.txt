@@ -87,6 +87,7 @@ edit_externally	ctrl+shift+e | alt+shift+e
 toggle_preview	ctrl+shift+p | alt+p
 bold	ctrl+b
 italic	ctrl+i | alt+i
+heading_1	ctrl+alt+1 | alt+1
 bullet_list	ctrl+shift+8 | alt+8
 numbered_list	ctrl+shift+7 | alt+7
 insert_link	ctrl+shift+k | alt+k

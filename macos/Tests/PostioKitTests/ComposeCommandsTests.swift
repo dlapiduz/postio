@@ -35,7 +35,7 @@ import Testing
     @Test func aMarkReachesTheDocument() {
         // `⌘B` over a rich draft asks the surface to bold the selection.
         let composer = model()
-        for mark in ["bold", "italic", "bullet_list", "numbered_list", "quote_block"] {
+        for mark in ["bold", "italic", "heading_1", "bullet_list", "numbered_list", "quote_block"] {
             let before = composer.markRequest?.serial ?? 0
             #expect(ComposeCommands.run(mark, on: composer, through: nil))
             #expect(composer.markRequest?.command == mark)

@@ -315,6 +315,7 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::InsertImage
         | C::Bold
         | C::Italic
+        | C::Heading1
         | C::BulletList
         | C::NumberedList
         | C::InsertLink

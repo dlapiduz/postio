@@ -20,5 +20,7 @@
   <gresource prefix="/dev/postio/Widgets/icons">
     <file compressed="true" alias="scalable/apps/dev.postio.Postio.svg">scalable/apps/dev.postio.Postio.svg</file>
     <file compressed="true" alias="scalable/apps/dev.postio.Postio-symbolic.svg">scalable/apps/dev.postio.Postio-symbolic.svg</file>
+    <!-- The composer's heading toggle: Adwaita draws none. -->
+    <file compressed="true" alias="scalable/actions/postio-heading-symbolic.svg">scalable/actions/postio-heading-symbolic.svg</file>
   </gresource>
 </gresources>

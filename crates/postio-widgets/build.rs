@@ -71,10 +71,14 @@ fn main() {
     // (`<size>/<context>/<name>`): the bundle and the packaging read the
     // same files.
     let icons_dir = data_dir.join("icons");
-    for name in ["dev.postio.Postio.svg", "dev.postio.Postio-symbolic.svg"] {
+    for name in [
+        "apps/dev.postio.Postio.svg",
+        "apps/dev.postio.Postio-symbolic.svg",
+        "actions/postio-heading-symbolic.svg",
+    ] {
         println!(
             "cargo:rerun-if-changed={}",
-            icons_dir.join("scalable/apps").join(name).display()
+            icons_dir.join("scalable").join(name).display()
         );
     }
     glib_build_tools::compile_resources(

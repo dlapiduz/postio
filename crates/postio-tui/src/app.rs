@@ -2826,11 +2826,13 @@ impl App {
                     }]
                 })
                 .unwrap_or_default(),
-            "bold" | "italic" | "bullet_list" | "numbered_list" | "quote_block" | "insert_link" => {
+            "bold" | "italic" | "heading_1" | "bullet_list" | "numbered_list" | "quote_block"
+            | "insert_link" => {
                 use crate::composer::Format;
                 let format = match id {
                     "bold" => Format::Bold,
                     "italic" => Format::Italic,
+                    "heading_1" => Format::Heading1,
                     "bullet_list" => Format::BulletList,
                     "numbered_list" => Format::NumberedList,
                     "quote_block" => Format::Quote,
@@ -5607,6 +5609,32 @@ pub(crate) mod tests {
                 .iter()
                 .any(|effect| matches!(effect, Effect::Autosave { .. })),
             "{effects:?}"
+        );
+    }
+
+    #[test]
+    fn the_heading_command_makes_the_line_a_heading_in_markdown() {
+        // #1485: the desktop's heading is `# ` here, as its other marks are
+        // their Markdown.
+        let mut app = app((160, 40));
+        addressed(&mut app, "Tide gate");
+        app.composer
+            .as_mut()
+            .unwrap()
+            .focus_field(crate::composer::Field::Body);
+        let effects = app.composer_command("heading_1");
+        assert_eq!(app.composer().unwrap().markdown(), "# Looking now.");
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::Autosave { .. })),
+            "{effects:?}"
+        );
+        app.composer_command("heading_1");
+        assert_eq!(
+            app.composer().unwrap().markdown(),
+            "Looking now.",
+            "a second press gives the paragraph back"
         );
     }
 

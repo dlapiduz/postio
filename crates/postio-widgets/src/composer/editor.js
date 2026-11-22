@@ -33,6 +33,7 @@ document.execCommand('styleWithCSS', false, 'false');
 const MARKDOWN_COMMANDS = {
     bold: ['bold', null],
     italic: ['italic', null],
+    heading_1: ['formatBlock', 'h1'],
     bullet_list: ['insertUnorderedList', null],
     numbered_list: ['insertOrderedList', null],
     quote_block: ['formatBlock', 'blockquote'],
@@ -251,6 +252,7 @@ function reportFormat() {
     const active = [];
     if (document.queryCommandState('bold')) active.push('bold');
     if (document.queryCommandState('italic')) active.push('italic');
+    if (document.queryCommandValue('formatBlock') === 'h1') active.push('heading_1');
     if (document.queryCommandState('insertUnorderedList')) active.push('bullet_list');
     if (document.queryCommandState('insertOrderedList')) active.push('numbered_list');
     if (document.queryCommandValue('formatBlock') === 'blockquote') active.push('quote_block');

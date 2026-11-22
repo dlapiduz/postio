@@ -396,6 +396,8 @@ pub struct FormatState {
     pub bold: bool,
     /// Inside `Emphasis`.
     pub italic: bool,
+    /// Inside a first-level heading.
+    pub heading_1: bool,
     /// Inside a bulleted list.
     pub bullet_list: bool,
     /// Inside a numbered list.
@@ -517,6 +519,7 @@ impl Editor {
                 let format = FormatState {
                     bold: tokens.contains(&"bold"),
                     italic: tokens.contains(&"italic"),
+                    heading_1: tokens.contains(&"heading_1"),
                     bullet_list: tokens.contains(&"bullet_list"),
                     numbered_list: tokens.contains(&"numbered_list"),
                     quote_block: tokens.contains(&"quote_block"),
@@ -902,6 +905,8 @@ pub enum Format {
     Bold,
     /// Toggle italic on the selection.
     Italic,
+    /// Toggle a first-level heading at the caret's block.
+    Heading1,
     /// Toggle a bulleted list at the caret's block.
     BulletList,
     /// Toggle a numbered list at the caret's block.
@@ -923,6 +928,13 @@ impl Editor {
         let command = match format {
             Format::Bold => "document.execCommand('bold');",
             Format::Italic => "document.execCommand('italic');",
+            Format::Heading1 => {
+                "if (document.queryCommandValue('formatBlock') === 'h1') { \
+                     document.execCommand('formatBlock', false, 'p'); \
+                 } else { \
+                     document.execCommand('formatBlock', false, 'h1'); \
+                 }"
+            }
             Format::BulletList => "document.execCommand('insertUnorderedList');",
             Format::NumberedList => "document.execCommand('insertOrderedList');",
             Format::QuoteBlock => {

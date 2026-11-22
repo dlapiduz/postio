@@ -622,7 +622,7 @@ mod imp {
         /// italic, bullet list, numbered list, quote block. Toggles because
         /// each reflects the caret — active when the selection already sits
         /// inside what the button would apply.
-        pub format_toggles: [gtk::ToggleButton; 5],
+        pub format_toggles: [gtk::ToggleButton; 6],
         /// The link button: a plain button, because a link is a dialog to
         /// fill in, not a state the caret can be in or out of.
         pub link_button: gtk::Button,
@@ -2143,6 +2143,9 @@ impl Composer {
             CommandId::Italic if self.is_open() => {
                 self.imp().body.format(editor::Format::Italic);
             }
+            CommandId::Heading1 if self.is_open() => {
+                self.imp().body.format(editor::Format::Heading1);
+            }
             CommandId::BulletList if self.is_open() => {
                 self.imp().body.format(editor::Format::BulletList);
             }
@@ -3230,34 +3233,7 @@ impl Composer {
         toolbar.set_accessible_role(gtk::AccessibleRole::Toolbar);
         toolbar.update_property(&[gtk::accessible::Property::Label("Formatting")]);
 
-        let toggles: [(CommandId, &str, &str); 5] = [
-            (
-                CommandId::Bold,
-                "format-text-bold-symbolic",
-                "postio-toolbar-bold",
-            ),
-            (
-                CommandId::Italic,
-                "format-text-italic-symbolic",
-                "postio-toolbar-italic",
-            ),
-            (
-                CommandId::BulletList,
-                "view-list-bullet-symbolic",
-                "postio-toolbar-bullet-list",
-            ),
-            (
-                CommandId::NumberedList,
-                "view-list-ordered-symbolic",
-                "postio-toolbar-numbered-list",
-            ),
-            (
-                CommandId::QuoteBlock,
-                "format-indent-more-symbolic",
-                "postio-toolbar-quote-block",
-            ),
-        ];
-        for (button, (id, icon, class)) in imp.format_toggles.iter().zip(toggles) {
+        for (button, (id, icon, class)) in imp.format_toggles.iter().zip(FORMAT_TOGGLES) {
             style_toolbar_button(button.as_ref(), id, icon, class);
             button.connect_clicked(glib::clone!(
                 #[weak(rename_to = composer)]
@@ -3331,6 +3307,7 @@ impl Composer {
             let states = [
                 state.bold,
                 state.italic,
+                state.heading_1,
                 state.bullet_list,
                 state.numbered_list,
                 state.quote_block,
@@ -3634,6 +3611,18 @@ impl Composer {
         self.add_inline_image(bytes, "image/png");
     }
 
+    /// The formatting the toolbar shows lit, by registry id, left to right:
+    /// what a person reads off it about where the caret is.
+    pub fn marks_lit(&self) -> Vec<&'static str> {
+        self.imp()
+            .format_toggles
+            .iter()
+            .zip(FORMAT_TOGGLES)
+            .filter(|(button, _)| button.is_active())
+            .map(|(_, (id, _, _))| id.as_str())
+            .collect()
+    }
+
     /// Script against the body's document, for assertions about what the
     /// surface actually rendered.
     #[doc(hidden)]
@@ -3824,6 +3813,44 @@ impl Composer {
         self.remove_attachment(index);
     }
 }
+
+/// The toolbar's formatting toggles, left to right: the command each runs,
+/// its icon and its style class. One list, so the toolbar and what it is
+/// observed to show cannot come to disagree about which toggle is which.
+const FORMAT_TOGGLES: [(CommandId, &str, &str); 6] = [
+    (
+        CommandId::Bold,
+        "format-text-bold-symbolic",
+        "postio-toolbar-bold",
+    ),
+    (
+        CommandId::Italic,
+        "format-text-italic-symbolic",
+        "postio-toolbar-italic",
+    ),
+    (
+        CommandId::Heading1,
+        // Adwaita has no heading icon; Postio draws its own to the
+        // symbolic contract, as it did the archive box.
+        "postio-heading-symbolic",
+        "postio-toolbar-heading",
+    ),
+    (
+        CommandId::BulletList,
+        "view-list-bullet-symbolic",
+        "postio-toolbar-bullet-list",
+    ),
+    (
+        CommandId::NumberedList,
+        "view-list-ordered-symbolic",
+        "postio-toolbar-numbered-list",
+    ),
+    (
+        CommandId::QuoteBlock,
+        "format-indent-more-symbolic",
+        "postio-toolbar-quote-block",
+    ),
+];
 
 /// The other children of the reading pane — what the composer takes over from.
 /// Whether `focus` is `widget` or something inside it.

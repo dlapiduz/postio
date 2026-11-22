@@ -45,6 +45,8 @@ pub enum Format {
     Bold,
     /// `*…*`.
     Italic,
+    /// `# ` at the start of the line.
+    Heading1,
     /// `- ` at the start of the line.
     BulletList,
     /// `1. ` at the start of the line.
@@ -266,6 +268,7 @@ impl Composer {
                     self.back(1);
                 }
             }
+            Format::Heading1 => self.toggle_prefix("# "),
             Format::BulletList => self.toggle_prefix("- "),
             Format::NumberedList => self.toggle_prefix("1. "),
             Format::Quote => self.toggle_prefix("> "),
@@ -825,8 +828,9 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn lists_and_quotes_prefix_the_line_and_a_second_press_takes_it_off() {
+    fn headings_lists_and_quotes_prefix_the_line_and_a_second_press_takes_it_off() {
         for (format, prefix) in [
+            (Format::Heading1, "# "),
             (Format::BulletList, "- "),
             (Format::NumberedList, "1. "),
             (Format::Quote, "> "),
