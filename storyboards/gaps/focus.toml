@@ -155,10 +155,6 @@ reason  = "CANDIDATE: the same unreachable keyboard (storyboards/list/digest-win
 
 # -- composer: the composer's dialog over the inbox, empty
 [[gap]]
-command = "bold"
-context = "composer"
-reason  = "formatting an empty body changes nothing visible until text is typed"
-[[gap]]
 command = "cancel_send"
 context = "composer"
 reason  = "an Outbox verb; nothing is in the Outbox"
@@ -166,10 +162,6 @@ reason  = "an Outbox verb; nothing is in the Outbox"
 command = "command_palette"
 context = "composer"
 reason  = "the composer's dialog has no arm for it; the palette is the inbox's bar"
-[[gap]]
-command = "italic"
-context = "composer"
-reason  = "formatting an empty body changes nothing visible until text is typed"
 [[gap]]
 command = "mark_sent"
 context = "composer"
