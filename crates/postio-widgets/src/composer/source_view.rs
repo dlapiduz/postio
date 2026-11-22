@@ -19,6 +19,9 @@ use postio_ui::editor::source::{QUOTE_LINE, strip_quote_marks};
 /// The tag a carried quote's line is drawn and guarded with.
 const CHIP_TAG: &str = "postio-quote-chip";
 
+/// The tag that hides the quote line's mark.
+const MARK_TAG: &str = "postio-quote-mark";
+
 /// The view, its strip and what its quote lines stand for.
 pub struct SourceView {
     root: gtk::Box,
@@ -61,6 +64,11 @@ impl SourceView {
         chip.set_editable(false);
         chip.set_style(gtk::pango::Style::Italic);
         buffer.tag_table().add(&chip);
+        // The line's private mark is the view's own, never drawn.
+        let mark = gtk::TextTag::new(Some(MARK_TAG));
+        mark.set_invisible(true);
+        mark.set_editable(false);
+        buffer.tag_table().add(&mark);
 
         let scroller = gtk::ScrolledWindow::builder()
             .child(&view)
@@ -345,6 +353,7 @@ fn remove_chip(buffer: &gtk::TextBuffer, key: gtk::gdk::Key) -> bool {
 fn tag_chips(buffer: &gtk::TextBuffer) {
     let (start, end) = buffer.bounds();
     buffer.remove_tag_by_name(CHIP_TAG, &start, &end);
+    buffer.remove_tag_by_name(MARK_TAG, &start, &end);
     for line in 0..buffer.line_count() {
         let Some(from) = buffer.iter_at_line(line) else {
             continue;
@@ -357,5 +366,8 @@ fn tag_chips(buffer: &gtk::TextBuffer) {
             to.forward_to_line_end();
         }
         buffer.apply_tag_by_name(CHIP_TAG, &from, &to);
+        let mut after_mark = from;
+        after_mark.forward_char();
+        buffer.apply_tag_by_name(MARK_TAG, &from, &after_mark);
     }
 }

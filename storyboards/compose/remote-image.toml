@@ -22,11 +22,11 @@ expect  = "A reply opens with the caret in the body, above the quote."
 [[step]]
 command = "toggle_markdown_source"
 check   = { app.focus.composer.view = "markdown" }
-expect  = "The body is Markdown, the quote a chip line below the caret."
+expect  = "The body is Markdown: the caret on an empty first line of its own, then the reply's attribution, then the quote as one chip line."
 
 [[step]]
 type    = "The chart: ![weekly chart](https://example.com/chart.png)"
-check   = { app.focus.composer.view = "markdown", app.focus.composer.not_attached = 1 }
+check   = { app.focus.composer.view = "markdown", app.focus.composer.not_attached = 1, app.focus.composer.source = "The chart: ![weekly chart](https://example.com/chart.png)\n\nOn 2026-06-02, Hollis Varga wrote:" }
 expect  = "The image is still its Markdown, and nothing was downloaded: under the body a row \"Not attached yet\" names \"weekly chart\" from example.com, with Download and attach ctrl+alt+i, and a line before Send says 1 image isn't attached and will be sent as a link."
 
 [[step]]

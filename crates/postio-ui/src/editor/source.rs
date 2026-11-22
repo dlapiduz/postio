@@ -70,6 +70,7 @@ pub fn open(document: &Document, caret: Option<&DocPosition>) -> Opened {
             offset: 0,
         },
     });
+    let in_room = caret.is_some_and(|caret| caret.path.first().is_none_or(|first| *first < room));
     let caret = shifted.as_ref();
     let mut text = String::new();
     let mut at = None;
@@ -121,7 +122,15 @@ pub fn open(document: &Document, caret: Option<&DocPosition>) -> Opened {
         }
     }
     flush(&mut text, &mut run, run_start, &mut at);
-    let caret = caret.map(|_| at.unwrap_or(0));
+    let mut caret = caret.map(|_| at.unwrap_or(0));
+    // The room stays as a blank line at the top, with the caret on it when
+    // it was there: what is typed is its own paragraph, never joined to the
+    // first words. Markdown reads a leading blank line as nothing, so an
+    // untouched room returns as no room.
+    if room > 0 && !text.is_empty() {
+        text.insert_str(0, "\n\n");
+        caret = caret.map(|at| if in_room { 0 } else { at + 2 });
+    }
     Opened {
         text,
         caret,
@@ -341,7 +350,18 @@ mod tests {
                 offset: 0,
             }),
         );
-        assert!(opened.text.starts_with("Thanks,"), "{:?}", opened.text);
+        assert!(opened.text.starts_with("\n\nThanks,"), "{:?}", opened.text);
         assert_eq!(opened.caret, Some(0));
+        // Typed on that line, it is a paragraph of its own.
+        let typed = format!("Hello{}", opened.text);
+        let returned = close(&typed, &opened.quotes, None);
+        assert_eq!(
+            returned.document.blocks[0],
+            markdown::to_document("Hello").blocks[0]
+        );
+        assert_eq!(returned.document.blocks.len(), 3);
+        // Untouched, the room goes and the rest is as it was.
+        let untouched = close(&opened.text, &opened.quotes, None);
+        assert_eq!(untouched.document.blocks, document.blocks[1..].to_vec());
     }
 }
