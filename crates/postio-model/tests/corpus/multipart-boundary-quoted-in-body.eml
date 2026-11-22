@@ -1,0 +1,33 @@
+Message-ID: <20260611T091500.mimequote@lists.example.org>
+Date: Thu, 11 Jun 2026 09:15:00 +0000
+From: Ada Example <ada@example.com>
+To: MIME helpers <mime-help@lists.example.org>
+Subject: Re: why does my digest stop halfway?
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_quoted_5e0a"
+
+--=_quoted_5e0a
+Content-Type: text/plain; charset=us-ascii
+Content-Transfer-Encoding: 7bit
+
+Your digest uses the boundary =_quoted_5e0a, so a reader that matches
+it anywhere stops at the first quote of it. Three ways it shows up:
+
+1. Mid-line, as in: the parts are split on --=_quoted_5e0a here.
+
+2. At the start of a line, followed by words:
+--=_quoted_5e0a is only a delimiter when nothing but spaces follow it.
+
+3. As the start of a longer token:
+--=_quoted_5e0aX is a different boundary altogether.
+
+All three are body text. This sentence is the end of the message.
+
+--=_quoted_5e0a
+Content-Type: text/plain; charset=us-ascii; name="delimiter-rule.txt"
+Content-Disposition: attachment; filename="delimiter-rule.txt"
+
+RFC 2046 5.1.1: a delimiter is CRLF, two hyphens, the boundary, optional
+linear whitespace, CRLF.
+
+--=_quoted_5e0a--
