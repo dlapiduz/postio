@@ -146,7 +146,6 @@ impl Row {
             Row::Correspondent(query) => Run::SearchFor(query),
             Row::Message { message, subject } => Run::Action(BarAction::Open { message, subject }),
             Row::Command(ActionId::Builtin(command)) => Run::Action(BarAction::Command(command)),
-            Row::Command(ActionId::Ext(_)) => Run::Nothing,
             Row::Place(destination, name) => Run::Action(BarAction::Go { destination, name }),
         }
     }

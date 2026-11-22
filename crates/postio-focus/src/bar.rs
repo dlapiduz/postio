@@ -426,7 +426,6 @@ impl Bar {
                 Row::Heading => (BarLineKind::Heading, None),
                 Row::Hint => (BarLineKind::Hint, None),
                 Row::Command(ActionId::Builtin(command)) => (BarLineKind::Command, Some(*command)),
-                Row::Command(ActionId::Ext(_)) => (BarLineKind::Command, None),
                 Row::Correspondent(_) => (BarLineKind::Correspondent, None),
                 Row::Place(..)
                 | Row::Search

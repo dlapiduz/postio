@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use crate::bridge::{CommandHandler, EventSink, HandlerFuture};
 use crate::invocation::{InvocationId, InvocationOutcome};
-use crate::{ActionId, Command, CommandId, Event, ExtId, registry};
+use crate::{ActionId, Command, CommandId, Event, registry};
 
 pub type DispatchFuture = Pin<Box<dyn Future<Output = Result<(), CommandError>> + Send + 'static>>;
 
@@ -96,47 +96,6 @@ impl Invocation {
     }
 }
 
-/// Not an `Invocation`: an extension command has no typed payload, only its id (ADR 0002).
-#[derive(Debug)]
-pub struct ExtInvocation {
-    id: ExtId,
-    events: EventSink,
-}
-
-impl ExtInvocation {
-    pub fn id(&self) -> ExtId {
-        self.id
-    }
-
-    pub fn invocation_id(&self) -> Option<InvocationId> {
-        self.events.origin()
-    }
-
-    pub fn emit(&self, event: Event) -> bool {
-        self.events.emit(event)
-    }
-
-    pub fn events(&self) -> EventSink {
-        self.events.clone()
-    }
-}
-
-pub trait ExtFn: Send + Sync + 'static {
-    fn call(&self, invocation: ExtInvocation) -> DispatchFuture;
-}
-
-struct FnExt<F>(F);
-
-impl<F, Fut> ExtFn for FnExt<F>
-where
-    F: Fn(ExtInvocation) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = Result<(), CommandError>> + Send + 'static,
-{
-    fn call(&self, invocation: ExtInvocation) -> DispatchFuture {
-        Box::pin((self.0)(invocation))
-    }
-}
-
 pub trait CommandFn: Send + Sync + 'static {
     fn call(&self, invocation: Invocation) -> DispatchFuture;
 }
@@ -156,7 +115,6 @@ where
 #[derive(Default)]
 pub struct DispatcherBuilder {
     handlers: HashMap<CommandId, Arc<dyn CommandFn>>,
-    ext: HashMap<ExtId, Arc<dyn ExtFn>>,
 }
 
 impl fmt::Debug for DispatcherBuilder {
@@ -210,24 +168,9 @@ impl DispatcherBuilder {
         self
     }
 
-    /// Panics on a duplicate, like `on`.
-    #[track_caller]
-    pub fn on_ext<F, Fut>(mut self, command: ExtId, handler: F) -> Self
-    where
-        F: Fn(ExtInvocation) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<(), CommandError>> + Send + 'static,
-    {
-        assert!(
-            self.ext.insert(command, Arc::new(FnExt(handler))).is_none(),
-            "`{command}` already has a handler"
-        );
-        self
-    }
-
     pub fn build(self) -> Dispatcher {
         Dispatcher {
             handlers: self.handlers,
-            ext: self.ext,
         }
     }
 }
@@ -235,7 +178,6 @@ impl DispatcherBuilder {
 #[derive(Clone)]
 pub struct Dispatcher {
     handlers: HashMap<CommandId, Arc<dyn CommandFn>>,
-    ext: HashMap<ExtId, Arc<dyn ExtFn>>,
 }
 
 impl fmt::Debug for Dispatcher {
@@ -316,44 +258,6 @@ fn finish(events: &EventSink, outcome: InvocationOutcome) {
             invocation,
             outcome,
         });
-    }
-}
-
-impl Dispatcher {
-    pub async fn dispatch_ext(&self, command: ExtId, events: EventSink) {
-        let title = registry::spec(ActionId::Ext(command))
-            .map(|spec| spec.title)
-            .unwrap_or_else(|| command.as_str());
-        let Some(handler) = self.ext.get(&command).cloned() else {
-            let reason = format!("`{title}` is not wired up in this build");
-            events.emit(Event::CommandRejected {
-                command: ActionId::Ext(command),
-                reason: reason.clone(),
-            });
-            finish(&events, InvocationOutcome::Rejected { reason });
-            return;
-        };
-
-        let invocation = ExtInvocation {
-            id: command,
-            events: events.clone(),
-        };
-        match tokio::spawn(handler.call(invocation)).await {
-            Ok(Ok(())) => finish(&events, InvocationOutcome::Completed),
-            Ok(Err(error)) => {
-                events.emit(error.clone().into_event(ActionId::Ext(command)));
-                finish(&events, error.into());
-            }
-            Err(join_error) if join_error.is_panic() => {
-                let message = format!("{title} failed unexpectedly");
-                events.emit(Event::Error {
-                    message: message.clone(),
-                    account: None,
-                });
-                finish(&events, InvocationOutcome::Failed { message });
-            }
-            Err(_) => {}
-        }
     }
 }
 

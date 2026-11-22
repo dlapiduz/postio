@@ -703,9 +703,8 @@ impl Bar {
         rules::add_account_verbs(&mut entries, &keymap, state, "");
         entries
             .into_iter()
-            .filter_map(|entry| match entry.id {
-                ActionId::Builtin(command) => Some(command),
-                ActionId::Ext(_) => None,
+            .map(|entry| match entry.id {
+                ActionId::Builtin(command) => command,
             })
             .collect()
     }

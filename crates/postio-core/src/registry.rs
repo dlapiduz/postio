@@ -5,9 +5,8 @@
 //! command with no `Recovery` fails the tests.
 
 use std::fmt;
-use std::sync::{OnceLock, RwLock};
 
-use crate::action::{ActionId, ExtId};
+use crate::action::ActionId;
 use crate::command::CommandId;
 use crate::context::{Context, ContextSet};
 use crate::state::Scope;
@@ -2575,109 +2574,6 @@ fn binding_in_force(
     postio_config::keys::expand_mod(raw, platform)
 }
 
-/// `destructive` and `recovery` are mandatory: an unrecoverable action nobody typed is what this
-/// registry prevents.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExtCommand {
-    pub id: String,
-    pub title: String,
-    /// `None` means palette-only.
-    pub default_binding: Option<String>,
-    pub alternate_bindings: Vec<String>,
-    pub contexts: ContextSet,
-    pub destructive: bool,
-    pub recovery: Recovery,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RegistrationError {
-    UnrecoverableDestructive,
-    /// The id is not `namespace:name`, or it collides with the built-in
-    /// vocabulary, which never contains the separator.
-    NotNamespaced,
-    AlreadyRegistered,
-}
-
-impl fmt::Display for RegistrationError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            RegistrationError::UnrecoverableDestructive => {
-                f.write_str("a destructive command must offer undo or confirmation")
-            }
-            RegistrationError::NotNamespaced => {
-                f.write_str("an extension command id must be `namespace:name`")
-            }
-            RegistrationError::AlreadyRegistered => {
-                f.write_str("that command id is already registered")
-            }
-        }
-    }
-}
-
-impl std::error::Error for RegistrationError {}
-
-/// Leaked rather than `Cow` (ADR 0002): keeps `CommandSpec` `Copy`, and registrations are
-/// append-only and bounded.
-#[derive(Debug, Clone, Copy)]
-struct ExtSpec {
-    id: ExtId,
-    title: &'static str,
-    default_binding: Option<&'static str>,
-    alternate_bindings: &'static [&'static str],
-    contexts: ContextSet,
-    destructive: bool,
-    recovery: Recovery,
-}
-
-fn extensions() -> &'static RwLock<Vec<ExtSpec>> {
-    static EXTENSIONS: OnceLock<RwLock<Vec<ExtSpec>>> = OnceLock::new();
-    EXTENSIONS.get_or_init(|| RwLock::new(Vec::new()))
-}
-
-fn read_extensions() -> std::sync::RwLockReadGuard<'static, Vec<ExtSpec>> {
-    extensions()
-        .read()
-        .unwrap_or_else(|error| error.into_inner())
-}
-
-/// Extensions register here and are then reachable from the palette, cheat sheet and `[keys]` like
-/// a built-in.
-///
-/// # Errors
-///
-/// See `RegistrationError`; returned, not panicked, because the caller may be loading someone
-/// else's plugin.
-pub fn register(command: ExtCommand) -> Result<ExtId, RegistrationError> {
-    if command.destructive && command.recovery == Recovery::None {
-        return Err(RegistrationError::UnrecoverableDestructive);
-    }
-    let id = ExtId::intern(&command.id).ok_or(RegistrationError::NotNamespaced)?;
-
-    let mut registered = extensions()
-        .write()
-        .unwrap_or_else(|error| error.into_inner());
-    if registered.iter().any(|spec| spec.id == id) {
-        return Err(RegistrationError::AlreadyRegistered);
-    }
-    let alternates: Vec<&'static str> = command
-        .alternate_bindings
-        .into_iter()
-        .map(|binding| &*Box::leak(binding.into_boxed_str()))
-        .collect();
-    registered.push(ExtSpec {
-        id,
-        title: Box::leak(command.title.into_boxed_str()),
-        default_binding: command
-            .default_binding
-            .map(|binding| &*Box::leak(binding.into_boxed_str())),
-        alternate_bindings: Box::leak(alternates.into_boxed_slice()),
-        contexts: command.contexts,
-        destructive: command.destructive,
-        recovery: command.recovery,
-    });
-    Ok(id)
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ActionSpec {
     pub id: ActionId,
@@ -2717,39 +2613,14 @@ impl From<&'static CommandSpec> for ActionSpec {
     }
 }
 
-impl From<ExtSpec> for ActionSpec {
-    fn from(spec: ExtSpec) -> Self {
-        ActionSpec {
-            id: ActionId::Ext(spec.id),
-            title: spec.title,
-            default_binding: spec.default_binding,
-            alternate_bindings: spec.alternate_bindings,
-            contexts: spec.contexts,
-            destructive: spec.destructive,
-            recovery: spec.recovery,
-            // Every extension command needs the store: an action done to mail must not be offered
-            // before there is any.
-            requires: MAIL,
-        }
-    }
-}
-
-/// Built-ins first in cheat-sheet order, then extensions in registration order, so a plugin cannot
-/// reorder the vocabulary. `all` and `for_context` keep meaning the built-in table, which
-/// `docs/keybindings.md` documents.
+/// `reachable` stays state-blind because `docs/keybindings.md` documents the whole vocabulary.
 pub fn reachable(context: Context) -> impl Iterator<Item = ActionSpec> {
-    let extensions: Vec<ActionSpec> = read_extensions()
-        .iter()
-        .filter(|spec| spec.contexts.contains(context))
-        .map(|spec| ActionSpec::from(*spec))
-        .collect();
-    for_context(context).map(ActionSpec::from).chain(extensions)
+    for_context(context).map(ActionSpec::from)
 }
 
 /// For a command whose surface a platform's design does not have, so a menu item would be a key
 /// that
-/// does nothing (#1571, #1573). Every surface asks this, so a platform answers once. Extensions are
-/// offered everywhere.
+/// does nothing (#1571, #1573). Every surface asks this, so a platform answers once.
 pub fn offered_on(action: ActionId, platform: Platform) -> bool {
     use CommandId as C;
     !matches!(
@@ -2803,28 +2674,17 @@ pub fn binding_offered_on(action: ActionId, binding: &str, platform: Platform) -
     )
 }
 
-/// `reachable` stays state-blind because `docs/keybindings.md` documents the whole vocabulary.
 pub fn reachable_in(context: Context, state: Availability) -> impl Iterator<Item = ActionSpec> {
     reachable(context).filter(move |spec| spec.requires.met_by(state))
 }
 
 pub fn every_action() -> impl Iterator<Item = ActionSpec> {
-    let extensions: Vec<ActionSpec> = read_extensions()
-        .iter()
-        .map(|spec| ActionSpec::from(*spec))
-        .collect();
-    all().map(ActionSpec::from).chain(extensions)
+    all().map(ActionSpec::from)
 }
 
-/// `None` only for an extension id named but never registered, a real state: `[keys]` can bind an
-/// id before its extension loads.
 pub fn spec(id: ActionId) -> Option<ActionSpec> {
     match id {
         ActionId::Builtin(id) => Some(ActionSpec::from(get(id))),
-        ActionId::Ext(id) => read_extensions()
-            .iter()
-            .find(|spec| spec.id == id)
-            .map(|spec| ActionSpec::from(*spec)),
     }
 }
 

@@ -19,7 +19,7 @@ pub mod state;
 pub mod test_support;
 pub mod undo;
 
-pub use action::{ActionId, ExtId};
+pub use action::ActionId;
 pub use bridge::{Bridge, CommandHandler, CommandSender, EventSink, EventStream};
 pub use command::{
     Command, CommandId, ContactAddressAction, ContactEditAction, ContactGroupNewAction,

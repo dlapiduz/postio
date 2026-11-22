@@ -7,7 +7,6 @@ use postio_core::{ActionId, Availability, Context, ContextSet, Keymap, registry}
 pub struct Row {
     /// The command, or `None` for the one box's prefixes (`>`, `#`, `@`), which are typed inside a
     /// surface.
-    /// An `ActionId`, so runtime-registered commands are taught on the same footing.
     pub id: Option<ActionId>,
     pub title: &'static str,
     /// The binding in force; `None` means palette-only.
@@ -62,9 +61,7 @@ pub fn sections(keymap: &Keymap, context: Context, state: Availability) -> Vec<S
 
     // Not what this platform has no surface for: the sheet would teach a key the app ignores.
     for spec in registry::reachable_in(context, state).filter(|spec| keymap.offers(spec.id)) {
-        let ActionId::Builtin(id) = spec.id else {
-            continue;
-        };
+        let ActionId::Builtin(id) = spec.id;
         let row = Row {
             id: Some(spec.id),
             title: spec.title,
@@ -88,35 +85,7 @@ pub fn sections(keymap: &Keymap, context: Context, state: Availability) -> Vec<S
         out.push(prefixes);
     }
     out.extend(sections.into_iter().filter(|s| !s.rows.is_empty()));
-    out.extend(extension_sections(keymap));
     out
-}
-
-/// One section per namespace, last and never interleaved, so a plugin cannot reorder the built-in
-/// sheet.
-fn extension_sections(keymap: &Keymap) -> Vec<Section> {
-    let mut sections: Vec<Section> = Vec::new();
-    for spec in registry::every_action() {
-        let ActionId::Ext(id) = spec.id else {
-            continue;
-        };
-        let row = Row {
-            id: Some(spec.id),
-            title: spec.title,
-            binding: keymap.binding(spec.id).map(str::to_owned),
-        };
-        match sections
-            .iter_mut()
-            .find(|section| section.title == id.namespace())
-        {
-            Some(section) => section.rows.push(row),
-            None => sections.push(Section {
-                title: id.namespace(),
-                rows: vec![row],
-            }),
-        }
-    }
-    sections
 }
 
 /// Generated from `crate::finder::MODES`, in sheet order, so a new mode appears with no other edit.
@@ -539,19 +508,7 @@ mod tests {
     fn the_sheet_prints_only_everywhere_and_the_readers_own_surface() {
         for context in [Context::List, Context::Composer, Context::Sidebar] {
             let printed = sections(&defaults(), context, in_the_list().1);
-            // A command another test registers at run time gets its own section; not this test's
-            // case.
-            let namespaces: Vec<&str> = registry::every_action()
-                .filter_map(|spec| match spec.id {
-                    ActionId::Ext(id) => Some(id.namespace()),
-                    ActionId::Builtin(_) => None,
-                })
-                .collect();
-            let titles: Vec<&str> = printed
-                .iter()
-                .map(|section| section.title)
-                .filter(|title| !namespaces.contains(title))
-                .collect();
+            let titles: Vec<&str> = printed.iter().map(|section| section.title).collect();
 
             let expected: Vec<&str> = [EVERYWHERE, IN_THE_BOX, heading(context)]
                 .into_iter()

@@ -286,7 +286,7 @@ pub struct KeyMapRow {
     pub keys: Vec<String>,
 }
 
-/// Built-ins first, then run-time commands, which join Act. A group with no rows is left out.
+/// A group with no rows is left out.
 pub fn key_map(
     keymap: &postio_core::Keymap,
     frontend: postio_core::Frontend,
@@ -296,12 +296,8 @@ pub fn key_map(
         .filter(|spec| spec.requires.offered_by(frontend))
         .filter(|spec| spec.contexts.intersects(shown))
         .filter_map(|spec| {
-            // A run-time command joins the verbs: it is a thing done to mail and needs no word from
-            // Focus.
-            let placed = match spec.id {
-                postio_core::ActionId::Builtin(command) => group(command)?,
-                postio_core::ActionId::Ext(_) => Group::Act,
-            };
+            let postio_core::ActionId::Builtin(command) = spec.id;
+            let placed = group(command)?;
             Some((
                 placed,
                 KeyMapRow {
@@ -444,30 +440,6 @@ mod tests {
         let chord =
             postio_config::keys::expand_mod("mod+shift+a", postio_config::paths::Platform::host());
         assert_eq!(archive.keys, ["w".to_owned(), chord]);
-    }
-
-    #[test]
-    fn a_registered_command_joins_the_verbs_with_no_code_of_focus_s() {
-        let ext = registry::register(registry::ExtCommand {
-            id: "test:sort-by-sender".to_owned(),
-            title: "Sort by sender".to_owned(),
-            default_binding: Some("alt+z".to_owned()),
-            alternate_bindings: Vec::new(),
-            contexts: postio_core::ContextSet::from_slice(&[postio_core::Context::List]),
-            destructive: false,
-            recovery: postio_core::Recovery::None,
-        })
-        .expect("it registers");
-        let keymap = postio_core::Keymap::resolve(&postio_config::KeyBindings::default());
-        let map = key_map(&keymap, Frontend::Focus);
-        let (group, row) = map
-            .iter()
-            .flat_map(|(group, rows)| rows.iter().map(move |row| (*group, row)))
-            .find(|(_, row)| row.action == postio_core::ActionId::Ext(ext))
-            .expect("the registered command is in the key map");
-        assert_eq!(group, Group::Act);
-        assert_eq!(row.title, "Sort by sender");
-        assert_eq!(row.keys, ["alt+z"]);
     }
 
     #[test]

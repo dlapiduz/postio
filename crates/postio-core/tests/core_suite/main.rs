@@ -1,6 +1,4 @@
-//! Cases that call `registry::register` or read `every_action()` keep their own binaries: in one
-//! process they race on the process-global registry. A case that sets a process-global does not
-//! belong here.
+//! A case that sets a process-global does not belong here.
 
 mod bridge;
 mod bridge_runtime_handle;
