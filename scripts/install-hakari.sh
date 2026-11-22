@@ -20,4 +20,9 @@ if pt_have; then
     exit 0
 fi
 
-pt_cargo_install
+pt_tarball_install \
+    "https://github.com/guppy-rs/guppy/releases/download/cargo-hakari-$VERSION/cargo-hakari-$VERSION-x86_64-unknown-linux-gnu.tar.gz" \
+    699a3193a9bd1a8d914b970d3f50f3385f24fbd8b1294d0c0ff31fbe7c2c9f48 \
+    "https://github.com/guppy-rs/guppy/releases/download/cargo-hakari-$VERSION/cargo-hakari-$VERSION-universal-apple-darwin.tar.gz" \
+    c1f84026b805cc7fb31c271e8b0720abadb8d9416d126c76d6fc50a2a147d7f9 \
+    "cargo-hakari"

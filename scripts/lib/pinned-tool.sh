@@ -79,3 +79,24 @@ pt_cargo_install() {
     pt_commit
     echo "$PT_NAME $PT_VERSION installed"
 }
+
+# pt_tarball_install <linux-url> <linux-sha256> <mac-url> <mac-sha256> <member-in-tarball>
+# The published binary, checksummed: `cargo install` compiled each tool's whole tree on every CI
+# cache miss (218 s of a 355 s job).
+pt_tarball_install() {
+    local url sha check
+    case "$(uname -s)" in
+    Linux) url=$1 sha=$2 check="sha256sum -c -" ;;
+    Darwin) url=$3 sha=$4 check="shasum -a 256 -c -" ;;
+    *) pt_cargo_install; return ;;
+    esac
+    pt_stage
+    curl -fsSL --retry 3 -o "$PT_STAGE/tool.tar.gz" "$url"
+    echo "$sha  $PT_STAGE/tool.tar.gz" | $check >/dev/null
+    tar -xzf "$PT_STAGE/tool.tar.gz" -C "$PT_STAGE" "$5"
+    mv "$PT_STAGE/$5" "$PT_STAGE/bin/$PT_NAME"
+    rm -f "$PT_STAGE/tool.tar.gz"
+    rm -rf "${PT_STAGE:?}/${5%%/*}" 2>/dev/null || true
+    pt_commit
+    echo "$PT_NAME $PT_VERSION installed"
+}
