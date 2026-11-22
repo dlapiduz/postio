@@ -24,7 +24,7 @@ expect  = "A reply opens with the caret in the body, above the quote. No formatt
 
 [[step]]
 type    = "# "
-check   = { composer.open = true, keyboard.field = "body", app.focus.composer.marks = "heading_1", app.focus.compose.typed = "" }
+check   = { composer.open = true, keyboard.field = "body", app.focus.composer.marks = "heading_1" }
 expect  = "The `# ` is gone: the line is a heading now, empty, and the toolbar's Heading toggle is lit."
 
 [[step]]

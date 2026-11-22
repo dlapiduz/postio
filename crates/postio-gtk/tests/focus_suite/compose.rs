@@ -443,9 +443,13 @@ pub fn the_heading_key_and_its_markdown_make_a_heading_the_toolbar_shows() {
         );
         let composer = window.composer().expect("the composer");
         let toggle = heading_toggle(&composer);
+        assert!(toggle.icon_name().is_some(), "the Heading toggle is drawn");
         composer.test_focus_field(postio_widgets::composer::Field::Body);
         composer.test_set_body("Agenda");
-        assert!(!toggle.is_active(), "a paragraph is not a heading");
+        assert!(
+            composer.marks_lit().is_empty(),
+            "a paragraph is not a heading"
+        );
 
         // ── the key, on and off ──────────────────────────────────────────
         let heading = gtk::gdk::ModifierType::CONTROL_MASK | gtk::gdk::ModifierType::ALT_MASK;
@@ -455,9 +459,11 @@ pub fn the_heading_key_and_its_markdown_make_a_heading_the_toolbar_shows() {
             "ctrl+alt+1 made no heading of the line: {}",
             block_drawn(&composer, 0)
         );
+        // Heading alone: the heading's own weight is not the Bold toggle's.
         assert!(
-            crate::settle_until(async || toggle.is_active()).await,
-            "the Heading toggle stayed out over a heading"
+            crate::settle_until(async || composer.marks_lit() == ["heading_1"]).await,
+            "the toolbar shows {:?} over a heading",
+            composer.marks_lit()
         );
         support::press(&window, "1", heading);
         assert!(
@@ -466,8 +472,9 @@ pub fn the_heading_key_and_its_markdown_make_a_heading_the_toolbar_shows() {
             block_drawn(&composer, 0)
         );
         assert!(
-            crate::settle_until(async || !toggle.is_active()).await,
-            "the Heading toggle stayed lit over a paragraph"
+            crate::settle_until(async || composer.marks_lit().is_empty()).await,
+            "the toolbar shows {:?} over a paragraph",
+            composer.marks_lit()
         );
 
         // ── `# `, typed at the start of the next line ────────────────────
@@ -488,8 +495,9 @@ pub fn the_heading_key_and_its_markdown_make_a_heading_the_toolbar_shows() {
             block_drawn(&composer, 1)
         );
         assert!(
-            crate::settle_until(async || toggle.is_active()).await,
-            "the Heading toggle stayed out over the typed heading"
+            crate::settle_until(async || composer.marks_lit() == ["heading_1"]).await,
+            "the toolbar shows {:?} over the typed heading",
+            composer.marks_lit()
         );
         assert_eq!(
             block_drawn(&composer, 0),
