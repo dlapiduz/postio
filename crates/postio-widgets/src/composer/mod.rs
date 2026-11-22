@@ -825,7 +825,10 @@ mod imp {
                 },
                 source: source_view::SourceView::new(),
                 source_toggle: gtk::ToggleButton::new(),
-                source_notice: gtk::Box::new(gtk::Orientation::Horizontal, 8),
+                source_notice: gtk::Box::new(
+                    gtk::Orientation::Horizontal,
+                    crate::widgets::space::S2,
+                ),
                 source_notice_label: gtk::Label::new(None),
                 source_notice_undo: gtk::Button::with_label("Undo"),
                 source_typed: RefCell::new(None),
@@ -861,7 +864,7 @@ mod imp {
                 inline_image: RefCell::new(None),
                 remote_image: RefCell::new(None),
                 remote_state: RefCell::default(),
-                remote_box: gtk::Box::new(gtk::Orientation::Vertical, 6),
+                remote_box: gtk::Box::new(gtk::Orientation::Vertical, crate::widgets::space::S2),
                 remote_list: gtk::ListBox::new(),
                 remote_drawn: RefCell::default(),
                 remote_warning: gtk::Label::new(None),
@@ -2307,9 +2310,9 @@ impl Composer {
         key: &str,
     ) -> gtk::Widget {
         let host = postio_ui::compose::remote_host(href);
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-        row.set_margin_top(4);
-        row.set_margin_bottom(4);
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, crate::widgets::space::S3);
+        row.set_margin_top(crate::widgets::space::S1);
+        row.set_margin_bottom(crate::widgets::space::S1);
         let words = if alt.is_empty() { "image" } else { alt };
         row.update_property(&[gtk::accessible::Property::Label(&format!(
             "Image not attached: {words}, from {host}"

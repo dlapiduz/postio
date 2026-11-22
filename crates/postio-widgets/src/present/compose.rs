@@ -545,21 +545,22 @@ pub fn install_inline_images(composer: &Composer, client: &Client) {
             let client = client.clone();
             let held = Rc::clone(&held);
             glib::spawn_future_local(async move {
+                let asked = client.attach_remote_image(draft, href.as_str().to_owned());
                 // POSTIO-GLIB-SAFE: a client call is a oneshot receive.
-                let outcome = client
-                    .attach_remote_image(draft, href.as_str().to_owned())
-                    .await
-                    .unwrap_or_else(|error| {
-                        tracing::warn!(%error, "the remote image request did not reach the host");
-                        Err(postio_ui::compose::RemoteRefusal::Unreachable(
-                            "Postio could not ask for it".to_owned(),
-                        ))
-                    });
+                let outcome = asked.await.unwrap_or_else(|error| {
+                    tracing::warn!(%error, "the remote image request did not reach the host");
+                    Err(postio_ui::compose::RemoteRefusal::Unreachable(
+                        "Postio could not ask for it".to_owned(),
+                    ))
+                });
                 if let Ok(part) = &outcome
                     && let Some(blob) = part.blob_id.clone()
-                    && let Ok(Some(bytes)) = client.attachment_bytes(blob.clone()).await
                 {
-                    held.borrow_mut().insert(blob, bytes);
+                    let read = client.attachment_bytes(blob.clone());
+                    // POSTIO-GLIB-SAFE: a client call is a oneshot receive.
+                    if let Ok(Some(bytes)) = read.await {
+                        held.borrow_mut().insert(blob, bytes);
+                    }
                 }
                 then(outcome);
             });
