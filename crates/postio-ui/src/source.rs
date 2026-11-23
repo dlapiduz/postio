@@ -832,3 +832,24 @@ pub fn footer(keymap: &postio_core::Keymap) -> crate::scope::FooterView {
         note: None,
     }
 }
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Imported {
+    pub keys: usize,
+    pub addresses: Vec<String>,
+}
+
+pub const NO_KEY_ATTACHED: &str = "There's no key attached to this message.";
+
+pub fn imported_line(imported: &Imported) -> String {
+    let keys = match imported.keys {
+        0 => return "There's no public key in that file.".to_owned(),
+        1 => "1 key".to_owned(),
+        n => format!("{n} keys"),
+    };
+    if imported.addresses.is_empty() {
+        format!("Imported {keys}, which names no address.")
+    } else {
+        format!("Imported {keys} for {}.", imported.addresses.join(", "))
+    }
+}

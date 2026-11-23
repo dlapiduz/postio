@@ -1695,6 +1695,30 @@ mod tests {
     }
 
     #[test]
+    fn i_on_the_source_imports_the_attached_keys_and_says_what_it_kept() {
+        let mut app = opened((120, 36));
+        update(&mut app, press('V'));
+        let effects = update(&mut app, press('i'));
+        assert!(
+            effects.contains(&Effect::ImportKeys(MessageId::new(6))),
+            "{effects:?}"
+        );
+        update(
+            &mut app,
+            Input::Imported(Ok(postio_ui::source::Imported {
+                keys: 1,
+                addresses: vec!["lena@example.com".to_owned()],
+            })),
+        );
+        assert_eq!(app.notice(), Some("Imported 1 key for lena@example.com."));
+        update(
+            &mut app,
+            Input::Imported(Ok(postio_ui::source::Imported::default())),
+        );
+        assert_eq!(app.notice(), Some(postio_ui::source::NO_KEY_ATTACHED));
+    }
+
+    #[test]
     fn shift_a_lists_the_links_and_attachments_and_choosing_one_opens_it() {
         let mut app = inbox((120, 36));
         update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));

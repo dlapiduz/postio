@@ -192,6 +192,7 @@ impl Req {
             Req::RawSource(_) => "RawSource",
             Req::SourceView { .. } => "SourceView",
             Req::GnupgKeyring { .. } => "GnupgKeyring",
+            Req::ImportKeys(_) => "ImportKeys",
             Req::Surfaced => "Surfaced",
             Req::DigestPreview { .. } => "DigestPreview",
             Req::DigestSummary(_) => "DigestSummary",
@@ -1642,6 +1643,18 @@ impl Client {
             Req::GnupgKeyring { on },
             "the GnuPG keyring",
             only!(Resp::GnupgKeyring),
+        )
+        .await
+    }
+
+    pub async fn import_keys(
+        &self,
+        from: crate::protocol::ImportFrom,
+    ) -> Result<postio_ui::source::Imported, StoreError> {
+        self.read(
+            Req::ImportKeys(from),
+            "the key import",
+            only!(Resp::Imported),
         )
         .await
     }

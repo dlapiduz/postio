@@ -98,6 +98,7 @@ pub enum Input {
         message: postio_model::MessageId,
         view: Result<postio_ui::source::SourceView, String>,
     },
+    Imported(Result<postio_ui::source::Imported, String>),
     Settled {
         generation: u64,
     },
@@ -212,6 +213,7 @@ pub enum Effect {
     SaveAllowlist(postio_ui::allowlist::RemoteImageAllowList),
     SetReading(postio_config::Reading),
     ReadSource(postio_model::MessageId),
+    ImportKeys(postio_model::MessageId),
     Settle {
         generation: u64,
         after: std::time::Duration,
@@ -2750,6 +2752,14 @@ impl App {
             }
             "source_tab_headers" => return self.source_tab(postio_ui::source::Tab::Headers),
             "source_tab_raw" => return self.source_tab(postio_ui::source::Tab::Raw),
+            "import_key" => {
+                return self
+                    .open
+                    .raw
+                    .as_ref()
+                    .map(|raw| vec![Effect::ImportKeys(raw.message)])
+                    .unwrap_or_default();
+            }
             "open_attachment_or_link" => return self.offer_choices(),
             "more_actions" => return self.more_actions(),
             "dismiss_marker" if self.focus == Focus::Reader => {
@@ -3506,6 +3516,11 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             }
         }
         Input::Source { message, view } => app.source_read(message, view),
+        Input::Imported(imported) => match imported {
+            Ok(imported) if imported.keys == 0 => app.say(postio_ui::source::NO_KEY_ATTACHED),
+            Ok(imported) => app.say(&postio_ui::source::imported_line(&imported)),
+            Err(error) => app.say(&error),
+        },
         Input::DwellDue {
             generation,
             message,

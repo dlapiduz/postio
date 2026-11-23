@@ -153,9 +153,8 @@ pub async fn load_with_row(
     )
 }
 
-/// What the reader's header says about who the sender is and whether the content is signed
-/// (#1928, spec 016). `headers` is the stored header block; which servers to believe comes from the
-/// account's provider (`authserv_ids`). Mail the user sent is never judged.
+/// `headers` is the stored header block; which servers to believe comes from the account's
+/// provider (`authserv_ids`). Mail the user sent is never judged (#1928).
 pub async fn authenticity(
     connection: &postio_storage::Checkout,
     row: &postio_model::Message,

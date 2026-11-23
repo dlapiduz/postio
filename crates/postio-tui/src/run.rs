@@ -1027,6 +1027,17 @@ fn perform(
                     tracing::warn!(%error, "could not write where messages open");
                 }
             }
+            Effect::ImportKeys(message) => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    let imported = client
+                        .import_keys(postio_client::protocol::ImportFrom::Message(message))
+                        .await
+                        .map_err(|error| error.message().to_owned());
+                    let _ = inputs.send(Input::Imported(imported)).await;
+                });
+            }
             Effect::ReadSource(message) => {
                 let client = client.clone();
                 let inputs = inputs.clone();

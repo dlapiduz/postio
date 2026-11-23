@@ -382,6 +382,7 @@ pub enum Req {
     GnupgKeyring {
         on: bool,
     },
+    ImportKeys(ImportFrom),
     Surfaced,
     /// Fails with a sentence when no `[focus.vault]` is configured.
     Vault {
@@ -590,6 +591,7 @@ pub enum Resp {
     RawSource(Vec<u8>),
     SourceView(Box<postio_ui::source::SourceView>),
     GnupgKeyring(postio_ui::settings::GnupgKeyring),
+    Imported(postio_ui::source::Imported),
     Vault(VaultPicture),
     Captured(postio_vault::Captured),
     /// The sentence is for the user.
@@ -861,4 +863,10 @@ mod tests {
             Err(postio_ui::digest::TIME_ERROR.to_owned())
         );
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImportFrom {
+    File(std::path::PathBuf),
+    Message(MessageId),
 }

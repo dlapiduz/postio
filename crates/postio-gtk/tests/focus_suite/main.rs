@@ -721,6 +721,10 @@ const CASES: &[(&str, fn())] = &[
     ),
     ("view_source::signed_mark", view_source::signed_mark as fn()),
     (
+        "view_source::import_key_with_none_attached_asks_for_a_file_and_says_what_it_kept",
+        view_source::import_key_with_none_attached_asks_for_a_file_and_says_what_it_kept as fn(),
+    ),
+    (
         "open_message::a_message_opens_at_its_top_every_time",
         open_message::a_message_opens_at_its_top_every_time as fn(),
     ),

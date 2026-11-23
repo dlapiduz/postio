@@ -172,3 +172,45 @@ pub fn signed_mark() {
         );
     });
 }
+
+pub fn import_key_with_none_attached_asks_for_a_file_and_says_what_it_kept() {
+    crate::gtk_case(async {
+        let fixture = Fixture::empty().await;
+        let (message, _) = fixture.file_from_ada("Budget", "The numbers.", 5).await;
+        fixture
+            .write_body(message, "The numbers are attached.")
+            .await;
+        fixture.write_raw(message, RAW).await;
+        let (window, _client) = fixture.open().await;
+        support::rows_shown(&window, 1).await;
+        let dir = tempfile::tempdir().expect("a directory");
+        let file = dir.path().join("ada.asc");
+        std::fs::copy(
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../postio-model/tests/corpus/keys/ada-a.asc"
+            ),
+            &file,
+        )
+        .expect("a key file");
+        let asked = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        window.set_file_picker({
+            let (asked, file) = (std::rc::Rc::clone(&asked), file.clone());
+            move |pick, answer| {
+                asked.borrow_mut().push(pick);
+                answer(Some(file.clone()));
+            }
+        });
+        support::keys(&window, &["j", "V"]);
+        assert!(crate::settle_until(async || on(&window, Tab::Verification)).await);
+        support::keys(&window, &["i"]);
+        assert!(
+            crate::settle_until(async || window.toast_showing().as_deref()
+                == Some("Imported 1 key for ada@example.com."))
+            .await,
+            "import said {:?}",
+            window.toast_showing()
+        );
+        assert_eq!(*asked.borrow(), [postio_gtk::chooser::SavePick::Key]);
+    });
+}

@@ -49,6 +49,7 @@ pub enum SavePick {
     Cards,
     CardsFile { suggested: String },
     Message { suggested: String },
+    Key,
 }
 
 /// `chosen` is called with what a person picks, and the dialog closes. Neither Save asks the portal

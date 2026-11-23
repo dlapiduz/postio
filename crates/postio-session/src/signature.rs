@@ -267,3 +267,75 @@ fn note(pending: &mut Vec<MessageId>, event: &postio_core::Event) {
         pending.push(*message);
     }
 }
+
+pub async fn import_keys(
+    database: &Store,
+    blobs: &BlobStore,
+    bytes: &[u8],
+    source: KeySource,
+    message: Option<MessageId>,
+) -> postio_storage::Result<postio_ui::source::Imported> {
+    let found = postio_signature::keys_in(bytes);
+    let connection = database.connect().await?;
+    let mut addresses: Vec<EmailAddress> = Vec::new();
+    {
+        let _permit = connection
+            .write_gate()
+            .acquire(WritePriority::Interactive)
+            .await;
+        let keys = KeyRepository::new(&connection);
+        let contacts = postio_storage::repository::ContactRepository::new(&connection);
+        let at = chrono::Utc::now().timestamp();
+        for key in &found {
+            let named: Vec<EmailAddress> = key
+                .addresses
+                .iter()
+                .map(|address| EmailAddress::new(None::<String>, address.as_str()))
+                .collect();
+            keys.record(&NewKey {
+                fingerprint: &key.fingerprint,
+                kind: KeyKind::OpenPgp,
+                keyblock: &key.keyblock,
+                primary_uid: key.primary_uid.as_deref(),
+                revoked: key.revoked,
+                addresses: &named,
+                source,
+                message,
+                at,
+            })
+            .await?;
+            for address in named {
+                // The person's own address has no contact; its key is kept all the same.
+                let _ = contacts.person_for_email(&address).await;
+                if !addresses.contains(&address) {
+                    addresses.push(address);
+                }
+            }
+        }
+    }
+    let mut again = Vec::new();
+    for address in &addresses {
+        again.extend(
+            KeyRepository::new(&connection)
+                .signed_messages_from(address)
+                .await?,
+        );
+    }
+    drop(connection);
+    again.sort_unstable();
+    again.dedup();
+    check_messages(database, blobs, &again).await?;
+    tracing::info!(
+        keys = found.len(),
+        rechecked = again.len(),
+        ?source,
+        "keys imported"
+    );
+    Ok(postio_ui::source::Imported {
+        keys: found.len(),
+        addresses: addresses
+            .into_iter()
+            .map(|address| address.address)
+            .collect(),
+    })
+}

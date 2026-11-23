@@ -1639,6 +1639,10 @@ impl Inner {
                     Err(reason) => Resp::Failed(postio_model::listing::StoreError::new(reason)),
                 }
             }
+            Req::ImportKeys(from) => match self.import_keys(from).await {
+                Ok(imported) => Resp::Imported(imported),
+                Err(reason) => Resp::Failed(postio_model::listing::StoreError::new(reason)),
+            },
             Req::GnupgKeyring { on } => match self.write_gnupg_switch(on) {
                 Err(reason) => Resp::Failed(postio_model::listing::StoreError::new(reason)),
                 Ok(()) => match gnupg::sync(
@@ -1775,6 +1779,64 @@ impl Inner {
 
     /// UIDs and mailbox paths are scoped to an account: another engine can fetch unrelated bytes
     /// under the same identity.
+    async fn import_keys(
+        &self,
+        from: postio_client::protocol::ImportFrom,
+    ) -> Result<postio_ui::source::Imported, String> {
+        use postio_client::protocol::ImportFrom;
+        use postio_storage::repository::KeySource;
+        let (database, blobs) = (&self.wiring.database, &self.wiring.blobs);
+        let failed = |error: postio_storage::Error| error.to_string();
+        match from {
+            ImportFrom::File(path) => {
+                let bytes = tokio::fs::read(&path)
+                    .await
+                    .map_err(|error| format!("Postio couldn't read that file: {error}"))?;
+                postio_session::signature::import_keys(
+                    database,
+                    blobs,
+                    &bytes,
+                    KeySource::File,
+                    None,
+                )
+                .await
+                .map_err(failed)
+            }
+            ImportFrom::Message(message) => {
+                let engine = self.engine_for_message(message).await;
+                let mut total = postio_ui::source::Imported::default();
+                for part in parts::read_message(database, message)
+                    .await?
+                    .attachments
+                    .iter()
+                    .filter(|part| {
+                        postio_ui::reader::parts::is_key(&part.mime_type, part.filename.as_deref())
+                    })
+                {
+                    let bytes =
+                        parts::part_bytes(database, blobs, engine.clone(), None, message, part.id)
+                            .await?;
+                    let imported = postio_session::signature::import_keys(
+                        database,
+                        blobs,
+                        &bytes,
+                        KeySource::Attachment,
+                        Some(message),
+                    )
+                    .await
+                    .map_err(failed)?;
+                    total.keys += imported.keys;
+                    for address in imported.addresses {
+                        if !total.addresses.contains(&address) {
+                            total.addresses.push(address);
+                        }
+                    }
+                }
+                Ok(total)
+            }
+        }
+    }
+
     fn write_gnupg_switch(&self, on: bool) -> Result<(), String> {
         let Some(path) = self.config_path.lock().expect("never poisoned").clone() else {
             return Ok(());

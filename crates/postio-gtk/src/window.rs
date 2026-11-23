@@ -4907,6 +4907,18 @@ impl FocusWindow {
                 dialog.set_initial_name(Some(&suggested));
                 dialog.save(Some(self), None::<&gio::Cancellable>, done);
             }
+            crate::chooser::SavePick::Key => {
+                dialog.set_title("Import key");
+                let keys = gtk::FileFilter::new();
+                keys.set_name(Some("Public keys"));
+                for pattern in ["*.asc", "*.gpg", "*.pgp", "*.key"] {
+                    keys.add_pattern(pattern);
+                }
+                let filters = gio::ListStore::new::<gtk::FileFilter>();
+                filters.append(&keys);
+                dialog.set_filters(Some(&filters));
+                dialog.open(Some(self), None::<&gio::Cancellable>, done);
+            }
             crate::chooser::SavePick::Message { suggested } => {
                 dialog.set_title("Save message");
                 dialog.set_initial_name(Some(&suggested));
@@ -5190,6 +5202,46 @@ impl FocusWindow {
         );
     }
 
+    fn import_key(&self) {
+        use postio_client::protocol::ImportFrom;
+        let (Some(message), Some(client)) = (self.source_of(), self.imp().client.borrow().clone())
+        else {
+            return;
+        };
+        let window = self.downgrade();
+        glib::spawn_future_local(async move {
+            // POSTIO-GLIB-SAFE: a client call is a oneshot receive (ADR 0041).
+            let attached = client.import_keys(ImportFrom::Message(message)).await;
+            let Some(this) = window.upgrade() else {
+                return;
+            };
+            match attached {
+                Ok(imported) if imported.keys > 0 => this.said_imported(Ok(imported)),
+                _ => this.pick_place(crate::chooser::SavePick::Key, move |path| {
+                    glib::spawn_future_local(async move {
+                        // POSTIO-GLIB-SAFE: a oneshot receive; the host reads the file.
+                        let imported = client.import_keys(ImportFrom::File(path)).await;
+                        if let Some(this) = window.upgrade() {
+                            this.said_imported(imported);
+                        }
+                    });
+                }),
+            }
+        });
+    }
+
+    fn said_imported(
+        &self,
+        imported: Result<postio_ui::source::Imported, postio_model::listing::StoreError>,
+    ) {
+        let said = match imported {
+            Ok(imported) => postio_ui::source::imported_line(&imported),
+            Err(error) => error.to_string(),
+        };
+        self.imp().toast.show_notice(&said);
+        self.follow_toast();
+    }
+
     fn source_verb(&self, verb: postio_focus::SourceVerb) {
         use postio_focus::SourceVerb;
         let Some(dialog) = self.source() else {
@@ -5208,7 +5260,7 @@ impl FocusWindow {
                 dialog.unfold();
             }
             SourceVerb::Find => dialog.find(),
-            SourceVerb::Import => {}
+            SourceVerb::Import => self.import_key(),
             _ => {}
         }
     }

@@ -59,8 +59,6 @@ impl Node {
     }
 }
 
-/// Flattened in walk order; ids sort as number paths, so `2.10` follows `2.9`.
-/// `root` is passed in, and a message with no parts still gets its root node.
 pub fn listed_as_attachment(mime: &str) -> bool {
     !matches!(
         mime.trim().to_ascii_lowercase().as_str(),
@@ -71,6 +69,13 @@ pub fn listed_as_attachment(mime: &str) -> bool {
     )
 }
 
+pub fn is_key(mime: &str, filename: Option<&str>) -> bool {
+    mime.trim().eq_ignore_ascii_case("application/pgp-keys")
+        || filename.is_some_and(|name| name.to_ascii_lowercase().ends_with(".asc"))
+}
+
+/// Flattened in walk order; ids sort as number paths, so `2.10` follows `2.9`.
+/// `root` is passed in, and a message with no parts still gets its root node.
 pub fn tree(root: &str, parts: &[Attachment]) -> Vec<Node> {
     let mut ordered: Vec<(Vec<u32>, &Attachment)> = parts
         .iter()
