@@ -1,25 +1,10 @@
-//! What a prefix could become (spec 010, US7, FR-042): the dropdown's
-//! short-prefix and operator states.
-//!
-//! The index has no term dictionary (research R1), so the words come the
-//! way [`super::words_near`] recovers them: the best documents of a
-//! `prefix*` match are read and split as the tokenizer splits. Metadata
-//! first -- senders, subjects, file names and lists are what a person types
-//! the beginning of -- and the bodies only when the metadata says fewer
-//! than [`ENOUGH_WORDS`] (D22). A vocabulary table kept on every write is
-//! the fallback if this misses its 20 ms, and only then.
-//!
-//! Every suggestion's count is what its query would find (US7's
-//! independent test): the conversations [`super::relaxations`] counts, all
-//! of them in one statement -- up to [`COMPLETION_COUNT_CAP`], past which
-//! it is a floor (D29). So the whole answer is at most four
-//! statements: the documents, the bodies when needed, the labels, the
-//! counts.
-//!
-//! People for `from:` and `to:` are ranked two-way (D21): how often they
-//! wrote to you (`contacts.times_seen`) plus how often you wrote to them
-//! (`correspondents.sent_count`), the same sum a conversation's
-//! `FrequentSender` reason is read from.
+//! What a prefix could become, for the dropdown's short-prefix and operator states. The index has
+//! no term dictionary, so words are recovered as [`super::words_near`] does:
+//! metadata first, bodies only when it gives fewer than [`ENOUGH_WORDS`]. Every count is what the
+//! suggestion's query would find, in one statement, up to [`COMPLETION_COUNT_CAP`] (a floor past
+//! it).
+//! People for `from:` and `to:` rank by how often they wrote to you plus how often you wrote to
+//! them.
 
 use std::collections::{HashMap, HashSet};
 
@@ -34,58 +19,31 @@ use super::escape_like;
 use super::relaxations::counts;
 use crate::error::Result;
 
-/// How many documents of each half are read for words.
-///
-/// The same bound a suggestion for a search that found nothing reads
-/// (`SUGGESTION_DOCUMENTS`): the index has already narrowed to documents
-/// holding a word that begins so, and ranking needs relative counts.
 const DOCUMENTS: i64 = 50;
 
-/// Fewer words than this from the metadata, and the bodies are read too.
 const ENOUGH_WORDS: usize = 3;
 
-/// The completed words offered: the dropdown draws one, "as a word".
 const WORDS: usize = 1;
 
-/// Labels, folders and lists offered.
 const LABELS: usize = 3;
 const FOLDERS: usize = 4;
 const LISTS: usize = 1;
 
-/// File names kept: the row names two and says how many more.
 const FILES: usize = 20;
 
-/// People offered.
 const PEOPLE: usize = 4;
 
-/// Where a suggestion's count stops (D29, maintainer 2026-10-09): the
-/// matches walked, as
-/// [`CONVERSATION_WALK_CAP`](postio_search::results::CONVERSATION_WALK_CAP)
-/// is the conversation search's. Past it the count is a floor -- the
-/// conversations among the matches walked -- and the row says "N+".
-///
-/// Below it the count is exact, what the suggestion's query would find
-/// (US7). A completion as common as `as`, in every message, walked the
-/// whole mailbox to the search's own cap and cost 28 ms of a 20 ms
-/// keystroke budget. On the step-1 corpus a thousand puts `a` at 4.4 ms at
-/// p95, 2,500 at 8.2 and 6,500 (what a floor of a thousand *conversations*
-/// would need there) at 18.1 (step-8 note, "Capped").
+/// Past it the count is a floor and the row says "N+". A completion as common as `as` walked the
+/// whole mailbox to the search's own cap and cost 28 ms of a 20 ms keystroke budget.
 pub const COMPLETION_COUNT_CAP: u64 = 1_000;
 
-/// The separator between a document's file names: a unit separator, which
-/// no file name carries.
 const UNIT: char = '\u{1f}';
 
-/// The day the counted queries are parsed against. They name no dates --
-/// a word, `label:`, `list:`, `in:`, `filename:` -- so any day reads them
-/// the same.
+/// The counted queries name no dates, so any day reads them the same.
 fn undated() -> NaiveDate {
     NaiveDate::default()
 }
 
-/// What `prefix` could become: the words, labels, lists and file names it
-/// begins, with no `field`; the people, labels or folders an operator's
-/// value begins with `field`. Each is counted as its query would count.
 pub async fn completions(
     connection: &Connection,
     account: AccountScope,
@@ -131,7 +89,6 @@ pub async fn completions(
     }
 }
 
-/// The short-prefix state's suggestions.
 async fn words_labels_lists_files(
     connection: &Connection,
     account: AccountScope,
@@ -234,20 +191,15 @@ async fn words_labels_lists_files(
     })
 }
 
-/// One metadata document as read for words.
 struct Document {
-    /// Sender, recipients, subject, list.
     texts: Vec<Option<String>>,
     list: Option<String>,
-    /// Its attachments' names, whole: the index's own column joins them
-    /// with spaces, which a name may hold.
+    /// Whole: the index's own column joins names with spaces, which a name may hold.
     files: Vec<String>,
 }
 
-/// The best [`DOCUMENTS`] metadata documents holding a word that begins
-/// with `word`. One statement. `fts_score` is projected bare and with the
-/// match's own parameter, or it answers 0.0 (see `HITS_JOIN`); the file
-/// names are read for those documents only, outside the ordered match.
+/// `fts_score` is projected bare with the match's own parameter, or it answers 0.0 (see
+/// `HITS_JOIN`); file names are read for those documents only, outside the ordered match.
 async fn metadata(connection: &Connection, word: &str) -> Result<Vec<Document>> {
     let documents = sql::all(
         connection,
@@ -286,8 +238,6 @@ async fn metadata(connection: &Connection, word: &str) -> Result<Vec<Document>> 
     Ok(documents)
 }
 
-/// The best [`DOCUMENTS`] bodies holding a word that begins with `word`,
-/// folded as the body index folds (ADR 0038). One statement.
 async fn bodies(connection: &Connection, word: &str) -> Result<Vec<String>> {
     let folded = postio_model::fold::fold(word);
     let texts = sql::all(
@@ -304,9 +254,6 @@ async fn bodies(connection: &Connection, word: &str) -> Result<Vec<String>> {
     Ok(texts.into_iter().flatten().collect())
 }
 
-/// Adds each word of one document's `texts` to `vocabulary`, once per
-/// document however often it repeats: split where the tokenizer splits and
-/// lowercased as it folds.
 fn count_words<'a>(vocabulary: &mut HashMap<String, u64>, texts: impl Iterator<Item = &'a String>) {
     let mut seen: HashSet<String> = HashSet::new();
     for text in texts {
@@ -322,15 +269,12 @@ fn count_words<'a>(vocabulary: &mut HashMap<String, u64>, texts: impl Iterator<I
     }
 }
 
-/// The first word of `text` that begins with `word`, lowercased.
 fn begins_a_word(text: &str, word: &str) -> Option<String> {
     text.split(|c: char| !c.is_alphanumeric())
         .map(str::to_lowercase)
         .find(|token| token.starts_with(word))
 }
 
-/// `(text, filter)` pairs as completions, each running its filter spelled
-/// once (D13), uncounted.
 fn completed(found: impl Iterator<Item = (String, Filter)>) -> Vec<Completion> {
     found
         .map(|(text, filter)| Completion {
@@ -345,8 +289,6 @@ fn completed(found: impl Iterator<Item = (String, Filter)>) -> Vec<Completion> {
         .collect()
 }
 
-/// Every completion in `groups` counted as its query counts, in one
-/// statement, each walk stopping at [`COMPLETION_COUNT_CAP`].
 async fn count_all(
     connection: &Connection,
     account: AccountScope,
@@ -370,23 +312,18 @@ async fn count_all(
     Ok(())
 }
 
-/// The ones that find something, most first, `most` of them: an offer that
-/// finds nothing is not made.
+/// An offer that finds nothing is not made.
 fn keep_found(completions: &mut Vec<Completion>, most: usize) {
     completions.retain(|completion| completion.count > 0);
     completions.sort_by(|a, b| b.count.cmp(&a.count).then(a.text.cmp(&b.text)));
     completions.truncate(most);
 }
 
-/// `LIKE` patterns for a name with a word beginning with `prefix`: at its
-/// start, or after a space.
 fn word_patterns(prefix: &str) -> (String, String) {
     let escaped = escape_like(&prefix.to_lowercase());
     (format!("{escaped}%"), format!("% {escaped}%"))
 }
 
-/// The labels whose name has a word beginning with `prefix`, each name
-/// once. One statement.
 async fn label_names(
     connection: &Connection,
     account: AccountScope,
@@ -424,8 +361,6 @@ async fn label_names(
     Ok(names)
 }
 
-/// The folders whose name has a word beginning with `prefix`, each name
-/// once, the ones mail is filed in. One statement.
 async fn folder_names(
     connection: &Connection,
     account: AccountScope,
@@ -466,11 +401,8 @@ async fn folder_names(
     Ok(names)
 }
 
-/// The people whose address or a word of whose name begins with `prefix`,
-/// most written-to either way first, ties by the latest either way (D21).
-/// Everyone, when nothing is typed yet, but you: your own addresses are on
-/// every message you sent and would always rank first, so they are left
-/// out as the People tab leaves them out. One statement.
+/// Your own addresses are left out, as the People tab leaves them out: they are on every message
+/// you sent and would always rank first.
 async fn people(
     connection: &Connection,
     account: AccountScope,
@@ -489,9 +421,8 @@ async fn people(
         }
         None => "",
     };
-    // Evidence is per address and account (`contact_sightings`), and a person
-    // hides an address only by not being live: an address nobody owns yet is
-    // offered, as it was when every address had a row of its own.
+    // Evidence is per address and account, and a person hides an address only by not being live: an
+    // address nobody owns yet is offered.
     let sql = format!(
         "SELECT p.address, p.name, p.seen, coalesce(w.sent_count, 0), p.last_seen,
                 w.last_sent_at

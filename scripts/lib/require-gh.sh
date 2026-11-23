@@ -1,30 +1,12 @@
-# Refuses to run against a `gh` too old for this workflow, in one sentence.
-#
-# `scripts/issue-claim.sh` reads `gh issue list --json ...,blockedBy,...`.
-# `blockedBy` shipped in `gh` 2.94.0 (cli/cli#13057, "Issues 2.0: issue
-# types, sub-issues, and relationships"). Before that release `gh` rejects
-# the field outright -- it writes an "Unknown JSON field" complaint to
-# stderr and nothing to stdout -- so the `python3 -c` piped after it tries
-# to parse an empty stream as JSON and dies with `JSONDecodeError`, a
-# traceback whose text has nothing to do with the actual problem. #558.
-#
-# `mise.toml` already pins `gh` above this floor, but mise is optional (see
-# that file's own header) -- a session where it is not active gets whatever
-# `gh` is already on `$PATH`, which is exactly the class of gap
-# `RUSTUP_TOOLCHAIN` leaves for the Rust pin (docs/archive/engineering-notes.md).
-# This is the runtime backstop every `scripts/issue-*.sh` sources, so a gap
-# like that fails in one sentence here instead of as a stack trace three
-# layers downstream.
-#
-# Sourced, not executed: every caller shares one `set -euo pipefail`, and
-# `exit` from a sourced script ends the caller's process the same way a
-# check failing partway through the caller's own body would.
+# Refuses to run against a `gh` too old for this workflow, in one sentence: `gh issue list --json
+# blockedBy` needs gh 2.94.0, and older versions leave an empty stream that dies as a
+# `JSONDecodeError` (#558). `mise.toml` pins gh but mise is optional, so this is the runtime
+# backstop every `scripts/issue-*.sh` sources. Sourced, not executed: `exit` ends the caller's
+# process.
 
 REQUIRE_GH_VERSION="2.94.0"
 
-# Numeric MAJOR.MINOR.PATCH comparison, not `sort -V`: BSD `sort` (macOS)
-# has no `-V`, and this exact class of GNU-only assumption already broke
-# `issue-claim.sh` once on that platform (#559's `slug()`).
+# Numeric comparison, not `sort -V`: BSD sort has no `-V` (#559).
 _require_gh_version_at_least() {
     local have="$1" want="$2"
     local IFS=.

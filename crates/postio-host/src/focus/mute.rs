@@ -1,22 +1,8 @@
-//! A muted thread's new replies are archived on arrival (spec 013 US5,
-//! FR-012, research R4).
-//!
-//! The first thing the filing stage does with an arrival, before any rule of
-//! Focus's own and before a snooze is ended: if the message joined a thread
-//! the person muted, it is archived the way any archive archives (an
-//! ordinary move the server hears of), the thread's `replies_since` goes up,
-//! and nothing else runs on it. It is **not** a Filtered decision: Filtered
-//! is "Focus judged this mail", and mute is the person's own instruction.
-//! The message stays in the store and in the search index; only the inbox
-//! loses it.
-//!
-//! **Exempt:** a message addressed to the person alone, one of their own
-//! addresses the only `To` and no `Cc`, arrives in the inbox as usual and the
-//! thread stays muted: somebody wrote to you.
-//!
-//! Cost: one statement for the whole batch when it holds any mail received
-//! into an inbox ([`ThreadRepository::muted`]), none otherwise; the move is
-//! written only for the replies it archives.
+//! A muted thread's new replies are archived on arrival, first, before any Focus rule or snooze
+//! end. Not a Filtered decision: mute is the person's instruction.
+//! Exempt: a message addressed to the person alone (one of their addresses the only `To`, no `Cc`)
+//! arrives as usual.
+//! Cost: one statement per batch when it holds any inbox mail, none otherwise.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -27,11 +13,7 @@ use postio_storage::actions::{self, Relocation};
 use postio_storage::repository::{IdentityRepository, MailboxRepository, ThreadRepository};
 use postio_sync::{FiledMessage, SyncError};
 
-/// Archives the replies in `filed` that joined a muted thread, and answers
-/// the arrivals that go on to be filed as usual.
-///
-/// A failure is the person's mail staying in the inbox: it is logged by
-/// count and the whole batch goes on.
+/// A failure leaves the person's mail in the inbox: logged by count, and the batch goes on.
 pub(crate) async fn archive_muted<'a>(
     transaction: &Connection,
     filed: &[FiledMessage<'a>],
@@ -133,8 +115,6 @@ async fn try_archive<'a>(
     Ok(rest)
 }
 
-/// Whether `message` is addressed to the person alone: one of `own` is its
-/// only `To` address, and it has no `Cc`.
 fn addressed_to_you_alone(message: &postio_model::Message, own: &BTreeSet<String>) -> bool {
     message.cc.is_empty() && message.to.len() == 1 && own.contains(&message.to[0].normalized())
 }
@@ -154,7 +134,6 @@ mod tests {
     use super::super::reply_wakes::ReplyWakes;
     use super::*;
 
-    /// A filing pass that remembers what it was handed.
     #[derive(Debug, Default)]
     struct Seen(Mutex<Vec<MessageId>>);
 
@@ -188,7 +167,6 @@ mod tests {
         pass: Arc<dyn FilingPass>,
     }
 
-    /// A conversation of one in the inbox, muted.
     async fn a_muted_thread(with_archive: bool) -> Scene {
         let database = test_support::memory().await;
         let connection = database.connect().await.expect("checkout");
@@ -223,7 +201,6 @@ mod tests {
     }
 
     impl Scene {
-        /// A message stored and threaded as sync does, addressed as given.
         async fn arrival(
             &self,
             rfc: &str,
@@ -343,7 +320,6 @@ mod tests {
             "mute is the person's word, not a Filtered decision"
         );
         assert!(!scene.handed_on(&reply), "no other filing rule runs on it");
-        // It is still in the store (searchable), not deleted.
         let stored = MessageRepository::new(&scene.connection)
             .get(reply.id)
             .await
@@ -354,8 +330,6 @@ mod tests {
 
     #[tokio::test]
     async fn a_demo_or_test_filing_what_it_stored_takes_the_same_path() {
-        // `FocusSetup::file_stored` is the pass every arrival goes through,
-        // for a caller that stored the message itself.
         let scene = a_muted_thread(true).await;
         let (reply, thread) = scene
             .arrival(
@@ -438,7 +412,6 @@ mod tests {
         assert_eq!(scene.mailbox_of(&reply).await, scene.inbox, "not muted");
         assert!(scene.handed_on(&reply));
 
-        // Muted again, and the account's own reply in Sent is not "received".
         ThreadRepository::new(&scene.connection)
             .mute(scene.thread)
             .await
@@ -507,11 +480,8 @@ mod tests {
         })
         .await;
 
-        // The mute lookup for the page (one statement, one row), the own
-        // addresses and the account's Archive (once each, however many
-        // replies), and the key `replies_since` is counted on (once for the
-        // thread). The moves and the count are writes, which `counting`
-        // does not see.
+        // One mute lookup, the own addresses and Archive once each, and the `replies_since` key;
+        // the moves and the count are writes, which `counting` does not see.
         assert_eq!(scene.replies_since().await, Some(2), "both counted");
         assert_eq!(counts.statements, 4, "{counts:?}");
 

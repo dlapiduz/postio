@@ -1,5 +1,5 @@
-//! Tiles of the snapshot on screen (research R8): 512 logical pixels tall,
-//! rasterised off the UI thread and kept as textures.
+//! Tiles of the snapshot: 512 logical pixels tall, rasterised off the UI thread and kept as
+//! textures.
 
 use std::collections::HashMap;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -11,23 +11,17 @@ use gtk::{gdk, glib};
 use postio_render::RenderedDocument;
 use postio_render::tile::{TileSpec, rasterize_tile, tile_width};
 
-/// A tile's height in logical pixels.
 pub(super) const TILE: f64 = 512.0;
 
-/// The most tile texture bytes one view holds (FR-022): the low-resolution
-/// copy comes on top, and nothing else grows with the message.
+/// Texture byte cap per view; the low-resolution copy comes on top.
 pub(super) const BUDGET: usize = 64 * 1024 * 1024;
 
-/// One tile to rasterise, and where to send it.
 struct Job {
     document: Arc<RenderedDocument>,
     index: u32,
     reply: Sender<(u64, u32, gdk::MemoryTexture)>,
 }
 
-/// The rasterising pool: two threads for the whole process. A tile is a
-/// few milliseconds of CPU; two keep one scroll ahead without contending
-/// with the render thread.
 fn pool() -> &'static Mutex<Sender<Job>> {
     static POOL: OnceLock<Mutex<Sender<Job>>> = OnceLock::new();
     POOL.get_or_init(|| {
@@ -56,7 +50,6 @@ fn pool() -> &'static Mutex<Sender<Job>> {
     })
 }
 
-/// The device-pixel band tile `index` covers.
 fn spec(document: &RenderedDocument, index: u32) -> TileSpec {
     let height = (TILE * document.scale).ceil() as u32;
     TileSpec::nth(index, height)
@@ -76,7 +69,6 @@ fn raster(document: &RenderedDocument, index: u32) -> gdk::MemoryTexture {
     )
 }
 
-/// The textures of one snapshot, and the ones on their way.
 #[derive(Default)]
 pub(super) struct Tiles {
     generation: u64,
@@ -84,44 +76,26 @@ pub(super) struct Tiles {
     pending: HashMap<u32, ()>,
     results: Option<Receiver<(u64, u32, gdk::MemoryTexture)>>,
     reply: Option<Sender<(u64, u32, gdk::MemoryTexture)>>,
-    /// The snapshot's low-resolution copy: what a missing tile shows, so
-    /// no frame is ever the bare ground (FR-029).
     low_res: Option<gdk::MemoryTexture>,
-    /// The last draw lacked a tile.
     short: bool,
-    /// Where the last draw was scrolled to.
     drawn_at: Option<f64>,
-    /// When each tile was last drawn or asked for, by draw count: the
-    /// least recent goes first when the budget is passed.
     used: HashMap<u32, u64>,
     draws: u64,
-    /// The tiles the last draw showed, which are never evicted.
     visible: (u32, u32),
 }
 
-/// What one draw is of: where the view is scrolled, how much of it shows,
-/// and where it sits in the surface.
 #[derive(Clone, Copy)]
 pub(super) struct Frame {
-    /// The horizontal scroll.
     pub left: f64,
-    /// The top of the window on the document, and its height.
     pub top: f64,
     pub height: f64,
-    /// The drawing space's top in the surface, in logical pixels.
     pub origin: f64,
-    /// The surface's scale.
     pub scale: f64,
 }
 
-/// Where tiles `first..=last` go, as `(index, y, height)` in logical
-/// pixels, relative to a space whose own top is `origin` logical pixels
-/// from the surface's: tile `n` starts `n * TILE - top` down.
-///
-/// Every edge is on a device pixel, and a tile ends where the next one
-/// begins. Left where they fall, edges at a fractional device pixel let
-/// the ground show between two tiles -- a line across the message that
-/// comes and goes as it scrolls (T188).
+/// Where tiles `first..=last` go, as `(index, y, height)` in logical pixels. Every edge is on a
+/// device pixel and a tile ends where the next begins; fractional edges let the ground show as a
+/// line between tiles.
 pub(super) fn placements(
     first: u32,
     last: u32,
@@ -139,7 +113,6 @@ pub(super) fn placements(
 }
 
 impl Tiles {
-    /// Start over for a new snapshot.
     pub(super) fn reset(&mut self, document: Arc<RenderedDocument>) {
         let (reply, results) = mpsc::channel();
         let low = &document.low_res;
@@ -167,8 +140,6 @@ impl Tiles {
         };
     }
 
-    /// Draw the tiles in view; ask for the missing ones, and call `redraw`
-    /// when they arrive.
     pub(super) fn draw(
         &mut self,
         snapshot: &gtk::Snapshot,
@@ -208,10 +179,8 @@ impl Tiles {
                     missing = true;
                     self.ask(document, index);
                     if let Some(low_res) = &self.low_res {
-                        // The copy stretched over the whole document, seen
-                        // through this tile's band. The band's edges are
-                        // device pixels, like the tiles', so bands that
-                        // meet leave no row between them (T188).
+                        // Bands share device-pixel edges like the tiles, so none leaves a row
+                        // between them.
                         let band = gtk::graphene::Rect::new(
                             -left as f32,
                             y as f32,
@@ -233,7 +202,6 @@ impl Tiles {
                 }
             }
         }
-        // One tile either side, so a scroll finds it ready.
         for index in [first.checked_sub(1), (last < end).then_some(last + 1)]
             .into_iter()
             .flatten()
@@ -245,14 +213,12 @@ impl Tiles {
         }
         self.short = missing;
         self.drawn_at = Some(top);
-        // Results are taken on a draw, so draw again while any are out --
-        // a prefetched tile as much as a missing one.
+        // Results are taken on a draw, so draw again while any are pending.
         if missing || !self.pending.is_empty() {
             self.wake(redraw);
         }
     }
 
-    /// The bytes of the textures held.
     pub(super) fn bytes(&self) -> usize {
         self.textures
             .values()
@@ -260,8 +226,6 @@ impl Tiles {
             .sum()
     }
 
-    /// Nothing asked for is still on its way, and the last draw had every
-    /// tile it needed.
     pub(super) fn settled(&self, top: f64) -> bool {
         self.pending.is_empty() && !self.short && self.drawn_at == Some(top)
     }
@@ -284,7 +248,6 @@ impl Tiles {
         }
     }
 
-    /// Take the tiles that have arrived.
     fn collect(&mut self) {
         let Some(results) = &self.results else {
             return;
@@ -298,8 +261,6 @@ impl Tiles {
         self.evict();
     }
 
-    /// Drop the least recently drawn tiles until the budget holds, never
-    /// one in view.
     fn evict(&mut self) {
         while self.bytes() > BUDGET {
             let oldest = self
@@ -313,7 +274,6 @@ impl Tiles {
         }
     }
 
-    /// Redraw once the pool has sent something.
     fn wake(&self, redraw: impl Fn() + 'static) {
         glib::timeout_add_local_once(Duration::from_millis(8), redraw);
     }
@@ -323,9 +283,6 @@ impl Tiles {
 mod tests {
     use super::*;
 
-    /// Tiles meet exactly, and every edge is on a device pixel, at every
-    /// scale GNOME offers, wherever the view sits in its window and
-    /// however far it is scrolled.
     #[test]
     fn adjacent_tiles_meet_on_device_pixels() {
         for scale in [1.0, 1.25, 1.5, 1.75, 2.0, 2.5] {

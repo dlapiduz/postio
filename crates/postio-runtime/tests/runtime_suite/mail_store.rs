@@ -1,12 +1,3 @@
-//! The store seam, without a database.
-//!
-//! [`MailStore`] is what a frontend holds, and the whole point of it being a
-//! trait is that neither side needs the other's dependencies: this file
-//! answers from a table rather than a database, which is what any frontend
-//! or test can do.
-//!
-//! Nothing here touches the network.
-
 use std::sync::Mutex;
 
 use chrono::{TimeZone, Utc};
@@ -19,10 +10,8 @@ use postio_runtime::store::{
 const ACCOUNT: i64 = 1;
 const INBOX: i64 = 1;
 
-/// A store that makes a page up on demand.
-///
-/// Holds a count rather than a mailbox, on purpose: a fake that kept every row
-/// in memory would be testing the opposite of what the seam is for.
+/// Holds a count rather than a mailbox: a fake keeping every row would test the opposite of what
+/// the seam is for.
 struct Fake {
     total: u32,
     asked: Mutex<Vec<PageRequest>>,
@@ -52,7 +41,6 @@ impl Fake {
 }
 
 impl Fake {
-    /// The flat window, made up on demand.
     fn message_page(&self, request: PageRequest) -> Read<'_, MessagePage> {
         self.asked.lock().expect("not poisoned").push(request);
         let end = (request.offset + request.limit).min(self.total);
@@ -63,8 +51,6 @@ impl Fake {
 }
 
 impl MailStore for Fake {
-    // This fake is about the message window, so it lists messages: the
-    // thread window has its own coverage in `thread_store.rs`.
     fn list_page(&self, request: PageRequest) -> Read<'_, postio_runtime::store::ListPage> {
         let page = self.message_page(request);
         Box::pin(async move { page.await.map(postio_runtime::store::ListPage::Messages) })
@@ -76,8 +62,6 @@ impl MailStore for Fake {
     }
 
     fn message_rows(&self, ids: Vec<MessageId>) -> Read<'_, Vec<MessageSummary>> {
-        // Keyed off the position the id encodes, so the answer is in the
-        // order asked rather than the order the fake happens to iterate.
         let rows = ids
             .iter()
             .filter_map(|id| u32::try_from(id.get() - 1).ok())
@@ -101,8 +85,7 @@ impl MailStore for Fake {
 
 #[tokio::test]
 async fn a_store_is_usable_behind_a_trait_object() {
-    // How a frontend holds it: one store, chosen once, behind a `dyn`. If the
-    // trait ever stops being object-safe this is what says so.
+    // How a frontend holds it, behind a `dyn`; fails if the trait stops being object-safe.
     let store: Box<dyn MailStore> = Box::new(Fake {
         total: 100_000,
         asked: Mutex::new(Vec::new()),
@@ -134,9 +117,7 @@ async fn a_store_is_usable_behind_a_trait_object() {
 
 #[tokio::test]
 async fn asking_for_a_window_asks_for_a_window() {
-    // docs/PRODUCT.md §18: a mailbox is never loaded into memory. The seam has to be
-    // able to express "these fifty, starting here" or the windowed list model
-    // above it has nothing to window over.
+    // A mailbox is never loaded into memory, so the seam must express "these fifty, starting here".
     let fake = Fake {
         total: 100_000,
         asked: Mutex::new(Vec::new()),

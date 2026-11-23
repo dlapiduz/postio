@@ -1,7 +1,3 @@
-//! What the search bar remembers (spec 010, D15 and D16): the last twenty
-//! queries a person ran, and per saved search the newest message they have
-//! seen its results up to.
-
 use chrono::{DateTime, TimeDelta, TimeZone, Utc};
 use postio_storage::searches::SearchRepository;
 use postio_storage::test_support;
@@ -33,9 +29,6 @@ async fn remembering_a_query_twice_keeps_one_row_with_the_latest_run() {
     assert_eq!(recent[0].last_run_at, at(9));
 }
 
-/// A search that stopped at its walk's cap is remembered as a floor, so its
-/// Recent row says "5,000+ results" (D30); running it again uncapped makes
-/// it exact.
 #[tokio::test]
 async fn a_capped_count_is_remembered_as_a_floor() {
     let database = test_support::memory().await;
@@ -145,7 +138,6 @@ async fn forget_seen_except_drops_the_rows_of_deleted_saved_searches() {
     assert_eq!(searches.seen_up_to("kept").await.unwrap(), Some(at(1)));
     assert_eq!(searches.seen_up_to("gone").await.unwrap(), None);
 
-    // No saved searches left: every row goes.
     assert_eq!(searches.forget_seen_except(&[]).await.unwrap(), 1);
     assert_eq!(searches.seen_up_to("kept").await.unwrap(), None);
 }

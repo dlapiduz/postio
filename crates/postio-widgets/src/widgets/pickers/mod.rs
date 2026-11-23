@@ -1,18 +1,6 @@
-//! The pickers (specs/007-postio-focus US5; contracts/focus-surface.md,
-//! "Pickers"; screens 11-14): a 380 px popover anchored to the focused
-//! row, titled with what it does and what it acts on, holding a short list
-//! and a field, with a footnote saying what happens next.
-//!
-//! [`Picker`] is the frame all four share: the title row, the list with its
-//! number keys and section headings, the field -- a typed date for snooze
-//! and remind, a filter for label and move -- and the footnote. It reads
-//! its keys through the one keymap in `Context::Picker`, so `1`-`4`,
-//! `Tab`, `Space` and `Enter` are the keymap's, not this file's. It
-//! decides nothing: what a choice means is the picker built on it
-//! ([`WhenPicker`], and Focus's label and move pickers).
-//!
-//! The words and times are `postio_ui::pickers`', where a test proves them
-//! without a display.
+//! A 380 px popover anchored to the focused row: title, short list, a field and a footnote.
+//! `Picker` is the frame all four pickers share; its keys come from the keymap's `Context::Picker`.
+//! It decides nothing: the picker built on it gives a choice meaning.
 
 mod when;
 
@@ -30,10 +18,8 @@ use crate::widgets::space::{S1, S2};
 
 pub use when::{When, WhenPicker};
 
-/// The popover's width (contracts/focus-surface.md).
 pub const WIDTH: i32 = 380;
 
-/// The number keys, in order: the first four keyed rows answer to them.
 const CHOOSE: [CommandId; 4] = [
     CommandId::PickerChoose1,
     CommandId::PickerChoose2,
@@ -41,59 +27,40 @@ const CHOOSE: [CommandId; 4] = [
     CommandId::PickerChoose4,
 ];
 
-/// A row's mark before its name.
 #[derive(Debug, Clone)]
 pub enum Mark {
-    /// A label's colour dot.
     Dot(gdk::RGBA),
 }
 
-/// One row of a picker's list.
 #[derive(Debug, Clone, Default)]
 pub struct Row {
-    /// The heading of the section this row starts, when it starts one:
-    /// "Recent", "All folders".
     pub section: Option<String>,
-    /// What sits before the name.
     pub mark: Option<Mark>,
-    /// The name, in bold.
     pub name: String,
-    /// On the right: a time, a count, "✓ applied".
     pub detail: String,
-    /// Whether a number key chooses it: the first four such rows answer to
-    /// `1`-`4`, in order.
+    /// The first four numbered rows answer to `1`-`4`, in order.
     pub numbered: bool,
 }
 
-/// Which field a picker holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Field {
-    /// A date typed in words, under the list; `Tab` reaches it.
     Date,
-    /// A filter over the list, above it, holding the keyboard from the
-    /// start; its placeholder says what it filters.
+    /// Holds the keyboard from the start; its placeholder says what it filters.
     Filter(&'static str),
 }
 
-/// What a person did in a picker.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Picked {
-    /// A row was chosen: by its number key, a click, or `Enter` on it.
     Choose(usize),
-    /// `Enter` in the field: what was typed, and the row selected then.
     Confirm {
-        /// The field's text.
         typed: String,
-        /// The row selected, if any.
         selected: Option<usize>,
     },
-    /// `Space` on a row.
     Toggle(usize),
 }
 
 type Handler = Rc<dyn Fn(Picked)>;
 
-/// The frame a picker is drawn in. See the module.
 pub struct Picker {
     popover: gtk::Popover,
     target: gtk::Label,
@@ -104,22 +71,15 @@ pub struct Picker {
     field: Field,
     keymap: RefCell<Keymap>,
     resolver: RefCell<Resolver>,
-    /// Every row, as last set.
     rows: RefCell<Vec<Row>>,
-    /// What each row of the list is: a heading, or the row at that index.
     shown: RefCell<Vec<Option<usize>>>,
     handler: RefCell<Option<Handler>>,
-    /// The press-anywhere-else watcher on the window the picker last
-    /// opened in.
     outside: RefCell<Option<(glib::WeakRef<gtk::Widget>, gtk::GestureClick)>>,
-    /// What held the keyboard before the picker took it: where it goes back
-    /// to when the picker closes.
+    /// Where the keyboard returns when the picker closes.
     before: RefCell<Option<glib::WeakRef<gtk::Widget>>>,
 }
 
 impl Picker {
-    /// A closed picker titled `title`, holding `field`, with `footnote`
-    /// under it, its keys read from `keymap`.
     pub fn new(keymap: &Keymap, title: &str, field: Field, footnote: &str) -> Rc<Self> {
         let heading = gtk::Label::new(Some(title));
         heading.add_css_class("postio-picker-title");
@@ -184,12 +144,9 @@ impl Picker {
             .halign(gtk::Align::Start)
             .build();
         popover.add_css_class("postio-picker-popover");
-        // No grab: a grabbing popup is the compositor's to dismiss, and one
-        // opened by a key rather than a click is dismissed at once where
-        // nothing has given the window a pointer serial -- which is every
-        // headless run, and a real session now and then. The picker holds
-        // the keyboard through the window's root focus instead, and a press
-        // outside it closes it (see `open`).
+        // No grab: a key-opened grabbing popup is dismissed at once where nothing gave the window a
+        // pointer serial (every headless run). The root focus holds the keyboard and a press
+        // outside closes it (see `open`).
         popover.set_autohide(false);
 
         let (resolver, _) = Resolver::from_commands_for(keymap, Frontend::Focus);
@@ -262,23 +219,19 @@ impl Picker {
         picker
     }
 
-    /// Run `handler` with what the person does.
     pub fn connect_picked(&self, handler: impl Fn(Picked) + 'static) {
         self.handler.replace(Some(Rc::new(handler)));
     }
 
-    /// Run `handler` whenever the field's text changes: a filter re-lists.
     pub fn connect_field_changed(&self, handler: impl Fn(&str) + 'static) {
         self.entry
             .connect_changed(move |entry| handler(entry.text().as_str()));
     }
 
-    /// Run `handler` when the picker closes, however it closes.
     pub fn connect_closed(&self, handler: impl Fn() + 'static) {
         self.popover.connect_closed(move |_| handler());
     }
 
-    /// Read every key from `keymap`.
     pub fn set_keymap(&self, keymap: &Keymap) {
         self.keymap.replace(keymap.clone());
         self.resolver
@@ -286,35 +239,29 @@ impl Picker {
         self.show_rows();
     }
 
-    /// Say what the picker acts on: "Ada Moreno · Atlas Q3 budget".
     pub fn set_target(&self, target: &str) {
         self.target.set_text(target);
     }
 
-    /// Set the line under the date field.
     pub fn set_field_hint(&self, hint: &str) {
         self.field_hint.set_text(hint);
     }
 
-    /// Set the footnote.
     pub fn set_footnote(&self, footnote: &str) {
         self.footnote.set_text(footnote);
     }
 
-    /// List `rows`, and select the first.
     pub fn set_rows(&self, rows: Vec<Row>) {
         self.rows.replace(rows);
         self.show_rows();
-        // A popup is sized when it is presented: rows that land after it
-        // opened -- a label picker's, read from the store -- would scroll
-        // inside the height it had when it was empty.
+        // A popup is sized when presented: rows arriving after it opened would scroll inside the
+        // empty height.
         if self.popover.is_visible() {
             self.popover.present();
         }
     }
 
-    /// Open the picker from `parent`, pointing at `rect` in its coordinates
-    /// (the whole of `parent` when `None`), with the field empty.
+    /// `rect` is in `parent`'s coordinates; `None` is the whole of `parent`.
     pub fn open(&self, parent: &impl IsA<gtk::Widget>, rect: Option<&gdk::Rectangle>) {
         let parent = parent.as_ref();
         if self.popover.parent().as_ref() != Some(parent) {
@@ -322,8 +269,8 @@ impl Picker {
                 self.popover.unparent();
             }
             self.popover.set_parent(parent);
-            // The popover goes with what it hangs from, before GTK would
-            // finalize that with a child still attached.
+            // The popover goes with its parent, before GTK finalizes the parent with a child still
+            // attached.
             parent.connect_destroy({
                 let popover = self.popover.downgrade();
                 move |_| {
@@ -357,8 +304,7 @@ impl Picker {
         }
     }
 
-    /// Close the picker on a press in the window it opened over: the popup
-    /// is its own surface, so a press the window sees is outside it.
+    /// The popup is its own surface, so a press the window sees is outside it.
     fn watch_outside(&self, parent: &gtk::Widget) {
         let Some(root) = parent.root().map(|root| root.upcast::<gtk::Widget>()) else {
             return;
@@ -391,31 +337,26 @@ impl Picker {
         self.outside.replace(Some((root.downgrade(), gesture)));
     }
 
-    /// Close the picker, changing nothing.
     pub fn close(&self) {
         self.popover.popdown();
     }
 
-    /// Whether the picker is up.
     pub fn is_open(&self) -> bool {
         self.popover.is_visible()
     }
 
-    /// Whether the picker is up and drawn: what a caller waits for before
-    /// reading it.
+    /// Up and drawn: what a caller waits for before reading it.
     pub fn is_shown(&self) -> bool {
         self.popover
             .child()
             .is_some_and(|child| child.is_mapped() && child.width() > 0)
     }
 
-    /// The field: the typed date, or the filter.
     pub fn entry(&self) -> &gtk::Entry {
         &self.entry
     }
 
-    /// Whether the keyboard is in the field: its text, which is what takes
-    /// the focus inside an entry, or the entry itself.
+    /// The text is what takes focus inside an entry, so check it as well as the entry.
     pub fn field_has_keyboard(&self) -> bool {
         self.entry
             .root()
@@ -425,17 +366,14 @@ impl Picker {
             })
     }
 
-    /// The popover, for a caller that places or styles it.
     pub fn popover(&self) -> &gtk::Popover {
         &self.popover
     }
 
-    /// The index of the selected row, if any.
     pub fn selected(&self) -> Option<usize> {
         self.list.selected_row().and_then(|row| self.row_at(&row))
     }
 
-    /// Select the `index`th row.
     pub fn select(&self, index: usize) {
         let at = self
             .shown
@@ -450,7 +388,6 @@ impl Picker {
         }
     }
 
-    /// Every text the picker shows, in order: what a test reads.
     pub fn texts(&self) -> Vec<String> {
         let mut said = Vec::new();
         let mut stack: Vec<gtk::Widget> = self.popover.child().into_iter().collect();
@@ -470,15 +407,8 @@ impl Picker {
         said
     }
 
-    /// Handle one key, as the picker's key controller does; `true` when the
-    /// picker used it.
-    ///
-    /// The keymap's `Context::Picker` decides: `1`-`4` choose, `Tab` goes
-    /// to the date field, `Space` toggles, `Enter` confirms and `Escape`
-    /// closes. In the field, typing wins, as everywhere: a digit or a space
-    /// typed into a filter is text -- except into an empty filter, where
-    /// there is nothing to type into yet and `1` and `Space` are the
-    /// picker's.
+    /// In the field typing wins: a digit or space in a non-empty filter is text; in an empty one
+    /// `1` and `Space` are the picker's.
     pub fn press(&self, key: gdk::Key, state: gdk::ModifierType) -> bool {
         match key {
             gdk::Key::Down => return self.step(1),
@@ -508,7 +438,6 @@ impl Picker {
         self.command(command)
     }
 
-    /// Run a picker command; `false` for one a picker does not answer.
     pub fn command(&self, command: CommandId) -> bool {
         if let Some(number) = CHOOSE.iter().position(|choose| *choose == command) {
             if let Some(index) = self.numbered(number) {
@@ -547,7 +476,6 @@ impl Picker {
         }
     }
 
-    /// The row the `number`th number key chooses.
     fn numbered(&self, number: usize) -> Option<usize> {
         self.rows
             .borrow()
@@ -558,7 +486,6 @@ impl Picker {
             .map(|(index, _)| index)
     }
 
-    /// Move the selection `by` rows, over the headings.
     fn step(&self, by: i32) -> bool {
         let rows = self.shown.borrow();
         let current = self.list.selected_row().map_or(-1, |row| row.index());
@@ -577,7 +504,7 @@ impl Picker {
         }
     }
 
-    /// The index in `rows` of the list row `row`; `None` for a heading.
+    /// `None` for a heading.
     fn row_at(&self, row: &gtk::ListBoxRow) -> Option<usize> {
         let at = usize::try_from(row.index()).ok()?;
         self.shown.borrow().get(at).copied().flatten()
@@ -590,7 +517,6 @@ impl Picker {
         }
     }
 
-    /// Draw the rows, with their headings, marks, details and number keys.
     fn show_rows(&self) {
         while let Some(child) = self.list.first_child() {
             self.list.remove(&child);
@@ -654,7 +580,6 @@ impl Picker {
     }
 }
 
-/// A label's colour dot.
 fn dot(colour: gdk::RGBA) -> gtk::DrawingArea {
     let dot = gtk::DrawingArea::new();
     dot.add_css_class("postio-picker-dot");

@@ -1,11 +1,3 @@
-//! Opening a message reads its row once.
-//!
-//! The reading pane asked `load_body_or_reason` for the body -- which reads
-//! the message row, with its recipients, attachments and labels, to decide
-//! whether there is a body at all -- and then read the same row again for
-//! the header and the parts tree. `load_with_row` hands back the row it
-//! already read.
-
 use chrono::Utc;
 use postio_model::{BodyState, EmailAddress, Message};
 use postio_storage::repository::{MessageRepository, StoredBody};

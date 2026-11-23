@@ -39,8 +39,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -59,9 +57,6 @@ FAILURES: list[str] = []
 def run(stub_dir: Path, overrides: dict[str, str]) -> dict[str, str]:
     """Run the wrapper and report the sccache-facing environment it built."""
     environment = dict(os.environ)
-    # The stub directory first and the real toolchain dropped, so a real
-    # sccache on this machine cannot make a case pass that would fail without
-    # one. /usr/bin and /bin stay because the wrapper is a bash script.
     environment["PATH"] = f"{stub_dir}:/usr/bin:/bin"
     for name in ("SCCACHE_LOG", "SCCACHE_ERROR_LOG", "OUT_DIR"):
         environment.pop(name, None)

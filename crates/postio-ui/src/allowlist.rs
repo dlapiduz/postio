@@ -1,45 +1,12 @@
-//! Who may load remote images, kept across restarts.
-//!
-//! Remote images are blocked by default — `PRODUCT.md`'s "nothing leaves this
-//! machine that the user did not ask for" starts at the tracking pixel — and
-//! "show once" never touches this. This is the standing exception, and the
-//! only place a decision to make one is recorded.
-//!
-//! # Why it is here rather than in a frontend
-//!
-//! The classic app had had one since `postio-xxz`, written against `glib`'s key
-//! file and `$XDG_STATE_HOME`. Neither exists on macOS, and a second
-//! implementation of a *privacy* rule is the one place ADR 0019 Q6's risk is
-//! least acceptable: two allow lists means two answers to "may this sender
-//! see me", and the wrong answer is silent and remote. So the rule and the
-//! file format live here, and each frontend supplies a path.
-//! [`RemoteImageAllowList`] is the same list under the name the desktop and
-//! terminal frontends speak, at the path they have always used (#1273).
-//!
-//! # Addresses and domains
-//!
-//! Two grants, deliberately. "Always allow this address" is what a person
-//! means about a correspondent; "always allow this domain" is what they mean
-//! about a service that sends from `notices-3a7f@relay.example.net` and never
-//! from the same address twice. A domain grant covers every address under it;
-//! neither covers a subdomain of the other, because `mail.example.com` and
-//! `example.com` can be different senders and guessing costs privacy.
-//!
-//! # A sender's treatment
-//!
-//! Beside the grants, [`RemoteImageAllowList`] keeps the treatment a person
-//! chose to always see one sender's mail in (specs/007-postio-focus T213),
-//! under a `[Treatment]` section of the same file. It is the same kind of
-//! thing -- a standing answer about one sender's mail, a view preference
-//! rather than mail data -- and [`AllowList::parse`] ignores the section, so
-//! a frontend that does not offer treatments reads the grants unchanged.
+//! Persistent remote-image allow list: the one implementation of this privacy rule, shared
+//! by every frontend (ADR 0019 Q6, #1273). Grants are per address or per domain; neither
+//! covers a subdomain of the other. It also keeps a sender's chosen treatment.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use postio_body::treatment::Treatment;
 
-/// Senders and domains whose remote images load without asking.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AllowList {
     addresses: BTreeSet<String>,
@@ -47,18 +14,12 @@ pub struct AllowList {
 }
 
 impl AllowList {
-    /// An empty list: nobody is allowed, which is the default state and the
-    /// state any unreadable file falls back to.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Parse a saved list. Anything unparseable reads as empty.
-    ///
-    /// **Fails closed.** A corrupt file means nobody is allow-listed, never
-    /// "allow everything" and never an error that stops a message being read:
-    /// the cost of the cautious reading is one extra click, and the cost of
-    /// the other is a beacon nobody consented to.
+    /// Parse a saved list. Fails closed: anything unparseable reads as empty, never as
+    /// "allow everything".
     pub fn parse(text: &str) -> Self {
         let mut list = Self::new();
         let mut section = None;
@@ -70,16 +31,13 @@ impl AllowList {
             match line {
                 "[addresses]" => section = Some(false),
                 "[domains]" => section = Some(true),
-                // Another section -- `[Treatment]`, which the shell beside
-                // this keeps -- is nobody's grant, and its lines must not be
-                // read as the previous section's.
+                // Another section's lines must not be read as the previous section's grants.
                 other if other.starts_with('[') && other.ends_with(']') => section = None,
                 entry => match section {
                     Some(true) => list.allow_domain(entry),
                     Some(false) => list.allow(entry),
-                    // A line before any section header belongs to nothing,
-                    // and guessing which list it was meant for is guessing
-                    // about consent.
+                    // A line before any section belongs to nothing; guessing is guessing about
+                    // consent.
                     None => {}
                 },
             }
@@ -87,7 +45,6 @@ impl AllowList {
         list
     }
 
-    /// The file's text, ready to write.
     pub fn render(&self) -> String {
         let mut out = String::from(
             "# Senders whose remote images Postio loads without asking.\n\
@@ -106,14 +63,12 @@ impl AllowList {
         out
     }
 
-    /// Read the list at `path`, or an empty one.
     pub fn load_from(path: &Path) -> Self {
         std::fs::read_to_string(path)
             .map(|text| Self::parse(&text))
             .unwrap_or_default()
     }
 
-    /// Write the list to `path`, creating the directory if it is missing.
     pub fn save_to(&self, path: &Path) -> std::io::Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -121,8 +76,6 @@ impl AllowList {
         std::fs::write(path, self.render())
     }
 
-    /// Whether `address` may load remote images — by its own grant or by one
-    /// covering its domain.
     pub fn is_allowed(&self, address: &str) -> bool {
         let address = address.trim().to_lowercase();
         if address.is_empty() {
@@ -134,7 +87,6 @@ impl AllowList {
         domain_of(&address).is_some_and(|domain| self.domains.contains(&domain))
     }
 
-    /// Always allow this address.
     pub fn allow(&mut self, address: &str) {
         let address = address.trim().to_lowercase();
         if !address.is_empty() {
@@ -142,10 +94,6 @@ impl AllowList {
         }
     }
 
-    /// Always allow every address at this domain.
-    ///
-    /// Takes an address or a bare domain, because the caller has an address
-    /// and the menu item says "this domain".
     pub fn allow_domain(&mut self, address_or_domain: &str) {
         let text = address_or_domain.trim().to_lowercase();
         let domain = domain_of(&text).unwrap_or(text);
@@ -154,30 +102,25 @@ impl AllowList {
         }
     }
 
-    /// Take a grant back.
     pub fn revoke(&mut self, address: &str) {
         let address = address.trim().to_lowercase();
         self.addresses.remove(&address);
         self.domains.remove(&address);
     }
 
-    /// Every address allowed by name, for a settings pane to list.
     pub fn addresses(&self) -> impl Iterator<Item = &str> {
         self.addresses.iter().map(String::as_str)
     }
 
-    /// Every domain allowed wholesale.
     pub fn domains(&self) -> impl Iterator<Item = &str> {
         self.domains.iter().map(String::as_str)
     }
 
-    /// Whether anybody is allowed at all.
     pub fn is_empty(&self) -> bool {
         self.addresses.is_empty() && self.domains.is_empty()
     }
 }
 
-/// The domain half of an address, lowercased.
 fn domain_of(address: &str) -> Option<String> {
     address
         .rsplit_once('@')
@@ -185,47 +128,26 @@ fn domain_of(address: &str) -> Option<String> {
         .filter(|domain| !domain.is_empty())
 }
 
-/// The key-file group the classic app's old allow list kept its senders in.
 const LEGACY_GROUP: &str = "AlwaysAllow";
 
-/// The section a sender's chosen treatment lives under: the address is the
-/// key, the treatment's attribute value (`app` or `paper`) the value.
+/// Section for a sender's chosen treatment: address key, `app` or `paper` value.
 const TREATMENT_SECTION: &str = "Treatment";
 
-/// Senders whose remote images load without asking, across restarts, at the
-/// path the desktop and terminal frontends share.
-///
-/// A thin shell over [`AllowList`], which is the one implementation every
-/// frontend reads and writes (#1273). Two allow lists meant two answers to
-/// "may this sender see me", and that is the least acceptable place for the
-/// two to drift: the wrong answer is silent and remote. The shell stays
-/// because the call sites in the frontends and `postio-tui` speak this
-/// vocabulary -- `senders`, `save`, `path` -- and rewriting them to say the
-/// same things differently would be churn without a reader.
+/// The desktop and terminal frontends' vocabulary (`senders`, `save`, `path`) over
+/// `AllowList`, the one implementation (#1273).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RemoteImageAllowList {
     inner: AllowList,
-    /// The treatment a person chose to always see a sender's mail in
-    /// (specs/007-postio-focus T213), by lowercased address.
     treatments: BTreeMap<String, Treatment>,
 }
 
 impl RemoteImageAllowList {
-    /// Read the saved list, falling back to empty for anything missing or
-    /// unreadable.
     pub fn load() -> Self {
         Self::load_from(&Self::path())
     }
 
-    /// As [`load`](Self::load), from a path you name.
-    ///
-    /// The shared format first, and the old `[AlwaysAllow]` key file only if
-    /// that read nothing -- which is what a key file parses to, since
-    /// [`AllowList::parse`] ignores every line before a section header it
-    /// knows. A file in the old shape is migrated in place, once: there are
-    /// no deployed installs to protect, but there
-    /// is a maintainer with grants in a running build, and silently
-    /// forgetting who they trusted would be the wrong kind of clean break.
+    /// Reads the shared format, then the old `[AlwaysAllow]` key file if that read nothing;
+    /// an old-shape file is migrated in place.
     pub fn load_from(path: &Path) -> Self {
         let text = std::fs::read_to_string(path).unwrap_or_default();
         let inner = AllowList::parse(&text);
@@ -237,71 +159,48 @@ impl RemoteImageAllowList {
             return Self { inner, treatments };
         };
         let migrated = Self { inner, treatments };
-        // Best-effort: the grants are in memory and correct either way, and
-        // a write that fails only means the migration happens again next
-        // launch.
+        // Best-effort: the grants are in memory either way; a failed write only repeats the
+        // migration next launch.
         let _ = migrated.save_to(path);
         migrated
     }
 
-    /// Whether `sender` has a standing "always allow" exception, by its own
-    /// grant or by one covering its domain.
-    ///
-    /// `sender` is a bare address (`ada@example.com`), not a "Display Name
-    /// `<addr>`" mailbox -- normalization here is only trimming and
-    /// lowercasing, not address parsing.
+    /// `sender` is a bare address, not a "Name `<addr>`" mailbox; it is only trimmed and lowercased.
     pub fn is_allowed(&self, sender: &str) -> bool {
         self.inner.is_allowed(sender)
     }
 
-    /// Grant `sender` a standing exception, in memory only.
-    ///
-    /// Deliberately not persisted here: the frontend is what knows whether
-    /// it is running against the real state directory or, in a test, a
-    /// scratch path -- see [`save_to`](Self::save_to).
+    /// In memory only: the frontend decides where it is saved.
     pub fn allow(&mut self, sender: &str) {
         self.inner.allow(sender);
     }
 
-    /// Whether any sender has a standing exception.
     pub fn is_empty(&self) -> bool {
         self.inner.is_empty()
     }
 
-    /// The grants themselves, to ask about or list -- domains included,
-    /// which [`senders`](Self::senders) leaves out.
     pub fn grants(&self) -> &AllowList {
         &self.inner
     }
 
-    /// The grants themselves, to change in memory -- a domain grant, a
-    /// revoke -- without losing the treatments beside them when the list
-    /// is saved.
+    /// Mutable grants; saving keeps the treatments beside them.
     pub fn grants_mut(&mut self) -> &mut AllowList {
         &mut self.inner
     }
 
-    /// Every sender allowed by name, in address order -- what a settings
-    /// pane lists to manage (#871).
     pub fn senders(&self) -> impl Iterator<Item = &str> {
         self.inner.addresses()
     }
 
-    /// Revoke `sender`'s standing exception, in memory only -- the same
-    /// split as [`allow`](Self::allow).
     pub fn revoke(&mut self, sender: &str) {
         self.inner.revoke(sender);
     }
 
-    /// The treatment `sender`'s mail is always drawn in, if the person chose
-    /// one ("Always for this sender", specs/007-postio-focus T213).
     pub fn treatment_for(&self, sender: &str) -> Option<Treatment> {
         self.treatments.get(&normalize(sender)).copied()
     }
 
-    /// Remember `treatment` for `sender`, or forget their choice with
-    /// `None`, in memory only -- [`save_to`](Self::save_to) persists it, as
-    /// for [`allow`](Self::allow).
+    /// `None` forgets the choice. In memory only.
     pub fn set_treatment(&mut self, sender: &str, treatment: Option<Treatment>) {
         let sender = normalize(sender);
         if sender.is_empty() {
@@ -317,25 +216,20 @@ impl RemoteImageAllowList {
         }
     }
 
-    /// Every remembered treatment, by sender in address order: what moving
-    /// them onto the people they belong to reads (ADR 0048).
     pub fn treatments(&self) -> impl Iterator<Item = (&str, Treatment)> {
         self.treatments
             .iter()
             .map(|(sender, treatment)| (sender.as_str(), *treatment))
     }
 
-    /// Forget every remembered treatment, in memory only, leaving the grants.
     pub fn clear_treatments(&mut self) {
         self.treatments.clear();
     }
 
-    /// Persist to [`path`](Self::path).
     pub fn save(&self) -> std::io::Result<()> {
         self.save_to(&Self::path())
     }
 
-    /// As [`save`](Self::save), to a path you name.
     pub fn save_to(&self, path: &Path) -> std::io::Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -350,10 +244,7 @@ impl RemoteImageAllowList {
         std::fs::write(path, text)
     }
 
-    /// `$XDG_STATE_HOME/postio/remote-images.ini`.
-    ///
-    /// `$XDG_STATE_HOME`, else `~/.local/state`: where GLib's
-    /// `user_state_dir` puts it, so the classic app finds the file it wrote.
+    /// `$XDG_STATE_HOME/postio/remote-images.ini`, falling back to `~/.local/state` as GLib does.
     pub fn path() -> PathBuf {
         let state = std::env::var_os("XDG_STATE_HOME")
             .filter(|dir| !dir.is_empty())
@@ -367,14 +258,11 @@ impl RemoteImageAllowList {
     }
 }
 
-/// An address as the lists key it: trimmed and lowercased.
 fn normalize(address: &str) -> String {
     address.trim().to_lowercase()
 }
 
-/// The `[Treatment]` section of a saved list: each sender's chosen
-/// treatment. A value no treatment answers to is no choice, so the rule
-/// decides for that sender as if nothing were written.
+/// The `[Treatment]` section; a value no treatment answers to is no choice.
 fn treatments_in(text: &str) -> BTreeMap<String, Treatment> {
     let mut in_section = false;
     let mut treatments = BTreeMap::new();
@@ -404,11 +292,7 @@ fn treatments_in(text: &str) -> BTreeMap<String, Treatment> {
     treatments
 }
 
-/// The classic app's old `[AlwaysAllow]` key file, if that is what `text` is.
-///
-/// Read without GLib: for one group of boolean keys the format is a few
-/// lines of text, and reading it here is what lets a frontend with no GLib
-/// keep the grants the classic app made.
+/// The old `[AlwaysAllow]` key file, read without GLib so a frontend without it keeps those grants.
 fn from_key_file(text: &str) -> Option<AllowList> {
     let mut in_group = false;
     let mut list = AllowList::new();
@@ -441,15 +325,11 @@ mod tests {
 
     #[test]
     fn nobody_is_allowed_to_begin_with() {
-        // The default that matters: a fresh install shows no remote image
-        // until somebody says so.
         assert!(!AllowList::new().is_allowed("ada@example.com"));
     }
 
     #[test]
     fn an_allowed_address_is_matched_however_it_is_capitalised() {
-        // `Ada@Example.com` and `ada@example.com` are one sender, and a
-        // grant that missed the second would silently keep blocking.
         let mut list = AllowList::new();
         list.allow("Ada@Example.com");
         assert!(list.is_allowed("ada@example.com"));
@@ -458,9 +338,6 @@ mod tests {
 
     #[test]
     fn a_domain_grant_covers_the_addresses_under_it() {
-        // What the second menu item is for: a service that sends from
-        // `notices-3a7f@relay.example.net` and never twice from the same
-        // address cannot be allowed one address at a time.
         let mut list = AllowList::new();
         list.allow_domain("notices-3a7f@relay.example.net");
         assert!(list.is_allowed("notices-9c21@relay.example.net"));
@@ -472,8 +349,6 @@ mod tests {
 
     #[test]
     fn a_domain_grant_does_not_reach_into_subdomains() {
-        // `mail.example.com` and `example.com` can be different senders, and
-        // guessing costs privacy rather than convenience.
         let mut list = AllowList::new();
         list.allow_domain("example.com");
         assert!(!list.is_allowed("someone@mail.example.com"));
@@ -501,7 +376,6 @@ mod tests {
 
     #[test]
     fn a_corrupt_file_allows_nobody_rather_than_everybody() {
-        // Fails closed: one extra click against a beacon nobody consented to.
         let list = AllowList::parse("this is not the file you are looking for\n\0\u{1}");
         assert!(list.is_empty());
         assert!(!list.is_allowed("ada@example.com"));
@@ -509,8 +383,6 @@ mod tests {
 
     #[test]
     fn a_line_before_any_heading_belongs_to_nothing() {
-        // Guessing which list a stray line was meant for is guessing about
-        // consent, and the guess that costs is the generous one.
         let list = AllowList::parse("ada@example.com\n\n[domains]\nrelay.example.net\n");
         assert!(!list.is_allowed("ada@example.com"));
         assert!(list.is_allowed("someone@relay.example.net"));
@@ -539,9 +411,6 @@ mod tests {
 
     #[test]
     fn the_key_file_the_desktop_app_wrote_is_read_and_migrated() {
-        // What GLib's key file wrote before the list was shared: nobody
-        // allowed then is forgotten now, and a sender explicitly *not*
-        // allowed does not arrive allowed.
         let path = scratch("glib-written");
         std::fs::write(
             &path,
@@ -553,8 +422,6 @@ mod tests {
 
         assert!(list.is_allowed("ada@example.com"));
         assert!(!list.is_allowed("bea@example.com"));
-        // Written back in the shared shape, so it happens once rather than
-        // every launch.
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("[addresses]"), "not rewritten: {text:?}");
         assert!(RemoteImageAllowList::load_from(&path).is_allowed("ada@example.com"));
@@ -629,9 +496,7 @@ mod tests {
 
     #[test]
     fn a_grant_changed_through_the_shell_keeps_the_treatments() {
-        // The Mac changed its grants through `AllowList` alone, whose
-        // render has no `[Treatment]` section: a revoke there would have
-        // forgotten every sender's chosen treatment.
+        // A revoke through `AllowList` alone must not forget treatments.
         let path = scratch("treatment-kept-by-grants");
         let mut list = RemoteImageAllowList::default();
         list.set_treatment("news@example.com", Some(Treatment::Paper));
@@ -674,8 +539,7 @@ mod tests {
 
     #[test]
     fn a_treatment_is_nobodys_grant() {
-        // The section follows `[domains]` in the file, and a reader that did
-        // not know it would take `news@example.com=paper` for a domain.
+        // The section follows `[domains]`; an unaware reader would take its lines for domains.
         let list = AllowList::parse(
             "[addresses]\nada@example.com\n\n[domains]\nrelay.example.net\n\n\
              [Treatment]\nnews@example.com=paper\n",

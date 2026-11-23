@@ -1,18 +1,3 @@
-//! Which SQL a first sync issues, and which of it the planner answers with a
-//! full scan (#1708).
-//!
-//! #1707 found a `SCAN messages` inside `upsert_batch` -- run once per sync
-//! batch -- by watching a CPU sit at 100% for an hour. This is the instrument
-//! that would have found it first: run a realistic first sync of a store with
-//! several mailboxes, threads, recipients, flags and bodies, remember the text
-//! of every statement it prepared, ask the planner about each, and fail on any
-//! that is a full scan of a table that grows with the mailbox.
-//!
-//! A scan that runs once per sync or reads a table that cannot grow large is
-//! named in [`ALLOWED`] with the reason; everything else is a bug, because the
-//! store this runs against in production is a hundred thousand messages and
-//! every page of it is decrypted to be read.
-
 use chrono::{DateTime, TimeDelta, TimeZone, Utc};
 use postio_account::backend::{MailBackend, MockBackend, MockMailbox, MockMessage};
 use postio_account::cancel::CancelToken;
@@ -25,8 +10,6 @@ use postio_sync::{resync_mailbox, sync_mailbox};
 
 const VALIDITY: u32 = 1_708_000_000;
 
-/// Statements whose scan of a large table is accepted, by a fragment of their
-/// text, with why. Empty until the audit says otherwise.
 const ALLOWED: &[(&str, &str)] = &[(
     "SELECT id, subject FROM messages",
     "the orphan rethread: once per mailbox, after its *first* sync only, \
@@ -37,9 +20,6 @@ fn at(second: i64) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 3, 1, 9, 0, 0).unwrap() + TimeDelta::seconds(second)
 }
 
-/// A message with a sender, three recipients, a Message-ID, and -- for all but
-/// every fifth message -- a parent in the same mailbox, so threads form and
-/// the threader has real work to do.
 fn mail(mailbox: &str, n: u32) -> Vec<u8> {
     let references = if n % 5 != 1 {
         format!(
@@ -117,7 +97,6 @@ async fn a_first_sync_issues_no_full_scan_of_a_table_that_grows() {
             .expect("first sync");
     }
 
-    // Bodies for the newest messages of the inbox, as the backfill lane does.
     let messages = MessageRepository::new(&connection);
     let inbox = &mailboxes[0];
     for uid in 300..=400u32 {
@@ -151,8 +130,6 @@ async fn a_first_sync_issues_no_full_scan_of_a_table_that_grows() {
         .expect("fetch body");
     }
 
-    // The top-up that turns "headers only" back into a backlog, as the engine
-    // runs it after each mailbox finishes.
     let mut backfill = Backfill::new(BackfillPolicy::default());
     for mailbox in &mailboxes {
         seed(&connection, &mut backfill, mailbox.id, 50)
@@ -160,7 +137,6 @@ async fn a_first_sync_issues_no_full_scan_of_a_table_that_grows() {
             .expect("seed the backlog");
     }
 
-    // The incremental pass over each synced mailbox.
     for mailbox in &mailboxes {
         resync_mailbox(&connection, &backend, mailbox, &CancelToken::new(), |_| {})
             .await
@@ -194,10 +170,8 @@ async fn a_first_sync_issues_no_full_scan_of_a_table_that_grows() {
         }
     }
     eprintln!("{} distinct statements issued", issued.len());
-    // The plans above are the ones production gets: nothing in Postio runs
-    // ANALYZE, and the engine must not have made statistics of its own. With
-    // them the same statements plan *worse* -- see
-    // docs/notes/2026-09-30-analyze-makes-the-hot-plans-worse.md.
+    // Production runs no ANALYZE; with statistics the same statements plan worse
+    // (docs/notes/2026-09-30-analyze-makes-the-hot-plans-worse.md).
     let stats: i64 =
         postio_storage::sql::scalar(&connection, "SELECT count(*) FROM sqlite_stat1", ())
             .await

@@ -1,10 +1,5 @@
 import SwiftUI
 
-/// The find bar above the reading pane (spec 006 FR-018, #1705).
-///
-/// Every gesture here is the command's: the field types into
-/// `FindInMessage`, Return is `find_next`, the arrows are `find_next` and
-/// `find_previous`, and Done and Escape close it. The bar decides nothing.
 public struct FindBar: View {
     private let find: FindInMessage
     private let setQuery: (String) -> Void

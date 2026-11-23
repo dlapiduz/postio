@@ -1,18 +1,9 @@
-//! A GDK key press, as the keymap resolver reads it.
-//!
-//! The resolver -- contexts, sequences, the text-entry rule -- is
-//! `postio_ui::keymap`, because none of it is toolkit-shaped. What is
-//! toolkit-shaped is turning a GDK key event into a [`Chord`], and both
-//! desktop apps do it, so it is here (ADR 0043) rather than in either app.
+//! A GDK key press as the keymap resolver reads it; both desktop apps share it (ADR 0043).
 
 use gtk::gdk;
 use postio_ui::keymap::{Chord, Modifiers};
 
-/// The chord a GTK key-pressed event is: the character the key types, the
-/// key's name when it types nothing, and the modifiers held with it.
-///
-/// `None` for a key this build has no name for -- a dead key, a keypad key
-/// with no binding -- which the caller should let propagate.
+/// `None` for a key with no name (a dead key), which the caller should let propagate.
 pub fn chord(keyval: gdk::Key, state: gdk::ModifierType) -> Option<Chord> {
     let mut modifiers = Modifiers::NONE;
     for (mask, modifier) in [
@@ -35,7 +26,6 @@ mod tests {
 
     #[test]
     fn a_key_event_is_the_chord_its_binding_is_written_as() {
-        // No display is needed: a keyval is a number and its name a table.
         for (name, state, expected) in [
             ("a", gdk::ModifierType::empty(), "a"),
             ("J", gdk::ModifierType::SHIFT_MASK, "J"),

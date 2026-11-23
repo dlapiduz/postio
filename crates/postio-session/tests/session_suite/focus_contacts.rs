@@ -1,6 +1,3 @@
-//! A sender's pin, markers and digest are kept on the correspondent, and the
-//! engine reads them beside the file (specs/011-focus-contacts S3, ADR 0048).
-
 use std::sync::{Arc, Mutex};
 
 use postio_config::{Config, DigestRule, Due, FocusConfig};
@@ -9,8 +6,6 @@ use postio_session::focus::FocusSettings;
 use postio_storage::repository::ContactRepository;
 use postio_storage::{Store, test_support};
 
-/// A Focus mode installed over a `config.toml` holding `text`, with the last
-/// configuration it published.
 struct Setup {
     settings: FocusSettings,
     database: Store,
@@ -244,7 +239,6 @@ async fn a_digest_for_one_sender_is_the_persons_and_keeps_its_name() {
         "not in the file"
     );
 
-    // Edited under the same name, then taken back with what it was kept as.
     let mut later = ledger();
     later.at = "18:30".into();
     s.settings
@@ -301,7 +295,6 @@ async fn the_rules_the_database_holds_reach_the_engine_when_it_starts() {
         .await
         .unwrap();
 
-    // A new process: the same store, a fresh Focus mode.
     let again = FocusSettings::default();
     again.install(None, FocusConfig::default(), Arc::new(|_| {}));
     assert!(

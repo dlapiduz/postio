@@ -21,7 +21,6 @@ use postio_client::protocol::ClientKind;
 use postio_host::Host;
 use postio_model::ListScope;
 use postio_model::listing::{MailStore, PageRequest};
-use postio_ui::paging::Fetch;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
@@ -731,48 +730,6 @@ async fn places_contents(
     }
 }
 
-/// What Focus's inbox surfaces among its conversations, as the host has it.
-async fn read_surfaced(client: &Client, inputs: &async_channel::Sender<Input>) {
-    match client.surfaced().await {
-        Ok(rows) => {
-            let _ = inputs.send(Input::Surfaced(rows)).await;
-        }
-        Err(error) => {
-            tracing::warn!(%error, "could not read Focus's surfaced rows: {error}");
-        }
-    }
-}
-
-/// One page of a list, as rows: what the store holds for the positions
-/// asked, with the page's labels read in one round trip, and Focus's
-/// surfaced rows put where `placement` says they sit.
-async fn read_page(
-    client: &Client,
-    request: postio_ui::paging::PageRequest,
-    placement: Option<crate::app::Placement>,
-) -> Result<postio_ui::paging::Page<crate::row::Row>, String> {
-    let (offset, limit) = crate::row::store_range(&request, placement.as_ref());
-    let answer = client
-        .list_page(PageRequest {
-            scope: request.scope,
-            offset,
-            limit,
-        })
-        .await
-        .map_err(|error| error.message().to_owned())?;
-    let labelled = match &answer {
-        postio_model::listing::ListPage::Threads(page) => client
-            .thread_labels(postio_ui::focus_list::label_threads(&page.rows))
-            .await
-            .unwrap_or_else(|error| {
-                tracing::warn!(%error, "could not read a page's labels: {error}");
-                Vec::new()
-            }),
-        postio_model::listing::ListPage::Messages(_) => Vec::new(),
-    };
-    Ok(crate::row::page_of(&request, answer, labelled, placement))
-}
-
 /// Where saved parts go: `$XDG_DOWNLOAD_DIR`, else `~/Downloads`, else the
 /// home directory, else here.
 fn downloads() -> std::path::PathBuf {
@@ -1422,28 +1379,6 @@ fn perform(
                     let _ = inputs.send(Input::Body { message, answer }).await;
                 });
             }
-            Effect::Open(scope) => {
-                // What the person is looking at, so mail arriving in the
-                // folder already on screen is not announced.
-                *attention.lock().expect("never poisoned") = postio_ui::notify::Attention {
-                    showing: match scope {
-                        ListScope::Mailbox(mailbox) => Some(mailbox),
-                        _ => None,
-                    },
-                    active: true,
-                };
-                let client = client.clone();
-                let inputs = inputs.clone();
-                tokio::spawn(async move {
-                    let total = client.list_count(scope).await.unwrap_or(0);
-                    // Read before the list opens, so its first page is placed
-                    // among them.
-                    if scope == ListScope::Focus(postio_model::FocusScope::Inbox) {
-                        read_surfaced(&client, &inputs).await;
-                    }
-                    let _ = inputs.send(Input::Opened { scope, total }).await;
-                });
-            }
             Effect::Ask(ask) => {
                 let client = client.clone();
                 let inputs = inputs.clone();
@@ -1506,34 +1441,6 @@ fn perform(
                     let _ = inputs.send(Input::Places(contents)).await;
                 });
             }
-            Effect::ReadSurfaced => {
-                let client = client.clone();
-                let inputs = inputs.clone();
-                tokio::spawn(async move { read_surfaced(&client, &inputs).await });
-            }
-            Effect::ReadFocusCounts => {
-                let client = client.clone();
-                let inputs = inputs.clone();
-                tokio::spawn(async move {
-                    match client.focus_counts().await {
-                        Ok(counts) => {
-                            let _ = inputs.send(Input::FocusCounts(counts)).await;
-                        }
-                        Err(error) => {
-                            tracing::warn!(%error, "could not read Focus's counts: {error}");
-                        }
-                    }
-                });
-            }
-            Effect::Recount(scope) => {
-                let client = client.clone();
-                let inputs = inputs.clone();
-                tokio::spawn(async move {
-                    if let Ok(total) = client.list_count(scope).await {
-                        let _ = inputs.send(Input::Recounted { scope, total }).await;
-                    }
-                });
-            }
             Effect::Send(command) => {
                 let client = client.clone();
                 tokio::spawn(async move {
@@ -1542,24 +1449,38 @@ fn perform(
                     }
                 });
             }
-            Effect::Fetch {
-                generation,
-                page,
-                fetch,
-                placement,
-            } => {
+            Effect::Focus { ticket, request } => {
+                // A post is said now, before anything after it is asked.
+                let request = match postio_focus::perform_now(client, request) {
+                    Ok(reply) => {
+                        let _ = inputs.try_send(Input::FocusReply(ticket, reply));
+                        continue;
+                    }
+                    Err(request) => request,
+                };
+                // What the person is looking at, so mail arriving in the
+                // folder already on screen is not announced.
+                if let postio_focus::Request::OpenScope { scope, .. } = &request {
+                    *attention.lock().expect("never poisoned") = postio_ui::notify::Attention {
+                        showing: match scope {
+                            ListScope::Mailbox(mailbox) => Some(*mailbox),
+                            _ => None,
+                        },
+                        active: true,
+                    };
+                }
                 let client = client.clone();
                 let inputs = inputs.clone();
                 tokio::spawn(async move {
-                    let Fetch::Scope(request) = fetch;
-                    let rows = read_page(&client, request, placement).await;
-                    let _ = inputs
-                        .send(Input::Page {
-                            generation,
-                            page,
-                            rows,
-                        })
-                        .await;
+                    let reply = postio_focus::perform(&client, request).await;
+                    let _ = inputs.send(Input::FocusReply(ticket, reply)).await;
+                });
+            }
+            Effect::FocusTimer { token, after } => {
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(after).await;
+                    let _ = inputs.send(Input::FocusTimer(token)).await;
                 });
             }
         }

@@ -1,23 +1,6 @@
-//! Asking an account whether it still works, and taking one away (#1277).
-//!
-//! Three account actions the settings window draws and neither frontend could
-//! run: **test the connection**, **re-index the store**, and **remove the
-//! account**. They belong together because they share the two things that
-//! make them awkward — reaching a credential that lives in the keyring, and
-//! saying what happened in words somebody can act on.
-//!
-//! # The words are the feature
-//!
-//! "Test connection" that answers *no* is worthless. `BackendError` already
-//! distinguishes the cases that call for different actions — a rejected
-//! password, a TLS failure, a timeout, a port that answers but is not IMAP —
-//! and turning those into sentences is a rule, not a rendering, so it lives
-//! here rather than in each frontend. The wording is the classic app's own,
-//! moved: it knows the one thing the error cannot, which is that a provider
-//! refusing an ordinary account password says only "rejected".
-//!
-//! No variant of `BackendError` carries a credential, so these are safe to
-//! show and safe to log.
+//! Testing an account's connection, re-indexing, and removing an account (#1277).
+//! Turning `BackendError` into sentences someone can act on is a rule, so it lives here; no variant
+//! carries a credential, so they are safe to show and log.
 
 use std::sync::Arc;
 
@@ -29,38 +12,20 @@ use postio_model::ids::AccountId;
 use postio_storage::Store;
 use postio_storage::repository::AccountRepository;
 
-/// What a connection test found.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectionReport {
-    /// Whether the account could sign in.
     pub reachable: bool,
-    /// What happened, for the person who pressed the button.
     pub message: String,
-    /// Whether the failure was that there is **no credential** for this
-    /// account rather than a wrong or rejected one.
-    ///
-    /// The settings pane's *Partial* state: a row that exists with nothing in
-    /// the keyring to sign in with. It calls for a different offer — put a
-    /// password in, or sign in again — than a server that said no, and a
-    /// pane that could not tell them apart would offer the wrong one.
+    /// No credential for this account, rather than a wrong one: the settings pane's *Partial*
+    /// state, which calls for a different offer.
     pub missing_credential: bool,
-    /// Whether the server **refused** the credential it was given — a
-    /// rotated app password, or a grant the provider revoked.
-    ///
-    /// The other half of what the pane needs to offer a repair rather than a
-    /// retry: a refused credential never passes a second test, and a pane
-    /// that could only say "unreachable" left the person to guess that the
-    /// password was the problem (#1584).
+    /// The server refused the credential given (a rotated app password or revoked grant); a refused
+    /// credential never passes a second test (#1584).
     pub rejected_credential: bool,
 }
 
-/// Open a session against the account's own server and close it again.
-///
-/// What sync does, and then stops. The credential comes from wherever this
-/// account keeps one — a stored password, an app password, or a refreshed
-/// OAuth token — through the same `TokenSource` the engine uses, so a test
-/// that passes is a statement about the path sync will take rather than
-/// about a second one written for the button.
+/// Open a session against the account's own server and close it again, through the same
+/// `TokenSource` sync uses, so a pass says something about sync's path.
 pub async fn test_connection(account: &Account, secrets: Arc<dyn SecretStore>) -> ConnectionReport {
     let key = AccountKey::new(account.address.address.clone());
     let tokens = crate::engine::token_source(account, &secrets);
@@ -107,10 +72,6 @@ pub async fn test_connection(account: &Account, secrets: Arc<dyn SecretStore>) -
     }
 }
 
-/// What a sign-in that failed with `error` reports.
-///
-/// Its own function so the classification can be asserted without a
-/// server: no test in the default suite touches the network.
 pub fn failure(error: &BackendError) -> ConnectionReport {
     ConnectionReport {
         reachable: false,
@@ -120,19 +81,8 @@ pub fn failure(error: &BackendError) -> ConnectionReport {
     }
 }
 
-/// Take an account away: its row, and then its credential.
-///
-/// **The row first here, which is the opposite of adding one**, and for the
-/// same reason: what must never be left behind is a credential nothing names
-/// versus an account that cannot authenticate. Removing leaves the harmless
-/// one if it fails halfway — an account gone from the store with a secret
-/// still in the keyring is untidy, while a row whose credential had already
-/// been deleted would be an account that could not sync and could not be
-/// repaired.
-///
-/// The credential is deleted **on the way out** rather than left: a mail
-/// client that forgets an account and keeps its password is the one thing
-/// worse than not forgetting it.
+/// Take an account away: its row, then its credential. The row goes first so a halfway failure
+/// leaves a harmless orphan secret rather than an account that cannot authenticate or be repaired.
 pub async fn remove_account(
     database: &Store,
     secrets: Arc<dyn SecretStore>,
@@ -149,8 +99,6 @@ pub async fn remove_account(
             .await
             .map_err(|error| format!("Postio could not read its local store: {error}"))?
         else {
-            // Already gone. Not an error: pressing Remove twice means what it
-            // said the first time.
             return Ok(());
         };
         let address = found.address.address.clone();
@@ -161,9 +109,7 @@ pub async fn remove_account(
         address
     };
 
-    // Best effort, and deliberately after the row: a keyring that refuses
-    // must not leave the account half-removed. What it leaves instead is a
-    // secret nothing names.
+    // Best effort and after the row: a refusing keyring must not leave the account half-removed.
     for key in [
         AccountKey::new(address.clone()),
         AccountKey::new(format!("{address}#oauth-refresh")),
@@ -176,12 +122,8 @@ pub async fn remove_account(
     Ok(())
 }
 
-/// Change what an account calls itself.
-///
-/// The one field the canvas' account form edits. Everything else on a row —
-/// the servers, the auth method — came from the preset table or from a
-/// sign-in, and editing those is changing *which account this is*, which is
-/// adding one.
+/// Change what an account calls itself, the one field the account form edits; the rest would make
+/// it a different account.
 pub async fn set_display_name(
     database: &Store,
     account: AccountId,
@@ -206,13 +148,8 @@ pub async fn set_display_name(
         .map_err(|error| format!("The account could not be updated: {error}"))
 }
 
-/// Turn a backend error into something the user can act on.
-///
-/// Moved from the classic app's onboarding, which had it for the same button on
-/// the other platform. The interesting case is the first: a provider that
-/// refuses ordinary account passwords says only that the credentials were
-/// rejected, and somebody who has typed their Apple ID password has no way
-/// to tell that from a typo.
+/// Turn a backend error into something the user can act on. A provider that refuses ordinary
+/// account passwords says only "rejected", which a typo looks the same as.
 pub fn explain(error: &BackendError) -> String {
     match error {
         BackendError::Auth { .. } => "The server rejected that address and password.\n\n\

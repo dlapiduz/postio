@@ -1,17 +1,3 @@
-//! A server that goes quiet in every way a server can, against the real pool.
-//!
-//! The pool is bounded, so a connection that is never given up on is a slot
-//! lost for good, and a connection that is given back in a state nobody
-//! checked is a corrupted exchange for whoever draws it next. Each case here
-//! asserts the three things a person sees: the operation fails promptly with
-//! a timeout, the connection is discarded rather than parked, and the next
-//! operation succeeds on a fresh connection.
-//!
-//! The clock is tokio's paused one and the server is reached through memory
-//! ([`TestServer::connector`]), so a sixty-second deadline costs milliseconds
-//! and the assertions are about exact virtual time. Over a socket the paused
-//! clock misfires (docs/gotchas.md).
-
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -25,11 +11,8 @@ use postio_account::test_server::{Fault, Quirk, TestMailbox, TestServer};
 use postio_model::{RemoteId, UidValidity};
 use tokio::time::Instant;
 
-/// How long a command may go without a byte from the server.
 const SILENCE: Duration = Duration::from_secs(60);
 
-/// A bound that only a hang can reach. Twice the deadline: if an operation is
-/// still running then, the deadline did not apply to it.
 const HANG: Duration = Duration::from_secs(120);
 
 const SEEDED: [&str; 3] = ["plain-text-simple", "attachment-pdf", "html-newsletter"];
@@ -46,7 +29,6 @@ async fn server() -> TestServer {
         .await
 }
 
-/// A pool whose connections run through memory, `capacity` bytes at a time.
 async fn pool(server: &TestServer, capacity: usize) -> ConnectionPool {
     let store = MemorySecretStore::new();
     let key = AccountKey::new(server.account());
@@ -95,8 +77,6 @@ async fn body(pool: &ConnectionPool) -> Result<Vec<u8>, BackendError> {
     Ok(sink.as_slice().to_vec())
 }
 
-/// Runs `operation` and requires it to fail with a timeout of `SILENCE`,
-/// reached after `SILENCE` of virtual time and not much more.
 async fn times_out<T: std::fmt::Debug>(
     operation: impl Future<Output = Result<T, BackendError>>,
     lead_in: Duration,
@@ -119,7 +99,6 @@ async fn times_out<T: std::fmt::Debug>(
     );
 }
 
-/// The poisoned connection was thrown away and a fresh one does the work.
 async fn recovers(pool: &ConnectionPool) {
     let stats = pool.stats();
     assert_eq!(
@@ -198,8 +177,6 @@ async fn an_idle_that_is_never_acknowledged_after_done_times_out_and_is_replaced
     let pool = pool(&server, 64 * 1024).await;
     server.inject(Fault::IgnoreDone);
 
-    // The watcher is told to stop a second in. `DONE` goes out, and the
-    // tagged completion that should answer it never comes.
     let stop = CancelToken::new();
     let wake = stop.clone();
     let operation = async {
@@ -218,7 +195,6 @@ async fn an_idle_that_is_never_acknowledged_after_done_times_out_and_is_replaced
     assert_eq!(stats.idle, 0, "the wedged watch connection was parked");
     let opened = stats.opened;
 
-    // The watch lane is usable again, on a connection of its own.
     let events = tokio::time::timeout(
         HANG,
         idle(&pool, "INBOX", Duration::from_secs(2), &CancelToken::new()),
@@ -233,7 +209,6 @@ async fn an_idle_that_is_never_acknowledged_after_done_times_out_and_is_replaced
 #[tokio::test(start_paused = true)]
 async fn a_server_that_stops_reading_a_write_times_out_and_is_replaced() {
     let server = server().await;
-    // A pipe that holds four kilobytes, and a message that cannot fit.
     let pool = pool(&server, 4 * 1024).await;
     server.quirk(Quirk::DeafToLiterals);
     let message = AppendMessage::new(vec![b'x'; 256 * 1024]);
@@ -244,7 +219,6 @@ async fn a_server_that_stops_reading_a_write_times_out_and_is_replaced() {
     )
     .await;
 
-    // The server is still deaf to literals, and a fetch carries none.
     recovers(&pool).await;
 }
 
@@ -256,8 +230,7 @@ async fn an_operation_dropped_mid_read_does_not_return_its_connection() {
         during: "FETCH".to_owned(),
     });
 
-    // The caller gives up first: a user closed the view, a job was
-    // superseded. The future is dropped with the response half read.
+    // The caller gives up first: the future is dropped with the response half read.
     let abandoned = tokio::time::timeout(Duration::from_secs(1), headers(&pool)).await;
     assert!(abandoned.is_err(), "the stalled fetch cannot have finished");
 

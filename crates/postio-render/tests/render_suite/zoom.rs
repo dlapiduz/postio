@@ -1,6 +1,3 @@
-//! Zoom (spec 006 FR-021, SC-009): at every step, nothing is lost off the
-//! side, and zoom narrows the effective width the way a browser's does.
-
 use crate::support::{LIGHT, render, request};
 use postio_model::test_corpus;
 
@@ -39,8 +36,6 @@ fn every_step_keeps_every_cluster_inside_the_document() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
-/// FR-021a: 200% in an 800px pane lays out 400 CSS px, so the responsive
-/// columns stack as they do in a narrow window.
 #[test]
 fn zoom_narrows_the_effective_width() {
     let x_of = |doc: &postio_render::RenderedDocument, text: &str| {
@@ -58,7 +53,6 @@ fn zoom_narrows_the_effective_width() {
         (x_of(&zoomed, "Market hall") - x_of(&zoomed, "Bus times")).abs() < 1.0,
         "the columns did not stack at 200%"
     );
-    // The view is still the pane's width; the text is twice the size.
     assert!(
         (zoomed.size.width - 800.0).abs() < 1.0,
         "the zoomed document is {} wide",

@@ -1,10 +1,3 @@
-//! A body the parser could not read is not "no body" (#287, #277).
-//!
-//! A message whose MIME structure the parser had to guess at can come back
-//! with no text and no HTML part. Calling that `Absent::Empty` tells the
-//! person "that is the whole message, not a fault", which is the one thing
-//! known to be untrue; the decode caveat is what is true.
-
 use chrono::Utc;
 use postio_model::{BodyState, EmailAddress, Message};
 use postio_session::reading::{Body, load_with_row};

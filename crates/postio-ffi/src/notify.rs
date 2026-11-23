@@ -1,81 +1,46 @@
-//! New-mail notifications at the boundary: the decision, not the delivery.
-//!
-//! [`postio_ui::notify`] is the one rule for whether an arrival is worth
-//! interrupting somebody for, which id coalesces it and where a click
-//! lands; `decide_notification` is that rule with the macOS app's wording,
-//! [`Wording::Counts`] — ids and counts only, because a notification there
-//! is a log the lock screen reads out. The frontend's `MailNotifier` is a
-//! shim over this, and `UNUserNotificationCenter` is the only thing it adds.
-//!
-//! The master switch (`[sync] notify`) crosses as `Session::notices` and
-//! the frontend applies it. The role gate (`[sync] notify_roles`) is decided
-//! here, by the same rule the host uses (`postio_ui::notify::role_watched`):
-//! the frontend passes the folder's role and the roles `Session::notices`
-//! reports, so the app notifies only for the folders the person chose.
+//! New-mail notifications at the boundary: the decision, not the delivery. `decide_notification` is
+//! `postio_ui::notify`'s rule with the macOS wording: ids and counts only, since a notification is
+//! a log the lock screen reads out. The role gate (`[sync] notify_roles`) is decided here; the
+//! master switch crosses as `Session::notices`.
 
 use postio_model::{MailboxId, MessageId};
 
 use crate::MailboxRoleFfi;
 use postio_ui::notify::{self, Attention, Decision, Suppressed, Wording};
 
-/// New mail that arrived, as `UiEvent::NewMail` reports it: ids only.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct MailArrivalFfi {
-    /// The folder it landed in.
     pub mailbox: i64,
-    /// The newly delivered messages.
     pub messages: Vec<i64>,
 }
 
-/// Why an arrival did not become a notification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum SuppressedFfi {
-    /// The event carried no new messages.
     NothingArrived,
-    /// It landed in the folder the user is looking at, right now.
     AlreadyOnScreen,
-    /// `[sync] notify_roles` does not list the folder's role.
     NotWatched,
 }
 
-/// One notification, ready to hand the notification centre.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct MailNotificationFfi {
     /// Stable per folder, so a second batch replaces the one on screen.
     pub identifier: String,
     /// What it says: counts and a folder name, never message content.
     pub title: String,
-    /// The rest of what it says.
     pub body: String,
-    /// Where a click should land.
     pub mailbox: i64,
-    /// The one message a single arrival is about, if it is one.
     pub message: Option<i64>,
 }
 
-/// What to do about an arrival.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum NotificationDecisionFfi {
-    /// Nothing, and why.
-    Suppress {
-        /// Why not.
-        reason: SuppressedFfi,
-    },
-    /// Post this.
-    Deliver {
-        /// What to post.
-        notification: MailNotificationFfi,
-    },
+    Suppress { reason: SuppressedFfi },
+    Deliver { notification: MailNotificationFfi },
 }
 
-/// Whether `arrival` becomes a notification, and what it says.
-///
-/// `showing` is the folder the list currently has open and `active` is
-/// whether Postio is the frontmost application; both are needed to suppress
-/// (see [`Attention`]). `mailbox_name` is the folder's display name when the
-/// frontend knows it. `role` is the folder's role and `notify_roles` is
-/// `[sync] notify_roles`: an arrival in a folder whose role is not listed is
-/// [`SuppressedFfi::NotWatched`].
+/// `showing` is the folder the list has open and `active` whether Postio is frontmost, both needed
+/// to suppress. An arrival in a folder whose `role` is not in `notify_roles` is
+/// `SuppressedFfi::NotWatched`.
 #[uniffi::export]
 pub fn decide_notification(
     arrival: MailArrivalFfi,
@@ -157,8 +122,7 @@ mod tests {
 
     #[test]
     fn an_arrival_in_a_folder_the_person_did_not_choose_is_not_told() {
-        // `[sync] notify_roles` defaults to the inbox. The macOS app used to
-        // notify for every folder, so a message landing in Trash said
+        // `[sync] notify_roles` defaults to the inbox, so a message landing in Trash does not say
         // "New mail in Trash".
         let arrival = || MailArrivalFfi {
             mailbox: 9,

@@ -1,8 +1,3 @@
-//! Download and attach, at the composer (spec 014 US8,
-//! `contracts/remote-image.md`, "The composer"): the rows under the body,
-//! the press, what each outcome says, and remove-to-link. The fetch is a
-//! fake handler that counts, so nothing reaches the network.
-
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -54,7 +49,6 @@ fn a_png_part() -> Attachment {
     part
 }
 
-/// The rows, the warning before Send, and no request until the press.
 pub fn a_remote_image_is_a_row_and_nothing_is_fetched_until_the_press() {
     let Some((_window, composer, pending)) = ready() else {
         return;
@@ -82,7 +76,6 @@ pub fn a_remote_image_is_a_row_and_nothing_is_fetched_until_the_press() {
     assert_eq!(composer.test_remote_rows()[0].1, "Downloading\u{2026}");
 }
 
-/// A picture that arrives takes the chip's place, and is an attachment.
 pub fn an_attached_image_takes_the_chips_place() {
     let Some((_window, composer, pending)) = ready() else {
         return;
@@ -106,7 +99,6 @@ pub fn an_attached_image_takes_the_chips_place() {
     assert_eq!(composer.draft().attachments.len(), 1);
 }
 
-/// A refusal says why on the row, and the image stays a link.
 pub fn a_refusal_says_why_and_the_image_stays_a_link() {
     let Some((_window, composer, pending)) = ready() else {
         return;
@@ -141,7 +133,6 @@ pub fn a_refusal_says_why_and_the_image_stays_a_link() {
     );
 }
 
-/// Remove sends it as the link it would be, and stops offering it.
 pub fn remove_turns_the_chip_into_a_link() {
     let Some((_window, composer, pending)) = ready() else {
         return;
@@ -158,7 +149,6 @@ pub fn remove_turns_the_chip_into_a_link() {
     assert!(pending.borrow().is_empty());
 }
 
-/// With no image in the body, the press says so and asks for nothing.
 pub fn a_press_with_no_image_says_so() {
     let Some((_window, composer, pending)) = ready() else {
         return;

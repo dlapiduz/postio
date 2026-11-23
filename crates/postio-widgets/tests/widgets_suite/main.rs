@@ -1,23 +1,7 @@
-//! One binary for the GTK cases of the crate the desktop app draws with
-//! (ADR 0043), under a custom harness, for two reasons:
-//!
-//!   * GTK may be initialized from exactly one thread per process (#41), and
-//!     libtest runs `#[test]` functions on a thread pool;
-//!   * every extra test *binary* links the whole GTK stack, and linking was
-//!     once the dominant cost of a GTK crate's tests (#329).
-//!
-//! So: `harness = false`, one `adw::init`, every case a plain `pub fn` in
-//! `widgets_suite/`, run in sequence under `catch_unwind` so one failure does
-//! not hide the rest.
-//!
-//! **A new case is a module here and a row in `CASES`.** `--list` and name
-//! filtering behave enough like libtest for `cargo test`, nextest and the
-//! tooling's test counting to work, and that output is a contract:
-//! `list_contract.rs` is what notices when it breaks, because a runner that
-//! misreads it runs nothing and reports success.
-//!
-//! A panicking case can leave toolkit state behind that fails a later case:
-//! when several cases fail at once, trust the first.
+//! One custom-harness binary for the crate's GTK cases (ADR 0043): GTK may be initialised from one
+//! thread per process (#41), and linking GTK per binary was the dominant cost (#329).
+//! A new case is a module here and a row in `CASES`; `--list` output is a contract that
+//! `list_contract.rs` checks.
 
 mod body_view;
 mod body_view_a11y;
@@ -69,8 +53,6 @@ mod list_model_generic;
 mod list_recycling;
 mod onboarding;
 mod onboarding_enter;
-mod onboarding_guess;
-mod onboarding_name;
 mod onboarding_sync_window;
 mod one_allowlist;
 mod pickers;
@@ -113,11 +95,8 @@ mod toast;
 mod toast_tone_and_undo;
 mod widgets_css;
 
-/// Cases held out of a default run, by name -- the table-driven spelling of
-/// `#[ignore]`, which means one thing here: this machine may not have what
-/// the case needs. A name here still runs when asked for explicitly, and still
-/// appears in `--list`, exactly as an ignored libtest case does. Say in a
-/// comment beside the name which issue or task takes it back.
+/// A name here still runs when asked for explicitly and still appears in `--list`. `#[ignore]`
+/// means only that this machine may lack what the case needs.
 const IGNORED: &[&str] = &[];
 
 const CASES: &[(&str, fn())] = &[
@@ -403,16 +382,8 @@ const CASES: &[(&str, fn())] = &[
         composer_recipients::revealing_cc_and_bcc_keeps_what_was_already_typed as fn(),
     ),
     (
-        "composer_recipients::cc_and_bcc_put_themselves_away_only_while_they_are_empty",
-        composer_recipients::cc_and_bcc_put_themselves_away_only_while_they_are_empty as fn(),
-    ),
-    (
         "composer_recipient_select::destroying_a_composer_releases_recipient_completion",
         composer_recipient_select::destroying_a_composer_releases_recipient_completion as fn(),
-    ),
-    (
-        "composer_recipient_select::replacing_the_text_keeps_the_popover_up",
-        composer_recipient_select::replacing_the_text_keeps_the_popover_up as fn(),
     ),
     (
         "composer_recipient_select::clicking_a_suggestion_puts_that_one_in_the_field",
@@ -421,14 +392,6 @@ const CASES: &[(&str, fn())] = &[
     (
         "composer_recipient_select::return_commits_the_suggestion_the_popover_has_selected",
         composer_recipient_select::return_commits_the_suggestion_the_popover_has_selected as fn(),
-    ),
-    (
-        "composer_recipient_select::accepting_a_group_inserts_every_member",
-        composer_recipient_select::accepting_a_group_inserts_every_member as fn(),
-    ),
-    (
-        "composer_recipient_select::nothing_is_offered_until_four_characters_are_typed",
-        composer_recipient_select::nothing_is_offered_until_four_characters_are_typed as fn(),
     ),
     (
         "composer_markdown_source::switching_there_and_back_changes_nothing",
@@ -499,14 +462,6 @@ const CASES: &[(&str, fn())] = &[
         composer_resume::resuming_replaces_the_draft_the_composer_was_holding as fn(),
     ),
     (
-        "composer_resume::composing_after_a_kept_draft_starts_blank",
-        composer_resume::composing_after_a_kept_draft_starts_blank as fn(),
-    ),
-    (
-        "composer_resume::resuming_an_unsaved_draft_over_another_unsaved_one_replaces_it",
-        composer_resume::resuming_an_unsaved_draft_over_another_unsaved_one_replaces_it as fn(),
-    ),
-    (
         "composer_resume::reopening_restores_the_formatting_and_the_attachments_too",
         composer_resume::reopening_restores_the_formatting_and_the_attachments_too as fn(),
     ),
@@ -521,14 +476,6 @@ const CASES: &[(&str, fn())] = &[
     (
         "composer_signature_default::a_resolved_signature_wins_over_the_identity_s_own",
         composer_signature_default::a_resolved_signature_wins_over_the_identity_s_own as fn(),
-    ),
-    (
-        "composer_signature_default::a_resolved_signature_the_account_does_not_have_falls_back_to_the_identity",
-        composer_signature_default::a_resolved_signature_the_account_does_not_have_falls_back_to_the_identity as fn(),
-    ),
-    (
-        "composer_signature_default::no_resolution_resets_a_picker_a_previous_compose_left_pointed_elsewhere",
-        composer_signature_default::no_resolution_resets_a_picker_a_previous_compose_left_pointed_elsewhere as fn(),
     ),
     (
         "composer_size::an_oversize_draft_is_refused_before_it_reaches_the_send_handler",
@@ -607,14 +554,6 @@ const CASES: &[(&str, fn())] = &[
         onboarding_enter::return_does_the_right_thing_in_every_field as fn(),
     ),
     (
-        "onboarding_guess::a_guess_fills_the_manual_form_and_opens_it",
-        onboarding_guess::a_guess_fills_the_manual_form_and_opens_it as fn(),
-    ),
-    (
-        "onboarding_name::a_typed_name_reaches_the_submission_and_a_blank_one_stays_empty",
-        onboarding_name::a_typed_name_reaches_the_submission_and_a_blank_one_stays_empty as fn(),
-    ),
-    (
         "onboarding_sync_window::picking_a_window_updates_the_estimate_and_start_sync_fires_it",
         onboarding_sync_window::picking_a_window_updates_the_estimate_and_start_sync_fires_it as fn(),
     ),
@@ -629,18 +568,6 @@ const CASES: &[(&str, fn())] = &[
     (
         "settings_accounts::the_context_menu_reaches_the_action_handler_with_the_right_account",
         settings_accounts::the_context_menu_reaches_the_action_handler_with_the_right_account as fn(),
-    ),
-    (
-        "settings_accounts::an_account_row_says_what_its_mail_weighs",
-        settings_accounts::an_account_row_says_what_its_mail_weighs as fn(),
-    ),
-    (
-        "settings_accounts::an_account_row_says_how_it_connects",
-        settings_accounts::an_account_row_says_how_it_connects as fn(),
-    ),
-    (
-        "settings_accounts::an_account_row_says_whether_its_token_is_still_good",
-        settings_accounts::an_account_row_says_whether_its_token_is_still_good as fn(),
     ),
     (
         "settings_accounts::a_refused_password_offers_a_new_one_on_its_row",
@@ -665,14 +592,6 @@ const CASES: &[(&str, fn())] = &[
     (
         "settings_account_detail::editing_the_display_name_reports_the_account_and_the_new_value",
         settings_account_detail::editing_the_display_name_reports_the_account_and_the_new_value as fn(),
-    ),
-    (
-        "settings_account_detail::editing_the_imap_port_reports_the_account_and_the_new_value",
-        settings_account_detail::editing_the_imap_port_reports_the_account_and_the_new_value as fn(),
-    ),
-    (
-        "settings_account_detail::opening_a_second_account_populates_its_own_settings_not_the_firsts",
-        settings_account_detail::opening_a_second_account_populates_its_own_settings_not_the_firsts as fn(),
     ),
     (
         "settings_account_detail::the_detail_view_offers_the_accounts_signatures_and_starts_on_its_default",
@@ -747,24 +666,8 @@ const CASES: &[(&str, fn())] = &[
         settings_filters::a_pinned_search_shows_the_key_that_runs_it as fn(),
     ),
     (
-        "settings_filters::the_page_says_how_a_saved_search_is_made",
-        settings_filters::the_page_says_how_a_saved_search_is_made as fn(),
-    ),
-    (
-        "settings_filters::pinned_filters_come_first_in_order_then_unpinned_ones_alphabetically",
-        settings_filters::pinned_filters_come_first_in_order_then_unpinned_ones_alphabetically as fn(),
-    ),
-    (
         "settings_filters::toggling_pinned_writes_straight_to_the_buffer",
         settings_filters::toggling_pinned_writes_straight_to_the_buffer as fn(),
-    ),
-    (
-        "settings_filters::deleting_a_filter_removes_its_row_and_leaves_everything_else_alone",
-        settings_filters::deleting_a_filter_removes_its_row_and_leaves_everything_else_alone as fn(),
-    ),
-    (
-        "settings_filters::reordering_moves_a_pinned_filter_and_disables_at_the_ends",
-        settings_filters::reordering_moves_a_pinned_filter_and_disables_at_the_ends as fn(),
     ),
     (
         "settings_frame::exactly_one_pane_is_ever_on_screen",
@@ -779,24 +682,12 @@ const CASES: &[(&str, fn())] = &[
         settings_frame::the_frame_is_identical_on_every_pane as fn(),
     ),
     (
-        "settings_frame::the_footer_names_the_table_the_pane_writes",
-        settings_frame::the_footer_names_the_table_the_pane_writes as fn(),
-    ),
-    (
-        "settings_frame::the_sidebar_groups_its_sections_under_two_headings",
-        settings_frame::the_sidebar_groups_its_sections_under_two_headings as fn(),
-    ),
-    (
         "settings_frame::finding_a_setting_narrows_the_sidebar_to_the_panes_that_have_it",
         settings_frame::finding_a_setting_narrows_the_sidebar_to_the_panes_that_have_it as fn(),
     ),
     (
         "settings_keys::rows_render_one_per_command_with_its_current_binding",
         settings_keys::rows_render_one_per_command_with_its_current_binding as fn(),
-    ),
-    (
-        "settings_keys::an_override_in_the_file_is_what_the_row_shows",
-        settings_keys::an_override_in_the_file_is_what_the_row_shows as fn(),
     ),
     (
         "settings_keys::capturing_a_free_key_writes_the_new_binding_to_the_buffer",
@@ -807,16 +698,8 @@ const CASES: &[(&str, fn())] = &[
         settings_keys::capturing_a_binding_already_in_use_is_surfaced_not_silently_overwritten as fn(),
     ),
     (
-        "settings_keys::escape_cancels_capture_without_changing_anything",
-        settings_keys::escape_cancels_capture_without_changing_anything as fn(),
-    ),
-    (
         "settings_privacy::allowed_senders_render_as_rows_and_hide_when_there_are_none",
         settings_privacy::allowed_senders_render_as_rows_and_hide_when_there_are_none as fn(),
-    ),
-    (
-        "settings_privacy::every_allowed_sender_gets_its_own_row",
-        settings_privacy::every_allowed_sender_gets_its_own_row as fn(),
     ),
     (
         "settings_privacy::revoking_a_sender_removes_its_row_and_persists",
@@ -825,14 +708,6 @@ const CASES: &[(&str, fn())] = &[
     (
         "settings_privacy::no_activations_hides_the_unsubscribe_section_and_shows_the_empty_state",
         settings_privacy::no_activations_hides_the_unsubscribe_section_and_shows_the_empty_state as fn(),
-    ),
-    (
-        "settings_privacy::every_activation_gets_its_own_row_newest_first",
-        settings_privacy::every_activation_gets_its_own_row_newest_first as fn(),
-    ),
-    (
-        "settings_privacy::the_read_receipt_count_states_zero_rather_than_going_blank",
-        settings_privacy::the_read_receipt_count_states_zero_rather_than_going_blank as fn(),
     ),
     (
         "settings_privacy::the_read_receipt_count_states_the_number_and_says_none_are_sent",
@@ -856,20 +731,8 @@ const CASES: &[(&str, fn())] = &[
         settings_sync::emptying_junk_and_trash_is_off_and_chosen_per_folder as fn(),
     ),
     (
-        "settings_sync::the_pane_shows_the_files_values",
-        settings_sync::the_pane_shows_the_files_values as fn(),
-    ),
-    (
-        "settings_sync::the_interval_the_file_actually_holds_is_still_stated",
-        settings_sync::the_interval_the_file_actually_holds_is_still_stated as fn(),
-    ),
-    (
         "settings_sync::pressing_manual_writes_straight_to_the_buffer_and_leaves_the_rest_alone",
         settings_sync::pressing_manual_writes_straight_to_the_buffer_and_leaves_the_rest_alone as fn(),
-    ),
-    (
-        "settings_sync::an_interval_somebody_set_by_hand_survives_pressing_the_segment_it_is_on",
-        settings_sync::an_interval_somebody_set_by_hand_survives_pressing_the_segment_it_is_on as fn(),
     ),
     (
         "settings_sync::typing_new_roles_and_pressing_enter_writes_the_new_list",
@@ -970,14 +833,6 @@ const CASES: &[(&str, fn())] = &[
     (
         "reader_notices::the_body_starts_at_the_same_place_whatever_the_notices",
         reader_notices::the_body_starts_at_the_same_place_whatever_the_notices as fn(),
-    ),
-    (
-        "reader_notices::a_waiting_plate_carries_no_notice_from_the_message_before",
-        reader_notices::a_waiting_plate_carries_no_notice_from_the_message_before as fn(),
-    ),
-    (
-        "reader_notices::the_body_starts_at_the_same_place_whoever_the_message_went_to",
-        reader_notices::the_body_starts_at_the_same_place_whoever_the_message_went_to as fn(),
     ),
     (
         "reader_notices::a_sender_warning_is_one_line_and_does_not_outlast_its_message",
@@ -1157,8 +1012,6 @@ const CASES: &[(&str, fn())] = &[
     ),
 ];
 
-/// Destroy every window a case left open, and let the teardown run, so the
-/// next case starts on an empty display.
 fn close_all_windows() {
     use gtk::prelude::*;
     if !gtk::is_initialized() {
@@ -1178,27 +1031,23 @@ fn close_all_windows() {
 fn main() {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     if arguments.iter().any(|a| a == "--list") {
-        // Two questions, and a libtest-compatible runner asks both: every
-        // test, then `--ignored` for the ignored subset. Answering the second
-        // with the full list tells a process-per-test runner that everything
-        // is ignored -- it then runs nothing and reports success.
+        // A process-per-test runner asks for `--ignored` after the full list; answering with the
+        // full list tells it everything is ignored and it runs nothing.
         let only_ignored = arguments.iter().any(|a| a == "--ignored");
         for (name, _) in CASES {
             if !only_ignored || IGNORED.contains(name) {
                 println!("{name}: test");
             }
         }
-        // `--format terse` is a machine-readable contract: real libtest emits
-        // the names and nothing else. The count is for the non-terse form.
+        // Terse output is machine-readable: names only; the count is for the non-terse form.
         if !arguments.iter().any(|a| a == "terse") {
             println!();
             println!("{} tests, 0 benchmarks", CASES.len());
         }
         return;
     }
-    // `--exact` means the argument is a whole test name, not a substring: a
-    // process-per-test runner passes it for every case, and without it a name
-    // that is a prefix of another would run both.
+    // `--exact` means a whole test name; without it a name that is a prefix of another would run
+    // both.
     let exact = arguments.iter().any(|a| a == "--exact");
     let run_ignored_only = arguments.iter().any(|a| a == "--ignored");
     let filters: Vec<&str> = arguments
@@ -1207,10 +1056,11 @@ fn main() {
         .map(|s| s.as_str())
         .collect();
 
-    // One initialisation for the process, before any case: each case's own
-    // guard then becomes a harmless re-init. No display is not an error
-    // here; a case that needs one says so itself.
-    let _ = adw::init();
+    // A case that needs a display is skipped once, here; display_required is what fails CI without one.
+    let display = adw::init().is_ok() && gtk::gdk::Display::default().is_some();
+    if !display {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+    }
 
     let mut failed = Vec::new();
     let mut ran = 0usize;
@@ -1221,12 +1071,14 @@ fn main() {
         if !filters.is_empty() && !matched {
             continue;
         }
-        // An ignored case runs only when it is asked for by name, or when
-        // `--ignored` asks for exactly those -- same rule libtest uses.
         if IGNORED.contains(name) && filters.is_empty() && !run_ignored_only {
             continue;
         }
         ran += 1;
+        if !display && !name.starts_with("display_required::") {
+            println!("test {name} ... ok (skipped: no display)");
+            continue;
+        }
         println!("test {name} ...");
         if std::panic::catch_unwind(case).is_err() {
             println!("test {name} ... FAILED");

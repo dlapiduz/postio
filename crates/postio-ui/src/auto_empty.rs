@@ -1,24 +1,15 @@
-//! The words of the Junk and Trash auto-empty setting (#1932), so the two
-//! panes that draw it say the same thing: the choices, what each is called,
-//! and the one sentence that says what it does.
-//!
-//! The setting itself is `[sync] empty_junk_after_days` and
-//! `empty_trash_after_days`; the rule it feeds is
-//! `postio_core::retention::AutoEmpty`.
+//! Wording of the Junk and Trash auto-empty setting (#1932), shared by both panes.
 
-/// The control's heading.
 pub const HEADING: &str = "Empty Junk and Trash";
 
-/// What choosing anything but Never does, said plainly because it cannot be
-/// undone: the mail is deleted here and on the server.
+/// Said plainly because it cannot be undone.
 pub const NOTE: &str =
     "Deletes mail older than this for good, here and on the server. Flagged mail is kept.";
 
 /// The days a pane offers; `0` is never, the default.
 pub const CHOICES: [u32; 4] = [0, 7, 30, 90];
 
-/// What a pane calls `days`: `Never`, `7 days`, or, for a number only the
-/// file could have written, its own count.
+/// `Never`, `7 days`, or the bare count for a value only the file could hold.
 pub fn label(days: u32) -> String {
     match days {
         0 => "Never".to_owned(),

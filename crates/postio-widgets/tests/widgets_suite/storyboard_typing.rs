@@ -1,10 +1,7 @@
-//! Typed text goes where the keyboard is (spec 008, research R3), and a
-//! keyboard on nothing that takes text is a failure, not a silent no-op.
-
 use gtk::prelude::*;
 use postio_widgets::storyboard::deliver::{TypeOutcome, type_text};
 
-use super::storyboard_support::{display, show, until};
+use super::storyboard_support::{show, until};
 
 fn shown(child: &impl IsA<gtk::Widget>) -> gtk::Window {
     let window = gtk::Window::new();
@@ -20,9 +17,6 @@ fn focus(window: &gtk::Window, widget: &impl IsA<gtk::Widget>) {
 }
 
 pub fn text_goes_in_at_the_cursor_of_a_focused_entry() {
-    if !display() {
-        return;
-    }
     let entry = gtk::Text::new();
     entry.set_text("hello world");
     let window = shown(&entry);
@@ -37,9 +31,6 @@ pub fn text_goes_in_at_the_cursor_of_a_focused_entry() {
 }
 
 pub fn text_goes_in_at_the_insert_mark_of_a_focused_text_view() {
-    if !display() {
-        return;
-    }
     let view = gtk::TextView::new();
     view.buffer().set_text("ab");
     let window = shown(&view);
@@ -55,9 +46,6 @@ pub fn text_goes_in_at_the_insert_mark_of_a_focused_text_view() {
 }
 
 pub fn a_hook_takes_what_no_editable_does() {
-    if !display() {
-        return;
-    }
     let button = gtk::Button::with_label("a web body, say");
     let window = shown(&button);
     focus(&window, &button);
@@ -74,9 +62,6 @@ pub fn a_hook_takes_what_no_editable_does() {
 }
 
 pub fn a_keyboard_on_a_list_has_nothing_to_type_into() {
-    if !display() {
-        return;
-    }
     let list = gtk::ListBox::new();
     list.append(&gtk::Label::new(Some("row")));
     let window = shown(&list);

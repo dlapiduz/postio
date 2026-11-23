@@ -1,17 +1,3 @@
-//! The real client stack against a real socket.
-//!
-//! Every other test in this crate replays a transcript ([`ImapScript`]) or
-//! stops at the `MailBackend` seam ([`MockBackend`](postio_account::backend::MockBackend)).
-//! Neither exercises `io-imap`: the script cannot answer a command nobody
-//! wrote down, and the mock sits above the protocol entirely. `io-imap` is
-//! pre-1.0 and shipped six minor releases in eleven weeks (ADR 0001), so it
-//! is the layer most likely to regress under us and the one nothing was
-//! watching.
-//!
-//! These tests drive `ConnectionPool` — real sockets, real `io-imap`, real
-//! session and auth path — against [`TestServer`], an in-process IMAP server
-//! on an ephemeral loopback port. Nothing here touches the network.
-
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -31,13 +17,8 @@ use postio_account::secret::{AccountKey, MemorySecretStore, Password, SecretStor
 use postio_account::test_server::{Fault, Quirk, TestMailbox, TestMessage, TestServer};
 use postio_model::{Flag, FlagSet, ModSeq, Uid, UidValidity};
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 const SEEDED: [&str; 3] = ["plain-text-simple", "attachment-pdf", "html-newsletter"];
 
-/// What a mainstream provider advertises after login.
 const FULL: [&str; 12] = [
     "IMAP4rev1",
     "SASL-IR",
@@ -53,8 +34,6 @@ const FULL: [&str; 12] = [
     "ID",
 ];
 
-/// A server shaped like the account this project targets: a provider that
-/// hides its extensions until you log in and names no special-use folders.
 async fn server() -> TestServer {
     TestServer::builder()
         .mailbox(
@@ -69,8 +48,6 @@ async fn server() -> TestServer {
         .await
 }
 
-/// The same server, minus the named capabilities — how a fallback path is
-/// put under test rather than assumed.
 async fn without(dropped: &[&str]) -> TestServer {
     let kept: Vec<&str> = FULL
         .iter()
@@ -112,7 +89,6 @@ async fn pool_with(server: &TestServer, config: PoolConfig) -> ConnectionPool {
     )
 }
 
-/// How many times the server has been asked to select a mailbox.
 fn selects(server: &TestServer) -> usize {
     server
         .commands()
@@ -122,12 +98,9 @@ fn selects(server: &TestServer) -> usize {
 }
 
 fn uids(values: impl IntoIterator<Item = u32>) -> Vec<postio_model::RemoteId> {
-    // The server above pins its generation to 4242, so these are the ids
-    // its adapter mints.
     values.into_iter().map(rid).collect()
 }
 
-/// The identity the pinned generation gives `uid`.
 fn rid(uid: u32) -> postio_model::RemoteId {
     postio_model::RemoteId::new(format!("4242:{uid}"))
 }
@@ -135,10 +108,6 @@ fn rid(uid: u32) -> postio_model::RemoteId {
 fn cancel() -> CancelToken {
     CancelToken::new()
 }
-
-// ---------------------------------------------------------------------------
-// The stack, end to end
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn the_client_stack_lists_folders_and_fetches_headers_over_a_socket() {
@@ -178,10 +147,8 @@ async fn the_client_stack_lists_folders_and_fetches_headers_over_a_socket() {
     );
     assert_eq!(envelope.from[0].address, "ada.norwood@example.com");
 
-    // BODYSTRUCTURE, round-tripped through the wire and back into the model:
-    // the multipart tree, its section numbers, and the filename an attachment
-    // is offered under. None of that is reachable from a mock that takes a
-    // structure as given.
+    // BODYSTRUCTURE round-tripped through the wire: tree, section numbers and filename, unreachable
+    // from a mock.
     let structure = messages[1]
         .structure
         .as_ref()
@@ -200,8 +167,6 @@ async fn the_client_stack_lists_folders_and_fetches_headers_over_a_socket() {
         Some("application/pdf".to_owned())
     );
 
-    // The extensions this provider hides until login are the ones every fast
-    // path is gated on — ADR 0001, Q3.
     let capabilities = pool.capabilities().expect("a session was opened");
     assert!(capabilities.supports_incremental_sync());
     assert!(capabilities.contains(Capability::UidPlus));
@@ -249,8 +214,6 @@ async fn one_mime_section_is_fetched_without_the_rest_of_the_message() {
     .await
     .unwrap();
 
-    // Section 1 of a multipart is its first part's *content*: no message
-    // headers, no MIME headers of its own, and nothing of the part after it.
     let whole = String::from_utf8(corpus("attachment-pdf")).expect("a utf-8 fixture");
     let section = String::from_utf8(sink.into_inner()).expect("the text part is utf-8");
 
@@ -259,10 +222,6 @@ async fn one_mime_section_is_fetched_without_the_rest_of_the_message() {
     assert!(!section.contains("=_mixed_pdf"), "the boundary leaked in");
     assert!(!section.contains("Content-Type"));
 }
-
-// ---------------------------------------------------------------------------
-// Incremental sync
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn a_changedsince_fetch_returns_only_what_moved() {
@@ -314,19 +273,12 @@ async fn a_delivery_is_visible_to_the_next_changedsince_fetch() {
 
 #[tokio::test]
 async fn a_uidvalidity_bump_is_refused_rather_than_acted_on() {
-    // The worst thing this codebase can do: a mailbox is renumbered, the
-    // session's cached SELECT still reports the old generation, and UIDs from
-    // the new one are read as though they were the old ones. Flags land on
-    // the wrong messages and a delete hits mail the user never chose — with
-    // nothing erroring, because every layer above believes the generation it
-    // was told.
+    // A renumbered mailbox with a cached SELECT would read new UIDs as old ones: flags on the wrong
+    // messages, deletes of unchosen mail, no error.
     let server = server().await;
     let pool = pool_with(
         &server,
         PoolConfig {
-            // Trust no cached selection across a checkout, so the renumber is
-            // caught on the very next operation rather than up to
-            // `selection_max_age` later.
             selection_max_age: Duration::ZERO,
             ..PoolConfig::default()
         },
@@ -347,8 +299,6 @@ async fn a_uidvalidity_bump_is_refused_rather_than_acted_on() {
 
     server.set_uid_validity("INBOX", UidValidity::new(9_001));
 
-    // No mailbox switch in between: the same mailbox, the same pool, the next
-    // operation.
     let error = fetch_headers(
         &pool,
         "INBOX",
@@ -372,8 +322,6 @@ async fn a_uidvalidity_bump_is_refused_rather_than_acted_on() {
     );
     assert!(error.requires_full_resync());
 
-    // Reported once, then work resumes in the new generation: the caller
-    // rebuilds and retries, and the retry must not keep failing.
     let after = fetch_headers(
         &pool,
         "INBOX",
@@ -389,8 +337,6 @@ async fn a_uidvalidity_bump_is_refused_rather_than_acted_on() {
 
 #[tokio::test]
 async fn a_body_fetch_is_refused_across_a_uidvalidity_bump_too() {
-    // Bodies are the half that attaches downloaded bytes to a row, so a
-    // generation the caller did not ask for has to stop this path as well.
     let server = server().await;
     let pool = pool_with(
         &server,
@@ -435,10 +381,8 @@ async fn a_body_fetch_is_refused_across_a_uidvalidity_bump_too() {
 
 #[tokio::test]
 async fn consecutive_fetches_on_one_mailbox_still_select_once() {
-    // The cache this guard sits on is a real optimisation: a backfill is many
-    // small fetches on one mailbox, and re-selecting before each of them
-    // would double the round trips. Making staleness impossible must not cost
-    // that.
+    // The SELECT cache is a real optimisation (a backfill is many small fetches); the guard must
+    // not cost it.
     let server = server().await;
     let pool = pool_for(&server).await;
 
@@ -496,10 +440,6 @@ async fn a_qresync_select_reports_the_changes_and_the_vanishes_together() {
 
 #[tokio::test]
 async fn a_server_without_condstore_refuses_the_incremental_path_rather_than_guessing() {
-    // Every extension is optional and Postio will meet servers without this
-    // one. The capability list is the only thing the choice may be made from,
-    // so dropping CONDSTORE here has to surface as a refusal, not as a fetch
-    // that quietly returns everything.
     let server = TestServer::builder()
         .capabilities(["IMAP4rev1", "SASL-IR", "AUTH=PLAIN", "ENABLE"])
         .mailbox(TestMailbox::new("INBOX").corpus(["plain-text-simple"]))
@@ -524,8 +464,6 @@ async fn a_server_without_condstore_refuses_the_incremental_path_rather_than_gue
         }
     ));
 
-    // The floor path still works, and reports no modification sequence
-    // because the server never offered one.
     let messages = fetch_headers(
         &pool,
         "INBOX",
@@ -572,16 +510,10 @@ async fn a_subscribed_only_listing_asks_the_server_which_folders_those_are() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// The lies a real server tells
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn a_malformed_fetch_sequence_number_fails_the_resync_rather_than_losing_mail() {
-    // At least one mainstream provider has shipped `* -1 FETCH (…)` under
-    // QRESYNC. `io-imap` skips an untagged line it cannot decode and completes
-    // the command `Ok` (ADR 0001, iCloud hazard 2), so the pull looks complete
-    // while a message's flags silently never arrived.
+    // `io-imap` skips an undecodable untagged line and completes `Ok` (ADR 0001, iCloud hazard 2),
+    // so flags silently never arrive.
     let server = server().await;
     let pool = pool_for(&server).await;
     let floor = ModSeq::new(server.highest_mod_seq("INBOX"));
@@ -631,10 +563,8 @@ async fn a_connection_dropped_mid_fetch_is_a_transient_error() {
 
 #[tokio::test]
 async fn a_missing_enabled_echo_is_success_not_a_downgrade() {
-    // RFC 5161 §3.1 requires the untagged `* ENABLED` line. At least one
-    // mainstream provider has omitted it; gating QRESYNC on the echo rather
-    // than on the post-auth capability list is how a client silently
-    // degrades to full resync forever. ADR 0001, hazard 1.
+    // RFC 5161 §3.1 requires `* ENABLED`; gating QRESYNC on the capability list instead of the echo
+    // degrades to full resync forever (ADR 0001, hazard 1).
     let server = TestServer::builder()
         .mailbox(TestMailbox::new("INBOX").corpus(["plain-text-simple"]))
         .quirk(Quirk::OmitEnabledEcho)
@@ -654,10 +584,8 @@ async fn a_missing_enabled_echo_is_success_not_a_downgrade() {
 
 #[tokio::test]
 async fn a_stalled_server_fails_the_command_and_frees_the_connection() {
-    // The pool is bounded, so a server that accepts a command and never
-    // answers does not cost one connection — it costs one of four,
-    // permanently. Enough of those and sync stops with nothing logged, which
-    // reads to the user as the app quietly ceasing to work.
+    // The pool is bounded: a command that never answers costs a connection permanently, and sync
+    // stops with nothing logged.
     let server = server().await;
     let pool = pool_with(
         &server,
@@ -690,8 +618,6 @@ async fn a_stalled_server_fails_the_command_and_frees_the_connection() {
         "it gave up promptly"
     );
 
-    // The connection is discarded rather than parked, so the retry gets a
-    // fresh one and the slot is not poisoned for everything after it.
     let recovered = fetch_headers(
         &pool,
         "INBOX",
@@ -712,10 +638,8 @@ async fn a_stalled_server_fails_the_command_and_frees_the_connection() {
 
 #[tokio::test]
 async fn a_slow_but_progressing_fetch_is_not_killed_by_the_deadline() {
-    // The trap in bounding a command: a large attachment over a slow link
-    // takes longer than any deadline worth setting on a SELECT. So the bound
-    // is on silence, not on duration — a response that keeps arriving keeps
-    // its connection however long it takes.
+    // The bound is on silence, not duration: a large attachment over a slow link outlasts any
+    // deadline worth setting.
     let server = server().await;
     let pool = pool_with(
         &server,
@@ -753,9 +677,8 @@ async fn a_slow_but_progressing_fetch_is_not_killed_by_the_deadline() {
 
 #[tokio::test]
 async fn a_server_that_never_finishes_the_handshake_does_not_hold_the_opening() {
-    // The same hang, one layer earlier: the socket connected and the TLS
-    // handshake finished, so `connect_timeout` had already been satisfied
-    // before the exchange that never completes.
+    // The hang after `connect_timeout` was already satisfied: socket and TLS done, exchange never
+    // completes.
     let server = server().await;
     let store = MemorySecretStore::new();
     let key = AccountKey::new(server.account());
@@ -783,10 +706,6 @@ async fn a_server_that_never_finishes_the_handshake_does_not_hold_the_opening() 
     assert!(matches!(error, BackendError::TimedOut { .. }), "{error}");
     assert!(error.is_transient());
 }
-
-// ---------------------------------------------------------------------------
-// Mutating commands
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn storing_flags_reports_what_they_are_now() {
@@ -836,9 +755,8 @@ async fn moving_uses_move_where_the_server_has_it() {
 
 #[tokio::test]
 async fn moving_without_move_copies_then_deletes() {
-    // Three round trips instead of one, and not atomic: a crash between the
-    // copy and the store leaves the message in both mailboxes. That is the
-    // cost of the fallback, and it is the caller's to tolerate.
+    // The fallback is not atomic: a crash between the copy and the store leaves the message in both
+    // mailboxes.
     let server = without(&["MOVE"]).await;
     let pool = pool_for(&server).await;
 
@@ -858,9 +776,8 @@ async fn moving_without_move_copies_then_deletes() {
 
 #[tokio::test]
 async fn moving_without_uidplus_leaves_the_source_marked_rather_than_expunged() {
-    // Without UIDPLUS the only expunge available also removes messages
-    // another client marked `\Deleted`. Losing somebody else's mail is worse
-    // than leaving ours in place, so the removal is left to the server.
+    // Without UIDPLUS the only expunge also removes other clients' `\Deleted` mail, so removal is
+    // left to the server.
     let server = without(&["MOVE", "UIDPLUS"]).await;
     let pool = pool_for(&server).await;
 
@@ -938,7 +855,6 @@ async fn a_targeted_expunge_without_uidplus_is_deferred_rather_than_widened() {
     let server = without(&["UIDPLUS"]).await;
     let pool = pool_for(&server).await;
 
-    // One we marked, one another client marked.
     store_flags(
         &pool,
         "INBOX",
@@ -1031,10 +947,6 @@ async fn selecting_reports_the_mailbox_and_whether_it_can_be_written() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// IDLE
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn idle_returns_the_change_the_server_pushed() {
     let server = server().await;
@@ -1056,9 +968,8 @@ async fn idle_returns_the_change_the_server_pushed() {
             .any(|event| matches!(event, MailboxEvent::Exists { .. })),
         "{events:?}"
     );
-    // This server hides IDLE from its banner, like the provider Postio
-    // targets. Gating on the post-auth capability list rather than on the
-    // greeting is the difference between watching and polling forever.
+    // The server hides IDLE from its banner; gating on the post-auth capability list, not the
+    // greeting, is what avoids polling forever.
     assert!(
         server
             .commands()
@@ -1101,7 +1012,6 @@ async fn idle_returns_empty_when_cancelled() {
     assert!(events.unwrap().is_empty());
 }
 
-/// How many `IDLE` commands the server has logged so far.
 fn idle_armings(server: &TestServer) -> usize {
     server
         .commands()
@@ -1112,11 +1022,8 @@ fn idle_armings(server: &TestServer) -> usize {
 
 #[tokio::test]
 async fn idle_waits_one_round_of_exactly_the_time_it_is_given() {
-    // How often IDLE is re-armed is the watcher's policy
-    // (`WatchPolicy::idle_refresh`, handed over as `timeout`), not a second
-    // interval in the pool. A round that outlives its timeout is a watcher
-    // deaf for as long as the difference; a round re-armed behind the
-    // caller's back is a second policy.
+    // IDLE re-arming is the watcher's policy (`WatchPolicy::idle_refresh`, passed as `timeout`),
+    // not a second interval in the pool.
     let server = server().await;
     let pool = pool_for(&server).await;
 
@@ -1135,8 +1042,6 @@ async fn idle_waits_one_round_of_exactly_the_time_it_is_given() {
 
 #[tokio::test]
 async fn a_server_without_idle_is_never_sent_one() {
-    // Polling such a server is the watcher's job, on
-    // `WatchPolicy::poll_interval`, over `status`.
     let server = TestServer::builder()
         .capabilities(["IMAP4rev1", "SASL-IR", "AUTH=PLAIN", "ENABLE", "CONDSTORE"])
         .mailbox(TestMailbox::new("INBOX").corpus(["plain-text-simple"]))
@@ -1169,10 +1074,6 @@ async fn a_command_the_server_does_not_implement_is_refused_loudly() {
     let reply = raw.expect_prefix("a2").await;
     assert!(reply.starts_with("a2 BAD"), "{reply}");
 }
-
-// ---------------------------------------------------------------------------
-// A hand-written client, for the commands `postio-account` cannot issue yet
-// ---------------------------------------------------------------------------
 
 struct RawClient {
     stream: tokio::net::TcpStream,
@@ -1207,7 +1108,6 @@ impl RawClient {
             .expect("write to the test server");
     }
 
-    /// Sends a command and reads until its tagged response.
     async fn command(&mut self, text: &str) {
         let tag = text.split(' ').next().unwrap().to_owned();
         self.send(&format!("{text}\r\n")).await;
@@ -1215,7 +1115,6 @@ impl RawClient {
         assert!(reply.contains(" OK"), "{reply}");
     }
 
-    /// Reads lines until one starts with `prefix`, and returns it.
     async fn expect_prefix(&mut self, prefix: &str) -> String {
         let deadline =
             tokio::time::Instant::now() + postio_test_support::scaled(Duration::from_secs(5));
@@ -1249,11 +1148,6 @@ fn corpus(name: &str) -> Vec<u8> {
     postio_model::test_corpus::load(name).bytes().to_vec()
 }
 
-// ---------------------------------------------------------------------------
-// COMPRESS=DEFLATE (RFC 4978)
-// ---------------------------------------------------------------------------
-
-/// A message whose body compresses well, so the wire is visibly smaller.
 fn bulky(lines: usize) -> TestMessage {
     let body = "The quarterly figures are attached below, as agreed.\r\n".repeat(lines);
     TestMessage::new(format!(
@@ -1290,8 +1184,6 @@ async fn a_session_negotiates_compression_after_login_when_the_server_offers_it(
 
 #[tokio::test]
 async fn compression_is_not_attempted_when_the_server_does_not_offer_it() {
-    // The control for the test above: the same server and the same calls, with
-    // the one capability gone.
     let server = without(&["COMPRESS=DEFLATE"]).await;
     let pool = pool_for(&server).await;
 
@@ -1389,8 +1281,6 @@ async fn idle_and_done_work_over_the_compressed_stream_and_the_session_is_reusab
             .any(|event| matches!(event, MailboxEvent::Exists { .. }))
     );
 
-    // `DONE` was sent and answered over the deflate stream; the same
-    // connection must now carry an ordinary command.
     let messages = fetch_headers(
         &pool,
         "INBOX",
@@ -1402,8 +1292,6 @@ async fn idle_and_done_work_over_the_compressed_stream_and_the_session_is_reusab
     .await
     .unwrap();
     assert_eq!(messages.len(), 4);
-    // Whatever number of connections the pool opened for the watch and for
-    // the fetch, every one of them negotiated.
     let logins = server
         .commands()
         .iter()

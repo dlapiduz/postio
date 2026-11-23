@@ -1,28 +1,17 @@
-//! vCard in and out of the address book (specs/005-contacts User Story 6).
-//!
-//! The bytes, not the files: a frontend reads the file the person chose and
-//! writes the one they named, because a file is only ever read or written
-//! through a panel they used (spec 011's contract), and this is the half
-//! under it -- parse and apply, or read and write out. Neither touches the
-//! network, and the log gets counts, never a name or an address: the file is
-//! somebody's address book (FR-061).
+//! vCard in and out of the address book: bytes, not files; the frontend owns the file panel.
+//! The log gets counts, never a name or an address.
 
 use postio_model::card::ImportSummary;
 use postio_model::{ContactId, ContactView};
 use postio_storage::Store;
 use postio_storage::repository::{ContactRepository, ExportRow, GroupExport};
 
-/// Who an export writes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExportScope {
-    /// These people, in this order: the marked ones, or what a filter shows.
     People(Vec<ContactId>),
-    /// Everyone a view lists.
     View(ContactView),
 }
 
-/// Reads the cards in `bytes` and applies them in one transaction. The
-/// summary, or why not in words for the screen.
 pub async fn import_vcards(database: &Store, bytes: &[u8]) -> Result<ImportSummary, String> {
     let import = postio_vcard::parse(bytes);
     let connection = database.connect().await.map_err(|error| {
@@ -50,8 +39,6 @@ pub async fn import_vcards(database: &Store, bytes: &[u8]) -> Result<ImportSumma
     Ok(summary)
 }
 
-/// Reads who `scope` names and returns one `.vcf` of them, and how many
-/// people it holds.
 pub async fn export_vcards(
     database: &Store,
     scope: ExportScope,
@@ -72,9 +59,6 @@ pub async fn export_vcards(
     Ok((file_of(&rows, &groups), rows.len()))
 }
 
-/// One `.vcf` of `rows`, each a 4.0 card edited into the one they were
-/// imported from, when they were -- then the groups they are in, naming only
-/// the members this file carries.
 fn file_of(rows: &[ExportRow], groups: &[GroupExport]) -> String {
     let people = rows
         .iter()
@@ -112,11 +96,8 @@ fn file_of(rows: &[ExportRow], groups: &[GroupExport]) -> String {
     people + &groups
 }
 
-/// The person at `address`, made now from the stored mail when the catch-up
-/// has not reached them yet; `None` for an address the store never saw and
-/// for the user's own.
-///
-/// What a card or `i` on a sender runs, so nothing waits on the catch-up.
+/// Made now from stored mail if the catch-up has not reached them; `None` for an unseen address or
+/// the user's own.
 pub async fn contact_for_address(database: &Store, address: &str) -> Option<postio_model::Contact> {
     let connection = database.connect().await.ok()?;
     let contacts = ContactRepository::new(&connection);
@@ -138,13 +119,8 @@ pub async fn contact_for_address(database: &Store, address: &str) -> Option<post
     contacts.get(person).await.ok()?
 }
 
-/// What the known-sender popover shows for `address`: the person (made now if
-/// the catch-up has not reached them), their counts, up to two things open
-/// between them and the user, and where their mail arrives. `None` for an
-/// address the store never saw.
-///
-/// One read over maintained tables: it costs the person's addresses, never
-/// their mail.
+/// `None` for an address the store never saw. One read over maintained tables: costs the person's
+/// addresses, never their mail.
 pub async fn contact_glance(
     database: &Store,
     address: &str,
@@ -167,8 +143,6 @@ pub async fn contact_glance(
         .await
         .ok()?;
     let default_arrival = contacts.default_arrival(person.id).await.ok()?;
-    // Someone only the mail knows gets introduced, unless the user said
-    // never to.
     let introduction = if !person.is_saved()
         && person.source == postio_model::ContactSource::Mail
         && person.kind == postio_model::ContactKind::Person
@@ -188,9 +162,7 @@ pub async fn contact_glance(
     })
 }
 
-/// Which Suggestions switches are on (Settings > Contacts). A store that
-/// cannot be read says each switch's own default, so a failed read never
-/// switches work on that was off.
+/// A store that cannot be read gives each switch's default, so a failed read never turns work on.
 pub async fn contact_suggestions(database: &Store) -> postio_model::ContactSuggestions {
     let Ok(reader) = database.read().await else {
         return postio_model::ContactSuggestions::default();
@@ -201,10 +173,7 @@ pub async fn contact_suggestions(database: &Store) -> postio_model::ContactSugge
         .unwrap_or_default()
 }
 
-/// Turns one Suggestions switch on or off and returns all four. Turning one
-/// on does what it had skipped: kinds are told apart, and the people already
-/// written to are saved. Turning one off stops that work and leaves what it
-/// already made.
+/// Turning one on does what it had skipped; turning one off stops the work and keeps what it made.
 pub async fn set_contact_suggestion(
     database: &Store,
     which: postio_model::Suggestion,
@@ -235,10 +204,7 @@ pub async fn set_contact_suggestion(
     Ok(contact_suggestions(database).await)
 }
 
-/// Saves the people the user has written to, when "Save people I write to,
-/// automatically" is on, and does nothing at all when it is off. Returns how
-/// many it saved. Only people: a list or a company is not saved by being
-/// written to, and nobody put away is.
+/// Only people: a list or a company is not saved by being written to. Returns how many were saved.
 pub async fn save_people_written_to(database: &Store) -> Result<usize, String> {
     let failed = |error: postio_storage::Error| {
         tracing::warn!(%error, "could not save the people written to");
@@ -261,10 +227,7 @@ pub async fn save_people_written_to(database: &Store) -> Result<usize, String> {
     Ok(saved)
 }
 
-/// What the newest mail from `person` says that the Edit form can keep: the
-/// phones and websites in its signature that are neither kept nor refused,
-/// then the ones kept. Empty when there is nothing, which is also what a
-/// failed read says: the form simply has no "Seen in mail".
+/// Empty when there is nothing or the read failed.
 pub async fn contact_seen(
     database: &Store,
     person: postio_model::ContactId,
@@ -279,8 +242,7 @@ pub async fn contact_seen(
     };
     let known = contacts.details(person).await.unwrap_or_default();
     let mut items = Vec::new();
-    // "Read signatures for details" off: nothing is parsed, so nothing new is
-    // seen; the details the person already kept still show.
+    // Off: nothing is parsed; details already kept still show.
     let reads = contact_suggestions(database)
         .await
         .is_on(postio_model::Suggestion::ReadSignatures);
@@ -310,7 +272,6 @@ pub async fn contact_seen(
     items
 }
 
-/// Who Postio would sync, and what it has linked: the plan's other inputs.
 async fn sync_inputs(
     database: &Store,
 ) -> Result<
@@ -380,9 +341,7 @@ async fn sync_inputs(
     Ok((locals, links))
 }
 
-/// Their records in a fixed order, so the same book plans the same way twice
-/// and a plan's fingerprint means the same thing at the preview and at the
-/// button.
+/// Fixed order, so a plan's fingerprint means the same at the preview and at the button.
 fn in_order(
     externals: &[postio_contact_sync::ExternalRecord],
 ) -> Vec<postio_contact_sync::ExternalRecord> {
@@ -391,10 +350,7 @@ fn in_order(
     ordered
 }
 
-/// What a sync with the Mac's Contacts would do, from a snapshot of their
-/// side: a dry run. Reads Postio's saved people and nothing else, writes
-/// nothing to either side, and logs counts only; the plan holds names, for the
-/// person to read.
+/// A dry run: reads saved people, writes nothing, logs counts only.
 pub async fn contacts_sync_plan(
     database: &Store,
     externals: &[postio_contact_sync::ExternalRecord],
@@ -402,8 +358,6 @@ pub async fn contacts_sync_plan(
     mode: postio_contact_sync::Mode,
 ) -> Result<postio_contact_sync::Plan, String> {
     let (locals, links) = sync_inputs(database).await?;
-    // The dry run is what a sync would do; nothing is written either way,
-    // and the gate (`postio_contact_sync::write`) is not called.
     let plan = postio_contact_sync::plan(&locals, &in_order(externals), &links, scope, mode);
     let (add, update, ask, delete) = plan.counts();
     let (bring_in, fields) = plan.bring_in_counts();
@@ -419,16 +373,10 @@ pub async fn contacts_sync_plan(
     Ok(plan)
 }
 
-/// Applies the Postio side of the plan the person was shown: saved contacts
-/// for the records only Contacts has, the fields Contacts changed, and the
-/// links that make the next sync a three-way comparison.
-///
-/// This writes Postio's database and nothing else. It never reaches an address
-/// book: it is handed their records as data, and the gate
-/// (`postio_contact_sync::write`) is not called. `shown` is the fingerprint of
-/// the plan the person saw; a snapshot that has changed since plans
-/// differently and is refused, so they preview again. Counts are logged, never
-/// names.
+/// Writes Postio's database only; never reaches an address book (`postio_contact_sync::write` is
+/// not called).
+/// `shown` is the fingerprint of the plan the person saw; a changed snapshot plans differently and
+/// is refused.
 pub async fn contacts_sync_bring_in(
     database: &Store,
     externals: &[postio_contact_sync::ExternalRecord],
@@ -486,7 +434,6 @@ pub async fn contacts_sync_bring_in(
         }
     }
 
-    // What Contacts changed, person by person.
     let mut by_person: std::collections::BTreeMap<i64, BookChanges> =
         std::collections::BTreeMap::new();
     let mut fields_changed: std::collections::BTreeMap<i64, usize> =
@@ -523,7 +470,6 @@ pub async fn contacts_sync_bring_in(
         }
     }
 
-    // Links: a match with nothing in question, and a link that has caught up.
     let asked: std::collections::BTreeSet<i64> = plan.conflicts.iter().map(|c| c.local).collect();
     let pairs = plan
         .matches
@@ -557,8 +503,6 @@ pub async fn contacts_sync_bring_in(
     Ok(done)
 }
 
-/// Where `person` is in `tab`'s list: what a cursor moves to after an import
-/// made them.
 pub async fn contact_position(
     database: &Store,
     person: postio_model::ContactId,
@@ -572,17 +516,13 @@ pub async fn contact_position(
         .flatten()
 }
 
-/// What the review offers to merge: the pairs the store suggests, scored with
-/// the evidence a person can read, joined into groups of people who look like
-/// one, the strongest first (specs/011-focus-contacts S10). A pair with no
-/// evidence is no candidate.
+/// A pair with no evidence is no candidate; the strongest group comes first.
 pub async fn contact_review(
     database: &Store,
     first: &[postio_model::ContactId],
 ) -> Vec<postio_model::MergeGroup> {
     let switches = contact_suggestions(database).await;
-    // "Suggest merging duplicates" off: nothing is looked for, so the queue is
-    // empty. Merging by hand (`contact_merge_of`) is not a suggestion.
+    // Off: no queue. Merging by hand (`contact_merge_of`) is not a suggestion.
     if !switches.is_on(postio_model::Suggestion::SuggestMerges) {
         return Vec::new();
     }
@@ -594,8 +534,6 @@ pub async fn contact_review(
     let Ok(mut pairs) = contacts.suggestion_pairs(40).await else {
         return Vec::new();
     };
-    // And the pairs nobody suggested: what the mail noted (a signature, a
-    // phone, a Resent-From) and one address stopping as another began.
     for (a, b) in contacts.discovered_pairs(40).await.unwrap_or_default() {
         if pairs
             .iter()
@@ -616,13 +554,10 @@ pub async fn contact_review(
         }
     }
     let mut groups = groups_of(scored);
-    // What an import just found first; the rest in their own order.
     groups.sort_by_key(|group| !group.people.iter().any(|p| first.contains(&p.id)));
     groups
 }
 
-/// The group the user chose by marking `ids`: whatever evidence there is is
-/// said, and when there is none the user's own choice is.
 pub async fn contact_merge_of(
     database: &Store,
     ids: &[postio_model::ContactId],
@@ -664,8 +599,6 @@ pub async fn contact_merge_of(
     })
 }
 
-/// What two records have in common that says they may be one person, and how
-/// much it counts for.
 async fn evidence_of(
     database: &Store,
     contacts: &ContactRepository<'_>,
@@ -688,8 +621,7 @@ async fn evidence_of(
             .clone()
             .or_else(|| signature.company.clone()),
     };
-    // "Read signatures" off: no signature is parsed, and what an earlier
-    // parse noted (a signature, a phone) is not used either.
+    // Off: no signature is parsed, and an earlier parse is not used.
     let (sig_a, sig_b) = if read_signatures {
         (
             signature_of(database, contacts, a).await,
@@ -712,8 +644,6 @@ async fn evidence_of(
         same_card: noted.card,
         signature: noted.signature.and_then(|key| {
             let mut parts = key.split('|').skip(1);
-            // The spelling a record already has, else the folded words said
-            // the way a person would write them.
             let spelled = |folded: &str, real: [&Option<String>; 2]| {
                 real.into_iter()
                     .flatten()
@@ -733,8 +663,6 @@ async fn evidence_of(
     Some((scored.evidence, scored.score))
 }
 
-/// "finance lead" as "Finance Lead": what the key keeps folded, said the way a
-/// person would write it when no record has the real spelling.
 fn words_cased(folded: &str) -> String {
     folded
         .split_whitespace()
@@ -749,7 +677,6 @@ fn words_cased(folded: &str) -> String {
         .join(" ")
 }
 
-/// What the newest mail from `person` signs with.
 async fn signature_of(
     database: &Store,
     contacts: &ContactRepository<'_>,
@@ -762,8 +689,6 @@ async fn signature_of(
     postio_classify::signature::parse(body.text.as_deref().unwrap_or(""))
 }
 
-/// Joins scored pairs that share a person into groups: the best record to
-/// keep first (saved, then the most mail), and the group's evidence in words.
 fn groups_of(
     scored: Vec<(
         postio_model::Contact,
@@ -795,7 +720,6 @@ fn groups_of(
             None => groups.push((vec![a, b], vec![evidence], score)),
         }
     }
-    // The strongest evidence first, and among equals the most records.
     groups.sort_by_key(|(people, _, score)| std::cmp::Reverse((*score, people.len())));
     groups
         .into_iter()
@@ -816,11 +740,8 @@ fn groups_of(
         .collect()
 }
 
-/// How a sender not yet saved reached the user: when their newest message
-/// came, who else was on it that the user knows, and what its signature says.
-///
-/// The body is read from the store, never fetched, and parsed on this
-/// machine; what it said is kept nowhere until the user adds the contact.
+/// The body is read from the store, never fetched, and parsed locally; what it said is kept nowhere
+/// until the user adds the contact.
 async fn introduction(
     database: &Store,
     reader: &postio_storage::Checkout,
@@ -831,8 +752,7 @@ async fn introduction(
         .await
         .ok()
         .flatten()?;
-    // "Read signatures for details" off: who and when are still said, what
-    // they signed with is not parsed.
+    // Off: who and when are still said; the signature is not parsed.
     let details = if contact_suggestions(database)
         .await
         .is_on(postio_model::Suggestion::ReadSignatures)
@@ -849,7 +769,6 @@ async fn introduction(
     })
 }
 
-/// How many rows a filtered Contacts list holds at most.
 pub const FILTER_CAP: u32 = 200;
 
 fn store_error(error: postio_storage::Error) -> postio_model::listing::StoreError {
@@ -857,9 +776,8 @@ fn store_error(error: postio_storage::Error) -> postio_model::listing::StoreErro
     postio_model::listing::StoreError::new("Could not read contacts")
 }
 
-/// A page of the Contacts list for `tab`: past `after`, then `skip` more.
-/// The page carries the sort key of the row before it, so the list can tell
-/// whether its first row starts a new letter without a read of its own.
+/// Carries the previous row's sort key so the list can tell whether its first row starts a new
+/// letter without another read.
 pub async fn contacts_page(
     database: &Store,
     tab: postio_model::ContactTab,
@@ -891,7 +809,6 @@ pub async fn contacts_page(
     Ok(postio_model::ContactsPageRead { rows, before })
 }
 
-/// The people in `tab` matching `text`, at most `cap`.
 pub async fn contacts_filtered(
     database: &Store,
     tab: postio_model::ContactTab,
@@ -905,15 +822,12 @@ pub async fn contacts_filtered(
         .map_err(store_error)
 }
 
-/// The strip's counts, the review queue and the catch-up's progress.
 pub async fn contacts_overview(
     database: &Store,
 ) -> Result<postio_model::ContactsOverview, postio_model::listing::StoreError> {
     let duplicates = contact_suggestions(database)
         .await
         .is_on(postio_model::Suggestion::SuggestMerges);
-    // The pairs are not counted in the store: the strip says how many groups
-    // of people the review will page through, which is the sheet's own count.
     let mut overview = {
         let reader = database.read().await?;
         ContactRepository::new(&reader)
@@ -930,8 +844,6 @@ pub async fn contacts_overview(
     Ok(overview)
 }
 
-/// What `person`'s card shows, as of `now`: the twelve months ending this
-/// month.
 pub async fn contact_card(
     database: &Store,
     person: postio_model::ContactId,
@@ -944,7 +856,6 @@ pub async fn contact_card(
         .map_err(store_error)
 }
 
-/// The name of every contact group, by name: what "+ Add to group" offers.
 pub async fn contact_group_names(
     database: &Store,
 ) -> Result<Vec<String>, postio_model::listing::StoreError> {
@@ -956,19 +867,13 @@ pub async fn contact_group_names(
         .map_err(store_error)
 }
 
-/// How far the catch-up has got: "Building contacts, n of m".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CatchUpProgress {
-    /// People made so far this run.
     pub made: usize,
-    /// How many addresses were waiting when it began.
     pub total: usize,
 }
 
-/// Makes a person for every address that has mail and none, `batch` at a
-/// time, newest first, one transaction per batch so live sync is never held
-/// up, and tells `progress` after each. Returns how many it made. The log
-/// gets counts; a name or an address never reaches it.
+/// One transaction per batch so live sync is never held up. Logs counts only.
 pub async fn catch_up(
     database: &Store,
     batch: u32,
@@ -1002,20 +907,14 @@ pub async fn catch_up(
     Ok(made)
 }
 
-/// Decides the kind of everyone the current detector has not decided yet,
-/// `batch` at a time, and stores it. Returns how many it decided. A kind the
-/// user chose is never touched, and a better detector (a higher
-/// `KIND_VERSION`) decides everyone detected again.
-///
-/// Reads counts over each sender's newest messages (storage's
-/// `kind_signals`), never mail, and logs counts only.
+/// A user-chosen kind is never touched; a higher `KIND_VERSION` re-decides everyone. Reads counts,
+/// never mail.
 pub async fn detect_kinds(database: &Store, batch: u32) -> Result<usize, String> {
     let failed = |error: postio_storage::Error| {
         tracing::warn!(%error, "could not decide what sort of correspondents people are");
         "Could not sort contacts".to_owned()
     };
-    // "Recognise lists, newsletters and automated senders" off: nobody is
-    // sorted and no counts are read; everyone stays as they are.
+    // Off: nobody is sorted and no counts are read.
     if !contact_suggestions(database)
         .await
         .is_on(postio_model::Suggestion::RecogniseKinds)
@@ -1033,9 +932,8 @@ pub async fn detect_kinds(database: &Store, batch: u32) -> Result<usize, String>
             .await
             .map_err(failed)?;
         for person in &people {
-            // Someone with no mail to count (no preferred address) is a
-            // person until there is some; deciding them anyway is what takes
-            // them out of the walk.
+            // No mail to count: a person until there is some; deciding them anyway takes them out
+            // of the walk.
             let kind = match contacts.kind_signals(*person).await.map_err(failed)? {
                 Some(signals) => postio_classify::kind::detect(&signals, rules).kind,
                 None => postio_model::ContactKind::Person,
@@ -1056,8 +954,7 @@ pub async fn detect_kinds(database: &Store, batch: u32) -> Result<usize, String>
     Ok(decided)
 }
 
-/// Every sender's remembered treatment, `(address, "app" | "paper")`: one
-/// entry per address of each person who chose one.
+/// `(address, "app" | "paper")`, one entry per address of each person who chose one.
 pub async fn treatments(
     database: &Store,
 ) -> Result<Vec<(String, String)>, postio_model::listing::StoreError> {
@@ -1069,9 +966,7 @@ pub async fn treatments(
     )
 }
 
-/// Remember that `address`'s mail is always drawn in `treatment`, or forget
-/// the choice. The treatment is the person's, so it covers every address they
-/// own; one who has never been seen is made a person to hold it.
+/// Covers every address the person owns; an unseen address is made a person to hold it.
 pub async fn set_treatment(
     database: &Store,
     address: &str,
@@ -1088,7 +983,6 @@ pub async fn set_treatment(
     let email = postio_model::EmailAddress::new(None::<String>, address.trim());
     let person = match (people.by_address(address.trim()).await?, treatment) {
         (Some(person), _) => person.id,
-        // Forgetting a choice nobody made makes nobody.
         (None, None) => return Ok(()),
         (None, Some(_)) => people
             .person_for_email(&email)
@@ -1118,7 +1012,6 @@ BEGIN:VCARD\r\nVERSION:4.0\r\nUID:urn:uuid:z\r\nFN:Zebulon Quux\r\nEMAIL:zq@exam
 BEGIN:VCARD\r\nVERSION:4.0\r\nKIND:group\r\nFN:Quuxes\r\nMEMBER:urn:uuid:z\r\n\
 MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
 
-    /// Everything logged on this thread while it is installed.
     #[derive(Clone, Default)]
     struct Captured(Arc<Mutex<Vec<u8>>>);
 
@@ -1139,10 +1032,6 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
             .expect("count the egress log")
     }
 
-    /// The Mac's `v i` and `v x` end here: the people and the group appear,
-    /// a second export of what the list shows is exactly those people, the
-    /// card's own lines survive, nothing leaves the machine, and the log
-    /// carries counts and never a name.
     #[tokio::test]
     async fn an_import_then_an_export_round_trips_and_leaks_nothing() {
         let log = Captured::default();
@@ -1197,8 +1086,6 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
         }
     }
 
-    /// Mail that was stored before contacts existed: a message from `from`
-    /// to the account's own address, with nobody made of either.
     async fn old_mail(database: &Store, from: &str, days: i64) {
         use chrono::TimeZone as _;
         let connection = database.connect().await.expect("a connection");
@@ -1277,8 +1164,6 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
         assert_eq!(again.arrival, Some(postio_model::ContactArrival::Digest));
     }
 
-    /// A first message from `from`, copied to someone the user saved, with
-    /// `body` stored beside it.
     async fn first_mail(database: &Store, from: &str, body: &str) {
         use chrono::TimeZone as _;
         let connection = database.connect().await.expect("a connection");
@@ -1336,7 +1221,6 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
         assert_eq!(intro.with, ["Ben Adeyemi"]);
         assert!(intro.last_at.is_some());
 
-        // Someone saved is a known sender; so is someone told to be ignored.
         let ben = contact_glance(&database, "ben@example.net", now)
             .await
             .expect("ben");
@@ -1411,7 +1295,6 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
             groups[0].evidence
         );
 
-        // Chosen by hand, with nothing in common, the choice is the evidence.
         let chosen = contact_merge_of(&database, &[ada, ben])
             .await
             .expect("a group");
@@ -1497,7 +1380,6 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
                 .duplicates,
             0
         );
-        // Merging by hand is not a suggestion.
         let (ada, other) = {
             let connection = database.connect().await.unwrap();
             let contacts = ContactRepository::new(&connection);
@@ -1525,8 +1407,6 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
         {
             let connection = database.connect().await.unwrap();
             let contacts = ContactRepository::new(&connection);
-            // Three records of one person make three suggested pairs and one
-            // group; two of another make one pair and one group.
             for (name, address) in [
                 ("Ada Moreno", "ada@example.org"),
                 ("ada  moreno", "a.moreno@example.net"),
@@ -1554,7 +1434,6 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
             2,
             "the strip counts what the sheet pages through, not suggested pairs"
         );
-        // Not the same, for every pair of the first group.
         {
             let connection = database.connect().await.unwrap();
             let contacts = ContactRepository::new(&connection);
@@ -1622,7 +1501,6 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
             postio_model::ContactKind::Person,
             "never told apart"
         );
-        // Turned back on, the same pass does the work it skipped.
         {
             let connection = database.connect().await.unwrap();
             postio_storage::repository::ContactSuggestionRepository::new(&connection)
@@ -1675,7 +1553,6 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
                     .is_saved()
             }
         };
-        // Off by default: the pass does nothing.
         assert_eq!(save_people_written_to(&database).await.unwrap(), 0);
         assert!(!saved(written).await);
 
@@ -1695,8 +1572,6 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
         assert_eq!(save_people_written_to(&database).await.unwrap(), 0, "once");
     }
 
-    /// Two messages, one from each of two addresses of one person nobody
-    /// told the store about, and the people the catch-up made of them.
     async fn two_addresses_one_person(
         database: &Store,
     ) -> (postio_model::MessageId, postio_model::MessageId) {
@@ -1864,8 +1739,6 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
                     title: title.to_owned(),
                 },
             };
-        // Marisol is saved in the demo, and the other side has her too, with
-        // another title and no organisation; Zed is nobody Postio has.
         let externals = vec![
             theirs(
                 "x1",
@@ -2068,8 +1941,6 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
         let grace = saved.iter().find(|(p, _)| p.shown_as() == "Grace").unwrap();
         assert_eq!(grace.0.organization.as_deref(), Some("Northwind"));
 
-        // Linked, with their fields as the base: the next sync has nothing to
-        // bring and nothing to ask.
         let links = ContactRepository::new(&reader).sync_links().await.unwrap();
         assert_eq!(links.len(), 2, "{links:?}");
         let again = contacts_sync_plan(&database, &externals, Scope::People, Mode::ReadOnly)
@@ -2178,8 +2049,6 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
         assert_eq!(saved[0].0.shown_as(), "Ada Moreno");
     }
 
-    /// Everything a sync could change in Postio, summed: a dry run leaves it
-    /// exactly as it was.
     async fn fingerprint(database: &Store) -> (i64, i64, i64) {
         let reader = database.read().await.expect("a reader");
         let one = |sql: &'static str| {
@@ -2214,8 +2083,6 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
         );
     }
 
-    /// The list's count and the card's tiles are one number: whatever a
-    /// person's row says about their mail, their card says too.
     async fn assert_rows_and_cards_agree(database: &Store) {
         let page = contacts_page(database, postio_model::ContactTab::All, None, 0, 500)
             .await
@@ -2231,8 +2098,6 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
                 "{}: the card says {} messages and the list {}",
                 row.name, card.stats.messages, row.messages
             );
-            // And the strip under the tiles reads the same stats: a person
-            // whose last mail falls in the twelve months it draws has a bar.
             let this_month = postio_model::month_key(chrono::Utc::now());
             if let Some(last) = card.stats.last
                 && postio_model::month_key(last) > this_month - 12
@@ -2281,7 +2146,6 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
         .await
         .unwrap();
         assert_rows_and_cards_agree(&database).await;
-        // And after they are merged into one.
         let groups = contact_review(&database, &[]).await;
         if let Some(group) = groups.first() {
             let connection = database.connect().await.unwrap();

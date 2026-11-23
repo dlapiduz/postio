@@ -4,13 +4,6 @@ import Testing
 @testable import PostioAppKit
 import PostioKit
 
-/// Edit › Undo over the engine's stack (specs/009-focus-macos T048, T051,
-/// R7).
-///
-/// The engine's `UndoStack` is the only stack (FR-041). This manager holds
-/// nothing but the words for its top, read from the engine, and sends
-/// `undo` when chosen; registering a mirror of each action would drift the
-/// moment the pill's Undo, an expiry or another window changed the stack.
 @MainActor
 struct UndoManagerTests {
     final class Sent {
@@ -44,7 +37,6 @@ struct UndoManagerTests {
     }
 
     @Test func thereIsNoRedo() {
-        // The engine has none, so the item is never offered.
         let undo = Self.manager()
         undo.remember("Archived 3 messages")
         #expect(undo.canRedo == false)
@@ -63,8 +55,6 @@ struct UndoManagerTests {
     }
 
     @Test func anOlderReadNeverOverwritesANewerOne() async {
-        // Two toasts in a burst: the read that started second is the truer
-        // one, whichever lands last.
         let undo = Self.manager()
         let slow = Task { await undo.refresh { Thread.sleep(forTimeInterval: 0.2); return "Archived" } }
         try? await Task.sleep(nanoseconds: 20_000_000)
@@ -74,8 +64,6 @@ struct UndoManagerTests {
     }
 
     @Test func textFieldsKeepTheirOwnUndo() {
-        // Typing in a field undoes typing: the engine's manager is only the
-        // main window's while nothing there takes text.
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 200, height: 100), styleMask: [.titled],
             backing: .buffered, defer: true)
@@ -119,8 +107,6 @@ struct UndoManagerTests {
     }
 
     @Test func editsUndoAndRedoAreAimedAtTheRouterWithTheirChords() {
-        // ⌘Z in a field reaches the field through this item, and in the
-        // list the engine's stack; ⇧⌘Z likewise.
         let router = UndoRouter(manager: Self.manager())
         let edit = MenuPlan.bar(bindings: { _ in [] }).first { $0.section == .edit }!
         let menu = MenuBar.menu(for: edit, target: nil, undo: router)

@@ -1,7 +1,5 @@
-//! Find in the message on screen (spec 006 FR-018): a search bar over the
-//! reading pane, matching over the snapshot's text index -- folded for case
-//! and diacritics -- and drawn as overlays, so it survives a re-render
-//! (FR-021f): the matches are recomputed from the query on every snapshot.
+//! Find in the message on screen: matches are computed over the snapshot's text index and
+//! recomputed on every snapshot, so a find survives a re-render.
 
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
@@ -9,25 +7,18 @@ use gtk::{gdk, glib};
 
 use super::BodyView;
 
-/// Every match, faintly; the current one, clearly.
 const MATCH: gdk::RGBA = gdk::RGBA::new(0.98, 0.80, 0.25, 0.35);
 const CURRENT: gdk::RGBA = gdk::RGBA::new(0.98, 0.62, 0.10, 0.60);
 
-/// What a find is looking for, and where.
 #[derive(Default)]
 pub(super) struct FindState {
     query: String,
     matches: Vec<std::ops::Range<usize>>,
     current: Option<usize>,
-    /// The next match found is the last, not the first: a find carried
-    /// into a message from the one after it (spec 013 US6).
     from_end: bool,
-    /// The query is a search's words, found as words
-    /// ([`postio_render::TextIndex::find_words`]), not the find bar's text.
     words: bool,
 }
 
-/// The find bar a reading pane shows above its `BodyView`.
 pub struct FindBar {
     bar: gtk::SearchBar,
     entry: gtk::SearchEntry,
@@ -35,7 +26,6 @@ pub struct FindBar {
 }
 
 impl FindBar {
-    /// A bar that finds in `view`.
     pub fn new(view: &BodyView) -> FindBar {
         let entry = gtk::SearchEntry::new();
         let bar = gtk::SearchBar::builder().child(&entry).build();
@@ -92,22 +82,18 @@ impl FindBar {
         }
     }
 
-    /// The bar, to place above the view.
     pub fn widget(&self) -> &gtk::SearchBar {
         &self.bar
     }
 
-    /// The query entry.
     pub fn entry(&self) -> &gtk::SearchEntry {
         &self.entry
     }
 
-    /// Show the bar with the entry focused (`find_in_message`).
     pub fn open(&self) {
         self.bar.set_search_mode(true);
         self.entry.grab_focus();
-        // The bar reveals with a transition; its entry takes focus once it
-        // is shown.
+        // The entry takes focus only once the reveal transition has shown it.
         let entry = self.entry.downgrade();
         glib::idle_add_local_once(move || {
             if let Some(entry) = entry.upgrade() {
@@ -116,7 +102,6 @@ impl FindBar {
         });
     }
 
-    /// Hide the bar and clear the highlights.
     pub fn close(&self) {
         self.bar.set_search_mode(false);
         self.entry.set_text("");
@@ -127,16 +112,13 @@ impl FindBar {
 }
 
 impl BodyView {
-    /// Look for `query`; an empty one clears the find.
     pub fn set_find_query(&self, query: &str) {
         self.imp().find.borrow_mut().words = false;
         self.look_for(query);
     }
 
-    /// Look for a search's words, each as a whole word and however they
-    /// are joined (#2193), the first match to be the last of the message
-    /// when `from_end`; empty words clear the find. What a window opened
-    /// from search results marks in each message it shows.
+    /// Finds a search's words as whole words; `from_end` makes the first match the last of the
+    /// message (#2193).
     pub fn set_find_words_from(&self, words: &str, from_end: bool) {
         {
             let mut find = self.imp().find.borrow_mut();
@@ -150,23 +132,18 @@ impl BodyView {
         {
             let mut find = self.imp().find.borrow_mut();
             find.query = query.to_owned();
-            // A new query starts from where the person is reading.
             find.current = None;
         }
         self.refresh_find();
         self.scroll_to_current();
     }
 
-    /// The current match's place among the message's matches, and how many
-    /// there are.
     pub fn find_state(&self) -> (Option<usize>, usize) {
         let find = self.imp().find.borrow();
         (find.current, find.matches.len())
     }
 
-    /// Step to the next match (`forward`) or the previous, *without*
-    /// wrapping: whether there was one. False at either end, which is where
-    /// a search's window goes on to the next matched message.
+    /// Steps without wrapping; false at either end.
     pub fn find_walk(&self, forward: bool) -> bool {
         {
             let mut find = self.imp().find.borrow_mut();
@@ -186,7 +163,6 @@ impl BodyView {
         true
     }
 
-    /// Recompute the matches from the query, over the snapshot on screen.
     pub(super) fn refresh_find(&self) {
         let matches = match self.document() {
             Some(doc) if !self.imp().find.borrow().query.is_empty() => {
@@ -199,8 +175,8 @@ impl BodyView {
             }
             _ => Vec::new(),
         };
-        // The first match from the top of what is in view, not from the
-        // top of the message: finding keeps the reading position (T203).
+        // From the top of what is in view, not of the message, so finding keeps the reading
+        // position.
         let from_here = self.document().and_then(|doc| {
             let (top, _) = self.window();
             matches.iter().position(|range| {
@@ -226,7 +202,6 @@ impl BodyView {
         self.queue_draw();
     }
 
-    /// Every match's highlight rectangles, in document coordinates.
     pub fn find_rects(&self) -> Vec<postio_render::Rect> {
         let Some(doc) = self.document() else {
             return Vec::new();
@@ -238,14 +213,11 @@ impl BodyView {
             .collect()
     }
 
-    /// The current match, as a range of the text index.
     pub fn current_match(&self) -> Option<std::ops::Range<usize>> {
         let find = self.imp().find.borrow();
         find.matches.get(find.current?).cloned()
     }
 
-    /// Make the next match current (`forward`), or the previous, and bring
-    /// it into view.
     pub fn find_step(&self, forward: bool) {
         {
             let mut find = self.imp().find.borrow_mut();
@@ -271,7 +243,6 @@ impl BodyView {
         }
     }
 
-    /// Draw the matches over the tiles.
     pub(super) fn draw_find(&self, snapshot: &gtk::Snapshot, left: f64, top: f64) {
         let Some(doc) = self.document() else { return };
         let find = self.imp().find.borrow();
@@ -297,15 +268,10 @@ impl BodyView {
 }
 
 impl BodyView {
-    /// Highlight `range` of the text on screen -- the sentence a marker
-    /// quotes (specs/007-postio-focus research R2) -- and bring it into view
-    /// a third of the way down; `None` takes the highlight away. The range
-    /// is the rendered text's (`TextIndex::locate` finds it), and belongs to
-    /// the message on screen: showing another clears it.
-    ///
-    /// The highlight is often set as a new document arrives, before the
-    /// column has grown to it; the scroll then waits for the column to grow
-    /// rather than stopping wherever the old document ended.
+    /// Highlights `range` of the text on screen and scrolls it a third of the way down; `None`
+    /// clears it.
+    /// A highlight often arrives before the column has grown to the new document, so the scroll
+    /// waits for it.
     pub fn set_highlight(&self, range: Option<std::ops::Range<usize>>) {
         self.mark(range);
         if !self.reveal_highlight() {
@@ -313,18 +279,14 @@ impl BodyView {
         }
     }
 
-    /// Highlight `range`, as [`set_highlight`](Self::set_highlight) does,
-    /// without moving: for a redraw of a message whose sentence the person
-    /// was already taken to, where the place is now theirs.
+    /// Highlights `range` without scrolling.
     pub fn mark(&self, range: Option<std::ops::Range<usize>>) {
         self.forget_reveal();
         self.imp().highlight.replace(range);
         self.queue_draw();
     }
 
-    /// Bring the highlight into view, a third of the way down, as far as
-    /// [`keep_in_view_on_reveal`](Self::keep_in_view_on_reveal) lets the
-    /// column go. False when the scroll could not get there yet.
+    /// False when the scroll could not get there yet.
     fn reveal_highlight(&self) -> bool {
         let rects = self.highlight_rects();
         let Some(first) = rects.first() else {
@@ -339,7 +301,6 @@ impl BodyView {
             .as_ref()
             .and_then(|weak| weak.upgrade());
         if let (Some(kept), Some(scroller)) = (kept, self.flow_scroller()) {
-            // In the column's coordinates, where the header is.
             let (Some(view), Some(header)) = (
                 self.compute_bounds(&scroller),
                 kept.compute_bounds(&scroller),
@@ -370,17 +331,12 @@ impl BodyView {
         }
     }
 
-    /// Never let a highlight's reveal scroll `widget` off the top of the
-    /// column this view flows in: a message window's header -- its subject
-    /// and who sent it -- stays in view as the window opens (#2125), and
-    /// the sentence is revealed only as far as that allows.
+    /// Never scrolls `widget` (a message window's header) off the top of the column on reveal
+    /// (#2125).
     pub fn keep_in_view_on_reveal(&self, widget: &impl IsA<gtk::Widget>) {
         self.imp().keep.replace(Some(widget.as_ref().downgrade()));
     }
 
-    /// Try [`reveal_highlight`](Self::reveal_highlight) again each time
-    /// what scrolls the document changes its range -- the layout catching
-    /// up with the document -- until it gets there.
     fn reveal_when_laid_out(&self) {
         let Some(adjustment) = self.scrolling() else {
             return;
@@ -396,19 +352,16 @@ impl BodyView {
         self.imp().reveal.replace(Some((adjustment, handler)));
     }
 
-    /// Stop waiting to bring a highlight into view.
     pub(super) fn forget_reveal(&self) {
         if let Some((adjustment, handler)) = self.imp().reveal.take() {
             adjustment.disconnect(handler);
         }
     }
 
-    /// The range the highlight covers, if one is set.
     pub fn highlighted(&self) -> Option<std::ops::Range<usize>> {
         self.imp().highlight.borrow().clone()
     }
 
-    /// The highlight's rectangles, in document coordinates.
     pub fn highlight_rects(&self) -> Vec<postio_render::Rect> {
         match (self.imp().highlight.borrow().clone(), self.document()) {
             (Some(range), Some(document)) => document.text.rects(range),
@@ -416,9 +369,6 @@ impl BodyView {
         }
     }
 
-    /// Draw the highlight under the find's matches: a faint ground in the
-    /// accent and a line under it, the marker's colour (screen 04), in the
-    /// scheme on screen.
     pub(super) fn draw_highlight(&self, snapshot: &gtk::Snapshot, left: f64, top: f64) {
         let rects = self.highlight_rects();
         if rects.is_empty() {
@@ -440,16 +390,11 @@ impl BodyView {
     }
 }
 
-/// How thick the highlight's line is.
 const UNDERLINE: f32 = 1.5;
 
-/// Where a highlight's reveal takes the scroll, or `None` to leave it.
-///
-/// `sentence` is the highlight's top and bottom, `value` and `page` what is
-/// in view, all in one coordinate space. The sentence comes a third of the
-/// way down (FR-035). With `keep`, the furthest the scroll may go and keep
-/// a header in view, it comes only if a third of the way down is within
-/// that; otherwise nothing moves and the window stays at its top (#2125).
+/// Where a reveal takes the scroll, or `None` to leave it. The sentence goes a third of the way
+/// down; with `keep` (the furthest scroll that still shows a header) nothing moves unless that fits
+/// (#2125).
 fn reveal_to(sentence: (f64, f64), value: f64, page: f64, keep: Option<f64>) -> Option<f64> {
     let (y0, y1) = sentence;
     if y0 >= value && y1 <= value + page {
@@ -466,8 +411,6 @@ fn reveal_to(sentence: (f64, f64), value: f64, page: f64, keep: Option<f64>) -> 
 mod reveal_tests {
     use super::reveal_to;
 
-    // A 563px page over a column whose header ends at 579, the sentence
-    // further down (#2125's fixture).
     const PAGE: f64 = 563.0;
 
     #[test]
@@ -478,7 +421,6 @@ mod reveal_tests {
 
     #[test]
     fn with_nothing_to_keep_the_sentence_comes_a_third_of_the_way_down() {
-        // FR-035 as it was, for a view with no header over it.
         assert_eq!(
             reveal_to((900.0, 920.0), 0.0, PAGE, None),
             Some(900.0 - PAGE / 3.0)
@@ -487,19 +429,12 @@ mod reveal_tests {
 
     #[test]
     fn the_reveal_never_scrolls_past_what_keeps_the_header_in_view() {
-        // #2125: the header starts at 40; a third of the way down would
-        // take the column to 712 and the header with it. Nor does it creep
-        // as far as it may and stop short of the sentence: the column stays
-        // at the top, and the marker card says what the sentence is.
+        // A third of the way down would push the header off, so nothing moves (#2125).
         assert_eq!(reveal_to((900.0, 920.0), 0.0, PAGE, Some(40.0)), None);
     }
 
     #[test]
     fn a_sentence_just_under_the_fold_leaves_the_column_at_the_top_too() {
-        // A third of the way down is past the header, so nothing moves --
-        // not even the few pixels that would show the sentence's last line,
-        // which take the space above the header with them and leave the
-        // window opened somewhere other than its top.
         assert_eq!(reveal_to((PAGE, PAGE + 20.0), 0.0, PAGE, Some(40.0)), None);
     }
 

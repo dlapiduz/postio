@@ -36,23 +36,18 @@ ROOT = Path(__file__).resolve().parent.parent
 
 TYPES = ("feat", "fix", "docs", "test", "refactor", "perf", "chore", "ci", "build", "revert")
 
-# Areas that are not a crate and not a top-level directory, but that work
-# lands in often enough to deserve a name. Everything else is derived from
-# the tree, so a new crate or directory needs no edit here.
+# Areas that are not a crate or top-level directory but deserve a name; everything else is derived
+# from the tree.
 AREAS = {"workspace", "tooling", "ci", "deps", "release", "hooks", "skills", "checks", "land", "claim"}
-# Directories at the root that no commit should be scoped to.
 NOT_AREAS = {"target", "vendor", "Design", "patches"}
 
 SUMMARY_MAX = 50
 BODY_MAX = 72
 
 SUBJECT = re.compile(r"^(?P<type>[a-z]+)\((?P<scope>[^)]+)\): (?P<summary>.+)$")
-# Shapes git and the tooling write themselves. Their subjects are not ours
-# to police: a revert quotes the subject it reverts, a fixup is squashed
-# away, and a merge never reaches main through a squash anyway.
+# Shapes git writes itself (revert, fixup, merge) are not ours to police.
 EXEMPT_SUBJECT = re.compile(r'^(?:Revert "|Merge |fixup! |squash! |amend! )')
 
-# Not a grammar, a net for the usual slips: "added", "fixes".
 NOT_IMPERATIVE = {
     "added", "adds", "fixed", "fixes", "removed", "removes", "updated", "updates",
     "changed", "changes", "moved", "moves", "renamed", "renames", "made", "makes",
@@ -60,8 +55,6 @@ NOT_IMPERATIVE = {
     "cleaned", "cleans", "bumped", "bumps", "deleted", "deletes", "replaced", "replaces",
 }
 
-# GitHub's closing keywords, with or without a colon, before a same-repo
-# number, a cross-repo reference or an issue URL.
 CLOSING = re.compile(
     r"\b(?P<word>close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+"
     r"(?P<ref>#\d+|[\w.-]+/[\w.-]+#\d+|https?://github\.com/\S+/issues/\d+)",
@@ -133,8 +126,7 @@ def check_body(lines: list[str]) -> list[str]:
     if lines[1]:
         return ["the subject needs a blank line after it"]
     body = lines[2:]
-    # The last paragraph, when it is all trailers (Refs, Co-Authored-By,
-    # Claude-Session), may run long: a trailer cannot be wrapped.
+    # A last paragraph that is all trailers may run long: a trailer cannot be wrapped.
     start = len(body)
     while start > 0 and body[start - 1]:
         start -= 1
@@ -144,7 +136,6 @@ def check_body(lines: list[str]) -> list[str]:
     for number, line in enumerate(body[:trailers], start=3):
         if len(line) <= BODY_MAX:
             continue
-        # Code, quoted output, a URL or one unbreakable token cannot wrap.
         if line[:1] in (" ", "\t") or "://" in line or " " not in line.strip():
             continue
         problems.append(f"line {number} is {len(line)} characters; wrap the body at {BODY_MAX}")

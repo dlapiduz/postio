@@ -59,8 +59,6 @@ case "$1" in
 esac
 """
 
-# Records its arguments; exits with $RUNNER_EXIT; writes a run.json per
-# storyboard so `page` has something to read.
 FAKE_RUNNER = """#!/usr/bin/env bash
 echo "runner $*" >> "$FAKE_LOG"
 echo "display ${POSTIO_TEST_DISPLAY:-}" >> "$FAKE_LOG"
@@ -80,7 +78,6 @@ def setup(tmp: Path) -> dict[str, str]:
     repo = tmp / "repo"
     (repo / "scripts").mkdir(parents=True)
     shutil.copy(SCRIPT, repo / "scripts" / "storyboards.sh")
-    # The script runs the headless wrapper; a pass-through stands in.
     wrap = repo / "scripts" / "test-headless.sh"
     wrap.write_text('#!/usr/bin/env bash\nexec "$@"\n')
     wrap.chmod(0o755)
@@ -294,8 +291,6 @@ def main() -> int:
         result = run(ctx, "base", STORYBOARDS_CACHE=str(cache))
         lines = log_lines(ctx)
         expect("base", result.returncode == 0, f"exit {result.returncode}: {result.stderr.strip()}")
-        # Not under the implementing tree: Cargo merges every ancestor's
-        # .cargo/config.toml, so a nested base repeats the rustflags (#1818).
         tree = repo.parent / ".storyboard-base" / repo.name
         expect("base-config", repo not in tree.parents,
                f"no ancestor of the base tree is the implementing tree: {tree}")

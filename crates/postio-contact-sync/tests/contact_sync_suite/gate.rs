@@ -1,9 +1,3 @@
-//! The two keys and the one question (specs/011-focus-contacts S12). The
-//! address book is a trait; every test here, and the demo, uses a fake that
-//! counts what reaches it. Nothing is asked of a person's address book unless
-//! they turned sync on, and nothing is written unless the build says so and
-//! they confirmed this very plan.
-
 use postio_contact_sync::{
     Authorization, Confirmation, ExternalAddressBook, ExternalRecord, FakeAddressBook, Fields,
     LocalRecord, Mode, Scope, SyncError, dry_run, enable, write,
@@ -82,10 +76,8 @@ fn access_is_asked_for_only_by_enable_which_is_the_users_turning_sync_on() {
     let mut book = book(Authorization::NotDetermined).granting(Authorization::Authorized);
     assert_eq!(enable(&mut book), Authorization::Authorized);
     assert_eq!(book.prompts(), 1);
-    // Already decided: turning it on again does not prompt a second time.
     assert_eq!(enable(&mut book), Authorization::Authorized);
     assert_eq!(book.prompts(), 1);
-    // Denied is a final state until the person enables it again.
     let mut denied = book_denied();
     assert_eq!(enable(&mut denied), Authorization::Denied);
     assert_eq!(
@@ -105,17 +97,14 @@ fn writes_need_both_keys_the_build_flag_and_the_confirmation_of_this_plan() {
     let plan = plan_for(&mut fake);
     let confirmed = Some(Confirmation::of(&plan));
 
-    // Flag off, confirmed: nothing.
     assert_eq!(
         write(&mut fake, &plan, confirmed, false),
         Err(SyncError::WritesOff)
     );
-    // Flag on, not confirmed: nothing.
     assert_eq!(
         write(&mut fake, &plan, None, true),
         Err(SyncError::NotConfirmed)
     );
-    // Both off: nothing.
     assert!(write(&mut fake, &plan, None, false).is_err());
     assert_eq!(
         fake.applied(),
@@ -123,7 +112,6 @@ fn writes_need_both_keys_the_build_flag_and_the_confirmation_of_this_plan() {
         "with either key off nothing reached the store"
     );
 
-    // A confirmation of another plan is not this plan's.
     let mut other = book(Authorization::Authorized);
     let mut other_locals = locals();
     other_locals[0].fields.title = "Different".into();
@@ -135,7 +123,6 @@ fn writes_need_both_keys_the_build_flag_and_the_confirmation_of_this_plan() {
     );
     assert_eq!(fake.applied(), 0);
 
-    // Only with both keys does anything reach the (fake) store.
     assert_eq!(write(&mut fake, &plan, confirmed, true), Ok(()));
     assert_eq!(fake.applied(), 1);
 }
@@ -163,8 +150,6 @@ fn a_read_only_mode_plan_cannot_be_written_even_with_both_keys() {
 
 #[test]
 fn the_trait_is_all_a_real_store_has_to_be() {
-    // A compile-time check that the fake is a stand-in for the trait and the
-    // trait has no other way in.
     fn takes(_: &mut dyn ExternalAddressBook) {}
     takes(&mut book(Authorization::Authorized));
 }

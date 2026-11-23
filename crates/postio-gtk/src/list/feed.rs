@@ -1,15 +1,7 @@
-//! Filling Focus's list from the store's host, and keeping it in step.
-//!
-//! The rules are the controller's (`postio_focus`, ADR 0045): what opening a
-//! place reads, how a page is shaped and spliced, what an engine event
-//! re-reads. This is their GTK driver. It hands the controller what happened,
-//! runs each request it asks for through `postio_focus::perform` on GTK's own
-//! loop -- the client's in-process transport answers through a oneshot, so
-//! the loop is never inside a query -- and applies what comes back to the
-//! list model.
-//!
-//! Staleness is the model's: a page is asked for under the model's
-//! generation, and the answer is delivered against it.
+//! The GTK driver for the controller (`postio_focus`, ADR 0045): hands it what happened, runs each
+//! request through `postio_focus::perform` on GTK's loop (the client's in-process transport answers
+//! through a oneshot, so the loop is never inside a query), and applies the result to the list
+//! model. Staleness is the model's: a page is asked for under its generation.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -25,13 +17,10 @@ use postio_widgets::list_model::{PageSource, WindowedModel};
 use super::model::FocusList;
 use super::spliced::SplicedList;
 
-/// The conversations each selected row stands for.
 pub type SelectionReach = std::collections::HashMap<MessageId, Vec<ThreadId>>;
 
-/// What the window does with an intent it draws.
 type IntentHandler = Box<dyn Fn(&Intent)>;
 
-/// The list, and where its pages come from.
 #[derive(Clone)]
 pub struct Feed {
     inner: Rc<Inner>,
@@ -40,22 +29,14 @@ pub struct Feed {
 struct Inner {
     client: Client,
     list: FocusList,
-    /// The rows with the open thread's children among them: what the view
-    /// draws, and where the cursor is counted.
     shown: SplicedList,
-    /// Focus's rules for the list. Borrowed only to hand it something and
-    /// take its effects: never while they are applied, because applying them
-    /// calls the model, and the model calls back.
+    /// Borrowed only to hand it something and take its effects: never while they are applied,
+    /// because applying them calls the model, and the model calls back.
     focus: RefCell<FocusController>,
-    /// Called when a page lands or the list is re-read.
     on_filled: RefCell<Vec<Box<dyn Fn()>>>,
-    /// Called with each intent that is the window's to draw: the cursor,
-    /// the selection, the heading, the strip's counts, the empty page.
     on_intent: RefCell<Vec<IntentHandler>>,
 }
 
-/// The `PageSource` the model holds: a handle on the feed, so a request can
-/// take an owned `Rc` into the future it spawns.
 struct Source(Rc<Inner>);
 
 impl PageSource for Source {
@@ -71,7 +52,6 @@ impl PageSource for Source {
 }
 
 impl Feed {
-    /// A feed reading through `client`, with nothing open yet.
     pub fn new(client: Client) -> Self {
         let list = FocusList::default();
         Feed {
@@ -88,64 +68,47 @@ impl Feed {
         }
     }
 
-    /// The client the rows are read through.
     pub fn client(&self) -> Client {
         self.inner.client.clone()
     }
 
-    /// The list model a view draws.
     pub fn list(&self) -> &FocusList {
         &self.inner.list
     }
 
-    /// The rows with the open thread's children among them, in the positions
-    /// the view and the cursor use.
     pub fn shown(&self) -> &SplicedList {
         &self.inner.shown
     }
 
-    /// The scope in view, once one is open.
     pub fn scope(&self) -> Option<ListScope> {
         self.inner.focus.borrow().scope()
     }
 
-    /// How many rows the scope in view has, as the store last said.
     pub fn total(&self) -> u32 {
         self.inner.focus.borrow().list_total()
     }
 
-    /// The cursor's `index` among the messages of a list of `total` rows,
-    /// and how many messages it holds: digests are not counted, matching
-    /// the strip, which counts what the store holds.
+    /// Digests are not counted, matching the strip, which counts what the store holds.
     pub fn message_place(&self, index: u32, total: u32) -> (u32, u32) {
         self.inner.focus.borrow().message_place(index, total)
     }
 
-    /// Every page this feed has asked the store for, in order.
     pub fn pages_asked(&self) -> Vec<u32> {
         self.inner.focus.borrow().pages_asked().to_vec()
     }
 
-    /// Call `handler` each time rows land: a first page, a re-read.
     pub fn connect_filled(&self, handler: impl Fn() + 'static) {
         self.inner.on_filled.borrow_mut().push(Box::new(handler));
     }
 
-    /// Call `handler` with each intent the window draws: where the cursor
-    /// is, what is selected, the list's heading, the strip's counts, the
-    /// page that stands in for an empty list.
     pub fn connect_intent(&self, handler: impl Fn(&Intent) + 'static) {
         self.inner.on_intent.borrow_mut().push(Box::new(handler));
     }
 
-    /// Run `id` through the controller: the cursor's and the selection's
-    /// commands, `!`, and Back's last rung.
     pub fn command(&self, id: CommandId) {
         self.input(Input::Command(id));
     }
 
-    /// Tell the controller `input`, over the rows as they are held, and do
-    /// what it says.
     pub fn input(&self, input: Input) {
         let effects = self
             .inner
@@ -155,34 +118,28 @@ impl Feed {
         Rc::clone(&self.inner).apply(effects);
     }
 
-    /// The search result at `position`, drawn; `None` while its page is on
-    /// its way, which [`want_result`](Self::want_result) asks for.
+    /// `None` while its page is on its way.
     pub fn result_row(&self, position: u64) -> Option<postio_focus::ResultRow> {
         self.inner.focus.borrow().result_row(position)
     }
 
-    /// The People tab's row at `position`, drawn; `None` past the last, or
-    /// before the rows are read.
+    /// `None` past the last, or before the rows are read.
     pub fn result_person(&self, position: u64) -> Option<postio_focus::PersonRow> {
         self.inner.focus.borrow().result_person(position)
     }
 
-    /// The Files tab's card at `position`, drawn; `None` past the last, or
-    /// before the cards are read.
+    /// `None` past the last, or before the cards are read.
     pub fn result_file(&self, position: u64) -> Option<postio_focus::FileCard> {
         self.inner.focus.borrow().result_file(position)
     }
 
-    /// The results view wants the row at `position`, which
-    /// [`result_row`](Self::result_row) could not give: its page is read,
-    /// and `Intent::ResultsPage` says when it lands.
     pub fn want_result(&self, position: u64) {
         let effects = self.inner.focus.borrow_mut().results_wanted(position);
         Rc::clone(&self.inner).apply(effects);
     }
 
-    /// `Tab` in the bar's field: whether the controller used it, stepping
-    /// into the chips; `false` leaves the key to the toolkit.
+    /// Whether the controller used it, stepping into the chips; `false` leaves the key to the
+    /// toolkit.
     pub fn bar_tab(&self) -> bool {
         let effects = self
             .inner
@@ -194,28 +151,19 @@ impl Feed {
         used
     }
 
-    /// Whether `message` is open among a search's hits rather than as the
-    /// list's row (spec 009 slice 8).
     pub fn among_hits(&self, message: MessageId) -> bool {
         self.inner.focus.borrow().among_hits(message)
     }
 
-    /// The folders popover's places whose names hold `filter`, each with
-    /// the token [`Input::OpenPlace`] goes to it by, from the places the
-    /// controller last read.
     pub fn places(&self, filter: &str) -> Vec<(u64, postio_ui::places::Entry)> {
         self.inner.focus.borrow().places(filter)
     }
 
-    /// Every folder's name as the places list it, from the places the
-    /// controller last read.
     pub fn folder_names(&self) -> Vec<(postio_model::MailboxId, String)> {
         self.inner.focus.borrow().folder_names().to_vec()
     }
 
-    /// The Contacts list's row at `index`, or `None` while its page is on its
-    /// way: a miss asks the store for it, and `ContactsRows` says when to
-    /// draw again.
+    /// `None` while its page is on its way: a miss asks the store for it.
     pub fn contacts_row(&self, index: u32) -> Option<postio_ui::contacts_view::RowView> {
         let effects = {
             let mut focus = self.inner.focus.borrow_mut();
@@ -228,71 +176,54 @@ impl Feed {
         None
     }
 
-    /// How many people the Contacts list holds.
     pub fn contacts_total(&self) -> u32 {
         self.inner.focus.borrow().contacts_total()
     }
 
-    /// Where the Contacts cursor is.
     pub fn contacts_cursor(&self) -> Option<u32> {
         self.inner.focus.borrow().contacts_cursor()
     }
 
-    /// The card beside the Contacts list, once it has been read.
     pub fn contacts_card(&self) -> Option<postio_ui::contacts_view::CardView> {
         self.inner.focus.borrow().contacts_card()
     }
 
-    /// The Edit contact form, while one is open.
     pub fn contact_edit(&self) -> Option<postio_ui::contact_edit::EditView> {
         self.inner.focus.borrow().contact_edit()
     }
 
-    /// The message the open message surface shows, while it is on top.
     pub fn reading(&self) -> Option<MessageId> {
         self.inner.focus.borrow().reading()
     }
 
-    /// The surface on top of the list, by the controller's stack.
     pub fn top_surface(&self) -> Option<postio_focus::SurfaceKind> {
         self.inner.focus.borrow().top_surface()
     }
 
-    /// Whether the controller answers `id` itself over what is on screen:
-    /// while a search's results are up, their keys and the verbs on a row.
     pub fn answers(&self, id: CommandId) -> bool {
         self.inner.focus.borrow().answers(id)
     }
 
-    /// Who runs `id` with the surfaces now over the list.
     pub fn route(&self, id: CommandId) -> postio_focus::Route {
         self.inner.focus.borrow().route(id)
     }
 
-    /// The keymap in force now.
     pub fn keymap(&self) -> postio_core::Keymap {
         self.inner.focus.borrow().keymap().clone()
     }
 
-    /// The key `id` runs on now, as a keycap spells it.
     pub fn key(&self, id: CommandId) -> Option<String> {
         postio_ui::hints::key(self.inner.focus.borrow().keymap(), id)
     }
 
-    /// The key context in force: the top surface's, or the list's.
     pub fn key_context(&self) -> postio_ui::keymap::KeyContext {
         self.inner.focus.borrow().key_context()
     }
 
-    /// A Ctrl-click (`range` false: `x` on that row) or a Shift-click (the
-    /// walk from the anchor to it) on `position`.
     pub fn pick(&self, position: u32, range: bool) {
         self.input(Input::Pick { position, range });
     }
 
-    /// The list has landed or moved: the cursor goes to the first row of
-    /// a place just opened, or back to what `!` kept; the strip's counts
-    /// are asked for again.
     pub fn landed(&self) {
         let effects = {
             let mut focus = self.inner.focus.borrow_mut();
@@ -302,106 +233,83 @@ impl Feed {
         Rc::clone(&self.inner).apply(effects);
     }
 
-    /// The list view put the cursor on `position`, or took it off the list:
-    /// the controller notes where it is and draws nothing.
+    /// The controller notes where it is and draws nothing.
     pub fn cursor_is(&self, position: Option<u32>) {
         self.inner.focus.borrow_mut().cursor_is(position);
     }
 
-    /// Drop the selection; the cursor stays.
     pub fn clear_selection(&self) {
         let effects = self.inner.focus.borrow_mut().clear_selection();
         Rc::clone(&self.inner).apply(effects);
     }
 
-    /// The window takes the list to a place of its own: the selection
-    /// goes, `!` is off, the days' headings come back.
     pub fn leave_list(&self) {
         let effects = self.inner.focus.borrow_mut().leave_list();
         Rc::clone(&self.inner).apply(effects);
     }
 
-    /// The header strip names `name`: what an empty folder says it is.
     pub fn note_place(&self, name: &str) {
         self.inner.focus.borrow_mut().note_place(name);
     }
 
-    /// What is selected: what `e` would archive.
     pub fn selection(&self) -> postio_core::state::Selection {
         self.inner.focus.borrow().selection()
     }
 
-    /// The conversations each selected row stands for.
     pub fn selection_reach(&self) -> SelectionReach {
         self.inner.focus.borrow().selection_reach().clone()
     }
 
-    /// Where a verb would go now: the selection when there is one, the
-    /// cursor's row otherwise.
     pub fn aim(&self) -> postio_focus::Aimed {
         self.inner.focus.borrow().aim(&self.inner.list)
     }
 
-    /// Whether `message` is the one the open thread's walk is showing: a
-    /// step in place, not a message to open.
     pub fn walking(&self, message: MessageId, row: Option<MessageId>) -> bool {
         self.inner.focus.borrow().walking(message, row)
     }
 
-    /// Where `action` would go now.
     pub fn aim_for(&self, action: CommandId) -> postio_focus::Aimed {
         self.inner.focus.borrow().aim_for(&self.inner.list, action)
     }
 
-    /// Whether an undo is waiting for the rows it brings back to land.
     pub fn restoring(&self) -> bool {
         self.inner.focus.borrow().restoring()
     }
 
-    /// Whether the last landing put the cursor on a row an undo brought
-    /// back: true once per undo.
+    /// True once per undo.
     pub fn take_restored(&self) -> bool {
         self.inner.focus.borrow_mut().take_restored()
     }
 
-    /// Whether `!` has narrowed the list to the rows with a marker.
     pub fn has_action(&self) -> bool {
         self.inner.focus.borrow().has_action()
     }
 
-    /// The strip's counts, as the host last said.
     pub fn counts(&self) -> Option<postio_client::protocol::FocusCounts> {
         self.inner.focus.borrow().counts()
     }
 
-    /// Show `scope`: count it, then let the list ask for what it draws.
-    ///
-    /// The rows already on screen stay until the new scope's first page
-    /// lands (`replace_source`), so a change of place never flashes empty.
+    /// The rows already on screen stay until the new scope's first page lands, so a change of place
+    /// never flashes empty.
     pub fn open(&self, scope: ListScope) {
         let effects = self.inner.focus.borrow_mut().open(scope);
         Rc::clone(&self.inner).apply(effects);
     }
 
-    /// Whether a scope was opened and its first page has landed since this
-    /// was last asked: true once per opening, so the cursor goes to the new
-    /// list's first row once and a later re-read leaves it where it is.
+    /// True once per opening, so the cursor goes to the new list's first row once and a later
+    /// re-read leaves it where it is.
     pub fn take_opened(&self) -> bool {
         self.inner.focus.borrow_mut().take_opened()
     }
 
-    /// Whether the first page of the scope in view has landed: a list still
-    /// waiting for it is loading, not empty.
     pub fn has_landed(&self) -> bool {
         self.inner.focus.borrow().has_landed()
     }
 
-    /// Whether `mailbox` is one of the inboxes Focus's own inbox is made of.
     pub fn is_inbox(&self, mailbox: postio_model::MailboxId) -> bool {
         self.inner.focus.borrow().is_inbox(mailbox)
     }
 
-    /// Bring the list into step with `event`, by the controller's rules.
     pub fn handle(&self, event: &Event) {
         let effects = self
             .inner
@@ -413,7 +321,6 @@ impl Feed {
 }
 
 impl Inner {
-    /// Do what the controller said, in order.
     fn apply(self: Rc<Self>, effects: Vec<Effect>) {
         for effect in effects {
             match effect {
@@ -442,10 +349,8 @@ impl Inner {
             Intent::ReplaceSource { .. } => {
                 let source: Rc<dyn PageSource> = Rc::new(Source(Rc::clone(&self)));
                 self.list.replace_source(source, false);
-                // Asked for here rather than left to the view: rows already
-                // on screen stay until this page lands and the list changes
-                // over, and nothing else would ask for it. An empty scope's
-                // first page is empty, which is the change-over to nothing.
+                // Rows already on screen stay until this page lands, and nothing else would ask for
+                // it. An empty scope's first page is empty: the change-over to nothing.
                 let stamp = self.list.generation();
                 let effects = self.focus.borrow_mut().page_wanted(0, stamp);
                 self.apply(effects);
@@ -469,7 +374,6 @@ impl Inner {
                     handler();
                 }
             }
-            // Not the feed's: the window draws the rest.
             intent => {
                 for handler in self.on_intent.borrow().iter() {
                     handler(&intent);

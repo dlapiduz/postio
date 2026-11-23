@@ -1,14 +1,5 @@
-//! The reader on a real display, end to end, against the corpus fixtures it
-//! exists for: `cid:` images, the remote-image banner and its allow list, the
-//! notices, quote folding, the reader view, and network isolation -- the one
-//! part that does touch a socket: a listener on `127.0.0.1` this process
-//! owns, there only to prove nothing else ever connects to it.
-//!
-//! Run as cases of the suite on its main thread: WebKit gives each thread
-//! that asks a `RunLoop` of its own, and a dropped web view queues its
-//! teardown onto the thread's, which nothing drains on a spawned one (#272).
-//!
-//! Skips without a display.
+//! Run as cases on the suite's main thread: a dropped web view queues teardown onto its thread's
+//! WebKit `RunLoop`, which nothing drains on a spawned thread (#272).
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -21,7 +12,6 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use chrono::{TimeZone, Utc};
-use gtk::gdk;
 use gtk::glib;
 use gtk::prelude::*;
 use postio_model::address::EmailAddress;
@@ -31,24 +21,15 @@ use postio_ui::reader::document;
 use postio_widgets::reader::{BlobSource, Reader, RemoteImageAllowList};
 
 pub fn the_reader_renders_and_hardens_the_corpus() {
-    // The whole point of the harness at the foot of this file. A libtest
-    // `#[test]` would be running on a thread of its own here, and this test
-    // deadlocks there (#272).
     assert_eq!(
         std::thread::current().name(),
         Some("main"),
         "this case must run on the main thread -- see `main` below"
     );
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-
     let window = gtk::Window::new();
     window.set_default_size(600, 500);
 
-    // ── inline cid: images resolve locally, including the dangling one ────
     let inline = test_corpus::load("inline-image-cid");
     let parsed = postio_model::mime::parse(inline.bytes());
     let mut blobs = HashMap::new();
@@ -78,14 +59,11 @@ pub fn the_reader_renders_and_hardens_the_corpus() {
         allowlist_path.clone(),
     );
 
-    // What the app hands every reader: a fetcher for the remote images a
-    // document names once the user allowed them. This one only ever dials
-    // this machine's loopback, so the file touches no real network.
+    // Dials only this machine's loopback, so the file touches no real network.
     reader.set_remote_fetch(loopback_fetch);
 
-    // What `the parts panel::set_held_back` is wired from —
-    // every render's blocked-reference counts, in order, split into ordinary
-    // pictures and likely trackers (#174).
+    // What `the parts panel::set_held_back` is wired from: every render's blocked-reference counts,
+    // split into pictures and likely trackers (#174).
     let rendered_counts: Rc<RefCell<Vec<postio_widgets::reader::HeldBack>>> =
         Rc::new(RefCell::new(Vec::new()));
     let counts_for_reader = Rc::clone(&rendered_counts);
@@ -114,7 +92,6 @@ pub fn the_reader_renders_and_hardens_the_corpus() {
         "the dangling cid: reference should still reach the scheme handler: {seen:?}"
     );
 
-    // ── the tracking-pixel fixture: blocked by default, banner says so ────
     let tracking = test_corpus::load("html-tracking-pixel-remote-images");
     let parsed = postio_model::mime::parse(tracking.bytes());
 
@@ -133,30 +110,12 @@ pub fn the_reader_renders_and_hardens_the_corpus() {
         "the banner should name the sender it would allow: {}",
         reader.banner_always_allow_label()
     );
-    // The fixture is built for exactly this split (#174): a 320x240 product
-    // shot, a 120x28 logo, and an open-rate beacon declaring `width="1"
-    // height="1"` and `width:1px; height:1px` in its style. All three are
-    // held back identically -- the split only changes what the parts panel
-    // calls them.
-    //
-    // Note every one of them is served from a host with `tracker` in its
-    // name, and two of them are pictures. That is the fixture making the
-    // point the heuristic rests on: the host says nothing.
-    //
-    // Four, not two, since #1326. The fixture's `<style>` block carries two
-    // more remote references -- a hero background and a `css-beacon` -- and
-    // it always did: they were simply invisible while `<style>` was deleted
-    // unread, which is presumably why whoever built the fixture put them
-    // there. Now that Postio parses the stylesheet it can see them, and a
-    // background that did not load is exactly as held back, to the reader, as
-    // an `<img>` that did not.
-    //
-    // The CSS beacon is counted with the images rather than as a tracker on
-    // purpose. `is_likely_tracker` reads a declared 1x1 size off an `<img>`,
-    // and a CSS background declares no size at all -- so Postio can say it
-    // was blocked but cannot honestly say it was a beacon. Guessing from the
-    // host would be the one thing the comment above says the fixture exists
-    // to refute.
+    // Held back identically: a 320x240 shot, a 120x28 logo and a 1x1 beacon, all from a `tracker`
+    // host, so the host says nothing.
+    // Four since #1326: the `<style>` block carries two more remote references (a hero background
+    // and a `css-beacon`), visible now the stylesheet is parsed.
+    // The CSS beacon counts as an image: `is_likely_tracker` reads a declared 1x1 size off an
+    // `<img>`, and a CSS background declares none.
     assert_eq!(
         rendered_counts.borrow().last().copied(),
         Some(postio_widgets::reader::HeldBack {
@@ -168,7 +127,6 @@ pub fn the_reader_renders_and_hardens_the_corpus() {
          real pictures"
     );
 
-    // ── a newsletter with nothing remote gets no banner ────────────────────
     let newsletter = test_corpus::load("html-newsletter");
     let parsed = postio_model::mime::parse(newsletter.bytes());
 
@@ -181,15 +139,13 @@ pub fn the_reader_renders_and_hardens_the_corpus() {
         "no remote reference was stripped, so there is nothing for the banner to report"
     );
 
-    // ── #971: the unsubscribe banner names a list and reports activation ──
     assert!(
         !reader.unsubscribe_banner_visible(),
         "nothing has named a list yet"
     );
     reader.set_unsubscribe(Some("newsletter.example.com"));
-    // On screen at once: the newsletter opened as its sender built it (spec
-    // 006 FR-031), so no reader-view notice outranks the list in the
-    // reader's one notice slot.
+    // On screen at once: the newsletter opens as sent, so no reader-view notice outranks the list
+    // in the one notice slot.
     assert!(
         reader.unsubscribe_banner_visible() && !reader.reader_notice_visible(),
         "nothing was rewritten, so the list is the notice that applies"
@@ -213,18 +169,14 @@ pub fn the_reader_renders_and_hardens_the_corpus() {
         &["newsletter.example.com".to_owned()],
         "clicking unsubscribe should report the list currently named"
     );
-    // A fresh render clears it, same convention as the decode notice: the
-    // caveat belongs to one message and must not outlive it.
+    // A fresh render clears it: the caveat belongs to one message.
     reader.render(&parsed.body, Some("weekly@news.example.org"));
     assert!(
         !reader.unsubscribe_banner_visible(),
         "render clears the previous message's banner until the caller sets a new one"
     );
-    // And the caller does, for this message, as the application would.
     reader.set_unsubscribe(Some("newsletter.example.com"));
 
-    // ── spec 006 FR-031: a newsletter opens as sent; reader view is asked for ─
-    // Rendered above, so the state is whatever `render` decided for it.
     assert!(
         !reader.is_reader_view(),
         "every message opens as its sender built it, bulk mail included"
@@ -256,12 +208,8 @@ pub fn the_reader_renders_and_hardens_the_corpus() {
         "with reader view gone, the list is the notice that applies"
     );
 
-    // ── #1029: and it lands on the sender's own paper, not Postio's ───────
-    // The half of the canvas (turn 7, screen 20) that `View original` did
-    // not do yet: *where* the original is drawn. A sender who laid out for a
-    // white page gets their white-background logo, their mid-grey body text
-    // and their links on a dark ground otherwise, which is the failure the
-    // feature exists to avoid rather than one it may cause.
+    // It lands on the sender's own paper: a sender who laid out for white would otherwise get
+    // white-background logos and grey text on a dark ground (#1029).
     let document = reader.test_document();
     assert!(
         document.contains(document::SENDERS_SHEET_CLASS),
@@ -281,18 +229,15 @@ pub fn the_reader_renders_and_hardens_the_corpus() {
         sheet.contains(&format!("--r-ground: {}", document::reader_ground(false))),
         "the sheet is the palette's light ground: {sheet}"
     );
-    // The chrome is the other half, and it is what makes the sheet a sheet:
-    // `body` keeps painting the theme's ground, so nothing here may move the
-    // light values onto the root.
+    // `body` keeps painting the theme's ground, so the light values must not move onto the root.
     assert!(
         !sheet.contains(":root"),
         "the light palette belongs inside the sender's box, not on the root"
     );
 
-    // And it paints. A selector that lost on specificity, or a custom
-    // property assumed to inherit where it does not, would leave the text
-    // above intact and paint nothing at all -- so the renderer is asked, in
-    // both directions, in the dark theme where the two grounds differ.
+    // And it paints: a selector that lost on specificity, or a custom property that does not
+    // inherit, would leave the text intact and paint nothing. Ask the renderer in the dark theme,
+    // where the grounds differ.
     let light = document::reader_ground(false);
     let sheet_document = document::document_for(
         "<p>hi</p>",
@@ -318,8 +263,6 @@ pub fn the_reader_renders_and_hardens_the_corpus() {
          chrome's ground through -- that is what makes the sheet a change"
     );
 
-    // Per message, never sticky. Somebody who wanted to see one newsletter's
-    // layout has said nothing at all about the next one.
     let finished = track_load_finished(&reader);
     reader.render(&parsed.body, Some("weekly@news.example.org"));
     wait_for(&finished, Duration::from_secs(5));
@@ -328,7 +271,6 @@ pub fn the_reader_renders_and_hardens_the_corpus() {
         "the next message opens as its sender built it again"
     );
 
-    // ── and ordinary correspondence is never dragged into it ──────────────
     let ordinary = test_corpus::load("multipart-alternative");
     let ordinary = postio_model::mime::parse(ordinary.bytes());
     let finished = track_load_finished(&reader);
@@ -339,9 +281,8 @@ pub fn the_reader_renders_and_hardens_the_corpus() {
         "a person's actual mail must look like the person wrote it"
     );
     assert!(!reader.reader_notice_visible());
-    // #1029: correspondence is `Rendering::Original` too, and is exactly the
-    // case that must not change. A reply on a white page inside a dark
-    // window would be worse than what the theme already does.
+    // #1029: correspondence must not change; a reply on a white page in a dark window would be
+    // worse than the theme.
     assert!(
         !reader
             .test_document()
@@ -349,17 +290,13 @@ pub fn the_reader_renders_and_hardens_the_corpus() {
         "an ordinary reply must keep following the theme"
     );
 
-    // ── #1030: transactional mail gets its facts lifted above the copy ────
-    // The end of the chain: `reader_view::lift` finds the rows, `body_html`
-    // draws them, and this is the document the web view was actually handed.
-    // Asserting on the extractor alone could not fail if nothing rendered it.
+    // The end of the chain: asserting on the extractor alone could not fail if nothing rendered it
+    // (#1030).
     let shipping = test_corpus::load("transactional-shipping-notice");
     let shipping = postio_model::mime::parse(shipping.bytes());
     let finished = track_load_finished(&reader);
     reader.render(&shipping.body, Some("orders@shop.example.test"));
     wait_for(&finished, Duration::from_secs(5));
-    // Opens as sent, like everything (spec 006 FR-031); the facts are
-    // reader view's, one command away.
     let finished = track_load_finished(&reader);
     reader.toggle_reader_view();
     wait_for(&finished, Duration::from_secs(5));
@@ -388,7 +325,6 @@ pub fn the_reader_renders_and_hardens_the_corpus() {
         "and drawn once, not once in the block and again in the paragraph"
     );
 
-    // ── #319: the header puts sender, subject and date on screen ──────────
     let header = reader.header();
     let ada = EmailAddress::new(Some("Ada Lovelace"), "ada@example.com");
     let bob = EmailAddress::new(Some("Bob"), "bob@example.com");
@@ -435,8 +371,6 @@ pub fn the_reader_renders_and_hardens_the_corpus() {
         "Cc must not cost vertical space until asked for"
     );
 
-    // A message with no subject and a sender with no display name still
-    // renders a complete header, not a blank one.
     header.set_message(std::slice::from_ref(&carol), &[], &[], None, date);
     assert!(
         !header.subject_label().trim().is_empty(),
@@ -456,8 +390,6 @@ pub fn the_reader_renders_and_hardens_the_corpus() {
         "no Cc means no disclosure to offer"
     );
 
-    // A header-only message -- headers synced, body not -- gets the same
-    // header a message with a body does: `set_message` never reads the body.
     header.set_message(
         std::slice::from_ref(&ada),
         std::slice::from_ref(&bob),
@@ -471,14 +403,12 @@ pub fn the_reader_renders_and_hardens_the_corpus() {
         "the header must survive showing an absent body"
     );
 
-    // Closing the pane clears the header along with everything else.
     reader.clear();
     assert!(
         header.subject_label().is_empty(),
         "a cleared pane must not keep showing the last message's header"
     );
 
-    // ── "always allow" persists and lifts the block on the next render ────
     let tracking_body = postio_model::mime::parse(tracking.bytes()).body;
     let finished = track_load_finished(&reader);
     reader.render(&tracking_body, Some("orders@shop.example.org"));
@@ -506,7 +436,6 @@ pub fn the_reader_renders_and_hardens_the_corpus() {
         "the allow-list file should carry the exception, not just memory"
     );
 
-    // ── quoted-text folding: the corpus's flowed reply ─────────────────────
     let flowed = test_corpus::load("plain-text-flowed-reply");
     let parsed = postio_model::mime::parse(flowed.bytes());
     assert!(
@@ -520,17 +449,10 @@ pub fn the_reader_renders_and_hardens_the_corpus() {
     let finished = track_load_finished(&reader);
     reader.render(&parsed.body, Some("quinn.abara@example.net"));
     wait_for(&finished, Duration::from_secs(5));
-    // The body has no images at all, so folding a quote must not trip the
-    // remote-image banner.
     assert!(!reader.banner_visible());
 
-    // ── network isolation: nothing ever reaches a real socket ─────────────
-    //
-    // The claim is "nothing leaves this machine that the user did not ask
-    // for", and half a proof of it is worthless: a listener nobody could ever
-    // have reached would sit silent whether the reader were hardened or wide
-    // open. So this runs twice — blocked, then consented — and the second run
-    // is what makes the first one mean something.
+    // Run twice, blocked then consented: a listener nobody could reach would be silent either way,
+    // so the second run is what makes the first mean something.
     let listener = TcpListener::bind("127.0.0.1:0").expect("a local listener should bind");
     listener.set_nonblocking(true).unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -540,9 +462,8 @@ pub fn the_reader_renders_and_hardens_the_corpus() {
     let accepting = std::thread::spawn(move || {
         while !stopping.load(Ordering::Relaxed) {
             if let Ok((stream, _addr)) = listener.accept() {
-                // Answered, so the fetch completes rather than hanging:
-                // a request that arrives is the thing being measured, and it
-                // has to arrive the same way in both phases.
+                // Answered so the fetch completes; a request must arrive the same way in both
+                // phases.
                 let _ = (&stream).write_all(
                     b"HTTP/1.1 200 OK\r\nContent-Type: image/gif\r\nContent-Length: 0\r\n\r\n",
                 );
@@ -562,8 +483,6 @@ pub fn the_reader_renders_and_hardens_the_corpus() {
     let finished = track_load_finished(&reader);
     reader.render(&beacon, Some(sender));
     wait_for(&finished, Duration::from_secs(5));
-    // Give the listener the full window, in case a fetch is merely slow
-    // rather than never asked for.
     pump_for(Duration::from_millis(900));
 
     assert!(
@@ -575,11 +494,6 @@ pub fn the_reader_renders_and_hardens_the_corpus() {
         "and it has to say so, or the user cannot consent to what they cannot see"
     );
 
-    // ── and the same beacon does arrive once the user asks for it ─────────
-    //
-    // Not a feature test: this is what proves the silence above was the
-    // reader's doing. If this fetch never lands either, the listener was
-    // unreachable and the assertion before it proved nothing at all.
     let finished = track_load_finished(&reader);
     reader.click_always_allow();
     wait_for(&finished, Duration::from_secs(5));
@@ -594,22 +508,11 @@ pub fn the_reader_renders_and_hardens_the_corpus() {
          proved nothing — the listener was never reachable"
     );
 
-    // ── the same proof for a beacon carried in a *style* ──────────────────
-    //
-    // #1325 admitted the sender's inline styling, and with it a second route
-    // to the network that no `<img>` appears in: `background-image: url(…)`.
-    // Spec FR-022 is explicit that the rule covers every way a message can
-    // name a resource, "including from within its styling", so the isolation
-    // proof has to cover it too.
-    //
-    // Two mechanisms should refuse this — `sanitize::contain_declarations`
-    // drops a remote `url()` while images are blocked, and the renderer
-    // resolves no URL the app did not hand it, so a declaration the
-    // sanitizer missed still fetches nothing. Defence in depth is only
-    // defence if something checks both layers are there.
-    //
-    // Run against a listener of its own, so a stray connection from the phase
-    // above cannot be read as this one passing.
+    // The same proof for a beacon in a style (#1325): `background-image: url(...)` is a second
+    // route to the network. Two layers refuse it, `sanitize::contain_declarations` and the
+    // renderer, so check both.
+    // A listener of its own, so a stray connection from the phase above is not read as this one
+    // passing.
     let styled_listener = TcpListener::bind("127.0.0.1:0").expect("a local listener should bind");
     styled_listener.set_nonblocking(true).unwrap();
     let styled_port = styled_listener.local_addr().unwrap().port();
@@ -634,9 +537,7 @@ pub fn the_reader_renders_and_hardens_the_corpus() {
             r#"<html><body><div style="background-image:url(http://127.0.0.1:{styled_port}/styled.gif);width:20px;height:20px">.</div></body></html>"#
         )),
     };
-    // A sender of its own: the one above has just been granted consent, and
-    // reusing it would test the allowed path while claiming to test the
-    // blocked one.
+    // A sender of its own: the one above has consent, and reusing it would test the allowed path.
     let styled_sender = "styled-tracker@example.org";
     let finished = track_load_finished(&reader);
     reader.render(&styled_beacon, Some(styled_sender));
@@ -655,8 +556,6 @@ pub fn the_reader_renders_and_hardens_the_corpus() {
          other — a user cannot consent to what they cannot see"
     );
 
-    // And it arrives on consent, for the reason the image phase runs twice:
-    // otherwise an unreachable listener would pass the assertion above.
     let finished = track_load_finished(&reader);
     reader.click_always_allow();
     wait_for(&finished, Duration::from_secs(5));
@@ -676,19 +575,9 @@ pub fn the_reader_renders_and_hardens_the_corpus() {
     window.destroy();
 }
 
-/// The instrument, against the real reader (#1328).
-///
-/// `postio_ui::test_support` is only worth having if its numbers move when
-/// the reader moves, and stay put when it does not. Asserted here rather than
-/// in `postio-ui`'s own tests because that crate cannot build a `Reader`, and
-/// an instrument proven only against itself is the shape of #327: written,
-/// tested, wired to nothing.
+/// `postio_ui::test_support` is only worth having if its numbers move when the reader moves;
+/// `postio-ui` cannot build a `Reader`.
 pub fn the_counters_see_what_the_reader_actually_does() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-
     let surfaces_before = postio_ui::test_support::surfaces_created();
     let held_before = postio_ui::test_support::surfaces_held();
     let renders_before = postio_ui::test_support::renders_issued();
@@ -736,7 +625,6 @@ pub fn the_counters_see_what_the_reader_actually_does() {
         window.destroy();
     }
 
-    // GTK finalizes on the main loop, not at the closing brace.
     for _ in 0..200 {
         while glib::MainContext::default().iteration(false) {}
     }
@@ -750,20 +638,9 @@ pub fn the_counters_see_what_the_reader_actually_does() {
     );
 }
 
-/// Building a reader loads nothing (#1603).
-///
-/// The constructor used to end in `clear()`, which loads an empty document --
-/// and a view's first load is what starts its web process. The window's
-/// reader is built inside `reading::install`, before the first frame, so that
-/// load put a process start into the startup burst for a pane nobody had
-/// opened a message in. The pane is painted its ground colour without a
-/// document (`the_pane_is_painted_before_it_has_a_document`); a load waits
-/// until there is something to draw, or until `warm` is asked for.
+/// The constructor used to end in `clear()`, whose empty load starts the web process inside the
+/// startup burst for a pane nobody had opened (#1603).
 pub fn a_new_reader_loads_nothing_until_it_is_asked_to() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let before = postio_ui::test_support::renders_issued();
     let reader = Reader::with_allowlist(
         Rc::new(NoBlobs),
@@ -786,8 +663,7 @@ impl BlobSource for NoBlobs {
     }
 }
 
-/// Fetch `urls` the way the app's fetcher would, but only from `127.0.0.1`:
-/// anything else is dropped unasked, so no case here reaches a real host.
+/// Anything but `127.0.0.1` is dropped unasked, so no case reaches a real host.
 fn loopback_fetch(urls: Vec<String>, done: postio_widgets::reader::view::RemoteArrived) {
     let (tx, rx) = mpsc::channel::<Vec<(String, Vec<u8>)>>();
     std::thread::spawn(move || {
@@ -842,8 +718,6 @@ fn scratch_path(name: &str) -> std::path::PathBuf {
     dir.join(format!("{name}.ini"))
 }
 
-/// A flag the reader's view raises when its next snapshot reaches the
-/// screen.
 fn track_load_finished(reader: &Reader) -> Rc<RefCell<bool>> {
     let done = Rc::new(RefCell::new(false));
     let flag = Rc::clone(&done);
@@ -853,8 +727,6 @@ fn track_load_finished(reader: &Reader) -> Rc<RefCell<bool>> {
     done
 }
 
-/// The ground the renderer paints behind `document`'s first text, in the
-/// dark theme, as `#rrggbb`.
 fn ground_behind_first_text(document: &str) -> String {
     let resources = postio_render::Resources::new();
     for face in document::FACES {

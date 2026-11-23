@@ -1,41 +1,24 @@
-//! Contacts sync as a plan (specs/011-focus-contacts S12).
-//!
-//! Rust owns every decision here and the address book is only bytes moving:
-//! [`plan`] is a pure function of what Postio has, what the other side has and
-//! what was synced last. It matches records, decides create, update or leave,
-//! and turns a field both sides changed into a question; it never says delete
-//! and never overwrites. [`dry_run`] reads a snapshot and returns the plan;
-//! that is all this crate does with an address book unless two keys are turned,
-//! and [`write()`](fn@write) says which: the build's [`CONTACT_SYNC_WRITES`] and the
-//! person's confirmation of this very plan.
-//!
-//! No I/O, no database, no toolkit: the boundary check holds it there, and
-//! every test runs over a [`FakeAddressBook`] that counts what reaches it.
+//! Rust owns every decision; the address book is only bytes moving. `plan` is a pure function of
+//! what
+//! Postio has, what the other side has and what was synced last; it never says delete and never
+//! overwrites.
+//! Nothing writes unless two keys are turned: `CONTACT_SYNC_WRITES` and the person's confirmation
+//! of this very plan.
 
 use std::collections::BTreeSet;
 
 use postio_model::ContactKind;
 
-/// The build-time key. Off until the maintainer has reviewed what a dry run
-/// printed and flips it in a commit of its own; until then nothing in this
-/// crate asks an address book to change.
+/// Off until the maintainer has reviewed a dry run and flips it in a commit of its own.
 pub const CONTACT_SYNC_WRITES: bool = false;
 
-/// The fields that sync. Kind, settings, notes, stats and Postio's own groups
-/// stay in Postio.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Fields {
-    /// Given name.
     pub given: String,
-    /// Family name.
     pub family: String,
-    /// Every address.
     pub emails: BTreeSet<String>,
-    /// Every phone number, as written.
     pub phones: Vec<String>,
-    /// Organisation.
     pub organization: String,
-    /// Job title.
     pub title: String,
 }
 
@@ -47,52 +30,33 @@ impl Fields {
     }
 }
 
-/// A person Postio has.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalRecord {
-    /// Postio's id.
     pub id: i64,
-    /// How to say them in a report.
     pub label: String,
-    /// What would sync.
     pub fields: Fields,
-    /// Only saved contacts sync.
     pub saved: bool,
-    /// Which kinds sync is decided by [`Scope`].
     pub kind: ContactKind,
 }
 
-/// A record the other side has.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExternalRecord {
-    /// The other side's identifier for it.
     pub id: String,
-    /// How to say it in a report.
     pub label: String,
-    /// What would sync.
     pub fields: Fields,
 }
 
-/// A match kept: the stable link, and the fields as of the last sync, which is
-/// what makes a three-way comparison possible.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Link {
-    /// Postio's id.
     pub local: i64,
-    /// The other side's id.
     pub external: String,
-    /// The synced fields as of the last sync.
     pub base: Fields,
 }
 
-/// What syncs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scope {
-    /// People only.
     People,
-    /// People and companies (the default).
     PeopleAndCompanies,
-    /// Everything saved.
     Everything,
 }
 
@@ -106,170 +70,108 @@ impl Scope {
     }
 }
 
-/// Whether a plan may ask the other side to change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
-    /// Both ways.
     TwoWay,
-    /// Read only: what the other side has may come in; nothing goes out.
     ReadOnly,
 }
 
-/// Which side a change is for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Side {
-    /// A change to Postio's record.
     Local,
-    /// A change to the other side's record.
     External,
 }
 
-/// A pair that is the same person.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Match {
-    /// Postio's id.
     pub local: i64,
-    /// The other side's id.
     pub external: String,
 }
 
-/// A record only the other side has, which would come into Postio as a saved
-/// contact: a change to Postio's own database, never to theirs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Import {
-    /// The other side's id for it.
     pub external: String,
-    /// For the report.
     pub label: String,
-    /// A person, or a company when the record has an organisation and no
-    /// name.
     pub kind: ContactKind,
-    /// What Postio would keep, and later compare against.
     pub fields: Fields,
 }
 
-/// A saved contact the other side lacks: what would be created there.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Create {
-    /// Postio's id.
     pub local: i64,
-    /// For the report.
     pub label: String,
-    /// What would be written.
     pub fields: Fields,
 }
 
-/// One field of one record that would change.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Change {
-    /// Postio's id.
     pub local: i64,
-    /// The other side's id.
     pub external: String,
-    /// Who, in words, for the report.
     pub label: String,
-    /// Which side changes.
     pub side: Side,
-    /// Which field.
     pub field: String,
-    /// What it becomes, in words.
     pub to: String,
-    /// What it becomes, as values: one for a name, organisation or title, and
-    /// each address or number that goes across for a set.
     pub values: Vec<String>,
 }
 
-/// A field both sides changed, to different values.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Conflict {
-    /// Postio's id.
     pub local: i64,
-    /// The other side's id.
     pub external: String,
-    /// For the report.
     pub label: String,
-    /// Which field.
     pub field: String,
-    /// Postio's value.
     pub mine: String,
-    /// The other side's.
     pub theirs: String,
 }
 
-/// A contact that could be more than one record, or the reverse.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ambiguous {
-    /// Postio's id.
     pub local: i64,
-    /// For the report.
     pub label: String,
-    /// The other side's records it could be.
     pub candidates: Vec<String>,
 }
 
-/// A linked record the other side no longer has.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Gone {
-    /// Postio's id.
     pub local: i64,
-    /// For the report.
     pub label: String,
-    /// The id that vanished.
     pub external: String,
 }
 
-/// A delete. Nothing in this crate ever makes one; the plan carries the list
-/// so a report can say there are none.
+/// Nothing in this crate ever makes one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Delete;
 
-/// What bringing a plan's Postio side in did: Postio's database changed and
-/// no address book was touched.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BroughtIn {
-    /// Saved contacts made from records only the other side had.
     pub people: usize,
-    /// Fields that changed in Postio.
     pub fields: usize,
-    /// Records Postio could not keep (an address someone else has, a refusal),
-    /// which stay where they were.
+    /// Records Postio could not keep (an address someone else has, a refusal); they stay where they
+    /// were.
     pub skipped: usize,
-    /// Postio's ids of the people made, in order.
     pub made: Vec<i64>,
-    /// Postio's ids of the people whose fields changed.
     pub touched: Vec<i64>,
 }
 
-/// What a sync would do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Plan {
-    /// Whether the plan may change the other side.
     pub mode: Mode,
-    /// Records found to be the same person.
     pub matches: Vec<Match>,
-    /// Saved contacts the other side lacks.
     pub creates: Vec<Create>,
-    /// Records only the other side has, which would come into Postio. Both
-    /// modes plan them: they change Postio and nothing else.
+    /// Both modes plan them: they change Postio and nothing else.
     pub imports: Vec<Import>,
-    /// Fields that would change, one side or the other.
     pub updates: Vec<Change>,
-    /// Fields both sides changed.
     pub conflicts: Vec<Conflict>,
-    /// Contacts that could be more than one record.
     pub ambiguous: Vec<Ambiguous>,
-    /// Linked records the other side no longer has.
     pub gone: Vec<Gone>,
     /// Always empty: a delete is never automatic.
     pub deletes: Vec<Delete>,
-    /// Records on the other side that stay there: out of scope, without an
-    /// address or a name Postio could keep them by, or a second record for an
-    /// address another already brings in.
+    /// Records on the other side that stay there: out of scope, without an address or name, or a
+    /// second record for an address another already brings in.
     pub left_alone: usize,
 }
 
 impl Plan {
-    /// `(add, update, ask, delete)`.
     pub fn counts(&self) -> (usize, usize, usize, usize) {
         (
             self.creates.len(),
@@ -279,9 +181,7 @@ impl Plan {
         )
     }
 
-    /// `(people who would come into Postio, fields that would change in
-    /// Postio)`: what bringing in applies, and all of it. Changes to the
-    /// other side are not in it.
+    /// Changes to the other side are not in it.
     pub fn bring_in_counts(&self) -> (usize, usize) {
         let local = self
             .updates
@@ -291,9 +191,7 @@ impl Plan {
         (self.imports.len(), local)
     }
 
-    /// "Would bring in 4, add 12, update 3, ask about 2, delete 0": counts
-    /// only, so it may be logged. "Bring in" is into Postio; "add" is into
-    /// the other side.
+    /// Counts only, so it may be logged. "Bring in" is into Postio; "add" is into the other side.
     pub fn summary(&self) -> String {
         let (add, update, ask, delete) = self.counts();
         let bring = self.imports.len();
@@ -302,8 +200,7 @@ impl Plan {
         )
     }
 
-    /// What the plan says in words, a line each, with names. It is the
-    /// person's to read and is never logged.
+    /// Names are the person's to read; never logged.
     pub fn report(&self) -> Vec<String> {
         let mut lines = Vec::new();
         for import in &self.imports {
@@ -350,11 +247,8 @@ impl Plan {
         lines
     }
 
-    /// What the plan would do, as one number: the person's yes to a plan is
-    /// bound to it, so a plan that changed since is not the one confirmed.
+    /// The person's yes is bound to it, so a plan that changed since is not the one confirmed.
     pub fn fingerprint(&self) -> u64 {
-        // FNV-1a over the plan's own text: stable, and different whenever
-        // what would be written is.
         let text = format!("{self:?}");
         let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
         for byte in text.bytes() {
@@ -365,8 +259,6 @@ impl Plan {
     }
 }
 
-/// The last four digits' worth of a number, for matching: digits only,
-/// compared on the trailing nine.
 fn phone_key(phone: &str) -> Option<String> {
     let digits: String = phone.chars().filter(char::is_ascii_digit).collect();
     (digits.len() >= 7).then(|| digits[digits.len().saturating_sub(9)..].to_owned())
@@ -389,8 +281,6 @@ fn shares_name_and_phone(a: &Fields, b: &Fields) -> bool {
         .any(|x| b.phones.iter().filter_map(|p| phone_key(p)).any(|y| x == y))
 }
 
-/// The plan for syncing `locals` with `externals`, given what is already
-/// `links`.
 pub fn plan(
     locals: &[LocalRecord],
     externals: &[ExternalRecord],
@@ -414,8 +304,6 @@ pub fn plan(
     let mut used_external: BTreeSet<&str> = BTreeSet::new();
     let mut settled_local: BTreeSet<i64> = BTreeSet::new();
 
-    // Links already made: compare field by field, or ask about a record that
-    // went away. Deleting anything is never the answer.
     for link in links {
         let Some(local) = locals.iter().filter(in_scope).find(|l| l.id == link.local) else {
             continue;
@@ -434,9 +322,8 @@ pub fn plan(
         }
     }
 
-    // New matches, by any shared address, then by name and phone. One
-    // candidate on both sides is a match; more than one on either is a
-    // question.
+    // By any shared address, then by name and phone. One candidate on both sides is a match; more
+    // than one on either is a question.
     let free_locals: Vec<&LocalRecord> = locals
         .iter()
         .filter(in_scope)
@@ -500,8 +387,6 @@ pub fn plan(
         }
     }
 
-    // A saved contact nobody matched is a create on the other side, in two
-    // way mode only.
     for local in &free_locals {
         if !settled_local.contains(&local.id) && mode == Mode::TwoWay {
             plan.creates.push(Create {
@@ -511,10 +396,8 @@ pub fn plan(
             });
         }
     }
-    // A record only they have comes in, if Postio can keep it: it needs an
-    // address to be found by and a name or an organisation to be called by,
-    // and the scope must take its kind. A second record for an address one
-    // already brings in waits until the first is there.
+    // A record only they have comes in if Postio can keep it: an address to be found by, a name or
+    // organisation to be called by, and the scope must take its kind.
     let mut claimed: BTreeSet<String> = BTreeSet::new();
     for external in externals {
         if used_external.contains(external.id.as_str())
@@ -548,7 +431,6 @@ pub fn plan(
     plan
 }
 
-/// One pair, field by field against what was synced last.
 fn compare(plan: &mut Plan, local: &LocalRecord, external: &ExternalRecord, base: &Fields) {
     let strings: [(&str, &str, &str, &str); 4] = [
         (
@@ -599,8 +481,7 @@ fn compare(plan: &mut Plan, local: &LocalRecord, external: &ExternalRecord, base
             });
         }
     }
-    // Addresses and phones merge as sets: what one side has and the other
-    // lacks goes across, and nothing is ever taken away.
+    // Addresses and phones merge as sets: nothing is ever taken away.
     let lacking_here: Vec<&String> = external
         .fields
         .emails
@@ -714,49 +595,35 @@ fn change_set(
     }
 }
 
-/// Whether the person has let Postio into an address book.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Authorization {
-    /// Never asked.
     NotDetermined,
-    /// The person said no (or the system did). Final until they turn sync on
-    /// again.
     Denied,
-    /// Allowed.
     Authorized,
 }
 
-/// Why sync did not do what was asked.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SyncError {
-    /// No permission, so nothing was read.
     NotAuthorized(Authorization),
-    /// The build's key is off.
     WritesOff,
-    /// The person has not confirmed this plan.
     NotConfirmed,
-    /// The plan is for a read-only account.
     ReadOnly,
-    /// The address book said no.
     Book(String),
 }
 
-/// The address book: a trait, so every test, the demo and every storyboard
-/// use a fake, and the real store (an adapter over `CNContactStore`) is one
-/// implementation nothing here constructs.
+/// A trait so every test, the demo and every storyboard use a fake; the real store (an adapter over
+/// `CNContactStore`) is one implementation nothing here constructs.
 pub trait ExternalAddressBook {
-    /// Whether Postio may read it. Never prompts.
+    /// Never prompts.
     fn authorization(&self) -> Authorization;
-    /// Asks the system for access. Called only by [`enable`].
+    /// Called only by `enable`.
     fn request_access(&mut self) -> Authorization;
-    /// Every record, for the sync scope.
     fn snapshot(&mut self) -> Result<Vec<ExternalRecord>, SyncError>;
-    /// Writes `plan`. Called only by [`write()`](fn@write), behind two keys.
+    /// Called only by `write`, behind two keys.
     fn apply(&mut self, plan: &Plan) -> Result<(), SyncError>;
 }
 
-/// The person turning sync on: the one place access is asked for, and only
-/// when the system has not already decided.
+/// The one place access is asked for, and only when the system has not already decided.
 pub fn enable(book: &mut dyn ExternalAddressBook) -> Authorization {
     match book.authorization() {
         Authorization::NotDetermined => book.request_access(),
@@ -780,21 +647,16 @@ pub fn dry_run(
     Ok(plan(locals, &externals, links, scope, mode))
 }
 
-/// The person's yes to one plan: bound to what it would write, so a plan that
-/// changed since is not confirmed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Confirmation(u64);
 
 impl Confirmation {
-    /// The confirmation of exactly `plan`.
     pub fn of(plan: &Plan) -> Self {
         Self(plan.fingerprint())
     }
 }
 
-/// Writes `plan` to the address book, if both keys are turned: the build's
-/// (`writes_enabled`, which callers pass [`CONTACT_SYNC_WRITES`]) and the
-/// person's confirmation of this plan. Either off, nothing reaches the book.
+/// Either key off, nothing reaches the book.
 pub fn write(
     book: &mut dyn ExternalAddressBook,
     plan: &Plan,
@@ -813,7 +675,6 @@ pub fn write(
     book.apply(plan)
 }
 
-/// An address book in memory that counts what reaches it.
 #[derive(Debug, Clone)]
 pub struct FakeAddressBook {
     state: Authorization,
@@ -825,7 +686,6 @@ pub struct FakeAddressBook {
 }
 
 impl FakeAddressBook {
-    /// A book in `state` holding `records`.
     pub fn new(state: Authorization, records: Vec<ExternalRecord>) -> Self {
         Self {
             state,
@@ -837,24 +697,20 @@ impl FakeAddressBook {
         }
     }
 
-    /// What asking for access will answer.
     #[must_use]
     pub fn granting(mut self, answer: Authorization) -> Self {
         self.grant = answer;
         self
     }
 
-    /// How many times access was asked for.
     pub fn prompts(&self) -> usize {
         self.prompts
     }
 
-    /// How many snapshots were read.
     pub fn snapshots(&self) -> usize {
         self.snapshots
     }
 
-    /// How many times a plan was applied.
     pub fn applied(&self) -> usize {
         self.applied
     }

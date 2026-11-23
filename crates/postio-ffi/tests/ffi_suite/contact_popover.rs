@@ -1,7 +1,3 @@
-//! The known-sender popover across the boundary (specs/011-focus-contacts
-//! S6): a click on a name draws it whole from the store, a change of arrival
-//! is drawn at once and kept, and the engine's toast carries the undo.
-
 use chrono::Utc;
 use postio_ffi::{ContactArrivalFfi, Session, SessionOptions, SurfaceKindFfi, UiEvent};
 use postio_model::{EmailAddress, Message};
@@ -99,7 +95,6 @@ async fn a_click_on_a_name_draws_the_popover_and_a_segment_changes_arrival_for_g
         "drawn at once (redrawn: {redrawn}) with the undo toast (toast: {toast})"
     );
 
-    // Kept: asked again, it is Digest, and the surface is the popover's.
     let s = session.clone();
     tokio::task::spawn_blocking(move || s.focus_contact_popover_at("friend@example.org".into()))
         .await

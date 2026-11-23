@@ -3,9 +3,6 @@ import Testing
 
 @testable import PostioKit
 
-/// The action bar's words (specs/009-focus-macos T052, screen 01): the
-/// count the controller composed, the verbs in the order the screen draws
-/// them with the user's keys, and the selection's own keys on the right.
 struct ActionBarTests {
     static let keys: [String: String] = [
         "archive": "a", "snooze": "s", "toggle_read": "r", "digest_rule": "d",
@@ -37,8 +34,6 @@ struct ActionBarTests {
     }
 
     @Test func taskIsOfferedOnlyWithAVault() {
-        // C9: capture is gated on a vault; a Task button that could only
-        // fail is worse than none.
         #expect(Self.words(vault: false)?.actions.contains { $0.command == "capture_task" } == false)
         let labels = Self.words(vault: true)?.actions.map(\.label)
         #expect(labels == [
@@ -57,8 +52,6 @@ struct ActionBarTests {
     }
 
     @Test func archiveIsTheDefault() {
-        // Screen 01 draws Archive on the raised fill: the one a selection is
-        // usually for.
         #expect(Self.words()?.actions.first { $0.isDefault }?.command == "archive")
         #expect(Self.words()?.actions.filter(\.isDefault).count == 1)
     }

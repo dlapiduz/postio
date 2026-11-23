@@ -1,8 +1,3 @@
-//! What the Contacts view reads (specs/011-focus-contacts S7): the list by
-//! kind tab, the strip's counts and review queue, and a card in one go.
-//! Every read is a seek over the kind index, the counts or the address
-//! rings, which the plans below hold to.
-
 use postio_model::{ContactArrival, ContactKind, ContactTab, ContactView, month_key};
 use postio_storage::repository::{ContactCursor, ContactRepository};
 use postio_storage::test_support::counting::unbounded;
@@ -232,7 +227,6 @@ async fn the_strip_counts_come_from_the_counts_table_and_the_queue_is_capped() {
     );
     assert_eq!(overview.building, None);
 
-    // Someone written to often and never saved is worth a look.
     for day in 1..=3 {
         mail(
             &connection,

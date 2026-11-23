@@ -1,12 +1,5 @@
-//! What Settings' Filtering page says (spec 007 US9, FR-110 to FR-119;
-//! screens.md, "Settings"): whether Focus files spam and automated updates
-//! away, what that does, that nothing is lost and the key that goes to it,
-//! and what `[focus.filter]` holds, in a person's words.
-//!
-//! The page is drawn by each frontend; the words are here, from the file's
-//! values and the keymap, where a test holds them. Nothing here invents a
-//! rule the engine does not have: the kinds are Filtered's own tabs, the
-//! guards are FR-111's four, and the lists are the file's.
+//! What Settings' Filtering page says: whether Focus files spam and automated updates
+//! away, and what `[focus.filter]` holds, from the file's values and the keymap.
 
 use postio_config::{FocusConfig, NeverEntry, never_entry};
 use postio_core::{CommandId, Keymap};
@@ -14,85 +7,53 @@ use postio_core::{CommandId, Keymap};
 use crate::filtered;
 use crate::hints::{self, Hint};
 
-/// The switch's label: what turning it on does.
 pub const SWITCH: &str = "Filter spam and automated updates";
 
-/// The heading over today's count and the way to Filtered.
 pub const FILTERED: &str = "Filtered";
 
-/// The button that goes to Filtered, with `g f` in it.
 pub const OPEN: &str = "Open Filtered";
 
-/// The heading over the guards and the senders never filtered.
 pub const NEVER: &str = "Never filtered";
 
-/// The heading over the marker kinds stopped for a sender.
 pub const STOPPED: &str = "Markers turned off";
 
-/// What is never deleted, whether filtering is on or off (FR-117).
 pub const KEPT: &str =
     "Nothing is deleted: filtered mail is archived, and Filtered lists all of it.";
 
-/// FR-111's guards, which win over every rule, as one sentence.
 pub const GUARDS: &str = "Whatever its headers say, mail is never filtered from anyone you have \
 written to, from your own domain, in a thread you took part in, or from a sender listed \
 here.";
 
-/// What the stopped markers list says with nothing in it (FR-108).
 pub const STOPPED_EMPTY: &str =
     "None. Dismissing one kind of marker from a sender three times turns it off here.";
 
-/// Everything the Filtering page says.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Page {
-    /// Whether filtering is on: `[focus] filtering`.
     pub on: bool,
-    /// What filtering does now, in a sentence.
     pub state: String,
-    /// "186 filtered today", "Nothing filtered today", or nothing: while
-    /// filtering is off, or before the count is known (C10).
+    /// `None` while filtering is off or before the count is known.
     pub today: Option<String>,
-    /// The keys Filtered answers that the page teaches: restore, and the
-    /// sweep while filtering is on. Those a `[keys]` edit unbound are left
-    /// out.
     pub keys: Vec<Hint>,
-    /// `[focus.filter] never`, one line each.
     pub never: Vec<Listed>,
-    /// What the never list says with nobody in it.
     pub never_empty: String,
-    /// `[focus.filter] stop_markers`, one line each.
     pub stopped: Vec<Listed>,
 }
 
-/// One entry of a `[focus.filter]` list, as the page says it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Listed {
-    /// The line.
     pub says: String,
-    /// Whether the entry does what it was written to do. One that does not
-    /// says why, in the validator's terms.
+    /// Whether the entry does what it was written to do; one that does not says why.
     pub acts: bool,
-    /// What taking the entry back writes, and what the control is called.
     pub undo: Undo,
 }
 
-/// The write that takes a listed entry back, as `focus_edit` spells it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Undo {
-    /// Remove this entry from `[focus.filter] never`: filter the sender again.
     Never(String),
-    /// Remove this `{ sender, kind }` from `stop_markers`: turn the marker
-    /// back on.
-    Marker {
-        /// The entry's sender, as written.
-        sender: String,
-        /// The entry's kind, as written.
-        kind: String,
-    },
+    Marker { sender: String, kind: String },
 }
 
 impl Undo {
-    /// What the control that does it says.
     pub fn label(&self) -> &'static str {
         match self {
             Undo::Never(_) => NEVER_UNDO,
@@ -101,14 +62,10 @@ impl Undo {
     }
 }
 
-/// The control on a pinned sender: the sender is filtered like anyone else.
 pub const NEVER_UNDO: &str = "Filter again";
 
-/// The control on a turned-off marker.
 pub const STOPPED_UNDO: &str = "Turn back on";
 
-/// The page for `focus`, with `filtered_today` messages filtered so far
-/// today when the count is known, its keys read from `keymap`.
 pub fn page(focus: &FocusConfig, filtered_today: Option<u32>, keymap: &Keymap) -> Page {
     let on = focus.filtering;
     let state = state(on);
@@ -143,8 +100,7 @@ pub fn page(focus: &FocusConfig, filtered_today: Option<u32>, keymap: &Keymap) -
     }
 }
 
-/// `never`, with a person's pin listed once, by name: it covers every
-/// address they own, and taking it back takes the person's pin back.
+/// A person's pin is listed once, by name: it covers every address they own.
 fn never_list(focus: &FocusConfig) -> Vec<Listed> {
     let mut listed_people: Vec<i64> = Vec::new();
     let mut lines = Vec::new();
@@ -166,7 +122,6 @@ fn never_list(focus: &FocusConfig) -> Vec<Listed> {
     lines
 }
 
-/// `stop_markers`, with a person's listed once per kind, by name.
 fn stopped_list(focus: &FocusConfig) -> Vec<Listed> {
     let mut listed: Vec<(i64, String)> = Vec::new();
     let mut lines = Vec::new();
@@ -197,8 +152,6 @@ fn stopped_list(focus: &FocusConfig) -> Vec<Listed> {
     lines
 }
 
-/// What filtering does now, in a sentence: what it files away and where,
-/// or, off, that all new mail arrives in the inbox.
 pub fn state(on: bool) -> String {
     if on {
         format!(
@@ -212,9 +165,7 @@ pub fn state(on: bool) -> String {
     }
 }
 
-/// Today's count, while filtering is `on` and the count is known: "186
-/// filtered today", or "Nothing filtered today". Nothing while filtering is
-/// off: a count shows only while its feature is in use (C10).
+/// `None` while filtering is off: a count shows only while its feature is in use.
 pub fn today(on: bool, filtered_today: Option<u32>) -> Option<String> {
     filtered_today.filter(|_| on).map(|count| match count {
         0 => "Nothing filtered today".to_owned(),
@@ -222,8 +173,6 @@ pub fn today(on: bool, filtered_today: Option<u32>) -> Option<String> {
     })
 }
 
-/// What Focus files away, from Filtered's tabs: "Spam, promotions,
-/// notifications, receipts, shipping and social".
 fn kinds() -> String {
     let names: Vec<String> = filtered::TABS
         .iter()
@@ -242,8 +191,6 @@ fn kinds() -> String {
         .unwrap_or_default()
 }
 
-/// Who an address or a whole domain names: the address, or "everyone at"
-/// the domain.
 fn who(entry: &str) -> Option<String> {
     match never_entry(entry)? {
         NeverEntry::Address(address) => Some(address.to_owned()),
@@ -251,7 +198,6 @@ fn who(entry: &str) -> Option<String> {
     }
 }
 
-/// A `never` entry, as the page lists it.
 fn never(entry: &str) -> Listed {
     let undo = Undo::Never(entry.to_owned());
     match who(entry) {
@@ -271,7 +217,6 @@ fn never(entry: &str) -> Listed {
     }
 }
 
-/// A `stop_markers` entry, as the page lists it.
 fn stopped(sender: &str, kind: &str, well_formed: bool) -> Listed {
     let kinds = match kind.trim().to_ascii_lowercase().as_str() {
         "question" => Some("Questions"),
@@ -309,7 +254,6 @@ mod tests {
         Config::from_toml_str(text).expect("a config").focus
     }
 
-    /// A person who decided, with the addresses it covers.
     fn ada() -> postio_config::ContactRule {
         let mut settings = postio_model::ContactSettings {
             arrival: Some(postio_model::ContactArrival::Inbox),
@@ -345,7 +289,6 @@ mod tests {
             .collect();
         assert_eq!(stopped, ["To-dos in mail from Ada Lovelace"]);
         assert!(page.never.iter().all(|entry| entry.acts));
-        // What takes it back names an address the write finds the person by.
         assert_eq!(
             page.never[1].undo,
             Undo::Never("ada@work.example".to_owned())

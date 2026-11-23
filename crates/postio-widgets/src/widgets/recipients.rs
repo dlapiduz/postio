@@ -1,14 +1,5 @@
-//! Recipient chips (specs/007-postio-focus T079, FR-052; screens 05 and 06):
-//! an address field drawn as one chip per finished recipient -- the name,
-//! the address in mono, and a × that takes it off -- with the address being
-//! typed after them.
-//!
-//! A presentation of the composer's own field, not a second field: the
-//! entry the composer already has, with its completion, is moved inside,
-//! and whatever it holds once an address is finished (a chosen suggestion,
-//! or a typed address and its comma) becomes a chip. The recipients are the
-//! chips, then what is still being typed. The composer opts in
-//! (`Composer::set_recipient_chips`); Focus does (research R15).
+//! The composer's own address entry, moved inside and drawn as one chip per finished recipient,
+//! followed by the address being typed.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -19,10 +10,8 @@ use postio_model::address::{current_entry, parse_list};
 
 use crate::widgets::space::S1;
 
-/// Who hears that the recipients changed.
 type Changed = Box<dyn Fn()>;
 
-/// One address field, drawn as chips and the address being typed.
 pub struct RecipientChips {
     root: gtk::Box,
     chips: gtk::Box,
@@ -35,8 +24,6 @@ pub struct RecipientChips {
 }
 
 impl RecipientChips {
-    /// Draw `entry` as chips: it moves inside, where it was in its parent,
-    /// and what it holds already is taken in.
     pub fn around(entry: &gtk::Entry) -> Rc<Self> {
         let root = gtk::Box::new(gtk::Orientation::Horizontal, S1);
         root.add_css_class("postio-recipient-chips");
@@ -70,19 +57,16 @@ impl RecipientChips {
         this
     }
 
-    /// The widget the chips and the entry are in.
     pub fn widget(&self) -> &gtk::Box {
         &self.root
     }
 
-    /// The recipients: every chip, then what is still being typed.
     pub fn addresses(&self) -> Vec<EmailAddress> {
         let mut addresses = self.addresses.borrow().clone();
         addresses.extend(parse_list(&self.entry.text()));
         addresses
     }
 
-    /// Show `addresses` as chips, with nothing being typed.
     pub fn set_addresses(self: &Rc<Self>, addresses: &[EmailAddress]) {
         self.committing.set(true);
         self.entry.set_text("");
@@ -91,13 +75,10 @@ impl RecipientChips {
         self.draw();
     }
 
-    /// Call `handler` whenever a chip comes or goes.
     pub fn connect_changed(&self, handler: impl Fn() + 'static) {
         self.changed.borrow_mut().push(Box::new(handler));
     }
 
-    /// Whatever the entry holds before the address being typed is finished:
-    /// it becomes chips, and the entry keeps only the unfinished rest.
     fn commit(self: &Rc<Self>) {
         if self.committing.get() {
             return;
@@ -116,7 +97,6 @@ impl RecipientChips {
         self.draw();
     }
 
-    /// Take the recipient at `index` off.
     fn remove(self: &Rc<Self>, index: usize) {
         {
             let mut addresses = self.addresses.borrow_mut();
@@ -128,7 +108,6 @@ impl RecipientChips {
         self.draw();
     }
 
-    /// Draw one chip per recipient, and say they changed.
     fn draw(self: &Rc<Self>) {
         while let Some(child) = self.chips.first_child() {
             self.chips.remove(&child);
@@ -141,8 +120,6 @@ impl RecipientChips {
         }
     }
 
-    /// A chip: the name in bold when there is one, the address in mono, and
-    /// the × that takes it off.
     fn chip(self: &Rc<Self>, index: usize, address: &EmailAddress) -> gtk::Box {
         let chip = gtk::Box::new(gtk::Orientation::Horizontal, S1);
         chip.add_css_class("postio-recipient-chip");

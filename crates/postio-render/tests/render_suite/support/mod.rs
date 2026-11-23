@@ -1,6 +1,3 @@
-//! What the renderer's integration tests share: the process's fonts, and a
-//! corpus fixture composed the way the reader composes it.
-
 #![allow(dead_code)]
 
 use std::sync::{Arc, OnceLock};
@@ -35,7 +32,6 @@ pub const HIGH_CONTRAST: Theme = Theme {
     high_contrast: true,
 };
 
-/// A request for `html` in `theme`, with no resources beyond the faces.
 pub fn request_for(html: String, theme: Theme) -> RenderRequest {
     let resources = Resources::new();
     for face in document::FACES {
@@ -60,13 +56,10 @@ pub fn request_for(html: String, theme: Theme) -> RenderRequest {
     }
 }
 
-/// A fixture as the reader composes it, scoped as message `scope` of a
-/// conversation, with its own parts, in `theme`; `None` with no body.
 pub fn request(name: &str, theme: Theme) -> Option<RenderRequest> {
     request_as(name, theme, Rendering::Original)
 }
 
-/// [`request`], composed as `rendering`: Reader view for FR-013b.
 pub fn request_as(name: &str, theme: Theme, rendering: Rendering) -> Option<RenderRequest> {
     let parsed = postio_model::mime::parse(test_corpus::load(name).bytes());
     if parsed.body.is_empty() {

@@ -1,11 +1,3 @@
-//! The windowed list model is generic over its row (specs/007-postio-focus
-//! T021): a list of rows that are not messages is windowed, filled in
-//! place and refreshed by the same code, through a `GObject` of its own that
-//! implements `WindowedModel` in two lines -- the shape Focus's list takes.
-//!
-//! What is asserted is what a `GtkListView` over it would see: the item each
-//! position answers with, and whether it is the same object as before.
-
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -17,7 +9,6 @@ use postio_model::ids::{MessageId, ThreadId};
 use postio_ui::list::ListRow;
 use postio_widgets::list_model::{ModelRow, PAGE_SIZE, PageSource, Windowed, WindowedModel};
 
-/// A row that is not a message: a note with an id.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Note {
     pub(crate) id: MessageId,
@@ -25,7 +16,6 @@ pub struct Note {
 }
 
 impl Note {
-    /// A note with an id and a text.
     pub(crate) fn numbered(id: i64, text: &str) -> Self {
         Note {
             id: MessageId::new(id),
@@ -100,7 +90,6 @@ glib::wrapper! {
 }
 
 impl NoteRow {
-    /// Call `on_change` when the row's contents changed.
     pub(crate) fn connect_changed(
         &self,
         on_change: impl Fn(&Self) + 'static,
@@ -168,8 +157,6 @@ impl WindowedModel for NoteList {
     }
 }
 
-/// A source of `total` notes that records what it was asked for and answers
-/// only when told to.
 struct Notes {
     total: u32,
     asked: RefCell<Vec<u32>>,
@@ -214,8 +201,6 @@ pub fn a_list_of_another_row_type_is_windowed_filled_and_refreshed() {
     list.set_source(source.clone());
     assert_eq!(list.n_items(), PAGE_SIZE + 5, "the source's count");
 
-    // Drawing position 0 asks for its page, and answers with a placeholder
-    // the delivery then fills in place.
     let held = list.item(0).and_downcast::<NoteRow>().expect("a row");
     assert!(!held.is_loaded(), "nothing has arrived yet");
     assert!(
@@ -235,11 +220,9 @@ pub fn a_list_of_another_row_type_is_windowed_filled_and_refreshed() {
     );
     assert_eq!(list.position_of(MessageId::new(3)), Some(2));
 
-    // A note changed in place keeps its object.
     assert!(list.update_row(note(1, "note 1, edited")));
     assert_eq!(text_at(&list, 0).as_deref(), Some("note 1, edited"));
 
-    // A refresh that finds a note gone splices it out where it stood.
     list.refresh();
     let mut fresh = page_of_notes(1, PAGE_SIZE);
     fresh.remove(1);

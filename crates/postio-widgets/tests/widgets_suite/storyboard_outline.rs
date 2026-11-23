@@ -1,14 +1,8 @@
-//! The outlined frame (spec 008, research R4): the plain frame, with a
-//! border round the widget the keyboard is on and a caption naming its
-//! region. Written beside the plain frame, never instead of it, because the
-//! base-versus-branch comparison hashes the plain one and an outline that
-//! moves with focus would otherwise count as a visual change.
-
 use gtk::prelude::*;
 use postio_widgets::capture;
 use postio_widgets::storyboard::outline::outlined;
 
-use super::storyboard_support::{display, show, until};
+use super::storyboard_support::{show, until};
 
 struct Pixels {
     bytes: Vec<u8>,
@@ -31,7 +25,6 @@ impl Pixels {
         self.bytes[at..at + 4].try_into().expect("a pixel")
     }
 
-    /// How many pixels in the rows `top..bottom` differ from `other`'s.
     fn differing(&self, other: &Self, top: usize, bottom: usize) -> usize {
         let row = self.width * 4;
         let (mine, _) = self.bytes[top * row..bottom * row].as_chunks::<4>();
@@ -40,7 +33,6 @@ impl Pixels {
     }
 }
 
-/// A window with a button low in the content, which holds the keyboard.
 fn window() -> (gtk::Window, gtk::Button) {
     let window = gtk::Window::new();
     window.set_decorated(false);
@@ -62,7 +54,6 @@ fn window() -> (gtk::Window, gtk::Button) {
     (window, button)
 }
 
-/// Settle on a stable frame to compare against.
 fn plain(window: &gtk::Window) -> gtk::gdk::Texture {
     let mut last = None;
     for _ in 0..4 {
@@ -73,9 +64,6 @@ fn plain(window: &gtk::Window) -> gtk::gdk::Texture {
 }
 
 pub fn the_focused_widgets_bounds_are_drawn_over() {
-    if !display() {
-        return;
-    }
     let (window, button) = window();
     let before = Pixels::of(&plain(&window));
 
@@ -99,13 +87,9 @@ pub fn the_focused_widgets_bounds_are_drawn_over() {
 }
 
 pub fn the_caption_carries_the_region_name() {
-    if !display() {
-        return;
-    }
     let (window, button) = window();
     let before = Pixels::of(&plain(&window));
     let bounds = button.compute_bounds(&window).expect("bounds");
-    // Rows well clear of the border, so only a caption can differ there.
     let rows_above = (bounds.y() as usize).saturating_sub(34)..(bounds.y() as usize - 2);
 
     let short = Pixels::of(&outlined(&window, "list"));
@@ -122,9 +106,6 @@ pub fn the_caption_carries_the_region_name() {
 }
 
 pub fn the_plain_frame_is_untouched() {
-    if !display() {
-        return;
-    }
     let (window, _button) = window();
     let hash = |texture: &gtk::gdk::Texture| blake3::hash(&Pixels::of(texture).bytes);
     let before = hash(&plain(&window));

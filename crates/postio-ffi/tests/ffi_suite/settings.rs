@@ -1,12 +1,3 @@
-//! The settings surface, as a frontend reads and writes it.
-//!
-//! The clause under test is ADR 0029's load-bearing one: **Swift never parses
-//! or writes TOML.** Every assertion here is about what survives a round trip
-//! through the boundary, because a second writer of `config.toml` with its own
-//! idea of key order and comment survival is the failure this design exists to
-//! prevent — and it is a failure nobody would see until their file had already
-//! been rewritten.
-
 use postio_ffi::{
     AppearanceFfi, DensityFfi, GroupFfi, ThemeFfi, row_metrics, settings_add_filter,
     settings_appearance, settings_composing, settings_filters, settings_group_label,
@@ -16,8 +7,6 @@ use postio_ffi::{
     settings_sections, settings_status, settings_syncing,
 };
 
-/// A file with things in it that a naive form would destroy: a comment, a key
-/// this version does not know, and tables either side of `[ui]`.
 const SAMPLE: &str = "\
 # hand-written, and it should stay that way
 [sync]
@@ -34,9 +23,8 @@ query = \"is:unread\"
 
 #[test]
 fn patching_appearance_leaves_everything_outside_the_ui_table_verbatim() {
-    // The whole reason the patch functions exist rather than a serialize of
-    // the whole `Config`: reserializing reorders every key and drops every
-    // comment in the file, not only in the table the pane owns.
+    // Patch functions, not a reserialize of `Config`: reserializing reorders every key and drops
+    // every comment in the file.
     let mut appearance = settings_appearance(SAMPLE.to_string()).expect("the sample parses");
     appearance.density = DensityFfi::Airy;
     let patched = settings_patch_appearance(SAMPLE.to_string(), appearance).expect("it patches");
@@ -61,11 +49,8 @@ fn patching_appearance_leaves_everything_outside_the_ui_table_verbatim() {
 
 #[test]
 fn patching_appearance_keeps_a_key_this_version_of_postio_does_not_know() {
-    // `UiConfig::extra` is a `toml::Table` of unknown keys, and it is exactly
-    // what cannot cross a boundary as five typed fields. If Swift sent an
-    // `AppearanceFfi` and the Rust side wrote only those five, a user who had
-    // hand-added a key -- or who opened a newer file with an older build --
-    // would lose it by opening the pane and touching nothing that owns it.
+    // `UiConfig::extra` (unknown keys) cannot cross as typed fields, so the patch must keep it or a
+    // hand-added key is lost by opening the pane.
     let appearance = settings_appearance(SAMPLE.to_string()).expect("the sample parses");
     let patched = settings_patch_appearance(SAMPLE.to_string(), appearance).expect("it patches");
 
@@ -77,9 +62,6 @@ fn patching_appearance_keeps_a_key_this_version_of_postio_does_not_know() {
 
 #[test]
 fn the_validity_line_names_the_line_a_broken_file_broke_on() {
-    // Canvas 3f's footer replaces a dialog's buttons, so "invalid" alone is a
-    // dead end -- 3d's rule is that every state names something and gives a
-    // way forward.
     let status = settings_status("[ui]\ndensity = = \n".to_string());
     assert!(!status.valid);
     assert_eq!(status.line, Some(2), "the footer pointed at the wrong line");
@@ -103,20 +85,15 @@ fn a_valid_file_says_so_and_says_how_long_it_took() {
 
 #[test]
 fn appearance_is_unreadable_from_a_file_that_will_not_parse() {
-    // ADR 0029's Failing state: a pane whose table will not parse disables its
-    // controls rather than showing values it had to guess. Answering
-    // `AppearanceFfi::default()` here would draw a form full of plausible
-    // settings that are not the user's, and saving it would erase the file
-    // they were trying to fix.
+    // A pane whose table will not parse disables its controls (ADR 0029): a default form would be
+    // saved over the file being fixed.
     assert!(settings_appearance("[ui]\ndensity = = \n".to_string()).is_none());
 }
 
 #[test]
 fn the_nav_is_focus_s_filtering_in_and_appearance_out() {
-    // The Mac is Focus (specs/009-focus-macos T131): its settings window
-    // lists what Focus honours. Filtering is in -- Focus files mail away on
-    // the Mac as it does on Linux -- and Appearance is out, since Focus
-    // follows the system's scheme and honours none of `[ui]`.
+    // Focus honours Filtering but not Appearance: it follows the system's scheme and ignores
+    // `[ui]`.
     let sections = settings_sections();
     let labels: Vec<&str> = sections.iter().map(|s| s.label.as_str()).collect();
     assert_eq!(
@@ -136,8 +113,8 @@ fn the_nav_is_focus_s_filtering_in_and_appearance_out() {
         "the nav order and names are the shared table's"
     );
 
-    // The grouping is the nav's shape, and a frontend that guessed it would
-    // put Composing under APPLICATION on one platform and MAIL on the other.
+    // A frontend that guessed the grouping would put Composing under different headings per
+    // platform.
     let mail: Vec<&str> = sections
         .iter()
         .filter(|s| s.group == GroupFfi::Mail)
@@ -163,8 +140,8 @@ const FILTERING: &str = "# mine\n[focus]\nfiltering = true\n\n[focus.filter]\n\
 
 #[test]
 fn the_filtering_pane_says_what_gtk_s_says() {
-    // The pane reads the people the last session to open installed: alone, or
-    // a neighbour's session is the one it reads.
+    // The pane reads the people the last session to open installed: run alone, or a neighbour's
+    // session is the one it reads.
     if postio_test_support::alone!("the_filtering_pane_says_what_gtk_s_says") {
         return;
     }
@@ -199,8 +176,8 @@ fn the_filtering_pane_says_what_gtk_s_says() {
 
 #[test]
 fn filtering_off_and_an_entry_taken_back_leave_the_rest_of_the_file_alone() {
-    // The pane reads the people the last session to open installed: alone, or
-    // a neighbour's session is the one it reads.
+    // The pane reads the people the last session to open installed: run alone, or a neighbour's
+    // session is the one it reads.
     if postio_test_support::alone!(
         "filtering_off_and_an_entry_taken_back_leave_the_rest_of_the_file_alone"
     ) {
@@ -260,8 +237,6 @@ fn the_after_unsubscribe_control_says_the_shared_words_and_writes_one_key() {
 
 #[test]
 fn a_pane_names_the_table_it_writes_and_the_two_that_own_none_say_so() {
-    // The footer under every structured pane reads `[sync] in config.toml`, so
-    // the table is the pane's, not a string the frontend keeps beside it.
     let by_key = |key: &str| {
         settings_sections()
             .into_iter()
@@ -270,8 +245,6 @@ fn a_pane_names_the_table_it_writes_and_the_two_that_own_none_say_so() {
     };
     assert_eq!(by_key("focus").table.as_deref(), Some("[focus]"));
     assert_eq!(by_key("sync").table.as_deref(), Some("[sync]"));
-    // Privacy is not a `config.toml` table at all (#871), and Config file is
-    // every table there is rather than one.
     assert_eq!(by_key("privacy").table, None);
 }
 
@@ -283,9 +256,8 @@ fn an_interval_reads_as_the_unit_it_was_written_in() {
 
 #[test]
 fn every_appearance_field_round_trips_through_the_boundary() {
-    // A handful of booleans and two enums is exactly the shape that gets wired up
-    // wrong once and never noticed, because each field looks right in the
-    // pane that set it.
+    // A handful of booleans and two enums gets wired wrong once and never noticed, since each field
+    // looks right in its pane.
     let appearance = AppearanceFfi {
         density: DensityFfi::Comfortable,
         theme: ThemeFfi::Light,
@@ -298,8 +270,6 @@ fn every_appearance_field_round_trips_through_the_boundary() {
     assert_eq!(read_back, appearance);
 }
 
-// -- the file itself --------------------------------------------------------
-
 fn temp_dir(tag: &str) -> std::path::PathBuf {
     let dir =
         std::env::temp_dir().join(format!("postio-ffi-settings-{tag}-{}", std::process::id()));
@@ -309,9 +279,8 @@ fn temp_dir(tag: &str) -> std::path::PathBuf {
 
 #[test]
 fn a_save_comes_back_byte_for_byte() {
-    // Canvas 3f: typing here and typing in $EDITOR produce the same bytes on
-    // disk. A save that normalised anything -- a trailing newline, a quote
-    // style -- would make that false the first time someone used both.
+    // Typing here and in $EDITOR must produce the same bytes: a save that normalised a trailing
+    // newline or quote style would break that.
     let dir = temp_dir("roundtrip");
     let path = dir.join("config.toml");
     let text = "# a comment\n[ui]\ndensity = \"compact\"\n";
@@ -324,9 +293,6 @@ fn a_save_comes_back_byte_for_byte() {
 
 #[test]
 fn a_file_that_is_not_there_yet_loads_as_an_empty_document() {
-    // ADR 0029's Empty state: a first run has no `config.toml`, and the pane
-    // shows defaults over an empty document rather than an error. The file is
-    // created on the first save.
     let dir = temp_dir("absent");
     let missing = dir.join("nothing-here.toml");
     assert_eq!(settings_load(missing.display().to_string()), "");
@@ -340,7 +306,6 @@ fn a_file_that_is_not_there_yet_loads_as_an_empty_document() {
 
 #[test]
 fn saving_creates_the_directory_the_config_belongs_in() {
-    // A first run on a machine with no `~/.config/postio` at all.
     let dir = temp_dir("mkdir");
     let path = dir.join("nested").join("config.toml");
 
@@ -352,19 +317,12 @@ fn saving_creates_the_directory_the_config_belongs_in() {
 
 #[test]
 fn the_config_path_is_the_one_the_rest_of_postio_reads() {
-    // Not a second opinion about where settings live: `postio_config::paths`
-    // already resolves this per platform, and a frontend that guessed would
-    // edit a file nothing loads.
     let path = settings_path().expect("this platform has a config path");
     assert!(path.ends_with("config.toml"), "{path}");
 }
 
-// -- what the list reads (#1215) --------------------------------------------
-
 #[test]
 fn the_session_reports_the_appearance_it_was_opened_with() {
-    // The pane writes `[ui]`; something has to read it, or the settings
-    // window is a form over a file this application ignores.
     let session = postio_ffi::Session::open(
         postio_ffi::SessionOptions::in_memory()
             .with_config_for_test("[ui]\ndensity = \"compact\"\ntheme = \"light\"\n"),
@@ -379,12 +337,8 @@ fn the_session_reports_the_appearance_it_was_opened_with() {
 
 #[test]
 fn a_session_with_no_ui_table_reports_the_built_in_defaults() {
-    // Plain `in_memory()`. It used to need an explicit empty document, because
-    // an absent one fell through to `Config::load()` and this asserted whatever
-    // density the person running it happened to prefer -- it failed on exactly
-    // that, and #1219 came from here. An in-memory session now ignores the
-    // installed file by construction, and `session_config_isolation.rs` is what
-    // holds that.
+    // In-memory sessions ignore the installed file by construction; `session_config_isolation.rs`
+    // holds that (#1219).
     let session = postio_ffi::Session::open(postio_ffi::SessionOptions::in_memory())
         .expect("an in-memory session");
     assert_eq!(session.appearance().density, DensityFfi::Airy);
@@ -393,10 +347,8 @@ fn a_session_with_no_ui_table_reports_the_built_in_defaults() {
 
 #[test]
 fn a_denser_row_is_shorter_and_the_tightest_one_drops_the_snippet() {
-    // What density *is*, rather than how either frontend draws it. The
-    // snippet is the line that costs the most vertical space and answers the
-    // triage question least, so compact is the setting that drops it — and a
-    // frontend that kept it would be denser in name only.
+    // Compact drops the snippet, the costliest line in vertical space; a frontend that kept it
+    // would be denser in name only.
     let airy = row_metrics(DensityFfi::Airy);
     let snug = row_metrics(DensityFfi::Comfortable);
     let compact = row_metrics(DensityFfi::Compact);
@@ -409,10 +361,8 @@ fn a_denser_row_is_shorter_and_the_tightest_one_drops_the_snippet() {
 
 #[test]
 fn a_rows_actions_are_registry_commands_the_keyboard_also_runs() {
-    // The point of crossing them rather than listing them in Swift: the mouse
-    // and the keyboard have to run the same verb for the same glyph, and a
-    // hover action with its own implementation would be a fourth way to
-    // archive that undo did not know about.
+    // Mouse and keyboard must run the same verb; a hover action with its own implementation would
+    // be a fourth way to archive that undo does not know.
     let actions = postio_ffi::row_actions();
     let commands: Vec<&str> = actions.iter().map(|a| a.command.as_str()).collect();
     assert_eq!(commands, ["archive", "flag", "delete"]);
@@ -431,9 +381,6 @@ fn a_rows_actions_are_registry_commands_the_keyboard_also_runs() {
     session.shutdown();
 }
 
-// --- the Composing pane, and which editor a draft goes to (#1288) ----------
-
-/// A file with a `[compose]` table and things around it worth preserving.
 const COMPOSING: &str = "\
 # hand-written, and it should stay that way
 [sync]
@@ -466,9 +413,6 @@ fn the_composing_pane_reads_the_compose_table() {
 
 #[test]
 fn choosing_an_editor_leaves_every_other_section_and_the_unknown_key_alone() {
-    // The clause this whole module is about, applied to the pane #1288 adds:
-    // a form that wrote the file itself would reorder it and drop both the
-    // comment and the key it does not understand.
     let mut composing = settings_composing(COMPOSING.to_owned()).expect("parses");
     composing.editor = "Another Editor".to_owned();
 
@@ -488,8 +432,7 @@ fn choosing_an_editor_leaves_every_other_section_and_the_unknown_key_alone() {
 
 #[test]
 fn an_editor_typed_with_a_space_on_the_end_is_stored_without_one() {
-    // The difference is invisible in a text field and fatal to the lookup:
-    // no platform finds an application called "Some Editor ".
+    // A trailing space is invisible in a text field and fatal to the lookup.
     let mut composing = settings_composing(COMPOSING.to_owned()).expect("parses");
     composing.editor = "  Some Editor  ".to_owned();
 
@@ -514,8 +457,6 @@ fn clearing_the_editor_hands_the_choice_back_to_the_platform() {
 
 #[test]
 fn an_editor_that_is_not_an_application_says_it_needs_a_terminal() {
-    // The case the setting exists for, and the one that would otherwise be a
-    // button doing nothing: somebody types the name of the editor they use.
     let target = settings_handoff_target(
         "vim".to_owned(),
         postio_ffi::FoundEditorFfi::TerminalProgram,
@@ -531,8 +472,8 @@ fn an_editor_that_is_not_an_application_says_it_needs_a_terminal() {
 
 #[test]
 fn the_button_names_the_editor_when_there_is_one_to_name() {
-    // `Open in $EDITOR` is canvas 26's label and it names an environment
-    // variable an application launched from Finder does not have (#1288).
+    // `Open in $EDITOR` names an environment variable an application launched from Finder does not
+    // have (#1288).
     assert_eq!(
         settings_handoff_label("Some Editor".to_owned()),
         "Open in Some Editor"
@@ -540,15 +481,9 @@ fn the_button_names_the_editor_when_there_is_one_to_name() {
     assert_eq!(settings_handoff_label(String::new()), "Edit elsewhere");
 }
 
-// --- the Sync & storage pane (#1156) ---------------------------------------
-
-/// The comment sits above `[ui]`, not above `[sync]`.
-///
-/// Deliberate: a `patch_*` regenerates the table it owns, so a comment
-/// attached to *that* table's own header does not survive — `patch_compose`
-/// documents the same trade, and two settings chosen from a segmented control
-/// are not the kind of TOML anybody hand-annotates. What must survive is
-/// everything the pane does not own, which is what this asserts.
+/// The comment sits above `[ui]`: a `patch_*` regenerates its own table, so a comment on that
+/// table's header does not survive.
+/// What must survive is everything the pane does not own.
 const SYNCING: &str = "\
 [sync]
 check_for_mail = \"poll\"
@@ -578,7 +513,6 @@ fn the_sync_pane_reads_the_sync_table() {
 
 #[test]
 fn emptying_junk_and_trash_is_off_until_chosen_and_written_back() {
-    // #1932: the pane's two day counts. Absent from the file is 0, never.
     let mut syncing = settings_syncing(SYNCING.to_owned()).expect("parses");
     assert_eq!(
         (
@@ -634,9 +568,8 @@ fn changing_how_mail_is_checked_leaves_the_rest_of_the_file_alone() {
 
 #[test]
 fn every_sync_field_survives_a_round_trip() {
-    // A pane with eight controls has eight chances to write one field and
-    // silently reset the other seven — which is what a form over a whole
-    // table does when one `patch` forgets a line.
+    // A pane with eight controls has eight chances to reset the other seven when one `patch`
+    // forgets a line.
     let mut syncing = settings_syncing(SYNCING.to_owned()).expect("parses");
     syncing.check_for_mail = postio_ffi::CheckForMailFfi::Manual;
     syncing.poll_interval_secs = 60;
@@ -653,8 +586,6 @@ fn every_sync_field_survives_a_round_trip() {
 
     assert_eq!(read_back, syncing);
 }
-
-// --- the Filters pane (#1156) ----------------------------------------------
 
 const FILTERS: &str = "\
 [saved_searches.urgent]
@@ -674,9 +605,6 @@ density = \"compact\"
 
 #[test]
 fn a_filter_shows_the_name_its_owner_gave_it_not_its_key() {
-    // #292 keeps the key stable and TOML-safe so a rename cannot orphan a
-    // filter. The label is `name`, and falls back to the key for every filter
-    // saved before renaming existed.
     let filters = settings_filters(FILTERS.to_owned()).expect("the sample parses");
 
     assert_eq!(filters.len(), 2);
@@ -691,8 +619,6 @@ fn a_filter_shows_the_name_its_owner_gave_it_not_its_key() {
 
 #[test]
 fn filters_come_back_in_the_order_the_sidebar_shows_them() {
-    // An explicit order first, then everything without one alphabetically —
-    // the order every filter had before reordering existed.
     let filters = settings_filters(FILTERS.to_owned()).expect("parses");
 
     assert_eq!(
@@ -725,8 +651,7 @@ fn editing_one_filter_leaves_the_others_and_their_unknown_keys_alone() {
 
 #[test]
 fn clearing_a_name_restores_the_key_rather_than_saving_an_empty_label() {
-    // A saved empty name would draw as nothing at all, which is worse than
-    // the key it replaced.
+    // A saved empty name would draw as nothing, which is worse than the key.
     let mut filters = settings_filters(FILTERS.to_owned()).expect("parses");
     filters[1].name = "   ".to_owned();
 
@@ -756,8 +681,7 @@ fn a_filter_can_be_added_and_removed() {
 
 #[test]
 fn two_filters_cannot_share_a_key() {
-    // The key is the identity. A silent overwrite would replace somebody's
-    // saved search with a new one of the same name.
+    // The key is the identity; an overwrite would replace somebody's saved search.
     let refusal = settings_add_filter(
         FILTERS.to_owned(),
         "urgent".to_owned(),
@@ -770,8 +694,8 @@ fn two_filters_cannot_share_a_key() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_filtering_pane_lists_a_person_s_pin_by_name_and_taking_it_back_clears_the_person() {
-    // The pane reads the people the last session to open installed: alone, or
-    // a neighbour's session is the one it reads.
+    // The pane reads the people the last session to open installed: run alone, or a neighbour's
+    // session is the one it reads.
     if postio_test_support::alone!(
         "the_filtering_pane_lists_a_person_s_pin_by_name_and_taking_it_back_clears_the_person"
     ) {

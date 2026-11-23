@@ -1,17 +1,3 @@
-//! `[mailboxes]` on disk, all the way to a role a verb can find.
-//!
-//! The tiers themselves are unit-tested where they live — precedence in
-//! `postio-model`, parsing and validation in `postio-config`, and what
-//! reconciliation writes in `postio-sync`. What none of those can see is
-//! whether a file a person actually edits reaches any of them, which is the
-//! shape of bug `postio-bl2` is about: every layer passing while nothing
-//! joins them.
-//!
-//! So this starts from bytes on disk and asserts the far end: the override a
-//! person wrote is the one folder resolution will use.
-//!
-//! Nothing here touches the network.
-
 use std::io::Write;
 
 use postio_model::MailboxRole;
@@ -43,8 +29,6 @@ trash = "Cestino"
     );
     assert_eq!(overrides.role_for("Cestino"), Some(MailboxRole::Trash));
 
-    // …and the precedence it carries is the one the model defines: above the
-    // server's own attribute, not merely above the name guess.
     assert_eq!(
         overrides.resolve(["\\Junk"], "Vecchia Posta"),
         MailboxRole::Archive
@@ -62,10 +46,6 @@ fn a_file_with_no_mailboxes_section_overrides_nothing() {
 
 #[test]
 fn an_unreadable_or_broken_file_overrides_nothing() {
-    // Both are reported by `validate`, with a line number, and shown in the
-    // settings panel. What must not happen here is a half-applied mapping:
-    // filing mail somewhere nobody chose is worse than filing it where it
-    // always went.
     assert!(mailbox_roles_at(std::path::Path::new("/nonexistent/postio.toml")).is_empty());
 
     let broken = config_file("[mailboxes\narchive = \"Vecchia Posta\"\n");
@@ -84,13 +64,6 @@ fn a_typo_in_a_role_name_maps_nothing() {
     );
 }
 
-// ── The command and discovery agree (#965 over #964) ────────────────────
-
-/// A choice made through the verb survives the next discovery pass, and the
-/// pass agrees with it -- the seam ADR 0035 lives on. The verb re-roles the
-/// rows locally; discovery reads the same map and must reach the same
-/// answer, or the sidebar would say one thing until the next reconnection
-/// and another after it.
 #[tokio::test]
 async fn a_role_chosen_through_the_verb_is_what_the_next_discovery_pass_keeps() {
     use postio_account::backend::{MailBackend, MockBackend, MockMailbox};
@@ -108,8 +81,6 @@ async fn a_role_chosen_through_the_verb_is_what_the_next_discovery_pass_keeps() 
         let connection = database.connect().await.expect("a connection");
         test_support::account(&connection).await
     };
-    // iCloud's shape: the provider's own Sent folder beside one another
-    // client made, nothing declared, so the alphabet picks `Sent`.
     let backend = MockBackend::builder()
         .mailbox(MockMailbox::new("INBOX"))
         .mailbox(MockMailbox::new("Sent"))

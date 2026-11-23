@@ -1,46 +1,9 @@
-//! Keeping a query: `[saved_searches]`, and the four verbs a sidebar offers over one.
-//!
-//! Half of what makes Postio's search worth learning is that a query can
-//! become a folder — `docs/PRODUCT.md` puts finding things among the three
-//! jobs this application has to beat the alternatives at, and a search you
-//! have to retype is a search you stop composing carefully. The promise is
-//! four edits to `config.toml`: save the query that is showing, rename the
-//! row it made, move it among its neighbours, remove it.
-//!
-//! None of those four is a widget. All four lived in the classic app's config
-//! anyway — read the file fresh, mutate the `[saved_searches]` table, patch it back,
-//! repaint the sidebar — which is why the macOS search surface could draw a
-//! *Save search as folder* affordance, leave it enabled, and have it do
-//! nothing (#1574). A frontend that cannot reach a rule re-invents it or goes
-//! without, and going without is the quieter of the two failures.
-//!
-//! # Why the file is read fresh on every verb
-//!
-//! Not out of a shared `Config` the application is already holding. A saved
-//! search is a `config.toml` edit, and `config.toml` is a file a person edits
-//! by hand and an editor rewrites from underneath us; the copy in memory is a
-//! snapshot of whenever it was last loaded. Writing a patched version of a
-//! *stale* read is how a hand-written `[sync]` block disappears an hour after
-//! it was typed. Reading immediately before patching keeps the window in
-//! which that can happen down to this function.
-//!
-//! # Why only `[saved_searches]` is rewritten
-//!
-//! Through [`postio_config::filters::patch_filters`], which is a
-//! `toml_edit` splice of one table, never a reserialize of the whole
-//! `Config`. The rest of the file — comments, key order, the tables this
-//! version of Postio has never heard of — comes back byte for byte. #885 is
-//! what happens otherwise: every saved search silently reformatting somebody's
-//! settings file.
-//!
-//! # Why a file that will not parse is refused rather than defaulted
-//!
-//! [`edit`] returns the parse error instead of falling back to
-//! [`Config::default`]. The fallback is the tempting reading — a broken file
-//! means we know nothing, so start from nothing — and it is wrong in exactly
-//! this one place: "nothing" includes an empty `[saved_searches]` table, so the very
-//! next `patch_filters` writes that emptiness over the searches the user
-//! still has. A file that does not parse is a file to leave alone.
+//! Saved searches in `[saved_searches]` and the four verbs a sidebar offers: save, rename, move,
+//! remove (#1574).
+//! The file is read fresh on every verb and only that table is spliced, so a stale read cannot
+//! erase hand edits (#885).
+//! A file that does not parse is refused, not defaulted: the default's empty table would be written
+//! over the user's searches.
 
 use std::path::Path;
 
@@ -48,97 +11,52 @@ use postio_config::{Config, ConfigError};
 
 pub use postio_config::filters::Reorder;
 
-/// One pinned `[saved_searches]` entry, as a sidebar draws it.
-///
-/// Not `postio_config::FilterConfig`, whose name is a map key rather than a
-/// field: a frontend takes a flat list of rows to draw, so the key/value
-/// split of the config schema is unpacked here once instead of in each
-/// frontend.
+/// Unpacked from `FilterConfig`, whose name is a map key, so frontends get a flat row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SavedSearch {
-    /// The `[saved_searches.<key>]` key — the stable identity a rename, a reorder or
-    /// a delete acts on (#292). Never shown; [`SavedSearch::name`] draws.
+    /// The stable identity a rename, reorder or delete acts on (#292); never shown.
     pub key: String,
-    /// What the row shows: the display name the user chose, or the key when
-    /// nobody has renamed it.
     pub name: String,
-    /// The query text this row runs when it is picked.
     pub query: String,
-    /// Whether it shows a quiet badge with the matches new since it was
-    /// last viewed (spec 010 D15).
     pub notify: bool,
 }
 
-/// One of the four things a sidebar can do to the saved searches.
-///
-/// A verb rather than four functions so that reading the file, patching it
-/// and writing it back is written once. The four differ only in which
-/// `postio_config` mutation they make, and every one of them has to make the
-/// same promises about the rest of the file.
+/// One verb type so reading, patching and writing back is written once.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verb<'a> {
-    /// Keep `query` as a new search: named `name`, or from its own text;
-    /// pinned, taking the next free place (and ⌥ number) after the others,
-    /// or not; notifying, or not; its dates as `dates` says ([`Verb::save`]
-    /// is the plain form a sidebar's Save makes).
-    ///
-    /// Blank does nothing: pinning an empty query pins "everything", which is
-    /// not a folder anybody meant to make.
+    /// `Verb::save` is the plain form a sidebar's Save makes. Blank does nothing: pinning an empty
+    /// query pins "everything".
     Save {
-        /// The query as it stands in the search field, not as it was last
-        /// run — saving what is on screen is the gesture.
+        /// As it stands in the search field, not as last run.
         query: &'a str,
-        /// The name it shows under; `None` shows the key.
         name: Option<&'a str>,
-        /// Pin to saved searches.
         pin: bool,
-        /// Notify when new mail matches: a quiet badge (D15).
         notify: bool,
-        /// Keep the date rolling, or not (D14).
         dates: Dates,
     },
-    /// Give the search under `key` a display name of its own.
     Rename {
-        /// Which search.
         key: &'a str,
         /// The new label. Blank, or the key repeated, means "not renamed".
         name: &'a str,
     },
-    /// Move the search under `key` one place among its neighbours.
     Move {
-        /// Which search.
         key: &'a str,
-        /// Which way.
         direction: Reorder,
     },
-    /// Remove the search under `key` entirely.
     Delete {
-        /// Which search.
         key: &'a str,
     },
 }
 
-/// How a saved query keeps its dates (spec 010 D14): both are the one
-/// language, so nothing but the string says which.
+/// Both are one query language, so only the string says which.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dates {
-    /// As typed.
     AsTyped,
-    /// Relative to the day it runs, "after:90d": always the last 90 days.
-    Rolling {
-        /// The day the typed dates are read against.
-        today: chrono::NaiveDate,
-    },
-    /// Calendar dates, "after:2026-07-01": always since 1 July.
-    Fixed {
-        /// The day the typed dates are read against.
-        today: chrono::NaiveDate,
-    },
+    Rolling { today: chrono::NaiveDate },
+    Fixed { today: chrono::NaiveDate },
 }
 
 impl<'a> Verb<'a> {
-    /// Save `query` as a sidebar does: pinned, named from its own text, no
-    /// badge, its dates as typed.
     pub fn save(query: &'a str) -> Self {
         Verb::Save {
             query,
@@ -150,52 +68,27 @@ impl<'a> Verb<'a> {
     }
 }
 
-/// What a verb left behind.
-///
-/// Always returned, even when the verb did nothing, because the caller's next
-/// move is the same either way: draw [`Edit::searches`]. A no-op is
-/// `changed: None` and the list as it already stood, not an error and not an
-/// absence the frontend has to invent a list for.
+/// Always returned, even for a no-op (`changed: None`, the list as it stood), so the caller draws
+/// the same way.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Edit {
-    /// The file as it now reads. Unchanged text when nothing happened.
     pub text: String,
-    /// The rows the sidebar should draw now, in order.
     pub searches: Vec<SavedSearch>,
-    /// The key of the entry that actually changed, or `None` when nothing
-    /// did — a blank query, a key that names no search, a row already at the
-    /// end it was being moved toward.
-    ///
-    /// Which row moved is not a nicety: after a reorder the keyboard has to
-    /// stay on the row it moved rather than on the position it left, and
-    /// after a save the new row is the one worth showing.
+    /// `None` when nothing changed: blank query, unknown key, or a row already at the end.
+    /// Callers keep the keyboard on the row that moved.
     pub changed: Option<String>,
 }
 
-/// The words a frontend asks a question in.
-///
-/// Wording crosses because wording drifts — ADR 0019 Q6's whole argument —
-/// and a destructive confirmation is the worst place for two platforms to
-/// have written their own sentence. Saved searches are the first two
-/// questions to cross; the shape is deliberately general enough for the next.
+/// Shared wording, so a destructive confirmation reads the same on every platform (ADR 0019).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Prompt {
-    /// The question itself.
     pub title: &'static str,
-    /// What it costs, when that is not obvious from the title.
     pub body: Option<&'static str>,
-    /// The button that goes through with it.
     pub confirm: &'static str,
-    /// The button that does not.
     pub cancel: &'static str,
 }
 
-/// Asked before a saved search is deleted.
-///
-/// A config-file edit has no undo stack to reach — #292 weighed that directly
-/// — so deleting one is confirmed, and this is the confirmation. The body
-/// says what is actually lost: not the folder, which can be made again, but
-/// the query somebody composed.
+/// A config edit has no undo stack, so deleting is confirmed (#292).
 pub const DELETE_PROMPT: Prompt = Prompt {
     title: "Delete this saved search?",
     body: Some("It can be saved again from the same query, but the query itself is gone."),
@@ -203,11 +96,7 @@ pub const DELETE_PROMPT: Prompt = Prompt {
     cancel: "Keep",
 };
 
-/// Asked when a saved search is being renamed.
-///
-/// No body: the entry, pre-filled with the name showing now, says everything
-/// a sentence would. The cancel is "Cancel" rather than [`DELETE_PROMPT`]'s
-/// "Keep" because there is nothing being taken away to keep.
+/// No body; cancel says "Cancel" since nothing is taken away.
 pub const RENAME_PROMPT: Prompt = Prompt {
     title: "Rename this saved search?",
     body: None,
@@ -215,12 +104,8 @@ pub const RENAME_PROMPT: Prompt = Prompt {
     cancel: "Cancel",
 };
 
-/// The pinned entries of `config`'s `[saved_searches]`, in the order a sidebar shows
-/// them.
-///
-/// [`Config::ordered_filter_keys`]'s order, which is explicit `order` first
-/// and then alphabetically by key — so a frontend draws the list exactly as
-/// given rather than sorting it again and disagreeing (#292).
+/// In `ordered_filter_keys` order (explicit `order`, then by key), so frontends do not re-sort and
+/// disagree (#292).
 pub fn pinned(config: &Config) -> Vec<SavedSearch> {
     config
         .ordered_filter_keys()
@@ -237,33 +122,21 @@ pub fn pinned(config: &Config) -> Vec<SavedSearch> {
         .collect()
 }
 
-/// The saved searches in the file at `path`, for the sidebar's first draw.
-///
-/// Best effort, the way the running application already treats a broken
-/// `config.toml`: a missing file has no searches in it, and one that will not
-/// parse is a reason to show the built-in defaults rather than to refuse to
-/// draw a sidebar. The errors that matter are the ones [`apply`] returns,
-/// where a write was about to happen.
+/// Best effort: a missing or unparseable file shows the built-in defaults. The errors that matter
+/// come from `apply`.
 pub fn load(path: &Path) -> Vec<SavedSearch> {
     Config::load_from_path(path)
         .map(|config| pinned(&config))
         .unwrap_or_default()
 }
 
-/// Carry out `verb` against `text`, touching no file.
-///
-/// The whole rule, with the I/O lifted out so it can be proven at the cheapest
-/// layer there is. [`apply`] is this plus a read and a write.
+/// The whole rule with the I/O lifted out; `apply` adds the read and write.
 pub fn edit(text: &str, verb: Verb<'_>) -> postio_config::Result<Edit> {
     let mut config = Config::from_toml_str(text)?;
     let before = config.filters.clone();
 
-    // Each arm answers "did this name something real", which is not the same
-    // question as "did anything change" -- renaming a search to the name it
-    // already had names something real and changes nothing. The comparison
-    // below settles the second question for all four at once, so no verb has
-    // to remember to, and a write that would rewrite the file byte for byte
-    // never happens.
+    // Each arm says whether it named something real; the comparison below decides whether anything
+    // changed, so a byte-identical rewrite never happens.
     let named = match verb {
         Verb::Save {
             query,
@@ -290,9 +163,6 @@ pub fn edit(text: &str, verb: Verb<'_>) -> postio_config::Result<Edit> {
         Verb::Delete { key } => config.delete_filter(key).then(|| key.to_owned()),
     };
 
-    // Computed from the mutated config either way: when nothing changed the
-    // two are equal by construction, and the caller still needs a list to
-    // draw rather than an absence to interpret.
     let searches = pinned(&config);
     let Some(changed) = named.filter(|_| config.filters != before) else {
         return Ok(Edit {
@@ -309,20 +179,12 @@ pub fn edit(text: &str, verb: Verb<'_>) -> postio_config::Result<Edit> {
     })
 }
 
-/// Carry out `verb` against the file at `path`, writing it back if anything
-/// changed.
-///
-/// A missing file is an empty one — the first saved search on a machine that
-/// has never opened the settings panel creates `config.toml`, the same as any
-/// other first write.
+/// A missing file is empty: the first saved search creates `config.toml`.
 pub fn apply(path: &Path, verb: Verb<'_>) -> postio_config::Result<Edit> {
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
         Err(source) if source.kind() == std::io::ErrorKind::NotFound => String::new(),
-        // Distinguished from "not there" on purpose. A file that exists and
-        // cannot be read -- a permission that changed, a disk that went away
-        // -- must not be treated as an empty one, because the next step would
-        // write a fresh `config.toml` over whatever is actually there.
+        // A file that exists but cannot be read is not an empty one: writing would clobber it.
         Err(source) => {
             return Err(ConfigError::Read {
                 path: path.to_path_buf(),
@@ -333,13 +195,8 @@ pub fn apply(path: &Path, verb: Verb<'_>) -> postio_config::Result<Edit> {
 
     let edit = edit(&text, verb)?;
     if edit.changed.is_some() {
-        // Atomically, which is `postio_config::save`'s whole contract with
-        // the watcher: a running Postio learns about its own settings change
-        // the same way it learns about one made in `$EDITOR`, because both
-        // arrive as a rename over the file rather than as a write into it.
-        // The safety half matters more here than the liveness half -- this
-        // file is hand-edited, and a write that fails part way through an
-        // in-place rewrite leaves it truncated.
+        // Atomic: the watcher sees a rename like any editor save, and a failed in-place write would
+        // truncate a hand-edited file.
         postio_config::save::write_atomically(path, &edit.text).map_err(|source| {
             ConfigError::Write {
                 path: path.to_path_buf(),
@@ -354,8 +211,6 @@ pub fn apply(path: &Path, verb: Verb<'_>) -> postio_config::Result<Edit> {
 mod tests {
     use super::*;
 
-    /// A file with the things a careless rewrite destroys: a comment, tables
-    /// either side of `[saved_searches]`, and a key nothing in this build reads.
     const SAMPLE: &str = "\
 # hand-written, and it should stay that way
 [sync]
@@ -370,13 +225,7 @@ density = \"compact\"
 some_future_key = 42
 ";
 
-    /// Three pinned rows, because "one place" and "either end" are only
-    /// different questions when there is a middle.
-    ///
-    /// [`SAMPLE`] has one filter, and that single row is simultaneously the
-    /// first and the last: a reorder over it refuses whichever way it is
-    /// asked, so it cannot tell a direction that was read from one that was
-    /// thrown away.
+    /// Three rows, so "one place" and "either end" differ: a single row is both first and last.
     const THREE: &str = "\
 [saved_searches.a]
 query = \"from:ada\"
@@ -419,9 +268,6 @@ pinned = true
 
     #[test]
     fn saving_nothing_saves_nothing() {
-        // Pinning an empty query pins "everything", which is not a folder
-        // anyone meant to make -- and it would still take a row in the
-        // sidebar and a line in the file.
         let edit = edit(SAMPLE, Verb::save("   ")).expect("the sample parses");
 
         assert_eq!(edit.changed, None);
@@ -498,9 +344,6 @@ pinned = true
 
     #[test]
     fn a_reorder_moves_one_place_and_writes_the_whole_order_down() {
-        // Moving one row pins every row's position: leaving the others
-        // implicit means they keep sorting alphabetically, which can put
-        // them anywhere at all relative to the one that now has a number.
         let moved = edit(
             THREE,
             Verb::Move {
@@ -514,8 +357,6 @@ pinned = true
         let keys: Vec<&str> = moved.searches.iter().map(|s| s.key.as_str()).collect();
         assert_eq!(keys, ["a", "c", "b"]);
 
-        // And it is durable: re-reading the patched text has to give the same
-        // order, or the row springs back the next time anything reloads.
         let reread = edit(&moved.text, Verb::save("")).expect("the patched file parses");
         let keys: Vec<&str> = reread.searches.iter().map(|s| s.key.as_str()).collect();
         assert_eq!(keys, ["a", "c", "b"], "the order did not survive the write");
@@ -523,14 +364,6 @@ pinned = true
 
     #[test]
     fn a_reorder_down_walks_the_other_way() {
-        // The two directions are one enum variant apart and are wired to two
-        // separate commands, which is exactly the shape that lets one of them
-        // be quietly wrong: a `Down` that is read as `Up` still moves a row,
-        // still repaints, and still names the row it moved, so there is
-        // nothing for a frontend -- or for a test that only checks that
-        // *something* happened -- to notice. Only the resulting order can
-        // tell the two apart, which is why this asserts on it and not on
-        // `changed` alone.
         let moved = edit(
             THREE,
             Verb::Move {
@@ -548,9 +381,6 @@ pinned = true
             "`a` went down exactly one place -- not up, and not to the end"
         );
 
-        // And durable, the same as the other direction: an order that only
-        // exists in the returned list springs back the next time anything
-        // reloads the file.
         let reread = edit(&moved.text, Verb::save("")).expect("the patched file parses");
         let keys: Vec<&str> = reread.searches.iter().map(|s| s.key.as_str()).collect();
         assert_eq!(keys, ["b", "a", "c"], "the order did not survive the write");
@@ -558,12 +388,6 @@ pinned = true
 
     #[test]
     fn a_row_at_the_end_it_is_moving_toward_stays_where_it_is() {
-        // Both ends, over a list whose two ends are different rows. A
-        // single-row fixture refuses every move whatever the code does with
-        // the direction, so it proves the refusal and nothing about what the
-        // refusal was for; here the front row may still go down and the back
-        // row may still go up, which is the part that fails if a direction
-        // is being dropped.
         for (key, direction) in [("a", Reorder::Up), ("c", Reorder::Down)] {
             let refused = edit(THREE, Verb::Move { key, direction }).expect("the file parses");
             assert_eq!(
@@ -585,13 +409,8 @@ pinned = true
 
     #[test]
     fn renaming_a_search_to_the_name_it_already_has_writes_nothing() {
-        // `rename_filter` answers "does this key name a search", which is not
-        // the same question as "did anything change": it says yes to a rename
-        // that stores the name already stored. Reporting that as a change
-        // would rewrite `config.toml` for nothing -- the watcher wakes, the
-        // sidebar repaints, and the keyboard is told to follow a row that
-        // never moved -- so the comparison against the table as it was is
-        // what settles it, and this is the only verb that can reach it.
+        // `rename_filter` says yes to a rename to the stored name; comparing against the table as
+        // it was keeps a no-op from rewriting the file.
         let named = edit(
             SAMPLE,
             Verb::Rename {
@@ -651,8 +470,6 @@ pinned = true
 
     #[test]
     fn an_unpinned_filter_is_not_a_sidebar_row() {
-        // `pinned` is the whole of what "shows in the sidebar" means, and the
-        // settings panel can turn it off without deleting the query.
         let text = "\
 [saved_searches.hidden]
 query = \"is:unread\"
@@ -666,9 +483,8 @@ pinned = false
 
     #[test]
     fn an_edit_leaves_every_other_line_in_the_file_alone() {
-        // The reason this goes through `patch_filters` rather than
-        // reserializing a `Config`: somebody's settings file is not ours to
-        // reformat because they saved a search (#885).
+        // Spliced via `patch_filters`, not reserialized: the settings file is not ours to reformat
+        // (#885).
         let saved = edit(SAMPLE, Verb::save("has:attach")).expect("the sample parses");
 
         assert!(
@@ -697,9 +513,8 @@ pinned = false
 
     #[test]
     fn a_file_that_will_not_parse_is_refused_rather_than_emptied() {
-        // The dangerous reading is "a broken file tells us nothing, so start
-        // from the defaults": the defaults have no filters, and the patch
-        // would then write that emptiness over searches the user still has.
+        // A broken file must not default: the defaults have no filters and the patch would erase
+        // the user's searches.
         let broken = "[ui]\ndensity = 42\n\n[saved_searches.keep]\nquery = \"is:unread\"\n";
 
         assert!(
@@ -719,8 +534,6 @@ pinned = false
         std::fs::create_dir_all(&dir).expect("a scratch directory");
         let path = dir.join("config.toml");
 
-        // A machine that has never had a `config.toml` still gets its first
-        // saved search.
         let saved = apply(&path, Verb::save("is:unread")).expect("a first save");
         assert_eq!(saved.changed.as_deref(), Some("is-unread"));
         assert_eq!(load(&path), saved.searches, "the file is the sidebar");
@@ -749,9 +562,6 @@ pinned = false
 
     #[test]
     fn the_questions_are_asked_in_words_both_frontends_share() {
-        // Not a test of English. It is a test that the sentences exist here
-        // at all: two platforms writing their own confirmation is two
-        // products, and the destructive one is where that matters most.
         assert_eq!(DELETE_PROMPT.title, "Delete this saved search?");
         assert!(
             DELETE_PROMPT

@@ -117,8 +117,6 @@ def case_file(case: Case, root: Path | None = None) -> Path | str:
     return hits[0] if len(hits) == 1 else "ambiguous"
 
 
-# --- reading Rust without a parser --------------------------------------
-
 _CHAR = re.compile(r"'(?:\\.|[^\\'])'")
 _RAW = re.compile(r'r(#*)"')
 
@@ -226,8 +224,6 @@ def fn_preamble(text: str, fn_name: str) -> str:
     return "\n".join(reversed(lines))
 
 
-# --- what a case cites ----------------------------------------------------
-
 _SPEC = re.compile(r"specs/(\d{3})-|\bspec (\d{3})\b", re.I)
 _ITEM = re.compile(r"\b(FR-\d{3}|SC-\d{3}|US\d+|T\d{3})\b")
 _ISSUE = re.compile(r"(?<![\w&])#(\d{2,5})\b")
@@ -263,8 +259,6 @@ def parse_refs(path: Path | str, fn_name: str) -> list[str]:
     return sorted(refs)
 
 
-# --- what a case smells of ------------------------------------------------
-
 _ASSERT = re.compile(r"\b(assert|assert_eq|assert_ne|debug_assert|debug_assert_eq|debug_assert_ne)!\s*\(")
 _CONSTANT_ATOMS = [
     re.compile(r'r#*"[^"]*"#*|"(?:\\.|[^"\\])*"'),  # strings
@@ -276,8 +270,8 @@ _CONSTANT_ATOMS = [
     re.compile(r"\b(?:[a-z_][a-z0-9_]*::)*[A-Z][A-Z0-9_]*\b(?!\s*[(:{])"),  # LIST_MIN, keys::ARCHIVE
 ]
 _LEFTOVER_OK = re.compile(r"^[\s+\-*/%<>=!&|()]*$")
-# A mock's own counter, read as one: `.calls()`, `call_count`, `.times(`. Not
-# a variable that happens to be called `calls`, nor "2 times" in a string.
+# A mock's own counter: `.calls()`, `call_count`, `.times(`; not a variable called `calls` or "2
+# times" in a string.
 _COUNTS = re.compile(r"\.calls\(\)|\bcall_count\b|\.times\(")
 _STRING = re.compile(r'r#*"[^"]*"#*|"(?:\\.|[^"\\])*"')
 _DISPLAY_SKIP = re.compile(r'eprintln!\s*\(\s*"skipping[^"]*"\s*\)\s*;\s*return\b')
@@ -354,8 +348,6 @@ def smells(body: str, refs: list[str]) -> set[str]:
     return found
 
 
-# --- which layer, and what it costs ---------------------------------------
-
 FRONTENDS = {"postio-ffi", "postio-gtk", "postio-widgets", "postio-tui"}
 CONTROLLERS = {"postio-focus"}
 DISPLAY_CRATES = {"postio-gtk", "postio-widgets"}  # their integration suites open windows
@@ -406,8 +398,6 @@ def _repo_helpers(text: str) -> list[str]:
             helpers.append(name)
     return helpers
 
-
-# --- which lines are test code ---------------------------------------------
 
 _CFG_TEST_MOD = re.compile(r"#\[cfg\(test\)\]\s*(?:#\[[^\]]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?mod\s+\w+\s*\{")
 

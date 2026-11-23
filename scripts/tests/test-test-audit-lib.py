@@ -46,7 +46,6 @@ def rel(c: test_audit.Case) -> str:
     return path if isinstance(path, str) else str(path.relative_to(FIXTURE))
 
 
-# Where a case lives (R5).
 check("suite case -> tests/<suite>/<mod>.rs",
       rel(case("postio-ffi::ffi_suite", "focus_pickers::opening_succeeds")),
       "crates/postio-ffi/tests/ffi_suite/focus_pickers.rs")
@@ -68,7 +67,6 @@ check("harness-free case -> its CASES module",
 check("a name defined twice and unresolvable is ambiguous",
       rel(case("postio-storage", "generated::dup")), "ambiguous")
 
-# What a case cites (R5).
 gtk = case("postio-gtk::focus_suite", "pickers::s_then_2_snoozes")
 check("header spec + fn item -> spec/item",
       test_audit.parse_refs(test_audit.case_file(gtk, FIXTURE), "s_then_2_snoozes"),
@@ -94,7 +92,6 @@ check("braces in strings, chars and comments do not end a body",
       "assert_eq!" in body(case("postio-ffi::ffi_suite", "nested::in_mod_rs")), True)
 
 
-# What a case smells of (R6): each smell, and a near miss that is not one.
 def smells(binary: str, name: str) -> list[str]:
     c = case(binary, name)
     path = test_audit.case_file(c, FIXTURE)
@@ -124,7 +121,6 @@ check("no ref in the case or its file is untraced", smells(FFI, "nested::in_mod_
 check("a call inside an assertion is not constant", smells("postio-storage", "deep::tests::dup"), [])
 
 
-# Which layer a case is in, and what it costs to run (FR-002, data-model Case).
 def layer(binary: str, name: str) -> tuple[str, int, bool]:
     c = case(binary, name)
     return test_audit.layer(c, test_audit.case_file(c, FIXTURE), body(c))
@@ -144,7 +140,6 @@ check("a case that reads the repository through a helper is meta",
 check("everything else is a rule", layer("postio-storage", "tests::counts_rows"), ("rule", 0, False))
 
 
-# Which lines of a source file are test code (research R3: not what a case protects).
 check("a #[cfg(test)] module's lines are test code",
       test_audit.test_line_ranges(FIXTURE / "crates/postio-storage/src/lib.rs"), [(9, 15)])
 check("a file with no test module has none", test_audit.test_line_ranges(FIXTURE / "crates/postio-storage/src/other.rs"), [])

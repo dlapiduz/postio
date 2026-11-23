@@ -1,22 +1,7 @@
-//! Putting a file on a draft (#1269).
-//!
-//! An attachment is bytes in the blob store plus a row on the draft, and the
-//! order matters for the same reason it does everywhere else here: the bytes
-//! first, so a draft never names a blob that is not there. The reverse is a
-//! message that cannot be sent and cannot be repaired from inside the
-//! application.
-//!
-//! # Why the MIME type is handed in
-//!
-//! Sniffing a file's type is a **platform service**: freedesktop reads the
-//! shared-mime-info database through `gio`, macOS asks
-//! `UniformTypeIdentifiers`, and neither is available to the other. So each
-//! frontend answers that question its own way and passes the answer here,
-//! where everything that is *not* platform-specific happens once.
-//!
-//! Falling back to `application/octet-stream` is the caller's job too, and
-//! deliberately: "some bytes" is better than refusing to attach a file over a
-//! type nothing recognises.
+//! Putting a file on a draft (#1269): bytes into the blob store first, then the row, so a draft
+//! never names a missing blob.
+//! The MIME type is handed in because sniffing is a platform service; the caller falls back to
+//! `application/octet-stream`.
 
 use std::path::Path;
 
@@ -24,24 +9,15 @@ use postio_model::attachment::Attachment;
 use postio_model::ids::MessageId;
 use postio_storage::BlobStore;
 
-/// The largest file this will attach.
-///
-/// Not a limit anybody asked for — it is a guard against the accident:
-/// dragging a disk image into a compose window and having Postio quietly
-/// spend a gigabyte of the store on it. Servers refuse well below this
-/// anyway, and a refusal here says so before the bytes are copied rather
-/// than after.
+/// The largest file this will attach: a guard against dragging a disk image into the store,
+/// refusing before the bytes are copied.
 pub const LARGEST_ATTACHMENT: u64 = 100 * 1024 * 1024;
 
-/// Copy `path` into the blob store and describe it as an attachment.
-///
-/// The attachment carries [`MessageId::UNASSIGNED`] until the draft it is on
-/// becomes a sent message, which is what `Draft::attachments` documents.
+/// Copy `path` into the blob store and describe it as an attachment, with `MessageId::UNASSIGNED`
+/// until the draft is sent.
 pub fn attach_file(blobs: &BlobStore, path: &Path, mime_type: &str) -> Result<Attachment, String> {
     let size = std::fs::metadata(path)
-        // The path is deliberately not in the message: an attachment's name
-        // is the user's, and an error string is a thing people paste into bug
-        // reports.
+        // The path stays out of the message: error strings get pasted into bug reports.
         .map_err(|error| format!("That file could not be read: {error}"))?
         .len();
     if size > LARGEST_ATTACHMENT {
@@ -66,27 +42,12 @@ pub fn attach_file(blobs: &BlobStore, path: &Path, mime_type: &str) -> Result<At
     Ok(attachment)
 }
 
-/// What refusing a non-image says, and where it points instead.
 const NOT_AN_IMAGE: &str = "That file is not an image. Use Attach file to send it alongside.";
 
-/// Store `bytes` as a picture in the body rather than a file beside it
-/// (#1571).
+/// Store `bytes` as a picture in the body rather than a file beside it (#1571).
 ///
-/// An inline part is a blob and a row, like any attachment, plus two things
-/// that make it a picture: [`Disposition::Inline`], and a `Content-ID` the
-/// body's `<img>` references. The id is the blob's digest at
-/// `postio.invalid` — unique by construction (the store deduplicates by
-/// content, so the same picture twice is one part referenced twice) and on a
-/// reserved domain, so it cannot collide with or be mistaken for anything
-/// real. One rule, here, rather than one per frontend: a composer that minted
-/// ids its own way would be a second answer to what a sent message says its
-/// parts are called.
-///
-/// `mime_type` is the caller's, for [`attach_file`]'s reason. What is decided
-/// here is that it has to be an image: anything else belongs beside the
-/// message, and saying so beats a broken picture the recipient cannot open.
-///
-/// [`Disposition::Inline`]: postio_model::attachment::Disposition::Inline
+/// The `Content-ID` is the blob's digest at the reserved `postio.invalid`, so one rule serves every
+/// frontend and the same picture twice is one part. A non-image `mime_type` is refused.
 pub fn inline_image(
     blobs: &BlobStore,
     bytes: &[u8],

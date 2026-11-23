@@ -1,27 +1,3 @@
-//! One language, two evaluators, and the test that keeps them one
-//! (ADR 0008 Q1).
-//!
-//! A digest rule is a query in the one language (spec FR-127, research R13):
-//! `from:<address>` in milestone 1, `list:` in milestone 2. It is asked of
-//! mail as the sync pass files it, before anything is committed where SQL
-//! could see it, so it is answered by `postio_search::matcher` in memory.
-//! Its preview ("would have caught 9 messages in the last 90 days") is the
-//! same query answered by the executor, over the store.
-//!
-//! Two evaluators of one language that disagree is the worst outcome
-//! available: the preview would show one answer and the rule would do
-//! another, and nothing else in the workspace could see it happen, because
-//! every other test exercises one evaluator at a time. So this indexes the
-//! whole `.eml` corpus, asks every query below of both, and asserts the
-//! answers are identical, naming the fixtures either side disagrees about.
-//!
-//! The queries are the ones a digest rule is written in -- `from:` and
-//! `list:`, and the query rules' `to:`, `subject:` and `filename:` -- chosen
-//! so each
-//! divides the corpus -- a query every message answers the same way agrees
-//! trivially and proves nothing -- plus a few that should match nothing at
-//! all, which is where a matcher too eager to say yes shows itself.
-
 use std::collections::BTreeSet;
 
 use chrono::{DateTime, NaiveDate, TimeZone, Utc};
@@ -35,9 +11,7 @@ use postio_storage::Connection;
 use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
 
-/// Queries each of which some fixtures answer and others do not.
 const DIVIDING: &[&str] = &[
-    // Sender rules, as milestone 1 writes them.
     "from:ada.norwood@example.com",
     "from:weekly@news.example.org",
     "from:news@larkspur.example.com",
@@ -52,7 +26,6 @@ const DIVIDING: &[&str] = &[
     "from:f.lemaitre@fr.example",
     "from:quinn.abara@example.net",
     "from:tove.bergstrom@example.com",
-    // What a rule edited by hand may say instead: the language allows it.
     "from:ada",
     "from:norwood",
     "from:example.org",
@@ -60,14 +33,11 @@ const DIVIDING: &[&str] = &[
     "from:\"Ada Norwood\"",
     "from:Françoise",
     "from:harbour",
-    // List rules, milestone 2's.
     "list:harbour-dev.lists.example.org",
     "list:weekly.news.example.org",
     "list:news.larkspur.example.com",
     "list:harbour",
     "list:example.org",
-    // Query rules, milestone 2's: what is known of a message as it is
-    // filed, before its body (spec 007 US14, T155).
     "to:ada.norwood@example.com",
     "to:quinn.abara@example.net",
     "to:harbour-dev@lists.example.org",
@@ -82,13 +52,11 @@ const DIVIDING: &[&str] = &[
     "-subject:walkthrough",
     "to:ada subject:walkthrough",
     "from:example.com -to:ada.norwood@example.com",
-    // Negation, and more than one condition.
     "-from:ada.norwood@example.com",
     "-list:harbour",
     "from:ada.norwood@example.com list:harbour",
     "from:quinn.abara@example.net -list:harbour",
     "from:example.com -from:ada.norwood@example.com",
-    // Either of several values (spec 010, D26).
     "from:{ada.norwood@example.com quinn.abara@example.net}",
     "from:{ada tanaka.yoko@jp.example orders@shop.example.org}",
     "-from:{ada.norwood@example.com quinn.abara@example.net}",
@@ -100,7 +68,6 @@ const DIVIDING: &[&str] = &[
     "from:{ada quinn.abara@example.net} -subject:{walkthrough zeppelin}",
 ];
 
-/// Queries no fixture should answer.
 const NOTHING: &[&str] = &[
     "from:nobody@example.com",
     "from:francoise",
@@ -121,7 +88,6 @@ fn now() -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 9, 26, 16, 9, 0).unwrap()
 }
 
-/// Every fixture, parsed as sync would parse it and stored in one inbox.
 struct Corpus {
     account: AccountId,
     messages: Vec<(&'static str, Message)>,
@@ -149,7 +115,6 @@ async fn corpus(connection: &Connection) -> Corpus {
     }
 }
 
-/// What the executor selects: the preview's answer.
 async fn by_executor(
     connection: &Connection,
     corpus: &Corpus,
@@ -161,7 +126,6 @@ async fn by_executor(
             account: AccountScope::Account(corpus.account),
             query,
             scope: Scope::AllMail,
-            // Past the corpus, so paging is never mistaken for disagreement.
             limit: 500,
             order: ResultOrder::Newest,
         },
@@ -175,7 +139,6 @@ async fn by_executor(
     .collect()
 }
 
-/// What the matcher selects, one message at a time, as a rule would.
 fn by_matcher(corpus: &Corpus, query: &ParsedQuery, text: &str) -> BTreeSet<MessageId> {
     let matcher = Matcher::new(query)
         .unwrap_or_else(|why| panic!("{text:?} is a digest rule's query, but: {why:?}"));
@@ -187,7 +150,6 @@ fn by_matcher(corpus: &Corpus, query: &ParsedQuery, text: &str) -> BTreeSet<Mess
         .collect()
 }
 
-/// The fixtures behind a set of ids, for a failure a person can act on.
 fn names(corpus: &Corpus, ids: impl IntoIterator<Item = MessageId>) -> Vec<&'static str> {
     let ids: BTreeSet<MessageId> = ids.into_iter().collect();
     corpus
@@ -228,9 +190,6 @@ async fn the_matcher_and_the_executor_agree_on_every_digest_query() {
 
 #[tokio::test]
 async fn a_full_address_finds_the_mail_from_it_and_nothing_sent_to_it() {
-    // #1699: `from:quinn.abara@example.net` found 22 fixtures, five of them
-    // (then) from that address and the rest sent to it by senders sharing
-    // a word with it. Both evaluators must find exactly the ones from it.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let corpus = corpus(&connection).await;
@@ -261,8 +220,6 @@ async fn a_full_address_finds_the_mail_from_it_and_nothing_sent_to_it() {
 
 #[tokio::test]
 async fn every_query_asks_something_the_corpus_answers_both_ways() {
-    // The premise of the test above: a query every fixture answers alike
-    // agrees trivially, and one expected to match nothing must not match.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let corpus = corpus(&connection).await;
@@ -288,9 +245,6 @@ async fn every_query_asks_something_the_corpus_answers_both_ways() {
 
 #[tokio::test]
 async fn the_matcher_reads_the_row_the_index_holds() {
-    // What the matcher builds for a message is what the executor's triggers
-    // wrote for it, column for column -- so a disagreement above is about
-    // meaning, never about which text either side was looking at.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let corpus = corpus(&connection).await;
@@ -298,7 +252,6 @@ async fn the_matcher_reads_the_row_the_index_holds() {
     for (name, message) in &corpus.messages {
         let stored = postio_storage::sql::one(
             &connection,
-            // Keyed by the message's content (ADR 0046), not the occurrence.
             "SELECT sender, recipients, subject, filenames, list_id
                FROM search_documents
               WHERE content_id = (SELECT content_id FROM messages WHERE id = ?1)",
@@ -322,10 +275,8 @@ async fn the_matcher_reads_the_row_the_index_holds() {
 
 #[test]
 fn the_matcher_refuses_label_and_has_action() {
-    // D12: labels and open markers are written after a message is filed,
-    // which is when the matcher runs, so it must refuse them -- never answer
-    // from a state that does not exist yet. Pinned here so a later change
-    // to the matcher's table cannot start answering them at filing time.
+    // Labels and open markers are written after a message is filed, when the matcher runs, so it
+    // must refuse them rather than answer from a state that does not exist yet (D12).
     use postio_search::matcher::Unsupported;
     for (text, token) in [
         ("label:atlas", "label:atlas"),

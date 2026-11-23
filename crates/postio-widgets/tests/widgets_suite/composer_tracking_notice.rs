@@ -1,12 +1,3 @@
-//! Issue #116: a reply that quotes an HTML-only message says so when the
-//! quoted text links to a domain other than the sender's own — on a real
-//! display, since this is the composer's own widget being shown and hidden,
-//! not just the pure domain-comparison logic `src/composer.rs` already
-//! unit-tests with no display.
-//!
-//! Its own file: GTK is single-threaded and initialised once, so one
-//! `#[test]` per integration binary. See `gtk_composer.rs`.
-
 use crate::support_compose::Window;
 use crate::support_compose::composer;
 use crate::support_compose::settle;
@@ -54,7 +45,6 @@ fn html_only_message(from_domain: &str, link_host: &str) -> Message {
     message
 }
 
-/// Depth-first search of a widget tree for the first one carrying `class`.
 fn find(widget: &gtk::Widget, class: &str) -> Option<gtk::Widget> {
     if widget.has_css_class(class) {
         return Some(widget.clone());
@@ -80,10 +70,6 @@ fn notice(composer: &postio_widgets::composer::Composer) -> gtk::Label {
 }
 
 pub fn replying_to_a_tracking_link_shows_the_notice_and_a_same_domain_link_does_not() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let display = gdk::Display::default().unwrap();
     fonts::install().expect("the embedded fonts should install");
     style::install(&display);
@@ -100,7 +86,6 @@ pub fn replying_to_a_tracking_link_shows_the_notice_and_a_same_domain_link_does_
         "nothing has been replied to yet, so there is nothing to say"
     );
 
-    // ── a foreign tracking link is flagged ─────────────────────────────────
     composer.connect_reply_source({
         let source = html_only_message("shop.example.org", "click.tracker.example.org");
         move |answer| answer(Some((source.clone(), an_account())))
@@ -120,7 +105,6 @@ pub fn replying_to_a_tracking_link_shows_the_notice_and_a_same_domain_link_does_
         "discarding the reply must not leave a stale notice for the next composition"
     );
 
-    // ── a link to the sender's own domain is not flagged ───────────────────
     composer.connect_reply_source({
         let source = html_only_message("shop.example.org", "shop.example.org");
         move |answer| answer(Some((source.clone(), an_account())))

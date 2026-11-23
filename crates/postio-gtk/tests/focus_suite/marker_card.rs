@@ -1,17 +1,9 @@
-//! The marker card and its sentence (US2 scenario 6, T073): a message with
-//! a marker opens with the card under its headers -- the kind, the quote,
-//! the action and its key -- and the quoted sentence is highlighted in the
-//! body where it appears (research R2).
-
 use crate::support::{self, Fixture};
 
 const SENTENCE: &str = "Please leave comments by Wednesday";
 
 pub fn a_marked_message_opens_with_its_card_and_its_sentence_highlighted() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let (message, _) = fixture
             .file(
@@ -31,10 +23,7 @@ pub fn a_marked_message_opens_with_its_card_and_its_sentence_highlighted() {
             .await;
         fixture.ask(message, SENTENCE).await;
         let (window, _client) = fixture.open().await;
-        assert!(
-            crate::settle_until(async || support::subjects(&window).len() == 1).await,
-            "the inbox never reached the screen"
-        );
+        support::rows_shown(&window, 1).await;
         support::keys(&window, &["j"]);
         support::press(&window, "Return", gtk::gdk::ModifierType::empty());
         let reading = window.reading().expect("open");
@@ -67,14 +56,8 @@ pub fn a_marked_message_opens_with_its_card_and_its_sentence_highlighted() {
     });
 }
 
-/// T118's surface: the card offers "Dismiss" with `-`'s key, and pressing
-/// it takes the marker off -- the card goes, and the list's row with it
-/// draws one line again.
 pub fn the_card_dismisses_its_marker() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let (message, _) = fixture
             .file(
@@ -89,10 +72,7 @@ pub fn the_card_dismisses_its_marker() {
             .await;
         fixture.ask(message, SENTENCE).await;
         let (window, _client) = fixture.open().await;
-        assert!(
-            crate::settle_until(async || support::subjects(&window).len() == 1).await,
-            "the inbox never reached the screen"
-        );
+        support::rows_shown(&window, 1).await;
         support::keys(&window, &["j"]);
         support::press(&window, "Return", gtk::gdk::ModifierType::empty());
         let reading = window.reading().expect("open");
@@ -121,15 +101,10 @@ pub fn the_card_dismisses_its_marker() {
     });
 }
 
-/// The highlight sits on the sentence's own words: the first and last
-/// characters it covers are the sentence's, in a body that is one short
-/// paragraph (the Atlas question, which the reviewer saw start on the
-/// period before it and stop short of its "?").
+/// The first and last characters covered are the sentence's own, not the preceding period or short
+/// of its "?".
 pub fn the_highlight_starts_and_ends_on_the_sentences_own_words() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         const ASK: &str = "Can you approve these by Friday so finance can close the quarter?";
         let fixture = Fixture::empty().await;
         let (message, _) = fixture
@@ -148,10 +123,7 @@ pub fn the_highlight_starts_and_ends_on_the_sentences_own_words() {
             .await;
         fixture.ask(message, ASK).await;
         let (window, _client) = fixture.open().await;
-        assert!(
-            crate::settle_until(async || support::subjects(&window).len() == 1).await,
-            "the inbox never reached the screen"
-        );
+        support::rows_shown(&window, 1).await;
         support::keys(&window, &["j"]);
         support::press(&window, "Return", gtk::gdk::ModifierType::empty());
         let reading = window.reading().expect("open");

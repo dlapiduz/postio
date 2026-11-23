@@ -1,10 +1,5 @@
-//! The Edit and New contact form's content (specs/011-focus-contacts S8,
-//! handoff screen 06): what the form holds, what makes it saveable, and what
-//! saving it means.
-//!
-//! The form is plain data so every frontend draws the same one and the engine
-//! saves it as one command: a person is made or changed all at once, and the
-//! undo is the form as it was.
+//! The Edit and New contact form as plain data, so every frontend draws the same one and the engine
+//! saves it as one command.
 
 use serde::{Deserialize, Serialize};
 
@@ -12,22 +7,16 @@ use crate::EmailAddress;
 use crate::contact::{ContactAddress, ContactCardRead, ContactKind, ShowAs};
 use crate::ids::AddressId;
 
-/// What the user calls one of a person's addresses (the type menu).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AddressLabel {
-    /// Their work address.
     Work,
-    /// Their own.
     Personal,
-    /// One they no longer use.
     Old,
 }
 
 impl AddressLabel {
-    /// Every label, in the type menu's order.
     pub const ALL: [Self; 3] = [Self::Work, Self::Personal, Self::Old];
 
-    /// The stored identifier.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Work => "work",
@@ -36,12 +25,10 @@ impl AddressLabel {
         }
     }
 
-    /// The inverse of [`AddressLabel::as_str`].
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|label| label.as_str() == name)
     }
 
-    /// The word the menu shows.
     pub fn title(self) -> &'static str {
         match self {
             Self::Work => "Work",
@@ -51,36 +38,25 @@ impl AddressLabel {
     }
 }
 
-/// What the store knows about one of a person's addresses that the person's
-/// own record does not carry: the label the user gave it, and whether a
-/// delivery failure named it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AddressNote {
-    /// Which address.
     pub address: AddressId,
-    /// What the user calls it.
     pub label: Option<AddressLabel>,
-    /// Whether a bounce named it.
     pub bounced: bool,
-    /// When the bounce was.
     pub bounced_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-/// One address row of the form.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FormAddress {
     /// The stored address this row is, `None` for one just typed.
     pub id: Option<AddressId>,
-    /// What is typed.
     pub address: String,
-    /// The type menu's choice.
     pub label: Option<AddressLabel>,
     /// Whether a bounce named it: drawn "Old · bounced", never edited.
     pub bounced: bool,
 }
 
 impl FormAddress {
-    /// An empty row, as "+ Add address" adds.
     pub fn blank() -> Self {
         Self {
             id: None,
@@ -90,7 +66,6 @@ impl FormAddress {
         }
     }
 
-    /// What the type menu says for this row: `Other` until one is chosen.
     pub fn label_text(&self) -> String {
         match (self.label, self.bounced) {
             (_, true) => "Old \u{b7} bounced".to_owned(),
@@ -104,26 +79,20 @@ impl FormAddress {
     }
 }
 
-/// What a person's signature says about them, read on this machine from the
-/// newest mail they sent (specs/011-focus-contacts S9).
+/// Read on this machine from the newest mail the person sent.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SignatureDetails {
-    /// The name the signature is signed with, when it gives a full one.
     pub name: Option<String>,
-    /// "Partnerships".
     pub title: Option<String>,
-    /// "Harbor Data Co.".
     pub company: Option<String>,
-    /// "+1 555 0142", as written.
     pub phones: Vec<String>,
-    /// "harbordata.example", as written, without a scheme.
+    /// As written, without a scheme.
     pub websites: Vec<String>,
 }
 
 impl SignatureDetails {
-    /// What two signatures share when they are the same person's: name,
-    /// title and company, folded. `None` unless all three are there, since
-    /// any two of them match colleagues and namesakes.
+    /// Name, title and company, folded; `None` unless all three are there, since any two match
+    /// colleagues and namesakes.
     pub fn key(&self) -> Option<String> {
         let fold = |text: &Option<String>| {
             text.as_deref()
@@ -143,7 +112,6 @@ impl SignatureDetails {
         ))
     }
 
-    /// Whether the signature said nothing worth showing.
     pub fn is_empty(&self) -> bool {
         self.title.is_none()
             && self.company.is_none()
@@ -152,24 +120,15 @@ impl SignatureDetails {
     }
 }
 
-/// What the body stage can note about a sender for the review to find look-alikes
-/// by.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum EvidenceKind {
-    /// The signature's name, title and company, folded
-    /// ([`SignatureDetails::key`]).
     Signature,
-    /// A phone number.
     Phone,
-    /// The address a `Resent-From` header named.
     Resent,
-    /// A contact card an import read that listed more than one person's
-    /// addresses: the card's identity.
     Card,
 }
 
 impl EvidenceKind {
-    /// The stored word.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Signature => "signature",
@@ -180,43 +139,31 @@ impl EvidenceKind {
     }
 }
 
-/// What two records share that was noted from mail, besides what the threads
-/// say.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PairEvidence {
-    /// The same signature on both, as [`SignatureDetails::key`] folds it.
     pub signature: Option<String>,
     /// A phone number both give.
     pub phone: Option<String>,
     /// A `Resent-From` naming one record's address on the other's mail:
     /// the address it forwards from, and the address that forwards.
     pub resent: Option<(String, String)>,
-    /// One imported contact card that lists both.
     pub card: Option<String>,
 }
 
-/// A phone number or website kept for a person, or refused.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KeptDetail {
-    /// `phone` or `url`.
     pub kind: DetailKind,
-    /// As written.
     pub value: String,
-    /// Whether the user added it or ignored it.
     pub added: bool,
 }
 
-/// What a [`KeptDetail`] is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum DetailKind {
-    /// A phone number.
     Phone,
-    /// A website.
     Url,
 }
 
 impl DetailKind {
-    /// The stored word.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Phone => "phone",
@@ -224,7 +171,6 @@ impl DetailKind {
         }
     }
 
-    /// The inverse of [`DetailKind::as_str`].
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
             "phone" => Some(Self::Phone),
@@ -234,58 +180,37 @@ impl DetailKind {
     }
 }
 
-/// One thing the mail says about a person that the Edit form can keep.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SeenItem {
-    /// A phone or a website.
     pub kind: DetailKind,
-    /// As written.
     pub value: String,
-    /// Whether it is kept already, rather than offered.
     pub kept: bool,
 }
 
-/// How a first message from someone reached the user, for the new-sender
-/// popover: what a person would want to know before saving them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Introduction {
-    /// What their signature says, read on this machine; empty when it said
-    /// nothing.
     pub details: SignatureDetails,
-    /// When their newest message arrived.
     pub last_at: Option<chrono::DateTime<chrono::Utc>>,
-    /// Who else was on that message and is someone the user knows.
     pub with: Vec<String>,
 }
 
-/// What saving a sender from the popover changed, so undo can put it back.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SenderPrior {
-    /// When they were saved before, if they were.
     pub saved_at: Option<chrono::DateTime<chrono::Utc>>,
-    /// Their title before.
     pub title: Option<String>,
-    /// Their organisation before.
     pub organization: Option<String>,
-    /// The details the save added, which undo removes.
     pub added: Vec<(DetailKind, String)>,
 }
 
-/// Why a form cannot be saved yet, in words for the person.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FormProblem {
-    /// No address is filled in.
     NoAddress,
-    /// An address does not look like one.
     NotAnAddress(String),
-    /// The same address twice.
     Twice(String),
-    /// No name, and no company to stand for one.
     NoName,
 }
 
 impl FormProblem {
-    /// What the form says beside the Save button.
     pub fn text(&self) -> String {
         match self {
             Self::NoAddress => "Add at least one address.".to_owned(),
@@ -298,31 +223,21 @@ impl FormProblem {
     }
 }
 
-/// The whole Edit form.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContactForm {
-    /// Person, company, list, newsletter or automated.
     pub kind: ContactKind,
-    /// First name.
     pub given: String,
-    /// Last name.
     pub family: String,
-    /// How the inbox names them.
     pub show_as: ShowAs,
-    /// Job title.
     pub title: String,
-    /// Company.
     pub company: String,
-    /// Addresses, in the order drawn.
     pub addresses: Vec<FormAddress>,
     /// Which address replies and new mail go to: an index into `addresses`.
     pub primary: usize,
-    /// The groups they are in, by name.
     pub groups: Vec<String>,
 }
 
 impl ContactForm {
-    /// The New contact form: nothing typed, one empty address row.
     pub fn blank() -> Self {
         Self {
             kind: ContactKind::Person,
@@ -337,8 +252,6 @@ impl ContactForm {
         }
     }
 
-    /// The Edit form for `card`'s person, `notes` saying what each address
-    /// is called.
     pub fn of(card: &ContactCardRead, notes: &[AddressNote]) -> Self {
         let person = &card.person;
         let (given, family) = match (&person.given_name, &person.family_name) {
@@ -384,7 +297,6 @@ impl ContactForm {
         }
     }
 
-    /// The name the form makes: first and last, as typed.
     pub fn full_name(&self) -> String {
         let parts = [self.given.trim(), self.family.trim()];
         parts
@@ -395,8 +307,6 @@ impl ContactForm {
             .join(" ")
     }
 
-    /// What the inbox will call them, in the chosen style: what the Show as
-    /// segments preview.
     pub fn shown_as(&self, style: ShowAs) -> String {
         let (given, family) = (self.given.trim(), self.family.trim());
         match style {
@@ -409,7 +319,6 @@ impl ContactForm {
         }
     }
 
-    /// Why this cannot be saved, or `None` when it can.
     pub fn problem(&self) -> Option<FormProblem> {
         let filled: Vec<&FormAddress> = self
             .addresses
@@ -468,8 +377,6 @@ impl ContactForm {
     }
 }
 
-/// "Ada Moreno" as first and last: everything after the first space is the
-/// last name. One word is a first name.
 pub fn split_name(name: &str) -> (String, String) {
     let name = name.trim();
     match name.split_once(char::is_whitespace) {

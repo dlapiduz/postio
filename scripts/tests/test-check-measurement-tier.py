@@ -78,25 +78,21 @@ def main() -> int:
     case("a tier that agrees with itself", config=config_with(FILTER),
          files=good, expect_fail=False)
 
-    # The filter silences a file that never says it is silenced.
     quiet = dict(good)
     quiet["crates/p/tests/slow_thing.rs"] = "//! A thing with no marker.\n"
     case("excluded but unmarked", config=config_with(FILTER), files=quiet,
          expect_fail=True, mentions="does not say so")
 
-    # The file claims the tier; the filter has never heard of it.
     orphan = dict(good)
     orphan["crates/p/tests/suite/ordinary.rs"] = marked()
     case("marked but still on the merge path", config=config_with(FILTER),
          files=orphan, expect_fail=True, mentions="still runs on every pull request")
 
-    # A term naming nothing -- a rename that only got as far as the source.
     case("the filter names a file that is gone",
          config=config_with("not (binary(departed) + binary(slow_thing) "
                             "+ (package(p) & test(/^measured::/)))"),
          files=good, expect_fail=True, mentions="names no file")
 
-    # The conflation coming back, in a file that is not marked at all.
     relapse = dict(good)
     relapse["crates/p/tests/suite/ordinary.rs"] = (
         '//! Ordinary.\n#[ignore = "a bench, not a gate"]\nfn x() {}\n'
@@ -104,9 +100,6 @@ def main() -> int:
     case("an #[ignore] that means slow", config=config_with(FILTER), files=relapse,
          expect_fail=True, mentions="scheduling reason wearing")
 
-    # ...and the legitimate neighbour it must not flag: one file holding a
-    # measurement and a test ignored for a capability, which is what
-    # `smtp_wait_cpu.rs` really is.
     neighbour = dict(good)
     neighbour["crates/p/tests/slow_thing.rs"] = marked(
         '#[ignore = "needs a system D-Bus and a live NetworkManager"]\nfn y() {}\n'
@@ -114,9 +107,6 @@ def main() -> int:
     case("a measurement beside a capability-ignored test",
          config=config_with(FILTER), files=neighbour, expect_fail=False)
 
-    # A module name two suites share, held out of one crate only: the
-    # `package(p) &` scope decides which file must say so, and the other
-    # crate's module keeps running on every pull request, unmarked.
     shared = dict(good)
     shared["crates/q/tests/other_suite/measured.rs"] = "//! The other crate's, still on every pull request.\n"
     case("a scoped term reaches only its crate", config=config_with(FILTER),
@@ -125,8 +115,6 @@ def main() -> int:
          config=config_with("not (binary(slow_thing) + test(/^measured::/))"),
          files=shared, expect_fail=True, mentions="crates/q/tests/other_suite/measured.rs")
 
-    # One case held out of a fast file: the marker sits on that case, and a
-    # bare `fn` of the same name with nothing above it is the drift.
     percase = dict(good)
     percase["crates/p/tests/suite/mixed.rs"] = (
         "//! Fast cases, and one that waits.\n\n"
@@ -140,8 +128,7 @@ def main() -> int:
     case("a case held out by name without its marker fails", config=scoped_case,
          files=unmarked, expect_fail=True, mentions="mixed.rs:4 does not say so")
 
-    # `profile.ci-full` holds the storyboard passes out because
-    # `profile.ci-storyboards` runs them. The two spellings must agree, or a
+    # `profile.ci-full` and `profile.ci-storyboards` must spell the storyboard passes alike, or a
     # test is held out of one and selected by neither.
     passes = "binary(focus_suite) & test(/^every_command::/)"
     split = (
@@ -160,7 +147,6 @@ def main() -> int:
     case("ci-full holds out what ci-storyboards does not run", config=drifted,
          files=good, expect_fail=True, mentions="ci-storyboards")
 
-    # No filter at all is a tier that has been deleted, not an empty one.
     case("no default-filter", config="[profile.default]\nretries = 0\n",
          files=good, expect_fail=True)
 

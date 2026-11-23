@@ -1,32 +1,7 @@
-//! The account form, joined to the store's host: the presenter both desktop
-//! apps drive their account dialogs with (ADR 0043; specs/007-postio-focus
-//! T165).
-//!
-//! [`crate::onboarding::Onboarding`] draws canvas 3e and knows nothing about
-//! mail. This is the other half. The probe, the connection test, the
-//! browser sign-in and the two writes are the host's (ADR 0041): this asks
-//! for each through `postio-client` and shows the answer, so the form
-//! behaves the same over any host.
-//!
-//! # What it does not do
-//!
-//! Start the new account's sync. It asks the host to save and wait
-//! ([`AfterSave::Wait`]): a first run asks how far back to go
-//! ([`Presenter::ask_sync_window`], which both apps' first runs use) and
-//! starts the sync once that is chosen, the add-account dialog brings the
-//! account into a window that is already running, and a credential update is
-//! over an account whose sync is running already. Each is its app's to do,
-//! from [`Presenter::connect_saved`].
-//!
-//! Nor does it open the browser on its own. A browser sign-in's consent link
-//! comes back from the host unopened, and the app hands the presenter how it
-//! opens one; the presenter opens it once, because the person pressed "Sign
-//! in with your browser".
-//!
-//! # Nothing here blocks the main loop
-//!
-//! Every client call is a oneshot receive: the host answers on its own
-//! runtime, and the form says what it is waiting for meanwhile.
+//! The account form joined to the store's host through `postio-client` (ADR 0043). It asks the host
+//! to save and wait (`AfterSave::Wait`) and never starts the new account's sync, which is the app's
+//! to do from [`Presenter::connect_saved`]. A consent link comes back unopened and is opened once,
+//! because the person pressed "Sign in with your browser".
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -38,20 +13,12 @@ use postio_client::protocol::{AfterSave, Stop};
 
 use crate::onboarding::{BrowserSignIn, Onboarding, Status, Submission};
 
-/// The stop for the probe in flight, if there is one.
-///
-/// A probe opens connections to servers the person has not named yet, so the
-/// one before is stopped when another starts, when Connect is pressed, and
-/// when the form is left (#57, ADR 0012 Q3). The form already refuses to
-/// start a probe while one is busy, but that answers what the form says,
-/// not whether a socket is open: two reasons to be right is the right
-/// number for a failure nobody would see.
+/// A probe opens connections to servers the person has not named yet, so the one before is stopped
+/// when another starts, when Connect is pressed, and when the form is left (#57, ADR 0012 Q3).
 #[derive(Clone, Default)]
 pub struct ProbeCancellation(Rc<RefCell<Option<Stop>>>);
 
 impl ProbeCancellation {
-    /// Stops whatever probe is in flight and hands back a stop for the new
-    /// one.
     pub fn restart(&self) -> Stop {
         self.stop();
         let stop = Stop::new();
@@ -59,7 +26,6 @@ impl ProbeCancellation {
         stop
     }
 
-    /// Stops whatever probe is in flight, if any. Idempotent.
     pub fn stop(&self) {
         if let Some(stop) = self.0.borrow_mut().take() {
             stop.stop();
@@ -67,17 +33,11 @@ impl ProbeCancellation {
     }
 }
 
-/// How an app opens a browser sign-in's consent link.
 type OpenLink = Box<dyn Fn(&str)>;
 
-/// What runs once an account is saved.
 type Saved = Box<dyn Fn(&Submission)>;
 
-/// An account form, driven through a client.
-///
-/// Cheap to clone. The form holds the presenter through the handlers it is
-/// given, and the presenter holds the form weakly, so closing the form
-/// frees both.
+/// Cheap to clone. The presenter holds the form weakly, so closing the form frees both.
 #[derive(Clone)]
 pub struct Presenter {
     inner: Rc<Inner>,
@@ -87,19 +47,14 @@ struct Inner {
     screen: glib::WeakRef<Onboarding>,
     client: Client,
     probe: ProbeCancellation,
-    /// The address of the browser sign-in under way, if one is.
     signing_in: RefCell<Option<String>>,
-    /// Whether the person cancelled the sign-in under way: its ending is
-    /// then theirs, not a failure.
+    /// A cancelled sign-in's ending is the person's, not a failure.
     cancelled: Cell<bool>,
     open_link: OpenLink,
     saved: RefCell<Vec<Saved>>,
 }
 
 impl Presenter {
-    /// Drive `screen` through `client`: its probe, its Connect, its
-    /// browser sign-in and its Cancel. `open_link` opens a consent link for
-    /// the person who asked for the sign-in.
     pub fn drive(screen: &Onboarding, client: &Client, open_link: impl Fn(&str) + 'static) -> Self {
         let presenter = Presenter {
             inner: Rc::new(Inner {
@@ -127,22 +82,14 @@ impl Presenter {
         presenter
     }
 
-    /// Run `handler` once an account is written: its credential and its
-    /// row, both. Never on a refused proof or a failed write.
+    /// Never on a refused proof or a failed write.
     pub fn connect_saved(&self, handler: impl Fn(&Submission) + 'static) {
         self.inner.saved.borrow_mut().push(Box::new(handler));
     }
 
-    /// Once an account is written, ask how much history to sync before
-    /// anything else happens (#876): the form moves to its last step, and
-    /// `chosen` runs when `Start sync` is pressed, after the choice has
-    /// been written to `[sync].initial_sync_messages` in `config.toml`.
-    ///
-    /// A failed write is logged and `chosen` still runs: the default is what
-    /// a fresh install already has, so it costs the size picked, not the
-    /// account. Replaces what [`Presenter::connect_saved`] handlers would
-    /// otherwise see first, so an app that asks registers this instead of
-    /// acting on the save.
+    /// A failed write is logged and `chosen` still runs: the default is what a fresh install has.
+    /// Replaces what
+    /// [`Presenter::connect_saved`] handlers would otherwise see first.
     pub fn ask_sync_window(&self, chosen: impl Fn(&Submission) + 'static) {
         let Some(screen) = self.screen() else {
             return;
@@ -170,7 +117,6 @@ impl Presenter {
         });
     }
 
-    /// The form was left: stop the probe it started.
     pub fn stop(&self) {
         self.inner.probe.stop();
     }
@@ -179,7 +125,6 @@ impl Presenter {
         self.inner.screen.upgrade()
     }
 
-    /// Look up `address`'s servers and show what was found.
     fn probe(&self, address: &str) {
         let Some(screen) = self.screen() else {
             return;
@@ -193,8 +138,8 @@ impl Presenter {
             // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
             // probes on its own runtime.
             let found = client.discover_until(address, stop.clone()).await;
-            // A probe the person moved on from answers nobody: its status
-            // would land over whatever the form says now.
+            // A probe the person moved on from answers nobody: its status would land over whatever
+            // the form says now.
             if stop.is_stopped() {
                 return;
             }
@@ -204,10 +149,7 @@ impl Presenter {
         });
     }
 
-    /// Connect: prove the credential and save the account, or begin the
-    /// browser sign-in.
     fn submit(&self, submission: &Submission) {
-        // Pressing Connect settles the question the probe was asking.
         self.inner.probe.stop();
         if submission.oauth_client.is_some() {
             self.sign_in(submission.clone());
@@ -216,9 +158,7 @@ impl Presenter {
         }
     }
 
-    /// The password path: the host proves the credential, then writes it
-    /// and the row, in `postio_session::onboarding::persist`'s order. A
-    /// refused proof writes nothing.
+    /// A refused proof writes nothing.
     fn add(&self, submission: Submission) {
         let Some(screen) = self.screen() else {
             return;
@@ -238,9 +178,6 @@ impl Presenter {
         });
     }
 
-    /// The browser sign-in (#534, ADR 0006 Q3): the host binds its loopback
-    /// listener and answers with the consent link, which is opened here once;
-    /// then it waits for the redirect, proves the token and saves.
     fn sign_in(&self, submission: Submission) {
         let Some(screen) = self.screen() else {
             return;
@@ -249,8 +186,6 @@ impl Presenter {
         self.inner
             .signing_in
             .replace(Some(submission.address.clone()));
-        // Who is being signed in to is known now; what the browser is sent
-        // to approve arrives with the link.
         screen.set_browser_sign_in(BrowserSignIn {
             provider: submission.settings.source.clone(),
             ..BrowserSignIn::default()
@@ -279,7 +214,6 @@ impl Presenter {
             };
             presenter.inner.signing_in.take();
             if ended.is_err() && presenter.inner.cancelled.get() {
-                // The person's own Esc: back to where they were, quietly.
                 if let Some(screen) = presenter.screen() {
                     screen.set_status(Status::Found(submission.settings.clone()));
                 }
@@ -292,7 +226,6 @@ impl Presenter {
         });
     }
 
-    /// Cancel, or `Esc`, while the browser is out.
     fn cancel_sign_in(&self) {
         let Some(address) = self.inner.signing_in.borrow().clone() else {
             return;
@@ -307,7 +240,6 @@ impl Presenter {
         });
     }
 
-    /// Show how a save ended, and tell whoever waits on a saved account.
     fn settle(&self, submission: &Submission, saved: Result<(), String>) {
         let Some(screen) = self.screen() else {
             return;
@@ -324,9 +256,6 @@ impl Presenter {
     }
 }
 
-/// Opens a consent link in the desktop's browser, over `parent`.
-///
-/// What an app hands [`Presenter::drive`] when it has no opener of its own.
 pub fn open_in_browser(parent: &impl IsA<gtk::Widget>) -> impl Fn(&str) + 'static {
     let parent = parent.as_ref().downgrade();
     move |url| {
@@ -347,15 +276,9 @@ pub fn open_in_browser(parent: &impl IsA<gtk::Widget>) -> impl Fn(&str) + 'stati
     }
 }
 
-/// A form in a dialog over `parent`, closed by every way out: `Esc`, the
-/// close button, and its parent going away. Closing it stops the probe it
-/// started.
-///
-/// The sheet is as tall as the form it holds, so its header is at the top of
-/// the dialog and nothing floats in blank space above and below. The form
-/// does change height as it is filled in -- the provider's card arrives, the
-/// server fields open, a refusal appears -- and the dialog follows it; the
-/// form's body scrolls, never its header, when the window is too short for it.
+/// Closed by every way out: `Esc`, the close button and its parent going away; closing stops the
+/// probe it started. The sheet is as tall as its form, and the form's body scrolls, never its
+/// header.
 fn dialog(screen: &Onboarding, title: &str, presenter: &Presenter) -> adw::Dialog {
     let dialog = adw::Dialog::builder()
         .title(title)
@@ -367,8 +290,6 @@ fn dialog(screen: &Onboarding, title: &str, presenter: &Presenter) -> adw::Dialo
         let presenter = presenter.clone();
         move |_| presenter.stop()
     });
-    // The keyboard goes to the field still to fill once the form is on
-    // screen, after the dialog has given it to its first focusable widget.
     screen.connect_map(|screen| {
         let screen = screen.downgrade();
         glib::idle_add_local_once(move || {
@@ -380,12 +301,6 @@ fn dialog(screen: &Onboarding, title: &str, presenter: &Presenter) -> adw::Dialo
     dialog
 }
 
-/// The add-account dialog over `parent` (#64, ADR 0012 Q1): a blank form,
-/// floating over the window rather than replacing it.
-///
-/// Once the account is written the dialog closes itself and `on_saved`
-/// hears the form's submission: bringing the account into the window is the
-/// app's.
 pub fn add_account(
     parent: &impl IsA<gtk::Widget>,
     client: &Client,
@@ -393,7 +308,6 @@ pub fn add_account(
     on_saved: impl Fn(&Submission) + 'static,
 ) -> adw::Dialog {
     let screen = Onboarding::new();
-    // A fresh form starts at its first field, which is the name.
     screen.focus_name();
     let presenter = Presenter::drive(&screen, client, open_link);
     let dialog = dialog(&screen, "Add account", &presenter);
@@ -410,10 +324,8 @@ pub fn add_account(
     dialog
 }
 
-/// [`add_account`] for a first run: after the account is written the
-/// dialog asks how much history to sync, and `on_saved` runs once that is
-/// chosen -- or when the dialog is closed at that step, since the account
-/// is already saved by then and must still come up.
+/// The dialog closes at the history step too, since the account is already saved by then and must
+/// still come up.
 pub fn add_account_asking_history(
     parent: &impl IsA<gtk::Widget>,
     client: &Client,
@@ -453,13 +365,7 @@ pub fn add_account_asking_history(
     dialog
 }
 
-/// The credential dialog over `parent` (#464; spec 007 US6 scenario 3): the
-/// form for the first account `which` picks, arriving filled in from its row
-/// with the cursor in the password.
-///
-/// `None` when no account is picked, or the accounts could not be read.
-/// Once the new credential is written the dialog closes itself and
-/// `on_saved` runs.
+/// `None` when no account is picked or the accounts could not be read.
 pub async fn update_credential(
     parent: &impl IsA<gtk::Widget>,
     client: &Client,
@@ -497,8 +403,6 @@ pub async fn update_credential(
 mod tests {
     use super::*;
 
-    // -- Cancelling the probe that is in flight (#57) ---------------------
-
     #[test]
     fn a_probe_gets_a_live_stop() {
         let cancellation = ProbeCancellation::default();
@@ -535,8 +439,6 @@ mod tests {
 
     #[test]
     fn stopping_twice_is_harmless() {
-        // Connect can be pressed without a probe ever having run: typed
-        // address, straight to the password field.
         let cancellation = ProbeCancellation::default();
         cancellation.stop();
         cancellation.stop();

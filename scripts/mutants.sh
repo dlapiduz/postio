@@ -1,26 +1,8 @@
 #!/usr/bin/env bash
-# Mutation-test the pure/logic crates: postio-model, postio-search,
-# postio-config, and postio-sync (the reconciliation logic lives there).
-# Not the GTK crates -- mutating widget code produces mostly timeouts and noise
-# on tests that need a compositor.
-#
-# CLAUDE.md already asks every session to do this by hand: "verify your
-# tests can fail" by injecting the regression a test exists to catch and
-# confirming it goes red. Mutation testing is that instruction, mechanised
-# and run against everything at once instead of one test at a time.
-#
-# It is slow by construction -- a full rebuild and test run per mutant --
-# so this never gates a PR. It runs nightly (scripts/mutants.sh is what
-# .github/workflows/mutants.yml calls) and its job is to report surviving
-# mutants past the committed baseline in docs/mutants-baseline.txt, not to
-# fail a build on every one it finds. See #99.
-#
-# On ~1900 mutants across these four crates, a full run is measured in
-# hours, not minutes, and briefly drove this shared workstation's load
-# average past 14 -- so run it on a runner of its own (the nightly job),
-# never on a machine other sessions share. The same POSTIO_UPDATE_DOCS=1
-# idiom keybindings_doc.rs and config_doc.rs use reseeds the baseline once
-# a run finishes:
+# Mutation-test the pure/logic crates: postio-model, postio-search, postio-config and postio-sync.
+# Not the GTK crates: mutating widget code gives timeouts and noise. Slow by construction (a full
+# rebuild and test per mutant, ~1900 mutants, hours), so it never gates a PR and belongs on a runner
+# of its own, never a shared workstation. It reports survivors past docs/mutants-baseline.txt (#99).
 #
 #   scripts/mutants.sh                          # every crate above
 #   scripts/mutants.sh postio-config            # just one
@@ -32,9 +14,7 @@ cd "$REPO"
 
 BASELINE="$REPO/docs/mutants-baseline.txt"
 
-# Checked first, same reason as scripts/coverage.sh and scripts/fuzz.sh: an
-# absent subcommand should not be discovered several minutes into a full
-# instrumented rebuild.
+# Checked first: an absent subcommand should not be discovered minutes into an instrumented rebuild.
 if ! command -v cargo-mutants >/dev/null 2>&1; then
     echo "cargo-mutants is not installed, so mutation testing cannot run." >&2
     echo >&2
@@ -56,22 +36,11 @@ done
 OUTPUT_DIR=$(mktemp -d)
 trap 'rm -rf "$OUTPUT_DIR"' EXIT
 
-# --no-shuffle: a stable order makes two runs of the same tree comparable,
-# which matters once this is diffed against a baseline rather than just read.
-#
-# --jobs 1: cargo-mutants gives each parallel job its own scratch copy of
-# the tree and a fresh target/ inside it, and with no cap it defaults to one
-# job per core. `--jobs 2` was the first fix, after the disk quota #510 hit
-# running unbounded parallelism -- but two later dispatches at `--jobs 2`
-# both died with "hosted runner lost communication with the server" at
-# roughly the same elapsed mark (~1h44m, ~1h56m), close enough together to
-# read as this job's own resource pressure rather than a random flake. One
-# job at a time trades wall time for peak memory and disk: still a fast
-# incremental rebuild of one crate per mutant after the first, and now
-# nothing else on the runner is building its own scratch copy at the same
-# moment. If a run at `--jobs 1` still dies the same way, the next thing to
-# try is splitting `mutants.yml` into one job per crate, so a lost runner
-# costs one crate's progress rather than all four's.
+# --no-shuffle: a stable order makes two runs comparable against the baseline.
+# --jobs 1: cargo-mutants gives each parallel job its own tree copy and fresh target/, and `--jobs
+# 2` still lost the hosted runner at ~1h50m (#510);
+# one job trades wall time for peak memory and disk. If it still dies, split `mutants.yml` per
+# crate.
 env -u RUSTUP_TOOLCHAIN cargo mutants "${PACKAGE_ARGS[@]}" --no-shuffle --jobs 1 \
     --output "$OUTPUT_DIR" || true
 
@@ -83,19 +52,10 @@ if [ ! -f "$SURVIVED" ]; then
 fi
 
 if [ -n "${MUTANTS_UPDATE_BASELINE:-}" ]; then
-    # Rewrite only the crates this run actually covered, and keep the rest.
-    #
-    # The baseline is one file for every crate, and `mutants.yml` runs one
-    # job per crate (#1458) -- so a whole-file rewrite means the last shard
-    # to finish wins and the baseline ends up describing one crate. Keeping
-    # the lines this run had nothing to say about is what makes the four
-    # jobs' updates compose instead of race.
-    #
-    # A line is a crate's when it begins `crates/<name>/`, which is the
-    # shape cargo-mutants emits. A line that matches no crate under test is
-    # kept: it is either another crate's or something this script does not
-    # recognise, and dropping what you cannot classify is how a baseline
-    # quietly becomes a record of the last run rather than of the triage.
+    # Rewrite only the crates this run covered and keep the rest: the baseline is one file and
+    # `mutants.yml` runs a job per crate (#1458), so a whole-file rewrite lets the last shard win.
+    # A line is a crate's when it begins `crates/<name>/`; an unclassifiable line is kept, since
+    # dropping it turns the baseline into a record of the last run.
     KEPT=$(mktemp)
     trap 'rm -rf "$OUTPUT_DIR" "$KEPT"' EXIT
     if [ -f "$BASELINE" ]; then
@@ -129,9 +89,6 @@ if [ ! -f "$BASELINE" ]; then
     exit 1
 fi
 
-# A line survives the diff against the baseline the same way any other
-# generated-reference check in this repository does: sorted, compared
-# exactly, new lines are what is new.
 NEW_SURVIVORS=$(comm -13 <(sort "$BASELINE") <(sort "$SURVIVED"))
 
 if [ -n "$NEW_SURVIVORS" ]; then

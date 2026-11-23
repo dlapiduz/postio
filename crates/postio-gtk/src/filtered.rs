@@ -1,14 +1,7 @@
-//! The Filtered view (spec 007 US9, screen 21): a full view, not a dialog,
-//! of what filing archived. Each row is one message with its reason; tabs
-//! `1`-`7` narrow it to one reason; the focused row offers its restore;
-//! and nothing here is deleted.
-//!
-//! The view only draws. What it shows -- the tabs, the rows read a page at
-//! a time, the row with the keyboard (a display position, the thread's
-//! children counted), the selection, the thread open under a row -- is the
-//! controller's (`postio_focus`, ADR 0045, spec 013 FR-025), told to it as
-//! inputs and drawn from its intents, so the rule is written once for both
-//! platforms.
+//! The Filtered view: a full view of what filing archived; tabs `1`-`7` narrow by reason, the
+//! focused row offers its restore, and nothing here is deleted.
+//! The view only draws: the controller (`postio_focus`, ADR 0045) owns tabs, rows, the keyboard,
+//! the selection and the open thread.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -26,61 +19,41 @@ use crate::bulk::Bulk;
 use crate::list::RowObject;
 use crate::list::RowWidget;
 
-/// What the view asks of the window, which owns the rest: a sweep is
-/// confirmed in a dialog.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FilteredAction {
-    /// Ask whether to sweep the inbox (FR-118).
     Sweep,
 }
 
 type Handler = Rc<dyn Fn(FilteredAction)>;
 
-/// What a row of the list is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Slot {
-    /// A day's heading.
     Heading,
-    /// The row at this index of the frame's rows.
     Row(usize),
-    /// The child at this index of the open thread.
     Child(usize),
 }
 
-/// The view. See the module.
 pub struct FilteredView {
     root: gtk::Box,
     tabs: gtk::Box,
     list: gtk::ListBox,
     footer: KeyLine,
-    /// What the keys act on from the focused row or child.
     scope_footer: Rc<crate::scope_footer::ScopeFooter>,
-    /// What stands in place of the rows when the tab has none.
     empty: gtk::Label,
     bar: Bulk,
-    /// The sweep button's words and key.
     sweep_words: gtk::Box,
-    /// What the controller last drew: the rows, the splice, the keyboard
-    /// and the selection as intents have changed them since.
     frame: RefCell<Option<Frame>>,
-    /// What each row of the list is.
     shown: RefCell<Vec<Slot>>,
-    /// The list row each display position is drawn in.
     at: RefCell<Vec<i32>>,
-    /// Set while the view moves the list's own selection, which is not a
-    /// click.
+    /// Set while the view moves the list's own selection, which is not a click.
     drawing: Cell<bool>,
-    /// Tells the controller what a person did.
     send: Rc<dyn Fn(Input)>,
-    /// Runs a command in the controller.
     command: Rc<dyn Fn(CommandId)>,
     handler: RefCell<Option<Handler>>,
     me: RefCell<std::rc::Weak<FilteredView>>,
 }
 
 impl FilteredView {
-    /// The view, its keys from `keymap`. `send` tells the controller a
-    /// click or a scroll; `command` runs a command in it.
     pub fn new(
         keymap: &Keymap,
         send: impl Fn(Input) + 'static,
@@ -101,8 +74,7 @@ impl FilteredView {
         let titles = gtk::Box::new(gtk::Orientation::Vertical, 0);
         titles.append(&title);
         titles.append(&subtitle);
-        // FR-118: filtering what is already in the inbox is a deliberate
-        // command, and this is where filtering lives. It asks first.
+        // Filtering what is already in the inbox is a deliberate command: it asks first.
         let sweep = gtk::Button::new();
         postio_widgets::widgets::button::style(&sweep, Kind::Ghost, Size::Regular);
         sweep.add_css_class("focus-filtered-sweep");
@@ -148,8 +120,6 @@ impl FilteredView {
         root.append(&tab_row);
         root.append(&scrolled);
         root.append(&empty);
-        // While anything is selected: screen 01's bar itself, with
-        // Filtered's verbs.
         let bar = Bulk::with_verbs(filtered::BAR_VERBS, keymap);
         bar.widget().add_css_class("focus-filtered-bar");
         root.append(bar.widget());
@@ -227,8 +197,8 @@ impl FilteredView {
                 }
             }
         });
-        // ⌘/Ctrl-click toggles a row and Shift-click takes a range, as the
-        // list's rows do; a plain click is the list's own.
+        // Ctrl-click toggles a row and Shift-click takes a range, as the list's rows do; a plain
+        // click is the list's own.
         let click = gtk::GestureClick::new();
         click.set_button(gtk::gdk::BUTTON_PRIMARY);
         click.set_propagation_phase(gtk::PropagationPhase::Capture);
@@ -269,8 +239,6 @@ impl FilteredView {
         view
     }
 
-    /// The commands the view has a control for: Back, the sweep, the
-    /// restore, and the tabs.
     pub fn controls() -> Vec<CommandId> {
         [
             CommandId::Back,
@@ -283,18 +251,14 @@ impl FilteredView {
         .collect()
     }
 
-    /// The view, for the window's pages.
     pub fn widget(&self) -> &gtk::Box {
         &self.root
     }
 
-    /// Run `handler` with what the person asks.
     pub fn connect_action(&self, handler: impl Fn(FilteredAction) + 'static) {
         self.handler.replace(Some(Rc::new(handler)));
     }
 
-    /// Read every key from `keymap`: the bar's verbs. The tabs, the sweep
-    /// and the restore take theirs from the next frame.
     pub fn set_keymap(&self, keymap: &Keymap) {
         self.bar.set_keymap(keymap);
         while let Some(child) = self.sweep_words.first_child() {
@@ -306,9 +270,8 @@ impl FilteredView {
         ));
     }
 
-    /// Forget what the last visit drew, so that coming back shows nothing
-    /// until the controller's first frame lands rather than rows it has
-    /// since moved on from.
+    /// So coming back shows nothing until the controller's first frame lands, rather than rows it
+    /// has since moved on from.
     pub fn clear(&self) {
         self.frame.replace(None);
         self.show_tabs();
@@ -317,7 +280,6 @@ impl FilteredView {
         self.show_bar();
     }
 
-    /// Draw `frame`, whole: `Intent::Filtered`.
     pub fn show(&self, frame: &Frame) {
         self.frame.replace(Some(frame.clone()));
         self.footer.set(&frame.footer);
@@ -332,8 +294,6 @@ impl FilteredView {
         self.show_bar();
     }
 
-    /// The keyboard is on display position `position` now:
-    /// `Intent::FilteredFocus`.
     pub fn show_focus(&self, position: Option<u32>) {
         if let Some(frame) = self.frame.borrow_mut().as_mut() {
             frame.focused = position;
@@ -341,7 +301,6 @@ impl FilteredView {
         self.place_focus();
     }
 
-    /// Open `splice` under its row: `Intent::FilteredSplice`.
     pub fn show_splice(&self, anchor: u32, children: &[postio_ui::thread_list::ChildRowView]) {
         if let Some(frame) = self.frame.borrow_mut().as_mut() {
             frame.expanded = Some(FilteredSplice {
@@ -352,7 +311,6 @@ impl FilteredView {
         self.show_rows();
     }
 
-    /// Fold the thread under `anchor`: `Intent::FilteredUnsplice`.
     pub fn show_unsplice(&self, anchor: u32) {
         if let Some(frame) = self.frame.borrow_mut().as_mut()
             && frame
@@ -365,7 +323,6 @@ impl FilteredView {
         self.show_rows();
     }
 
-    /// The selection changed: `Intent::FilteredSelection`.
     pub fn show_selection(&self, selected: &[MessageId], bar: Option<&postio_focus::FilteredBar>) {
         if let Some(frame) = self.frame.borrow_mut().as_mut() {
             for row in &mut frame.rows {
@@ -377,14 +334,10 @@ impl FilteredView {
         self.show_bar();
     }
 
-    /// What the keys act on from the focused row or child:
-    /// `Intent::Footer`.
     pub fn show_scope(&self, view: &postio_ui::scope::FooterView) {
         self.scope_footer.set(view);
     }
 
-    /// The focused row's message, if any: what `R` restores. A child is
-    /// its thread's row.
     pub fn focused(&self) -> Option<MessageId> {
         let frame = self.frame.borrow();
         let frame = frame.as_ref()?;
@@ -397,14 +350,12 @@ impl FilteredView {
         frame.rows.get(row).map(|line| line.message)
     }
 
-    /// The listed rows' subjects, top to bottom.
     pub fn subjects(&self) -> Vec<String> {
         self.frame.borrow().as_ref().map_or_else(Vec::new, |frame| {
             frame.rows.iter().map(|row| row.subject.clone()).collect()
         })
     }
 
-    /// Every text the view shows, in order: what a test reads.
     pub fn texts(&self) -> Vec<String> {
         let mut said = Vec::new();
         let mut stack = vec![self.root.clone().upcast::<gtk::Widget>()];
@@ -426,7 +377,6 @@ impl FilteredView {
         said
     }
 
-    /// Give the list the keyboard, on the controller's row.
     pub fn focus_list(&self) {
         let focused = self
             .frame
@@ -444,12 +394,10 @@ impl FilteredView {
         }
     }
 
-    /// Whether anything is selected.
     pub fn has_selection(&self) -> bool {
         !self.selected().is_empty()
     }
 
-    /// The messages selected.
     pub fn selected(&self) -> Vec<MessageId> {
         self.frame.borrow().as_ref().map_or_else(Vec::new, |frame| {
             frame
@@ -461,13 +409,10 @@ impl FilteredView {
         })
     }
 
-    /// The footer's bar, for a test to read.
     pub fn scope_footer(&self) -> &Rc<crate::scope_footer::ScopeFooter> {
         &self.scope_footer
     }
 
-    /// The subject the message at the keyboard's row is titled by: its own,
-    /// or the open thread's for a child.
     pub fn focused_subject(&self) -> Option<String> {
         let frame = self.frame.borrow();
         let frame = frame.as_ref()?;
@@ -479,13 +424,11 @@ impl FilteredView {
         frame.rows.get(row).map(|line| line.subject.clone())
     }
 
-    /// The slot display position `position` draws.
     fn slot_of_position(&self, position: u32) -> Option<Slot> {
         let at = *self.at.borrow().get(position as usize)?;
         self.shown.borrow().get(usize::try_from(at).ok()?).copied()
     }
 
-    /// The display position the list row at `index` draws.
     fn position_of_row(&self, index: i32) -> Option<u32> {
         self.at
             .borrow()
@@ -494,14 +437,11 @@ impl FilteredView {
             .map(|position| position as u32)
     }
 
-    /// The list row that draws display position `position`.
     fn list_row_at(&self, position: u32) -> Option<gtk::ListBoxRow> {
         let at = *self.at.borrow().get(position as usize)?;
         self.list.row_at_index(at)
     }
 
-    /// Move the list's own selection to the controller's row, and show the
-    /// focused row's restore and its keys.
     fn place_focus(&self) {
         let focused = self.frame.borrow().as_ref().and_then(|frame| frame.focused);
         self.drawing.set(true);
@@ -516,8 +456,6 @@ impl FilteredView {
         self.show_focus_marks();
     }
 
-    /// Only the focused row offers its restore (screen 21), and a child
-    /// shows the keys that act on it while it is focused.
     fn show_focus_marks(&self) {
         let selected = self.list.selected_row();
         let none_selected = !self.has_selection();
@@ -534,7 +472,6 @@ impl FilteredView {
         }
     }
 
-    /// Check the selected rows' boxes and bring the restore up or down.
     fn show_picks(&self) {
         let selected = self.selected();
         let shown = self.shown.borrow().clone();
@@ -564,7 +501,6 @@ impl FilteredView {
         self.show_focus_marks();
     }
 
-    /// Say so when the tab on screen has nothing, once it has been read.
     fn show_empty(&self) {
         let said = self
             .frame
@@ -600,7 +536,6 @@ impl FilteredView {
         }
     }
 
-    /// Draw the tabs with their counts, the one on screen raised.
     fn show_tabs(&self) {
         while let Some(child) = self.tabs.first_child() {
             self.tabs.remove(&child);
@@ -638,7 +573,6 @@ impl FilteredView {
         }
     }
 
-    /// Draw the rows, each day under its heading.
     fn show_rows(&self) {
         crate::rebuild::keeping_focus(&self.list, || self.rebuild_rows());
         self.place_focus();
@@ -699,26 +633,20 @@ impl FilteredView {
         }
         self.shown.replace(shown);
         self.at.replace(at);
-        // Rows are rebuilt here, including after a later page lands, so a
-        // cap taught only once after the view opened would miss every row
-        // a later page adds (T142, T143).
+        // Rows are rebuilt here, including after a later page lands: a cap taught once after the
+        // view opened would miss every row a later page adds.
         crate::a11y::teach_shortcuts(&self.root);
         crate::motion::keep_to_budget(&self.root);
     }
 
-    /// One row, as a line.
     fn row(&self, frame: &Frame, index: usize, row: &FilteredLine, open: bool) -> gtk::Box {
         let line = gtk::Box::new(gtk::Orientation::Horizontal, S3);
         line.add_css_class("focus-filtered-row");
-        // The list's checked box, in the gutter.
         let check = gtk::Image::from_icon_name("checkbox-checked-symbolic");
         check.add_css_class("focus-filtered-check");
-        // Always laid out, so a checked row's columns line up with the
-        // rest; only drawn while it is selected.
+        // Always laid out, so a checked row's columns line up with the rest.
         check.set_opacity(if row.selected { 1.0 } else { 0.0 });
         line.append(&check);
-        // A conversation of more than one message has a chevron, and says
-        // how many (spec 013 FR-009).
         let thread = row.messages > 1;
         let chevron = gtk::Image::from_icon_name(if open {
             "pan-down-symbolic"
@@ -807,7 +735,6 @@ impl FilteredView {
         line
     }
 
-    /// The display position of row `index`, children counted.
     fn display_of_row(&self, index: usize) -> Option<u32> {
         let frame = self.frame.borrow();
         let frame = frame.as_ref()?;
@@ -820,8 +747,6 @@ impl FilteredView {
     }
 }
 
-/// The restore button in a row of the list, wherever the day heading put
-/// it.
 fn restore_button(row: &gtk::Widget) -> Option<gtk::Button> {
     let mut stack = vec![row.clone()];
     while let Some(widget) = stack.pop() {
@@ -837,7 +762,6 @@ fn restore_button(row: &gtk::Widget) -> Option<gtk::Button> {
     None
 }
 
-/// The first widget under `root` with CSS class `class`.
 fn find_class(root: &gtk::Widget, class: &str) -> Option<gtk::Widget> {
     let mut stack = vec![root.clone()];
     while let Some(widget) = stack.pop() {

@@ -3,48 +3,26 @@ import PostioKit
 import Foundation
 import PostioFFI
 
-/// Opening a draft in the editor somebody chose (#1288).
-///
-/// Canvas 26 labels the hand-off `Open in $EDITOR`. An application launched
-/// from Finder has **no shell environment**, so `$EDITOR` is usually simply
-/// absent here and that label would name nothing. `[compose] editor` in
-/// `config.toml` is the setting instead, and this is the AppKit half of
-/// acting on it.
-///
-/// # What is decided here and what is not
-///
-/// Only one question is a fact about this Mac: whether an application by that
-/// name exists. `NSWorkspace` answers it. **Everything that follows** — that
-/// a name which is not an application is a command, that a command needs a
-/// terminal, and what to say about it — is `postio_ui::handoff`, so GTK
-/// reaches the same conclusion about the same name rather than a similar one.
+/// An app launched from Finder has no shell environment, so `$EDITOR` is usually absent;
+/// `[compose] editor` in `config.toml` is the setting. Only whether an application by that name
+/// exists is decided here; the rest is `postio_ui::handoff`, shared with GTK.
 extension ComposeHandoff {
-    /// What this Mac has by that name.
-    ///
-    /// Three answers, because two conflated a terminal editor with a typo:
-    /// `vim` is real and has no window, `vum` is neither, and telling
-    /// somebody the second "runs in a terminal" is a wrong answer
-    /// confidently given (#1297).
+    /// Three answers: `vim` is real and has no window, `vum` is neither, and calling the second
+    /// "runs in a terminal" is wrong (#1297).
     public static func found(_ name: String) -> FoundEditorFfi {
         if applicationURL(name) != nil { return .application }
-        // A real program with no window of its own — `vim`, `nano`, `emacs
-        // -nw`. Looked for the way a shell would, on `PATH`.
         return onPath(name) ? .terminalProgram : .nothing
     }
 
-    /// Whether this Mac has an application by that name.
     public static func isApplication(_ name: String) -> Bool {
         applicationURL(name) != nil
     }
 
-    /// Whether a bare name resolves to an executable on `PATH`.
     private static func onPath(_ name: String) -> Bool {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty, !trimmed.contains("/") else { return false }
         let path = ProcessInfo.processInfo.environment["PATH"]
-            // An application launched from Finder inherits no shell
-            // environment, so `PATH` is often absent entirely. These are the
-            // directories a terminal editor actually lives in.
+            // Finder-launched apps inherit no shell environment, so `PATH` is often absent.
             ?? "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin"
         return path.split(separator: ":").contains { directory in
             FileManager.default.isExecutableFile(
@@ -54,17 +32,9 @@ extension ComposeHandoff {
         }
     }
 
-    /// The application `name` refers to, in the three spellings somebody
-    /// might reasonably write.
-    ///
-    /// A **path** first, which is the escape hatch for an application
-    /// somewhere unusual and the only unambiguous form. Then the name as it
-    /// appears in the Dock (`BBEdit`, `Visual Studio Code`), looked for in
-    /// the applications directories — `urlForApplication(withName:)` is gone
-    /// from the SDK, so the search is written out rather than borrowed.
-    /// Then a **bundle identifier** (`com.apple.TextEdit`), which is what
-    /// Launch Services actually keys on and the form that survives an
-    /// application being renamed.
+    /// A path first, then the Dock name searched in the applications directories
+    /// (`urlForApplication(withName:)` is gone from the SDK), then a bundle identifier, which
+    /// survives renames.
     static func applicationURL(_ name: String) -> URL? {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return nil }
@@ -85,25 +55,16 @@ extension ComposeHandoff {
         return NSWorkspace.shared.urlForApplication(withBundleIdentifier: trimmed)
     }
 
-    /// Where applications live on this Mac, user's own first.
     private static func applicationDirectories() -> [URL] {
         var directories: [URL] = []
         for domain: FileManager.SearchPathDomainMask in [.userDomainMask, .localDomainMask, .systemDomainMask] {
             directories += FileManager.default.urls(for: .applicationDirectory, in: domain)
         }
-        // `/System/Applications/Utilities` and the like: one level of nesting
-        // is how Apple ships several of its own, and a person naming one is
-        // naming an application like any other.
         return directories + directories.map { $0.appendingPathComponent("Utilities") }
     }
 
-    /// Open `file` per the configured editor. `nil` when it opened; a
-    /// sentence for the compose window's status line when it did not.
-    ///
-    /// Asynchronous in the `Application` case because
-    /// `openApplication(at:configuration:)` is, and its completion is the
-    /// only thing that knows whether the application actually started —
-    /// reporting success before that would be reporting a guess.
+    /// Asynchronous in the `Application` case: only the completion of
+    /// `openApplication(at:configuration:)` knows whether it started.
     @MainActor
     public static func open(_ file: URL, using configured: String) async -> String? {
         switch settingsHandoffTarget(configured: configured, found: found(configured)) {
@@ -119,8 +80,6 @@ extension ComposeHandoff {
             return advice
         case .application(let name):
             guard let application = applicationURL(name) else {
-                // Between the check above and here somebody could have moved
-                // it; more usefully, this is what a typo looks like.
                 return "This Mac has no application called \(name), so the draft is still here."
             }
             do {
@@ -141,8 +100,7 @@ extension ComposeHandoff {
     private static func openInFront(_ file: URL) -> NSWorkspace.OpenConfiguration {
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.arguments = [file.path]
-        // The point of the hand-off is to type in the other editor, so it
-        // comes forward. Postio's own window is about to go read-only.
+        // The hand-off is to type in the other editor, so it comes forward.
         configuration.activates = true
         return configuration
     }

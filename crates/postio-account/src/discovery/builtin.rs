@@ -1,21 +1,7 @@
-//! Providers Postio ships settings for, as data.
-//!
-//! The table exists because the generic probe chain does not always find
-//! anything: some providers publish neither a Thunderbird autoconfig document
-//! nor RFC 6186 SRV records, and a first-run screen that has to fall back to
-//! manual entry for a mainstream provider is a bad first impression. Shipping
-//! the published settings also makes that screen instant, and works offline.
-//!
-//! **Every provider is one row.** No named constant, no special-cased branch,
-//! no identifier that mentions a vendor. Adding the next provider is adding a
-//! `[provider.<id>]` table to `data/providers.toml` and nothing else --
-//! `docs/PRODUCT.md` §3 asks for exactly that, and issue #191 is what makes
-//! it literally true: the row used to have to be a [`Preset`] literal
-//! written in Rust. `providers_toml` is the schema and the parser; `build.rs`
-//! fails the build if the shipped file does not satisfy it; a user's own
-//! `$XDG_CONFIG_HOME/postio/providers.toml` is layered on top at process
-//! start, in the same shape, with the user's own rows winning on a
-//! collision.
+//! Every provider is one row in `data/providers.toml` (#191): no named constant, no special-cased
+//! branch.
+//! `build.rs` validates the shipped file; a user's `providers.toml` overlay is layered on top and
+//! wins on collision.
 
 use std::collections::BTreeMap;
 
@@ -26,17 +12,12 @@ use std::sync::LazyLock;
 use crate::discovery::providers_toml::{self, OAuthRow, ProviderRow, Security};
 use crate::discovery::settings::{AccountSettings, Encryption, ServerSettings, SettingsSource};
 
-/// What a provider that refuses ordinary account passwords has to say before
-/// the password field, worded without naming anybody: the sentence is the
-/// same for every such provider, and a row that spelled out a vendor's name
-/// here would be a special case wearing a string's clothes. Derived from
-/// `requires_app_password` rather than carried in `providers.toml` itself,
-/// so no row can accidentally say something different.
+/// Worded without naming anybody and derived from `requires_app_password`, so no row can say
+/// something different.
 const APP_PASSWORD_NOTE: &str = "This provider requires an app-specific password: generate one in your \
      account settings and paste it here. Your ordinary account password will \
      not work.";
 
-/// One provider's published settings.
 #[derive(Debug, Clone)]
 pub struct Preset {
     row: ProviderRow,
@@ -59,35 +40,21 @@ impl From<ProviderRow> for Preset {
 }
 
 impl Preset {
-    /// The provider's own display name.
     pub fn display_name(&self) -> &str {
         &self.row.display_name
     }
 
-    /// Every domain this provider issues addresses on.
     pub fn domains(&self) -> &[String] {
         &self.row.domains
     }
 
-    /// MX host suffixes that identify this provider (#94).
     pub fn mx_suffixes(&self) -> &[String] {
         &self.row.mx_suffixes
     }
 
-    /// Whether `host` is one of this provider's inbound mail exchangers.
-    ///
-    /// A **suffix** match, unlike [`claims`](Self::claims), and the
-    /// difference is the point. A domain is issued to a person and is
-    /// theirs, so a lookalike must never inherit a real provider's servers.
-    /// An MX host is the provider's own name for its own edge, and providers
-    /// hand out one per customer -- `alice-com.mail.protection.example` --
-    /// so whole-host equality would match nothing.
-    ///
-    /// The match stops at a **label boundary**, which is what keeps it from
-    /// being the substring match `claims` refuses to be: without it,
-    /// `evil-mail.protection.example` inherits `mail.protection.example`.
-    /// The length of the longest suffix of this row that `host` matches, or
-    /// `None` for no match. Length is what orders two rows that both match.
+    /// Suffix match at a label boundary, unlike `claims`: providers hand out one MX host per
+    /// customer, but `evil-mail.protection.example` must not inherit `mail.protection.example`.
+    /// Returns the length of the longest matching suffix, which orders rows that both match.
     fn mx_match_len(&self, host: &str) -> Option<usize> {
         let host = host.trim_end_matches('.');
         if host.is_empty() {
@@ -113,40 +80,29 @@ impl Preset {
             .max()
     }
 
-    /// The `Authentication-Results` authserv-ids this provider's servers
-    /// stamp on mail they receive (#1928).
-    ///
-    /// The reader trusts an `Authentication-Results` header only when its
-    /// authserv-id is one of these (a hostname, matched whole or as a
-    /// label-bounded suffix): anything else was written by the sender or a
-    /// relay. Empty when the provider stamps none, or none we have seen.
+    /// The reader trusts an `Authentication-Results` header only when its authserv-id is one of
+    /// these (whole or label-bounded suffix); anything else was written by the sender or a relay
+    /// (#1928).
     pub fn authserv_ids(&self) -> &[String] {
         &self.row.authserv_ids
     }
 
-    /// The provider's IMAP host.
     pub fn imap_host(&self) -> &str {
         &self.row.imap_host
     }
 
-    /// The provider's submission host.
     pub fn smtp_host(&self) -> &str {
         &self.row.smtp_host
     }
 
-    /// The IMAP port to connect on.
     pub fn imap_port(&self) -> u16 {
         self.row.imap_port
     }
 
-    /// The submission port to connect on.
     pub fn smtp_port(&self) -> u16 {
         self.row.smtp_port
     }
 
-    /// How far this provider's `CHANGEDSINCE` answer can be believed.
-    ///
-    /// `Unreliable` for a row with `condstore_reliable = false`.
     pub fn change_feed(&self) -> postio_model::ChangeFeed {
         if self.row.condstore_reliable {
             postio_model::ChangeFeed::Reliable
@@ -155,47 +111,30 @@ impl Preset {
         }
     }
 
-    /// Whether only an application-specific password will work.
     pub fn requires_app_password(&self) -> bool {
         self.row.requires_app_password
     }
 
-    /// The preference order among the ways this provider can be signed
-    /// into -- `"app-password"`, `"oauth2"`.
+    /// Preference order, e.g. `"app-password"`, `"oauth2"`.
     pub fn auth(&self) -> &[String] {
         &self.row.auth
     }
 
-    /// Where this provider's OAuth endpoints come from, if it offers OAuth
-    /// at all. `providers_toml::validate` already guarantees that a row
-    /// naming `"oauth2"` in [`auth`](Self::auth) has one of these.
+    /// `providers_toml::validate` guarantees a row naming `"oauth2"` in `auth` has one.
     pub fn oauth(&self) -> Option<&OAuthRow> {
         self.row.oauth.as_ref()
     }
 
-    /// A sentence the user has to read before typing a password, when this
-    /// provider requires an app-specific one.
     fn note(&self) -> Option<&'static str> {
         self.row.requires_app_password.then_some(APP_PASSWORD_NOTE)
     }
 
-    /// Where to generate an app-specific password, when
-    /// [`requires_app_password`](Self::requires_app_password) is set.
     pub fn password_help_url(&self) -> Option<&str> {
         self.row.password_help_url.as_deref()
     }
 
-    /// The provider's own name for each special-use folder, when the
-    /// server's `LIST` offers no `SPECIAL-USE` attribute to settle a role
-    /// directly (#959) -- iCloud's `Sent Messages`, `Deleted Messages` and
-    /// `Archives`, for instance.
-    ///
-    /// A key `providers.toml` names that
-    /// [`MailboxRole::from_name`] does not recognise is dropped rather than
-    /// failing the row: this table is maintainer-authored data checked by
-    /// eye at review time, not user input to warn about, the same leniency
-    /// `postio_config`'s own `[mailboxes]` override reads its role names
-    /// with.
+    /// For servers whose `LIST` offers no `SPECIAL-USE` (#959), e.g. iCloud. Unrecognised role keys
+    /// are dropped, not an error: the table is maintainer-authored.
     pub fn role_names(&self) -> BTreeMap<MailboxRole, String> {
         self.row
             .mailboxes
@@ -204,10 +143,8 @@ impl Preset {
             .collect()
     }
 
-    /// Whether this provider issues addresses on `domain`.
-    ///
-    /// Whole-domain equality, never a substring or suffix match: a lookalike
-    /// domain must not inherit a real provider's servers.
+    /// Whole-domain equality, never substring or suffix: a lookalike domain must not inherit a real
+    /// provider's servers.
     fn claims(&self, domain: &str) -> bool {
         self.row
             .domains
@@ -215,7 +152,6 @@ impl Preset {
             .any(|known| known.eq_ignore_ascii_case(domain))
     }
 
-    /// This provider's published settings, for `email`.
     pub fn settings_for(&self, email: &str) -> AccountSettings {
         AccountSettings {
             email: email.to_owned(),
@@ -229,18 +165,15 @@ impl Preset {
                 self.row.smtp_port,
                 self.row.smtp_security.into(),
             ),
-            // The login keeps the domain the user actually typed rather than a
-            // rewritten primary-domain form: providers with alias domains
-            // expect the address as issued.
+            // Keeps the domain the user typed: alias-domain providers expect the address as issued.
             login: email.to_owned(),
             source: SettingsSource::Builtin,
             requires_app_password: self.row.requires_app_password,
             note: self.note().map(str::to_owned),
             password_help_url: self.row.password_help_url.clone(),
             display_name: Some(self.row.display_name.clone()),
-            // The sign-in offer, only when the row *prefers* oauth2: a row
-            // listing it second is a fallback for the user to reach through
-            // the client-id path, not the door the wizard opens first.
+            // Only when the row prefers oauth2: listed second, it is a fallback reached through the
+            // client-id path.
             jmap: self
                 .row
                 .backend
@@ -269,12 +202,7 @@ impl Preset {
     }
 }
 
-/// The shipped table, embedded at compile time and parsed once.
-///
-/// `build.rs` already parsed and validated this exact file with the same
-/// module before the crate compiled at all -- a parse failure here would
-/// mean the build itself had already failed, so the `expect` cannot fire in
-/// a build that succeeded.
+/// `build.rs` already validated this file, so the `expect` cannot fire.
 fn shipped_rows() -> BTreeMap<String, ProviderRow> {
     let parsed = providers_toml::parse(include_str!("../../data/providers.toml"))
         .expect("build.rs already validated data/providers.toml");
@@ -287,22 +215,13 @@ fn shipped_rows() -> BTreeMap<String, ProviderRow> {
     parsed.rows
 }
 
-/// The user's own overlay, read from an arbitrary environment lookup so it
-/// is testable without touching the process environment.
-///
-/// A missing file is not an error -- most installs will never have one. A
-/// file that exists but fails to parse or validate is logged and dropped
-/// wholesale rather than partially applied: this is much lower stakes than
-/// `config.toml`, whose accounts and credentials the whole app depends on --
-/// worst case here, a custom provider does not appear and onboarding falls
-/// back to manual entry, exactly as an unrecognised domain already does.
+/// A missing file is not an error. One that fails to parse is logged and dropped wholesale: worst
+/// case a custom provider does not appear and onboarding falls back to manual entry.
 fn overlay_rows_from<F>(env: F) -> BTreeMap<String, ProviderRow>
 where
     F: Fn(&str) -> Option<String>,
 {
-    // The same directory `config.toml` is in, on whichever platform: this
-    // file sits beside it, and a user who moved one expects the other to
-    // follow. #556.
+    // Beside `config.toml` on every platform, so one moved implies the other (#556).
     let Ok(dir) = postio_config::paths::config_dir_from(env, Platform::host()) else {
         return BTreeMap::new();
     };
@@ -331,9 +250,6 @@ fn overlay_rows() -> BTreeMap<String, ProviderRow> {
     overlay_rows_from(|key| std::env::var(key).ok())
 }
 
-/// The table. One row per provider, shipped plus the user's own overlay,
-/// merged with the user's rows winning -- computed once and shared for the
-/// life of the process.
 static PRESETS: LazyLock<Vec<Preset>> = LazyLock::new(|| {
     providers_toml::merged(shipped_rows(), overlay_rows())
         .into_values()
@@ -341,21 +257,15 @@ static PRESETS: LazyLock<Vec<Preset>> = LazyLock::new(|| {
         .collect()
 });
 
-/// Every provider Postio ships settings for.
 pub fn presets() -> &'static [Preset] {
     &PRESETS
 }
 
-/// The preset covering `domain`, if Postio ships one.
 pub fn preset_for_domain(domain: &str) -> Option<&'static Preset> {
     PRESETS.iter().find(|preset| preset.claims(domain))
 }
 
-/// The preset whose MX suffixes cover `host`, if Postio ships one (#94).
-///
-/// The longest suffix wins, so a provider that publishes both a general
-/// suffix and a more specific one under it resolves to the specific row
-/// rather than to whichever happens to be earlier in the table.
+/// The longest suffix wins, so a specific row beats a general one regardless of table order.
 pub fn preset_for_mx_host(host: &str) -> Option<&'static Preset> {
     PRESETS
         .iter()
@@ -364,31 +274,19 @@ pub fn preset_for_mx_host(host: &str) -> Option<&'static Preset> {
         .map(|(_, preset)| preset)
 }
 
-/// The preset whose `imap_host` is exactly `host`, if Postio ships one
-/// (#959).
-///
-/// Unlike [`preset_for_mx_host`]'s suffix match -- for a custom domain
-/// delegated to a provider that has never been connected to -- this is for
-/// an account already connected: the host it is talking to right now, so a
-/// folder-role tie-break can ask "which provider is this" without redoing
-/// the domain-based discovery a running connection has no further use for.
-/// Case-insensitive: DNS host names are.
+/// For an already-connected account: the host it talks to now, so a folder-role tie-break can ask
+/// which provider this is without redoing discovery (#959). Case-insensitive.
 pub fn preset_for_imap_host(host: &str) -> Option<&'static Preset> {
     PRESETS
         .iter()
         .find(|preset| preset.imap_host().eq_ignore_ascii_case(host))
 }
 
-/// The authserv-ids to trust on mail an account reached through `imap_host`
-/// (#1928): its provider's, or none for a server Postio ships no row for --
-/// in which case no `Authentication-Results` is believed.
+/// Empty for a server Postio ships no row for, so no `Authentication-Results` is believed (#1928).
 pub fn authserv_ids_for_imap_host(imap_host: &str) -> &'static [String] {
     preset_for_imap_host(imap_host).map_or(&[], Preset::authserv_ids)
 }
 
-/// Returns settings for `domain` when Postio ships them, without any I/O.
-///
-/// `domain` is matched case-insensitively.
 pub fn lookup(email: &str, _local_part: &str, domain: &str) -> Option<AccountSettings> {
     preset_for_domain(domain).map(|preset| preset.settings_for(email))
 }
@@ -397,8 +295,6 @@ pub fn lookup(email: &str, _local_part: &str, domain: &str) -> Option<AccountSet
 mod tests {
     use super::*;
 
-    /// Which providers the sync engine does not take at their word about what
-    /// changed is a column of the preset table (#1915), not a branch.
     #[test]
     fn the_providers_known_to_under_report_condstore_say_so_in_their_row() {
         use postio_model::ChangeFeed;
@@ -418,15 +314,11 @@ mod tests {
         );
     }
 
-    /// Addresses are built rather than written out, so no literal address in a
-    /// provider's real domain ever appears in the source. See CLAUDE.md,
-    /// "No personal data".
+    /// Built, not written out, so no literal address in a provider's real domain appears in source.
     fn address_in(domain: &str) -> String {
         format!("a@{domain}")
     }
 
-    /// #1928: which servers' `Authentication-Results` an account believes is
-    /// the provider's row, found by the host the account talks to.
     #[test]
     fn an_account_trusts_the_authserv_ids_of_its_providers_row() {
         let google = authserv_ids_for_imap_host("IMAP.gmail.com");
@@ -434,14 +326,8 @@ mod tests {
         assert!(authserv_ids_for_imap_host("imap.example.org").is_empty());
     }
 
-    /// #954: a shipped row's stated refresh lifetime reaches the offer the
-    /// sign-in acts on.
-    ///
-    /// The whole data path in one assertion — TOML, schema, preset, offer.
-    /// Every piece of this is tested on invented rows elsewhere, which is
-    /// exactly the arrangement that can pass while the *shipped* table says
-    /// nothing: a field nobody filled in is indistinguishable from a field
-    /// nobody reads.
+    /// A field nobody filled in is indistinguishable from one nobody reads, so this asserts the
+    /// shipped table carries a refresh lifetime through to the offer (#954).
     #[test]
     fn a_shipped_row_carries_its_refresh_lifetime_through_to_the_offer() {
         let stated: Vec<(&str, Option<u32>)> = presets()
@@ -460,23 +346,12 @@ mod tests {
             stated.iter().any(|(_, days)| *days == Some(90)),
             "and one stating ninety: {stated:?}"
         );
-        // Deliberately not asserted here: that some shipped row states
-        // *nothing*. Both rows offering OAuth today state a lifetime, so
-        // that assertion would be about the table's current contents rather
-        // than about the code. The absent case is pinned where it belongs —
-        // on an invented row in `providers_toml`, and on the token source
-        // that must do nothing without one.
+        // Not asserted: that some shipped row states nothing; that depends on the table's contents.
+        // The absent case is pinned on an invented row in `providers_toml`.
     }
 
-    /// #94: an MX host resolves to the provider that publishes that suffix.
     #[test]
     fn an_mx_host_resolves_to_the_provider_whose_suffix_it_ends_with() {
-        // Suffix rather than equality, unlike `claims`, and the difference is
-        // the point: a domain is issued to a person and is theirs, so a
-        // lookalike must never inherit a provider's servers. An MX *host* is
-        // the provider's own name for its own inbound edge, and providers
-        // hand out one per customer -- `alice-com.mail.protection.example`.
-        // Matching the whole host would match nothing.
         for preset in presets() {
             for suffix in preset.mx_suffixes() {
                 let host = format!("something.{suffix}");
@@ -490,8 +365,8 @@ mod tests {
         }
     }
 
-    /// The suffix must be a *label* boundary, not a string suffix, or
-    /// `evil-mail.protection.example` inherits `mail.protection.example`.
+    /// A label boundary, not a string suffix: `evil-mail.protection.example` must not inherit
+    /// `mail.protection.example`.
     #[test]
     fn a_suffix_match_stops_at_a_label_boundary() {
         let Some((preset, suffix)) = presets()
@@ -518,9 +393,6 @@ mod tests {
         assert!(preset_for_mx_host("").is_none());
     }
 
-    /// #959: an already-connected account can ask "which provider is this"
-    /// from the host it is talking to right now, without a fresh
-    /// domain-based lookup.
     #[test]
     fn an_imap_host_resolves_to_the_provider_that_publishes_it() {
         for preset in presets() {
@@ -548,24 +420,9 @@ mod tests {
         assert!(preset_for_imap_host("").is_none());
     }
 
-    /// iCloud's SMTP is the port Apple documents, on the transport they
-    /// document it with.
-    ///
-    /// This row said 465 with implicit TLS. Sending a real message produced
-    ///
-    /// ```text
-    /// Not sent -- connecting to smtp.mail.me.com:465 failed:
-    ///   no answer within 30s (gave up after 8 attempts)
-    /// ```
-    ///
-    /// Apple documents 587 with STARTTLS and documents no other port
-    /// (<https://support.apple.com/en-us/102525>). 465 is not refused, it is
-    /// unanswered, so every send spent the queue's whole retry budget before
-    /// telling the user anything.
-    ///
-    /// Asserted through the preset rather than by reading the TOML: the
-    /// spelling of the transport is `start-tls`, kebab-cased by serde, and
-    /// `starttls` parses as nothing at all.
+    /// Apple documents 587 with STARTTLS and no other port; 465 is unanswered, so every send spent
+    /// the whole retry budget. Asserted through the preset because `starttls` parses as nothing
+    /// (the spelling is `start-tls`).
     #[test]
     fn icloud_sends_on_the_port_apple_documents() {
         let icloud = preset_for_domain("icloud.com").expect("iCloud should be a shipped row");
@@ -577,9 +434,6 @@ mod tests {
         );
     }
 
-    /// The account #501 and #943 describe: iCloud's own real folders, so a
-    /// role tie-break has something to prefer over the look-alike another
-    /// client left beside each one.
     #[test]
     fn icloud_names_its_own_role_folders() {
         let icloud = preset_for_domain("icloud.com").expect("iCloud should be a shipped row");
@@ -594,9 +448,8 @@ mod tests {
         );
         assert_eq!(
             names.get(&MailboxRole::Archive).map(String::as_str),
-            // "Archive", not "Archives": #1178. The plural is what somebody
-            // calls a folder they file years under, and pointing the role at
-            // it sends every archive into a folder with four messages in it.
+            // "Archive", not "Archives": the plural names a folder somebody files years under
+            // (#1178).
             Some("Archive")
         );
     }
@@ -674,10 +527,6 @@ mod tests {
 
     #[test]
     fn the_named_providers_the_first_run_screen_has_to_cover_are_in_the_table() {
-        // These were a second, hardcoded table in
-        // the classic app's provision example's `known` -- the same data in two
-        // places, only one of which the onboarding screen could reach.
-        // Issue #69 asks for one table both callers use.
         for (domain, imap, smtp) in [
             ("icloud.com", "imap.mail.me.com", "smtp.mail.me.com"),
             ("me.com", "imap.mail.me.com", "smtp.mail.me.com"),
@@ -693,8 +542,6 @@ mod tests {
             assert_eq!(settings.smtp.host, smtp, "{domain}");
         }
     }
-
-    // -- Acceptance: office365/outlook preset (#868) ------------------------
 
     #[test]
     fn a_microsoft_365_domain_resolves_to_the_office365_preset() {
@@ -712,10 +559,7 @@ mod tests {
 
     #[test]
     fn a_custom_domain_delegated_to_microsoft_365_resolves_by_its_mx_suffix() {
-        // The mockup's own scenario (Design/screens/14-add-account.png):
-        // "contoso.com uses Microsoft 365" -- a custom domain has no reason
-        // to appear in `domains`, so this has to work through the MX-suffix
-        // path every other custom-domain provider already uses (#94).
+        // A custom domain is not in `domains`, so this resolves through the MX-suffix path (#94).
         let preset =
             preset_for_mx_host("contoso-com.mail.protection.outlook.com").unwrap_or_else(|| {
                 panic!("a Microsoft 365 MX host should resolve to the office365 preset")
@@ -756,9 +600,8 @@ mod tests {
 
     #[test]
     fn every_row_is_usable_as_written() {
-        // The table is data, and data gets typed. A row with an empty host or
-        // a zero port would reach the first-run screen as a prefilled form
-        // that cannot possibly connect.
+        // A row with an empty host or zero port would reach first-run as a form that cannot
+        // connect.
         for preset in presets() {
             assert!(!preset.display_name().is_empty());
             assert!(!preset.domains().is_empty(), "{}", preset.display_name());
@@ -797,15 +640,9 @@ mod tests {
         }
     }
 
-    // ── issue #191: the shipped table is a compiled TOML asset ────────────
-
     #[test]
     fn the_shipped_file_is_the_same_module_the_build_script_already_validated() {
-        // Not a tautology: this proves `data/providers.toml` still parses
-        // and validates *by itself*, through the exact function `build.rs`
-        // calls, independent of whether `presets()` has been touched yet in
-        // this test binary. If the two ever disagreed, this is how you'd
-        // find out without waiting for a build to fail.
+        // Proves the file parses and validates by itself, through the function `build.rs` calls.
         let parsed = providers_toml::parse(include_str!("../../data/providers.toml"))
             .expect("the checked-in file must parse and validate on its own");
         assert_eq!(parsed.rows.len(), presets().len());

@@ -15,21 +15,14 @@ repository.workspace = true
 test-golden = []
 
 [dependencies]
-# The HTML parser, and the reason this is its own crate rather than part of
-# postio-model: `ammonia` pulls html5ever, markup5ever and a generated tag
-# table, and postio-model is what the whole workspace waits on. See ADR 0004.
+# `ammonia` pulls html5ever and a generated tag table, which is why this is not part of postio-model
+# (ADR 0004).
 ammonia = "4.2.5"
-# Already in the tree: `ammonia` parses `style` attributes with it, so the
-# sender-CSS work shares one parser rather than adding a second. See #1326.
 cssparser = "0.38"
 html5ever = "0.40.1"
-# Sanitised HTML to Markdown, for the terminal's reader (docs/archive/specs/005-tui-frontend
-# research R5; spike T005 found it keeps every safety promise over the corpus).
 htmd = "0.6.0"
 markup5ever_rcdom = "0.40.1"
 postio-model = { workspace = true }
-# Markdown to the composer's document, for the terminal composer
-# (docs/archive/specs/005-tui-frontend research R6).
 pulldown-cmark = { version = "0.13", default-features = false }
 postio-workspace-hack.workspace = true
 

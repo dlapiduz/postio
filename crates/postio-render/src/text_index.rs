@@ -1,12 +1,6 @@
-//! The text index (research R7): the document's text in reading order,
-//! with the geometry of every drawn cluster -- the one serialisation copy,
-//! find and the screen reader share, so they cannot disagree.
-//!
-//! Built once per render, on the render thread, from the laid-out tree:
-//! tabs between table cells, newlines at rows and blocks, image `alt` in
-//! its place, `display: none` and `visibility: hidden` left out. Blitz's
-//! own `get_selected_text` joins inline roots with a space and flattens
-//! tables, so it is not used.
+//! The document's text in reading order with the geometry of every drawn cluster,
+//! built once per render on the render thread. Blitz's own `get_selected_text`
+//! joins inline roots with a space and flattens tables, so it is not used.
 
 use std::ops::Range;
 
@@ -15,7 +9,6 @@ use parley::layout::PositionedLayoutItem;
 
 use crate::{Cluster, Point, Rect, Rgb, Scope, TextIndex};
 
-/// Elements whose end is a line break in reading order.
 const BLOCKS: &[&str] = &[
     "address",
     "article",
@@ -50,10 +43,8 @@ const BLOCKS: &[&str] = &[
     "ul",
 ];
 
-/// Elements whose content is never read.
 const UNREAD: &[&str] = &["head", "script", "style", "template", "title"];
 
-/// Build the index of a laid-out document.
 pub(crate) fn build(doc: &BaseDocument) -> TextIndex {
     let mut builder = Builder {
         doc,
@@ -80,9 +71,7 @@ struct Builder<'a> {
     chars: usize,
     clusters: Vec<Cluster>,
     line: u32,
-    /// Cells written in the current table row.
     cell: usize,
-    /// Inside an inline box (an inline-block within a line): no breaks.
     inline: usize,
 }
 
@@ -96,7 +85,6 @@ impl Builder<'_> {
         self.text.chars().next_back()
     }
 
-    /// End the current line, unless it is already ended.
     fn line_break(&mut self) {
         if self.inline == 0 && self.last().is_some_and(|c| c != '\n') {
             self.trim_blanks();
@@ -104,7 +92,6 @@ impl Builder<'_> {
         }
     }
 
-    /// Drop trailing spaces and tabs: no cluster covers them.
     fn trim_blanks(&mut self) {
         while let Some(c) = self.last().filter(|c| *c == ' ' || *c == '\t') {
             self.text.pop();
@@ -180,9 +167,6 @@ impl Builder<'_> {
         }
     }
 
-    /// One inline root: its own text in logical order, with every inline
-    /// box (an image, an inline-block) read at the place it sits, and a
-    /// cluster for every glyph cluster drawn.
     fn inline_root(&mut self, node: &Node) {
         let Some(data) = node
             .element_data()
@@ -201,7 +185,6 @@ impl Builder<'_> {
             .collect();
         boxes.sort_by_key(|(index, _)| *index);
         let mut boxes = boxes.into_iter().peekable();
-        // Where each byte of `source` landed in `text`, in chars.
         let mut at = vec![self.chars; source.len() + 1];
         for (byte, c) in source.char_indices() {
             while let Some((_, id)) = boxes.next_if(|(index, _)| *index <= byte) {
@@ -220,7 +203,6 @@ impl Builder<'_> {
         }
         at[source.len()] = self.chars;
         for (byte, _) in source.char_indices().rev() {
-            // A byte inside a multi-byte char maps where its char did.
             for inner in byte + 1..source.len() {
                 if !source.is_char_boundary(inner) {
                     at[inner] = at[byte];
@@ -296,13 +278,9 @@ impl Builder<'_> {
                 for cluster in run.run().visual_clusters() {
                     let first = glyph;
                     glyph += cluster.glyphs().count();
-                    // A ligature is one glyph over several clusters: the
-                    // first holds the glyph, the rest hold none, and Parley
-                    // splits the glyph's advance among them all. A cluster
-                    // with no glyph belongs to the glyph run its ligature's
-                    // glyph is in, and its share of the advance moves the
-                    // pen like any other's -- skipping it put every later
-                    // box on the line left of its glyph (#1783).
+                    // A ligature is one glyph over several clusters; a cluster with no glyph
+                    // still moves the pen by its share of the advance: skipping it put
+                    // every later box on the line left of its glyph (#1783).
                     let owner = if glyph == first {
                         first.saturating_sub(1)
                     } else {
@@ -337,13 +315,11 @@ impl Builder<'_> {
     }
 }
 
-/// `display: none`: not laid out, not read.
 fn hidden(node: &Node) -> bool {
     node.primary_styles()
         .is_some_and(|styles| styles.get_box().display.is_none())
 }
 
-/// `visibility: hidden` or `collapse`: laid out, but neither drawn nor read.
 fn invisible(node: &Node) -> bool {
     use style::computed_values::visibility::T as Visibility;
     node.primary_styles()
@@ -364,16 +340,13 @@ fn srgb(colour: &style::color::AbsoluteColor) -> (Rgb, f32) {
     )
 }
 
-/// The colour text in `node` is drawn in.
 fn colour(node: &Node) -> Option<Rgb> {
     node.primary_styles()
         .map(|styles| srgb(&styles.clone_color()).0)
 }
 
-/// The colour behind `id`: its ancestors' backgrounds composited down to
-/// the nearest opaque one, or to white. A translucent ground counts -- a
-/// search match's tint is one -- because it is what a person sees behind
-/// the text.
+/// A translucent ground counts (a search match's tint is one): it is what a person sees behind the
+/// text.
 fn ground(doc: &BaseDocument, id: NodeId) -> Rgb {
     let mut layers: Vec<(Rgb, f32)> = Vec::new();
     let mut base = Rgb::from_u8(255, 255, 255);
@@ -406,7 +379,6 @@ fn ground(doc: &BaseDocument, id: NodeId) -> Rgb {
     })
 }
 
-/// The message a node belongs to.
 fn scope_of(doc: &BaseDocument, id: NodeId) -> Scope {
     let attribute = LocalName::from("data-postio-message");
     let mut at = doc.get_node(id);
@@ -420,9 +392,6 @@ fn scope_of(doc: &BaseDocument, id: NodeId) -> Scope {
 }
 
 impl TextIndex {
-    /// The offset of the glyph at `point`: its start, or its end when the
-    /// point is in its trailing half. A point beside a line's text snaps to
-    /// the nearest cluster on that line.
     pub fn hit(&self, point: Point) -> Option<usize> {
         let on_line: Vec<&Cluster> = self
             .clusters
@@ -453,7 +422,6 @@ impl TextIndex {
         })
     }
 
-    /// The word around `offset`: letters and digits either side of it.
     pub fn word_at(&self, offset: usize) -> Range<usize> {
         let chars: Vec<char> = self.text.chars().collect();
         let word = |i: usize| chars.get(i).is_some_and(|c| c.is_alphanumeric());
@@ -471,7 +439,6 @@ impl TextIndex {
         start..end
     }
 
-    /// The laid-out line around `offset`, as a range of the text.
     pub fn line_at(&self, offset: usize) -> Range<usize> {
         let Some(line) = self
             .clusters
@@ -491,7 +458,6 @@ impl TextIndex {
         start..end
     }
 
-    /// The boxes `range` is drawn in: one per line it touches.
     pub fn rects(&self, range: Range<usize>) -> Vec<Rect> {
         let mut out: Vec<(u32, Rect)> = Vec::new();
         for cluster in &self.clusters {
@@ -506,7 +472,6 @@ impl TextIndex {
         out.into_iter().map(|(_, rect)| rect).collect()
     }
 
-    /// The text of `range`, in chars; clamped to the text.
     pub fn slice(&self, range: Range<usize>) -> &str {
         let byte = |char_offset: usize| {
             self.text
@@ -519,48 +484,31 @@ impl TextIndex {
         &self.text[start..end]
     }
 
-    /// Every match of `query`, in order, ignoring case and diacritics:
-    /// `TOTAL` finds `Total` and `tötal`.
     pub fn find(&self, query: &str) -> Vec<Range<usize>> {
         let (needle, _) = fold(query, Spacing::AsWritten);
         let (haystack, origin) = fold(&self.text, Spacing::AsWritten);
         matches(&haystack, &origin, &needle)
     }
 
-    /// Every place a search's words are drawn, in order (spec 013 US6): each
-    /// word as a whole word, ignoring case and diacritics, and words that
-    /// stand together one match however they are joined, so the search
-    /// `rate limit headers` finds both "rate limit headers" and
-    /// "rate-limit headers", as the index did (#2193).
+    /// Words standing together are one match however joined: `rate limit headers`
+    /// finds "rate-limit headers" too (#2193).
     pub fn find_words(&self, query: &str) -> Vec<Range<usize>> {
         word_matches(&self.text, query)
     }
 
-    /// Every place `excerpt`'s words are drawn, in order: [`find`](Self::find)
-    /// with whitespace made alike on both sides (spike S5, research R2).
-    ///
-    /// Any run of whitespace matches any other. A sentence a detector read
-    /// from a flattened source has spaces where the index has a tab between
-    /// table cells, a line break between blocks, or one space for a
-    /// hard-wrapped line. Whitespace at either end of the excerpt is not
-    /// part of its words.
+    /// [`find`](Self::find) with whitespace made alike on both sides: a sentence
+    /// a detector read from a flattened source has spaces where the index has a
+    /// tab, a line break or a hard wrap.
     pub fn find_excerpt(&self, excerpt: &str) -> Vec<Range<usize>> {
         let (needle, _) = fold(excerpt, Spacing::Collapsed);
         let (haystack, origin) = fold(&self.text, Spacing::Collapsed);
         matches(&haystack, &origin, &needle)
     }
 
-    /// Where the sentence `excerpt` is drawn, or `None` when the reader does
-    /// not draw it: what a marker highlights in the open message (spec 007
-    /// FR-035, research R2).
-    ///
-    /// The words are found with [`find_excerpt`](Self::find_excerpt). When
-    /// they are drawn more than once, the occurrence nearest the excerpt's
-    /// proportional place in the text it was read from is the one: the
-    /// offset cannot address the index itself, but its proportion survives
-    /// the index's reading order well enough to choose. Over every corpus
-    /// body sent twice, it chose the right copy 1,948 times in 1,948
-    /// (`tests/excerpt_locate.rs`).
+    /// `None` when the reader does not draw it. When drawn more than once, the
+    /// occurrence nearest the excerpt's proportional place in its source wins: the
+    /// offset cannot address the index, but its proportion survives well enough
+    /// (`tests/render_suite/measurement/excerpt_locate.rs`).
     pub fn locate(&self, excerpt: crate::Excerpt<'_>) -> Option<Range<usize>> {
         let wanted = excerpt.offset as f64 / excerpt.source_len.max(1) as f64;
         let drawn = self.text.chars().count().max(1) as f64;
@@ -570,10 +518,8 @@ impl TextIndex {
             .min_by(|a, b| distance(a).total_cmp(&distance(b)))
     }
 
-    /// The first offset drawn at or below `y`: what a zoom keeps in place.
-    ///
-    /// The topmost cluster below `y`, leftmost on a tie -- not the first in
-    /// reading order, which in a table can be the top of the next column.
+    /// The topmost cluster below `y`, leftmost on a tie: not the first in reading order, which in a
+    /// table can be the top of the next column.
     pub fn char_at_top(&self, y: f64) -> usize {
         self.clusters
             .iter()
@@ -588,17 +534,12 @@ impl TextIndex {
     }
 }
 
-/// What a fold does with whitespace.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Spacing {
-    /// Keeps it as written: find in the page matches what was typed.
     AsWritten,
-    /// Writes every run of it as one space, and drops it at either end.
     Collapsed,
 }
 
-/// `text` folded for matching, and for each folded char the offset of the
-/// char it came from.
 fn fold(text: &str, spacing: Spacing) -> (Vec<char>, Vec<usize>) {
     use unicode_normalization::UnicodeNormalization as _;
     use unicode_normalization::char::is_combining_mark;
@@ -614,9 +555,7 @@ fn fold(text: &str, spacing: Spacing) -> (Vec<char>, Vec<usize>) {
             continue;
         }
         if c.is_ascii() {
-            // Its own decomposition, and one lowercase char: most of a mail
-            // body, and the per-char decomposition below is what folding
-            // spends its time on.
+            // Its own decomposition and one lowercase char: most of a mail body, so the fast path.
             folded.push(c.to_ascii_lowercase());
             origin.push(offset);
             continue;
@@ -635,9 +574,6 @@ fn fold(text: &str, spacing: Spacing) -> (Vec<char>, Vec<usize>) {
     (folded, origin)
 }
 
-/// [`TextIndex::find_words`] over `text`: its words that `query` names, in
-/// char ranges, a run of them with nothing but spaces and punctuation
-/// between merged into one.
 fn word_matches(text: &str, query: &str) -> Vec<Range<usize>> {
     let (wanted, _) = fold(query, Spacing::AsWritten);
     let wanted: Vec<&[char]> = wanted
@@ -677,8 +613,6 @@ fn word_matches(text: &str, query: &str) -> Vec<Range<usize>> {
     out
 }
 
-/// Every match of `needle` in `haystack`, in order and not overlapping, as
-/// ranges of the text `origin` maps back to.
 fn matches(haystack: &[char], origin: &[usize], needle: &[char]) -> Vec<Range<usize>> {
     let mut out = Vec::new();
     if needle.is_empty() {
@@ -708,9 +642,6 @@ mod tests {
             .collect()
     }
 
-    /// A search's words are found as the index found them, a word at a
-    /// time, and words that stand together are one match however they are
-    /// joined: a hyphen is no less a match than a space (#2193).
     #[test]
     fn a_searchs_words_are_found_however_they_are_joined() {
         assert_eq!(

@@ -1,25 +1,19 @@
-//! Accounts, their servers, and the identities that send from them.
-
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::address::EmailAddress;
 use crate::ids::{AccountId, IdentityId, SignatureId};
 
-/// How a connection is protected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum TransportSecurity {
     /// Plaintext. Only ever valid for a local test server.
     None,
-    /// Upgrade an initially plaintext connection with `STARTTLS`.
     StartTls,
-    /// TLS from the first byte (implicit TLS).
     #[default]
     Tls,
 }
 
 impl TransportSecurity {
-    /// A stable lowercase identifier, for storage and config.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::None => "none",
@@ -28,11 +22,7 @@ impl TransportSecurity {
         }
     }
 
-    /// The inverse of [`TransportSecurity::as_str`].
-    ///
-    /// `None` for anything else: a value that is not one of these came from a
-    /// corrupt row or a hand-edited config, and guessing at it would be worse
-    /// than saying so.
+    /// `None` for an unknown name: a corrupt row or hand-edited config must not be guessed at.
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
             "none" => Some(Self::None),
@@ -43,22 +33,16 @@ impl TransportSecurity {
     }
 }
 
-/// How Postio authenticates to a server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum AuthMethod {
-    /// An ordinary account password.
     #[default]
     Password,
-    /// A provider-issued app-specific password. This is the v1 iCloud path.
     AppPassword,
-    /// OAuth 2 with a refresh token.
     OAuth2,
-    /// `XOAUTH2` SASL, as used by Gmail and Outlook.
     XOAuth2,
 }
 
 impl AuthMethod {
-    /// A stable lowercase identifier, for storage and config.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Password => "password",
@@ -68,7 +52,6 @@ impl AuthMethod {
         }
     }
 
-    /// The inverse of [`AuthMethod::as_str`].
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
             "password" => Some(Self::Password),
@@ -80,55 +63,33 @@ impl AuthMethod {
     }
 }
 
-/// Where and how to reach one of an account's servers.
-///
-/// Carries no secret. Credentials live in the Secret Service keyring and are
-/// never part of the domain model, never written to `config.toml` and never
-/// logged.
+/// Carries no secret: credentials live in the keyring, never in the model, `config.toml` or logs.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct ServerConfig {
-    /// Hostname.
     pub host: String,
-    /// TCP port.
     pub port: u16,
-    /// Connection security.
     pub security: TransportSecurity,
-    /// Login username, usually the full address.
     pub username: String,
 }
 
-/// Which protocol adapter reaches this account's server (ADR 0018 Q5).
-///
-/// Chosen at add-account time from the preset row's preference order —
-/// the connection proof tries each in turn and stores the first that
-/// worked — and read back by the engine every launch. `Imap` for every
-/// account that predates the column.
+/// Which protocol adapter reaches this account's server, chosen at add-account time and persisted
+/// (ADR 0018 Q5).
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum Backend {
-    /// The IMAP adapter, over the account's incoming server.
     #[default]
     Imap,
-    /// The JMAP adapter (#544).
     Jmap {
-        /// The RFC 8620 session resource URL, resolved from the preset row
-        /// at add time and persisted so startup needs no discovery.
+        /// RFC 8620 session URL, persisted so startup needs no discovery.
         session_url: String,
     },
-    /// The Gmail REST adapter (#546). Everything it needs beyond the
-    /// account's OAuth credential is Google's fixed API endpoint, so it
-    /// carries no composition data.
     Gmail,
-    /// A maildir already on this machine (#1278). No server, no credential:
-    /// the whole account is the directory named here.
     Maildir {
-        /// The tree's root, absolute — `~/mail`, a synchronised Dovecot
-        /// store, whatever the user pointed at.
+        /// Absolute path of the tree's root.
         root: String,
     },
 }
 
 impl Backend {
-    /// A stable lowercase identifier, for storage and diagnostics.
     pub fn kind(&self) -> &'static str {
         match self {
             Self::Imap => "imap",
@@ -139,63 +100,37 @@ impl Backend {
     }
 }
 
-/// The OAuth composition data an account signed in with (#534).
-///
-/// What the engine needs, every launch and offline too, to rebuild the
-/// account's own-client token source: the resolved token endpoint and the
-/// client id.
+/// OAuth data persisted at sign-in so the engine rebuilds its token source offline at every launch
+/// (#534).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OAuthConfig {
-    /// The OAuth client id the sign-in used.
     pub client_id: String,
-    /// The token endpoint, resolved at sign-in (from the preset row or
-    /// RFC 8414 metadata) and persisted so startup needs no network.
+    /// Resolved at sign-in (preset or RFC 8414) and persisted so startup needs no network.
     pub token_url: String,
-    /// The authorization endpoint, persisted for the same reason: a
-    /// re-authentication after a revoked grant runs the browser flow
-    /// again, offline-resolvable.
+    /// Persisted so re-authentication after a revoked grant works offline.
     pub authorize_url: String,
-    /// The scopes the sign-in requested, space-joined as RFC 6749 §3.3
-    /// carries them.
+    /// Space-joined, per RFC 6749 §3.3.
     pub scopes: String,
-    /// How many days the provider says the **refresh** grant lives, copied
-    /// from its preset row at sign-in.
-    ///
-    /// Here rather than looked up per refresh for the same reason
-    /// [`token_url`](Self::token_url) is: the engine rebuilds a token source
-    /// from this row at every launch and must not need the preset table, or
-    /// a network, to do it.
-    ///
-    /// `None` is the ordinary case — most providers state nothing — and must
-    /// behave exactly as Postio did before the field existed: no early
-    /// deadline, and a dead grant found the way it always was (#954).
+    /// Days the provider says the refresh grant lives, copied from the preset at sign-in so launch
+    /// needs no preset table. `None` means no early deadline (#954).
     #[serde(default)]
     pub refresh_token_lifetime_days: Option<u32>,
 }
 
-/// A signature appended to outgoing mail.
-///
-/// Owned by the account and named, rather than being a property of one
-/// identity (#12): a person has a long form and a short one, or one with a
-/// disclaimer for mail leaving the company, and which to use is a decision
-/// per message rather than per address. An identity names the one it signs
-/// with by default; the composer can point a draft at any of the others.
+/// A named signature owned by the account, so a draft can pick any of them; an identity names its
+/// default (#12).
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Signature {
-    /// Local id. Unassigned until it has been stored.
     #[serde(default)]
     pub id: SignatureId,
-    /// What the composer's picker shows. Unique within the account.
+    /// Unique within the account.
     #[serde(default)]
     pub name: String,
-    /// Plain-text form.
     pub text: String,
-    /// Rich form, when there is one.
     pub html: Option<String>,
 }
 
 impl Signature {
-    /// A signature called `name`, with `text` as its only form.
     pub fn new(name: impl Into<String>, text: impl Into<String>) -> Self {
         Self {
             id: SignatureId::UNASSIGNED,
@@ -205,34 +140,24 @@ impl Signature {
         }
     }
 
-    /// The same signature with a rich form as well.
     pub fn with_html(mut self, html: impl Into<String>) -> Self {
         self.html = Some(html.into());
         self
     }
 }
 
-/// An address the user can send from, within an account.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Identity {
-    /// Local id.
     pub id: IdentityId,
-    /// Owning account.
     pub account_id: AccountId,
-    /// Name shown in the identity picker.
     pub display_name: String,
-    /// The `From` address this identity sends as.
     pub address: EmailAddress,
-    /// An explicit `Reply-To`, when it differs from `address`.
     pub reply_to: Option<EmailAddress>,
-    /// Signature for this identity.
     pub signature: Option<Signature>,
-    /// Whether this is the account's default identity.
     pub is_default: bool,
 }
 
 impl Identity {
-    /// Builds an unpersisted identity for `account_id`.
     pub fn new(account_id: AccountId, address: EmailAddress) -> Self {
         Self {
             id: IdentityId::UNASSIGNED,
@@ -245,105 +170,50 @@ impl Identity {
         }
     }
 
-    /// The address replies to mail from this identity should go to.
     pub fn effective_reply_to(&self) -> &EmailAddress {
         self.reply_to.as_ref().unwrap_or(&self.address)
     }
 }
 
-/// A configured mail account.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Account {
-    /// Local id.
     pub id: AccountId,
-    /// Name shown in the sidebar.
     pub display_name: String,
-    /// The account's primary address.
     pub address: EmailAddress,
-    /// IMAP server.
     pub incoming: ServerConfig,
-    /// SMTP server.
     pub outgoing: ServerConfig,
-    /// How to authenticate.
     pub auth: AuthMethod,
-    /// The OAuth client this account signed in with, when it did (#534).
-    ///
-    /// `None` on password accounts — and on OAuth accounts fed by an
-    /// external broker, which carry an OAuth `auth` method and no client
-    /// of their own. Never a secret: the client id is public by definition
-    /// on a native app, and the endpoint is a URL; the client secret and
-    /// the refresh token live in the keyring under derived keys.
+    /// `None` on password accounts and external-broker accounts. Never a secret: the client secret
+    /// and refresh token live in the keyring.
     pub oauth: Option<OAuthConfig>,
-    /// Which protocol adapter reaches the server (ADR 0018 Q5).
     #[serde(default)]
     pub backend: Backend,
-    /// Whether the account participates in sync.
     pub enabled: bool,
-    /// Addresses this account can send from.
     pub identities: Vec<Identity>,
-    /// Every signature this account can sign with, in picker order (#12).
-    ///
-    /// An identity's own signature is one of these; the composer offers the
-    /// rest so a draft can sign differently without changing who it is from.
     #[serde(default)]
     pub signatures: Vec<Signature>,
-    /// The largest message this account's provider will accept, in bytes.
-    ///
-    /// `None` means no configured limit, and then nothing is checked — see
-    /// [`crate::size::check`]. Inventing a number would refuse mail the
-    /// provider would have taken, with no way for the person to tell Postio's
-    /// guess from their provider's rule.
-    ///
-    /// Never read from the SMTP `SIZE` capability: `postio-smtp` holds that
-    /// Postio announces nothing and relies on nothing, and a refusal
-    /// conditional on a capability list is how that erodes.
+    /// In bytes; `None` means no limit and nothing is checked. Never read from the SMTP `SIZE`
+    /// capability:
+    /// postio-smtp relies on no capability list.
     pub max_message_size: Option<u64>,
-    /// An account-wide override of what a new draft starts signed with
-    /// (#12's last item, #394) — see [`crate::signature_default::resolve`] for the
-    /// full precedence this participates in, alongside a mailbox's own
-    /// override and an identity's own signature.
-    ///
-    /// `None` means this account has no opinion, and resolution falls
-    /// through to whatever would have applied without it.
+    /// Account-wide override of a new draft's signature; `None` falls through (see
+    /// [`crate::signature_default::resolve`]).
     #[serde(default)]
     pub default_signature_id: Option<SignatureId>,
-    /// When the account was added.
     pub created_at: DateTime<Utc>,
-    /// The account new messages come from when the message itself does not
-    /// say (#960).
-    ///
-    /// Exactly one thing, and the fence around it is the point: it does not
-    /// order the sidebar, prioritise sync, decide what Unified contains, or
-    /// mean an account is more the user's than another. **Reply, reply-all
-    /// and forward never read it** — which address a reply comes from is
-    /// decided by the message being replied to ([`crate::reply`]), and a
-    /// default that overrode that would send replies from the wrong address
-    /// to people who wrote to a different one.
-    ///
-    /// At most one account carries it, enforced by
-    /// `AccountRepository::set_default`. `false` on every account is the
-    /// ordinary state — it is what every store had before this existed — and
-    /// resolves to the behaviour Postio had without it rather than to an
-    /// error or a choice made on the user's behalf.
-    ///
-    /// The same shape as [`Identity::is_default`] one level down, so the
-    /// resolution reads the way the naming does: default account, then that
-    /// account's default identity.
+    /// The account new messages come from when the message does not say (#960). It orders nothing
+    /// and reply, reply-all and forward never read it: the replied-to message decides the address
+    /// ([`crate::reply`]). At most one account carries it (`AccountRepository::set_default`); none
+    /// is the ordinary state.
     #[serde(default)]
     pub is_default: bool,
-    /// Marked for removal, but not yet reaped (#464).
-    ///
-    /// Setting this is what "Remove" in the settings panel does: instant,
-    /// and reversible from the undo toast. The actual `DELETE ... CASCADE`
-    /// only runs once, at the next startup, before any engine is created
-    /// (`AccountRepository::reap_pending_deletions`), so a crash before the
-    /// toast expires is harmless — nothing has actually been deleted yet.
+    /// Set by Remove in settings (undoable). The cascade delete runs at next startup, before any
+    /// engine exists (`AccountRepository::reap_pending_deletions`) (#464).
     #[serde(default)]
     pub pending_deletion: bool,
 }
 
 impl Account {
-    /// Builds an unpersisted account with conventional IMAPS/submission ports.
     pub fn new(display_name: impl Into<String>, address: EmailAddress) -> Self {
         let username = address.address.clone();
         Self {
@@ -376,9 +246,7 @@ impl Account {
         }
     }
 
-    /// The identity marked default, or the first one when none is marked.
-    ///
-    /// Returns `None` only when the account has no identities at all.
+    /// `None` only when the account has no identities.
     pub fn default_identity(&self) -> Option<&Identity> {
         self.identities
             .iter()
@@ -386,21 +254,10 @@ impl Account {
             .or_else(|| self.identities.first())
     }
 
-    /// The identity a message sent to `recipients` was addressed to.
-    ///
-    /// A reply has to come from the address the mail arrived at — answering
-    /// from the wrong one is how a thread ends up split across two mailboxes
-    /// at the other end, and how a personal address leaks into a work thread.
-    ///
-    /// `recipients` is walked in order and the first match wins, so a caller
-    /// passing `To` before `Cc` gets the identity the message was actually
-    /// *sent* to rather than one that was merely copied. An identity's
-    /// explicit `Reply-To` counts as one of its addresses, because mail
-    /// answering that identity is addressed to it however it is spelled.
-    ///
-    /// Falls back to [`Account::default_identity`] when nothing matches: mail
-    /// reaches an account by routes that are not in any header, and a reply
-    /// with no `From` at all is worse than one from the usual address.
+    /// The identity a message sent to `recipients` was addressed to: a reply must come from the
+    /// address the mail arrived at. First match wins (`To` before `Cc`); an identity's `Reply-To`
+    /// counts as its address. Falls back to the default identity, since mail can arrive by routes
+    /// absent from headers.
     pub fn identity_for(&self, recipients: &[EmailAddress]) -> Option<&Identity> {
         recipients
             .iter()
@@ -413,10 +270,6 @@ impl Account {
             .or_else(|| self.default_identity())
     }
 
-    /// Whether `address` is one of this account's own addresses.
-    ///
-    /// Used to pick the "to me" affordances and to drop the user from
-    /// reply-all recipients.
     pub fn owns_address(&self, address: &EmailAddress) -> bool {
         self.address.same_address(address)
             || self
@@ -426,51 +279,22 @@ impl Account {
     }
 }
 
-/// How many accounts a view is about: one, or all of them.
-///
-/// Deliberately not an `Option<AccountId>`. There is always a scope, and the
-/// old `None` had to mean both "no account is chosen" and "every account at
-/// once" — see [`AccountScope::Unified`].
-///
-/// The asymmetry is the point. [`AccountScope::Account`] names real mailboxes
-/// on a real server, so it can be a *destination*; [`AccountScope::Unified`]
-/// is a view assembled across every enabled account and can never be one.
-///
-/// # Why this lives in `postio-model` (#186)
-///
-/// It began in `postio_core::state` (#182), which is the natural home for a
-/// thing the UI's state machine holds — and then search needed exactly the
-/// same value. `postio-index` cannot depend on `postio-core` and should not,
-/// so the choice was between defining a second, parallel enum of the same two
-/// variants and moving this one down to the crate both already share.
-///
-/// A duplicate would be small and would look harmless. It would also be two
-/// things that must agree about what "unified" means, in a codebase where
-/// `AppState.scope` and `SearchRequest.account` are supposed to be the *same*
-/// answer to the same question — so the list and the search bar could
-/// disagree about which accounts they are showing, which is precisely the
-/// class of bug ADR 0005 Q10 is about. One type cannot drift from itself.
-/// `postio_core::state::Scope` re-exports this, so nothing #182 wrote had to
-/// change.
+/// How many accounts a view is about: one, or all. Not an `Option<AccountId>`, whose `None` meant
+/// both "none chosen" and "all". `Account` can be a destination; `Unified` is a view and never one.
+/// Lives here so list state and `SearchRequest.account` share one type and cannot disagree (ADR
+/// 0005 Q10, #186).
 #[derive(
     Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
 )]
 pub enum AccountScope {
-    /// One account's own mailboxes.
     Account(AccountId),
-    /// Every enabled account at once. A view, never a destination.
-    ///
-    /// The default, and it is not a placeholder: unified over zero accounts
-    /// is empty, which is exactly what a fresh install has to show.
+    /// A view, never a destination. The default: unified over zero accounts is empty, as a fresh
+    /// install must show.
     #[default]
     Unified,
 }
 
 impl AccountScope {
-    /// The account this scope names, or `None` for [`AccountScope::Unified`].
-    ///
-    /// The one place the old `Option<AccountId>` survives, and it now means
-    /// exactly one thing: "this view is not about a single account."
     pub fn account(self) -> Option<AccountId> {
         match self {
             Self::Account(id) => Some(id),
@@ -478,7 +302,6 @@ impl AccountScope {
         }
     }
 
-    /// Whether this scope can be the destination of a move.
     pub fn is_single_account(self) -> bool {
         matches!(self, Self::Account(_))
     }
@@ -500,8 +323,6 @@ mod tests {
 
     #[test]
     fn unified_is_the_default_scope() {
-        // Not a placeholder: unified over zero accounts is empty, which is
-        // what a fresh install has to show.
         assert_eq!(AccountScope::default(), AccountScope::Unified);
     }
 
@@ -559,7 +380,6 @@ mod tests {
             "matched case-insensitively, as addresses compare"
         );
 
-        // To first, then Cc: the identity it was sent to beats one copied.
         assert_eq!(
             account
                 .identity_for(&[to("ada@work.example.com"), to("ada@example.com")])

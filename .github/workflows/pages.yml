@@ -1,26 +1,9 @@
 name: Pages
 
-# Deploys the docs site to GitHub Pages: site/ (the hand-written landing
-# page, #24) at `/`, and the mdBook reference (docs/book/, #25) at `/docs/`.
-#
-# Deliberately its own workflow rather than a job in ci.yml, for the same
-# reason release.yml is separate (docs/decisions/0011-docs-site.md Q6): it
-# says nothing about whether the Rust workspace builds, and it should not
-# sit in the critical path of a PR that never touched either surface.
-#
-# One deployment, two surfaces, per ADR 0011 Q1/Q6. mdBook compiles nothing
-# of the Rust workspace -- it renders checked-in Markdown, including the
-# generated references (docs/keybindings.md, docs/config.md) unchanged --
-# and this job does not regenerate them: if either had drifted from its
-# source of truth, `ci.yml`'s own mdbook-build job already failed on the PR
-# that made it stale (Q6). This deploy job trusts the tree it was pushed.
-#
-# Still cheap relative to ci.yml/bench.yml:
-# no GTK, no WebKit, no workspace compile -- one small `cargo install` of
-# mdbook itself (cached), an mdbook build, and a Pages upload/deploy. Pushing
-# to main with a docs change is common enough, and this job light enough,
-# that it stays on `push` -- it never joined the workflows that were
-# workflow_dispatch-only while this repository was private.
+# Deploys the docs site to GitHub Pages: site/ at `/` and the mdBook reference (docs/book/) at
+# `/docs/` (ADR 0011).
+# Its own workflow, off the PR critical path. It trusts the checked-in generated references;
+# `ci.yml`'s mdbook-build job catches drift on the PR.
 on:
   push:
     branches: [main]
@@ -38,8 +21,6 @@ permissions:
   pages: write
   id-token: write
 
-# Only one deployment at a time; a newer push should win over an in-flight
-# older one rather than queuing behind it.
 concurrency:
   group: pages
   cancel-in-progress: true
@@ -53,8 +34,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # The pin decides; see ci.yml's `fmt` job for why nothing here calls
-      # `rustup default`.
       - name: Install Rust toolchain
         run: rustup show active-toolchain
 
@@ -65,15 +44,9 @@ jobs:
           path: ~/.cargo/bin/mdbook
           key: ${{ runner.os }}-mdbook-0.5.4
 
-      # Pinned the same way cargo-fuzz is in fuzz.yml: a version, not a
-      # floating latest, so a new mdbook release cannot change the deployed
-      # site's rendering out from under a commit that touched nothing.
-      #
-      # Skipped outright on a cache hit: `cargo install` refuses to overwrite
-      # an existing binary ("binary `mdbook` already exists in destination")
-      # and exits 101, so restoring the cache and then installing over it
-      # fails the job. The key pins the version, so a hit is by construction
-      # the binary this step would have built (#760).
+      # Pinned to a version so a new mdbook release cannot change the deployed rendering.
+      # Skipped on a cache hit: `cargo install` exits 101 over an existing binary, and the key pins
+      # the version (#760).
       - name: Install mdbook
         if: steps.mdbook-cache.outputs.cache-hit != 'true'
         run: cargo install mdbook --locked --version 0.5.4
@@ -81,10 +54,8 @@ jobs:
       - name: Build the book
         run: mdbook build docs/book
 
-      # upload-pages-artifact takes one directory tree, so the two surfaces
-      # are assembled into one staging directory first: the landing page at
-      # its root, the book underneath docs/ -- exactly the shape ADR 0011 Q1
-      # describes for the served site.
+      # upload-pages-artifact takes one directory: the landing page at its root, the book under
+      # docs/ (ADR 0011 Q1).
       - name: Assemble the Pages artifact
         run: |
           mkdir -p _site

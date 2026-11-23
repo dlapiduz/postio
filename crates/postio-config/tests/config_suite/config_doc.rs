@@ -1,20 +1,3 @@
-//! `docs/config.md` is generated from the config schema.
-//!
-//! `postio-config` is a set of `serde` structs with doc comments, and Rust
-//! has no reflection to walk them at runtime — so unlike
-//! `keybindings_doc.rs`, which renders `postio_core::registry::all()`
-//! directly, this file owns a hand-written table of every documented key
-//! and *asserts* that the table's paths are exactly the keys
-//! [`reference_config`] serialises. Adding a field without adding its row
-//! here fails this test with the field's name in the message; removing a
-//! field without removing its row does too.
-//!
-//! ADR 0011 Q3 is the design this follows, including why: `schemars` would
-//! put a schema library in the graph of every crate that depends on
-//! `postio-config` (`postio-core` among them) to render one page, and
-//! parsing the source with `syn` in a build script is a second, driftable
-//! model of the same schema.
-
 use std::fmt::Write as _;
 use std::path::PathBuf;
 
@@ -27,8 +10,6 @@ fn document_path() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/config.md"))
 }
 
-/// One documented key: its dotted path, its TOML type, its default exactly
-/// as it would appear in `config.toml`, and the prose.
 struct Entry {
     path: &'static str,
     kind: &'static str,
@@ -37,7 +18,6 @@ struct Entry {
 }
 
 const ENTRIES: &[Entry] = &[
-    // ── [ui] ──────────────────────────────────────────────────────────
     Entry {
         path: "ui.density",
         kind: "string",
@@ -62,14 +42,12 @@ const ENTRIES: &[Entry] = &[
         default: "true",
         description: "Show each row's sender-initials chip.",
     },
-    // ── [reader] ──────────────────────────────────────────────────────
     Entry {
         path: "reader.zoom",
         kind: "integer",
         default: "100",
         description: "How large messages are drawn, in percent: one of 50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250 or 300. Another value loads as the nearest step.",
     },
-    // ── [sync] ────────────────────────────────────────────────────────
     Entry {
         path: "sync.check_for_mail",
         kind: "string",
@@ -148,7 +126,6 @@ const ENTRIES: &[Entry] = &[
         default: "0 (never)",
         description: "Permanently delete Trash older than this many days, here and on the server. Flagged mail is kept. 0 leaves Trash alone.",
     },
-    // ── [storage] ─────────────────────────────────────────────────────
     Entry {
         path: "storage.max_bytes",
         kind: "integer",
@@ -157,7 +134,6 @@ const ENTRIES: &[Entry] = &[
                        the store is a cache and may evict what is refetchable, never message \
                        text or drafts.",
     },
-    // ── [compose] ─────────────────────────────────────────────────────
     Entry {
         path: "compose.signature_on_reply",
         kind: "string",
@@ -181,7 +157,6 @@ const ENTRIES: &[Entry] = &[
                       terminal -- `vim`, `nano` -- cannot be opened by either frontend, \
                       and Postio says so rather than appearing to do nothing.",
     },
-    // ── [tui] ─────────────────────────────────────────────────────────
     Entry {
         path: "tui.preview",
         kind: "string",
@@ -205,7 +180,6 @@ const ENTRIES: &[Entry] = &[
                        `code`, `error`, `warning`, `success`. A value is a colour name, a \
                        palette number or `#rrggbb`. `NO_COLOR` overrides every one.",
     },
-    // ── [logging] ─────────────────────────────────────────────────────
     Entry {
         path: "logging.level",
         kind: "string",
@@ -226,7 +200,6 @@ const ENTRIES: &[Entry] = &[
         default: "true",
         description: "Prefix each log line with the time it was emitted.",
     },
-    // ── [focus] ───────────────────────────────────────────────────────
     Entry {
         path: "focus.filtering",
         kind: "boolean",
@@ -251,7 +224,6 @@ const ENTRIES: &[Entry] = &[
                        that list already sent: `archive` or `delete`. Either is one undoable \
                        action, and nothing moves unless you press the notice's button.",
     },
-    // ── [focus.filter] ────────────────────────────────────────────────
     Entry {
         path: "focus.filter.never",
         kind: "array of strings",
@@ -268,7 +240,6 @@ const ENTRIES: &[Entry] = &[
                        `question` or `todo`. Focus writes one when a kind is dismissed three \
                        times for the same sender, and undo takes it back.",
     },
-    // ── [[focus.digests]] ─────────────────────────────────────────────
     Entry {
         path: "focus.digests.name",
         kind: "string",
@@ -301,7 +272,6 @@ const ENTRIES: &[Entry] = &[
         default: "none (required)",
         description: "The local time it comes due, as `HH:MM`.",
     },
-    // ── [focus.model] ─────────────────────────────────────────────────
     Entry {
         path: "focus.model.endpoint",
         kind: "string",
@@ -337,7 +307,6 @@ const ENTRIES: &[Entry] = &[
         default: "true",
         description: "Offer \"Digest mail like this\", which asks the model for a rule.",
     },
-    // ── [focus.vault] ─────────────────────────────────────────────────
     Entry {
         path: "focus.vault.path",
         kind: "string",
@@ -360,9 +329,6 @@ const ENTRIES: &[Entry] = &[
     },
 ];
 
-/// A table inside a section that is documented as a section of its own:
-/// its keys are rows under its own heading, not one row of their parent's.
-/// `array` is an array of tables, `[[...]]`, written once per entry.
 struct Nested {
     path: &'static str,
     array: bool,
@@ -387,9 +353,6 @@ const NESTED: &[Nested] = &[
     },
 ];
 
-/// Every nested table filled in, as a person would write it. It is printed
-/// under `[focus]`, and [`reference_config`] reads it, so an example that
-/// stops parsing, or stops naming every key, fails the tests below.
 const FOCUS_EXAMPLE: &str = "\
 [focus]
 filtering = true
@@ -419,7 +382,6 @@ tasks_note = \"Tasks.md\"
 projects = \"Projects\"
 ";
 
-/// What each section says after its table, where a row is not enough.
 const PROSE: &[(&str, &str)] = &[
     (
         "ui",
@@ -495,35 +457,17 @@ const PROSE: &[(&str, &str)] = &[
     ),
 ];
 
-/// A `Config` built so every documented key actually serialises, for the
-/// completeness check below.
-///
-/// [`Config::default`] alone will not do: `storage.max_bytes` is an
-/// `Option<u64>` that is `None` by default, and a `None` field with no
-/// `skip_serializing_if` is simply absent from the TOML `toml` writes --
-/// there is no way to spell "documented, but unset" as a bare default. This
-/// gives it a value purely so its path exists to compare against; the table
-/// above still documents the real default, "unset".
+/// `storage.max_bytes` is `None` by default and absent from the TOML; give it a value so its path
+/// exists to compare against.
 fn reference_config() -> Config {
     let mut config = Config::default();
     config.storage.max_bytes = Some(0);
-    // `[focus]`'s nested tables are empty or absent by default, and neither
-    // is written out: the example fills every one of them in.
     config.focus = Config::from_toml_str(FOCUS_EXAMPLE)
         .expect("the `[focus]` example parses")
         .focus;
     config
 }
 
-/// Every key path a serialised [`reference_config`] carries.
-///
-/// `[section]` then its leaves, and one level further for the tables in
-/// [`NESTED`], whose keys are documented as a section of their own; an
-/// array of tables contributes the keys of its entries. Everything else
-/// is a leaf. `[accounts]`/`[saved_searches]`/`[mailboxes]`/`[keys]` are dynamic
-/// maps that serialise as bare, empty tables with no leaves of their own to
-/// collect -- they are documented as sections in the rendered prose
-/// instead, not as rows in this table.
 fn schema_paths() -> Vec<String> {
     let text = toml::to_string(&reference_config()).expect("Config always serialises");
     let value: toml::Value = toml::from_str(&text).expect("what was just serialised, parses");
@@ -559,8 +503,6 @@ fn collect(prefix: &str, fields: &toml::Table, paths: &mut Vec<String>) {
     }
 }
 
-/// What a section's heading says: `[focus.filter]`, or `[[focus.digests]]`
-/// for an array of tables.
 fn heading(section: &str) -> String {
     if NESTED
         .iter()
@@ -572,8 +514,6 @@ fn heading(section: &str) -> String {
     }
 }
 
-/// The prose after `section`'s table, if it has any. `[focus]`'s ends by
-/// opening a code block for [`FOCUS_EXAMPLE`], which is closed here.
 fn prose(section: &str, out: &mut String) {
     let Some((_, text)) = PROSE.iter().find(|(name, _)| *name == section) else {
         return;

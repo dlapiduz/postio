@@ -1,29 +1,17 @@
 name: Supply-chain audit
 
-# ci.yml's `supply-chain` job runs cargo-deny -- advisories included -- but
-# only when a push or PR touches non-prose paths, and is itself
-# workflow_dispatch-only while this repo is private (see the "PAUSED" note
-# there). A RUSTSEC advisory published against something already in
-# Cargo.lock's ~405 packages therefore has no ceiling on how long it goes
-# unnoticed: deny.toml opens by observing that a compromised transitive
-# dependency here is "the highest-value target the project owns within
-# reach", and the gap between an advisory's publication and the next
-# unrelated push landing is exactly the window that matters. #146.
-#
-# Licences, bans and sources do not change without a Cargo.lock change, so
-# the push-time job still owns those; this checks only what can turn red
-# with nobody touching the repository at all.
+# ci.yml's `supply-chain` job only runs on non-prose pushes, so an advisory against something
+# already in
+# Cargo.lock can go unnoticed. This checks only what turns red with nobody touching the repository
+# (#146).
 on:
   schedule:
-    # Offset from bench.yml's 06:00 so the two scheduled jobs are not both
-    # queuing for a runner at the exact same minute.
     - cron: "30 6 * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
-  # Scoped here rather than widened workspace-wide, per #145: only this job
-  # reports a failure by filing or updating an issue.
+  # Scoped to this job (#145): only it files or updates an issue.
   issues: write
 
 jobs:
@@ -34,26 +22,17 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/python
 
-      # Installed directly rather than through EmbarkStudios/cargo-deny-action:
-      # that action runs as a Docker entrypoint, and its own stdout is not
-      # something a later step in this job can read back -- which is exactly
-      # what turning a failure into an issue that names the advisory needs.
-      # Pinned to the same release the action itself bundles (see its
-      # Dockerfile), with the published checksum verified before the binary
-      # is ever executed.
+      # Installed directly, not through the Docker-based action, whose stdout a later step cannot
+      # read back.
+      # The version matches the action's bundle and the published checksum is verified before
+      # execution.
       - name: Install cargo-deny
         env:
           DENY_VERSION: "0.20.2"
           DENY_SHA256: "9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f"
         run: |
-          # The member is named in full rather than matched with `*/`. GNU tar
-          # only treats wildcards in a member name as wildcards when
-          # `--wildcards` is in effect, and whether it is by default varies --
-          # this workstation's tar 1.35 extracted `*/cargo-deny` happily while
-          # the runner's answered "Pattern matching characters used in file
-          # names" and then "*/cargo-deny: Not found in archive", exit 2. The
-          # directory inside the archive is the archive's own name without the
-          # suffix, so there is nothing to guess at.
+          # The member is named in full: GNU tar treats `*/` as a wildcard only with `--wildcards`,
+          # and the runner's tar failed on it.
           dir="cargo-deny-${DENY_VERSION}-x86_64-unknown-linux-musl"
           archive="${dir}.tar.gz"
           curl -sSL -o "$archive" \
@@ -62,10 +41,8 @@ jobs:
           sudo tar -xzf "$archive" --strip-components=1 -C /usr/local/bin "${dir}/cargo-deny"
           cargo-deny --version
 
-      # Advisories only -- see the note above on why licences/bans/sources
-      # stay with the push-time job. `--all-features` matches ci.yml's own
-      # supply-chain job, so the two never disagree about what is in the
-      # graph to begin with.
+      # Advisories only; licences, bans and sources stay with the push-time job. `--all-features`
+      # matches its graph.
       - name: cargo deny check advisories
         id: audit
         run: |
@@ -83,9 +60,6 @@ jobs:
           scripts/report-advisory-failure.sh audit-output.txt \
             "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
 
-      # A step failing here is the point: it is what makes a passing run
-      # silent and a failing one visible in the Actions tab, on top of
-      # whatever issue the step above filed.
       - name: Fail the job so a red run is visible
         if: steps.audit.outputs.failed == 'true'
         run: exit 1

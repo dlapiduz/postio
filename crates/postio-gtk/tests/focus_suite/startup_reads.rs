@@ -1,21 +1,6 @@
-//! Opening a window reads a bounded amount, whatever the mailbox holds
-//! (#1479).
-//!
-//! `docs/PRODUCT.md` §18 budgets startup at 500 ms. The signature of a miss
-//! is that the first frame waits on work proportional to what the mailbox
-//! holds. This is counted rather than timed, for the reason
-//! [`postio_storage::test_support::counting`] gives: a count is the same
-//! number on this workstation and on a loaded runner.
-//!
-//! > Opening a window reads a bounded amount, whatever the mailbox holds.
-//!
-//! Two stores an order of magnitude apart, the same counts from both.
-//!
-//! The counters are thread-local, which is exactly right: `startup::adopt`
-//! runs on the thread that has to draw the first frame, so every read it
-//! makes *synchronously* is a read the frame is waiting on, while what it
-//! hands to the host's runtime -- the page fetch, the body-index catch-up --
-//! is off this thread by construction.
+//! Opening a window reads a bounded amount whatever the mailbox holds (#1479), counted rather than
+//! timed. The counters are thread-local, so every read `startup::adopt` makes synchronously is a
+//! read the first frame waits on.
 //!
 //! POSTIO-MEASUREMENT: it builds a mailbox big enough that an unbounded
 //! startup read would show, 28 s, so it runs on the nightly timer.
@@ -25,15 +10,11 @@ use postio_storage::test_support::counting::{Counts, checkouts, counted};
 
 use crate::support::{self, Fixture};
 
-/// The two mailboxes, an order of magnitude apart: far enough that anything
-/// linear in the mailbox shows as a factor of ten rather than as noise.
 const SMALL: usize = 1_000;
 const LARGE: usize = 10_000;
 
-/// A window pointed at a store of `size`, and what that cost the main
-/// thread. Everything built is kept: the host's runtime is still draining
-/// what `adopt` spawned, and dropping it would be tearing the application
-/// down mid-startup rather than measuring one.
+/// Everything built is kept: the host's runtime is still draining what `adopt` spawned, and
+/// dropping it would tear the application down mid-startup.
 struct Opened {
     counts: Counts,
     connections: u64,
@@ -42,9 +23,8 @@ struct Opened {
 async fn opening(size: usize) -> Opened {
     let fixture = Fixture::large(size).await;
     let host = fixture.host();
-    // Deliberately not presented: a window at startup has no settings panel
-    // on screen, and a panel's own figures are not the first frame's to wait
-    // for.
+    // Not presented: a startup window has no settings panel on screen, and a panel's figures are
+    // not the first frame's to wait for.
     let window = postio_gtk::window::FocusWindow::new(None);
     window.set_default_size(1280, 800);
     let timeline = postio_widgets::startup::Timeline::start();
@@ -82,9 +62,6 @@ async fn opening(size: usize) -> Opened {
 
 pub fn opening_a_window_reads_a_bounded_amount_however_big_the_mailbox_is() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let small = opening(SMALL).await;
         let large = opening(LARGE).await;
         eprintln!("  opening over {SMALL:>6} messages: {:?}", small.counts);
@@ -93,9 +70,6 @@ pub fn opening_a_window_reads_a_bounded_amount_however_big_the_mailbox_is() {
             "  connections opened: {} over {SMALL}, {} over {LARGE}",
             small.connections, large.connections
         );
-        // What is left is the floor: the host's warm readers, opened once on
-        // first use, and a write's own connection -- the same number
-        // whatever the mailbox holds.
         assert_eq!(
             small.connections, large.connections,
             "the connections opened move with the mailbox"

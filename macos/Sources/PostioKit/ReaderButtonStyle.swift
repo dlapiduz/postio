@@ -1,21 +1,11 @@
 import SwiftUI
 
-/// The reading pane's buttons, as canvas 25 draws them.
-///
-/// Square-shouldered rectangles in the condensed heading voice: the primary
-/// verb (Reply) filled with the accent, the rest outlined. AppKit's bordered
-/// style is a rounded capsule that truncated "Reply all" to "Reply…" as soon
-/// as a chord shared its label, which is the other half of this: the label is
-/// the verb alone and is never truncated. The chord is the button's tooltip,
-/// still discoverable, no longer competing for the width.
-///
-/// The system face at its condensed width stands in for Barlow Condensed,
-/// which only the reader's web view has registered so far.
+/// Square-shouldered, condensed heading voice: the primary verb filled with the accent, the rest
+/// outlined. AppKit's bordered style truncated "Reply all" to "Reply…", so the label is the verb
+/// alone and the chord is the tooltip.
 public struct ReaderButtonStyle: ButtonStyle {
     public enum Kind: Sendable {
-        /// Filled with the accent: the one verb a person most likely wants.
         case primary
-        /// Outlined: everything beside it.
         case secondary
     }
 

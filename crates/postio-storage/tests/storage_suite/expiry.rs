@@ -1,6 +1,3 @@
-//! Auto-emptying Junk and Trash (#1932): which mail is old enough, found a
-//! page at a time, and what purging it leaves in the queue.
-
 use chrono::{Duration, TimeZone, Utc};
 use postio_model::{Flag, MailboxRole, Message, MessageId, Operation};
 use postio_storage::Connection;

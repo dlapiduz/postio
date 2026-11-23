@@ -26,8 +26,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -170,7 +168,6 @@ def main() -> int:
         repo, stub_dir = world(base)
         worktrees = base / "worktrees"
 
-        # ── no flag, inside a landed worktree: it is reused ──────────────
         first = landed_worktree(repo, worktrees, 1)
         result = claim(repo, base, stub_dir, "4242", cwd=first)
         moved = worktrees / "issue-4242"
@@ -190,7 +187,6 @@ def main() -> int:
                 print(failure, file=sys.stderr)
             return 1
 
-        # ── a dirty tree falls back to a fresh claim, and says why ───────
         (moved / "scratch.txt").write_text("uncommitted\n", encoding="utf-8")
         result = claim(repo, base, stub_dir, "4243", cwd=moved)
         fresh = worktrees / "issue-4243"
@@ -204,7 +200,6 @@ def main() -> int:
             fail("dirty-fallback", "did not say why the tree was not reused", result)
         (moved / "scratch.txt").unlink()
 
-        # ── --reuse stays strict: the same dirty tree is a refusal ───────
         (moved / "scratch.txt").write_text("uncommitted\n", encoding="utf-8")
         result = claim(repo, base, stub_dir, "--reuse", "4244", cwd=moved)
         if result.returncode == 0:
@@ -213,7 +208,6 @@ def main() -> int:
             fail("explicit-strict", "--reuse claimed a fresh tree; that is not what it means", result)
         (moved / "scratch.txt").unlink()
 
-        # ── --fresh from a clean worktree leaves it alone ────────────────
         result = claim(repo, base, stub_dir, "--fresh", "4244", cwd=moved)
         if result.returncode != 0:
             fail("fresh", "the claim failed", result)
@@ -222,13 +216,6 @@ def main() -> int:
         elif not moved.is_dir() or not (moved / "target" / "warm").is_file():
             fail("fresh", "--fresh moved or emptied the tree it was run from", result)
 
-        # ── pushed, with a PR open: reuse goes ahead (#1107) ─────────────
-        #
-        # With auto-merge the session does not wait for the merge, so the
-        # tree it wants to reuse holds commits that are not on the base yet.
-        # They are on origin, on a branch with an open PR, so nothing is
-        # stranded by moving on; the old branch stays in the repository for
-        # `--resume` if CI turns it red.
         pushed = worktrees / "issue-4244"
         (pushed / "pushed.txt").write_text("on its way\n", encoding="utf-8")
         git("add", "-A", cwd=pushed)
@@ -245,7 +232,6 @@ def main() -> int:
             fail("pushed-open-pr", "the pushed branch was deleted locally; --resume needs it", result)
         (stub_dir / "open-prs").unlink()
 
-        # ── pushed, but no PR: that is unlanded work, still refused ──────
         moved2 = worktrees / "issue-4245"
         (moved2 / "nopr.txt").write_text("pushed, no PR\n", encoding="utf-8")
         git("add", "-A", cwd=moved2)
@@ -255,7 +241,6 @@ def main() -> int:
         if result.returncode == 0:
             fail("pushed-no-pr", "reused a tree whose commits have no PR to land them", result)
 
-        # ── the shared checkout never reuses, flag or no flag ────────────
         result = claim(repo, base, stub_dir, "--dry-run", cwd=repo)
         if result.returncode != 0 or "would claim" not in result.stdout:
             fail("shared", "a plain claim from the shared checkout stopped working", result)

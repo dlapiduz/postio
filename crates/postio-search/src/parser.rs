@@ -1,23 +1,8 @@
-//! The query parser itself: a pure function from `(&str, today)` to a
-//! [`ParsedQuery`].
-//!
-//! The grammar is intentionally tiny and total — *every* input parses, because
-//! results update on every keystroke and a half-typed query is the normal case,
-//! not an error case:
-//!
-//! ```text
-//! query   := token*
-//! token   := '-'? ( operator | text )
-//! operator:= keyword ':' value          (keyword is one Postio knows)
-//! text    := word | '"' phrase '"'
-//! ```
-//!
-//! A word runs to the next whitespace, except that a `"` suspends that rule so
-//! `subject:"quarterly report"` is one token. An unterminated quote simply runs
-//! to the end of the input — the user is still typing it.
-//!
-//! Anything that is not a keyword Postio knows stays free text, so `foo:bar`
-//! and `https://example.com` search for themselves instead of erroring.
+//! The query parser: a pure function from `(&str, today)` to a [`ParsedQuery`]. The grammar is
+//! total: every input parses, because a half-typed query is the normal case.
+//! A word runs to the next whitespace, except that a `"` suspends that rule; an unterminated quote
+//! runs to the end of input. Anything that is not a known keyword stays free text, so `foo:bar` and
+//! `https://example.com` search for themselves.
 
 use chrono::NaiveDate;
 
@@ -27,16 +12,9 @@ use crate::query::{
 };
 use crate::size::parse_size;
 
-/// Parses a search query.
-///
-/// `today` is the reference date every relative date (`after:yesterday`,
-/// `after:"last quarter"`) resolves against. It is a parameter rather than a
-/// clock read on purpose: this function is pure, which is what makes it
-/// exhaustively testable, and what lets the search bar re-parse on every
-/// keystroke without side effects.
-///
-/// This never fails. Half-typed operators become [`Partial`]s, unknown
-/// operators become free text, and an empty input becomes an empty query.
+/// `today` is a parameter, not a clock read, so the function is pure and the bar can re-parse on
+/// every keystroke. Never fails: half-typed operators become [`Partial`]s, unknown operators free
+/// text.
 pub fn parse(input: &str, today: NaiveDate) -> ParsedQuery {
     let mut tokens = Vec::new();
     let mut cursor = 0usize;
@@ -62,7 +40,6 @@ pub fn parse(input: &str, today: NaiveDate) -> ParsedQuery {
     }
 }
 
-/// Byte offset of the next non-whitespace character at or after `from`.
 fn next_word_start(input: &str, from: usize) -> Option<usize> {
     input[from..]
         .char_indices()
@@ -70,24 +47,16 @@ fn next_word_start(input: &str, from: usize) -> Option<usize> {
         .map(|(offset, _)| from + offset)
 }
 
-/// Byte offset just past the word starting at `start`.
-///
-/// Whitespace ends a word, unless it sits inside quotes or inside a set's
-/// braces (D26). An unclosed quote or set swallows the rest of the input,
-/// which is exactly what a user mid-phrase expects to see highlighted.
+/// Whitespace ends a word unless inside quotes or a set's braces (D26); an unclosed quote or set
+/// swallows the rest of the input, which is what a user mid-phrase expects highlighted.
 pub(crate) fn word_end(input: &str, start: usize) -> usize {
     scan(&input[start..])
         .0
         .map_or(input.len(), |end| start + end)
 }
 
-/// Where whitespace ends `word` (`None`: it runs to the end), and whether a
-/// quote and a set are still open there.
-///
-/// A `{` opens a set only straight after an operator's colon --
-/// `from:{`, `-label:{` -- so a brace anywhere else is the character it
-/// was. Inside a set a quote suspends the closing brace, as it suspends
-/// whitespace.
+/// A `{` opens a set only straight after an operator's colon (`from:{`, `-label:{`); inside a set a
+/// quote suspends the closing brace.
 fn scan(word: &str) -> (Option<usize>, bool, bool) {
     let mut in_quotes = false;
     let mut in_set = false;
@@ -105,29 +74,21 @@ fn scan(word: &str) -> (Option<usize>, bool, bool) {
     (None, in_quotes, in_set)
 }
 
-/// Whether `word` leaves a set open at its end: what [`crate::edit`]'s
-/// `join` closes before anything follows it.
 pub(crate) fn leaves_set_open(word: &str) -> bool {
     scan(word).2
 }
 
-/// Whether `before` is a known operator and its colon, nothing else: what
-/// a `{` must follow to open a set.
 fn opens_set(before: &str) -> bool {
     let body = before.strip_prefix('-').unwrap_or(before);
     body.strip_suffix(':')
         .is_some_and(|keyword| !keyword.contains([':', '"']) && Field::parse(keyword).is_some())
 }
 
-/// Turns one raw word into a token, or `None` if it carries no meaning at all
-/// (a lone `-`, a lone `"`), in which case it is dropped.
 fn classify(raw: &str, today: NaiveDate) -> Option<TokenKind> {
-    // Punctuation on its own is someone mid-keystroke, not a search term.
     if raw.chars().all(|ch| ch == '-' || ch == '"') {
         return None;
     }
     let (negated, body) = match raw.strip_prefix('-') {
-        // A bare `-` is not a negation of anything yet.
         Some(rest) if !rest.is_empty() => (true, rest),
         _ => (false, raw),
     };
@@ -150,8 +111,7 @@ fn classify(raw: &str, today: NaiveDate) -> Option<TokenKind> {
     }))
 }
 
-/// Splits `keyword:value` at the first colon, provided no quote opened before
-/// it — `"re: invoice"` is a phrase, not an operator.
+/// Splits at the first colon, provided no quote opened before it: `"re: invoice"` is a phrase.
 fn split_operator(body: &str) -> Option<(&str, &str)> {
     let colon = body.char_indices().find_map(|(offset, ch)| match ch {
         '"' => Some(Err(())),
@@ -162,20 +122,13 @@ fn split_operator(body: &str) -> Option<(&str, &str)> {
     Some((&body[..colon], &body[colon + 1..]))
 }
 
-/// Strips the quotes a user typed around a value. Quotes only ever group
-/// characters; they are never part of the value.
 fn unquote(value: &str) -> String {
     value.trim_matches('"').to_string()
 }
 
-/// Builds the token for a recognized operator, falling back to a [`Partial`]
-/// whenever the value is not usable yet.
-///
-/// `raw` is everything after the colon, quotes and all. Unquoting happens
-/// here rather than at the call site because `header:` has to split its own
-/// value first: `header:x-mailer="mutt 1.5"` opens its quote *inside* the
-/// operator value, so stripping the outer quotes before the `=` is found
-/// takes the closing one off and leaves the opening one in the value.
+/// Unquoting happens here because `header:` splits its own value first: `header:x-mailer="mutt
+/// 1.5"` opens its quote inside the value, so stripping the outer quotes before the `=` leaves the
+/// opening one in.
 fn operator(negated: bool, field: Field, raw: &str, today: NaiveDate) -> TokenKind {
     let partial = |value: String| {
         TokenKind::Partial(Partial {
@@ -211,9 +164,6 @@ fn operator(negated: bool, field: Field, raw: &str, today: NaiveDate) -> TokenKi
         Field::Account => filter(Filter::Account(value)),
         Field::Group => filter(Filter::Group(value)),
         Field::Label => filter(Filter::Label(value)),
-        // A comma-separated list of addresses; empty entries are someone
-        // between one address and the next, and a value of nothing but
-        // separators has nothing to look for yet.
         Field::With => {
             let addresses: Vec<String> = value
                 .split(',')
@@ -237,10 +187,8 @@ fn operator(negated: bool, field: Field, raw: &str, today: NaiveDate) -> TokenKi
         Field::Is => match value.to_ascii_lowercase().as_str() {
             "unread" | "new" => filter(Filter::Is(State::Unread)),
             "read" | "seen" => filter(Filter::Is(State::Read)),
-            // An earlier brief wrote `is:starred`; the canvas renamed it to
-            // Flagged, and docs/PRODUCT.md §7 keeps the old spelling as an alias.
+            // `is:starred` is an alias kept for the old spelling; the canvas says Flagged.
             "flagged" | "starred" | "star" => filter(Filter::Is(State::Flagged)),
-            // The promoted headers' operators (spec 007, research R8).
             "bulk" => filter(Filter::Is(State::Bulk)),
             "automated" => filter(Filter::Is(State::Automated)),
             _ => partial(value),
@@ -261,23 +209,15 @@ fn operator(negated: bool, field: Field, raw: &str, today: NaiveDate) -> TokenKi
             Some(bytes) => filter(Filter::Smaller(bytes)),
             None => partial(value),
         },
-        // Handled above: it is the one operator whose value has structure of
-        // its own, so it never reaches this table.
         Field::Header => unreachable!("header: is split before the value is unquoted"),
     }
 }
 
-/// `{ada tomas}` after `field:`, as a filter: one value is that value's
-/// plain filter, two or more a set (D26). `None` -- a `Partial` -- for a
-/// set still open, empty, followed by more text, holding a value that is
-/// not usable yet, or of a field that takes none.
 fn set(field: Field, raw: &str, today: NaiveDate) -> Option<Filter> {
     if !field.takes_set() {
         return None;
     }
     let inner = raw.strip_prefix('{')?.strip_suffix('}')?;
-    // The closing brace must be the set's own: `{ada}x` never gets here,
-    // and `{a} b}` is not a set.
     if inner_closes_early(inner) {
         return None;
     }
@@ -298,7 +238,6 @@ fn set(field: Field, raw: &str, today: NaiveDate) -> Option<Filter> {
     Filter::any_of(members)
 }
 
-/// Whether a `}` outside quotes closes the set before its last character.
 fn inner_closes_early(inner: &str) -> bool {
     let mut in_quotes = false;
     inner.chars().any(|ch| {
@@ -309,7 +248,6 @@ fn inner_closes_early(inner: &str) -> bool {
     })
 }
 
-/// A member's end inside a set: whitespace outside quotes.
 fn inner_word_end(inner: &str, start: usize) -> usize {
     let mut in_quotes = false;
     for (offset, ch) in inner[start..].char_indices() {
@@ -322,29 +260,15 @@ fn inner_word_end(inner: &str, start: usize) -> usize {
     inner.len()
 }
 
-/// `header:name`, `header:name=value`, and every half-typed state in between.
-///
-/// The grammar is ADR 0025 Q6's table. Split at the **first** `=`, because a
-/// structured header value contains its own —
-/// `authentication-results=spf=pass` is the motivating example, and splitting
-/// at the last one would ask for a field called
-/// `authentication-results=spf`, which no message has.
-///
-/// Both halves are normalized here, by `postio_model::headers`, and that is
-/// the point of doing it in the parser at all: the index holds normalized
-/// rows, an in-memory matcher (#479) holds normalized headers, and a
-/// `Filter::Header` that had not been through the same function would ask
-/// each of them for a string neither can hold — two spaces where the stored
-/// value has one, an encoded word where the stored value has the word.
+/// Split at the first `=`: a structured value contains its own (`authentication-results=spf=pass`).
+/// Both halves are normalized by `postio_model::headers`, so the index, the in-memory matcher and
+/// `Filter::Header` compare the same form.
 fn header(negated: bool, raw: &str) -> TokenKind {
     let (name, value) = match raw.split_once('=') {
         Some((name, value)) => (name, Some(value)),
         None => (raw, None),
     };
     let name = postio_model::headers::normalize_name(&unquote(name));
-    // No name yet -- `header:`, `header:=`, `header:=mutt`. Nothing to ask
-    // of the index, and an error would be wrong: this is what the query
-    // looks like one keystroke in.
     if name.is_empty() {
         return TokenKind::Partial(Partial {
             negated,

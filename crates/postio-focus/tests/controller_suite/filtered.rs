@@ -1,12 +1,3 @@
-//! The Filtered view, from the controller's side (specs/009-focus-macos
-//! T108; spec 007 US9, screen 21).
-//!
-//! What GTK's `filtered.rs` and the window's Filtered handlers did, asserted
-//! here so the Mac's view behaves the same: `g f` shows it with its seven
-//! reason tabs and their counts, a number key narrows it to one reason, `R`
-//! restores the focused message and stops filtering its sender, and nothing
-//! in it is deleted but by Delete (C4: never automatically).
-
 use crate::search_support::{asks, shown};
 use chrono::{TimeZone, Utc};
 use postio_client::protocol::FilteredRow;
@@ -20,7 +11,6 @@ use postio_model::listing::MessageSummary;
 use postio_model::{EmailAddress, MessageId, ThreadId};
 use postio_ui::keymap::KeyContext;
 
-/// Three conversations behind the view.
 struct List;
 
 impl Rows for List {
@@ -59,7 +49,6 @@ fn view(effects: &[Effect]) -> Option<FilteredView> {
         })
 }
 
-/// A filtered message from Ledger, filed `minutes` ago.
 fn filed(id: i64, reason: &str, minutes: i64) -> FilteredRow {
     let at =
         Utc.with_ymd_and_hms(2026, 10, 2, 9, 0, 0).unwrap() - chrono::Duration::minutes(minutes);
@@ -86,7 +75,6 @@ fn filed(id: i64, reason: &str, minutes: i64) -> FilteredRow {
     }
 }
 
-/// `g f`, answered: the tabs' counts, then the first page of All.
 fn opened(focus: &mut FocusController, rows: Vec<FilteredRow>) -> Vec<Effect> {
     let asked = asks(&run(focus, CommandId::GoToFiltered));
     let mut effects = Vec::new();
@@ -205,7 +193,6 @@ fn r_restores_the_focused_message() {
     );
 }
 
-/// What a key sends while Filtered is up, as commands.
 fn sent(focus: &mut FocusController, command: CommandId) -> Vec<(Command, Vec<MessageTarget>)> {
     asks(&run(focus, command))
         .into_iter()
@@ -218,7 +205,6 @@ fn sent(focus: &mut FocusController, command: CommandId) -> Vec<(Command, Vec<Me
 
 #[test]
 fn delete_flag_and_read_act_on_the_focused_filtered_message_alone() {
-    // C4 is "never deleted automatically": Delete is the person's own.
     for (key, made) in [
         (CommandId::Delete, Command::default_for(CommandId::Delete)),
         (CommandId::Flag, Command::default_for(CommandId::Flag)),
@@ -261,7 +247,6 @@ fn only_delete_deletes_in_filtered_and_archive_does_nothing() {
             }
         }
     }
-    // Filtered mail is archived already.
     let mut focus = mac();
     let _ = opened(&mut focus, vec![filed(7, "notification", 5)]);
     assert_eq!(sent(&mut focus, CommandId::Archive), vec![]);
@@ -297,7 +282,6 @@ fn return_opens_the_focused_message_over_filtered_and_esc_comes_back() {
         total: 2,
         host: Host::Own,
     }));
-    // `j` in it walks Filtered, not the list behind it.
     let effects = run(&mut focus, CommandId::NextMessage);
     assert!(shown(&effects).contains(&Intent::OpenMessage {
         message: MessageId::new(8),
@@ -340,7 +324,6 @@ fn the_sweep_says_how_many_first_and_moves_only_once_confirmed() {
             .collect::<Vec<_>>(),
         vec![Request::Post(Command::SweepInbox)]
     );
-    // A sweep that would move nothing says so instead of asking.
     let effects = run(&mut focus, CommandId::SweepInbox);
     let [(ticket, _)] = asks(&effects)[..] else {
         panic!("counted again");
@@ -403,9 +386,6 @@ fn the_delete_flag_and_read_keys_reach_filtered() {
     }
 }
 
-// -- Selecting in Filtered, as the list does (the main list's rules) --------
-
-/// Three filtered messages, 7 to 9, newest first.
 fn three() -> Vec<FilteredRow> {
     vec![
         filed(7, "notification", 5),
@@ -414,8 +394,6 @@ fn three() -> Vec<FilteredRow> {
     ]
 }
 
-/// The last selection Filtered drew in `effects`: the rows boxed, and its
-/// bar's count.
 fn selection(effects: &[Effect]) -> Option<(Vec<i64>, Option<String>)> {
     shown(effects)
         .into_iter()
@@ -449,13 +427,11 @@ fn x_takes_the_focused_row_in_and_out_of_the_selection() {
         selection(&effects),
         Some((vec![7, 8], Some("2 selected".to_owned())))
     );
-    // Out again: the box clears, the bar stays for the one left.
     let effects = run(&mut focus, CommandId::ToggleSelection);
     assert_eq!(
         selection(&effects),
         Some((vec![7], Some("1 selected".to_owned())))
     );
-    // Moving the keyboard selects nothing.
     let effects = run(&mut focus, CommandId::NextMessage);
     assert_eq!(selection(&effects), None);
 }
@@ -472,7 +448,6 @@ fn j_and_k_capital_extend_the_selection_as_the_keyboard_walks() {
     assert_eq!(shown(&effects)[0], Intent::FilteredFocus(Some(1)));
     let effects = run(&mut focus, CommandId::ExtendSelectionDown);
     assert_eq!(selection(&effects).unwrap().0, vec![7, 8, 9]);
-    // Up from the last row takes the row it leaves in too, and walks back.
     let effects = run(&mut focus, CommandId::ExtendSelectionUp);
     assert_eq!(shown(&effects)[0], Intent::FilteredFocus(Some(1)));
 }
@@ -498,12 +473,10 @@ fn a_click_with_the_toggle_modifier_toggles_and_shift_takes_a_range() {
         shown(&effects).contains(&Intent::FilteredFocus(Some(1))),
         "the keyboard follows the click"
     );
-    // Shift from the anchor (row 1) down to row 2.
     let effects = pick(&mut focus, 2, true);
     assert_eq!(selection(&effects).unwrap().0, vec![8, 9]);
     let effects = pick(&mut focus, 1, false);
     assert_eq!(selection(&effects).unwrap().0, vec![9]);
-    // A plain click selects nothing.
     let effects = focus.handle_on(Input::FilteredPoint(0), &List);
     assert_eq!(selection(&effects), None);
 }
@@ -513,7 +486,6 @@ fn the_view_boxes_the_selected_rows_and_carries_the_bar() {
     let mut focus = mac();
     let _ = opened(&mut focus, three());
     let _ = run(&mut focus, CommandId::ToggleSelection);
-    // A re-read, as mail moving elsewhere causes, keeps the selection.
     let effects = opened_again(&mut focus, three());
     let view = view(&effects).expect("redrawn");
     let boxed: Vec<bool> = view.rows.iter().map(|row| row.selected).collect();
@@ -541,7 +513,6 @@ fn the_view_boxes_the_selected_rows_and_carries_the_bar() {
     assert_eq!(hints, ["toggle", "extend", "clear"]);
 }
 
-/// The view's own re-read: `Event::MessageListChanged`, answered.
 fn opened_again(focus: &mut FocusController, rows: Vec<FilteredRow>) -> Vec<Effect> {
     let effects = focus.handle_on(
         Input::Event(postio_core::Event::MessageListChanged {
@@ -654,7 +625,6 @@ fn a_tab_is_another_place_so_the_selection_goes() {
     let view = view(&effects).expect("the tabs are drawn again");
     assert!(view.bar.is_none(), "{view:?}");
     assert!(view.rows.iter().all(|row| !row.selected));
-    // And what was selected is not acted on from the new tab.
     let _ = opened_again(&mut focus, three());
     let sent = sent(&mut focus, CommandId::Delete);
     assert_eq!(
@@ -708,7 +678,6 @@ fn the_selection_keys_reach_filtered() {
 fn a_tab_with_nothing_says_so_once_it_has_been_counted() {
     let mut focus = mac();
     let asked = asks(&run(&mut focus, CommandId::GoToFiltered));
-    // Before the counts land, an empty list is not yet "nothing".
     let (ticket, stamp) = asked
         .iter()
         .find_map(|(ticket, request)| match request {

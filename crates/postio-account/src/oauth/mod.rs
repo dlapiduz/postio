@@ -1,32 +1,6 @@
-//! The OAuth 2 authorization flow: system browser, loopback redirect, PKCE.
-//!
-//! ADR 0006 Q3, implemented as `OwnClientTokenSource`'s flow — the user's
-//! own client credentials, no verification burden, and the same code
-//! Postio's verified client will reuse once it has one.
-//!
-//! * The consent screen opens in the **user's own browser**
-//!   ([`browser::BrowserOpener`]) — never Postio's hardened `WebView`, which
-//!   has JavaScript off and would let an embedded page read the password
-//!   being typed into it.
-//! * The redirect lands on a [`redirect::LoopbackRedirect`] bound for the
-//!   duration of this one attempt and closed the moment the code arrives or
-//!   the caller's [`CancelToken`] fires.
-//! * [`pkce::Pkce`] is generated fresh per attempt and sent with the
-//!   authorization request; [`pkce::State`] is compared against the
-//!   callback before anything is exchanged.
-//! * [`exchange`] does the token POST and, when a provider names only an
-//!   `issuer`, the RFC 8414 metadata GET that resolves it to concrete
-//!   endpoints — both over the same `pimalaya-stream`/`io-http` transport
-//!   [`crate::discovery::transport`] already uses, so no new dependency
-//!   class arrives for it.
-//! * [`token_source::OwnClientTokenSource`] is the [`crate::auth::TokenSource`]
-//!   this flow feeds: the refresh token goes to the keyring, the access
-//!   token stays a [`crate::secret::Password`] in memory and is never
-//!   written to disk.
-//!
-//! What this module deliberately does not do: decide *when* to start a
-//! flow (that is a UI action, one click) or route a rejected token to
-//! `Attention` (#194). It is the mechanism those call into.
+//! ADR 0006 Q3: the user's own client credentials, system browser, loopback redirect and PKCE.
+//! Deciding when to start a flow (a UI action) and routing a rejected token to `Attention` (#194)
+//! are not here.
 
 pub mod browser;
 mod error;
@@ -37,9 +11,6 @@ pub mod token_source;
 
 use crate::cancel::CancelToken;
 
-/// The URL type [`BrowserOpener`] speaks, re-exported so anything
-/// implementing that trait names the same one this crate's API does rather
-/// than pinning `url` again on its own.
 pub use url::Url;
 
 pub use browser::BrowserOpener;
@@ -49,38 +20,17 @@ pub use pkce::{Pkce, State};
 pub use redirect::LoopbackRedirect;
 pub use token_source::OwnClientTokenSource;
 
-/// Everything one authorization attempt needs to know before it starts.
-///
-/// `authorize_endpoint` and `token_endpoint` are already resolved — from a
-/// preset row directly, or via [`exchange::resolve_endpoints`] against an
-/// `issuer` — so this type carries no `Option`s a caller could forget to
-/// handle.
 #[derive(Clone, Debug)]
 pub struct AuthorizeRequest {
-    /// The user's own OAuth client id (ADR 0006 Q1 — `OwnClientTokenSource`
-    /// never ships a Postio-verified one).
     pub client_id: String,
-    /// The user's own client secret, when the provider's token endpoint
-    /// requires one even for a public, PKCE-protected client. Rare, and
-    /// never written to disk unencrypted — same rule as any other secret.
     pub client_secret: Option<String>,
-    /// Where consent is asked.
     pub authorize_endpoint: Url,
-    /// Where the code is exchanged.
     pub token_endpoint: Url,
-    /// Requested scopes, space-joined into the authorization request per
-    /// RFC 6749 §3.3.
     pub scopes: Vec<String>,
 }
 
-/// Runs one authorization attempt end to end: bind the loopback listener,
-/// open the consent screen in the caller's browser, wait for the redirect,
-/// and exchange the code for tokens.
-///
-/// Cancelling `cancel` at any point — before the browser opens, while
-/// waiting for the redirect, or during the token exchange — unwinds
-/// cleanly: the listener is dropped (closing its socket) and no token
-/// exchange fires for a flow that never produced a validated code.
+/// Cancelling at any point unwinds cleanly: the listener is dropped and no token exchange fires for
+/// a flow that never produced a validated code.
 pub async fn authorize(
     request: AuthorizeRequest,
     opener: &dyn BrowserOpener,
@@ -89,18 +39,9 @@ pub async fn authorize(
     authorize_watching(request, opener, cancel, &|_| {}).await
 }
 
-/// [`authorize`], telling `bound` which port the redirect is listening on.
-///
-/// A frontend that is about to send somebody to their browser has something
-/// to say while they are gone: which port the answer will come back on, and
-/// that the wait is bounded. It cannot know either without being told, and
-/// the port is chosen inside this function — the listener binds `:0` because
-/// a fixed port is a port something else may already hold.
-///
-/// A callback rather than a returned port, because the port exists for the
-/// span of the wait and there is nothing sensible to return it *before*: the
-/// call that would hand it back is the one that blocks until the flow is
-/// over.
+/// A callback rather than a returned port: the port exists only for the span of the wait, and the
+/// call that would return it blocks until the flow ends. The listener binds `:0` because a fixed
+/// port may be held.
 pub async fn authorize_watching(
     request: AuthorizeRequest,
     opener: &dyn BrowserOpener,
@@ -133,7 +74,6 @@ pub async fn authorize_watching(
     .await
 }
 
-/// Builds the URL the browser is sent to, per RFC 6749 §4.1.1 plus RFC 7636.
 fn authorization_url(
     request: &AuthorizeRequest,
     pkce: &Pkce,

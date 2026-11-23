@@ -1,24 +1,9 @@
-//! Opening a session over a real store, and what a locked keyring means.
-//!
-//! ADR 0014 put the store's master key in the OS keyring, so "open the store"
-//! is really "ask the keyring, then open the store" — and the two ways that
-//! can fail are not the same failure. A locked keyring is recoverable by the
-//! user and its remedy is a different surface from a store that will not open.
-//! These tests exist to keep those two apart at the boundary, where a frontend
-//! has nothing but the error case to route on.
-//!
-//! Nothing here touches the user's real keyring: every case injects its own
-//! secret store. A test that reached for the login keyring would prompt on a
-//! developer's machine and hang on a headless one.
-
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use postio_account::secret::{AccountKey, MemorySecretStore, Password, SecretError, SecretStore};
 use postio_ffi::{Session, SessionError, SessionOptions};
 
-/// A keyring that is present and refuses, which is the case ADR 0014 cares
-/// about: not "there is no key" but "there is a key and you cannot have it".
 #[derive(Debug)]
 struct LockedKeyring;
 
@@ -63,9 +48,6 @@ fn a_session_opens_over_a_store_on_disk() {
         session.is_open(),
         "the session reported open but holds no store"
     );
-    // The store is on disk and not merely claimed: a constructor that
-    // returned Ok while opening nothing would satisfy every other assertion
-    // in this file.
     assert!(
         path.exists(),
         "no database at {} -- the session opened nothing",
@@ -74,12 +56,8 @@ fn a_session_opens_over_a_store_on_disk() {
     session.shutdown();
 }
 
-/// A real secret store with a tally of how often a key was *written*.
-///
-/// Needed because ADR 0014 lands in stages and the store is not encrypted
-/// yet (`open_store` still takes the key without using it, pending #300/#301).
-/// So "the second session reused the first one's key" cannot be shown by the
-/// store opening — it would open either way. Counting the mints shows it.
+/// Counts key writes: the store opens either way, so reuse of the key can be shown only by the
+/// mints.
 #[derive(Debug)]
 struct CountingKeyring {
     inner: MemorySecretStore,
@@ -121,9 +99,6 @@ impl SecretStore for CountingKeyring {
 
 #[test]
 fn the_store_survives_a_second_session_over_the_same_path() {
-    // The key is minted on first run and read back on the next. Reusing one
-    // secret store across both is what makes this the real sequence rather
-    // than two independent first runs.
     let scratch = tempfile::tempdir().expect("a scratch directory");
     let path = scratch.path().join("postio.db");
     let counting = Arc::new(CountingKeyring::new());
@@ -144,11 +119,8 @@ fn the_store_survives_a_second_session_over_the_same_path() {
     assert!(second.is_open());
     second.shutdown();
 
-    // The assertion that matters. A second mint would mean the store was
-    // re-keyed on every launch -- harmless today, because nothing is
-    // encrypted under it yet, and catastrophic the moment #300 issues
-    // `PRAGMA key`: every previous message would become unreadable. Better to
-    // hold the line now, while the failure is still cheap.
+    // A second mint means the store was re-keyed every launch: harmless until `PRAGMA key` (#300),
+    // then every message is unreadable.
     assert_eq!(
         counting.mints(),
         1,
@@ -158,16 +130,12 @@ fn the_store_survives_a_second_session_over_the_same_path() {
 
 #[test]
 fn a_locked_keyring_is_its_own_error_and_not_a_broken_store() {
-    // The routing this protects: `KeyringLocked` sends the user to "unlock
-    // and retry", `StoreUnavailable` to "your store is broken". Getting them
-    // the wrong way round sends somebody with working mail to onboarding,
-    // which is the failure ADR 0014 names explicitly.
+    // `KeyringLocked` routes to "unlock and retry", `StoreUnavailable` to "your store is broken";
+    // swapped, someone with working mail lands in onboarding (ADR 0014).
     let scratch = tempfile::tempdir().expect("a scratch directory");
     let path = scratch.path().join("postio.db");
 
-    // Matched rather than `expect_err`, which would need `Debug` on `Session`
-    // -- and a session that carries a live store, a runtime handle and a
-    // command bus has no business having a derived one.
+    // Matched rather than `expect_err`, which would need `Debug` on `Session`.
     let error = match Session::open(SessionOptions::at(&path).with_secrets(Arc::new(LockedKeyring)))
     {
         Ok(_) => panic!("a locked keyring must not yield a session"),
@@ -187,8 +155,7 @@ fn a_locked_keyring_is_its_own_error_and_not_a_broken_store() {
 
 #[test]
 fn a_locked_keyring_opens_no_store_at_all() {
-    // ADR 0014's "no plaintext fallback", asserted where it can be seen: not
-    // a degraded session, not an empty one, no database file left behind.
+    // No plaintext fallback (ADR 0014): not a degraded session, and no database file left behind.
     let scratch = tempfile::tempdir().expect("a scratch directory");
     let path = scratch.path().join("postio.db");
 
@@ -203,9 +170,8 @@ fn a_locked_keyring_opens_no_store_at_all() {
 
 #[test]
 fn a_store_from_another_build_says_start_over_not_try_again() {
-    // `StoreUnavailable` is "try again"; a store whose schema no migration
-    // reaches is refused by the same file every time, so trying again is a
-    // dead end the Mac must not offer (specs/007-postio-focus T215).
+    // `StoreUnavailable` means "try again"; a store whose schema no migration reaches is refused
+    // every time, so the Mac must not offer it.
     let scratch = tempfile::tempdir().expect("a scratch directory");
     let path = scratch.path().join("postio.db");
     let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
@@ -233,10 +199,8 @@ fn a_store_from_another_build_says_start_over_not_try_again() {
 
 #[test]
 fn starting_over_a_store_from_another_build_leaves_one_that_opens() {
-    // The Mac's "Start over" (specs/009-focus-macos T097): the refusal above
-    // is a dead end unless something gets past it. The store is set aside,
-    // not deleted, under the key it was written with, and a fresh one takes
-    // its place that the next launch opens.
+    // Start over sets the store aside under its own key, not deleted, and a fresh one takes its
+    // place.
     let scratch = tempfile::tempdir().expect("a scratch directory");
     let path = scratch.path().join("postio.db");
     let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
@@ -267,10 +231,8 @@ fn starting_over_a_store_from_another_build_leaves_one_that_opens() {
 
 #[test]
 fn a_store_under_another_key_says_start_over_and_starting_over_opens() {
-    // #1598: the key does not change between attempts, so "Try again" is a
-    // dead end here too. Its own case, because the Mac's page says something
-    // different: nothing in the old store decrypts, so no account comes
-    // across.
+    // The key does not change between attempts, so "Try again" is a dead end; nothing in the old
+    // store decrypts, so no account comes across (#1598).
     let scratch = tempfile::tempdir().expect("a scratch directory");
     let path = scratch.path().join("postio.db");
     let stranger = postio_storage::key::StoreKey::from_bytes([0x2a; 32]);
@@ -306,9 +268,7 @@ fn a_store_under_another_key_says_start_over_and_starting_over_opens() {
 
 #[test]
 fn the_refusal_is_worded_once_for_both_apps() {
-    // The page a refused store shows on the Mac (T100) says what GTK's
-    // says: the words are `postio_ui::focus_state`'s, and the Mac reads
-    // them here rather than keeping a copy that drifts.
+    // The words are `postio_ui::focus_state`'s, read here rather than copied to drift.
     use postio_ui::focus_state as words;
     let said = postio_ffi::store_refusal_words();
     assert_eq!(said.cant_open, words::CANT_OPEN_MAIL);

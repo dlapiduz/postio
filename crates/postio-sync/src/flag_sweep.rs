@@ -1,18 +1,6 @@
-//! Reading every flag in a mailbox, for a server whose change feed cannot be
-//! believed.
-//!
-//! The decision to sweep is [`postio_model::SweepPolicy::decide`]'s; this is
-//! the doing of it. The server's whole flag listing
-//! ([`MailBackend::fetch_flags`]) is compared with the store's, and only the
-//! messages that disagree are written, through
-//! [`MessageRepository::apply_server_flags`], which keeps what the user has
-//! done that the server has not yet heard.
-//!
-//! A sweep only ever *corrects flags*. A message the server lists and the
-//! store lacks is an arrival, which the `UIDNEXT` witness in [`crate::resync`]
-//! already owns; a message the store holds and the server omits is a deletion,
-//! which the count arithmetic there owns. Doing either here as well would be
-//! two answers to one question.
+//! Compares the server's whole flag listing with the store's and writes only the messages that
+//! disagree, keeping unsent local changes.
+//! Only corrects flags: arrivals and deletions belong to `crate::resync`.
 
 use std::collections::BTreeMap;
 
@@ -25,21 +13,16 @@ use postio_storage::repository::MessageRepository;
 use crate::drain::SyncError;
 use crate::initial;
 
-/// What one sweep did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) struct Swept {
-    /// Whether every flag was actually read. `false` when the backend cannot
-    /// list flags alone, so the pass is not counted as having swept.
+    /// `false` when the backend cannot list flags alone, so the pass is not counted as having
+    /// swept.
     pub swept: bool,
-    /// Messages whose stored flags the sweep changed.
     pub corrected: usize,
 }
 
-/// The messages whose stored flags differ from what the server lists.
-///
-/// Pure, so the comparison is red in a second. `\Recent` is compared as the
-/// store would keep it (not at all): a server reporting it on one pass and
-/// not the next is not a change anyone made.
+/// Pure. `\Recent` is not compared: a server reporting it on one pass and not the next is no
+/// change.
 pub(crate) fn disagreements(
     stored: &[(MessageId, Uid, FlagSet)],
     server: Vec<(Uid, FlagSet)>,
@@ -57,11 +40,8 @@ pub(crate) fn disagreements(
         .collect()
 }
 
-/// Reads `mailbox`'s flags from the server and writes the ones that moved.
-///
-/// Errors propagate, and the caller must not record the server's
-/// `HIGHESTMODSEQ` until this has returned: advancing it past a pass whose
-/// flags were not reconciled is the way a missed change becomes permanent.
+/// The caller must not record the server's `HIGHESTMODSEQ` until this returns: advancing past
+/// unreconciled flags makes a missed change permanent.
 pub(crate) async fn sweep(
     connection: &Checkout,
     backend: &dyn MailBackend,
@@ -98,7 +78,6 @@ pub(crate) async fn sweep(
         initial::yield_once().await;
     }
 
-    // Counts and ids only: a log never carries what a message said.
     tracing::debug!(
         mailbox = mailbox.id.get(),
         listed = stored.len(),
@@ -155,7 +134,6 @@ mod tests {
     #[test]
     fn an_arrival_and_a_deletion_are_not_a_flag_difference() {
         let held = stored(&[(10, 1, &[Flag::Seen])]);
-        // UID 1 is gone from the server's list and UID 9 is not in the store.
         let server = vec![(Uid::new(9), flags(&[Flag::Seen]))];
 
         assert!(disagreements(&held, server).is_empty());

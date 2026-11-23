@@ -11,15 +11,12 @@ repository.workspace = true
 [dependencies]
 async-trait = { workspace = true }
 io-sasl = { workspace = true }
-# Its address types are `ToStatic`, and turning one parsed from a borrowed
-# `&str` into the `'static` the session keeps needs the trait in scope.
-# Already in the lock via io-smtp, so it costs no extra compile.
+# Address types are `ToStatic`; turning a parsed borrowed `&str` into the `'static` the session
+# keeps needs the trait in scope.
 bounded-static = "0.8"
 io-smtp = { version = "0.9", default-features = false, features = ["client"] }
-# IDNA, for RFC 6531's easy half: a non-ASCII *domain* is punycoded and needs
-# no extension at all. Already in the tree through `url`, so this adds a name
-# rather than a crate. `io-smtp` has modules for RFC 1870, 3207, 3461, 4954,
-# 7628 and 7677 and none for 6531, so the conversion is ours to do (#922).
+# IDNA for RFC 6531's easy half: a non-ASCII domain is punycoded. `io-smtp` has no module for 6531,
+# so the conversion is ours (#922).
 idna = "1.1.0"
 postio-model.workspace = true
 postio-transport.workspace = true

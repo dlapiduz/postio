@@ -4,19 +4,8 @@ import Testing
 
 @testable import PostioKit
 
-/// The pickers at the row, as the controller's intents leave them
-/// (specs/009-focus-macos T091; screens 11 to 14).
-///
-/// The controller (`crates/postio-focus/src/pickers.rs`) decides which
-/// picker opens, what it acts on, what it lists and what each row does.
-/// The Mac draws what it is told -- `FocusOpenPicker`, then a whole
-/// `FocusPickerRows` for every change -- and hands back what happened: the
-/// field's words, a row chosen or toggled, Return, Escape. The arrows'
-/// highlight is the toolkit's, and so it is this model's: only Swift knows
-/// which row Space and Return are about.
 @MainActor
 struct PickerModelTests {
-    /// Remembers what the picker told the engine.
     final class Engine: PickerEngine {
         var typed: [String] = []
         var chosen: [UInt64] = []
@@ -41,7 +30,6 @@ struct PickerModelTests {
             color: color, applied: applied, create: create)
     }
 
-    /// Screen 11's presets.
     static let presets: [PickerRowFfi] = [
         row(1, "Later today", detail: "18:00", key: "1"),
         row(2, "Tomorrow morning", detail: "Sun 27 Sep, 08:00", key: "2"),
@@ -49,7 +37,6 @@ struct PickerModelTests {
         row(4, "Next week", detail: "Sat 3 Oct, 08:00", key: "4"),
     ]
 
-    /// Screen 13's labels.
     static let labels: [PickerRowFfi] = [
         row(11, "Atlas", detail: "\u{2713} applied", dot: true, color: "#c0703a", applied: true),
         row(12, "Harbor", detail: "71", dot: true),
@@ -79,8 +66,6 @@ struct PickerModelTests {
         return (PickerModel(engine: engine), engine)
     }
 
-    // -- What the picker draws ------------------------------------------------
-
     @Test func theSnoozePresetsAreNumberedOneToFourWithKeycaps() {
         let (picker, _) = Self.model()
         let change = picker.apply(.focusOpenPicker(view: Self.view()))
@@ -92,7 +77,6 @@ struct PickerModelTests {
         #expect(picker.rows.map(\.name) == ["Later today", "Tomorrow morning", "Monday morning", "Next week"])
         #expect(picker.rows.map(\.cap) == ["1", "2", "3", "4"])
         #expect(picker.rows.map(\.detail) == ["18:00", "Sun 27 Sep, 08:00", "Mon 28 Sep, 08:00", "Sat 3 Oct, 08:00"])
-        // Screen 11: the first preset is highlighted as it opens.
         #expect(picker.highlighted == 1)
         #expect(picker.hint == "Tab to type")
         #expect(picker.footnote == "Snoozed mail is under g z.")
@@ -103,7 +87,6 @@ struct PickerModelTests {
         picker.apply(.focusOpenPicker(view: Self.view(.label)))
         #expect(picker.rows.map(\.dot) == [true, true, true])
         #expect(picker.rows[0].colour == LabelColour(hex: "#c0703a"))
-        // Unset: a colour from its name, as GTK draws it (FR-012).
         #expect(picker.rows[1].colour == LabelColour.of(name: picker.rows[1].name, stored: nil))
         #expect(picker.rows[1].colour != nil)
         #expect(picker.rows[0].applied)
@@ -121,7 +104,6 @@ struct PickerModelTests {
             Self.row(23, "Archive", detail: "18,204", section: "All folders"),
         ])))
         #expect(picker.rows.map(\.section) == ["Recent", nil, "All folders"])
-        // The rows the read brought: the first is highlighted.
         #expect(picker.highlighted == 21)
     }
 
@@ -133,20 +115,16 @@ struct PickerModelTests {
         #expect(picker.apply(.focusPickerField) == nil)
     }
 
-    // -- The typed field --------------------------------------------------------
-
     @Test func tabPutsTheKeyboardInTheDateFieldAndReturnTakesTheTypedDate() {
         let (picker, engine) = Self.model()
         picker.apply(.focusOpenPicker(view: Self.view()))
         #expect(!picker.inField)
         #expect(picker.apply(.focusPickerField) == .field)
         #expect(picker.inField)
-        // Typed words are the date now, not the highlighted preset.
         #expect(picker.highlighted == nil)
         picker.typed("tue 9am")
         #expect(engine.typed == ["tue 9am"])
         #expect(picker.typed == "tue 9am")
-        // The controller reads the words back as a date.
         picker.apply(.focusPickerRows(view: Self.view(typed: "tue 9am", hint: "Tue 29 Sep, 09:00")))
         #expect(picker.hint == "Tue 29 Sep, 09:00")
         #expect(picker.highlighted == nil)
@@ -180,15 +158,12 @@ struct PickerModelTests {
         #expect(picker.rows[0].create)
     }
 
-    // -- Space, Return, Escape ----------------------------------------------------
-
     @Test func spaceTogglesTheHighlightedLabelAndTheHighlightStaysOnIt() {
         let (picker, engine) = Self.model()
         picker.apply(.focusOpenPicker(view: Self.view(.label)))
         picker.move(by: 1)
         picker.toggle()
         #expect(engine.toggled == [12])
-        // The redraw says Harbor is on, under tokens of its own.
         picker.apply(.focusPickerRows(view: Self.view(.label, rows: [
             Self.row(41, "Atlas", detail: "\u{2713} applied", dot: true, applied: true),
             Self.row(42, "Harbor", detail: "\u{2713} applied", dot: true, applied: true),
@@ -208,8 +183,6 @@ struct PickerModelTests {
     }
 
     @Test func returnInTheLabelPickerClosesItAsItsFootnoteSays() {
-        // "Space toggles a label · Return closes" (screen 13): Return is the
-        // controller's confirm, which closes, or makes the label typed.
         let (picker, engine) = Self.model()
         picker.apply(.focusOpenPicker(view: Self.view(.label)))
         picker.confirm()
@@ -237,7 +210,6 @@ struct PickerModelTests {
         #expect(picker.apply(.focusCloseSurface(kind: .picker)) == .close)
         #expect(!picker.isOpen)
         #expect(picker.rows.isEmpty)
-        // Closed already: the toolkit's own close is not said again.
         #expect(picker.closedByToolkit() == false)
     }
 
@@ -251,8 +223,6 @@ struct PickerModelTests {
     }
 
     @Test func theKeysOnlySwiftCanAnswerAreRunHere() {
-        // `picker_toggle` and `picker_confirm` need the highlight, which
-        // only the toolkit knows; every other key goes to `invoke`.
         let (picker, engine) = Self.model()
         #expect(picker.run(PickerCommand.toggle) == false)
         picker.apply(.focusOpenPicker(view: Self.view(.label)))
@@ -263,8 +233,6 @@ struct PickerModelTests {
         #expect(picker.run("picker_choose_1") == false)
         #expect(picker.run("back") == false)
     }
-
-    // -- The arrows ----------------------------------------------------------------
 
     @Test func theArrowsMoveTheHighlightAndStopAtEitherEnd() {
         let (picker, _) = Self.model()

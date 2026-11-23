@@ -100,15 +100,12 @@ def main() -> int:
 
         expect("a hack in step passes", fixture(tmp_path / "clean"), 0)
 
-        # The trap: `b` now asks for `three`, which compiles and passes, and
-        # the hack still says `one` and `two`.
         drifted = fixture(tmp_path / "drifted")
         member(drifted, "b", '"two", "three"')
         hakari(drifted, "manage-deps", "--yes")  # the line itself stays in step
         expect("a member's features change and the hack is not regenerated",
                drifted, 1, "contents are out of date", "cargo hakari generate")
 
-        # A member added by hand, without the line naming the hack.
         newcomer = fixture(tmp_path / "newcomer")
         member(newcomer, "c", '"one"')
         expect("a new member arrives without its line", newcomer, 1,

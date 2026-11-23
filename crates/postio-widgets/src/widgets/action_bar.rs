@@ -1,17 +1,6 @@
-//! A row of [`KeycapButton`]s, identical on every screen.
-//!
-//! The canvas's rule (turn 7) is that an action bar looks the same wherever
-//! it appears: real buttons with keycap hints, one primary, no bare
-//! monospace text links. The reading pane had one, built by hand; the
-//! conversation pane's per-message buttons were three bare `gtk::Button`s
-//! with no caps at all, and its footer had none. Three surfaces, one shape.
-//!
-//! # One path to the composer and the queue
-//!
-//! Every button here runs [`Command::default_for`] on the same [`CommandId`]
-//! the keybinding does, and hands it out through [`ActionBar::connect_command`]
-//! for whoever mounts the bar to act on. There is no second "reply from a
-//! button" implementation to keep in step with the real one.
+//! A row of `KeycapButton`s, identical on every screen. Each button runs `Command::default_for` on
+//! the same `CommandId` as its keybinding and hands it to `connect_command`: one path to the
+//! composer and queue.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -23,28 +12,18 @@ use super::keycap::KeycapButton;
 
 type CommandHandler = Box<dyn Fn(Command)>;
 
-/// One button in a bar: the command it runs, its label, the CSS class a test
-/// finds it by, and whether it gets the primary treatment.
 #[derive(Clone, Copy, Debug)]
 pub struct Action {
-    /// The command the button runs, and whose key its cap shows.
     pub command: CommandId,
-    /// The words on the button, and its accessible name.
     pub label: &'static str,
-    /// The CSS class a surface dresses it by and a test finds it by.
     pub class: &'static str,
-    /// Whether it is the one verb the bar exists for.
     pub primary: bool,
-    /// Drawn instead of the label, when the design asks for an icon.
-    ///
-    /// The label is not optional even then: it stays the accessible name and
-    /// the tooltip. A platform icon name rather than a drawn asset, because
-    /// `PRODUCT.md` §19 asks for an application that reads as native.
+    /// The label stays the accessible name and tooltip. A platform icon name, not a drawn asset
+    /// (`PRODUCT.md` section 19).
     pub icon: Option<&'static str>,
 }
 
 impl Action {
-    /// A secondary button — the common case.
     pub const fn new(command: CommandId, label: &'static str, class: &'static str) -> Self {
         Self {
             command,
@@ -55,20 +34,17 @@ impl Action {
         }
     }
 
-    /// Draw it as `icon` rather than as words.
     pub const fn icon(mut self, icon: &'static str) -> Self {
         self.icon = Some(icon);
         self
     }
 
-    /// The one verb the bar exists for.
     pub const fn primary(mut self) -> Self {
         self.primary = true;
         self
     }
 }
 
-/// The bar itself.
 pub struct ActionBar {
     root: gtk::Box,
     buttons: Vec<Rc<KeycapButton>>,
@@ -76,11 +52,7 @@ pub struct ActionBar {
 }
 
 impl ActionBar {
-    /// Build a bar over `actions`, in the order given.
-    ///
-    /// Returned as `Rc` because a button's own `clicked` handler needs to
-    /// call back into `self` — the same reason `composer::Completion::install`
-    /// does, and weakly for the same reason.
+    /// Returned as `Rc` because a button's `clicked` handler calls back into `self`, weakly.
     pub fn new(actions: &[Action], class: &str) -> Rc<Self> {
         let root = gtk::Box::new(gtk::Orientation::Horizontal, 10);
         root.add_css_class("postio-action-bar");
@@ -105,9 +77,8 @@ impl ActionBar {
                     ),
                 });
                 KeycapButton::arm(&button);
-                // In a bar every verb is a button you can see the edges of
-                // (#1174, "both bars" in screen 17): the non-primary ones are
-                // secondary rather than the ghosts a lone keycap is.
+                // Non-primary verbs in a bar are secondary buttons with visible edges, not ghosts
+                // (#1174).
                 if !action.primary {
                     super::button::style(
                         &button.widget(),
@@ -136,20 +107,12 @@ impl ActionBar {
             });
         }
 
-        // A sensible key hint from the moment the bar exists, the same
-        // defensive default the list row keeps for its own hints:
-        // `Window::apply_keymap` is what keeps this current once a real
-        // config loads, but nothing here should depend on that call having
-        // already happened by the time anyone looks.
+        // Defaults until `Window::apply_keymap` runs, so a hint never depends on call order.
         this.set_keymap(Keymap::defaults());
         this
     }
 
-    /// Push everything after this point to the right-hand end.
-    ///
-    /// What separates a bar's verbs from the status a surface puts beside
-    /// them — the conversation footer's hint line, the reader's thread
-    /// position.
+    /// Separates a bar's verbs from the status a surface puts beside them.
     pub fn append_trailing(&self, widget: &impl IsA<gtk::Widget>) {
         let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         spacer.set_hexpand(true);
@@ -157,22 +120,18 @@ impl ActionBar {
         self.root.append(widget);
     }
 
-    /// The widget to place in a pane.
     pub fn widget(&self) -> gtk::Widget {
         self.root.clone().upcast()
     }
 
-    /// Show or hide the whole bar.
     pub fn set_visible(&self, visible: bool) {
         self.root.set_visible(visible);
     }
 
-    /// Whether the bar is on screen.
     pub fn is_visible(&self) -> bool {
         self.root.is_visible()
     }
 
-    /// Re-cap every button from the live keymap.
     pub fn set_keymap(&self, keymap: &Keymap) {
         for button in &self.buttons {
             let Some(id) = button.command() else { continue };
@@ -180,27 +139,23 @@ impl ActionBar {
         }
     }
 
-    /// One button, by the command it runs.
     pub fn button(&self, command: CommandId) -> Option<&Rc<KeycapButton>> {
         self.buttons
             .iter()
             .find(|button| button.command() == Some(command))
     }
 
-    /// Called with the invocation whenever a button is pressed — the same
-    /// [`Command`] the keyboard's binding for the same verb would produce.
+    /// The same `Command` the keyboard's binding for the verb produces.
     pub fn connect_command(&self, handler: impl Fn(Command) + 'static) {
         self.commands.borrow_mut().push(Box::new(handler));
     }
 
-    /// Press a button without a pointer, for a test.
     pub fn press(&self, command: CommandId) {
         if let Some(button) = self.button(command) {
             button.press();
         }
     }
 
-    /// Run `command` against whatever the surface is showing.
     fn run(&self, command: CommandId) {
         let command = Command::default_for(command);
         for handler in self.commands.borrow().iter() {
@@ -209,12 +164,8 @@ impl ActionBar {
     }
 }
 
-/// The keys `actions` currently carry — `None` where the user cleared a
-/// binding entirely, or lost it to a collision.
-///
-/// A free function, decoupled from the widgets [`ActionBar::set_keymap`]
-/// updates from it, so a rebind reaching a bar is testable without a display
-/// — the same split the focused row's hints make.
+/// `None` where the user cleared a binding or lost it to a collision. Free so a rebind is testable
+/// without a display.
 pub fn keys(actions: &[Action], keymap: &Keymap) -> Vec<(CommandId, Option<String>)> {
     actions
         .iter()

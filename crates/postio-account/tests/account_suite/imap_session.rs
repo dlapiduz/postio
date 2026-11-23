@@ -1,9 +1,3 @@
-//! Opening an IMAP session: TLS, authentication, and the capability re-read.
-//!
-//! `io-imap` is sans-I/O, so the whole handshake runs here against a recorded
-//! transcript with no socket involved. The live-server tests at the bottom are
-//! `#[ignore]`d and need `POSTIO_TEST_*` in the environment.
-
 use postio_account::backend::{BackendError, Capability};
 use postio_account::imap::{
     ConnectionSettings, IMAPS_PORT, ImapScript, ImapSession, RustlsConnector, ScriptedConnector,
@@ -24,16 +18,10 @@ fn settings() -> ConnectionSettings {
     )
 }
 
-// ---------------------------------------------------------------------------
-// The post-auth capability re-read
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn the_capability_set_comes_from_after_authentication() {
-    // This is the whole reason this bead exists. iCloud's banner advertises
-    // IMAP4rev1 and the auth mechanisms and nothing else; CONDSTORE, QRESYNC,
-    // IDLE and UIDPLUS appear only once logged in. Trust the banner and the
-    // client silently loses incremental sync forever.
+    // iCloud's banner lists only IMAP4rev1 and auth mechanisms; CONDSTORE, QRESYNC, IDLE and
+    // UIDPLUS appear after login.
     let connector = ScriptedConnector::extensions_hidden_until_login();
 
     let session = ImapSession::open(&settings(), &password(), &connector)
@@ -48,8 +36,6 @@ async fn the_capability_set_comes_from_after_authentication() {
     assert!(capabilities.contains(Capability::Move));
     assert!(capabilities.supports_incremental_sync());
 
-    // …and the re-read really happened: a CAPABILITY command went out after
-    // the AUTHENTICATE.
     let commands = connector.log().commands();
     let authenticated = commands
         .iter()
@@ -66,8 +52,6 @@ async fn the_capability_set_comes_from_after_authentication() {
 
 #[tokio::test]
 async fn the_banner_alone_would_not_have_been_enough() {
-    // Guards the test above against becoming vacuous: if the transcript ever
-    // starts advertising the extensions up front, the assertion proves nothing.
     let banner_only =
         ImapScript::new("* OK [CAPABILITY IMAP4rev1 SASL-IR AUTH=PLAIN] iCloud ready")
             .on("AUTHENTICATE", "{tag} OK [CAPABILITY IMAP4rev1] done");
@@ -95,10 +79,6 @@ async fn the_session_reports_the_endpoint_and_the_account_it_authenticated_as() 
     assert_eq!(session.account(), "someone@example.com");
     assert!(session.is_encrypted());
 }
-
-// ---------------------------------------------------------------------------
-// TLS
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn implicit_tls_is_the_only_connection_attempted() {
@@ -185,7 +165,6 @@ async fn starttls_upgrades_the_connection_before_authenticating() {
     assert!(session.is_encrypted());
     assert!(session.capabilities().contains(Capability::QResync));
 
-    // The password went out after the upgrade, not before it.
     let commands = log.commands();
     let upgraded = commands
         .iter()
@@ -225,10 +204,6 @@ async fn a_failed_starttls_upgrade_does_not_authenticate_anyway() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Authentication
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn a_rejected_password_is_an_authentication_failure_not_a_retry() {
     let script = ImapScript::new("* OK [CAPABILITY IMAP4rev1 SASL-IR AUTH=PLAIN] iCloud ready").on(
@@ -250,7 +225,6 @@ async fn a_rejected_password_is_an_authentication_failure_not_a_retry() {
 
 #[tokio::test]
 async fn a_connection_that_dies_mid_handshake_is_transient() {
-    // The transcript stops after the greeting, so the next read sees EOF.
     let script = ImapScript::new("* OK [CAPABILITY IMAP4rev1 SASL-IR AUTH=PLAIN] iCloud ready");
     let connector = ScriptedConnector::new(script.on("AUTHENTICATE", ""));
 
@@ -260,10 +234,6 @@ async fn a_connection_that_dies_mid_handshake_is_transient() {
 
     assert!(!error.is_authentication_failure());
 }
-
-// ---------------------------------------------------------------------------
-// Secrets
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn the_password_never_reaches_a_log_line_or_a_debug_rendering() {
@@ -278,8 +248,6 @@ async fn the_password_never_reaches_a_log_line_or_a_debug_rendering() {
     assert!(!rendered.contains(secret));
     assert!(rendered.contains("imap.example.com:993"));
 
-    // It is on the wire, base64-encoded, because that is what SASL PLAIN is —
-    // but never in the clear, and never in anything we would print.
     assert!(!String::from_utf8_lossy(&connector.log().written).contains(secret));
 }
 
@@ -300,16 +268,6 @@ async fn an_authentication_error_does_not_quote_the_password_back() {
     assert!(!error.to_string().contains(secret));
 }
 
-// ---------------------------------------------------------------------------
-// Live server. Ignored by default; needs a real account.
-// ---------------------------------------------------------------------------
-
-/// Reads the live-test credentials, or skips.
-///
-/// `POSTIO_TEST_IMAP_USER` and `POSTIO_TEST_IMAP_PASSWORD` — for a provider
-/// that requires one, an app-specific password. The host comes from Postio's
-/// preset table when it ships one for the address's domain, and
-/// `POSTIO_TEST_IMAP_HOST` overrides it for anything else.
 fn live_settings() -> Option<(ConnectionSettings, Password)> {
     let user = std::env::var("POSTIO_TEST_IMAP_USER").ok()?;
     let password = std::env::var("POSTIO_TEST_IMAP_PASSWORD").ok()?;
@@ -334,7 +292,6 @@ async fn live_server_advertises_the_extensions_the_sync_design_needs() {
         .await
         .expect("live connect");
 
-    // The last unverified assumption in ADR 0001. Print it, then assert it.
     println!(
         "{} post-auth CAPABILITY: {}",
         session.endpoint(),

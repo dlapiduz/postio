@@ -1,84 +1,9 @@
-//! Keeping an already-synced mailbox current: QRESYNC/CONDSTORE incremental
-//! resync, with a `UIDVALIDITY` change as the correctness trap it is.
-//!
-//! # The decision is not this module's to make
-//!
-//! [`SyncState::plan`](postio_model::SyncState::plan) is the pure function
-//! that decides *how* a mailbox should be brought up to date, from the state
-//! this crate already persisted and what the server just reported at
-//! `SELECT`. This module is the other half: it executes each of that
-//! decision's three answers.
-//!
-//! * [`ResyncPlan::UpToDate`] — nothing to do beyond recording that the
-//!   mailbox was looked at.
-//! * [`ResyncPlan::Incremental`] — ask only for what changed since the last
-//!   `MODSEQ` we hold, and reconcile what vanished. See "Detecting vanished
-//!   messages" below for why that second half needs its own explanation.
-//! * [`ResyncPlan::Full`] — re-enumerate from scratch. Per
-//!   [`ResyncPlan::Full`]'s own docs this always means *discarding cached
-//!   UIDs*, not just the ones that changed generation, so every `Full` reason
-//!   — not only [`FullResyncReason::GenerationChanged`] — wipes this
-//!   mailbox's local rows before [`initial::sync_mailbox`] repopulates it.
-//!   Getting this specific case wrong is the one CLAUDE.md calls out by name:
-//!   a `UIDVALIDITY` change that is not wiped silently corrupts state, because
-//!   an old UID means a different message once the generation moves on.
-//!
-//! # Detecting vanished messages
-//!
-//! `MailBackend` deliberately does not expose IMAP's `VANISHED` response —
-//! ADR 0001 found that `io-imap` discards it when requested through `FETCH`
-//! anyway, and the trait stays protocol-neutral rather than growing a QRESYNC-
-//! shaped hole for one extension. So this module reconstructs "what vanished"
-//! from counting, and only pays for the expensive half of that when the
-//! count says it must:
-//!
-//! 1. `CHANGEDSINCE` finds every message that is new or changed. On a
-//!    conforming server new messages are always caught by it: a message
-//!    cannot exist before the `MODSEQ` it was created at, and RFC 7162
-//!    §3.1.2.1 requires that to exceed the mailbox's previous
-//!    `HIGHESTMODSEQ`. See "Arrivals" below for what happens when a server
-//!    does not manage that.
-//! 2. If `known + newly_arrived` equals what `SELECT` just reported the
-//!    mailbox holds, nothing vanished — the arithmetic is exact, not a
-//!    heuristic, so a simultaneous arrival-and-deletion that happens to leave
-//!    the count unchanged still trips it. This is the common case, and it
-//!    costs nothing beyond the `CHANGEDSINCE` fetch itself: "reconnect with
-//!    no server changes fetches essentially nothing" falls out of it for free.
-//! 3. When the count disagrees, and only then, every previously known UID is
-//!    re-fetched with no `CHANGEDSINCE` filter; whichever ones the server no
-//!    longer answers for are gone and are deleted locally.
-//!
-//! # Flags, when the change feed cannot be believed
-//!
-//! `CHANGEDSINCE` is also how a flag set on another device reaches this one,
-//! and some servers (iCloud, Yahoo, Exchange) under-report it. What a backend
-//! says about its own feed ([`MailBackend::change_feed`], from the provider
-//! preset) goes, with the folder's size and the passes since the last
-//! sweep, to [`SweepPolicy::decide`], which says whether this pass also reads
-//! every flag in the folder. A pass that sweeps reconciles the store with the
-//! whole listing, on `UpToDate` as well as `Incremental` -- a server that
-//! under-reports may not move `HIGHESTMODSEQ` at all.
-//!
-//! **The server's `HIGHESTMODSEQ` is recorded last**, after the change pull
-//! and the sweep have both succeeded. A pass that fails in either leaves the
-//! stored value where it was, so the next one asks again from the same place;
-//! recording it first would make a failed sweep permanent.
-//!
-//! # Arrivals, from `UIDNEXT` rather than from the change feed
-//!
-//! Step 1 above rests on the server assigning every new message a `MODSEQ`
-//! above the `HIGHESTMODSEQ` we last recorded. That is what the RFC requires
-//! and it is not something to bet the inbox on: a message the change feed
-//! never mentions is a message that never appears, with no error anywhere, and
-//! "new mail stopped arriving" is the single worst way for a mail client to
-//! fail.
-//!
-//! So arrivals have a second, independent witness — `UIDNEXT`, which means
-//! exactly "UIDs below this have been handed out" and cannot be wrong without
-//! the server being incoherent. When it has moved past what the change feed
-//! accounted for, the gap is fetched directly. The check costs nothing on a
-//! conforming server: the change feed already reported those UIDs, so the
-//! range is empty and no second `FETCH` is issued.
+//! Keeps a synced mailbox current by executing `SyncState::plan`'s answer: up to date, incremental,
+//! or full. Every full reason wipes local rows first, since an unwiped `UIDVALIDITY` change
+//! silently corrupts state (old UID, different message). Vanished messages are found by count
+//! arithmetic (ADR 0001: no `VANISHED`). Arrivals have a second witness, `UIDNEXT`, so a lying
+//! change feed cannot hide new mail; the server's `HIGHESTMODSEQ` is recorded last so a failed
+//! sweep is retried.
 
 use std::collections::BTreeSet;
 
@@ -102,88 +27,39 @@ use crate::drain::SyncError;
 use crate::filing::{FiledMessage, FilingEffects, FilingPass};
 use crate::initial::{self, Progress};
 
-/// This module's result type.
 pub type Result<T> = std::result::Result<T, SyncError>;
 
-/// What one resync pass did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
-    /// The server reported nothing new; only `last_seen_at` advanced.
     UpToDate,
-    /// A full re-enumeration ran. See [`ResyncPlan::Full`] for why.
     Full {
-        /// Why a full pass was required.
         reason: FullResyncReason,
-        /// What [`initial::sync_mailbox`] did while repopulating the mailbox.
         report: initial::Report,
     },
-    /// An incremental pull could not be trusted, so the mailbox was
-    /// re-enumerated instead.
-    ///
-    /// Distinct from [`Full`](Self::Full) because nothing was wrong with the
-    /// local state: the *wire* was. `io-imap` drops an untagged response it
-    /// cannot decode and completes the command `Ok` (ADR 0001), so a pull
-    /// that lost a line looks exactly like one that did not; the backend
-    /// counts the skips and refuses the result rather than reporting a
-    /// gap-free answer. There is no `FullResyncReason` for that, and
-    /// inventing one would put the blame in the wrong place.
+    /// The wire was untrustworthy, not the local state: `io-imap` drops an undecodable untagged
+    /// line and completes `Ok` (ADR 0001), so the mailbox was re-enumerated.
     Rebuilt {
-        /// What the re-enumeration did.
         report: initial::Report,
     },
-    /// Only what changed since the last sync was fetched.
     Incremental {
-        /// Messages that were new or had a flag change, per `CHANGEDSINCE`.
         changed: usize,
-        /// Messages that no longer exist on the server and were removed
-        /// locally.
         vanished: usize,
-        /// Of `changed`, the ones that were not known before this pass —
-        /// genuine arrivals rather than a flag change on mail already here.
-        /// This is what a desktop notification is about; `changed` alone
-        /// cannot tell the two apart.
+        /// Of `changed`, genuine arrivals rather than flag changes; what a desktop notification is
+        /// about.
         arrived: Vec<MessageId>,
-        /// Of `arrived`, the ones a filing pass took out of the inbox's view
-        /// as it filed them (spec 007): filtered into the archive, or held
-        /// for a digest. Focus never announces these (FR-153), and they are
-        /// not in its inbox to splice in. Empty unless a host in Focus mode
-        /// gave the pass one.
+        /// Of `arrived`, those a filing pass took out of the inbox's view (filtered or held); Focus
+        /// never announces these (FR-153).
         filed_away: Vec<MessageId>,
-        /// Of `arrived`, the thread each joined: what `ThreadChanged` says.
-        /// Includes the filed-away ones, since the thread changed all the same.
+        /// Of `arrived`, the thread each joined, including filed-away ones.
         thread_arrivals: crate::threaded::ThreadArrivals,
     },
 }
 
-/// Whether the mailbox is still short of the server's `EXISTS` after an
-/// incremental pass has reconciled it.
-///
-/// # Why after, and not instead of, `plan`
-///
-/// A mailbox is short of `EXISTS` for two quite different reasons, and only
-/// one of them is a defect. The ordinary one is new mail: the server counts a
-/// delivery the moment it lands, and the local store catches up on the next
-/// pass. Checking before the pass therefore fires on *every* delivery, which
-/// would turn each new message into a full re-enumeration — caught by
-/// `loopback::an_incremental_resync_sees_a_flag_change_and_an_arrival`, which
-/// is what this comment exists to keep true.
-///
-/// After the pass, arrivals have been fetched and vanished rows removed, so
-/// the count should agree. When it still does not, the mailbox is missing
-/// mail that no delta accounts for: the state a UID listing shorter than
-/// `EXISTS` left behind, where `last_full_sync_at` is stamped on a mailbox
-/// that was never enumerated and every later pass asks what changed since a
-/// sync that never happened.
-///
-/// # Why the queue has to be consulted
-///
-/// The other way to be short is to have archived something the server has not
-/// been told about: the row has left this mailbox locally while the server
-/// still counts it. Enumerating then refetches the message the user archived
-/// and puts it back. A `failed` row counts as unsettled for exactly this
-/// reason — the local move stands, the server never heard, and it stays that
-/// way until the user clears it, so a check that looked only at `pending`
-/// would resurrect that message on every pass.
+/// Whether the mailbox is still short of `EXISTS` after an incremental pass reconciled it.
+/// Checked after, not before: new mail makes it short on every delivery, which would turn each into
+/// a full re-enumeration.
+/// The queue is consulted because a locally archived row the server has not heard about also leaves
+/// it short; a `failed` row counts as unsettled, or that message resurrects every pass.
 async fn still_short_of_exists(
     connection: &Checkout,
     mailbox: &Mailbox,
@@ -195,16 +71,9 @@ async fn still_short_of_exists(
     };
     let messages = MessageRepository::new(connection);
     let held = messages.count_in(mailbox.id, generation).await?;
-    // Rows the store will not hold however often they are fetched: the
-    // server's copy of a draft this client wrote, which `upsert_batch`
-    // refuses so a draft is not stored twice. They are counted by the
-    // server's `EXISTS` and never by ours, so a mailbox holding drafts is
-    // permanently "short" by exactly that many -- and re-enumerating it
-    // fetches them, has them refused, and leaves the count where it was.
-    //
-    // Measured: Drafts re-enumerated on every pass, for ever, 27 held
-    // against 28 reported. A repair that cannot converge is a loop, and
-    // this is what makes the arithmetic able to balance.
+    // Rows the store refuses however often fetched (the server's copy of a draft this client wrote)
+    // count in `EXISTS` but never in ours;
+    // without this Drafts re-enumerated on every pass.
     let refused = messages.refused_rows_in(mailbox.id).await?;
     if held.saturating_add(refused) >= exists {
         return Ok(false);
@@ -225,12 +94,8 @@ async fn still_short_of_exists(
     Ok(true)
 }
 
-/// Fetches what a mailbox is missing, without disturbing what it has.
-///
-/// `Coverage::Missing` because nothing renumbered: the rows on disk are as
-/// valid as any other pass's, and the shortfall is precisely the mail that was
-/// never fetched. The repair therefore costs the missing mail and nothing
-/// else, and it resumes if it is cut short.
+/// `Coverage::Missing` because nothing renumbered: the repair costs only the missing mail and
+/// resumes if cut short.
 async fn enumerate_the_shortfall(
     connection: &Checkout,
     backend: &dyn MailBackend,
@@ -255,11 +120,7 @@ async fn enumerate_the_shortfall(
     })
 }
 
-/// Brings `mailbox` up to date, choosing full or incremental resync per
-/// [`SyncState::plan`](postio_model::SyncState::plan).
-///
-/// `on_progress` is only called when a full pass runs; see
-/// [`initial::sync_mailbox`].
+/// `on_progress` is only called when a full pass runs.
 pub async fn resync_mailbox(
     connection: &Checkout,
     backend: &dyn MailBackend,
@@ -270,10 +131,8 @@ pub async fn resync_mailbox(
     resync_mailbox_filing(connection, backend, mailbox, None, cancel, on_progress).await
 }
 
-/// [`resync_mailbox`], handing what an incremental pass files to `filing`
-/// inside the transaction that files it (spec 007): what a host in Focus
-/// mode runs, and nothing else does. See [`crate::filing`] for why only an
-/// incremental pass's arrivals reach it.
+/// With `filing` handed what an incremental pass files, inside the transaction that files it (spec
+/// 007); only a host in Focus mode runs this.
 pub async fn resync_mailbox_filing(
     connection: &Checkout,
     backend: &dyn MailBackend,
@@ -294,10 +153,8 @@ pub async fn resync_mailbox_filing(
     .await
 }
 
-/// [`resync_mailbox_filing`] with the flag sweep's thresholds supplied rather
-/// than the shipped ones: when to stop believing the change feed is a policy,
-/// and a caller (a test, above all, since the shipped threshold is a folder of
-/// two thousand messages) can hold a different one.
+/// With the flag sweep's thresholds supplied, so a test can hold a different policy than the
+/// shipped two-thousand-message one.
 #[allow(clippy::too_many_arguments)]
 pub async fn resync_mailbox_with_policy(
     connection: &Checkout,
@@ -313,13 +170,8 @@ pub async fn resync_mailbox_with_policy(
 
     let selected = match backend.select(&mailbox.path, SelectMode::ReadWrite).await {
         Ok(selected) => selected,
-        // A backend that refuses to serve a generation nobody confirmed says
-        // so *instead of* handing back a status — see
-        // `BackendError::UidValidityChanged`. That refusal is the rebuild
-        // signal, not a failed pass: swallowing it here is the difference
-        // between re-enumerating a renumbered mailbox and never noticing it
-        // was renumbered. Branching on the predicate rather than the variant
-        // is what the error type asks of its callers.
+        // `UidValidityChanged` is the rebuild signal, not a failed pass; branch on the predicate,
+        // not the variant.
         Err(error) if error.requires_full_resync() => {
             return rebuild(
                 connection,
@@ -342,32 +194,17 @@ pub async fn resync_mailbox_with_policy(
 
     match previous.plan(&reported) {
         ResyncPlan::Full(reason) => {
-            // Which of the three paths a pass took, and why. The `warn` is
-            // deliberate: falling back to a full re-enumeration is correct but
-            // degraded, and the reason is what tells you whether the server
-            // renumbered or we lost the incremental basis ourselves.
+            // `warn`: a full re-enumeration is correct but degraded, and the reason says whether
+            // the server renumbered or we lost the basis.
             tracing::warn!(
                 mailbox = mailbox.id.get(),
                 reason = ?reason,
                 "falling back to a full resync"
             );
-            // Only a renumbering invalidates cached rows — the same line
-            // `rebuild` below draws (#564). A modseq-less backend plans this
-            // path on *every* pass, and wiping there would refetch the world
-            // each tick and lose local rows whose flags have not drained; the
-            // generation held, so the rows are refreshed in place instead.
-            //
-            // `NeverSynced` used to be wiped alongside `GenerationChanged`,
-            // and that was #1176. `complete_full_sync` runs at the *end* of an
-            // enumeration, so a pass cut short leaves rows on disk and
-            // `last_full_sync_at` still `None` — which is `NeverSynced`. The
-            // wipe therefore fired on exactly the state an interrupted pass
-            // leaves, threw away what it had fetched, and started from zero;
-            // for a mailbox too big to finish in one pass, forever. Nothing
-            // renumbered, so the rows are as valid as any other pass's, and
-            // `Coverage::Missing` is documented as the thing that "makes a
-            // sync that was interrupted halfway cheap to resume". It could
-            // not, because there was never anything left to resume from.
+            // Only a renumbering invalidates cached rows (#564), as in `rebuild`. A modseq-less
+            // backend plans this on every pass, so wiping would refetch the world.
+            // `NeverSynced` is not wiped (#1176): an interrupted pass leaves rows and no
+            // `last_full_sync_at`, and wiping restarted a too-big mailbox from zero for ever.
             let coverage = match reason {
                 FullResyncReason::GenerationChanged => {
                     if let Some(generation) = previous.generation {
@@ -375,40 +212,25 @@ pub async fn resync_mailbox_with_policy(
                     }
                     initial::Coverage::Missing
                 }
-                // Nothing renumbered in either case, so the rows on disk are
-                // as valid as any other pass's and only what is absent is
-                // fetched. For `ShortOfExists` that is the whole point: the
-                // mail this mailbox never had, without refetching the mail it
-                // does.
                 FullResyncReason::NeverSynced => initial::Coverage::Missing,
-                // Never planned: `still_short_of_exists` decides it after an
-                // incremental pass and `enumerate_the_shortfall` runs it, so
-                // it does not reach this table.
+                // Never planned: `still_short_of_exists` decides it after an incremental pass.
                 FullResyncReason::ShortOfExists => initial::Coverage::Missing,
                 FullResyncReason::NoModSeq | FullResyncReason::ModSeqWentBackwards => {
                     initial::Coverage::Everything
                 }
             };
-            // What the server reports is recorded before the re-read for
-            // every reason but one. `GenerationChanged` has to record first:
-            // the observation is what drops the old counters and the
-            // completed-sync marker, so a pass cut short is `NeverSynced`
-            // and resumes. `ModSeqWentBackwards` must record *last*: the
-            // re-read is its flag pass, and the lower value stored ahead of
-            // it makes a pass cut short look `UpToDate` against a server
-            // that reports that very value, so the flags it was going to
-            // read are never read.
+            // Recorded before the re-read, except `ModSeqWentBackwards`, which records last:
+            // storing the lower value first makes a cut-short pass look `UpToDate`.
+            // `GenerationChanged` must record first: the observation drops the old counters so a
+            // cut-short pass resumes as `NeverSynced`.
             let record_after = reason == FullResyncReason::ModSeqWentBackwards;
             if !record_after {
                 sync_state
                     .observe(mailbox.id, &reported, Utc::now())
                     .await?;
             }
-            // A backend with no MODSEQ re-reads the folder on every pass
-            // after the first, and this is its incremental pass: what it
-            // inserts arrived since the last one, and goes to the filing
-            // pass as an incremental pull's arrivals do (spec 007). Every
-            // other full pass files the backlog, and none (FR-118).
+            // A backend with no MODSEQ re-reads on every pass, so what it inserts is new mail and
+            // goes to filing (spec 007); other full passes file the backlog, i.e. none (FR-118).
             let filing = match reason {
                 FullResyncReason::NoModSeq => filing,
                 _ => None,
@@ -437,9 +259,7 @@ pub async fn resync_mailbox_with_policy(
                 since = since.get(),
                 "resyncing incrementally"
             );
-            // The change pull and the flag sweep are one unit: either failing
-            // leaves the server's `HIGHESTMODSEQ` unrecorded, and a sweep that
-            // loses a line is the same untrustworthy answer a pull that does.
+            // One unit: a failed pull or sweep leaves `HIGHESTMODSEQ` unrecorded.
             let outcome = async {
                 let mut outcome = incremental(
                     connection,
@@ -488,16 +308,12 @@ pub async fn resync_mailbox_with_policy(
                     }
                     Ok(outcome)
                 }
-                // The pull cannot be trusted, and asking the same question
-                // again would lose the same answer — see [`Outcome::Rebuilt`].
-                // Note that `reported` is deliberately *not* recorded first:
-                // a state that says "synchronized up to here" would tell the
-                // next pass there was nothing to catch up on.
+                // The pull cannot be trusted and asking again would lose the same line
+                // (`Outcome::Rebuilt`). `reported` is not recorded first: it would say nothing is
+                // left to catch up on.
                 Err(SyncError::Backend(error)) if error.requires_full_resync() => {
-                    // The integrity guard firing: io-imap dropped a response
-                    // line the incremental pull was counting on, so the answer
-                    // cannot be trusted. Loud, because it means a delta was
-                    // silently lost — see `postio_account::imap`'s `undecoded`.
+                    // The integrity guard: io-imap dropped a line the pull counted on, so a delta
+                    // was silently lost. See `postio_account::imap`'s `undecoded`.
                     tracing::error!(
                         mailbox = mailbox.id.get(),
                         %error,
@@ -518,9 +334,8 @@ pub async fn resync_mailbox_with_policy(
         }
         ResyncPlan::UpToDate => {
             tracing::debug!(mailbox = mailbox.id.get(), "already up to date");
-            // A server that under-reports changes may not have moved
-            // `HIGHESTMODSEQ` for the change it missed, so "up to date" is
-            // exactly the state a sweep is for.
+            // A server that under-reports may not have moved `HIGHESTMODSEQ`, so "up to date" is
+            // exactly when a sweep is needed.
             let swept = match sweep_flags(
                 connection,
                 backend,
@@ -554,19 +369,10 @@ pub async fn resync_mailbox_with_policy(
                 .observe(mailbox.id, &reported, Utc::now())
                 .await?;
             sync_state.record_flag_pass(mailbox.id, swept.swept).await?;
-            // The steady state of the poisoned mailbox, and the one that
-            // matters most: an idle server never moves `MODSEQ`, so a mailbox
-            // stamped as synced without ever having been enumerated plans
-            // `UpToDate` on every pass and agrees with itself for ever. "Up to
-            // date" has to mean "holds what the server says it holds".
-            //
-            // `HIGHESTMODSEQ` standing still does not mean nothing left: RFC
-            // 7162 §3.2 makes an expunge raise it only for a server that
-            // supports QRESYNC, so a CONDSTORE-only server can delete a
-            // message and report the value we already hold. More rows than
-            // the server's `EXISTS` is the one thing that cannot be new mail
-            // or a flag, so it is the witness (the same arithmetic
-            // `incremental` uses, asked of the whole mailbox).
+            // An idle server never moves `MODSEQ`, so a mailbox stamped synced but never enumerated
+            // would plan `UpToDate` for ever; "up to date" must mean "holds what the server holds".
+            // A CONDSTORE-only server may delete without raising `HIGHESTMODSEQ` (RFC 7162 §3.2),
+            // so more rows than `EXISTS` is the witness.
             if let Some(generation) = previous.generation {
                 let messages = MessageRepository::new(connection);
                 if messages.count_in(mailbox.id, generation).await? > selected.exists {
@@ -598,8 +404,6 @@ pub async fn resync_mailbox_with_policy(
                     .await;
             }
             if swept.corrected > 0 {
-                // Flags moved under a mailbox the server called unchanged:
-                // the list showing it is stale, and nothing else did.
                 return Ok(Outcome::Incremental {
                     changed: swept.corrected,
                     vanished: 0,
@@ -613,7 +417,6 @@ pub async fn resync_mailbox_with_policy(
     }
 }
 
-/// Runs the flag sweep when `pass` says to.
 async fn sweep_flags(
     connection: &Checkout,
     backend: &dyn MailBackend,
@@ -630,25 +433,11 @@ async fn sweep_flags(
     }
 }
 
-/// Re-enumerates a mailbox whose incremental basis the backend would not stand
-/// behind.
-///
-/// Asks the server what it is *now*, because the reason the last answer was
-/// refused may well be that the mailbox is not what it was. Two cases come out
-/// of that, and they want different things:
-///
-/// * **The generation moved.** Every local UID is meaningless, so the rows
-///   under it are wiped before the mailbox is read again — the
-///   [generation](FullResyncReason::GenerationChanged) rebuild, reported
-///   exactly as the planned path reports it, so a caller cannot tell whether
-///   the change was discovered by comparing statuses or by being refused one.
-/// * **The generation held.** The UIDs are still good and only the *pull* was
-///   untrustworthy, so nothing is thrown away: a full enumeration refreshes
-///   every flag and inserts every arrival, which is everything a dropped
-///   `CHANGEDSINCE` line could have carried. A message expunged during the
-///   lost window survives locally until the next pass, whose count check
-///   notices that the server holds fewer messages than we do and reconciles —
-///   which is a great deal cheaper than discarding rows that are still right.
+/// Re-enumerates a mailbox whose incremental basis the backend would not stand behind, after asking
+/// the server what it is now.
+/// A moved generation wipes the rows first, reported as the planned path reports it. A held
+/// generation wipes nothing: only the pull was untrustworthy, and a full enumeration refreshes
+/// every flag and inserts every arrival.
 async fn rebuild(
     connection: &Checkout,
     backend: &dyn MailBackend,
@@ -669,10 +458,8 @@ async fn rebuild(
         .observe(mailbox.id, &reported, Utc::now())
         .await?;
 
-    // A wiped mailbox has nothing left to skip, so the cheaper pass covers
-    // it; an intact one has to be re-read rather than filled in, because the
-    // delta that went missing was most likely a flag on a message that is
-    // already stored.
+    // A wiped mailbox has nothing to skip; an intact one is re-read, since the lost delta was
+    // likely a flag on a stored message.
     let coverage = if renumbered {
         initial::Coverage::Missing
     } else {
@@ -700,17 +487,10 @@ async fn rebuild(
     })
 }
 
-/// Fetches what changed since `since`, and reconciles what vanished.
-///
-/// See the module docs for why vanish detection is conditional on the
-/// arithmetic rather than always run, and why arrivals get a second witness.
-// Eight, because the filing pass a host in Focus mode hands in (spec 007)
-// joined the seven this pass already needed, each its own.
+/// Fetches what changed since `since` and reconciles what vanished; vanish detection runs only when
+/// the count arithmetic demands it, and arrivals have a second witness (module docs).
 #[allow(clippy::too_many_arguments)]
 async fn incremental(
-    // A pooled connection rather than a bare one, because this is where the
-    // write gate lives: the units below take a background permit, and only
-    // the pool knows the gate they take it from.
     connection: &Checkout,
     backend: &dyn MailBackend,
     mailbox: &Mailbox,
@@ -725,9 +505,8 @@ async fn incremental(
     let known_set: UidSet = known.iter().copied().collect();
     let known_count = known.len() as u32;
 
-    // Both fetches that can bring new mail ask for the headers the filing
-    // pass reads before a body exists (spec 007, research R8); the vanish
-    // check below does not, since it only asks what is still there.
+    // Both fetches that can bring new mail ask for the headers the filing pass reads before a body
+    // exists (spec 007, research R8).
     let mut changed = backend
         .fetch_headers_for_filing(&mailbox.path, &UidSet::all(), Some(since), cancel)
         .await?;
@@ -758,55 +537,29 @@ async fn incremental(
             .into_iter()
             .map(|message| message.into_message(mailbox.account_id, mailbox.id))
             .collect();
-        // Read once rather than per unit: the account does not change under
-        // this loop, and the lookup is a statement that would otherwise
-        // repeat for every twenty-five messages.
         let account = AccountRepository::new(connection)
             .get(mailbox.account_id)
             .await?;
 
-        // `initial::WRITE_UNIT` at a time, the same size and for the same two
-        // reasons its own loop gives. A *unit* rather than a message, because
-        // every repository call below releases a savepoint and a release with
-        // nothing enclosing it is an fsync — unenclosed, this wrote once for
-        // the upserts and then twice more per message. A unit rather than the
-        // whole batch, because the lock this holds is the one a person's own
-        // write needs (#425): unchunked and ungated, a draft autosaving as it
-        // was typed waited out every changed message in the folder, ran past
-        // `busy_timeout`, and was lost. This is the path that runs on every
-        // start, for every folder, so it meets the UI thread's local-first
-        // writes more often than the first-sync one does — which is the
-        // argument for taking the permit here, not against it.
+        // `initial::WRITE_UNIT` at a time, as `initial` does: one savepoint release per call is an
+        // fsync unless enclosed, and an ungated whole batch held the lock a draft autosave needed
+        // (#425).
         let mut rest: &[postio_model::Message] = &batch;
         while !rest.is_empty() {
-            // Sized from what the last unit cost — see `initial::unit_rows`
-            // and the #1587 story on `WRITE_UNIT`, which is the ceiling now.
             let take = initial::unit_rows().min(rest.len());
             let (slice, tail) = rest.split_at(take);
             rest = tail;
-            // The permit, the transaction and the sizing clock, and another
-            // try when the engine says busy: see `initial::write_unit`.
             let account_id = mailbox.account_id;
             let mailbox_id = mailbox.id;
             let role = mailbox.role;
             let account_ref = account.as_ref();
             let known_ref = &known_set;
             let ((newly, effects, joined), held) = initial::write_unit(connection, || {
-                // IMMEDIATE for the reason `initial.rs` gives at its own
-                // transaction (#79): the first statement here is a SELECT,
-                // and a deferred transaction that has to promote a read lock
-                // to a write lock is refused without the busy handler ever
-                // running.
-                //
-                // `upsert_batch` assigns the ids and takes a `Vec`, so the
-                // unit is copied in and read back out -- the same shape
-                // `initial.rs` uses at its own version of this.
+                // IMMEDIATE (#79), as in `initial.rs`. `upsert_batch` takes a `Vec`, so the unit is
+                // copied in and read back.
                 let source: Vec<Message> = slice.to_vec();
                 postio_storage::transaction(connection, move |connection| async move {
                     let mut written = source;
-                    // Indexed once per message, and not at all when nothing
-                    // in its search text changed -- which on a resync of
-                    // known mail is almost every message (#1587).
                     let upsert = crate::initial::upsert_indexed(&connection, &mut written).await?;
                     crate::correspondents::record(&connection, role, account_id, &upsert).await?;
 
@@ -816,11 +569,8 @@ async fn incremental(
                         threads.push(threading.thread(message).await?.thread_id);
                     }
 
-                    // Only the arrivals, by the same test twice over: `known_set`
-                    // was read before this fetch, so a message already in it is a
-                    // flag change or similar, not a new correspondent sighting and
-                    // not new mail to notify about. See `contacts::record`'s docs
-                    // for the double-counting this also avoids.
+                    // Only arrivals: a message in `known_set` (read before this fetch) is a flag
+                    // change, not a new sighting or new mail.
                     let mut arrivals = Vec::new();
                     if let Some(account) = account_ref {
                         for message in &written {
@@ -835,11 +585,9 @@ async fn incremental(
                         }
                     }
 
-                    // The arrivals, to the filing pass a host in Focus mode
-                    // installs, in this same transaction: after the upsert
-                    // and the threading, before any event (spec 007). A
-                    // pass that fails takes back only its own writes: the
-                    // mail stays in the inbox and the insert commits.
+                    // Arrivals go to the filing pass in this transaction, after upsert and
+                    // threading, before any event (spec 007); a failing pass takes back only its
+                    // own writes.
                     let mut effects = FilingEffects::default();
                     if let Some(filing) = filing
                         && !arrivals.is_empty()
@@ -858,8 +606,6 @@ async fn incremental(
                             crate::filing::file_arrivals(&connection, filing, mailbox_id, &filed)
                                 .await;
                     }
-                    // Who joined which thread, for the event the engine emits
-                    // once this has committed.
                     let mut joined = crate::threaded::ThreadArrivals::default();
                     for (message, thread) in written.iter().zip(&threads) {
                         if arrivals.contains(&message.id) {
@@ -875,10 +621,8 @@ async fn incremental(
             filed_away.extend(effects.filtered);
             filed_away.extend(effects.held);
             initial::unit_wrote(slice.len(), held);
-            // One real yield per unit, for the reason `initial.rs` gives at
-            // its own batch loop: an uncontended gate and a commit whose work
-            // runs inside the poll can both come back `Ready`, and a pass
-            // that never yields cannot be interrupted or stood aside from.
+            // One real yield per unit, as in `initial.rs`, or a pass whose awaits come back `Ready`
+            // cannot be interrupted.
             initial::yield_once().await;
         }
     }
@@ -908,21 +652,13 @@ async fn incremental(
     })
 }
 
-/// Asks the server which of `known` it still holds, and deletes the rest
-/// locally. Returns how many rows went.
-///
-/// `expected_gone` is how many of `known` the server's own `EXISTS` says are
-/// gone: `known + arrivals - EXISTS`. It is the integrity check on the
-/// answer. Absence from a fetch is not proof of an expunge -- io-imap drops
-/// an untagged `FETCH` line it cannot decode and completes the command `Ok`
-/// -- and a `SEARCH` can come back short, so an answer that does not account
-/// for exactly the vanishings the count demands is not believed, and nothing
-/// is deleted. The next pass sees the same count and asks again, which costs
-/// a stale row a little longer; the alternative is deleting mail the server
-/// still holds (#1913).
-///
-/// Presence is one `UID SEARCH` where the backend can list. Where it cannot,
-/// the known set is fetched in chunks, never in one call.
+/// Asks the server which of `known` it still holds and deletes the rest locally; returns how many
+/// rows went.
+/// `expected_gone` is `known + arrivals - EXISTS`, the integrity check: absence from a fetch is not
+/// proof of expunge (io-imap drops undecodable lines, `SEARCH` can come back short),
+/// so an answer not accounting for exactly that many vanishings is not believed and nothing is
+/// deleted (#1913).
+/// One `UID SEARCH` where the backend can list, else the known set in chunks.
 async fn reconcile_vanished(
     connection: &Checkout,
     backend: &dyn MailBackend,
@@ -971,13 +707,8 @@ async fn reconcile_vanished(
     Ok(messages.delete(&ids).await?)
 }
 
-/// The first UID of the range `UIDNEXT` says exists and the change feed did
-/// not report, or `None` when the two agree.
-///
-/// The floor is one past the highest UID the feed *did* report rather than the
-/// last `UIDNEXT` we recorded, so a feed that accounted for the arrivals — the
-/// conforming case, and the common one — produces an empty range and no second
-/// round trip.
+/// The floor is one past the highest UID the feed reported, so a conforming feed yields an empty
+/// range and no second round trip.
 fn unaccounted_arrivals(
     reported: &[postio_account::backend::FetchedMessage],
     selected: &ServerStatus,
@@ -993,12 +724,8 @@ fn unaccounted_arrivals(
     (floor < selected.uid_next.get()).then(|| Uid::new(floor))
 }
 
-/// Removes every locally known message under `generation`.
-///
-/// Goes through [`MessageRepository::uids_in`] rather than the windowed list
-/// query: a `UIDVALIDITY` reset means every row under the old generation is
-/// meaningless, including ones a user has marked for deletion but that have
-/// not been expunged yet, and the list query hides those.
+/// Uses `MessageRepository::uids_in`, not the windowed list query, which hides rows marked for
+/// deletion that a `UIDVALIDITY` reset must also wipe.
 async fn wipe_mailbox(
     connection: &Connection,
     mailbox_id: MailboxId,

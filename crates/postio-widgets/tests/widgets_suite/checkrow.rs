@@ -1,9 +1,3 @@
-//! The checkbox that replaced six switches (#1179).
-//!
-//! One behaviour, and it is the one every settings pane depends on: showing
-//! the file's current value must not count as changing it. Skips without a
-//! display. Nothing here touches the network.
-
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -11,7 +5,6 @@ use gtk::gdk;
 use gtk::prelude::*;
 use postio_widgets::widgets::CheckRow;
 
-/// A realized checkbox, or `None` with no display.
 fn check_row() -> Option<(gtk::Window, Rc<CheckRow>)> {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");

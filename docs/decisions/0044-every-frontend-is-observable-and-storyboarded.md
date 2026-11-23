@@ -1,54 +1,17 @@
 # ADR 0044 — Every frontend is observable and storyboarded
 
 - **Status:** Accepted (2026-10-02), with `specs/008-storyboards`
-- **Spec:** [`specs/008-storyboards`](../../specs/008-storyboards/spec.md)
-  (FR-010, FR-015, FR-031; the spec carries the reasoning, this records the
-  rule)
-- **Related:** [ADR 0043](0043-focus-is-the-one-desktop-app.md) (the GTK
-  half lives in `postio-widgets`, beside the one desktop app),
-  [ADR 0019](0019-macos-frontend.md) (the frontend the rule will reach next)
-- **Decision:** **Every Postio frontend reports where everything is as one
-  shared `Observation`, has a runner that plays the shared storyboard
-  format, and ships a change to its interaction with the storyboard that
-  describes it.**
+- **Decision:** Every frontend reports where everything is as one shared `Observation`, has a runner that plays the shared storyboard format, and ships a change to its interaction with the storyboard that describes it.
 
----
+## Rules
+- Observable: `observe()` returns `postio_ui::observe::Observation`, filled per `specs/008-storyboards/contracts/observation.md`. Fill it from what is on screen (the widget holding the keyboard, the cursor's row, the notice up), never from what a layer was told. Reading only, no store access or side effect. A field the frontend cannot fill is declared unobserved, never guessed.
+- Storyboarded: the runner reads `storyboards/` (format in `storyboards/README.md`), presses commands by the frontend's own bindings, films each step and writes `run.json` through `postio-storyboard`, so no two runners read a storyboard differently.
+- A change to keyboard behaviour ships with its storyboard, written from the acceptance before the code, and is reviewed with `/ux-review`. A defect fixed in one frontend gets a storyboard. One that applies to every frontend is shared, with an override where an app legitimately differs.
+- The desktop app has one runner (`postio-gtk` over `postio-widgets`). The terminal and macOS apps owe one before their next interaction work (FR-031). The terminal's is cheapest because its update is pure.
+- `postio-storyboard` is a development crate shipped frontends never depend on. `Observation` lives in `postio-ui`.
 
-## The rule
+## Why
+- Defects that reached the maintainer were sequence defects every layer's tests passed (#1744 to #1752). Only a picture of the sequence plus a record of where things are shows them.
 
-1. **Observable.** A frontend implements `observe()` returning
-   `postio_ui::observe::Observation`, filled as
-   `specs/008-storyboards/contracts/observation.md` says: from what is on
-   screen (the widget that really holds the keyboard, the cursor's row, the
-   notice that is up), never from what a layer was told; reading only, with
-   no store access and no side effect; and a field the frontend cannot fill
-   is declared unobserved, never guessed.
-2. **Storyboarded.** A frontend has a runner that reads the storyboard files
-   in `storyboards/` -- the format in `storyboards/README.md` -- presses
-   commands by its own bindings, films each step, and writes `run.json` in
-   the shared shape, through `postio-storyboard`, so no two runners can read a
-   storyboard differently.
-3. **Shipped together.** A change to how a frontend behaves under the
-   keyboard ships with the storyboard that describes the new behaviour,
-   written from the acceptance before the code, and is reviewed with
-   `/ux-review` before it reaches the maintainer. A defect fixed in one
-   frontend gets a storyboard; one that applies to every frontend is shared,
-   with an override where an app legitimately differs.
-
-## Why a rule and not a habit
-
-The defects that reached the maintainer were sequence defects that every
-layer's tests passed (the spec's Context table), and the first day of
-storyboards found nine more (#1744 to #1752). They live between layers, and only a
-picture of the sequence plus a record of where things are can show them.
-A frontend that cannot be observed or played is one where that class of
-defect is invisible again, so it is a boundary, not a nicety.
-
-## Consequences
-
-- The desktop app has one runner (`postio-gtk`, over `postio-widgets`'
-  GTK half), and storyboards play on it and nothing else since the classic
-  app's removal was approved (ADR 0043; specs/007-postio-focus T265). The terminal and macOS apps owe one each before their next
-  interaction work (FR-031). The terminal's is the cheapest: its update is already pure.
-- `postio-storyboard` is a development crate the shipped frontends never
-  depend on; `Observation` lives in `postio-ui`, which they all do.
+## Revisit when
+- A frontend legitimately cannot be observed.

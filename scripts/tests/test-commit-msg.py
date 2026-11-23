@@ -55,8 +55,6 @@ GOOD_BODY = (
     "Refs: #42",
 )
 
-# --- what must pass ---------------------------------------------------
-
 expect("a crate scope", run("--branch", "issue-42-x",
        message=message("fix(gtk): repaint the list once per key", *GOOD_BODY)), True)
 expect("several scopes", run("--branch", "issue-42-x",
@@ -101,8 +99,6 @@ expect("leaving an issue open, said safely", run("--branch", "issue-42-x", messa
     "Refs: #42",
 )), True)
 expect("a PR title with its number", run("--title", "fix(gtk): repaint the list once per key (#1972)"), True)
-
-# --- what must be refused ---------------------------------------------
 
 expect("an unknown type", run("--branch", "chore/x",
        message=message("style(gtk): drop a redundant closure")), False, "style")

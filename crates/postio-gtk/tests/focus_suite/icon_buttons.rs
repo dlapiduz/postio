@@ -1,18 +1,11 @@
-//! T202: one rule for icon buttons, as T192 is for close. Every icon-only
-//! button on every surface is the one `icon_button()` builds, and is laid
-//! out at its own size -- centred where it stands, never stretched to its
-//! row's height or its column's width -- so it hovers in its own shape. A
-//! stretched one (T193's 26x46 pill in the top bar) cannot come back on a
-//! surface this walks.
+//! Every icon-only button is the one `icon_button()` builds and is laid out at its own size, never
+//! stretched to its row or column.
 
 use adw::prelude::AdwDialogExt;
 use gtk::prelude::*;
 
 use crate::support::{self, Fixture};
 
-/// Whether `widget` is a button that shows an icon and no words: a
-/// `GtkButton` or a `GtkMenuButton`, not the toggle a menu button keeps
-/// inside it.
 fn is_icon_only(widget: &gtk::Widget) -> bool {
     if !(widget.is::<gtk::Button>() || widget.is::<gtk::MenuButton>()) {
         return false;
@@ -35,7 +28,6 @@ fn is_icon_only(widget: &gtk::Widget) -> bool {
     icon && !words
 }
 
-/// Every icon button on `surface` that is on screen.
 fn icon_buttons(surface: &impl IsA<gtk::Widget>) -> Vec<gtk::Widget> {
     support::descendants(surface)
         .into_iter()
@@ -43,7 +35,6 @@ fn icon_buttons(surface: &impl IsA<gtk::Widget>) -> Vec<gtk::Widget> {
         .collect()
 }
 
-/// What a button is called, for a failure to name it.
 fn name_of(widget: &gtk::Widget) -> String {
     let tooltip = widget.tooltip_text().map(|text| text.to_string());
     let icon = widget
@@ -58,9 +49,6 @@ fn name_of(widget: &gtk::Widget) -> String {
     format!("{tooltip:?} ({icon:?}, {:?})", widget.css_classes())
 }
 
-/// The rule, on one surface: at least one icon button (so a surface that
-/// lost them all does not pass by finding none), each built by the shared
-/// constructor and allocated exactly what it asks for.
 fn assert_icon_buttons_keep_their_shape(name: &str, surface: &impl IsA<gtk::Widget>) {
     let found = icon_buttons(surface);
     assert!(!found.is_empty(), "{name}: no icon buttons on screen");
@@ -82,7 +70,6 @@ fn assert_icon_buttons_keep_their_shape(name: &str, surface: &impl IsA<gtk::Widg
     }
 }
 
-/// Wait for `surface` to lay its icon buttons out.
 async fn laid_out(surface: &impl IsA<gtk::Widget>) {
     assert!(
         crate::settle_until(async || icon_buttons(surface)
@@ -95,13 +82,8 @@ async fn laid_out(surface: &impl IsA<gtk::Widget>) {
 
 pub fn every_surfaces_icon_buttons_keep_their_own_shape() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        let (message, _) = fixture
-            .file(("Ada Moreno", "ada@example.com"), "Budget", "x", 10)
-            .await;
+        let (message, _) = fixture.file_from_ada("Budget", "x", 10).await;
         fixture.write_body(message, "A body.").await;
         fixture.label_in(message, "Harbor", "#3a7d44").await;
         let (window, _client) = fixture.open().await;
@@ -109,10 +91,8 @@ pub fn every_surfaces_icon_buttons_keep_their_own_shape() {
         window.set_default_size(1000, 640);
         crate::settle();
 
-        // The window's top bar: compose, the main menu, close.
         assert_icon_buttons_keep_their_shape("the window", &window);
 
-        // The key map.
         let keys = postio_gtk::keymap_dialog::build(&window.keymap());
         keys.present(Some(&window));
         laid_out(&keys).await;
@@ -120,7 +100,6 @@ pub fn every_surfaces_icon_buttons_keep_their_own_shape() {
         keys.close();
         crate::settle();
 
-        // The raw source.
         let source = postio_gtk::source::dialog(b"From: a@example.com\r\n\r\nx", &window.keymap());
         source.present(Some(&window));
         laid_out(&source).await;
@@ -128,7 +107,6 @@ pub fn every_surfaces_icon_buttons_keep_their_own_shape() {
         source.close();
         crate::settle();
 
-        // The open message: its steps and its close.
         support::keys(&window, &["j"]);
         let _ = window.handle_key(gtk::gdk::Key::Return, gtk::gdk::ModifierType::empty());
         let reading = window.reading().expect("Enter opened the message");
@@ -138,8 +116,6 @@ pub fn every_surfaces_icon_buttons_keep_their_own_shape() {
         reading.close();
         crate::settle();
 
-        // The composer, replying: close, detach, the recipient's and the
-        // label's removes, and the formatting toolbar.
         window.act(postio_core::CommandId::Reply);
         assert!(crate::settle_until(async || window.compose_dialog().is_some()).await);
         let compose = window.compose_dialog().expect("the compose dialog");
@@ -150,9 +126,6 @@ pub fn every_surfaces_icon_buttons_keep_their_own_shape() {
 
 pub fn the_digests_icon_buttons_keep_their_own_shape() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (fixture, _, _) = crate::digest::delivered_holding().await;
         let (window, _client) = fixture.open().await;
         let digest = crate::digest::open_digest(&window).await;
@@ -162,13 +135,8 @@ pub fn the_digests_icon_buttons_keep_their_own_shape() {
     });
 }
 
-/// Settings (T234): its header's X, and the icon buttons its panes draw --
-/// a saved search's reorder and delete.
 pub fn the_settings_icon_buttons_keep_their_own_shape() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_fixture, window, _directory, _path) = crate::settings::one_message_under(
             "[saved_searches.receipts]\nquery = \"in:Receipts\"\npinned = true\n",
         )

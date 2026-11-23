@@ -50,8 +50,6 @@ STUB_CHECKS = [
     "check-runtime-crossings.py",
 ]
 
-# `merged.txt` holds the old base tip when the base's PR has merged;
-# `open.txt` exists when this branch already has an open PR.
 GH_STUB = """#!/usr/bin/env bash
 if [ "$1" = "--version" ]; then echo "gh version 2.98.0 (2026-01-01)"; exit 0; fi
 printf '%s\\n' "$*" >> "$STUB_DIR/calls"
@@ -162,8 +160,6 @@ def run_case(base: Path, channel: str, *, recorded: str, base_merged: bool, pr_o
         (gitdir / "postio-base").write_text(recorded + "\n", encoding="utf-8")
 
     if base_merged:
-        # What GitHub does: one squash commit on main with different hashes,
-        # and the merged branch deleted.
         other = base / "other"
         subprocess.run(["git", "clone", "-q", str(origin), str(other)], check=True)
         (other / "BASE").write_text("the base's work\n", encoding="utf-8")
@@ -209,7 +205,6 @@ def main() -> int:
             ahead = git("log", "--format=%s", "origin/main..HEAD", cwd=root).splitlines()
             return result, calls, recorded, ahead
 
-    # A
     r, calls, recorded, ahead = case(recorded="chore/base", base_merged=True, pr_open=True)
     if r.returncode != 0:
         FAILURES.append(f"A: landing failed\n{report('A', r, calls)}")
@@ -224,7 +219,6 @@ def main() -> int:
     if "squash-merged" not in r.stdout:
         FAILURES.append(f"A: said nothing about the move\n{report('A', r, calls)}")
 
-    # B
     r, calls, recorded, ahead = case(recorded="chore/base", base_merged=True, pr_open=False)
     if r.returncode != 0 or "pr create --base main" not in calls:
         FAILURES.append(f"B: the new PR was not opened against main\n{report('B', r, calls)}")
@@ -233,14 +227,12 @@ def main() -> int:
     if ahead != ["feat(dummy): the stacked work"]:
         FAILURES.append(f"B: base commits were replayed: {ahead}\n{report('B', r, calls)}")
 
-    # C
     r, calls, recorded, ahead = case(recorded="chore/base", base_merged=False, pr_open=False)
     if r.returncode != 0 or "pr create --base chore/base" not in calls:
         FAILURES.append(f"C: the PR was not opened against the open base\n{report('C', r, calls)}")
     if recorded != "chore/base" or "retargeted" not in r.stdout:
         FAILURES.append(f"C: base changed or the retarget was not announced\n{report('C', r, calls)}")
 
-    # D
     r, calls, recorded, ahead = case(recorded="main", base_merged=False, pr_open=False)
     if r.returncode != 0 or "pr list" in calls or "pr create --base main" not in calls:
         FAILURES.append(f"D: the default path changed\n{report('D', r, calls)}")

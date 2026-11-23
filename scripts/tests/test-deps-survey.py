@@ -111,7 +111,6 @@ jobs:
     write(fx / web("crates.io/api/v1/crates/tokio"), crate_json("1.41.0"))  # current
     write(fx / web("crates.io/api/v1/crates/bigdep"), crate_json("2.0.1"))  # major
     write(fx / web("crates.io/api/v1/crates/fresh"), crate_json("2.3.0"))  # current
-    # ghost: no fixture at all -> unknown
     write(fx / web("crates.io/api/v1/crates/gtk4"), crate_json("0.12.0"))  # package rename, major
     write(fx / web("crates.io/api/v1/crates/tempfile"), crate_json("3.27.0"))  # ~ pin, within
     write(fx / web("crates.io/api/v1/crates/cc"), crate_json("1.2.0"))
@@ -127,7 +126,6 @@ jobs:
           json.dumps([{"cycle": "3.15", "latest": "3.15.1"}, {"cycle": "3.14", "latest": "3.14.9"}]))
     write(fx / f("gh api repos/cli/cli/releases/latest"), json.dumps({"tag_name": "v2.98.0"}))
     write(fx / f("gh api repos/jqlang/jq/releases/latest"), json.dumps({"tag_name": "jq-1.9.0"}))
-    # sccache: no fixture -> unknown
     write(fx / web("crates.io/api/v1/crates/cargo-hakari"), crate_json("0.9.40"))
     write(fx / web("crates.io/api/v1/crates/cargo-nextest"), crate_json("0.9.143"))
     write(fx / f("gh api repos/actions/checkout/releases/latest"), json.dumps({"tag_name": "v7.1.0"}))
@@ -135,7 +133,6 @@ jobs:
     write(fx / web("dl.flathub.org/repo/refs/heads/runtime/org.gnome.Platform/x86_64/51"), "404")
     write(fx / web("dl.flathub.org/repo/refs/heads/runtime/org.gnome.Platform/x86_64/52"), "404")
     write(fx / web("dl.flathub.org/repo/refs/heads/runtime/org.freedesktop.Platform/x86_64/26.08"), "200")
-    # 27.08: no fixture -> not decisive, but 26.08 already settles "behind"
 
 
 def names(items) -> set[str]:
@@ -145,7 +142,6 @@ def names(items) -> set[str]:
 def main() -> int:
     survey = load()
 
-    # The requirement arithmetic, on its own.
     m = survey.requirement_allows
     case("caret allows a minor", m("1.2", "1.9.0"))
     case("caret refuses a major", not m("1.2", "2.0.0"))
@@ -236,7 +232,6 @@ def main() -> int:
         case("text shows the group once",
              out.count("pimalaya") == 1, out)
 
-        # Everything unreachable: nothing may read as current.
         empty = tmp / "empty"
         empty.mkdir()
         dead = subprocess.run(

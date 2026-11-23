@@ -1,18 +1,7 @@
-//! Measure what body compression actually achieves on this project's corpus.
+//! Reports what body compression achieves on the `postio-model` `.eml` corpus.
 //!
-//! ADR 0020 plans against 1.57x per-value and 2.19x with a trained dictionary,
-//! both taken from real mail. This reports what the 38-message `.eml` corpus
-//! in `postio-model` gives, which is a *different and much smaller* thing:
-//!
-//! **A corpus figure, not a forecast.** Thirty-eight fixtures chosen to cover
-//! parser edge cases are not a mailbox, and they are far more self-similar
-//! than real mail — which is exactly the trap ADR 0020 records. A scratch
-//! benchmark over generated mail reaches 6-7x and means nothing. Do not put a
-//! number from this into an ADR or a PR body as a prediction.
-//!
-//! ```text
-//! cargo run -p postio-storage --example body_ratio --features test-support
-//! ```
+//! A corpus figure, not a forecast: the fixtures are far more self-similar than real mail (ADR
+//! 0020).
 
 #![allow(clippy::disallowed_methods)] // the crate's own code prepares through `sql::statement`; a test may reach the engine directly
 

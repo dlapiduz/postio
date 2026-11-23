@@ -1,8 +1,3 @@
-//! Saving a sender from the new-sender popover (specs/011-focus-contacts S9):
-//! what their signature said becomes theirs, only on Add contact, and
-//! undoing it leaves nothing behind; ignoring a sender is a mark that
-//! survives.
-
 use postio_model::{ContactSettings, DetailKind, EmailAddress, SignatureDetails};
 use postio_storage::repository::{ContactRepository, ContactSettingsRepository};
 use postio_storage::test_support;
@@ -32,7 +27,6 @@ async fn add_contact_saves_the_person_and_keeps_what_the_signature_said() {
         )
         .await
         .unwrap();
-    // Made by hand a person is saved already; make them a sender only.
     let prior = contacts.add_sender(person, &jonas()).await.unwrap();
     let after = contacts.get(person).await.unwrap().unwrap();
     assert!(after.is_saved());
@@ -260,7 +254,6 @@ async fn a_bounce_marks_the_address_counts_in_the_review_and_shows_on_the_card()
     let notes = contacts.address_notes(ada).await.unwrap();
     assert!(notes[0].bounced && notes[0].bounced_at.is_some());
 
-    // A report older than one already known changes nothing.
     contacts
         .mark_bounced("a.moreno@example.net", when - chrono::Duration::days(9))
         .await
@@ -268,7 +261,6 @@ async fn a_bounce_marks_the_address_counts_in_the_review_and_shows_on_the_card()
     let again = contacts.address_notes(ada).await.unwrap();
     assert_eq!(again[0].bounced_at, notes[0].bounced_at);
 
-    // Long ago is not "recently".
     contacts
         .mark_bounced(
             "a.moreno@example.net",

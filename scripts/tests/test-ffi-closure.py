@@ -36,8 +36,6 @@ def build(tmp: Path, graph: dict[str, list[str]]) -> Path:
         crate = tmp / "crates" / name
         crate.mkdir(parents=True)
         body = [f'[package]\nname = "{name}"\nversion = "0.1.0"\n', "[dependencies]"]
-        # All three spellings the real manifests use, rotated, so a parser that
-        # only understands one of them fails here rather than in CI.
         for index, dep in enumerate(deps):
             body.append(
                 [f'{dep} = {{ path = "../{dep}" }}',
@@ -80,43 +78,33 @@ def failing(name: str, graph: dict[str, list[str]], mutate=None) -> None:
 
 
 def main() -> int:
-    # The shape this exists for: a frontend the boundary crate cannot reach.
     case(
         "a crate nothing depends on is outside",
         {"postio-ffi": ["postio-core"], "postio-core": [], "postio-frontend": ["postio-core"]},
         ["postio-frontend"],
     )
-    # The derivation, proven: the same three crates, one edge added, and the
-    # answer changes. A hard-coded list cannot pass both this and the case
-    # above.
     case(
         "an edge into it brings it inside",
         {"postio-ffi": ["postio-core", "postio-frontend"], "postio-core": [], "postio-frontend": []},
         [],
     )
-    # Transitively, not just one hop.
     case(
         "reach is transitive",
         {"postio-ffi": ["postio-a"], "postio-a": ["postio-b"], "postio-b": ["postio-c"],
          "postio-c": [], "postio-far": []},
         ["postio-far"],
     )
-    # A dev-dependency counts. It cannot change the generated bindings, but a
-    # larger closure is the safe direction and the helper says so.
     case(
         "a dev-dependency still counts as reach",
         {"postio-ffi": ["postio-tool"], "postio-tool": []},
         [],
     )
-    # A cycle must not hang or double-count.
     case(
         "a cycle terminates",
         {"postio-ffi": ["postio-a"], "postio-a": ["postio-b"], "postio-b": ["postio-a"],
          "postio-lonely": []},
         ["postio-lonely"],
     )
-    # The directory is what a changed path carries, and it is only equal to the
-    # package name by convention.
     def rename(tmp: Path) -> None:
         (tmp / "crates" / "postio-odd").rename(tmp / "crates" / "some-directory")
     with tempfile.TemporaryDirectory() as raw:
@@ -128,9 +116,6 @@ def main() -> int:
         if not ok:
             FAILURES.append(f"directory case: got {result.stdout!r}")
 
-    # Refusals. Each of these would otherwise produce an empty or short list,
-    # which the caller reads as "everything obliges macOS" -- safe, but silent.
-    # A non-zero exit is what makes it visible instead.
     failing("a workspace with no postio-ffi", {"postio-core": []})
     failing(
         "a manifest with no [package]",

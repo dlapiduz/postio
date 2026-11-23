@@ -1,12 +1,3 @@
-//! A document drawn again keeps the reader where they were: showing a
-//! message's images redraws it, and the character at the top of the view
-//! stays where it was.
-//!
-//! Measured on the snapshot on screen: the character a person is reading,
-//! and where on screen it sits.
-//!
-//! Skips without a display. Nothing here touches the network.
-
 use std::rc::Rc;
 
 use gtk::gdk;
@@ -15,17 +6,10 @@ use postio_model::MessageBody;
 use postio_widgets::body_view::BodyView;
 use postio_widgets::reader::Reader;
 
-fn display() -> bool {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return false;
-    }
-    let display = gdk::Display::default().unwrap();
-    crate::support_reader::prepare(&display);
-    true
+fn prepare() {
+    crate::support_reader::prepare(&gdk::Display::default().unwrap());
 }
 
-/// Pump the main loop for `how_long`, so timers and frames can happen.
 fn settle_for(how_long: std::time::Duration) {
     let deadline = std::time::Instant::now() + postio_test_support::scaled(how_long);
     while std::time::Instant::now() < deadline {
@@ -34,8 +18,6 @@ fn settle_for(how_long: std::time::Duration) {
     }
 }
 
-/// Wait until `view` shows a snapshot whose text satisfies `ready` and
-/// that is tall enough to scroll.
 fn wait_laid_out(view: &BodyView, ready: impl Fn(&str) -> bool) {
     let deadline = std::time::Instant::now() + postio_test_support::patience();
     while std::time::Instant::now() < deadline {
@@ -53,9 +35,7 @@ fn wait_laid_out(view: &BodyView, ready: impl Fn(&str) -> bool) {
 fn scroll_to(view: &BodyView, y: f64) -> f64 {
     let adjustment = view.vadjustment().expect("the view scrolls");
     adjustment.set_value(y);
-    // The view draws only the window it shows, so the snapshot holds the
-    // text at the new top once it has redrawn there -- which a loaded
-    // machine takes longer than a fixed pause to do.
+    // The view draws only the window it shows; wait for the redraw rather than pausing.
     let deadline = std::time::Instant::now() + postio_test_support::patience();
     loop {
         settle_for(std::time::Duration::from_millis(10));
@@ -71,13 +51,11 @@ fn scroll_to(view: &BodyView, y: f64) -> f64 {
     adjustment.value()
 }
 
-/// The character at the top of the view: what a person is reading.
 fn reading(view: &BodyView) -> usize {
     let top = view.vadjustment().expect("the view scrolls").value();
     view.document().expect("a snapshot").text.char_at_top(top)
 }
 
-/// Where the character at `offset` sits on screen, from the view's top.
 fn on_screen(view: &BodyView, offset: usize) -> f64 {
     let document = view.document().expect("a snapshot");
     let top = view.vadjustment().expect("the view scrolls").value();
@@ -92,9 +70,7 @@ fn on_screen(view: &BodyView, offset: usize) -> f64 {
 }
 
 pub fn showing_a_messages_images_keeps_its_place() {
-    if !display() {
-        return;
-    }
+    prepare();
     let dir = tempfile::tempdir().expect("a scratch directory");
     let reader = Reader::with_allowlist(
         Rc::new(|_content_id: &str| None),
@@ -124,9 +100,8 @@ pub fn showing_a_messages_images_keeps_its_place() {
     );
 
     scroll_to(&view, 1500.0);
-    // What the person is reading: the character at the top of the view, and
-    // where on screen it sits. Showing the images changes what is *above*
-    // it, so the scroll offset may move; the words must not.
+    // Showing the images changes what is above the reader's place, so the scroll offset may move;
+    // the words must not.
     let offset = reading(&view);
     let reading_at = on_screen(&view, offset);
 

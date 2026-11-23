@@ -52,16 +52,13 @@ def main() -> int:
     case("a failed shard fails", 1, "yes", "success", "frontend-build=success", "test-frontends=failure")
     case("a cancelled job fails", 1, "yes", "success", "frontend-build=cancelled", "test-frontends=success")
 
-    # The trap: a skip with Rust changed means the work was not done.
     case("skipped when Rust changed fails", 1, "yes", "success", "frontend-build=skipped", "test-frontends=skipped")
     case("one skipped when Rust changed fails", 1, "yes", "success", "frontend-build=success", "test-frontends=skipped")
 
-    # And the legitimate skip.
     case("skipped when no Rust changed passes", 0, "no", "success", "frontend-build=skipped", "test-frontends=skipped")
     case("a failure is a failure even with no Rust changed", 1, "no", "success",
          "frontend-build=failure", "test-frontends=skipped")
 
-    # A classification that did not happen proves nothing.
     case("a failed classification fails", 1, "", "failure", "frontend-build=skipped", "test-frontends=skipped")
     case("a skipped classification fails", 1, "", "skipped", "frontend-build=skipped", "test-frontends=skipped")
     case("an unreadable rust answer fails", 1, "", "success", "frontend-build=skipped", "test-frontends=skipped")

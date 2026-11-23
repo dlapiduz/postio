@@ -1,11 +1,5 @@
-//! Adding an account: the probe's reading, the proof, and the two writes.
-//!
-//! The first-run screen's half that talks to servers and the store, with
-//! nothing a toolkit names. It was the classic app's until the terminal needed
-//! the same first run (docs/archive/specs/005-tui-frontend T016): the same probe options,
-//! the same proof in the same order, the same sentences for the same
-//! failures, the same credential-first write. The desktop calls it; the
-//! host answers the terminal's onboarding requests with it.
+//! Adding an account: the probe's reading, the proof, and the two writes; the half of the first-run
+//! screen that names no toolkit, shared with the terminal.
 
 use postio_account::discovery::{
     AccountSettings, DiscoveryOutcome, DiscoveryReport, Encryption, ProbeOptions, SettingsSource,
@@ -19,19 +13,9 @@ use postio_storage::Store;
 use postio_storage::repository::AccountRepository;
 use postio_ui::onboarding::{Server, Settings, Status, Submission};
 
-/// How this application probes, as against how the crate probes by default.
-///
-/// The one difference is `guess_common_names`, which `postio-account` ships off
-/// because "an unverified guess presented as a *discovery* is worse than an
-/// empty form" — and it is right about that. The composition root turns it on
-/// because it controls what the guess is presented *as*: [`status_for`] can
-/// only ever put it in [`Status::Manual`], the state whose heading says no
-/// settings were published and whose form is open for editing. That is a
-/// starting point, not a claim.
-///
-/// `postio-69`: without it, a domain publishing no autoconfig — every custom
-/// domain, which is exactly the person least able to answer — got five empty
-/// boxes.
+/// How this application probes. `guess_common_names` is on here, though `postio-account` ships it
+/// off, because `status_for` can only present a guess as `Status::Manual`, a starting point not a
+/// claim.
 pub fn probe_options() -> ProbeOptions {
     ProbeOptions {
         guess_common_names: true,
@@ -39,40 +23,20 @@ pub fn probe_options() -> ProbeOptions {
     }
 }
 
-/// What the screen should show for `report`.
-///
-/// Split out of the classic app's `probe` so it can be driven
-/// without a network: the mapping is where a discovery becomes a sentence,
-/// and it is the half that had the bug.
 pub fn status_for(report: &DiscoveryReport) -> Status {
     let found = report.settings().map(shown);
     match (&report.outcome, found) {
         (DiscoveryOutcome::Discovered(_), Some(settings)) => Status::Found(settings),
-        // Everything else is manual entry, prefilled when there was anything
-        // to prefill with. Never `Found`: see `probe_options`.
         (_, suggestion) => Status::Manual { suggestion },
     }
 }
 
-/// Both writes, in the order that cannot strand an account.
+/// Both writes, in the order that cannot strand an account: the credential first, then the row,
+/// since a failed keyring write after the row left an account that could not sync or be repaired
+/// (`postio-67`). A secret with no account is rolled back and harmless.
 ///
-/// **The credential first, then the row.** 0.1.0 did it the other way round
-/// and `postio-67` is what that cost: a keyring write that failed after the
-/// row was committed left an account with no reachable password, which could
-/// not sync, could not authenticate, and could not be repaired from inside
-/// the application — onboarding is the only thing that writes a credential,
-/// and `first_account().is_some()` meant onboarding never ran again.
-///
-/// The failure that order *does* leave behind — a secret with no account —
-/// is rolled back here, and would be harmless even if the rollback failed:
-/// nothing reads a credential no account row names.
-///
-/// **Must be polled on the engine runtime, not the GTK main context.** The
-/// keyring is reached over D-Bus by a future bounded with
-/// `tokio::time::timeout`, so awaiting it from `glib::spawn_future_local`
-/// panics with "there is no reactor running" — `postio-66`, which shipped.
-/// `feed.rs` states the rule: neither loop can drive the other, so runtime
-/// work is spawned and answered over a channel.
+/// Must be polled on the engine runtime, not the GTK main context: the keyring is reached over
+/// D-Bus with `tokio::time::timeout`, which panics without a reactor (`postio-66`).
 pub async fn persist(
     database: &Store,
     secrets: &dyn SecretStore,
@@ -81,9 +45,8 @@ pub async fn persist(
 ) -> Result<(), String> {
     let key = AccountKey::new(submission.address.clone());
     let password = Password::new(submission.password.clone());
-    // Reported rather than swallowed: an account with no password in the
-    // keyring cannot sync, and a silent failure would read as a Postio bug
-    // rather than as a locked keyring.
+    // Reported, not swallowed: a silent failure would read as a Postio bug rather than a locked
+    // keyring.
     secrets.store(&key, &password).await.map_err(|error| {
         format!(
             "The password could not be stored in the keyring: {error}. \
@@ -93,7 +56,6 @@ pub async fn persist(
 
     if let Err(reason) = save(database, submission, backend).await {
         if let Err(error) = secrets.delete(&key).await {
-            // Safe to log: no `SecretError` carries a password.
             tracing::warn!(%error, "the rolled-back credential could not be removed");
         }
         return Err(reason);
@@ -101,20 +63,9 @@ pub async fn persist(
     Ok(())
 }
 
-/// Write the account row, creating it or repairing the one already there.
-///
-/// Synchronous, because rusqlite is; called from [`persist`] on the engine
-/// runtime, where one indexed insert is not worth a `spawn_blocking`.
-///
-/// # Why this can be a repair
-///
-/// Since `postio-67` the screen is reachable a second time: an account whose
-/// credential the keyring will not give up is sent back here rather than
-/// opened. That submit arrives over a row that already exists, and a second
-/// row would leave `first_account` choosing between two accounts for the
-/// same address. So an existing row is *updated* — and its identities are
-/// left exactly as they are, because [`AccountRepository::update`] makes the
-/// list it is handed authoritative and every saved draft points at one.
+/// Write the account row, creating it or repairing the one already there. An existing row is
+/// updated and its identities left as they are, since a second row for one address would leave
+/// `first_account` choosing between two (`postio-67`).
 pub async fn save(
     database: &Store,
     submission: &Submission,
@@ -166,7 +117,6 @@ pub async fn save(
     }
 }
 
-/// Put the submitted servers on `account`, leaving its identities alone.
 fn configure(account: &mut Account, submission: &Submission) {
     account.incoming.host = submission.settings.imap.host.clone();
     account.incoming.port = submission.settings.imap.port;
@@ -176,20 +126,15 @@ fn configure(account: &mut Account, submission: &Submission) {
     account.outgoing.port = submission.settings.smtp.port;
     account.outgoing.security = submission.settings.smtp.security;
     account.outgoing.username = submission.settings.login.clone();
-    // An OAuth submission's auth and client are written by `persist_oauth`,
-    // which is the only caller holding the resolved endpoints; a password
-    // submission resets both, so switching a repaired account from OAuth
-    // back to a password leaves no stale client behind.
+    // `persist_oauth` writes an OAuth submission's auth and client; a password submission resets
+    // both so no stale client remains.
     if submission.oauth_client.is_none() {
         account.auth = AuthMethod::Password;
         account.oauth = None;
     }
-    // A repair over an account somebody had disabled is still a repair: the
-    // user just proved they want to sign in to it.
     account.enabled = true;
 }
 
-/// What the screen shows, from what the probe found.
 pub fn shown(settings: &AccountSettings) -> Settings {
     let server = |server: &postio_account::discovery::ServerSettings| Server {
         host: server.host.clone(),
@@ -207,17 +152,9 @@ pub fn shown(settings: &AccountSettings) -> Settings {
         requires_app_password: settings.requires_app_password,
         note: settings.note.clone(),
         help_url: settings.password_help_url.clone(),
-        // The provider's preferred door (#534): a preset row that leads
-        // with oauth2 opens the browser sign-in.
         oauth_sign_in: settings.oauth.is_some(),
-        // #1115: a preset row names itself -- its own display name says
-        // more than the mechanism that found it ("known provider").
-        // Gated on `Builtin` specifically rather than on `display_name`
-        // being `Some`: an autoconfig or ISPDB document can carry its own
-        // `<displayName>` too (`discovery::mod.rs`'s shared XML-shaped
-        // builder), and #877 decided those keep naming the *source* --
-        // the wizard has verified far less about a scraped document than
-        // about a provider Postio ships settings for by hand.
+        // #1115: a `Builtin` preset names itself by display name; autoconfig and ISPDB documents
+        // keep naming the source (#877).
         source: match settings.source {
             SettingsSource::Builtin => settings
                 .display_name
@@ -228,7 +165,6 @@ pub fn shown(settings: &AccountSettings) -> Settings {
     }
 }
 
-/// The IMAP connection to test.
 pub fn connection_settings(submission: &Submission) -> ConnectionSettings {
     ConnectionSettings::new(
         submission.settings.imap.host.clone(),
@@ -238,17 +174,9 @@ pub fn connection_settings(submission: &Submission) -> ConnectionSettings {
     )
 }
 
-/// Turn a backend error into something the user can act on.
-///
-/// The acceptance criterion is that a failure gives a *specific, actionable*
-/// reason, and `BackendError` already distinguishes the cases that need
-/// different actions. What it cannot know is the one that matters most here:
-/// a provider that refuses ordinary account passwords will simply say the
-/// credentials were rejected, and a user who has typed their Apple ID
-/// password has no way to tell that from a typo.
-///
-/// No variant of `BackendError` carries a password, so these are safe to show
-/// and safe to log.
+/// Turn a backend error into something the user can act on. A provider that refuses ordinary
+/// account passwords says only "rejected", which a typo looks the same as. No variant carries a
+/// password.
 pub fn explain(error: &postio_account::backend::BackendError) -> String {
     use postio_account::backend::BackendError as E;
     match error {
@@ -279,20 +207,12 @@ pub fn explain(error: &postio_account::backend::BackendError) -> String {
     }
 }
 
-/// Prove `submission`'s credentials against its server, and answer which
-/// backend to store: JMAP when the probe offered it and it signs in, else
-/// IMAP. The error is [`explain`]'s sentence, for the screen.
-///
-/// Network work: run it on the runtime, never on a thread that draws. The
-/// proof tries backends in the row's preference order and the first that
-/// works is the one stored (#545): a credential that only speaks IMAP still
-/// lands on a provider advertising JMAP, and one that speaks JMAP gets the
-/// native protocol.
+/// Prove `submission`'s credentials and answer which backend to store: JMAP when offered and it
+/// signs in, else IMAP (#545). Network work: run it on the runtime.
 pub async fn prove(
     submission: &Submission,
     jmap: Option<&postio_account::discovery::JmapOffer>,
 ) -> Result<postio_model::account::Backend, String> {
-    // The password is used for one login and dropped here.
     let password = Password::new(submission.password.clone());
     if let Some(offer) = jmap
         && let Ok(url) = offer.session_url.parse()
@@ -325,11 +245,8 @@ pub use postio_ui::onboarding::write_sync_window;
 
 pub use postio_ui::onboarding::configured;
 
-/// The signed-in account's settings as `signin` takes them: the servers on
-/// the sheet (which the person may have edited), and the provider's offer.
-///
-/// The browser sign-in itself is [`crate::signin`]'s and nobody else's: it
-/// is a consent path, and there is exactly one.
+/// The signed-in account's settings as `signin` takes them. The browser sign-in itself is
+/// `crate::signin`'s, the one consent path.
 pub fn account_settings(
     submission: &Submission,
     offer: &postio_account::discovery::OAuthOffer,
@@ -361,12 +278,8 @@ pub fn account_settings(
     }
 }
 
-/// Whose consent screen this is, for the step's own heading.
-///
-/// From the IMAP host, because that is what the preset row actually carries
-/// — there is no provider *name* in the table, and inventing a mapping from
-/// domain to brand is how a provider table stops being data and starts being
-/// code (CLAUDE.md: providers are data, not code).
+/// Whose consent screen this is, from the IMAP host: the preset table has no provider name, and
+/// mapping domain to brand would make it code.
 pub fn provider_name(settings: &Settings) -> String {
     settings.source.clone()
 }

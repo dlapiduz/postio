@@ -1,27 +1,8 @@
-//! `Refresh` (`F5`, `R`): bring the folder on screen in line with the server.
-//!
-//! # Why this is not in `actions.rs`
-//!
-//! Every verb there is local-first — a handful of indexed writes and their
-//! queue rows, done before the handler returns, so app state and the undo
-//! stack see a total order. Refresh is the opposite kind of thing: it is a
-//! *network* pass with no local write of its own, it can take as long as the
-//! server takes, and it is not undoable. Awaiting it on the bus would hold
-//! every other command behind a mailbox that is slow to answer.
-//!
-//! So the handler starts the pass and returns. The engine already reports what
-//! it is doing — `SyncProgress` while it counts, `ConnectionChanged` when it
-//! settles, `MessageListChanged` when the folder actually moved — which is the
-//! same way the status line hears about a sync nobody asked for.
-//!
-//! # Why the engine arrives late
-//!
-//! The bus is built before the window exists, because the window's very first
-//! gesture must reach a real handler. The engine is started when the window is
-//! fed, which is later and may not happen at all — no account, or no usable
-//! TLS. [`EngineSlot`] is that gap: the handler reads it at invocation time and
-//! says so plainly when there is nothing behind it, rather than the key doing
-//! nothing.
+//! `Refresh` (`F5`, `R`): bring the folder on screen in line with the server. Unlike the
+//! local-first verbs in `actions.rs` it is a network pass that is not undoable, so the handler
+//! starts it and returns rather than holding the bus.
+//! The engine arrives after the bus (it starts when the window is fed, and may not at all);
+//! `EngineSlot` is that gap, read at invocation time.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -35,18 +16,12 @@ use postio_runtime::Engine;
 use postio_storage::Store;
 use postio_storage::repository::MailboxRepository;
 
-/// The engines, once there are any: one per account.
-///
-/// Written by whoever starts an account's engine; read by the `Refresh`
-/// handler on every invocation. Keyed by account because an engine syncs
-/// only its own account's mailboxes, so a refresh has to find the engine of
-/// the account each mailbox belongs to, not whichever started first.
+/// The engines, once there are any, keyed by account since an engine syncs only its own account's
+/// mailboxes.
 #[derive(Debug, Clone, Default)]
 pub struct EngineSlot(Arc<Mutex<BTreeMap<AccountId, Engine>>>);
 
 impl EngineSlot {
-    /// Put `account`'s engine in. A second engine for the same account
-    /// replaces the first.
     pub fn fill(&self, account: AccountId, engine: Engine) {
         self.0
             .lock()
@@ -54,7 +29,6 @@ impl EngineSlot {
             .insert(account, engine);
     }
 
-    /// `account`'s engine, if one has been started.
     pub fn get(&self, account: AccountId) -> Option<Engine> {
         self.0
             .lock()
@@ -63,16 +37,11 @@ impl EngineSlot {
             .cloned()
     }
 
-    /// Whether no engine has been started at all.
     pub fn is_empty(&self) -> bool {
         self.0.lock().expect("never poisoned").is_empty()
     }
 }
 
-/// Register `Refresh` on `builder`.
-///
-/// Separate from `actions::dispatcher` so the two kinds of verb keep their own
-/// reasoning: see the module docs.
 pub fn wire(
     builder: DispatcherBuilder,
     engine: EngineSlot,
@@ -87,13 +56,8 @@ pub fn wire(
     })
 }
 
-/// Start a sync pass over every mailbox the view in front of the user draws
-/// from: the folder itself, or each account's inbox for Focus, the unified
-/// inbox and Flagged.
-///
-/// Returns as soon as the engines have been asked, not when they have
-/// answered. The only await is a pair of indexed local reads to learn which
-/// mailboxes those are.
+/// Start a sync pass over every mailbox the view draws from (the folder, or each account's inbox
+/// for Focus, unified and Flagged). Returns once the engines have been asked.
 async fn refresh(
     engines: &EngineSlot,
     database: &Store,
@@ -104,9 +68,8 @@ async fn refresh(
         return Err(CommandError::rejected("Nothing is open to refresh"));
     };
     if engines.is_empty() {
-        // No account, or no transport: the sidebar already says the account is
-        // offline, and a key that silently did nothing would be worse than a
-        // sentence saying why.
+        // No account or no transport: a key that silently did nothing would be worse than a
+        // sentence.
         return Err(CommandError::rejected("This account is not syncing"));
     }
 
@@ -121,10 +84,7 @@ async fn refresh(
         started += 1;
         let events = events.clone();
         tokio::spawn(async move {
-            // The pass reports itself as it goes — progress, connection state,
-            // and the list changing — so all this has left to do is say when
-            // it could not run at all. A failure the engine already announced
-            // through the status line would otherwise be announced twice.
+            // The pass reports itself as it goes; this only says when it could not run at all.
             if let Err(error) = engine.sync(mailbox).await {
                 events.emit(Event::Error {
                     message: error.message().to_string(),
@@ -139,7 +99,6 @@ async fn refresh(
     Ok(())
 }
 
-/// The `(account, mailbox)` pairs to sync for `target`.
 async fn passes_for(
     database: &Store,
     target: RefreshTarget,
@@ -167,12 +126,6 @@ async fn passes_for(
 
 #[cfg(test)]
 mod tests {
-    //! What `Refresh` does before it hands off, and that it hands off at all.
-    //!
-    //! Nothing here draws anything, so unlike `compose`'s test these need no
-    //! display — they are ordinary functions over a real bus state and a mock
-    //! server, which is the point of the handler being a plain function rather
-    //! than a closure buried in the builder.
 
     use std::sync::Arc;
 
@@ -185,20 +138,16 @@ mod tests {
 
     use super::*;
 
-    /// A state with a folder open, so a refresh has something to refresh.
     fn looking_at(mailbox: postio_model::MailboxId) -> SharedState {
         let mut state = AppState::new();
         state.open_mailbox(mailbox);
         SharedState::new(state)
     }
 
-    /// Somewhere for the handler to report, and the stream that would carry it
-    /// to the window.
     fn a_sink() -> (EventSink, EventStream) {
         event_channel()
     }
 
-    /// An engine for `account` over `backend`, in `slot`.
     async fn engine_in(
         slot: &EngineSlot,
         database: &Store,
@@ -208,7 +157,6 @@ mod tests {
         let directory = tempfile::tempdir().expect("a blob directory");
         let blobs = BlobStore::open(directory.path(), &postio_storage::test_support::blob_keys())
             .expect("a blob store");
-        // Kept alive for the test's duration by leaking the one directory.
         std::mem::forget(directory);
         let (sink, _engine_events) = event_channel();
         slot.fill(
@@ -245,7 +193,6 @@ mod tests {
         )
     }
 
-    /// Whether `backend` is asked something within a generous bound.
     async fn is_asked(backend: &MockBackend, before: u64) -> bool {
         tokio::time::timeout(std::time::Duration::from_secs(15), async {
             loop {
@@ -281,8 +228,6 @@ mod tests {
 
     #[tokio::test]
     async fn refreshing_without_an_engine_says_so_rather_than_doing_nothing() {
-        // No account, or no usable transport. A key that silently did nothing
-        // is the failure mode this whole branch exists to avoid.
         let (sink, _events) = a_sink();
         let database = test_support::memory().await;
 
@@ -316,18 +261,12 @@ mod tests {
             .await
             .expect("the pass starts");
 
-        // The handler returns before the pass finishes — that is the whole
-        // point of it — so what is asserted is that the server was actually
-        // asked, not what it said.
         assert!(
             is_asked(&backend, before).await,
             "F5 never reached the server: the pass was started but nothing was asked"
         );
     }
 
-    /// The maintainer's report: F5 in the inbox said "No folder is open".
-    /// Focus is a view over every account, so it has no single folder; each
-    /// account's engine has to be asked about its own inbox.
     #[tokio::test]
     async fn refreshing_the_focus_inbox_syncs_every_accounts_inbox() {
         let database = test_support::memory().await;
@@ -371,8 +310,6 @@ mod tests {
         );
     }
 
-    /// A folder of the second account goes to the second account's engine,
-    /// not to whichever engine started first.
     #[tokio::test]
     async fn refreshing_a_folder_asks_the_engine_of_its_account() {
         let database = test_support::memory().await;

@@ -1,13 +1,3 @@
-//! Writing and replying, from the controller's side (specs/009-focus-macos
-//! T072; spec 007 US3, screens 05 and 06).
-//!
-//! What GTK's window and composer did -- `refuses_reply`, the draft opened
-//! from a row, `offered_on_open_draft`, `settle_send`, the add-account
-//! offer, and the composer's debounced autosave -- asserted here so the
-//! Mac's composer behaves the same. The draft's words stay the toolkit's:
-//! the controller decides when the composer opens, what it answers, when
-//! what is written is saved, and what is said when it closes.
-
 use std::time::Duration;
 
 use crate::search_support::shown;
@@ -23,8 +13,6 @@ use postio_model::{AccountId, DraftId, DraftState, EmailAddress, MessageId, Thre
 use postio_ui::focus_list::FocusRow;
 use postio_ui::keymap::KeyContext;
 
-/// A list of conversations, each with the send state its latest message is
-/// in: `None` for received mail.
 struct List {
     states: Vec<Option<DraftState>>,
 }
@@ -36,7 +24,6 @@ impl List {
         }
     }
 
-    /// `len` conversations of received mail.
     fn received(len: usize) -> Self {
         List {
             states: vec![None; len],
@@ -92,7 +79,6 @@ impl Rows for List {
     }
 }
 
-/// A controller under `platform`, its clock stopped at 16:12 on a Monday.
 fn controller(platform: Platform) -> FocusController {
     let mut focus = FocusController::new(Policy::for_platform(platform));
     let at = chrono::Local
@@ -125,7 +111,6 @@ fn asked(effects: &[Effect]) -> Vec<(Ticket, Request)> {
         .collect()
 }
 
-/// The timers set, as `(token, after)`.
 fn timers(effects: &[Effect]) -> Vec<(u64, Duration)> {
     effects
         .iter()
@@ -136,7 +121,6 @@ fn timers(effects: &[Effect]) -> Vec<(u64, Duration)> {
         .collect()
 }
 
-/// The composition an `Intent::SaveDraft` names, if one was said.
 fn saved(effects: &[Effect]) -> Option<u64> {
     shown(effects).into_iter().find_map(|intent| match intent {
         Intent::SaveDraft { composition } => Some(composition),
@@ -158,18 +142,15 @@ fn run(focus: &mut FocusController, command: CommandId, rows: &List) -> Vec<Effe
     focus.handle_on(Input::Command(command), rows)
 }
 
-/// The list landed with the cursor on its first row.
 fn landed(focus: &mut FocusController, rows: &List) {
     let _ = focus.landed(rows, true);
 }
 
-/// `c` on a landed list: the composer is open, with nothing written yet.
 fn composing(focus: &mut FocusController, rows: &List) -> Vec<Effect> {
     landed(focus, rows);
     run(focus, CommandId::Compose, rows)
 }
 
-/// The first composition a controller opens.
 const FIRST: u64 = 1;
 
 #[test]
@@ -255,7 +236,6 @@ fn on_linux_the_composer_stacks_over_the_open_message() {
             message: Some(MessageId::new(100)),
         }]
     );
-    // Esc leaves the composer and the message is still there under it.
     let _ = run(&mut focus, CommandId::Back, &rows);
     assert_eq!(focus.key_context(), KeyContext::Reader);
 }
@@ -346,7 +326,6 @@ fn with_no_account_to_write_from_c_offers_add_account() {
     );
     assert_eq!(focus.key_context(), KeyContext::List, "no composer opened");
 
-    // With an account, `c` writes.
     let _ = focus.handle(Input::Accounts(vec![AccountId::new(1)]));
     let effects = run(&mut focus, CommandId::Compose, &rows);
     assert!(matches!(
@@ -394,7 +373,6 @@ fn edits_within_the_quiet_period_coalesce_into_one_save() {
         focus.handle(Input::Timer(tokens[2])).is_empty(),
         "a timer fires once"
     );
-    // The save landing changes nothing on screen.
     assert!(
         focus
             .handle(Input::DraftSaved {
@@ -469,7 +447,6 @@ fn a_save_with_nothing_to_keep_is_not_announced() {
     let _ = composing(&mut focus, &rows);
     let _ = focus.handle(Input::ComposerEdited);
     let _ = run(&mut focus, CommandId::Back, &rows);
-    // Written, then cleared: the frontend found nothing worth keeping.
     let effects = focus.handle(Input::DraftSaved {
         composition: FIRST,
         saved: Ok(false),
@@ -503,7 +480,6 @@ fn a_composer_its_window_closed_is_saved_as_esc_saves_it() {
     let mut focus = mac();
     let _ = composing(&mut focus, &rows);
     let _ = focus.handle(Input::ComposerEdited);
-    // ⌘W or the close button: the toolkit closed it, and says so.
     let effects = focus.handle_on(Input::SurfaceClosed(SurfaceKind::Composer), &rows);
     assert_eq!(saved(&effects), Some(FIRST));
     assert!(shown(&effects).contains(&Intent::KeyboardHome));
@@ -531,13 +507,11 @@ fn a_new_composition_saves_the_one_it_replaces_first() {
         ],
         "the words in the composer are saved before it is refilled"
     );
-    // The replaced draft is said to be kept, once it is.
     let effects = focus.handle(Input::DraftSaved {
         composition: FIRST,
         saved: Ok(true),
     });
     assert_eq!(toasts(&effects).len(), 1);
-    // The new composition's own timer saves the new one.
     let token = timers(&focus.handle(Input::ComposerEdited))[0].0;
     assert_eq!(saved(&focus.handle(Input::Timer(token))), Some(FIRST + 1));
 }
@@ -589,8 +563,6 @@ fn edit_on_an_open_draft_on_its_way_opens_it_in_the_composer() {
     }
 }
 
-/// `command` on the cursor's row asks which draft is behind it, and the
-/// answer settles that draft's send.
 fn settles(command: CommandId, expected: Command) {
     let rows = List::of(&[Some(DraftState::Unconfirmed)]);
     let mut focus = mac();
@@ -679,7 +651,6 @@ fn settling_the_open_draft_closes_it_and_the_keyboard_goes_home() {
 
 #[test]
 fn a_composer_the_frontend_opened_itself_is_saved_on_closing_too() {
-    // A `mailto:` link: the frontend made the draft and opened the window.
     let rows = List::received(1);
     let mut focus = mac();
     landed(&mut focus, &rows);

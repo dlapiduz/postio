@@ -4,14 +4,6 @@ import Testing
 @testable import PostioAppKit
 @testable import PostioKit
 
-/// The results' query field (specs/010-focus-search T069; design §1 and
-/// §3.1; research R11): an `NSTextView` whose chips are text attachments,
-/// so free words can sit after them and an excluded chip can be struck
-/// through, which `NSTokenField` can do neither of.
-///
-/// It draws what `FocusQuery` said and reports what the keyboard did: a
-/// chip removed by its token, a wish to edit the query. It never edits the
-/// query itself -- the next `FocusQuery` redraws it.
 @MainActor
 @Suite struct ChipQueryFieldTests {
     static func chip(_ token: UInt32, _ op: String, _ value: String, excluded: Bool = false)
@@ -41,7 +33,6 @@ import Testing
 
         #expect(field.chipAttachments.map(\.chip.id) == [5, 2, 9])
         #expect(field.words == "atlas budget")
-        // The attachments come first in the text, one character each.
         let text = field.textStorage?.string ?? ""
         #expect(text.utf16.prefix(3).allSatisfy { $0 == 0xFFFC })
         #expect(text.hasSuffix("atlas budget"))
@@ -72,7 +63,6 @@ import Testing
 
         field.deleteBackward(nil)
         #expect(removed == [9], "one Remove, by its token")
-        // Nothing edited here: the controller's next `FocusQuery` redraws.
         #expect(field.chipAttachments.count == 3)
     }
 
@@ -107,8 +97,6 @@ import Testing
         #expect(field.words == "atlas budget")
     }
 
-    /// Screen 13: while nothing matches the whole field is ringed, and the
-    /// query edited as text is ringed as the inbox's opened field is.
     @Test func theQueryBoxIsRingedWhileNothingMatchesOrWhileEdited() {
         let box = ResultsQueryBox()
         box.show(chips: [Self.chip(5, "from:", "ada")], words: "", hint: "⌘⌫ clears filters", nothingFound: true)

@@ -52,9 +52,8 @@ SUITE = "focus_suite"
 # Named by the headless runner's watchdog, so it runs on its own (#272).
 ALLOWED_PREFIX = "e2e"
 
-# The files that keep a process of their own, and why. Each also says so in
-# its own doc comment; this list is what makes the check enforce that the set
-# does not grow quietly.
+# Files that keep a process of their own; each says why in its doc comment, so the set cannot grow
+# quietly.
 ALLOWED_FILES = {
     "packaging": "reads the desktop entry, metainfo and manifests; draws nothing",
 }

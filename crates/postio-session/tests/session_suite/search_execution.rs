@@ -1,18 +1,8 @@
-//! One search path, shared by both frontends (#660).
-//!
-//! The executor in `postio-index` was always toolkit-free; what was not was
-//! the thin layer above it that decides the hit limit and cuts each excerpt.
-//! That lived in the classic app, where only the GTK build could reach it, so a
-//! macOS search would have needed a second copy — and a second copy of "how
-//! many hits, and which text gets highlighted" is two products that answer the
-//! same query differently the first time either is edited.
-
 use postio_model::{BodyState, Message};
 use postio_search::facets::Scope;
 use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
 
-/// A store with three messages, two of which say "quarterly".
 async fn store() -> (test_support::TempStore, postio_model::ids::AccountId) {
     let database = test_support::temp().await;
     let connection = database.connect().await.expect("checkout");
@@ -39,11 +29,6 @@ async fn store() -> (test_support::TempStore, postio_model::ids::AccountId) {
         message.subject = Some(subject.to_string());
         message.sync.body_state = BodyState::Full;
         messages.create(&mut message).await.expect("create");
-        // Both halves, because they are genuinely different things: the index
-        // is what `search` matches against, the stored body is what the
-        // excerpt is cut from. A message with one and not the other is a real
-        // state -- it gets a hit and no excerpt -- so the fixture has to be
-        // explicit about wanting both.
         messages
             .set_body(
                 message.id,
@@ -93,10 +78,6 @@ async fn a_term_finds_the_messages_that_carry_it() {
 
 #[tokio::test]
 async fn every_hit_carries_an_excerpt_cut_from_its_own_body() {
-    // The reason this layer exists at all: `snippet()` was an FTS5 function
-    // over indexed content, and the body index stores none (#407/#408), so the
-    // excerpt has to be reconstructed from the blob. A frontend cutting its
-    // own would highlight a different string than the one that matched.
     let (database, account) = store().await;
     let results = run(&database, account, "quarterly").await;
     for hit in &results.hits {
@@ -109,8 +90,6 @@ async fn every_hit_carries_an_excerpt_cut_from_its_own_body() {
 
 #[tokio::test]
 async fn a_structured_only_query_leaves_the_excerpts_empty() {
-    // `is:unread` has nothing to point at. Empty rather than a whole-body
-    // excerpt, which is what SQLite did before the reconstruction moved here.
     let (database, account) = store().await;
     let results = run(&database, account, "is:unread").await;
     assert!(!results.hits.is_empty(), "everything here is unread");
@@ -126,12 +105,6 @@ async fn a_query_matching_nothing_is_an_empty_result_rather_than_a_failure() {
     let results = run(&database, account, "aardvark").await;
     assert!(results.hits.is_empty());
 }
-
-// ---------------------------------------------------------------------------
-// A word that found nothing is answered with the word that was meant, shown
-// as such (ADR 0037, amended): the box keeps what was typed, the results are
-// for the offered word, and the panel says which. Quotes opt out.
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn a_misspelled_word_shows_the_mail_for_the_word_it_meant() {
@@ -180,9 +153,6 @@ async fn a_word_that_found_mail_is_shown_as_typed() {
 
 #[tokio::test]
 async fn a_search_is_timed_on_the_app_clock() {
-    // The readout says "11 hits · 2 ms"; timed on the system's clock it
-    // read 2 ms in one storyboard run and 3 ms in the next, so the same
-    // build filmed two different frames. On a frozen clock no time passes.
     let (database, account) = store().await;
     postio_ui::clock::freeze(chrono::Local::now());
     let results = run(&database, account, "quarterly").await;

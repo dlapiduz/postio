@@ -3,9 +3,6 @@ import Testing
 
 @testable import PostioKit
 
-/// A dropdown row reads as one sentence (specs/010-focus-search T135;
-/// design §5): its words, then the folder and date, with the sentence
-/// composed in `postio-ui` and highlights never the only signal.
 @MainActor
 struct DropdownAccessibilityTests {
     @Test func aRowReadsItsWordsThenWhereAndWhen() {

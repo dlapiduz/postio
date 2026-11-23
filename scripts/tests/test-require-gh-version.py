@@ -48,17 +48,12 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
 
 HERE = Path(__file__).resolve().parent.parent
 REQUIRE_GH = HERE / "lib" / "require-gh.sh"
-# Sourced immediately after `set -euo pipefail`, checked dynamically below
-# with no other setup. `issue-land.sh` sources the same file later -- see
-# the module docstring -- and is checked statically instead, further down.
 TOP_GUARDED_SCRIPTS = [
     "issue-claim.sh",
     "issue-file.sh",
@@ -115,7 +110,6 @@ def main() -> int:
         )
         wrapper.chmod(0o755)
 
-        # -- too old: refused, with a sentence naming both versions --------
         result = check_wrapper(stub_dir, wrapper, "2.92.0")
         if result.returncode == 0:
             FAILURES.append(
@@ -143,7 +137,6 @@ def main() -> int:
                 f"--- stdout ---\n{result.stdout}"
             )
 
-        # -- exactly at the floor: allowed -----------------------------------
         result = check_wrapper(stub_dir, wrapper, "2.94.0")
         if result.returncode != 0 or "past the guard" not in result.stdout:
             FAILURES.append(
@@ -151,7 +144,6 @@ def main() -> int:
                 f"--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"
             )
 
-        # -- comfortably new: allowed -----------------------------------------
         result = check_wrapper(stub_dir, wrapper, "2.98.0")
         if result.returncode != 0 or "past the guard" not in result.stdout:
             FAILURES.append(
@@ -159,7 +151,6 @@ def main() -> int:
                 f"--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"
             )
 
-        # -- the three top-guarded scripts, with no other setup ----------------
         for name in TOP_GUARDED_SCRIPTS:
             script = HERE / name
             result = run(["bash", str(script)], stub_dir, "2.92.0")
@@ -180,7 +171,6 @@ def main() -> int:
                     f"clean message:\n--- stderr ---\n{result.stderr}"
                 )
 
-    # -- issue-land.sh: the guard sits later, checked by position -------------
     land_text = (HERE / "issue-land.sh").read_text(encoding="utf-8")
     source_line = 'source "$(dirname "${BASH_SOURCE[0]}")/lib/require-gh.sh"'
     if source_line not in land_text:

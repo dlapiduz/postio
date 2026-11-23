@@ -1,52 +1,10 @@
-//! Noticing that mail arrived: `IDLE` on one mailbox, interval polling on the
-//! rest.
-//!
-//! # The failure mode this module is shaped around
-//!
-//! `IDLE` fails silently. A server that drops a connection it has not heard
-//! from, a middle-box that reaps an idle NAT entry, a server that accepts the
-//! command and then never sends an untagged response — all three look exactly
-//! like a quiet mailbox. There is no error, no disconnect and nothing in a log.
-//! The user's experience is "new mail stopped appearing", hours later, with no
-//! way to tell that anything is wrong.
-//!
-//! So this module never trusts `IDLE` as the only evidence:
-//!
-//! * The command is re-issued well inside [`WatchPolicy::idle_refresh`], which
-//!   is minutes rather than the twenty-nine RFC 2177 §3 permits — the cap is
-//!   what the *protocol* tolerates, not what the path between two machines
-//!   does.
-//! * A mailbox that has only been idled on for [`WatchPolicy::poll_interval`]
-//!   is reconciled with a plain `STATUS` regardless. That is the floor under a
-//!   deaf connection: however badly push is behaving, new mail surfaces within
-//!   one poll interval.
-//! * Whether to idle at all is decided from the post-authentication
-//!   [`Capabilities`], never from the untagged `* ENABLED` echo — some servers
-//!   never send one (ADR 0001, "iCloud-specific hazards"), and a client that
-//!   waits for it either never idles or, worse, believes it is idling.
-//!
-//! # Two lanes, because `IDLE` occupies a connection
-//!
-//! A connection inside `IDLE` cannot carry anything else, which is why the
-//! watched mailbox gets its own. That is a real structural constraint rather
-//! than an implementation detail, so it is in the API: [`Watcher::next_push`]
-//! is what the dedicated connection should do, [`Watcher::next_poll`] what the
-//! shared one should do, and the two never hand out the same mailbox.
-//!
-//! # No timers, no tasks, no connections
-//!
-//! Like [`Supervisor`](crate::connect::Supervisor), this is a state machine the
-//! caller drives: it says what to do next and is told what happened, and the
-//! layer that owns a runtime does the waiting. That is what keeps the whole
-//! engine testable at an exact instant with no clock, and it is also what makes
-//! the duplicate-connection guarantee checkable — see [`Watcher::next_push`].
-//!
-//! # What a wake-up means
-//!
-//! Nothing here interprets an event. [`MailboxEvent`] says *that* a mailbox
-//! changed, never what it now holds, so the only correct response to any of
-//! them is a resync pull ([`crate::resync::resync_mailbox`]). Applying them as
-//! a diff is how a client and a server quietly stop agreeing.
+//! Watches for new mail: `IDLE` on one mailbox, interval polling on the rest. `IDLE` fails
+//! silently, so it is never the only evidence:
+//! it re-arms well inside `idle_refresh`, and a `STATUS` every `poll_interval` is the floor under a
+//! deaf connection. Idling is decided from post-auth `Capabilities`, never an `* ENABLED` echo (ADR
+//! 0001).
+//! A state machine the caller drives, with no timers or connections. A wake-up says only that a
+//! mailbox changed; the response is always a resync pull.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -56,51 +14,24 @@ use postio_account::backend::{Capabilities, Capability, MailboxEvent, MailboxSta
 use postio_account::cancel::CancelToken;
 use postio_model::{MailboxId, ModSeq, Uid};
 
-// ---------------------------------------------------------------------------
-// Policy
-// ---------------------------------------------------------------------------
-
-/// The longest RFC 2177 §3 lets a client hold one `IDLE` before re-issuing it.
-///
-/// A ceiling, not a target: [`WatchPolicy::idle_refresh`] is far below it
-/// because the protocol's tolerance is not the network's.
+/// A ceiling, not a target: `WatchPolicy::idle_refresh` is far below it because the protocol's
+/// tolerance is not the network's.
 pub const RFC2177_MAX_IDLE: Duration = Duration::from_secs(29 * 60);
 
-/// How hard to watch, and how often to distrust the answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WatchPolicy {
-    /// Whether to use `IDLE` at all — `[sync] idle` in `config.toml`.
-    ///
-    /// Turning it off costs push delivery and buys one connection back, which
-    /// is a trade some accounts and some servers want.
     pub idle: bool,
-    /// How long one `IDLE` is held before it is re-issued.
     pub idle_refresh: Duration,
-    /// How often a mailbox is reconciled with a `STATUS` — `[sync]
-    /// poll_interval_secs`.
-    ///
-    /// Applies to every mailbox, the watched one included: see the module docs
-    /// on why push is never the only evidence.
+    /// Applies to every mailbox, the watched one included: push is never the only evidence.
     pub poll_interval: Duration,
-    /// `[sync] check_for_mail = "manual"` (#1013): never idle and never poll
-    /// on a timer, whatever `idle`/`poll_interval` say — only an explicit
-    /// check-for-mail reaches the server. That command runs
-    /// `Engine::sync` directly (`postio-session`'s `Refresh` handler) rather
-    /// than through this watcher, so setting this true costs that path
-    /// nothing; it only silences the automatic one.
+    /// `[sync] check_for_mail = "manual"` (#1013): never idle or poll on a timer; only an explicit
+    /// check-for-mail reaches the server, through `Engine::sync`, not this watcher.
     pub manual: bool,
 }
 
 impl Default for WatchPolicy {
-    /// Idle, re-arming every nine minutes, reconciling every five.
-    ///
-    /// Nine minutes is chosen against the network rather than the protocol.
-    /// RFC 2177 would allow twenty-nine, and at the other extreme `io-imap`'s
-    /// own watch loop re-arms every twenty-nine *seconds* — roughly 120 round
-    /// trips an hour per mailbox, which is more than a server needs and more
-    /// than a laptop on battery wants. Nine minutes is under the idle timeout
-    /// of every consumer NAT and HTTP-proxy path we know of, and costs seven
-    /// round trips an hour.
+    /// Idle, re-arming every nine minutes (under every consumer NAT and proxy idle timeout),
+    /// reconciling every five.
     fn default() -> Self {
         Self {
             idle: true,
@@ -112,93 +43,56 @@ impl Default for WatchPolicy {
 }
 
 impl WatchPolicy {
-    /// The `IDLE` duration to ask for, clamped to what RFC 2177 §3 permits.
-    ///
-    /// A misconfigured hour-long refresh would leave the client believing it is
-    /// watching a mailbox the server stopped talking to fifty minutes ago.
+    /// Clamped to RFC 2177 §3: a misconfigured hour-long refresh would leave the client watching a
+    /// mailbox the server stopped talking to.
     pub fn idle_timeout(&self) -> Duration {
         self.idle_refresh.min(RFC2177_MAX_IDLE)
     }
 }
 
-// ---------------------------------------------------------------------------
-// What to do, and what came back
-// ---------------------------------------------------------------------------
-
-/// Whether a mailbox is watched by push or by polling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Attention {
-    /// The one mailbox worth a connection of its own — in practice the inbox.
-    ///
-    /// Registering a second one replaces the first: there is one dedicated
-    /// connection, and pretending otherwise would silently stop watching
-    /// whichever mailbox lost.
+    /// The one mailbox with a connection of its own, in practice the inbox. A second registration
+    /// replaces the first.
     Push,
-    /// Checked on [`WatchPolicy::poll_interval`] over the shared connection.
     Poll,
 }
 
-/// The next thing a connection should do.
 #[derive(Debug)]
 pub enum Watch {
-    /// Hold an `IDLE` on `path` for `timeout`, then report through
-    /// [`Watcher::woke`].
-    ///
-    /// `cancel` is the watcher's copy as well as the caller's:
-    /// [`Watcher::suspend`] fires it, which is how a machine going to sleep
+    /// `cancel` is also the watcher's copy: `Watcher::suspend` fires it so a sleeping machine
     /// closes the connection instead of leaking it.
     Idle {
-        /// The mailbox being watched.
         mailbox: MailboxId,
-        /// Its path on the server.
         path: String,
-        /// How long to hold the command.
         timeout: Duration,
-        /// Fired when the watcher wants the command to end early.
         cancel: CancelToken,
     },
-    /// Ask the server for `path`'s state, and report through
-    /// [`Watcher::observed`].
     Poll {
-        /// The mailbox to check.
         mailbox: MailboxId,
-        /// Its path on the server.
         path: String,
     },
-    /// Nothing is due on this lane.
-    ///
-    /// `until` is when to come back; `None` means nothing will become due
-    /// without something else happening first — the watcher is suspended, has
-    /// nothing registered on this lane, or is waiting for a step it already
-    /// handed out to be reported.
+    /// `until` is when to come back; `None` means nothing is due without something else happening
+    /// first (suspended, nothing registered, or a step awaiting its report).
     Wait {
-        /// When the next step falls due, if it can be known now.
         until: Option<DateTime<Utc>>,
     },
 }
 
-/// What a completed step means for the mailbox it was about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Wake {
-    /// Something moved. Pull, rather than trying to infer what.
     Changed,
-    /// Nothing moved. Carry on watching.
     Quiet,
 }
 
 impl Wake {
-    /// Whether the caller should resync this mailbox now.
     pub fn needs_resync(self) -> bool {
         matches!(self, Self::Changed)
     }
 }
 
-/// The parts of a [`MailboxStatus`] that mean "something happened".
-///
-/// Compared instead of the whole struct so that a field describing the
-/// *session* rather than the mailbox — `read_only`, the permanent flag list —
-/// cannot make an unchanged folder look busy, and so that adding a field to
-/// [`MailboxStatus`] cannot silently change what counts as a change.
+/// Compared instead of the whole `MailboxStatus` so session-level fields (`read_only`, permanent
+/// flags) cannot make an unchanged folder look busy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Signature {
     generation: postio_model::Generation,
@@ -220,56 +114,39 @@ impl Signature {
     }
 }
 
-// ---------------------------------------------------------------------------
-// The watcher
-// ---------------------------------------------------------------------------
-
-/// One mailbox's place in the rotation.
 #[derive(Debug)]
 struct Target {
     path: String,
     attention: Attention,
-    /// When this mailbox may next be acted on.
     due_at: DateTime<Utc>,
-    /// When the server last actually told us this mailbox's state — a `STATUS`
-    /// answer, or an `IDLE` that reported something. A quiet `IDLE` is not
-    /// evidence, which is the whole point of tracking this separately.
+    /// When the server last told us this mailbox's state (a `STATUS` answer, or an `IDLE` that
+    /// reported); a quiet `IDLE` is not evidence.
     verified_at: Option<DateTime<Utc>>,
-    /// What the last verification said.
     signature: Option<Signature>,
-    /// Set while a step is outstanding. Cleared only by a report.
     in_flight: Option<CancelToken>,
 }
 
 impl Target {
-    /// Whether the mailbox is overdue a `STATUS` reconciliation.
     fn wants_verifying(&self, now: DateTime<Utc>, interval: Duration) -> bool {
         match self.verified_at {
-            // Never looked at: we have only just connected and have no idea
-            // what we missed while we were away.
             None => true,
             Some(at) => now - at >= delta(interval),
         }
     }
 }
 
-/// Decides what to watch, when, and on which connection.
-///
-/// Holds no connection and starts no task. See the module docs.
 #[derive(Debug)]
 pub struct Watcher {
     policy: WatchPolicy,
-    /// Whether `IDLE` is both configured and advertised. Read from the
-    /// post-authentication capability list, never from an `* ENABLED` echo.
+    /// Both configured and advertised, read from the post-auth capability list, never an `*
+    /// ENABLED` echo.
     can_idle: bool,
     targets: HashMap<MailboxId, Target>,
-    /// The one mailbox on the dedicated connection, when there is one.
     pushed: Option<MailboxId>,
     suspended: bool,
 }
 
 impl Watcher {
-    /// A watcher for a server with `capabilities`, watching nothing yet.
     pub fn new(policy: WatchPolicy, capabilities: &Capabilities) -> Self {
         Self {
             policy,
@@ -280,32 +157,21 @@ impl Watcher {
         }
     }
 
-    /// Re-reads the capability list, as a reconnection produces.
-    ///
-    /// A server may come back with less than it had — a failover to a node
-    /// without `IDLE` is a real thing — and continuing to idle at it would be
-    /// watching a mailbox nobody is listening to.
+    /// A server may come back with less (a failover to a node without `IDLE`).
     pub fn set_capabilities(&mut self, capabilities: &Capabilities) {
         self.can_idle = self.policy.idle && capabilities.contains(Capability::Idle);
     }
 
-    /// The policy in force.
     pub fn policy(&self) -> WatchPolicy {
         self.policy
     }
 
-    /// Whether this server will actually be idled on.
     pub fn idles(&self) -> bool {
         self.can_idle
     }
 
-    /// Registers a mailbox, or changes how an already-registered one is
-    /// watched.
-    ///
-    /// Registering a second [`Attention::Push`] mailbox demotes the first to
-    /// polling rather than silently dropping it: there is one dedicated
-    /// connection, and a mailbox nobody watches at all is worse than one
-    /// watched slowly.
+    /// A second `Attention::Push` mailbox demotes the first to polling: a mailbox nobody watches is
+    /// worse than one watched slowly.
     pub fn watch(&mut self, mailbox: MailboxId, path: impl Into<String>, attention: Attention) {
         let path = path.into();
         if attention == Attention::Push {
@@ -331,7 +197,6 @@ impl Watcher {
         target.attention = attention;
     }
 
-    /// Stops watching a mailbox — it was deleted, or unsubscribed.
     pub fn forget(&mut self, mailbox: MailboxId) {
         if let Some(target) = self.targets.remove(&mailbox)
             && let Some(cancel) = target.in_flight
@@ -343,13 +208,8 @@ impl Watcher {
         }
     }
 
-    /// What the dedicated connection should do next.
-    ///
-    /// Returns a step at most once per mailbox until that step is reported
-    /// through [`woke`](Self::woke), [`observed`](Self::observed) or
-    /// [`failed`](Self::failed). That is the duplicate-connection guarantee:
-    /// a caller cannot obtain two `IDLE`s for one mailbox by asking twice,
-    /// however confused its own task bookkeeping gets.
+    /// Returns a step at most once per mailbox until it is reported (`woke`, `observed` or
+    /// `failed`): the duplicate-connection guarantee.
     pub fn next_push(&mut self, now: DateTime<Utc>) -> Watch {
         let Some(mailbox) = self.pushed else {
             return Watch::Wait { until: None };
@@ -357,11 +217,7 @@ impl Watcher {
         self.step(mailbox, now)
     }
 
-    /// What the shared connection should do next.
-    ///
-    /// The mailbox that is due soonest, never the pushed one — that belongs to
-    /// [`next_push`](Self::next_push), and checking it from here would be the
-    /// duplicate work `IDLE` exists to avoid.
+    /// The mailbox due soonest, never the pushed one, which belongs to `next_push`.
     pub fn next_poll(&mut self, now: DateTime<Utc>) -> Watch {
         if self.suspended || self.policy.manual {
             return Watch::Wait { until: None };
@@ -377,8 +233,6 @@ impl Watcher {
                 continue;
             }
             if now >= target.due_at {
-                // Ties broken by id so the rotation is deterministic rather
-                // than at the mercy of hash order.
                 if due.is_none_or(|current| {
                     (target.due_at, *id) < (self.targets[&current].due_at, current)
                 }) {
@@ -395,11 +249,8 @@ impl Watcher {
         }
     }
 
-    /// Reports what an `IDLE` returned.
-    ///
-    /// Any event at all is [`Wake::Changed`]: the events say only *that* the
-    /// mailbox moved. An empty slice is the ordinary quiet expiry, and also
-    /// what a cancelled `IDLE` reports.
+    /// Any event is `Wake::Changed`: events say only that the mailbox moved. An empty slice is a
+    /// quiet expiry or a cancelled `IDLE`.
     pub fn woke(
         &mut self,
         mailbox: MailboxId,
@@ -410,24 +261,18 @@ impl Watcher {
             return Wake::Quiet;
         };
         target.in_flight = None;
-        // Re-arm immediately: an idle that has just returned is a connection
-        // sitting silent, and silence is what gets it dropped.
         target.due_at = now;
 
         if events.is_empty() {
             return Wake::Quiet;
         }
-        // The pull the caller is about to run is itself a verification, so a
-        // busy mailbox does not also pay for a STATUS.
         target.verified_at = Some(now);
         target.signature = None;
         Wake::Changed
     }
 
-    /// Reports what a `STATUS` said.
-    ///
-    /// The first look at a mailbox is always [`Wake::Changed`]: we have just
-    /// connected, and nothing local can say what happened while we were gone.
+    /// The first look at a mailbox is always `Wake::Changed`: nothing local says what happened
+    /// while we were gone.
     pub fn observed(
         &mut self,
         mailbox: MailboxId,
@@ -446,20 +291,13 @@ impl Watcher {
         target.in_flight = None;
         target.verified_at = Some(now);
         target.signature = Some(signature);
-        // A mailbox that is about to be idled on goes straight back to it;
-        // everything else waits out the interval.
         target.due_at = if idled { now } else { now + delta(interval) };
 
         if changed { Wake::Changed } else { Wake::Quiet }
     }
 
-    /// Reports that a step failed.
-    ///
-    /// The mailbox is released rather than left in flight forever — a wedged
-    /// target is a mailbox that silently stops being watched — and is held off
-    /// for one poll interval, by which time
-    /// [`Supervisor`](crate::connect::Supervisor) has had its say about whether
-    /// the connection is coming back at all.
+    /// The mailbox is released, not left in flight (a wedged target is silently unwatched), and
+    /// held off one poll interval.
     pub fn failed(&mut self, mailbox: MailboxId, now: DateTime<Utc>) {
         let interval = self.policy.poll_interval;
         if let Some(target) = self.targets.get_mut(&mailbox) {
@@ -468,73 +306,35 @@ impl Watcher {
         }
     }
 
-    /// Reclaims every step whose caller vanished without reporting.
-    ///
-    /// The engine races the command a step handed out against its job
-    /// channel, and the loser of that race is *dropped*, not failed —
-    /// nothing ever calls [`woke`](Self::woke) or [`failed`](Self::failed)
-    /// for it. Left alone, the target stays outstanding for ever: never
-    /// idled, never polled — the inbox silently unwatched for the rest of
-    /// the session, which is how #755 found this. Cancelling the token
-    /// unwinds whatever half-run command the drop left on the wire; making
-    /// the target due now is what re-establishes the watch on the next
-    /// round.
-    ///
-    /// Call it only when the caller of any outstanding step is known to be
-    /// gone — right after the race is decided against it. A step that
-    /// completed properly has already cleared itself, so this is a no-op
-    /// then.
+    /// Reclaims every step whose caller vanished without reporting (#755): the engine's race drops
+    /// the loser, so the target would stay outstanding and the inbox unwatched.
+    /// Cancelling unwinds a half-run command; making the target due re-establishes the watch. Call
+    /// only when the caller is known to be gone.
     pub fn interrupted(&mut self, now: DateTime<Utc>) {
         for target in self.targets.values_mut() {
             if let Some(cancel) = target.in_flight.take() {
                 cancel.cancel();
                 target.due_at = now;
-                // Whatever the vanished command might have reported, it
-                // never did — a delivery during the gap is exactly what the
-                // `IDLE` would have caught and nothing now has. Forgetting
-                // the verification makes the next step a `STATUS`, so the
-                // gap is reconciled rather than idled over; `resume` does
-                // the same, for the same reason.
+                // The vanished command never reported what it would have caught; forgetting the
+                // verification makes the next step a `STATUS`.
                 target.verified_at = None;
             }
         }
     }
 
-    /// Forget every mailbox's verification, without cancelling anything.
-    ///
-    /// For when something *else* drove the connection. A queued write has to
-    /// `SELECT` the mailbox to run, and `SELECT` answers with that mailbox's
-    /// current state — which the server thereafter considers the client to
-    /// have been told. An `IDLE` armed afterwards reports only what happens
-    /// *next*, so mail that landed between the last `IDLE` and the write is
-    /// in neither: the `IDLE` that would have caught it was not armed yet,
-    /// and the one that is armed now has already been told.
-    ///
-    /// The same reasoning [`interrupted`](Self::interrupted) is written from,
-    /// applied to a gap nothing was cancelled in. Without it the only floor
-    /// left is the poll interval, which is five minutes — long enough for a
-    /// delivery to sit invisible while the account looks perfectly healthy
-    /// (#807).
-    ///
-    /// Nothing is cancelled and no step is handed back, so this is safe to
-    /// call while a step is outstanding: it changes what the *next* decision
-    /// will be, not what the current one is doing.
+    /// Forgets every mailbox's verification without cancelling anything (#807). A queued write
+    /// `SELECT`s the mailbox, so mail landing between the last `IDLE` and the write is in neither;
+    /// the next decision becomes a `STATUS`. Safe while a step is outstanding.
     pub fn unverified(&mut self) {
         for target in self.targets.values_mut() {
             target.verified_at = None;
         }
     }
 
-    /// Parks the watcher and ends every outstanding command.
-    ///
-    /// What suspending a laptop means. Cancelling is the whole point: an
-    /// `IDLE` left running holds a connection open on a machine that is about
-    /// to stop answering, and the server keeps it — and its resources —
-    /// until it times out.
-    ///
-    /// The cancelled steps stay *outstanding* until their callers report back,
-    /// so nothing is handed out again while a command is still unwinding. That
-    /// is what makes resume unable to open a second connection.
+    /// Parks the watcher and cancels every outstanding command, so a suspending laptop does not
+    /// leak an `IDLE`.
+    /// Cancelled steps stay outstanding until their callers report, so resume cannot open a second
+    /// connection.
     pub fn suspend(&mut self) {
         self.suspended = true;
         for target in self.targets.values() {
@@ -544,22 +344,15 @@ impl Watcher {
         }
     }
 
-    /// Un-parks the watcher, and makes everything due at once.
-    ///
-    /// A machine that has just woken has no idea how long it was away, so every
-    /// mailbox is checked immediately rather than waiting out an interval that
-    /// was measured before the lid closed.
+    /// Un-parks the watcher and makes everything due at once: the time away is unknown.
     pub fn resume(&mut self, now: DateTime<Utc>) {
         self.suspended = false;
         for target in self.targets.values_mut() {
             target.due_at = now;
-            // Whatever we knew about the server, we knew it before an
-            // indeterminate gap.
             target.verified_at = None;
         }
     }
 
-    /// Hands out the step `mailbox` is due, marking it outstanding.
     fn step(&mut self, mailbox: MailboxId, now: DateTime<Utc>) -> Watch {
         if self.suspended || self.policy.manual {
             return Watch::Wait { until: None };
@@ -580,8 +373,8 @@ impl Watcher {
             };
         }
 
-        // The watched mailbox idles, except when it is overdue the `STATUS`
-        // that is the floor under a connection which has gone deaf.
+        // The watched mailbox idles unless it is overdue the `STATUS` that is the floor under a
+        // deaf connection.
         if can_idle && self.pushed == Some(mailbox) && !target.wants_verifying(now, interval) {
             let cancel = CancelToken::new();
             target.in_flight = Some(cancel.clone());
@@ -593,9 +386,7 @@ impl Watcher {
             };
         }
 
-        // A `STATUS` is a round trip and cannot be cancelled halfway to any
-        // useful effect, but it still carries a token: it is what marks the
-        // mailbox outstanding, and it is what a suspend fires at.
+        // Carries a token because it marks the mailbox outstanding and is what a suspend fires at.
         target.in_flight = Some(CancelToken::new());
         Watch::Poll {
             mailbox,
@@ -604,8 +395,6 @@ impl Watcher {
     }
 }
 
-/// A [`Duration`] as a [`TimeDelta`], saturating rather than failing on a
-/// configured interval nobody could mean.
 fn delta(duration: Duration) -> TimeDelta {
     TimeDelta::from_std(duration).unwrap_or(TimeDelta::MAX)
 }
@@ -675,7 +464,6 @@ mod tests {
         let mut watcher = Watcher::new(WatchPolicy::default(), &idling());
         assert!(watcher.idles());
 
-        // A failover to a node with a smaller feature set.
         watcher.set_capabilities(&capabilities(&["IMAP4rev1"]));
 
         assert!(
@@ -734,9 +522,6 @@ mod tests {
             .in_flight
             .clone()
             .expect("a step is outstanding");
-        // The engine races this command against its job channel, and the
-        // loser of that race is dropped, not failed — nothing will ever
-        // report it.
         assert!(
             matches!(watcher.next_push(now), Watch::Wait { until: None }),
             "an outstanding step blocks the lane; that is the wedge's first half"
@@ -779,19 +564,11 @@ mod tests {
 
     #[test]
     fn a_write_driving_the_connection_costs_the_watcher_its_evidence() {
-        // #807. A queued write `SELECT`s the mailbox it writes to, and that
-        // answer is the server telling the client the mailbox's current
-        // state. An `IDLE` armed afterwards reports only what happens next,
-        // so a delivery that landed between the last `IDLE` and the write is
-        // in neither of them. Without this the next step is another `IDLE`
-        // and the only floor left is the poll interval -- five minutes of a
-        // message sitting invisible while the account looks healthy.
         let mut watcher = Watcher::new(WatchPolicy::default(), &idling());
         let mailbox = MailboxId::new(1);
         let now = DateTime::<Utc>::MIN_UTC;
         watcher.watch(mailbox, "INBOX", Attention::Push);
 
-        // Verified once, so the watcher is content to idle.
         let status = MailboxStatus {
             path: "INBOX".to_owned(),
             generation: postio_model::Generation::new(1),
@@ -837,15 +614,10 @@ mod tests {
 
     #[test]
     fn the_default_policy_is_what_governs_the_wire() {
-        // The watch policy has one home, and this pins what it does by
-        // default: the numbers the engine actually runs on, which `postio-
-        // account` once repeated with different values (30 s and 10 min)
-        // that nothing ever read.
         let policy = WatchPolicy::default();
         assert_eq!(policy.idle_refresh, Duration::from_secs(9 * 60));
         assert_eq!(policy.poll_interval, Duration::from_secs(300));
 
-        // A server with IDLE is idled for the refresh, in one round.
         let mut watcher = Watcher::new(policy, &idling());
         let inbox = MailboxId::new(1);
         let now = DateTime::<Utc>::MIN_UTC;
@@ -856,7 +628,6 @@ mod tests {
         };
         assert_eq!(timeout, Duration::from_secs(9 * 60));
 
-        // One without is polled with STATUS, every poll interval.
         let mut watcher = Watcher::new(policy, &capabilities(&["IMAP4rev1"]));
         watcher.watch(inbox, "INBOX", Attention::Push);
         assert!(matches!(watcher.next_push(now), Watch::Poll { .. }));

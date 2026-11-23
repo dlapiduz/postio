@@ -1,7 +1,3 @@
-//! Postio Focus's verbs, sent through the host the way a frontend sends them
-//! (specs/007-postio-focus). Asserted on what a frontend sees: what its reads
-//! answer, the events it hears, and what its undo takes back.
-
 use chrono::{DateTime, Local, TimeZone as _, Utc};
 use postio_client::protocol::ClientKind;
 use postio_core::{Command, Event, MessageTarget};
@@ -10,8 +6,6 @@ use postio_storage::repository::MessageRepository;
 
 use crate::tests::World;
 
-/// Saturday 26 September 2026 at 16:09 on this machine's clock: US5's fixed
-/// clock, the one screen 11 draws its times at.
 fn saturday_at_nine_past_four() -> DateTime<Local> {
     Local
         .with_ymd_and_hms(2026, 9, 26, 16, 9, 0)
@@ -19,7 +13,6 @@ fn saturday_at_nine_past_four() -> DateTime<Local> {
         .expect("a time the clocks do not skip")
 }
 
-/// When `message` comes back from its snooze, as the store holds it.
 fn snoozed_until(world: &World, message: MessageId) -> Option<DateTime<Utc>> {
     world.rt.block_on(async {
         let reader = world.database().read().await.expect("a reader");
@@ -32,7 +25,6 @@ fn snoozed_until(world: &World, message: MessageId) -> Option<DateTime<Utc>> {
     })
 }
 
-/// A snooze of the world's message until `until`, as the picker sends it.
 fn snooze(until: DateTime<Utc>, message: MessageId) -> Command {
     Command::Snooze {
         target: MessageTarget::Messages(vec![message]),
@@ -40,13 +32,8 @@ fn snooze(until: DateTime<Utc>, message: MessageId) -> Command {
     }
 }
 
-// ── Snooze until a chosen time (T092) ───────────────────────────────────────
-
 #[test]
 fn a_snooze_comes_back_at_the_preset_or_the_typed_time_it_was_given() {
-    // US5 scenarios 1 and 2, at a fixed clock. Each of the snooze picker's
-    // four presets, and "tue 9am" as `parse_when` reads it, is exactly when
-    // the mail comes back: the picker's time reaches the store.
     let world = World::new();
     let (client, events) = world.frontend(ClientKind::Focus);
     let now = saturday_at_nine_past_four();
@@ -127,7 +114,6 @@ fn a_snooze_hides_the_mail_and_undoing_its_unsnooze_puts_back_the_chosen_time() 
     );
 }
 
-/// A time as the store keeps it: to the millisecond.
 trait Millis {
     fn with_nanosecond_zeroed(self) -> Self;
 }
@@ -138,10 +124,6 @@ impl Millis for DateTime<Utc> {
     }
 }
 
-// ── Remind if no reply (T094) ───────────────────────────────────────────────
-
-/// A message filed in the world's inbox, from `from`, threaded as sync
-/// threads it: `rfc` its `Message-ID`, `parent` the one it answers.
 fn letter(
     world: &World,
     from: &str,
@@ -178,8 +160,6 @@ fn letter(
     })
 }
 
-/// Wait until Focus's catch-up has sorted everything up to `message`: its
-/// mark, which it moves once it has, is there.
 fn sorted_through(world: &World, message: MessageId) {
     crate::tests::eventually(world, || {
         world.rt.block_on(async {
@@ -194,7 +174,6 @@ fn sorted_through(world: &World, message: MessageId) {
     });
 }
 
-/// The reminder standing on `thread`, as the store holds it.
 fn reminder_on(
     world: &World,
     thread: postio_model::ThreadId,
@@ -208,11 +187,8 @@ fn reminder_on(
     })
 }
 
-/// When a reminder was cancelled, and when it fired.
 type Answered = (Option<DateTime<Utc>>, Option<DateTime<Utc>>);
 
-/// Every reminder the store holds on `thread`, standing or not: when each
-/// was cancelled and fired.
 fn reminders_on(world: &World, thread: postio_model::ThreadId) -> Vec<Answered> {
     world.rt.block_on(async {
         let reader = world.database().read().await.expect("a reader");
@@ -235,15 +211,12 @@ fn reminders_on(world: &World, thread: postio_model::ThreadId) -> Vec<Answered> 
     })
 }
 
-/// US5's reminder, set from the picker at the fixed clock: "In 2 working
-/// days", Tuesday 29 September at 09:00.
 fn tuesday_at_nine() -> DateTime<Utc> {
     postio_ui::schedule::remind_presets(saturday_at_nine_past_four())[1]
         .1
         .with_timezone(&Utc)
 }
 
-/// A reminder on `message`'s conversation, due at `at`, as the picker sends it.
 fn remind(message: MessageId, at: Option<DateTime<Utc>>) -> Command {
     Command::RemindIfNoReply {
         target: MessageTarget::Messages(vec![message]),
@@ -251,7 +224,6 @@ fn remind(message: MessageId, at: Option<DateTime<Utc>>) -> Command {
     }
 }
 
-/// Fire the reminders due as of `now`, as Focus's due timer does each tick.
 fn fire_at(world: &World, now: DateTime<Utc>) -> usize {
     world
         .rt
@@ -261,7 +233,6 @@ fn fire_at(world: &World, now: DateTime<Utc>) -> usize {
 
 #[test]
 fn a_reminder_is_set_on_the_conversation_and_undo_takes_it_back() {
-    // FR-045: a reminder is undoable when set, and when cleared.
     let world = World::new();
     let (client, events) = world.frontend(ClientKind::Focus);
     let set_on = saturday_at_nine_past_four().with_timezone(&Utc);
@@ -331,8 +302,6 @@ fn a_reminder_is_set_on_the_conversation_and_undo_takes_it_back() {
 
 #[test]
 fn a_reminder_nobody_answered_fires_when_its_time_passes() {
-    // US5 scenario 4, at the fixed clock: no reply by Tuesday 09:00, and the
-    // conversation surfaces then -- not before.
     let world = World::new();
     let (client, events) = world.frontend(ClientKind::Focus);
     let set_on = saturday_at_nine_past_four().with_timezone(&Utc);
@@ -365,9 +334,6 @@ fn a_reminder_nobody_answered_fires_when_its_time_passes() {
 
 #[test]
 fn a_reminder_that_came_due_while_focus_was_closed_fires_when_it_opens() {
-    // US5 scenario 4's second half and FR-045: Focus was not running at the
-    // due time, and the reminder surfaces when Focus next opens. The world
-    // has no account syncing and nothing reaches a network: it is offline.
     let world = World::new();
     let (client, events) = world.frontend(ClientKind::Focus);
     let (budget, thread) = letter(
@@ -399,18 +365,12 @@ fn a_reminder_that_came_due_while_focus_was_closed_fires_when_it_opens() {
     assert!(fired.is_surfaced());
 }
 
-/// A reminder due a day from now: ahead of Focus's own timer for the
-/// whole test, so only the filing pass can have answered it.
 fn tomorrow() -> DateTime<Utc> {
     (Utc::now() + chrono::TimeDelta::days(1)).with_nanosecond_zeroed()
 }
 
 #[test]
 fn a_reply_from_somebody_else_cancels_the_reminder() {
-    // US5 scenario 3: a reminder, and another participant's reply before
-    // its time. Focus files the reply -- here as the mail another app took
-    // in while Focus was closed, sorted when it opens -- and the reply
-    // cancels the reminder, so nothing returns when its time passes.
     let world = World::new();
     let (client, events) = world.frontend(ClientKind::Focus);
     let (budget, thread) = letter(
@@ -452,8 +412,6 @@ fn a_reply_from_somebody_else_cancels_the_reminder() {
 
 #[test]
 fn the_person_s_own_message_does_not_cancel_their_reminder() {
-    // FR-044: a reply from anyone *but the user* cancels it. Their own
-    // follow-up, in the same conversation, leaves it waiting.
     let world = World::new();
     let (client, events) = world.frontend(ClientKind::Focus);
     let (budget, thread) = letter(
@@ -491,10 +449,6 @@ fn the_person_s_own_message_does_not_cancel_their_reminder() {
 
 #[test]
 fn the_person_s_own_reply_settles_a_surfaced_reminder() {
-    // T095: the conversation came back marked "No reply since"; the person
-    // then wrote in it themselves -- their reply is filed in Sent, which
-    // the filing pass does not read -- and the surfaced row stops
-    // standing, as a reply from anyone else's does.
     let world = World::new();
     let (client, events) = world.frontend(ClientKind::Focus);
     let (budget, thread) = letter(
@@ -515,7 +469,6 @@ fn the_person_s_own_reply_settles_a_surfaced_reminder() {
         1,
         "it fired"
     );
-    // The world's account as one that sends: its identity and its Sent.
     sending(&world);
     let sent = crate::tests::folder(&world, postio_model::MailboxRole::Sent);
     world.rt.block_on(async {
@@ -556,10 +509,6 @@ fn the_person_s_own_reply_settles_a_surfaced_reminder() {
     assert_eq!(reminder_on(&world, thread), None, "it no longer stands");
 }
 
-// ── Answering an invitation (T112) ──────────────────────────────────────────
-
-/// The world's account as one that sends: an identity at its address, the
-/// attendee its invitations name, and a Sent folder to file the reply in.
 fn sending(world: &World) {
     world.rt.block_on(async {
         let connection = world.database().connect().await.expect("a connection");
@@ -579,8 +528,6 @@ fn sending(world: &World) {
     });
 }
 
-/// An invitation from Ines to the world's account, an hour old, with its
-/// marker as the body stage writes it: open, unanswered.
 fn invited(world: &World) -> MessageId {
     let start = crate::tests::ahead();
     let request = crate::tests::invitation_mail(
@@ -621,8 +568,6 @@ fn invited(world: &World) -> MessageId {
     request
 }
 
-/// A mail server and an SMTP server that accepts everything, as the
-/// drainer meets them.
 struct Outbox {
     backend: postio_account::backend::MockBackend,
     smtp: postio_smtp::transport::ScriptedConnector,
@@ -646,7 +591,6 @@ fn outbox(world: &World) -> Outbox {
             .await
             .expect("the password");
     });
-    // The test account submits on 587 with STARTTLS, as most do.
     let script = postio_smtp::transport::SmtpScript::new("220 mail.example.com ESMTP ready")
         .on(
             "EHLO",
@@ -666,7 +610,6 @@ fn outbox(world: &World) -> Outbox {
 }
 
 impl Outbox {
-    /// Drain the account's queue as of `now`, as the engine does.
     fn drain_at(&self, world: &World, now: DateTime<Utc>) -> postio_sync::DrainReport {
         let tokens = postio_account::auth::StoredPasswordSource::new(self.secrets.clone());
         world.rt.block_on(async {
@@ -683,7 +626,6 @@ impl Outbox {
         })
     }
 
-    /// How many messages reached the SMTP server.
     fn sent(&self) -> usize {
         self.smtp
             .log()
@@ -693,27 +635,21 @@ impl Outbox {
             .count()
     }
 
-    /// Everything written to the SMTP server.
     fn written(&self) -> String {
         String::from_utf8_lossy(&self.smtp.log().written).into_owned()
     }
 }
 
-/// The invitation's answer, as its marker holds it.
 fn answer_on(world: &World, message: MessageId) -> Option<postio_model::listing::InviteAnswer> {
     crate::tests::marker_on(world, message).and_then(|marker| marker.answer)
 }
 
-/// Past the window an answer waits out in the outbox.
 fn after_the_window() -> DateTime<Utc> {
     Utc::now() + postio_session::actions::RSVP_WINDOW + chrono::TimeDelta::seconds(1)
 }
 
 #[test]
 fn an_accepted_invitation_waits_out_its_window_and_then_one_reply_leaves() {
-    // US8 scenarios 2 and 3, and FR-102: `y` queues the answer through the
-    // outbox, local-first. Nothing reaches the transport before the window
-    // ends; after it, exactly one reply goes to the organiser.
     let world = World::new();
     sending(&world);
     let request = invited(&world);
@@ -772,8 +708,6 @@ fn an_accepted_invitation_waits_out_its_window_and_then_one_reply_leaves() {
 
 #[test]
 fn an_answer_taken_back_inside_its_window_sends_nothing() {
-    // US8 scenario 2: cancelled within the ten seconds, nothing is sent,
-    // and the invitation is as it was.
     let world = World::new();
     sending(&world);
     let request = invited(&world);
@@ -819,8 +753,6 @@ fn an_answer_taken_back_inside_its_window_sends_nothing() {
 
 #[test]
 fn when_the_window_closes_the_answer_stands() {
-    // Research R9: the due timer turns `accepting` into `accepted` once the
-    // window has closed, and nothing earlier.
     let world = World::new();
     sending(&world);
     let request = invited(&world);
@@ -857,8 +789,6 @@ fn when_the_window_closes_the_answer_stands() {
 
 #[test]
 fn an_invitation_answers_only_from_an_address_it_invited() {
-    // "With no match, there is no answer": an invitation that names none of
-    // the person's addresses among its attendees has nobody to answer as.
     let world = World::new();
     sending(&world);
     let request = invited(&world);
@@ -910,9 +840,6 @@ fn an_invitation_answers_only_from_an_address_it_invited() {
     assert_eq!(answer_on(&world, request), None);
 }
 
-// ── Dismissing a marker (T118) ──────────────────────────────────────────────
-
-/// A `config.toml` in a directory of its own, saying `text`.
 fn config_file(text: &str) -> (tempfile::TempDir, std::path::PathBuf) {
     let directory = tempfile::tempdir().expect("a directory");
     let path = directory.path().join("config.toml");
@@ -920,15 +847,12 @@ fn config_file(text: &str) -> (tempfile::TempDir, std::path::PathBuf) {
     (directory, path)
 }
 
-/// `[focus]` as the file at `path` now says it.
 fn focus_in(path: &std::path::Path) -> postio_config::FocusConfig {
     postio_config::Config::from_toml_str(&std::fs::read_to_string(path).expect("the file"))
         .expect("it reads")
         .focus
 }
 
-/// `[focus]` as the engine reads it now: the file, and what correspondents
-/// decided beside it (ADR 0048).
 fn engine(world: &World) -> postio_config::FocusConfig {
     world
         .host()
@@ -939,8 +863,6 @@ fn engine(world: &World) -> postio_config::FocusConfig {
         .expect("Focus mode is on")
 }
 
-/// A dismissal, or its undoing, of `message`'s marker, as the frontend
-/// sends it.
 fn dismiss(message: MessageId, dismissed: bool) -> Command {
     Command::DismissMarker {
         target: MessageTarget::Messages(vec![message]),
@@ -950,12 +872,6 @@ fn dismiss(message: MessageId, dismissed: bool) -> Command {
 
 #[test]
 fn a_dismissed_marker_stays_gone_and_three_from_one_sender_stop_that_kind() {
-    // US12 scenario 5 and FR-108. A dismissed marker never returns on its
-    // message, however often the message is classified. Three questions
-    // from one sender dismissed as wrong teach Focus that this sender's
-    // questions are not questions to the person: `[focus.filter]
-    // stop_markers` gains the correction, written as an editor saves it,
-    // and the sender's next question is not marked. Undo takes both back.
     let world = World::new();
     let (_directory, path) = config_file("# Mine.\n[ui]\ndensity = \"compact\"\n");
     let questions: Vec<MessageId> = (0..3)
@@ -988,8 +904,6 @@ fn a_dismissed_marker_stays_gone_and_three_from_one_sender_stop_that_kind() {
                 Event::ActionCompleted { .. } | Event::CommandRejected { .. }
             )
         });
-        // Dismissals in one breath are one gesture, as archives are: one
-        // toast that counts them, and one undo.
         assert_eq!(
             said,
             Event::ActionCompleted {
@@ -1022,7 +936,6 @@ fn a_dismissed_marker_stays_gone_and_three_from_one_sender_stop_that_kind() {
         }]
     );
 
-    // Classified again, the first question's marker does not come back.
     world.rt.block_on(async {
         let connection = world.database().connect().await.expect("a connection");
         postio_storage::sql::execute(
@@ -1047,7 +960,6 @@ fn a_dismissed_marker_stays_gone_and_three_from_one_sender_stop_that_kind() {
         "still dismissed"
     );
 
-    // The same sender's next question is not marked.
     let next = crate::tests::letter_from_tove(
         &world,
         Utc::now(),
@@ -1066,7 +978,6 @@ fn a_dismissed_marker_stays_gone_and_three_from_one_sender_stop_that_kind() {
         "the sender's questions are not marked any more"
     );
 
-    // Undo takes the dismissals back, and the correction they taught.
     world.send(&client, Command::Undo);
     world.hear(&events, |event| {
         matches!(event, Event::UndoPerformed { .. })
@@ -1084,10 +995,6 @@ fn a_dismissed_marker_stays_gone_and_three_from_one_sender_stop_that_kind() {
     );
 }
 
-// ── Restoring from Filtered (T125) ──────────────────────────────────────────
-
-/// File `message` as an arrival in the inbox, through the filing pass
-/// Focus mode has installed: what the next sync would do with it.
 fn file_now(world: &World, message: MessageId) {
     let pass = world
         .host()
@@ -1119,11 +1026,6 @@ fn file_now(world: &World, message: MessageId) {
 
 #[test]
 fn a_restore_brings_the_message_back_pins_its_sender_and_one_undo_reverses_both() {
-    // US9 scenario 4, FR-116: `R` returns a filtered message to the inbox
-    // and never filters its sender again -- the correction written to
-    // `[focus.filter] never` -- and one `Ctrl+Z` reverses all of it: the
-    // message goes back to Filtered with its reason, and the sender is
-    // filtered again.
     let world = World::new();
     let (_directory, path) = config_file("[ui]\ndensity = \"compact\"\n");
     crate::tests::focus_ran_before(&world);
@@ -1215,14 +1117,8 @@ fn a_restore_brings_the_message_back_pins_its_sender_and_one_undo_reverses_both(
     );
 }
 
-// ── Sweeping the inbox (T128) ───────────────────────────────────────────────
-
 #[test]
 fn a_sweep_says_what_it_would_move_then_moves_exactly_that_as_one_undo() {
-    // FR-118: filtering applies to mail filed after it is turned on, so the
-    // mail already in the inbox when Focus first opens stays there. Moving
-    // it is a deliberate command, which says first how much would move,
-    // then moves exactly that, and is one undoable action.
     let world = World::new();
     crate::tests::filed_elsewhere(&world, "notifications@forge.example", "Build passed");
     crate::tests::filed_elsewhere(&world, "alerts@builds.example", "Deploy finished");
@@ -1308,10 +1204,6 @@ fn a_sweep_says_what_it_would_move_then_moves_exactly_that_as_one_undo() {
     }
 }
 
-// ── Surfaced rows (T136) ────────────────────────────────────────────────────
-
-/// A message from `from` in the world's inbox, received `ago`, held for the
-/// "Newsletters" rule from then.
 fn newsletter(world: &World, from: &str, subject: &str, ago: chrono::TimeDelta) -> MessageId {
     let (id, _) = letter(
         world,
@@ -1334,7 +1226,6 @@ fn newsletter(world: &World, from: &str, subject: &str, ago: chrono::TimeDelta) 
     id
 }
 
-/// The surfaced rows, as a Focus client reads them.
 fn surfaced(world: &World, client: &postio_client::Client) -> Vec<postio_model::listing::Surfaced> {
     world
         .rt
@@ -1344,10 +1235,6 @@ fn surfaced(world: &World, client: &postio_client::Client) -> Vec<postio_model::
 
 #[test]
 fn a_delivered_digest_is_announced_and_listed_with_its_count_senders_and_place() {
-    // FR-123, FR-124: when a digest comes due, one row surfaces among the
-    // conversations, saying its cadence, its name, its count and its
-    // senders; the frontend hears that the surfaced rows changed, and reads
-    // them -- each with its time and where it sits in the inbox.
     let world = World::new();
     let config = crate::tests::digesting("cadence = \"daily\"\nat = \"00:00\"");
     newsletter(
@@ -1407,8 +1294,6 @@ fn a_delivered_digest_is_announced_and_listed_with_its_count_senders_and_place()
 
 #[test]
 fn a_fired_reminder_is_announced_and_listed_with_its_conversation() {
-    // A reminder nobody answered surfaces too: the frontend hears it, and
-    // reads the conversation it is about and the day it was set.
     let world = World::new();
     let (client, events) = world.frontend(ClientKind::Focus);
     let (budget, thread) = letter(
@@ -1453,9 +1338,6 @@ fn a_fired_reminder_is_announced_and_listed_with_its_conversation() {
 
 #[test]
 fn an_archived_reminder_row_leaves_and_undo_brings_it_back() {
-    // T095: a surfaced reminder is a row of Focus's inbox while its
-    // conversation is in an inbox. Archiving it takes the row away with
-    // the conversation, and undoing the archive brings both back.
     let world = World::new();
     let (client, events) = world.frontend(ClientKind::Focus);
     let (budget, _) = letter(
@@ -1501,9 +1383,6 @@ fn an_archived_reminder_row_leaves_and_undo_brings_it_back() {
     );
 }
 
-// ── The digest verbs (T137, T138, T139) ─────────────────────────────────────
-
-/// Every message a digest rule holds, and whether each is delivered yet.
 fn holds(world: &World) -> Vec<(MessageId, String, bool)> {
     world.rt.block_on(async {
         let reader = world.database().read().await.expect("a reader");
@@ -1521,7 +1400,6 @@ fn holds(world: &World) -> Vec<(MessageId, String, bool)> {
     })
 }
 
-/// The one digest row surfaced, as a Focus client reads it.
 fn the_digest(world: &World, client: &postio_client::Client) -> postio_model::DeliveryId {
     match surfaced(world, client).as_slice() {
         [postio_model::listing::Surfaced::Digest { delivery, .. }] => *delivery,
@@ -1529,7 +1407,6 @@ fn the_digest(world: &World, client: &postio_client::Client) -> postio_model::De
     }
 }
 
-/// Where the message is: its folder's role.
 fn role_of(world: &World, message: MessageId) -> postio_model::MailboxRole {
     world.rt.block_on(async {
         let reader = world.database().read().await.expect("a reader");
@@ -1549,9 +1426,6 @@ fn role_of(world: &World, message: MessageId) -> postio_model::MailboxRole {
 
 #[test]
 fn archiving_a_digest_archives_every_message_in_it_as_one_undo() {
-    // US10 scenario 4, FR-125: `⇧A` in the digest archives all its messages
-    // as one action, its row leaves the inbox, and one `Ctrl+Z` puts both
-    // back.
     let world = World::new();
     let first = newsletter(
         &world,
@@ -1621,13 +1495,8 @@ fn archiving_a_digest_archives_every_message_in_it_as_one_undo() {
     assert_eq!(the_digest(&world, &client), delivery, "and its row is back");
 }
 
-/// `[[focus.digests]]` "Newsletters" for two senders, weekly, on the day
-/// three days from now, so nothing comes due in a test.
-///
-/// The day is computed, not written down: the tests hold mail from one and
-/// two days ago, and a rule comes due at its first time after the oldest
-/// hold. A fixed "sunday" came due on any Monday or Tuesday run, and the due
-/// timer's first tick, which is immediate, then raced the test's own verbs.
+/// The day is computed: a fixed "sunday" came due on any Monday or Tuesday run, and the due timer's
+/// immediate first tick then raced the test's own verbs.
 fn two_senders() -> String {
     use chrono::Datelike as _;
     let day = (Utc::now() + chrono::TimeDelta::days(3))
@@ -1656,10 +1525,6 @@ at = \"09:00\"
 
 #[test]
 fn stopping_a_sender_releases_what_the_rule_held_for_them_and_undo_puts_it_back() {
-    // US10 scenario 5, FR-125: `D` stops digesting the sender -- the rule
-    // in config.toml loses them, what it held of theirs rejoins the inbox,
-    // and their next message goes to the inbox -- and one undo takes it all
-    // back.
     let world = World::new();
     let (_directory, path) = config_file(&two_senders());
     let news = newsletter(
@@ -1742,9 +1607,6 @@ fn stopping_a_sender_releases_what_the_rule_held_for_them_and_undo_puts_it_back(
 
 #[test]
 fn stopping_a_rule_s_only_sender_removes_the_rule_and_undo_puts_it_back_whole() {
-    // A rule made by "Digest this sender" names one sender. Stopping them
-    // leaves a rule that holds nothing, which is no rule: it goes, and undo
-    // puts it back exactly, cadence and all.
     let world = World::new();
     let (_directory, path) =
         config_file(&two_senders().replace(", \"from:editor@ledger.example\"", ""));
@@ -1784,8 +1646,6 @@ fn stopping_a_rule_s_only_sender_removes_the_rule_and_undo_puts_it_back_whole() 
     assert_eq!(holds(&world).len(), 1, "holding its mail again");
 }
 
-/// A message from `from` in the world's inbox, received now, held by
-/// nothing.
 fn newsletter_unheld(world: &World, from: &str, subject: &str) -> MessageId {
     letter(
         world,
@@ -1803,10 +1663,6 @@ fn newsletter_unheld(world: &World, from: &str, subject: &str) -> MessageId {
 
 #[test]
 fn a_rule_s_preview_counts_what_the_executor_finds_in_the_last_ninety_days() {
-    // US10 scenario 1, FR-120, FR-127: the rule dialog's preview is the
-    // rule's query run through the executor over the last 90 days -- its
-    // count, and the newest four rows -- so it means what the same query
-    // means in search.
     let world = World::new();
     world.rt.block_on(async {
         let connection = world.database().connect().await.expect("a connection");
@@ -1878,9 +1734,6 @@ fn a_rule_s_preview_counts_what_the_executor_finds_in_the_last_ninety_days() {
 
 #[test]
 fn a_preview_counts_a_message_two_of_its_queries_match_once() {
-    // T138: a rule of several queries -- "Digest these…" writes one per
-    // sender, and a query rule may overlap them -- would have caught each
-    // message once, however many of its queries match it.
     let world = World::new();
     world.rt.block_on(async {
         let connection = world.database().connect().await.expect("a connection");
@@ -1919,9 +1772,6 @@ fn a_preview_counts_a_message_two_of_its_queries_match_once() {
 
 #[test]
 fn a_rule_is_written_to_config_edited_in_its_place_and_removing_it_releases_its_mail() {
-    // FR-120, FR-126: the dialog's Create writes the rule to config.toml,
-    // an edit rewrites it where it stands, and removing it at `g d` takes
-    // it out of the file and releases what it held into the inbox.
     let world = World::new();
     let (_directory, path) = config_file("# Mine.\n");
     world
@@ -1985,9 +1835,6 @@ fn a_rule_is_written_to_config_edited_in_its_place_and_removing_it_releases_its_
 
 #[test]
 fn view_source_fetches_the_raw_message_when_asked_and_not_before() {
-    // Spec 007 US2 scenario 5, T068: `v` shows the raw message's header
-    // lines. The background lane stores no raw source (ADR 0017), so the
-    // bytes come from the server on the key press -- and only then.
     use crate::tests::{eventually, row_titled, server_with_one_message, syncing_world};
     let mock = server_with_one_message();
     let world = syncing_world(mock.clone());
@@ -2013,7 +1860,6 @@ fn view_source_fetches_the_raw_message_when_asked_and_not_before() {
         "fetched once, on the request"
     );
 
-    // Asked again, the source is on this machine and nothing is fetched.
     let again = world
         .rt
         .block_on(client.raw_source(message))
@@ -2024,9 +1870,8 @@ fn view_source_fetches_the_raw_message_when_asked_and_not_before() {
 
 #[test]
 fn view_source_of_a_message_whose_text_was_downloaded_fetches_the_raw_message() {
-    // #1984: with a `BODYSTRUCTURE` the text axis stores the words and no raw
-    // source, and a message without attachments is then `full`. `v` must
-    // still fetch the bytes, because the person asked for them.
+    // With a `BODYSTRUCTURE` the text axis stores the words and no raw source, so a message without
+    // attachments is `full`; `v` must still fetch the bytes (#1984).
     use crate::tests::{eventually, row_titled, syncing_world};
     use postio_account::backend::{BodyStructure, MockBackend, MockMailbox, MockMessage, PartNode};
     use postio_core::Event;
@@ -2070,18 +1915,13 @@ fn view_source_of_a_message_whose_text_was_downloaded_fetches_the_raw_message() 
 
 #[test]
 fn a_first_sync_that_lands_between_ticks_is_not_sorted_at_the_next_open() {
-    // Spec 007 T164, FR-118: a first sync files its backlog, which is never
-    // filtered. Focus keeps its mark on its tick, so a first sync that lands
-    // after one tick and before the next, then a quit, left its rows past
-    // the mark -- and the next open sorted them as if another app had
-    // filed them. Stopping keeps the mark current.
+    // A first sync's backlog is never filtered; stopping keeps the mark current, or the next open
+    // sorts those rows as if another app had filed them.
     let mut world = World::new();
     world.host().enable_focus(crate::FocusSetup::default());
     sorted_through(&world, world.message());
-    // The first tick, at once after the catch-up, has moved the mark.
     std::thread::sleep(std::time::Duration::from_millis(200));
 
-    // A new account's first sync, between two ticks: no filing pass sees it.
     let first_sync =
         crate::tests::filed_elsewhere(&world, "notifications@forge.example", "Build passed");
     world.relaunch();
@@ -2095,14 +1935,8 @@ fn a_first_sync_that_lands_between_ticks_is_not_sorted_at_the_next_open() {
     );
 }
 
-// ── List and query rules (spec 007 T155, US14) ──────────────────────────────
-
 #[test]
 fn a_query_rule_s_preview_lists_what_it_matches_and_the_rule_holds_the_same() {
-    // US14 scenario 2, and the story's Independent Test: a query rule's
-    // preview is the query through the executor over the recent window, in
-    // the one language search speaks (ADR 0008), and what it lists is what
-    // the rule then holds as mail is filed.
     let world = World::new();
     world.rt.block_on(async {
         let connection = world.database().connect().await.expect("a connection");
@@ -2166,9 +2000,6 @@ fn a_query_rule_s_preview_lists_what_it_matches_and_the_rule_holds_the_same() {
 
 #[test]
 fn a_rule_the_filing_pass_could_never_answer_is_refused_with_a_sentence() {
-    // FR-171: a rule holds mail as it is filed, before its body is here, so
-    // it can ask only what is known then. A query beyond that would be
-    // saved and hold nothing; it is refused, saying what a rule can use.
     let world = World::new();
     let (_directory, path) = config_file("");
     world
@@ -2202,10 +2033,6 @@ fn a_rule_the_filing_pass_could_never_answer_is_refused_with_a_sentence() {
     );
 }
 
-// ── SC-005: moving senders' settings onto the senders changes nothing ───────
-
-/// A `config.toml` holding one of each entry the move gives to a
-/// correspondent, beside the ones it leaves in the file.
 fn before_the_move() -> String {
     "[focus.filter]
 never = [\"notifications@forge.example\", \"@pinned.example\"]
@@ -2226,8 +2053,6 @@ at = \"08:00\"
     .to_owned()
 }
 
-/// A subject, the role of the folder it landed in, why Focus filed it away
-/// if it did, and the digest that holds it if one does.
 type Landed = (
     String,
     postio_model::MailboxRole,
@@ -2235,8 +2060,6 @@ type Landed = (
     Option<String>,
 );
 
-/// Where each of a fixed corpus lands under `text`: the folder's role, the
-/// reason Focus gave for filing it away, and the digest that holds it.
 fn where_the_corpus_lands(
     text: &str,
     migrating: bool,
@@ -2310,8 +2133,6 @@ fn moving_senders_settings_onto_the_senders_lands_every_message_where_it_landed(
     let (before, file_before, _) = where_the_corpus_lands(&before_the_move(), false);
     let (after, file_after, path_after) = where_the_corpus_lands(&before_the_move(), true);
 
-    // The fixture means something: some mail stays, some is filed away, some
-    // is held for a digest.
     let roles: std::collections::BTreeSet<_> = before.iter().map(|row| row.1).collect();
     assert!(roles.len() >= 2, "{before:?}");
     assert!(
@@ -2336,8 +2157,6 @@ fn moving_senders_settings_onto_the_senders_lands_every_message_where_it_landed(
         "every message lands in the same folder, for the same reason, in the same digest"
     );
 
-    // And the move happened: the file lost what a person can hold, kept the
-    // rest, and the old file is beside it.
     assert!(file_before.contains("notifications@forge.example"));
     assert!(
         !file_after.contains("notifications@forge.example"),

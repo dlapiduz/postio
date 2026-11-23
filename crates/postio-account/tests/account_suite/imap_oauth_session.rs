@@ -1,15 +1,3 @@
-//! Opening a session with a bearer token rather than a password.
-//!
-//! #193, the wiring slice of #2: a token that exists but cannot authenticate a
-//! session is not OAuth support. `ImapSession::open` builds `SaslPlainCreds`
-//! for a password account; it has to build the OAUTHBEARER or XOAUTH2
-//! credentials instead when the account says so.
-//!
-//! Against [`TestServer`] on a loopback port, so this exercises the real
-//! `io-imap` auth path and the real SASL mechanisms rather than a transcript
-//! that could only ever replay what was written down. Nothing here touches the
-//! network.
-
 use postio_account::backend::BackendError;
 use postio_account::imap::{ImapSession, RustlsConnector};
 use postio_account::secret::Password;
@@ -22,8 +10,6 @@ fn connector() -> RustlsConnector {
     RustlsConnector::new().expect("a connector")
 }
 
-/// A server that accepts a bearer token and nothing else — so a test that
-/// passes here cannot be passing because PLAIN quietly still worked.
 async fn oauth_server(mechanism: &str) -> TestServer {
     TestServer::builder()
         .capabilities(["IMAP4rev1", "SASL-IR", &format!("AUTH={mechanism}")])
@@ -59,9 +45,8 @@ async fn a_session_opens_with_an_xoauth2_token() {
         .expect("XOAUTH2 should authenticate against a server that offers it");
 }
 
-/// The token is the credential, so the wrong one has to be refused — a test
-/// that only ever presents the right token cannot tell "the mechanism works"
-/// from "the server accepts anything".
+/// A test that only presents the right token cannot tell "the mechanism works" from "the server
+/// accepts anything".
 #[tokio::test]
 async fn a_wrong_bearer_token_is_an_auth_failure() {
     let server = oauth_server("OAUTHBEARER").await;
@@ -77,10 +62,6 @@ async fn a_wrong_bearer_token_is_an_auth_failure() {
     );
 }
 
-/// The existing path, unchanged. `AuthMethod::Password` and `AppPassword` both
-/// mean PLAIN, and an account that never mentions auth gets PLAIN by default —
-/// #193's third acceptance criterion, and the one a regression would be
-/// quietest about.
 #[tokio::test]
 async fn the_password_path_is_unchanged() {
     let server = TestServer::builder()
@@ -88,7 +69,6 @@ async fn the_password_path_is_unchanged() {
         .start()
         .await;
 
-    // The default: nothing said about auth at all.
     ImapSession::open(
         &server.settings(),
         &Password::new(server.password()),
@@ -97,7 +77,6 @@ async fn the_password_path_is_unchanged() {
     .await
     .expect("an account that says nothing about auth still uses PLAIN");
 
-    // And both password-shaped methods, said explicitly.
     for method in [AuthMethod::Password, AuthMethod::AppPassword] {
         let settings = server.settings().with_auth(method);
         ImapSession::open(&settings, &Password::new(server.password()), &connector())
@@ -105,10 +84,6 @@ async fn the_password_path_is_unchanged() {
             .unwrap_or_else(|error| panic!("{method:?} should still be PLAIN: {error:?}"));
     }
 }
-
-// ---------------------------------------------------------------------------
-// A rejected token: one invalidate, one retry, then stop
-// ---------------------------------------------------------------------------
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -118,8 +93,6 @@ use postio_account::auth::TokenSource;
 use postio_account::imap::{ConnectionPool, PoolConfig, Priority};
 use postio_account::secret::{AccountKey, SecretError};
 
-/// Hands out `first` until invalidated, then `second`. Counts both calls, so
-/// a test can assert the discipline rather than the outcome alone.
 #[derive(Debug)]
 struct RotatingSource {
     first: String,
@@ -165,9 +138,8 @@ fn authenticate_attempts(server: &TestServer) -> usize {
         .count()
 }
 
-/// The discipline ADR 0006 Q5 asks for, at the layer that saw the rejection:
-/// a stale token is invalidated once, retried once with whatever the source
-/// hands back next, and that is the end of it.
+/// ADR 0006 Q5: a stale token is invalidated once and retried once with what the source hands back
+/// next.
 #[tokio::test]
 async fn a_stale_token_is_invalidated_once_and_retried_once() {
     let server = oauth_server("OAUTHBEARER").await;
@@ -202,9 +174,8 @@ async fn a_stale_token_is_invalidated_once_and_retried_once() {
     );
 }
 
-/// And it stops. A source with nothing new to offer — which is every stored
-/// password, whose `invalidate` is a documented no-op — must not be retried
-/// against, or a wrong password becomes an endless pair of round trips.
+/// A source with nothing new (every stored password) must not be retried, or a wrong password
+/// loops.
 #[tokio::test]
 async fn a_source_with_nothing_new_is_not_retried() {
     let server = oauth_server("OAUTHBEARER").await;
@@ -235,10 +206,6 @@ async fn a_source_with_nothing_new_is_not_retried() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Three sessions, one refresh — the acceptance criterion of #194
-// ---------------------------------------------------------------------------
-
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::time::Duration;
@@ -246,11 +213,6 @@ use std::time::Duration;
 use postio_account::oauth::{OwnClientTokenSource, TokenResponse};
 use postio_account::secret::MemorySecretStore;
 
-/// A token endpoint that hands back `TOKEN`, counts what it served, and is
-/// slow enough that three callers really overlap on it.
-///
-/// Written here rather than reached for: what this test is about is the
-/// *count*, and a helper that hid the counting would hide the assertion.
 fn slow_counting_token_endpoint() -> (url::Url, Arc<AtomicUsize>) {
     let served = Arc::new(AtomicUsize::new(0));
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
@@ -280,8 +242,6 @@ fn slow_counting_token_endpoint() -> (url::Url, Arc<AtomicUsize>) {
             let mut discard = vec![0u8; length];
             let _ = reader.read_exact(&mut discard);
             counter.fetch_add(1, Ordering::SeqCst);
-            // Long enough that a pool opening three sessions has all three
-            // waiting on this one request, which is the shape being tested.
             std::thread::sleep(std::time::Duration::from_millis(150));
 
             let body = format!(r#"{{"access_token":"{TOKEN}","expires_in":3600}}"#);
@@ -299,15 +259,8 @@ fn slow_counting_token_endpoint() -> (url::Url, Arc<AtomicUsize>) {
     )
 }
 
-/// Counts how many `access_token` calls are inside the wrapped source at
-/// once.
-///
-/// Without this the refresh count proves nothing: a pool that opened its
-/// three connections one after another would refresh once too, because the
-/// first refresh fills the cache the other two then read. What is being
-/// tested is what happens when they *overlap*, so the overlap has to be
-/// asserted rather than assumed — and asserted causally, not with a
-/// stopwatch, which goes vacuous exactly when the machine is slow.
+/// Counts concurrent `access_token` calls: sequential opens would also refresh once, so the overlap
+/// is asserted causally, not by stopwatch.
 #[derive(Debug)]
 struct Overlap {
     inner: Arc<dyn TokenSource>,
@@ -330,10 +283,8 @@ impl TokenSource for Overlap {
     }
 }
 
-/// ADR 0006 Q5's whole point, at the layer a person meets it: a pool bringing
-/// three connections up on an expired token refreshes once and opens three
-/// sessions, rather than sending three refreshes and — on a provider that
-/// rotates its refresh token — invalidating two of its own.
+/// ADR 0006 Q5: three connections on an expired token refresh once, since a rotating provider
+/// invalidates the others.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn three_sessions_on_an_expired_token_cost_one_refresh() {
     let server = oauth_server("OAUTHBEARER").await;

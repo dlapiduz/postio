@@ -1,24 +1,10 @@
-//! Layer 1, the guards (FR-111): mail from somebody the user deals with is
-//! never filtered, whatever a rule or a classifier says of it.
-
 use crate::facts::Facts;
 use crate::input::FiledMessage;
 
-/// Whether `filed` is guarded against filtering (FR-111): the user
-/// pinned a sender of it or restored mail from one (`[focus.filter]
-/// never`), a sender is at one of the user's own domains, the user has
-/// written to a sender, or the user took part in its conversation. Any one
-/// is enough.
-///
-/// A message the guards cannot ask about, with no sender or no
-/// conversation, is guarded too: nothing says it is safe to filter, and
-/// when in doubt mail goes to the inbox (FR-112). So is one whose facts
-/// cannot be read, since [`Facts`] answers `true` when it cannot answer.
-///
-/// The questions go cheapest first and stop at the first yes, because the
-/// filing pass pays for each on every new message: the config and the
-/// identities are in memory, `correspondents` is a seek, and the
-/// conversation is an `EXISTS` (research R8).
+/// Any one guard is enough. A message with no sender or no conversation, or whose facts cannot be
+/// read (`Facts` answers `true`), is guarded too: when in doubt mail goes to the inbox.
+/// Cheapest question first, stopping at the first yes: the filing pass pays for each on every
+/// message.
 pub(crate) fn guarded(filed: &FiledMessage<'_>, facts: &dyn Facts) -> bool {
     let Some(thread) = filed.thread else {
         return true;
@@ -40,8 +26,6 @@ mod tests {
 
     use super::*;
 
-    /// What the store and the config know, as lists; and which questions
-    /// were asked, in order.
     #[derive(Default)]
     struct Known {
         wrote_to: Vec<&'static str>,
@@ -78,8 +62,6 @@ mod tests {
         }
     }
 
-    /// A store that cannot answer: its reads fail, and the contract says a
-    /// failed read answers `true` (`Facts`).
     struct Unreadable;
 
     impl Facts for Unreadable {
@@ -99,8 +81,6 @@ mod tests {
 
     const THREAD: ThreadId = ThreadId::new(7);
 
-    /// `message` as filing hands it over: into the inbox, in the
-    /// conversation the row says.
     fn filed(message: &Message) -> FiledMessage<'_> {
         FiledMessage {
             message,
@@ -109,7 +89,6 @@ mod tests {
         }
     }
 
-    /// Mail from `from`, in thread 7.
     fn from(addresses: &[&str]) -> Message {
         let mut message = Message::new(AccountId::new(1), MailboxId::new(1), Utc::now());
         message.from = addresses
@@ -123,7 +102,6 @@ mod tests {
 
     #[test]
     fn each_guard_alone_keeps_mail_in_the_inbox() {
-        // FR-111, and US9 scenarios 2 and 3: one guard is enough.
         let rows: [(&str, Known, bool); 6] = [
             ("nothing is known of the sender", Known::default(), false),
             (
@@ -193,15 +171,11 @@ mod tests {
 
     #[test]
     fn a_store_that_cannot_answer_keeps_mail_in_the_inbox() {
-        // Facts says a failed read answers true: every question is a reason
-        // not to act, so when in doubt mail goes to the inbox (FR-112).
         assert!(guarded(&filed(&from(&["deals@shop.example"])), &Unreadable));
     }
 
     #[test]
     fn a_message_the_guards_cannot_ask_about_is_guarded() {
-        // No sender to ask after, or no conversation yet: the guards cannot
-        // say it is safe to filter, so it is not filtered.
         let anonymous = from(&[]);
         let unthreaded = from(&["deals@shop.example"]);
 
@@ -217,10 +191,8 @@ mod tests {
 
     #[test]
     fn the_conversation_is_the_one_filing_says_it_joined() {
-        // Sync threads an arrival after it is stored, so the row it hands
-        // over has no `thread_id` of its own; the conversation comes with
-        // the filed message (T102). A guard that read the row instead would
-        // guard every arrival, and nothing would ever be filtered.
+        // Sync threads an arrival after it is stored, so the row has no `thread_id`; a guard that
+        // read the row would guard every arrival and nothing would be filtered.
         let mut arrival = from(&["deals@shop.example"]);
         arrival.thread_id = None;
 
@@ -245,9 +217,6 @@ mod tests {
 
     #[test]
     fn the_guards_ask_the_cheap_questions_first_and_stop_at_a_yes() {
-        // The filing pass pays for every question on every new message: the
-        // config and the identities are in memory, `correspondents` is a
-        // seek, and the conversation is an EXISTS (research R8).
         let pinned = Known {
             never: vec!["deals@shop.example"],
             ..Known::default()

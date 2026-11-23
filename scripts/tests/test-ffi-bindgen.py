@@ -38,8 +38,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -47,11 +45,6 @@ import patience  # noqa: E402  -- enabled by the sys.path line above
 SCRIPTS = Path(__file__).resolve().parent.parent
 REPO_ROOT = SCRIPTS.parent
 BINDGEN = SCRIPTS / "ffi-bindgen.sh"
-# Sandboxes go under `target/`, which git ignores: inside the worktree because
-# the shared-tree guard only lifts its refusals for worktree paths, and not in
-# its root because a killed run leaves the sandbox behind and `git add -A` in a
-# worktree will commit it. `scripts/checks/check-test-sandboxes.py` says what
-# that cost (#1225).
 SANDBOXES = REPO_ROOT / "target" / "tmp"
 SANDBOXES.mkdir(parents=True, exist_ok=True)
 
@@ -73,10 +66,6 @@ def main() -> int:
         print("- cannot continue without the script", file=sys.stderr)
         return 1
 
-    # A private out-dir under the repo, so nothing lands in a place a later
-    # `git add -A` would pick up, and RUSTUP_TOOLCHAIN cleared for the same
-    # reason `issue-land.sh` clears it: this workstation exports one that beats
-    # rust-toolchain.toml.
     environment = dict(os.environ)
     environment.pop("RUSTUP_TOOLCHAIN", None)
 
@@ -115,47 +104,27 @@ def main() -> int:
 
         text = swift.read_text(encoding="utf-8")
 
-        # What Rust exported has to appear in Swift with the type it exported.
-        # `String` rather than a buffer type is the marshalling working.
         case("the Swift declares the exported function",
              "public func probe() -> String" in text,
              "no `public func probe() -> String` in the generated Swift; the "
              "export did not cross, or its signature changed without this "
              "test being updated")
 
-        # The reason the generator is built from this workspace rather than
-        # installed: uniffi writes a per-function checksum into the Swift and
-        # compares it against the library at startup. A generator of a
-        # different version produces a Swift that fatalErrors on launch.
+        # The generator is built from this workspace because uniffi writes a per-function checksum
+        # into the Swift and compares it at startup; another version fatalErrors on launch.
         case("the Swift carries the API checksum guard",
              "uniffi_postio_ffi_checksum_func_probe()" in text
              and "UniFFI API checksum mismatch" in text,
              "no checksum guard, so a version-skewed generator would produce "
              "Swift that fails at runtime instead of at build time")
 
-        # The reason this boundary is UniFFI and not a hand-written C ABI:
-        # the drain has to arrive in Swift as `async`, so the frontend can
-        # write `while let e = await session.nextEvent()` on the main actor.
-        # A synchronous signature here would mean a callback, a continuation
-        # and manual cancellation on the far side -- the machinery that
-        # produces "the UI froze". ADR 0019 Q3.
         case("the event drain crosses as Swift async",
              "func nextEvent() async" in text,
              "nextEvent() is not async in the generated Swift; the drain would "
              "have to be hand-wrapped on the Swift side")
 
-        # The typed errors have to be reachable from outside the generated
-        # module, or the frontend can catch them only as `Error` and is back
-        # to matching on message text -- which `SessionError`'s own doc
-        # comment says is the thing it exists to prevent, because "locked
-        # keyring, retry" and "no account, onboard" are different answers.
-        #
-        # Visibility rather than existence, and it is the visibility that
-        # moves: uniffi 0.32 emits `public` on its own line above the
-        # declaration where 0.29 put it inline, so a reader -- or a check --
-        # looking for `public enum SessionError` on one line concludes the
-        # type was demoted to internal when it was not. Asserted the way the
-        # compiler sees it, on the token and not the line.
+        # Visibility, asserted on the token not the line: uniffi 0.32 puts `public` on its own line
+        # above the declaration.
         for error in ("SessionError", "SettingsError"):
             declaration = re.search(
                 r"\bpublic\s+enum\s+" + error + r"\b", text
@@ -165,7 +134,6 @@ def main() -> int:
                  f"{error} is not declared public, so Swift outside this "
                  f"module cannot name it in a `catch`")
 
-        # The module map is what makes `import` work from Swift at all.
         case("the module map names a module Swift can import",
              "module postio_ffiFFI" in modulemap.read_text(encoding="utf-8"),
              "the module map does not declare postio_ffiFFI")

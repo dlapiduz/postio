@@ -1,24 +1,5 @@
-//! SC-013's gate (`specs/007-postio-focus` T116, research R10): the labelled
-//! needs-action dataset, through the classifier's real body stage.
-//!
-//! Every item becomes a message addressed the way the item says -- to the
-//! user, copied to them, through a list, from an automated sender -- with its
-//! text cut down to the newest message's own words. It is then handed to
-//! [`postio_classify::at_body`] exactly as the body stage hands a message,
-//! and what comes back is compared with the item's label.
-//!
-//! **The gate is precision.** At least 9 in 10 of the markers made must be
-//! right: the kind, and the sentence quoted. A detector that marks nothing
-//! has measured nothing, and fails. Recall is reported, not gated (SC-013).
-//!
-//! The dataset and the rules have one author, so read the numbers as a best
-//! case: real mail will do worse (spike S4, research R10). Two numbers depend
-//! on more than the detector: the own text is cut by `postio_body::own_text`,
-//! as the body stage cuts it (below), and each item's addressing is modelled
-//! by the headers [`message_for`] gives it.
-//!
-//! `cargo test -p postio-classify --test needs_action -- --nocapture` prints
-//! the report.
+//! The gate is precision: at least 9 in 10 markers made must be right, kind and quoted sentence.
+//! A detector that marks nothing fails; recall is reported, not gated.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -30,8 +11,6 @@ use postio_model::{AccountId, EmailAddress, Identity, MailboxId, MailboxRole, Me
 use serde::Deserialize;
 
 const DATASET: &str = include_str!("../data/needs_action.toml");
-
-// --- The dataset ------------------------------------------------------------------
 
 #[derive(Debug, Deserialize)]
 struct Dataset {
@@ -59,8 +38,6 @@ struct Item {
     also: Vec<Also>,
 }
 
-/// Another genuine ask in the same message: not the marker R10's precedence
-/// picks, but not a wrong one either.
 #[derive(Debug, Deserialize)]
 struct Also {
     label: String,
@@ -75,8 +52,6 @@ fn date(text: &str) -> NaiveDate {
     NaiveDate::parse_from_str(text, "%Y-%m-%d").expect("a YYYY-MM-DD date")
 }
 
-/// Whitespace runs collapsed and the sentence's closing `.`/`!` dropped: a
-/// quote is compared by its words, not by how the text was wrapped.
 fn normalized(text: &str) -> String {
     text.split_whitespace()
         .collect::<Vec<_>>()
@@ -84,8 +59,6 @@ fn normalized(text: &str) -> String {
         .trim_end_matches(['.', '!'])
         .to_owned()
 }
-
-// --- The dataset's own invariants ----------------------------------------------------
 
 #[test]
 fn the_dataset_is_big_enough_and_covers_every_case_it_promises() {
@@ -203,15 +176,6 @@ fn every_address_in_the_dataset_is_reserved() {
     }
 }
 
-// --- The own text -------------------------------------------------------------
-//
-// The detector reads the newest message's own words: postio-body's
-// extraction, the one the body stage uses (T115, T117), with quoted history
-// and the signature out, by the same boundaries the reader folds. The gate
-// measured with the spike's stand-in for it until the body stage existed;
-// this is the cutter the detector meets in production.
-
-/// `text`'s own words, as the body stage cuts them from a plain-text body.
 fn own_text(text: &str) -> String {
     postio_body::own_text(&postio_model::MessageBody {
         text: Some(text.to_owned()),
@@ -219,9 +183,6 @@ fn own_text(text: &str) -> String {
     })
 }
 
-// --- Each item as a message ------------------------------------------------------
-
-/// No guard applies: they decide filtering, not markers.
 struct NoGuards;
 
 impl Facts for NoGuards {
@@ -239,7 +200,6 @@ impl Facts for NoGuards {
     }
 }
 
-/// What the body stage is handed in production.
 struct BuiltIn;
 
 impl Rules for BuiltIn {
@@ -248,18 +208,14 @@ impl Rules for BuiltIn {
     }
 }
 
-/// The item as mail, with the headers its addressing arrives with.
 struct Addressed {
     message: Message,
 }
 
-/// Who writes to the user in the dataset: one invented correspondent, since
-/// an item's text, not its sender, is what it labels.
 fn correspondent() -> EmailAddress {
     EmailAddress::new(Some("Correspondent"), "correspondent@example.org")
 }
 
-/// The item as mail, with the headers its addressing arrives with.
 fn message_for(item: &Item, user: &EmailAddress, sent: DateTime<Utc>) -> Addressed {
     let mut message = Message::new(AccountId::new(1), MailboxId::new(1), sent);
     message.date = Some(sent);
@@ -280,7 +236,6 @@ fn message_for(item: &Item, user: &EmailAddress, sent: DateTime<Utc>) -> Address
         "list" => {
             message.to = vec![EmailAddress::new(None::<&str>, "team@lists.example.org")];
             message.list_id = Some("team.lists.example.org".to_owned());
-            // `Precedence: list`, and the list's own unsubscribe link.
             (true, 2)
         }
         "automated" => {
@@ -289,7 +244,6 @@ fn message_for(item: &Item, user: &EmailAddress, sent: DateTime<Utc>) -> Address
                 "notifications@service.example",
             )];
             message.to = vec![user.clone()];
-            // `Auto-Submitted: auto-generated`.
             (false, 8)
         }
         other => panic!("{}: addressing {other}", item.id),
@@ -310,8 +264,8 @@ fn identity(data: &Dataset) -> Identity {
     identity
 }
 
-/// Noon on the dataset's day, in this machine's zone: the zone the detector
-/// reads "by Friday" in, so the due day compares in it too.
+/// In this machine's zone, which the detector reads "by Friday" in, so the due day compares in it
+/// too.
 fn sent_at(data: &Dataset) -> DateTime<Utc> {
     let noon = date(&data.sent).and_hms_opt(12, 0, 0).expect("noon");
     Local
@@ -321,8 +275,6 @@ fn sent_at(data: &Dataset) -> DateTime<Utc> {
         .with_timezone(&Utc)
 }
 
-/// What the classifier marked on one item: its kind, the sentence it quotes
-/// (cut from the own text by the marker's span), and its due day.
 struct Marked {
     kind: &'static str,
     quote: String,
@@ -371,9 +323,6 @@ fn classify(item: &Item, data: &Dataset) -> Option<Marked> {
     })
 }
 
-// --- The measurement ---------------------------------------------------------------
-
-/// Markers made and right, for one kind or one case.
 #[derive(Debug, Default)]
 struct Tally {
     items: usize,
@@ -386,7 +335,6 @@ struct Tally {
 struct Score {
     predicted: usize,
     right: usize,
-    /// Right, or one of the item's other genuine asks.
     right_or_also: usize,
     labelled: usize,
     due_expected: usize,
@@ -397,8 +345,7 @@ struct Score {
 }
 
 impl Score {
-    /// Right markers over markers made. With none made it is 0, not
-    /// undefined: a detector that says nothing has not been measured.
+    /// With none made it is 0, not undefined: a detector that says nothing has not been measured.
     fn precision(&self) -> f64 {
         self.right as f64 / self.predicted.max(1) as f64
     }

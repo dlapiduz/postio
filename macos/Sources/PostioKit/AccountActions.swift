@@ -1,44 +1,27 @@
 import Foundation
 import PostioFFI
 
-/// The three things the settings window can do to an account (#1277).
-///
-/// A model rather than three closures in a view, because two of them block —
-/// a connection test waits on a server, a re-index walks every message — and
-/// because the third is destructive and has to be *asked about* rather than
-/// done. What a view keeps is which one is running and what it said.
 @MainActor
 @Observable
 public final class AccountActions {
-    /// Which action is running, if any, so a pane can disable the rest.
     public enum Running: Equatable {
         case testing, reindexing, removing
     }
 
     public private(set) var running: Running?
-    /// What the last action said. Cleared when another starts.
     public private(set) var outcome: String?
-    /// Whether that outcome was a failure, for how it is drawn.
     public private(set) var failed = false
-    /// The account a removal is waiting to be confirmed for.
     public private(set) var confirmingRemoval: AccountFfi?
-    /// What the last connection test found wrong with an account's
-    /// credential, and which account that was.
-    ///
-    /// Keyed by account because one model serves every row: a finding that
-    /// followed the selection would tell the next account it has no
-    /// password. Kept across other actions, unlike the outcome, because it
-    /// stays true until a repair says otherwise.
+    /// Keyed by account because one model serves every row: a finding that followed the selection
+    /// would tell the next account it has no password. Kept across other actions because it stays
+    /// true until a repair says otherwise.
     private var finding: (account: Int64, trouble: CredentialTrouble)?
 
-    /// What the last test found wrong with `account`'s credential, if it was
-    /// tested and something was.
     public func trouble(for account: Int64) -> CredentialTrouble? {
         guard let finding, finding.account == account else { return nil }
         return finding.trouble
     }
 
-    /// Record what a connection test of `account` said.
     func found(_ report: ConnectionReportFfi, for account: Int64) {
         let trouble: CredentialTrouble? =
             report.missingCredential ? .missing
@@ -51,50 +34,35 @@ public final class AccountActions {
         }
     }
 
-    /// `account`'s credential was just put right, so stop saying otherwise.
     public func credentialRepaired(_ account: Int64) {
         if finding?.account == account { finding = nil }
     }
 
-    /// How far a re-index has got: messages done, and how many there are.
-    ///
-    /// A pass over five thousand messages takes long enough that a button
-    /// with no progress is indistinguishable from a button that does nothing.
     public private(set) var progress: (done: UInt32, total: UInt32)?
 
-    /// What the button says while it works — `Re-indexing… 1,203 of 4,985`.
     public var progressLabel: String? {
         guard let progress, progress.total > 0 else { return nil }
         return "\(Int(progress.done).formatted(.number)) of "
             + "\(Int(progress.total).formatted(.number))"
     }
 
-    /// A report from the boundary. Ignored unless a re-index is running, so
-    /// a late event cannot make an idle pane look busy.
     public func reindexProgressed(done: UInt32, total: UInt32) {
         guard running == .reindexing else { return }
         progress = (done, total)
     }
 
-    /// What to run when an account has just been added.
-    ///
-    /// Set by the application, which owns the session and the accounts list.
-    /// The sheet writes the row through the boundary and then has to say so:
-    /// the row alone changes nothing, because the engines were started when
-    /// the session opened and a new account has none (#1299).
+    /// The row alone changes nothing: engines start when the session opens and a new account has
+    /// none (#1299).
     public var accountAdded: (() -> Void)?
 
-    /// An account was added. Tell whoever is listening.
     public func added() {
         accountAdded?()
     }
 
     public init() {}
 
-    /// Whether anything is in flight.
     public var isBusy: Bool { running != nil }
 
-    /// Test the connection, off the main actor.
     public func test(_ account: AccountFfi, through session: PostioSession?) async {
         guard let session, running == nil else { return }
         begin(.testing)
@@ -104,7 +72,6 @@ public final class AccountActions {
         finish(report.message, failed: !report.reachable)
     }
 
-    /// Rebuild the index, off the main actor.
     public func reindex(_ account: AccountFfi, through session: PostioSession?) async {
         guard let session, running == nil else { return }
         begin(.reindexing)
@@ -116,21 +83,14 @@ public final class AccountActions {
         )
     }
 
-    /// Ask before removing: it takes the account's mail with it.
     public func askToRemove(_ account: AccountFfi) {
         confirmingRemoval = account
     }
 
-    /// Changed your mind.
     public func cancelRemoval() {
         confirmingRemoval = nil
     }
 
-    /// What the confirmation says, naming what goes.
-    ///
-    /// The address, and the fact that the mail goes with it. A confirmation
-    /// that says "are you sure?" and nothing else is a dialog people learn to
-    /// dismiss without reading.
     public func removalWarning(for account: AccountFfi) -> String {
         """
         Remove \(account.address)? Its mail is removed from this Mac and its \
@@ -139,7 +99,6 @@ public final class AccountActions {
         """
     }
 
-    /// Do it, having asked.
     public func confirmRemoval(through session: PostioSession?) async {
         guard let account = confirmingRemoval, let session, running == nil else { return }
         confirmingRemoval = nil
@@ -149,8 +108,6 @@ public final class AccountActions {
         finish(complaint ?? "\(account.address) was removed.", failed: complaint != nil)
     }
 
-    /// Rename an account. Synchronous: it is one row, and no server is
-    /// consulted.
     public func rename(
         _ account: AccountFfi,
         to name: String,
@@ -162,19 +119,13 @@ public final class AccountActions {
         failed = complaint != nil
     }
 
-    /// Report an outcome that did not come from one of the actions here.
-    ///
-    /// The switches in the pane write through the boundary directly — they
-    /// are one column and no server is consulted — but their refusals belong
-    /// in the same place every other outcome goes, or a switch that would not
-    /// flip would be silent.
+    /// The pane's switches write directly, but their refusals belong in the same place as every
+    /// other outcome.
     public func said(_ outcome: String, failed: Bool) {
         self.outcome = outcome
         self.failed = failed
     }
 
-    /// Pretend a re-index started, so the reporting can be asserted without
-    /// a session and a store behind it.
     #if DEBUG
         func beginReindexForTesting() { begin(.reindexing) }
     #endif

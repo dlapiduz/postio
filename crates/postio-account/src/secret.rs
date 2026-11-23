@@ -1,20 +1,6 @@
-//! Credential storage for Postio accounts.
-//!
-//! Postio keeps account passwords in the OS keyring (Secret Service, or the
-//! Flatpak keyring portal when sandboxed) and nowhere else. `config.toml`
-//! records *where* a password lives — never the password. There is
-//! deliberately no plaintext option: a config file at mode 0644 holding an
-//! app-specific password is exactly the failure this module exists to prevent.
-//!
-//! Two sources are supported, both behind [`SecretStore`]:
-//!
-//! * [`KeyringSecretStore`] — the default, backed by `oo7`.
-//! * [`CommandSecretStore`] — the escape hatch for people who already keep
-//!   their secrets in `pass`, `gopass`, `age`, a hardware token wrapper, and
-//!   so on. Read-only by construction.
-//!
-//! [`MemorySecretStore`] is the in-memory double the test suite runs on so
-//! that no test needs a live Secret Service session.
+//! Passwords live in the OS keyring (Secret Service, or the Flatpak portal) and nowhere else;
+//! `config.toml` records where, never the password, and there is no plaintext option.
+//! `MemorySecretStore` is the test double.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -26,21 +12,11 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
-/// Attribute value identifying items this application owns.
 const APPLICATION: &str = "postio";
 
-/// Freedesktop schema attribute, so `seahorse` and friends group our items.
 const SCHEMA: &str = "org.postio.Account";
 
-/// What to tell a user whose keyring will not open. Every locked-keyring
-/// error ends with this; it is the only path forward, because Postio has no
-/// plaintext fallback to offer.
-/// What to tell someone whose keyring will not open.
-///
-/// Names the application they would actually go looking for, which is a
-/// different one per platform — "Passwords and Keys" means nothing on a Mac,
-/// and pointing someone at software they do not have is worse than saying
-/// nothing.
+/// Names the application they would actually look for, which differs per platform.
 #[cfg(not(target_os = "macos"))]
 const UNLOCK_HINT: &str = "Unlock it (log in again, or open Passwords and Keys \
                            and unlock the Login keyring) and retry.";
@@ -48,72 +24,37 @@ const UNLOCK_HINT: &str = "Unlock it (log in again, or open Passwords and Keys \
 const UNLOCK_HINT: &str = "Unlock it (log in again, or open Keychain Access \
                            and unlock the login keychain) and retry.";
 
-// ---------------------------------------------------------------------------
-// Password
-// ---------------------------------------------------------------------------
-
-/// A password held in memory.
-///
-/// Zeroized on drop, redacted in `Debug` and `Display`, and — importantly —
-/// neither `Serialize` nor `Deserialize`, so it cannot end up in a config
-/// file or a log line by accident.
-///
-/// `Clone` is safe here and deliberate: each clone owns its own
-/// `Zeroizing<String>` and is overwritten independently when it drops, so
-/// copying a password does not create an unprotected one. What is *not* safe
-/// is copying the string out — see [`expose`](Self::expose).
-///
-/// `PartialEq` compares byte by byte and is **not** constant time. That is
-/// fine for what this type does: Postio compares a password against nothing,
-/// least of all against anything an attacker supplies. Do not reach for it to
-/// verify a credential.
+/// Zeroized on drop, redacted in `Debug` and `Display`, and neither `Serialize` nor `Deserialize`,
+/// so it cannot reach a config file or log by accident. `Clone` is safe: each clone zeroizes
+/// independently.
+/// `PartialEq` is not constant time; never use it to verify a credential.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Password(Zeroizing<String>);
 
 impl Password {
-    /// Wraps a password.
     pub fn new(value: impl Into<String>) -> Self {
         Self(Zeroizing::new(value.into()))
     }
 
-    /// Borrows the secret. Every call site should be short-lived and obvious
-    /// in review — that is the point of the explicit name.
+    /// Every call site should be short-lived and obvious in review.
     pub fn expose(&self) -> &str {
         &self.0
     }
 
-    /// True when the stored password is empty, which no backend should ever
-    /// return for a configured account.
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 }
 
-/// Read a secret buffer as text, without copying it.
-///
-/// Takes `Zeroizing` rather than `&[u8]` on purpose: it is the only route
-/// from bytes to a [`Password`] in this module, so a caller holding a bare
-/// buffer has to wrap it before it can get anywhere, and the wrapping is
-/// what overwrites the secret when the buffer drops. The compiler enforces
-/// that; nothing else could.
-///
-/// It *borrows* rather than converting for the second half of the same
-/// reason. `String::from_utf8` would move the buffer into a `String` and
-/// hand back a plain, un-zeroized allocation on success — and on failure
-/// drop the bytes it was given without overwriting them. That failure path
-/// is where the secret used to escape without ever becoming a `Password`,
-/// so nothing downstream protected it either. See #144.
+/// Takes `Zeroizing` and borrows: `String::from_utf8` would hand back an un-zeroized allocation,
+/// and on failure drop the bytes without overwriting them, the path the secret used to escape on
+/// (#144).
 fn secret_text(bytes: &Zeroizing<Vec<u8>>) -> Option<&str> {
     std::str::from_utf8(bytes).ok()
 }
 
-/// The first line of `text`, without its line ending.
-///
-/// `pass show` and friends print the password on line one and metadata
-/// after it, and every one of them ends the line. A password may contain
-/// spaces, so nothing but the line ending is trimmed.
-///
-/// Borrowed, so this adds no allocation to zeroize.
+/// `pass show` prints the password on line one and metadata after it. A password may contain
+/// spaces, so only the line ending is trimmed.
 fn first_line(text: &str) -> &str {
     text.split('\n')
         .next()
@@ -133,37 +74,27 @@ impl fmt::Display for Password {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Account key
-// ---------------------------------------------------------------------------
-
-/// Identifies the credential belonging to one account.
-///
-/// Safe to log: it holds the account address, never the secret.
+/// Safe to log: holds the address, never the secret.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct AccountKey {
     account: String,
 }
 
 impl AccountKey {
-    /// Keys a credential by the account's address.
     pub fn new(account: impl Into<String>) -> Self {
         Self {
             account: account.into(),
         }
     }
 
-    /// The account this credential belongs to.
     pub fn account(&self) -> &str {
         &self.account
     }
 
-    /// The label shown by keyring browsers such as `seahorse`.
     pub fn label(&self) -> String {
         format!("Postio ({})", self.account)
     }
 
-    /// Secret Service lookup attributes for this account.
     pub fn attributes(&self) -> [(&'static str, &str); 3] {
         [
             ("application", APPLICATION),
@@ -179,140 +110,64 @@ impl fmt::Display for AccountKey {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Errors
-// ---------------------------------------------------------------------------
-
-/// Everything that can go wrong reaching a credential.
-///
-/// No variant carries a password, so these are safe to log verbatim.
-///
-/// `Clone` because a failure is *shared*: one refresh attempt answers every
-/// caller that was waiting on it (ADR 0006 Q5, #194), and a revoked grant
-/// that each waiter re-attempted would be the stampede that discipline
-/// exists to prevent. Every field is already an owned `String` or a number,
-/// so cloning copies a sentence and nothing else.
+/// No variant carries a password, so these are safe to log verbatim. `Clone` because one refresh
+/// attempt answers every waiting caller (ADR 0006 Q5, #194).
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum SecretError {
-    /// The keyring exists but will not open. Recoverable by the user, so the
-    /// message says how.
     #[error(
         "the {keyring} keyring is locked, so Postio cannot read the password for {account}. {UNLOCK_HINT}"
     )]
-    Locked {
-        /// Which keyring refused: usually `login`.
-        keyring: String,
-        /// The account whose password was wanted.
-        account: String,
-    },
+    Locked { keyring: String, account: String },
 
-    /// The refresh grant itself has passed the lifetime its provider states.
-    ///
-    /// Distinct from [`Locked`](Self::Locked), which a user fixes by
-    /// unlocking, and from [`NotFound`](Self::NotFound), which means nothing
-    /// was ever stored. This one is recoverable only by signing in again, so
-    /// it is the one failure here that counts as an authentication failure
-    /// and routes the account to "sign in again" (#954).
+    /// Recoverable only by signing in again, so it counts as an authentication failure and routes
+    /// the account to "sign in again" (#954).
     #[error("the sign-in for {account} has expired; sign in again to keep this account syncing")]
-    GrantExpired {
-        /// The account whose grant has to be renewed.
-        account: String,
-    },
+    GrantExpired { account: String },
 
-    /// No credential is stored for this account yet.
     #[error("no password is stored for {account}; add one and Postio will keep it in the keyring")]
-    NotFound {
-        /// The account with no stored credential.
-        account: String,
-    },
+    NotFound { account: String },
 
-    /// The `command` source failed, or was asked to do something it cannot.
     #[error("secret command {command} failed: {reason}")]
-    Command {
-        /// The command line, as configured.
-        command: String,
-        /// Why it failed — an exit status, its stderr, or a usage error.
-        reason: String,
-    },
+    Command { command: String, reason: String },
 
-    /// The keyring backend itself errored.
     #[error("keyring error while handling the password for {account}: {reason}")]
-    Backend {
-        /// The account involved.
-        account: String,
-        /// The backend's own message.
-        reason: String,
-    },
+    Backend { account: String, reason: String },
 
-    /// The keyring never answered within [`KEYRING_TIMEOUT`]. Under Flatpak
-    /// this happens when `org.freedesktop.portal.Secret`'s `RetrieveSecret`
-    /// request never gets a `Response` signal — no error, no prompt, just
-    /// silence — so without this bound a credential read hangs the caller
-    /// forever instead of failing.
+    /// Under Flatpak `RetrieveSecret` can never get a `Response` signal; without this bound a
+    /// credential read hangs forever.
     #[error(
         "the keyring did not respond about {account} within {seconds}s; it may be unavailable or unresponsive"
     )]
-    Timeout {
-        /// The account whose password was wanted.
-        account: String,
-        /// How long Postio waited before giving up.
-        seconds: u64,
-    },
+    Timeout { account: String, seconds: u64 },
 }
 
-// ---------------------------------------------------------------------------
-// The store trait
-// ---------------------------------------------------------------------------
-
-/// Where an account's password lives.
-///
-/// Abstracted so the whole test suite can run without a Secret Service
-/// session; see [`MemorySecretStore`].
 #[async_trait]
 pub trait SecretStore: Send + Sync + fmt::Debug {
-    /// Short name of this backend, for diagnostics and config round-trips.
     fn describe(&self) -> &'static str;
 
-    /// Stores (or replaces) the password for `key`.
     async fn store(&self, key: &AccountKey, password: &Password) -> Result<(), SecretError>;
 
-    /// Reads the password for `key`.
     async fn retrieve(&self, key: &AccountKey) -> Result<Password, SecretError>;
 
     /// Removes the password for `key`. Removing an absent password succeeds.
     async fn delete(&self, key: &AccountKey) -> Result<(), SecretError>;
 }
 
-// ---------------------------------------------------------------------------
-// Config-facing source
-// ---------------------------------------------------------------------------
-
-/// The `config.toml` representation of where a password lives.
-///
-/// There is no `raw` variant, and there never will be. Deserialization goes
-/// through [`SecretSourceRepr`] rather than serde's internally-tagged enum
-/// derive specifically so that an unknown key is a hard error: serde's
-/// `deny_unknown_fields` is silently ineffective on internally-tagged enums
-/// (the content is buffered and unit variants ignore whatever is left over),
-/// which would let a `raw = "..."` sit in `config.toml` looking honoured
-/// while Postio quietly used the keyring — or worse, let a user believe
-/// Postio was reading it. A stray plaintext key must stop the load and say
-/// so.
+/// No `raw` variant, ever. Deserialization goes through `SecretSourceRepr` because
+/// `deny_unknown_fields` is silently ineffective on internally-tagged enums, which would let a `raw
+/// = "..."` sit in `config.toml` looking honoured. A stray plaintext key must stop the load.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum SecretSource {
-    /// The OS keyring. The default, and the only writable source.
     #[default]
     Keyring,
-    /// Run a program and read the password from its standard output.
     Command {
         /// Program and arguments, e.g. `["pass", "show", "mail/icloud"]`.
         argv: Vec<String>,
     },
 }
 
-/// Wire shape of [`SecretSource`]. A plain struct, so `deny_unknown_fields`
-/// actually bites.
+/// A plain struct, so `deny_unknown_fields` bites.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 struct SecretSourceRepr {
@@ -321,8 +176,6 @@ struct SecretSourceRepr {
     argv: Option<Vec<String>>,
 }
 
-/// The `type` discriminant. Anything else — `raw`, `plain`, `cleartext` — is
-/// an unknown variant and therefore an error.
 #[derive(Deserialize)]
 #[serde(rename_all = "kebab-case")]
 enum SecretSourceKind {
@@ -356,7 +209,6 @@ impl<'de> Deserialize<'de> for SecretSource {
 }
 
 impl SecretSource {
-    /// Builds the store this source describes.
     pub fn build(&self) -> Arc<dyn SecretStore> {
         match self {
             Self::Keyring => platform_keyring(),
@@ -365,17 +217,8 @@ impl SecretSource {
     }
 }
 
-/// The OS keyring this host actually has.
-///
-/// `SecretSource::Keyring` in `config.toml` means "wherever this system keeps
-/// secrets", not "the Secret Service" — so the choice belongs here rather than
-/// at each call site, where it would be four chances to get it wrong and four
-/// places to change when a third platform appears.
-///
-/// A `cfg` rather than a parameter, unlike the path resolution in
-/// `postio-session`: there the *answer* differs per platform and both answers
-/// are worth asserting from either host, but here the *type* differs and there
-/// is nothing for a Linux machine to check about `SecItem`.
+/// `SecretSource::Keyring` means "wherever this system keeps secrets", so the choice is made here,
+/// by `cfg` since the type differs per platform.
 pub fn platform_keyring() -> Arc<dyn SecretStore> {
     #[cfg(target_os = "macos")]
     {
@@ -387,19 +230,9 @@ pub fn platform_keyring() -> Arc<dyn SecretStore> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Keyring store
-// ---------------------------------------------------------------------------
-
-/// How long a single keyring round trip may take before Postio gives up.
-///
-/// Generous enough to tolerate a cold D-Bus activation of the keyring daemon,
-/// short enough that a hung Secret portal is a visible error in seconds
-/// rather than an indefinitely frozen account setup.
+/// Tolerates a cold D-Bus activation but makes a hung Secret portal a visible error in seconds.
 const KEYRING_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Bounds `fut` to [`KEYRING_TIMEOUT`], turning "never resolves" into
-/// [`SecretError::Timeout`] instead of hanging the caller forever.
 async fn with_timeout<T>(
     key: &AccountKey,
     fut: impl Future<Output = Result<T, SecretError>>,
@@ -414,72 +247,36 @@ async fn with_timeout<T>(
         })
 }
 
-/// The Keychain-backed store, on macOS.
-///
-/// A fourth implementation of the same trait rather than a branch inside the
-/// third: which keyring an installation uses is a choice about *that*
-/// installation, and the seam that already carries `command` and `memory`
-/// carries this too (ADR 0019).
+/// A separate implementation of the trait, not a branch: which keyring is used is a choice about
+/// the installation (ADR 0019).
 #[cfg(target_os = "macos")]
 pub mod keychain;
 #[cfg(target_os = "macos")]
 pub use keychain::KeychainSecretStore;
 
-/// Secret Service / Flatpak portal backed store. The default.
 #[derive(Clone, Debug, Default)]
 pub struct KeyringSecretStore {
     _private: (),
 }
 
 impl KeyringSecretStore {
-    /// Builds a store against the session's keyring.
-    ///
-    /// The connection is opened lazily on first use so that constructing an
-    /// account never blocks on D-Bus.
+    /// Opened lazily so constructing an account never blocks on D-Bus.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// The Secret Service over D-Bus, sandbox or no sandbox.
-    ///
-    /// Exactly what `oo7::Keyring::new()` does for an *unsandboxed* process,
-    /// lifted out so a sandboxed one can ask for it too. [`Self::keyring`]
-    /// says why it has to.
-    /// Boxed because `oo7::dbus::Error` is large and this one is only logged.
+    /// What `oo7::Keyring::new()` does for an unsandboxed process, lifted out so a sandboxed one
+    /// can ask too. Boxed because `oo7::dbus::Error` is large.
     async fn secret_service() -> Result<oo7::Keyring, Box<oo7::dbus::Error>> {
         let service = oo7::dbus::Service::new().await.map_err(Box::new)?;
         let collection = service.default_collection().await.map_err(Box::new)?;
         Ok(oo7::Keyring::DBus(collection))
     }
 
-    /// A keyring to work against, preferring the Secret Service.
-    ///
-    /// `oo7::Keyring::new()` takes the *file* backend whenever
-    /// `ashpd::is_sandboxed()`, unlocking it with a secret fetched through
-    /// `org.freedesktop.portal.Secret`. Under Flatpak that hangs: the portal
-    /// answers `version = 1`, so oo7's own fallback — which fires only on
-    /// `PortalNotFound` — never runs, and the `RetrieveSecret` request never
-    /// gets a `Response` signal at all:
-    ///
-    /// ```text
-    /// Object does not exist at path
-    ///   "/org/freedesktop/portal/desktop/request/1_162907/ashpd_8WTKorW3xf"
-    /// ```
-    ///
-    /// Every credential read then spends [`KEYRING_TIMEOUT`] and fails, which
-    /// is what the first run of the 0.4.2 Flatpak did: onboarding could not
-    /// save a password at all.
-    ///
-    /// Asking the Secret Service directly costs no new permission. The
-    /// manifest has carried `--talk-name=org.freedesktop.secrets` since the
-    /// Flatpak existed and nothing ever used it — oo7 does not consult that
-    /// name when it believes it is sandboxed, however much the sandbox
-    /// allows. It also puts the Flatpak's credentials where every other build
-    /// of Postio already keeps them, instead of in a second, app-private
-    /// store the same user's other install cannot read.
-    ///
-    /// The portal path stays as the fallback, for a session that genuinely
-    /// has no Secret Service on the bus.
+    /// `oo7::Keyring::new()` takes the file backend when sandboxed, and under Flatpak the portal's
+    /// `RetrieveSecret` never gets a `Response`, so every read times out.
+    /// Asks the Secret Service directly (the manifest already allows `org.freedesktop.secrets`);
+    /// the portal path is the fallback.
     async fn keyring(&self, key: &AccountKey) -> Result<oo7::Keyring, SecretError> {
         let keyring = match Self::secret_service().await {
             Ok(keyring) => keyring,
@@ -539,10 +336,8 @@ impl SecretStore for KeyringSecretStore {
             })?;
 
             let secret = item.secret().await.map_err(|err| map_oo7_error(key, err))?;
-            // Our own copy of the keyring's bytes, wrapped before anything
-            // else happens to it: the previous shape moved it through
-            // `String::from_utf8`, which is fine on the success path and
-            // dropped an un-zeroized copy of the secret on the failure one.
+            // Wrapped before anything else happens to it: `String::from_utf8` dropped an
+            // un-zeroized copy on failure.
             let bytes = Zeroizing::new(secret.as_bytes().to_vec());
             let text = secret_text(&bytes).ok_or_else(|| SecretError::Backend {
                 account: key.account().to_owned(),
@@ -568,11 +363,8 @@ impl SecretStore for KeyringSecretStore {
     }
 }
 
-/// Turns an `oo7` failure into something a user can act on.
-///
-/// The locked cases are the ones that matter: a dismissed prompt and an
-/// `IsLocked` service error both mean "the keyring did not open", and both
-/// must produce the unlock instructions rather than a D-Bus stack trace.
+/// A dismissed prompt and an `IsLocked` error both mean the keyring did not open, and must produce
+/// unlock instructions rather than a D-Bus trace.
 fn map_oo7_error(key: &AccountKey, err: oo7::Error) -> SecretError {
     let account = key.account().to_owned();
 
@@ -594,22 +386,13 @@ fn map_oo7_error(key: &AccountKey, err: oo7::Error) -> SecretError {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Command store
-// ---------------------------------------------------------------------------
-
-/// Runs a program and takes its standard output as the password.
-///
-/// This is the `pass`/`gopass`/`age` escape hatch. It is read-only: Postio
-/// will not try to guess how to write a secret back into someone else's
-/// secret manager.
+/// Read-only: Postio will not guess how to write into someone else's secret manager.
 #[derive(Clone, Debug)]
 pub struct CommandSecretStore {
     argv: Vec<String>,
 }
 
 impl CommandSecretStore {
-    /// Builds a store that runs `argv`.
     pub fn new<I, S>(argv: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -671,10 +454,8 @@ impl SecretStore for CommandSecretStore {
             }));
         }
 
-        // The program's whole standard output is the secret, so it is wrapped
-        // the moment it is ours -- before the UTF-8 check, which is the path
-        // the copy used to escape on, and before the split, which used to
-        // leave a second un-zeroized `String` behind as well.
+        // Wrapped the moment it is ours, before the UTF-8 check and the split, which used to leak
+        // un-zeroized copies.
         let stdout = Zeroizing::new(output.stdout);
         let text = secret_text(&stdout)
             .ok_or_else(|| self.failure("the command printed something that is not valid UTF-8"))?;
@@ -695,22 +476,8 @@ impl SecretStore for CommandSecretStore {
     }
 }
 
-// ---------------------------------------------------------------------------
-// In-memory store (test double)
-// ---------------------------------------------------------------------------
-
-/// In-memory [`SecretStore`] for tests.
-///
-/// Public on purpose: crates above this one need to test their credential
-/// paths without a Secret Service session either. [`MemorySecretStore::locked`]
-/// simulates a keyring that will not open.
-///
-/// It holds [`Password`] rather than `String` for the reason the rest of this
-/// module does: a plain `String` in the map would be freed without being
-/// overwritten every time an entry is replaced or the store is dropped. Being
-/// a test double is not an exemption — the fixtures crates above this one
-/// write into it are the shape a real one has, and the habit is what carries
-/// over. #144.
+/// Public so crates above can test credential paths without a Secret Service. It holds `Password`,
+/// not `String`, so replaced or dropped entries are zeroized (#144).
 #[derive(Clone, Debug, Default)]
 pub struct MemorySecretStore {
     items: Arc<Mutex<HashMap<AccountKey, Password>>>,
@@ -718,12 +485,10 @@ pub struct MemorySecretStore {
 }
 
 impl MemorySecretStore {
-    /// An empty, unlocked store.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// A store that behaves like a keyring nobody has unlocked.
     pub fn locked() -> Self {
         Self {
             items: Arc::new(Mutex::new(HashMap::new())),
@@ -731,18 +496,15 @@ impl MemorySecretStore {
         }
     }
 
-    /// A fresh handle onto the same contents — the equivalent of restarting
-    /// Postio and opening the same keyring again.
+    /// Equivalent of restarting Postio and opening the same keyring again.
     pub fn reopen(&self) -> Self {
         self.clone()
     }
 
-    /// How many credentials are held.
     pub fn len(&self) -> usize {
         self.items.lock().expect("secret store mutex").len()
     }
 
-    /// Whether any credential is held.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -817,20 +579,8 @@ mod tests {
         assert!(toml::from_str::<SecretSource>("type = \"command\"\nargv = []").is_err());
     }
 
-    // -- Zeroization (#144) ------------------------------------------------
-    //
-    // A secret that reaches a plain `Vec<u8>` or `String` is freed without
-    // being overwritten, and stays legible in whatever page the allocator
-    // hands out next. `Password` was always right; the buffers *around* it
-    // were the gap, and the invalid-UTF-8 paths were the worst of them,
-    // because that is where the copy escaped without ever becoming a
-    // `Password` at all.
-    //
-    // The guarantee is carried by the signature: `secret_text` accepts only
-    // `&Zeroizing<Vec<u8>>`, so a caller holding a bare buffer has to wrap it
-    // before it can get a password out, and it borrows rather than converting,
-    // so no second allocation exists to leak. These tests hold the behaviour
-    // that signature has to keep working.
+    // `secret_text` accepts only `&Zeroizing<Vec<u8>>` and borrows, so a bare buffer must be
+    // wrapped and no second allocation exists to leak (#144).
 
     #[test]
     fn a_secret_buffer_reads_back_as_text_without_a_second_allocation() {
@@ -849,15 +599,12 @@ mod tests {
 
     #[test]
     fn only_the_first_line_of_a_command_is_the_password() {
-        // `pass show` prints the password on line one and metadata after it.
         assert_eq!(first_line("hunter2\n"), "hunter2");
         assert_eq!(first_line("hunter2\r\n"), "hunter2");
         assert_eq!(first_line("hunter2\nlogin: ada@example.com\n"), "hunter2");
         assert_eq!(first_line("hunter2"), "hunter2");
         assert_eq!(first_line("\n"), "");
         assert_eq!(first_line(""), "");
-        // A password may legitimately contain spaces, so nothing but the line
-        // ending is trimmed.
         assert_eq!(first_line(" hunter 2 \n"), " hunter 2 ");
     }
 
@@ -873,9 +620,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_command_that_prints_something_that_is_not_utf8_is_an_error() {
-        // The path the leak lived on: before #144 the buffer holding the
-        // secret was dropped here without being zeroized, and it never became
-        // a `Password`, so nothing else protected it either.
+        // The invalid-UTF-8 path: before #144 the buffer was dropped here unzeroized.
         let store = CommandSecretStore::new(["/bin/sh", "-c", "printf '\\377\\376'"]);
         let error = store
             .retrieve(&AccountKey::new("ada@example.com"))
@@ -904,23 +649,8 @@ mod tests {
         }
     }
 
-    /// A real round trip through the Secret Service, which is the only thing
-    /// that can tell [`KeyringSecretStore::keyring`]'s two backends apart.
-    ///
-    /// `#[ignore]` in its documented sense: this needs a Secret Service
-    /// session on the bus, which CI has not got. It is also the wrong shape
-    /// to prove the bug it belongs to — what broke was the *sandboxed*
-    /// choice, and a test binary is never sandboxed, so this passes either
-    /// way here. What it does defend is the fallback staying usable: if
-    /// `secret_service()` stops producing a working keyring on an ordinary
-    /// desktop, this fails.
-    ///
-    /// The sandboxed half is proven by running the Flatpak, and there is no
-    /// substitute for that in this suite.
-    ///
-    /// ```text
-    /// cargo test -p postio-account --lib -- --ignored a_password_survives
-    /// ```
+    /// Needs a Secret Service session, so `#[ignore]`d. A test binary is never sandboxed, so it
+    /// does not prove the Flatpak choice; it guards the fallback staying usable.
     #[tokio::test]
     #[ignore = "needs a Secret Service session on the bus"]
     async fn a_password_survives_a_round_trip_through_the_secret_service() {

@@ -1,12 +1,5 @@
-//! A header refresh of a known IMAP row keeps the content already fetched
-//! (#1982).
-//!
-//! `resync::incremental` re-fetches the headers of everything `CHANGEDSINCE`
-//! reports and writes each through `upsert_batch`. Reading a message moves
-//! its `MODSEQ`, so a body the person had just read went back to
-//! `headers_only` and the pane said "Downloading" again. Content is
-//! immutable for a message on an IMAP server: a flag, a `MODSEQ` or a move
-//! says nothing about it.
+//! Content is immutable for an IMAP message, so a header refresh of a known row must keep a body
+//! already fetched, or the pane says "Downloading" again (#1982).
 
 use chrono::{TimeZone, Utc};
 use postio_model::{
@@ -22,7 +15,6 @@ fn at(seconds: i64) -> chrono::DateTime<Utc> {
         .unwrap()
 }
 
-/// What `FETCH (UID FLAGS ENVELOPE ...)` hands back for message `n`: headers.
 fn header_fetch(account: AccountId, mailbox: MailboxId, n: u32, mod_seq: u64) -> Message {
     let mut message = Message::new(account, mailbox, at(i64::from(n)));
     message.subject = Some(format!("Tide gate {n}"));
@@ -35,8 +27,6 @@ fn header_fetch(account: AccountId, mailbox: MailboxId, n: u32, mod_seq: u64) ->
     message
 }
 
-/// Message `n` as the store holds it once its body, raw source, preview and
-/// one attachment have been fetched.
 async fn fetched(messages: &MessageRepository<'_>, mut message: Message) -> MessageId {
     let mut part = Attachment::new(MessageId::UNASSIGNED, "application/pdf", 4_096);
     part.filename = Some("survey.pdf".into());
@@ -168,7 +158,6 @@ async fn adopting_a_moved_row_at_its_destination_keeps_the_fetched_body() {
     let connection = database.connect().await.expect("a connection");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
-    // The archive move nulled the server coordinates and kept the row.
     let mut ours = header_fetch(account.id, inbox, 1, 10);
     ours.server.uid = None;
     ours.server.uid_validity = None;
@@ -176,7 +165,6 @@ async fn adopting_a_moved_row_at_its_destination_keeps_the_fetched_body() {
     ours.server.mod_seq = None;
     let id = fetched(&messages, ours).await;
 
-    // The destination's pass names it: a new uid, the same Message-ID.
     let mut named = header_fetch(account.id, inbox, 41, 3);
     named.rfc_message_id = Some(RfcMessageId::new("<tide-1@example.com>"));
     let report = messages
@@ -217,7 +205,6 @@ async fn a_row_never_fetched_is_written_as_the_refresh_has_it() {
     assert_eq!(row.preview.as_deref(), Some("a snippet from the envelope"));
 }
 
-/// The rows and statements a refresh of `known` fetched rows reads and runs.
 async fn cost_of_refreshing(known: u32) -> (usize, usize) {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("a connection");

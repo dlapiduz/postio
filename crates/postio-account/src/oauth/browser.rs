@@ -1,45 +1,27 @@
-//! Opening the consent screen in the user's own browser.
-//!
-//! ADR 0006 Q3: never Postio's hardened `WebView` — an embedded browser can
-//! read the password typed into it, providers block embedded user agents
-//! outright, and the reader's `WebView` has JavaScript off, which a consent
-//! screen requires. [`SystemBrowserOpener`] shells out to `xdg-open`, the
-//! freedesktop way to ask the desktop "open this URL with whatever the user
-//! has chosen" — the same mechanism `docs/PRODUCT.md`'s v1 scope (Linux
-//! only) already assumes elsewhere.
+//! ADR 0006 Q3: the consent screen opens in the user's own browser, never Postio's `WebView`: an
+//! embedded browser can read the typed password, providers block embedded agents, and the reader's
+//! `WebView` has JavaScript off.
 
 use std::io;
 use std::process::{Command, Stdio};
 
 use url::Url;
 
-/// Opens a URL outside the application.
-///
-/// A trait so the flow in [`super::authorize`] never touches a real desktop
-/// in a test: `RecordingOpener` stands in for it there — `#[cfg(test)]`,
-/// so it is not part of these docs to link to.
+/// A trait so tests never touch a real desktop.
 pub trait BrowserOpener: Send + Sync {
-    /// Opens `url` in the user's browser. Returns once the request to open
-    /// it has been made — never waits for the browser, let alone the user.
     fn open(&self, url: &Url) -> io::Result<()>;
 }
 
-/// The real opener: `xdg-open <url>`, detached.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SystemBrowserOpener;
 
 impl BrowserOpener for SystemBrowserOpener {
     fn open(&self, url: &Url) -> io::Result<()> {
         // POSTIO-CONSENT: this process is spawned only from `oauth::authorize`,
-        // itself reached only from the account's own "Sign in" action — one
-        // explicit click per attempt, never on render and never retried
-        // automatically. See ADR 0006 Q3 and CLAUDE.md, "Privacy is a
-        // feature".
-        //
-        // Output is discarded rather than inherited: `xdg-open`'s stdout and
-        // stderr are chatter about which handler it picked, not something a
-        // mail client's own log should carry, and inheriting them would let
-        // a misbehaving handler write to Postio's terminal.
+        // itself reached only from the account's own "Sign in" click: one per attempt, never on
+        // render, never retried (ADR 0006 Q3).
+        // Output is discarded: it is chatter about the handler, and inheriting it would let a
+        // handler write to Postio's terminal.
         Command::new("xdg-open")
             .arg(url.as_str())
             .stdin(Stdio::null())
@@ -59,8 +41,6 @@ mod test_support {
 
     use super::*;
 
-    /// A [`BrowserOpener`] that records the URL instead of opening anything,
-    /// for tests that play the browser's part themselves.
     #[derive(Debug, Default)]
     pub struct RecordingOpener {
         opened: Mutex<Vec<Url>>,
@@ -77,7 +57,6 @@ mod test_support {
     }
 
     impl RecordingOpener {
-        /// The most recently opened URL, if any.
         pub fn last(&self) -> Option<Url> {
             self.opened
                 .lock()

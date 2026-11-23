@@ -1,6 +1,3 @@
-//! Agent access in Settings (#1832): what the pane shows and what revoking
-//! writes, asserted on the sentences a person reads.
-
 use chrono::{TimeZone, Utc};
 use postio_ffi::{
     Session, SessionOptions, settings_agent_sharing, settings_agent_words,

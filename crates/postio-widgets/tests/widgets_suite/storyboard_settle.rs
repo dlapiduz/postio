@@ -1,15 +1,9 @@
-//! Settling: when has a step finished drawing (spec 008, research R4)?
-//!
-//! The window is watched on its own frame clock. It is settled when several
-//! samples in a row are identical, and then watched a while longer, because
-//! a frame that changes after "settling" is a jump a reviewer must see.
-
 use std::time::Duration;
 
 use gtk::prelude::*;
 use postio_widgets::storyboard::settle::{Settings, Verdict, settle};
 
-use super::storyboard_support::{display, show};
+use super::storyboard_support::show;
 
 fn window_with(label: &gtk::Label) -> gtk::Window {
     let window = gtk::Window::new();
@@ -19,8 +13,6 @@ fn window_with(label: &gtk::Label) -> gtk::Window {
     window
 }
 
-/// Settings with a shorter wait, stretched by `POSTIO_TEST_PATIENCE` on a
-/// loaded machine, where six identical frames can take longer than 1.2 s.
 fn quick() -> Settings {
     Settings {
         max: postio_test_support::scaled(Duration::from_millis(1200)),
@@ -29,9 +21,6 @@ fn quick() -> Settings {
 }
 
 pub fn a_static_window_settles() {
-    if !display() {
-        return;
-    }
     let label = gtk::Label::new(Some("nothing moves here"));
     let window = window_with(&label);
 
@@ -48,15 +37,10 @@ pub fn a_static_window_settles() {
 }
 
 pub fn a_change_after_settling_is_a_jump_with_both_frames() {
-    if !display() {
-        return;
-    }
     let label = gtk::Label::new(Some("before"));
     let window = window_with(&label);
-    // Sampling settles after six identical frames; the change comes ten
-    // frames later, inside the watch. Counted on the frame clock, not
-    // timed: a wall-clock 250 ms landed before the settle on a loaded
-    // machine, which drew one frame in the time it had six.
+    // Counted on the frame clock, not timed: a wall-clock 250 ms landed before the settle on a
+    // loaded machine.
     let ticks = std::cell::Cell::new(0u32);
     label.add_tick_callback(move |label, _| {
         ticks.set(ticks.get() + 1);
@@ -89,13 +73,8 @@ pub fn a_change_after_settling_is_a_jump_with_both_frames() {
 }
 
 pub fn an_empty_window_is_blank() {
-    if !display() {
-        return;
-    }
     let label = gtk::Label::new(Some("never realised"));
     label.set_visible(false);
-    // No title bar either: a bar is something drawn, and this window has
-    // to have nothing in it at all.
     let window = gtk::Window::new();
     window.set_decorated(false);
     window.set_child(Some(&label));
@@ -113,9 +92,6 @@ pub fn an_empty_window_is_blank() {
 }
 
 pub fn a_window_that_never_stops_changing_is_unsettled() {
-    if !display() {
-        return;
-    }
     let label = gtk::Label::new(Some("0"));
     let window = window_with(&label);
     let mut count = 0u32;

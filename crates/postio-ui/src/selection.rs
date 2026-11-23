@@ -1,30 +1,5 @@
-//! What an action will hit — which is not where the keyboard is.
-//!
-//! # Two states, not one
-//!
-//! A list has a **cursor** and a **selection**, and they are different things.
-//! The cursor is where the keyboard is: `j` and `k` move it, the reading pane
-//! follows it, and canvas 1b draws it with an accent tint, a 3px steel left
-//! edge and the key hints. The selection is what `a` would archive. Most of
-//! the time they are the same row, which is exactly why conflating them is the
-//! usual bug: it only shows up once a selection is more than one row, and then
-//! every bulk action lands somewhere the user did not expect.
-//!
-//! `GtkSingleSelection` is the cursor here, not the selection — the name is
-//! GTK's, the meaning is ours. This module is the other half.
-//!
-//! # Never a `Vec` for "select all"
-//!
-//! The list is windowed over paged SQLite and must never materialise a mailbox
-//! (`docs/PRODUCT.md` §18), so "select all" cannot mean "collect a hundred thousand
-//! ids". [`Selection`] — `postio-core`'s, so the view and the command bus
-//! cannot drift about what a selection *is* — models it as either an explicit
-//! set or the predicate `Everything { except }`. Selecting a 100k mailbox and
-//! taking three rows back out is four ids, and archiving it is one statement
-//! for the store to resolve rather than 100k of anything.
-//!
-//! That is why [`summary`] takes the total as an argument instead of counting:
-//! counting is the thing the predicate exists to avoid.
+//! What an action will hit, which is not where the keyboard is: the cursor (keyboard, reading pane)
+//! and the selection (what `a` would archive) are separate states.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -32,85 +7,55 @@ use std::rc::Rc;
 use postio_core::state::Selection;
 use postio_model::{AccountId, MessageId};
 
-/// A change to the selection, handed to whoever is drawing it.
 type Observer = Box<dyn Fn(&Selection)>;
 
-/// What an aggregate view could show when a whole-view selection was made.
-///
-/// The unified list draws every configured account, including ones Postio
-/// cannot currently reach — their synced mail is real mail, and ADR 0005 Q10
-/// is emphatic that hiding it would be the worse lie. A `Ctrl+A` there is
-/// therefore about *fewer* accounts than the rows on screen, and both halves
-/// of that have to travel together: the ids so the verb acts on the right
-/// rows, the names so the header can say what it left out.
-///
-/// Default — both empty — is every ordinary view: one account, nothing
-/// omitted, nothing to disclose.
+/// A whole-view selection in the unified list is about fewer accounts than the rows on screen,
+/// so the ids and the omitted account names travel together (ADR 0005 Q10).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Reach {
-    /// The accounts the view could show, in the sidebar's order.
     pub accounts: Vec<AccountId>,
-    /// The accounts it could not, named as the banner names them.
     pub omitted: Vec<String>,
 }
 
-/// The selection and the anchor a range extends from, as plain data: the
-/// rules of [`SelectionState`] with nobody to tell. `Send`, so a controller
-/// that is not tied to one thread can own one (specs/009-focus-macos R3).
-///
-/// Every change answers whether anything changed, which is what a caller
-/// that redraws -- or a [`SelectionState`] that announces -- needs to know.
+/// `Send`, so a controller not tied to one thread can own one. Every change returns whether
+/// anything changed.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Selector {
     selection: Selection,
-    /// What the view could show when `Everything` was made. Meaningless for
-    /// any other selection, which is why [`Selector::reach`] answers from
-    /// the selection rather than from this alone.
+    /// Meaningless unless the selection is `Everything`.
     reach: Reach,
-    /// Where a range extension counts from -- the last row the user pointed
-    /// at deliberately, rather than wherever the cursor has since wandered.
+    /// The last row deliberately pointed at, not wherever the cursor has wandered.
     anchor: Option<MessageId>,
 }
 
 impl Selector {
-    /// What is selected right now.
     pub fn selection(&self) -> Selection {
         self.selection.clone()
     }
 
-    /// Whether an action would hit nothing.
     pub fn is_empty(&self) -> bool {
         self.selection.is_empty()
     }
 
-    /// Whether `message` is in the selection.
     pub fn contains(&self, message: MessageId) -> bool {
         self.selection.contains(message)
     }
 
-    /// The row a range extends from.
     pub fn anchor(&self) -> Option<MessageId> {
         self.anchor
     }
 
-    /// Select exactly `message` -- a plain click, or opening one.
     pub fn select_only(&mut self, message: MessageId) -> bool {
         self.anchor = Some(message);
         self.replace(Selection::These(vec![message]))
     }
 
-    /// Add `message` if it is out, take it out if it is in -- `x`, and
-    /// Ctrl-click.
     pub fn toggle(&mut self, message: MessageId) -> bool {
         self.anchor = Some(message);
         self.mutate(|selection| selection.toggle(message))
     }
 
-    /// Add `message`, leaving it alone if it is already in -- `J` and `K`.
-    ///
-    /// The anchor does not move: extending is one gesture however many times
-    /// it is repeated, so a later Shift-click still counts from where the
-    /// user started rather than from the last row it reached.
+    /// The anchor does not move: extending is one gesture however often it repeats.
     pub fn extend_to(&mut self, message: MessageId) -> bool {
         if self.anchor.is_none() {
             self.anchor = Some(message);
@@ -118,7 +63,6 @@ impl Selector {
         self.mutate(|selection| selection.insert(message))
     }
 
-    /// Add every message in `messages` -- a Shift-click over a range.
     pub fn extend_over(&mut self, messages: impl IntoIterator<Item = MessageId>) -> bool {
         self.mutate(|selection| {
             for message in messages {
@@ -127,14 +71,11 @@ impl Selector {
         })
     }
 
-    /// Select everything the list is showing, without naming any of it.
-    /// See [`SelectionState::select_all`] for why `reach` is recorded now.
     pub fn select_all(&mut self, reach: Reach) -> bool {
         self.reach = reach;
         self.replace(Selection::Everything { except: Vec::new() })
     }
 
-    /// What the current whole-view selection was scoped to.
     pub fn reach(&self) -> Reach {
         match &self.selection {
             Selection::Everything { .. } => self.reach.clone(),
@@ -142,13 +83,11 @@ impl Selector {
         }
     }
 
-    /// Drop the selection, and the anchor with it.
     pub fn clear(&mut self) -> bool {
         self.anchor = None;
         self.replace(Selection::default())
     }
 
-    /// Replace the selection wholesale.
     pub fn set(&mut self, selection: Selection) -> bool {
         self.replace(selection)
     }
@@ -168,11 +107,7 @@ impl Selector {
     }
 }
 
-/// The selection, the anchor a range extends from, and who to tell: a
-/// [`Selector`] shared on one thread, announcing each change.
-///
-/// Cheap to clone: every clone is the same selection, which is what lets the
-/// rows, the header and the command handlers all hold one.
+/// Cheap to clone: every clone is the same selection.
 #[derive(Clone, Default)]
 pub struct SelectionState {
     inner: Rc<Inner>,
@@ -194,92 +129,65 @@ impl std::fmt::Debug for SelectionState {
 }
 
 impl SelectionState {
-    /// Nothing selected.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// What is selected right now.
     pub fn selection(&self) -> Selection {
         self.inner.selector.borrow().selection()
     }
 
-    /// Whether an action would hit nothing.
     pub fn is_empty(&self) -> bool {
         self.inner.selector.borrow().is_empty()
     }
 
-    /// Whether `message` is in the selection.
     pub fn contains(&self, message: MessageId) -> bool {
         self.inner.selector.borrow().contains(message)
     }
 
-    /// The row a range extends from.
     pub fn anchor(&self) -> Option<MessageId> {
         self.inner.selector.borrow().anchor()
     }
 
-    /// Called whenever the selection changes.
     pub fn connect_changed(&self, observer: impl Fn(&Selection) + 'static) {
         self.inner.observers.borrow_mut().push(Box::new(observer));
     }
 
-    /// Select exactly `message` -- a plain click, or opening one.
     pub fn select_only(&self, message: MessageId) {
         self.change(|selector| selector.select_only(message));
     }
 
-    /// Add `message` if it is out, take it out if it is in -- `x`, and
-    /// Ctrl-click.
     pub fn toggle(&self, message: MessageId) {
         self.change(|selector| selector.toggle(message));
     }
 
-    /// Add `message`, leaving it alone if it is already in -- `J` and `K`.
-    /// The anchor does not move ([`Selector::extend_to`]).
     pub fn extend_to(&self, message: MessageId) {
         self.change(|selector| selector.extend_to(message));
     }
 
-    /// Add every message in `messages` -- a Shift-click over a range.
     pub fn extend_over(&self, messages: impl IntoIterator<Item = MessageId>) {
         self.change(|selector| selector.extend_over(messages));
     }
 
-    /// Select everything the list is showing, without naming any of it.
-    ///
-    /// `reach` is what the view could actually show at this instant, and it
-    /// is recorded here rather than read again when a verb runs. Those are
-    /// different moments: an account that reconnects in between would join a
-    /// selection the user was never shown, and a selection that silently
-    /// *grows* cannot be spotted in the summary (#811, ADR 0005 Q10).
-    /// [`Reach::default()`] for every view that is not an aggregate.
+    /// `reach` is recorded now, not re-read when a verb runs: an account reconnecting in between
+    /// would silently grow the selection (#811, ADR 0005 Q10).
     pub fn select_all(&self, reach: Reach) {
         self.change(|selector| selector.select_all(reach));
     }
 
-    /// What the current whole-view selection was scoped to.
-    ///
-    /// Empty unless the selection is a predicate over an aggregate view:
-    /// every other selection either names its rows or is relative to a view
-    /// that is within one account already.
     pub fn reach(&self) -> Reach {
         self.inner.selector.borrow().reach()
     }
 
-    /// Drop the selection, and the anchor with it.
     pub fn clear(&self) {
         self.change(Selector::clear);
     }
 
-    /// Replace the selection wholesale -- what an event from the command bus
-    /// will do once `postio-agr` makes the bus the writer.
     pub fn set(&self, selection: Selection) {
         self.change(|selector| selector.set(selection));
     }
 
-    /// Apply `change`, and tell every observer when it changed anything.
-    /// The borrow ends before anyone is told, so an observer may read.
+    /// The borrow ends before observers are told, so one may read.
     fn change(&self, change: impl FnOnce(&mut Selector) -> bool) {
         let changed = change(&mut self.inner.selector.borrow_mut());
         if changed {
@@ -295,31 +203,9 @@ impl SelectionState {
     }
 }
 
-/// What the header says about the selection, or `None` when there is nothing
-/// to say.
-///
-/// `total` is how many rows the list holds, which the store already knows from
-/// the count it does to size the window. Without it a predicate can only be
-/// described rather than counted — "everything" is a promise about a query,
-/// and answering "how many" by walking it is the one thing the predicate
-/// exists to prevent.
-///
-/// # `omitted`, and why it costs the count
-///
-/// The accounts a whole-view selection was **not** scoped to, named. In the
-/// unified list an account Postio cannot reach is still drawn — its synced
-/// mail is real mail — and is deliberately left out of `Ctrl+A` (#811,
-/// ADR 0005 Q10). So `total` counts rows the predicate does not name, and the
-/// arithmetic above would produce a number that is simply wrong.
-///
-/// Rather than guess at a correction, the summary stops claiming a count and
-/// says what it left out instead. The *why* is already on screen a few pixels
-/// above, in the classic app's list state `Partial` banner; this names the same
-/// accounts in the same words — [`crate::format::names`] — so the two read as
-/// one statement rather than two.
-///
-/// Empty for every ordinary view, including a named selection, which left
-/// nothing out by construction: its rows were pointed at one at a time.
+/// `total` is passed in because counting is what the `Everything` predicate exists to avoid.
+/// `omitted` names accounts a whole-view selection left out (#811); the summary then stops claiming
+/// a count, since `total` includes rows the predicate does not name.
 pub fn summary(selection: &Selection, total: Option<u32>, omitted: &[String]) -> Option<String> {
     match selection {
         Selection::These(messages) if messages.is_empty() => None,
@@ -338,8 +224,6 @@ pub fn summary(selection: &Selection, total: Option<u32>, omitted: &[String]) ->
     }
 }
 
-/// A count with thousands separated, because a selection is a number the user
-/// is about to act on and "50000" is not a number anybody reads.
 pub(crate) fn count(value: u32) -> String {
     let digits = value.to_string();
     let mut out = String::with_capacity(digits.len() + digits.len() / 3);
@@ -352,12 +236,7 @@ pub(crate) fn count(value: u32) -> String {
     out
 }
 
-/// The messages between two positions in the list, inclusive, in list order.
-///
-/// `rows` is the list as it stands, `None` where a page has not arrived yet.
-/// Those gaps are skipped rather than waited for: the user is dragging a
-/// range they can see, and a selection that blocks on a page fetch would be a
-/// selection that stutters.
+/// `None` rows (pages not yet arrived) are skipped, not waited for.
 pub fn range(rows: &[Option<MessageId>], from: usize, to: usize) -> Vec<MessageId> {
     let (first, last) = if from <= to { (from, to) } else { (to, from) };
     rows.iter()
@@ -368,15 +247,8 @@ pub fn range(rows: &[Option<MessageId>], from: usize, to: usize) -> Vec<MessageI
         .collect()
 }
 
-/// Where the cursor is after the list changed under it: `removed` rows
-/// replaced by `added` at `position`, leaving `len` rows.
-///
-/// A cursor before the change stays; one after it moves with its row. A
-/// cursor whose own row went -- archived, deleted, snoozed -- stays at the
-/// same place, on the row that slid up into it, or the last row when it was
-/// the last (#1687, #1746). That is what makes `a a a` work down a list:
-/// each press acts on the row the person is looking at, never on nothing.
-/// No cursor stays none, and an emptied list has none.
+/// A cursor whose own row went stays in place (the row that slid up into it), or on the last row,
+/// so `a a a` works down a list (#1687, #1746).
 pub fn cursor_after_change(
     cursor: Option<u32>,
     position: u32,
@@ -398,15 +270,8 @@ pub fn cursor_after_change(
     Some(at.min(len - 1))
 }
 
-/// Where the cursor should stand before `gone` leave the list: on the first
-/// row after its own that survives, when its own row is going.
-///
-/// `rows` is the list from the cursor's row on, `None` where a page has not
-/// arrived (a row nobody has named is not going). The answer is an offset
-/// into `rows`, so the caller puts the cursor there and lets the list slide
-/// it up as the rows above it go -- by place, not by slot number: with
-/// rows above the cursor going too, "the same index" skips a row (#468).
-/// `None` when the cursor's row is staying, or nothing survives below it.
+/// The answer is an offset into `rows`, by place and not slot number: with rows above going too,
+/// "the same index" skips a row (#468).
 pub fn survivor_below(
     rows: impl IntoIterator<Item = Option<MessageId>>,
     gone: &[MessageId],
@@ -423,8 +288,6 @@ pub fn survivor_below(
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
-
-    // -- Selector: the same rules as plain data (specs/009-focus-macos R3) --
 
     fn msg(n: i64) -> MessageId {
         MessageId::new(n)
@@ -501,16 +364,11 @@ mod tests {
     fn the_cursor_goes_to_the_first_survivor_below_its_own_row() {
         let rows = |ids: &[i64]| ids.iter().map(|n| Some(id(*n))).collect::<Vec<_>>();
         let gone = [id(1), id(3), id(4)];
-        // Cursor on 4, which goes; 5 follows and stays.
         assert_eq!(survivor_below(rows(&[4, 5, 6]), &gone), Some(1));
-        // The row right below goes as well: the one after it.
         assert_eq!(survivor_below(rows(&[3, 4, 7]), &gone), Some(2));
-        // The cursor's own row is staying: nothing to move.
         assert_eq!(survivor_below(rows(&[2, 3, 7]), &gone), None);
-        // Nothing survives below.
         assert_eq!(survivor_below(rows(&[4]), &gone), None);
         assert_eq!(survivor_below(rows(&[3, 4]), &gone), None);
-        // A page that has not arrived is not a row that is going.
         assert_eq!(survivor_below([Some(id(3)), None], &gone), Some(1));
     }
 
@@ -529,9 +387,6 @@ mod tests {
 
     #[test]
     fn toggling_moves_the_anchor_and_extending_does_not() {
-        // Ctrl-click says "count from here"; Shift+J says "carry on from
-        // where I started". A range extended one row at a time has to end up
-        // where the same range dragged in one gesture would.
         let state = SelectionState::new();
         state.toggle(id(1));
         state.extend_to(id(2));
@@ -618,10 +473,8 @@ mod tests {
 
     #[test]
     fn the_reach_is_fixed_when_the_gesture_is_made_not_when_it_is_read() {
-        // The time-of-check/time-of-use hole this exists to close: the
-        // accounts a select-all is about are the ones the view could show at
-        // the moment it was pressed. Nothing consults reachability again, so
-        // an account coming back cannot widen a selection already made.
+        // The accounts are the ones the view could show when pressed; an account coming back must
+        // not widen the selection.
         let state = SelectionState::new();
 
         state.select_all(Reach {
@@ -635,9 +488,6 @@ mod tests {
 
     #[test]
     fn a_selection_that_names_its_rows_has_no_reach_to_disclose() {
-        // Pointing at rows one at a time leaves nothing out, so a stale
-        // reach from an earlier select-all must not follow the selection
-        // that replaced it into the header.
         let state = SelectionState::new();
         state.select_all(Reach {
             accounts: vec![AccountId::new(1)],
@@ -651,11 +501,7 @@ mod tests {
 
     #[test]
     fn a_predicate_that_left_an_account_out_names_it_instead_of_counting() {
-        // #811, ADR 0005 Q10. The unified list draws an unreachable account's
-        // synced mail, so the row count includes rows the selection does not.
-        // Subtracting nothing and printing the total would be a count that
-        // silently excludes an account -- the same lie as the banner not
-        // being there, in a smaller place.
+        // #811: the row count includes an unreachable account's rows that the selection does not.
         let selection = Selection::Everything { except: Vec::new() };
 
         assert_eq!(
@@ -681,8 +527,6 @@ mod tests {
 
     #[test]
     fn a_named_selection_is_never_partial_however_many_accounts_are_away() {
-        // The rows were pointed at one by one, so nothing was left out of
-        // them: the disclosure belongs to the predicate, not to the header.
         let selection = Selection::These(vec![id(1), id(2)]);
 
         assert_eq!(
@@ -719,7 +563,6 @@ mod tests {
 
     #[test]
     fn the_cursor_on_a_removed_row_stays_on_the_row_that_slid_into_it() {
-        // Row 1 of 36 archived: the cursor is on the new row 1.
         assert_eq!(cursor_after_change(Some(1), 1, 1, 0, 35), Some(1));
     }
 
@@ -737,7 +580,6 @@ mod tests {
 
     #[test]
     fn a_rewritten_list_keeps_the_cursor_at_its_place() {
-        // A refresh that replaced every row, one fewer.
         assert_eq!(cursor_after_change(Some(1), 0, 36, 35, 35), Some(1));
     }
 

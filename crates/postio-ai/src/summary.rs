@@ -1,16 +1,6 @@
-//! The digest summariser (spec 007 FR-172 to FR-175, US13, research R16):
-//! statements with references, each reference resolved by excerpt.
-//!
-//! The model is shown the digest's messages, numbered, inside the fence, and
-//! answers in a fixed schema: rows of a topic, a statement, the number of the
-//! message it came from, and a passage of that message copied as written.
-//!
-//! **A statement is kept only if its reference resolves**: its number names
-//! one of the messages, and its passage is in that message's text byte for
-//! byte. Anything else is dropped (FR-173). What is kept is plain text --
-//! whitespace made single spaces, control characters taken out, and nothing
-//! read as markup: a `<a href=…>` the model wrote stays those characters
-//! (FR-174). The summariser gets no tools and has no send path.
+//! The digest summariser: the model's statements are kept only if their reference resolves, that
+//! is the message number is real and the passage is in that message byte for byte. Kept text is
+//! plain: a `<a href=…>` the model wrote stays those characters.
 
 use std::sync::Arc;
 
@@ -21,44 +11,32 @@ use serde_json::{Map, Value};
 use crate::client::{AiError, Client, Question};
 use crate::schema::{Field, Kind, Schema};
 
-/// The most messages one summary is written from; the rest are in the
-/// plain list.
+/// The most messages one summary is written from; the rest stay in the plain list.
 pub const MAX_SOURCES: usize = 40;
 
-/// How much of each message the model is shown, in characters: a
-/// newsletter's first screens, which is where its news is.
+/// Characters of each message the model is shown.
 pub const SOURCE_CHARS: usize = 4_000;
 
-/// One message a summary is written from.
 #[derive(Debug, Clone, Copy)]
 pub struct Source<'a> {
-    /// Which message.
     pub message: MessageId,
-    /// Its account, for the egress log.
     pub account: AccountId,
-    /// Who sent it, as the digest shows them.
     pub sender: &'a str,
-    /// Its subject.
     pub subject: &'a str,
-    /// Its own text: what a reference's passage must be found in.
     pub text: &'a str,
 }
 
-/// The person's model, as the digest summariser.
 #[derive(Debug, Clone)]
 pub struct Summariser {
     client: Arc<Client>,
 }
 
 impl Summariser {
-    /// Ask `client`'s model.
     pub fn new(client: Arc<Client>) -> Self {
         Self { client }
     }
 
-    /// A summary of `sources`, oldest first, from `senders` people: every
-    /// statement the model wrote whose reference resolves. An error when the
-    /// model could not answer; the digest then opens on its plain list.
+    /// An error when the model could not answer; the digest then opens on its plain list.
     pub fn summarise(
         &self,
         sources: &[Source<'_>],
@@ -99,8 +77,6 @@ impl Summariser {
     }
 }
 
-/// The answer's shape: rows of a topic, a statement, the message's number
-/// and a passage of it.
 const SCHEMA: Schema = Schema {
     name: "digest_summary",
     fields: &[Field {
@@ -132,7 +108,6 @@ const SCHEMA: Schema = Schema {
     }],
 };
 
-/// What the model is asked, in Postio's words.
 const ASKED: &str = "You summarise a digest of newsletters and updates for one person. \
     The messages are numbered [1], [2] and so on. Write short, factual statements of what \
     they say, grouped by topic, and nothing they do not say.\n\
@@ -143,7 +118,6 @@ const ASKED: &str = "You summarise a digest of newsletters and updates for one p
     exactly as it is written, character for character.\n\
     Order the statements by topic. Leave out adverts, footers and unsubscribe text.";
 
-/// The rows whose references resolve, as plain text.
 fn statements(answer: &Map<String, Value>, sources: &[Source<'_>]) -> Vec<SummaryStatement> {
     let Some(rows) = answer.get("statements").and_then(Value::as_array) else {
         return Vec::new();
@@ -170,8 +144,7 @@ fn statements(answer: &Map<String, Value>, sources: &[Source<'_>]) -> Vec<Summar
         .collect()
 }
 
-/// `excerpt` as it is in `text`, if it is there byte for byte: the passage a
-/// reference is pinned to. Surrounding whitespace is let go; nothing else.
+/// Surrounding whitespace is let go; nothing else.
 pub fn resolve(excerpt: &str, text: &str) -> Option<String> {
     let excerpt = excerpt.trim();
     if excerpt.chars().filter(|c| c.is_alphanumeric()).count() < 3 || !text.contains(excerpt) {
@@ -180,9 +153,7 @@ pub fn resolve(excerpt: &str, text: &str) -> Option<String> {
     Some(excerpt.to_owned())
 }
 
-/// What the model wrote, as one line of plain characters: runs of
-/// whitespace are one space, and control characters are gone. Nothing else
-/// changes, so markup stays the characters it is.
+/// Whitespace runs become one space and control characters go; markup stays characters.
 fn plain(text: &str) -> String {
     text.split_whitespace()
         .map(|word| word.chars().filter(|c| !c.is_control()).collect::<String>())
@@ -191,7 +162,6 @@ fn plain(text: &str) -> String {
         .join(" ")
 }
 
-/// A header's text on one line, for the fence's labels.
 fn one_line(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -250,8 +220,6 @@ mod tests {
 
     #[test]
     fn every_statement_ends_in_a_reference_to_the_message_it_came_from() {
-        // US13 scenario 1, SC-014: each statement cites one of the digest's
-        // messages, by its number, at a passage that is in it verbatim.
         let summary = summarised(vec![
             row(
                 "Your town",
@@ -286,8 +254,6 @@ mod tests {
 
     #[test]
     fn a_statement_whose_reference_does_not_resolve_is_not_kept() {
-        // FR-173: a passage that is not in its message, or a number that
-        // names no message, and the statement is dropped.
         let summary = summarised(vec![
             row("Your town", "Kept.", 1, "the station opens in 2028"),
             row(
@@ -316,8 +282,6 @@ mod tests {
 
     #[test]
     fn what_the_model_wrote_is_kept_as_plain_characters() {
-        // US13 scenario 3, FR-174: markup and a bare URL are characters, and
-        // a statement is one line.
         let summary = summarised(vec![row(
             "Your <b>town</b>",
             "Read <a href=\"https://phish.example/\">this</a>\nat https://phish.example/x \u{7}now.",
@@ -335,8 +299,6 @@ mod tests {
 
     #[test]
     fn the_messages_are_fenced_as_data_and_numbered() {
-        // US13 scenario 5, ADR 0009 Q4: the digest's mail is data in the
-        // fence, one request is all it costs, and it carries no tool.
         let runtime = FakeRuntime::always(Reply::content(r#"{"statements":[]}"#));
         let summary = summariser(&runtime)
             .summarise(&sources(), 2)
@@ -357,7 +319,6 @@ mod tests {
 
     #[test]
     fn a_model_that_is_not_running_writes_no_summary() {
-        // US13 scenario 4: the digest opens on its plain list.
         let runtime = FakeRuntime::refusing();
         assert_eq!(
             summariser(&runtime).summarise(&sources(), 2),

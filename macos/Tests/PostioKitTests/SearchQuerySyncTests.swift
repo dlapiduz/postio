@@ -4,15 +4,6 @@ import Testing
 
 @testable import PostioKit
 
-/// One query, two controls (specs/010-focus-search T067; design §1 and
-/// §3.2): every filter is both a chip in the field and a button in the
-/// filter bar, and changing either changes the other.
-///
-/// Not because Swift keeps them in step: the controller does
-/// (`crates/postio-focus`, `edit::apply`). A control's change crosses as a
-/// `TermEditFfi` -- an operator's keyword and its value, or a chip's token
-/// -- and the next `FocusQuery` redraws both the chips and the buttons.
-/// Swift never builds query text: no `field:value` is ever spelled here.
 @MainActor
 struct SearchQuerySyncTests {
     final class Engine: SearchQueryEngine {
@@ -26,8 +17,6 @@ struct SearchQuerySyncTests {
         FilterButtonFfi(kind: kind, label: label, applied: applied, open: false, key: nil)
     }
 
-    /// The bar's eight buttons, `applied` the ones the query holds, with
-    /// the labels the controller gives them.
     static func buttons(_ applied: [FilterKindFfi: String] = [:]) -> [FilterButtonFfi] {
         let plain: [(FilterKindFfi, String)] = [
             (.from, "From"), (.to, "To"), (.date, "Date"), (.anywhere, "Anywhere"), (.label, "Label"),
@@ -97,8 +86,6 @@ struct SearchQuerySyncTests {
         let model = SearchQueryModel(engine: Engine())
         model.apply(Self.query([]))
 
-        // Typed in the field as words; the controller lowered it to a chip
-        // and named the button.
         model.apply(Self.query([Self.chip(3, "from:", "ada")], words: "", applied: [.from: "From: Ada Moreno"]))
 
         let from = Self.applied(model, .from)
@@ -116,8 +103,6 @@ struct SearchQuerySyncTests {
         model.remove(3)
         model.clearFilters()
 
-        // Every edit is a keyword and a value apart, or a token: nothing
-        // joined into query text on this side.
         for edit in engine.edits {
             switch edit {
             case let .toggle(field, value), let .add(field, value, _):
@@ -137,9 +122,6 @@ struct SearchQuerySyncTests {
     }
 
     @Test func aPopoverButtonAsksForItsPopoverAndEditsNothing() {
-        // From, To, Date, Anywhere and Label open popovers (step 4): a
-        // click asks the controller for one, and the query changes only
-        // when something in it is checked.
         let engine = Engine()
         let model = SearchQueryModel(engine: engine)
         model.apply(Self.query([]))
@@ -150,8 +132,6 @@ struct SearchQuerySyncTests {
         #expect(engine.opened == [.from, .to, .date, .anywhere, .label])
     }
 
-    /// Screen 13 (D24): with nothing found the hint names ⌘⌫ as its cap,
-    /// and the whole field is ringed, as the controller says.
     @Test func aHintWithAKeySpellsTheKeyAsItsCap() {
         let model = SearchQueryModel(engine: Engine())
         model.apply(

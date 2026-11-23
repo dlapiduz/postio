@@ -1,13 +1,3 @@
-//! The composer's seams, shared rather than written twice
-//! (specs/007-postio-focus T022, T078): every seam answered only through
-//! `postio-client`, with nothing here that reaches `postio-session` or
-//! `postio-host` -- which is what let this module move behind
-//! `postio-widgets` at all (ADR 0043).
-//!
-//! The app's own wiring tests prove its window's `ctrl+Return` reaches
-//! this. This is the presenter on its own: a bare
-//! `Composer`, wired through a scripted `Client`, with no window at all.
-
 use std::sync::{Arc, Mutex};
 
 use gtk::prelude::*;
@@ -18,8 +8,6 @@ use postio_core::{CommandId, EventEnvelope};
 use postio_model::ids::{AccountId, DraftId};
 use postio_widgets::composer::Composer;
 
-/// A host that answers a save and a send, and records every request it was
-/// asked.
 struct Scripted {
     asked: Mutex<Vec<Req>>,
 }
@@ -48,11 +36,6 @@ impl Transport for Scripted {
     }
 }
 
-/// `ctrl+Return`'s claim (proven in the app's wiring), for the presenter alone:
-/// filling the fields and dispatching `Send` on a bare composer, wired
-/// through the shared presenter and nothing else, queues the draft through
-/// the client -- with the recipient and subject that were typed -- and
-/// closes the composer.
 pub fn dispatching_send_queues_the_draft_through_the_client() {
     if adw::init().is_err() {
         return;
@@ -81,11 +64,7 @@ pub fn dispatching_send_queues_the_draft_through_the_client() {
         composer.is_open(),
         "dispatching Compose did not open a draft"
     );
-    // Not `test_set_body`: that types through the live WebKit surface, which
-    // this bare window never maps, and this case is not about the body.
-    // `send`'s own seam reads the composer's in-memory document, which
-    // `open` already seeded, and the assertions below are only about the
-    // recipient and the subject.
+    // Not `test_set_body`: it types through a WebKit surface this bare window never maps.
     composer.test_set_to("quinn@example.net");
     composer.test_set_subject("Tide gate interlock");
 

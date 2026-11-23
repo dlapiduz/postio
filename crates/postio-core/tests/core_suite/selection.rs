@@ -1,10 +1,3 @@
-//! What an action will hit, and how the keyboard changes it.
-//!
-//! The constraint that shapes all of this: docs/PRODUCT.md §18 says a mailbox is never
-//! loaded into memory, so "select all" in a 100,000-message folder must not be
-//! expressible only as 100,000 ids. It is a predicate instead, and the storage
-//! layer resolves it in one statement when an action finally lands.
-
 use postio_config::paths::Platform;
 use postio_core::state::Selection;
 use postio_core::{AppState, CommandId, Context, Event, registry};
@@ -61,8 +54,6 @@ fn extending_adds_the_row_and_takes_the_focus_with_it() {
 
 #[test]
 fn select_all_is_a_predicate_rather_than_a_hundred_thousand_ids() {
-    // The whole point. If this ever becomes a `Vec`, the windowed list model
-    // is defeated by one keystroke.
     let mut state = AppState::new();
     state.select_all();
 
@@ -89,7 +80,6 @@ fn deselecting_inside_select_all_stays_a_predicate() {
     );
     assert!(state.selection().contains(MessageId::new(8)));
 
-    // And putting it back is the same gesture again.
     state.toggle_selection(MessageId::new(7));
     assert!(state.selection().contains(MessageId::new(7)));
     assert_eq!(state.selection(), &Selection::Everything { except: vec![] });
@@ -116,7 +106,6 @@ fn every_selection_change_is_announced() {
         "nothing told the toolbar its count moved: {events:?}"
     );
 
-    // And an idempotent change says nothing, so a repaint is never wasted.
     let again = state.select_all();
     assert!(
         !again
@@ -128,8 +117,6 @@ fn every_selection_change_is_announced() {
 
 #[test]
 fn the_four_selection_keys_are_in_the_registry_and_overridable() {
-    // All four go through the registry so `[keys]` can move them, and so the
-    // palette and the `?` sheet print them beside everything else.
     for (id, binding) in [
         (CommandId::ToggleSelection, "x"),
         (CommandId::ExtendSelectionDown, "J"),
@@ -161,12 +148,6 @@ fn the_four_selection_keys_are_in_the_registry_and_overridable() {
 
 #[test]
 fn an_explicit_binding_outranks_a_built_in_default_that_wants_the_same_key() {
-    // `x` is `toggle_selection`'s default. Someone who writes
-    // `archive = "x"` has said what they want, and a default is only ever a
-    // suggestion — so the override takes the key and the default gives it up.
-    // Without this rule, adding a command with a popular default silently
-    // steals a key somebody had already asked for, and which command wins
-    // depends on the order of a table they have never seen.
     let mut overrides = postio_config::KeyBindings::default();
     overrides
         .overrides_mut()

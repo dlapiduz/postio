@@ -1,14 +1,7 @@
-//! The macOS Keychain store, against a keychain the test owns.
-//!
-//! Never the login keychain: a test that reached for it would prompt on a
-//! developer's machine and hang every headless run. Each case creates a
-//! keychain file in a temp directory, uses it, and throws it away.
-
 #![cfg(target_os = "macos")]
 
 use postio_account::secret::{AccountKey, KeychainSecretStore, Password, SecretError, SecretStore};
 
-/// A store over a keychain that exists only for this test.
 fn scratch_keychain() -> (KeychainSecretStore, tempfile::TempDir) {
     let scratch = tempfile::tempdir().expect("a scratch directory");
     let path = scratch.path().join("postio-test.keychain");
@@ -32,9 +25,8 @@ async fn a_password_round_trips() {
 
 #[tokio::test]
 async fn storing_twice_replaces_rather_than_duplicates() {
-    // The trait says "stores (or replaces)". A keychain that accumulated two
-    // items for one account would answer with whichever it found first, which
-    // is a password that silently stops changing when the user updates it.
+    // The trait says "stores (or replaces)"; two items per account would make a changed password
+    // silently not apply.
     let (store, _scratch) = scratch_keychain();
     let key = AccountKey::new("ada@example.com");
 
@@ -46,11 +38,8 @@ async fn storing_twice_replaces_rather_than_duplicates() {
 
 #[tokio::test]
 async fn an_absent_password_is_not_found_rather_than_an_error() {
-    // The distinction ADR 0014 turns on. `store_key` treats `NotFound` as a
-    // first run and mints a key; anything else it refuses — because minting
-    // on a transient failure would encrypt the next write under a key the
-    // existing store knows nothing about, and the mailbox would be gone
-    // rather than merely unavailable.
+    // ADR 0014: `store_key` mints a key only on `NotFound`; minting on a transient failure would
+    // orphan the existing store.
     let (store, _scratch) = scratch_keychain();
     let key = AccountKey::new("nobody@example.com");
 
@@ -64,7 +53,6 @@ async fn an_absent_password_is_not_found_rather_than_an_error() {
 
 #[tokio::test]
 async fn deleting_an_absent_password_succeeds() {
-    // The trait requires it: "Removing an absent password succeeds."
     let (store, _scratch) = scratch_keychain();
     let key = AccountKey::new("nobody@example.com");
     store.delete(&key).await.expect("deleting nothing is fine");
@@ -111,18 +99,13 @@ async fn two_accounts_do_not_see_each_other() {
 
 #[test]
 fn the_store_says_which_backend_it_is() {
-    // `describe()` round-trips through `config.toml`, so it has to name this
-    // backend distinctly from the Secret Service one.
     let (store, _scratch) = scratch_keychain();
     assert_eq!(store.describe(), "keychain");
 }
 
 #[test]
 fn the_platform_keyring_is_the_keychain_here() {
-    // `SecretSource::Keyring` in `config.toml` means "wherever this system
-    // keeps secrets". On macOS that is the Keychain, and a build that still
-    // reached for the Secret Service would fail at the first D-Bus call —
-    // which is exactly how this was found.
+    // `SecretSource::Keyring` must resolve to the Keychain on macOS, not the Secret Service.
     assert_eq!(
         postio_account::secret::platform_keyring().describe(),
         "keychain"
@@ -131,9 +114,8 @@ fn the_platform_keyring_is_the_keychain_here() {
 
 #[tokio::test]
 async fn the_unlock_hint_names_software_a_mac_user_has() {
-    // The message a locked keychain produces is the only instruction the user
-    // gets, and pointing them at "Passwords and Keys" — which does not exist
-    // on macOS — is worse than saying nothing.
+    // A locked-keychain message must not point at "Passwords and Keys", which does not exist on
+    // macOS.
     let error = SecretError::Locked {
         keyring: "login".to_string(),
         account: "ada@example.com".to_string(),

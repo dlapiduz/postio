@@ -30,11 +30,8 @@ import shutil
 import sys
 from typing import Mapping
 
-#: Present. Nothing to decide.
 FINE = "fine"
-#: Absent, and that is expected here. Say so, do not fail.
 SKIP_AND_SAY = "skip-and-say"
-#: Absent where it should not be. A skip here would read as a pass.
 FAIL = "fail"
 
 
@@ -58,13 +55,8 @@ def is_ci(environ: Mapping[str, str] | None = None) -> bool:
     return bool(environ.get("CI", ""))
 
 
-#: What a self-test exits with to say it cannot be meaningful here.
-#:
-#: Not 0 and not 1: `run-self-tests.sh` counts and names these separately, so
-#: a Linux-only test on a macOS runner shows up in the log as one that stood
-#: down rather than as one that passed. 77 is the convention autotools and
-#: `make check` already use for "skipped", so it is the least surprising
-#: number to pick and the one least likely to collide with a real exit code.
+# : What a self-test exits with to say it cannot be meaningful here: not 0 or 1, so
+# `run-self-tests.sh` reports it as stood down, not passed. 77 is autotools' "skipped".
 NOT_APPLICABLE_EXIT = 77
 
 

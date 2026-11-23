@@ -1,7 +1,5 @@
-//! The egress log (#151): what left this machine, auditable.
-//!
-//! See migration 0018 and `postio_model::egress` for the shape and the
-//! rule — ids, counts and outcomes, never content.
+//! The egress log (#151): what left this machine, auditable; ids, counts and outcomes, never
+//! content (migration 0018).
 
 use postio_model::egress::{EgressEvent, EgressOutcome, EgressSubsystem};
 use postio_model::ids::AccountId;
@@ -10,18 +8,15 @@ use crate::error::Result;
 use crate::sql::{self, RowExt as _, bind};
 use crate::store::Connection;
 
-/// Read and write the egress log on one connection.
 pub struct EgressLogRepository<'a> {
     connection: &'a Connection,
 }
 
 impl<'a> EgressLogRepository<'a> {
-    /// Borrow `connection` for egress reads and writes.
     pub fn new(connection: &'a Connection) -> Self {
         Self { connection }
     }
 
-    /// Append one connection attempt.
     pub async fn record(&self, event: &EgressEvent) -> Result<()> {
         sql::execute(
             self.connection,
@@ -40,8 +35,6 @@ impl<'a> EgressLogRepository<'a> {
         Ok(())
     }
 
-    /// The newest `limit` entries, newest first — what the settings surface
-    /// lists for the user to audit.
     pub async fn recent(&self, limit: u32) -> Result<Vec<EgressEvent>> {
         sql::all(
             self.connection,
@@ -67,10 +60,8 @@ impl<'a> EgressLogRepository<'a> {
         .await
     }
 
-    /// How many connections the log holds.
-    ///
-    /// The proof the documents promise runs on this: a default test suite
-    /// that touched no network leaves it at zero.
+    /// The proof the documents promise runs on this: a default test suite that touched no network
+    /// leaves it at zero.
     pub async fn count(&self) -> Result<u64> {
         let count: i64 = sql::one(
             self.connection,
@@ -126,8 +117,6 @@ mod tests {
 
     #[tokio::test]
     async fn a_call_to_the_person_s_own_model_is_logged_under_model() {
-        // Spec 007 FR-168: every call to the local model is in the log, in
-        // the same table as the mail protocols' connections (ADR 0009 Q6).
         let database = test_support::memory().await;
         let connection = database.connect().await.expect("checkout");
         let log = EgressLogRepository::new(&connection);

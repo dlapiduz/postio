@@ -36,8 +36,6 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-# The crates whose `src/` lays out widgets: the desktop app, and the crate
-# holding what it draws (ADR 0043; specs/007-postio-focus R1).
 CRATES = ("postio-widgets", "postio-gtk")
 BASELINE = Path("scripts/checks/spacing-literals-baseline.txt")
 

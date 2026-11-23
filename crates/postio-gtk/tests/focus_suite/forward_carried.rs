@@ -1,12 +1,3 @@
-//! A forward carries a part nobody downloaded (#1690): opening it asks the
-//! server for that part, with nothing sent, and the composer's row for it
-//! reads "downloading" until the bytes land, then reads as any attachment.
-//!
-//! Nothing dials anything: the host syncs from a mock backend, which lets
-//! the message's words through and holds every body fetch after them at the
-//! server until the case lets it go, so the downloading state lasts exactly
-//! as long as the case looks at it.
-
 use std::sync::Arc;
 
 use gtk::prelude::*;
@@ -22,7 +13,6 @@ use crate::support::{self, Fixture};
 const PAYLOAD: &str = "%PDF carried";
 const TEXT: &str = "See attached.";
 
-/// A report whose PDF is part 2.
 fn report() -> MockMessage {
     let raw = format!(
         "Message-ID: <report@example.com>\r\nFrom: Ada Moreno <ada@example.com>\r\n\
@@ -47,7 +37,6 @@ fn report() -> MockMessage {
         .with_part("2", PAYLOAD.as_bytes())
 }
 
-/// What the composer's attachment rows say, beside their names.
 fn attachment_notes(composer: &postio_widgets::composer::Composer) -> Vec<String> {
     support::with_class(composer, "postio-compose-label")
         .into_iter()
@@ -59,14 +48,10 @@ fn attachment_notes(composer: &postio_widgets::composer::Composer) -> Vec<String
 
 pub fn a_forwarded_part_reads_downloading_until_its_bytes_land() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let backend = MockBackend::builder()
             .mailbox(MockMailbox::new("INBOX").message(report()))
             .build();
-        // The words come through; the part, asked for later, waits.
         backend.hold(Held::Bodies, "INBOX", 1);
         let host = postio_host::Host::start(fixture.database.clone(), fixture.blob_store(), {
             let backend = backend.clone();
@@ -96,8 +81,7 @@ pub fn a_forwarded_part_reads_downloading_until_its_bytes_land() {
             crate::settle_until(async || window.composer().is_some()).await,
             "Focus mounted no composer"
         );
-        // `f` forwards the cursor's row: a row drawn is not yet a row the
-        // cursor is on, and a press before it lands forwards nothing.
+        // A row drawn is not yet a row the cursor is on; a press before it lands forwards nothing.
         assert!(
             crate::settle_until(async || window.observe().cursor.index == Some(0)).await,
             "the cursor never landed on the report: {:?}",
@@ -123,7 +107,6 @@ pub fn a_forwarded_part_reads_downloading_until_its_bytes_land() {
             "the carried part never read as downloading: {:?}",
             attachment_notes(&composer)
         );
-        // Asked for at the server, by the open alone: nothing was sent.
         assert!(
             crate::settle_until(async || backend.parked() == 1).await,
             "the part was never asked for"
@@ -137,8 +120,6 @@ pub fn a_forwarded_part_reads_downloading_until_its_bytes_land() {
             0,
             "opening a forward sends nothing"
         );
-        // Still downloading while the server holds it: the drawing is not a
-        // flash that happens to be caught.
         crate::settle();
         assert!(
             attachment_notes(&composer)
@@ -158,13 +139,9 @@ pub fn a_forwarded_part_reads_downloading_until_its_bytes_land() {
             "the part landed and still reads: {:?}",
             attachment_notes(&composer)
         );
-        // Landed, not refused: a refusal (`BodyFailed`) would also end
-        // "downloading". `BodyLoaded` comes only after the write, so a landed
-        // part is readable by then; but the drawing also ends on any answer
-        // to the ask but `Queued`, and `Unreachable` still fetches the part
-        // once the account is up. Read the store until the part is there,
-        // not once (#2206). A fetch that failed never lands, and the message
-        // then says what the server served.
+        // `BodyLoaded` comes only after the write, but the drawing also ends on any answer but
+        // `Queued`, and `Unreachable` still fetches once the account is up:
+        // read the store until the part is there, not once (#2206).
         let original = composer
             .draft()
             .forwarded_from

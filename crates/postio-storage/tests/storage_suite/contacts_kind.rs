@@ -1,6 +1,3 @@
-//! The evidence a contact's kind is decided from, and the decision stored
-//! (specs/011-focus-contacts S2).
-
 use chrono::{DateTime, TimeZone, Utc};
 
 use postio_model::promoted::{AUTO_GENERATED, PRECEDENCE_BULK, PromotedHeaders};
@@ -20,7 +17,6 @@ async fn setup() -> (postio_storage::Store, Checkout, Account, MailboxId) {
     (database, connection, account, inbox)
 }
 
-/// Stores and records a message from `from`, as sync does.
 async fn received(
     connection: &Checkout,
     account: &Account,

@@ -1,14 +1,3 @@
-//! Acceptance tests for #192 — the OAuth flow: system browser, loopback
-//! redirect, PKCE, real cancellation.
-//!
-//! Nothing here touches the real network or a real browser. The "browser"
-//! is played by the test itself, completing the redirect over loopback TCP
-//! exactly the way a consenting user's tab would; the authorization server
-//! is an in-process mock on an ephemeral loopback port. Both are the kind
-//! of local-only, port-ephemeral I/O CLAUDE.md's "no network in the
-//! default suite" rule already treats as fine — the same footing
-//! `tests/imap_loopback.rs` runs the real client stack on.
-
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::sync::Mutex;
@@ -21,9 +10,6 @@ use tokio::net::TcpStream;
 use tokio::sync::oneshot;
 use url::Url;
 
-/// A [`BrowserOpener`] that hands the authorize URL to a channel instead of
-/// opening a real desktop browser, so the test can play the browser's part
-/// itself.
 struct ChannelOpener(Mutex<Option<oneshot::Sender<Url>>>);
 
 impl ChannelOpener {
@@ -42,9 +28,6 @@ impl BrowserOpener for ChannelOpener {
     }
 }
 
-/// A one-shot mock token endpoint: accepts one connection, reads one
-/// request, answers with a fixed JSON body, on a background thread so the
-/// async flow under test can drive real (loopback) I/O against it.
 struct MockTokenServer {
     url: Url,
     handle: Option<thread::JoinHandle<String>>,
@@ -95,16 +78,11 @@ impl MockTokenServer {
         }
     }
 
-    /// Whether the server ever accepted a connection, without blocking:
-    /// used to prove a token exchange did **not** fire.
     fn was_contacted(mut self) -> bool {
         match self.handle.take() {
             Some(handle) => {
-                // The listener has at most one client in every test that
-                // calls this, and that client (if any) has already finished
-                // talking by the time the flow under test has returned —
-                // so a short join is enough to tell "never connected" from
-                // "connected".
+                // At most one client exists and has finished by now, so a short join tells "never
+                // connected" from "connected".
                 for _ in 0..50 {
                     if handle.is_finished() {
                         return true;
@@ -128,16 +106,6 @@ fn request(token_endpoint: Url) -> AuthorizeRequest {
     }
 }
 
-/// Connects to the loopback redirect as a consenting browser tab would,
-/// reading `code`/`state`/`redirect_uri` straight off the URL the flow
-/// handed its [`BrowserOpener`].
-///
-/// Async, over `tokio::net::TcpStream`, rather than a blocking
-/// `std::net::TcpStream`: `#[tokio::test]` runs on a single-threaded
-/// runtime, and the `authorize` task under test lives on that same thread.
-/// A blocking connect/write/read here would never yield the thread back to
-/// the scheduler, so `authorize`'s own `accept()` could never run —
-/// deadlock, not a slow test.
 async fn play_the_browser(authorize_url: &Url, code: &str) {
     let pairs: std::collections::HashMap<_, _> = authorize_url.query_pairs().into_owned().collect();
     let redirect: Url = pairs["redirect_uri"].parse().expect("redirect_uri parses");
@@ -201,8 +169,6 @@ async fn cancelling_before_the_redirect_arrives_never_starts_a_token_exchange() 
     let cancel_for_flow = cancel.clone();
     let flow = tokio::spawn(async move { authorize(req, &opener, &cancel_for_flow).await });
 
-    // Wait for the flow to actually be listening before cancelling it, so
-    // this test cannot pass by accident on a task that never started.
     opened.await.expect("the flow opens a browser URL");
     cancel.cancel();
 
@@ -229,8 +195,6 @@ async fn a_mismatched_state_is_dropped_and_the_real_redirect_still_completes_the
 
     let authorize_url = opened.await.expect("the flow opens a browser URL");
 
-    // A stray connection with the wrong state must not end the attempt or
-    // trigger a token exchange...
     let pairs: std::collections::HashMap<_, _> = authorize_url.query_pairs().into_owned().collect();
     let redirect: Url = pairs["redirect_uri"].parse().unwrap();
     let mut bad = TcpStream::connect((redirect.host_str().unwrap(), redirect.port().unwrap()))
@@ -244,7 +208,6 @@ async fn a_mismatched_state_is_dropped_and_the_real_redirect_still_completes_the
     let mut discard = Vec::new();
     let _ = bad.read_to_end(&mut discard).await;
 
-    // ...so the real browser tab still completes it.
     play_the_browser(&authorize_url, "the-real-code").await;
 
     let response = flow
@@ -256,10 +219,7 @@ async fn a_mismatched_state_is_dropped_and_the_real_redirect_still_completes_the
 
 #[tokio::test]
 async fn the_flow_says_which_port_the_answer_will_come_back_on() {
-    // A frontend that has just sent somebody to their browser has something
-    // to say while they are gone, and it cannot know the port without being
-    // told: the listener binds `:0`, because a fixed port is one something
-    // else may already hold.
+    // The listener binds `:0`, so the frontend cannot know the port without being told.
     let server = MockTokenServer::start(
         r#"{"access_token":"final-access-token","refresh_token":"r","expires_in":3600}"#,
     );
@@ -285,8 +245,6 @@ async fn the_flow_says_which_port_the_answer_will_come_back_on() {
         .expect("port mutex")
         .expect("a port was reported");
     assert!(port > 0);
-    // The same port the browser was actually sent to, which is the only
-    // thing that makes saying it out loud worth anything.
     let redirect = authorize_url
         .query_pairs()
         .find(|(key, _)| key == "redirect_uri")

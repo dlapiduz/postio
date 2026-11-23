@@ -1,12 +1,5 @@
-//! What the desktop knows Focus by (T159): the name its windows give the
-//! compositor, and the `postio://` links it opens.
-
-/// GNOME matches a window to its desktop entry by the Wayland `app_id`,
-/// which GDK takes from `g_get_prgname()` -- the *binary* name, `postio`,
-/// unless the application says otherwise. The entry is
-/// `dev.postio.Postio.desktop`, with `StartupWMClass` to match, so a Postio
-/// that never set its name would be drawn with a generic icon under a
-/// generic name.
+/// GNOME matches a window to its desktop entry by the Wayland `app_id`, which GDK takes from
+/// `g_get_prgname()`: the binary's name unless the app says otherwise.
 pub fn focus_says_which_application_it_is() {
     let _application = postio_gtk::app::application();
     let reported = gtk::glib::prgname();
@@ -15,10 +8,8 @@ pub fn focus_says_which_application_it_is() {
         Some(postio_gtk::app::APP_ID),
         "Focus's windows would tell the compositor they are {reported:?}"
     );
-    // The entry registers `x-scheme-handler/mailto` and
-    // `x-scheme-handler/postio` with `%U`: a link
-    // clicked elsewhere arrives as a file to open, which GApplication drops
-    // unless the application says it takes them.
+    // A link clicked elsewhere arrives as a file to open, which GApplication drops unless the
+    // application says it takes them.
     assert!(
         gtk::prelude::ApplicationExt::flags(&_application)
             .contains(gtk::gio::ApplicationFlags::HANDLES_OPEN),
@@ -26,29 +17,16 @@ pub fn focus_says_which_application_it_is() {
     );
 }
 
-/// Focus is Postio (spec 007, C27): the window a person switches to is
-/// titled with the app's name, not the name it had as a second launcher.
 pub fn the_window_is_titled_postio() {
     use gtk::prelude::GtkWindowExt;
     crate::gtk_case(async {
-        if !crate::support::display() {
-            return;
-        }
         let window = postio_gtk::window::FocusWindow::new(None);
         assert_eq!(window.title().as_deref(), Some("Postio"));
     });
 }
 
-/// T217: a running Focus is drawn with the Postio icon. The dock matches the
-/// window to `dev.postio.Postio.desktop`, whose `Icon=` names the
-/// package's one icon; a window with no icon of its own (an AdwWindow's
-/// switcher entry, a compositor without the entry) asks the theme for the
-/// same name, so the theme must be able to answer from the binary.
 pub fn focus_shows_the_postio_icon() {
     crate::gtk_case(async {
-        if !crate::support::display() {
-            return;
-        }
         let (_fixture, window) = crate::support::three_in_the_inbox().await;
         let name = postio_gtk::app::ICON_NAME;
         assert_eq!(name, "dev.postio.Postio", "the package's one icon");
@@ -75,14 +53,8 @@ pub fn focus_shows_the_postio_icon() {
     });
 }
 
-/// US15 scenario 2: a `postio://message/<id>` link opens that message over
-/// the list and does nothing else to it; a link naming nothing here, or
-/// nothing Postio knows how to name, is refused with a sentence.
 pub fn a_postio_link_opens_its_message_and_an_unknown_one_is_refused() {
     crate::gtk_case(async {
-        if !crate::support::display() {
-            return;
-        }
         let (fixture, window) = crate::support::three_in_the_inbox().await;
         let row = window
             .pane()
@@ -152,8 +124,6 @@ pub fn a_postio_link_opens_its_message_and_an_unknown_one_is_refused() {
     });
 }
 
-/// What the composer a `mailto:` link opened shows: the To chip, the
-/// subject entry and the body text, as a person reads them.
 async fn shows_the_mailto(window: &postio_gtk::window::FocusWindow) {
     assert!(
         crate::settle_until(async || window.compose_dialog().is_some()).await,
@@ -182,17 +152,10 @@ async fn shows_the_mailto(window: &postio_gtk::window::FocusWindow) {
     );
 }
 
-/// `mailto:` (row 46, T244): a link the desktop hands Focus opens a composer
-/// with To, Subject and the body filled in.
 pub fn a_mailto_link_opens_a_composer_with_its_fields_filled() {
     crate::gtk_case(async {
-        if !crate::support::display() {
-            return;
-        }
         let fixture = crate::support::Fixture::empty().await;
-        fixture
-            .file(("Ada Moreno", "ada@example.com"), "Budget", "Numbers.", 5)
-            .await;
+        fixture.file_from_ada("Budget", "Numbers.", 5).await;
         let (window, _client) = fixture.open().await;
         window.open_link(
             "mailto:ada@example.com?subject=Lunch%20on%20Friday&body=Noon%20at%20the%20usual%20place%3F",
@@ -201,14 +164,8 @@ pub fn a_mailto_link_opens_a_composer_with_its_fields_filled() {
     });
 }
 
-/// The same link on a cold launch -- a browser's click starts the app --
-/// arrives before the store is open and waits for it, as a `postio://` link
-/// does.
 pub fn a_mailto_link_that_arrives_before_the_store_waits_for_it() {
     crate::gtk_case(async {
-        if !crate::support::display() {
-            return;
-        }
         let fixture = crate::support::Fixture::empty().await;
         let window = postio_gtk::window::FocusWindow::new(None);
         gtk::prelude::GtkWindowExt::present(&window);
@@ -224,23 +181,13 @@ pub fn a_mailto_link_that_arrives_before_the_store_waits_for_it() {
     });
 }
 
-/// A second launch of the single-instance application is an `activate` on the
-/// primary process, and `app::run`'s handler answers it by raising the window
-/// it already has -- building nothing, adopting no second store, starting no
-/// second sync. `run` owns the process's main loop and cannot be driven from
-/// a suite, so this holds the parts it stands on: the window Focus builds
-/// for its application *is* the application's active window (what the guard
-/// reads), presenting it again leaves one window, and a second
-/// `start_syncing` is a no-op rather than a second set of engines.
+/// `run` owns the process's main loop and cannot be driven from a suite, so this holds the parts it
+/// stands on: one window, and a second `start_syncing` is a no-op.
 pub fn a_second_activate_has_one_window_and_starts_sync_once() {
     use adw::prelude::*;
     crate::gtk_case(async {
-        if !crate::support::display() {
-            return;
-        }
         let application = postio_gtk::app::application();
         let _ = application.register(gtk::gio::Cancellable::NONE);
-        // No account: starting sync here dials nothing.
         let none = crate::support::NoAccount::new().await;
         let host = none.host_signing_in_to(postio_account::backend::MockBackend::default());
         let window = postio_gtk::window::FocusWindow::new(Some(&application));
@@ -248,7 +195,6 @@ pub fn a_second_activate_has_one_window_and_starts_sync_once() {
         let session = postio_gtk::startup::adopt(&window, host, &postio_config::Config::default());
         crate::settle();
 
-        // The guard `run`'s activate handler reads.
         let active = application.active_window();
         assert_eq!(
             active.as_ref().map(|active| active.as_ptr()),
@@ -256,7 +202,6 @@ pub fn a_second_activate_has_one_window_and_starts_sync_once() {
             "the application does not know Focus's window as its active one, so a \
              second launch would build another"
         );
-        // A second activate presents it again.
         window.present();
         crate::settle();
         let focus_windows = || {

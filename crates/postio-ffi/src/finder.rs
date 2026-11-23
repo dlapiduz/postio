@@ -1,33 +1,23 @@
-//! The search box's prefix modes for the macOS frontend: `#` folders, `@`
-//! correspondents, `+` labels (`postio_ui::finder::MODES`; `>` is the
-//! palette's, `paletteEntries`).
-//!
-//! What crosses is a mode's matches, already scored and ordered by the shared
-//! matcher, and the sentence for when there are none -- the wording GTK's box
-//! uses, so the two boxes answer an empty result the same way.
+//! The search box's prefix modes for macOS: `#` folders, `@` correspondents, `+` labels
+//! (`postio_ui::finder::MODES`;
+//! `>` is the palette's). Matches arrive scored and ordered by the shared matcher, with the shared
+//! empty-result sentence.
 
-/// One row a prefix mode offers.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct FinderHitFfi {
     /// The folder or label to act on. Zero for a correspondent, whose row is
     /// acted on through [`query`](Self::query).
     pub id: i64,
-    /// What the row says: the folder's name, the label's, the person's.
     pub title: String,
-    /// The second thing the row says: a folder's unread count, a
-    /// correspondent's address.
     pub detail: Option<String>,
     /// Byte offsets in `title` the query matched, for emphasis.
     pub positions: Vec<u32>,
-    /// What picking a correspondent writes into the box: a `from:` query,
-    /// so the search that follows is one the user can go on building.
+    /// What picking a correspondent writes into the box: a `from:` query.
     pub query: Option<String>,
 }
 
-/// A mode's answer: its rows, and what to say when there are none.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct FinderAnswerFfi {
-    /// The matches, best first.
     pub hits: Vec<FinderHitFfi>,
     /// Never a shrug: names what was looked in.
     pub empty: String,
@@ -37,13 +27,8 @@ pub(crate) fn positions(positions: &[usize]) -> Vec<u32> {
     positions.iter().map(|&at| at as u32).collect()
 }
 
-/// `#`: the folders matching `query`, best first.
-///
-/// The palette's matcher over the names the sidebar draws, so `wd` finds
-/// `wayland-devel` here exactly as `cp` finds "Command palette" in `>`.
-/// The classic app's finder was the same rule over its own rows.
-/// Views (Flagged, Snoozed) are not folders to go to, and a container that
-/// holds no mail is not either.
+/// `#`: the folders matching `query`, best first. Views (Flagged, Snoozed) and containers that hold
+/// no mail are not folders to go to.
 pub(crate) fn folders(mailboxes: &[crate::MailboxFfi], query: &str) -> FinderAnswerFfi {
     let query = query.trim();
     let mut found: Vec<(i32, FinderHitFfi)> = mailboxes
@@ -72,7 +57,6 @@ pub(crate) fn folders(mailboxes: &[crate::MailboxFfi], query: &str) -> FinderAns
     }
 }
 
-/// `@`: the correspondents matching `query`, best first.
 pub(crate) fn contacts(known: &[postio_model::Contact], query: &str) -> FinderAnswerFfi {
     let hits = postio_ui::finder::contacts(known, query)
         .into_iter()
@@ -84,9 +68,8 @@ pub(crate) fn contacts(known: &[postio_model::Contact], query: &str) -> FinderAn
             title: hit.name,
         })
         .collect();
-    // Two different empties. Postio has no address book: correspondents are
-    // learned from the mail that syncs, so none at all is a mailbox that has
-    // not synced rather than a query that missed.
+    // Two different empties: correspondents are learned from synced mail, so none at all is a
+    // mailbox that has not synced.
     let empty = if known.is_empty() {
         "No correspondents yet — Postio learns them from the mail it syncs.".to_owned()
     } else {
@@ -95,7 +78,6 @@ pub(crate) fn contacts(known: &[postio_model::Contact], query: &str) -> FinderAn
     FinderAnswerFfi { hits, empty }
 }
 
-/// `+`: the labels matching `query`, best first.
 pub(crate) fn labels(known: &[postio_model::Label], query: &str) -> FinderAnswerFfi {
     FinderAnswerFfi {
         hits: postio_ui::finder::labels(known, query)

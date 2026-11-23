@@ -46,8 +46,6 @@ import tempfile
 import time
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -148,7 +146,6 @@ def main() -> int:
                  and f"MAKEFLAGS=--jobserver-auth=fifo:{fifo}" in result.stdout.replace('"', ""),
                  f"exit {result.returncode}\n{result.stdout}\n{result.stderr}")
 
-            # ── a leaked token comes back, but only when nothing is running ─
             take_one(fifo)
             case("the fixture leaked one token", tokens(fifo) == 2, f"{tokens(fifo)} tokens")
             result = run(directory, "ensure", idle="0")
@@ -160,7 +157,6 @@ def main() -> int:
                  result.returncode == 0 and tokens(fifo) == 3,
                  f"exit {result.returncode}; {tokens(fifo)} tokens, want 3\n{result.stderr}")
 
-            # ── a dead holder is replaced, tokens and all ────────────────────
             os.kill(int(first_pid), 15)
             time.sleep(0.2)
             result = run(directory, "ensure", idle="1")

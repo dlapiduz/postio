@@ -1,31 +1,6 @@
-//! Streaming a message or one MIME part into a [`BodySink`] — no whole body
-//! ever held in memory.
-//!
-//! # Two streaming strategies, chosen by `BodyPart`
-//!
-//! `io-imap` 0.6.0 ships a real byte-streaming FETCH
-//! (`rfc3501::fetch_stream::ImapMessageFetchStream`), but it is hard-coded to
-//! `BODY.PEEK[]` — the *whole* message, with no section parameter. There is
-//! no public API to stream an individual MIME part that way, which is
-//! exactly the case that matters most for memory: a large attachment is a
-//! section, not a whole message.
-//!
-//! So [`BodyPart::Whole`] drives that real streaming coroutine directly
-//! against the session's transport (see [`stream_whole`]) — one round trip,
-//! bytes handed to the sink as they arrive off the socket, regardless of
-//! message size. [`BodyPart::Headers`], [`BodyPart::Text`] and
-//! [`BodyPart::Section`] have no such primitive available, so they fall back
-//! to a loop of bounded RFC 3501 §6.4.5 partial fetches instead (see
-//! [`stream_windows`]): `BODY.PEEK[section]<offset.count>`, one
-//! [`PARTIAL_FETCH_WINDOW`]-sized round trip at a time, until the server
-//! returns less than a full window. That costs more round trips than true
-//! streaming for a large part, but it is the only way to bound memory when
-//! the section itself cannot be named to the streaming coroutine.
-//!
-//! A cancelled or failed fetch never calls [`BodySink::finish`]: whatever
-//! partial bytes reached the sink are the caller's to discard, per the
-//! sink's own contract. Retrying is starting over, not resuming a byte
-//! offset — this module does not track one across calls.
+//! `Whole` drives io-imap's streaming FETCH coroutine, which is hard-coded to `BODY.PEEK[]`; other
+//! parts loop over bounded RFC 3501 partial fetches (`PARTIAL_FETCH_WINDOW`) to bound memory.
+//! A cancelled or failed fetch never calls `BodySink::finish`; retrying starts over.
 
 use std::num::NonZeroU32;
 
@@ -47,11 +22,8 @@ use crate::cancel::CancelToken;
 
 use super::{ConnectionPool, ImapSession, MAX_MESSAGE_SIZE, Priority, READ_BUFFER, TransportError};
 
-/// Octets asked for per round trip. See the [module docs](self) for why this
-/// is a loop of partial fetches rather than one streamed command.
 pub const PARTIAL_FETCH_WINDOW: u32 = 128 * 1024;
 
-/// Streams `part` of `uid` in `mailbox` into `sink`.
 pub async fn fetch_part(
     pool: &ConnectionPool,
     mailbox: &str,
@@ -89,10 +61,6 @@ pub async fn fetch_part(
     })
 }
 
-/// Fetches `section` in [`PARTIAL_FETCH_WINDOW`]-sized windows, writing each
-/// to `sink` as it arrives, until the server returns less than a full
-/// window. Does not call [`BodySink::finish`] — that is [`fetch_part`]'s job,
-/// once every window succeeded.
 async fn stream_windows(
     session: &mut ImapSession,
     mailbox: &str,
@@ -127,15 +95,8 @@ async fn stream_windows(
     Ok(total)
 }
 
-/// Streams the whole message in one round trip via `io-imap`'s real
-/// streaming `UID FETCH … BODY.PEEK[]` coroutine.
-///
-/// Unlike [`stream_windows`] this drives the coroutine directly against the
-/// session's transport rather than going through [`ImapClientAsync`]: the
-/// coroutine's own yield vocabulary (`BodyChunk`, `WantsStream`) is one of
-/// the handful the crate documents as meant to be wired per-caller, the same
-/// reason `ImapSession::open` pumps `ImapSessionOpen` by hand rather than
-/// through `run`.
+/// Drives the coroutine against the session's transport directly, as `ImapSession::open` does,
+/// since its yield vocabulary is meant to be wired per caller.
 async fn stream_whole(
     session: &mut ImapSession,
     mailbox: &str,
@@ -151,8 +112,7 @@ async fn stream_whole(
         id,
         ImapMessageFetchStreamOptions {
             uid: true,
-            // The same ceiling a buffered response gets: a body past it is a
-            // server misbehaving, not a message to write to disk.
+            // The ceiling a buffered response gets: a body past it is a misbehaving server.
             max_literal_len: MAX_MESSAGE_SIZE,
             ..ImapMessageFetchStreamOptions::default()
         },
@@ -161,11 +121,8 @@ async fn stream_whole(
     let mut buffer = [0u8; READ_BUFFER];
     let mut resume: Option<&[u8]> = None;
     let mut total: u64 = 0;
-    // `ImapMessageFetchStream` completes `Ok(())` both when the server sent
-    // no FETCH data at all (the UID does not exist — RFC 3501 says a FETCH
-    // of a missing id is a bare tagged OK) and when it streamed a genuine
-    // body, and does not distinguish the two itself. This is the only signal
-    // available to tell them apart from here.
+    // The coroutine completes `Ok(())` both for a missing UID (a bare tagged OK, RFC 3501) and for
+    // a real body; this flag tells them apart.
     let mut saw_body = false;
 
     loop {
@@ -209,10 +166,8 @@ async fn stream_whole(
                 let (written, short) =
                     stream_len_into_sink(session, sink, len, &mut buffer).await?;
                 total += written;
-                // The coroutine's own resume convention for this step: `None`
-                // reports that every requested octet reached the sink,
-                // `Some(&[])` reports a short read — never the bytes
-                // themselves, which already went straight to the sink.
+                // Resume convention: `None` means every requested octet reached the sink,
+                // `Some(&[])` a short read.
                 resume = if short { Some(&[]) } else { None };
             }
         }
@@ -228,10 +183,7 @@ async fn stream_whole(
     Ok(total)
 }
 
-/// Reads exactly `len` octets from `session`'s transport into `sink`, in
-/// [`READ_BUFFER`]-sized chunks so a multi-megabyte message never exists
-/// whole in memory. Returns the octets actually written and whether the
-/// connection closed before all of `len` arrived.
+/// Returns the octets written and whether the connection closed before all of `len` arrived.
 async fn stream_len_into_sink(
     session: &mut ImapSession,
     sink: &mut dyn BodySink,
@@ -273,12 +225,8 @@ fn map_fetch_stream_error(error: ImapMessageFetchStreamError) -> BackendError {
             context: "the IMAP session".to_owned(),
             reason,
         },
-        // The socket died in the middle of the exchange: the literal stopped
-        // short of the octet count the server announced, or the tagged
-        // response never came. That is the connection failing, not the server
-        // refusing — and the difference decides whether the caller retries,
-        // because `Protocol` is permanent and `Disconnected` is not. Found by
-        // `tests/imap_loopback.rs`, which tears a connection mid-FETCH.
+        // A socket dying mid-exchange is a connection failure, not a server refusal: `Protocol` is
+        // permanent and `Disconnected` is not, which decides whether the caller retries.
         error @ (ImapMessageFetchStreamError::ShortBody
         | ImapMessageFetchStreamError::MissingTagged) => BackendError::Disconnected {
             context: "a streamed FETCH".to_owned(),
@@ -290,7 +238,6 @@ fn map_fetch_stream_error(error: ImapMessageFetchStreamError) -> BackendError {
     }
 }
 
-/// One `UID FETCH … BODY.PEEK[section]<offset.window>` round trip.
 async fn fetch_window(
     session: &mut ImapSession,
     mailbox: &str,
@@ -328,10 +275,8 @@ async fn fetch_window(
         });
     }
 
-    // The entry that carries a body section, not merely the first: a server
-    // may report another message's flag change inside this reply (RFC 3501
-    // §7.4.2), and one earlier in the folder sorts ahead of the answer. Read
-    // as the answer, it has no section and the part came back empty.
+    // The entry carrying a body section, not the first: a server may report another message's flag
+    // change in this reply (RFC 3501 §7.4.2), and read as the answer it has no section.
     for items in raw.into_values() {
         for item in items {
             if let MessageDataItem::BodyExt { data, .. } = item {
@@ -354,7 +299,6 @@ fn section_for(part: &BodyPart) -> BackendResult<Option<Section<'static>>> {
     })
 }
 
-/// Parses an IMAP section number like `2.1` into the dotted `Part` it names.
 fn parse_part_number(spec: &str) -> BackendResult<Part> {
     let malformed = || BackendError::Protocol {
         reason: format!("{spec:?} is not a valid IMAP body section number"),
@@ -373,22 +317,9 @@ fn imap_types_vec1(numbers: Vec<NonZeroU32>) -> Option<io_imap::types::core::Vec
     io_imap::types::core::Vec1::try_from(numbers).ok()
 }
 
-/// One section of many messages, in a single `UID FETCH` (#1551).
-///
-/// The text axis asks for the same section path over and over — most mail's
-/// words are at `1` or `1.1` — and IMAP will answer a whole set in one round
-/// trip. That is the difference between one wait per message and one wait per
-/// batch, which on a first sync of tens of thousands of messages is the whole
-/// cost.
-///
-/// **No `partial`, so no windowing.** Every answer is held at once, which is
-/// the trade a batch makes; `postio_sync::backfill` is what bounds the set by
-/// `RFC822.SIZE` before calling, and leaves anything large on the streaming
-/// path where the window still applies.
-///
-/// A uid the server does not return is simply absent from the answer, not an
-/// error: the queue is derived from a local table and an expunge between the
-/// two is ordinary.
+/// One section of many messages in one `UID FETCH` (#1551). No `partial`: every answer is held at
+/// once, so `postio_sync::backfill` bounds the set by `RFC822.SIZE` first.
+/// A uid the server does not return is absent, not an error.
 pub async fn fetch_sections(
     pool: &ConnectionPool,
     mailbox: &str,
@@ -411,8 +342,8 @@ pub async fn fetch_sections(
     pool.execute(priority, async |session| {
         let live = session.ensure_selected(&mailbox_owned, false).await?;
 
-        // Resolved inside the selection, because `wire_uid` is what notices a
-        // renumber and it must be the *current* generation's answer.
+        // Resolved inside the selection: `wire_uid` notices a renumber and must see the current
+        // generation.
         let mut by_uid = std::collections::HashMap::new();
         let mut uids = crate::backend::UidSet::new();
         for id in &wanted {
@@ -427,8 +358,7 @@ pub async fn fetch_sections(
                     reason: format!("a uid set that cannot be a sequence set: {error}"),
                 }
             })?;
-        // `Uid` alongside the body, because the answer arrives unordered and
-        // the uid in it is the only thing that says which message it is.
+        // `Uid` rides with the body because the answer arrives unordered.
         let items = MacroOrMessageDataItemNames::MessageDataItemNames(vec![
             MessageDataItemName::Uid,
             MessageDataItemName::BodyExt {
@@ -468,9 +398,8 @@ pub async fn fetch_sections(
                     _ => {}
                 }
             }
-            // Both or neither. A body with no uid cannot be attributed, and
-            // attributing it to the wrong message would store one person's
-            // mail on another's row.
+            // Both or neither: attributing an unattributed body could store one person's mail on
+            // another's row.
             if let (Some(uid), Some(body)) = (uid, body)
                 && let Some(id) = by_uid.get(&uid)
             {

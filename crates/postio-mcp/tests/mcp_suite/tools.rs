@@ -1,5 +1,3 @@
-//! The tool list: reads and one draft, and nothing derived from mail.
-
 use std::collections::BTreeSet;
 
 use serde_json::json;
@@ -39,9 +37,7 @@ fn the_tools_are_reads_a_draft_and_the_organizing_verbs() {
 
 #[test]
 fn no_tool_sends_deletes_or_marks_mail() {
-    // ADR 0010 Q4, as amended on 2026-10-14: archive, move and label are
-    // allowed; sending, deleting and marking are absent, not gated. The day
-    // one of these appears, this fails and asks why.
+    // Sending, deleting and marking are absent, not gated (ADR 0010 Q4).
     let mut world = World::new(INBOX_ONLY);
     for name in names(&mut world) {
         for verb in [
@@ -119,9 +115,6 @@ fn every_organizing_tool_says_mail_is_untrusted_and_to_act_only_when_asked() {
 
 #[test]
 fn the_tool_list_is_the_same_whatever_the_mailbox_holds() {
-    // ADR 0010 Q5: nothing derived from mail reaches a name, a description
-    // or a schema. Two mailboxes, two configurations, before and after
-    // reading: one list.
     let mut one = World::new(INBOX_ONLY);
     let before = one.request("tools/list", json!({}))["result"].clone();
     one.call("search_mail", json!({"query": "atlas"}));

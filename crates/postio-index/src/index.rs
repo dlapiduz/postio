@@ -1,54 +1,10 @@
-//! The full-text search index: schema, sync triggers, and the rebuild path.
-//!
-//! # The shape: two `USING fts` indexes on ordinary tables
-//!
-//! The engine's full-text search is an *index method*, not a module:
-//! `CREATE INDEX ... USING fts` puts an inverted index on ordinary columns,
-//! and the engine maintains it the way it maintains any other index. So
-//! there is no virtual table here, no external-content shadow table, and no
-//! trigger whose job is keeping an index in step — all of which the FTS5
-//! version of this module needed. Two indexes:
-//!
-//! * `search_documents_fts`, over the five metadata columns of
-//!   `search_documents`;
-//! * `messages_body_fts`, over `message_search_bodies.body_search` — the
-//!   body text folded for search, one row per indexed message. The engine's
-//!   tokenizer lowercases and does not strip diacritics, so
-//!   [`postio_model::fold`] folds the column on the way in ([`index_body`])
-//!   and the query path applies the identical fold, or the two stop meeting.
-//!
-//! # Why `search_documents` is still a table of its own
-//!
-//! An index covers columns, and the metadata this search covers (sender,
-//! recipients, subject, attachment filenames, list id) does not live on one
-//! row of `messages`: sender and recipients are rows of `recipients`,
-//! filenames are rows of `attachments`. `search_documents` is the flattened
-//! row — one per message — that gives the index something to sit on. It is
-//! kept current by triggers on `messages`, `recipients` and `attachments`,
-//! and backfilled by [`SCHEMA_FOR_TEST`]'s trailing `INSERT` for the mail
-//! that predates the triggers, because a retro-fitted index that only sees
-//! new arrivals answers nothing on every existing store.
-//!
-//! Bodies are not flattened into it: since ADR 0020 they are already one
-//! column of one row (`message_contents.body_text`), and their index sits on a
-//! sibling table of its own, `message_search_bodies`, which [`index_body`]
-//! writes — the fold cannot be computed by a trigger, and keeping the folded
-//! copy off `messages` keeps the index's segment merges off every other
-//! write to that table.
-//!
-//! `search_documents.content_id` cascades from `message_contents.id`, so
-//! removing the last mailbox membership collects its document and indexes.
-//! Search hydrates a qualifying occurrence for location-specific actions.
-//!
-//! # Applying this schema
-//!
-//! [`ensure_schema`] runs on every start, versioned per half (metadata,
-//! bodies, headers): current halves are skipped cheaply, and a mismatched
-//! half is dropped and rebuilt, because the index is derived data and the
-//! tables it derives from are still there (#490 is why the versions exist).
-//! It is deliberately not a numbered `postio-storage` migration: this index
-//! is `postio-search`'s own concern, layered on top of tables
-//! `postio-storage` already created.
+//! The full-text search index: two `USING fts` indexes on ordinary tables, `search_documents_fts`
+//! over five metadata columns and `messages_body_fts` over `message_search_bodies.body_search`.
+//! The tokenizer does not strip diacritics, so [`postio_model::fold`] folds the body column on the
+//! way in ([`index_body`]) and the query path applies the identical fold.
+//! `search_documents` is a flattened row per message kept current by triggers, since sender,
+//! recipients and filenames live in other tables; [`ensure_schema`] is versioned per half, not a
+//! `postio-storage` migration.
 
 use postio_model::MessageBody;
 
@@ -56,24 +12,11 @@ use crate::error::Result;
 use postio_storage::Connection;
 use postio_storage::sql::{self, RowExt as _, bind};
 
-/// Creates `search_documents`, its two `USING fts` indexes and every
-/// trigger that keeps them in sync, if they do not already exist.
-///
-/// Call this once per connection before indexing or searching — on every
-/// application start, the same way the store's migrations run on every
-/// start. Requires `PRAGMA foreign_keys = ON` (per connection on this
-/// engine; the store's connect path sets it) so that deleting a message
-/// cascades into `search_documents`.
-///
-/// # It indexes what is already there
-///
-/// Creating the triggers is only half of it. They see mail that arrives after
-/// them, and this index is retro-fitted onto stores that already hold tens of
-/// thousands of messages — so the schema ends with a backfill over `messages`,
-/// and running it again is a no-op rather than a second copy. Everything
-/// except message *bodies*: a `message_search_bodies` row is written only
-/// when the extracted text exists, no trigger can derive it from raw bytes,
-/// and [`index_body`] is how it arrives.
+/// Call once per connection before indexing or searching, on every start. Requires `PRAGMA
+/// foreign_keys = ON` so deleting a message cascades into `search_documents`.
+/// The schema ends with a backfill over `messages`, so a store that predates the triggers is
+/// indexed and a rerun is a no-op; bodies arrive through [`index_body`], since no trigger can
+/// derive them.
 pub async fn ensure_schema(connection: &Connection) -> Result<()> {
     postio_storage::sql::batch(
         connection,
@@ -84,34 +27,20 @@ pub async fn ensure_schema(connection: &Connection) -> Result<()> {
     )
     .await?;
 
-    // `IF NOT EXISTS` adds new objects and cannot change an existing
-    // table's columns, which is how `list_id` broke every store created
-    // before it: the CREATE was a silent no-op over the old table while the
-    // new triggers referenced the column it never gained (#490). So the
-    // schema is versioned per half, and a mismatched half is dropped and
-    // rebuilt — the index is derived data, and the mail tables it derives
-    // from are exactly one `SCHEMA` run away.
+    // `IF NOT EXISTS` cannot change an existing table's columns, which is how `list_id` broke every
+    // store created before it (#490):
+    // the schema is versioned per half and a mismatched half is dropped and rebuilt, since the
+    // index is derived data.
     let metadata = half_version(connection, "metadata").await?;
     let bodies = half_version(connection, "bodies").await?;
     let headers = half_version(connection, "headers").await?;
     let attachments = half_version(connection, "attachments").await?;
     let extractor = half_version(connection, "extractor").await?;
 
-    // Nothing to do, and saying so is worth more than it looks. The batch
-    // below is every object `IF NOT EXISTS`, which reads as free and is not:
-    // on a 20,000-message store `CREATE TRIGGER IF NOT EXISTS
-    // trg_messages_fts_au` took 160-230ms with the trigger already there,
-    // more than the rest of opening the store put together, on every single
-    // start and growing with the mailbox (#1113). The trigger's body names
-    // `messages_fts`, and parsing it appears to make SQLite instantiate the
-    // fts5 module that the `CREATE VIRTUAL TABLE IF NOT EXISTS` above it
-    // skips by matching on name alone.
-    //
-    // The versions are what make this safe to skip: they already decide
-    // whether each half is current, and #490 is why they exist. The cost is
-    // that a store whose objects were removed out-of-band is no longer
-    // repaired by the next start -- the ordinary contract of a versioned
-    // migration, and the same one `postio_storage::migrate` keeps.
+    // Skipped when current: on a 20,000-message store `CREATE TRIGGER IF NOT EXISTS` took 160-230
+    // ms even with the trigger present, on every start (#1113).
+    // The cost is that objects removed out-of-band are no longer repaired by the next start, the
+    // ordinary contract of a versioned migration.
     if metadata == METADATA_SCHEMA_VERSION
         && bodies == BODIES_SCHEMA_VERSION
         && headers == HEADERS_SCHEMA_VERSION
@@ -134,8 +63,6 @@ pub async fn ensure_schema(connection: &Connection) -> Result<()> {
         .await?;
     }
     if headers != HEADERS_SCHEMA_VERSION {
-        // The index goes with the table; SQLite drops it either way, and
-        // naming it is what stops a future rename from leaving one behind.
         postio_storage::sql::batch(
             connection,
             "DROP TRIGGER IF EXISTS trg_message_contents_header_index_au;
@@ -146,9 +73,6 @@ pub async fn ensure_schema(connection: &Connection) -> Result<()> {
     }
 
     if attachments != ATTACHMENTS_SCHEMA_VERSION {
-        // Derived from blobs, like the body half, and refilled the same
-        // way: the indexer finds every downloaded attachment with no
-        // current row and extracts it again in the background.
         postio_storage::sql::batch(connection, DROP_ATTACHMENTS).await?;
     }
 
@@ -163,9 +87,6 @@ pub async fn ensure_schema(connection: &Connection) -> Result<()> {
     if attachments != ATTACHMENTS_SCHEMA_VERSION
         || extractor != i64::from(postio_extract::EXTRACTOR_VERSION)
     {
-        // The triggers keep `attachment_text_owed` from here on; what was
-        // owed before them -- a half just rebuilt empty, or rows another
-        // extractor made -- is counted once, now.
         set_half_version(
             connection,
             "extractor",
@@ -177,91 +98,34 @@ pub async fn ensure_schema(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// The metadata half's schema version: `search_documents`, `messages_fts`,
-/// and every trigger that feeds them.
-///
-/// **Bump this whenever any of those changes shape** — a new column, a
-/// changed trigger body, a tokenizer change. On mismatch the whole half is
-/// dropped and regenerated from `messages`/`recipients`/`attachments` by
-/// [`SCHEMA`]'s own backfill: one pass of SQL, no blob reads. Versions are
-/// compared for *equality*, so a downgrade rebuilds too rather than leaving
-/// a shape this build has never seen.
-///
-/// The history, so a bump has somewhere to point:
-/// 1 — the original shape (#327).
-/// 2 — `list_id` on `search_documents` and `messages_fts` (48a2f96).
-/// 3 — `search_documents_deferred`, and every trigger standing aside while
-///     it holds a row, so a sync batch indexes each message once
-///     ([`defer_documents`], #1587).
+/// Bump whenever the metadata half changes shape: a mismatch drops and regenerates it from
+/// `messages`/`recipients`/`attachments` by [`SCHEMA`]'s backfill, no blob reads.
+/// Versions compare for equality, so a downgrade rebuilds too.
 const METADATA_SCHEMA_VERSION: i64 = 4;
 
-/// The body half's version: `messages_body_fts` over `message_search_bodies`.
-///
-/// **Kept separate deliberately.** Refilling the metadata half is cheap SQL;
-/// refilling this one means `index_local_bodies` re-reading every body on
-/// disk — minutes on a real archive, against a search that answers
-/// metadata-only until it finishes. A metadata bump must never cost that,
-/// so this only moves when the body index itself changes shape. On
-/// mismatch `message_search_bodies` is cleared; the catch-up pass finds
-/// every message missing from it and refills in the background, batched and
-/// yielding (#500).
-///
-/// History:
-/// 1 — `messages_body_fts` on `messages.body_search`.
-/// 2 — the same index moved to its own table, `message_search_bodies`, so a
-///     header write no longer merges the body index (`fts_write_cost`).
+/// Kept separate from the metadata version: refilling this half re-reads every body on disk
+/// (minutes on a real archive), so a metadata bump must never cost it (#500).
+/// On mismatch `message_search_bodies` is cleared and the catch-up pass refills it.
 const BODIES_SCHEMA_VERSION: i64 = 3;
 
-/// The header half's version: `message_headers` and its name index.
-///
-/// **Bump this when the table changes shape, and also when either cap in
-/// [`HEADER_ROWS_PER_MESSAGE`] or [`postio_model::headers::VALUE_LIMIT`]
-/// moves** — the rows are that policy's output, so a store whose rows were
-/// written under the old caps answers `header:` differently from a fresh
-/// one, which is the drift ADR 0025 Q3 promises is revisable.
-///
-/// Revisable because refilling is cheap: unlike the body half, nothing here
-/// reads a blob or decompresses a body of its own — `body_headers` is one of
-/// the three columns the row already carries, and
-/// [`messages_missing_header_rows`] finds every message that needs one.
+/// Bump when the table changes shape, or when either cap ([`HEADER_ROWS_PER_MESSAGE`],
+/// [`postio_model::headers::VALUE_LIMIT`]) moves: the rows are that policy's output (ADR 0025 Q3).
+/// Refilling is cheap, since it reads no blob.
 const HEADERS_SCHEMA_VERSION: i64 = 2;
 
-/// The attachments half's version: `attachment_passages`, its full-text
-/// index, and `attachment_extraction` (spec 010 D10).
-///
-/// **Bump this when either table changes shape** or the location encoding
-/// ([`encode_location`]) changes. A change in what the extractor produces
-/// for the same bytes is `postio_extract::EXTRACTOR_VERSION`'s to say, not
-/// this: rows record the extractor version they were made with, and an
-/// older one is simply missing again ([`attachments_missing_text`]), with
-/// no table dropped.
-///
-/// History:
-/// 1 — the half, keyed by `(content_id, position)` (#1805's content).
-/// 2 — `attachment_text_owed` and the triggers that keep it, so a search
-///     asks whether anything is unread with one seek rather than a walk of
-///     every attachment.
-/// 3 — `unavailable` as an outcome of its own, so a part skipped for want
-///     of the extraction helper can be told from one skipped for good.
+/// Bump when either table or the location encoding ([`encode_location`]) changes. A change in what
+/// the extractor produces is
+/// `postio_extract::EXTRACTOR_VERSION`'s to say: older rows are simply missing again
+/// ([`attachments_missing_text`]).
 pub const ATTACHMENTS_SCHEMA_VERSION: i64 = 3;
 
-/// How many rows one message may contribute to `message_headers`.
-///
-/// ADR 0025 Q3's second cap, and the one that bounds the pathological
-/// message: twenty hops through a mailing list, each adding a `Received` and
-/// an ARC set, is a hundred fields for one message. The first
-/// [`HEADER_ROWS_PER_MESSAGE`] in **wire order** are kept, which is where the
-/// fields a person searches for live — a `Received` chain grows at the top
-/// and the interesting `X-` fields sit above it.
-///
-/// A cap and not an allowlist, for the reason ADR 0025 Q3 gives at length: a
-/// list of header names is maintained forever, lies about every name off it,
-/// and converges on one provider's own vocabulary.
+/// The first rows in wire order are kept, where the fields a person searches for live. A cap, not
+/// an allowlist, which is maintained forever and converges on one provider's vocabulary (ADR 0025
+/// Q3).
 pub const HEADER_ROWS_PER_MESSAGE: usize = 64;
 
-/// Everything the metadata half is made of, for the rebuild path. Kept next
-/// to [`SCHEMA`], which recreates each of these: a trigger dropped here and
-/// not recreated there is a column that silently stops updating.
+/// Kept next to [`SCHEMA`], which recreates each of these: a trigger dropped here and not recreated
+/// there silently stops updating.
 const DROP_METADATA: &str = "DROP TRIGGER IF EXISTS trg_search_documents_messages_ai;
 DROP TRIGGER IF EXISTS trg_search_documents_messages_au;
 DROP TRIGGER IF EXISTS trg_search_documents_recipients_ai;
@@ -275,7 +139,6 @@ DROP TABLE IF EXISTS search_documents;
 DROP TABLE IF EXISTS search_documents_deferred;
 ";
 
-/// Everything the attachments half is made of, for its rebuild.
 const DROP_ATTACHMENTS: &str = "DROP TRIGGER IF EXISTS trg_attachment_text_owed_attachments_ai;
 DROP TRIGGER IF EXISTS trg_attachment_text_owed_attachments_au;
 DROP TRIGGER IF EXISTS trg_attachment_text_owed_attachments_ad;
@@ -291,22 +154,11 @@ DROP TABLE IF EXISTS attachment_passages;
 DROP TABLE IF EXISTS attachment_extraction;
 ";
 
-/// The attachments half (spec 010 D10, data-model "postio-index schema").
-///
-/// **Keyed by content, not by the attachment row.** An occurrence's
-/// `attachments` rows are a projection a refetch replaces (see
-/// `MessageRepository::set_attachment_blob`), so an attachment id does not
-/// survive one, and text keyed by it would cascade away and be extracted
-/// again on every refetch. Since #1805 the immutable payload is a
-/// `message_contents` row shared by every occurrence a backend names as the
-/// same message, and its parts are numbered by `position`; the text of an
-/// attachment is a fact about that payload. So `(content_id, position)` is
-/// the key: one extraction however many folders hold the message, kept
-/// across a refetch, and gone by cascade when the last occurrence goes --
-/// the same shape `search_documents` and `message_search_bodies` have.
-///
-/// Evicting a blob does not remove its text: the text is derived, small
-/// (bounded by `Limits::max_text`), and lives in the encrypted store.
+/// Keyed by content, not by the attachment row: an `attachments` projection is replaced by a
+/// refetch, so text keyed by its id would be extracted again on every refetch.
+/// `(content_id, position)` gives one extraction however many folders hold the message (#1805).
+/// Evicting a blob does not remove its text: it is derived, small (`Limits::max_text`), and lives
+/// in the encrypted store.
 const ATTACHMENTS_SCHEMA: &str = "\
 -- One located unit of an attachment's text: a PDF page, a sheet row, a
 -- slide, a paragraph, a table row, a line. `text` is as extracted, for
@@ -484,9 +336,6 @@ BEGIN
 END;
 ";
 
-/// `attachment_text_owed` counted from scratch: everything [`MISSING`]
-/// holds, once per part. Run when the half is rebuilt and when the
-/// extractor version moves; the triggers keep it between.
 const RECOUNT_OWED: &str = "DELETE FROM attachment_text_owed;
 INSERT INTO attachment_text_owed (content_id, position)
 SELECT DISTINCT m.content_id, a.position
@@ -499,9 +348,7 @@ SELECT DISTINCT m.content_id, a.position
 ON CONFLICT DO NOTHING;
 ";
 
-/// The recorded version of one schema half, `0` when it has never been
-/// recorded — a fresh store, or any store from before versioning existed.
-/// Both rebuild, which for the fresh store is simply the first build.
+/// `0` when never recorded; a fresh store and a pre-versioning one both rebuild.
 async fn half_version(connection: &Connection, half: &str) -> Result<i64> {
     let version = sql::first(
         connection,
@@ -524,47 +371,19 @@ async fn set_half_version(connection: &Connection, half: &str, version: i64) -> 
     Ok(())
 }
 
-/// Sets (or clears) the indexed body text for a message.
-///
-/// The raw body bytes live in the blob store, so nothing here can derive
-/// this column the way the metadata columns are derived by trigger. The
-/// caller reads the extracted plain-text body (E2.9's job, not this
-/// crate's — raw HTML must never reach this column) and passes it here
-/// once it has the bytes.
-///
-/// A message with no `search_documents` row yet (indexing raced ahead of the
-/// message insert) is not an error: the write is simply a no-op, since there
-/// is nothing to update. See [`ensure_schema`] for why the row always exists
-/// once the message does.
+/// Raw markup must never reach this column, so the caller passes extracted plain text. A message
+/// with no `search_documents` row yet (indexing raced ahead of the insert) is a no-op.
 pub async fn index_body(
     connection: &Connection,
     message_id: i64,
     body: Option<&str>,
 ) -> Result<()> {
-    // An upsert into `message_search_bodies`, the sibling table the body
-    // index is on. A body write pays the index merge here; a header write to
-    // `messages` does not, which is the whole point of the table (see the
-    // schema).
-    //
-    // **A row is written even for a message with no text**, an empty string
-    // in it. The row's *presence* is the record that this message *was*
-    // indexed: [`messages_missing_body_text`] asks for messages with no row
-    // here, and when "tried, nothing there" left no row, every
-    // attachment-only message stayed a candidate for ever -- with one batch
-    // of them in a store, `postio_session::index_local_bodies` re-selected
-    // the same batch in a tight loop, burning a core and streaming write
-    // transactions for as long as the app ran (#500). An empty string can
-    // never match, and the row can never be re-selected.
-    //
-    // Folded on the way in, because the engine's tokenizer will not: see
-    // [`postio_model::fold`], and note that the query path must apply the
-    // same fold or the two stop meeting.
-    // `SELECT ... WHERE EXISTS`, not `VALUES`, so a message that is not here
-    // yet is a no-op rather than a foreign-key violation. `index_body` can
-    // race ahead of the message insert (the catch-up pass and a fresh sync
-    // touch the same rows), and the old column write was a `WHERE id = ?`
-    // `UPDATE` that simply matched nothing -- this keeps that contract now
-    // that the write is an insert into a table with a foreign key.
+    // A row is written even for a message with no text (an empty string): its presence records that
+    // it was indexed, and without it every
+    // attachment-only message stayed a candidate for ever, re-selected in a tight loop (#500).
+    // Folded on the way in, because the tokenizer will not ([`postio_model::fold`]).
+    // `SELECT ... WHERE EXISTS`, not `VALUES`, so a message not here yet is a no-op rather than a
+    // foreign-key violation.
     connection
         .execute(
             "INSERT INTO message_search_bodies (content_id, body_search)
@@ -577,16 +396,10 @@ pub async fn index_body(
     Ok(())
 }
 
-/// [`index_body`] for many messages at once, building the full-text index
-/// over them once rather than merging it once per body.
-///
-/// Each body written into an indexed column pays the index's merge: 18 of
-/// the 24 seconds the search seed's five hundred bodies took (#2020). So
-/// the index is dropped, the rows written as a plain table in one
-/// transaction, and the index built again over every row, the ones that
-/// were there before included. For a store nothing else is searching while
-/// it fills -- a seed, a rebuild -- since its bodies match nothing until
-/// the index is back. The index is rebuilt even when a write fails.
+/// Each body written into an indexed column pays the index's merge (18 of the 24 seconds the search
+/// seed's five hundred bodies took, #2020), so the index is dropped,
+/// rows are written plain in one transaction, and the index is rebuilt even when a write fails. For
+/// a store nothing else is searching while it fills.
 pub async fn index_bodies(connection: &Connection, bodies: &[(i64, &str)]) -> Result<()> {
     postio_storage::sql::batch(connection, "DROP INDEX IF EXISTS messages_body_fts").await?;
     let written = postio_storage::sql::in_scope(connection, |connection| async move {
@@ -600,22 +413,10 @@ pub async fn index_bodies(connection: &Connection, bodies: &[(i64, &str)]) -> Re
     written
 }
 
-/// Indexes a message's body, whichever form it arrived in.
-///
-/// The call every producer of a body should make, rather than
-/// [`index_body`] with text it extracted itself. "Raw markup must never reach
-/// this column" is a rule about the column, so the crate that owns the column
-/// is where it is kept: an HTML-only message goes through
-/// [`postio_body::parse()`] and is indexed as what it *says*, never as its
-/// markup — otherwise every such message is a hit for `div`, for `href`, and
-/// for the host of every tracking redirect it carries.
-///
-/// `text/plain` wins when there is one. It is what the sender wrote, the
-/// HTML alternative is a rendering of the same words, and indexing both would
-/// double the index for no new hits.
-///
-/// A message with neither form clears the column rather than leaving stale
-/// text behind — the same shape as `index_body(.., None)`.
+/// The call every producer of a body should make: an HTML-only message is indexed as what it says,
+/// never as its markup, or every such message is a hit for `div`.
+/// `text/plain` wins when there is one, since indexing both would double the index for no new hits.
+/// A message with neither clears the column.
 pub async fn index_body_of(
     connection: &Connection,
     message_id: i64,
@@ -624,80 +425,33 @@ pub async fn index_body_of(
     index_body(connection, message_id, indexable_text(body).as_deref()).await
 }
 
-/// The plain text that represents `body` in the index, if it has any.
-///
-/// Separate from [`index_body_of`] so it can be tested without a database,
-/// and so the maintenance pass and the sync path provably agree on what a
-/// message's indexable text *is*.
+/// Separate from [`index_body_of`] so the maintenance pass and the sync path provably agree on what
+/// a message's indexable text is.
 pub fn indexable_text(body: &MessageBody) -> Option<String> {
     if let Some(text) = body.text.as_deref().filter(|text| !text.trim().is_empty()) {
         return Some(text.to_owned());
     }
     let html = body.html.as_deref()?;
-    // `to_search_text`, not `to_text`: the latter spells a link out as
-    // `label <href>` because a quoted reply needs the address, and an index
-    // must not — see its own documentation. Both walk `postio_body`'s closed
-    // document subset rather than doing a general markup-to-text pass, which
-    // is the thing that makes most mail's plain-text part unreadable.
+    // `to_search_text`, not `to_text`: the latter spells a link out as `label <href>` for quoted
+    // replies, which an index must not.
     let text = postio_body::parse(html).to_search_text();
     (!text.trim().is_empty()).then_some(text)
 }
 
-/// Message ids whose body is local but whose indexed text is empty, newest
-/// first and windowed to `limit`.
-///
-/// What a store that predates body indexing needs to catch up on, and what
-/// any body that missed its write at fetch time — a crash between the commit
-/// point and the index write — shows up in afterwards. Empty on a store that
-/// is already caught up, which is what makes running it on every start
-/// affordable.
-///
-/// `body_state` and not merely "has a blob": the column says whether the bytes
-/// are on this machine, and a message the index claims to have read while its
-/// body is still on the server would make search answer for a corpus it does
-/// not have.
-///
-/// **Both `full` and `partial`.** ADR 0017 split those apart: `partial` means
-/// the words are local and the attachment payloads are not, and it is the
-/// settled state of every text-backfilled message carrying an attachment —
-/// 15% of the reference mailbox. Asking only for `full`, which was the only
-/// state a fetched body could reach when this was written, skips every one of
-/// them, and the search corpus is precisely what the text axis exists to
-/// complete.
-///
-/// Asked of `message_bodies_fts` rather than of `search_documents.body`, and
-/// that matters for exactly one population, which is everybody: a store that
-/// indexed its bodies before this table existed has them in the old column,
-/// and asking the old column would answer "nothing to do" for every one of
-/// them while the new index stayed empty for ever.
-/// # Why it takes a cursor (#1549)
-///
-/// The answer is ordered by `received_at DESC`, which is the order
-/// `idx_messages_recency` is in — and it is also the order a sweep *fills*
-/// the index in. So without a cursor, batch _k_ starts at the newest message
-/// and walks past everything batches 1…_k_−1 already indexed before it
-/// reaches a candidate, and a sweep is quadratic in the size of the archive.
-///
-/// That is not theoretical and it is not small. Measured on a real store of
-/// ~61,000 messages, a caught-up pass cost **640ms of scanning per message
-/// actually indexed**, because the only way to discover there is nothing to
-/// do is to look at every message. `body_index_cost` shows the synthetic
-/// curve: at 40,000 messages the per-batch cost rose 76× across one sweep.
-///
-/// [`Candidate`] carries the `received_at` back so the caller can hand it in
-/// again. Two things make each skipped row dearer than a bare index walk, and
-/// both argue for skipping fewer of them: `body_state` is not in
-/// `idx_messages_recency`, so every row the walk passes is fetched from
-/// `messages` to test it. Bodies now live on their content owner, so the
-/// recency walk reads bounded occurrence metadata.
+/// Resumable from a cursor: ordered by `received_at DESC`, the order a sweep fills the index in, so
+/// without one batch k walks past everything earlier batches indexed and a sweep is quadratic
+/// (#1549).
+/// Includes both `full` and `partial` bodies (ADR 0017: `partial` is the settled state of every
+/// text-backfilled message with an attachment), and tests `body_state` rather than "has a blob", so
+/// search never answers for a corpus it does not have.
+/// Empty on a caught-up store, which makes running it on every start affordable.
 pub async fn messages_missing_body_text(
     connection: &Connection,
     limit: u32,
     after: Option<Candidate>,
 ) -> Result<Vec<Candidate>> {
-    // Two statements rather than one with a nullable bound cursor: the
-    // planner sees a literal range on the leading index column in the second,
-    // which is the whole point of passing one.
+    // Two statements, not one with a nullable cursor: the planner sees a literal range on the
+    // leading index column in the second.
     match after {
         None => sql::all(
             connection,
@@ -719,34 +473,12 @@ pub async fn messages_missing_body_text(
         )
         .await
         .map_err(Into::into),
-        // **Resumed at the cursor's timestamp, not strictly after it**, and on
-        // one column rather than two. Both halves of that are forced by what
-        // the engine will seek on:
-        //
-        // ```text
-        // received_at < ?2 OR (received_at = ?2 AND id < ?3)
-        //   -> MULTI-INDEX OR m (idx_messages_recency, idx_messages_recency)
-        //      USE SORTER FOR ORDER BY          (sorts the whole set; LIMIT
-        //                                        cannot stop it early)
-        // (received_at, id) < (?2, ?3)
-        //   -> SCAN messages AS m USING INDEX idx_messages_recency
-        //                                     (filters from the top; the
-        //                                      quadratic is unchanged)
-        // received_at <= ?2
-        //   -> SEARCH m USING INDEX idx_messages_recency (received_at>=?)
-        // ```
-        //
-        // Only the third is a seek. Measured on 40,000 messages, the first two
-        // sweep no faster than having no cursor at all.
-        //
-        // Dropping the `id` tiebreaker is safe **because indexing a message
-        // removes it from this answer**. A row sharing the boundary timestamp
-        // is either already indexed, and the `NOT EXISTS` excludes it, or it
-        // is not, and it still needs doing — so `<=` repeats nothing and skips
-        // nothing. What it cannot do on its own is guarantee forward progress
-        // if indexing silently fails for a whole batch at one timestamp; the
-        // caller's "this batch is the last batch" guard is what catches that,
-        // and it predates this (#500).
+        // Resumed at the cursor's timestamp on one column, not strictly after it on two:
+        // `(received_at, id) < (?2, ?3)` scans and the OR form sorts the whole set;
+        // only `received_at <= ?2` is a seek (measured on 40,000 messages). Dropping the `id`
+        // tiebreaker is safe because indexing removes a message from this answer,
+        // so `<=` repeats and skips nothing; the caller's last-batch guard catches a batch that
+        // fails to index (#500).
         Some(cursor) => sql::all(
             connection,
             "SELECT m.id, m.received_at
@@ -771,25 +503,12 @@ pub async fn messages_missing_body_text(
     }
 }
 
-/// A message a sweep has still to index, and where it sits in the order.
-///
-/// The position travels with the answer so a sweep can resume rather than
-/// restart; see [`messages_missing_body_text`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Candidate {
-    /// The message to index.
     pub id: i64,
-    /// Its `received_at`, which with [`id`](Self::id) is its place in
-    /// `idx_messages_recency`.
     pub received_at: i64,
 }
 
-/// As [`messages_missing_body_text`], scoped to one account (#981).
-///
-/// What a per-account reindex is driven by, after
-/// [`clear_account_body_index`] has made this account's own local mail the
-/// candidate set — the rest of the store is untouched, so a rebuild for one
-/// account never re-derives another's.
 pub async fn messages_missing_body_text_for_account(
     connection: &Connection,
     account_id: i64,
@@ -813,19 +532,7 @@ pub async fn messages_missing_body_text_for_account(
     .map_err(Into::into)
 }
 
-/// Removes `account_id`'s rows from `message_search_bodies`, so the next
-/// [`messages_missing_body_text_for_account`] call finds them again.
-///
-/// Nothing here touches `messages` or `search_documents`: this account's mail
-/// is not going anywhere, only its body text drops out of the index until the
-/// catch-up pass puts it back. Deleting the rows is what
-/// [`messages_missing_body_text_for_account`] then keys on — a message with
-/// no row in `message_search_bodies` is one to index.
 pub async fn clear_account_body_index(connection: &Connection, account_id: i64) -> Result<usize> {
-    // Deleting the rows, not clearing a column: the body index is on
-    // `message_search_bodies` now, and a missing row is what the catch-up
-    // pass looks for. See `index_body` for why an indexed-but-textless
-    // message holds an empty-string row.
     Ok(connection
         .execute(
             "DELETE FROM message_search_bodies
@@ -835,35 +542,13 @@ pub async fn clear_account_body_index(connection: &Connection, account_id: i64) 
         .await? as usize)
 }
 
-/// Replaces a message's rows in `message_headers`.
-///
-/// The only writer of that table. Every field becomes a row, in wire order,
-/// under ADR 0025 Q3's two caps: values truncated by
-/// [`postio_model::headers::normalize_value`] and the message cut off at
-/// [`HEADER_ROWS_PER_MESSAGE`] fields.
-///
-/// # Why it normalizes rather than trusting its caller
-///
-/// The index holds a 512-byte prefix and an in-memory matcher (#479) holds
-/// whatever it was handed, so the two disagree about every long header unless
-/// both pass through the same function. Calling
-/// [`Headers::normalized`](postio_model::Headers::normalized) here means a
-/// caller cannot forget, and means there is one answer to "what does this
-/// message's `X-Mailer` say" rather than one per evaluator.
-///
-/// # A message with no fields still gets a row
-///
-/// An empty block writes one row whose name is empty, and that is the same
-/// trick [`index_body`] plays with an empty body for the same reason: the
-/// rows are also the record that this message *was* indexed. Without it,
-/// [`messages_missing_header_rows`] would offer a message that parses to
-/// nothing on every lap for ever, which is #500 exactly. The row can never
-/// match — the parser refuses an empty header name, so no `Filter::Header`
-/// ever carries one.
-///
-/// A message with no row in `messages` is a harmless no-op rather than an
-/// error, exactly as [`index_body`] is: the foreign key rejects the insert
-/// and indexing that raced an expunge is not a fault.
+/// The only writer of `message_headers`, under ADR 0025 Q3's two caps. It normalizes rather than
+/// trusting its caller: the index holds a 512-byte prefix
+/// and the in-memory matcher whatever it was handed (#479), so both must pass through the same
+/// function.
+/// A message with no fields still gets one row with an empty name: the rows record that it was
+/// indexed, or [`messages_missing_header_rows`] would offer it every lap (#500). The parser refuses
+/// an empty header name, so it never matches.
 pub async fn index_headers(
     connection: &Connection,
     message_id: i64,
@@ -872,19 +557,14 @@ pub async fn index_headers(
     let Some(content_id) = content_id_of(connection, message_id).await? else {
         return Ok(());
     };
-    // What the three promoted headers say, for mail whose sync did not ask
-    // for them -- a first sync, a JMAP account -- and the same answer for
-    // mail whose did (spec 007, research R8). Here because this is where
-    // every header block arrives, from the backfill and from the catch-up.
     postio_storage::repository::MessageRepository::new(connection)
         .set_promoted(
             postio_model::MessageId::new(message_id),
             postio_model::promoted::PromotedHeaders::from_headers(headers),
         )
         .await?;
-    // Delete first: the pass is resumable and a version bump refills the whole
-    // table, so re-indexing a message is the ordinary case. An upsert would
-    // leave the rows of a message that has *lost* a header behind.
+    // Delete first: re-indexing is the ordinary case, and an upsert would leave the rows of a
+    // message that has lost a header.
     connection
         .execute(
             "DELETE FROM message_headers WHERE content_id = ?1",
@@ -902,9 +582,8 @@ pub async fn index_headers(
         .await?;
     let mut written = 0usize;
     for (ordinal, header) in normalized.iter().take(HEADER_ROWS_PER_MESSAGE).enumerate() {
-        // `normalize_name` trims, so a field whose name was whitespace has
-        // none. It would collide with the "indexed, nothing there" row below
-        // and it is not a name anything can ask for.
+        // A field whose name was only whitespace has none: it would collide with the "indexed,
+        // nothing there" row below.
         if header.name.is_empty() {
             continue;
         }
@@ -919,12 +598,8 @@ pub async fn index_headers(
     Ok(())
 }
 
-/// Whether `messages` still holds this id.
-///
-/// Asked before the delete rather than left to the foreign key, because the
-/// delete on its own would succeed against no rows and the insert that
-/// follows would be the thing that failed — turning "indexed a message that
-/// has just been expunged" into an error the caller has to classify.
+/// Asked before the delete: the delete alone would succeed against no rows and the insert would
+/// fail, turning an expunge race into an error.
 async fn content_id_of(connection: &Connection, message_id: i64) -> Result<Option<i64>> {
     let found: Option<i64> = sql::first(
         connection,
@@ -936,22 +611,10 @@ async fn content_id_of(connection: &Connection, message_id: i64) -> Result<Optio
     Ok(found)
 }
 
-/// Message ids whose header block is stored and whose header rows are not,
-/// newest first and windowed to `limit`.
-///
-/// What the catch-up pass in `postio_session::index_local_headers` works
-/// through: every message in every store, the first time, because nothing
-/// wrote `body_headers` until #884 and nothing indexed it until now. Empty
-/// on a store that is caught up, which is what makes running it on every
-/// start affordable.
-///
-/// **Local only, and that is a scoping decision rather than an omission.**
-/// `body_headers IS NOT NULL` is ADR 0025 Q5's first population — the one a
-/// pass with no network can finish. A message whose block was never stored
-/// belongs to `MessageRepository::messages_missing_headers` (a repair from
-/// the raw blob on disk) or to `messages_needing_a_header_fetch` (the only
-/// case that dials out). Mixing them here would mean batches this pass can
-/// make no progress on, and the pass stops when a batch does not shrink.
+/// Local only: `body_headers IS NOT NULL` is ADR 0025 Q5's population a pass with no network can
+/// finish. A message whose block was never stored belongs to
+/// `MessageRepository::messages_missing_headers` or `messages_needing_a_header_fetch`; mixing them
+/// would give batches this pass can make no progress on.
 pub async fn messages_missing_header_rows(connection: &Connection, limit: u32) -> Result<Vec<i64>> {
     sql::all(
         connection,
@@ -969,10 +632,6 @@ pub async fn messages_missing_header_rows(connection: &Connection, limit: u32) -
     .map_err(Into::into)
 }
 
-/// As [`messages_missing_header_rows`], scoped to one account (#981). See
-/// [`messages_missing_body_text_for_account`]'s own doc for why a targeted
-/// candidate query is what keeps a per-account reindex from touching any
-/// other account's rows.
 pub async fn messages_missing_header_rows_for_account(
     connection: &Connection,
     account_id: i64,
@@ -995,12 +654,6 @@ pub async fn messages_missing_header_rows_for_account(
     .map_err(Into::into)
 }
 
-/// Removes `account_id`'s rows from `message_headers`, so the next
-/// [`messages_missing_header_rows_for_account`] call finds them again.
-///
-/// Ordinary rows, unlike [`clear_account_body_index`]'s contentless table —
-/// this is the same delete [`index_headers`] itself issues before replacing
-/// a message's rows, just for every message an account has rather than one.
 pub async fn clear_account_header_index(connection: &Connection, account_id: i64) -> Result<usize> {
     Ok(connection
         .execute(
@@ -1011,24 +664,13 @@ pub async fn clear_account_header_index(connection: &Connection, account_id: i64
         .await? as usize)
 }
 
-/// Stand the search triggers aside until [`write_documents`].
-///
-/// For a sync batch, inside its transaction: the batch then writes its
-/// messages, addresses and attachments with no index work, and
-/// [`write_documents`] indexes each message once, whole. Every trigger write
-/// is an operation on `search_documents_fts`, and the engine's cost is per
-/// operation, not per statement -- batching the writes into fewer statements
-/// was measured and changed nothing. So the only lever is fewer operations.
-///
-/// **Only inside a transaction that ends in [`write_documents`].** The
-/// deferral is a row, and a row outlives the call that wrote it: left
-/// standing, every later write would go unindexed. A transaction that fails
-/// takes the row with it on rollback, which is the other way it ends.
-///
-/// Answers whether there is an index to defer. A store [`ensure_schema`]
-/// has not reached -- a test's, or one opened by something other than a
-/// session -- has no triggers either, so there is nothing to stand aside and
-/// nothing for [`write_documents`] to write.
+/// For a sync batch, inside its transaction: every trigger write is an operation on
+/// `search_documents_fts` and the engine's cost is per operation, so writing each message once with
+/// [`write_documents`] is the only lever.
+/// Only inside a transaction that ends in [`write_documents`]: the deferral is a row and outlives
+/// the call, so left standing every later write would go unindexed; a rollback takes it away.
+/// Answers whether there is an index to defer; a store [`ensure_schema`] has not reached has no
+/// triggers.
 pub async fn defer_documents(connection: &Connection) -> postio_storage::Result<bool> {
     let indexed = sql::exists(
         connection,
@@ -1049,23 +691,14 @@ pub async fn defer_documents(connection: &Connection) -> postio_storage::Result<
     Ok(indexed)
 }
 
-/// Index `messages` -- each once, from what the tables now say -- and end
-/// the deferral [`defer_documents`] began. Answers how many documents were
-/// written.
-///
-/// A document whose text has not changed is not written at all: the upsert
-/// updates only when one of its columns differs, and an unwritten row is no
-/// index operation. That is what makes a resync of unchanged mail -- which
-/// deletes and rewrites every address it touches -- cost nothing here.
-///
-/// The text is built the way the triggers and the backfill in [`SCHEMA`]
-/// build it, so a document reads the same whichever wrote it.
+/// A document whose text has not changed is not written at all, so a resync of unchanged mail costs
+/// nothing. The text is built as the triggers and the backfill in [`SCHEMA`] build it.
 pub async fn write_documents(
     connection: &Connection,
     messages: &[postio_model::MessageId],
 ) -> postio_storage::Result<u64> {
-    // A JSON array of integers, which `json_each` reads: one placeholder
-    // whatever the batch size, so the statement compiles once and is cached.
+    // One JSON-array placeholder whatever the batch size, so the statement compiles once and is
+    // cached.
     let ids = format!(
         "[{}]",
         messages
@@ -1111,22 +744,10 @@ pub async fn write_documents(
     Ok(written)
 }
 
-/// Rebuilds the metadata index from `search_documents`.
-///
-/// Dropped and recreated, which is what "rebuild" means for an index. It was
-/// FTS5's own `'rebuild'` command -- a message to a virtual table, telling it
-/// to regenerate its b-trees from its content table. There is no virtual
-/// table to send a message to now: the index is an ordinary index on an
-/// ordinary table, and the engine builds it from the rows the same way it
-/// would any other.
-///
-/// Use it after a bulk import that bypassed the triggers, or as a maintenance
-/// operation if the index is ever suspected of having drifted.
-///
-/// It does **not** rebuild the body index, and does not need to: that one is
-/// on `messages.body_search`, a column of the same table, and is maintained
-/// by the same writes. What catches a body up is
-/// [`messages_missing_body_text`] and the pass behind it.
+/// Dropped and recreated: the index is an ordinary index on an ordinary table. Use after a bulk
+/// import that bypassed the triggers.
+/// It does not rebuild the body index, which [`messages_missing_body_text`] and the pass behind it
+/// catch up.
 pub async fn rebuild(connection: &Connection) -> Result<()> {
     postio_storage::sql::batch(
         connection,
@@ -1138,11 +759,6 @@ pub async fn rebuild(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// The schema text, for a test that applies it one statement at a time.
-pub const SCHEMA_FOR_TEST: &str = SCHEMA;
-
-/// The full-text index over the bodies: apart from [`SCHEMA`] so that
-/// [`index_bodies`] can build it once over many rows.
 const BODY_INDEX: &str = "CREATE INDEX IF NOT EXISTS messages_body_fts ON message_search_bodies USING fts (body_search);";
 
 const SCHEMA: &str = "\
@@ -1376,30 +992,16 @@ WHERE m.id = (SELECT min(id) FROM messages WHERE content_id = m.content_id)
 ON CONFLICT (content_id) DO NOTHING;
 ";
 
-// ---------------------------------------------------------------------------
-// The attachments half (spec 010 D10).
-// ---------------------------------------------------------------------------
-
-/// One downloaded attachment whose text this extractor has not read:
-/// what the indexer needs to read its blob and extract it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MissingAttachment {
-    /// One occurrence's attachment row; [`index_attachment_text`] keys the
-    /// text by its content and position, so any occurrence will do.
+    /// Any occurrence will do: [`index_attachment_text`] keys the text by content and position.
     pub attachment: postio_model::AttachmentId,
-    /// The message that carries it.
     pub message: postio_model::MessageId,
-    /// Where its bytes are, in the blob store.
     pub blob: postio_model::BlobId,
-    /// Its declared type, parameters and all.
     pub mime_type: String,
-    /// Its file name, when it has one.
     pub name: Option<String>,
 }
 
-/// The queue's question, before its order, limit or message filter: an
-/// attachment of a message, its bytes on this machine, and no row from the
-/// current extractor for its content and position.
 pub(crate) const MISSING: &str =
     "SELECT a.id, a.message_id, a.blob_id, a.mime_type, a.filename, m.content_id, a.position
   FROM attachments a JOIN messages m ON m.id = a.message_id
@@ -1421,8 +1023,6 @@ fn missing_row(row: &turso::Row) -> postio_storage::Result<(MissingAttachment, (
     ))
 }
 
-/// One of each content and position: two occurrences of one payload are
-/// one extraction.
 fn first_of_each(rows: Vec<(MissingAttachment, (i64, i64))>) -> Vec<MissingAttachment> {
     let mut seen = std::collections::HashSet::new();
     rows.into_iter()
@@ -1431,23 +1031,16 @@ fn first_of_each(rows: Vec<(MissingAttachment, (i64, i64))>) -> Vec<MissingAttac
         .collect()
 }
 
-/// Up to `limit` downloaded attachments with no text from the current
-/// extractor, newest first: the indexer's catch-up queue.
-///
-/// Only attachments whose blob is on this machine (D10, FR-050): one that
-/// was never downloaded is not here, and nothing asks for its bytes to put
-/// it here. A part that was tried has a row whatever came of it, so the
-/// queue never offers it twice (#500); one made by an older extractor is
-/// missing again, which is how a version bump re-extracts everything.
-///
-/// One entry per payload part: every occurrence of the same content shares
-/// one extraction ([`ATTACHMENTS_SCHEMA`]).
+/// Only attachments whose blob is on this machine; nothing asks for the bytes of one never
+/// downloaded. A part that was tried has a row whatever came of it,
+/// so the queue never offers it twice (#500); one from an older extractor is missing again, which
+/// is how a bump re-extracts.
 pub async fn attachments_missing_text(
     connection: &Connection,
     limit: u32,
 ) -> Result<Vec<MissingAttachment>> {
-    // Twice the limit, then one per payload part: a page of duplicates
-    // still leaves something to do, and the next call finds the rest.
+    // Twice the limit, then one per payload part: a page of duplicates still leaves something to
+    // do.
     let rows = sql::all(
         connection,
         &format!("{MISSING} ORDER BY a.id DESC LIMIT ?2"),
@@ -1463,9 +1056,6 @@ pub async fn attachments_missing_text(
     Ok(missing)
 }
 
-/// [`attachments_missing_text`] for exactly these messages: the event
-/// path, which knows which messages just had bytes stored and does not ask
-/// the whole mailbox (#1549's lesson for bodies).
 pub async fn attachments_missing_text_of(
     connection: &Connection,
     messages: &[postio_model::MessageId],
@@ -1491,20 +1081,10 @@ pub async fn attachments_missing_text_of(
     Ok(first_of_each(rows))
 }
 
-/// Writes what the extractor read from one attachment, replacing whatever
-/// its payload part held, and records how it went.
-///
-/// One row per unit, in order, each with its location and its text as
-/// written beside the same text folded for the index
-/// ([`postio_model::fold`], as [`index_body`] folds bodies). An extraction
-/// with no units still records its outcome: that row is what takes the
-/// part off the queue.
-///
-/// `false`, and nothing written, when the attachment is not here any more
-/// -- its message was expunged, or a refetch replaced its row, between
-/// being queued and being indexed. Not an error, for [`index_body`]'s
-/// reason. Run it inside the caller's transaction: it is a delete and a
-/// statement per unit.
+/// An extraction with no units still records its outcome: that row takes the part off the queue.
+/// `false` and nothing written when the attachment is gone
+/// (expunged, or a refetch replaced its row), which is not an error. Run it inside the caller's
+/// transaction.
 pub async fn index_attachment_text(
     connection: &Connection,
     attachment: postio_model::AttachmentId,
@@ -1560,9 +1140,8 @@ pub async fn index_attachment_text(
     Ok(true)
 }
 
-/// An outcome as `attachment_extraction` records it: its own word, except
-/// that a part skipped for want of its reader is `unavailable` rather than
-/// `skipped`, because that skip is not final ([`requeue_unavailable`]).
+/// A part skipped for want of its reader is `unavailable`, not `skipped`, because that skip is not
+/// final ([`requeue_unavailable`]).
 fn recorded(outcome: postio_extract::Outcome) -> &'static str {
     match outcome {
         postio_extract::Outcome::Skipped(postio_extract::Skip::Unavailable) => "unavailable",
@@ -1570,14 +1149,9 @@ fn recorded(outcome: postio_extract::Outcome) -> &'static str {
     }
 }
 
-/// Put every part recorded `unavailable` back in the indexer's queue: the
-/// reader it was skipped for is here now. Answers how many.
-///
-/// The row is what kept the part off the queue, so that a pass with no
-/// helper ends (#500); taking it away is what lets the next pass read it.
-/// Called by the indexer before a pass when it can see the helper, not by
-/// the queue itself -- a queue that offered these parts while the helper
-/// was missing would offer them for ever.
+/// The row is what kept the part off the queue so a pass with no helper ends (#500). Called by the
+/// indexer before a pass when it can see the helper, not by the queue:
+/// a queue that offered these parts without the helper would offer them for ever.
 pub async fn requeue_unavailable(connection: &Connection) -> Result<u64> {
     Ok(sql::execute(
         connection,
@@ -1587,8 +1161,6 @@ pub async fn requeue_unavailable(connection: &Connection) -> Result<u64> {
     .await?)
 }
 
-/// The payload part an attachment row shows: its message's content and
-/// its position.
 async fn part_of(
     connection: &Connection,
     attachment: postio_model::AttachmentId,
@@ -1603,8 +1175,6 @@ async fn part_of(
     .await?)
 }
 
-/// An attachment's text as extracted, in order, each unit with where it
-/// was: what a passage is cut from.
 pub async fn attachment_text(
     connection: &Connection,
     attachment: postio_model::AttachmentId,
@@ -1612,7 +1182,6 @@ pub async fn attachment_text(
     let Some((content_id, position)) = part_of(connection, attachment).await? else {
         return Ok(Vec::new());
     };
-    // Bounded by `Limits::max_units` at the writer.
     let rows: Vec<(String, String)> = sql::all_unbounded(
         connection,
         "SELECT location, text FROM attachment_passages
@@ -1627,9 +1196,7 @@ pub async fn attachment_text(
         .collect())
 }
 
-/// The text of each unit `wanted` names -- an attachment and where in it
-/// -- in one read: what a page's file passages are cut from. A unit that
-/// is not there (the message went, the extractor changed) is left out.
+/// A unit that is not there (the message went, the extractor changed) is left out.
 pub async fn attachment_units(
     connection: &Connection,
     wanted: &[(postio_model::AttachmentId, postio_search::results::Location)],
@@ -1643,8 +1210,7 @@ pub async fn attachment_units(
     if wanted.is_empty() {
         return Ok(Vec::new());
     }
-    // `[[id, "sheet:Summary:14"], …]`: JSON, so a sheet's name is quoted
-    // whatever it holds.
+    // JSON, so a sheet's name is quoted whatever it holds.
     let pairs = format!(
         "[{}]",
         wanted
@@ -1682,7 +1248,6 @@ pub async fn attachment_units(
         .collect())
 }
 
-/// `text` as a JSON string, quotes and all.
 fn json_string(text: &str) -> String {
     let mut quoted = String::with_capacity(text.len() + 2);
     quoted.push('"');
@@ -1698,10 +1263,7 @@ fn json_string(text: &str) -> String {
     quoted
 }
 
-/// A [`Location`](postio_search::results::Location) as its column holds
-/// it: `page:2`, `sheet:Summary:14`, `slide:3`, `paragraph:7`, `line:1`,
-/// `table:1:4`, `image`. A sheet's name may hold a colon, so its row is
-/// read from the right.
+/// A sheet's name may hold a colon, so its row is read from the right.
 pub fn encode_location(location: &postio_search::results::Location) -> String {
     use postio_search::results::Location;
     match location {
@@ -1715,7 +1277,6 @@ pub fn encode_location(location: &postio_search::results::Location) -> String {
     }
 }
 
-/// [`encode_location`]'s inverse; `None` for anything it did not write.
 pub fn decode_location(encoded: &str) -> Option<postio_search::results::Location> {
     use postio_search::results::Location;
     if encoded == "image" {
@@ -1753,9 +1314,6 @@ mod tests {
     use postio_storage::repository::MessageRepository;
     use postio_storage::test_support;
 
-    /// Metadata matches, through the index rather than through a virtual
-    /// table: `fts_match` takes the columns it is searching, and the planner
-    /// resolves that set to `search_documents_fts`.
     async fn matches(connection: &Connection, query: &str) -> Vec<i64> {
         sql::all(
             connection,
@@ -1804,11 +1362,6 @@ mod tests {
             .await
             .expect("create message");
 
-        // `matches` runs an unquoted MATCH; a bare hyphen has its own
-        // meaning in FTS5 query syntax, so `list:`'s own value is quoted at
-        // the query-builder layer instead — see `fts_literal` and
-        // `list_names_a_mailing_list_by_its_list_id_not_by_a_recipient_address`
-        // in `tests/executor.rs` for that path end to end.
         assert_eq!(matches(&connection, "lists").await, vec![message.id.get()]);
         assert!(matches(&connection, "unrelated").await.is_empty());
     }
@@ -1857,7 +1410,6 @@ mod tests {
         );
     }
 
-    /// What `search_documents` holds for `message`, or `None`.
     async fn document(
         connection: &Connection,
         message: i64,
@@ -1873,8 +1425,6 @@ mod tests {
         .expect("a read")
     }
 
-    /// A synced message with a sender, three recipients and an attachment:
-    /// six writes the triggers would each turn into an index operation.
     fn addressed(
         account: &postio_model::Account,
         mailbox: postio_model::MailboxId,
@@ -1898,10 +1448,6 @@ mod tests {
 
     #[tokio::test]
     async fn a_deferred_batch_is_indexed_once_per_message_and_completely() {
-        // #1587: every trigger write to `search_documents` is an operation on
-        // its full-text index, ~2.3 ms each, so a message with five addresses
-        // paid seven of them on insert. A sync batch defers the triggers and
-        // writes each message's document once, whole, at the end.
         let database = test_support::memory().await;
         let connection = database.connect().await.expect("checkout");
         ensure_schema(&connection).await.expect("schema");
@@ -1936,8 +1482,6 @@ mod tests {
             "and searchable"
         );
 
-        // The deferral ends with the write: the next message, written
-        // outside a batch, is indexed by its triggers as before.
         let mut later = Message::new(account.id, mailbox, Utc::now());
         later.subject = Some("Lighthouse".to_owned());
         MessageRepository::new(&connection)
@@ -1952,10 +1496,6 @@ mod tests {
 
     #[tokio::test]
     async fn resyncing_unchanged_mail_writes_no_document() {
-        // A resync rewrites every address and attachment of every message it
-        // touches (`write_update` deletes and reinserts them), and the
-        // triggers turned that into two index operations per address --
-        // per message, per pass, for mail that had not changed (#1719).
         let database = test_support::memory().await;
         let connection = database.connect().await.expect("checkout");
         ensure_schema(&connection).await.expect("schema");
@@ -1988,11 +1528,6 @@ mod tests {
         );
     }
 
-    /// Body matches, which are an index on `messages.body_search` now (#407,
-    /// `docs/archive/specs/004-turso-store`) rather than a contentless table of their own.
-    ///
-    /// The query goes through the same fold the write path applied, which is
-    /// the rule `postio_model::fold` exists to keep: both sides or neither.
     async fn body_matches(connection: &Connection, query: &str) -> Vec<i64> {
         let folded = postio_model::fold::fold(query);
         sql::all(
@@ -2116,10 +1651,6 @@ mod tests {
             .await
             .expect("create message");
 
-        // Drift, simulated the only way an index method allows: drop the
-        // index. There is no shadow table to empty -- which is itself the
-        // point of the change, since the drift this test was written for
-        // (#407) was a shadow table falling out of step with its content.
         postio_storage::sql::batch(&connection, "DROP INDEX search_documents_fts;")
             .await
             .expect("drop the index, simulating drift");
@@ -2143,7 +1674,6 @@ mod tests {
             .expect("no-op, not an error");
     }
 
-    /// A second account in the same store, for the scoping tests below.
     async fn second_account(
         connection: &Connection,
     ) -> (postio_model::Account, postio_model::ids::MailboxId) {
@@ -2196,7 +1726,6 @@ mod tests {
         .await
         .expect("index b's body");
 
-        // Both are indexed, so neither is a candidate for either account yet.
         assert!(
             messages_missing_body_text_for_account(&connection, first.id.get(), 10)
                 .await
@@ -2225,17 +1754,6 @@ mod tests {
         );
     }
 
-    /// #1549: one sweep walks the recency index once, not once per batch.
-    ///
-    /// Without a cursor every batch starts at the newest message and walks
-    /// past everything the previous batches indexed, so a sweep is quadratic
-    /// in the size of the archive — on a real 61,000-message store that was
-    /// 640ms of scanning per message actually indexed.
-    ///
-    /// This is the sweep as the pass actually performs it: take a batch,
-    /// index it, resume from its last row. What it pins is that the three
-    /// batches together visit all six messages, once each, in recency order —
-    /// nothing repeated, nothing skipped, and nothing left behind.
     #[tokio::test]
     async fn a_sweep_resumes_after_its_cursor_rather_than_restarting() {
         let database = test_support::memory().await;
@@ -2288,8 +1806,6 @@ mod tests {
         );
     }
 
-    /// The cursor is a position and nothing more: resuming does not drag in a
-    /// message that has been indexed since.
     #[tokio::test]
     async fn an_indexed_message_is_not_a_candidate_after_a_cursor_either() {
         let database = test_support::memory().await;
@@ -2326,9 +1842,6 @@ mod tests {
             .expect("first batch");
         assert_eq!(first[0].id, created[0], "the newest, and it is not indexed");
 
-        // The pass indexes what it took before it resumes, which is what
-        // makes `<=` exact: the cursor row is excluded on the next batch
-        // because it is now indexed, not because the predicate excluded it.
         index_body_of(
             &connection,
             first[0].id,

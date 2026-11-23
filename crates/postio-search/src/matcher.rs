@@ -1,77 +1,29 @@
-//! The second evaluator: a query, one message, in memory (ADR 0008 Q1).
-//!
-//! # Why there are two
-//!
-//! `postio-index` answers a [`ParsedQuery`] by compiling it to SQL over the
-//! store's full-text index: the search bar, a saved search, a digest rule's
-//! preview. A digest rule (spec FR-127, research R13) is also asked of mail
-//! as the sync pass files it, inside the pass's transaction, before the
-//! message is anywhere a query could see it -- so it is answered here, from
-//! the message itself. One language, one parser, two evaluators.
-//!
-//! # Agreement is the feature
-//!
-//! If the two disagreed, a rule's preview would show one answer and the rule
-//! would do another. `postio-index`'s `digest_matcher` test runs a list of
-//! queries through both over the whole `.eml` corpus and asserts identical
-//! answers. Everything below that looks like a fussy detail is the executor's
-//! own behaviour, reproduced on purpose:
-//!
-//! * **The row is the index's row.** [`Document`] is the text the store's
-//!   triggers write into `search_documents` for a message -- each address as
-//!   its name, a space, and its address -- and the test holds the two equal,
-//!   column for column.
-//! * **Words, not substrings.** The index splits text into runs of letters
-//!   and digits and lowercases them (tantivy's `default` analyzer), so
-//!   `from:ad` does not find `ada@example.com`, and `from:francoise` does not
-//!   find "Françoise": the metadata columns are not folded for diacritics.
-//! * **A phrase in one column.** `from:v` holds when `v`'s words appear, in
-//!   order and adjacent, in the sender -- the executor asks the index for
-//!   `sender:"v"` (`fts_column_condition`). `to:`, `subject:`, `filename:`
-//!   and `list:` are the same with their own column in place of the sender.
-//!   Until #1699 the executor's per-row check accepted any one of `v`'s words
-//!   in the column, so `from:` a full address also found mail sent to it;
-//!   it no longer does, and neither does this.
-//!
-//! # What it evaluates
-//!
-//! The part of the language digest rules are written in: `from:` (milestone
-//! 1's sender rules), and `list:`, `to:`, `subject:` and `filename:`
-//! (milestone 2's list and query rules) -- what is known of a message as it
-//! is filed, before its body -- each possibly negated, any number of them
-//! together, and each may be a set of values (`from:{ada tomas}`, spec 010
-//! D26), which holds when any value would. Anything else is
-//! [`Unsupported`], named, so a rule that asks
-//! more than this can be refused where it is configured rather than
-//! silently holding the wrong mail. Free text is among it: the executor
-//! also searches bodies, which filing does not have.
+//! The second evaluator: a query against one message in memory (ADR 0008 Q1), for digest rules
+//! asked as the sync pass files mail, before it is anywhere a query could see it.
+//! It must agree with `postio-index`'s executor, which `digest_matcher` checks over the `.eml`
+//! corpus: [`Document`] is the row the store's triggers write, words not substrings (tantivy's
+//! `default` analyzer), `from:v` a phrase in one column.
+//! Only `from:`, `to:`, `subject:`, `filename:` and `list:` (negatable, sets allowed) are
+//! evaluated; anything else is [`Unsupported`], so a rule asking more is refused where configured.
 
 use postio_model::{EmailAddress, Message};
 
 use crate::ParsedQuery;
 use crate::query::{Filter, TokenKind};
 
-/// A message's row in the executor's metadata index, built in memory: the
-/// five columns of `search_documents`, as `postio-index`'s triggers write
-/// them.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Document {
-    /// The `From` addresses, each as its name, a space, and its address.
     pub sender: String,
     /// The `Bcc`, `Cc` and `To` addresses, the same way, in the order the
     /// trigger's aggregate reads them: through the index on `(message_id,
     /// kind, position)`, so by kind, alphabetically, then by position.
     pub recipients: String,
-    /// The subject, or nothing.
     pub subject: String,
-    /// Attachment filenames, space-separated.
     pub filenames: String,
-    /// The `List-Id`'s identifier, or nothing.
     pub list_id: String,
 }
 
 impl Document {
-    /// `message`'s row.
     pub fn of(message: &Message) -> Self {
         Self {
             sender: addresses(&message.from),
@@ -88,7 +40,6 @@ impl Document {
     }
 }
 
-/// `coalesce(name, '') || ' ' || address`, joined by spaces.
 fn addresses<'a>(addresses: impl IntoIterator<Item = &'a EmailAddress>) -> String {
     addresses
         .into_iter()
@@ -103,37 +54,26 @@ fn addresses<'a>(addresses: impl IntoIterator<Item = &'a EmailAddress>) -> Strin
         .join(" ")
 }
 
-/// Why a query cannot be matched in memory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Unsupported {
-    /// The query constrains nothing: a rule over it would hold every message.
     Empty,
-    /// A token outside `from:`, `to:`, `subject:`, `filename:` and `list:`
-    /// -- free text, another operator, or one still being typed -- as it was
-    /// written.
     Token(String),
 }
 
-/// A query, ready to be asked of one message after another.
 #[derive(Debug, Clone)]
 pub struct Matcher {
     clauses: Vec<Condition>,
 }
 
-/// One clause: any of its column conditions, or -- negated -- none of them.
-/// A set (`from:{ada tomas}`, D26) has one per value; any other clause, one.
 #[derive(Debug, Clone)]
 struct Condition {
     negated: bool,
     alternatives: Vec<Alternative>,
 }
 
-/// One column condition, with its words worked out once.
 #[derive(Debug, Clone)]
 struct Alternative {
-    /// Which column the phrase must be in.
     column: Column,
-    /// The value's words as the index holds them, with their positions.
     phrase: Vec<(usize, String)>,
 }
 
@@ -147,8 +87,6 @@ enum Column {
 }
 
 impl Matcher {
-    /// `query`, if every token in it is a `from:`, `to:`, `subject:`,
-    /// `filename:` or `list:`.
     pub fn new(query: &ParsedQuery) -> Result<Self, Unsupported> {
         if query.is_empty() {
             return Err(Unsupported::Empty);
@@ -188,12 +126,10 @@ impl Matcher {
         Ok(Self { clauses })
     }
 
-    /// Whether the query selects `message`.
     pub fn matches(&self, message: &Message) -> bool {
         self.matches_document(&Document::of(message))
     }
 
-    /// Whether the query selects the message `document` is the row of.
     pub fn matches_document(&self, document: &Document) -> bool {
         self.clauses
             .iter()
@@ -226,13 +162,11 @@ impl Alternative {
 /// `RemoveLongFilter::limit(40)` in the `default` analyzer.
 const LONGEST_WORD: usize = 40;
 
-/// Maximal runs of letters and digits: tantivy's `SimpleTokenizer`.
 fn runs(text: &str) -> impl Iterator<Item = &str> {
     text.split(|c: char| !c.is_alphanumeric())
         .filter(|run| !run.is_empty())
 }
 
-/// tantivy's `LowerCaser`: ASCII in place, anything else char by char.
 fn lowercase(word: &str) -> String {
     if word.is_ascii() {
         word.to_ascii_lowercase()
@@ -251,9 +185,6 @@ fn indexed(text: &str) -> Vec<(usize, String)> {
         .collect()
 }
 
-/// Whether `phrase` occurs in `text` as the index finds a phrase: each word
-/// at the same distance from the first as in the phrase. A phrase with no
-/// words finds nothing, as an empty index query does.
 fn phrase_in(text: &str, phrase: &[(usize, String)]) -> bool {
     let Some(((first_at, first), rest)) = phrase.split_first() else {
         return false;
@@ -337,8 +268,6 @@ mod tests {
         assert!(!matcher("from:ad").matches_document(&ada));
         assert!(!matcher("from:\"com example\"").matches_document(&ada));
         assert!(!matcher("from:grace@example.com").matches_document(&ada));
-        // The name and the address are one run of text in the row, so a
-        // phrase may span them, as it does in the index.
         assert!(matcher("from:\"Norwood Ada\"").matches_document(&ada));
     }
 
@@ -353,8 +282,6 @@ mod tests {
 
     #[test]
     fn a_full_address_is_found_in_the_sender_and_nowhere_else() {
-        // #1699: the address is in the recipients, and the sender shares
-        // "example" with it. That is mail *to* the address, not from it.
         let reply = row(
             "Quinn Abara quinn.abara@example.net",
             "Ada Norwood ada.norwood@example.com",
@@ -363,8 +290,6 @@ mod tests {
         assert!(!matcher("from:ada.norwood@example.com").matches_document(&reply));
         assert!(matcher("to:ada.norwood@example.com").matches_document(&reply));
         assert!(!matcher("to:quinn.abara@example.net").matches_document(&reply));
-        // Every word of the phrase in the sender, but not in order, is not
-        // the phrase either.
         assert!(!matcher("from:\"example.net quinn\"").matches_document(&reply));
     }
 
@@ -385,8 +310,6 @@ mod tests {
 
     #[test]
     fn a_recipient_a_subject_and_a_filename_are_matched_as_their_columns() {
-        // US14: a query rule. `to:`, `subject:` and `filename:` are the
-        // executor's same two conditions as `from:`, on their own columns.
         let mut minutes = row(
             "Quinn Abara quinn.abara@example.net",
             "Ada Norwood ada.norwood@example.com",
@@ -401,10 +324,7 @@ mod tests {
         assert!(!matcher("filename:drawing.svg").matches_document(&minutes));
         assert!(matcher("to:ada subject:minutes").matches_document(&minutes));
         assert!(!matcher("to:ada -subject:minutes").matches_document(&minutes));
-        // "quinn" is in the row, but not in the recipients.
         assert!(!matcher("to:quinn").matches_document(&minutes));
-        // "invite.ics" is a filename, and the subject shares "invite" with
-        // it: the phrase must be in the one column the operator names.
         minutes.subject = "Minutes and invite".to_owned();
         assert!(!matcher("subject:invite.ics").matches_document(&minutes));
         assert!(matcher("subject:minutes").matches_document(&minutes));
@@ -412,7 +332,6 @@ mod tests {
 
     #[test]
     fn a_set_holds_when_any_value_does_and_negated_when_none_does() {
-        // D26, on the columns the matcher already reads.
         let ada = row(
             "Ada Norwood ada.norwood@example.com",
             "",
@@ -452,7 +371,6 @@ mod tests {
         let long = "x".repeat(LONGEST_WORD);
         let sender = format!("Ada {long} norwood@example.com");
         let document = row(&sender, "", "");
-        // The index holds "ada", nothing at the next position, "norwood".
         assert!(!matcher("from:\"ada norwood\"").matches_document(&document));
         assert!(matcher("from:norwood@example.com").matches_document(&document));
     }

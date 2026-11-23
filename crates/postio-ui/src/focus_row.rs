@@ -1,10 +1,5 @@
-//! What a Focus row and the list around it say, with no toolkit in it
-//! (spec 007 US1; contracts/focus-surface.md, "Rows").
-//!
-//! The row draws in one `snapshot()` in `postio-gtk`; the rules behind
-//! what it draws are here, where a unit test proves them in milliseconds:
-//! which day heading a row sits under, how many label pills fit, and when
-//! the conversation's count is worth a badge.
+//! What a Focus row and the list around it say, with no toolkit: day headings, label pills, count
+//! badges.
 
 use chrono::{Datelike, NaiveDate};
 use postio_core::CommandId;
@@ -13,13 +8,8 @@ use postio_model::listing::ThreadSummary;
 use postio_model::thread_view::{ThreadMember, ThreadView};
 use postio_model::{EmailAddress, MessageId};
 
-/// The most label pills a row draws; the open message shows them all
-/// (spec Edge Cases, "Labels").
 pub const MAX_PILLS: usize = 2;
 
-/// The heading a day's rows sit under: `Today · Saturday 26 September`,
-/// `Yesterday · Friday 25 September`, then the day alone, with its year
-/// once it is not this one.
 pub fn day_heading(day: NaiveDate, today: NaiveDate) -> String {
     let date = if day.year() == today.year() {
         day.format("%A %-d %B").to_string()
@@ -33,9 +23,6 @@ pub fn day_heading(day: NaiveDate, today: NaiveDate) -> String {
     }
 }
 
-/// The date on an open message's header card (screen 04): relative for
-/// today, "Today, 15:22", and the absolute date beyond it -- a
-/// message once opened is not "yesterday", it is dated.
 pub fn message_date(
     at: chrono::DateTime<chrono::Utc>,
     now: chrono::DateTime<chrono::Local>,
@@ -44,19 +31,13 @@ pub fn message_date(
     if local.date_naive() == now.date_naive() {
         return format!("Today, {}", local.format("%H:%M"));
     }
-    // The same shape as today's ("Today, 15:22"): a comma, no "at", and no
-    // weekday -- the card's line is short, and the date is not what it is for.
     local.format("%-d %b %Y, %H:%M").to_string()
 }
 
-/// The badge a conversation's count draws, or none for a conversation of
-/// one: the badge says how big the conversation is, and one is not big.
 pub fn count_badge(message_count: u32) -> Option<String> {
     (message_count > 1).then(|| message_count.to_string())
 }
 
-/// A digest row's first column: "Weekly · digest", or "Digest" when its
-/// rule's cadence is not known (screen 01, T136).
 pub fn digest_title(cadence: Option<postio_model::listing::Cadence>) -> String {
     use postio_model::listing::Cadence;
     match cadence {
@@ -67,14 +48,11 @@ pub fn digest_title(cadence: Option<postio_model::listing::Cadence>) -> String {
     }
 }
 
-/// A digest row's subject: "Newsletters · 14 messages".
 pub fn digest_subject(rule: &str, count: u32) -> String {
     let messages = if count == 1 { "message" } else { "messages" };
     format!("{rule} \u{b7} {count} {messages}")
 }
 
-/// A digest row's line: its summary's opening once one is written, and
-/// until then who it is from -- "From Ledger, Forge and 4 others".
 pub fn digest_line(summary: Option<&str>, senders: &[String]) -> String {
     if let Some(summary) = summary.map(str::trim).filter(|summary| !summary.is_empty()) {
         return summary.to_owned();
@@ -90,24 +68,17 @@ pub fn digest_line(summary: Option<&str>, senders: &[String]) -> String {
     }
 }
 
-/// The words on the top bar's command field.
 pub const COMMAND_PROMPT: &str = "Search mail, go to a folder, or run a command";
 
-/// The main menu, top to bottom: each item's label and the command it runs
-/// (`None` for About, which is the application's, not a command).
 pub const MENU: &[(&str, Option<CommandId>)] = &[
-    // The people (specs/011-focus-contacts S13): `g c`.
     ("Contacts", Some(CommandId::OpenContacts)),
     ("Settings", Some(CommandId::Settings)),
-    // A check item (T232): checked while messages open beside the list.
     ("Read beside the list", Some(CommandId::ToggleReadingPane)),
     ("Keyboard shortcuts", Some(CommandId::CheatSheet)),
     ("About", None),
     ("Quit", Some(CommandId::Quit)),
 ];
 
-/// The chrome's buttons, each with the command a click runs. The command
-/// field runs search, and wears the palette's key beside search's.
 pub const BUTTONS: &[CommandId] = &[
     CommandId::Compose,
     CommandId::Search,
@@ -117,7 +88,6 @@ pub const BUTTONS: &[CommandId] = &[
     CommandId::Quit,
 ];
 
-/// The compose button's tooltip: "Compose · c", or "Compose" with no key.
 pub fn compose_tooltip(key: Option<&str>) -> String {
     match key {
         Some(key) => format!("Compose \u{b7} {key}"),
@@ -125,7 +95,6 @@ pub fn compose_tooltip(key: Option<&str>) -> String {
     }
 }
 
-/// The strip's digest rules button: "1 digest rule", "4 digest rules".
 pub fn digest_rules(count: usize) -> String {
     if count == 1 {
         "1 digest rule".to_owned()
@@ -134,18 +103,13 @@ pub fn digest_rules(count: usize) -> String {
     }
 }
 
-/// The longest a row's one line of words runs before it is cut with an
-/// ellipsis. The row's width cuts it again; this keeps a whole preview from
-/// riding every frontend's text layout.
+/// Keeps a whole preview out of every frontend's text layout; the row's width cuts it again.
 const LINE_CHARS: usize = 90;
 
-/// Whether `who` is one of the account's own identities.
 fn is_me(who: &EmailAddress, me: &[EmailAddress]) -> bool {
     me.iter().any(|mine| mine.same_address(who))
 }
 
-/// The first name a row says: the display name's first word, else the local
-/// part, else the address.
 pub fn first_name(who: &EmailAddress) -> &str {
     let name = who.display();
     if who.name.as_deref().is_some_and(|n| !n.trim().is_empty()) {
@@ -155,16 +119,9 @@ pub fn first_name(who: &EmailAddress) -> &str {
     }
 }
 
-/// Who a thread row names (spec 013 US1): up to three first names, newest
-/// first, then "you" when the account took part, then "+N" for the others
-/// that did not fit ("Lena, Ben, Ana, you +2"). A thread of one message
-/// names its sender in full, as any single message does.
-///
-/// `participants` is first-seen order, as `ThreadSummary` carries it, and
-/// `latest` the sender of the newest message, who leads: a reply from
-/// someone who wrote before moves them to the front, as the row's line
-/// does (#2107). "You" is decided by the account's identities in `me`,
-/// never by a name.
+/// Up to three first names, newest first, then "you" if the account took part, then "+N".
+/// `latest` leads, as a reply from an earlier writer moves them to the front (#2107). "You"
+/// is decided by the identities in `me`, never by a name.
 pub fn participants(
     participants: &[EmailAddress],
     latest: Option<&EmailAddress>,
@@ -208,9 +165,6 @@ pub fn participants(
     said
 }
 
-/// The thread row's snippet: the latest message's sender and the start of
-/// its words, "Ben: Looks good…". The ellipsis marks a cut, so a short line
-/// is not given one. Empty words leave the sender alone out of it.
 pub fn latest_line(from: Option<&EmailAddress>, me: &[EmailAddress], words: &str) -> String {
     let first = words.lines().map(str::trim).find(|line| !line.is_empty());
     let Some(first) = first else {
@@ -226,7 +180,6 @@ pub fn latest_line(from: Option<&EmailAddress>, me: &[EmailAddress], words: &str
         said.push_str(": ");
     }
     if first.chars().count() > LINE_CHARS {
-        // Cut at a word, not through one, unless the line is one long word.
         let end = first
             .char_indices()
             .nth(LINE_CHARS)
@@ -243,14 +196,11 @@ pub fn latest_line(from: Option<&EmailAddress>, me: &[EmailAddress], words: &str
     said
 }
 
-/// The "2 new" pill, or none when nothing is unread.
 pub fn new_badge(unread: u32) -> Option<String> {
     (unread > 0).then(|| format!("{unread} new"))
 }
 
-/// The tag on a child that answers an older message than the one before it,
-/// "↳ to Ana". `answers` indexes `members` (date order); a member that
-/// cannot be found or has no sender leaves nothing to name.
+/// A member that cannot be found or has no sender leaves nothing to name.
 pub fn child_tag(answers: Option<u32>, members: &[ThreadMember]) -> Option<String> {
     let answered = members.get(answers? as usize)?;
     let who = if answered.own {
@@ -261,9 +211,6 @@ pub fn child_tag(answers: Option<u32>, members: &[ThreadMember]) -> Option<Strin
     Some(format!("\u{21b3} to {who}"))
 }
 
-/// Which message opening a thread row lands on (FR-013): the first unread,
-/// else the first with an open action marker, else the latest. `None` only
-/// for a thread with no members.
 pub fn open_at(view: &ThreadView) -> Option<MessageId> {
     let members = &view.members;
     members
@@ -274,49 +221,29 @@ pub fn open_at(view: &ThreadView) -> Option<MessageId> {
         .map(|member| member.id)
 }
 
-/// The chevron in a thread row's gutter. A one-message thread has none, so
-/// it is `Option<Chevron>` on the row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Chevron {
-    /// Folded: the thread's children are not shown.
     Collapsed,
-    /// Open: the children sit under the row.
     Expanded,
 }
 
-/// Everything a thread row says, composed once here so the Mac and GTK draw
-/// the same words (contracts/frontend-threads.md).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThreadRowView {
-    /// "Lena, Ben, Ana, you", or the sender's full name for a thread of one.
     pub participants: String,
-    /// The message count, for threads of two or more only.
     pub count: Option<String>,
-    /// The thread's subject.
     pub subject: String,
-    /// Drawn bold: some message here is unread.
     pub bold: bool,
-    /// Every label of the thread; the row draws [`MAX_PILLS`] of them.
     pub labels: Vec<Label>,
-    /// "Ben: Looks good…".
     pub latest_line: String,
-    /// "2 new".
     pub new: Option<String>,
-    /// A paperclip: any message has an attachment.
     pub attachment: bool,
-    /// Replies since the thread was muted, when it is.
     pub muted: Option<u32>,
-    /// What the row says of it: "muted \u{b7} 1".
     pub muted_badge: Option<String>,
-    /// The latest message's time, as every row says it.
     pub time: String,
-    /// The gutter's chevron; `None` for a thread of one.
     pub chevron: Option<Chevron>,
 }
 
 impl ThreadRowView {
-    /// The row for `thread`, with its `labels`, as seen by an account whose
-    /// identities are `me`, `expanded` when its children are shown.
     pub fn new(
         thread: &ThreadSummary,
         labels: &[Label],
@@ -415,29 +342,18 @@ mod tests {
     }
 }
 
-/// What a marked row's second line says (contracts/focus-surface.md,
-/// "Rows"): the kind chip, the date, the quoted sentence, and the actions
-/// that answer it -- or, once answered or when it cannot be, what is true.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MarkerLine {
-    /// The kind chip: "Invite", "Question", "To-do" or "No reply".
     pub chip: &'static str,
-    /// What the marker is, which decides what else it may offer.
     pub kind: postio_model::listing::MarkerKind,
-    /// The date: "Tue 29 Sep · 10:00–10:45", "Wed 30 Sep", "since Sat 26 Sep".
     pub date: Option<String>,
-    /// The sentence the marker is about, verbatim, for a question or to-do.
     pub quote: Option<String>,
-    /// What stands where the actions would: "Accepted", "Cancelled", "Past".
     pub status: Option<&'static str>,
-    /// The commands that answer it, in order, each with its button's words.
     pub actions: Vec<(postio_core::CommandId, &'static str)>,
 }
 
 impl MarkerLine {
-    /// This line in a Focus that can capture into a vault (`[focus.vault]`
-    /// configured, milestone 3): a to-do then offers Task `t` before
-    /// Snooze (spec C9, screens 01, 03 and 04). Nothing else changes.
+    /// A to-do offers Task `t` before Snooze when Focus can capture into a vault.
     pub fn capturing(mut self, capture: bool) -> Self {
         if capture && self.kind == postio_model::listing::MarkerKind::Todo {
             self.actions
@@ -447,12 +363,8 @@ impl MarkerLine {
     }
 }
 
-/// The second line for `marker`, as of `now`, in `zone`.
-///
-/// An invitation's "past" is read from its end time here, when the row is
-/// drawn: the marker is not flipped as time passes (T110), so a row that
-/// has been on screen across the end of its event stops offering an answer
-/// without anything being written.
+/// An invitation's "past" is read from its end time when drawn, not flipped as time passes,
+/// so a row left on screen stops offering an answer without anything being written.
 pub fn marker_line<Tz: chrono::TimeZone>(
     marker: &postio_model::listing::MarkerSummary,
     now: chrono::DateTime<chrono::Utc>,
@@ -504,7 +416,6 @@ where
             ("Invite", status, actions)
         }
         MarkerKind::Question => ("Question", None, vec![(CommandId::Reply, "Reply")]),
-        // Task joins Snooze once Obsidian exists (milestone 3, spec C9).
         MarkerKind::Todo => ("To-do", None, vec![(CommandId::Snooze, "Snooze")]),
         MarkerKind::NoReply => ("No reply", None, vec![(CommandId::Reply, "Reply")]),
     };
@@ -654,8 +565,6 @@ mod marker_tests {
     }
     #[test]
     fn with_a_vault_a_to_do_offers_task_before_snooze_and_nothing_else_changes() {
-        // Spec C9: Task joins Snooze on a to-do once Obsidian exists, which
-        // is once `[focus.vault]` is configured (T158).
         let todo = MarkerSummary {
             kind: MarkerKind::Todo,
             when: Some(MarkerWhen::Due(at(30, 12, 0))),
@@ -695,41 +604,26 @@ mod marker_tests {
     }
 }
 
-/// Where a list row's columns stand in a row `width` pixels wide
-/// (focus-surface.md, Rows; T232 for the narrow list beside a reading
-/// pane).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RowColumns {
-    /// Where the sender's column starts.
     pub sender_x: f32,
-    /// How wide the sender's column is.
     pub sender_width: f32,
-    /// Where the subject starts.
     pub subject_x: f32,
-    /// Where a marked row's second line starts: under the subject, or,
-    /// once the sender's column has had to narrow, under the sender, so the
-    /// marker's chip, date and answers keep the row's width.
+    /// Under the subject, or under the sender once its column has narrowed, so the marker keeps the
+    /// row's width.
     pub marker_x: f32,
 }
 
-/// The sender's column at its widest, from screen 01.
 pub const SENDER_WIDTH: f32 = 222.0;
-/// The narrowest the sender's column gets: a name, ellipsized.
 pub const SENDER_MIN: f32 = 120.0;
-/// Where the sender's column starts, after the gutter.
 pub const SENDER_X: f32 = 56.0;
-/// The room the subject's column keeps before the sender's gives any up:
-/// a subject, a pill and the trailing time and count.
+/// The room the subject keeps before the sender's column gives any up.
 pub const SUBJECT_ROOM: f32 = 260.0;
-/// The gap between the two columns, and between things on a line.
 pub const COLUMN_GAP: f32 = 12.0;
-/// The room a row's right edge keeps.
 pub const ROW_TRAILING: f32 = 24.0;
 
-/// The columns of a row `width` pixels wide: the screen's at the inbox's
-/// width, the sender's column narrowing (to [`SENDER_MIN`]) only when the
-/// subject's would otherwise have less than [`SUBJECT_ROOM`] -- the list
-/// beside a reading pane, 404 px at its narrowest.
+/// The sender's column narrows (to `SENDER_MIN`) only when the subject would have less than
+/// `SUBJECT_ROOM`.
 pub fn row_columns(width: f32) -> RowColumns {
     let spare = width - SENDER_X - COLUMN_GAP - SUBJECT_ROOM - ROW_TRAILING;
     let sender_width = spare.clamp(SENDER_MIN, SENDER_WIDTH);
@@ -746,8 +640,6 @@ pub fn row_columns(width: f32) -> RowColumns {
     }
 }
 
-/// The header strip's counts: `312 · 41 unread`, or the conversations alone
-/// while nothing is unread.
 pub fn strip_counts(conversations: u32, unread: u32) -> String {
     let conversations = crate::selection::count(conversations);
     if unread == 0 {
@@ -759,16 +651,12 @@ pub fn strip_counts(conversations: u32, unread: u32) -> String {
     )
 }
 
-/// The header strip's count for a place that is not the inbox: how many
-/// conversations it lists, and nothing about unread -- the unread count of
-/// the inbox describes the inbox, and beside "Flagged" it described a place
-/// the person had left.
+/// No unread count: the inbox's describes the inbox, and beside "Flagged" it described a place the
+/// person had left.
 pub fn place_counts(conversations: u32) -> String {
     crate::selection::count(conversations)
 }
 
-/// The has-action toggle's words: `Has action · 7`, or `Has action` before
-/// the count is known.
 pub fn has_action_label(count: Option<u32>) -> String {
     match count {
         Some(count) => format!("Has action \u{b7} {}", crate::selection::count(count)),
@@ -776,9 +664,6 @@ pub fn has_action_label(count: Option<u32>) -> String {
     }
 }
 
-/// What the strip says while the has-action filter is on: `Showing 7 of
-/// 312 · ! again to show all`, naming the key the keymap gives the toggle,
-/// or `Showing 7 of 312` when nothing is bound to it.
 pub fn showing(shown: u32, total: u32, key: Option<&str>) -> String {
     let said = format!(
         "Showing {} of {}",
@@ -791,10 +676,8 @@ pub fn showing(shown: u32, total: u32, key: Option<&str>) -> String {
     }
 }
 
-/// Who a row names in its sender column. Received mail names who it is
-/// from; a draft or a queued message is from the person themselves, so in
-/// Drafts and the Outbox the row names who it is to, as every mail client
-/// does: `To Ada Lovelace`.
+/// Drafts and the Outbox name who the mail is to, since it is from the person themselves: `To Ada
+/// Lovelace`.
 pub fn row_names(message: &postio_model::listing::MessageSummary) -> String {
     if message.send_state.is_none() {
         return message
@@ -949,14 +832,10 @@ mod strip_tests {
 
     #[test]
     fn a_narrow_row_gives_the_senders_column_up_first() {
-        // 460: the list beside an 820 pane in a 1280 window.
         let columns = row_columns(460.0);
         assert_eq!(columns.sender_width, 120.0);
         assert_eq!(columns.subject_x, 188.0);
-        // The subject keeps what is left, and the marker line the row.
         assert_eq!(columns.marker_x, SENDER_X);
-        // Just short of the screen's columns, the sender gives up only what
-        // the subject needs.
         let columns = row_columns(560.0);
         assert_eq!(columns.sender_width, 560.0 - 56.0 - 12.0 - 260.0 - 24.0);
         assert_eq!(columns.marker_x, SENDER_X);
@@ -1023,7 +902,6 @@ mod thread_words_tests {
 
     #[test]
     fn participants_are_first_names_newest_first_with_you_last() {
-        // First-seen order in; newest first out (SPEC §2).
         let seen = [
             who("Ana Ruiz"),
             who("Ben Ortiz"),
@@ -1035,8 +913,6 @@ mod thread_words_tests {
 
     #[test]
     fn the_newest_messages_sender_leads_though_they_wrote_before() {
-        // Ana opened the thread and has just replied (#2107): she leads,
-        // where first-seen order alone would leave her third.
         let seen = [
             me()[0].clone(),
             who("Ana Ruiz"),

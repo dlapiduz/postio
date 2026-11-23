@@ -1,10 +1,3 @@
-//! What a card reads about a person: tiles, a twelve-month strip, the newest
-//! messages, and the Contacts tabs' counts (specs/011-focus-contacts S5).
-//!
-//! All of it is kept as mail is recorded and read in a fixed number of
-//! statements over a person's addresses, never over their mail, which the
-//! budgets below hold at two sizes of store.
-
 use chrono::{DateTime, TimeZone, Utc};
 
 use postio_model::{
@@ -25,7 +18,6 @@ pub(crate) async fn setup() -> (postio_storage::Store, Checkout, Account, Mailbo
     (database, connection, account, inbox)
 }
 
-/// A message `from` `to` on `when`, stored and recorded as sync does.
 pub(crate) async fn mail(
     connection: &Checkout,
     account: &Account,
@@ -292,7 +284,6 @@ async fn the_tabs_counts_are_kept_by_triggers_as_people_come_change_and_go() {
 async fn old_mail_is_folded_into_the_months_the_ring_and_the_opened_count() {
     let (_database, connection, account, inbox) = setup().await;
     let me = account.address.address.clone();
-    // Stored before anything recorded it, as in a migrated store.
     for (day, read) in [(3u32, true), (9, false), (21, true)] {
         let mut message = Message::new(account.id, inbox, at(2026, 2, day));
         message.from = vec![EmailAddress::new(None::<String>, "ada@example.org")];

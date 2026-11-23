@@ -1,22 +1,5 @@
-//! The command bar, search, go-to and the places (research R2, slice 8).
-//!
-//! Moved from `postio-gtk`'s window and bar (`go_to`, `go_to_inbox`,
-//! `go_to_role`, `go_to_view`, the saved searches, `bar_action`,
-//! reopen-after-hit and the chip editor) and from its places popover (the
-//! places read), so the Mac's bar and popover behave as GTK's do. What a
-//! bar's words mean, the lines they offer and what each line says are
-//! `postio_ui::command_bar`'s and `postio_ui::finder`'s; this keeps the
-//! bar's state -- what is typed, which lines are on screen and what each
-//! runs, which results are current -- and turns a line run into what the
-//! list does. The toolkit draws the lines it is given and hands back the
-//! token of the one run.
-//!
-//! `/` and `mod+k` open one bar two ways (C24). A command run from it acts
-//! on what the cursor was on when the bar opened. A place run from it is
-//! opened as the list, through the feed's own opening, so the strip, the
-//! cursor on the first row and the paging all follow. The places -- every
-//! account's mailboxes, folders and labels, counted -- are one request,
-//! however many accounts there are.
+//! The command bar, search and go-to: what is typed, which lines are on screen and which
+//! results are current, and what running a line does to the list.
 
 use postio_client::protocol::SavedCount;
 use postio_core::{ActionId, CommandId, Context, Frontend, Keymap};
@@ -31,198 +14,119 @@ use crate::dropdown::{self, Action, DropdownState, Landed, Latest, Offer, Shown,
 use crate::feed::Step;
 use crate::{FocusController, Intent, Reply, Request, SurfaceKind};
 
-/// How the bar was opened: `/` for mail, `mod+k` for commands (C24).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BarMode {
-    /// Search: the dropdown (spec 010), and `@`'s correspondents.
     Search,
-    /// Commands only: opened with `>` typed.
     Commands,
 }
 
-/// What kind of line the bar draws.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BarLineKind {
-    /// A section heading; runs nothing.
     Heading,
-    /// A line of the empty bar saying what typing does; runs nothing.
     Hint,
-    /// A command, with its key.
     Command,
-    /// A correspondent `@` offered.
     Correspondent,
 }
 
-/// One line of the bar, with everything it draws.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BarLine {
-    /// What kind of line.
     pub kind: BarLineKind,
-    /// What [`Input::BarRun`](crate::Input::BarRun) hands back to run it:
-    /// never reused, so a line since redrawn runs nothing.
+    /// Handed back by `BarRun`; never reused, so a redrawn line runs nothing.
     pub token: u64,
-    /// Its title: a command's name, a correspondent's.
     pub title: String,
-    /// Its dimmer detail.
     pub detail: Option<String>,
-    /// The key that does the same, as the keymap spells it.
     pub key: Option<String>,
-    /// The command a keycap is drawn for, when it is one's.
     pub command: Option<CommandId>,
-    /// Whether the arrows may rest on it.
     pub selectable: bool,
 }
 
-/// The bar, whole: what [`Intent::BarLines`] draws.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct BarView {
-    /// The words echoed under the field.
     pub echo: Option<String>,
-    /// The lines, top to bottom.
     pub lines: Vec<BarLine>,
-    /// Where the highlight goes, by token; `None` leaves it where it is, or
-    /// on the first line that runs something.
+    /// `None` leaves it where it is, or on the first line that runs something.
     pub highlight: Option<u64>,
-    /// The pinned saved searches' names, in order: the first four run on
-    /// `SavedSearch1`-`4`.
     pub saved: Vec<String>,
 }
 
-/// Every place there is to go, read in one request.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PlacesRead {
-    /// The folders popover's entries, counted: every account's mailboxes,
-    /// folders and labels, its Outbox while anything waits, and Snoozed and
-    /// Flagged.
     pub entries: Vec<Entry>,
-    /// The bar's places: every mailbox, folder and label.
     pub places: Vec<Place>,
-    /// Every folder's name, for a hit's `in:`.
     pub folders: Vec<(MailboxId, String)>,
-    /// Which account each folder is, when there are several to tell apart.
     pub owners: Vec<(MailboxId, String)>,
-    /// Every correspondent, for `@` and for a name typed.
     pub contacts: Vec<Contact>,
-    /// The messages a search looks through, off the folders' maintained
-    /// totals (ADR 0040): the empty dropdown's "local index · 18,204
-    /// messages".
+    /// From the folders' maintained totals (ADR 0040), not a count.
     pub messages: u64,
 }
 
-/// One line on screen and what running it does.
 #[derive(Debug, Clone)]
 struct Item {
     row: Row,
     line: BarLine,
 }
 
-/// A message a hit opened, which `j` and `k` walk among the others.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Hit {
     message: MessageId,
     thread: Option<ThreadId>,
 }
 
-/// The bar's state, and the places it and the popover read.
 #[derive(Debug)]
 pub(crate) struct Bar {
-    /// How it was opened, while it is up.
     mode: Option<BarMode>,
-    /// The words, as the field holds them.
     typed: String,
-    /// Moves whenever the words do: an answer under an older one is for
-    /// words no longer there.
+    /// Moves whenever the words do: an answer under an older stamp is stale.
     stamp: u64,
     next_token: u64,
-    /// The lines the words make outside the dropdown: `>`'s commands,
-    /// `@`'s correspondents, or the empty bar's hints.
     base: Vec<Item>,
-    /// The chips the dropdown's words were lowered to: what a saved search
-    /// keeps.
     chips: Vec<String>,
-    /// The hit last read, which has just been closed: where the highlight
-    /// goes once the words' hits land again.
     pending: Option<MessageId>,
-    /// The cursor's message when the bar opened: what a command run from it
-    /// acts on.
     aim: Option<MessageId>,
-    /// The words when a hit was opened, and the hit on screen since: the
-    /// bar comes back on them when it closes.
     held: Option<(String, MessageId)>,
-    /// The hits the message opened from the bar walks with `j` and `k`.
     found: Vec<Hit>,
-    /// The pinned saved searches, in order.
     saved: Vec<SavedSearch>,
-    /// What an `Intent::SaveSearch` is saving.
     saving: Option<crate::SaveSearch>,
     keymap: Keymap,
-    /// The places, as last read.
     places: PlacesRead,
     names: postio_ui::names::Names,
     /// Moves with every read of the places: a popover token names its read.
     places_read: u64,
-    /// Whether the folders popover is up (the frontend says).
     places_shown: bool,
-    /// Whether a read of the places is on its way.
     places_asked: bool,
-    /// Whether mail changed after the read on its way was asked for: it
-    /// may not count the change, so another read follows it.
+    /// Mail changed after the read on its way was asked for: it may miss the change, so another
+    /// read follows.
     places_stale: bool,
-    /// Whether Focus files mail away: the popover lists Filtered then.
     filtering: bool,
-    /// The clock, when stopped: what the dropdown's dates count from.
     clock: Option<chrono::DateTime<chrono::Local>>,
-    /// The dropdown, while it is what the bar shows.
     drop: Option<Drop>,
-    /// The searches run lately, newest first, each with its token.
     recents: Vec<(u64, postio_client::protocol::RecentSearch)>,
-    /// The saved searches' counts by key, as last read: `(key, total,
-    /// new)`.
     saved_counts: Vec<SavedCount>,
-    /// The saved pills' tokens, in order.
     saved_tokens: Vec<u64>,
-    /// The cheat sheet's rows' tokens, and the example's.
     sheet: Vec<u64>,
-    /// The row the toolkit's arrows rest on.
     highlighted: Option<u64>,
-    /// The sentence ⌘⌫ kept as words: searched as typed, not lowered,
-    /// while the field still begins with it.
+    /// Searched as typed, not lowered, while the field still begins with it.
     literal: Option<String>,
-    /// The field's text was put there, not typed: a run, Tab, a saved
-    /// search. An operator at its end is a chip made, not one being typed.
+    /// An operator at its end is a chip made, not one being typed.
     settled: bool,
 }
 
-/// The dropdown's state while the bar shows it.
 #[derive(Debug)]
 struct Drop {
     state: DropdownState,
-    /// The query the words were lowered to.
     query: Option<postio_search::ParsedQuery>,
-    /// The query's words, for the highlight.
     terms: Vec<String>,
-    /// What the words found, once it has landed.
     landed: Option<Landed>,
-    /// The operator whose value is being typed (`Operator`).
     field: Option<postio_search::query::Field>,
-    /// Its value so far, or the prefix (`Prefix`).
     value: String,
-    /// Where in the field the piece being typed begins: what a suggestion
-    /// run replaces.
     piece: usize,
-    /// The suggestions on screen, each with its token.
     offers: Vec<(u64, Offer)>,
-    /// The rest of the best word (`Prefix`).
     ghost: Option<String>,
-    /// The latest from the focused person (`Operator`), and whose was
-    /// asked last.
     latest: Option<Latest>,
     latest_asked: Option<String>,
-    /// What the sentence was understood as (`PlainEnglish`): its tiles,
-    /// the lowered query as Tab writes it, and the results' note.
     tiles: Vec<UnderstoodTile>,
-    /// The suggestions for `value` have landed: an empty `offers` is then
-    /// nobody, not "not read yet" (`Operator`).
+    /// The suggestions for `value` have landed: an empty `offers` is then nobody, not "not read
+    /// yet".
     answered: bool,
     lowered: Option<String>,
     note: String,
@@ -265,9 +169,7 @@ impl Bar {
             found: Vec::new(),
             saved: Vec::new(),
             saving: None,
-            // The registry's own keys until the frontend says which are in
-            // force; resolved once per process where it can be, since
-            // resolving is quadratic in the commands.
+            // Resolving the keymap is quadratic in the commands: once per process.
             keymap: if platform == postio_config::paths::Platform::host() {
                 Keymap::defaults().clone()
             } else {
@@ -304,9 +206,6 @@ impl Bar {
         self.mode.is_some()
     }
 
-    /// The bindings in force, as the bar's keycaps say them.
-    /// How many saved searches are pinned: the next one's ⌥ number is one
-    /// more.
     pub(crate) fn saved_len(&self) -> usize {
         self.saved.len()
     }
@@ -315,18 +214,14 @@ impl Bar {
         &self.keymap
     }
 
-    /// Every folder the places know, by name.
     pub(crate) fn folders(&self) -> &[(MailboxId, String)] {
         &self.places.folders
     }
 
-    /// Each folder's account, where there are several.
     pub(crate) fn owners(&self) -> &[(MailboxId, String)] {
         &self.places.owners
     }
 
-    /// Where an answer named by `names` has its hits: its folders, the
-    /// places', what a digest holds, and the accounts.
     fn wheres(&self, names: postio_search::results::FacetNames) -> dropdown::Wheres {
         let mut folders = names.folders;
         folders.extend(self.places.folders.iter().cloned());
@@ -337,7 +232,6 @@ impl Bar {
         }
     }
 
-    /// The name a person is known by, for any address they own.
     pub(crate) fn name_for(&self, address: &str) -> Option<String> {
         self.places
             .contacts
@@ -349,7 +243,6 @@ impl Bar {
                     .any(|owned| owned.address.address.eq_ignore_ascii_case(address))
             })
             .and_then(|contact| {
-                // A person known only by their address has no name to give.
                 let shown = contact.display_name();
                 (!contact
                     .addresses
@@ -359,21 +252,16 @@ impl Bar {
             })
     }
 
-    /// The words in the field, trimmed, while the bar searches: what ⌘↩
-    /// shows the results of.
     pub(crate) fn search_words(&self) -> Option<&str> {
         let words = self.typed.trim();
         let searching = self.mode == Some(BarMode::Search) || self.drop.is_some();
         (searching && !words.is_empty()).then_some(words)
     }
 
-    /// What an `Intent::SaveSearch` is saving.
     pub(crate) fn set_saving(&mut self, saving: crate::SaveSearch) {
         self.saving = Some(saving);
     }
 
-    /// Walk `hits` from a message one of them opened, as a hit opened from
-    /// the bar walks the bar's: nothing to come back to when it closes.
     pub(crate) fn walk(&mut self, hits: Vec<(MessageId, Option<ThreadId>)>) {
         self.found = hits
             .into_iter()
@@ -386,8 +274,7 @@ impl Bar {
         self.keymap = keymap;
     }
 
-    /// Filtering turned on or off adds or takes away Filtered, so once the
-    /// places have landed the popover is told to read them again.
+    /// Filtered is listed only while filtering, so the popover reads the places again.
     pub(crate) fn set_filtering(&mut self, filtering: bool) -> Vec<Step> {
         if self.filtering == filtering {
             return Vec::new();
@@ -400,12 +287,8 @@ impl Bar {
         vec![Step::Show(Intent::PlacesChanged)]
     }
 
-    /// Today's filtered count landed, `before` the one known until then.
-    /// While Focus files mail Filtered is listed by it, and the counts are a
-    /// read of their own that can land after the places: once the places
-    /// have landed (their read always holds Snoozed and Flagged), a change
-    /// in it is a change in them, so their tokens move on and the popover
-    /// is told to read them again.
+    /// The filtered count can land after the places; once they have, a change in it is a change in
+    /// them, so their tokens move on and the popover reads again.
     pub(crate) fn filtered_counted(&mut self, before: Option<u32>, now: u32) -> Vec<Step> {
         if !self.filtering || before == Some(now) || self.places.entries.is_empty() {
             return Vec::new();
@@ -414,8 +297,6 @@ impl Bar {
         vec![Step::Show(Intent::PlacesChanged)]
     }
 
-    /// Open the bar `mode`'s way on `text`, over the cursor's `aim`, and
-    /// read the places it can go.
     fn open(&mut self, mode: BarMode, text: &str, aim: Option<MessageId>) -> Vec<Step> {
         self.mode = Some(mode);
         self.aim = aim;
@@ -446,9 +327,7 @@ impl Bar {
         steps
     }
 
-    /// The bar closed: nothing it showed is kept, and an answer still on
-    /// its way is for nothing. A hit opened from it keeps its words, to
-    /// come back on.
+    /// An answer still on its way is for nothing; a hit opened from the bar keeps its words.
     pub(crate) fn close(&mut self) {
         self.mode = None;
         self.typed.clear();
@@ -461,13 +340,11 @@ impl Bar {
         self.literal = None;
     }
 
-    /// The field's words now.
     fn typed(&mut self, text: String) -> Vec<Step> {
         if !self.is_open() || text == self.typed {
             return Vec::new();
         }
-        // ⌫ on an operator with no value yet takes the colon in the field;
-        // the operator goes whole, back to the words before it (US7).
+        // ⌫ on an operator with no value takes the colon; the operator goes whole.
         if let (Some(mode), Some(drop)) = (self.mode, &self.drop)
             && drop.state == DropdownState::Operator
             && drop.value.is_empty()
@@ -482,8 +359,6 @@ impl Bar {
         self.answer()
     }
 
-    /// Answer what is typed: the dropdown for words, `in:` and the empty
-    /// field, and otherwise spec 009's lines for `>` and `@`.
     fn answer(&mut self) -> Vec<Step> {
         self.stamp += 1;
         let typed = self.typed.trim().to_owned();
@@ -497,8 +372,6 @@ impl Bar {
         vec![self.draw(None)]
     }
 
-    /// The lines `typed` makes outside the dropdown: `>`'s commands, `@`'s
-    /// correspondents, or the empty bar's hints.
     fn base_lines(&self, typed: &str) -> Vec<Line> {
         match rules::route(typed) {
             rules::Route::Correspondent(name) => {
@@ -506,12 +379,10 @@ impl Bar {
             }
             rules::Route::Plain if typed.is_empty() => rules::empty_lines(),
             rules::Route::Plain => self.commands(typed),
-            // The dropdown's.
             rules::Route::Folder(_) | rules::Route::Blend => Vec::new(),
         }
     }
 
-    /// The commands `>` and the words after it match.
     fn commands(&self, typed: &str) -> Vec<Line> {
         let state = availability();
         let mut blend = finder::blend(
@@ -526,12 +397,8 @@ impl Bar {
         rules::blend_lines(&blend)
     }
 
-    /// `typed`, read as plain English against today and the address book,
-    /// and asked the forgiving way: a person searching wants "tickt" to
-    /// find the ticket. A saved search keeps the words, not this, so the
-    /// rules made from them stay exact (ADR 0037, as amended).
-    /// `from:` and `to:` know people: a word that names a contact finds
-    /// mail from every address they own (specs/011-focus-contacts S4).
+    /// Read as plain English, asked forgivingly ("tickt" finds the ticket). A saved search keeps
+    /// the words, not this, so its rules stay exact (ADR 0037).
     pub(crate) fn lower(&self, typed: &str) -> postio_search::ParsedQuery {
         postio_search::natural::lower(typed, self.now().date_naive(), &|name| {
             self.names.lookup(name)
@@ -545,10 +412,6 @@ impl Bar {
         self.next_token
     }
 
-    /// `lines` as items, each with a token of its own. Only `>`'s commands,
-    /// `@`'s correspondents and the empty bar's hints are drawn here (see
-    /// [`Bar::base_lines`]); spec 009's places, search and hit rows are the
-    /// dropdown's now (#2079), so a rule that offered one draws nothing.
     fn items(&mut self, lines: Vec<Line>) -> Vec<Item> {
         lines
             .into_iter()
@@ -563,7 +426,6 @@ impl Bar {
                 Row::Heading => (BarLineKind::Heading, None),
                 Row::Hint => (BarLineKind::Hint, None),
                 Row::Command(ActionId::Builtin(command)) => (BarLineKind::Command, Some(*command)),
-                Row::Command(ActionId::Ext(_)) => (BarLineKind::Command, None),
                 Row::Correspondent(_) => (BarLineKind::Correspondent, None),
                 Row::Place(..)
                 | Row::Search
@@ -601,7 +463,6 @@ impl Bar {
         })
     }
 
-    /// The bar, as it is now, with the highlight on `highlight`.
     fn draw(&self, highlight: Option<u64>) -> Step {
         if self.drop.is_some() {
             return self.draw_dropdown(highlight);
@@ -618,13 +479,11 @@ impl Bar {
         }))
     }
 
-    /// What the bar echoes under the field: the words.
     fn echo(&self) -> Option<String> {
         let typed = self.typed.trim();
         (!typed.is_empty()).then(|| rules::echo(typed))
     }
 
-    /// The line `token` names, among those on screen.
     fn row(&self, token: u64) -> Option<Row> {
         self.base
             .iter()
@@ -632,8 +491,6 @@ impl Bar {
             .map(|item| item.row.clone())
     }
 
-    /// The places, read again: what the bar completes and blends with, and
-    /// what the popover lists.
     fn places_landed(&mut self, read: Result<PlacesRead, String>) -> Vec<Step> {
         self.places_asked = false;
         let again = std::mem::take(&mut self.places_stale) && self.places_shown;
@@ -644,25 +501,21 @@ impl Bar {
         steps
     }
 
-    /// Ask for the places, noting that a read is on its way.
     fn ask_places(&mut self) -> Step {
         self.places_asked = true;
         Step::Ask(Request::Places)
     }
 
-    /// Ask for the places unless a read is already on its way: a folder
-    /// the sync label must name and the places do not know yet (#1731).
+    /// Unless a read is already on its way (#1731).
     pub(crate) fn places_wanted(&mut self) -> Option<Step> {
         (!self.places_asked).then(|| self.ask_places())
     }
 
-    /// The read of the places on its way will not land (the controller
-    /// forgot its requests): the next change asks again.
+    /// The controller forgot its requests, so the read on its way will not land.
     pub(crate) fn places_forgotten(&mut self) {
         self.places_asked = false;
     }
 
-    /// The folders popover went up or came down (the frontend's word).
     pub(crate) fn places_shown(&mut self, shown: bool) {
         self.places_shown = shown;
         if !shown {
@@ -670,9 +523,7 @@ impl Bar {
         }
     }
 
-    /// Mail changed: while the folders popover is up its counts are read
-    /// again, one read at a time -- a change during a read is followed by
-    /// one more, not by a read per change.
+    /// A change during a read is followed by one more read, not one per change.
     pub(crate) fn places_heard(&mut self, event: &postio_core::Event) -> Vec<Step> {
         use postio_core::Event;
         let counts = matches!(
@@ -693,7 +544,6 @@ impl Bar {
         vec![self.ask_places()]
     }
 
-    /// [`Self::places_landed`]'s read, taken in.
     fn places_read_landed(&mut self, read: Result<PlacesRead, String>) -> Vec<Step> {
         match read {
             Ok(read) => {
@@ -710,8 +560,6 @@ impl Bar {
         if !self.is_open() {
             return steps;
         }
-        // Drawn again: `@` has its correspondents now, and the empty
-        // dropdown how many messages the index holds.
         let typed = self.typed.trim().to_owned();
         let lines = self.base_lines(&typed);
         self.base = self.items(lines);
@@ -719,13 +567,11 @@ impl Bar {
         steps
     }
 
-    /// `Tab`: the dropdown's ghost, chips or first pill.
     fn tab(&mut self) -> Vec<Step> {
         let (Some(mode), Some(drop)) = (self.mode, &self.drop) else {
             return Vec::new();
         };
         match drop.state {
-            // The ghost: the word it completes, in the prefix's place.
             DropdownState::Prefix => match drop.offers.iter().find_map(|(_, offer)| match offer {
                 Offer::Word(word) if drop.ghost.is_some() => Some(word.text.clone()),
                 _ => None,
@@ -736,7 +582,6 @@ impl Bar {
                 }
                 None => Vec::new(),
             },
-            // The sentence, as the chips it became.
             DropdownState::PlainEnglish => match drop.lowered.clone() {
                 Some(text) => self.retype(mode, text),
                 None => Vec::new(),
@@ -756,8 +601,6 @@ impl Bar {
         }
     }
 
-    /// `mod+BackSpace`: in plain English, the sentence kept as words,
-    /// searched as typed.
     fn back_to_words(&mut self) -> Vec<Step> {
         if !self
             .drop
@@ -770,8 +613,6 @@ impl Bar {
         self.answer()
     }
 
-    /// The query a saved search keeps: the chips, or the words when they
-    /// make none.
     fn query(&self) -> String {
         if self.chips.is_empty() {
             self.typed.trim().to_owned()
@@ -780,8 +621,6 @@ impl Bar {
         }
     }
 
-    /// The popover's places: every entry, the views, and Filtered while
-    /// Focus files mail away, `filtered_today` being what it filed today.
     fn listed(&self, filtered_today: Option<u32>, wanted: &str) -> Vec<Entry> {
         let filtered = filtered_today
             .filter(|_| self.filtering)
@@ -790,7 +629,6 @@ impl Bar {
     }
 }
 
-/// A line with only a title.
 fn plain(kind: BarLineKind, token: u64, title: String) -> BarLine {
     BarLine {
         kind,
@@ -803,8 +641,6 @@ fn plain(kind: BarLineKind, token: u64, title: String) -> BarLine {
     }
 }
 
-/// What the bar's commands are offered under: Focus's, over every
-/// account's mail, as GTK's bar asks.
 fn availability() -> postio_core::Availability {
     postio_core::Availability {
         scope: postio_core::Scope::Unified,
@@ -813,8 +649,6 @@ fn availability() -> postio_core::Availability {
     }
 }
 
-/// The commands the bar answers while it is up, besides Back: its own,
-/// and the dropdown's (spec 010 step 2).
 const BAR_KEYS: [CommandId; 5] = [
     CommandId::BackToWords,
     CommandId::SaveSearch,
@@ -823,8 +657,6 @@ const BAR_KEYS: [CommandId; 5] = [
     CommandId::ExcludeSuggestion,
 ];
 
-/// The commands that open the bar or go somewhere: the controller's on the
-/// list, and while the bar is up.
 const GOING: [CommandId; 17] = [
     CommandId::Search,
     CommandId::CommandPalette,
@@ -845,22 +677,17 @@ const GOING: [CommandId; 17] = [
     CommandId::GoToFolders,
 ];
 
-/// Whether `id` opens the bar or goes somewhere.
 pub(crate) fn goes(id: CommandId) -> bool {
     GOING.contains(&id)
 }
 
-/// Whether the bar, up, answers `id` itself.
 pub(crate) fn bar_key(id: CommandId) -> bool {
     BAR_KEYS.contains(&id) || GOING.contains(&id)
 }
 
 impl FocusController {
-    /// A command that opens the bar, runs one of its keys, or goes
-    /// somewhere; `None` when `id` is none of those.
     pub(crate) fn going(&mut self, id: CommandId, rows: &dyn Rows) -> Option<Vec<Step>> {
         let steps = match id {
-            // Over the results, on their query (FR-021).
             CommandId::Search => {
                 let query = self.results_query().unwrap_or_default();
                 self.open_bar(BarMode::Search, &query, rows)
@@ -874,8 +701,7 @@ impl FocusController {
             | CommandId::SavedSearch4 => {
                 let index = rules::SAVED.iter().position(|saved| *saved == id)?;
                 match self.bar.saved.get(index).cloned() {
-                    // Viewing a search that notifies is seeing it: its
-                    // badge counts from now (D15).
+                    // Viewing a search that notifies is seeing it: its badge counts from now.
                     Some(search) => {
                         let mut steps = self.open_bar(BarMode::Search, &search.query, rows);
                         if search.notify {
@@ -919,8 +745,6 @@ impl FocusController {
             CommandId::GoToTrash => vec![Step::Ask(Request::RoleFolder(MailboxRole::Trash))],
             CommandId::GoToSnoozed => self.go_view(FocusScope::Snoozed, "Snoozed"),
             CommandId::GoToFlagged => self.go_view(FocusScope::Flagged, "Flagged"),
-            // A view over Drafts, of the first account, as the popover's row
-            // for it is of the account it lists.
             CommandId::GoToOutbox => match self.cursor.accounts().first().copied() {
                 Some(account) => self.go_to(
                     Destination::Outbox(account),
@@ -938,7 +762,6 @@ impl FocusController {
         Some(steps)
     }
 
-    /// Open the bar `mode`'s way on `text`, over the cursor's row.
     pub(crate) fn open_bar(&mut self, mode: BarMode, text: &str, rows: &dyn Rows) -> Vec<Step> {
         let aim = self.cursor.row(rows).map(|row| row.id);
         let mut steps = self
@@ -948,8 +771,6 @@ impl FocusController {
         steps
     }
 
-    /// The list leaves where it is for a place called `name`: the selection
-    /// goes, `!` is off, and the strip names it.
     fn leave_for(&mut self, name: &str) -> Vec<Step> {
         let mut steps = self.cursor.leave(self.feed.total());
         steps.push(Step::Show(Intent::SingleHeading(None)));
@@ -959,23 +780,19 @@ impl FocusController {
         steps
     }
 
-    /// `g i`: Focus's own inbox.
     fn go_inbox(&mut self) -> Vec<Step> {
         let mut steps = self.leave_for("Inbox");
         steps.push(Step::Open(ListScope::Focus(FocusScope::Inbox)));
         steps
     }
 
-    /// `g z`, `g *`: a view over every account's mail, not a folder.
     fn go_view(&mut self, scope: FocusScope, name: &str) -> Vec<Step> {
         let mut steps = self.leave_for(name);
         steps.push(Step::Open(ListScope::Focus(scope)));
         steps
     }
 
-    /// Show `destination` in the list, named `name`. A folder that is an
-    /// inbox is Focus's; a label is its search, since Focus lists no label
-    /// on its own.
+    /// A folder that is an inbox is Focus's; a label is its search, since Focus lists no label.
     fn go_to(&mut self, destination: Destination, name: &str, rows: &dyn Rows) -> Vec<Step> {
         match destination {
             Destination::Mailbox(mailbox) if self.feed.is_inbox(mailbox) => self.go_inbox(),
@@ -996,8 +813,6 @@ impl FocusController {
         }
     }
 
-    /// Close the bar, as running one of its lines does; the keyboard goes
-    /// home unless what runs `opens` a surface of its own.
     pub(crate) fn dismiss_bar(&mut self, opens: bool) -> Vec<Step> {
         self.bar.close();
         let mut steps = Vec::new();
@@ -1010,7 +825,6 @@ impl FocusController {
         steps
     }
 
-    /// Run the bar's line `token`.
     pub(crate) fn bar_run(&mut self, token: u64, rows: &dyn Rows) -> Vec<Step> {
         if !self.bar.is_open() {
             return Vec::new();
@@ -1022,12 +836,9 @@ impl FocusController {
             return Vec::new();
         };
         match row.run() {
-            // Spec 009's search and folder rows, which this bar no longer
-            // draws: the dropdown has the words' hits.
             Run::Nothing | Run::Search | Run::ToggleOrder | Run::Action(BarAction::Open { .. }) => {
                 Vec::new()
             }
-            // A correspondent `@` offered: their mail, searched.
             Run::SearchFor(text) => match self.bar.mode {
                 Some(mode) => self.bar.retype(mode, text),
                 None => Vec::new(),
@@ -1040,7 +851,6 @@ impl FocusController {
             Run::Action(BarAction::Command(id)) => {
                 let aim = self.bar.aim;
                 let mut steps = self.dismiss_bar(false);
-                // What the bar opened over, wherever the cursor went since.
                 if let Some(aim) = aim
                     && self.cursor.row(rows).map(|row| row.id) != Some(aim)
                     && let Some(at) = rows.position_of(aim)
@@ -1057,7 +867,6 @@ impl FocusController {
         }
     }
 
-    /// Open a hit in the message surface, among the others it walks.
     fn open_hit(&mut self, message: MessageId) -> Vec<Step> {
         let found: Vec<Hit> = self
             .bar
@@ -1078,7 +887,6 @@ impl FocusController {
         steps
     }
 
-    /// Show the hit `message`, at its place among the hits.
     pub(crate) fn show_hit(&mut self, message: MessageId) -> Vec<Step> {
         let Some(index) = self.bar.found.iter().position(|hit| hit.message == message) else {
             return Vec::new();
@@ -1098,7 +906,6 @@ impl FocusController {
             .open(&row, index as u32, total, self.policy.caps.stacking)
     }
 
-    /// `j`/`k` in a message a hit opened: the hits, not the list behind.
     pub(crate) fn step_hit(&mut self, reading: MessageId, by: i32) -> Option<Vec<Step>> {
         let at = self
             .bar
@@ -1116,8 +923,6 @@ impl FocusController {
         Some(self.show_hit(message))
     }
 
-    /// The facts of a message a hit opened, for its verbs: it is in no
-    /// list row.
     pub(crate) fn hit_facts(&self, reading: MessageId) -> Option<RowFacts> {
         let hit = self.bar.found.iter().find(|hit| hit.message == reading)?;
         Some(RowFacts {
@@ -1128,32 +933,26 @@ impl FocusController {
         })
     }
 
-    /// Whether `message` is open among a search's hits, which `j` and `k`
-    /// walk: its place is the hits', even when the list has it too.
+    /// Its place is the hits', even when the list has it too.
     pub fn among_hits(&self, message: MessageId) -> bool {
         self.bar.found.iter().any(|hit| hit.message == message)
     }
 
-    /// The message a hit opened has closed: the bar comes back on the
-    /// words, the highlight on the hit last read.
     pub(crate) fn hit_closed(&mut self, rows: &dyn Rows) -> Vec<Step> {
         self.bar.found.clear();
         let Some((typed, message)) = self.bar.held.take() else {
             return Vec::new();
         };
-        // The message went because a composer (or another surface) took its
-        // window (M4), not because the reader left: the words are put away,
-        // and a dropdown must never open over it.
+        // A composer or another surface took the message's window, not the reader leaving: no
+        // dropdown may open over it.
         if self.surfaces.top().is_some() {
             return Vec::new();
         }
         let steps = self.open_bar(BarMode::Search, &typed, rows);
-        // Applied when the results land.
         self.bar.pending = Some(message);
         steps
     }
 
-    /// Run the popover's place `token`.
     pub(crate) fn open_place(&mut self, token: u64, rows: &dyn Rows) -> Vec<Step> {
         if token >> 32 != self.bar.places_read {
             return Vec::new();
@@ -1169,7 +968,6 @@ impl FocusController {
         }
     }
 
-    /// The popover's places whose names hold `filter`, with their tokens.
     pub(crate) fn listed_places(&self, filter: &str) -> Vec<(u64, Entry)> {
         let filtered_today = self.counts.map(|counts| counts.filtered_today);
         let all = self.bar.listed(filtered_today, "");
@@ -1178,7 +976,6 @@ impl FocusController {
             .into_iter()
             .filter_map(|mut entry| {
                 let index = all.iter().position(|each| *each == entry)?;
-                // A folder whose last pass failed carries why (#1731).
                 if let Destination::Mailbox(mailbox) = entry.destination {
                     entry.failure = self.failure(mailbox).map(str::to_owned);
                 }
@@ -1187,18 +984,14 @@ impl FocusController {
             .collect()
     }
 
-    /// Every folder's name as the places list it, for the sync label to
-    /// name a folder that can't sync.
     pub fn folder_names(&self) -> &[(MailboxId, String)] {
         &self.bar.places.folders
     }
 
-    /// A reply the bar asked for.
     pub(crate) fn bar_reply(&mut self, reply: Reply, rows: &dyn Rows) -> Vec<Step> {
         match reply {
             Reply::Places(read) => {
                 let mut steps = self.bar.places_landed(read);
-                // The sync label names a failed folder by these names.
                 steps.extend(self.relabel());
                 steps
             }
@@ -1219,7 +1012,6 @@ impl FocusController {
         }
     }
 
-    /// The bar's own inputs.
     pub(crate) fn bar_input(&mut self, input: crate::Input, rows: &dyn Rows) -> Vec<Step> {
         use crate::Input;
         match input {
@@ -1251,8 +1043,8 @@ impl FocusController {
                             text: postio_ui::focus_target::search_saved(said),
                             kind: crate::ToastKind::Notice,
                         })];
-                        // A search that notifies starts seen: its badge
-                        // counts what arrives after it was saved (D15).
+                        // A search that notifies starts seen: its badge counts what arrives after
+                        // it was saved.
                         if let (Some(key), true) =
                             (saved.key, saving.as_ref().is_some_and(|save| save.notify))
                         {
@@ -1281,12 +1073,7 @@ impl FocusController {
     }
 }
 
-/// The dropdown: its state, what it asks and what its rows run (spec 010
-/// step 2).
 impl Bar {
-    /// Whether `typed` is drawn as the dropdown: words, and `in:` (an
-    /// operator's state, step 8), however the bar was opened, and the empty
-    /// field opened for search. `>` and `@` keep spec 009's lines.
     fn shows_dropdown(&self, typed: &str) -> bool {
         match rules::route(typed) {
             rules::Route::Blend | rules::Route::Folder(_) => true,
@@ -1295,14 +1082,11 @@ impl Bar {
         }
     }
 
-    /// The pinned saved searches changed: their pills get new tokens.
     fn set_saved(&mut self, saved: Vec<SavedSearch>) {
         self.saved = saved;
         self.saved_tokens = (0..self.saved.len()).map(|_| self.token()).collect();
     }
 
-    /// Answer what is typed as the dropdown: the empty state now, or the
-    /// state the words are in (design §2's table) and what it asks.
     fn answer_dropdown(&mut self, typed: &str) -> Vec<Step> {
         if typed.is_empty() {
             self.chips.clear();
@@ -1339,13 +1123,11 @@ impl Bar {
         self.answer_words(parsed)
     }
 
-    /// The previous drop, when it was in `state`: what is kept on screen
-    /// until the next answer lands, rather than blinking empty.
+    /// Kept on screen until the next answer lands, rather than blinking empty.
     fn kept(&mut self, state: DropdownState) -> Option<Drop> {
         self.drop.take().filter(|drop| drop.state == state)
     }
 
-    /// Words: their top hits, Narrow to and Show all (screen 03).
     fn answer_words(&mut self, parsed: postio_search::ParsedQuery) -> Vec<Step> {
         self.chips = rules::chips(&parsed).unwrap_or_default();
         let searchable = parsed.is_searchable();
@@ -1375,8 +1157,6 @@ impl Bar {
         steps
     }
 
-    /// One to three letters: what they could become, and the top hits so
-    /// far (screen 02).
     fn answer_prefix(&mut self, typed: &str, piece: usize) -> Vec<Step> {
         // Half a word, not English: "at" is no stop word here.
         let parsed = postio_search::parse(typed, self.now().date_naive())
@@ -1422,7 +1202,6 @@ impl Bar {
         steps
     }
 
-    /// An operator's value: its people, labels or folders (screen 04).
     fn answer_operator(
         &mut self,
         field: postio_search::query::Field,
@@ -1457,8 +1236,6 @@ impl Bar {
         ]
     }
 
-    /// A sentence the Mac lowered: what it understood, then its results
-    /// newest first (screen 05).
     fn answer_plain(&mut self, lowered: postio_search::natural::Lowered) -> Vec<Step> {
         let query = lowered.query.clone().forgiving().contact_aware();
         self.chips = rules::chips(&query).unwrap_or_default();
@@ -1493,8 +1270,7 @@ impl Bar {
         let landed = self
             .kept(DropdownState::PlainEnglish)
             .and_then(|drop| drop.landed);
-        // The words are marked, not the person: the sender column says who
-        // (screen 05 marks "Invoice" alone).
+        // The words are marked, not the person: the sender column says who.
         let terms = query
             .text_terms()
             .filter(|term| !term.negated)
@@ -1521,8 +1297,6 @@ impl Bar {
         steps
     }
 
-    /// One "Understood as" tile: the token's operator and value, a person
-    /// by the name the address book gives, and the words it came from.
     fn tile(&self, token: &postio_search::query::Token, words: &str) -> UnderstoodTile {
         let (op, value) = match (token.field(), token.raw.split_once(':')) {
             (Some(field), Some((op, value))) => {
@@ -1543,7 +1317,6 @@ impl Bar {
         }
     }
 
-    /// The dropdown, as it is now.
     fn draw_dropdown(&self, select: Option<u64>) -> Step {
         let Some(drop) = &self.drop else {
             return Step::Show(Intent::BarLines(BarView::default()));
@@ -1618,8 +1391,6 @@ impl Bar {
         Step::Show(Intent::Dropdown(view))
     }
 
-    /// The cheat sheet's example, lowered against today and the address
-    /// book, as typing it would be.
     fn example(&self) -> String {
         let lowered = postio_search::natural::lower_with_origins(
             postio_ui::search_view::EXAMPLE,
@@ -1635,7 +1406,6 @@ impl Bar {
             .join(" ")
     }
 
-    /// What the dropdown's row or pill `token` runs.
     fn action(&self, token: u64) -> Option<Action> {
         let drop = self.drop.as_ref()?;
         if let Some((_, offer)) = drop.offers.iter().find(|(at, _)| *at == token) {
@@ -1676,7 +1446,6 @@ impl Bar {
         }
     }
 
-    /// Put `text` in the field, as a run of the bar does, and answer it.
     fn retype(&mut self, mode: BarMode, text: String) -> Vec<Step> {
         let mut steps = vec![Step::Show(Intent::OpenBar {
             mode,
@@ -1689,7 +1458,6 @@ impl Bar {
         steps
     }
 
-    /// Add `clause` to the query, spelled once (D13), and search again.
     fn narrow(&mut self, mode: BarMode, clause: postio_search::query::Clause) -> Vec<Step> {
         let text = postio_search::edit::apply(
             self.typed.trim(),
@@ -1699,8 +1467,6 @@ impl Bar {
         self.retype(mode, text)
     }
 
-    /// A conversation search landed: the words' top hits, pills and count,
-    /// when it is for the words still typed; then their passages.
     fn conversations(
         &mut self,
         stamp: u64,
@@ -1785,7 +1551,6 @@ impl Bar {
         steps
     }
 
-    /// The hits' passages landed: drawn in place, the arrows where they are.
     fn passages(
         &mut self,
         stamp: u64,
@@ -1816,9 +1581,6 @@ impl Bar {
         vec![self.draw(None)]
     }
 
-    /// What the prefix or the operator's value could become, landed: the
-    /// offers drawn, each with a token kept while it stays; for people, the
-    /// latest from the one focused by default asked at once.
     fn suggested(
         &mut self,
         stamp: u64,
@@ -1875,14 +1637,12 @@ impl Bar {
             .filter(|_| state == DropdownState::Prefix);
         drop.offers = offers;
         drop.answered = true;
-        // Nobody listed: the preview of whoever was focused goes with them.
         if first_person.is_none() && state == DropdownState::Operator {
             drop.latest = None;
             drop.latest_asked = None;
         }
         let mut steps = vec![self.draw(None)];
-        // The arrows rest where they were if that row is still drawn, and on
-        // the first person otherwise: whose latest is shown.
+        // The arrows rest where they were if that row is still drawn, else on the first person.
         let focused = self
             .highlighted
             .and_then(|token| self.person(token))
@@ -1893,7 +1653,6 @@ impl Bar {
         steps
     }
 
-    /// The person whose row is `token`, among the offers on screen.
     fn person(&self, token: u64) -> Option<String> {
         self.drop
             .as_ref()?
@@ -1905,7 +1664,6 @@ impl Bar {
             })
     }
 
-    /// Ask for the latest from `address`, unless it was the last asked.
     fn ask_latest(&mut self, address: String) -> Option<Step> {
         let drop = self.drop.as_mut()?;
         if drop.latest_asked.as_deref() == Some(address.as_str()) {
@@ -1918,8 +1676,6 @@ impl Bar {
         }))
     }
 
-    /// The arrows rest on `token` now: what the keys aimed at the
-    /// highlighted row act on, and on a person, their latest is asked.
     fn highlight(&mut self, token: u64) -> Vec<Step> {
         self.highlighted = Some(token);
         match self.person(token) {
@@ -1928,8 +1684,6 @@ impl Bar {
         }
     }
 
-    /// The latest from a person landed: drawn under the people when it is
-    /// still the one asked for.
     fn latest_landed(
         &mut self,
         stamp: u64,
@@ -1977,8 +1731,6 @@ impl Bar {
         vec![self.draw(None)]
     }
 
-    /// ⌥↩ on the offer `token`: its chip, excluded, in place of what is
-    /// being typed.
     pub(crate) fn exclude(&mut self, token: u64) -> Vec<Step> {
         let (Some(mode), Some(drop)) = (self.mode, self.drop.as_ref()) else {
             return Vec::new();
@@ -1994,8 +1746,6 @@ impl Bar {
         self.pick(mode, filter, true)
     }
 
-    /// The key: exclude the offer the arrows rest on, or the one focused
-    /// by default when they have not moved.
     fn exclude_highlighted(&mut self) -> Vec<Step> {
         let Some(drop) = self.drop.as_ref() else {
             return Vec::new();
@@ -2010,8 +1760,6 @@ impl Bar {
         }
     }
 
-    /// Put `filter`'s chip, `negated` or not, in place of what is being
-    /// typed, with room to type on.
     fn pick(
         &mut self,
         mode: BarMode,
@@ -2024,14 +1772,12 @@ impl Bar {
         self.retype(mode, text)
     }
 
-    /// Put `text` in place of what is being typed.
     fn replace(&mut self, mode: BarMode, text: &str) -> Vec<Step> {
         let piece = self.drop.as_ref().map_or(0, |drop| drop.piece);
         let text = format!("{}{text}", &self.typed[..piece.min(self.typed.len())]);
         self.retype(mode, text)
     }
 
-    /// The recent searches, read: drawn when the empty dropdown is up.
     fn recents_read(
         &mut self,
         answer: Result<Vec<postio_client::protocol::RecentSearch>, String>,
@@ -2059,9 +1805,7 @@ impl Bar {
         self.redraw_empty(None)
     }
 
-    /// New mail arrived: the searches that notify are counted again while
-    /// the dropdown shows their badges; the others keep their counts
-    /// (spec 010 T099).
+    /// Only searches that notify are recounted; the others keep their counts.
     pub(crate) fn heard(&self, event: &postio_core::Event) -> Vec<Step> {
         if !matches!(event, postio_core::Event::NewMail { .. }) || !self.is_open() {
             return Vec::new();
@@ -2076,11 +1820,9 @@ impl Bar {
         })]
     }
 
-    /// The saved searches' counts, read.
     fn saved_counted(&mut self, answer: Result<Vec<SavedCount>, String>) -> Vec<Step> {
         match answer {
-            // Merged by key: a recount of the searches that notify leaves
-            // the others' counts as they were.
+            // Merged by key: a recount of notifying searches leaves the others' counts.
             Ok(counts) => {
                 for counted in counts {
                     match self
@@ -2101,8 +1843,6 @@ impl Bar {
         }
     }
 
-    /// Draw the empty dropdown again, if it is up, the arrows moved to
-    /// `select`.
     fn redraw_empty(&self, select: Option<u64>) -> Vec<Step> {
         match &self.drop {
             Some(drop) if self.is_open() && drop.state == DropdownState::Empty => {
@@ -2112,15 +1852,12 @@ impl Bar {
         }
     }
 
-    /// Forget the recent search `token`: gone from the panel now, from the
-    /// store when the host has it.
     fn forget(&mut self, token: u64) -> Vec<Step> {
         let Some(at) = self.recents.iter().position(|(at, _)| *at == token) else {
             return Vec::new();
         };
         let (_, recent) = self.recents.remove(at);
-        // The arrows stay in place, on the row that moved up into it, or
-        // the one above when it was the last.
+        // The arrows stay on the row that moved up, or the one above when it was last.
         let next = self
             .recents
             .get(at)
@@ -2134,8 +1871,6 @@ impl Bar {
         steps
     }
 
-    /// The key: forget the recent search the arrows rest on, or the one
-    /// focused by default when they have not moved.
     fn forget_highlighted(&mut self) -> Vec<Step> {
         if !matches!(&self.drop, Some(drop) if drop.state == DropdownState::Empty) {
             return Vec::new();
@@ -2150,7 +1885,6 @@ impl Bar {
         }
     }
 
-    /// The query, as it is kept among the recent searches.
     pub(crate) fn remember(&self) -> Option<Step> {
         let landed = self.drop.as_ref()?.landed.as_ref()?;
         let query = self.typed.trim();
@@ -2165,7 +1899,6 @@ impl Bar {
 }
 
 impl FocusController {
-    /// Run the dropdown's `action`.
     fn drop_run(&mut self, action: Action, rows: &dyn Rows) -> Vec<Step> {
         let Some(mode) = self.bar.mode else {
             return Vec::new();
@@ -2189,14 +1922,12 @@ impl FocusController {
     }
 }
 
-/// `(key, query)` for each saved search: what their counts are asked by.
 fn keyed<'a>(searches: impl Iterator<Item = &'a SavedSearch>) -> Vec<(String, String)> {
     searches
         .map(|search| (search.key.clone(), search.query.clone()))
         .collect()
 }
 
-/// Whether two offers are the same row: a redraw keeps its token.
 fn same_offer(a: &Offer, b: &Offer) -> bool {
     match (a, b) {
         (Offer::Word(a), Offer::Word(b))
@@ -2209,10 +1940,7 @@ fn same_offer(a: &Offer, b: &Offer) -> bool {
     }
 }
 
-/// The operator whose value is being typed at the end of `typed`, with the
-/// value so far and where its piece begins: `from:`, `to:`, `label:` and
-/// `in:` (design §2, "Operator being typed"). A space after the value
-/// says it is done, and none is.
+/// `from:`, `to:`, `label:` and `in:`; a space after the value says it is done.
 fn operator_typed(typed: &str) -> Option<(postio_search::query::Field, String, usize)> {
     use postio_search::query::Field;
     if typed.is_empty() || typed.ends_with(char::is_whitespace) {
@@ -2233,16 +1961,12 @@ fn operator_typed(typed: &str) -> Option<(postio_search::query::Field, String, u
     Some((field, value.trim_start_matches('"').to_owned(), piece))
 }
 
-/// Whether `typed` is a short prefix: one word of one to three letters or
-/// digits (design §2, "Short prefix").
 fn is_prefix(typed: &str) -> bool {
     let count = typed.chars().count();
     (1..=3).contains(&count) && typed.chars().all(char::is_alphanumeric)
 }
 
-/// Whether the sentence was understood as more than its words: some term
-/// was lowered from English into an operator (screen 05). Operators typed
-/// as themselves have no English origin and are only a query.
+/// Operators typed as themselves have no English origin and are only a query.
 fn understood(lowered: &postio_search::natural::Lowered) -> bool {
     lowered.origins.iter().any(|origin| {
         origin.from.is_some()

@@ -1,10 +1,6 @@
-//! What a storyboard may say.
-//!
-//! The loader accepts any file that has the grammar's shape. The lint is the
-//! rest of the contract: that the ids name real commands, the chords parse,
-//! no address is a real one, every back-reference looks back, and a shared
-//! storyboard checks only what every app can observe. Each failure is its own
-//! named error, so a test (and a person) can say which rule a file broke.
+//! What a storyboard may say beyond the grammar's shape: real command ids, parseable chords, no
+//! real address, back-references that look back, and shared storyboards checking only what every
+//! app can observe. Each failure is its own named error.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -18,100 +14,42 @@ use serde_json::Value;
 
 use crate::format::{Apps, Checks, Input, Leaf, SourceKind, Step, StepRef, Storyboard, Wait, load};
 
-/// One rule a storyboard broke.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum LintError {
-    /// There is no `source`.
     #[error("no `source`: a storyboard says why it exists")]
     MissingSource,
-    /// An issue storyboard names no `proof`.
     #[error("`proof` is required when the source is an issue")]
     MissingProof,
-    /// A `command` that is not in the registry.
     #[error("step {step}: `{command}` is not a command id")]
-    UnknownCommand {
-        /// The 1-based step.
-        step: usize,
-        /// What was written.
-        command: String,
-    },
-    /// A `key` that does not parse once `mod` is expanded.
+    UnknownCommand { step: usize, command: String },
     #[error("step {step}: key `{key}` does not parse: {reason}")]
     BadChord {
-        /// The 1-based step.
         step: usize,
-        /// What was written.
         key: String,
-        /// What the parser said.
         reason: String,
     },
-    /// An address that is not on a reserved domain.
     #[error(
         "`{address}` is not on a reserved domain (example.com, .test, .invalid, .example, .localhost)"
     )]
-    UnreservedAddress {
-        /// The address.
-        address: String,
-    },
-    /// A `same_as` that does not name an earlier step.
+    UnreservedAddress { address: String },
     #[error("step {step}: `same_as` {target} is not an earlier step")]
-    SameAsNotEarlier {
-        /// The 1-based step it is written on.
-        step: usize,
-        /// What it names.
-        target: String,
-    },
-    /// An override that names a step the storyboard does not have.
+    SameAsNotEarlier { step: usize, target: String },
     #[error("override for {app} names step `{step}`, which does not exist")]
-    OverrideMissingStep {
-        /// The app.
-        app: String,
-        /// The step reference.
-        step: String,
-    },
-    /// An override for an app the storyboard does not name.
+    OverrideMissingStep { app: String, step: String },
     #[error("override for {app}, which the storyboard's `apps` does not include")]
-    OverrideForOtherApp {
-        /// The app.
-        app: String,
-    },
-    /// `calibration` outside `storyboards/calibration/`.
+    OverrideForOtherApp { app: String },
     #[error("`calibration` belongs only under storyboards/calibration/")]
     CalibrationOutsideDirectory,
-    /// `app.*` or `keyboard.widget` checked in a storyboard that does not
-    /// name exactly one app.
     #[error("step {step}: `{path}` is not shared; name exactly one app to check it")]
-    SharedCheckOnPrivateField {
-        /// The 1-based step.
-        step: usize,
-        /// The field.
-        path: String,
-    },
-    /// The name is not the file stem.
+    SharedCheckOnPrivateField { step: usize, path: String },
     #[error("name `{name}` differs from the file stem `{stem}`")]
-    NameIsNotStem {
-        /// The name.
-        name: String,
-        /// The file stem.
-        stem: String,
-    },
-    /// Two steps share an id.
+    NameIsNotStem { name: String, stem: String },
     #[error("two steps are called `{id}`")]
-    DuplicateStepId {
-        /// The id.
-        id: String,
-    },
-    /// Two storyboards share a name.
+    DuplicateStepId { id: String },
     #[error("the name `{name}` is also used by {other}")]
-    DuplicateName {
-        /// The name.
-        name: String,
-        /// The other file.
-        other: PathBuf,
-    },
+    DuplicateName { name: String, other: PathBuf },
 }
 
-/// Every rule `storyboard` breaks. Empty means clean.
 pub fn lint(storyboard: &Storyboard) -> Vec<LintError> {
     let mut errors = Vec::new();
 
@@ -207,8 +145,6 @@ pub fn lint(storyboard: &Storyboard) -> Vec<LintError> {
         }
     }
 
-    // Addresses can be in any string at all, so look at all of them rather
-    // than at the fields someone thought of.
     let value = serde_json::to_value(storyboard).unwrap_or(Value::Null);
     let mut strings = Vec::new();
     collect_strings(&value, &mut strings);
@@ -222,7 +158,6 @@ pub fn lint(storyboard: &Storyboard) -> Vec<LintError> {
     errors
 }
 
-/// The checks a step carries: its own, those of a wait, and those of a settle.
 fn step_checks(step: &Step) -> Vec<&Checks> {
     let mut out = vec![&step.check];
     if let Input::Wait(Wait::Until(until)) = &step.input {
@@ -234,8 +169,6 @@ fn step_checks(step: &Step) -> Vec<&Checks> {
     out
 }
 
-/// The 1-based position a step reference names: an explicit id first, then
-/// an index. `None` when it names nothing.
 fn position_of(storyboard: &Storyboard, reference: &str) -> Option<usize> {
     storyboard
         .steps
@@ -262,7 +195,6 @@ fn lint_references(
             StepRef::Id(id) => id.clone(),
             StepRef::Index(index) => index.to_string(),
         };
-        // Step 0, the starting state, is earlier than every step.
         let starting_state = reference == "0";
         if !starting_state && !position_of(storyboard, &reference).is_some_and(|at| at < number) {
             errors.push(LintError::SameAsNotEarlier {
@@ -282,8 +214,6 @@ fn collect_strings<'a>(value: &'a Value, out: &mut Vec<&'a str>) {
     }
 }
 
-/// The email addresses in `text`, shaped as the personal-data check shapes
-/// them: a local part, an `@`, and a dotted domain ending in letters.
 fn addresses_in(text: &str) -> Vec<String> {
     let local_char = |c: char| c.is_ascii_alphanumeric() || "._%+-".contains(c);
     let domain_char = |c: char| c.is_ascii_alphanumeric() || c == '.' || c == '-';
@@ -322,9 +252,6 @@ fn is_reserved(address: &str) -> bool {
     RESERVED_TLDS.contains(&tld) || labels.any(|label| RESERVED_LABELS.contains(&label))
 }
 
-/// Load and lint every storyboard under `root`, returning what went wrong as
-/// `(file, message)`. Gap lists (`gaps/`) are not storyboards, and
-/// non-`.toml` files (the README, `.gitkeep`) are not either.
 pub fn lint_catalogue(root: &Path) -> Vec<(PathBuf, String)> {
     let mut files = Vec::new();
     collect_files(root, &mut files);
@@ -374,10 +301,8 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// Labels any one of which makes a domain reserved, as the personal-data
-/// check spells them. A test reads that script, so the two cannot drift.
+/// A test reads the personal-data check's script, so the two cannot drift.
 const RESERVED_LABELS: [&str; 1] = ["example"];
-/// Top-level domains that are reserved on their own.
 const RESERVED_TLDS: [&str; 3] = ["test", "invalid", "localhost"];
 
 #[cfg(test)]
@@ -412,8 +337,6 @@ mod tests {
 
     #[test]
     fn a_calibration_storyboard_needs_no_proof() {
-        // Calibration tests the reviewer, not a defect: there is no red to
-        // prove, so `proof` does not apply.
         let text = "source = { kind = \"issue\", ref = \"#1\" }\ncalibration = \"must_fail\"\n";
         assert_eq!(lint_at(text, "calibration/cal-walk.toml"), vec![]);
     }
@@ -424,7 +347,6 @@ mod tests {
         assert!(lint_text(text).contains(&LintError::MissingProof));
         let text = "proof = \"open\"\nsource = { kind = \"issue\", ref = \"#1\" }\n";
         assert_eq!(lint_text(text), vec![]);
-        // Only an issue is asked for one.
         assert_eq!(lint_text(GOOD), vec![]);
     }
 
@@ -460,8 +382,7 @@ mod tests {
         }
     }
 
-    /// An address on a domain nobody reserved, assembled at run time: the
-    /// repository's own personal-data check rightly refuses one written out.
+    /// Assembled at run time: the repository's personal-data check refuses one written out.
     fn unreserved(local: &str) -> String {
         format!("{local}@{}", ["real", "mail", ".com"].concat())
     }
@@ -513,8 +434,6 @@ mod tests {
 
     #[test]
     fn same_as_the_starting_state_is_earlier_than_every_step() {
-        // Step 0 is where the storyboard began, so "back to how it was" is
-        // `same_as = 0` -- a reference to the past, never to the future.
         let text = format!(
             "{GOOD}[[step]]\ncommand = \"back\"\ncheck = {{ cursor.index = {{ same_as = 0 }} }}\n"
         );
@@ -534,7 +453,6 @@ mod tests {
                 target: "b".into()
             }]
         );
-        // Itself, an index at or past it, and a stranger are all not earlier.
         for target in ["1", "2", "9", "\"nobody\""] {
             let text = format!(
                 "{GOOD}[[step]]\ncommand = \"back\"\n[[step]]\ncommand = \"back\"\ncheck = {{ cursor.index = {{ same_as = {target} }} }}\n"

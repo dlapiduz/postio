@@ -1,33 +1,15 @@
 //! Markdown, in both directions, for a frontend that draws text.
-//!
-//! [`from_html`] is the terminal reader's: the reader sanitiser's output, as
-//! CommonMark a terminal can style. Only ever sanitised HTML -- converting
-//! *after* the sanitiser is what keeps every guarantee it makes
-//! (`docs/archive/specs/005-tui-frontend` research R5, `contracts/markdown.md`).
-//!
-//! Two things are Postio's own on the way out, because Markdown has no word
-//! for them:
-//!
-//! * an image is `![alt](postio-image:N)`, a placeholder the terminal draws
-//!   and never follows -- including an image whose remote `src` the sanitiser
-//!   removed, which would otherwise vanish without a trace;
-//! * a folded quote (`<details>`, from [`crate::fold_html_quotes`]) is its
-//!   content between [`FOLD`] and [`END_FOLD`] lines, which the terminal
-//!   turns into a block that expands.
+//! `from_html` takes only sanitised HTML: converting after the sanitiser keeps its guarantees.
+//! An image is `![alt](postio-image:N)`, drawn and never followed; a folded quote sits between
+//! `FOLD` and `END_FOLD` lines.
 
-/// The line that opens a folded quote in [`from_html`]'s output.
-///
-/// Private-use characters, so ordinary text does not look like one. A sender
-/// who writes them can make text fold, which is all they can do with it.
+/// Private-use characters, so ordinary text does not look like one.
 pub const FOLD: &str = "\u{E000}fold\u{E000}";
 
-/// The line that closes a folded quote.
 pub const END_FOLD: &str = "\u{E000}end\u{E000}";
 
-/// The scheme an image placeholder carries in [`from_html`]'s output.
 pub const IMAGE_SCHEME: &str = "postio-image";
 
-/// Sanitised HTML as Markdown for a terminal.
 pub fn from_html(sanitized: &str) -> String {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -45,66 +27,46 @@ pub fn from_html(sanitized: &str) -> String {
                 .filter(|alt| !alt.is_empty())
                 .unwrap_or_else(|| "image".to_owned());
             let number = images.fetch_add(1, Ordering::Relaxed);
-            // Brackets would end the alt text early; the placeholder's words
-            // are the sender's, and only ever drawn, never followed.
+            // Brackets would end the alt text early.
             let alt = alt.replace(['[', ']'], "");
             Some(format!("![{alt}]({IMAGE_SCHEME}:{number})").into())
         })
         .add_handler(
             vec!["details"],
             |handlers: &dyn Handlers, element: &Element| {
-                // A fold is a container: its quote begins blocks of its own.
                 let inner = handlers.walk_children(element.node, Context::BLOCK);
                 Some(format!("\n\n{FOLD}\n\n{}\n\n{END_FOLD}\n\n", inner.content.trim()).into())
             },
         )
-        // The terminal draws its own line for a fold; the sanitiser's summary
-        // words would only repeat it.
+        // The terminal draws its own line for a fold; the summary would repeat it.
         .add_handler(vec!["summary"], |_: &dyn Handlers, _: &Element| {
             Some("".into())
         })
         .build();
-    // A converter that cannot read what the sanitiser wrote has nothing to
-    // show; the plain text is what the reader falls back to then.
+    // The plain text is the reader's fallback when the converter fails.
     converter.convert(sanitized).unwrap_or_default()
 }
 
-/// Markdown, as the composer's own document.
-///
-/// What the terminal composer sends through: the HTML part is
-/// [`crate::render`] of this, the generator the desktop composer uses, so
-/// the same content makes the same HTML from either (`contracts/markdown.md`,
-/// SC-006). Total -- every input is some document, and it never panics.
-///
-/// CommonMark with GFM's tables, strikethrough, task lists and bare
-/// autolinks (spec 014 R1, R2). What the document has no node for stays the
-/// words the person typed: raw HTML, a footnote. A link to anything but
-/// `http`, `https` or `mailto` is its words and no link. An image is an image
-/// when it names a part attached to this draft (`cid:`), and a
-/// [`crate::Inline::RemoteImage`] when it names the web: a chip the person
-/// may press to download and attach, sent as a link if they never do. Nothing
-/// here fetches it (spec 014 D7; ADR 0003's privacy rule holds).
+/// What the terminal composer sends through: the HTML part is `crate::render` of this, so both
+/// composers make the same HTML. Total. CommonMark with GFM tables, strikethrough, task lists and
+/// bare autolinks; raw HTML stays as typed words, and a link to anything but `http`, `https` or
+/// `mailto` is words only. A web image is a `RemoteImage` chip; nothing here fetches it (ADR 0003).
 pub fn to_document(markdown: &str) -> crate::Document {
     to_document_mapped(markdown).0
 }
 
-/// As [`to_document`], with the [`SourceMap`] between the Markdown and the
-/// document it reads into: what the source view places the caret with
-/// (spec 014 FR-027).
 pub fn to_document_mapped(markdown: &str) -> (crate::Document, SourceMap) {
     use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag};
 
-    // GFM's tables, strikethrough and task lists (spec 014 R1). Its bare
-    // autolinks are not in the parser; `autolink` finds them below.
+    // Bare autolinks are not in the parser; `autolink` finds them below.
     let options =
         Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
     let mut stack = vec![Frame::Blocks(Vec::new())];
-    // Every visible character read, and where in the source it came from.
     let mut seen = Seen::default();
     let mut lost = Lost::default();
     for (event, range) in Parser::new_ext(markdown, options).into_offset_iter() {
-        // GFM drops a row's cells past its header before any event says
-        // they were there, so they are counted off the source line.
+        // GFM drops a row's cells past its header before any event, so they are counted off the
+        // source line.
         if let (Event::Start(Tag::TableRow), Some(Frame::Table(alignments, _))) =
             (&event, stack.last())
         {
@@ -123,8 +85,6 @@ pub fn to_document_mapped(markdown: &str) -> (crate::Document, SourceMap) {
                 ),
                 Tag::BlockQuote(_) => Frame::Quote(Vec::new()),
                 Tag::CodeBlock(kind) => {
-                    // The info string's first word, if the type will hold it;
-                    // the rest of the info string is dropped.
                     let language = match kind {
                         CodeBlockKind::Fenced(info) => info
                             .split_whitespace()
@@ -165,15 +125,10 @@ pub fn to_document_mapped(markdown: &str) -> (crate::Document, SourceMap) {
                 ),
                 Tag::TableHead | Tag::TableRow => Frame::Row(Vec::new()),
                 Tag::TableCell => Frame::Inlines(Holder::Cell, Vec::new()),
-                // A block of HTML: what it holds goes to its container.
                 Tag::HtmlBlock => Frame::Blocks(Vec::new()),
-                // Anything else the parser was not asked to know is not
-                // reached; what is, keeps its words below.
                 _ => Frame::Inlines(Holder::Transparent, Vec::new()),
             }),
             Event::End(_) => {
-                // A mark opened as HTML and never closed ends with what
-                // holds it.
                 while matches!(stack.last(), Some(Frame::Inlines(Holder::Html(..), _))) {
                     let frame = stack.pop().expect("an open mark");
                     close(&mut stack, frame, &mut lost);
@@ -190,25 +145,18 @@ pub fn to_document_mapped(markdown: &str) -> (crate::Document, SourceMap) {
                     seen.run(markdown, &range, &text);
                     code.push_str(&text);
                 }
-                // An image's words are its alternative text, not a place
-                // the caret can be.
                 Some(Frame::Image(dest, alt)) => {
-                    // A web image's words are where a caret can be: the
-                    // rich view draws them as its link.
                     if crate::WebHref::parse(dest).is_some() {
                         seen.run(markdown, &range, &text);
                     }
                     alt.push_str(&text);
                 }
-                // Inside a link the words are its label, never another link.
                 Some(Frame::Inlines(Holder::Link(_), _)) => {
                     seen.run(markdown, &range, &text);
                     push_inline(&mut stack, crate::Inline::Text(text.into_string()));
                 }
-                // A bare address is a link (GFM's extended autolinks) only
-                // where it was typed as it reads: a backslash or an entity
-                // in its source is someone saying "this is text", which is
-                // how `from_document` keeps text text.
+                // A bare address links only where typed as it reads; a backslash or entity says
+                // "this is text".
                 _ if markdown.get(range.clone()) == Some(&*text) => {
                     seen.run(markdown, &range, &text);
                     let before = markdown[..range.start].chars().next_back();
@@ -225,10 +173,9 @@ pub fn to_document_mapped(markdown: &str) -> (crate::Document, SourceMap) {
                 seen.run(markdown, &range, &code);
                 push_inline(&mut stack, crate::Inline::Code(code.into_string()));
             }
-            // The few tags `from_document` writes where Markdown has no
-            // spelling (spec 014's golden spellings): `<br>`, an empty
-            // comment between two lists, and a mark CommonMark would not
-            // read. Any other HTML is the words that were typed.
+            // The tags `from_document` writes where Markdown has no spelling: `<br>`, an empty
+            // comment between two lists, and a mark CommonMark would not read. Other HTML stays
+            // words.
             Event::Html(html) => {
                 let html = html.trim();
                 if html == "<!-- -->" {
@@ -284,7 +231,6 @@ pub fn to_document_mapped(markdown: &str) -> (crate::Document, SourceMap) {
             }
             Event::Rule => push_block(&mut stack, crate::Block::Rule),
             Event::TaskListMarker(done) => {
-                // On the item, which in a loose list is under its paragraph.
                 if let Some(Frame::Item(task, ..)) = stack
                     .iter_mut()
                     .rev()
@@ -300,7 +246,6 @@ pub fn to_document_mapped(markdown: &str) -> (crate::Document, SourceMap) {
             _ => {}
         }
     }
-    // Close whatever an unfinished input left open, innermost first.
     while stack.len() > 1 {
         let frame = stack.pop().expect("more than one");
         close(&mut stack, frame, &mut lost);
@@ -315,59 +260,36 @@ pub fn to_document_mapped(markdown: &str) -> (crate::Document, SourceMap) {
     (document, map)
 }
 
-/// [`from_document`], with the [`SourceMap`] of what it wrote.
-///
-/// The map of the written Markdown read back, which is the document's own
-/// map because the view loses nothing (FR-024).
 pub fn from_document_mapped(document: &crate::Document) -> (String, SourceMap) {
     let written = from_document(document);
     let (_, map) = to_document_mapped(&written);
     (written, map)
 }
 
-/// A place in a document: the path of indexes down to the block that holds
-/// text -- a paragraph, a heading, a code block or a table cell, counting a
-/// list's items and a table's cells (header first) on the way -- then a
-/// character offset in that block's text, where a break is one character.
+/// Path of indexes down to the text-holding block, then a character offset, a break counting one.
 #[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DocPosition {
-    /// Indexes down to the block.
     pub path: Vec<usize>,
-    /// Characters into its text.
     pub offset: usize,
 }
 
-/// Where each character of a document is in its Markdown, and back.
-///
-/// Used only to place the caret when the source view opens and closes
-/// (spec 014 FR-027). Never stored.
+/// Used only to place the caret when the source view opens and closes. Never stored.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SourceMap {
-    /// Each visible character: its position, its source byte, and the
-    /// length in the source of what spelled it.
     entries: Vec<(DocPosition, usize, usize)>,
-    /// The byte offset where each source line starts.
     lines: Vec<usize>,
-    /// The source's length.
     len: usize,
-    /// What the Markdown said that the document could not hold.
     lost: Lost,
 }
 
-/// What typed Markdown said that its document narrowed away (spec 014
-/// FR-026): the source view reports it rather than dropping it silently.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Lost {
-    /// Table cells past their header's width.
     pub cells: usize,
-    /// Links to an address mail may not link to (not http, https, mailto).
     pub links: usize,
-    /// Images naming neither a part of this draft nor the web.
     pub images: usize,
 }
 
 impl Lost {
-    /// Whether nothing was narrowed.
     pub fn is_empty(&self) -> bool {
         *self == Lost::default()
     }
@@ -378,8 +300,7 @@ impl SourceMap {
         let mut entries = Vec::new();
         let mut from = 0;
         for (position, c) in visible(document) {
-            // Greedy: what was read but not kept (a paragraph's last
-            // `<br>`) is passed over.
+            // Greedy: what was read but not kept (a paragraph's last `<br>`) is passed over.
             let Some(at) = seen[from..].iter().position(|(read, ..)| *read == c) else {
                 break;
             };
@@ -398,17 +319,14 @@ impl SourceMap {
         }
     }
 
-    /// What the Markdown said that the document narrowed away.
     pub fn lost(&self) -> Lost {
         self.lost
     }
 
-    /// The byte offset in the Markdown of `position`.
     pub fn to_source(&self, position: &DocPosition) -> usize {
         if let Some((_, byte, _)) = self.entries.iter().find(|(at, ..)| at == position) {
             return *byte;
         }
-        // One past a block's last character: after what spelled it.
         if let Some(before) = position.offset.checked_sub(1) {
             let previous = DocPosition {
                 path: position.path.clone(),
@@ -418,20 +336,14 @@ impl SourceMap {
                 return byte + len;
             }
         }
-        // A block with no text: where the next text is, or the end.
         self.entries
             .iter()
             .find(|(at, ..)| at > position)
             .map_or(self.len, |(_, byte, _)| *byte)
     }
 
-    /// The position of the byte `offset` in the Markdown.
-    ///
-    /// Inside a marker (`**`, `## `, `- [ ] `), the first character it
-    /// formats, on its line. Past the last character on its line -- text
-    /// that was narrowed away -- the nearest position before it. On a line
-    /// with no text of its own (a fence, a delimiter row), the next
-    /// character; at the end, the end.
+    /// Inside a marker, the first character it formats; past a line's last character (narrowed
+    /// text), the nearest one before; on a line with no text, the next, or the end.
     pub fn to_document(&self, offset: usize) -> DocPosition {
         let offset = offset.min(self.len);
         let line = self
@@ -475,14 +387,10 @@ impl SourceMap {
     }
 }
 
-/// The private character a caret is carried in, between the rich editor and
-/// the document (spec 014 R14): the editor marks a copy of its body with it,
-/// and `parse` keeps it where the caret was, so the caret's [`DocPosition`]
-/// is read off the document `parse` builds rather than reasoned out from the
-/// editor's own markup. Private use, so it is nobody's text.
+/// The editor marks a copy of its body with it and `parse` keeps it where the caret was,
+/// so the position is read off the parsed document. Private use, so it is nobody's text.
 pub const CARET: char = '\u{E002}';
 
-/// The document with [`CARET`] taken out of it, and the position it marked.
 pub fn take_caret(mut document: crate::Document) -> (crate::Document, Option<DocPosition>) {
     let position = visible(&document)
         .into_iter()
@@ -492,8 +400,6 @@ pub fn take_caret(mut document: crate::Document) -> (crate::Document, Option<Doc
     (document, position)
 }
 
-/// `document` with [`CARET`] at `position`: what the rich editor is loaded
-/// with to put its caret there.
 pub fn put_caret(document: &crate::Document, position: &DocPosition) -> crate::Document {
     let mut marked = document.clone();
     if let Some(block) = block_at(&mut marked.blocks, &position.path) {
@@ -502,7 +408,6 @@ pub fn put_caret(document: &crate::Document, position: &DocPosition) -> crate::D
     marked
 }
 
-/// The block that holds text at `path`, or the cell of a table.
 fn block_at<'a>(blocks: &'a mut [crate::Block], path: &[usize]) -> Option<&'a mut crate::Block> {
     use crate::Block;
     let (first, rest) = path.split_first()?;
@@ -510,7 +415,6 @@ fn block_at<'a>(blocks: &'a mut [crate::Block], path: &[usize]) -> Option<&'a mu
         !rest.is_empty() && matches!(blocks.get(*first)?, Block::List { .. } | Block::Quote(_));
     let block = blocks.get_mut(*first)?;
     if !container {
-        // A table's cell is the last index, read by `put_caret_in`.
         return Some(block);
     }
     match block {
@@ -555,8 +459,7 @@ fn put_caret_in(block: &mut crate::Block, cell: usize, offset: usize) {
     }
 }
 
-/// Put the caret `offset` visible characters into `inlines`. Returns what
-/// is left of the offset when it runs past them.
+/// Returns what is left of the offset when it runs past `inlines`.
 fn put_caret_inlines(inlines: &mut Vec<crate::Inline>, mut offset: usize) -> Option<usize> {
     use crate::Inline;
     let mut index = 0;
@@ -585,8 +488,6 @@ fn put_caret_inlines(inlines: &mut Vec<crate::Inline>, mut offset: usize) -> Opt
                 }
                 offset -= 1;
             }
-            // A remote image is drawn as its words, a link, so the caret
-            // can be in them.
             Inline::RemoteImage { alt, .. } => {
                 let len = alt.chars().count();
                 if offset <= len {
@@ -661,14 +562,12 @@ fn strip_caret_inlines(inlines: &mut Vec<crate::Inline>) {
     inlines.retain(|inline| !matches!(inline, Inline::Text(text) if text.is_empty()));
 }
 
-/// What the parser read, character by character.
 #[derive(Default)]
 struct Seen(Vec<(char, usize, usize)>);
 
 impl Seen {
-    /// The characters of `text`, read from `range`: one for one where the
-    /// source spells them as they are, else all at where the run began (an
-    /// escape, an entity).
+    /// One for one where the source spells characters as they are, else all at where the run began
+    /// (an escape, an entity).
     fn run(&mut self, source: &str, range: &std::ops::Range<usize>, text: &str) {
         let slice = source.get(range.clone()).unwrap_or_default();
         if let Some(inner) = slice.find(text).filter(|_| !text.is_empty()) {
@@ -683,7 +582,6 @@ impl Seen {
     }
 }
 
-/// Every character the caret can be on, in order, with its position.
 fn visible(document: &crate::Document) -> Vec<(DocPosition, char)> {
     let mut out = Vec::new();
     for (index, block) in document.blocks.iter().enumerate() {
@@ -748,7 +646,6 @@ fn visible_inlines(inlines: &[crate::Inline]) -> Vec<char> {
             }
             Inline::Link { inlines, .. } => out.extend(visible_inlines(inlines)),
             Inline::Break => out.push('\n'),
-            // Drawn as its words in the rich view, a link to its address.
             Inline::RemoteImage { alt, .. } => out.extend(alt.chars()),
             Inline::Image { .. } => {}
         }
@@ -756,10 +653,8 @@ fn visible_inlines(inlines: &[crate::Inline]) -> Vec<char> {
     out
 }
 
-/// The document in the normal form the Markdown view writes and reads
-/// (spec 014 FR-024): adjacent text runs merged, empty ones dropped,
-/// adjacent code spans and adjacent marks of one kind merged, and a
-/// non-empty code block ending in a line end. Each is a difference no reader can see. Idempotent.
+/// Merges adjacent text runs, code spans and same-kind marks and drops empty ones: differences no
+/// reader can see. Idempotent.
 pub fn normalize(document: crate::Document) -> crate::Document {
     crate::Document {
         blocks: document.blocks.into_iter().map(normalize_block).collect(),
@@ -811,7 +706,6 @@ fn normalize_inlines(inlines: Vec<crate::Inline>) -> Vec<crate::Inline> {
     use crate::Inline;
     let mut out: Vec<Inline> = Vec::with_capacity(inlines.len());
     for inline in inlines {
-        // A mark inside the same mark reads as the one mark.
         fn flat(
             inner: Vec<Inline>,
             same: fn(Inline) -> Result<Vec<Inline>, Inline>,
@@ -846,7 +740,6 @@ fn normalize_inlines(inlines: Vec<crate::Inline>) -> Vec<crate::Inline> {
         match (out.last_mut(), inline) {
             (Some(Inline::Text(last)), Inline::Text(more)) => last.push_str(&more),
             (Some(Inline::Code(last)), Inline::Code(more)) => last.push_str(&more),
-            // Two marks of one kind side by side read as one.
             (Some(Inline::Strong(last)), Inline::Strong(more))
             | (Some(Inline::Emphasis(last)), Inline::Emphasis(more))
             | (Some(Inline::Strikethrough(last)), Inline::Strikethrough(more)) => {
@@ -860,25 +753,16 @@ fn normalize_inlines(inlines: Vec<crate::Inline>) -> Vec<crate::Inline> {
     out
 }
 
-/// The composer's document, as Markdown the terminal composer can edit.
-///
-/// What opens a draft written in the desktop composer: its HTML, parsed to
-/// the document, written back out as the Markdown that reads into that same
-/// document -- `to_document(&from_document(d)) == d` for any document without
-/// a carried quote. A quote carried from the message being answered
-/// (`Block::Quoted`) is not Markdown and is not written here; the composer
-/// keeps it whole beside the text.
+/// `to_document(&from_document(d)) == d` for any document without a carried quote.
+/// A `Block::Quoted` is not Markdown and is not written; the composer keeps it whole beside the
+/// text.
 pub fn from_document(document: &crate::Document) -> String {
     let mut out = String::new();
     write_blocks(&mut out, &document.blocks, "");
     out
 }
 
-/// `blocks`, each line after the first of each block prefixed with `indent`
-/// (a list item's continuation, a quote's `> `), a blank line between them.
-///
-/// Two lists of one kind side by side would read as one, so an empty
-/// comment stands between them (spec 014's golden spellings).
+/// Two lists of one kind side by side would read as one, so an empty comment stands between them.
 fn write_blocks(out: &mut String, blocks: &[crate::Block], indent: &str) {
     let mut previous: Option<&crate::Block> = None;
     for block in blocks {
@@ -904,7 +788,6 @@ fn write_blocks(out: &mut String, blocks: &[crate::Block], indent: &str) {
     }
 }
 
-/// Whether two lists would merge into one if nothing stood between them.
 fn same_list_kind(a: &crate::Block, b: &crate::Block) -> bool {
     match (a, b) {
         (crate::Block::List { kind: a, .. }, crate::Block::List { kind: b, .. }) => {
@@ -914,27 +797,20 @@ fn same_list_kind(a: &crate::Block, b: &crate::Block) -> bool {
     }
 }
 
-/// Where a run of inlines sits, which decides how its edges are spelled.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Place {
-    /// A paragraph: a break is `\` at the end of a line, except where
-    /// Markdown cannot put one.
     Paragraph,
-    /// A heading or a table cell: one line, so every break is `<br>`.
     Line,
-    /// Inside a mark or a link: the container spells the edges.
     Inner,
 }
 
-/// One block, without its trailing newline; `false` for one Markdown does
-/// not carry (a quote carried from the message being answered).
+/// `false` for a block Markdown does not carry (a carried quote).
 fn write_block(out: &mut String, block: &crate::Block) -> bool {
     use crate::Block;
     match block {
         Block::Paragraph(inlines) => {
-            // A paragraph of nothing but breaks has no words to hang them
-            // on, so it is that many `<br>`s and one more (spec 014: an
-            // empty paragraph is a line holding only `<br>`).
+            // A paragraph of nothing but breaks has no words to hang them on, so it is that many
+            // `<br>`s and one more.
             if inlines
                 .iter()
                 .all(|inline| matches!(inline, crate::Inline::Break))
@@ -992,8 +868,6 @@ fn write_block(out: &mut String, block: &crate::Block) -> bool {
             text: code,
             language,
         } => {
-            // A fence longer than any backtick run inside, so the code
-            // cannot close it.
             let longest = code.split(|c| c != '`').map(str::len).max().unwrap_or(0);
             let fence = "`".repeat(longest.max(2) + 1);
             out.push_str(&fence);
@@ -1014,7 +888,6 @@ fn write_block(out: &mut String, block: &crate::Block) -> bool {
     true
 }
 
-/// A GFM pipe table: the header, the delimiter row, the body rows.
 fn write_table(out: &mut String, table: &crate::Table) {
     use crate::Alignment;
     let row = |out: &mut String, cells: &[crate::Cell]| {
@@ -1041,9 +914,7 @@ fn write_table(out: &mut String, table: &crate::Table) {
     }
 }
 
-/// A list item: its first block after the marker, the rest indented under
-/// it, a blank line between them so a second paragraph is not read as the
-/// first one's next line.
+/// A blank line follows the first block so a second paragraph is not read as its next line.
 fn write_item(out: &mut String, blocks: &[crate::Block], indent: &str) {
     let mut first = true;
     for block in blocks {
@@ -1068,8 +939,6 @@ fn write_inlines(out: &mut String, inlines: &[crate::Inline], place: Place) {
         let after = inlines.get(index + 1);
         match inline {
             Inline::Text(text) => {
-                // A space Markdown would trim: at a paragraph's or a line's
-                // edge, or beside a break.
                 let edge = place != Place::Inner;
                 let opens = edge && (index == 0 || matches!(before, Some(Inline::Break)));
                 let closes = edge && (index == last || matches!(after, Some(Inline::Break)));
@@ -1092,8 +961,7 @@ fn write_inlines(out: &mut String, inlines: &[crate::Inline], place: Place) {
                     out.push_str("<code></code>");
                     continue;
                 }
-                // A fence longer than any run of backticks inside, padded
-                // where CommonMark would otherwise strip or merge.
+                // Padded where CommonMark would otherwise strip or merge.
                 let longest = code.split(|c| c != '`').map(str::len).max().unwrap_or(0);
                 let fence = "`".repeat(longest + 1);
                 let spaced = code.starts_with(' ') && code.ends_with(' ') && code.trim() != "";
@@ -1124,8 +992,6 @@ fn write_inlines(out: &mut String, inlines: &[crate::Inline], place: Place) {
                 ));
             }
             Inline::Break => {
-                // `\` at a line's end, where there is a line on both sides
-                // and words before; `<br>` everywhere else.
                 let backslash = place == Place::Paragraph
                     && index > 0
                     && index < last
@@ -1137,9 +1003,8 @@ fn write_inlines(out: &mut String, inlines: &[crate::Inline], place: Place) {
     }
 }
 
-/// A mark as its Markdown delimiters where CommonMark will read them back
-/// -- its words start and end with a letter or a digit -- and as HTML
-/// where it would not: `**x!**y` is not bold, `<strong>x!</strong>y` is.
+/// `**x!**y` is not bold, so a mark whose words do not start and end with a letter or digit is
+/// written as HTML.
 fn write_mark(out: &mut String, inner: &[crate::Inline], delimiter: &str, tag: &str) {
     let mut text = String::new();
     write_inlines(&mut text, inner, Place::Inner);
@@ -1153,7 +1018,6 @@ fn write_mark(out: &mut String, inner: &[crate::Inline], delimiter: &str, tag: &
     }
 }
 
-/// A link destination, in angle brackets where a space would end it.
 fn destination(href: &str) -> String {
     if href.contains([' ', '<', '>']) {
         format!("<{}>", href.replace('<', "%3C").replace('>', "%3E"))
@@ -1162,12 +1026,9 @@ fn destination(href: &str) -> String {
     }
 }
 
-/// Text, with everything Markdown would read as markup escaped.
-///
-/// Including what GFM would read as a bare autolink: a backslash before its
-/// first `.`, `:` or `@` keeps it the text it was, because `to_document`
-/// links only an address typed as it reads. `line_start` is whether the text
-/// begins a line, where a `#`, `-`, `+`, `=` or a number would start a block.
+/// A backslash before a bare autolink's first `.`, `:` or `@` keeps it text, since `to_document`
+/// links only an address typed as it reads. `line_start` is whether `#`, `-`, `+`, `=` or a number
+/// would start a block.
 fn escape(text: &str, line_start: bool) -> String {
     let breaks: Vec<usize> = crate::autolink::find(text)
         .iter()
@@ -1195,24 +1056,18 @@ fn escape(text: &str, line_start: bool) -> String {
     out
 }
 
-/// What holds a run of inlines.
 enum Holder {
     Paragraph,
     Heading(crate::HeadingLevel),
     Emphasis,
     Strong,
     Strikethrough,
-    /// One table cell.
     Cell,
-    /// A mark written as HTML, because its delimiters would not read back.
     Html(Mark),
-    /// A link, when its target is one the document can carry.
     Link(Option<crate::Href>),
-    /// Something the document has no node for: its words pass through.
     Transparent,
 }
 
-/// The marks `from_document` may write as HTML.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mark {
     Strong,
@@ -1232,28 +1087,21 @@ impl Mark {
     }
 }
 
-/// One open container while the Markdown is read.
 enum Frame {
     Blocks(Vec<crate::Block>),
     Quote(Vec<crate::Block>),
     List(crate::ListKind, Vec<crate::ListItem>),
-    /// A list item: its box, its blocks, and the words of a tight item not
-    /// yet wrapped in a paragraph.
     Item(Option<crate::Task>, Vec<crate::Block>, Vec<crate::Inline>),
     Inlines(Holder, Vec<crate::Inline>),
     Code(Option<crate::Language>, String),
     Image(String, String),
-    /// A table: its alignments, and its rows so far, the header first.
     Table(Vec<crate::Alignment>, Vec<Vec<crate::Cell>>),
-    /// A table row's cells so far.
     Row(Vec<crate::Cell>),
 }
 
 fn push_inline(stack: &mut [Frame], inline: crate::Inline) {
     match stack.last_mut() {
         Some(Frame::Inlines(_, inlines) | Frame::Item(_, _, inlines)) => {
-            // One run of words is one text, however the parser split it -- at
-            // an escape, a soft break -- so a document reads back the same.
             if let (crate::Inline::Text(more), Some(crate::Inline::Text(last))) =
                 (&inline, inlines.last_mut())
             {
@@ -1284,7 +1132,6 @@ fn push_block(stack: &mut [Frame], block: crate::Block) {
             blocks.push(block);
         }
         Some(Frame::List(_, items)) => items.push(crate::ListItem::new(vec![block])),
-        // A block inside an inline container: close it into the words.
         Some(
             Frame::Inlines(..)
             | Frame::Code(..)
@@ -1300,8 +1147,6 @@ fn push_block(stack: &mut [Frame], block: crate::Block) {
     }
 }
 
-/// How many cells a pipe-table row was typed with: its `|`s, less the
-/// escaped ones and the optional outer pair.
 fn typed_cells(row: &str) -> usize {
     let row = row.trim();
     let inner = row.strip_prefix('|').unwrap_or(row);
@@ -1323,10 +1168,7 @@ fn typed_cells(row: &str) -> usize {
     cells
 }
 
-/// A paragraph's inlines as the paragraph they spell, or none for none.
-///
-/// `<br><br>` alone is a paragraph of one break: a paragraph of nothing but
-/// breaks is written with one more, since an empty one is `<br>` (spec 014).
+/// A paragraph of nothing but breaks is written with one more `<br>`, since an empty one is `<br>`.
 fn paragraph_of(mut inlines: Vec<crate::Inline>) -> Option<crate::Block> {
     let breaks = !inlines.is_empty()
         && inlines
@@ -1406,9 +1248,6 @@ fn close(stack: &mut [Frame], frame: Frame, lost: &mut Lost) {
             let attached = dest.strip_prefix("cid:").and_then(crate::ContentId::parse);
             match (attached, crate::WebHref::parse(&dest)) {
                 (Some(content_id), _) => push_inline(stack, Inline::Image { content_id, alt }),
-                // Never fetched here: a chip the person may press to
-                // download and attach it, and a link if they never do
-                // (spec 014 D7).
                 (None, Some(href)) => push_inline(stack, Inline::RemoteImage { href, alt }),
                 (None, None) => {
                     lost.images += 1;
@@ -1694,7 +1533,6 @@ mod tests {
             assert!(matches!(&inlines[0], Inline::RemoteImage { href, alt }
                 if href.as_str() == "https://example.com/x.png" && alt == "x"));
             assert!(matches!(&inlines[2], Inline::Image { .. }));
-            // An address the web does not serve stays the words written.
             let other = to_document("![z](ftp://example.com/z.png)");
             assert_eq!(
                 other.blocks[0],
@@ -1833,7 +1671,6 @@ mod tests {
     }
 
     mod source_map {
-        //! spec 014 `contracts/source-view.md`, "The caret".
         use super::super::{DocPosition, from_document_mapped, to_document_mapped};
 
         fn at(path: &[usize], offset: usize) -> DocPosition {
@@ -1843,7 +1680,6 @@ mod tests {
             }
         }
 
-        /// Every visible character of `markdown`'s document, by position.
         fn positions(markdown: &str) -> Vec<DocPosition> {
             let (document, _) = to_document_mapped(markdown);
             super::super::visible(&document)
@@ -1895,8 +1731,6 @@ mod tests {
 
         #[test]
         fn narrowed_text_maps_to_the_nearest_position_before_it() {
-            // A third cell in a two-column table is cut, so its words have
-            // no position: the caret goes to the end of what survived.
             let ragged = "| a | b |\n|---|---|\n| c | d | cut |\n";
             let (_, map) = to_document_mapped(ragged);
             let cut = ragged.find("cut").unwrap();

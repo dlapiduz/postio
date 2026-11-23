@@ -1,32 +1,19 @@
-//! The package is Focus (spec 007, decision C27; ADR 0043): one app named
+//! The package is Postio: one app, one binary, one application id, one desktop entry and one
+//! AppStream component, in the desktop Flatpak.
 //!
 //! POSTIO-OWN-BINARY: plain libtest, and `focus_suite` is a `harness = false` GTK harness.
-//! Postio, the binary `postio`, the application id `dev.postio.Postio`, one
-//! desktop entry, one AppStream component, in the desktop Flatpak.
-//!
-//! None of this needs a display: it is the metadata a session uses to find
-//! and launch Postio, and it goes wrong in ways nothing notices until a user
-//! has installed it. Each part is checked against the others. A desktop
-//! entry the manifest never installs is not shipped. A binary the entry
-//! names but the manifest never builds is a launcher that does nothing. And
-//! a bundle the release never looked inside can be missing either one.
-//! `postio-tui`'s `packaging.rs` checks the grants the packages share.
+//! None of this needs a display; each part is checked against the others.
 
 use std::path::{Path, PathBuf};
 
 use postio_gtk::app::{APP_ID, ICON_NAME};
 
-/// The binary the manifest builds and the entry launches.
 const BINARY: &str = "postio";
-/// The extraction helper, installed beside it (spec 010 D28).
 const HELPER: &str = "postio-extract-helper";
-/// The agent's entry point (ADR 0010, #1832), installed beside them.
 const MCP: &str = "postio-mcp";
 
-/// The Flatpak the desktop app ships in, named after the id.
 const MANIFEST: &str = "flatpak/dev.postio.Postio.json";
 
-/// Where the desktop entry is installed in the sandbox.
 fn installed_entry() -> String {
     format!("/app/share/applications/{APP_ID}.desktop")
 }
@@ -44,7 +31,6 @@ fn data() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("data")
 }
 
-/// The desktop entry as it ships, named after the application id.
 fn entry_path() -> PathBuf {
     data().join(format!("{APP_ID}.desktop"))
 }
@@ -78,7 +64,6 @@ fn list(key: &str) -> Vec<String> {
         .collect()
 }
 
-/// The names of the `[[bin]]` targets a crate's manifest declares.
 fn binaries(crate_dir: &str) -> Vec<String> {
     let manifest = read(&format!("{crate_dir}/Cargo.toml"));
     manifest
@@ -93,7 +78,6 @@ fn binaries(crate_dir: &str) -> Vec<String> {
         .collect()
 }
 
-/// The manifest's build commands, one per JSON string line.
 fn commands(manifest: &str) -> Vec<&str> {
     manifest
         .lines()
@@ -102,7 +86,6 @@ fn commands(manifest: &str) -> Vec<&str> {
         .collect()
 }
 
-/// The app is Postio: the id the desktop app had, and the binary on PATH.
 #[test]
 fn focus_is_postio() {
     assert_eq!(APP_ID, "dev.postio.Postio");
@@ -135,14 +118,10 @@ fn the_desktop_entry_describes_postio() {
             "Categories should contain {wanted}, got {categories:?}"
         );
     }
-    // Wayland matches a window to its entry by the app id.
     assert_eq!(value("StartupWMClass"), APP_ID);
     assert_eq!(value("Icon"), ICON_NAME);
 }
 
-/// Postio is the system's `mailto:` handler, and opens the `postio://`
-/// links written into notes (spec FR-185). With one launcher, nothing else
-/// in the package claims either scheme.
 #[test]
 fn postio_handles_mailto_and_postio_links() {
     let types = list("MimeType");
@@ -152,7 +131,6 @@ fn postio_handles_mailto_and_postio_links() {
             "the entry should register {wanted}, got {types:?}"
         );
     }
-    // A handler with no field code is launched without the link.
     let exec = value("Exec");
     assert!(
         exec.contains("%u") || exec.contains("%U"),
@@ -160,9 +138,8 @@ fn postio_handles_mailto_and_postio_links() {
     );
 }
 
-/// One app, one launcher: a second entry would be a second icon in the app
-/// grid, and two entries claiming one scheme leave the choice to whichever
-/// the desktop reads first.
+/// A second entry would be a second icon in the app grid, and two entries claiming one scheme leave
+/// the choice to whichever the desktop reads first.
 #[test]
 fn the_package_has_one_desktop_entry() {
     let entries: Vec<String> = std::fs::read_dir(data())
@@ -179,8 +156,6 @@ fn the_entry_is_named_after_the_id_and_its_icon_ships_in_the_package() {
         entry_path().file_name().and_then(|name| name.to_str()),
         Some(format!("{APP_ID}.desktop").as_str())
     );
-    // `Icon=` is a theme name: the package installs it as an SVG, and the
-    // symbolic variant, under that name.
     let manifest = read(MANIFEST);
     for (source, installed) in [
         (
@@ -207,11 +182,8 @@ fn the_entry_is_named_after_the_id_and_its_icon_ships_in_the_package() {
     }
 }
 
-/// The Flatpak installs the raster sizes a session asks for. 16 and 32 are
-/// hand-drawn rather than downscales (`Design/icons/` carries the
-/// optical-sizing rule), and 48, 64 and 128 are what GNOME asks for in the
-/// dash, the overview and the switcher at 1x. A size with no file is drawn
-/// as nothing at all, not as a fallback.
+/// 16 and 32 are hand-drawn rather than downscales; 48, 64 and 128 are what GNOME asks for at 1x. A
+/// size with no file is drawn as nothing, not a fallback.
 #[test]
 fn the_flatpak_installs_the_icon_sizes_a_session_asks_for() {
     let manifest = read(MANIFEST);
@@ -248,10 +220,6 @@ fn the_desktop_entry_passes_the_freedesktop_validator() {
     );
 }
 
-/// The desktop Flatpak builds Focus as `postio`, runs it, and installs its
-/// entry and metainfo. The only other thing it builds is the extraction
-/// helper, which the attachment indexer looks for beside its own executable
-/// (spec 010 D28), and `postio-mcp`, which an MCP client launches (#1832).
 #[test]
 fn the_desktop_flatpak_builds_and_installs_postio_its_helper_and_the_agent_entry_only() {
     let manifest = read(MANIFEST);
@@ -325,8 +293,6 @@ fn the_desktop_flatpak_builds_and_installs_postio_its_helper_and_the_agent_entry
     );
 }
 
-/// One package, one app, one AppStream component: GNOME Software shows
-/// Postio's page, and it names the one launcher and the one binary.
 #[test]
 fn the_metainfo_describes_postio_with_one_launcher() {
     let metainfo = read(&format!("crates/postio-gtk/data/{APP_ID}.metainfo.xml"));
@@ -350,16 +316,12 @@ fn the_metainfo_describes_postio_with_one_launcher() {
         provided,
         vec![format!("<binary>{BINARY}</binary>").as_str()]
     );
-    // The app is Postio now; "Postio Focus" was the second launcher's name.
     assert!(
         !metainfo.contains("Postio Focus"),
         "the metainfo still describes Focus as a second app"
     );
 }
 
-/// The store page shows what the app looks like: screenshots, each an image
-/// the site serves (so the URL is the site's own) that exists in the
-/// repository, and none of them an earlier app's.
 #[test]
 fn the_metainfo_shows_focus_screenshots_the_site_serves() {
     let metainfo = read(&format!("crates/postio-gtk/data/{APP_ID}.metainfo.xml"));
@@ -388,13 +350,9 @@ fn the_metainfo_shows_focus_screenshots_the_site_serves() {
     }
 }
 
-/// The release looks inside the bundle it is about to publish, so a
-/// manifest that stops building the app fails the release rather than
-/// shipping without it.
 #[test]
 fn the_release_checks_the_bundle_carries_postio() {
     let workflow = read(".github/workflows/release.yml");
-    // The `flatpak` job, up to the next job: a line indented two spaces.
     let running: Vec<&str> = workflow
         .lines()
         .skip_while(|line| *line != "  flatpak:")
@@ -412,8 +370,7 @@ fn the_release_checks_the_bundle_carries_postio() {
         format!("files/share/applications/{APP_ID}.desktop"),
         format!("files/share/metainfo/{APP_ID}.metainfo.xml"),
     ] {
-        // Whole words on lines that run, so a comment naming a path does
-        // not count as checking it.
+        // Whole words on lines that run, so a comment naming a path does not count as checking it.
         assert!(
             running
                 .iter()
@@ -426,9 +383,7 @@ fn the_release_checks_the_bundle_carries_postio() {
         !running.iter().any(|line| line.contains(gone)),
         "the `flatpak` job still looks for {gone}"
     );
-    // The same job builds the terminal bundle, which carries `postio-tui`
-    // and no desktop entry: v0.5.0's first run failed there, looking for
-    // the desktop app's binary in a bundle that never had it.
+    // The same job builds the terminal bundle, which carries `postio-tui` and no desktop entry.
     assert!(
         running.iter().any(|line| line
             .split_whitespace()
@@ -443,19 +398,9 @@ fn the_release_checks_the_bundle_carries_postio() {
     );
 }
 
-/// Every SVG the package installs says it is one where a format sniffer
-/// looks.
-///
-/// An image loader does not trust the file extension; it reads the first
-/// bytes and asks shared-mime-info what they are. The rule for SVG is `<svg`
-/// within the first 257 bytes: `/usr/share/mime/magic` matches it at offset 0
-/// with a 256-byte range. A file whose opening tag sits behind a long comment
-/// header is, to that sniffer, not an image at all: gdk-pixbuf through glycin
-/// says "Couldn't recognize the image file format", GNOME Shell draws nothing
-/// where the app icon should be, and `appstreamcli compose` reports a
-/// `file-read-error` for the same file. The shipped app icon once carried a
-/// 680-byte provenance comment before its `<svg>`, and each of those was
-/// diagnosed as something else.
+/// An image loader sniffs for `<svg` within the first 257 bytes (shared-mime-info): an opening tag
+/// behind a long comment header is not an image to it, and the shipped app icon once carried a
+/// 680-byte comment before its `<svg>`.
 #[test]
 fn every_bundled_svg_is_recognised_where_a_sniffer_looks() {
     const SNIFF_WINDOW: usize = 257;

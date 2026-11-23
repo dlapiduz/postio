@@ -1,8 +1,5 @@
-//! Which apps a storyboard applies to.
-//!
-//! Applicability is static (research R7): the loader and the lint can answer
-//! it with no runner built, because it is a question about the command
-//! registry and about what each runner declares, not about a run.
+//! Which apps a storyboard applies to. Static (research R7): answerable with no runner built, from
+//! the command registry and what each runner declares.
 
 use std::collections::BTreeMap;
 
@@ -12,21 +9,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::format::{Apps, Input, Storyboard};
 
-/// A Postio frontend a storyboard can be played against.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum App {
-    /// Postio, the desktop app (spec 007; ADR 0043): the one app storyboards
-    /// play on.
     Focus,
-    /// The terminal client.
     Terminal,
-    /// The macOS client.
     Macos,
 }
 
 impl std::fmt::Display for App {
-    /// The name the storyboard file and `runner list` spell it with.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             App::Focus => "focus",
@@ -36,17 +27,13 @@ impl std::fmt::Display for App {
     }
 }
 
-/// Whether `app` exists on this branch at all. macOS is built elsewhere and
-/// is named in the vocabulary and nothing more (research R7).
+/// macOS is built elsewhere and is named in the vocabulary and nothing more.
 pub fn present(app: App) -> bool {
     matches!(app, App::Focus | App::Terminal)
 }
 
-/// Whether `app` offers `command`, by what the registry says its frontend
-/// is offered (`requires.offered_by`): the desktop does not offer what only
-/// the terminal's composer has, and Focus has no panes to cycle. A command the
-/// registry offers but the app never wired still counts as provided; that gap
-/// is what the generated pass is for.
+/// By the registry's `requires.offered_by`: a command the registry offers but the app never wired
+/// still counts as provided; that gap is what the generated pass is for.
 pub fn provides(app: App, command: CommandId) -> bool {
     let requires = registry::get(command).requires;
     match app {
@@ -56,52 +43,36 @@ pub fn provides(app: App, command: CommandId) -> bool {
     }
 }
 
-/// What a runner declares it can build, as `runner list` reports it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunnerInfo {
-    /// The app.
     pub app: App,
-    /// Seeds it can build.
     pub seeds: Vec<String>,
-    /// Presets it names.
     pub presets: Vec<String>,
-    /// Variant axes and the values it supports on each.
     pub axes: BTreeMap<String, Vec<String>>,
 }
 
-/// Whether a storyboard applies to an app, and if not, why.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Applicability {
-    /// Play it.
     Applies,
-    /// Do not; every reason is listed.
     NotApplicable(Vec<Reason>),
 }
 
-/// One reason a storyboard does not apply to an app.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum Reason {
-    /// The app is not built on this branch.
     #[error("not present on this branch")]
     NotPresentOnBranch,
-    /// The storyboard's `apps` leaves it out.
     #[error("the storyboard does not name this app")]
     NotNamed,
-    /// A command the app does not provide.
     #[error("the app does not provide `{0}`")]
     MissingCommand(String),
-    /// A seed the app cannot build.
     #[error("the app cannot build seed `{0}`")]
     MissingSeed(String),
-    /// A preset the app does not declare.
     #[error("the app does not declare preset `{0}`")]
     MissingPreset(String),
 }
 
-/// Whether `storyboard` applies to `app`, given what its runner declares.
-///
-/// Every reason is listed, not just the first, so one run of the lint says
-/// everything standing between a storyboard and an app.
+/// Every reason is listed, not just the first, so one lint run says everything standing between a
+/// storyboard and an app.
 pub fn applies(storyboard: &Storyboard, app: App, info: &RunnerInfo) -> Applicability {
     if !present(app) {
         return Applicability::NotApplicable(vec![Reason::NotPresentOnBranch]);
@@ -132,10 +103,8 @@ pub fn applies(storyboard: &Storyboard, app: App, info: &RunnerInfo) -> Applicab
     }
 }
 
-/// Commands an explicitly named, present app does not provide: `(app,
-/// command id)`. Naming apps turns each into a load error, because the author
-/// asked for that app and the storyboard cannot be played on it. Apps absent
-/// from this branch are not judged; there is no registry to ask.
+/// Naming apps turns each into a load error, because the author asked for that app. Apps absent
+/// from this branch are not judged: there is no registry to ask.
 pub fn unprovided_for_named_apps(storyboard: &Storyboard) -> Vec<(App, String)> {
     let Apps::Named(named) = &storyboard.apps else {
         return Vec::new();
@@ -151,9 +120,6 @@ pub fn unprovided_for_named_apps(storyboard: &Storyboard) -> Vec<(App, String)> 
     out
 }
 
-/// The commands `app` would have to press, once: those of steps it does not
-/// skip. A command that is not an id is the lint's to report, not this
-/// module's.
 fn commands_needed(storyboard: &Storyboard, app: App) -> Vec<CommandId> {
     let skipped = |number: usize, id: Option<&str>| {
         storyboard.overrides.get(&app).is_some_and(|steps| {
@@ -178,12 +144,9 @@ fn commands_needed(storyboard: &Storyboard, app: App) -> Vec<CommandId> {
     out
 }
 
-/// The one variant a run without `--variants` plays. Each axis the runner
-/// lists has its default value first; an axis whose asked values include that
-/// default keeps it, and one that asks only for others -- `inbox-dark` asks
-/// for `scheme = ["dark"]` and nothing else -- takes the first of them, so a
-/// storyboard is never filmed in a variant it did not ask for. Axes the runner
-/// lacks are returned, as [`variants`] returns them.
+/// An axis whose asked values include its default keeps it; one asking only for others
+/// (`inbox-dark` asks `scheme = ["dark"]`) takes the first of them, so a storyboard is never filmed
+/// in a variant it did not ask for.
 pub fn default_variant(
     storyboard: &Storyboard,
     info: &RunnerInfo,
@@ -211,10 +174,6 @@ pub fn default_variant(
     (variant, ignored)
 }
 
-/// Every variant a storyboard asks this app for: the cross product of the
-/// values it lists on each axis the app supports, plus the axes it asked
-/// for that the app does not have (FR-017). A storyboard that varies nothing
-/// has one variant, the default, which is empty.
 pub fn variants(
     storyboard: &Storyboard,
     info: &RunnerInfo,
@@ -299,7 +258,6 @@ mod tests {
                 "{}",
                 spec.id.as_str()
             );
-            // The registry's own answer never contradicts the coarse one.
             if terminal {
                 assert!(!provides(App::Focus, spec.id));
             }
@@ -313,7 +271,6 @@ mod tests {
     #[test]
     fn focus_provides_what_only_focus_has() {
         assert!(provides(App::Focus, CommandId::ToggleHasAction));
-        // Flag is every app's since C13.
         assert!(provides(App::Focus, CommandId::Flag));
     }
 
@@ -324,7 +281,6 @@ mod tests {
             applies(&board, App::Focus, &info(App::Focus)),
             Applicability::Applies
         );
-        // Macos is the one still not built.
         let macos = applies(&board, App::Macos, &info(App::Macos));
         let Applicability::NotApplicable(reasons) = macos else {
             panic!("macos is not present on this branch: {macos:?}");
@@ -357,9 +313,7 @@ mod tests {
             error.contains(command) && error.contains("focus"),
             "{error}"
         );
-        // Naming an app that is not built here cannot be checked, so loads.
         assert!(board("apps = [\"macos\"]\n", &[command]).is_ok());
-        // A step the app skips does not need the command.
         let text = format!(
             "apps = [\"focus\"]\n{HEAD}[[step]]\ncommand = \"{command}\"\n[app.focus.step.1]\nskip = {{ reason = \"terminal only\" }}\n"
         );
@@ -398,7 +352,6 @@ mod tests {
             applies(&known, App::Focus, &info(App::Focus)),
             Applicability::Applies
         );
-        // The default seed is `small`.
         let plain = self::board("", &["back"]).unwrap();
         let mut bare = info(App::Focus);
         bare.seeds.clear();

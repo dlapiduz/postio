@@ -1,16 +1,7 @@
-//! `COMPRESS=DEFLATE` (RFC 4978): raw deflate under the protocol.
-//!
-//! The protocol crates are sans-I/O, so compression is a property of the
-//! byte stream they are pumped against, not of a coroutine. After the server
-//! accepts `COMPRESS DEFLATE`, [`DeflateStream`] replaces the stream the
-//! session was driving and everything above it carries on unchanged.
-//!
-//! Two rules from the RFC make this more than a `GzEncoder` wrapper:
-//!
-//! * The stream is raw deflate, with no zlib header or checksum.
-//! * Every write ends on a sync flush. Without it the compressor holds back
-//!   the tail of a command in its window, the server never sees it, and the
-//!   exchange hangs. `IDLE` and `DONE` are the first things to notice.
+//! `COMPRESS=DEFLATE` (RFC 4978): raw deflate under the protocol, a property of the byte stream
+//! since the protocol crates are sans-I/O. Raw means no zlib header or checksum, and every write
+//! ends on a sync flush: otherwise the compressor holds back the tail of a command, the server
+//! never sees it and the exchange hangs.
 
 use std::io;
 
@@ -19,17 +10,11 @@ use flate2::{Compress, Compression, Decompress, FlushCompress, FlushDecompress, 
 
 use crate::{Stream, TransportError};
 
-/// How much compressed input is read from the wire at a time.
 const WIRE_CHUNK: usize = 16 * 1024;
 
-/// A raw-deflate encoder and decoder, with no I/O.
-///
-/// Shared by [`DeflateStream`] and the in-process test server, so the two
-/// ends of a test agree with each other only because both follow the RFC.
 pub struct DeflateCodec {
     encoder: Compress,
     decoder: Decompress,
-    /// Compressed bytes read off the wire and not yet inflated.
     pending: Vec<u8>,
     consumed: usize,
 }
@@ -49,7 +34,6 @@ impl Default for DeflateCodec {
 }
 
 impl DeflateCodec {
-    /// A fresh pair of raw (header-less) deflate states.
     pub fn new() -> Self {
         Self {
             encoder: Compress::new(Compression::fast(), false),
@@ -59,8 +43,6 @@ impl DeflateCodec {
         }
     }
 
-    /// Compresses `plain` and ends it on a sync flush, so the peer can
-    /// inflate every byte of it without waiting for more.
     pub fn deflate(&mut self, plain: &[u8]) -> Vec<u8> {
         let mut out = Vec::with_capacity(plain.len() / 2 + 64);
         let start = self.encoder.total_in();
@@ -73,15 +55,12 @@ impl DeflateCodec {
                 .compress_vec(&plain[done..], &mut out, FlushCompress::Sync)
                 .expect("raw deflate cannot fail on in-memory input");
             let done = usize::try_from(self.encoder.total_in() - start).unwrap_or(usize::MAX);
-            // Everything is consumed and the flush marker did not fill the
-            // buffer, so nothing is left inside the compressor.
             if done == plain.len() && out.len() < out.capacity() {
                 return out;
             }
         }
     }
 
-    /// Queues compressed bytes that arrived from the peer.
     pub fn push(&mut self, wire: &[u8]) {
         if self.consumed == self.pending.len() {
             self.pending.clear();
@@ -128,7 +107,6 @@ impl DeflateCodec {
     }
 }
 
-/// A [`Stream`] whose bytes are raw deflate on the wire.
 #[derive(Debug)]
 pub struct DeflateStream {
     inner: Box<dyn Stream>,
@@ -136,8 +114,6 @@ pub struct DeflateStream {
 }
 
 impl DeflateStream {
-    /// Wraps `inner`, which must be the stream on which the server has just
-    /// answered `COMPRESS DEFLATE` with `OK` and nothing else.
     pub fn new(inner: Box<dyn Stream>) -> Self {
         Self {
             inner,
@@ -147,15 +123,12 @@ impl DeflateStream {
 }
 
 impl DeflateStream {
-    /// Replaces the stream in `slot` with itself wrapped in deflate.
     pub fn wrap(slot: &mut Box<dyn Stream>) {
         let inner = std::mem::replace(slot, Box::new(Vacant));
         *slot = Box::new(Self::new(inner));
     }
 }
 
-/// What [`DeflateStream::wrap`] leaves in the slot for the instant between
-/// taking the old stream out and putting the new one in.
 #[derive(Debug)]
 struct Vacant;
 
@@ -266,7 +239,6 @@ mod tests {
     #[test]
     fn the_wire_form_is_raw_deflate_with_no_zlib_header() {
         let wire = DeflateCodec::new().deflate(b"a1 NOOP\r\n");
-        // A zlib stream starts 0x78; a sync-flushed raw stream ends 00 00 FF FF.
         assert_ne!(wire[0], 0x78);
         assert_eq!(&wire[wire.len() - 4..], [0x00, 0x00, 0xFF, 0xFF]);
     }

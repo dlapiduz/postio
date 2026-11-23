@@ -1,13 +1,5 @@
-//! The digest rules list, `g r` (spec 007 T139, C15), in Filtered's
-//! full-view frame (screen 21): every rule in `config.toml` with what it
-//! matches, when it delivers, when it next does, and what it holds now.
-//!
-//! Designed with `/ux-architect`'s invariants: a full view in place of the
-//! inbox rather than another dialog; its keys are the list's (`j`/`k`
-//! walk it, `Enter` edits the focused rule in screen 24's dialog, `Delete`
-//! removes it) so nothing new is learned; removing asks first, because it
-//! releases what the rule held into the inbox and no undo takes a rule's
-//! mail back into it; and with no rule it says how to make one.
+//! The digest rules list, `g r`, in Filtered's full-view frame. Removing asks first, because it
+//! releases what the rule held into the inbox and no undo takes a rule's mail back into it.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -21,25 +13,15 @@ use postio_ui::digest;
 use postio_widgets::widgets::keyhint::{self, KeyLine};
 use postio_widgets::widgets::space::{S1, S3};
 
-/// What a person asked of the view.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RulesAction {
-    /// Go back to the inbox.
     Back,
-    /// Edit this rule.
     Edit(String),
-    /// Remove this rule, releasing what it holds.
-    Remove {
-        /// The rule's name.
-        name: String,
-        /// What it holds now.
-        holds: u32,
-    },
+    Remove { name: String, holds: u32 },
 }
 
 type Handler = Rc<dyn Fn(RulesAction)>;
 
-/// The view. See the module.
 pub struct RulesView {
     client: Client,
     root: gtk::Box,
@@ -56,7 +38,6 @@ pub struct RulesView {
 }
 
 impl RulesView {
-    /// The view, reading through `client`, its keys from `keymap`.
     pub fn new(client: Client, keymap: &Keymap) -> Rc<Self> {
         let back = gtk::Button::new();
         back.add_css_class("flat");
@@ -157,17 +138,14 @@ impl RulesView {
         view
     }
 
-    /// The view, for the window's pages.
     pub fn widget(&self) -> &gtk::Box {
         &self.root
     }
 
-    /// Run `handler` with what the person asks.
     pub fn connect_action(&self, handler: impl Fn(RulesAction) + 'static) {
         self.handler.replace(Some(Rc::new(handler)));
     }
 
-    /// Read every key from `keymap`.
     pub fn set_keymap(&self, keymap: &Keymap) {
         self.keymap.replace(keymap.clone());
         self.footer.set(&digest::rules_footer(keymap));
@@ -175,7 +153,6 @@ impl RulesView {
         self.show();
     }
 
-    /// Show `rules`, and read what each holds now.
     pub fn open(&self, rules: Vec<DigestRule>) {
         self.holds.replace(vec![0; rules.len()]);
         self.rules.replace(rules);
@@ -187,7 +164,6 @@ impl RulesView {
         }
     }
 
-    /// Take the rule called `name` off the list: it was removed.
     pub fn forget(&self, name: &str) {
         let index = self
             .rules
@@ -204,7 +180,6 @@ impl RulesView {
         }
     }
 
-    /// Move the selection `by` rows: `j` and `k`.
     pub fn step(&self, by: i32) {
         let at = self.list.selected_row().map_or(-1, |row| row.index());
         if let Some(row) = self.list.row_at_index((at + by).max(0)) {
@@ -213,8 +188,6 @@ impl RulesView {
         }
     }
 
-    /// The focused rule's name and what it holds: what `Enter` edits and
-    /// `Delete` removes.
     pub fn focused(&self) -> Option<(String, u32)> {
         let row = self.list.selected_row()?;
         let index = usize::try_from(row.index()).ok()?;
@@ -222,7 +195,6 @@ impl RulesView {
         Some((name, self.holds.borrow().get(index).copied().unwrap_or(0)))
     }
 
-    /// Every text the view shows, in order: what a test reads.
     pub fn texts(&self) -> Vec<String> {
         let mut said = Vec::new();
         let mut stack = vec![self.root.clone().upcast::<gtk::Widget>()];
@@ -256,7 +228,6 @@ impl RulesView {
         self.rules.borrow().get(index).cloned()
     }
 
-    /// What each rule holds now: one request, one statement.
     fn read_holds(&self) {
         let names: Vec<String> = self
             .rules
@@ -276,7 +247,6 @@ impl RulesView {
             let (Some(view), Ok(holds)) = (weak.upgrade(), read) else {
                 return;
             };
-            // Only if the list is still the one asked about.
             let still: Vec<String> = view
                 .rules
                 .borrow()
@@ -294,13 +264,10 @@ impl RulesView {
         });
     }
 
-    /// Draw the rows again, the keyboard kept (`crate::rebuild`).
     fn show(&self) {
         crate::rebuild::keeping_focus(&self.list, || self.rebuild());
     }
 
-    /// One row a rule: its name, what it matches, when it delivers, when
-    /// it next does, and what it holds.
     fn rebuild(&self) {
         while let Some(child) = self.list.first_child() {
             self.list.remove(&child);
@@ -378,15 +345,13 @@ impl RulesView {
             item.set_child(Some(&line));
             self.list.append(&item);
         }
-        // Rows are rebuilt here, including after `read_holds`'s async
-        // fetch lands, so a cap taught only once after `open()` would miss
-        // every row this redraw replaces (T142, T143).
+        // Rows are rebuilt here, including after `read_holds`'s fetch lands, so a cap taught only
+        // once after `open()` would miss every row this redraw replaces.
         crate::a11y::teach_shortcuts(&self.root);
         crate::motion::keep_to_budget(&self.root);
     }
 }
 
-/// The focused row's buttons, in a row of the list.
 fn actions_of(row: &gtk::Widget) -> Option<gtk::Widget> {
     let mut stack = vec![row.clone()];
     while let Some(widget) = stack.pop() {

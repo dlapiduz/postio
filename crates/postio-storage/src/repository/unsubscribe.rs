@@ -1,9 +1,5 @@
-//! The one-click-unsubscribe activation log (#971).
-//!
-//! See `postio_model::unsubscribe` and migration 0008 for the shape and
-//! the reason it exists: CLAUDE.md's privacy section requires activation
-//! to be deliberate, and this is the record of it, the same append-only
-//! shape `EgressLogRepository` already uses for the same kind of claim.
+//! The one-click-unsubscribe activation log (#971): the deliberate-activation record the privacy
+//! section requires, append-only like `EgressLogRepository` (migration 0008).
 
 use postio_model::UnsubscribeActivation;
 use postio_model::ids::{AccountId, UnsubscribeActivationId};
@@ -15,7 +11,6 @@ use crate::sql::{self, RowExt as _, bind};
 use crate::store::Connection;
 use turso::Row;
 
-/// Read and write the unsubscribe-activation log on one connection.
 pub struct UnsubscribeRepository<'a> {
     connection: &'a Connection,
 }
@@ -23,12 +18,10 @@ pub struct UnsubscribeRepository<'a> {
 const COLUMNS: &str = "id, account_id, list_identifier, activated_at";
 
 impl<'a> UnsubscribeRepository<'a> {
-    /// Borrow `connection` for unsubscribe-log reads and writes.
     pub fn new(connection: &'a Connection) -> Self {
         Self { connection }
     }
 
-    /// Appends one activation, assigning its id.
     pub async fn record(
         &self,
         activation: &mut UnsubscribeActivation,
@@ -49,8 +42,6 @@ impl<'a> UnsubscribeRepository<'a> {
         Ok(id)
     }
 
-    /// Every activation for `account_id`, newest first — what the privacy
-    /// settings pane lists.
     pub async fn for_account(&self, account_id: AccountId) -> Result<Vec<UnsubscribeActivation>> {
         sql::all(
             self.connection,

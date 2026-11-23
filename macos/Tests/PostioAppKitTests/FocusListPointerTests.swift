@@ -5,14 +5,6 @@ import Testing
 @testable import PostioAppKit
 @testable import PostioKit
 
-/// The pointer and the controller's intents on the table
-/// (specs/009-focus-macos T049, contracts/mac-surfaces.md "List").
-///
-/// The table never moves its own cursor or selection: a click is reported
-/// to the controller, and the ring and the boxes move when its intents come
-/// back. A table that moved them itself would be a second opinion about
-/// where the keyboard is, and the two would disagree the first time the
-/// controller refused a row (a digest row cannot be selected).
 @MainActor
 struct FocusListPointerTests {
     static func table(_ count: Int) -> FocusListTable {
@@ -99,7 +91,6 @@ struct FocusListPointerTests {
     }
 
     @Test func theSingleHeadingStandsOverTheFirstRowOnly() {
-        // `!` on: one heading replaces the day headings (screen 03).
         let table = Self.table(3)
         table.pageArrived(0)
         table.apply(table.model.focus.apply(.focusHeading(text: "Has action \u{b7} 3"))!)
@@ -131,7 +122,6 @@ struct FocusListPointerTests {
     }
 }
 
-/// The menu `A` shows over the open message: GTK's chooser's choices.
 @MainActor
 struct AttachmentMenuTests {
     static let choices = OpenChoicesFfi(
@@ -142,7 +132,6 @@ struct AttachmentMenuTests {
         ],
         nothing: nil, save: "Save", saveAll: "Save all")
 
-    /// Choose the item titled `title` from `menu`.
     private func choose(_ title: String, in menu: NSMenu) {
         guard let item = menu.items.first(where: { $0.title == title }) else {
             Issue.record("no item \(title)")

@@ -1,42 +1,25 @@
-//! A sender's remembered treatment, behind one interface
-//! (specs/011-focus-contacts S3, ADR 0048).
-//!
-//! "Always draw this sender's mail this way" is the person's, so it lives on
-//! the contact in the store, and a reader that looks senders up as a message
-//! opens cannot ask the store each time. [`SenderTreatments`] is what a
-//! reader holds; [`Remembered`] is the table the host fills it from, kept in
-//! memory, which answers at once and tells the host what changed.
+//! A sender's remembered treatment (specs/011-focus-contacts S3, ADR 0048).
+//! `Remembered` is the in-memory table a reader holds, so it need not ask the store per message.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
 use postio_body::treatment::Treatment;
 
-/// Whatever remembers how a sender's mail is always drawn.
 pub trait SenderTreatments {
-    /// The treatment chosen for `sender`, if one was.
     fn treatment_for(&self, sender: &str) -> Option<Treatment>;
 
-    /// Remember `treatment` for `sender`, or forget the choice with `None`.
     fn set_treatment(&self, sender: &str, treatment: Option<Treatment>);
 }
 
-/// What is told when a treatment is set or forgotten: the sender, and the
-/// treatment or `None`.
 type Changed = Box<dyn Fn(&str, Option<Treatment>)>;
 
-/// Treatments held in memory and kept in step with the store by the app that
-/// owns the reader: it fills the table ([`Remembered::replace`]) from what
-/// the host holds and hears every change through the callback given to
-/// [`Remembered::new`].
 pub struct Remembered {
     chosen: RefCell<BTreeMap<String, Treatment>>,
     changed: Changed,
 }
 
 impl Remembered {
-    /// An empty table that calls `changed` with each `(sender, treatment)`
-    /// it is given to remember.
     pub fn new(changed: impl Fn(&str, Option<Treatment>) + 'static) -> Self {
         Remembered {
             chosen: RefCell::default(),
@@ -44,9 +27,7 @@ impl Remembered {
         }
     }
 
-    /// Replace the table with what the store holds: `(address, "app" |
-    /// "paper")`, an entry per address of each person who chose. A word that
-    /// names no treatment is left out.
+    /// A word that names no treatment is left out.
     pub fn replace(&self, entries: impl IntoIterator<Item = (String, String)>) {
         *self.chosen.borrow_mut() = entries
             .into_iter()

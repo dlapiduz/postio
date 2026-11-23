@@ -1,13 +1,6 @@
-//! The plain-text fallback (spec 006 FR-023; specs/007-postio-focus T218):
-//! when it is drawn, and what it looks like.
-//!
-//! What is asserted is the snapshot the view holds -- what a person would
-//! read -- never what the view was handed.
-
 use std::rc::Rc;
 use std::time::Duration;
 
-use gtk::gdk;
 use gtk::prelude::*;
 use postio_model::message::MessageBody;
 use postio_render::{FallbackReason, Outcome};
@@ -16,20 +9,12 @@ use postio_widgets::reader::{Reader, RemoteImageAllowList};
 
 use crate::support::{content, until};
 
-/// A render that finished inside its deadline is the one shown, even when
-/// the main loop came back to it late. The deadline and the poll for the
-/// result are both main-loop timers; a main thread busy past the deadline
-/// (sanitising the next message, laying out the dialog, a sync landing)
-/// found both due at once, ran the deadline first, and replaced a finished
-/// render with the plain-text fallback.
+/// The deadline and the result poll are both main-loop timers; a main thread busy past the deadline
+/// found both due, ran the deadline first and replaced a finished render with the fallback.
 ///
 /// POSTIO-MEASUREMENT: it sleeps two seconds so the main loop is late, which no fake
 /// clock can stand in for under GTK, so it runs on the nightly timer.
 pub fn a_finished_render_is_shown_when_the_main_loop_was_late() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let deadline = Duration::from_millis(200);
     let view = BodyView::new(deadline);
     let scroller = gtk::ScrolledWindow::builder().child(&view).build();
@@ -42,8 +27,6 @@ pub fn a_finished_render_is_shown_when_the_main_loop_was_late() {
     assert!(until(|| view.width() > 0), "the view was never allocated");
 
     view.set_content_from_top(content("plain-text-simple"));
-    // The render runs on its own thread and is done long before this ends;
-    // the main loop is what is late.
     std::thread::sleep(postio_test_support::scaled(Duration::from_secs(2)));
     assert!(
         until(|| view.document().is_some()),
@@ -58,15 +41,12 @@ pub fn a_finished_render_is_shown_when_the_main_loop_was_late() {
     );
 }
 
-/// The words both messages carry: two paragraphs, long enough to wrap.
 const WORDS: &str = "The survey starts Monday at the north gate, and the crew \
                      meets at seven with the long tapes, the level and enough \
                      water for the morning.\n\nBring the field books from last \
                      season; the corner stakes moved in the spring floods and \
                      every one of them needs checking against the old notes.";
 
-/// A reader as Focus's open message has one: flowing in a column, drawing
-/// treatments when `treated`, in a window `width` wide.
 fn reader(name: &str, treated: bool, width: i32) -> (gtk::Window, Reader) {
     let reader = Reader::with_allowlist(
         Rc::new(|_content_id: &str| None),
@@ -93,9 +73,6 @@ fn reader(name: &str, treated: bool, width: i32) -> (gtk::Window, Reader) {
     (window, reader)
 }
 
-/// Where each character of the first paragraph is drawn, from its first
-/// word: the column's edges, the face's advances and the lines' rhythm,
-/// all in one list of rectangles.
 fn drawn_words(reader: &Reader) -> Vec<(f64, f64, f64, f64)> {
     let document = reader.view().document().expect("a snapshot");
     let text = &document.text.text;
@@ -114,20 +91,9 @@ fn drawn_words(reader: &Reader) -> Vec<(f64, f64, f64, f64)> {
     rects
 }
 
-/// The plain text a render past its deadline shows is laid out as a
-/// plain-text body is (T218): the same column edges, the same face and
-/// size, the same line rhythm. It was the renderer's own page -- 16px in
-/// from both edges, another face, under a serif notice inside the body.
-///
-/// Compared glyph for glyph against the same words sent as plain text,
-/// drawn by the same reader at the same width: in Focus (treatments, the
-/// line above says why) at the same place exactly; in the classic reader
-/// (the notice is in the document) at the same edges, one notice lower.
+/// Compared glyph for glyph against the same words sent as plain text: same column edges, face,
+/// size and line rhythm.
 pub fn a_fallback_is_laid_out_as_a_plain_text_body() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     for treated in [true, false] {
         let (window, reader) = reader("layout", treated, 560);
         let sent_as_text = MessageBody {
@@ -172,8 +138,7 @@ pub fn a_fallback_is_laid_out_as_a_plain_text_body() {
         reader.view().release_renders();
         window.close();
 
-        // Never a silent swap (FR-023): with no line above the body to say
-        // it, the document does.
+        // Never a silent swap: with no line above the body to say so, the document does.
         assert_eq!(
             said.contains("Shown as plain text: this message took too long to lay out."),
             !treated,
@@ -205,14 +170,8 @@ pub fn a_fallback_is_laid_out_as_a_plain_text_body() {
     }
 }
 
-/// In Focus the body that fell back is in neither treatment, so the
-/// render-mode line says what it is and why, and offers nothing to switch
-/// to; the body carries no notice of its own to say it twice (T218).
+/// The body carries no notice of its own, so the render-mode line is the only place it says so.
 pub fn the_render_mode_line_says_a_body_fell_back() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let (window, reader) = reader("line", true, 700);
     reader.view().hold_renders();
     reader.render(

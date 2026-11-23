@@ -1,9 +1,6 @@
-//! Putting a file on a draft (#1269).
-
 use postio_session::attaching::{LARGEST_ATTACHMENT, attach_file, inline_image};
 use postio_storage::test_support;
 
-/// A blob store of its own, and a file to put in it.
 fn a_store() -> (postio_storage::BlobStore, tempfile::TempDir) {
     let scratch = tempfile::tempdir().expect("a scratch directory");
     let blobs = postio_storage::BlobStore::open(scratch.path(), &test_support::blob_keys())
@@ -28,9 +25,6 @@ fn a_file_becomes_bytes_in_the_store_and_a_row_on_the_draft() {
         "it belongs to no message until the draft is sent"
     );
 
-    // The bytes are actually there — an attachment naming a blob that is not
-    // is a message that cannot be sent and cannot be repaired from inside the
-    // application.
     let id = attachment.blob_id.expect("the attachment names a blob");
     let mut held = Vec::new();
     std::io::Read::read_to_end(
@@ -43,8 +37,6 @@ fn a_file_becomes_bytes_in_the_store_and_a_row_on_the_draft() {
 
 #[test]
 fn a_file_that_is_not_there_is_refused_without_naming_it() {
-    // An attachment's name is the user's, and an error string is a thing
-    // people paste into bug reports.
     let (blobs, scratch) = a_store();
     let missing = scratch.path().join("not-here.pdf");
 
@@ -59,9 +51,6 @@ fn a_file_that_is_not_there_is_refused_without_naming_it() {
 
 #[test]
 fn something_far_too_large_is_refused_before_its_bytes_are_copied() {
-    // The accident this guards: a disk image dragged into a compose window,
-    // quietly costing a gigabyte of the store for a message no server will
-    // accept anyway.
     let (blobs, scratch) = a_store();
     let path = scratch.path().join("enormous.img");
     let file = std::fs::File::create(&path).expect("a file");
@@ -71,13 +60,11 @@ fn something_far_too_large_is_refused_before_its_bytes_are_copied() {
     let error = attach_file(&blobs, &path, "application/octet-stream").expect_err("too big");
 
     assert!(error.contains("will not attach"), "{error}");
-    // And it says how big, in the units a person thinks in.
     assert!(error.contains("MB") || error.contains("GB"), "{error}");
 }
 
 #[test]
 fn a_type_nothing_recognises_still_attaches() {
-    // "Some bytes" is better than refusing a file over a type nothing knows.
     let (blobs, scratch) = a_store();
     let path = scratch.path().join("thing.whatever");
     std::fs::write(&path, b"...").expect("a file");
@@ -87,10 +74,6 @@ fn a_type_nothing_recognises_still_attaches() {
     assert_eq!(attachment.mime_type, "application/octet-stream");
 }
 
-// -- an image in the body rather than beside it (#1571) ----------------------
-
-/// A few bytes that say they are a PNG. Nothing here decodes them: the type
-/// is the caller's answer, as it is for `attach_file`.
 const PIXELS: &[u8] = b"\x89PNG\r\n\x1a\nnot really a picture";
 
 #[test]
@@ -108,8 +91,6 @@ fn an_inline_image_is_bytes_in_the_store_named_by_a_content_id() {
     assert_eq!(attachment.size, PIXELS.len() as u64);
     assert_eq!(attachment.filename.as_deref(), Some("inline-image.png"));
 
-    // The id the body will reference, on a reserved domain: it can never be
-    // mistaken for, or collide with, anything real.
     let content_id = attachment
         .content_id
         .clone()
@@ -125,8 +106,6 @@ fn an_inline_image_is_bytes_in_the_store_named_by_a_content_id() {
 
 #[test]
 fn the_same_picture_twice_is_one_content_id() {
-    // The blob store deduplicates by content, and the id is the blob's: an
-    // image pasted twice is one part referenced twice, not two parts.
     let (blobs, _scratch) = a_store();
     let first = inline_image(&blobs, PIXELS, "image/png").expect("it inlines");
     let second = inline_image(&blobs, PIXELS, "image/png").expect("it inlines");

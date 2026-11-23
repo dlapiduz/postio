@@ -1,32 +1,10 @@
-//! What owns Postio's store, in the process of the app that opened it.
-//!
-//! Turso holds an exclusive lock on the database file, and the operation
-//! queue is correct only with one drainer, so one app at a time opens the
-//! store -- the desktop app or the terminal -- and runs the engines in its
-//! own process (ADR 0041). Whichever it is starts a [`Host`] over the store
-//! ([`Host::open`]) and reads and writes only through `postio-client`'s
-//! [`Client`], handed out by [`Host::connect`] with no encoding in between:
-//! a request is a value on a channel, answered on the host's runtime.
-//!
-//! # A selection per client
-//!
-//! Each client has its own selection, focus and undo history, and the host
-//! has none of its own. So each connected client gets its own verbs over the
-//! store: its own [`SharedState`], which adopts the snapshot each of its
-//! commands carries, and its own [`Actions`], whose undo stack is therefore
-//! that client's alone (research R1a). A window's first-run screen and its
-//! panes are two clients of one host.
-//!
-//! Commands from every client run **one at a time, in arrival order**, on
-//! one queue. That is what the single bridge pump guaranteed, and the verbs
-//! were written against it.
-//!
-//! # Whose events are whose
-//!
-//! What a command changed in the store is everybody's news. What a command
-//! *says about itself* is its sender's alone: the "Archived 12 messages —
-//! Undo" notice, a refusal, an error, the end of a tracked send.
-//! [`is_feedback`] draws that line.
+//! What owns Postio's store in the app's process: one app at a time opens it (Turso's exclusive
+//! lock, one queue drainer) and starts a [`Host`] (ADR 0041).
+//! Clients reach it only through `postio-client`'s [`Client`] from [`Host::connect`]; each has its
+//! own selection, undo history, [`SharedState`] and [`Actions`], and commands from all run one at a
+//! time in arrival order.
+//! What a command changed is everybody's news; what it says about itself (notices, refusals) is its
+//! sender's alone ([`is_feedback`]).
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -45,8 +23,6 @@ use postio_storage::{BlobStore, Store};
 
 pub use focus::{FocusHandle, FocusSetup};
 
-/// The store's owner in this process, serving the clients connected to it.
-///
 /// Dropping it stops its runtime, and with it the engines.
 pub struct Host {
     inner: Arc<Inner>,
@@ -57,43 +33,25 @@ pub struct Host {
 
 struct Inner {
     wiring: Wiring,
-    /// What each address's last probe offered for JMAP, for the submission
-    /// that follows it.
     offers: Mutex<HashMap<String, Option<postio_account::discovery::JmapOffer>>>,
-    /// What each address's last probe offered for a browser sign-in.
     oauth_offers: Mutex<HashMap<String, postio_account::discovery::OAuthOffer>>,
-    /// The browser sign-ins under way, by address.
     sign_ins: Mutex<HashMap<String, SignIn>>,
-    /// Where everybody's news goes: a sink on the event hub, or over a
-    /// wiring built elsewhere, whatever that wiring reports to.
     hub: EventSink,
     clients: Mutex<HashMap<ClientId, Entry>>,
     next_client: AtomicU64,
     queue: async_channel::Sender<Queued>,
-    /// `[sync]`'s notification settings: which folders' arrivals notify.
     notify: Mutex<postio_config::SyncConfig>,
-    /// The engine syncing each account, once started.
     engines: Engines,
-    /// Focus mode's tasks, once Focus has switched it on (spec 007). `None`
-    /// in every host but Focus's.
     focus: Mutex<Option<FocusHandle>>,
-    /// Where `config.toml` is, when the host was opened on one: where Focus
-    /// writes the person's corrections, unless told otherwise.
     config_path: Mutex<Option<std::path::PathBuf>>,
-    /// Whether this process has moved the file's address-keyed entries onto
-    /// the correspondents they name (`focus::contacts_move`).
     contacts_moved: std::sync::atomic::AtomicBool,
-    /// Likewise for the remote-image list's treatments.
     treatments_moved: std::sync::atomic::AtomicBool,
-    /// The bodies a reading pane has asked for (#1788).
     asked_bodies: Arc<reading::AskedBodies>,
-    /// Each account's link, for the plate of a body that is not here (#1986).
     links: Arc<reading::Links>,
     #[cfg(test)]
     searches_in_flight: AtomicU64,
 }
 
-/// Observe this operation's lifetime, including cancellation, in host tests.
 #[cfg(test)]
 struct SearchProbe<'a>(&'a AtomicU64);
 
@@ -112,51 +70,34 @@ impl Drop for SearchProbe<'_> {
     }
 }
 
-/// The engine syncing each account: at most one per account, however many
-/// times a frontend asks for sync to start.
 type Engines = Arc<EngineTable>;
 
 #[derive(Default)]
 struct EngineTable {
     running: Mutex<HashMap<postio_model::AccountId, postio_runtime::Engine>>,
-    /// The bodies asked of these engines. A request waits in an engine's
-    /// memory, so a new engine for an account starts without the ones its
-    /// predecessor held, and what was asked of that one is asked again
-    /// ([`adopt`], #1986).
+    /// A request waits in an engine's memory, so a new engine starts without the old one's; what
+    /// was asked is asked again ([`adopt`], #1986).
     asked: Arc<reading::AskedBodies>,
-    /// Held while engines start, so two asks at once -- the app's own at
-    /// startup and one after an account is added -- cannot both find none
-    /// running.
+    /// Held while engines start, so two simultaneous asks cannot both find none running.
     starting: tokio::sync::Mutex<()>,
 }
 
-/// One connected frontend, as the host holds it.
 #[derive(Clone)]
 struct Entry {
     kind: ClientKind,
     state: SharedState,
     verbs: Arc<Dispatcher>,
-    /// The actions behind `verbs`: what its undo stack would take back is
-    /// read here (`Req::UndoTop`).
     actions: Actions,
-    /// Where this client's own command events go, to be sorted.
     sink: EventSink,
-    /// Where this client hears everything: an agent acting beside it tells
-    /// it what the agent's commands said about themselves.
     outbox: async_channel::Sender<EventEnvelope>,
-    /// The tasks that carry this client's events, stopped when it leaves:
-    /// the hub never closes a subscription on its own.
+    /// Stopped when the client leaves: the hub never closes a subscription on its own.
     tasks: Vec<tokio::task::AbortHandle>,
-    /// This client's draft writes, in the order it made them.
     drafts: compose::DraftWriter,
 }
 
-/// Start syncing every enabled account that is not syncing yet.
-///
-/// From nothing, every account is started together, under the connection
-/// budget's judgement of the whole set; once some are running, each one
-/// missing joins them, as an account added while Postio runs does. Either
-/// way an account never gets a second engine.
+/// From nothing, every account starts together under the connection budget's judgement; later, each
+/// missing one joins.
+/// An account never gets a second engine.
 async fn start_sync(wiring: Wiring, engines: Engines) {
     let _starting = engines.starting.lock().await;
     let accounts = match wiring.database.read().await {
@@ -209,8 +150,6 @@ async fn start_sync(wiring: Wiring, engines: Engines) {
     }
 }
 
-/// Keep `engine` as `account`'s: retained so the process stops it before
-/// exiting, and in the slot `Refresh` reads if it is the first.
 fn adopt(
     wiring: &Wiring,
     engines: &Engines,
@@ -225,13 +164,11 @@ fn adopt(
         .expect("never poisoned")
         .insert(account, engine);
     if let Some(old) = replaced {
-        // Two engines on one account would hold two connections, poll twice
-        // and drain one queue twice. The new one is in the table and wired
-        // above, so nothing lands on the closed channel of the old.
+        // Two engines on one account would hold two connections, poll twice and drain one queue
+        // twice.
         postio_runtime::retire(old);
-        // What the old engine had queued went with it, and the host would
-        // otherwise take the ask for still standing for a minute. Only what
-        // was asked is asked again, by the panes that were waiting on it.
+        // What the old engine had queued went with it; ask again, or the host would take the ask as
+        // standing for a minute.
         for message in engines.asked.forget_account(account) {
             wiring
                 .events
@@ -240,7 +177,6 @@ fn adopt(
     }
 }
 
-/// Start the sync of the account saved for `address`, and no other.
 async fn start_engine_for(wiring: &Wiring, engines: &Engines, address: &str) {
     let Ok(connection) = wiring.database.read().await else {
         return;
@@ -261,9 +197,8 @@ async fn start_engine_for(wiring: &Wiring, engines: &Engines, address: &str) {
     }
 }
 
-/// Rebuild `account`'s local search index (#981), announcing each reading
-/// as [`Event::BackfillProgress`] on the account's own id: one progress
-/// channel, not two.
+/// Progress is [`Event::BackfillProgress`] on the account's own id: one progress channel, not two
+/// (#981).
 async fn rebuild(database: Store, events: EventSink, account: postio_model::AccountId) {
     let rebuilt = postio_session::reindex_account(&database, account, |done, total| {
         events.emit(Event::BackfillProgress {
@@ -278,21 +213,16 @@ async fn rebuild(database: Store, events: EventSink, account: postio_model::Acco
     }
 }
 
-/// A write's answer: done, or the store's sentence for why not.
 fn done(written: Result<(), postio_model::listing::StoreError>) -> Resp {
     written.map_or_else(Resp::Failed, |()| Resp::Done)
 }
 
-/// A browser sign-in under way.
 struct SignIn {
-    /// Gives it up.
     cancel: postio_account::cancel::CancelToken,
-    /// How it ended, once it has.
     done: tokio::sync::watch::Receiver<Option<Result<(), String>>>,
 }
 
-/// The host's browser opener: it opens nothing, and reports the URL to the
-/// frontend that asked, which opens it only when the person does.
+/// Opens nothing: reports the URL to the asking frontend, which opens it only when the person does.
 struct Announcer(Mutex<Option<tokio::sync::oneshot::Sender<postio_account::oauth::Url>>>);
 
 impl postio_account::oauth::BrowserOpener for Announcer {
@@ -304,14 +234,10 @@ impl postio_account::oauth::BrowserOpener for Announcer {
     }
 }
 
-/// A request answered on arrival, or one left to be answered concurrently.
 enum InOrder {
-    /// Answered now, in the order it arrived.
     Answered(Resp),
-    /// A read, to answer on a task of its own.
     Later(Req),
-    /// Handed over in the order it arrived, answered when it lands: a draft
-    /// write, which must not overtake the one before it.
+    /// A draft write, which must not overtake the one before it.
     Pending(std::pin::Pin<Box<dyn std::future::Future<Output = Resp> + Send>>),
 }
 
@@ -320,21 +246,15 @@ struct Queued {
     command: Command,
     aim: StateSnapshot,
     invocation: Option<InvocationId>,
-    /// The command's target is a search's whole match, resolved when it
-    /// runs: in order with every other command, as one unit.
     matching: Option<Matching>,
 }
 
-/// Every conversation a query matches but the rows taken back out
-/// (`Req::SendMatching`).
 struct Matching {
     account: postio_model::AccountScope,
     query: postio_search::ParsedQuery,
     except: Vec<postio_model::MessageId>,
 }
 
-/// Whether `event` is a command speaking about itself, which only the
-/// frontend that sent the command should hear.
 pub fn is_feedback(event: &Event) -> bool {
     matches!(
         event,
@@ -346,32 +266,24 @@ pub fn is_feedback(event: &Event) -> bool {
     )
 }
 
-/// Worker threads for the host's runtime: the desktop app's number, and its
-/// reason (#1502). The work is I/O-bound command handling -- the engines and
-/// the store have threads of their own -- and every idle worker is another
-/// malloc arena kept after a burst.
+/// The work is I/O-bound command handling, and every idle worker is another malloc arena kept after
+/// a burst (#1502).
 const WORKER_THREADS: usize = 2;
 
-/// The blocking pool's ceiling, as the desktop app bounded it: the passes
-/// after the first frame and the odd synchronous read, without climbing
-/// toward tokio's default of 512 in a burst.
+/// Bounded rather than tokio's default of 512 in a burst.
 const BLOCKING_THREADS: usize = 8;
 
-/// A frontend's verbs over the shared store: the session's actions and
-/// refresh, resolving against `state`.
 fn verbs(wiring: &Wiring, state: &SharedState) -> Dispatcher {
     verbs_over(wiring, state, actions_for(wiring, state))
 }
 
-/// The session's actions for one frontend: kept beside its dispatcher so the
-/// host can read its undo stack without running a command.
+/// Kept beside its dispatcher so the host can read its undo stack without running a command.
 fn actions_for(wiring: &Wiring, state: &SharedState) -> Actions {
     Actions::new(wiring.database.clone(), state.clone())
         .with_blob_store(wiring.blobs.clone())
         .with_focus(wiring.focus.clone())
 }
 
-/// [`verbs`], over `actions` the caller keeps a handle to.
 fn verbs_over(wiring: &Wiring, state: &SharedState, actions: Actions) -> Dispatcher {
     let builder = actions::wire(Dispatcher::builder(), actions);
     refresh::wire(
@@ -384,11 +296,6 @@ fn verbs_over(wiring: &Wiring, state: &SharedState, actions: Actions) -> Dispatc
 }
 
 impl Host {
-    /// Take ownership of an open store and start serving.
-    ///
-    /// `configure` finishes the wiring the way the installation asks --
-    /// mailbox roles, sync policy, the keyring -- exactly as the desktop app
-    /// finished its own before this process existed.
     pub fn start(
         database: Store,
         blobs: BlobStore,
@@ -426,17 +333,10 @@ impl Host {
         Ok(Host::serving(wiring, hub.sink(), Some(bridge)))
     }
 
-    /// Read the store key, open the store, and start a host over it, wired
-    /// as `config.toml` at `config_path` asks: what an app does before it
-    /// shows anything, in its own process.
-    ///
-    /// `report` hears each wait before it starts -- the keyring, then the
-    /// store's own stages -- so a frontend can say what it is waiting on.
-    /// Blocks the calling thread for all of it. `Err` is a sentence for a
-    /// person and the way past it: a keyring that will not answer, or a
-    /// store that will not open -- among them [`postio_storage::Error::InUse`],
-    /// another Postio having it open, which trying again gets past, and a
-    /// schema no migration reaches, which only starting over does.
+    /// `Err` is a sentence for a person and the way past it: a keyring that will not answer, a
+    /// store another Postio has open (trying again gets past), or a schema no migration reaches
+    /// (only starting over does). `report` hears each wait before it starts. Blocks the calling
+    /// thread.
     pub fn open(
         config_path: Option<&std::path::Path>,
         secrets: Arc<dyn postio_account::secret::SecretStore>,
@@ -450,9 +350,7 @@ impl Host {
         )
     }
 
-    /// [`Host::open`], over the store at `store` rather than this
-    /// installation's: for a suite that needs a store per case, which a
-    /// process-wide `POSTIO_STORE` cannot give it.
+    /// For a suite that needs a store per case, which a process-wide `POSTIO_STORE` cannot give.
     pub fn open_at(
         config_path: Option<&std::path::Path>,
         store: &std::path::Path,
@@ -466,8 +364,8 @@ impl Host {
         let key = postio_session::store_key_blocking(secrets.as_ref())
             .map_err(|error| postio_session::key_refusal(&error))?;
         let (database, blobs) = {
-            // Its own runtime, dropped before the host's exists: opening the
-            // store is async, and nothing else is running yet to host it.
+            // Its own runtime, dropped before the host's exists: opening the store is async and
+            // nothing else is running to host it.
             let runtime = tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(1)
                 .enable_all()
@@ -513,19 +411,13 @@ impl Host {
                 .with_secrets(secrets)
         })
         .map_err(Refusal::try_again)?;
-        // Which folders' arrivals are worth a notification.
         host.notify_with(sync_config);
         *host.inner.config_path.lock().expect("never poisoned") =
             config_path.map(std::path::Path::to_path_buf);
         Ok(host)
     }
 
-    /// Adopt a wiring built elsewhere -- the desktop app's, or an
-    /// integration suite's -- rather than opening the store again: its
-    /// runtime, its event hub, its engines' slot.
-    ///
-    /// A wiring whose events go to a single reader rather than a hub still
-    /// has its store served, and still hears what the host's verbs change;
+    /// A wiring whose events go to a single reader rather than a hub still has its store served;
     /// its clients hear only what their own commands say about themselves.
     pub fn over(wiring: Wiring) -> Host {
         let hub = wiring.events.clone();
@@ -561,8 +453,8 @@ impl Host {
                 pump.run(queued).await;
             }
         });
-        // The links, heard once for the host rather than once per client:
-        // the word is kept before the panes are told to read again.
+        // Heard once for the host, not per client: the word is kept before the panes are told to
+        // read again.
         if let Some(news) = inner.hub.subscribe("host:links") {
             let links = Arc::clone(&inner.links);
             let hub = inner.hub.clone();
@@ -582,17 +474,11 @@ impl Host {
         }
     }
 
-    /// Notify about arrivals as `[sync]` in `config` says: `notify` and
-    /// `notify_roles`. The defaults until this is called.
     pub fn notify_with(&self, config: postio_config::SyncConfig) {
         *self.inner.notify.lock().expect("never poisoned") = config;
     }
 
-    /// Whether `messages` arriving in `mailbox` is worth a notification, and
-    /// what it says, while the person's `attention` is where it is:
-    /// [`notify::decide_arrival`] under `[sync]` as [`Host::notify_with`]
-    /// last set it. Read on the host's runtime; the answer is awaited
-    /// anywhere.
+    /// Read on the host's runtime; the answer is awaited anywhere.
     pub fn notification(
         &self,
         mailbox: postio_model::MailboxId,
@@ -616,9 +502,8 @@ impl Host {
         async move { deciding.await.ok().flatten() }
     }
 
-    /// [`Host::notification`], for Focus: only about the arrivals Focus's
-    /// inbox still lists, never mail it filtered or held (FR-153). `None`
-    /// when none of them stayed.
+    /// Only about arrivals Focus's inbox still lists, never mail it filtered or held. `None` when
+    /// none stayed.
     pub fn focus_notification(
         &self,
         mailbox: postio_model::MailboxId,
@@ -655,28 +540,20 @@ impl Host {
         async move { deciding.await.ok().flatten() }
     }
 
-    /// The verbs each frontend's dispatcher answers, for a frontend that
-    /// filters its gestures by them as the desktop's window does.
     pub fn wired(&self) -> Vec<postio_core::CommandId> {
         verbs(&self.inner.wiring, &SharedState::default())
             .wired()
             .collect()
     }
 
-    /// The wiring every read and the engines hang off.
     pub fn wiring(&self) -> &Wiring {
         &self.inner.wiring
     }
 
-    /// Whether Focus mode has been switched on ([`Host::enable_focus`]).
     pub fn focus_enabled(&self) -> bool {
         self.inner.focus.lock().expect("never poisoned").is_some()
     }
 
-    /// Start a sync engine for every enabled account, on the host's runtime.
-    ///
-    /// Sync runs while the app that opened the store runs, and stops with
-    /// the host ([`Host::stop`]).
     pub fn start_syncing(&self) {
         let wiring = self.inner.wiring.clone();
         let engines = Arc::clone(&self.inner.engines);
@@ -685,16 +562,11 @@ impl Host {
             .spawn(async move { start_sync(wiring, engines).await });
     }
 
-    /// Start the passes that catch the store up with itself: the body
-    /// indexer, the header repair and index, and the disk reclaim
-    /// ([`maintenance::spawn_idle_passes`]).
     pub fn start_idle_passes(&self) {
         maintenance::spawn_idle_passes(&self.inner.wiring);
     }
 
-    /// The same passes, `delay` from now: long enough for the first
-    /// frontend's first pages to have had the runtime to themselves, since
-    /// nobody is waiting on any of this (#1604).
+    /// Delayed so the first frontend's first pages have the runtime to themselves (#1604).
     pub fn start_idle_passes_after(&self, delay: std::time::Duration) {
         let wiring = self.inner.wiring.clone();
         self.inner.runtime().spawn(async move {
@@ -703,20 +575,14 @@ impl Host {
         });
     }
 
-    /// The host's runtime, for a frontend that has work of its own to run
-    /// there: Focus's remote-image fetch, as the desktop app runs its own.
     pub fn runtime(&self) -> tokio::runtime::Handle {
         self.inner.runtime().clone()
     }
 
-    /// Stop this host's engines and mark a clean end, before the host is
-    /// dropped.
-    ///
-    /// Engines first: they are the one thing still writing on threads of
-    /// their own, and a write torn by the process exit is left for a pre-1.0
-    /// engine to recover (the classic app's startup said the same, and did this).
-    /// Only this host's: a process with several -- a test suite -- stopped
-    /// every one of them whenever one host ended (#1976).
+    /// Engines first: they are the one thing still writing on threads of their own. Only this
+    /// host's are stopped;
+    /// a process with several hosts (a test suite) once stopped every one whenever one ended
+    /// (#1976).
     pub fn stop(&self) {
         let engines: Vec<_> =
             std::mem::take(&mut *self.inner.engines.running.lock().expect("never poisoned"))
@@ -726,25 +592,18 @@ impl Host {
         self.close();
     }
 
-    /// What [`Host::stop`] does once nothing is syncing: Focus's mark kept
-    /// current, so nothing that landed since its last tick is sorted again
-    /// at the next open, and the store's clean end. Apart so a test can
-    /// close a host and launch the next session over the same store.
+    /// Kept apart so a test can close a host and launch the next session over the same store.
     pub(crate) fn close(&self) {
         self.keep_focus_mark();
         postio_session::blocking::now(postio_session::end_session(&self.inner.wiring.database));
     }
 
-    /// What hands out clients of this host to something that outlives a
-    /// borrow of it: the agent socket's connections (ADR 0041, amended
-    /// 2026-10-14).
     pub fn connector(&self) -> Connector {
         Connector {
             inner: Arc::clone(&self.inner),
         }
     }
 
-    /// A client of this host: every frontend's, in its own process.
     pub fn connect(&self, kind: ClientKind) -> Client {
         let (id, events) = self.inner.join(kind);
         Client::new(Arc::new(Local {
@@ -755,8 +614,6 @@ impl Host {
     }
 }
 
-/// Hands out clients of a host, from anywhere: a clone of what
-/// [`Host::connect`] uses, without the host's runtime.
 #[derive(Clone)]
 pub struct Connector {
     inner: Arc<Inner>,
@@ -769,7 +626,6 @@ impl std::fmt::Debug for Connector {
 }
 
 impl Connector {
-    /// A client of the host, as [`Host::connect`].
     pub fn connect(&self, kind: ClientKind) -> Client {
         let (id, events) = self.inner.join(kind);
         Client::new(Arc::new(Local {
@@ -779,16 +635,10 @@ impl Connector {
         }))
     }
 
-    /// A client for an agent's calls ([`ClientKind::Mcp`]), standing beside
-    /// the app window that connected last.
-    ///
-    /// It shares that window's verbs, so what the agent does is on the
-    /// window's undo stack and `u` there takes it back, and the window
-    /// hears the undo offer each of the agent's commands makes, as it would
-    /// for its own keystroke. Its tracked sends still answer the agent. With
-    /// no window connected, it is an ordinary client with its own undo.
-    ///
-    /// Answers the client, and whether it stands beside a window.
+    /// Shares the window's verbs, so what the agent does is on the window's undo stack and `u`
+    /// there takes it back.
+    /// With no window connected it is an ordinary client with its own undo. Answers the client, and
+    /// whether it stands beside a window.
     pub fn connect_agent(&self) -> (Client, bool) {
         let window = self.inner.window();
         let beside = window.is_some();
@@ -807,13 +657,10 @@ impl Inner {
         &self.wiring.runtime
     }
 
-    /// Register a client and start sorting its events.
     fn join(&self, kind: ClientKind) -> (ClientId, async_channel::Receiver<EventEnvelope>) {
         self.join_beside(kind, None)
     }
 
-    /// The window an agent stands beside: the app frontend that connected
-    /// last, if one is connected.
     fn window(&self) -> Option<Entry> {
         let clients = self.clients.lock().expect("never poisoned");
         clients
@@ -828,9 +675,6 @@ impl Inner {
             .map(|(_, entry)| entry.clone())
     }
 
-    /// [`Inner::join`], sharing `beside`'s verbs -- its selection and its
-    /// undo stack -- when there is one, and telling it what this client's
-    /// commands say about themselves as well as telling this client.
     fn join_beside(
         &self,
         kind: ClientKind,
@@ -853,10 +697,8 @@ impl Inner {
         let also_told = beside.map(|window| window.outbox);
         let (outbox, events) = async_channel::unbounded::<EventEnvelope>();
 
-        // Everybody's news, from the engines and from every client's verbs.
         let label = format!("client:{kind:?}:{}", id.0).to_lowercase();
-        // Over a wiring whose events go to one reader, there is no news to
-        // subscribe to: the client hears what its own commands say.
+        // With events going to one reader there is no news to subscribe to.
         let everybody = self.hub.subscribe(&label);
         let to_client = outbox.clone();
         let asked_bodies = Arc::clone(&self.asked_bodies);
@@ -865,8 +707,8 @@ impl Inner {
                 return;
             };
             while let Some(envelope) = everybody.next_tracked().await {
-                // A fetch that ended without the body: the ask is over (#1985).
-                // Only one for the words: a part refused says nothing of them.
+                // A fetch that ended without the body ends the ask (#1985); only for the words: a
+                // part refused says nothing of them.
                 if let Event::BodyFailed {
                     message, sections, ..
                 } = &envelope.event
@@ -880,18 +722,16 @@ impl Inner {
             }
         });
 
-        // This client's own verbs report here, and are sorted: what they say
-        // about themselves goes to this client alone, what they changed goes
-        // to everybody (the hub, which includes this client).
+        // What a client's verbs say about themselves goes to this client alone; what they changed
+        // goes to everybody.
         let (sink, own) = event_channel();
         let hub = self.hub.clone();
         let own_outbox = outbox.clone();
         let sorting = self.runtime().spawn(async move {
             while let Some(envelope) = own.next_tracked().await {
                 if is_feedback(&envelope.event) {
-                    // The window an agent acts beside hears it too: the undo
-                    // offer is on its stack. Untracked there, since the
-                    // tracked send is the agent's to hear.
+                    // The window an agent acts beside hears it too, untracked: the tracked send is
+                    // the agent's to hear.
                     if let Some(window) = &also_told {
                         let _ = window
                             .send(EventEnvelope::untracked(envelope.event.clone()))
@@ -927,8 +767,6 @@ impl Inner {
         (id, events)
     }
 
-    /// Forget a client: its events stop, and a command it queued and has
-    /// not run yet is dropped with it.
     fn leave(&self, client: ClientId) {
         let entry = self.clients.lock().expect("never poisoned").remove(&client);
         if let Some(entry) = entry {
@@ -939,11 +777,8 @@ impl Inner {
         }
     }
 
-    /// A request that must be answered in the order it was made, answered
-    /// now; any other request, handed back to be answered concurrently.
-    ///
-    /// Commands are this kind: two keystrokes arrive in order and must run
-    /// in order, and spawning each would let the second overtake the first.
+    /// Commands answer in order: two keystrokes must run in order, and spawning each would let the
+    /// second overtake the first.
     fn answer_in_order(&self, client: ClientId, request: Req) -> InOrder {
         match request {
             Req::Send(command, aim) => InOrder::Answered(self.enqueue(client, command, aim, None)),
@@ -993,9 +828,8 @@ impl Inner {
                 };
                 let account = draft.account_id;
                 let queued = entry.drafts.send(generation, *draft, at);
-                // Everybody's list moved -- the row left Drafts for the
-                // Outbox -- so the news goes to the hub, not only to the
-                // frontend that sent it.
+                // The row left Drafts for the Outbox, so everybody's list moved: the news goes to
+                // the hub.
                 let hub = self.hub.clone();
                 InOrder::Pending(Box::pin(async move {
                     match queued.await {
@@ -1031,16 +865,14 @@ impl Inner {
             .cloned()
     }
 
-    /// Run one client's command, aimed with that client's selection.
     async fn run(&self, mut queued: Queued) {
         let Some(entry) = self.entry(queued.client) else {
             return;
         };
         if let Some(matching) = queued.matching.take() {
-            // A whole search's selection becomes its messages here, on the
-            // command queue: what the match holds when the verb runs, and
-            // one target, so one undo takes it all back. A match that could
-            // not be walked aims at nothing, which the verb refuses aloud.
+            // A whole search's selection is resolved here, on the command queue, as one target so
+            // one undo takes it all back.
+            // A match that cannot be walked aims at nothing, which the verb refuses aloud.
             let messages = match self.wiring.database.read().await {
                 Ok(reader) => postio_session::search::matching(
                     &reader,
@@ -1077,7 +909,6 @@ impl Inner {
         entry.verbs.dispatch(queued.command, sink).await;
     }
 
-    /// Mute or unmute a thread for `client`, through its undo stack.
     async fn mute(&self, client: ClientId, thread: postio_model::ThreadId, muted: bool) -> Resp {
         let Some(entry) = self.entry(client) else {
             return Resp::Stopped;
@@ -1090,8 +921,7 @@ impl Inner {
         }
     }
 
-    /// Answer one request from local state. Nothing here waits on the
-    /// network: a remote effect is a command, queued.
+    /// Nothing here waits on the network: a remote effect is a command, queued.
     async fn answer(&self, client: ClientId, request: Req) -> Resp {
         #[cfg(test)]
         let _search = matches!(&request, Req::Conversations { .. })
@@ -1184,7 +1014,6 @@ impl Inner {
                 .await
                 {
                     Ok(done) => {
-                        // The lists and counts read the people again.
                         self.hub.emit(Event::ContactsChanged {
                             names_changed: true,
                         });
@@ -1196,7 +1025,6 @@ impl Inner {
             Req::ContactsImport(bytes) => {
                 match contacts::import_vcards(&self.wiring.database, &bytes).await {
                     Ok(summary) => {
-                        // The lists and counts read the people again.
                         self.hub.emit(Event::ContactsChanged {
                             names_changed: true,
                         });
@@ -1231,8 +1059,6 @@ impl Inner {
             Req::ContactSuggestionSet(which, on) => {
                 match contacts::set_contact_suggestion(&self.wiring.database, which, on).await {
                     Ok(switches) => {
-                        // The review's count and the kinds in the lists move
-                        // with the switches.
                         self.hub.emit(Event::ContactsChanged {
                             names_changed: false,
                         });
@@ -1574,8 +1400,8 @@ impl Inner {
                 .mailboxes(account)
                 .await
                 .map_or_else(Resp::Failed, Resp::Mailboxes),
-            // A removed account is gone for every frontend until the removal
-            // is undone or carried out, as the desktop's settings show it.
+            // A removed account is gone for every frontend until the removal is undone or carried
+            // out.
             Req::Accounts => match self.wiring.database.read().await {
                 Ok(connection) => postio_storage::repository::AccountRepository::new(&connection)
                     .list()
@@ -1759,7 +1585,6 @@ impl Inner {
                     contacts::set_treatment(&self.wiring.database, &address, treatment.as_deref())
                         .await;
                 if set.is_ok() {
-                    // The snapshot a reader starts from follows the change.
                     let _ = self.wiring.focus.load_contacts(&self.wiring.database).await;
                 }
                 done(set)
@@ -1845,8 +1670,6 @@ impl Inner {
         }
     }
 
-    /// An account change, as the desktop's settings make it
-    /// (the desktop's settings panel, over `AccountOp`). Everyone's sidebar hears of it.
     async fn account(
         &self,
         op: postio_client::protocol::AccountOp,
@@ -1876,8 +1699,6 @@ impl Inner {
                 return Ok(());
             }
         }
-        // The account's folders appear, go or come back in every sidebar:
-        // what a mailbox tree changing already makes each frontend redraw.
         let account = match op {
             AccountOp::SetEnabled { account, .. }
             | AccountOp::Remove(account)
@@ -1889,8 +1710,7 @@ impl Inner {
         Ok(())
     }
 
-    /// A reading pane's answer, after asking for each body it draws as
-    /// "Downloading this message": the pane is a person opening it (#1788).
+    /// The pane is a person opening the message (#1788).
     async fn opened(&self, readings: Vec<postio_client::protocol::Reading>) -> Resp {
         for message in self
             .asked_bodies
@@ -1901,9 +1721,8 @@ impl Inner {
         Resp::Readings(readings)
     }
 
-    /// The engine owning this message's server identity. UIDs and mailbox
-    /// paths are scoped to an account: another engine can fetch unrelated
-    /// bytes under the same identity, or leave the request waiting forever.
+    /// UIDs and mailbox paths are scoped to an account: another engine can fetch unrelated bytes
+    /// under the same identity.
     async fn engine_for_message(
         &self,
         message: postio_model::MessageId,
@@ -1911,15 +1730,12 @@ impl Inner {
         let account = parts::account_of(&self.wiring.database, message).await?;
         let engines = self.engines.running.lock().expect("never poisoned");
         if engines.is_empty() {
-            // A caller may supply its own engine through Wiring instead of
-            // asking the host to start sync.
             self.wiring.engine.get(account)
         } else {
             engines.get(&account).cloned()
         }
     }
 
-    /// Ask the message's account for its body ahead of its backfill.
     async fn fetch_body(&self, message: postio_model::MessageId) {
         let Some(engine) = self.engine_for_message(message).await else {
             tracing::debug!(message = message.get(), "no engine to fetch that body");
@@ -1932,9 +1748,7 @@ impl Inner {
         });
     }
 
-    /// Queues the sections a freshly opened forward carries, through the
-    /// interactive lane, as the reader's chip does (#1690), and says whether
-    /// they are coming: the composer draws them downloading only then.
+    /// Says whether they are coming: the composer draws them downloading only then (#1690).
     async fn fetch_carried(
         &self,
         message: postio_model::MessageId,
@@ -1977,7 +1791,6 @@ impl Inner {
         Ok(written)
     }
 
-    /// Rebuild `account`'s local search index, and return when it is over.
     async fn rebuild_index(&self, account: postio_model::AccountId) {
         rebuild(
             self.wiring.database.clone(),
@@ -1987,14 +1800,9 @@ impl Inner {
         .await;
     }
 
-    /// What discovery finds for `address`, as the first-run screen shows it:
-    /// the desktop's probe, options and reading of it
-    /// (`postio_session::onboarding`). What the probe offered for JMAP is
-    /// kept for the submission that follows.
-    ///
-    /// `stop` is the frontend's: pulling it cancels the probe's token on
-    /// the spot, so a probe the person has moved on from holds no socket
-    /// open (#57), and it answers as one that found nothing.
+    /// What the probe offered for JMAP is kept for the submission that follows. `stop` cancels the
+    /// probe's token on the spot, so a probe the person has moved on from holds no socket open
+    /// (#57); it answers as one that found nothing.
     async fn discover(
         &self,
         address: &str,
@@ -2038,15 +1846,10 @@ impl Inner {
         }
     }
 
-    /// Begin the desktop's browser sign-in for `submission`
-    /// (`postio_session::signin`) and answer where it waits
-    /// for the person: the consent URL, in full.
-    ///
-    /// **Nothing is opened here.** The host's opener only reports the URL;
-    /// the frontend shows it and opens it, or copies it, when the person
-    /// asks (US7 scenario 2). The sign-in runs on, waiting at its loopback
-    /// redirect, and [`finish_oauth`](Self::finish_oauth) is how a frontend
-    /// hears the end of it.
+    /// Nothing is opened here: the host's opener only reports the URL; the frontend opens or copies
+    /// it when the person asks.
+    /// The sign-in runs on at its loopback redirect; [`finish_oauth`](Self::finish_oauth) reports
+    /// its end.
     async fn begin_oauth(
         &self,
         submission: postio_ui::onboarding::Submission,
@@ -2151,7 +1954,6 @@ impl Inner {
         })
     }
 
-    /// Wait for the sign-in for `address` to end.
     async fn finish_oauth(&self, address: &str) -> Result<(), String> {
         let done = self
             .sign_ins
@@ -2176,12 +1978,8 @@ impl Inner {
         }
     }
 
-    /// Prove `submission`'s credentials, save the account, and start its
-    /// sync: the desktop's order, so a refused sign-in writes nothing. The
-    /// error is the first-run screen's sentence.
-    ///
-    /// `then` says whether the host starts the account's sync or leaves it
-    /// to the frontend (`AfterSave`).
+    /// Proves the credentials before saving, so a refused sign-in writes nothing. `then` says
+    /// whether the host starts the account's sync or leaves it to the frontend.
     async fn add_account(
         &self,
         submission: postio_ui::onboarding::Submission,
@@ -2199,7 +1997,6 @@ impl Inner {
             None => self.stored_offers(&key).await.0,
         };
         let backend = match &self.wiring.mail {
-            // Handed a mail server (a test's), the proof is signing in to it.
             Some(mail) => postio_account::backend::MailBackend::connect(mail.backend.as_ref())
                 .await
                 .map(|_| postio_model::account::Backend::Imap)
@@ -2213,17 +2010,13 @@ impl Inner {
             backend,
         )
         .await?;
-        // Its engine, and only its: the others are already running.
         if then == postio_client::protocol::AfterSave::Sync {
             start_engine_for(&self.wiring, &self.engines, &submission.address).await;
         }
         Ok(())
     }
 
-    /// What an account already saved at `address` was signed in with: its
-    /// JMAP session and its browser sign-in's endpoints. A credential
-    /// update proves over what the account already uses, with no probe
-    /// first -- the form arrives filled in from the account's own row.
+    /// A credential update proves over what the account already uses, with no probe first.
     async fn stored_offers(
         &self,
         address: &str,
@@ -2252,9 +2045,8 @@ impl Inner {
                     session_url: session_url.clone(),
                 })
             }
-            // A Gmail-REST repair re-proves through OAuth like any other
-            // Gmail account; a maildir has no server to prove anything
-            // against at all.
+            // A Gmail-REST repair re-proves through OAuth; a maildir has no server to prove
+            // against.
             postio_model::account::Backend::Imap
             | postio_model::account::Backend::Gmail
             | postio_model::account::Backend::Maildir { .. } => None,
@@ -2272,9 +2064,7 @@ impl Inner {
         (jmap, oauth)
     }
 
-    /// A search, as the desktop's bar runs it: in the scope asked (every
-    /// folder but drafts, junk and trash, unless the query names one, by
-    /// default), up to the desktop's hit limit, with no excerpts -- a
+    /// Scope is every folder but drafts, junk and trash unless the query names one; no excerpts, a
     /// terminal list shows none.
     async fn search(
         &self,
@@ -2311,11 +2101,8 @@ impl Inner {
         })
     }
 
-    /// A message's body, or which kind of "no body" it is.
-    ///
-    /// "Offline" is not told apart from "not fetched yet" here: the host has
-    /// no reachability signal of its own yet, and saying "downloading" about
-    /// a body that is not is the milder of the two mistakes.
+    /// "Offline" is not told apart from "not fetched yet": the host has no reachability signal, and
+    /// saying "downloading" wrongly is the milder mistake.
     async fn body(&self, message: postio_model::MessageId) -> Resp {
         let connection = match self.wiring.database.read().await {
             Ok(connection) => connection,
@@ -2326,8 +2113,6 @@ impl Inner {
         ))
     }
 
-    /// A conversation's messages as list rows, oldest first: the order it
-    /// happened in, which is how a reader reads down the page.
     async fn conversation(&self, thread: postio_model::ThreadId) -> Resp {
         use postio_model::listing::StoreError;
         use postio_storage::repository::{ThreadOrder, ThreadRepository};
@@ -2341,8 +2126,6 @@ impl Inner {
             },
             Err(error) => return Resp::Failed(StoreError::from(error)),
         };
-        // The store's own rows, so a conversation's members look exactly like
-        // the list rows every frontend already draws.
         self.wiring
             .store
             .message_rows(ids)
@@ -2350,14 +2133,9 @@ impl Inner {
             .map_or_else(Resp::Failed, Resp::Rows)
     }
 
-    /// Record that the person asked to leave `message`'s list, and name it.
-    ///
-    /// The activation is filed under the list's `List-Id`, else the sender's
-    /// domain -- the desktop reader's rule (#971), moved here from the classic
-    /// app so every frontend records it the same way. The answer, which is
-    /// what the confirmation says, names what the offer after it acts on:
-    /// the `List-Id`, else the sender's exact address (#1952), so the log
-    /// needs no address to say it. Only ever answered for a deliberate act.
+    /// Filed under the list's `List-Id`, else the sender's domain (#971). The answer names what the
+    /// offer after it acts on: the `List-Id`, else the sender's exact address (#1952), so the log
+    /// needs no address. Only answered for a deliberate act.
     async fn unsubscribe(&self, message: postio_model::MessageId) -> Resp {
         use postio_model::listing::StoreError;
         use postio_storage::repository::{MessageRepository, UnsubscribeRepository};
@@ -2398,10 +2176,8 @@ impl Inner {
         }
     }
 
-    /// What the list `message` came from has sent that a sweep could reach
-    /// (#1931): a page of ids from one indexed read, the scope chosen by
-    /// [`postio_ui::unsubscribe::sweep_scope`]. Reads only; the verb that
-    /// acts on them is an ordinary command, so it is queued and undoable.
+    /// Reads only; the verb that acts on them is an ordinary command, so it is queued and undoable
+    /// (#1931).
     async fn list_mail(&self, message: postio_model::MessageId) -> Resp {
         use postio_model::listing::StoreError;
         let connection = match self.wiring.database.connect().await {
@@ -2418,9 +2194,8 @@ impl Inner {
         }
     }
 
-    /// Write one part's bytes to `to`, fetching them first if they were
-    /// never downloaded -- the one reading path allowed to reach the network,
-    /// and only because a person asked for these bytes.
+    /// The one reading path allowed to reach the network, and only because a person asked for these
+    /// bytes.
     async fn write_part(
         &self,
         message: postio_model::MessageId,
@@ -2443,10 +2218,7 @@ impl Inner {
         }
     }
 
-    /// Where a part opened by the system is written: under this user's
-    /// runtime directory, readable by this user alone, named as the sender
-    /// named it -- but only the file name, so a hostile name cannot write
-    /// anywhere else.
+    /// Only the sender's file name is used, so a hostile name cannot write anywhere else.
     async fn private_copy_path(
         &self,
         message: postio_model::MessageId,
@@ -2465,7 +2237,6 @@ impl Inner {
         parts::private_copy_path(&base, message, attachment, name.as_deref())
     }
 
-    /// Put a command on the one queue. Never waits.
     fn enqueue(
         &self,
         client: ClientId,
@@ -2490,9 +2261,7 @@ impl Inner {
     }
 }
 
-/// The in-process transport: requests run on the host's runtime and answer
-/// through a oneshot, so a caller on any executor -- GTK's main loop, a test's
-/// runtime -- can await them.
+/// Answers through a oneshot so a caller on any executor can await.
 struct Local {
     inner: Arc<Inner>,
     client: ClientId,
@@ -2510,8 +2279,6 @@ impl Transport for Local {
         let request = match self.inner.answer_in_order(self.client, request) {
             InOrder::Answered(answered) => return Box::pin(async move { Ok(answered) }),
             InOrder::Pending(landing) => {
-                // On the host's runtime, so the answer lands whatever
-                // executor the caller awaits on.
                 let (answer, answered) = tokio::sync::oneshot::channel();
                 self.inner.runtime().spawn(async move {
                     let _ = answer.send(landing.await);
@@ -2524,11 +2291,9 @@ impl Transport for Local {
         let inner = Arc::clone(&self.inner);
         let client = self.client;
         if request.cancellable() {
-            // A search whose caller has gone stops at its next await (D9):
-            // the driver drops a superseded keystroke's future, and the
-            // search that replaced it should not wait behind it for a
-            // reader. Dropping a read mid-match leaves its connection clean
-            // (`turso_capabilities.rs`, R8).
+            // A search whose caller has gone stops at its next await: a superseded keystroke's
+            // future is dropped and its replacement should not wait behind it. Dropping a read
+            // mid-match leaves its connection clean.
             let family = request.family();
             self.inner.runtime().spawn(async move {
                 let resp = tokio::select! {
@@ -2592,7 +2357,6 @@ mod tests;
 #[cfg(test)]
 mod verbs_tests;
 
-/// A thread forward's answer, on the wire.
 fn forwarded(built: Result<postio_model::Forwarded, String>) -> Resp {
     match built {
         Ok(forwarded) => Resp::Forwarded(forwarded),

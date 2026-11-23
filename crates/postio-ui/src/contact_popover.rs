@@ -1,10 +1,4 @@
-//! The known-sender popover, without a toolkit (specs/011-focus-contacts S6,
-//! handoff screen 04).
-//!
-//! Everything the popover says or shapes is decided here: the avatar's
-//! initials, colour and glyph, the three tiles and their captions, the open
-//! lines, the arrival control and the three actions. A toolkit only draws
-//! what [`view`] returns.
+//! The known-sender popover without a toolkit: avatar, tiles, open lines, arrival control, actions.
 
 use chrono::{DateTime, Datelike, Local, Utc};
 use postio_core::{CommandId, Keymap};
@@ -12,27 +6,19 @@ use postio_model::{
     Contact, ContactArrival, ContactId, ContactKind, ContactStats, OpenItem, OpenSide,
 };
 
-/// The avatar colours, muted and mid-dark so white initials read on each.
-/// A person's is chosen by their id, so it is the same in every list, every
-/// popover and both apps.
+/// Muted and mid-dark so white initials read; chosen by id, so a person's is the same everywhere.
 pub const PALETTE: [u32; 8] = [
     0x5b6b7a, 0x9a6a2f, 0xb0624a, 0x4f7a5a, 0x8a5a9a, 0x3d6f9a, 0x7a64b0, 0xa07a3c,
 ];
 
-/// What a person's avatar draws.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Avatar {
-    /// Up to two letters, or the kind's glyph for a sender that is no one.
     pub text: String,
-    /// The fill, `0xRRGGBB`.
     pub rgb: u32,
-    /// Whether the shape is a circle; a list, a newsletter and a robot are
-    /// rounded squares.
+    /// `false` for a list, newsletter or robot: a rounded square.
     pub round: bool,
 }
 
-/// The glyph a kind stands for in place of initials, `None` for those drawn
-/// with letters.
 pub fn kind_glyph(kind: ContactKind) -> Option<&'static str> {
     match kind {
         ContactKind::List => Some("≡"),
@@ -42,10 +28,7 @@ pub fn kind_glyph(kind: ContactKind) -> Option<&'static str> {
     }
 }
 
-/// The initials of `name`: the first letters of its first and last words,
-/// uppercased; one letter for one word; `?` for nothing to go on.
 pub fn initials(name: &str) -> String {
-    // An address stands in for a name: only its local part is a word.
     let name = name.split('@').next().unwrap_or(name);
     let words: Vec<&str> = name
         .split(|c: char| c.is_whitespace() || matches!(c, '.' | '_' | '-'))
@@ -59,7 +42,6 @@ pub fn initials(name: &str) -> String {
     }
 }
 
-/// A person's avatar.
 pub fn avatar(id: ContactId, name: &str, kind: ContactKind) -> Avatar {
     let glyph = kind_glyph(kind);
     Avatar {
@@ -69,128 +51,75 @@ pub fn avatar(id: ContactId, name: &str, kind: ContactKind) -> Avatar {
     }
 }
 
-/// One of the three figures under the name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Tile {
-    /// "431", "today", "—".
     pub value: String,
-    /// "messages".
     pub caption: String,
 }
 
-/// One thing open between the user and the person.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenLine {
-    /// "Waiting on you", "Waiting on Ada".
     pub label: String,
-    /// What it is.
     pub text: String,
-    /// Whether the move is the user's, which the label is drawn in the
-    /// accent for.
     pub yours: bool,
-    /// The message it hangs on, to open it.
     pub message: postio_model::MessageId,
 }
 
-/// One segment of the arrival control.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArrivalOption {
-    /// "Inbox", "Digest", "Filtered out".
     pub label: String,
-    /// Where it sends mail.
     pub arrival: ContactArrival,
-    /// Whether it is the one in force.
     pub on: bool,
 }
 
-/// One of the buttons along the foot.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Action {
-    /// "All mail", "Write", "Open card".
     pub label: String,
-    /// The command it runs.
     pub command: CommandId,
-    /// Its key as the keymap binds it, `None` when unbound.
     pub key: Option<String>,
-    /// Whether it is the default (↩) action, drawn filled.
     pub primary: bool,
-    /// Whether it can be used now.
     pub enabled: bool,
 }
 
-/// Everything the popover draws.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PopoverView {
-    /// The address the popover is about: what its commands name.
     pub address: String,
-    /// The avatar.
     pub avatar: Avatar,
-    /// The name, as the person asked for it styled.
     pub name: String,
-    /// The address under it.
     pub subline: String,
-    /// "Finance lead, Northwind Partners".
     pub role: String,
-    /// Messages, from you, last.
     pub tiles: [Tile; 3],
-    /// Up to [`MAX_OPEN`] lines.
     pub open: Vec<OpenLine>,
-    /// "Mail from Ada arrives in".
     pub arrival_title: String,
-    /// Inbox, Digest, Filtered out.
     pub arrival: Vec<ArrivalOption>,
-    /// All mail, Write, Open card.
     pub actions: Vec<Action>,
-    /// For a sender not yet saved, what the popover says in place of the
-    /// tiles and open lines (specs/011-focus-contacts S9, handoff screen 05).
     pub intro: Option<IntroView>,
-    /// The arrival control's own keys, as the keymap binds them: `←→
-    /// choose`, `0 default rules`. Drawn beside its title, so `0` is not a
-    /// hidden key.
     pub hints: Vec<crate::hints::Hint>,
 }
 
-/// What the new-sender popover says.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IntroView {
-    /// "Sent 1 message \u{b7} today 13:47".
     pub sent: String,
-    /// "Not saved yet. First email today; Ben Adeyemi is on copy."
     pub status: String,
-    /// "From their signature"; `None` when the signature said nothing.
     pub signature_title: Option<String>,
-    /// "Partnerships \u{b7} Harbor Data Co.", "+1 555 0142 \u{b7} harbordata.example".
     pub signature_lines: Vec<String>,
-    /// "Read on this Mac. Added only if you save."
     pub signature_foot: Option<String>,
 }
 
-/// The most open lines the popover shows.
 pub const MAX_OPEN: usize = 2;
 
-/// What [`view`] is made from.
 #[derive(Debug)]
 pub struct Facts<'a> {
-    /// The person.
     pub person: &'a Contact,
-    /// The address the popover was asked for.
     pub address: &'a str,
-    /// Their counts.
     pub stats: &'a ContactStats,
-    /// What is open between the two, newest first.
     pub open: &'a [OpenItem],
-    /// Where their mail arrives, `None` for by the default rules.
     pub arrival: Option<ContactArrival>,
-    /// Where the default rules put it, which is what `None` shows.
     pub default_arrival: ContactArrival,
-    /// Whether the person's card can be opened (the Contacts mode exists).
     pub card: bool,
-    /// For a sender not yet saved: how they reached the user and what their
-    /// signature said.
     pub introduction: Option<&'a postio_model::Introduction>,
 }
 
-/// The first name: the given name, else the first word of the shown name.
 pub fn first_name(person: &Contact) -> String {
     let given = person.given_name.as_deref().map(str::trim).unwrap_or("");
     if !given.is_empty() {
@@ -204,7 +133,6 @@ pub fn first_name(person: &Contact) -> String {
         .to_owned()
 }
 
-/// The line under the address: title and company, or what the person is.
 pub fn role_line(person: &Contact) -> String {
     let filled = |value: &Option<String>| {
         value
@@ -230,8 +158,6 @@ pub fn role_line(person: &Contact) -> String {
     }
 }
 
-/// When the last message was, in a tile: `today`, `yesterday`, a weekday
-/// within the week, then a date, with the year past this one.
 pub fn last_word(last: Option<DateTime<Utc>>, now: DateTime<Local>) -> String {
     let Some(last) = last else {
         return "—".to_owned();
@@ -254,8 +180,7 @@ fn count_tile(count: u32, one: &str, many: &str) -> Tile {
     }
 }
 
-/// How long they take to reply, as a tile says it: `~45 min`, `~3 h`,
-/// `~2 d`; `—` when the ring has too few answers to say.
+/// `~45 min`, `~3 h`, `~2 d`; `—` when the ring has too few answers.
 pub fn reply_word(median: Option<chrono::Duration>) -> String {
     let Some(median) = median else {
         return "—".to_owned();
@@ -270,7 +195,6 @@ pub fn reply_word(median: Option<chrono::Duration>) -> String {
     }
 }
 
-/// The three tiles: messages, how fast they reply, and the last message.
 pub fn tiles(stats: &ContactStats, now: DateTime<Local>) -> [Tile; 3] {
     [
         count_tile(stats.messages, "message", "messages"),
@@ -285,7 +209,6 @@ pub fn tiles(stats: &ContactStats, now: DateTime<Local>) -> [Tile; 3] {
     ]
 }
 
-/// The popover for `facts`.
 pub fn view(facts: &Facts<'_>, keymap: &Keymap, now: DateTime<Local>) -> PopoverView {
     let person = facts.person;
     let first = first_name(person);
@@ -379,7 +302,6 @@ pub fn view(facts: &Facts<'_>, keymap: &Keymap, now: DateTime<Local>) -> Popover
     }
 }
 
-/// How a sender not yet saved is introduced.
 pub fn intro_view(
     introduction: &postio_model::Introduction,
     stats: &ContactStats,
@@ -441,8 +363,7 @@ pub fn intro_view(
     }
 }
 
-/// The arrival one segment to the left or right of `from`, stopping at the
-/// ends rather than wrapping: a segmented control is a line, not a ring.
+/// Stops at the ends rather than wrapping: a segmented control is a line.
 pub fn step_arrival(from: Option<ContactArrival>, by: i32) -> ContactArrival {
     const ORDER: [ContactArrival; 3] = [
         ContactArrival::Inbox,

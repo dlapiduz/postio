@@ -62,8 +62,6 @@ def main() -> int:
         f"got {with_patience('0.5')}",
     )
 
-    # A typo in a workflow must not set every deadline in the suite to zero and
-    # turn every wait into an instant failure. Same rule as the Rust side.
     case("a typo is ignored", with_patience("soon") == 1.0, f"got {with_patience('soon')}")
     case("zero is ignored", with_patience("0") == 1.0, f"got {with_patience('0')}")
     case(
@@ -77,7 +75,6 @@ def main() -> int:
     case("deadline scales", patience.deadline(10) == 30.0, f"got {patience.deadline(10)}")
     os.environ.pop(patience.PATIENCE_ENV, None)
 
-    # The wrapper behaves like `subprocess.run` for anything that finishes.
     done = patience.run(
         ["bash", "-c", "printf hello"], capture_output=True, text=True, timeout=30
     )
@@ -87,8 +84,6 @@ def main() -> int:
         f"got exit {done.returncode}, stdout {done.stdout!r}",
     )
 
-    # And a command that does not says *that*, rather than looking like a
-    # wrong answer. This is the half #1243 was really about.
     try:
         patience.run(["bash", "-c", "sleep 5"], timeout=0.05)
         case("a hang raises ScriptHung", False, "it returned instead of raising")
@@ -111,8 +106,6 @@ def main() -> int:
             "the raw TimeoutExpired escaped, which is the thing being fixed",
         )
 
-    # The dial reaches the wrapper too: the same call that timed out above
-    # survives once the runner is declared busy.
     os.environ[patience.PATIENCE_ENV] = "200"
     try:
         slow = patience.run(

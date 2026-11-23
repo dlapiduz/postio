@@ -34,7 +34,6 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-# Generic on purpose: the registry asks for a contact, and none is given.
 USER_AGENT = "postio-deps-survey"
 CRATES_API = "https://crates.io/api/v1/crates/"
 RUST_STABLE = "https://static.rust-lang.org/dist/channel-rust-stable.toml"
@@ -42,7 +41,6 @@ PYTHON_EOL = "https://endoflife.date/api/python.json"
 FLATHUB = "https://dl.flathub.org/repo/refs/heads/runtime/{id}/x86_64/{branch}"
 HACK_CRATE = "postio-workspace-hack"
 
-# mise tools whose releases are on GitHub, and the tag prefix to strip.
 MISE_GITHUB = {
     "gh": ("cli/cli", "v"),
     "jq": ("jqlang/jq", "jq-"),
@@ -136,8 +134,6 @@ class Source:
         except (urllib.error.URLError, OSError) as e:
             raise Unreachable(f"{url}: {e}") from e
 
-
-# ---- versions and requirements ------------------------------------------
 
 def vtuple(text: str) -> tuple[int, ...]:
     """Numeric part of a version: `v7.0.1`, `jq-1.8`, `0.3.0-beta.4` -> ints."""
@@ -240,8 +236,6 @@ def classify(req: str, latest: str) -> str:
     return "major"
 
 
-# ---- crates.io ----------------------------------------------------------
-
 def latest_stable(src: Source, name: str, pre: bool = False) -> str:
     """Newest stable version; with `pre`, newest of all (we are on a prerelease)."""
     data = src.json(CRATES_API + name)
@@ -318,8 +312,6 @@ def survey_crates(src: Source, root: Path, progress) -> dict:
         except Unreachable as e:
             unknown.append({"name": name, "requirement": ", ".join(reqs), "error": str(e)})
             continue
-        # The loosest requirement decides: one that allows latest means a
-        # manifest can already take it; report the tightest behind one.
         behind = [(r, classify(r, latest)) for r in reqs]
         behind = [(r, k) for r, k in behind if k != "current"]
         if not behind:
@@ -340,8 +332,6 @@ def survey_crates(src: Source, root: Path, progress) -> dict:
     return {"checked": len(deps), "current": current, "within_semver": within, "major": major,
             "groups": list(grouped.values()), "unknown": unknown}
 
-
-# ---- the rest -----------------------------------------------------------
 
 def compare(name: str, current: str, fetch, **extra) -> dict:
     """A version pinned somewhere against whatever `fetch()` says is newest."""
@@ -459,8 +449,6 @@ def survey_blitz(src: Source, root: Path) -> dict:
     pin = tomllib.loads((root / "patches/blitz/upstream.toml").read_text())["version"]
     return compare("blitz-dom", pin, lambda: latest_stable(src, "blitz-dom", _is_prerelease(pin)))
 
-
-# ---- output -------------------------------------------------------------
 
 def render(report: dict) -> str:
     lines: list[str] = []

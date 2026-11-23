@@ -1,28 +1,11 @@
-//! Keeping secrets out of `config.toml`.
-//!
-//! Postio stores passwords, app-specific passwords and tokens in the Secret
-//! Service keyring. `config.toml` only ever holds a *reference* to a keyring
-//! entry, under the `keyring_entry` key.
-//!
-//! This module is the enforcement point, and it works in both directions:
-//!
-//! * **Reading** — secret-looking keys are stripped from the parsed document
-//!   *before* it is deserialized, so no typed struct can ever hold one, not
-//!   even through the unknown-key passthrough. What was stripped is reported
-//!   via [`crate::Config::rejected_secrets`] so the settings panel can tell the
-//!   user to move it to the keyring.
-//! * **Writing** — the same strip runs again on the way out, so a secret that
-//!   somehow reached memory still cannot be persisted.
-//!
-//! Errors get the same treatment: [`redact_secret_lines`] scrubs parser
-//! messages, which end up in logs and in the settings validity line.
+//! Passwords and tokens live in the Secret Service keyring; `config.toml` only holds a
+//! `keyring_entry` reference. Secret-looking keys are stripped before deserialization and again on
+//! the way out, and parser errors are redacted (`redact_secret_lines`).
 
 use std::borrow::Cow;
 
 use toml::{Table, Value};
 
-/// Substrings that mark a key as secret-bearing, matched against the key with
-/// case, `-` and `_` removed.
 const SECRET_MARKERS: &[&str] = &[
     "password",
     "passwd",
@@ -34,7 +17,6 @@ const SECRET_MARKERS: &[&str] = &[
     "privatekey",
 ];
 
-/// Keys that are secrets on their own but contain no marker substring.
 const SECRET_EXACT: &[&str] = &["pass", "pw"];
 
 /// Whether a TOML key must never be stored in `config.toml`.
@@ -58,8 +40,6 @@ pub fn is_secret_key(key: &str) -> bool {
         || SECRET_MARKERS.iter().any(|m| normalized.contains(m))
 }
 
-/// Remove every secret-bearing key from `table`, at any depth, returning the
-/// dotted paths of what was removed.
 pub fn strip_secrets(table: &mut Table) -> Vec<String> {
     let mut removed = Vec::new();
     strip_table(table, "", &mut removed);
@@ -97,10 +77,8 @@ fn join(prefix: &str, key: &str) -> String {
     }
 }
 
-/// Replace the value of any `secret_key = value` line with `<redacted>`.
-///
-/// TOML parser errors quote the offending source line verbatim; without this a
-/// syntax error on a password line would print the password.
+/// TOML parser errors quote the offending source line verbatim; without this a syntax error on a
+/// password line would print the password.
 pub fn redact_secret_lines(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for (index, line) in text.lines().enumerate() {

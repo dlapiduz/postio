@@ -39,26 +39,12 @@ members = [
     "crates/postio-vcard",
     "crates/postio-contact-sync",
 ]
-# Upstream crates carried with Postio's patches applied: sources, not
-# members, so the workspace's lints and gates do not reach them.
 exclude = ["vendor"]
 
-# What a bare `cargo build` or `cargo check` compiles: everything above
-# except the FFI layer.
-#
-# `postio-ffi` links a `staticlib` *and* a `cdylib`, and its `uniffi` takes
-# the `cli` feature, so it pulls `uniffi_bindgen`, `clap` and
-# `cargo_metadata` into every build — for a macOS frontend that does not
-# ship yet (#1306). Until it does, that is a cost each fresh worktree pays
-# before its first `cargo check` can answer.
-#
-# No coverage is lost: `--workspace` ignores this list, and `--workspace` is
-# what `issue-land.sh`'s check, every compile job in `ci.yml`, and
-# `check-crate-boundaries.py`'s `cargo metadata` already use.
-#
-# **A new member belongs in both lists.** Leaving it out here means a bare
-# cargo command silently stops building it; that is deliberate for this one
-# crate and an accident anywhere else (#1500).
+# What a bare `cargo build` compiles: everything except `postio-ffi`, whose `uniffi` `cli` feature
+# pulls `uniffi_bindgen`, `clap` and `cargo_metadata` (#1306).
+# `--workspace` ignores this list. A new member belongs in both lists, or bare cargo silently stops
+# building it (#1500).
 default-members = [
     "crates/postio-model",
     "crates/postio-storage",
@@ -101,71 +87,39 @@ default-members = [
 [workspace.package]
 version = "0.6.2"
 edition = "2024"
-# The compiler this workspace is actually built with, everywhere.
-#
-# This said 1.90 while rust-toolchain.toml pinned 1.98, so nothing had ever
-# built on 1.90 and the claim rested on nothing. An MSRV is a promise made to
-# someone downstream; the only consumer today is this repository, so the honest
-# promise is the pin. `scripts/checks/check-toolchain-pinned.py` keeps the two equal.
-#
-# When Postio is published, this stops being free: supporting an older compiler
-# then means a CI job that proves it, not a lower number here.
+# The compiler the workspace is built with; `scripts/checks/check-toolchain-pinned.py` keeps it
+# equal to rust-toolchain.toml.
+# An MSRV promises something downstream and the only consumer is this repository, so the promise is
+# the pin.
 rust-version = "1.100"
 license = "MIT"
 repository = "https://github.com/dlapiduz/postio"
-# Postio is an application, and these crates are its internals. None of them is
-# published, and `cargo publish` on one would fail anyway -- they depend on each
-# other by path, which crates.io refuses.
-#
-# Saying so has two effects beyond preventing an accident. It is the truth, and
-# it is what lets `deny.toml`'s `allow-wildcard-paths` apply: cargo-deny treats
-# a publishable crate's path dependency as a wildcard, because a published crate
-# could not have one.
+# Not published: crates.io refuses path dependencies, and it is what lets `deny.toml`'s
+# `allow-wildcard-paths` apply.
 publish = false
 
-# The lint floor every crate answers to.
-#
-# This used to be a `#![forbid(unsafe_code)]` / `#![warn(missing_docs)]` pair
-# repeated in each `lib.rs`, and it drifted: `unsafe_code` reached seven crates
-# of twelve and `missing_docs` nine, with three crates that contain no `unsafe`
-# at all still not forbidding it. One table cannot drift.
-# `scripts/checks/check-lint-floor.py` keeps it the only table.
-#
-# `forbid` rather than `deny` on purpose: `deny` can be switched off again by an
-# `#[allow]` anywhere inside the crate, and a mail client that holds credentials
-# and parses hostile input is the wrong place for `unsafe` to arrive quietly.
-# The two crates that genuinely need it are exceptions with a reason, not a
-# weaker default for everybody.
+# The lint floor every crate answers to, kept the only table by
+# `scripts/checks/check-lint-floor.py`.
+# `forbid`, not `deny`: an `#[allow]` inside the crate can switch `deny` off, and this client holds
+# credentials and parses hostile input.
 [workspace.lints.rust]
 unsafe_code = "forbid"
-missing_docs = "warn"
-# A future nobody awaits is a statement that silently does not run. Fifty-six
-# of them survived the move to an async storage layer into a *green build* --
-# indexing calls, a settings write, a sidebar refresh -- and every one
-# compiled, warned, and did nothing. Warning-grade is not enough for a failure
-# mode whose only symptom is the absence of one.
+missing_docs = "allow"
+# A future nobody awaits silently does not run; fifty-six survived into a green build as warnings.
 unused_must_use = "deny"
 
-# Cargo 1.100 turned on `cargo::unused_dependencies`, and every member's
-# `postio-workspace-hack` line and every line of the hack itself is "unused"
-# by design: the hack only unifies features (ADR 0047). Unused dependencies
-# are gated by `cargo machete` (`scripts/checks/check-unused-deps.py`), which
-# knows that, so this lint would only say the same thing worse.
+# Cargo 1.100's `cargo::unused_dependencies` flags every `postio-workspace-hack` line, which only
+# unifies features (ADR 0047);
+# `cargo machete` (`scripts/checks/check-unused-deps.py`) gates unused dependencies and knows that.
 [workspace.lints.cargo]
 unused_dependencies = "allow"
 
 [workspace.lints.clippy]
-# `let _ = some_async_call();` is the hole `unused_must_use` cannot see: the
-# value *is* used -- it is bound to `_` -- so the compiler is satisfied and the
-# future is dropped unpolled. That is how the draft that had just been sent
-# went on existing (`send.rs`: `let _ = DraftRepository::new(..).delete(..)`),
-# and it reads exactly like the deliberate "I don't care about this Result"
-# it is copied from.
+# `let _ = some_async_call();` binds the future to `_`, so `unused_must_use` is satisfied and it is
+# dropped unpolled.
 let_underscore_future = "deny"
 
 [workspace.metadata.cargo-machete]
-# Every member depends on the workspace-hack for its features and never
-# names it in code (ADR 0047), which is exactly what `cargo machete` reports.
 ignored = ["postio-workspace-hack"]
 
 [workspace.dependencies]
@@ -200,17 +154,12 @@ postio-storyboard = { path = "crates/postio-storyboard" }
 postio-focus = { path = "crates/postio-focus" }
 postio-demo = { path = "crates/postio-demo" }
 postio-mcp = { path = "crates/postio-mcp" }
-# Every member depends on it, so `-p` builds resolve third-party features
-# the way the workspace build does (ADR 0047). Managed by `cargo hakari`.
 postio-workspace-hack = { path = "crates/postio-workspace-hack" }
 postio-vcard   = { path = "crates/postio-vcard" }
 postio-contact-sync = { path = "crates/postio-contact-sync" }
 
-# Third-party crates two or more members share, so a version, a feature
-# list and a default-features decision are made once (#1498). A member
-# adds features on top with `features = [...]`; it cannot take defaults
-# away, which is why the entries below turn them off only where every
-# member already had.
+# Third-party crates shared by two or more members (#1498). A member adds features but cannot take
+# defaults away, so entries turn them off only where every member already had.
 async-channel = "2.5.0"
 async-trait = "0.1.92"
 base64 = "0.23.1"
@@ -241,13 +190,9 @@ zeroize = "1.9.1"
 lto = "thin"
 codegen-units = 1
 
-# The terminal frontend's release build: `cargo build --profile release-tui
-# -p postio-tui`. Its size is a requirement, not a nicety -- each terminal
-# package must be under half its desktop counterpart
-# (docs/archive/specs/005-tui-frontend SC-004) -- so it trades build time for bytes:
-# whole-program LTO, `s` rather than speed, no unwinding tables, no symbols.
-# `panic = "abort"` is safe here because the terminal is restored by a panic
-# hook, which runs before the abort (postio-tui's `term.rs`).
+# The terminal build must be under half its desktop counterpart (docs/archive/specs/005-tui-frontend
+# SC-004): LTO, `s`, no unwinding tables, no symbols.
+# `panic = "abort"` is safe because a panic hook restores the terminal before the abort.
 [profile.release-tui]
 inherits = "release"
 lto = "fat"
@@ -255,79 +200,25 @@ opt-level = "s"
 panic = "abort"
 strip = true
 
-# Debug info is the heaviest part of compiling and linking the GTK/WebKit
-# stack, and diagnosis here happens through tests and POSTIO_LOG, not a
-# debugger. This was tuned once to `line-tables-only` without measuring what
-# that left behind, and what it left behind was most of it. Measured on the
-# classic app's test binary (`app_suite`, since removed), cold builds of
-# `cargo test --no-run` at `-j6` with sccache off, on an idle box:
-#
-#     debug                 cold build   binary   .debug sections
-#     "line-tables-only"      301/307s   239 MB       153.6 MB
-#     0                           282s    70 MB              0
-#
-# Faster *and* smaller: line tables are not free to emit across ~470 crates,
-# and `target/debug/deps` holds ~330 executables that each carried them.
-#
-# What this costs was checked rather than assumed, and it is narrower than it
-# sounds. `file:line` survives in **panic and assertion messages** -- what a
-# failing test actually prints -- because those come from `#[track_caller]`
-# and are compiled in as data, not read from DWARF. What is lost is
-# `file:line` on the frames of a `RUST_BACKTRACE` dump (function names
-# remain) and variable inspection in gdb. Nothing in this workspace asserts
-# on a backtrace.
-#
-# **`strip = "debuginfo"` was tried here and does nothing.** The theory was
-# that `debug = 0` cannot reach the precompiled std rlibs and only a link-time
-# strip would. Measured, that is false: `debug = 0` alone leaves *zero* bytes
-# of `.debug_*` in the binary. Adding `strip` produced a byte-identical 70 MB
-# and cost 44 seconds (326s against 282s), because cargo passes `-C strip` to
-# all ~470 units while only a handful are ever linked. Do not add it back.
-#
-# To get debug info for one run, with no edit here:
-#
-#     CARGO_PROFILE_DEV_DEBUG=line-tables-only cargo test -p <crate>
-#
-# Budget a full rebuild when you do: a profile change invalidates cargo's
-# fingerprint for every unit in the graph, and sccache hashes the literal
-# command line so it cannot serve the difference either (docs/engineering-
-# notes.md, "mold looked like a memory win").
+# debug = 0: cold test build 282s vs 301s and a 70 MB binary vs 239 MB, measured. `file:line`
+# survives in panic and assertion messages (`#[track_caller]`); only backtrace frames lose it.
+# `strip = "debuginfo"` was measured: a byte-identical binary and 44s slower. Do not add it. Debug
+# info for one run: `CARGO_PROFILE_DEV_DEBUG=line-tables-only cargo test -p <crate>` (rebuilds every
+# unit).
 [profile.dev]
 debug = 0
 
-# Dev builds must stay fast to iterate on, but the perf budget is measured in
-# release; see CLAUDE.md.
-#
-# `opt-level = 2` here meant every one of the ~470 third-party crates was
-# optimized in dev, which is the largest single codegen cost in a cold
-# worktree -- and cold worktrees are the normal case, because each one keeps
-# its own `target/` (#76) and a claim starts from an empty one unless
-# `--reuse` applies (#1012).
-#
-# Lowering this was tried, and measured, and put back. `opt-level = 1` looked
-# free -- no gate can observe it, because the perf budgets are asserted as
-# **counts** off SQLite's trace hook rather than as timings (CLAUDE.md,
-# "Gated as counts, not as timings") and `cargo bench` measures release. But
-# what it moves is the wall clock of the suites people wait on, and it moves
-# it a long way: the classic app's suite ran in **200s** with this at `2`
-# and **382s** with it at `1`. Nearly double, for ~20s of
-# cold-build time saved.
-#
-# So this line is not a leftover to tidy away: it is the reason the
-# integration suites are bearable, and the thing it protects does not show up
-# in any gate's pass or fail.
+# Dependencies stay at `opt-level = 2`: no gate observes it, but the application suite ran in 200s
+# against 382s at 1.
+# Not a leftover to tidy away.
 [profile.dev.package."*"]
 opt-level = 2
 
-# Turso from Postio's fork (branch postio-0.8.4-tantivy-0.27): v0.8.4 plus fuzzy
-# and prefix word expansion in the full-text index (turso#8359, closed upstream
-# unmerged, ported) and a per-word `~N` opt-in, on tantivy 0.27 so the index's
-# zstd is 0.14 (0.26's 0.13 is named by RUSTSEC-2026-0391, -0398, -0403). Search uses it only for the words it
-# offers when a query finds nothing; every query it runs is quoted, and a
-# quoted query is parsed exactly as upstream parses it. It also names
-# `TursoVecInExt::new_in` in full where Rust 1.100's inherent `Vec::new_in`
-# would otherwise win. Every turso crate comes from the one commit, so no
-# two copies of a type meet.
+# Turso from Postio's fork (branch postio-0.8.4-tantivy-0.27): v0.8.4 plus fuzzy and prefix word
+# expansion in the full-text index, on tantivy 0.27 so zstd is 0.14 (0.26's 0.13 is named by
+# RUSTSEC-2026-0391, -0398, -0403). Every query search runs is quoted and parses as upstream. It
+# names `TursoVecInExt::new_in` in full where Rust 1.100's `Vec::new_in` would win. Every turso
+# crate comes from one commit.
 [patch.crates-io]
 turso = { git = "https://github.com/dlapiduz/turso", rev = "fa342b793f8a8b006da570fb6bca6196cb65dacc" }
 turso_core = { git = "https://github.com/dlapiduz/turso", rev = "fa342b793f8a8b006da570fb6bca6196cb65dacc" }
@@ -339,14 +230,6 @@ turso_sdk_kit_macros = { git = "https://github.com/dlapiduz/turso", rev = "fa342
 turso_sync_engine = { git = "https://github.com/dlapiduz/turso", rev = "fa342b793f8a8b006da570fb6bca6196cb65dacc" }
 turso_sync_sdk_kit = { git = "https://github.com/dlapiduz/turso", rev = "fa342b793f8a8b006da570fb6bca6196cb65dacc" }
 
-# Upstream crates with Postio's patch queues applied (`patches/<queue>/`,
-# checked by `scripts/vendor-patches.sh verify`), carried in-tree so a patch
-# is reviewed as a diff in the same pull request that needs it, and dropped
-# when upstream takes it.
-#
-# Blitz 0.3.0-beta.4: the reading renderer's engine.
 blitz-dom = { path = "vendor/blitz-dom" }
 blitz-paint = { path = "vendor/blitz-paint" }
-# mail-parser 1.0.1: every message Postio reads. calcard and io-maildir
-# still take 0.11 from the registry, which this does not touch.
 mail-parser = { path = "vendor/mail-parser" }

@@ -1,10 +1,6 @@
-//! What a thread adds to the composer (spec 013 US7; screens 09 and 10): the
-//! *What to forward* chooser above To, the bar under the title on a reply to
-//! a message that is not the latest, and the messages newer than the one
-//! answered, read-only, below what is written.
-//!
-//! The controller composes the words (`postio_ui::compose`) and says when;
-//! these draw them and hand back a click.
+//! What a thread adds to the composer: the *What to forward* chooser above To, the older-reply bar
+//! under the title, and the newer messages read-only below what is written. The controller composes
+//! the words; these draw them and hand back a click.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -15,28 +11,21 @@ use postio_widgets::widgets::keyhint;
 use postio_widgets::widgets::space;
 use postio_widgets::widgets::{Kind, Size};
 
-/// Told which card a click chose.
 type CardHandler = Rc<dyn Fn(postio_model::ForwardForm)>;
-/// Told which of the bar's two buttons a click pressed (0 or 1).
 type ActionHandler = Rc<dyn Fn(usize)>;
 
-/// The thread's parts of the composer.
 pub struct ThreadParts {
-    /// The bar under the title: placed as a top bar of the dialog.
     pub older: gtk::Box,
     older_title: gtk::Label,
     older_detail: gtk::Label,
     older_buttons: [gtk::Button; 2],
     older_actions: RefCell<Vec<String>>,
-    /// The chooser above To: placed as a top bar of the dialog.
     pub chooser: gtk::Box,
     cards: gtk::Box,
     chooser_view: RefCell<Option<ChooserView>>,
-    /// The newer messages, below what is written: placed in the column.
     pub newer: gtk::Box,
     newer_count: Cell<usize>,
     quoted_expanded: Cell<bool>,
-    /// The folded forwarded messages, a row each, below what is typed.
     pub forwarded: gtk::Box,
     forwarded_count: Cell<usize>,
     on_unfold: RefCell<Option<Rc<dyn Fn()>>>,
@@ -45,7 +34,6 @@ pub struct ThreadParts {
 }
 
 impl ThreadParts {
-    /// Hidden parts, drawn when the controller says.
     pub fn new() -> Rc<Self> {
         let older = gtk::Box::new(gtk::Orientation::Horizontal, space::S3);
         older.add_css_class("focus-older-reply");
@@ -75,8 +63,8 @@ impl ThreadParts {
         let chooser = gtk::Box::new(gtk::Orientation::Vertical, space::S2);
         chooser.add_css_class("focus-forward-chooser");
         chooser.set_visible(false);
-        // One stop in the tab order, above To: `1` `2` `3` are its own while
-        // it holds the keyboard (spec 013 FR-023), and Tab moves on to To.
+        // One stop in the tab order, above To: `1` `2` `3` are its own while it holds the keyboard,
+        // and Tab moves on to To.
         chooser.set_focusable(true);
         chooser.update_property(&[gtk::accessible::Property::Label("What to forward")]);
         let cards = gtk::Box::new(gtk::Orientation::Horizontal, space::S2);
@@ -123,17 +111,14 @@ impl ThreadParts {
         parts
     }
 
-    /// Run `handler` with the card a click chose.
     pub fn connect_card(&self, handler: impl Fn(postio_model::ForwardForm) + 'static) {
         self.on_card.replace(Some(Rc::new(handler)));
     }
 
-    /// Run `handler` with the index of the bar's button a click pressed.
     pub fn connect_action(&self, handler: impl Fn(usize) + 'static) {
         self.on_action.replace(Some(Rc::new(handler)));
     }
 
-    /// Draw the chooser, the chosen card ringed.
     pub fn show_chooser(self: &Rc<Self>, view: &ChooserView) {
         while let Some(child) = self.cards.first_child() {
             self.cards.remove(&child);
@@ -141,8 +126,7 @@ impl ThreadParts {
         for card in &view.cards {
             let button = gtk::Button::new();
             button.add_css_class("focus-forward-card");
-            // The chooser is the one stop; a click chooses and leaves the
-            // keyboard there.
+            // The chooser is the one stop; a click chooses and leaves the keyboard there.
             button.set_focusable(false);
             button.set_focus_on_click(false);
             if card.form == view.selected {
@@ -181,7 +165,6 @@ impl ThreadParts {
         self.chooser.set_visible(true);
     }
 
-    /// Draw the older-reply bar, or take it away.
     pub fn show_older(&self, view: Option<&OlderReplyView>) {
         let Some(view) = view else {
             self.older.set_visible(false);
@@ -206,8 +189,6 @@ impl ThreadParts {
         self.older.set_visible(true);
     }
 
-    /// The newer messages, drawn read-only as `(who and when, first words)`
-    /// lines; none puts them away.
     pub fn show_newer(&self, lines: &[(String, String)]) {
         while let Some(child) = self.newer.first_child() {
             self.newer.remove(&child);
@@ -231,18 +212,14 @@ impl ThreadParts {
         self.newer.set_visible(!lines.is_empty());
     }
 
-    /// The quoted messages' rows are expanded or collapsed again.
     pub fn set_quoted_expanded(&self, expanded: bool) {
         self.quoted_expanded.set(expanded);
     }
 
-    /// Run `handler` when a folded forwarded message's row is pressed.
     pub fn connect_unfold(&self, handler: impl Fn() + 'static) {
         self.on_unfold.replace(Some(Rc::new(handler)));
     }
 
-    /// Draw the forwarded messages as their collapsed rows, one each, the
-    /// last with the key that opens them all; none takes the rows away.
     pub fn show_forwarded(
         self: &Rc<Self>,
         rows: &[postio_body::forward::ForwardedRow],
@@ -291,12 +268,10 @@ impl ThreadParts {
         self.forwarded.set_visible(!rows.is_empty());
     }
 
-    /// How many forwarded messages are folded into rows.
     pub fn forwarded_rows(&self) -> usize {
         self.forwarded_count.get()
     }
 
-    /// Take everything away: a composition ended or a new one began.
     pub fn clear(&self) {
         self.show_older(None);
         self.show_newer(&[]);
@@ -307,7 +282,6 @@ impl ThreadParts {
         self.quoted_expanded.set(false);
     }
 
-    /// Whether the keyboard is in the chooser.
     pub fn chooser_has_focus(&self) -> bool {
         self.chooser.is_visible()
             && self
@@ -320,19 +294,16 @@ impl ThreadParts {
                 })
     }
 
-    /// Put the keyboard in the chooser, when it is up.
     pub fn focus_chooser(&self) {
         if self.chooser.is_visible() {
             self.chooser.grab_focus();
         }
     }
 
-    /// Whether the chooser is up.
     pub fn chooser_open(&self) -> bool {
         self.chooser.is_visible()
     }
 
-    /// The chosen card's title.
     pub fn chooser_selected(&self) -> Option<String> {
         let view = self.chooser_view.borrow();
         let view = view.as_ref()?;
@@ -342,7 +313,6 @@ impl ThreadParts {
             .map(|card| card.title.clone())
     }
 
-    /// The cards, "This message 1 | Whole thread 2 | As attachments 3".
     pub fn chooser_cards(&self) -> String {
         let view = self.chooser_view.borrow();
         view.as_ref().map_or_else(String::new, |view| {
@@ -357,24 +327,20 @@ impl ThreadParts {
         })
     }
 
-    /// The bar's title, while it is up.
     pub fn older_title(&self) -> Option<String> {
         self.older
             .is_visible()
             .then(|| self.older_title.text().to_string())
     }
 
-    /// The bar's buttons, " | " apart.
     pub fn older_actions(&self) -> String {
         self.older_actions.borrow().join(" | ")
     }
 
-    /// How many newer messages are drawn.
     pub fn newer_count(&self) -> usize {
         self.newer_count.get()
     }
 
-    /// Whether the quoted rows are expanded.
     pub fn quoted_expanded(&self) -> bool {
         self.quoted_expanded.get()
     }

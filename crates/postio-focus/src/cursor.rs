@@ -1,11 +1,5 @@
-//! The cursor, the selection and the has-action filter (research R2,
-//! slice 3; contract invariants 1-3).
-//!
-//! Moved from `postio-gtk`'s window so the Mac's list moves and selects by
-//! the same rules. The cursor is where the keyboard is; the selection is
-//! what `a` would archive; they are never the same thing (constitution II).
-//! The rows themselves stay with each toolkit: the controller reads them
-//! through [`Rows`] and says where the cursor goes and what is selected.
+//! The cursor, the selection and the has-action filter. The cursor is where the keyboard is; the
+//! selection is what `a` would archive; they are never the same thing (constitution II).
 
 use std::collections::HashMap;
 
@@ -18,22 +12,16 @@ use postio_ui::selection::{Reach, Selector};
 use crate::Intent;
 use crate::feed::Step;
 
-/// What the controller needs to know about one row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RowFacts {
-    /// The row's message: what the cursor stays on and the selection names.
     pub id: MessageId,
-    /// Whether it is a digest's row, which no bulk verb reaches.
     pub digest: bool,
-    /// The conversations it stands for, every copy (spec 007 T161).
     pub threads: Vec<ThreadId>,
-    /// Whether opening it writes rather than reads: a draft not yet on its
-    /// way (spec 007 US11 scenario 3).
+    /// Whether opening it writes rather than reads: a draft not yet on its way.
     pub writes: bool,
 }
 
 impl RowFacts {
-    /// What `row` is, to the controller.
     pub fn of(row: &FocusRow) -> Self {
         RowFacts {
             id: row.id(),
@@ -46,23 +34,16 @@ impl RowFacts {
     }
 }
 
-/// The list as the frontend holds it. The controller never keeps a copy of
-/// the rows (one resident window, constitution V); it asks.
+/// The controller never keeps a copy of the rows (one resident window, constitution V); it asks.
 pub trait Rows {
-    /// How many rows the list draws.
     fn len(&self) -> u32;
-    /// Whether the list draws no rows.
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
-    /// The row at `position`, once its page has landed.
     fn facts(&self, position: u32) -> Option<RowFacts>;
-    /// Where `message`'s row is, when it is in a landed page.
     fn position_of(&self, message: MessageId) -> Option<u32>;
-    /// Where `thread`'s row is, when it is in a landed page: the row a
-    /// cursor follows across a re-read that changed its message (#2107).
-    /// The default walks every row, which a list of a page or two can
-    /// afford; a windowed list answers from what it holds.
+    /// The row a cursor follows across a re-read that changed its message (#2107). The default
+    /// walks every row; a windowed list answers from what it holds.
     fn position_of_thread(&self, thread: ThreadId) -> Option<u32> {
         (0..self.len()).find(|at| {
             self.facts(*at)
@@ -74,22 +55,16 @@ pub trait Rows {
     fn is_child(&self, _position: u32) -> bool {
         false
     }
-    /// The row at `position` as a picker names what it acts on: its
-    /// sender and its subject. `None` -- the default -- for a frontend
-    /// with no words for it, and the picker names nothing.
+    /// `None`, the default, for a frontend with no words for it: the picker names nothing.
     fn said(&self, _position: u32) -> Option<(String, String)> {
         None
     }
-    /// The row at `position` whole, once its page has landed: what a
-    /// capture is made from, whose senders `d` digests, and a digest row's
-    /// delivery. `None` -- the default -- for a frontend that keeps no
-    /// such row, and those read nothing from it.
+    /// `None`, the default, for a frontend that keeps no such row.
     fn row(&self, _position: u32) -> Option<FocusRow> {
         None
     }
 }
 
-/// No list: for inputs that need none.
 pub struct NoRows;
 
 impl Rows for NoRows {
@@ -104,29 +79,22 @@ impl Rows for NoRows {
     }
 }
 
-/// Where the keyboard is, what is selected, and whether `!` is on.
 #[derive(Debug, Default)]
 pub(crate) struct Cursor {
-    /// The cursor's row.
     position: Option<u32>,
     /// The message `!` left the cursor on, to find again when the list lands.
     keep: Option<MessageId>,
     selector: Selector,
-    /// The conversations each selected row stands for.
     reach: HashMap<MessageId, Vec<ThreadId>>,
-    /// Whether the list is narrowed to rows with a marker (`!`).
     has_action: bool,
-    /// The accounts Focus's inbox is made of: what "everything" reaches.
     accounts: Vec<AccountId>,
     /// Whether a command moved the cursor since the place in view was
     /// opened: the rows still showing are the ones it walked, and the first
     /// page landing a beat later must not walk it back to the top.
     moved: bool,
-    /// The thread the cursor's row stood for when the list was asked to
-    /// read itself again: a reply changes the message the row is drawn
-    /// from and may move it to the top, and the cursor goes with it rather
-    /// than staying on a position another row now holds (#2107). Until the
-    /// controller next moves the cursor.
+    /// The thread the cursor's row stood for when the list was asked to read itself again: a reply
+    /// may move the row to the top, and the cursor goes with it rather than staying on a position
+    /// another row now holds (#2107).
     follow: Option<ThreadId>,
 }
 
@@ -151,12 +119,10 @@ impl Cursor {
         &self.accounts
     }
 
-    /// The cursor's row, once its page has landed.
     pub(crate) fn row(&self, rows: &dyn Rows) -> Option<RowFacts> {
         self.cursor_row(rows)
     }
 
-    /// The cursor's row as a verb aims at it: a child is its own message.
     pub(crate) fn aim_row(&self, rows: &dyn Rows) -> Option<postio_ui::focus_target::AimRow> {
         let position = self.position?;
         self.cursor_row(rows)
@@ -168,36 +134,29 @@ impl Cursor {
             })
     }
 
-    /// Put the cursor on `position`.
     pub(crate) fn place(&mut self, position: u32, rows: &dyn Rows) -> Vec<Step> {
         self.to(Some(position), rows)
     }
 
-    /// Move the cursor `by` rows, as `j`/`k` do; whether it moved.
     pub(crate) fn step(&mut self, by: i32, rows: &dyn Rows) -> (Vec<Step>, bool) {
         let before = self.position;
         let steps = self.by(by, rows);
         (steps, self.position != before)
     }
 
-    /// The frontend moved the cursor itself -- its list view took a click,
-    /// a row went from under it -- and says where it is now. Nothing is
-    /// drawn: the cursor is already there.
+    /// The frontend moved the cursor itself (a click, a row gone from under it); nothing is drawn.
     pub(crate) fn moved_to(&mut self, position: Option<u32>) {
         self.position = position;
     }
 
-    /// A place is being opened: the cursor goes to its first row when it
-    /// lands, unless a command moves the cursor before then.
+    /// The cursor goes to the first row when it lands, unless a command moves it first.
     pub(crate) fn opening(&mut self) {
         self.moved = false;
         self.follow = None;
     }
 
-    /// The list is about to be read again: the cursor's row is remembered
-    /// by its thread, for [`landed`](Self::landed) to find wherever the
-    /// re-read puts it. A child of an open thread, and a digest, stand for
-    /// no thread of their own here and are left where they are.
+    /// The cursor's row is remembered by its thread, for `landed` to find wherever the re-read puts
+    /// it. A child of an open thread, and a digest, stand for no thread here and stay put.
     pub(crate) fn rereading(&mut self, rows: &dyn Rows) {
         let Some(position) = self.position else {
             return;
@@ -218,8 +177,6 @@ impl Cursor {
         self.accounts = accounts;
     }
 
-    /// The list has landed: an opening puts the cursor on its first row
-    /// (C30), or back on the message `!` kept; a re-read leaves it.
     pub(crate) fn landed(&mut self, rows: &dyn Rows, opened: bool) -> Vec<Step> {
         if let Some(message) = self.keep.take() {
             return match rows.position_of(message) {
@@ -236,8 +193,6 @@ impl Cursor {
             {
                 match rows.position_of_thread(thread) {
                     Some(position) => return self.to(Some(position), rows),
-                    // Gone from the rows on screen: the cursor stays where
-                    // the list left it.
                     None if here.is_some() => self.follow = None,
                     None => {}
                 }
@@ -255,7 +210,6 @@ impl Cursor {
         Vec::new()
     }
 
-    /// A command the cursor answers, or `None` when it is not one of its.
     pub(crate) fn command(
         &mut self,
         id: CommandId,
@@ -292,16 +246,10 @@ impl Cursor {
         Some(steps)
     }
 
-    /// The pointer put the cursor on `position`: a click on a row, which
-    /// selects nothing (spec 007 FR-016).
     pub(crate) fn point(&mut self, position: u32, rows: &dyn Rows) -> Vec<Step> {
         self.to(Some(position), rows)
     }
 
-    /// A modified click on `position`: with the platform's toggle modifier,
-    /// the row goes in or out, as `x` would; with Shift, every row from the
-    /// anchor (the cursor, before there is one) to it goes in, digests
-    /// walked over. The cursor follows the click either way.
     pub(crate) fn pick(
         &mut self,
         position: u32,
@@ -346,10 +294,8 @@ impl Cursor {
         steps
     }
 
-    /// Select every row `rows` has, digests walked over, and name them in
-    /// the selection instead of "everything": for a view whose rows are the
-    /// whole of what its selection can mean (Filtered), where there is no
-    /// predicate for the host to resolve. The cursor stays.
+    /// For a view whose rows are the whole of what its selection can mean (Filtered), where there
+    /// is no predicate for the host to resolve. Digests are walked over.
     pub(crate) fn select_rows(&mut self, rows: &dyn Rows, total: u32) -> Vec<Step> {
         let mut changed = false;
         for position in 0..rows.len() {
@@ -361,24 +307,20 @@ impl Cursor {
         self.selection_steps(changed, total)
     }
 
-    /// The list is leaving for another place: the selection goes and `!`
-    /// is off, since neither means anything there.
     pub(crate) fn leave(&mut self, total: u32) -> Vec<Step> {
         self.has_action = false;
         self.keep = None;
         self.clear(total)
     }
 
-    /// Back's last rung: drop the selection; the cursor stays.
     pub(crate) fn clear(&mut self, total: u32) -> Vec<Step> {
         self.reach.clear();
         let changed = self.selector.clear();
         self.selection_steps(changed, total)
     }
 
-    /// `!`: narrow the inbox to the rows with a marker, or back (spec 007
-    /// FR-017). The selection goes, since what it named may not be shown;
-    /// the cursor's message is kept, to find again when the list lands.
+    /// The selection goes, since what it named may not be shown; the cursor's message is kept to
+    /// find again when the list lands.
     fn toggle_has_action(
         &mut self,
         rows: &dyn Rows,
@@ -408,9 +350,7 @@ impl Cursor {
         steps
     }
 
-    /// `J`/`K`: take the cursor's row into the selection and the next one
-    /// with it, moving the cursor onto it. A digest row is walked over, not
-    /// taken in: no bulk verb reaches it, and `x` refuses it the same way.
+    /// A digest row is walked over, not taken in: no bulk verb reaches it.
     fn extend(&mut self, by: i32, rows: &dyn Rows, total: u32) -> Vec<Step> {
         let mut changed = self.take_cursor_row(rows);
         let mut steps = self.by(by, rows);
@@ -433,8 +373,7 @@ impl Cursor {
         rows.facts(self.position?)
     }
 
-    /// Move the cursor `by` rows, and nothing else: nothing opens, nothing
-    /// is marked read, the selection stays as it was (spec 007 FR-016).
+    /// Moves the cursor and nothing else: nothing opens, nothing is marked read.
     fn by(&mut self, by: i32, rows: &dyn Rows) -> Vec<Step> {
         let len = rows.len();
         if len == 0 {
@@ -447,8 +386,6 @@ impl Cursor {
         self.to(Some(next), rows)
     }
 
-    /// Put the cursor on `position`, and have the frontend bring it into
-    /// view; a position off the list moves nothing.
     fn to(&mut self, position: Option<u32>, rows: &dyn Rows) -> Vec<Step> {
         match position {
             Some(position) if position < rows.len() => {
@@ -464,8 +401,6 @@ impl Cursor {
         }
     }
 
-    /// The cursor and the selection as they are, drawn again: the list
-    /// shown again after the results it was hidden under (spec 010 D17).
     pub(crate) fn redraw(&self, total: u32) -> Vec<Step> {
         let mut steps: Vec<Step> = self
             .position

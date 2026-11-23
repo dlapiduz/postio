@@ -1,22 +1,10 @@
-//! The formatting commands, through the bridge: #338.
-//!
-//! Each registry command lands as [`Editor::format`] or
-//! [`Editor::create_link`], runs the editing machinery the dialect contract
-//! pins, crosses the bridge as an ordinary edit, and shows up as canonical
-//! [`Document`] structure. This is the round trip the issue's acceptance
-//! names — command in, `Strong`/`List`/`Quote`/`Link` out — plus the scheme
-//! gate: an address outside http/https/mailto is refused before it can
-//! reach markup, and says so by return value.
-//!
-//! One test function: GTK is single-threaded and initialised once.
-
 use crate::support_compose::settle_until as settle;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
 
+use gtk::glib;
 use gtk::prelude::*;
-use gtk::{gdk, glib};
 use postio_body::{Block, Document, HeadingLevel, Inline};
 use postio_widgets::composer::editor::{Editor, Format};
 use webkit6::prelude::*;
@@ -40,9 +28,7 @@ fn eval_str(view: &webkit6::WebView, script: &str) -> String {
     result.borrow_mut().take().unwrap_or_default()
 }
 
-/// Load `document` and wait for the page swap to actually commit — `load`
-/// is asynchronous, and a gesture fired between loads lands on the page
-/// that is leaving.
+/// `load` is asynchronous: a gesture fired between loads lands on the page that is leaving.
 fn load_synced(editor: &Editor, document: Document, expected_text: &str) {
     editor.load(document);
     // The script too, not only the text (#1716): a gesture that lands
@@ -51,11 +37,8 @@ fn load_synced(editor: &Editor, document: Document, expected_text: &str) {
         eval_str(editor.widget(), "document.body.textContent") == expected_text
             && eval_str(editor.widget(), crate::support_compose::EDITOR_LISTENING) == "true"
     });
-    // And on screen, laid out (#1800). A selection in text that has no
-    // layout yet is not one WebKit can format: it collapses it to a caret
-    // and `execCommand` toggles a typing style. A person selects what they
-    // can see, and the view is mapped and laid out by then; under load the
-    // window lags the page, so wait for what they would see.
+    // Also on screen and laid out (#1800): a selection in unlaid-out text collapses to a caret and
+    // `execCommand` toggles a typing style.
     settle("the editor to be on screen with its text laid out", || {
         editor.widget().is_mapped()
             && eval_str(
@@ -81,7 +64,6 @@ fn eval(view: &webkit6::WebView, script: &str) {
     settle("the script to answer", || *done.borrow());
 }
 
-/// Select `from..to` inside the first paragraph's text node.
 fn select(view: &webkit6::WebView, from: u32, to: u32) {
     eval(
         view,
@@ -102,14 +84,8 @@ fn text_paragraph(text: &str) -> Document {
     document
 }
 
-/// Wait for a formatting command to change the document, and fail within
-/// seconds, naming the command and the selection it ran on, if it never does.
-///
-/// A command applied to a selection that has collapsed toggles the typing
-/// style at a caret instead of wrapping anything: nothing changes, nothing
-/// is reported, and nothing will ever arrive. The general deadline is 120 s
-/// scaled by patience for waits on WebKit loading; a wait on this has no
-/// slow case worth that long (#1859).
+/// A command on a collapsed selection toggles the typing style, so nothing changes and nothing
+/// arrives; fail within seconds, naming the command (#1859).
 fn lands(editor: &Editor, command: &str, landed: impl Fn() -> bool) {
     let limit = postio_test_support::scaled(Duration::from_secs(10));
     let start = std::time::Instant::now();
@@ -143,18 +119,12 @@ fn lands(editor: &Editor, command: &str, landed: impl Fn() -> bool) {
 /// 30 s on a CI runner and the widgets suite's longest-running flake
 /// (#1800), so it runs on the nightly timer; the per-command cases stay.
 pub fn every_formatting_command_lands_as_canonical_structure() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under the headless runner to exercise this)");
-        return;
-    }
-
     let window = gtk::Window::new();
     window.set_default_size(600, 400);
     let editor = Editor::with_coalesce(Rc::new(|_: &str| None), Duration::ZERO);
     window.set_child(Some(editor.widget()));
     window.present();
 
-    // ── bold on a selection becomes Strong ────────────────────────────────
     load_synced(
         &editor,
         text_paragraph("make this strong"),
@@ -170,7 +140,6 @@ pub fn every_formatting_command_lands_as_canonical_structure() {
         )
     });
 
-    // ── italic likewise ───────────────────────────────────────────────────
     load_synced(&editor, text_paragraph("lean on this"), "lean on this");
     select(editor.widget(), 0, 4);
     editor.format(Format::Italic);
@@ -182,7 +151,6 @@ pub fn every_formatting_command_lands_as_canonical_structure() {
         )
     });
 
-    // ── the list toggles, both kinds ──────────────────────────────────────
     load_synced(&editor, text_paragraph("item one"), "item one");
     select(editor.widget(), 0, 0);
     editor.format(Format::BulletList);
@@ -208,7 +176,6 @@ pub fn every_formatting_command_lands_as_canonical_structure() {
         )
     });
 
-    // ── the heading toggles on and back off (#1485) ──────────────────────
     load_synced(&editor, text_paragraph("Agenda"), "Agenda");
     select(editor.widget(), 0, 0);
     editor.format(Format::Heading1);
@@ -226,7 +193,6 @@ pub fn every_formatting_command_lands_as_canonical_structure() {
         matches!(editor.document().blocks.first(), Some(Block::Paragraph(_)))
     });
 
-    // ── the quote block toggles on and back off ───────────────────────────
     load_synced(&editor, text_paragraph("as you said"), "as you said");
     select(editor.widget(), 0, 0);
     editor.format(Format::QuoteBlock);
@@ -238,7 +204,6 @@ pub fn every_formatting_command_lands_as_canonical_structure() {
         matches!(editor.document().blocks.first(), Some(Block::Paragraph(_)))
     });
 
-    // ── a link on the selection, and the scheme gate ──────────────────────
     load_synced(
         &editor,
         text_paragraph("read this later"),

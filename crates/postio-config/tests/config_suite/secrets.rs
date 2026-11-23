@@ -1,8 +1,3 @@
-//! Security tests: `config.toml` must never be able to hold a secret.
-//!
-//! CLAUDE.md: "Secrets go in the Secret Service keyring. Never in
-//! `config.toml`, never logged." These tests are the enforcement.
-
 use postio_config::{Config, secrets};
 
 const PASSWORD: &str = "hunter2-do-not-persist";
@@ -83,15 +78,12 @@ fn no_secret_can_round_trip_to_disk() {
     ] {
         assert!(!out.contains(key), "secret key `{key}` serialized:\n{out}");
     }
-    // The rest of the file is untouched.
     assert!(out.contains("imap.example.com"));
     assert!(out.contains("ada@example.com"));
 }
 
 #[test]
 fn a_secret_injected_after_parsing_still_cannot_be_written() {
-    // Belt and braces: even if some later code pushes a secret into the
-    // unknown-key passthrough, serialization drops it.
     let mut cfg = Config::default();
     cfg.extra
         .insert("password".into(), toml::Value::String(PASSWORD.into()));
@@ -116,10 +108,6 @@ fn keyring_entry_is_not_mistaken_for_a_secret() {
         "#,
     )
     .unwrap();
-    // Read back through the round-trip rather than a typed accessor:
-    // `[accounts]` is retired (#470) and now survives as an unknown table.
-    // The subject of this test is unchanged -- a keyring *reference* is not
-    // a secret and must not be stripped.
     assert!(
         cfg.to_toml_string().unwrap().contains("keyring_entry"),
         "a keyring reference is not a secret and must persist"
@@ -161,8 +149,6 @@ fn parse_errors_never_quote_a_secret() {
 
 #[test]
 fn no_type_in_this_crate_declares_a_secret_field() {
-    // Guards against a future struct gaining a `password` field, which would
-    // make secrets serializable again.
     let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut offenders = Vec::new();
     visit(&src, &mut offenders);

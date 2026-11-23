@@ -1,37 +1,6 @@
-//! The sync engine, driven from one thread that owns a connection.
-//!
-//! `postio-sync` had `Drainer` and `Backfill` and nothing called either: the
-//! operation queue filled up locally and never reached a server, and message
-//! bodies were never fetched. This is the loop that runs them.
-//!
-//! # Why it is a thread and not a task
-//!
-//! A drain is a long, stateful, *sequential* thing: one connection, one
-//! queue, one order. So the engine gets a thread of its own running a
-//! current-thread runtime, keeps its state there in `Rc`/`RefCell` — none of
-//! it `Send`, on purpose — and takes work over a channel. Nothing about it
-//! crosses a thread boundary while borrowed, and every caller awaits a reply
-//! rather than blocking — which is the rule that matters, because the caller
-//! is the UI.
-//!
-//! It was first shaped this way by necessity: the store's connection was
-//! rusqlite's, `!Sync`, so the drain's future could not be `tokio::spawn`ed
-//! at all. The store is async to the bottom now (docs/archive/specs/004-turso-store) and
-//! a checkout could cross threads; the sequential shape is the point, and it
-//! stayed.
-//!
-//! # What runs here
-//!
-//! * **Draining** the operation queue for an account: flags, moves, deletes,
-//!   expunges over IMAP, and sends over SMTP.
-//! * **Backfilling** message bodies: seeded per mailbox after a sync, and
-//!   jumped to the front when the reading pane opens something.
-//! * **Staying connected**: a `Supervisor` per engine, polled on a timer and
-//!   told directly by whatever hit a broken connection, so a dropped session
-//!   is noticed by the operation that found it rather than by the next tick.
-//!
-//! Both report back as [`Event`]s on the sink they were given, so the UI
-//! learns what happened the same way it learns everything else.
+//! The sync engine: one thread owns the connection and a current-thread runtime, state in
+//! `Rc`/`RefCell`, work over a channel.
+//! Callers await a reply and never block, because the caller is the UI.
 
 use std::cell::RefCell;
 use std::fmt;
@@ -53,6 +22,7 @@ use postio_storage::repository::{
     MailboxRepository, MessageRepository, OperationQueueRepository, SyncStateRepository,
 };
 use postio_storage::{BlobStore, Checkout, Store};
+use postio_sync::backfill::Outcome;
 use postio_sync::initial::Progress;
 use postio_sync::status::StatusTracker;
 use postio_sync::{
@@ -60,54 +30,29 @@ use postio_sync::{
     ReconnectPolicy, RetryPolicy, SmtpContext, Supervisor, SyncError, SyncStatus, Wake, Watch,
     WatchPolicy, Watcher, backfill, discover, initial, resync,
 };
-// The crate root's `Outcome` is the *resync* one; a body has its own.
-use postio_sync::backfill::Outcome;
 
-/// What the connection is doing, and what the operating system says about the
-/// network.
-///
-/// Re-exported rather than mirrored: whoever holds an [`Engine`] is the
-/// composition root, which depends on `postio-sync` anyway, and a second
-/// enum saying the same thing is a second enum to keep in step. The *frontend*
-/// never sees these — this whole module is behind the `runtime` feature, which
-/// the view layer cannot enable.
+/// Re-exported from `postio-sync`; the frontend never sees these (this module is behind the
+/// `runtime` feature).
 pub use postio_sync::{Blocker, Link, NetworkState};
 
 use postio_core::Event;
 use postio_core::bridge::EventSink;
 
-/// What one drain pass did.
-///
-/// Core's own summary of `postio_sync::DrainReport`, so the sync engine's
-/// types stay behind this boundary the way the storage types do.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DrainSummary {
-    /// Rows the server accepted.
     pub applied: usize,
-    /// Rows that needed no round trip because they cancelled each other out.
     pub coalesced: usize,
-    /// Rows whose message was not where the operation expected it.
     pub obsolete: usize,
-    /// Rows waiting for a retry.
     pub deferred: usize,
-    /// Rows given up on, each with the reason the user should see.
     pub failed: Vec<String>,
-    /// Rows that may or may not have happened, each with its reason.
-    ///
-    /// Separate from `failed` because the two say different things and the
-    /// user is told different things (#674): a failure did not happen, and
-    /// this may have. Nothing here becomes an `Event::Error` — a send that
-    /// might be in somebody's inbox is not an error, it is a question, and
-    /// the `Unconfirmed` draft is where it is asked.
+    /// Separate from `failed`: a failure did not happen, this may have (#674).
+    /// Nothing here becomes an `Event::Error`; the `Unconfirmed` draft asks the question.
     pub uncertain: Vec<String>,
-    /// Mailboxes whose local state is now known to disagree with the server.
     pub needs_resync: Vec<MailboxId>,
-    /// Which thread each Sent copy the drain filed joined.
     pub thread_arrivals: postio_sync::threaded::ThreadArrivals,
 }
 
 impl DrainSummary {
-    /// Whether anything at all happened.
     pub fn is_empty(&self) -> bool {
         self.applied == 0
             && self.coalesced == 0
@@ -118,30 +63,20 @@ impl DrainSummary {
     }
 }
 
-/// What one sync pass did to a mailbox.
-///
-/// Core's own summary, so `postio-sync`'s report types stay behind this
-/// boundary the way the storage types do.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SyncSummary {
-    /// Messages that were not known locally before this pass.
     pub inserted: usize,
-    /// Messages already present that this pass wrote again.
     pub updated: usize,
-    /// Messages filed into a thread during this pass.
     pub threaded: usize,
-    /// Whether the whole mailbox had to be re-enumerated.
     pub full: bool,
 }
 
 impl SyncSummary {
-    /// Whether the local store moved at all.
     pub fn changed(&self) -> bool {
         self.inserted > 0 || self.updated > 0 || self.threaded > 0
     }
 }
 
-/// Work the engine could not do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EngineError {
     message: String,
@@ -168,103 +103,53 @@ impl fmt::Display for EngineError {
 
 impl std::error::Error for EngineError {}
 
-/// Everything the engine needs to exist.
-///
-/// Assembled by whoever owns the account — the composition root — because
-/// choosing a transport, a keyring and a blob directory is exactly the kind of
-/// decision a runtime should be handed rather than make.
 pub struct EngineParts {
-    /// The account this engine is for.
-    ///
-    /// One engine per account, because a second account is a second server,
-    /// a second password and a second link to keep up. Nothing here is shared
-    /// between them but the database.
     pub account: AccountId,
-    /// The local store.
     pub database: Store,
-    /// Where attachment bytes are read from and the sent copy is written to.
     pub blobs: BlobStore,
-    /// The IMAP side: flags, moves, deletes, expunges, bodies.
     pub backend: Arc<dyn MailBackend>,
-    /// The SMTP side. Without it `Operation::Send` fails outright, which is
-    /// not a bug — a queue with nothing to send through cannot send.
+    /// Absent means `Operation::Send` fails outright.
     pub smtp: Arc<dyn SmtpConnector>,
-    /// Where the account's credential comes from — **the same instance the
-    /// IMAP store behind `backend` holds** (ADR 0006 Q5).
-    ///
-    /// One per account rather than one per connection. Sharing is what lets a
-    /// rejection seen on one side be seen on the other, and what keeps a
-    /// provider that rotates its refresh token from having two simultaneous
-    /// refreshes invalidate each other. Building a second source here would
-    /// look identical and be exactly that bug.
+    /// Must be the same instance the IMAP store behind `backend` holds (ADR 0006 Q5): sharing lets
+    /// a
+    /// rejection on one side be seen on the other, and stops two refreshes of a rotating token
+    /// invalidating each other.
     pub tokens: Arc<dyn TokenSource>,
-    /// Where the engine reports what it did.
     pub events: EventSink,
-    /// How hard to retry a failed operation.
     pub retry: RetryPolicy,
-    /// How eagerly to fetch bodies nobody has asked for yet.
     pub backfill: BackfillPolicy,
-    /// How long to wait before trying a dropped connection again.
     pub reconnect: ReconnectPolicy,
-    /// How closely to watch for mail arriving.
     pub watch: WatchPolicy,
-    /// Where the engine learns that the machine's network came or went.
     pub network: NetworkSource,
-    /// Folders the user has assigned a role to by hand, from `[mailboxes]`.
-    ///
-    /// Carried rather than read here for the reason every other policy on
-    /// this struct is: which folder is the archive is a fact about *this
-    /// installation*, and an engine that reached for a config file itself
-    /// could not be driven by a test. Empty is the ordinary case and costs
-    /// nothing — see [`RoleOverrides`].
     pub mailbox_roles: RoleOverrides,
-    /// Where a sync pass reads "now" from for repaint coalescing.
-    ///
-    /// [`SystemClock`] for every engine outside a test; see [`Clock`] for
-    /// why this is carried rather than read directly.
     pub clock: Arc<dyn Clock>,
 }
 
-/// Who tells the engine about the network.
-///
-/// Explicit rather than "listen if the bus is there", because a test that
-/// quietly opened a D-Bus connection would be a test that behaves differently
-/// on a developer's desktop and on a CI runner. The application asks for
-/// [`NetworkSource::NetworkManager`]; everything else leaves it alone.
+/// Explicit so a test never opens a D-Bus connection by accident.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum NetworkSource {
-    /// Nobody. The link is judged entirely by whether connections work, which
-    /// is correct but waits out a backoff the machine could have skipped.
     #[default]
     Ignored,
-    /// NetworkManager over the system bus. Falls back to [`Self::Ignored`]
-    /// behaviour on a machine that does not run it.
     NetworkManager,
 }
 
-/// One unit of work for the engine's thread.
 enum Job {
     Drain {
         reply: tokio::sync::oneshot::Sender<Result<DrainSummary, EngineError>>,
     },
-    /// The user supplied a new password, so a blocked link is worth trying.
     RetryNow {
         reply: tokio::sync::oneshot::Sender<Link>,
     },
-    /// The operating system changed its mind about the network.
     SetNetwork {
         state: NetworkState,
         reply: tokio::sync::oneshot::Sender<Link>,
     },
-    /// What the link is doing right now.
     LinkState {
         reply: tokio::sync::oneshot::Sender<Link>,
     },
-    /// How far the backfill has got.
     BackfillProgress {
         reply: tokio::sync::oneshot::Sender<BackfillProgress>,
     },
-    /// Bring one mailbox in line with the server.
     Sync {
         mailbox: MailboxId,
         reply: tokio::sync::oneshot::Sender<Result<SyncSummary, EngineError>>,
@@ -278,7 +163,6 @@ enum Job {
         message: MessageId,
         reply: tokio::sync::oneshot::Sender<Result<bool, EngineError>>,
     },
-    /// Fetch named payload sections of one message, ahead of everything else.
     RequestPayloads {
         message: MessageId,
         parts: Vec<String>,
@@ -291,16 +175,8 @@ enum Job {
 }
 
 impl Job {
-    /// Whether a wave can answer this without stopping its lanes (#1593).
-    ///
-    /// A body request is an enqueue -- the fetch itself runs beside the
-    /// lanes, as every backfill body has since #631 -- and a query is
-    /// answered from engine state. Neither needs a connection a lane is
-    /// holding, and neither takes the store's write gate, which a suspended
-    /// pass may be holding. `Sync` and `Drain` are what the cancel exists
-    /// for: the caller is waiting on a whole pass or the whole queue.
-    /// `RetryNow` and `SetNetwork` move the link, and a wave whose link has
-    /// moved should stop and let the loop look at it.
+    /// A body request is an enqueue and a query reads engine state; neither needs a connection a
+    /// lane holds or the write gate a suspended pass may hold (#1593).
     fn is_answered_beside_a_wave(&self) -> bool {
         matches!(
             self,
@@ -313,7 +189,6 @@ impl Job {
         )
     }
 
-    /// Whether answering this queues a body the person is waiting for.
     fn asks_for_a_body(&self) -> bool {
         matches!(
             self,
@@ -322,21 +197,11 @@ impl Job {
     }
 }
 
-/// Engines the application keeps running for the whole session.
-///
-/// The application used to `Box::leak` each engine, on the reasoning that it
-/// lives as long as the process and "dropping it at exit would stop the
-/// engine a moment before the process ends anyway". That was sound while the
-/// store recovered a torn write cleanly and unsound once it did not have to:
-/// the moment before the process ends is when a sync pass may be mid-commit,
-/// and the engine that replaced SQLite is pre-1.0 — trusting its WAL recovery
-/// to undo a write torn by `exit()` is a bet worth not making. See
-/// [`EngineThread`].
-///
-/// So they are retained here instead, where [`stop`] can reach them.
+/// Retained for the session so [`stop`] can join them: a sync pass may be mid-commit at exit, and
+/// the
+/// store's WAL recovery is not worth betting on.
 static RETAINED: Mutex<Vec<Engine>> = Mutex::new(Vec::new());
 
-/// Keep `engine` alive for the session, and reachable by [`stop`].
 pub fn retain(engine: Engine) {
     RETAINED
         .lock()
@@ -344,12 +209,8 @@ pub fn retain(engine: Engine) {
         .push(engine);
 }
 
-/// Wind down an engine that something else has replaced, without waiting.
-///
-/// Closes its job channel at once, so nothing more is queued on it, takes
-/// it out of the retained list so [`stop`] does not hold or join
-/// it a second time, and joins its thread off the caller's thread: the
-/// caller may be the async executor or a UI loop (#1986).
+/// Wind down a replaced engine without waiting: close its channel, drop it from the retained list,
+/// and join off the caller's thread, which may be the UI loop (#1986).
 pub fn retire(engine: Engine) {
     RETAINED
         .lock()
@@ -360,14 +221,7 @@ pub fn retire(engine: Engine) {
     std::thread::spawn(move || engine.thread.join_bounded());
 }
 
-/// Stop `engines` and wait for their threads, before exiting. Every other
-/// retained engine goes on running.
-///
-/// What a host stopping is: the engines it started, and nobody else's. It
-/// stopped every retained engine once, which in the application is the same
-/// thing and in a test suite is not: several hosts share a process there,
-/// and each one that ended took its neighbours' syncs down mid-case (#1976).
-/// A no-op given none.
+/// Stop `engines` and join their threads; other retained engines keep running (#1976).
 pub fn stop(engines: Vec<Engine>) {
     RETAINED
         .lock()
@@ -385,9 +239,7 @@ fn stop_and_wait(engines: Vec<Engine>) {
         return;
     }
     tracing::debug!(count = engines.len(), "stopping the sync engines");
-    // Close every channel before joining anything, so the engines wind down
-    // concurrently — and give the joins one shared deadline: a machine with
-    // N accounts owes the user one grace on the way out, not N of them
+    // Close every channel before joining, with one shared deadline: N accounts owe one grace, not N
     // (#759).
     for engine in &engines {
         engine.jobs.close();
@@ -398,40 +250,23 @@ fn stop_and_wait(engines: Vec<Engine>) {
     }
 }
 
-/// A handle to the sync engine.
-///
-/// Cloning gives another handle to the same thread. Dropping every handle
-/// stops it — and **waits for it to stop**, which is the part that matters.
-/// See [`EngineThread`].
+/// Cloning shares the thread; dropping the last handle waits for it to stop.
 #[derive(Debug, Clone)]
 pub struct Engine {
-    /// Declared first, so it drops first: closing the channel is what tells
-    /// the thread to finish, and [`EngineThread`] is what then waits for it.
-    /// Reordering these two fields reintroduces a deadlock.
+    /// Declared first so it drops first; reordering these fields reintroduces a deadlock.
     jobs: async_channel::Sender<Job>,
-    /// Never read. Held so that the last handle to go joins the thread, which
-    /// is entirely a `Drop` effect — see [`EngineThread`].
+    /// Never read; the last handle to go joins the thread in `Drop`.
     #[allow(dead_code)]
     thread: Arc<EngineThread>,
-    /// Where this engine's incremental passes find the filing pass they
-    /// hand their arrivals to. See [`FilingSlot`].
     filing: FilingSlot,
 }
 
-/// Where a host in Focus mode puts the filing pass its engines' incremental
-/// passes run (spec 007, `postio_sync::filing`).
-///
-/// One slot, shared: the host holds it and every engine it starts is spawned
-/// with a clone ([`Engine::spawn_filing`]), so filling it reaches the
-/// engines running and the ones an account added later will start -- and
-/// is already in place when an engine's first pass is an incremental one.
-/// Each pass reads it once, as it starts. Empty in every host Focus did not
-/// switch on, which is every host but Focus's.
+/// Where a Focus-mode host puts the filing pass: one slot shared by every engine it starts, read
+/// once as each pass starts.
 #[derive(Clone, Default)]
 pub struct FilingSlot(Arc<std::sync::RwLock<Option<Arc<dyn FilingPass>>>>);
 
 impl FilingSlot {
-    /// The filing pass, if Focus mode put one here.
     pub fn get(&self) -> Option<Arc<dyn FilingPass>> {
         self.0
             .read()
@@ -439,8 +274,6 @@ impl FilingSlot {
             .clone()
     }
 
-    /// File every incremental pass from now on with `pass`, in every engine
-    /// sharing this slot; `None` takes it away.
     pub fn set(&self, pass: Option<Arc<dyn FilingPass>>) {
         *self
             .0
@@ -458,49 +291,16 @@ impl fmt::Debug for FilingSlot {
     }
 }
 
-/// The engine's thread, joined when the last [`Engine`] handle goes.
-///
-/// # Why this is not a detached thread
-///
-/// It was one. `Engine::spawn` started a thread and dropped its
-/// `JoinHandle`, so nothing could wait for it even in principle — and
-/// `exit()` does not stop threads, it runs the process's exit handlers and
-/// then kills it. A sync pass still committing at that moment kept writing
-/// while the process was torn down around it.
-///
-/// Under SQLCipher this was a reproducible coredump: encrypting a page went
-/// through libcrypto, libcrypto was finalized by the same exit handlers, and
-/// thread B faulted through freed memory. That specific crash left with the C
-/// library — the pure-Rust engine has no atexit finalizer to fault through.
-///
-/// What did not leave is the write torn mid-commit. Under SQLite a torn WAL
-/// frame was "what recovery is for"; the engine that replaced it is pre-1.0,
-/// and its recovery is its own young implementation rather than the most
-/// tested one on earth. Waiting for the pass to finish rather than betting on
-/// that recovery is cheap insurance, and it is why this stayed after the
-/// coredump it was written for stopped being possible.
-///
-/// # Bounded, because `Drop` runs on somebody else's thread
-///
-/// The last handle usually goes on the GTK main loop, and a shutdown that
-/// blocks it for as long as a stalled network read is a worse bug than the
-/// one being fixed. So this waits [`SHUTDOWN_GRACE`] for the thread to
-/// finish whatever job it was on and gives up otherwise, saying so. Giving
-/// up is the old behaviour, which is the right thing to degrade to.
+/// Joined when the last handle goes: `exit()` does not stop threads, and a pass mid-commit must not
+/// be torn.
+/// The wait is bounded by `SHUTDOWN_GRACE` because `Drop` often runs on the GTK main loop; giving
+/// up detaches.
 #[derive(Debug)]
 struct EngineThread {
     handle: Mutex<Option<std::thread::JoinHandle<()>>>,
-    /// What the thread was last seen doing, for the warning when it outstays
-    /// the grace.
     busy: Busy,
 }
 
-/// What the engine's thread was last seen doing.
-///
-/// Written by the engine's thread as it moves between phases and read by
-/// [`EngineThread::join_until`] when the grace expires, so the warning can
-/// name what was still running instead of leaving the reader to guess which
-/// of a dozen awaits went long (#759).
 #[derive(Clone, Debug)]
 struct Busy(Arc<Mutex<String>>);
 
@@ -524,29 +324,16 @@ impl Busy {
     }
 }
 
-/// How long dropping the last [`Engine`] waits for its thread to stop.
-///
-/// The loop notices a closed channel at its next `select!`, so in practice
-/// this is the tail of one in-flight job and expires in microseconds. The
-/// bound is for the case where that job is waiting out a network read.
+/// Normally microseconds; the bound covers a job stuck in a network read.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 
 impl EngineThread {
-    /// Wait for the thread to stop, up to [`SHUTDOWN_GRACE`], and join it.
-    ///
-    /// Idempotent: the handle is taken out, so a second call has nothing left
-    /// to wait for. That is what lets [`Engine::stop`] and this type's `Drop`
-    /// both be correct without either having to know about the other.
-    ///
-    /// The caller must have closed the job channel first, or there is nothing
-    /// telling the thread to finish and this simply spends the grace period.
+    /// Idempotent. The caller must close the job channel first, or this just spends the grace.
     fn join_bounded(&self) {
         self.join_until(Instant::now() + SHUTDOWN_GRACE);
     }
 
-    /// As [`join_bounded`](Self::join_bounded), against a deadline the caller
-    /// chose — which is what lets [`stop`] give N engines one shared
-    /// grace on the way out instead of N graces in a row (#759).
+    /// Against a caller-chosen deadline, so N engines share one grace (#759).
     fn join_until(&self, deadline: Instant) {
         let Some(handle) = self
             .handle
@@ -557,8 +344,7 @@ impl EngineThread {
             return;
         };
 
-        // The engine dropping its own handle. Joining here would be a thread
-        // waiting on itself, which never returns.
+        // The engine dropping its own handle: joining would wait on itself.
         if handle.thread().id() == std::thread::current().id() {
             return;
         }
@@ -569,9 +355,7 @@ impl EngineThread {
         if handle.is_finished() {
             let _ = handle.join();
         } else {
-            // Detached again, deliberately: a stalled engine must not hold the
-            // window shut. This is the state everything was in before the
-            // handle was kept, so the risk is the one that was always there.
+            // Detached deliberately: a stalled engine must not hold the window shut.
             tracing::warn!(
                 busy = %self.busy.what(),
                 "the sync engine did not stop within {SHUTDOWN_GRACE:?}; leaving it running"
@@ -582,8 +366,6 @@ impl EngineThread {
 
 impl Drop for EngineThread {
     fn drop(&mut self) {
-        // The last handle went, so the sender went with it and the channel is
-        // closed. See `Engine`'s field order for why that is already true.
         self.join_bounded();
     }
 }
@@ -613,49 +395,22 @@ impl fmt::Debug for Job {
     }
 }
 
-/// How much stack the engine's thread and its runtime's workers get.
-///
-/// A `std::thread` spawned without this gets Rust's 2 MiB default, which is
-/// **not** the 8 MiB the kernel gives the main thread from `RLIMIT_STACK` —
-/// and the engine is the one place that difference bites, because
-/// `Engine::spawn` `block_on`s the whole sync loop on its thread rather than
-/// handing it to a runtime someone else sized. Every frame of `sync_wave` →
-/// `sync_pass` → `resync_mailbox` → the backend's `select` future stacks up
-/// there at once.
-///
-/// Measured before this existed, by sweeping `RUST_MIN_STACK` until a pass
-/// stopped fitting: the *smallest sync this project can express* — one
-/// mailbox, one message, loopback IMAP — peaked between 1024 and 1088 KiB,
-/// so it was already spending half the ceiling before a real account's
-/// mailbox tree, overlapping passes and deeper responses were anywhere near
-/// it. Three aborts in two minutes on 2026-09-17 are what ran out (#1541).
-///
-/// 8 MiB rather than "a bit more than we measured", because it costs nothing
-/// to be wrong in this direction: thread stacks are reserved address space
-/// and only the pages actually touched are ever resident. It matches the main
-/// thread, which is the least surprising answer to "how much stack does a
-/// thread have here".
+/// A bare `std::thread` gets 2 MiB, not the main thread's 8 MiB, and `block_on` of the sync loop
+/// stacks
+/// deep frames: the smallest possible sync peaked near 1 MiB and real ones aborted (#1541).
 const ENGINE_STACK: usize = 8 * 1024 * 1024;
 
 impl Engine {
-    /// Start the engine on a thread of its own.
-    ///
-    /// Returns as soon as the thread is running; nothing has been drained yet.
     pub fn spawn(parts: EngineParts) -> Result<Engine, EngineError> {
         Engine::spawn_filing(parts, FilingSlot::default())
     }
 
-    /// [`Engine::spawn`], its incremental passes filing their arrivals with
-    /// whatever pass `filing` holds as each one starts (spec 007).
     pub fn spawn_filing(parts: EngineParts, filing: FilingSlot) -> Result<Engine, EngineError> {
-        // Unbounded because the sender is the UI and it must never block on
-        // the engine. What arrives is a handful of small jobs, not a stream.
+        // Unbounded: the sender is the UI and must never block on the engine.
         let (jobs, inbox) = async_channel::unbounded::<Job>();
         let store = parts.database.clone();
         let busy = Busy::new();
 
-        // The handle is kept, not dropped. See `EngineThread` for the
-        // coredump that came of dropping it.
         let handle = std::thread::Builder::new()
             .name("postio-sync".to_string())
             .stack_size(ENGINE_STACK)
@@ -676,92 +431,49 @@ impl Engine {
         })
     }
 
-    /// Whether this engine's incremental passes hand their arrivals to a
-    /// filing pass: only under a host in Focus mode.
     pub fn files_arrivals(&self) -> bool {
         self.filing.get().is_some()
     }
 
-    /// Whether the engine has been told to stop: its job channel is closed.
     pub fn is_stopped(&self) -> bool {
         self.jobs.is_closed()
     }
 
-    /// Stop the engine and wait for its thread, whatever else still holds a
-    /// handle.
-    ///
-    /// `Drop` covers the ordinary case — the last handle goes and the thread
-    /// is joined — but the application keeps handles that outlive any scope,
-    /// in `Wiring` and in the retained list, precisely so the engine runs for
-    /// the whole session. Nothing drops those, so nothing would join the
-    /// thread, and the process would exit with a sync pass still writing. See
-    /// [`EngineThread`] for what that costs now that pages are encrypted.
-    ///
-    /// Idempotent, and safe to call from any thread except the engine's own.
+    /// Stop and join the thread whatever else holds a handle; the retained handles never drop.
+    /// Idempotent; not from the engine's own thread.
     pub fn stop(&self) {
-        // Close first: this is what makes the loop's `recv` return, and
-        // without it the wait below just spends its grace period.
         self.jobs.close();
-        // Wake a wait that would otherwise notice the close on its next tick.
         JOB_SENT.notify_waiters();
         self.thread.join_bounded();
     }
 
-    /// Send everything the queue is holding for `account`.
-    ///
-    /// One pass. The caller decides when the next one runs — after a
-    /// reconnect, after the shortest deferred backoff elapses, or when the
-    /// user does something new.
     pub async fn drain(&self) -> Result<DrainSummary, EngineError> {
         self.ask(|reply| Job::Drain { reply }).await
     }
 
-    /// Try a blocked link again, because the user supplied a new password.
-    ///
-    /// The one thing that clears [`Link::Blocked`]: a refused password does
-    /// not get better on a timer, so nothing retries it until someone says
-    /// the credentials have changed.
+    /// The one thing that clears `Link::Blocked`: a refused password does not improve on a timer.
     pub async fn retry_now(&self) -> Result<Link, EngineError> {
         self.tell(|reply| Job::RetryNow { reply }).await
     }
 
-    /// Tell the engine what the operating system says about the network.
-    ///
-    /// [`Link::Offline`] is deliberately not [`Link::Waiting`]: with no
-    /// network there is nothing to retry against, so attempts are not spent
-    /// and the status line says "offline" rather than counting down to a
-    /// reconnection that cannot succeed.
+    /// `Link::Offline` is not `Link::Waiting`: with no network no attempts are spent.
     pub async fn set_network(&self, state: NetworkState) -> Result<Link, EngineError> {
         self.tell(|reply| Job::SetNetwork { state, reply }).await
     }
 
-    /// What the link is doing right now.
     pub async fn link(&self) -> Result<Link, EngineError> {
         self.tell(|reply| Job::LinkState { reply }).await
     }
 
-    /// What the backfill has done and has left to do.
-    ///
-    /// Every message that has entered the queue is in exactly one of these
-    /// counts, which is what lets a progress display add up rather than
-    /// drift.
+    /// Every queued message is in exactly one count, so a progress display adds up.
     pub async fn backfill_progress(&self) -> Result<BackfillProgress, EngineError> {
         self.tell(|reply| Job::BackfillProgress { reply }).await
     }
 
-    /// Bring `mailbox` in line with the server.
-    ///
-    /// The first pass enumerates it; every pass after that is incremental,
-    /// falling back to a full re-enumeration when the server says the UID
-    /// space it was counting on is gone.
     pub async fn sync(&self, mailbox: MailboxId) -> Result<SyncSummary, EngineError> {
         self.ask(|reply| Job::Sync { mailbox, reply }).await
     }
 
-    /// Queue up to `limit` bodies worth having for `mailbox`.
-    ///
-    /// Called once per mailbox at startup and again whenever a sync finishes,
-    /// which is when the set of messages missing a body has changed.
     pub async fn seed_backfill(
         &self,
         mailbox: MailboxId,
@@ -775,27 +487,14 @@ impl Engine {
         .await
     }
 
-    /// Ask for one message's body ahead of everything else.
-    ///
-    /// The reading pane opened it, so it is the one body the user is actually
-    /// waiting for. `false` means there was nothing to fetch — the body is
-    /// already here, or the message is gone.
+    /// `false` means nothing to fetch: the body is here or the message is gone.
     pub async fn request_body(&self, message: MessageId) -> Result<bool, EngineError> {
         self.ask(|reply| Job::RequestBody { message, reply }).await
     }
 
-    /// Asks for named payload sections of `message`, ahead of everything else.
-    ///
-    /// ADR 0017's payload axis: the background lane fetches a message's words
-    /// and leaves its attachments on the server, so this is what the reading
-    /// pane sends when somebody opens one. By section — `BODY.PEEK[2]` — not
-    /// the message around it, and the bytes land in `attachments.blob_id`.
-    ///
-    /// The answer says whether the fetch was queued and, when it was not,
-    /// why: each is a different sentence for the person who asked (#1996).
-    /// [`PayloadAsk::Unreachable`] is queued all the same, for when the link
-    /// is back. The bytes land as a `BodyLoaded` naming the parts, or a
-    /// `BodyFailed` does.
+    /// Says whether the fetch was queued and, if not, why (#1996); `Unreachable` is queued all the
+    /// same
+    /// for when the link returns.
     pub async fn request_payloads(
         &self,
         message: MessageId,
@@ -809,19 +508,12 @@ impl Engine {
         .await
     }
 
-    /// Asks for every byte of `message`, not only the sections holding its
-    /// text.
-    ///
-    /// The background lane fetches text and leaves payloads on the server
-    /// (ADR 0017), so this is what the reading pane calls when the user opens
-    /// an attachment that was never downloaded. Still on demand: nothing
-    /// speculative reaches for a payload.
+    /// Every byte, not only the text sections; on demand only (ADR 0017).
     pub async fn request_whole_message(&self, message: MessageId) -> Result<bool, EngineError> {
         self.ask(|reply| Job::RequestWholeMessage { message, reply })
             .await
     }
 
-    /// As [`ask`](Self::ask), for a job whose answer cannot fail.
     async fn tell<T>(
         &self,
         job: impl FnOnce(tokio::sync::oneshot::Sender<T>) -> Job,
@@ -853,87 +545,29 @@ impl Engine {
     }
 }
 
-/// How often the link is polled when nothing else is happening.
-///
-/// The supervisor is a state machine rather than a task, so the cadence is
-/// the runtime's to choose. Five seconds is often enough that a dropped
-/// connection is noticed promptly and rare enough that an idle Postio is
-/// doing nothing most of the time — and it is only the *floor*: whatever hits
-/// a broken connection tells the supervisor directly through `observe`, so
-/// the common case does not wait for a tick at all.
-/// How many bodies to fetch between two sync waves.
-///
-/// The number that decides whether a mailbox becomes *readable* while the rest
-/// of the account is still being enumerated. Zero was the old behaviour and it
-/// meant the inbox's bodies waited for every other folder's headers; unbounded
-/// would invert it, and a folder of forty thousand messages would never finish
-/// its headers because its own bodies kept queueing in front of them.
-///
-/// Eight is a batch, not a budget: enough that a few seconds of enumeration
-/// buys a screenful of readable mail, small enough that the wave loop keeps
-/// its turn. It is checked against the job inbox and the operation queue
-/// between each one anyway, so the cost of it being briefly wrong is one body
-/// on the wire — the same bound the backfill below this loop already accepts.
+/// Bodies fetched between two sync waves, so a mailbox is readable while the rest is enumerated:
+/// zero starves bodies, unbounded starves the headers of a huge folder.
 const BODIES_BETWEEN_WAVES: usize = 8;
 
-/// How many bodies of one batch a wave writes at once beside its lanes.
-///
-/// A batch ([`postio_sync::backfill::Backfill::next_batch`]) is claimed
-/// whenever fewer than [`BATCHES_BESIDE_A_WAVE`] are out -- when a pass
-/// finishes, when one commits a batch of headers, and when a batch of bodies
-/// lands -- so bodies flow for the length of the wave rather than only between
-/// waves. Its sections and header blocks cross the wire as a set; this many of
-/// its bodies are then written concurrently and settled as one, which is what
-/// [`BODY_WINDOW`] is for the between-wave pump. The lanes keep being polled
-/// while it is out, and a job cancels the wave around it.
-///
-/// What this replaces is worse than slow: the pass-completion handler used to
-/// drain the *whole* backfill queue in place, with every other lane frozen
-/// until it finished, and the first version of the in-wave top-up fed that
-/// drain a thousand bodies -- a five-message folder took seventeen seconds
-/// to sync behind it. A handler is also the wrong place to take the write
-/// gate, since a frozen lane may be holding it.
+/// Bodies of one batch written concurrently beside the lanes. Draining the whole queue in the
+/// pass-completion handler froze every lane, and a handler must not take the write gate.
 const BODIES_BESIDE_A_WAVE: usize = 8;
 
-/// How many batches a wave keeps out beside its lanes (#1941).
-///
-/// Two: one writing while the next is on the wire, which is the whole of the
-/// pipeline. Memory holds two batches' sections at most, and a batch that has
-/// not started when a job arrives goes back to the queue.
+/// One batch writing while the next is on the wire; a batch not yet started when a job arrives goes
+/// back (#1941).
 const BATCHES_BESIDE_A_WAVE: usize = 2;
 
-/// How long the body backfill may hold the loop before it goes back to look
-/// for new mail.
-///
-/// **Without this, a long download makes the app deaf.** The loop drains the
-/// body queue and only then reaches the branch that watches for arrivals, and
-/// on a first sync of a large archive "only then" is hours: mail delivered
-/// meanwhile is not noticed until the backfill finishes, which reads as the
-/// app being broken in the exact way a mail client cannot afford. Every guard
-/// the pump loops already carry is about work the engine has *been given* —
-/// a job, a queued operation, going offline — and none of them fires for
-/// "time has passed and nobody has looked at the inbox".
-///
-/// [`POLL_INTERVAL`], because that is already this engine's answer to "how
-/// often is it worth looking", and the slice costs almost nothing: expiring
-/// it only means *asking the watcher* whether anything is due. The watcher's
-/// own schedule decides whether a `STATUS` actually goes out, and when it has
-/// nothing to say the loop takes it straight back. So this is the latency a
-/// delivery waits, not a round-trip rate.
+/// **Without this a long download makes the app deaf**: the loop drains the body queue before it
+/// watches for arrivals, which on a large first sync is hours. Expiring only asks the watcher
+/// whether
+/// anything is due, so this is a delivery's latency, not a round-trip rate.
 const BACKFILL_SLICE: Duration = POLL_INTERVAL;
 
-/// The engine's tick: how often it wakes due snoozes and looks at the link.
-///
-/// Public because Focus mode's due timer keeps the same five seconds
-/// (spec 007): a reminder fires on the tick a snooze would wake on.
+/// Public: Focus mode's due timer keeps the same tick (spec 007).
 pub const POLL_INTERVAL: Duration = Duration::from_secs(5);
 
-/// The engine's thread: a runtime and a connection of its own.
-///
-/// One worker, because this thread is the whole of it -- but multi-threaded,
-/// because a `current_thread` runtime refuses `block_in_place`, and anything
-/// reached from in here that needs a synchronous store read would abort the
-/// process rather than block (`postio_session::blocking`).
+/// One worker, but multi-threaded: a `current_thread` runtime refuses `block_in_place`, which a
+/// synchronous store read needs (`postio_session::blocking`).
 fn run(
     parts: EngineParts,
     store: Store,
@@ -943,9 +577,8 @@ fn run(
 ) {
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)
-        // Same reasoning as [`ENGINE_STACK`], and needed for the same
-        // reason: a pass that `spawn`s lands on this worker rather than on
-        // the thread above, and a worker gets the 2 MiB default too.
+        // Same as `ENGINE_STACK`: a spawned task lands on this worker, which also gets the 2 MiB
+        // default.
         .thread_stack_size(ENGINE_STACK)
         .enable_all()
         .build()
@@ -961,10 +594,6 @@ fn run(
         }
     };
 
-    // One span around everything this thread does, so every line below can be
-    // attributed to an account without every line having to say so. A sync run
-    // spans a connection and many commands; flat lines cannot answer "which
-    // run was this".
     let span = tracing::info_span!("engine", account = parts.account.get());
     runtime.block_on(tracing::Instrument::instrument(
         async move {
@@ -985,26 +614,19 @@ fn run(
                 filing,
             };
             let mut ticker = tokio::time::interval(POLL_INTERVAL);
-            // The first tick fires immediately; skipping it would leave the link
-            // unexamined until the first interval elapsed.
             ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
-            // A channel rather than a job, so that a bus which is slow to answer —
-            // or absent — cannot hold up anything the user asked for. The listener
-            // task lives on this same runtime and stops with it.
+            // A channel, not a job, so a slow or absent bus cannot hold up anything the user asked
+            // for.
             let (network, mut network_changed) = tokio::sync::watch::channel(NetworkState::Unknown);
             if parts.network == NetworkSource::NetworkManager {
                 tokio::spawn(crate::network::follow(network));
             }
 
-            // Attempt the first connection right now, rather than waiting for
-            // `ticker`'s first tick to win a race against whatever else is
-            // ready: the classic app's backfill seeding sent a job the instant
-            // `Engine::spawn` returns, so a job was already queued by the
-            // time this loop ever ran for the first time, and `select!`
-            // gives no guarantee about which of two simultaneously-ready
-            // branches goes first. #109 measured that race costing a full
-            // `POLL_INTERVAL` of connect latency on every single run.
+            // Connect now rather than race `ticker`'s first tick: with a job already queued,
+            // `select!`
+            // picks among ready branches arbitrarily, and the race cost a full `POLL_INTERVAL`
+            // (#109).
             let moved = state
                 .supervisor
                 .poll(parts.backend.as_ref(), Utc::now(), entropy())
@@ -1013,9 +635,7 @@ fn run(
             handle_link_transition(&parts, &store, &mut state).await;
 
             loop {
-                // How long until a backing-off link is due. Computed before the
-                // `select!` so the branch holds a number, not a borrow of the
-                // state it then mutates.
+                // Computed before `select!` so the branch holds a number, not a borrow of `state`.
                 let link_due = match state.supervisor.link() {
                     postio_sync::Link::Waiting { retry_at, .. } => {
                         Some((*retry_at - Utc::now()).to_std().unwrap_or(Duration::ZERO))
@@ -1028,13 +648,10 @@ fn run(
                             state.busy.set(format!("serving {job:?}"));
                             serve(job, &parts, &store, &mut state).await;
                         }
-                        // Every handle dropped: nothing more will be asked.
                         Err(_) => break,
                     },
-                    // The link's own retry time, not the next tick: a backoff of
-                    // a second used to be spent waiting out the rest of
-                    // `POLL_INTERVAL`, and a body asked for in that time was
-                    // told the link was down (#1985).
+                    // The link's own retry time, not the next tick: a body asked for during a short
+                    // backoff was told the link was down (#1985).
                     () = async {
                         match link_due {
                             Some(wait) => tokio::time::sleep(wait).await,
@@ -1055,16 +672,11 @@ fn run(
                         announce_link(&parts, &mut state, moved);
                         wake_due_snoozes(&parts, &store).await;
                     }
-                    // Queued work, so a person's action is not left to the next
-                    // tick. `keep_watch` below wakes for it and returns, and the
-                    // loop comes straight back here: without this arm the drain
-                    // it woke for waited for `ticker` -- up to `POLL_INTERVAL`,
-                    // measured at 4.0 s, for a flag set on an idle app.
+                    // Queued work wakes the drain without waiting for `ticker` (4.0 s measured for
+                    // a flag on an idle app).
                     () = wait_for_queued_work(&parts, &store) => {}
-                    // The machine's own opinion of the network. It only ever moves
-                    // the link between waiting and offline — the attempt count is
-                    // the supervisor's, because NetworkManager knows about the
-                    // interface and not about whether the server answers.
+                    // Only moves the link between waiting and offline; the attempt count is the
+                    // supervisor's, since NetworkManager knows interfaces, not servers.
                     Ok(()) = network_changed.changed() => {
                         let reported = *network_changed.borrow_and_update();
                         let moved = state.supervisor.set_network(reported, Utc::now());
@@ -1072,23 +684,14 @@ fn run(
                     }
                 }
 
-                // Whatever the link just did, act on it before anything else: a
-                // queue that has been waiting for a connection should go out the
-                // moment there is one, not on the next thing the user happens to
-                // do.
+                // Act on the transition first so a queue waiting for a connection goes out the
+                // moment there is one.
                 handle_link_transition(&parts, &store, &mut state).await;
 
-                // When the backfill has to give the loop back so it can look
-                // for new mail. See [`BACKFILL_SLICE`].
                 let slice_ends = Instant::now() + BACKFILL_SLICE;
 
-                // A few mailboxes at a time, highest priority first, and the
-                // inbox checked between waves: a folder with forty thousand
-                // messages must not hold the engine away from a body the user
-                // is waiting for. A wave in progress is cancelled the moment a
-                // job arrives rather than waiting to be noticed here, which is
-                // what keeps that true now that a wave is more than one
-                // mailbox long. See `sync_wave`.
+                // A few mailboxes at a time with the inbox checked between waves; a job cancels a
+                // wave in progress (see `sync_wave`).
                 while nothing_asked(&inbox)
                     && state.supervisor.link().is_online()
                     && !state.to_sync.is_empty()
@@ -1096,44 +699,17 @@ fn run(
                 {
                     state.busy.set("a sync wave");
                     if let Some(job) = sync_wave(&parts, &store, &mut state, &inbox).await {
-                        // The wave took this off the inbox to see whether it
-                        // could answer it beside its lanes, and it could not.
-                        // Served here, exactly as the `select!` above would
-                        // have, and before anything else runs.
+                        // The wave took this off the inbox and could not answer it beside its
+                        // lanes; serve it first.
                         state.busy.set(format!("serving {job:?}"));
                         serve(job, &parts, &store, &mut state).await;
                     }
 
-                    // **Bodies between waves, not only after the last one.**
-                    //
-                    // A sync seeds the backfill for the folder it just
-                    // changed, so the inbox's bodies are queued the moment its
-                    // headers land -- and used to sit there, because the only
-                    // `pump_body` was below this loop and this loop does not
-                    // end until every folder is enumerated. Measured against a
-                    // real account: the inbox's 174 headers were in after 7
-                    // seconds, and two minutes later not one body had been
-                    // fetched, because Archive's 60,934 and Sent Messages'
-                    // 20,324 headers were still going. A list you cannot read
-                    // is not a synced mailbox.
-                    //
-                    // `BODIES_BETWEEN_WAVES` at a time, so this interleaves
-                    // rather than inverting the order: headers still win
-                    // overall, and a folder of forty thousand still gets
-                    // through. The inbox is served first without being asked
-                    // for, because it syncs first and so seeds first, and the
-                    // queue hands them back in that order.
-                    //
-                    // Every guard the loop below uses applies here too, for
-                    // the same reasons: a job, a queued operation and going
-                    // offline all outrank a body nobody asked for.
-                    //
-                    // This is no longer the only place, and it is no longer
-                    // the one that matters most: a wave now lasts as long as
-                    // its largest folder, so `sync_wave` fetches bodies
-                    // beside its lanes for the whole of it (#631, the second
-                    // time). What this pump still covers is the gap between
-                    // one wave ending and the next admitting its lanes.
+                    // Bodies between waves: a sync seeds the backfill for the folder it changed,
+                    // and without this
+                    // pump the inbox's bodies waited until every folder was enumerated.
+                    // Every guard of the loop below applies: a job, queued operation or going
+                    // offline outranks a body nobody asked for.
                     let mut fetched = 0;
                     while fetched < BODIES_BETWEEN_WAVES
                         && Instant::now() < slice_ends
@@ -1141,12 +717,8 @@ fn run(
                         && state.supervisor.link().is_online()
                         && !has_queued_work(&parts, &store).await
                     {
-                        // Refill before pumping, exactly as the loop below
-                        // does. Pumping alone drains whatever the last sync
-                        // seeded and then stops for good: `top_up_backfill`
-                        // is what finds the *next* batch, and leaving it out
-                        // here bought one body per run. Measured -- one, in
-                        // four minutes, while 22 MB of headers went past.
+                        // Refill before pumping: pumping alone drains the last seed and stops;
+                        // `top_up_backfill` finds the next batch.
                         if state.backfill.is_idle()
                             && top_up_backfill(&parts, &store, &mut state).await == 0
                         {
@@ -1159,28 +731,16 @@ fn run(
                     }
                 }
 
-                // A wave that yielded to queued work has to be followed by the
-                // drain it yielded *for*. Without this the operation waits at
-                // the `select!` above for up to `POLL_INTERVAL` — the wave
-                // stops promptly and then nothing happens, which is most of
-                // the delay #944 reported and the half that is easy to miss
-                // once the yielding itself looks fixed.
+                // A wave that yielded to queued work must be followed by the drain it yielded for,
+                // or the operation waits up to `POLL_INTERVAL` (#944).
                 if state.supervisor.link().is_online() && has_queued_work(&parts, &store).await {
                     state.busy.set("draining after a wave");
                     let outcome = drain(&parts, &store, &mut state).await;
                     announce_drain(&parts, &outcome).await;
                 }
 
-                // Then fetch bodies, but only while nothing else is asking. One
-                // at a time and the inbox checked between each, so the longest a
-                // user waits behind the backfill is the one body already on the
-                // wire.
-                //
-                // The queue is checked between each too, and for the same reason:
-                // a body nobody has asked for is a guess about what the user will
-                // want next, and a queued operation is something they have already
-                // done. Speculation must not outrank it — a first sync of a large
-                // mailbox is thousands of bodies long.
+                // Then bodies, only while nothing else is asking: a body nobody asked for is a
+                // guess and must not outrank a queued operation.
                 while Instant::now() < slice_ends
                     && nothing_asked(&inbox)
                     && state.supervisor.link().is_online()
@@ -1190,17 +750,10 @@ fn run(
                 {
                 }
 
-                // Then queue the next batch, and fetch that too. `seed` takes
-                // the newest `seed_batch` messages still missing a body, and
-                // for the life of the project nothing ever called it a second
-                // time -- so the cap read as a horizon and everything below
-                // the first batch of a folder waited to be opened (#318).
-                //
-                // Only when the queue has genuinely drained: `is_idle` is
-                // false while the background lane is merely *paused* (metered,
-                // or the user is doing something), and topping up then would
-                // pull an entire archive into memory that policy has just said
-                // not to fetch.
+                // Then queue the next batch (#318), only once the queue has drained: `is_idle` is
+                // false while the
+                // lane is merely paused, and topping up then would pull in an archive that policy
+                // said not to fetch.
                 while Instant::now() < slice_ends
                     && nothing_asked(&inbox)
                     && state.supervisor.link().is_online()
@@ -1219,35 +772,20 @@ fn run(
                     {}
                 }
 
-                // Then wait to be told about mail. This is the branch that
-                // idles, so it goes last — and `keep_watch` itself watches
-                // the inbox and the queue, so a job arriving while an `IDLE`
-                // is held does not wait out the timeout.
-                //
-                // It used to be a `select!` here that *dropped* `keep_watch`
-                // when a job arrived, and that drop is a wedge twice over: a
-                // step the watcher handed out is outstanding until reported,
-                // so the dropped future left its mailbox unwatched for the
-                // rest of the session — never idled, never polled — and the
-                // store got a session back that was still inside `IDLE`,
-                // poisoning the next checkout. A delivery then sat unseen
-                // until reconnect. #755 is where that surfaced; the wedge
-                // itself predates the conversation pane.
+                // Then wait for mail, last because it idles. `keep_watch` is never dropped
+                // mid-step: a dropped
+                // step leaves its mailbox unwatched and the store a session still inside `IDLE`
+                // (#755).
                 if inbox.is_empty() && state.to_sync.is_empty() {
-                    // Whether the backfill used its whole slice, which is
-                    // exactly "there is a download in progress and it wants
-                    // the loop back". A held `IDLE` would keep it waiting for
-                    // minutes, so in that case the watch takes the cheap step
-                    // instead — see `keep_watch`.
+                    // A full slice means a download is in progress; a held `IDLE` would starve it,
+                    // so the watch takes the cheap step.
                     let downloading = Instant::now() >= slice_ends;
                     if !downloading {
                         state.busy.set("idle");
                     }
                     keep_watch(&parts, &store, &mut state, &inbox, downloading).await;
-                    // Defence in depth: `keep_watch` now runs its step to
-                    // completion and always reports it, but a step that ever
-                    // again vanishes unreported must not leave its mailbox
-                    // treated as covered for ever.
+                    // Defence in depth: a step that vanished unreported must not leave its mailbox
+                    // treated as covered.
                     if let Some(watcher) = state.watcher.as_mut() {
                         watcher.interrupted(Utc::now());
                     }
@@ -1258,113 +796,46 @@ fn run(
     ));
 }
 
-/// What the engine's thread keeps between jobs.
 struct State {
-    /// What this thread is doing right now, shared with the handle that will
-    /// one day wait for it. See [`Busy`].
     busy: Busy,
     backfill: Backfill,
-    /// When the body queue last said how far it had got.
-    ///
-    /// A status line redraws a few times a second at most, and a backfill
-    /// against a fast server settles bodies far quicker than that, so this
-    /// throttles the same way `StatusTracker` throttles a sync pass's
-    /// batches and for the same reason. See [`announce_backfill`].
     backfill_announced: Option<std::time::Instant>,
-    /// What this account's mail weighs, as last measured.
-    ///
-    /// Cached rather than read per announcement: see [`emit_backfill_progress`]
-    /// for why a status-line redraw must not cost a table scan.
+    /// Cached so a status-line redraw does not cost a table scan.
     footprint: Option<MailFootprint>,
     supervisor: Supervisor,
-    /// The account's status line.
-    ///
-    /// Behind a `RefCell` because a sync wave runs several passes at once and
-    /// every one of them folds its own batches in as they land — which is the
-    /// whole of `postio-qhz.5` and cannot be deferred to the end of a pass.
-    /// The engine is a single-thread runtime, so this is a borrow checker
-    /// question rather than a thread-safety one, and no borrow is ever held
-    /// across an await: every one of them is a single call on the tracker.
-    ///
-    /// `Rc` on top of that so `sync_wave` can clone a handle each wave
-    /// (#631): every pass borrows through the clone, never through `state`
-    /// itself, which is what lets a pass be settled — `&mut State` and all —
-    /// the moment it finishes, while its wave-mates are still running and
-    /// still hold a clone of their own.
+    /// A `RefCell` because a wave's passes fold batches in concurrently; no borrow is held across
+    /// an await.
+    /// `Rc` so `sync_wave` can clone a handle each wave (#631).
     status: Rc<RefCell<StatusTracker>>,
-    /// Whether the link was up last time anything looked.
-    ///
-    /// Only the *transition* is interesting: a connection that has been up
-    /// for an hour is not a reason to drain again.
     online: bool,
-    /// Mailboxes waiting for a sync pass.
-    ///
-    /// A queue rather than a loop, so one long mailbox cannot hold the engine
-    /// away from everything else it is asked to do.
     to_sync: std::collections::VecDeque<MailboxId>,
-    /// The account's `MailboxRole::Inbox` folders, as [`queue_every_mailbox`]
-    /// last read them. What [`next_to_sync`] keys the INBOX-first rule on:
-    /// the role, never a folder name.
+    /// Keyed on the role, never a folder name.
     inbox_ids: Vec<MailboxId>,
-    /// INBOX's header pass is done and its newest page of bodies has been
-    /// seeded but not yet fetched. While set, [`next_to_sync`] still admits
-    /// no other mailbox. Cleared the moment that page is down. See
-    /// [`postio_sync::order`].
+    /// INBOX's headers are done and its first page of bodies is seeded but not fetched; no other
+    /// mailbox is admitted until it clears.
     inbox_page_pending: bool,
-    /// The mailboxes whose last pass failed while the link stayed up
-    /// (#1731): what lets the pass that completes next clear the folder's
-    /// mark once, and every other completed pass say nothing.
+    /// Mailboxes whose last pass failed with the link up (#1731), so the next completed pass clears
+    /// the mark once.
     failing: std::collections::BTreeSet<MailboxId>,
-    /// What is being watched for mail arriving, and how.
-    ///
-    /// `None` until the first connection tells us what the server can do —
-    /// whether it offers `IDLE` decides between holding a connection open and
-    /// asking on an interval, and guessing wrong either wastes a connection
-    /// or misses mail.
+    /// `None` until the first connection reports whether the server offers `IDLE`.
     watcher: Option<Watcher>,
-    /// Whether the last [`top_up_backfill`] found nothing left to queue.
-    ///
-    /// A latch, not a cache of the answer: it stops the engine re-asking
-    /// every folder on every loop iteration once the account is covered, and
-    /// is cleared by the two things that can make the answer change — a sync
-    /// that wrote something, and the link coming up. Without it, an account
-    /// whose remaining candidates are all set aside (over the size cap, or
-    /// failed this session) would re-run one query per folder every five
-    /// seconds for ever, finding the same nothing.
+    /// A latch stopping a per-folder query every loop once covered; cleared by a sync that wrote
+    /// and by the link coming up.
     backfill_covered: bool,
-    /// The filing pass a host in Focus mode gave this engine, if one has.
     filing: FilingSlot,
 }
 
-/// How many times any engine in this process has asked the store whether an
-/// operation is due. For tests: an idle engine should almost never ask.
-static QUEUE_CHECKS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-/// See [`QUEUE_CHECKS`].
-#[doc(hidden)]
-pub fn queue_checks() -> u64 {
-    QUEUE_CHECKS.load(std::sync::atomic::Ordering::Relaxed)
-}
-
-/// How many times an engine's wait for a job or for queued work woke on its
-/// own clock rather than on a send or a write. For tests: this was twenty a
-/// second for jobs and two for the queue, all day; it is one a second and
-/// one every five now.
+/// For tests: waits that woke on their own clock rather than on a send or a write.
 static IDLE_WAKEUPS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// See [`IDLE_WAKEUPS`].
 #[doc(hidden)]
 pub fn idle_wakeups() -> u64 {
     IDLE_WAKEUPS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// Whether the account's queue has anything due right now.
-///
-/// Deliberately silent about failure: a connection this cannot check out is
-/// already being reported by whatever else wanted one, and a drain skipped for
-/// a tick costs five seconds.
+/// Silent about failure: a connection this cannot check out is reported elsewhere, and a skipped
+/// drain costs one tick.
 async fn has_queued_work(parts: &EngineParts, store: &Store) -> bool {
-    QUEUE_CHECKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let Ok(connection) = store.connect_background().await else {
         return false;
     };
@@ -1374,17 +845,9 @@ async fn has_queued_work(parts: &EngineParts, store: &Store) -> bool {
         .is_ok_and(|due| !due.is_empty())
 }
 
-/// Clears every snooze in this account whose time has come, and tells the
-/// list about whichever mailboxes it woke a row in (#493).
-///
-/// Visibility itself is self-healing regardless of this ever running — every
-/// list query reads `snoozed_until` against wall-clock time fresh on every
-/// page — so this is purely about promptness: a message due while the app is
-/// open should turn into a visible row within one `POLL_INTERVAL`, not only
-/// the next time something else happens to write that row. Deliberately
-/// silent about failure, the same reason [`has_queued_work`] is: a connection
-/// this cannot check out is already being reported elsewhere, and a sweep
-/// skipped for one tick costs five seconds, not a wrong answer.
+/// Visibility is self-healing (list queries read `snoozed_until` fresh); this only makes a due row
+/// appear
+/// within one `POLL_INTERVAL` (#493). Silent about failure, like `has_queued_work`.
 async fn wake_due_snoozes(parts: &EngineParts, store: &Store) {
     let Ok(connection) = store.connect_background().await else {
         return;
@@ -1403,7 +866,6 @@ async fn wake_due_snoozes(parts: &EngineParts, store: &Store) {
     }
 }
 
-/// Whether the link has come up since this was last asked.
 fn came_up(state: &mut State) -> bool {
     let online = state.supervisor.link().is_online();
     let transition = online && !state.online;
@@ -1411,47 +873,29 @@ fn came_up(state: &mut State) -> bool {
     transition
 }
 
-/// Act on whatever the link just did, before anything else runs.
-///
-/// A queue that has been waiting for a connection should go out the moment
-/// there is one, not on the next thing the user happens to do. Shared
-/// between the loop and the one connection attempt made before it, so a
-/// link that comes up before the loop's first iteration is handled exactly
-/// the way one coming up mid-loop is. See the comment on that first attempt.
+/// Shared with the one connection attempt before the loop, so a link up before the first iteration
+/// is handled like one mid-loop.
 async fn handle_link_transition(parts: &EngineParts, store: &Store, state: &mut State) {
     if came_up(state) {
-        // A session that failed bodies while the link was down set them
-        // aside; a link that has just come up is exactly when they are worth
-        // offering again, and when a folder that had nothing left may have
-        // grown one.
+        // A link just up is when bodies set aside while it was down are worth offering again.
         state.backfill_covered = false;
         state.backfill.reconnected();
         let outcome = drain(parts, store, state).await;
         announce_drain(parts, &outcome).await;
-        // Before anything asks what is *in* a folder, find out which
-        // folders there are. Everything below reads the local table, and on
-        // a new account that table is empty until this runs.
+        // Folders first: everything below reads the local table, which is empty on a new account.
         discover(parts, store).await;
-        // And find out what the server has been doing meanwhile.
         queue_every_mailbox(parts, store, state).await;
         start_watching(parts, store, state).await;
     } else if state.supervisor.link().is_online() && has_queued_work(parts, store).await {
-        // The queue is filled by whoever performed the action — a flag, an
-        // archive, a draft autosaved as it is typed — and none of them can
-        // tell this thread that they wrote a row. So it asks, and the cost
-        // of asking with an empty queue is one indexed read. Without this a
-        // mutation made while connected would wait for the next
-        // *reconnection* to go out, which on a machine that stays online is
-        // never.
+        // Writers cannot tell this thread they wrote a row, so it asks (one indexed read);
+        // otherwise a
+        // mutation made while connected would wait for the next reconnection.
         let outcome = drain(parts, store, state).await;
         announce_drain(parts, &outcome).await;
     }
 }
 
-/// Resolve once the inbox has something in it, without taking it.
-///
-/// `recv` would take the job and then be cancelled by the other branch of the
-/// `select!`, losing it. This only ever observes.
+/// Observes only: `recv` would take the job and lose it when the other `select!` branch cancels it.
 async fn wait_for_job(inbox: &async_channel::Receiver<Job>) {
     loop {
         let sent = JOB_SENT.notified();
@@ -1460,8 +904,7 @@ async fn wait_for_job(inbox: &async_channel::Receiver<Job>) {
         if !nothing_asked(inbox) {
             return;
         }
-        // Woken by a send, rather than looking twenty times a second. The
-        // tick is for the inbox closing, which no send announces.
+        // Woken by a send; the tick is for the inbox closing, which no send announces.
         tokio::select! {
             () = sent => {}
             () = tokio::time::sleep(CLOSE_CHECK) => {
@@ -1471,65 +914,40 @@ async fn wait_for_job(inbox: &async_channel::Receiver<Job>) {
     }
 }
 
-/// Told whenever any engine in this process is sent a job. Process-wide
-/// rather than per engine because every wait rechecks its own inbox: a wake
-/// meant for another account's engine costs one `is_empty`.
+/// Process-wide because every wait rechecks its own inbox; a wake meant for another engine costs
+/// one `is_empty`.
 static JOB_SENT: tokio::sync::Notify = tokio::sync::Notify::const_new();
 
-/// How often a wait notices the inbox has closed, which nothing announces.
 const CLOSE_CHECK: Duration = Duration::from_secs(1);
 
-/// Whether the engine may start — or keep doing — unattended work.
-///
-/// The guard every background loop shares: nothing is waiting in the inbox,
-/// and nobody has closed it. The second half is not implied by the first —
-/// a **closed** channel is also empty, so a loop gating on `is_empty` alone
-/// reads shutdown as leisure and drains a queue nobody is staying for
-/// (#759).
+/// A closed channel is also empty, so `is_empty` alone reads shutdown as leisure (#759).
 fn nothing_asked(inbox: &async_channel::Receiver<Job>) -> bool {
     inbox.is_empty() && !inbox.is_closed()
 }
 
-/// Resolve once every [`Engine`] handle is gone and the channel is closed —
-/// never otherwise. Polled, like [`wait_for_job`], and like it only ever
-/// observes.
 async fn wait_for_close(inbox: &async_channel::Receiver<Job>) {
     while !inbox.is_closed() {
         tokio::time::sleep(CLOSE_POLL).await;
     }
 }
 
-/// How often a fetch in flight looks for the inbox closing.
-///
-/// Much tighter than [`CLOSE_CHECK`], which is an idle wait's tick: this one
-/// is the part of `Engine::stop` that falls between the stop and the token
-/// firing, and at a second it was half the shutdown budget, with the tail of
-/// the call still to come (#1941). An `is_closed` read every 50 ms costs
-/// nothing next to a wire fetch.
+/// Tighter than `CLOSE_CHECK`: at a second this was half the shutdown budget (#1941).
 const CLOSE_POLL: Duration = Duration::from_millis(50);
 
-/// Resolve once the account's queue has something due, without draining it.
-///
-/// Polled rather than signalled because the queue is a table, written by
-/// whichever thread performed the user's action, and SQLite has no way to say
-/// so. Half a second is chosen against [`wait_for_job`], which already wakes
-/// twenty times a second on the same loop: next to that, two indexed reads a
-/// second cost nothing, and they are what makes an action taken while
-/// connected reach the server while the user still remembers taking it.
+/// Polled because the queue is a table written by other threads and gives no signal; two indexed
+/// reads
+/// a second get a connected action to the server promptly.
 async fn wait_for_queued_work(parts: &EngineParts, store: &Store) {
     loop {
-        // Enabled before the check, so a write that lands between the check
-        // and the wait still wakes it.
+        // Enabled before the check, so a write between the check and the wait still wakes it.
         let written = store.write_gate().interactive_writes().notified();
         tokio::pin!(written);
         written.as_mut().enable();
         if has_queued_work(parts, store).await {
             return;
         }
-        // Woken by the interactive write a person's action makes, rather than
-        // asking the store every half second on an idle app. The tick is for
-        // what no write announces: an operation deferred until a retry comes
-        // due.
+        // Woken by interactive writes; the tick covers what no write announces, an operation whose
+        // retry comes due.
         tokio::select! {
             () = written => {}
             () = tokio::time::sleep(POLL_INTERVAL) => {
@@ -1539,15 +957,10 @@ async fn wait_for_queued_work(parts: &EngineParts, store: &Store) {
     }
 }
 
-/// The shortest a watch step will ever sleep.
-///
-/// Stops a watcher that says "nothing due, now" from spinning the loop.
 const WATCH_FLOOR: Duration = Duration::from_millis(50);
 
-/// Start watching for mail, now that there is a connection to watch over.
-///
-/// The inbox gets the dedicated connection — it is the one mailbox worth one
-/// — and everything else is checked on an interval over the shared one.
+/// The inbox gets the dedicated connection; everything else is checked on an interval over the
+/// shared one.
 #[tracing::instrument(skip_all)]
 async fn start_watching(parts: &EngineParts, store: &Store, state: &mut State) {
     let capabilities = match parts.backend.capabilities().await {
@@ -1557,10 +970,7 @@ async fn start_watching(parts: &EngineParts, store: &Store, state: &mut State) {
             return;
         }
     };
-    // The names themselves: which of QRESYNC, CONDSTORE and SPECIAL-USE the
-    // server offers is the first thing anyone asks when a resync misbehaves,
-    // and a capability list is the server's public advertisement, not the
-    // user's data.
+    // Names only: a server's capability list is public, not the user's data.
     tracing::debug!(
         capabilities = ?capabilities.names(),
         incremental = capabilities.supports_incremental_sync(),
@@ -1596,52 +1006,28 @@ async fn start_watching(parts: &EngineParts, store: &Store, state: &mut State) {
     state.watcher = Some(watcher);
 }
 
-/// Resolve once something needs the engine's attention: a job in the inbox,
-/// or the account's queue holding something due.
-///
-/// What lets [`keep_watch`] end a held `IDLE` early without being dropped
-/// mid-command. Both halves only ever observe.
+/// Lets `keep_watch` end a held `IDLE` early without being dropped mid-command; only observes.
 async fn interruption(parts: &EngineParts, store: &Store, inbox: &async_channel::Receiver<Job>) {
     tokio::select! {
         _ = wait_for_job(inbox) => {}
-        // A local mutation is not a job — nobody tells this thread that a
-        // row was written — and an `IDLE` is held for minutes. Without this
-        // half, a flag set or a draft autosaved while connected would wait
-        // out the whole watch before going anywhere.
+        // A local write is not a job, and an `IDLE` is held for minutes.
         _ = wait_for_queued_work(parts, store) => {}
     }
 }
 
-/// What a wave found when something asked for its attention.
 enum Asked {
-    /// Nothing the lanes need to stop for, and possibly nothing at all.
     Nothing,
-    /// A body was asked for and is queued: fetch it beside the lanes, now.
     FetchNow,
-    /// The account's queue holds something due: drain it beside the lanes.
     DrainNow,
-    /// A job the wave cannot answer, or the inbox has closed. The lanes
-    /// stop; the job, if there is one, is the caller's to serve.
     Stop(Option<Job>),
 }
 
-/// Answer whatever asked, if a wave can answer it without stopping (#1593).
-///
-/// The wave used to only *observe* its inbox and the queue, and answered
-/// both the same way: cancel every lane, return, let the loop serve the job
-/// or drain the queue, start the lanes again. Live, that restarted two
-/// first-sync passes over 60,937 and 20,328 messages five times in the
-/// first minute -- once per message the person opened or marked read -- and
-/// on that server each restart also cost a reconnect, because the restarted
-/// pass's `SEARCH` is the one io-imap misreads. So the wave takes the job
-/// off the inbox and looks at it: a body request is an enqueue and the
-/// fetch runs beside the lanes; a query is answered from state; a due
-/// operation is drained on a connection of its own, beside the lanes. Only
-/// a job the wave cannot answer stops it, and that job is handed back
-/// rather than put back, because a channel has no front to put it on.
-///
-/// `draining` says a drain is already running beside the lanes, so a queue
-/// that is still non-empty is not a reason to start another.
+/// A wave used to cancel every lane for any job or due queue, restarting first-sync passes once per
+/// message
+/// the person opened (#1593). Now a body request is enqueued, a query answered, and a due operation
+/// drained
+/// beside the lanes; only an unanswerable job stops the wave, and it is handed back because a
+/// channel has no front.
 async fn attend(
     parts: &EngineParts,
     store: &Store,
@@ -1671,14 +1057,9 @@ async fn attend(
     }
 }
 
-/// Do whatever the watcher says is due, and queue a sync if anything moved.
-///
-/// Returns when there is something to report, the step ends, or something
-/// else needs the engine — a job, queued work. The interruption is
-/// **cooperative**: the step's own cancel token is fired and the command
-/// awaited to completion, never dropped. A dropped command is a wedge twice
-/// over — the watcher never hears about its step, and the store gets back a
-/// session still inside `IDLE` that poisons the next checkout (#755).
+/// Interruption is cooperative: the step's cancel token is fired and the command awaited, never
+/// dropped;
+/// a dropped command leaves the store a session still inside `IDLE` (#755).
 async fn keep_watch(
     parts: &EngineParts,
     store: &Store,
@@ -1687,22 +1068,15 @@ async fn keep_watch(
     downloading: bool,
 ) {
     if !state.supervisor.link().is_online() {
-        // Nothing to watch over. Wait rather than spin.
-        //
-        // Said every tick, at `debug`: "the app is just sitting there" is a
-        // real report, and the reason it is sitting there is the answer. A
-        // `Blocked` link in particular never retries on its own — retrying a
-        // refused credential is how an account gets locked — so without this
-        // the silence is indistinguishable from a hang.
+        // Nothing to watch over: wait. Logged at debug because a `Blocked` link never retries on
+        // its
+        // own, and silence looks like a hang.
         tracing::debug!(
             link = %postio_model::address::redact_addresses(&format!("{:?}", state.supervisor.link())),
             "not connected; nothing to watch"
         );
-        // Dropping a sleep is harmless, so the plain race is fine here. Not
-        // past the moment a backing-off link is due: the loop reconnects it
-        // when it gets back, and sleeping the whole interval through a
-        // backoff of a second is what left a body asked for in that time
-        // told the link was down (#1985).
+        // Not past a backoff's due time, or a body asked for meanwhile is told the link is down
+        // (#1985).
         let wait = match state.supervisor.link() {
             postio_sync::Link::Waiting { retry_at, .. } => (*retry_at - Utc::now())
                 .to_std()
@@ -1728,46 +1102,22 @@ async fn keep_watch(
     };
 
     let now = Utc::now();
-    // Push first: the inbox is the one mailbox worth a connection of its
-    // own, and if it has nothing due the shared connection can do a round.
-    //
-    // **Unless a download is in progress**, in which case push is the wrong
-    // shape: an `IDLE` is held for minutes and the backfill is not something
-    // `interruption` wakes for — it is not a job and not a queued operation —
-    // so pushing here would trade a long download for a longer one. A
-    // `STATUS` is one round trip and answers the only question that matters
-    // while the loop is borrowed: has anything arrived. And if nothing is
-    // even due, say so at once and give the loop straight back, rather than
-    // sleeping on a watcher that has nothing to tell us.
+    // Push first, unless a download is in progress: an `IDLE` is held for minutes and the backfill
+    // does
+    // not wake `interruption`, so a one-round-trip `STATUS` is used instead.
     let step = match watcher.next_push(now) {
         Watch::Wait { .. } => watcher.next_poll(now),
         step => step,
     };
-    // **A download is in progress: check the same mailbox, cheaply.**
-    //
-    // The first version of this skipped `next_push` while downloading and
-    // asked `next_poll` instead, which looks equivalent and is not:
-    // `next_poll` deliberately never offers the pushed mailbox, because that
-    // one belongs to `next_push`. The inbox *is* the pushed mailbox, so the
-    // effect was that a download stopped the inbox being watched at all —
-    // worse than the problem being fixed, and exactly what
-    // `mail_that_arrives_during_a_long_download_is_still_noticed` caught.
-    //
-    // So the step is taken normally and only the *shape* of it changes. A
-    // `STATUS` is one round trip and answers the only question that matters
-    // here — has anything arrived — where an `IDLE` would hold the loop for
-    // minutes and is not something `interruption` wakes for, the backfill
-    // being neither a job nor a queued operation. `observed` is the report
-    // for a poll and already knows about the pushed mailbox: it puts it
-    // straight back to idling rather than waiting out an interval.
+    // During a download keep the same mailbox but change the step's shape: `next_poll` never offers
+    // the
+    // pushed mailbox (the inbox), so asking it would stop the inbox being watched at all.
     let step = match (downloading, step) {
         (true, Watch::Idle { mailbox, path, .. }) => Watch::Poll { mailbox, path },
-        // Nothing due, and a download wants the loop back rather than a sleep.
         (true, Watch::Wait { .. }) => return,
         (_, step) => step,
     };
 
-    // Kept before the step is consumed: matching on it moves the path out.
     let watched = step_mailbox(&step);
     let wake = match step {
         Watch::Idle {
@@ -1776,12 +1126,9 @@ async fn keep_watch(
             timeout,
             cancel,
         } => {
-            // Run to completion, whatever else happens: an interruption
-            // fires the token and *waits* — `round_of_idle` observes it
-            // mid-read, winds down with `DONE`, and the session goes back
-            // to the store usable. Dropping this future instead returns a
-            // session still inside `IDLE`, and the next checkout hangs on
-            // it (#755).
+            // Run to completion: an interruption fires the token and waits; dropping returns a
+            // session
+            // still inside `IDLE` and the next checkout hangs (#755).
             let command = parts.backend.idle(&path, timeout, &cancel);
             tokio::pin!(command);
             let result = tokio::select! {
@@ -1802,8 +1149,8 @@ async fn keep_watch(
                 }
             }
         }
-        // A `STATUS` is one round trip; an interruption waits it out rather
-        // than dropping a half-read reply back into the store.
+        // An interruption waits out a `STATUS` rather than dropping a half-read reply into the
+        // store.
         Watch::Poll { mailbox, path } => match parts.backend.status(&path).await {
             Ok(status) => watcher.observed(mailbox, &status, Utc::now()),
             Err(error) => {
@@ -1813,8 +1160,6 @@ async fn keep_watch(
                 return;
             }
         },
-        // Nothing due yet. Sleep until something might be, rather than
-        // spinning the loop on a watcher with nothing to say.
         Watch::Wait { until } => {
             let delay = until
                 .map(|at| (at - Utc::now()).to_std().unwrap_or_default())
@@ -1828,15 +1173,13 @@ async fn keep_watch(
     };
 
     if let (Wake::Changed, Some(mailbox)) = (wake, watched) {
-        // What moved is not worth inferring from the events — they say only
-        // *that* the mailbox moved — so pull.
+        // The events say only that the mailbox moved, not what, so pull.
         if !state.to_sync.contains(&mailbox) {
             state.to_sync.push_back(mailbox);
         }
     }
 }
 
-/// Which mailbox a step was about.
 fn step_mailbox(step: &Watch) -> Option<MailboxId> {
     match step {
         Watch::Idle { mailbox, .. } | Watch::Poll { mailbox, .. } => Some(*mailbox),
@@ -1844,16 +1187,9 @@ fn step_mailbox(step: &Watch) -> Option<MailboxId> {
     }
 }
 
-/// Ask the server what folders the account has, and write them down.
-///
-/// Runs on every reconnection rather than only on the first, because folders
-/// are created, renamed and removed by other clients — and because the first
-/// connection of a brand-new account is the one where the local table is empty
-/// and *everything* below depends on it.
-///
-/// A failure is reported and not fatal: the folders already known still sync.
-/// A brand-new account with no folders yet is simply empty for another
-/// reconnection, which is what it already looks like.
+/// Runs on every reconnection: folders change under other clients, and a new account's local table
+/// is empty.
+/// A failure is reported and not fatal.
 async fn discover(parts: &EngineParts, store: &Store) {
     let connection = match store.connect_background().await {
         Ok(connection) => connection,
@@ -1876,9 +1212,6 @@ async fn discover(parts: &EngineParts, store: &Store) {
     {
         Ok(report) => {
             if report.changed() {
-                // The sidebar reads the folder table, and nothing else is
-                // going to tell it that the table just gained every folder
-                // the account has.
                 parts.events.emit(Event::MailboxesChanged {
                     account: parts.account,
                 });
@@ -1893,47 +1226,17 @@ async fn discover(parts: &EngineParts, store: &Store) {
     }
 }
 
-/// Queue the next batch of bodies, INBOX first, and say how many.
-///
-/// # Why a top-up exists at all
-///
-/// `backfill::seed` asks for the newest `seed_batch` messages of one folder
-/// that are still missing a body. That is a batch, and it was being used as a
-/// horizon: the classic app seeded every folder once at startup and nothing in
-/// the workspace ever called it again, so when those drained the background
-/// lane had nothing to do for the rest of the process. Every message below
-/// the first batch of its folder waited to be opened, and paid a round trip
-/// when it was (#318).
-///
-/// Nothing here remembers how far it has got, and nothing needs to: a body
-/// that lands sets `body_state` to `full`, which is what takes it out of
-/// `needing_backfill`. So each call naturally asks for the *next* batch, and
-/// the walk backwards through a folder is a property of the durable row
-/// rather than of a cursor that a restart would lose.
-///
-/// # Why it stops
-///
-/// Two kinds of message stay in `needing_backfill` however often they are
-/// offered: one over `max_body_bytes`, and one whose fetch failed this
-/// session. `Backfill::enqueue` sets both aside and answers "queued nothing",
-/// which is what this counts — so a folder whose only remaining candidates
-/// are those reports zero and the caller stops, rather than re-queueing a
-/// failing message in a tight loop against the server. `backfill_covered`
-/// then keeps the engine from re-asking every folder on every loop iteration
-/// until a sync or a reconnection says the answer may have changed.
-///
-/// INBOX first, by [`postio_sync::order::sync_priority`], for the reason
-/// [`queue_every_mailbox`] gives: the folder the user is reading is the one
-/// whose bodies are worth having first. It returns as soon as one folder
-/// yields work, so a large Archive never gets ahead of it.
+/// Each call asks for the next batch because a landed body leaves `needing_backfill`, so the walk
+/// lives in
+/// durable rows (#318). Candidates over `max_body_bytes` or failed this session are set aside and
+/// count
+/// zero, so the caller stops; `backfill_covered` stops the re-asking.
 async fn top_up_backfill(parts: &EngineParts, store: &Store, state: &mut State) -> usize {
     if state.backfill_covered {
         return 0;
     }
     let Ok(connection) = store.connect_background().await else {
-        // Nothing to read folders with. Not latched: the next pass will have
-        // a connection, and latching here would stop the backfill for the
-        // life of the process over one busy moment.
+        // Not latched: the next pass will have a connection.
         return 0;
     };
     let mut mailboxes = match MailboxRepository::new(&connection)
@@ -1964,19 +1267,16 @@ async fn top_up_backfill(parts: &EngineParts, store: &Store, state: &mut State) 
             }
         };
         if queued > 0 {
-            // Counts and a folder id, which is all a log may carry about mail.
+            // Counts and a folder id, all a log may carry about mail.
             tracing::debug!(mailbox = mailbox.id.get(), queued, "backfill topped up");
             announce_backfill(parts, state, std::time::Instant::now()).await;
             return queued;
         }
     }
 
-    // Blocks for the rows that cannot rebuild one from disk (#884). After the
-    // words and before the payloads: it is a small fetch that makes `header:`
-    // stop lying about mail already on this machine, where a payload is bytes
-    // nobody has asked for yet. Unconditional, unlike the payload lane below,
-    // because it is not a policy anyone opts into -- it is a store finishing a
-    // migration -- and it stops finding work once every block is stored.
+    // Header blocks for rows that cannot rebuild one from disk (#884); unconditional because it is
+    // a
+    // migration finishing, not a policy.
     for mailbox in mailboxes.iter().filter(|mailbox| mailbox.selectable) {
         let queued = match backfill::seed_header_blocks(
             &connection,
@@ -2003,11 +1303,9 @@ async fn top_up_backfill(parts: &EngineParts, store: &Store, state: &mut State) 
         }
     }
 
-    // Every folder's *words* are local. Only now the payloads, and only if
-    // this installation asked for them: ADR 0017's two axes are ordered, not
-    // interleaved, because the text axis is what makes search complete and
-    // offline reading real, and an archive of attachments finished first
-    // would be a mailbox that still could not be searched.
+    // Payloads only after every folder's words and only if asked (ADR 0017): text is what makes
+    // search
+    // complete, and attachments first would leave a mailbox unsearchable.
     if parts.backfill.attachments == AttachmentPolicy::Eager {
         for mailbox in mailboxes.iter().filter(|mailbox| mailbox.selectable) {
             let queued = match backfill::seed_payloads(
@@ -2032,22 +1330,13 @@ async fn top_up_backfill(parts: &EngineParts, store: &Store, state: &mut State) 
         }
     }
 
-    // Every folder had nothing left to offer. Stop asking until something
-    // changes.
     state.backfill_covered = true;
     tracing::debug!("every folder's bodies are local, or set aside");
     0
 }
 
-/// Line every selectable folder up for a sync pass, INBOX first.
-///
-/// Sorted by [`postio_sync::order::sync_priority`], not by id and not by the
-/// order discovery happened to list them in — a large Archive queued ahead of
-/// INBOX left the user watching an empty inbox for as long as the archive took
-/// (`postio-0d9.6`). The one-mailbox-at-a-time drain loop above this function
-/// already finishes a mailbox before starting the next, so putting INBOX
-/// first here is also what keeps it readable while everything behind it is
-/// still syncing.
+/// INBOX first by `sync_priority`: a large Archive queued ahead left an empty inbox for as long as
+/// it took.
 async fn queue_every_mailbox(parts: &EngineParts, store: &Store, state: &mut State) {
     let Ok(connection) = store.connect_background().await else {
         tracing::warn!("no connection to read folders with; syncing nothing this pass");
@@ -2076,8 +1365,7 @@ async fn queue_every_mailbox(parts: &EngineParts, store: &Store, state: &mut Sta
             .filter(|mailbox| mailbox.selectable)
             .map(|mailbox| mailbox.id),
     );
-    // A failed folder that is no longer one to sync -- deleted, or made
-    // unselectable -- will never have the pass that clears its mark.
+    // A failed folder that is no longer one to sync will never have the pass that clears its mark.
     let gone: Vec<MailboxId> = state
         .failing
         .iter()
@@ -2092,10 +1380,8 @@ async fn queue_every_mailbox(parts: &EngineParts, store: &Store, state: &mut Sta
             failure: None,
         });
     }
-    // The one line that answers "the account connected and nothing happened".
-    // Every folder-enumerating path here reads the *local* table; `discover`
-    // is what fills it from the server on link-up, and a count of zero here
-    // means that has not happened yet or found nothing.
+    // Answers "connected and nothing happened": zero here means `discover` has not filled the local
+    // table or found nothing.
     tracing::info!(
         known = mailboxes.len(),
         queued = state.to_sync.len(),
@@ -2109,35 +1395,16 @@ async fn queue_every_mailbox(parts: &EngineParts, store: &Store, state: &mut Sta
     }
 }
 
-/// How often a sync in progress tells the list that its mailbox has moved.
-///
-/// Each notification costs the list an invalidation and a page read, so one
-/// per committed batch would be three hundred reloads across a first sync of
-/// a large mailbox — the interaction budget spent entirely on repainting,
-/// during the one stretch where the application most needs to feel alive.
-/// Half a second is far below what reads as a delay and far above what reads
-/// as a flicker.
+/// Each notification costs the list an invalidation and a page read; one per batch would be
+/// hundreds of reloads on a first sync.
 const REPAINT_INTERVAL: Duration = Duration::from_millis(500);
 
-/// Where a sync pass reads "now" from when deciding whether to coalesce a
-/// repaint.
-///
-/// [`Repaint::batch_committed`] already takes its clock as a parameter — the
-/// throttle itself has always been tested by stepping through explicit
-/// instants, never by sleeping. But the one call site, [`Committed::batch`],
-/// read the system clock directly, so the number of events a real sync pass
-/// produced depended on how much wall-clock time actually separated batches
-/// committing — which a busy machine can stretch past [`REPAINT_INTERVAL`]
-/// for a batch that would otherwise have coalesced (#507). Injecting the
-/// clock here carries that same "time is a parameter, not a read" discipline
-/// one level up, so a test can make the event count a function of the
-/// batches synced rather than of how fast the machine ran them.
+/// Injected so a test can make the event count a function of the batches synced, not of wall-clock
+/// time (#507).
 pub trait Clock: Send + Sync {
-    /// The current instant, as far as a sync pass is concerned.
     fn now(&self) -> Instant;
 }
 
-/// The real clock. Every sync outside a test uses this.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SystemClock;
 
@@ -2147,12 +1414,8 @@ impl Clock for SystemClock {
     }
 }
 
-/// Tells the list a mailbox has moved, at most every [`REPAINT_INTERVAL`].
-///
-/// The *first* batch is announced immediately and every later one is
-/// throttled. That ordering is the whole point: the first screenful is what
-/// the user is waiting for, and making them wait half a second for rows that
-/// are already committed would be the same bug in miniature.
+/// The first batch is announced immediately and later ones throttled: the first screenful is what
+/// the user waits for.
 struct Repaint {
     events: EventSink,
     account: AccountId,
@@ -2170,15 +1433,9 @@ impl Repaint {
         }
     }
 
-    /// A batch reached the database. Announce it if it is time to.
-    ///
-    /// Only a *full enumeration* ever gets here: an incremental pull writes
-    /// its rows without reporting [`Progress`], so the flicker of issue #72
-    /// was never this. It is worth saying because the event this emits is
-    /// `MessageListChanged`, which the view answers by discarding every
-    /// visible row widget — the right answer while the list is being built
-    /// out of nothing, and the wrong one for a delivery. If an incremental
-    /// path ever starts reporting progress, it must not come through here.
+    /// Only a full enumeration gets here. The event discards every visible row widget, which is
+    /// wrong for
+    /// an incremental delivery, so an incremental path must not come through here.
     fn batch_committed(&mut self, now: Instant) {
         if !self.due(now) {
             return;
@@ -2198,54 +1455,27 @@ impl Repaint {
     }
 }
 
-/// What one committed batch tells the rest of the application.
-///
-/// Both halves have to happen *as the batch lands*, and for the same reason:
-/// a first sync of a large mailbox takes minutes, and everything the user can
-/// see of it happens in here. Collecting the reports and folding them in after
-/// the pass returned left the list empty (`postio-qhz.7`) and the status line
-/// silent (`postio-qhz.5`) for the whole of it.
-///
-/// # Two throttles, deliberately
-///
-/// They are not the same number because they are not the same cost. A repaint
-/// costs the list an invalidation and a page read, so it is held to
-/// [`REPAINT_INTERVAL`]; a progress report costs a label, and
-/// [`StatusTracker`] holds it to its own, shorter interval. The tracker also
-/// never drops the report that completes a pass, which the list does not need
-/// — a repaint that is superseded loses nothing, whereas a status line stuck
-/// at 89% on a folder that has finished is simply wrong.
-///
-/// [`StatusTracker`]: postio_sync::StatusTracker
+/// Both halves happen as the batch lands; folding them in after the pass left the list empty and
+/// the
+/// status silent. The repaint is held to `REPAINT_INTERVAL`; `StatusTracker` has its own interval
+/// and
+/// never drops the report that completes a pass.
 struct Committed<'a> {
     parts: &'a EngineParts,
-    /// Borrowed rather than owned: it is the account's tracker and it outlives
-    /// this pass. Holding it here is what lets the callback fold progress in
-    /// as it arrives, which is the whole of `postio-qhz.5` — the previous
-    /// arrangement could not, because the callback is `FnMut` and something
-    /// else already had the `&mut`.
-    ///
-    /// A cell rather than a `&mut` because the passes of one sync wave share
-    /// the tracker. The borrow below is taken and given back inside `batch`,
-    /// never across an await.
+    /// A cell because a wave's passes share the tracker; the borrow is taken and returned inside
+    /// `batch`, never across an await.
     status: &'a RefCell<StatusTracker>,
     repaint: Repaint,
-    /// The wave's cue that a batch is down and it may look up: see
-    /// [`claim_bodies_for_the_wave`].
     yield_point: &'a tokio::sync::Notify,
 }
 
 impl Committed<'_> {
-    /// A batch reached the database.
     fn batch(&mut self, progress: Progress) {
         self.repaint.batch_committed(self.parts.clock.now());
         self.yield_point.notify_one();
         let reported = self.status.borrow_mut().on_progress(progress, Utc::now());
         if let Some(status) = reported {
-            // Counts and an outcome, which is all a log may carry about mail.
-            // Here because the two `sync started` / `sync finished` lines say
-            // nothing about the minutes in between, and this is the line that
-            // tells a pass that is working from one that has stalled.
+            // Counts and an outcome, all a log may carry about mail.
             tracing::debug!(
                 done = progress.fetched,
                 total = progress.target,
@@ -2256,42 +1486,11 @@ impl Committed<'_> {
     }
 }
 
-/// Fetch queued bodies a batch at a time, up to [`BODY_WINDOW`] of a batch's
-/// writes at once.
-///
-/// Returns whether it did anything, so the caller can keep going until the
-/// queue is empty. Runs up to `batches` batches, or until `until`, or until
-/// something outranks it (#1941: the next batch is fetched while this one is
-/// written).
-///
-/// # Why more than one (#1551)
-///
-/// This fetched exactly one body per call, and waited for it, on the grounds
-/// that holding one claim "bounds how long anything else can be stuck behind
-/// the backfill". The bound was real and the mechanism was the wrong one: a
-/// body fetch is almost all round trip, so a serial backfill over a large
-/// archive is one round trip per message with nothing overlapping. On a
-/// 61,000-message first sync that is 61,000 waits end to end, and no amount
-/// of bandwidth shortens it.
-///
-/// What actually protects the interactive case is a layer down.
-/// `postio_account::imap::pool` serves [`Priority::Interactive`][p] before
-/// [`Priority::Background`][p], and `Backfill::next_body` hands interactive
-/// claims out first — so a message the user just opened is ahead of the
-/// backfill in both queues whether one background body is in flight or two.
-///
-/// The window is what keeps that true, in two ways. A priority decides who
-/// takes the *next free* connection, not who takes one away, so the general
-/// lane must never be full of background fetches: with the default budget of
-/// four connections and one dedicated to watching, three are general, and a
-/// window of two leaves one for whatever the reader asks for. And the window
-/// tops up with [`Backfill::next_interactive_body`][nib] as each fetch settles, so
-/// a message opened while this call is in flight starts at the next free slot
-/// rather than behind the whole window — one body's wait, which is exactly
-/// the bound the serial loop gave.
-///
-/// [p]: postio_sync::backfill::Priority
-/// [nib]: postio_sync::backfill::Backfill::next_interactive_body
+/// Fetch queued bodies a batch at a time, up to `BODY_WINDOW` writes at once; returns whether it
+/// did anything.
+/// A priority picks who takes the next free connection, not who loses one, so the general lane must
+/// never be
+/// full of background fetches; the window leaves one general connection for the reader (#1551).
 async fn pump_body(
     parts: &EngineParts,
     store: &Store,
@@ -2304,24 +1503,16 @@ async fn pump_body(
     let Some(head) = first.first() else {
         return false;
     };
-    // Every claim carries a clone of the backfill's one token, so this
-    // cancels all of them -- which is what shutdown wants, and why the claims
-    // do not need tokens of their own.
+    // Every claim carries the backfill's one token, so this cancels all of them (shutdown).
     let cancel = head.cancel.clone();
 
-    // Read before the fetches start, so nothing below borrows `state` while
-    // they are in flight. ADR 0017's inline rule, from the same policy the
-    // queue is scheduled under (#751).
+    // Read before the fetches start so nothing borrows `state` while they are in flight (ADR 0017,
+    // #751).
     let inline_cap = state.backfill.policy().max_inline_bytes;
 
-    // One batch is written while the next is on the wire (#1941): the fetch of
-    // N+1 is a future polled beside N's writes, so a run of batches costs the
-    // longer of the two rather than their sum. Never more than one batch
-    // ahead, so memory holds two batches' sections at most, and the
-    // look-ahead is only claimed while every guard the callers' loops apply
-    // still holds -- a job, a queued operation, going offline and the end of
-    // the slice all stop it, and a claim taken for a batch that then does not
-    // start goes back to the queue it came from.
+    // One batch is written while the next is on the wire (#1941); the look-ahead is claimed only
+    // while
+    // every guard still holds, and a claim for a batch that does not start goes back to its queue.
     let mut ready = prefetch_watched(parts, store, inbox, first).await;
     let mut done = 0;
     loop {
@@ -2348,18 +1539,14 @@ async fn pump_body(
         let mut waiting: std::collections::VecDeque<_> = claims.into();
         let mut running = FuturesUnordered::new();
 
-        // Shutdown must not wait for the wire: when the channel closes
-        // mid-fetch, fire the token so every fetch unwinds cooperatively
-        // instead of running to the command timeout, which is twelve times the
-        // shutdown grace (#759). Nothing is lost -- what a cancelled fetch
-        // leaves unfetched stays `body_state <> 'full'`, and the next seed
-        // derives the queue from that -- but the ones already in flight are
-        // still drained, so no claim is left outstanding for ever.
+        // Shutdown must not wait for the wire: fire the token when the channel closes, since the
+        // command
+        // timeout is twelve times the grace (#759). In-flight fetches are still drained so no claim
+        // is left outstanding.
         let mut cancelled = false;
         loop {
-            // The window, refilled from the batch. A job that arrives while
-            // the batch is out is answered after at most the bodies already
-            // on the wire: what has not started goes back.
+            // A job arriving mid-batch waits at most for the bodies on the wire; what has not
+            // started goes back.
             if !nothing_asked(inbox) {
                 for claim in waiting.drain(..) {
                     state.backfill.release(claim);
@@ -2404,21 +1591,15 @@ async fn pump_body(
             else {
                 break;
             };
-            // A slot just freed. If the user has opened something since this call
-            // began, start it now rather than making it wait for the rest of the
-            // window -- that would be a longer wait than the serial loop gave,
-            // which is the one thing this change must not cost. Only interactive
-            // work: topping up with background would make the call unbounded, and
-            // the outer loop's own checks are what let a queued job interleave.
+            // A slot just freed: start a just-opened message now rather than behind the window;
+            // interactive only,
+            // since a background top-up would make the call unbounded.
             if !cancelled && let Some(next) = state.backfill.next_interactive_body() {
-                // No prefetch for a top-up: it arrived after the batch and is one
-                // message, which is not a batch.
                 running.push(fetch_one_body(parts, store, inline_cap, None, next));
             }
             settle_body(parts, state, message, mailbox, sections, result).await;
         }
 
-        // The next batch: already here, still on the wire, or never claimed.
         let next = match (arrived, ahead) {
             (Some(landed), _) => Some(landed),
             (None, Some(pending)) => Some(pending.await),
@@ -2438,20 +1619,14 @@ async fn pump_body(
     true
 }
 
-/// A batch of claims and the sections fetched ahead for them.
 type Batch = (
     Vec<postio_sync::backfill::Claim>,
     Option<Rc<RefCell<postio_sync::backfill::Prefetched>>>,
 );
 
-/// [`prefetch_batch`], with the shutdown heard while it is on the wire.
-///
-/// The prefetch is awaited outside the drain loop's `select!` -- before the
-/// first batch starts and after the last body settles -- where nothing
-/// watched the inbox, so a stop landing there waited out the whole command
-/// (#1941). Closing the channel fires the claims' token; the prefetch then
-/// unwinds cooperatively and returns what it had, so the claims come back to
-/// be released and nothing is half-written.
+/// Awaited outside the drain loop's `select!`, where a stop used to wait out the whole command
+/// (#1941);
+/// closing the channel fires the claims' token and the prefetch unwinds, returning what it had.
 async fn prefetch_watched(
     parts: &EngineParts,
     store: &Store,
@@ -2471,11 +1646,7 @@ async fn prefetch_watched(
     }
 }
 
-/// The wire half of a batch: the text sections and header blocks of every
-/// claim in it, a command each for as many as share a section path (#1551).
-///
-/// Best-effort by construction: whatever it does not bring back,
-/// `fetch_body` fetches the way it always did.
+/// Best-effort: whatever it does not bring back, `fetch_body` fetches the usual way.
 async fn prefetch_batch(
     parts: &EngineParts,
     store: &Store,
@@ -2488,8 +1659,8 @@ async fn prefetch_batch(
     let requests: Vec<_> = claims.iter().map(|claim| claim.request.clone()).collect();
     let prefetched = match store.connect_background().await {
         Ok(connection) => {
-            // Background only if every claim in the batch is: one the user
-            // or an arrival is waiting on lifts the whole command.
+            // Background only if every claim is; one the user or an arrival waits on lifts the
+            // whole command.
             let quiet = claims
                 .iter()
                 .all(|claim| claim.priority == backfill::Priority::Background)
@@ -2514,14 +1685,10 @@ async fn prefetch_batch(
     (claims, prefetched)
 }
 
-/// How many bodies may be on the wire at once. See [`pump_body`].
 const BODY_WINDOW: usize = 2;
 
-/// One body, start to finish, borrowing nothing the caller needs mutably.
-///
-/// Split out so several can run on one `FuturesUnordered`: everything that
-/// touches `State` -- the supervisor, the progress, the event -- happens in
-/// the drain loop, where there is exactly one of it.
+/// Separate so several run on one `FuturesUnordered`; everything touching `State` happens in the
+/// drain loop.
 async fn fetch_one_body(
     parts: &EngineParts,
     store: &Store,
@@ -2535,26 +1702,24 @@ async fn fetch_one_body(
         sections: claim.request.want.sections(),
         result,
     };
-    // A body queued behind the write gate when the shutdown fired has not
-    // started, and its text may already be in the prefetch, so nothing below
-    // would hear the token. Writes already begun finish; this one has not.
+    // A body queued behind the write gate when shutdown fired has not started and may already be in
+    // the
+    // prefetch, so nothing below would hear the token.
     if claim.cancel.is_cancelled() {
         return settled(Err(SyncError::Backend(BackendError::Cancelled)));
     }
     let connection = match store.connect_background().await {
         Ok(connection) => connection,
-        // Reported settled rather than left in flight for ever: a claim
-        // nobody finishes is a queue that never drains.
+        // Reported settled: a claim nobody finishes is a queue that never drains.
         Err(error) => {
             return settled(Ok(Outcome::Failed {
                 reason: error.to_string(),
             }));
         }
     };
-    // Lifted out **before** the fetch, and the borrow dropped with the
-    // statement. The window's fetches share one cache and run concurrently,
-    // so a borrow held across the await below would be the second borrower's
-    // panic — the kind that compiles and then only fails under load.
+    // Lifted out before the fetch with the borrow dropped: the window's fetches share one cache, so
+    // a
+    // borrow held across the await would panic only under load.
     let mut mine = prefetched.map(|cache| cache.borrow_mut().split_for(&claim.request.remote_id));
     let quiet =
         (claim.priority == backfill::Priority::Background).then(|| background_backend(parts));
@@ -2571,8 +1736,6 @@ async fn fetch_one_body(
     settled(result)
 }
 
-/// One fetched body, as [`fetch_one_body`] hands it to [`settle_body`]:
-/// which message, and which of its sections the fetch was for.
 struct Settled {
     message: MessageId,
     mailbox: MailboxId,
@@ -2580,39 +1743,12 @@ struct Settled {
     result: Result<Outcome, SyncError>,
 }
 
-/// Say how far the body queue has got.
-///
-/// Pushed rather than waited for. `Engine::backfill_progress` has always been
-/// able to answer this and nothing ever asked, so the longest phase of a
-/// first sync — the bodies, not the list — was drawn as `idle`: not merely
-/// unreported but reported as nothing happening, which reads as stuck
-/// (issue #74).
-///
-/// # Throttled, because a body is not a redraw
-///
-/// Called after every settled body, and against a fast server that is far
-/// more often than a status line can redraw for. `StatusTracker` throttles a
-/// sync pass's batches for exactly this reason and this follows its policy:
-/// the same 250 ms floor, and the same rule that the update which *finishes*
-/// the work is never dropped — an account is not allowed to sit at
-/// `bodies 1994 of 2000` because the last body landed inside the window.
-///
-/// Emitting per body without this was measurably not free: it turned
-/// `sync_wave.rs`'s INBOX-first test red about half the time, because the
-/// events a 2000-message archive produced crowded out the work the engine
-/// was supposed to be doing.
-///
-/// The other update never dropped is the first one after the queue was
-/// empty, which is seeding: that is when the denominator becomes known, and
-/// a line that appears only once a fetch has completed is silent for exactly
-/// the stretch someone is most likely to be watching it.
-///
-/// `now` is a parameter rather than a read of the clock, for the same reason
-/// [`Repaint::batch_committed`] and [`StatusTracker::on_progress`] take one:
-/// a throttle a test cannot step through can only be tested by sleeping —
-/// see engine.rs's own unit tests below, and issue #316's second cause,
-/// which a real-time integration test could reproduce only by accident of
-/// how fast the machine running it happened to be.
+/// Pushed after every settled body, throttled like `StatusTracker` (250 ms floor): per-body events
+/// crowded
+/// out the engine's own work. Never dropped: the update that finishes the work, and the first after
+/// the
+/// queue was empty (seeding, when the denominator becomes known). `now` is a parameter so tests
+/// need no sleep (#316).
 async fn announce_backfill(parts: &EngineParts, state: &mut State, now: std::time::Instant) {
     let (done, total, drained) = backfill_snapshot(state);
 
@@ -2627,31 +1763,15 @@ async fn announce_backfill(parts: &EngineParts, state: &mut State, now: std::tim
     emit_backfill_progress(parts, state, done, total, drained, now).await;
 }
 
-/// How often [`announce_backfill`] is allowed to report a settled body, at
-/// most. [`StatusTracker`] holds its own progress line to the same floor,
-/// for the same reason.
 const BACKFILL_ANNOUNCE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
 
-/// Announces the backfill's current progress unconditionally — never
-/// throttled.
-///
-/// Issue #316's third cause: [`Job::RequestBody`] called the same throttled
-/// [`announce_backfill`] a background body settling does, so whether the
-/// reading pane's own open was ever reported at all depended on where the
-/// 250 ms window happened to be. The floor above exists to protect the
-/// engine from the firehose of events a fast archive produces (see
-/// [`announce_backfill`]'s doc comment) — not from a person opening a
-/// second message a moment after the first. `backfill.rs`'s own module doc
-/// puts it as "the interactive lane always wins"; the status line honours
-/// the same rule by never making a click wait out a background pass's
-/// throttle window.
+/// Never throttled: the reading pane's own open must be reported whatever the 250 ms window says
+/// (#316).
 async fn announce_backfill_now(parts: &EngineParts, state: &mut State, now: std::time::Instant) {
     let (done, total, drained) = backfill_snapshot(state);
     emit_backfill_progress(parts, state, done, total, drained, now).await;
 }
 
-/// `(done, total, drained)` as of right now — the read [`announce_backfill`]
-/// and [`announce_backfill_now`] both act on.
 fn backfill_snapshot(state: &State) -> (usize, usize, bool) {
     let progress = state.backfill.progress();
     let done = progress.settled();
@@ -2660,8 +1780,6 @@ fn backfill_snapshot(state: &State) -> (usize, usize, bool) {
     (done, total, drained)
 }
 
-/// Updates the throttle clock and emits the report both announce functions
-/// share.
 async fn emit_backfill_progress(
     parts: &EngineParts,
     state: &mut State,
@@ -2670,16 +1788,12 @@ async fn emit_backfill_progress(
     drained: bool,
     now: std::time::Instant,
 ) {
-    // This is called every 250 ms while a backfill runs. The footprint is a
-    // kept row now (#1508), not a scan, but it is still a checkout and two
-    // reads: recomputed only when the queue opens or drains -- the moments
-    // the totals can actually have moved by much -- and cached in between.
+    // Called every 250 ms during a backfill; the footprint (a checkout and two reads) is recomputed
+    // only when the queue opens or drains (#1508).
     if state.footprint.is_none() || drained {
         state.footprint = measure(parts).await;
     }
-    // Forget the clock once the queue is empty, so the next backfill's first
-    // report is prompt rather than waiting out a window that started during
-    // the last one.
+    // Forget the clock once drained, so the next backfill's first report is prompt.
     state.backfill_announced = if drained { None } else { Some(now) };
 
     parts.events.emit(Event::BackfillProgress {
@@ -2690,10 +1804,7 @@ async fn emit_backfill_progress(
     });
 }
 
-/// Reads this account's mail footprint, or `None` if the store cannot answer.
-///
-/// Never fatal: a status line that cannot say how many bytes there are should
-/// fall back to saying how many messages there are, not stop the backfill.
+/// Never fatal: without byte totals the status line falls back to message counts.
 async fn measure(parts: &EngineParts) -> Option<MailFootprint> {
     let connection = parts.database.connect().await.ok()?;
     let footprint = MessageRepository::new(&connection)
@@ -2726,10 +1837,7 @@ async fn serve(job: Job, parts: &EngineParts, store: &Store, state: &mut State) 
                     .map_err(|error| EngineError::new(error.to_string())),
                 Err(error) => Err(EngineError::new(error.to_string())),
             };
-            // Say it now, not after the first body lands. Seeding is when the
-            // denominator becomes known, and a status line that appears only
-            // once a fetch has completed is silent for exactly the stretch
-            // the user is most likely to be watching it.
+            // Say it now: seeding is when the denominator becomes known.
             announce_backfill(parts, state, std::time::Instant::now()).await;
             let _ = reply.send(outcome);
         }
@@ -2740,8 +1848,7 @@ async fn serve(job: Job, parts: &EngineParts, store: &Store, state: &mut State) 
                     .map_err(|error| EngineError::new(error.to_string())),
                 Err(error) => Err(EngineError::new(error.to_string())),
             };
-            // Unconditional, not the throttled `announce_backfill` above:
-            // the interactive lane always wins (#316).
+            // Unconditional, not throttled: the interactive lane always wins (#316).
             announce_backfill_now(parts, state, std::time::Instant::now()).await;
             let _ = reply.send(outcome);
         }
@@ -2759,8 +1866,7 @@ async fn serve(job: Job, parts: &EngineParts, store: &Store, state: &mut State) 
                 Err(error) => Err(EngineError::new(error.to_string())),
             }
             .map(|asked| unreachable_unless_up(asked, state.supervisor.link()));
-            // Interactive, like `RequestBody`: the user opened that chip and
-            // is watching a spinner for exactly these bytes (#316).
+            // Interactive: the user is watching a spinner for these bytes (#316).
             announce_backfill_now(parts, state, std::time::Instant::now()).await;
             let _ = reply.send(outcome);
         }
@@ -2773,7 +1879,6 @@ async fn serve(job: Job, parts: &EngineParts, store: &Store, state: &mut State) 
                 }
                 Err(error) => Err(EngineError::new(error.to_string())),
             };
-            // Interactive, like `RequestBody`: the user is waiting on it.
             announce_backfill_now(parts, state, std::time::Instant::now()).await;
             let _ = reply.send(outcome);
         }
@@ -2803,11 +1908,8 @@ async fn serve(job: Job, parts: &EngineParts, store: &Store, state: &mut State) 
     }
 }
 
-/// A queued payload ask on a link that cannot carry it now, said so: the
-/// person waiting on a save hears "offline" now rather than "still
-/// downloading" in thirty seconds. A link about to make its first attempt
-/// is not down; one waiting out a failure, with no network, or stopped for
-/// the person is.
+/// A queued payload ask on a link that cannot carry it says so now, so a person waiting on a save
+/// hears "offline" instead of "still downloading" later.
 fn unreachable_unless_up(asked: PayloadAsk, link: &Link) -> PayloadAsk {
     let down = match link {
         Link::Online { .. } => false,
@@ -2821,17 +1923,13 @@ fn unreachable_unless_up(asked: PayloadAsk, link: &Link) -> PayloadAsk {
     }
 }
 
-/// One drain pass, for the loop: the link checked, the watcher told, and
-/// what happened folded into the engine's state.
 async fn drain(
     parts: &EngineParts,
     store: &Store,
     state: &mut State,
 ) -> Result<DrainSummary, EngineError> {
-    // A drain needs a session. Without one the queue is not *failed*, it is
-    // simply not sent yet — which is the whole local-first promise: the write
-    // already happened here, and reaching the server is a separate thing that
-    // can wait. So a link that is not up leaves every row where it is.
+    // Without a session the queue is not failed, only not sent yet (local-first): a link that is
+    // not up leaves every row where it is.
     if !state.supervisor.link().is_online() {
         let moved = state
             .supervisor
@@ -2847,24 +1945,17 @@ async fn drain(
     settle_drain(parts, state, outcome)
 }
 
-/// What the watcher is told before a drain drives a connection.
-///
-/// A write `SELECT`s the mailbox it writes to. That answer is the server
-/// telling the client the mailbox's current state, so an `IDLE` armed
-/// afterwards reports only what happens next -- and a delivery that landed
-/// just before the write is in neither. Dropping the watcher's verification
-/// makes its next step a `STATUS`, which reconciles the gap within one poll
-/// tick instead of leaving it to the five-minute floor (#807).
+/// A write `SELECT`s its mailbox, so an `IDLE` armed afterwards misses a delivery that landed just
+/// before it;
+/// dropping the watcher's verification makes its next step a `STATUS` (#807).
 fn before_a_drain(state: &mut State) {
     if let Some(watcher) = state.watcher.as_mut() {
         watcher.unverified();
     }
 }
 
-/// The drain itself, with SMTP wired in so `Operation::Send` can actually
-/// send: one connection, the queue, and nothing of the engine's state --
-/// which is what lets a wave run it beside its lanes (#1593). The caller
-/// settles what comes back with [`settle_drain`].
+/// Touches nothing of the engine's state, so a wave can run it beside its lanes (#1593); the caller
+/// settles with `settle_drain`.
 #[tracing::instrument(name = "drain", skip_all)]
 async fn run_drain(parts: &EngineParts, store: &Store) -> Result<DrainSummary, SyncError> {
     let connection = store.connect_background().await?;
@@ -2907,7 +1998,6 @@ async fn run_drain(parts: &EngineParts, store: &Store) -> Result<DrainSummary, S
     })
 }
 
-/// Fold what a drain did into the engine's state, and say what it means.
 fn settle_drain(
     parts: &EngineParts,
     state: &mut State,
@@ -2917,9 +2007,8 @@ fn settle_drain(
         Ok(summary) => Ok(summary),
         Err(error) => {
             tracing::warn!(%error, "the drain pass failed");
-            // Noticed by the operation that hit it rather than by the next
-            // tick: a session that died mid-drain has already cost the user
-            // one action, and waiting five seconds to admit it costs another.
+            // Noticed by the operation that hit it, not the next tick: a session that died
+            // mid-drain has already cost the user one action.
             if let SyncError::Backend(backend) = &error {
                 let moved = state.supervisor.observe(backend, Utc::now());
                 announce_link(parts, state, moved);
@@ -2929,57 +2018,24 @@ fn settle_drain(
     }
 }
 
-/// The most mailboxes a wave will ever sync at once, whatever the store.
-///
-/// This is the *IMAP* side's ceiling: that store defaults to four connections
-/// with one spoken for by `IDLE`, so a fourth concurrent mailbox would not
-/// get a connection of its own — it would take turns on somebody else's and
-/// pay a `SELECT` on every batch for the privilege (see
-/// `postio_account::imap::selection`). More lanes than the server will give
-/// connections is slower than fewer.
-///
-/// **It does not bind today, and that is worth knowing before touching it.**
-/// [`sync_lanes`] is bounded by the *database* store, which is smaller:
-/// `DEFAULT_MAX_CONNECTIONS` is 4, so a shipped wave gets
-/// `4 - `[`RESERVED_FOR_ELSEWHERE`]` = 2` and this clamp never applies.
-/// `the_database_pool_is_what_bounds_the_lanes_not_the_imap_ceiling` pins
-/// that, because the two used to disagree with nothing to notice (#729).
-///
-/// Kept rather than deleted: raising the database store is what would reach
-/// it, and #733 measured what reaching it buys — nothing at or below a 20 ms
-/// round trip, ~12% at 120 ms, on top of the ~30% the second lane is worth
-/// there. Whoever raises the store should read that table and answer the
-/// question it does not: what a third lane costs the UI's own reads, which
-/// is what [`RESERVED_FOR_ELSEWHERE`] exists to protect.
+/// The IMAP-side ceiling: a fourth lane would share a connection and pay a `SELECT` per batch. It
+/// does not bind
+/// today, because `sync_lanes` is bounded by the smaller database store (#729); #733 measured what
+/// raising it buys.
 const MAX_SYNC_LANES: usize = 3;
 
-/// Store connections a sync wave will not touch.
-///
-/// One for the UI thread's reads — the message list, the reader, the sidebar
-/// — and one for the engine's own housekeeping between waves.
+/// One for the UI thread's reads and one for the engine's housekeeping between waves.
 const RESERVED_FOR_ELSEWHERE: usize = 2;
 
-/// How many mailboxes may be in flight at once, for this store.
-///
-/// The *database* store decides, because it is the scarcer of the two: every
-/// concurrent pass contends for the one writer, and the UI thread reads
-/// through the same store. Leaving [`RESERVED_FOR_ELSEWHERE`] behind is what
-/// keeps the message list answering while a first sync works through an
-/// archive. [`MAX_SYNC_LANES`] is the IMAP-side ceiling above that, and does
-/// not bind on the shipped store.
-///
-/// The number used to be the connection pool's size. There is no pool to ask
-/// any more -- the engine keeps its own and a checkout is cheap -- so the
-/// limit it was standing in for is passed in, which is also what keeps both
-/// halves of the rule testable: the shipped ceiling, and a larger one that
-/// reaches [`MAX_SYNC_LANES`].
+/// The database store decides because it is scarcer: passes contend for one writer, and leaving
+/// `RESERVED_FOR_ELSEWHERE` keeps the list answering during a first sync. The limit is a parameter
+/// so both ceilings are testable.
 fn sync_lanes(concurrent_passes: usize) -> usize {
     concurrent_passes
         .saturating_sub(RESERVED_FOR_ELSEWHERE)
         .clamp(1, MAX_SYNC_LANES)
 }
 
-/// Whether an INBOX pass is waiting in the queue or running in a lane.
 fn inbox_pass_pending(state: &State, active: &[MailboxId]) -> bool {
     state
         .to_sync
@@ -2988,23 +2044,11 @@ fn inbox_pass_pending(state: &State, active: &[MailboxId]) -> bool {
         .any(|mailbox| state.inbox_ids.contains(mailbox))
 }
 
-/// The next mailbox a wave may admit to a lane: INBOX first, and nothing
-/// else until INBOX has had its turn. This is the whole of the rule in
-/// [`postio_sync::order`].
-///
-/// - A queued INBOX is taken ahead of everything, wherever it sits in the
-///   queue (an IDLE wake or a requeued pass can leave it behind others).
-/// - While an INBOX pass is queued or running, nothing else is admitted: its
-///   headers must not share the store writer or the wire with another
-///   folder's.
-/// - While INBOX's newest page of bodies is still being fetched
-///   (`inbox_page_pending`, with `bodies_running` saying a fetch is actually
-///   in flight) nothing else is admitted either. If no fetch is running the
-///   page is not progressing -- paused, metered, interrupted -- so the hold
-///   is dropped rather than starving every other folder.
-///
-/// `None` means "hold the lane free", and the caller retries at its next
-/// completion boundary.
+/// INBOX first, and nothing else until it has had its turn (`postio_sync::order`): a queued INBOX
+/// is taken ahead of
+/// everything, and while its pass or its first page of bodies is in flight nothing else is
+/// admitted; if no fetch runs
+/// (`bodies_running`) the hold is dropped. `None` means hold the lane free.
 fn next_to_sync(
     state: &mut State,
     active: &[MailboxId],
@@ -3029,79 +2073,13 @@ fn next_to_sync(
     state.to_sync.pop_front()
 }
 
-/// Sync several mailboxes at once, in priority order, until something the
-/// wave cannot answer arrives.
-///
-/// # What a wave answers without stopping (#1593)
-///
-/// A body request, a query, a due operation: each is served beside the
-/// lanes -- see [`attend`] -- and the lanes run on. A `Sync`, a `Drain`, a
-/// job that moves the link, or the inbox closing stops them; that job is
-/// returned for the loop to serve, and the interrupted passes go back on the
-/// front of the queue.
-///
-/// # Why concurrently
-///
-/// A first sync of a real account is the slowest thing Postio does, and one
-/// mailbox at a time leaves every round trip unused. Running two passes
-/// together overlaps them, and costs nothing but connections the store was
-/// already sized for (`postio-0d9.7`).
-///
-/// **The original justification no longer holds and is worth correcting
-/// rather than repeating.** It read: "almost all of that wall clock is a
-/// round trip — a batch of two hundred headers spent an order of magnitude
-/// longer waiting for the server than writing to SQLite." Measured against a
-/// real account since, it is an order of magnitude the *other* way: 13.8 s of
-/// fetch against 165.5 s of write, with the write path ~97% occupied across
-/// both lanes (#78). #77's read-ahead is most of the reason — the fetch now
-/// hides behind the previous write, so what is left in the open is the write.
-///
-/// The conclusion survives the premise, which is why this still runs passes
-/// concurrently. #733 measured lane counts directly against injected latency
-/// and found no crossover: extra lanes are neutral at and below a 20 ms round
-/// trip and a clear win above it — ~30% for the second lane at 120 ms.
-/// Serialising writes does not *add* work, it only fails to remove any, and a
-/// lane whose write is queued still overlaps its fetch. A real account's
-/// median batch sits in the range where lanes do nothing and its tail in the
-/// range where they do a great deal (#78 measured `fetch_ms` p50 22 ms, p90
-/// 118 ms), so the lanes earn their place on the tail.
-///
-/// # Why INBOX still comes first
-///
-/// [`queue_every_mailbox`] sorts by [`postio_sync::order::sync_priority`] and
-/// this takes from the front, so INBOX is in the *first* wave rather than
-/// behind an archive — which is the whole of `postio-0d9.6`, and matters more
-/// now rather than less: a lane occupied by a forty-thousand-message archive
-/// is a lane INBOX is not waiting behind.
-///
-/// # A lane that frees is refilled, while nothing has asked
-///
-/// A wave used to return only when *every* pass in it had finished, and the
-/// outer loop starts no wave before the last one returns — so one slow pass
-/// held every mailbox still queued, however many lanes sat free. That is the
-/// live incident in
-/// `docs/notes/2026-09-13-a-slow-pass-stops-every-folder-behind-it.md`:
-/// fifteen folders queued, two started, one finished, fifty-nine thousand
-/// messages never attempted behind a twenty-five-message Drafts pass.
-///
-/// So a completed pass now admits the next queued mailbox into its lane —
-/// but only after checking the same conditions [`interruption`] watches,
-/// because the first version of this refill was reverted: with `biased;`
-/// completions first, a wave that feeds itself at every completion can keep
-/// the first branch ready and starve the arm that yields to the user
-/// (#944, #122). Checking *at the completion boundary, before admitting*
-/// closes that hole from the other side: back-to-back completions each pass
-/// through the check, so a waiting job stops the refill exactly where the
-/// starvation would have begun, and the running passes are cancelled as
-/// before. `a_slow_pass_does_not_hold_the_folders_queued_behind_the_wave`
-/// and `a_job_is_served_without_waiting_out_the_wave_it_arrived_during`
-/// hold the two halves.
-///
-/// (An older section here explained why every connection was taken before
-/// any pass started: the previous engine's pool blocked the OS thread on a
-/// condvar when exhausted, which on a single-thread runtime was a real
-/// deadlock. This engine's `connect` is async and pools internally, so a
-/// lane can take its connection as it is admitted.)
+/// Sync several mailboxes at once, in priority order, until something the wave cannot answer
+/// arrives; that job
+/// is returned and the interrupted passes go back on the front of the queue. Lanes pay off on slow
+/// links (#733).
+/// A completed pass admits the next mailbox only after the checks `interruption` watches, or a
+/// self-feeding wave
+/// starves the arm that yields to the user (#944, #122).
 async fn sync_wave(
     parts: &EngineParts,
     store: &Store,
@@ -3119,31 +2097,17 @@ async fn sync_wave(
         return None;
     }
 
-    // Shared by every pass in the wave, and cancelled as one: a job the user
-    // is waiting on must not queue behind three mailboxes. A cancelled pass
-    // keeps everything it committed and resumes from there, so this costs at
-    // most the batch that was on the wire.
+    // Shared by every pass and cancelled as one; a cancelled pass keeps what it committed, so this
+    // costs at most the batch on the wire.
     let cancel = postio_account::cancel::CancelToken::new();
 
-    // Cloned, not borrowed: every pass folds its own batches into this for as
-    // long as it runs (`Committed::batch`, never across an await), and below
-    // a pass is settled — `&mut state` and all — the moment it finishes,
-    // while its wave-mates may still be running and still holding a clone of
-    // their own. A borrow of `state.status` tied to `state` itself would rule
-    // that out; an owned handle on the same `RefCell` does not. See
-    // `State::status`.
+    // Cloned, not borrowed: a pass is settled with `&mut state` while its wave-mates still hold
+    // their own handle (see `State::status`).
     let status = state.status.clone();
 
-    // One place makes a pass's future, so the initial fill and every refill
-    // push the same type into `running` — and so the future owns its
-    // connection outright, which is what lets a lane be admitted while its
-    // wave-mates are still borrowing theirs.
-    // Every pass in the wave rings this once per committed batch, and the
-    // loop below answers by looking up from the headers: a few bodies, and a
-    // glance at the watched inbox. See [`claim_bodies_for_the_wave`] for why a wave
-    // cannot wait until it is over to do either.
+    // Every pass rings this once per committed batch; the loop answers by looking up from the
+    // headers (see `claim_bodies_for_the_wave`).
     let yield_point = tokio::sync::Notify::new();
-    // One filing pass for the wave, as it stood when the wave began.
     let filing = state.filing.get();
     let make_pass = |mailbox: MailboxId, connection: Checkout| {
         let status = status.clone();
@@ -3164,8 +2128,6 @@ async fn sync_wave(
         }
     };
 
-    // Settling writes through its own connection: the lanes' connections
-    // live inside their futures now.
     let settle_connection = match store.connect_background().await {
         Ok(connection) => connection,
         Err(error) => {
@@ -3176,10 +2138,8 @@ async fn sync_wave(
 
     let lanes = sync_lanes(postio_storage::MAX_CONCURRENT_PASSES);
     let mut admitted: Vec<MailboxId> = Vec::new();
-    // The lanes' current occupants, as opposed to `admitted`, which keeps
-    // every mailbox this wave ever ran: a folder that changed while its own
-    // pass is still running needs no second pass, one that changed after
-    // its pass finished does.
+    // Current occupants, unlike `admitted`: a folder that changed while its pass runs needs no
+    // second pass; one that changed after does.
     let mut active: Vec<MailboxId> = Vec::new();
     let mut running = FuturesUnordered::new();
     while running.len() < lanes {
@@ -3193,8 +2153,7 @@ async fn sync_wave(
                 running.push(make_pass(mailbox, connection));
             }
             Err(error) => {
-                // Nothing to sync it with. Put it back rather than dropping
-                // it: the next wave will have a connection.
+                // Put it back, not dropped: the next wave will have a connection.
                 state.to_sync.push_front(mailbox);
                 tracing::warn!(%error, "no connection for a sync lane");
                 break;
@@ -3205,38 +2164,21 @@ async fn sync_wave(
         return None;
     }
 
-    // #631: settled and pumped the instant each individual pass finishes,
-    // not batched until every lane in the wave has. Batching outcomes meant
-    // INBOX's own bodies waited out however long its wave-mate's headers
-    // took to enumerate, even though INBOX's own pass had long since
-    // finished — the outer loop's phase separation (headers, then bodies)
-    // was not the only place that happened; it happened inside one wave too.
+    // Settled and pumped the instant each pass finishes (#631); batching waited out the slowest
+    // wave-mate.
     let mut interrupted: Vec<MailboxId> = Vec::new();
     let mut asked_to_stop = false;
-    // A job taken off the inbox that the wave could not answer: the caller
-    // serves it the moment the wave returns. See [`attend`].
     let mut handed_back: Option<Job> = None;
-    // When the wave next asks the watcher about the inbox. On a clock of its
-    // own, not on header commits: a wave whose folders are all done keeps
-    // fetching bodies with no batch left to ring, and new mail went unseen
-    // until the whole backfill was over. See [`Look`].
+    // On a clock of its own, not header commits: a wave whose folders are done keeps fetching
+    // bodies with no batch to ring, and new mail went unseen.
     let mut look_at = Some(tokio::time::Instant::now());
-    // Beside the lanes, never inside a handler: a handler runs while the
-    // passes are suspended, and a pass suspends *holding the write gate*
-    // (`initial::commit_batch` takes it per unit and awaits the statements
-    // under it). A body fetch that took the gate from inside a handler would
-    // wait on a pass that is waiting to be polled -- which is a deadlock,
-    // and was, the first time this was written. So the fetches and the
-    // `STATUS` are futures of their own, polled with everything else, and
-    // the handlers only start them and settle what they return.
+    // Beside the lanes, never inside a handler: a pass suspends holding the write gate, so a fetch
+    // taking the gate
+    // from a handler deadlocks.
     let mut bodies = FuturesUnordered::new();
-    // The inbox's watch, beside the lanes: an `IDLE` on the pool's watch
-    // connection, or a `STATUS` where the server cannot idle. At most one.
     let mut looks: FuturesUnordered<futures_util::future::LocalBoxFuture<'_, Look>> =
         FuturesUnordered::new();
     let mut idle_cancel: Option<postio_account::cancel::CancelToken> = None;
-    // At most one drain at a time, beside the lanes, for a queued write the
-    // person made during the wave (#1593). See [`attend`].
     let mut drains = FuturesUnordered::new();
     let make_drain = || run_drain(parts, store);
     let make_bodies = |claims: Vec<postio_sync::backfill::Claim>, inline_cap: Option<u64>| async move {
@@ -3258,12 +2200,8 @@ async fn sync_wave(
             Watch::Wait { .. } => None,
         }
     };
-    // What the wave does with whatever asked for its attention, at every
-    // place it is asked: a body request starts a fetch beside the lanes, a
-    // due operation starts a drain beside them, and only a job the wave
-    // cannot answer stops them. A macro rather than a closure because each
-    // arm below borrows a different one of these queues, and a closure
-    // holding all of them would hold them across the whole `select!`.
+    // A macro, not a closure: each arm borrows a different queue, and a closure would hold them all
+    // across the `select!`.
     macro_rules! act_on {
         ($attention:expr) => {
             match $attention {
@@ -3291,7 +2229,6 @@ async fn sync_wave(
         };
     }
 
-    // Admit queued mailboxes into free lanes, as [`next_to_sync`] allows.
     macro_rules! refill {
         () => {
             while running.len() < lanes {
@@ -3314,36 +2251,24 @@ async fn sync_wave(
         };
     }
 
-    // `looks` is not a reason to keep going: an `IDLE` lasts minutes, and the
-    // wave winds it down below once its own work is done.
+    // `looks` does not keep the wave going: an `IDLE` lasts minutes and is wound down below.
     while !running.is_empty() || !bodies.is_empty() || !drains.is_empty() {
         tokio::select! {
             biased;
-            // Completions first: a wave that is already finishing should
-            // finish rather than notice the job it was about to be told
-            // about and mark everything cancelled.
+            // Completions first, so a finishing wave does not notice a job and mark everything
+            // cancelled.
             Some(outcome) = running.next(), if !running.is_empty() => {
                 let stopped_early = outcome.was_cancelled();
-                // A pass the store turned away as busy is owed another turn
-                // exactly as a cancelled one is (#1594): it stopped through
-                // no fault of its mailbox, kept what it committed, and its
-                // units had already waited out the engine's timeout several
-                // times over. Requeued at the front rather than left to the
-                // watcher's next poll, which is up to five minutes after the
-                // wave -- and not put on screen, because it is not an error
-                // the person can act on.
+                // A pass the store turned away as busy is owed another turn like a cancelled one
+                // (#1594): requeued at the front, not shown as an error.
                 let turned_away = outcome.was_transient();
                 if stopped_early || turned_away {
                     interrupted.push(outcome.mailbox);
                 }
                 active.retain(|mailbox| *mailbox != outcome.mailbox);
-                // The wave is the engine acting on its own initiative, so a
-                // failed pass is reported to the user here rather than
-                // returned to a caller who asked for it. An interrupted one
-                // is not a failure: it stops where it was told to and
-                // resumes, and saying so would put a spurious error on
-                // screen every time the user did something during a first
-                // sync.
+                // The wave acts on its own initiative, so a failed pass is reported here; an
+                // interrupted one is
+                // not a failure and would put a spurious error up.
                 if let Err(error) = settle_pass(parts, state, &settle_connection, outcome).await
                     && !stopped_early
                     && !turned_away
@@ -3353,32 +2278,21 @@ async fn sync_wave(
                         account: Some(parts.account),
                     });
                 }
-                // New mail the pass found starts down now, beside whatever
-                // background batch is on the wire, not after it.
                 if !asked_to_stop {
                     act_on!(Asked::FetchNow);
                 }
-                // The interruption conditions, checked here as well as in
-                // the arms below: `biased;` polls completions first, so
-                // completions arriving back to back could starve those arms —
-                // which is how the first refill was reverted. Checked
-                // *before* admitting anything, no pass is ever refilled past
-                // a job that has already asked.
+                // The interruption conditions are checked here too: `biased;` polls completions
+                // first, so
+                // back-to-back completions could starve the other arms (the first refill was
+                // reverted for it).
                 if !asked_to_stop {
                     let draining = !drains.is_empty();
                     act_on!(attend(parts, store, state, inbox, draining).await);
                 }
-                // Its bodies start now, beside the lanes -- `settle_pass` has
-                // just seeded them -- rather than after the wave, which for
-                // INBOX beside an archive is the hour #631 is about. Not in
-                // place: an in-handler drain froze every other lane for as
-                // long as the queue was, and could take the write gate from a
-                // lane that was holding it. See [`BODIES_BESIDE_A_WAVE`].
-                //
-                // Claimed *before* the lane is refilled, because the refill
-                // asks whether INBOX's page of bodies is on the wire: a page
-                // claimed after it would read as "not progressing" and
-                // release the other folders onto the INBOX it just finished.
+                // Bodies start now beside the lanes, not in place (an in-handler drain froze the
+                // lanes and could take the
+                // write gate from a holder, #631). Claimed before the refill, which asks whether
+                // INBOX's page is on the wire.
                 while !asked_to_stop
                     && bodies.len() < BATCHES_BESIDE_A_WAVE
                     && let Some(claims) = claim_bodies_for_the_wave(parts, store, state, inbox, &active).await
@@ -3386,26 +2300,14 @@ async fn sync_wave(
                     let inline_cap = state.backfill.policy().max_inline_bytes;
                     bodies.push(make_bodies(claims, inline_cap));
                 }
-                // The freed lane takes the next queued mailbox, highest
-                // priority first — one slow pass must not hold the folders
-                // queued behind the wave (see the refill note above). INBOX
-                // is the exception in the other direction: nothing else is
-                // admitted while it is syncing or its newest bodies are
-                // coming down ([`next_to_sync`]).
                 if !asked_to_stop {
                     refill!();
                 }
             }
-            // The two halves of `interruption`, as two arms, because they
-            // are answered differently now (#1593) and only one of them is
-            // quiet while a drain runs. A job: answered beside the lanes
-            // when it can be, otherwise the wave stops for it. A local
-            // mutation is not a job -- nobody tells this thread that a row
-            // was written -- so the queue is watched too, or the user's
-            // send, mark-read or move waits out every folder left in
-            // `to_sync` (#944); it is drained beside the lanes, and the arm
-            // is off while one drain is in flight so a queue that is
-            // non-empty *because* it is being drained does not start another.
+            // A local mutation is not a job, so the queue is watched too or a send waits out every
+            // folder in
+            // `to_sync` (#944); off while a drain is in flight so a queue being drained does not
+            // start another.
             _ = wait_for_job(inbox), if !asked_to_stop => {
                 let draining = !drains.is_empty();
                 act_on!(attend(parts, store, state, inbox, draining).await);
@@ -3413,13 +2315,8 @@ async fn sync_wave(
             _ = wait_for_queued_work(parts, store), if !asked_to_stop && drains.is_empty() => {
                 act_on!(attend(parts, store, state, inbox, false).await);
             }
-            // A batch of bodies came back. Settle it the way `pump_body`
-            // would have, and send the next one out: this is what makes the
-            // flow continuous rather than one batch per tick.
             Some(fetched) = bodies.next(), if !bodies.is_empty() => {
                 settle_bodies(parts, state, fetched).await;
-                // An arrival whose text just landed has its attachments
-                // queued behind it; they go now too.
                 if !asked_to_stop {
                     act_on!(Asked::FetchNow);
                 }
@@ -3430,18 +2327,12 @@ async fn sync_wave(
                     let inline_cap = state.backfill.policy().max_inline_bytes;
                     bodies.push(make_bodies(claims, inline_cap));
                 }
-                // INBOX's newest page may just have come down, which is what
-                // the other folders were being held for.
                 if !asked_to_stop {
                     refill!();
                 }
             }
-            // The drain beside the lanes finished. Settled and announced as
-            // the loop's own drain would be. One that *failed* stops the
-            // wave rather than being tried again here: the loop's drain
-            // below the wave is the one with the link's supervision around
-            // it, and a queue that stays due would otherwise start a drain
-            // every poll for the length of the archive.
+            // A failed drain stops the wave: the loop's drain has the link's supervision, and a
+            // still-due queue would otherwise start one every poll.
             Some(outcome) = drains.next(), if !drains.is_empty() => {
                 let outcome = settle_drain(parts, state, outcome);
                 let failed = outcome.is_err();
@@ -3451,22 +2342,12 @@ async fn sync_wave(
                     cancel.cancel();
                 }
             }
-            // The inbox's watch came back. A change to a folder no lane is
-            // syncing gets a lane of its own, now, beside the ones already
-            // running: not by cancelling them -- a half-done pass costs its
-            // resume, and the folders in the lanes are the big ones -- and
-            // not by queueing behind them, which is the hour this exists to
-            // avoid. A change to a folder that is mid-pass is queued for one
-            // more pass after it: the running pass may have asked the server
-            // before the delivery, and a queued INBOX is taken first.
-            //
-            // The watcher's first look at a folder always reads as a change
-            // (there is no earlier signature), so the inbox gets one
-            // incremental pass it did not strictly need, once per start. That
-            // pass is a `SEARCH` against a folder that just synced, and it is
-            // also what catches mail that arrived while the inbox's own pass
-            // was running -- the same reason `keep_watch` re-syncs on a first
-            // observation.
+            // A change to a folder no lane is syncing gets a lane of its own, not by cancelling (a
+            // half-done pass costs
+            // its resume); a mid-pass folder is queued for one more pass. The watcher's first look
+            // always reads as a
+            // change, so the inbox gets one pass it did not need, which also catches mail that
+            // arrived during its own pass.
             Some(look) = looks.next(), if !looks.is_empty() => {
                 idle_cancel = None;
                 look_at = Some(tokio::time::Instant::now());
@@ -3497,7 +2378,6 @@ async fn sync_wave(
                     }
                 }
             }
-            // Time to ask the watcher about the inbox again.
             () = sleep_until_look(look_at), if look_at.is_some() && looks.is_empty() && !asked_to_stop => {
                 look_at = None;
                 let step = state
@@ -3521,10 +2401,6 @@ async fn sync_wave(
                     }
                 }
             }
-            // A batch of headers is down in some lane. Look up from them:
-            // ask after the watched inbox, and start a few bodies. See
-            // [`claim_bodies_for_the_wave`] for why a wave cannot leave either until
-            // it is over.
             _ = yield_point.notified(), if !asked_to_stop => {
                 while bodies.len() < BATCHES_BESIDE_A_WAVE
                     && let Some(claims) = claim_bodies_for_the_wave(parts, store, state, inbox, &active).await
@@ -3536,9 +2412,8 @@ async fn sync_wave(
         }
     }
 
-    // The inbox's watch is wound down, never dropped: a dropped `IDLE` hands
-    // the pool a session still inside the command (#755). What it saw is
-    // queued for the loop rather than lost.
+    // Wound down, never dropped: a dropped `IDLE` hands the pool a session still inside the command
+    // (#755).
     if let Some(cancel) = idle_cancel.take() {
         cancel.cancel();
     }
@@ -3550,9 +2425,8 @@ async fn sync_wave(
         }
     }
 
-    // Back on the front of the queue, in the order they were taken off it —
-    // completion order says nothing about priority, and INBOX must not come
-    // back behind the archive it started alongside.
+    // Back on the front in the order taken off: INBOX must not come back behind the archive it
+    // started with.
     for mailbox in admitted.iter().rev() {
         if interrupted.contains(mailbox) {
             state.to_sync.push_front(*mailbox);
@@ -3567,30 +2441,9 @@ async fn sync_wave(
     handed_back
 }
 
-/// The next batch of bodies for a wave to fetch beside its lanes, claimed
-/// here and fetched by [`fetch_bodies`]. `None` when there is nothing to
-/// fetch or something outranks fetching it.
-///
-/// # Why a wave cannot wait until it is over
-///
-/// `6f0ba687` put a bounded body pump *between* waves, and it was enough
-/// while passes were being cut short and requeued every minute, so "between
-/// waves" came round often. Since `93537292` a slow pass is left alone, a
-/// wave refills its lanes from `to_sync` and returns only when every lane is
-/// empty — so a wave now lasts as long as its largest folder. Measured on a
-/// real account: the inbox's 240 headers were local four seconds after start,
-/// and ninety seconds into the first sync twenty-one header batches had
-/// committed and not one body had been fetched, nor would one be for the
-/// hour the archive takes. And nothing looked for new mail either, because
-/// `keep_watch` sits below the wave loop too. Both are the same fault: the
-/// wave is the whole engine while it runs.
-///
-/// So the passes ring [`Committed::batch`]'s yield point once per committed
-/// batch, and the wave answers with this, under every guard the between-wave
-/// pump uses; the inbox is watched on a clock of its own ([`Look`]). The fetches
-/// themselves run as futures beside the lanes (see `sync_wave`), so the
-/// headers keep flowing while they are on the wire -- and the next batch is
-/// claimed as each lands, so bodies flow for the length of the wave.
+/// `None` when nothing is to fetch or something outranks it. A wave lasts as long as its largest
+/// folder, so
+/// without this no body is fetched and nothing watches for mail for the hour an archive takes.
 async fn claim_bodies_for_the_wave(
     parts: &EngineParts,
     store: &Store,
@@ -3601,16 +2454,14 @@ async fn claim_bodies_for_the_wave(
     if !nothing_asked(inbox)
         || !state.supervisor.link().is_online()
         || has_queued_work(parts, store).await
-        // INBOX's headers come before anybody's bodies, INBOX's own
-        // included: a body fetch shares the wire and the store writer with
-        // the header pass ([`next_to_sync`]).
+        // INBOX's headers come before anyone's bodies: a body fetch shares the wire and the store
+        // writer with the header pass.
         || inbox_pass_pending(state, active)
     {
         return None;
     }
-    // While INBOX's newest page is the only thing queued, finish that page
-    // and nothing past it: a top-up would seed the *next* page of INBOX and
-    // the other folders would wait for the whole mailbox.
+    // While INBOX's page is the only thing queued, finish it and nothing past: a top-up would seed
+    // INBOX's next page and the other folders would wait.
     if state.backfill.is_idle()
         && !state.inbox_page_pending
         && top_up_backfill(parts, store, state).await == 0
@@ -3621,9 +2472,6 @@ async fn claim_bodies_for_the_wave(
     (!claims.is_empty()).then_some(claims)
 }
 
-/// The account's server for work nobody is waiting on: the archive's
-/// headers and the background lane's bodies. See
-/// [`MailBackend::for_background`].
 fn background_backend(parts: &EngineParts) -> Arc<dyn MailBackend> {
     parts
         .backend
@@ -3631,38 +2479,21 @@ fn background_backend(parts: &EngineParts) -> Arc<dyn MailBackend> {
         .unwrap_or_else(|| Arc::clone(&parts.backend))
 }
 
-/// What the wave's watch on the inbox came back with.
-///
-/// # Its own clock, and a real `IDLE`
-///
-/// The wave used to look at the inbox only when a lane committed a batch of
-/// headers, and took an `Idle` step as a `Poll`. Once every folder's headers
-/// were down, the wave went on fetching bodies with no batch left to ring,
-/// and nothing looked at the inbox until the whole backfill was over. So the
-/// wave asks the watcher on a clock of its own, and holds the `IDLE` it is
-/// given: `idle` runs on the pool's dedicated watch connection, so it costs
-/// the lanes and the bodies nothing, and a delivery is pushed rather than
-/// found on the next look.
-///
-/// Only the inbox. `keep_watch`'s `next_poll` walks every folder, and every
-/// folder's first observation reads as a change, so polling them all from
-/// inside a wave would start a pass per folder for nothing. The inbox is the
-/// folder a person is waiting on; the rest are watched between waves.
+/// The wave looks at the inbox on its own clock and holds a real `IDLE` on the watch connection.
+/// Only the inbox:
+/// every folder's first observation reads as a change, so polling them all would start a pass per
+/// folder.
 enum Look {
-    /// An `IDLE` returned.
     Woke(
         MailboxId,
         Result<Vec<postio_account::backend::MailboxEvent>, BackendError>,
     ),
-    /// A `STATUS` returned.
     Observed(
         MailboxId,
         Result<postio_account::backend::MailboxStatus, BackendError>,
     ),
 }
 
-/// Reports a [`Look`] to the watcher, and answers the mailbox it says
-/// changed.
 fn settle_look(parts: &EngineParts, state: &mut State, look: Look) -> Option<MailboxId> {
     let now = Utc::now();
     let (mailbox, wake) = match look {
@@ -3685,7 +2516,6 @@ fn settle_look(parts: &EngineParts, state: &mut State, look: Look) -> Option<Mai
     (wake == Wake::Changed).then_some(mailbox)
 }
 
-/// Sleeps until `at`, or forever when there is no look to take.
 async fn sleep_until_look(at: Option<tokio::time::Instant>) {
     match at {
         Some(at) => tokio::time::sleep_until(at).await,
@@ -3693,8 +2523,6 @@ async fn sleep_until_look(at: Option<tokio::time::Instant>) {
     }
 }
 
-/// Fetches a batch of claimed bodies, the way [`pump_body`] does, without
-/// touching engine state: what comes back is settled by [`settle_bodies`].
 async fn fetch_bodies(
     parts: &EngineParts,
     store: &Store,
@@ -3707,15 +2535,13 @@ async fn fetch_bodies(
         return fetched;
     }
     let (claims, prefetched) = prefetch_watched(parts, store, inbox, claims).await;
-    // Every claim carries the backfill's one token, so firing it unwinds every
-    // fetch in the batch (see [`pump_body`]).
     let cancel = claims.first().map(|claim| claim.cancel.clone());
     let mut waiting: std::collections::VecDeque<_> = claims.into();
     let mut running = FuturesUnordered::new();
     let mut cancelled = false;
     loop {
-        // A job that arrives while the batch is out waits for the bodies on
-        // the wire and no more: what has not started goes back to the queue.
+        // A job arriving mid-batch waits only for bodies on the wire; what has not started goes
+        // back.
         while running.len() < BODIES_BESIDE_A_WAVE && nothing_asked(inbox) {
             let Some(claim) = waiting.pop_front() else {
                 break;
@@ -3728,11 +2554,9 @@ async fn fetch_bodies(
                 claim,
             ));
         }
-        // Shutdown must not wait for the bodies on the wire: they unwind on
-        // the token instead of running out the batch, which with a window this
-        // wide was seconds of the shutdown grace. What they leave unfetched
-        // stays `body_state <> 'full'`, and a write already started finishes,
-        // so no body is half-stored.
+        // Shutdown must not wait for bodies on the wire: they unwind on the token, unfetched ones
+        // stay
+        // `body_state <> 'full'`, and a write already started finishes.
         let settled = tokio::select! {
             biased;
             next = running.next() => next,
@@ -3753,16 +2577,12 @@ async fn fetch_bodies(
     fetched
 }
 
-/// What [`fetch_bodies`] brought back: the settled bodies, and the claims it
-/// stopped short of because a job was waiting.
 #[derive(Default)]
 struct Fetched {
     results: Vec<Settled>,
     unstarted: Vec<postio_sync::backfill::Claim>,
 }
 
-/// What [`pump_body`] does with each fetched body, for a batch fetched
-/// beside a wave.
 async fn settle_bodies(parts: &EngineParts, state: &mut State, fetched: Fetched) {
     for claim in fetched.unstarted {
         state.backfill.release(claim);
@@ -3780,13 +2600,9 @@ async fn settle_bodies(parts: &EngineParts, state: &mut State, fetched: Fetched)
     }
 }
 
-/// What the engine does with one fetched body, wherever it was fetched.
-///
-/// A fetch that errored did not necessarily fail *about the message*
-/// ([`backfill::fetch_body`] marks those itself): a dropped link, a timeout
-/// or a cancel is [`Outcome::Interrupted`], offered again after a backoff and
-/// on reconnection (#1985). A mailbox whose `UIDVALIDITY` moved has stale
-/// UIDs in the store, so it is queued for the resync that rebuilds them.
+/// An error is not necessarily about the message: a dropped link, timeout or cancel is
+/// `Outcome::Interrupted`,
+/// retried after a backoff (#1985). A moved `UIDVALIDITY` queues the resync that rebuilds the UIDs.
 async fn settle_body(
     parts: &EngineParts,
     state: &mut State,
@@ -3811,8 +2627,6 @@ async fn settle_body(
             reason: error.to_string(),
         }
     });
-    // The reading pane is waiting on exactly this for whatever the user just
-    // opened, so it is worth saying the moment the bytes are local.
     // Named by section, so a wait for one part hears its own (#1996, #1690).
     if matches!(outcome, Outcome::Stored { .. }) {
         parts.events.emit(Event::BodyLoaded {
@@ -3821,9 +2635,8 @@ async fn settle_body(
             sections: sections.clone(),
         });
     }
-    // The open message reads again: a refusal changes its plate (#1918), and
-    // an interruption tells the host the ask is over, so that opening the
-    // message again is asking again (#1985).
+    // A refusal changes the open message's plate (#1918); an interruption tells the host the ask is
+    // over, so opening again asks again (#1985).
     if matches!(
         outcome,
         Outcome::Failed { .. } | Outcome::Interrupted { .. }
@@ -3838,18 +2651,13 @@ async fn settle_body(
     announce_backfill(parts, state, std::time::Instant::now()).await;
 }
 
-/// What one pass did, before the engine's own state hears about it.
 struct PassOutcome {
     mailbox: MailboxId,
     result: Result<SyncSummary, PassFailure>,
-    /// What the pass announced as new mail: their bodies, and then their
-    /// attachments, go on the backfill's fresh lane when it settles.
     arrived: Vec<MessageId>,
 }
 
 impl PassOutcome {
-    /// Whether this pass stopped because the wave cancelled it, rather than
-    /// finishing or failing. Its mailbox is owed another turn.
     fn was_cancelled(&self) -> bool {
         matches!(
             &self.result,
@@ -3859,9 +2667,7 @@ impl PassOutcome {
         )
     }
 
-    /// Whether this pass ended on the store turning a write away as busy
-    /// (#1594): not its mailbox's fault, and owed another turn the way a
-    /// cancelled pass is.
+    /// The store turned a write away as busy (#1594): owed another turn like a cancelled pass.
     fn was_transient(&self) -> bool {
         matches!(
             &self.result,
@@ -3902,13 +2708,9 @@ mod pass_outcome_tests {
     }
 }
 
-/// Why a pass did not produce a summary.
 enum PassFailure {
-    /// The folder was queued and then went away — renamed or removed by
-    /// another client between discovery and this wave. Not the link's fault,
-    /// so the supervisor never hears about it.
+    /// Renamed or removed by another client between discovery and this wave; not the link's fault.
     NoSuchMailbox,
-    /// The pass ran and failed.
     Failed(SyncError),
 }
 
@@ -3921,18 +2723,11 @@ impl fmt::Display for PassFailure {
     }
 }
 
-/// One sync pass over one mailbox.
-///
-/// `sync_mailbox` the first time and `resync_mailbox` afterwards, decided by
-/// whether the mailbox has sync state — which is the record of a pass having
-/// completed, and the thing `resync_mailbox` needs to be incremental against.
-///
-/// Deliberately touches nothing that needs `&mut State`: several of these run
-/// at once (see [`sync_wave`]), and what they share — the status line — is
-/// behind a `RefCell` that no pass holds across an await. Everything else is
-/// [`settle_pass`]'s job, afterwards.
-// Named `sync` rather than `sync_pass`: the span is the log surface for a
-// mailbox pass and predates the split, and `logging_privacy` keys on it.
+/// First time `sync_mailbox`, afterwards `resync_mailbox`, decided by whether the mailbox has sync
+/// state.
+/// Touches nothing needing `&mut State`, since passes run concurrently; the rest is `settle_pass`'s
+/// job.
+// Named `sync`: the span is the log surface for a mailbox pass and `logging_privacy` keys on it.
 #[tracing::instrument(name = "sync", skip_all, fields(mailbox = mailbox.get(), path, incremental))]
 async fn sync_pass(
     parts: &EngineParts,
@@ -3958,20 +2753,16 @@ async fn sync_pass(
         Err(error) => return failed(PassFailure::Failed(error.into())),
     };
 
-    // A folder *path* is a name the user chose for a container, not a message
-    // and not an address; it is what makes a per-mailbox line legible at all.
-    // INBOX is what a person is waiting on, new mail included; every other
-    // folder's headers are a backfill, and take a shared connection only
-    // when nothing a person asked for wants it.
+    // A folder path is a name the user chose, not mail or an address. INBOX is what a person waits
+    // on;
+    // every other folder's headers are a backfill and take a shared connection only when nothing
+    // else wants it.
     let quiet =
         (record.role != postio_model::MailboxRole::Inbox).then(|| background_backend(parts));
     let backend = quiet.as_deref().unwrap_or(parts.backend.as_ref());
     tracing::Span::current().record("path", record.path.as_str());
     tracing::Span::current().record("incremental", synced_before);
     tracing::info!("sync started");
-    // Timed here so the "sync finished" line can say how long the pass took:
-    // the one number that separates a slow server from a slow store, and
-    // the number the 2026-09-13 stall was diagnosed without.
     let started = std::time::Instant::now();
 
     announce_status(parts, &status.borrow_mut().on_sync_started(mailbox));
@@ -3982,27 +2773,16 @@ async fn sync_pass(
         repaint: Repaint::new(parts.events.clone(), parts.account, mailbox),
         yield_point,
     };
-    // Populated only by the incremental branch below: a first sync or a
-    // rebuild can insert thousands of messages that are new to *this
-    // store*, not new mail the user has not seen arrive — see
-    // `Event::NewMail`'s doc comment and postio-du6's "no notification
-    // storm" acceptance criterion.
+    // Filled only by the incremental branch: a first sync inserts thousands of messages new to this
+    // store, not new mail (no notification storm).
     let mut arrived: Vec<MessageId> = Vec::new();
-    // Whether `arrived` accounts for everything this pass did to the list.
-    //
-    // `SyncSummary` cannot answer this: it folds `changed + vanished` into
-    // one `updated` count, and an incremental pull reports a brand-new
-    // message as *changed* rather than inserted. The distinction only exists
-    // here, while the `Outcome` is still whole — `arrived` is the subset of
-    // `changed` that was not known before, so `changed == arrived.len()`
-    // means nothing already on screen moved or changed under the user.
+    // `SyncSummary` folds changed and vanished into `updated`, so only here can we tell that
+    // `arrived` accounts for everything the pass did to the list.
     let mut only_arrivals = false;
-    // Which thread each arrival joined, said once per thread after the pass
-    // commits (`Event::ThreadChanged`). Filled where `arrived` is.
     let mut thread_arrivals = postio_sync::threaded::ThreadArrivals::default();
     let result = if synced_before {
-        // Its arrivals go to the filing pass, when a host in Focus mode gave
-        // this engine one; a first sync, below, never files (spec 007).
+        // Arrivals go to the filing pass when a Focus host gave one; a first sync never files (spec
+        // 007).
         resync::resync_mailbox_filing(connection, backend, &record, filing, cancel, |progress| {
             committed.batch(progress)
         })
@@ -4017,9 +2797,8 @@ async fn sync_pass(
             } = &outcome
             {
                 thread_arrivals = joined.clone();
-                // What Focus's filing pass filtered or held is not new mail
-                // anybody is told of (FR-153), and not in the inbox a view
-                // would splice it into: the view re-reads instead.
+                // What Focus's filing pass filtered or held is not new mail anybody is told of; the
+                // view re-reads instead.
                 arrived = ids
                     .iter()
                     .copied()
@@ -4027,11 +2806,9 @@ async fn sync_pass(
                     .collect();
                 only_arrivals = *vanished == 0 && *changed == ids.len() && filed_away.is_empty();
             }
-            // A backend with no MODSEQ re-reads the folder on every pass
-            // after the first: this *is* its incremental pass, and what it
-            // inserted arrived since the last one (#1704). Every other full
-            // pass -- a rebuild, a renumbering, MODSEQ going backwards -- is
-            // a reload, and announcing it would be the notification storm.
+            // A backend with no MODSEQ re-reads the folder every pass, so what it inserted arrived
+            // since the last (#1704);
+            // every other full pass is a reload, and announcing it would be a notification storm.
             if let resync::Outcome::Full {
                 reason: postio_model::FullResyncReason::NoModSeq,
                 report,
@@ -4069,38 +2846,20 @@ async fn sync_pass(
             elapsed_ms = started.elapsed().as_millis() as u64,
             "sync finished"
         );
-        // When this folder last synced, which nothing wrote until #1281 —
-        // the column had been in the schema since migration 0001 and both
-        // frontends' sidebars read it, so every Postio told its user it had
-        // never synced however much mail it held.
-        //
-        // Here rather than beside the fetch, because this is the point at
-        // which a pass has *completed*: a pass that failed halfway has not
-        // synced the folder, and a timestamp that moved anyway would answer
-        // "when did this last try" to a question nobody asked.
+        // Recorded here, where a pass has completed: a failed pass has not synced the folder
+        // (#1281).
         if let Err(error) = MailboxRepository::new(connection)
             .record_sync(mailbox, chrono::Utc::now())
             .await
         {
-            // Worth a line and not worth failing the pass: the mail is
-            // fetched and stored, and what is lost is a sentence in a footer.
             tracing::warn!(%error, "the folder synced but the time could not be recorded");
         }
-        // `MessageListChanged` is the view's blunt instrument: it means the
-        // *order* moved, and `MessageList::invalidate` answers it by telling
-        // GTK every row was removed and re-added — every visible row widget
-        // discarded and rebuilt, every page re-read, the scroll anchor and
-        // the selection rediscovered. That is the right answer to a resort
-        // and the wrong one to a delivery.
-        //
-        // When `arrived` accounts for every insert and nothing was updated
-        // or re-threaded, the `NewMail` below says the same thing precisely,
-        // and the view prepends instead. Emitting both means the blunt one
-        // runs anyway and the cheap one never gets to matter — issue #72,
-        // the flicker on every sync tick.
+        // `MessageListChanged` makes the view discard and rebuild every row widget; when `arrived`
+        // describes every
+        // insert, `NewMail` lets it prepend instead, and emitting both caused the flicker on every
+        // sync tick (#72).
         let described_by_arrivals = only_arrivals && !arrived.is_empty();
         if summary.changed() && !described_by_arrivals {
-            // The list showing this folder has to re-read it.
             parts.events.emit(Event::MessageListChanged {
                 account: parts.account,
                 mailbox,
@@ -4113,9 +2872,8 @@ async fn sync_pass(
                 messages: arrived.clone(),
             });
         }
-        // After the pass's transactions have committed, one event per thread
-        // however many of its messages arrived. Filed-away arrivals count:
-        // the thread changed whether or not the inbox shows them.
+        // After the transactions commit, one event per thread; filed-away arrivals count, since the
+        // thread changed.
         for (thread, members_added) in thread_arrivals.into_threads() {
             parts.events.emit(Event::ThreadChanged {
                 account: parts.account,
@@ -4132,11 +2890,6 @@ async fn sync_pass(
     }
 }
 
-/// Fold a finished pass into the engine's state, and say what it did.
-///
-/// Split from [`sync_pass`] because everything in here needs `&mut State`,
-/// and passes run concurrently. Sequential and cheap: no network, one
-/// possible indexed read.
 async fn settle_pass(
     parts: &EngineParts,
     state: &mut State,
@@ -4151,11 +2904,8 @@ async fn settle_pass(
     } = outcome;
     let now = Utc::now();
 
-    // A pass the wave cancelled is not a failure and not a completed pass: it
-    // stopped where it was told to, keeping everything it had committed, and
-    // whoever requeues it resumes from there. It leaves the status line
-    // (nothing is fetching for it any more) and touches nothing else — in
-    // particular not the supervisor, since the link is fine.
+    // A cancelled pass is neither a failure nor a completed one: it keeps what it committed and
+    // leaves the supervisor alone, since the link is fine.
     if let Err(PassFailure::Failed(SyncError::Backend(BackendError::Cancelled))) = &result {
         announce_status(parts, &state.status.borrow_mut().on_sync_abandoned(mailbox));
         return Err(EngineError::new("the sync pass was interrupted"));
@@ -4174,11 +2924,8 @@ async fn settle_pass(
                     failure: None,
                 });
             }
-            // A pass that finished says so: `done == total` is how the stream
-            // says "a sync completed", and a pass over an empty mailbox never
-            // counted anything to reach it. Without this a frontend cannot
-            // tell an inbox a first pass found empty from one the first pass
-            // has not reached (T220). Failed and cancelled passes say nothing.
+            // `done == total` is how the stream says a sync completed; an empty mailbox never
+            // counted anything to reach it.
             if matches!(
                 state.status.borrow().status(),
                 SyncStatus::Idle {
@@ -4193,11 +2940,8 @@ async fn settle_pass(
                 });
             }
             if summary.changed() {
-                // A sync is exactly when the set of messages missing a body
-                // changed, so it is exactly when the backfill is worth
-                // seeding again. It also means there is more to cover than
-                // the last top-up found: new mail arrives *above* whatever
-                // point the walk backwards through the archive had reached.
+                // A sync changes the set of messages missing a body, and new mail arrives above
+                // wherever the backwards walk had reached.
                 state.backfill_covered = false;
                 match backfill::seed(
                     connection,
@@ -4207,8 +2951,6 @@ async fn settle_pass(
                 )
                 .await
                 {
-                    // INBOX's newest page is queued: the other folders wait
-                    // for it ([`next_to_sync`]).
                     Ok(queued) => {
                         if queued > 0 && state.inbox_ids.contains(&mailbox) {
                             state.inbox_page_pending = true;
@@ -4222,10 +2964,8 @@ async fn settle_pass(
                     }
                 }
 
-                // What just arrived goes ahead of the backlog the seed above
-                // joined: its words, then its attachments, so new mail is
-                // readable -- and its attachments openable -- by the time
-                // anybody reaches for it. See `Backfill::arrived`.
+                // What just arrived goes ahead of the backlog: words, then attachments (see
+                // `Backfill::arrived`).
                 for message in &arrived {
                     if let Err(error) =
                         backfill::request_arrived(connection, &mut state.backfill, *message).await
@@ -4234,18 +2974,12 @@ async fn settle_pass(
                     }
                 }
 
-                // A sync is also when a send nobody could confirm may have
-                // turned up (#674). The draft reserved its `Message-ID`
-                // before the first attempt, so a message arriving with that
-                // id *is* the confirmation — no user action, no extra
-                // request, nothing that leaves the machine. Only when the
-                // pass actually changed something: an unchanged mailbox
-                // cannot have brought the copy down.
+                // The draft reserved its `Message-ID` before the first attempt, so a message
+                // arriving with that id
+                // confirms the send (#674); only when the pass changed something.
                 match postio_sync::send::confirm_unconfirmed(connection, parts.account).await {
                     Ok(resolved) => {
                         for (draft, message) in resolved {
-                            // The Drafts list has a row that has stopped
-                            // being a draft, and the pane may be showing it.
                             tracing::debug!(draft = draft.get(), "an unconfirmed send is resolved");
                             parts.events.emit(Event::MessagesChanged {
                                 account: parts.account,
@@ -4253,9 +2987,7 @@ async fn settle_pass(
                             });
                         }
                     }
-                    // Worth a line, not a banner: the drafts stay
-                    // `Unconfirmed`, which is the honest state, and the next
-                    // pass looks again.
+                    // The drafts stay `Unconfirmed`, the honest state; the next pass looks again.
                     Err(error) => {
                         tracing::warn!(%error, "could not check for resolved sends");
                     }
@@ -4270,10 +3002,8 @@ async fn settle_pass(
                 announce_link(parts, state, moved);
             }
             announce_status(parts, &state.status.borrow_mut().on_sync_abandoned(mailbox));
-            // The folder's own failure, kept on it until a pass of it
-            // completes (#1731) -- unless the link went down with it, which
-            // the link's state already says, or nothing failed the folder: a
-            // store busy with another writer, or a folder gone from the store.
+            // Kept until a pass of the folder completes (#1731), unless the link went down (its
+            // state says so) or nothing failed the folder.
             let the_folders = !turned_away && !matches!(failure, PassFailure::NoSuchMailbox);
             if the_folders && state.supervisor.link().is_online() {
                 state.failing.insert(mailbox);
@@ -4288,12 +3018,8 @@ async fn settle_pass(
     }
 }
 
-/// One mailbox, synced now, for a caller that is waiting on the answer.
-///
-/// The wave above is how the engine syncs on its own initiative; this is
-/// [`Job::Sync`] — the watcher saw mail arrive, or the user asked. It takes
-/// one connection and runs one pass, so a single mailbox never pays for the
-/// wave's machinery.
+/// One mailbox synced now for a caller waiting on the answer (`Job::Sync`), without the wave's
+/// machinery.
 async fn sync(
     parts: &EngineParts,
     store: &Store,
@@ -4316,8 +3042,6 @@ async fn sync(
         .await
         .map_err(|error| EngineError::new(error.to_string()))?;
     let cancel = postio_account::cancel::CancelToken::new();
-    // Nobody listens between this pass's batches: it is one mailbox, run
-    // for a job, and the job's caller is waiting on the whole of it.
     let yield_point = tokio::sync::Notify::new();
     let filing = state.filing.get();
     let outcome = sync_pass(
@@ -4333,7 +3057,6 @@ async fn sync(
     settle_pass(parts, state, &connection, outcome).await
 }
 
-/// What a resync did, in the engine's own terms.
 fn summarise_resync(outcome: resync::Outcome) -> SyncSummary {
     match outcome {
         resync::Outcome::UpToDate => SyncSummary::default(),
@@ -4343,9 +3066,8 @@ fn summarise_resync(outcome: resync::Outcome) -> SyncSummary {
             threaded: report.threaded,
             full: true,
         },
-        // An incremental pull counts what moved rather than what it wrote:
-        // a flag change is an update, and a message the server no longer has
-        // is a row removed. Both mean the list showing this folder is stale.
+        // An incremental pull counts what moved, not what it wrote; a flag change or a vanished
+        // message makes the list stale.
         resync::Outcome::Incremental {
             changed, vanished, ..
         } => SyncSummary {
@@ -4357,7 +3079,6 @@ fn summarise_resync(outcome: resync::Outcome) -> SyncSummary {
     }
 }
 
-/// Why the link is not usable, phrased for the user.
 fn offline_reason(link: &Link) -> String {
     match link {
         Link::Blocked(blocker) => blocker.reason().to_string(),
@@ -4367,13 +3088,8 @@ fn offline_reason(link: &Link) -> String {
     }
 }
 
-/// Say what the status line should show now.
-///
-/// One place, because a link change and a sync pass both move the same
-/// status and the frontend should not have to tell which produced it.
-/// `SyncProgress` rather than `ConnectionChanged` while a pass is counting:
-/// they are different questions — *is there a connection* and *how far has
-/// this got* — and the sidebar draws them differently.
+/// One place because a link change and a sync pass move the same status. `SyncProgress` rather than
+/// `ConnectionChanged` while counting: different questions, drawn differently.
 fn announce_status(parts: &EngineParts, status: &SyncStatus) {
     if let SyncStatus::Syncing {
         progress: Some(progress),
@@ -4391,8 +3107,6 @@ fn announce_status(parts: &EngineParts, status: &SyncStatus) {
         account: parts.account,
         state: connection_of(status),
     });
-    // The typed category rides on the state; the prose travels beside it,
-    // which is what the status line reads.
     if let SyncStatus::Error { reason, .. } = status {
         parts.events.emit(Event::Error {
             message: reason.clone(),
@@ -4401,17 +3115,10 @@ fn announce_status(parts: &EngineParts, status: &SyncStatus) {
     }
 }
 
-/// The frontend's summary of where an account stands.
-///
-/// One function rather than two inline matches, because a link change and a
-/// sync pass must agree — and because the `Failing` reason (ADR 0005 Q10) is
-/// a mapping worth testing on its own. `needs_credentials` is how
-/// `postio-sync` distinguishes its two blockers: a refused credential is
-/// `Auth` (the user signs in again; the blocked link never retries on a
-/// timer), and everything else a retry cannot fix is `Config` (the user
-/// edits a setting). `Network` and `Server` are reserved: transient trouble
-/// is `Connecting` while the backoff works, and a per-operation server
-/// failure belongs to the operation queue, not the link.
+/// `needs_credentials` is how `postio-sync` tells its two blockers apart: a refused credential is
+/// `Auth` (never retried
+/// on a timer), anything else a retry cannot fix is `Config`. `Network` and `Server` are reserved
+/// (ADR 0005 Q10).
 fn connection_of(status: &SyncStatus) -> postio_core::ConnectionState {
     match status {
         SyncStatus::Offline => postio_core::ConnectionState::Offline,
@@ -4435,20 +3142,12 @@ fn connection_of(status: &SyncStatus) -> postio_core::ConnectionState {
     }
 }
 
-/// Turn a link transition into what the status line shows.
-///
-/// `StatusTracker` already throttles and shapes these, so this is only the
-/// last hop: its `SyncStatus` onto core's own `ConnectionState`, which is the
-/// summary the frontend reads and which `postio-core` promised would not
-/// change when the sync engine's state machine does.
 fn announce_link(parts: &EngineParts, state: &mut State, moved: Option<Link>) {
     let Some(link) = moved else {
         return;
     };
-    // Only transitions reach here, so this is one line per actual change
-    // rather than one per poll.
-    // Through `Debug`, then redacted: a `Blocked` link carries the reason it
-    // is blocked, and an unusable credential names the account.
+    // Through `Debug`, then redacted: a `Blocked` link carries its reason, and an unusable
+    // credential names the account.
     tracing::info!(
         link = %postio_model::address::redact_addresses(&format!("{link:?}")),
         "connection state changed"
@@ -4458,8 +3157,6 @@ fn announce_link(parts: &EngineParts, state: &mut State, moved: Option<Link>) {
         account: parts.account,
         state: connection_of(&status),
     });
-    // The typed category rides on the state; the prose travels beside it,
-    // which is what the status line reads.
     if let SyncStatus::Error { reason, .. } = &status {
         tracing::error!(
             reason = %postio_model::address::redact_addresses(reason),
@@ -4472,10 +3169,7 @@ fn announce_link(parts: &EngineParts, state: &mut State, moved: Option<Link>) {
     }
 }
 
-/// The account's Drafts folder, for saying that a draft moved.
-///
-/// A point read on a connection this thread already has. `None` before the
-/// first sync has found one, in which case no draft has a row to have moved.
+/// `None` before the first sync has found one.
 async fn drafts_mailbox(parts: &EngineParts) -> Option<MailboxId> {
     let connection = parts.database.connect().await.ok()?;
     postio_storage::repository::MailboxRepository::new(&connection)
@@ -4486,24 +3180,15 @@ async fn drafts_mailbox(parts: &EngineParts) -> Option<MailboxId> {
         .map(|mailbox| mailbox.id)
 }
 
-/// Say what a drain did, so the UI hears it the way it hears everything else.
 async fn announce_drain(parts: &EngineParts, outcome: &Result<DrainSummary, EngineError>) {
     let events = &parts.events;
     let account = parts.account;
     match outcome {
         Ok(summary) => {
-            // A drain moves drafts between Drafts and the Outbox: the drainer
-            // marks Sending as it opens the socket, Sent when the server
-            // accepts, and Failed or Unconfirmed when it does not (spec 003).
-            // The row's `send_state` is what decides which list holds it, so
-            // both have to be re-read.
-            //
-            // Deliberately coarse -- any drain that did something, not "a
-            // drain that touched a send". The report does not distinguish
-            // operation kinds, and threading that through it would buy a
-            // distinction nobody can see: these two lists are small, a Reload
-            // re-queries them, and the alternative is a stale row saying
-            // "Sending" about a message that failed ten minutes ago.
+            // A drain moves drafts between Drafts and the Outbox, decided by `send_state`, so both
+            // are re-read. Coarse on
+            // purpose: the report does not distinguish operation kinds, and a stale "Sending" row
+            // is worse.
             let moved =
                 summary.applied > 0 || !summary.failed.is_empty() || !summary.uncertain.is_empty();
             if moved && let Some(drafts) = drafts_mailbox(parts).await {
@@ -4512,16 +3197,12 @@ async fn announce_drain(parts: &EngineParts, outcome: &Result<DrainSummary, Engi
                     mailbox: drafts,
                 });
             }
-            // A mailbox the server disagreed with has to be re-read, and the
-            // list showing it is the thing that has to know.
             for mailbox in &summary.needs_resync {
                 events.emit(Event::MessageListChanged {
                     account,
                     mailbox: *mailbox,
                 });
             }
-            // A Sent copy filed into a thread (a reply, usually): the thread
-            // an open window reads has a new member.
             for (thread, members_added) in summary.thread_arrivals.clone().into_threads() {
                 events.emit(Event::ThreadChanged {
                     account,
@@ -4537,11 +3218,8 @@ async fn announce_drain(parts: &EngineParts, outcome: &Result<DrainSummary, Engi
                     account: Some(account),
                 });
             }
-            // And deliberately *not* an error (#674). A send that may have
-            // arrived is not a failure to report and dismiss; it is a
-            // question, and the durable place it is asked is the
-            // `Unconfirmed` draft the send path left behind. Logged so a bug
-            // report can see it happened at all.
+            // Deliberately not an error (#674): a send that may have arrived is a question, asked
+            // by the `Unconfirmed` draft. Logged so a bug report can see it.
             for reason in &summary.uncertain {
                 tracing::warn!(reason, "an operation settled without a knowable outcome");
             }
@@ -4555,11 +3233,7 @@ async fn announce_drain(parts: &EngineParts, outcome: &Result<DrainSummary, Engi
     }
 }
 
-/// Jitter for the reconnect backoff.
-///
-/// The clock rather than a random number generator: this only has to stop a
-/// fleet of clients retrying in lockstep, and a dependency for that would be
-/// a dependency for nothing.
+/// The clock, not an RNG: this only has to stop clients retrying in lockstep.
 fn entropy() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -4569,9 +3243,6 @@ fn entropy() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    /// The warning for a thread that outstays the grace names what the
-    /// thread was doing, because "it did not stop" without *what* leaves a
-    /// bug report with nothing to chase (#759).
     #[test]
     fn the_stall_warning_names_what_the_engine_was_doing() {
         use postio_test_support::logs::Captured;
@@ -4593,8 +3264,6 @@ mod tests {
             .with_max_level(tracing::Level::WARN)
             .with_ansi(false)
             .finish();
-        // A deadline already in the past: the sleeper cannot have finished,
-        // so this warns immediately rather than costing the test a grace.
         tracing::subscriber::with_default(subscriber, || thread.join_until(Instant::now()));
 
         let log = String::from_utf8_lossy(&captured.0.lock().expect("not poisoned")).into_owned();
@@ -4608,24 +3277,8 @@ mod tests {
         );
     }
 
-    /// What `sync_lanes` actually yields, pinned so the constants and the
-    /// prose cannot drift apart again.
-    ///
-    /// This is the whole of #729: `MAX_SYNC_LANES` reasoned carefully about
-    /// the *IMAP* store, while `sync_lanes` is bounded by the *database* one,
-    /// which is smaller and binds first. The ceiling documented a number the
-    /// shipped configuration could not reach and nothing noticed, because
-    /// nothing asserted the relationship.
-    ///
-    /// Green when written -- the behaviour was always right; it was the
-    /// description that was wrong. Its job is to fail if
-    /// `MAX_CONCURRENT_PASSES`, `RESERVED_FOR_ELSEWHERE` or `MAX_SYNC_LANES`
-    /// move without the doc comments moving with them.
-    ///
-    /// It asked the connection pool for its size until the engine changed.
-    /// There is no pool to ask -- the engine keeps its own and a checkout is
-    /// cheap -- so the limit the pool size was standing in for is named
-    /// directly, and the relationship this test guards is unchanged.
+    /// `sync_lanes` is bounded by the database store, which binds before `MAX_SYNC_LANES` (#729);
+    /// fails if the constants move without the docs.
     #[tokio::test]
     async fn the_store_is_what_bounds_the_lanes_not_the_imap_ceiling() {
         let _database = postio_storage::test_support::memory().await;
@@ -4634,10 +3287,8 @@ mod tests {
             postio_storage::MAX_CONCURRENT_PASSES - RESERVED_FOR_ELSEWHERE,
             "the reserve against the database store decides, not MAX_SYNC_LANES"
         );
-        // Asserted on what the store actually yields rather than on the
-        // constants: clippy rejects an assertion whose operands are all
-        // constant, and reading it back off the store is the honest form
-        // anyway -- the store's answer is the thing that matters.
+        // Asserted on what the store yields: clippy rejects an assertion whose operands are all
+        // constant.
         assert!(
             sync_lanes(postio_storage::MAX_CONCURRENT_PASSES) < MAX_SYNC_LANES,
             "MAX_SYNC_LANES is a ceiling held in reserve: it does not bind on \
@@ -4645,15 +3296,7 @@ mod tests {
         );
     }
 
-    /// A ceiling high enough that the IMAP-side one is what stops it.
-    ///
-    /// The other half of the same rule: `MAX_SYNC_LANES` is not dead, it is
-    /// simply not reached today. Raising `MAX_CONCURRENT_PASSES` is what
-    /// would reach it, which is why the constant stays.
-    ///
-    /// It used to open a roomier *pool* to prove this. There is no pool to
-    /// size any more, so it passes the larger ceiling directly -- which tests
-    /// the same clamp and does not need a database at all.
+    /// `MAX_SYNC_LANES` is unreached today, not dead: a larger ceiling reaches it.
     #[test]
     fn a_larger_ceiling_runs_into_max_sync_lanes() {
         assert_eq!(
@@ -4665,9 +3308,7 @@ mod tests {
 
     #[test]
     fn a_refused_credential_fails_as_auth_and_anything_else_as_config() {
-        // ADR 0005 Q10: the reason is what the *user* can do. postio-sync's
-        // blocked link tells its two cases apart with `needs_credentials`,
-        // and both must surface typed rather than as prose to parse.
+        // ADR 0005 Q10: both blocker cases surface typed rather than as prose to parse.
         let auth = super::connection_of(&postio_sync::SyncStatus::Error {
             reason: "the server refused the password".into(),
             needs_credentials: true,
@@ -4695,7 +3336,6 @@ mod tests {
 
     #[test]
     fn transient_trouble_is_connecting_not_failing() {
-        // Backoff that will retry on its own is not a person-shaped problem.
         assert_eq!(
             super::connection_of(&postio_sync::SyncStatus::Connecting),
             postio_core::ConnectionState::Connecting
@@ -4704,8 +3344,6 @@ mod tests {
     use super::*;
     use postio_core::bridge::event_channel;
 
-    /// A `State` with nothing queued, for tests that only care about
-    /// [`queue_every_mailbox`]'s effect on `to_sync`.
     fn empty_state() -> State {
         State {
             busy: Busy::new(),
@@ -4725,9 +3363,7 @@ mod tests {
         }
     }
 
-    /// `EngineParts` over `database`, with the receiving end of its own
-    /// event channel — kept, not discarded, so a test can see what got
-    /// announced.
+    /// Keeps the receiving end of the event channel so a test can see what was announced.
     async fn parts_over(
         database: Store,
     ) -> (
@@ -4766,9 +3402,6 @@ mod tests {
         (parts, events, directory)
     }
 
-    /// #1731: a failed folder that has left the store never gets the pass
-    /// that would clear its mark, so the next queueing clears it -- and only
-    /// that one.
     #[tokio::test]
     async fn queueing_clears_the_mark_of_a_failed_folder_that_is_gone() {
         let database = postio_storage::test_support::memory().await;
@@ -4802,20 +3435,14 @@ mod tests {
         );
     }
 
-    /// postio-0d9.6: a 37,699-message Archive was queued ahead of an
-    /// untouched INBOX because nothing ordered the sync queue across
-    /// mailboxes — it was whatever `list_for_account` happened to return.
-    /// `queue_every_mailbox` must put INBOX first, then the folders a person
-    /// reads next, then everything else, regardless of the order the
-    /// mailboxes were created in.
+    /// INBOX first, then the folders a person reads next, then the rest, whatever order they were
+    /// created in.
     #[tokio::test]
     async fn queueing_every_mailbox_puts_inbox_first_and_orders_the_rest_by_role() {
         let database = postio_storage::test_support::memory().await;
         let (parts, _events, _directory) = parts_over(database.clone()).await;
         let connection = database.connect().await.expect("checkout");
 
-        // Created deliberately out of role order, archive first, so a queue
-        // built from creation or discovery order would fail this test.
         let archive = postio_storage::test_support::mailbox(
             &connection,
             &account_of(&parts).await,
@@ -4874,32 +3501,23 @@ mod tests {
             .expect("the test account exists")
     }
 
-    /// The throttle behind [`Repaint`], driven by a clock the test owns.
-    ///
-    /// Time is a parameter rather than a read, for the same reason
-    /// `postio-search` takes `today`: a schedule you cannot step through is a
-    /// schedule you can only test by sleeping.
+    /// Time is a parameter so the throttle is tested without sleeping.
     #[test]
     fn the_first_batch_is_announced_at_once_and_the_rest_are_throttled() {
         let (sink, events) = event_channel();
         let mut repaint = Repaint::new(sink, AccountId::new(1), MailboxId::new(4));
         let start = Instant::now();
 
-        // The first screenful is what the user is waiting for.
         repaint.batch_committed(start);
         assert_eq!(events.len(), 1, "the first batch has to show immediately");
 
-        // Everything inside the window folds into it. This is the case that
-        // matters: three hundred batches of an initial sync must not be three
-        // hundred reloads.
+        // Three hundred batches of an initial sync must not be three hundred reloads.
         for step in 1..=50 {
-            // Spread across the window without ever reaching its end.
             let inside = REPAINT_INTERVAL / 100 * (step % 100);
             repaint.batch_committed(start + inside);
         }
         assert_eq!(events.len(), 1, "batches inside the window must coalesce");
 
-        // And the next window opens.
         repaint.batch_committed(start + REPAINT_INTERVAL);
         assert_eq!(events.len(), 2);
         repaint.batch_committed(start + REPAINT_INTERVAL * 2);
@@ -4908,18 +3526,12 @@ mod tests {
 
     #[test]
     fn a_pass_that_commits_nothing_says_nothing() {
-        // An up-to-date resync reports no batches at all, and a list that
-        // reloaded anyway would be paying for a sync that changed nothing.
         let (sink, events) = event_channel();
         let _repaint = Repaint::new(sink, AccountId::new(1), MailboxId::new(4));
 
         assert_eq!(events.len(), 0);
     }
 
-    // -- The backfill announce throttle (issue #316) -------------------
-
-    /// A body request the backfill has never seen before, distinct per `n`
-    /// so several can be claimed without colliding.
     fn body_request(n: u32) -> backfill::BodyRequest {
         backfill::BodyRequest {
             message: MessageId::new(n as i64),
@@ -4935,10 +3547,6 @@ mod tests {
         }
     }
 
-    // -- A body fetch that errored (issue #1985) ----------------------
-
-    /// Claims `body_request(n)` and settles it with `result`, as the
-    /// engine's drain loop does.
     async fn settle_claimed(
         parts: &EngineParts,
         state: &mut State,
@@ -5010,7 +3618,6 @@ mod tests {
 
     #[tokio::test]
     async fn a_refused_part_is_said_by_its_section_so_a_text_wait_does_not_hear_it() {
-        // #1996: the news names what the fetch was for.
         let database = postio_storage::test_support::memory().await;
         let (parts, events, _directory) = parts_over(database).await;
         let mut state = empty_state();
@@ -5074,9 +3681,6 @@ mod tests {
         );
     }
 
-    /// Documents the throttle `announce_backfill` still has, over an
-    /// explicit clock rather than a real one — see its own doc comment for
-    /// why a real-time version of this test would prove nothing reliably.
     #[tokio::test]
     async fn a_second_announcement_inside_the_floor_is_throttled() {
         let database = postio_storage::test_support::memory().await;
@@ -5098,9 +3702,6 @@ mod tests {
         );
     }
 
-    /// Issue #316, cause 3: an interactive open must never wait out a
-    /// background pass's throttle window the way the test above shows a
-    /// second ordinary announce does.
     #[tokio::test]
     async fn announce_backfill_now_is_never_throttled() {
         let database = postio_storage::test_support::memory().await;
@@ -5112,8 +3713,6 @@ mod tests {
         announce_backfill(&parts, &mut state, t0).await;
         assert_eq!(events.len(), 1);
 
-        // A second interactive claim, 10ms later -- exactly the timing the
-        // test above proves the throttled path swallows.
         state.backfill.request_now(body_request(2));
         announce_backfill_now(&parts, &mut state, t0 + Duration::from_millis(10)).await;
 
@@ -5141,12 +3740,6 @@ mod tests {
         }
     }
 
-    /// The progress line can say what the mail weighs, not only how many
-    /// messages there are.
-    ///
-    /// The whole point of #383: `BODYSTRUCTURE` arrives with the header sync,
-    /// so the totals are free — and the reason it is worth saying is that
-    /// "12,400 of 81,744" tells someone nothing about whether to wait.
     #[tokio::test]
     async fn backfill_progress_carries_what_the_mail_weighs() {
         let database = postio_storage::test_support::memory().await;
@@ -5190,10 +3783,8 @@ mod tests {
         }
     }
 
-    /// A drain always reports and resets the clock, whichever announce
-    /// function reaches it — `emit_backfill_progress` is the one place both
-    /// funnel through, and this is what stops a finished queue from sticking
-    /// at `2000 of 2000` (the same trap `SyncProgress` avoids).
+    /// A drain resets the clock whichever announce function reaches it, so a finished queue does
+    /// not stick at `2000 of 2000`.
     #[tokio::test]
     async fn a_drained_queue_resets_the_throttle_clock() {
         let database = postio_storage::test_support::memory().await;
@@ -5220,8 +3811,6 @@ mod tests {
         );
     }
 
-    /// The folder marks a pass's ending leaves (#1731), by every kind of
-    /// ending `settle_pass` sees, over a link that is up.
     #[tokio::test]
     async fn only_a_pass_that_failed_its_folder_marks_it_and_only_a_completed_one_clears_it() {
         let database = postio_storage::test_support::memory().await;
@@ -5263,8 +3852,6 @@ mod tests {
             )))
         };
 
-        // Nothing to clear: a completed pass of a folder that never failed
-        // says nothing.
         let _ = settle_pass(
             &parts,
             &mut state,
@@ -5274,8 +3861,6 @@ mod tests {
         .await;
         assert_eq!(marks(&events), Vec::<Option<String>>::new());
 
-        // Stopped by the wave, turned away by a busy store, or gone from the
-        // store: none of them failed the folder.
         for result in [
             Err(PassFailure::Failed(SyncError::Backend(
                 BackendError::Cancelled,
@@ -5289,8 +3874,6 @@ mod tests {
         }
         assert_eq!(marks(&events), Vec::<Option<String>>::new());
 
-        // The positive control: a refusal with the link up marks it, every
-        // time, and the next completed pass clears it once.
         let _ = settle_pass(&parts, &mut state, &connection, end(refused())).await;
         let _ = settle_pass(&parts, &mut state, &connection, end(refused())).await;
         let marked = marks(&events);
@@ -5305,7 +3888,6 @@ mod tests {
             state.supervisor.link().is_online(),
             "a refused SELECT keeps the link"
         );
-        // A cancelled pass of a marked folder leaves the mark where it is.
         let _ = settle_pass(
             &parts,
             &mut state,

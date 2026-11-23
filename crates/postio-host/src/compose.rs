@@ -1,16 +1,6 @@
-//! The store half of writing mail: saving, discarding and queueing drafts,
-//! and what the composer reads to fill itself in.
-//!
-//! Moved out of the classic app (docs/archive/specs/005-tui-frontend T015) so the desktop and
-//! the terminal save a draft the same way. Both reach them through the
-//! Compose [`Req`](postio_client::protocol::Req)s, and each client's draft
-//! writes go through a [`DraftWriter`] of its own, in the order it made them
-//! (#1608). What stays in a frontend is its own half: the desktop's composer
-//! signals, and `gio`'s MIME sniff.
-//!
-//! Every function here logs and answers `None` or an error rather than
-//! panicking: a composer that cannot read a contact still lets the user type
-//! the address.
+//! The store half of writing mail: saving, discarding and queueing drafts, and what the composer
+//! reads.
+//! Every function logs and answers `None` or an error rather than panicking.
 
 use chrono::{DateTime, Utc};
 use postio_client::protocol::Queued;
@@ -28,22 +18,16 @@ use postio_storage::repository::{
 };
 use postio_storage::{BlobStore, Store};
 
-/// How many recipient suggestions a prefix offers.
 pub const SUGGESTION_LIMIT: u32 = 8;
 
-/// The moment a draft is saved, queued or cancelled at, from the clock seam
-/// rather than the system's, so a storyboard that stops the clock sees the
-/// Outbox dated as of its own day.
+/// From the clock seam, so a storyboard that stops the clock dates the Outbox by its own day.
 fn now() -> DateTime<Utc> {
     postio_model::clock::now().with_timezone(&Utc)
 }
 
-/// Autosave: the draft is written, and its upload to the server's Drafts
-/// folder is queued in the same transaction (`DraftRepository::save_and_sync`).
-///
-/// `interactive_write` rather than a bare connection: a draft autosave is a
-/// write the person typing is waiting on, so it goes ahead of a backfill's
-/// bulk writes rather than queueing behind them (#425).
+/// Autosave: the draft and its Drafts-folder upload are queued in one transaction.
+/// Uses `interactive_write` so the typing person's save goes ahead of a backfill's bulk writes
+/// (#425).
 pub async fn save_draft(database: &Store, draft: &mut Draft) -> postio_storage::Result<()> {
     let (connection, _permit) = database.interactive_write().await?;
     DraftRepository::new(&connection)
@@ -52,16 +36,13 @@ pub async fn save_draft(database: &Store, draft: &mut Draft) -> postio_storage::
     Ok(())
 }
 
-/// Discard: the local row goes now, and the server copy is queued for removal.
 pub async fn delete_draft(database: &Store, id: DraftId) -> postio_storage::Result<()> {
     let (connection, _permit) = database.interactive_write().await?;
     DraftRepository::new(&connection).discard(id, now()).await?;
     Ok(())
 }
 
-/// Send: the draft goes to `Queued` and its `Operation::Send` row is written,
-/// in one transaction — see `DraftRepository::queue_send`. With `at`, the
-/// drainer leaves it alone until then (`queue_send_at`).
+/// With `at`, the drainer leaves the draft alone until then.
 pub async fn queue_send(
     database: &Store,
     draft: &mut Draft,
@@ -81,13 +62,8 @@ pub async fn queue_send(
     Ok(())
 }
 
-/// A group named in To, Cc or Bcc becomes its members (specs/011-focus-contacts
-/// S8). `Quarry crew`, or `to:Quarry crew`, stands for each live member's
-/// primary address, so the same words send the same way from every frontend.
-///
-/// An entry that is already an address is left alone, a group nobody made is
-/// left for the send to refuse as it always has, and an address the draft
-/// already names is not added twice.
+/// A group named in To, Cc or Bcc becomes its members' primary addresses. An unknown group is left
+/// for the send to refuse.
 async fn expand_groups(
     connection: &postio_storage::Connection,
     draft: &mut Draft,
@@ -142,23 +118,19 @@ async fn expand_groups(
     Ok(())
 }
 
-/// What one composer asks of the store, in the order it asked (#1608).
 enum DraftOp {
-    /// Autosave this composition's draft; answer with the id it has.
     Save {
         generation: u64,
         draft: Draft,
         reply: tokio::sync::oneshot::Sender<Result<DraftId, StoreError>>,
     },
-    /// Queue it to send -- now, or at `at` -- and answer with the Drafts
-    /// folder, whose list just changed, once the queue write landed.
+    /// Answers the Drafts folder, whose list just changed, once the queue write landed.
     Send {
         generation: u64,
         draft: Draft,
         at: Option<DateTime<Utc>>,
         reply: tokio::sync::oneshot::Sender<Result<Queued, StoreError>>,
     },
-    /// This composition was closed empty: its autosaved row goes.
     Discard {
         generation: u64,
         known: Option<DraftId>,
@@ -166,21 +138,9 @@ enum DraftOp {
     },
 }
 
-/// Writes one composer's drafts, one request at a time, in the order the
-/// composer made them (#1608). Each frontend has its own.
-///
-/// Every save, send and discard once ran on the GTK thread, each waiting for
-/// the interactive write permit, so an autosave tick could stall the thread
-/// that draws for as long as a sync's unit took. Here the composer hands the
-/// request over and returns; the answer arrives when the write has landed.
-///
-/// What the synchronous version guaranteed by construction is kept by order
-/// and by remembering one id. A composition is named by a `generation` the
-/// composer chooses. Its first save assigns an id, which the writer
-/// remembers, so a second save made before the first landed updates the same
-/// row rather than inserting another, and a send queues the row the saves
-/// made. A discard is behind every save its composition made, so it deletes
-/// the row they left.
+/// Writes one composer's drafts in the order it made them, off the GTK thread (#1608).
+/// A `generation` names a composition; its first save's id is remembered, so later saves update the
+/// same row and a discard deletes it.
 #[derive(Clone, Debug)]
 pub struct DraftWriter {
     ops: async_channel::Sender<DraftOp>,
@@ -196,18 +156,14 @@ impl std::fmt::Debug for DraftOp {
     }
 }
 
-/// A write the writer did not get to: the runtime it ran on is gone.
 fn gone() -> StoreError {
     StoreError::new("the draft writer has stopped")
 }
 
 impl DraftWriter {
-    /// A writer for one composer, running on `runtime` until the last clone
-    /// of it is dropped.
     pub fn spawn(database: Store, runtime: &tokio::runtime::Handle) -> Self {
         let (ops, requests) = async_channel::unbounded::<DraftOp>();
         runtime.spawn(async move {
-            // The composition whose draft was saved last, and its id.
             let mut current: Option<(u64, DraftId)> = None;
             let id_for = |current: &Option<(u64, DraftId)>, generation: u64, draft: &mut Draft| {
                 if !draft.id.is_assigned()
@@ -244,12 +200,8 @@ impl DraftWriter {
                         reply,
                     } => {
                         id_for(&current, generation, &mut draft);
-                        // Taken on failure too, and deliberately: a queue write
-                        // that fails leaves the autosaved row where it is,
-                        // `Editing`, recoverable, and the close that follows a
-                        // send must not delete the user's words on the way out.
-                        // Losing the send is recoverable, losing the message is
-                        // not.
+                        // Taken on failure too: a failed queue write leaves the autosaved row
+                        // recoverable, and the close after a send must not delete it.
                         if current.is_some_and(|(saved_for, _)| saved_for == generation) {
                             current = None;
                         }
@@ -294,7 +246,6 @@ impl DraftWriter {
         DraftWriter { ops }
     }
 
-    /// Autosave `draft` as composition `generation`; the answer is its id.
     pub fn save(
         &self,
         generation: u64,
@@ -309,8 +260,6 @@ impl DraftWriter {
         async move { answer.await.unwrap_or_else(|_| Err(gone())) }
     }
 
-    /// Queue `draft` to send, now or at `at`; the answer is the Drafts folder
-    /// whose list moved, when an immediate send moved one.
     pub fn send(
         &self,
         generation: u64,
@@ -327,8 +276,6 @@ impl DraftWriter {
         async move { answer.await.unwrap_or_else(|_| Err(gone())) }
     }
 
-    /// Drop composition `generation`'s row -- the one its saves made, else
-    /// `known`.
     pub fn discard(
         &self,
         generation: u64,
@@ -346,19 +293,13 @@ impl DraftWriter {
     }
 
     fn hand_over(&self, op: DraftOp) {
-        // Unbounded: the composer never waits on the writer, which is the
-        // point. A closed channel means the runtime is gone, and the answer
-        // says so.
+        // Unbounded: the composer never waits on the writer.
         let _ = self.ops.try_send(op);
     }
 }
 
-/// The account's Drafts folder, which is where a draft's row lives whatever
-/// its send state — the Outbox is a predicate over that folder, not a second
-/// one (spec 003).
-///
-/// `None` before the first sync has found one, in which case the draft has no
-/// row to have moved and there is nothing to announce.
+/// The Outbox is a predicate over this folder, not a second one.
+/// `None` before the first sync has found one.
 pub async fn drafts_mailbox(database: &Store, account: AccountId) -> Option<MailboxId> {
     let connection = database.read().await.ok()?;
     MailboxRepository::new(&connection)
@@ -369,7 +310,6 @@ pub async fn drafts_mailbox(database: &Store, account: AccountId) -> Option<Mail
         .map(|mailbox| mailbox.id)
 }
 
-/// Takes a queued draft back for editing, if it has not started sending.
 pub async fn cancel_queued_send(database: &Store, id: DraftId) -> Option<Draft> {
     let connection = database
         .connect()
@@ -392,11 +332,7 @@ pub async fn cancel_queued_send(database: &Store, id: DraftId) -> Option<Draft> 
     }
 }
 
-/// Why this draft's last send attempt gave up, if it did.
-///
-/// Read from the queue row rather than from the draft, because that is where
-/// the drainer writes it and a second copy is one that can come to disagree
-/// with the first (#1487).
+/// Read from the queue row, where the drainer writes it, so no second copy can disagree (#1487).
 pub async fn why_the_send_failed(database: &Store, id: DraftId) -> Option<String> {
     let connection = database
         .read()
@@ -411,7 +347,6 @@ pub async fn why_the_send_failed(database: &Store, id: DraftId) -> Option<String
         .flatten()
 }
 
-/// The draft a message row is listing, if it is listing one.
 pub async fn draft_behind(database: &Store, message: MessageId) -> Option<Draft> {
     let connection = database
         .read()
@@ -425,7 +360,6 @@ pub async fn draft_behind(database: &Store, message: MessageId) -> Option<Draft>
         .ok()?
 }
 
-/// The draft with this id, if it is still there.
 pub async fn draft_by_id(database: &Store, id: DraftId) -> Option<Draft> {
     let connection = database
         .read()
@@ -439,7 +373,6 @@ pub async fn draft_by_id(database: &Store, id: DraftId) -> Option<Draft> {
         .ok()?
 }
 
-/// Every draft `account` has, for crash recovery.
 pub async fn drafts_of(database: &Store, account: AccountId) -> postio_storage::Result<Vec<Draft>> {
     let connection = database.read().await?;
     DraftRepository::new(&connection)
@@ -447,20 +380,10 @@ pub async fn drafts_of(database: &Store, account: AccountId) -> postio_storage::
         .await
 }
 
-/// Record that a session began, and answer the draft `account` was still
-/// writing if the last session died without ending cleanly (#491).
-///
-/// Only after a crash: `DraftState::Editing` alone is not evidence of one --
-/// Esc parks a draft in exactly that state on purpose -- and a client that
-/// opens into a stale compose buffer instead of the inbox reads as broken.
-/// `begin_session` is what knows how the last session ended; asking it also
-/// marks this one open, so this is asked once per process.
-///
-/// The most recently edited draft worth keeping, by the rule Esc uses
-/// ([`closing`](postio_model::draft::closing)): an untouched buffer is not
-/// work, and recovering one is self-perpetuating -- the composer it reopens
-/// autosaves another empty `Editing` row, and every unclean stop after the
-/// first would open the client into it.
+/// Records that a session began; answers the draft `account` was writing if the last session died
+/// uncleanly (#491). Only after a crash: `Editing` alone is not evidence (Esc parks drafts so), and
+/// an untouched buffer is not recovered, since reopening it autosaves another empty row. Asked once
+/// per process: `begin_session` marks this one open.
 pub async fn recover(database: &Store, account: AccountId) -> Option<Draft> {
     if !postio_session::begin_session(database).await {
         return None;
@@ -478,10 +401,7 @@ pub async fn recover(database: &Store, account: AccountId) -> Option<Draft> {
     })
 }
 
-/// The bytes stored under `blob`, or none when they cannot be read.
-///
-/// Blocking: callers run it on a blocking thread. A composer's inline image
-/// is drawn from these, the same cost the reader pays per inline image.
+/// Blocking: run on a blocking thread.
 pub fn blob_bytes(blobs: &BlobStore, blob: &postio_model::ids::BlobId) -> Option<Vec<u8>> {
     let mut file = blobs
         .reader(blob)
@@ -494,8 +414,6 @@ pub fn blob_bytes(blobs: &BlobStore, blob: &postio_model::ids::BlobId) -> Option
     Some(bytes)
 }
 
-/// The account a composer sends from: its identities, signatures and size
-/// limit.
 pub async fn account(database: &Store, account: AccountId) -> Option<Account> {
     let connection = database.read().await.ok()?;
     match AccountRepository::new(&connection).get(account).await {
@@ -512,8 +430,7 @@ pub async fn account(database: &Store, account: AccountId) -> Option<Account> {
     }
 }
 
-/// The signature a new draft for `account` starts with: the selected
-/// mailbox's override, else the account's default, else none.
+/// The selected mailbox's override, else the account's default, else none.
 pub async fn default_signature(
     database: &Store,
     account: AccountId,
@@ -530,8 +447,7 @@ pub async fn default_signature(
         .ok()
         .flatten()?
         .default_signature_id;
-    // Spelled out rather than chained: `and_then` takes a closure, and a
-    // closure cannot await.
+    // A closure cannot await.
     let mailbox_signature = match selected {
         Some(id) => MailboxRepository::new(&connection)
             .get(id)
@@ -544,14 +460,11 @@ pub async fn default_signature(
     signature_default::resolve(mailbox_signature, account_default)
 }
 
-/// How many correspondents the finder's `@` can offer: the desktop's bound,
-/// there to stop a pathological store rather than to page a normal one.
+/// Bounds a pathological store; not a page size.
 const CORRESPONDENT_LIMIT: u32 = 50_000;
 
-/// The people the user corresponds with, as the desktop's `@` reads them.
-/// People are shared across accounts (specs/005-contacts), so this is not
-/// one account's list: `_account` stays only so the wire protocol, which the
-/// widgets and the terminal also speak, keeps its shape. Empty, and logged, when the store cannot be read.
+/// People are shared across accounts; `_account` stays only for the wire protocol's shape. Empty,
+/// and logged, when the store cannot be read.
 pub async fn correspondents(database: &Store, _account: AccountId) -> Vec<postio_model::Contact> {
     let found = async {
         let connection = database.read().await?;
@@ -565,9 +478,8 @@ pub async fn correspondents(database: &Store, _account: AccountId) -> Vec<postio
     })
 }
 
-/// Everything recipient completion can offer, on one warm reader:
-/// what the desktop's composer holds in memory so each keystroke is a lookup
-/// rather than a query. Empty, and logged, when the store cannot be read.
+/// Held in memory by the desktop composer so each keystroke is a lookup. Empty, and logged, when
+/// the store cannot be read.
 pub async fn recipient_directory(
     database: &Store,
     _account: AccountId,
@@ -603,8 +515,7 @@ pub async fn recipient_directory(
     })
 }
 
-/// The account's labels, by name. Empty, and logged, when the store cannot
-/// be read.
+/// Empty, and logged, when the store cannot be read.
 pub async fn labels(database: &Store, account: AccountId) -> Vec<postio_model::Label> {
     let found = async {
         let connection = database.read().await?;
@@ -618,9 +529,7 @@ pub async fn labels(database: &Store, account: AccountId) -> Vec<postio_model::L
     })
 }
 
-/// How many conversations carry each of `account`'s labels: the label
-/// picker's counts. Nothing, said in the log, when the store cannot answer:
-/// a label without its count is still the label.
+/// Nothing, logged, when the store cannot answer.
 pub async fn label_counts(
     database: &Store,
     account: AccountId,
@@ -637,9 +546,7 @@ pub async fn label_counts(
     })
 }
 
-/// The label `name` in `account`: the one it has by that name in any case,
-/// or a new one. A store write, local like every label change; the label
-/// reaches the server as the keyword on the first message it goes on.
+/// Case-insensitive get-or-create; reaches the server as a keyword on the first message it goes on.
 pub async fn create_label(
     database: &Store,
     account: AccountId,
@@ -669,9 +576,7 @@ pub async fn create_label(
         .ok()
 }
 
-/// The labels on each of `threads`: a Focus page's pills, read for the page
-/// in one statement (spec 007 T043). Nothing, said in the log, when the
-/// store cannot answer: a row without its pills is still the row.
+/// One statement for the whole page. Nothing, logged, when the store cannot answer.
 pub async fn thread_labels(
     database: &Store,
     threads: &[postio_model::ThreadId],
@@ -688,11 +593,8 @@ pub async fn thread_labels(
     })
 }
 
-/// Focus's header strip counts (spec 007 FR-018, T048), each a counted read
-/// over Focus's own membership rather than the per-folder trigger counts,
-/// which cannot see held mail: the inboxes (one statement), the rows (one,
-/// and the fold's two more with several accounts), the unread (one) and
-/// the rows that draw a marker (one, sought from the markers).
+/// Counted over Focus's own membership, not the per-folder trigger counts, which cannot see held
+/// mail.
 pub async fn focus_counts(
     database: &Store,
 ) -> Result<postio_client::protocol::FocusCounts, postio_model::listing::StoreError> {
@@ -700,8 +602,7 @@ pub async fn focus_counts(
         let connection = database.read().await?;
         let threads = postio_storage::repository::ThreadRepository::new(&connection);
         let inboxes = threads.unified_inboxes().await?;
-        // "Today" is the person's: local midnight, as the filing records
-        // are bounded (filter_decisions.decided_at).
+        // Local midnight, like `filter_decisions.decided_at`.
         let midnight = chrono::Local::now()
             .date_naive()
             .and_hms_opt(0, 0, 0)
@@ -726,11 +627,8 @@ pub async fn focus_counts(
     })
 }
 
-/// Recipient completion for `prefix`, as the terminal asks it: the account's
-/// groups and the contacts the prefix matches, each with the letters the
-/// user wrote to it, ranked by the one rule every app shares,
-/// `postio_ui::recipients::suggest` (spec 007 T076, research R15) -- the
-/// rule the desktop composer applies to its directory in memory.
+/// Ranked by `postio_ui::recipients::suggest`, the rule the desktop applies to its directory in
+/// memory.
 pub async fn recipients(
     database: &Store,
     _account: AccountId,
@@ -750,9 +648,8 @@ pub async fn recipients(
                 named.push((group.name, addresses));
             }
         }
-        // The store's prefix match, wide enough that its own order -- by
-        // how lately and how often each was seen -- cannot push an address
-        // the user writes to out before the rule has ranked it.
+        // Wide enough that the store's own order cannot push out an address the user writes to
+        // before the rule ranks it.
         let contacts = ContactRepository::new(&connection)
             .complete(prefix, PREFIX_POOL)
             .await?;
@@ -772,11 +669,8 @@ pub async fn recipients(
     })
 }
 
-/// How many contacts a prefix's completion ranks: the store's match, before
-/// the rule orders it.
 const PREFIX_POOL: u32 = 500;
 
-/// `contacts`, each with the letters the user wrote to any of its addresses.
 fn with_letters(
     contacts: Vec<postio_model::Contact>,
     written: &std::collections::HashMap<String, u32>,
@@ -799,8 +693,6 @@ fn with_letters(
         .collect()
 }
 
-/// The message `id` with its body, and the account it belongs to: what a
-/// reply or a forward is built from.
 pub async fn reply_source(database: &Store, id: MessageId) -> Option<(Message, Account)> {
     let connection = database
         .read()
@@ -821,13 +713,9 @@ pub async fn reply_source(database: &Store, id: MessageId) -> Option<(Message, A
     Some((message, account))
 }
 
-/// Reads `path` and writes its bytes into `blobs` as an attachment of type
-/// `mime_type`.
-///
-/// Blocking throughout: callers run it on a blocking thread. The type is the
-/// caller's, because how to sniff one differs by frontend — the desktop asks
-/// shared-mime-info through `gio`; [`guess_mime_type`] is the fallback for a
-/// process that has no `gio`.
+/// Blocking: run on a blocking thread. The caller supplies the type because sniffing differs by
+/// frontend;
+/// [`guess_mime_type`] is the fallback without `gio`.
 pub fn attach_file(
     blobs: &BlobStore,
     path: &std::path::Path,
@@ -835,8 +723,7 @@ pub fn attach_file(
 ) -> Option<Attachment> {
     let size = std::fs::metadata(path).ok()?.len();
     let file = std::fs::File::open(path)
-        // The path is deliberately not logged: an attachment's name is the
-        // user's, and a log line is a thing people paste into bug reports.
+        // The path is not logged: an attachment's name is the user's.
         .map_err(|error| tracing::warn!(%error, "could not read the file to attach"))
         .ok()?;
     let blob_id = blobs
@@ -852,26 +739,16 @@ pub fn attach_file(
     Some(attachment)
 }
 
-/// Writes pasted image bytes into `blobs` as an inline part the body can
-/// point at by `cid:`.
-///
-/// The rule is `postio_session::attaching::inline_image`'s, which the macOS
-/// composer calls too: one answer for what an inline picture's `Content-ID`
-/// is, and the same refusal of a non-image or an oversized one, whichever
-/// frontend it was pasted into.
+/// The rule is `postio_session::attaching::inline_image`'s, so every frontend agrees on the
+/// `Content-ID` and refuses non-images and oversized ones.
 pub fn inline_attachment(blobs: &BlobStore, bytes: Vec<u8>, mime_type: &str) -> Option<Attachment> {
     postio_session::attaching::inline_image(blobs, &bytes, mime_type)
         .map_err(|error| tracing::warn!(%error, "could not store the pasted image"))
         .ok()
 }
 
-/// A MIME type for `path` from its first bytes, then its extension, for a
-/// process without shared-mime-info.
-///
-/// Only the types mail commonly carries; anything else is the generic "some
-/// bytes", which is what the desktop falls back to as well. Wrong-but-generic
-/// is safe here: the recipient's client sniffs again, and a type that claims
-/// too much (an image that is not one) is the only harmful answer.
+/// For a process without shared-mime-info. Unknown types are the generic "some bytes": a type that
+/// claims too much is the only harmful answer.
 pub fn guess_mime_type(path: &std::path::Path) -> String {
     let mut head = [0u8; 16];
     let read = std::fs::File::open(path)

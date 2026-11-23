@@ -1,9 +1,3 @@
-//! A store with mail in it, a host over it, and a server over the host.
-//!
-//! The mailbox: Ada's account, `test@example.com`, with an inbox and an
-//! archive, and a second account nobody shares. Every address is on a
-//! reserved domain and nothing reaches the network: the host runs no engine.
-
 use std::cell::Cell;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -21,24 +15,16 @@ use postio_storage::repository::{
 use postio_storage::test_support;
 use serde_json::{Value, json};
 
-/// The address of the account a test shares.
 pub const ADA: &str = "test@example.com";
-/// The address of the account no test shares.
 pub const OTHER: &str = "other@example.org";
 
-/// `[mcp]` sharing Ada's inbox and nothing else.
 pub const INBOX_ONLY: &str = "[mcp.accounts.\"test@example.com\"]\nmailboxes = [\"INBOX\"]\n";
-/// `[mcp]` sharing every folder of Ada's account.
 pub const EVERY_FOLDER: &str = "[mcp.accounts.\"test@example.com\"]\nmailboxes = [\"*\"]\n";
-/// `[mcp]` sharing every folder of Ada's account, and letting the agent
-/// archive, move and label in it.
 pub const ORGANIZE: &str = "[mcp.accounts.\"test@example.com\"]\nmailboxes = [\"*\"]\n\
 actions = [\"archive\", \"move\", \"label\"]\n";
 
-/// The words every message here is found by, so a search can reach them all.
 pub const COMMON: &str = "harborview";
 
-/// A backend that counts how often the store was asked for.
 pub struct Counted {
     held: Held,
     leases: Rc<Cell<u32>>,
@@ -51,7 +37,6 @@ impl Backend for Counted {
     }
 }
 
-/// The world a case runs in.
 pub struct World {
     pub rt: tokio::runtime::Runtime,
     pub database: Store,
@@ -59,17 +44,12 @@ pub struct World {
     pub other: AccountId,
     pub inbox: MailboxId,
     pub archive: MailboxId,
-    /// An ordinary folder: "Projects".
     pub projects: MailboxId,
     pub trash: MailboxId,
     pub junk: MailboxId,
-    /// In the inbox: "Atlas budget", from Grace.
     pub budget: MessageId,
-    /// In the archive: "Quarterly numbers".
     pub archived: MessageId,
-    /// In the inbox: HTML with a script and a remote image.
     pub html: MessageId,
-    /// In the other account's inbox.
     pub elsewhere: MessageId,
     pub server: Server<Counted>,
     pub leases: Rc<Cell<u32>>,
@@ -81,7 +61,6 @@ pub struct World {
 }
 
 impl World {
-    /// The mailbox, with `[mcp]` as `shared` says.
     pub fn new(shared: &str) -> World {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -198,8 +177,6 @@ impl World {
         world
     }
 
-    /// A message in `mailbox`, its body stored and indexed the way the
-    /// backfill leaves one.
     pub fn message(
         &self,
         account: AccountId,
@@ -215,7 +192,6 @@ impl World {
         self.store(message)
     }
 
-    /// `message`, written with its body and indexed.
     pub fn store(&self, mut message: Message) -> MessageId {
         message.sync.body_state = postio_model::BodyState::Full;
         let body = message.body.clone();
@@ -249,12 +225,10 @@ impl World {
         })
     }
 
-    /// Change what `[mcp]` shares, as a person editing the file would.
     pub fn share(&self, shared: &str) {
         std::fs::write(&self.config, shared).expect("the config");
     }
 
-    /// Send one JSON-RPC request and read its answer.
     pub fn request(&mut self, method: &str, params: Value) -> Value {
         let id = self.next_id.replace(self.next_id.get() + 1);
         let line = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
@@ -268,14 +242,12 @@ impl World {
         answer
     }
 
-    /// Call `tool` with `arguments`, and read its result.
     pub fn call(&mut self, tool: &str, arguments: Value) -> ToolResult {
         let answer = self.request("tools/call", json!({"name": tool, "arguments": arguments}));
         assert!(answer.get("error").is_none(), "a protocol error: {answer}");
         ToolResult(answer["result"].clone())
     }
 
-    /// Every operation waiting to reach a server, in any account.
     pub fn queued(&self) -> Vec<postio_model::Operation> {
         self.rt.block_on(async {
             let connection = self.database.connect().await.expect("a connection");
@@ -296,7 +268,6 @@ impl World {
         })
     }
 
-    /// Every draft in every account.
     pub fn drafts(&self) -> Vec<postio_model::Draft> {
         self.rt.block_on(async {
             let connection = self.database.connect().await.expect("a connection");
@@ -307,7 +278,6 @@ impl World {
         })
     }
 
-    /// The access log's lines.
     pub fn audit_lines(&self) -> Vec<Value> {
         std::fs::read_to_string(&self.audit)
             .unwrap_or_default()
@@ -316,14 +286,12 @@ impl World {
             .collect()
     }
 
-    /// The host, for a case that asks it something directly.
     pub fn host(&self) -> &Host {
         &self.host
     }
 }
 
 impl World {
-    /// The folder `message` is in now.
     pub fn mailbox_of(&self, message: MessageId) -> MailboxId {
         self.rt.block_on(async {
             let connection = self.database.connect().await.expect("a connection");
@@ -336,7 +304,6 @@ impl World {
         })
     }
 
-    /// The names of the labels `message` carries.
     pub fn labels_of(&self, message: MessageId) -> Vec<String> {
         self.rt.block_on(async {
             let connection = self.database.connect().await.expect("a connection");
@@ -351,16 +318,13 @@ impl World {
     }
 }
 
-/// A `tools/call` result.
 pub struct ToolResult(pub Value);
 
 impl ToolResult {
-    /// Whether the tool said it could not do it.
     pub fn is_error(&self) -> bool {
         self.0["isError"].as_bool().unwrap_or(false)
     }
 
-    /// The server's own words: the first block.
     pub fn notice(&self) -> String {
         self.0["content"][0]["text"]
             .as_str()
@@ -368,8 +332,6 @@ impl ToolResult {
             .to_owned()
     }
 
-    /// The mail the tool returned, parsed: the second block, under its
-    /// untrusted label. Panics when there is none.
     pub fn mail(&self) -> Value {
         let text = self.0["content"][1]["text"]
             .as_str()
@@ -378,7 +340,6 @@ impl ToolResult {
         block["untrusted_mail_content"].clone()
     }
 
-    /// Everything the result says, as one string, for "never says X".
     pub fn all_text(&self) -> String {
         self.0.to_string()
     }

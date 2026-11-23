@@ -1,51 +1,7 @@
-//! An in-process IMAP server, for tests that need the wire.
-//!
-//! # Why this exists
-//!
-//! Postio had two test doubles and neither one touched the protocol.
-//! [`MockBackend`](crate::backend::MockBackend) sits at the `MailBackend`
-//! trait, so everything above it is well covered and `io-imap` is never
-//! exercised at all. [`ImapScript`](crate::imap::ImapScript) replays a fixed
-//! transcript, which proved the capability-banner case but cannot answer a
-//! command sequence nobody wrote down, and cannot model state that changes.
-//!
-//! `io-imap` is pre-1.0 and shipped six minor releases in eleven weeks
-//! (ADR 0001), which makes it the layer most likely to regress under us and
-//! the one nothing was watching. So this is a *stateful* server the real
-//! client stack can talk to over a loopback socket: real bytes, real
-//! `io-imap`, real session and auth path, in an ordinary `cargo test` with no
-//! network.
-//!
-//! ```no_run
-//! # use postio_account::test_server::{TestMailbox, TestServer};
-//! # async fn example() {
-//! let server = TestServer::builder()
-//!     .mailbox(TestMailbox::new("INBOX").corpus(["plain-text-simple"]))
-//!     .start()
-//!     .await;
-//!
-//! // Point a ConnectionPool at `server.settings()` and sync it.
-//! # }
-//! ```
-//!
-//! # Fault injection is the point
-//!
-//! A server that only behaves correctly would test half of what matters. The
-//! failures Postio has to survive are the ones a real provider actually
-//! produces: extensions hidden until after login, a missing `* ENABLED` echo,
-//! a `FETCH` sequence number no decoder can read, a connection that dies
-//! halfway through a body. Two of those can silently lose mail. See [`Quirk`]
-//! for the ones a server *is*, and [`Fault`] for the ones it *does* once.
-//!
-//! # What it is not
-//!
-//! A complete IMAP server. It implements what Postio sends plus enough
-//! around the edges to be useful, and answers anything else with `BAD`
-//! rather than guessing — a test server that improvised would let a client's
-//! mistake through. There is no TLS: plaintext on loopback is what
-//! [`ConnectionSettings::validate`](crate::imap::ConnectionSettings::validate)
-//! allows for exactly this, and a certificate would add nothing a test can
-//! observe.
+//! A stateful IMAP server on loopback for the real client stack, since the mock sits above
+//! `io-imap` and a scripted transcript cannot model changing state.
+//! Fault injection is the point: `Quirk` is what a server is, `Fault` what it does once. Unknown
+//! commands answer `BAD` so a client mistake does not pass; there is no TLS.
 
 mod mime;
 #[cfg(feature = "imap")]
@@ -71,27 +27,17 @@ use self::wire::{Conn, WireStats};
 #[cfg(feature = "imap")]
 pub use self::pipe::InMemoryConnector;
 
-/// The account the server accepts, unless a builder says otherwise.
 const DEFAULT_ACCOUNT: &str = "someone@example.com";
 
-/// The password it accepts. An app-specific password, in spirit.
 const DEFAULT_PASSWORD: &str = "app-specific-password";
 
-/// The bearer token it accepts for OAUTHBEARER/XOAUTH2, unless a builder says
-/// otherwise. Deliberately unlike the password: presenting one where the other
-/// belongs has to fail.
+/// Deliberately unlike the password: presenting one where the other belongs must fail.
 const DEFAULT_ACCESS_TOKEN: &str = "test-access-token";
 
-/// What the greeting advertises by default: nothing worth having.
-///
-/// The provider Postio targets hides `CONDSTORE`, `QRESYNC`, `IDLE` and
-/// `UIDPLUS` until after login, so that is what the default server does. A
-/// client that trusts the banner degrades to full resync forever without one
-/// error being logged, and this is the shape of server that proves it does
-/// not — ADR 0001, Q3.
+/// Hides `CONDSTORE`, `QRESYNC`, `IDLE` and `UIDPLUS` until login, like the provider Postio targets
+/// (ADR 0001 Q3).
 const DEFAULT_BANNER: [&str; 4] = ["IMAP4rev1", "SASL-IR", "AUTH=PLAIN", "AUTH=LOGIN"];
 
-/// What `CAPABILITY` reports once authenticated.
 const DEFAULT_CAPABILITIES: [&str; 14] = [
     "IMAP4rev1",
     "SASL-IR",
@@ -109,141 +55,72 @@ const DEFAULT_CAPABILITIES: [&str; 14] = [
     "COMPRESS=DEFLATE",
 ];
 
-/// A way this server misbehaves for as long as it is set.
-///
-/// Every one of these is something a mainstream provider has actually done.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[non_exhaustive]
 pub enum Quirk {
-    /// Advertise the full capability set in the greeting, before login.
-    ///
-    /// The *conformant* behaviour, and not the default: hiding extensions
-    /// until after authentication is what the provider Postio targets does,
-    /// and is the case worth being wrong about.
+    /// The conformant behaviour, not the default: hiding extensions until after authentication is
+    /// what the provider Postio targets does.
     AdvertiseExtensionsBeforeLogin,
 
-    /// Put `[CAPABILITY …]` in the tagged OK that ends authentication.
-    ///
-    /// Saves the client a round trip. Without it — the default — the client
-    /// has to ask again, which is the path `ensure_capabilities` exists for
-    /// and the one every Postio session must take.
+    /// Without it, the default, the client has to ask again: the path `ensure_capabilities` exists
+    /// for.
     CapabilityInLoginResponse,
 
-    /// Answer `ENABLE` with a bare tagged OK and no untagged `* ENABLED`.
-    ///
-    /// A violation of RFC 5161 §3.1 that at least one mainstream provider has
-    /// shipped. A client that gates QRESYNC on the echo rather than on the
-    /// post-auth capability list silently loses incremental sync.
+    /// A violation of RFC 5161 §3.1 shipped by at least one mainstream provider: a client gating
+    /// QRESYNC on the echo silently loses incremental sync.
     OmitEnabledEcho,
 
-    /// Emit `* -1 FETCH (…)` during a `CHANGEDSINCE` pull.
-    ///
-    /// A sequence number is a `NonZeroU32`, so the line cannot be decoded.
-    /// `io-imap` skips an undecodable untagged response and completes the
-    /// command `Ok`, which means a resync that lost a message's flags looks
-    /// exactly like one that did not.
+    /// A sequence number is a `NonZeroU32`, so the line cannot be decoded; `io-imap` skips it and
+    /// completes `Ok`, so a resync that lost a message's flags looks complete.
     MalformedFetchSequenceNumber,
 
-    /// Send the `SELECT`'s `UIDVALIDITY` on a line `io-imap` cannot decode.
-    ///
-    /// Not the same as omitting it, and the difference is the whole point:
-    /// the server *did* send it, and the client lost it. `io-imap` skips an
-    /// untagged response it cannot decode and completes the command `Ok`, so
-    /// the code is simply absent — indistinguishable from a server that never
-    /// sends one, unless something counted the skip.
-    ///
-    /// A sequence number is a `NonZeroU32`, so `* -1 FETCH (…)` cannot decode;
-    /// this emits one in place of the `UIDVALIDITY` line.
+    /// The server did send it and the client lost it: `io-imap` skips the undecodable line and
+    /// completes `Ok`, indistinguishable from a server that never sends one unless the skip is
+    /// counted.
     UidValidityLostToAnUndecodableLine,
 
-    /// Answer the next `SELECT` with `generation`, then tell the truth again.
-    ///
-    /// A server contradicting itself about a mailbox's `UIDVALIDITY` from one
-    /// `SELECT` to the next. Not hypothetical: a live account produced a burst
-    /// of these across a whole folder list, alongside three `SELECT`s that
-    /// carried no `UIDVALIDITY` at all (#1538). It matters because a client
-    /// that believes the first answer throws the folder's entire UID space
-    /// away and refetches it.
-    UidValidityFlapsOnce {
-        /// What that one `SELECT` claims instead of the truth.
-        generation: u32,
-    },
+    /// A live account contradicted itself across `SELECT`s (#1538); a client believing the first
+    /// answer throws away the folder's whole UID space.
+    UidValidityFlapsOnce { generation: u32 },
 
-    /// Leave `UIDVALIDITY` out of the next `SELECT` entirely, then behave.
-    ///
-    /// The other half of what the account in #1538 produced: alongside the
-    /// contradictions, three `SELECT`s carried no `UIDVALIDITY` line at all.
-    /// RFC 3501 §6.3.1 requires one, so this is a server fault -- but a
-    /// client that gives up on the first omission loses the folder for that
-    /// pass.
+    /// The other half of #1538: RFC 3501 §6.3.1 requires one, but giving up on the first omission
+    /// loses the folder for that pass.
     UidValidityOmittedOnce,
 
-    /// Never send `UIDVALIDITY` at all.
-    ///
-    /// Not a flake but a broken server, and the case that must still be
-    /// refused: a mailbox whose generation is unknowable cannot be addressed
-    /// by UID, so no number of retries makes it usable.
+    /// A broken server that must still be refused: a mailbox whose generation is unknowable cannot
+    /// be addressed by UID.
     UidValidityAlwaysOmitted,
 
-    /// Stop reading the moment a command announces a literal.
-    ///
-    /// The `+` goes out and then nothing is read again, so a client writing
-    /// a large `APPEND` fills every buffer between us and blocks in its
-    /// write -- the case a read deadline cannot see, because the client is
-    /// not reading at all.
+    /// The `+` goes out and nothing is read again, so a client writing a large `APPEND` blocks in
+    /// its write, which no read deadline sees.
     DeafToLiterals,
 }
 
-/// Something the server does once, to the next command that matches.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Fault {
-    /// Answer part of the response and hang up.
-    ///
-    /// Against `FETCH` this tears the connection in the middle of a body
-    /// literal, which is the case that matters: the client has already been
-    /// told how many octets are coming.
+    /// Against `FETCH` it tears the connection mid body literal, after the client was told how many
+    /// octets are coming.
     DropConnection {
-        /// The command name to fire on, e.g. `"FETCH"`.
         during: String,
     },
-    /// Accept the command and never answer it.
     Stall {
-        /// The command name to fire on.
         during: String,
     },
-    /// Answer, but slowly: the response goes out in pieces, `gap` apart.
-    ///
-    /// The other half of a deadline. A client that bounds how long a command
-    /// may *take* kills this connection; one that bounds how long the server
-    /// may be *silent* keeps it, which is what a large attachment over a slow
-    /// link needs.
+    /// A client bounding how long a command may take kills this connection; one bounding how long
+    /// the server may be silent keeps it, as a large attachment over a slow link needs.
     Trickle {
-        /// The command name to fire on.
         during: String,
-        /// How long between pieces of the response.
         gap: Duration,
     },
-    /// Start a `FETCH` response, send part of the body literal it promised,
-    /// and go silent.
-    ///
-    /// Not the same as [`Stall`](Self::Stall): the client has been told how
-    /// many octets are coming, has read some of them, and is waiting for the
-    /// rest with a half-built response in its parser.
+    /// Not `Stall`: the client has read part of the literal and waits with a half-built response in
+    /// its parser.
     StallMidLiteral {
-        /// The command name to fire on, e.g. `"FETCH"`.
         during: String,
     },
-    /// Let an `IDLE` start, read the client's `DONE`, and never answer it.
-    ///
-    /// The tagged completion the client is waiting for does not come, and the
-    /// connection stays open and silent.
     IgnoreDone,
-    /// Answer `NO`.
     Reject {
-        /// The command name to fire on.
         during: String,
-        /// The text after `NO`.
         reason: String,
     },
 }
@@ -262,7 +139,6 @@ impl Fault {
     }
 }
 
-/// A message to seed a mailbox with.
 #[derive(Clone, Debug)]
 pub struct TestMessage {
     raw: Vec<u8>,
@@ -271,7 +147,6 @@ pub struct TestMessage {
 }
 
 impl TestMessage {
-    /// A message from its raw RFC 5322 bytes.
     pub fn new(raw: impl Into<Vec<u8>>) -> Self {
         Self {
             raw: raw.into(),
@@ -280,28 +155,21 @@ impl TestMessage {
         }
     }
 
-    /// A message from the shared `.eml` corpus, by fixture name.
-    ///
-    /// The corpus is the one every other crate tests against, so a sync test
-    /// and a parser test are looking at the same bytes.
     pub fn corpus(name: &str) -> Self {
         Self::new(postio_model::test_corpus::load(name).bytes().to_vec())
     }
 
-    /// Sets the flags the message already carries.
     pub fn with_flags(mut self, flags: FlagSet) -> Self {
         self.flags = flags;
         self
     }
 
-    /// Sets `INTERNALDATE`; otherwise it comes from the `Date` header.
     pub fn with_internal_date(mut self, at: DateTime<Utc>) -> Self {
         self.internal_date = Some(at);
         self
     }
 }
 
-/// A mailbox to seed the server with.
 #[derive(Clone, Debug)]
 pub struct TestMailbox {
     path: String,
@@ -314,7 +182,6 @@ pub struct TestMailbox {
 }
 
 impl TestMailbox {
-    /// An empty mailbox at `path`.
     pub fn new(path: impl Into<String>) -> Self {
         Self {
             path: path.into(),
@@ -327,16 +194,12 @@ impl TestMailbox {
         }
     }
 
-    /// Sets the hierarchy delimiter the server reports.
     pub fn delimiter(mut self, delimiter: char) -> Self {
         self.delimiter = delimiter;
         self
     }
 
-    /// Sets the `LIST` attributes, e.g. `\Sent`.
-    ///
-    /// Leaving them off is how a test covers a server without `SPECIAL-USE`,
-    /// which is the one Postio targets.
+    /// Leaving them off covers a server without `SPECIAL-USE`, which is the one Postio targets.
     pub fn attributes<I, S>(mut self, attributes: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -346,31 +209,26 @@ impl TestMailbox {
         self
     }
 
-    /// Sets whether the account is subscribed to this mailbox.
     pub fn subscribed(mut self, subscribed: bool) -> Self {
         self.subscribed = subscribed;
         self
     }
 
-    /// Sets the mailbox's UID generation.
     pub fn uid_validity(mut self, uid_validity: UidValidity) -> Self {
         self.uid_validity = uid_validity;
         self
     }
 
-    /// Sets the modification sequence the mailbox starts at.
     pub fn highest_mod_seq(mut self, highest_mod_seq: ModSeq) -> Self {
         self.highest_mod_seq = highest_mod_seq;
         self
     }
 
-    /// Adds a message. UIDs are assigned in insertion order from 1.
     pub fn message(mut self, message: TestMessage) -> Self {
         self.messages.push(message);
         self
     }
 
-    /// Adds messages from the `.eml` corpus, by fixture name.
     pub fn corpus<I, S>(mut self, names: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -398,7 +256,6 @@ impl TestMailbox {
     }
 }
 
-/// The state every connection shares, and the bell they ring on a change.
 #[derive(Debug)]
 pub(crate) struct Shared {
     state: Mutex<ServerState>,
@@ -422,7 +279,6 @@ impl Shared {
     }
 }
 
-/// Builds a [`TestServer`].
 #[derive(Clone, Debug)]
 pub struct TestServerBuilder {
     account: String,
@@ -455,29 +311,23 @@ impl TestServerBuilder {
         }
     }
 
-    /// Sets the account the server accepts.
     pub fn account(mut self, account: impl Into<String>) -> Self {
         self.account = account.into();
         self
     }
 
-    /// Sets the password the server accepts.
     pub fn password(mut self, password: impl Into<String>) -> Self {
         self.password = password.into();
         self
     }
 
-    /// Sets the bearer token `OAUTHBEARER` and `XOAUTH2` accept (#193).
-    ///
-    /// Advertising the mechanism is separate — put `AUTH=OAUTHBEARER` in
-    /// [`capabilities`](Self::capabilities) — so a test can also describe a
-    /// server that offers a mechanism and then refuses every token.
+    /// Advertising the mechanism is separate (`AUTH=OAUTHBEARER` in `capabilities`), so a test can
+    /// describe a server that offers it and refuses every token (#193).
     pub fn access_token(mut self, token: impl Into<String>) -> Self {
         self.access_token = token.into();
         self
     }
 
-    /// Sets what the greeting advertises, before login.
     pub fn banner<I, S>(mut self, capabilities: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -487,10 +337,7 @@ impl TestServerBuilder {
         self
     }
 
-    /// Sets what `CAPABILITY` reports once authenticated.
-    ///
-    /// This is what every extension is gated on, so dropping a name here is
-    /// how a test covers the fallback path for a server without it.
+    /// Everything is gated on this, so dropping a name covers the fallback for a server without it.
     pub fn capabilities<I, S>(mut self, capabilities: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -500,30 +347,23 @@ impl TestServerBuilder {
         self
     }
 
-    /// Adds a mailbox.
     pub fn mailbox(mut self, mailbox: TestMailbox) -> Self {
         self.mailboxes.push(mailbox);
         self
     }
 
-    /// Hangs up on an `IDLE` that has run this long without being re-armed.
-    ///
-    /// What every server eventually does — RFC 2177 §3 allows it after 29
-    /// minutes and middle-boxes are far less patient — and the reason a
-    /// watcher has to wind `IDLE` down and issue it again. Without this the
-    /// server idles forever and a client that never re-arms looks fine.
+    /// RFC 2177 §3 allows it after 29 minutes and middle-boxes are less patient; without this, a
+    /// client that never re-arms looks fine.
     pub fn idle_limit(mut self, limit: Duration) -> Self {
         self.idle_limit = Some(limit);
         self
     }
 
-    /// Makes the server misbehave in a particular way from the start.
     pub fn quirk(mut self, quirk: Quirk) -> Self {
         self.quirks.insert(quirk);
         self
     }
 
-    /// Binds an ephemeral loopback port and starts serving.
     pub async fn start(self) -> TestServer {
         let listener = TcpListener::bind(("127.0.0.1", 0))
             .await
@@ -573,9 +413,6 @@ impl TestServerBuilder {
     }
 }
 
-/// A running IMAP server on a loopback port.
-///
-/// Dropping it stops accepting connections; open ones end with the test.
 #[derive(Debug)]
 pub struct TestServer {
     addr: SocketAddr,
@@ -587,34 +424,27 @@ pub struct TestServer {
 }
 
 impl TestServer {
-    /// Starts building a server.
     pub fn builder() -> TestServerBuilder {
         TestServerBuilder::new()
     }
 
-    /// Where it is listening.
     pub fn addr(&self) -> SocketAddr {
         self.addr
     }
 
-    /// The account it accepts.
     pub fn account(&self) -> &str {
         &self.account
     }
 
-    /// The password it accepts.
     pub fn password(&self) -> &str {
         &self.password
     }
 
-    /// The bearer token it accepts (#193).
     pub fn access_token(&self) -> &str {
         &self.access_token
     }
 
-    /// Settings that reach it: cleartext, because
-    /// [`validate`](crate::imap::ConnectionSettings::validate) allows that on
-    /// loopback and nowhere else.
+    /// Cleartext, which `validate` allows on loopback only.
     #[cfg(feature = "imap")]
     pub fn settings(&self) -> crate::imap::ConnectionSettings {
         crate::imap::ConnectionSettings::new(
@@ -625,28 +455,21 @@ impl TestServer {
         )
     }
 
-    /// A connector that reaches this server through memory rather than a
-    /// socket.
-    ///
-    /// Use it when a test needs the paused clock (`start_paused`) or a
-    /// connection that fills up: `capacity` is how many bytes the pipe holds
-    /// before a write blocks.
+    /// Reaches the server through memory, for a paused clock (`start_paused`) or a connection that
+    /// fills up: `capacity` is how many bytes the pipe holds before a write blocks.
     #[cfg(feature = "imap")]
     pub fn connector(&self, capacity: usize) -> InMemoryConnector {
         InMemoryConnector::new(Arc::clone(&self.shared), capacity)
     }
 
-    /// Arms a fault. The next matching command fires it, once.
     pub fn inject(&self, fault: Fault) {
         self.shared.lock().faults.push(fault);
     }
 
-    /// Makes the server misbehave from now on.
     pub fn quirk(&self, quirk: Quirk) {
         self.shared.lock().quirks.insert(quirk);
     }
 
-    /// How many connections have switched to `COMPRESS=DEFLATE`.
     pub fn compressed_connections(&self) -> usize {
         self.shared
             .stats
@@ -654,8 +477,8 @@ impl TestServer {
             .load(std::sync::atomic::Ordering::SeqCst)
     }
 
-    /// What the server has sent: `(protocol bytes, socket bytes)`. They
-    /// differ only on connections that negotiated compression.
+    /// `(protocol bytes, socket bytes)`; they differ only on connections that negotiated
+    /// compression.
     pub fn bytes_sent(&self) -> (usize, usize) {
         let stats = &self.shared.stats;
         (
@@ -664,29 +487,24 @@ impl TestServer {
         )
     }
 
-    /// Every command line the server has received, tags included.
     pub fn commands(&self) -> Vec<String> {
         self.shared.lock().log.clone()
     }
 
-    /// The mailbox's current `HIGHESTMODSEQ`.
     pub fn highest_mod_seq(&self, path: &str) -> u64 {
         self.with(path, |mailbox| mailbox.highest_mod_seq)
     }
 
-    /// The mailbox's current `UIDVALIDITY`.
     pub fn uid_validity(&self, path: &str) -> UidValidity {
         UidValidity::new(self.with(path, |mailbox| mailbox.uid_validity))
     }
 
-    /// The UIDs the mailbox holds, in order.
     pub fn uids(&self, path: &str) -> Vec<Uid> {
         self.with(path, |mailbox| {
             mailbox.uids().into_iter().map(Uid::new).collect()
         })
     }
 
-    /// One message's flags.
     pub fn flags(&self, path: &str, uid: Uid) -> FlagSet {
         self.with(path, |mailbox| {
             mailbox
@@ -696,9 +514,6 @@ impl TestServer {
         })
     }
 
-    /// Delivers a message, as new mail arriving would.
-    ///
-    /// Wakes any connection sitting in `IDLE`.
     pub fn deliver(&self, path: &str, message: TestMessage) -> Uid {
         let uid = {
             let mut state = self.shared.lock();
@@ -715,7 +530,6 @@ impl TestServer {
         Uid::new(uid)
     }
 
-    /// Sets one message's flags, as another client would.
     pub fn set_flags(&self, path: &str, uid: Uid, flags: FlagSet) {
         {
             let mut state = self.shared.lock();
@@ -731,10 +545,8 @@ impl TestServer {
         self.shared.notify();
     }
 
-    /// Removes a message, as another client's expunge would.
-    ///
-    /// It is remembered for `VANISHED (EARLIER)`, so a QRESYNC resync can
-    /// still report it to a client that was away.
+    /// Remembered for `VANISHED (EARLIER)`, so a QRESYNC resync still reports it to a client that
+    /// was away.
     pub fn vanish(&self, path: &str, uid: Uid) {
         {
             let mut state = self.shared.lock();
@@ -746,10 +558,6 @@ impl TestServer {
         self.shared.notify();
     }
 
-    /// Renumbers the mailbox's UID space, as a restore from backup does.
-    ///
-    /// Every UID a client holds becomes meaningless, which is the event the
-    /// sync engine has to notice rather than paper over.
     pub fn set_uid_validity(&self, path: &str, uid_validity: UidValidity) {
         {
             let mut state = self.shared.lock();

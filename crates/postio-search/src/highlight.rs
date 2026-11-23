@@ -1,70 +1,32 @@
-//! Where a query matched, so a surface can draw it.
-//!
-//! Canvas 2b highlights the matched terms twice: once in the result row's
-//! snippet, and again in the preview beside it. Those are two different
-//! problems wearing one face.
-//!
-//! * The **snippet** already knows. FTS5 cut it out of the indexed text and
-//!   wrapped each match in [`MATCH_START`]/[`MATCH_END`] as it went, so
-//!   [`from_snippet`] only has to take the markers back out and remember
-//!   where they were.
-//! * The **preview** does not. It is the message body as the reader renders
-//!   it, and nothing has marked it up — so [`find`] has to locate the query's
-//!   own terms in it, using [`terms`] to say what those are.
-//!
-//! Both answer in byte ranges into plain text, because that is what every
-//! consumer can turn into what it needs: Pango attributes, a CSS span, or a
-//! test assertion.
-//!
-//! # Why matching is by token and not by substring
-//!
-//! FTS5's default tokenizer splits on non-alphanumerics, so `mail` does not
-//! match `maildir` — and a highlighter that used `str::find` would paint
-//! `mail` inside `maildir` for a query that never matched that message on
-//! that word. The acceptance criterion is that the highlighting *matches the
-//! executed query*, so the rule here is the tokenizer's rule: a term matches
-//! a whole token, and a multi-word term matches consecutive tokens. That
-//! also makes `from:ada@example.com` behave: it is three tokens in a row,
-//! which highlights the address and not every `example` on the page.
+//! Where a query matched, as byte ranges into plain text. A snippet already carries FTS5 markers
+//! ([`from_snippet`]); a preview has none, so [`find`] locates [`terms`] in it.
+//! Matching is by token, FTS5's rule, not by substring: `mail` must not be painted inside
+//! `maildir`, and a multi-word term (`from:ada@example.com`) matches consecutive tokens.
 
 use std::ops::Range;
 
 use crate::query::{Filter, ParsedQuery};
 
-/// Marks the start of a match inside a snippet.
-///
-/// A control character rather than `<b>`: the snippet is plain text on its
-/// way to a widget, and anything spellable is something a message could
-/// contain and thereby forge.
+/// A control character rather than `<b>`: anything spellable is something a message could contain
+/// and so forge.
 pub const MATCH_START: char = '\u{1}';
 
-/// Marks the end of a match inside a snippet. See [`MATCH_START`].
 pub const MATCH_END: char = '\u{2}';
 
-/// What [`snippet`](https://sqlite.org/fts5.html#the_snippet_function) puts
-/// where it cut.
 pub const ELLIPSIS: &str = "…";
 
-/// Text, plus where in it the query matched.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Highlighted {
-    /// The text with no markers in it, ready to display.
     pub text: String,
-    /// Byte ranges into `text`, in order and never overlapping.
     pub matches: Vec<Range<usize>>,
 }
 
 impl Highlighted {
-    /// Whether the query matched anywhere in this text.
     pub fn is_highlighted(&self) -> bool {
         !self.matches.is_empty()
     }
 
-    /// The text split into runs, each flagged with whether it matched.
-    ///
-    /// The shape a renderer actually wants: walk it and emit a plain span or
-    /// a highlighted one. Empty runs are never emitted, so a match at either
-    /// end does not produce a leading or trailing blank.
+    /// Empty runs are never emitted, so a match at either end produces no blank.
     pub fn runs(&self) -> Vec<(&str, bool)> {
         let mut runs = Vec::new();
         let mut cursor = 0usize;
@@ -84,12 +46,8 @@ impl Highlighted {
     }
 }
 
-/// Reads a snippet FTS5 produced, taking the markers back out.
-///
-/// Unbalanced markers cannot arise from `snippet()`, but they can arise from
-/// a message that contains the control characters itself, so a marker with no
-/// partner is simply dropped rather than trusted — a forged `\u{1}` must not
-/// be able to paint a highlight the query did not earn.
+/// A marker with no partner is dropped rather than trusted: a message can contain the control
+/// characters, and a forged one must not paint a highlight the query did not earn.
 pub fn from_snippet(snippet: &str) -> Highlighted {
     let mut text = String::with_capacity(snippet.len());
     let mut matches = Vec::new();
@@ -112,16 +70,8 @@ pub fn from_snippet(snippet: &str) -> Highlighted {
     Highlighted { text, matches }
 }
 
-/// The terms a query asked for, as the text a reader would see them in.
-///
-/// Positive terms only. A negated term is not in this message by definition,
-/// and a [`Partial`](crate::query::Partial) constrains nothing yet — neither
-/// has anything to point at. Operators whose value is not text (`is:`,
-/// `has:`, dates, sizes) contribute nothing either.
-///
-/// `from:`/`to:` values are included: they are terms the user asked about,
-/// and the token rule above keeps an address from spraying highlights over
-/// every word it happens to share with the body.
+/// Positive terms only: a negated term is not in the message, a [`Partial`](crate::query::Partial)
+/// constrains nothing, and non-text operators contribute nothing.
 pub fn terms(query: &ParsedQuery) -> Vec<String> {
     let mut terms: Vec<String> = query
         .text_terms()
@@ -129,7 +79,6 @@ pub fn terms(query: &ParsedQuery) -> Vec<String> {
         .map(|term| term.value.clone())
         .collect();
 
-    // Every value of a set (D26): either is what the reader is looking for.
     for filter in query
         .filters()
         .filter(|clause| !clause.negated)
@@ -141,7 +90,6 @@ pub fn terms(query: &ParsedQuery) -> Vec<String> {
             | Filter::Subject(value)
             | Filter::Filename(value)
             | Filter::List(value) => value,
-            // `in:` names a mailbox, which is not part of what is being read.
             _ => continue,
         };
         terms.push(value.clone());
@@ -151,10 +99,6 @@ pub fn terms(query: &ParsedQuery) -> Vec<String> {
     terms
 }
 
-/// Finds every place `terms` matches in `text`, merged and in order.
-///
-/// See the module docs for why this is token matching rather than substring
-/// matching. Case is folded, so `Maildir` matches `maildir`.
 pub fn find(text: &str, terms: &[String]) -> Vec<Range<usize>> {
     let tokens = tokenize(text);
     if tokens.is_empty() {
@@ -186,8 +130,6 @@ pub fn find(text: &str, terms: &[String]) -> Vec<Range<usize>> {
     merge(found)
 }
 
-/// [`find`], returning the text alongside — the same shape [`from_snippet`]
-/// answers in, so a surface can draw a snippet and a preview the one way.
 pub fn highlight(text: &str, terms: &[String]) -> Highlighted {
     Highlighted {
         matches: find(text, terms),
@@ -195,40 +137,15 @@ pub fn highlight(text: &str, terms: &[String]) -> Highlighted {
     }
 }
 
-/// How many tokens of context a [`snippet`] carries around its match.
-///
-/// Was FTS5's `snippet()` argument, and stays the same number so a result row
-/// is the length it has always been. Wide enough to show the phrase in a
-/// sentence, short enough for one line of a list row at the design canvas's
-/// widths.
+/// The number FTS5's `snippet()` took, so a result row stays the length it has always been.
 pub const SNIPPET_TOKENS: usize = 12;
 
-/// A one-line excerpt of `text` around where `terms` matched, with each match
-/// wrapped in [`MATCH_START`]/[`MATCH_END`].
-///
-/// # Why Postio makes this and SQLite no longer does
-///
-/// `snippet()` is an FTS5 function over the *indexed content*, and the body
-/// index has none: `message_bodies_fts` is `content = ''`, which is the whole
-/// point of it (#407). So the excerpt is cut here instead, from the same text
-/// the caller handed `postio-index`'s indexing — which is a stronger
-/// guarantee than the old one rather than a weaker one, because it is
-/// literally the string that was indexed rather than SQLite's reconstruction
-/// of it.
-///
-/// # Matching what matched
-///
-/// [`find`]'s token rule is FTS5's own, so a word this marks is a word FTS5
-/// would have matched. What it deliberately cannot do is know *which* column
-/// FTS5 scored: a query that hit only the subject leaves the body with no
-/// match, and this then answers a leading excerpt rather than nothing, which
-/// is what the row wants and what `snippet()` did in the same situation.
-///
-/// # Whitespace
-///
-/// Collapsed to single spaces. A body is full of newlines and a result row is
-/// one line; the token *sequence* is unchanged by this, since whitespace is a
-/// separator to the tokenizer either way, so it cannot change what matches.
+/// `snippet()` needs indexed content and `message_bodies_fts` is `content = ''` (#407), so the
+/// excerpt is cut here from the same text that was indexed.
+/// [`find`]'s token rule is FTS5's own. A query that hit only the subject leaves the body unmatched
+/// and this answers a leading excerpt rather than nothing.
+/// Whitespace is collapsed to one line; it is a separator to the tokenizer, so matching is
+/// unchanged.
 pub fn snippet(text: &str, terms: &[String]) -> String {
     let flat = collapse_whitespace(text);
     let tokens = tokenize(&flat);
@@ -237,8 +154,6 @@ pub fn snippet(text: &str, terms: &[String]) -> String {
     }
     let found = find(&flat, terms);
 
-    // The window, in tokens. Centred on the first match when there is one,
-    // and the opening of the text when there is not.
     let first = found.first().and_then(|range| {
         tokens
             .iter()
@@ -270,8 +185,6 @@ pub fn snippet(text: &str, terms: &[String]) -> String {
         out.push_str(ELLIPSIS);
     }
 
-    // Markers go in as the window is copied out, so the offsets never have to
-    // be adjusted for the ones already written.
     let mut cursor = from;
     for range in found {
         if range.end <= from {
@@ -295,7 +208,6 @@ pub fn snippet(text: &str, terms: &[String]) -> String {
     out
 }
 
-/// Every run of whitespace as one space, and no leading or trailing space.
 pub(crate) fn collapse_whitespace(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut in_space = false;
@@ -313,8 +225,6 @@ pub(crate) fn collapse_whitespace(text: &str) -> String {
     out
 }
 
-/// Splits text into `(byte range, folded token)` the way FTS5's default
-/// tokenizer does: runs of alphanumerics, everything else a separator.
 fn tokenize(text: &str) -> Vec<(Range<usize>, String)> {
     let mut tokens = Vec::new();
     let mut start: Option<usize> = None;
@@ -332,13 +242,10 @@ fn tokenize(text: &str) -> Vec<(Range<usize>, String)> {
     tokens
 }
 
-/// A term's tokens, in order. `"ada@example.com"` is three of them.
 fn words(term: &str) -> Vec<String> {
     tokenize(term).into_iter().map(|(_, word)| word).collect()
 }
 
-/// Sorts ranges and folds overlapping or touching ones together, so two terms
-/// that matched the same word do not draw the highlight twice.
 fn merge(mut ranges: Vec<Range<usize>>) -> Vec<Range<usize>> {
     ranges.sort_by_key(|range| (range.start, range.end));
     let mut merged: Vec<Range<usize>> = Vec::with_capacity(ranges.len());
@@ -381,8 +288,6 @@ mod tests {
             .collect()
     }
 
-    // -- snippets ---------------------------------------------------------
-
     #[test]
     fn a_snippet_loses_its_markers_and_keeps_where_they_were() {
         let highlighted = from_snippet(&marked("a 40k-message [maildir] takes nine minutes"));
@@ -411,9 +316,6 @@ mod tests {
 
     #[test]
     fn a_marker_a_message_forged_cannot_paint_a_highlight() {
-        // An opening marker with no partner, which `snippet()` never emits —
-        // so it came from the message, and a message does not get to decide
-        // what looks like a hit.
         let highlighted = from_snippet(&format!("plain {MATCH_START}text"));
 
         assert_eq!(highlighted.text, "plain text");
@@ -438,8 +340,6 @@ mod tests {
 
         assert_eq!(highlighted.runs(), vec![("whole", true)]);
     }
-
-    // -- what a query asks for --------------------------------------------
 
     #[test]
     fn free_text_is_what_a_plain_query_asks_for() {
@@ -471,7 +371,6 @@ mod tests {
 
     #[test]
     fn every_value_of_a_positive_set_is_a_term() {
-        // D26: either person is what the reader is looking for.
         assert_eq!(
             terms(&parse("from:{ada tomas} subject:{budget plan} -to:{bo cy}")),
             ["ada", "tomas", "budget", "plan"]
@@ -483,8 +382,6 @@ mod tests {
     fn a_mailbox_is_not_part_of_what_is_being_read() {
         assert!(terms(&parse("in:archive")).is_empty());
     }
-
-    // -- finding terms in text --------------------------------------------
 
     #[test]
     fn a_term_matches_a_whole_token_and_not_a_prefix_of_one() {
@@ -581,7 +478,6 @@ mod tests {
         let found = highlight("the café is naïve", &["café".to_owned()]);
 
         assert_eq!(painted(&found), "the [café] is naïve");
-        // The ranges have to land on char boundaries or slicing them panics.
         for matched in &found.matches {
             assert!(found.text.is_char_boundary(matched.start));
             assert!(found.text.is_char_boundary(matched.end));
@@ -591,7 +487,6 @@ mod tests {
 
 #[cfg(test)]
 mod snippet_tests {
-    //! The excerpt Postio cuts now that FTS5 cannot (#408).
 
     use super::*;
 
@@ -627,9 +522,6 @@ mod snippet_tests {
 
     #[test]
     fn text_with_no_match_still_gives_the_row_its_opening() {
-        // What `snippet()` did in the same situation: a query that hit the
-        // subject leaves the body unmatched, and a blank line under the
-        // subject would be a worse answer than the first words of the mail.
         let text = "alpha ".repeat(40);
 
         let out = marked(&text, &["needle"]);
@@ -641,9 +533,6 @@ mod snippet_tests {
 
     #[test]
     fn a_phrase_marks_the_whole_phrase_and_not_its_words_apart() {
-        // The one multi-token query Postio's grammar can express: `text :=
-        // word | '"' phrase '"'`. `find`'s consecutive-token rule is what
-        // makes it agree with the `"quarterly report"` FTS5 matched.
         let out = marked(
             "A quarterly summary, then the quarterly report itself.",
             &["quarterly report"],
@@ -669,9 +558,6 @@ mod snippet_tests {
 
     #[test]
     fn newlines_become_spaces_without_moving_what_matched() {
-        // A body is full of them and a result row is one line. The tokenizer
-        // treats whitespace as a separator either way, so collapsing it
-        // cannot change which tokens match.
         assert_eq!(
             marked("Dear Ada,\n\n   The report\tis ready.\n", &["report"]),
             "Dear Ada, The [report] is ready."
@@ -680,12 +566,8 @@ mod snippet_tests {
 
     #[test]
     fn a_star_is_a_character_and_not_a_prefix_search() {
-        // Postio's grammar has no prefix operator: `ParsedQuery::fts_match`
-        // wraps every term with `fts_literal`, which quotes it, and a `*`
-        // inside an FTS5 string literal is a character. `unicode61` then
-        // drops it as a separator, so `report*` is the term `report` --
-        // exactly as this marks it. Pinned because "prefix queries highlight
-        // correctly" is only answerable as "there are none".
+        // Postio's grammar has no prefix operator: `fts_literal` quotes every term and `unicode61`
+        // drops `*` as a separator, so `report*` is the term `report`.
         let out = marked("The report and the reporting", &["report*"]);
 
         assert!(out.contains("[report]"), "{out}");
@@ -698,9 +580,6 @@ mod snippet_tests {
 
     #[test]
     fn near_is_a_word_and_not_an_operator() {
-        // Same reason as the star. `NEAR` reaches FTS5 quoted, so it is the
-        // token `near` and nothing else -- there is no proximity query for a
-        // highlight to disagree with.
         let out = marked("the mill is near the store", &["near"]);
 
         assert_eq!(out, "the mill is [near] the store");
@@ -714,8 +593,6 @@ mod snippet_tests {
 
     #[test]
     fn what_is_marked_is_what_from_snippet_reads_back() {
-        // The two halves have to agree, or a row draws its highlight
-        // somewhere the query never matched.
         let terms = vec!["report".to_owned()];
         let text = "The quarterly report is attached.";
 

@@ -1,18 +1,10 @@
 import SwiftUI
 
-/// The results' footer (specs/010-focus-search T072; design §3.5): 32
-/// tall with a hairline above. Normally the keys -- move, open, select,
-/// edit the query, back to the inbox -- and on the right "48
-/// conversations · local index · 41 ms". While results are checked it is
-/// the bulk bar: "5 selected", then the verbs with their keys, and on the
-/// right "⇧X select all 12" until everything is checked.
-///
-/// Every word and key is the controller's (`FocusResults`); the checked
-/// count's words are `postio-ui`'s, handed in as `checked`.
+/// Every word and key is the controller's (`FocusResults`); the checked count's words are
+/// `postio-ui`'s, handed in as `checked`.
 public struct SearchFooter: View {
     let hints: [ResultsModel.Hint]
     let right: String
-    /// "5 selected" while results are checked, else `nil`.
     let checked: String?
     let bulk: [ResultsModel.Hint]
     let selectAll: ResultsModel.Hint?
@@ -34,8 +26,6 @@ public struct SearchFooter: View {
         HStack(spacing: 14) {
             if let checked {
                 Text(checked).font(.system(size: 12, weight: .bold)).foregroundStyle(.primary)
-                // The verbs read as buttons (screen 12): the word bold, its
-                // key after it.
                 HStack(spacing: 14) {
                     ForEach(bulk) { hint in
                         HStack(spacing: 5) {

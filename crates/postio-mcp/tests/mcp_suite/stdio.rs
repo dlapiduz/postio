@@ -1,7 +1,3 @@
-//! The binary itself, over a pipe: what Claude Code and Claude Desktop
-//! launch. A demo store stands in for the installation's, so nothing reads
-//! the keyring.
-
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 

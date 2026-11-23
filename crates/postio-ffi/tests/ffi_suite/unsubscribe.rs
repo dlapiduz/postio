@@ -1,21 +1,6 @@
-//! One-click unsubscribe across the boundary (#971), and the decode caveat
-//! that sits beside it in the same notice strip (#901).
-//!
-//! `PRODUCT.md` lists one-click unsubscribe among Postio's privacy features
-//! and CLAUDE.md states the rule: **only on deliberate activation**. macOS
-//! had no form of it at all — the boundary did not carry a list identifier,
-//! so the reader could not have drawn a banner even if somebody wrote one.
-//!
-//! The assertions are in two halves, and the second half is the point:
-//!
-//! 1. **What a message offers** — the `List-Id`, the sender's domain when
-//!    there is none, and nothing whatsoever for mail on its way out (#1525).
-//! 2. **What cannot happen by accident** — reading a message, rendering its
-//!    document and asking what it offers, over and over, records nothing;
-//!    and an activation asked for on a message that offers nothing is
-//!    refused rather than logged. Between them those say the activation is
-//!    reachable only from a frontend that meant it, which is the whole
-//!    privacy claim.
+//! One-click unsubscribe across the boundary (#971), and the decode caveat beside it (#901).
+//! Reading, rendering and asking what a message offers record nothing, and an activation on a
+//! message that offers nothing is refused.
 
 use chrono::Utc;
 use postio_ffi::{RemoteImagesFfi, Session, SessionOptions};
@@ -27,55 +12,28 @@ use postio_storage::repository::{
 };
 use postio_storage::test_support;
 
-/// One message to seed. Every field is something the banner's rules read.
 #[derive(Default)]
 struct Seed {
-    /// Which of the store's two accounts owns this message — `0` or `1`.
-    ///
-    /// The activation log is stamped with an account, and a store holding
-    /// only one makes the wrong stamp indistinguishable from the right one:
-    /// "the message's account" and "the first account there is" are the same
-    /// value, so an assertion on it cannot fail. Anything asserting on the
-    /// stamp puts its message under `1`.
+    /// The activation log is stamped with an account; with one account a wrong stamp equals the
+    /// right one, so anything asserting on the stamp puts its message under `1`.
     account: usize,
-    /// `From`, which is where the domain fallback comes from.
     sender: &'static str,
-    /// `List-Id`, when the sender set one.
     list_id: Option<&'static str>,
-    /// Whether the stored body says parts of it did not decode.
     encoding_problems: bool,
-    /// The `send_state` column, for the Outbox cases.
     send_state: Option<DraftState>,
-    /// Whether it carries a `List-Unsubscribe` (`messages.unsubscribe_offered`).
     list_unsubscribe: bool,
 }
 
-/// A session over a store holding one message per seed, the store itself,
-/// and both of its accounts.
-///
-/// The store is handed back because the activation log is *stamped with an
-/// account* and the boundary's own record deliberately does not carry one —
-/// the Privacy pane draws every account's activations in one list, the same
-/// shape the remote-image grants have. Reading the log directly is how that
-/// stamp gets asserted at all.
-///
-/// # Why there are always two accounts
-///
-/// Both of the things this file is here to pin are invisible in a store with
-/// one. `activateUnsubscribe` has to stamp the row with *the message's*
-/// account, and `unsubscribeActivations` has to read *every* account's log
-/// and interleave them — and a single-account fixture makes "the message's
-/// account", "the first account" and "the only account" one value, so an
-/// implementation that reached for any of them would pass. The second
-/// account exists whether or not a given test names it, which also means
-/// every read in here goes through the merge rather than around it.
+/// Always two accounts: `activateUnsubscribe` must stamp the message's account and
+/// `unsubscribeActivations` must merge every account's log,
+/// which a one-account fixture cannot tell apart. The store is returned so the stamp can be read
+/// from the log directly.
 async fn a_store_with(
     seeds: &[Seed],
 ) -> (std::sync::Arc<Session>, Vec<i64>, Store, Vec<AccountId>) {
     a_store_configured("", seeds).await
 }
 
-/// [`a_store_with`], over a session whose `config.toml` says `config`.
 async fn a_store_configured(
     config: &str,
     seeds: &[Seed],
@@ -128,12 +86,8 @@ async fn a_store_configured(
                 )
                 .await
                 .expect("the body is stored");
-            // Written here rather than through a draft, because the only
-            // writer of this column is private to `postio-storage` and lives
-            // behind saving a draft — three tables and a queue row to reach
-            // one flag the reader reads back out. What is under test is what
-            // the boundary does with the column, not how it came to hold a
-            // value.
+            // Written directly: the only writer of this column is private to `postio-storage`,
+            // behind saving a draft.
             if let Some(state) = seed.send_state {
                 connection
                     .execute(
@@ -157,7 +111,6 @@ async fn a_store_configured(
     (session, ids, database, accounts)
 }
 
-/// Everything the log holds for `account`, straight from storage.
 async fn logged(database: &Store, account: AccountId) -> Vec<postio_model::UnsubscribeActivation> {
     let connection = database.connect().await.expect("a connection");
     UnsubscribeRepository::new(&connection)
@@ -180,9 +133,7 @@ async fn a_message_from_a_list_names_the_list_it_says_it_is_from() {
         .await
         .expect("a message with a List-Id is offered an unsubscribe");
     assert_eq!(offer.list_identifier, "news.example.org");
-    // Against the shared sentence rather than a copy typed here: a second
-    // copy of the words is how the two readers come to say different things
-    // about the same message.
+    // Against the shared sentence, not a copy typed here.
     assert_eq!(
         offer.summary,
         postio_ui::unsubscribe::summary("news.example.org")
@@ -192,8 +143,8 @@ async fn a_message_from_a_list_names_the_list_it_says_it_is_from() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn bulk_mail_with_no_list_header_names_the_senders_domain() {
-    // Almost no commercial mail sets `List-Id`. A banner that only appeared
-    // for the mail that did would be a privacy feature nobody ever saw.
+    // Almost no commercial mail sets `List-Id`; a banner only for mail that did would never be
+    // seen.
     let (session, ids, _database, _accounts) = a_store_with(&[Seed {
         sender: "weekly@news.example.org",
         ..Seed::default()
@@ -209,9 +160,7 @@ async fn bulk_mail_with_no_list_header_names_the_senders_domain() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_message_on_its_way_out_is_offered_nothing() {
-    // #1525: the fallback is the sender's domain, and the sender of an
-    // outgoing message is the user — so a banner over the Outbox offers to
-    // unsubscribe somebody from their own account.
+    // #1525: the fallback is the sender's domain, which for outgoing mail is the user's own.
     let (session, ids, _database, _accounts) = a_store_with(&[
         Seed {
             sender: "ada@example.com",
@@ -252,11 +201,8 @@ async fn a_message_the_store_does_not_hold_offers_nothing() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn reading_a_message_never_records_an_activation() {
-    // The privacy claim, asserted rather than asserted *about*. Everything a
-    // reader does when a message opens — render the document, ask what it
-    // offers, render it again because the reader turned a page — happens
-    // here, repeatedly, and the log stays empty. Unsubscribing is something
-    // a person does, not something a message causes.
+    // Reading, rendering and asking what a message offers, repeatedly, leaves the log empty:
+    // unsubscribing is something a person does.
     let (session, ids, database, accounts) = a_store_with(&[Seed {
         sender: "weekly@news.example.org",
         list_id: Some("news.example.org"),
@@ -287,10 +233,8 @@ async fn reading_a_message_never_records_an_activation() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn activating_records_one_activation_against_the_messages_account() {
-    // The message is deliberately the *second* account's. The log is scoped
-    // per account, so a row stamped with the wrong one is a row the owner
-    // never sees in their pane and somebody else does — and with one account
-    // in the store the wrong stamp and the right one are the same number.
+    // The message is the second account's: with one account a wrong stamp and the right one are the
+    // same number.
     let (session, ids, database, accounts) = a_store_with(&[Seed {
         account: 1,
         sender: "weekly@mail.example.org",
@@ -318,8 +262,6 @@ async fn activating_records_one_activation_against_the_messages_account() {
         "an account that owns none of this mail was given an activation"
     );
 
-    // And it is what the Privacy pane will draw — which reads every account,
-    // so the row shows up there whichever one it belongs to.
     let listed = session.unsubscribe_activations().await;
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].list_identifier, "news.example.org");
@@ -335,10 +277,8 @@ async fn activating_records_one_activation_against_the_messages_account() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn activating_a_message_that_offers_nothing_is_refused() {
-    // The second half of "only on deliberate activation": the action does
-    // not trust the caller's word that a banner was on screen. It re-derives
-    // the offer, and refuses when there is none — so a frontend bug cannot
-    // record the user leaving their own account's domain.
+    // The action re-derives the offer instead of trusting that a banner was shown, so a frontend
+    // bug cannot record the user leaving their own domain.
     let (session, ids, database, accounts) = a_store_with(&[Seed {
         sender: "ada@example.com",
         send_state: Some(DraftState::Queued),
@@ -388,9 +328,7 @@ async fn the_privacy_pane_lists_activations_newest_first() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_body_that_lost_a_part_says_so_and_a_clean_one_stays_quiet() {
-    // #901's flag, which was computed and read by nothing on this platform:
-    // the macOS reader renders a document and never said the words in it may
-    // not be the words that were sent.
+    // #901's flag was computed and read by nothing on this platform.
     let (session, ids, _database, _accounts) = a_store_with(&[
         Seed {
             sender: "weekly@news.example.org",
@@ -418,14 +356,8 @@ async fn a_body_that_lost_a_part_says_so_and_a_clean_one_stays_quiet() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_privacy_pane_interleaves_every_accounts_log() {
-    // What `unsubscribeActivations` claims, asserted: *every* account, in one
-    // list, in time order. The rows are written straight into the log rather
-    // than by pressing the button, because pressing it stamps `Utc::now()`
-    // and two presses in a test land in the same millisecond — which would
-    // make this assert on a tie-break instead of on the merge. Four rows at
-    // four known instants, alternating between the two accounts, is the only
-    // arrangement where reading one account, or reading both and not
-    // interleaving them, both come out wrong.
+    // Rows are written straight into the log at four known instants, alternating accounts: pressing
+    // the button stamps `Utc::now()` and two presses tie.
     let (session, _ids, database, accounts) = a_store_with(&[]).await;
     let connection = database.connect().await.expect("a connection");
     let log = UnsubscribeRepository::new(&connection);
@@ -458,7 +390,6 @@ async fn the_privacy_pane_interleaves_every_accounts_log() {
     );
 }
 
-/// The banner Focus's message window draws, as the document it opens with.
 fn focus_banner(session: &Session, message: i64) -> Option<postio_ffi::UnsubscribeOfferFfi> {
     session
         .focus_reader_document(message, RemoteImagesFfi::Blocked, None, 1440)
@@ -467,9 +398,6 @@ fn focus_banner(session: &Session, message: i64) -> Option<postio_ffi::Unsubscri
 
 #[tokio::test(flavor = "multi_thread")]
 async fn focus_draws_the_banner_over_list_mail_with_the_shared_words() {
-    // #1585: Focus's message window on the Mac had no banner at all, while
-    // GTK's drew one in its notice slot. The document the window already
-    // opens with carries it now, so the offer costs no second read.
     let (session, ids, _database, _accounts) = a_store_with(&[
         Seed {
             sender: "weekly@mail.example.org",
@@ -499,9 +427,6 @@ async fn focus_draws_the_banner_over_list_mail_with_the_shared_words() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn focus_draws_no_banner_over_personal_mail_or_the_outbox() {
-    // The band is GTK's `postio_ui::unsubscribe::banner`: personal mail has
-    // neither header and stays clean, though `X` would still find a domain
-    // to leave; and nothing on its way out is offered at all (#1525).
     let (session, ids, _database, _accounts) = a_store_with(&[
         Seed {
             sender: "grace@example.org",
@@ -523,7 +448,6 @@ async fn focus_draws_no_banner_over_personal_mail_or_the_outbox() {
 
     assert_eq!(focus_banner(&session, ids[0]), None, "personal mail");
     assert_eq!(focus_banner(&session, ids[1]), None, "the Outbox");
-    // The control: the same fixture does draw one where it should.
     assert!(focus_banner(&session, ids[2]).is_some());
     session.shutdown();
 }
@@ -550,9 +474,6 @@ async fn focus_says_when_a_body_lost_a_part() {
     session.shutdown();
 }
 
-/// After leaving a list the boundary words what is left (#1931): the count of
-/// the list's messages, never another list's, never a Flagged one, and
-/// nothing at all when nothing is left.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_offer_after_leaving_counts_the_lists_mail_and_only_that() {
     let (session, ids, _database, _) = a_store_with(&[
@@ -592,7 +513,6 @@ async fn the_offer_after_leaving_counts_the_lists_mail_and_only_that() {
         offer.summary
     );
 
-    // No List-Id: the sender's exact address, and only one message is theirs.
     let offer = session
         .list_mail_offer(ids[3])
         .await
@@ -605,8 +525,6 @@ async fn the_offer_after_leaving_counts_the_lists_mail_and_only_that() {
     );
 }
 
-/// The one action the notice offers is the one `[focus] after_unsubscribe`
-/// names (#1952); the words around it do not change.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_notice_offers_the_configured_action() {
     let seeds = [

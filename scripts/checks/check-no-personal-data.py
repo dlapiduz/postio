@@ -35,12 +35,9 @@ import re
 import subprocess
 import sys
 
-# A domain is reserved if any label is exactly "example" -- which covers
-# example.com, example.co.uk and mail.example.org alike -- or if the TLD is one
-# of the reserved ones. Requiring "example.com" specifically flagged perfectly
-# good ccTLD-shaped fixtures, and pushed one session into weakening an address
-# parser's test data to satisfy this check. A guard that degrades tests is
-# worse than no guard.
+# A domain is reserved if any label is exactly "example" or the TLD is reserved; requiring
+# "example.com" flagged good ccTLD-shaped fixtures and pushed a session into weakening an address
+# parser's test data.
 RESERVED = re.compile(
     r"@(?:[A-Za-z0-9-]+\.)*example(?:\.[A-Za-z0-9-]+)*$"
     r"|@(?:[A-Za-z0-9-]+\.)*(?:test|invalid|localhost)$",
@@ -48,48 +45,24 @@ RESERVED = re.compile(
 )
 ADDRESS = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 
-# Files whose whole point is to name what is forbidden, or which carry
-# legitimate upstream addresses.
 SKIP_PATHS = (
     "scripts/checks/check-no-personal-data.py",
-    # Its self-test has to hold a forbidden address to prove this fires on
-    # one, exactly as the check above has to name what it forbids.
     "scripts/tests/test-check-no-personal-data.py",
-    # Same reasoning, for issue-land.sh's staging-order regression test: it
-    # plants a real-shaped address in a throwaway sandbox file to prove the
-    # gate now sees a file staged on the same landing that adds it.
     "scripts/tests/test-issue-land-personal-data.py",
-    # The copyright line names the holder on purpose.
     "LICENSE",
-    # Hook sources and their test fixtures must name what they forbid.
     ".claude/",
     "Design/",
     "crates/postio-ui/data/fonts/",
-    # Same font files, copied for the landing page (#24) rather than shared
-    # at build time -- see site/assets/css/site.css.
     "site/assets/fonts/",
-    # Rendered PNG screenshots. Binary bytes decoded as UTF-8 with errors
-    # ignored can coincidentally spell something ADDRESS matches -- found
-    # when a compose.png produced by `cargo run --example shot` (#24) hit
-    # this by chance. No screenshot's whole point is to name a person, the
-    # way LICENSE's and the fonts' OFL.txt's is, so this is the same
-    # exemption for a different reason: nothing here is text in the first
-    # place.
+    # Rendered PNG screenshots: binary bytes decoded as UTF-8 can coincidentally spell an address.
     "site/assets/img/",
-    # Upstream crates exactly as released (`scripts/vendor-patches.sh verify`
-    # proves it), whose doc examples and copyright headers carry upstream's
-    # own addresses. Postio's changes to them are `patches/`, which is
-    # scanned like everything else.
+    # Upstream crates exactly as released (`scripts/vendor-patches.sh verify`) carry upstream's own
+    # addresses; `patches/` is scanned.
     "vendor/",
 )
-# Upstream/maintainer addresses that belong in a licence or manifest.
 ALLOW_EXACT = {
     "noreply@anthropic.com",
-    # release.yml's bot commit identity for the version-bump it pushes
-    # (#886). A `users.noreply.github.com` address is deliberate privacy,
-    # not a leak -- the git-config-specific check below already treats it
-    # that way; this is the same domain, named exactly, for the one place
-    # it appears as plain text rather than as a `user.email` value.
+    # release.yml's bot commit identity (#886): a noreply address is deliberate privacy, not a leak.
     "release-bot@users.noreply.github.com",
 }
 
@@ -152,7 +125,6 @@ def denied_names() -> list[tuple[str, str]]:
             ["git", "config", key], capture_output=True, text=True
         )
         value = r.stdout.strip()
-        # A noreply forwarding address is deliberate privacy, not a leak.
         if value and not value.endswith("users.noreply.github.com"):
             ident.append((f"git {key}", value))
     return ident

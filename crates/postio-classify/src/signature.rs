@@ -1,15 +1,9 @@
-//! Reading a signature (specs/011-focus-contacts S9).
-//!
-//! A pure function from the words of a message to what its signature says
-//! about the sender: a title, a company, phone numbers and websites. It reads
-//! only the block at the tail of the message (after a `-- ` line, or after a
-//! sign-off such as "Best,"), never the sentences above it, and never quoted
-//! text. No I/O, no network: what is parsed stays on this machine, and the
-//! caller decides what is kept.
+//! A pure function from a message's words to what its signature says: title, company, phone
+//! numbers, websites. Reads only the block at the tail, never the sentences above it or quoted
+//! text.
 
 use postio_model::SignatureDetails;
 
-/// The words a signature is read by, from `data/signature.toml`.
 #[derive(serde::Deserialize)]
 struct Words {
     sign_offs: Vec<String>,
@@ -24,11 +18,9 @@ fn words() -> &'static Words {
     &WORDS
 }
 
-/// What `text`'s signature says.
 pub fn parse(text: &str) -> SignatureDetails {
     let block = signature_block(text);
     let mut details = SignatureDetails::default();
-    // The name, when there is one, is the first line of the block.
     let mut first_line = true;
     for line in &block {
         let line = line.trim();
@@ -60,8 +52,6 @@ pub fn parse(text: &str) -> SignatureDetails {
     details
 }
 
-/// The lines of the signature: after a `-- ` line, else after the last
-/// sign-off, up to eight of them, stopping at quoted text.
 fn signature_block(text: &str) -> Vec<&str> {
     let all: Vec<&str> = text.lines().collect();
     // Quoted text and what follows it is not the sender's signature.
@@ -77,7 +67,6 @@ fn signature_block(text: &str) -> Vec<&str> {
         .or_else(|| {
             all.iter()
                 .rposition(|line| is_sign_off(line))
-                // The sign-off, then the name: the name is the next line.
                 .map(|at| at + 1)
         });
     match start {
@@ -99,8 +88,6 @@ fn is_sign_off(line: &str) -> bool {
     words().sign_offs.contains(&line)
 }
 
-/// A phone number in `line`: at least seven digits in a run of digits,
-/// spaces, dots, dashes and parentheses, with an optional leading `+`.
 fn phone_in(line: &str) -> Option<String> {
     let bytes: Vec<char> = line.chars().collect();
     let mut at = 0;
@@ -171,7 +158,6 @@ fn looks_like_domain(text: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
 }
 
-/// A title and a company in `line`, in the shapes people write them.
 fn work_in(line: &str, details: &mut SignatureDetails) {
     for separator in [" \u{b7} ", " | ", " \u{2022} ", " - ", " at ", ", "] {
         if let Some((left, right)) = line.split_once(separator) {
@@ -227,8 +213,6 @@ fn looks_like_company(text: &str) -> bool {
             .is_some_and(|word| words().company_suffixes.contains(word))
 }
 
-/// A person's full name: two to four words, each starting with a capital and
-/// made of letters, apostrophes, dots and hyphens.
 fn is_name(line: &str) -> bool {
     let words: Vec<&str> = line.split_whitespace().collect();
     (2..=4).contains(&words.len())

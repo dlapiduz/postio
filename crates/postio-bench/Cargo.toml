@@ -8,18 +8,12 @@ license.workspace = true
 publish.workspace = true
 repository.workspace = true
 
-# No library and no binary: this crate is bench targets and nothing else.
-# Without this, cargo looks for `src/lib.rs` and fails.
+# Bench targets only: no library and no binary.
 [lib]
 path = "src/lib.rs"
 
-# Everything is a dev-dependency, deliberately.
-#
-# Bench targets can read them, and `cargo build --workspace` cannot -- which
-# matters because `postio-storage/test-support` pulls in seeding and fixture
-# code that has no business being reachable from an ordinary build. As
-# ordinary dependencies, feature unification would switch that on for every
-# crate in the workspace.
+# All dev-dependencies: `cargo build --workspace` cannot reach them, so
+# `postio-storage/test-support` is not unified onto every crate.
 [dev-dependencies]
 adw = { version = "0.9", package = "libadwaita", features = ["v1_7"] }
 chrono = { workspace = true, features = ["std"] }
@@ -28,14 +22,12 @@ futures-util = { workspace = true }
 gtk = { version = "0.11.5", package = "gtk4", features = ["v4_20"] }
 postio-config.workspace = true
 postio-core.workspace = true
-# `list_scroll` and `composer_open`: Focus's row and its composer frame.
 postio-gtk.workspace = true
 postio-host.workspace = true
 postio-widgets.workspace = true
 postio-account.workspace = true
 postio-index.workspace = true
 postio-model = { workspace = true, features = ["test-corpus"] }
-# `reader_render`: the reading renderer and the document it is handed.
 postio-body.workspace = true
 postio-render.workspace = true
 postio-ui.workspace = true
@@ -44,20 +36,13 @@ postio-search.workspace = true
 postio-session.workspace = true
 postio-storage = { workspace = true, features = ["test-support"] }
 postio-sync.workspace = true
-# Throwaway stores: a bench that measured a database it had to keep would be
-# measuring the disk it was left on.
 tempfile = { workspace = true }
-# `store_reads` builds a multi-thread runtime and `sync_lanes` a current-thread
-# one, both by hand: the store and the sync engine are async, and a bench has
-# to own the runtime it measures them on.
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 
 [lints]
 workspace = true
 
-# The perf budgets CLAUDE.md names -- startup, interaction, search -- plus the
-# store, sync and list benchmarks. `harness = false` on every one: each owns
-# its `main`, whether through criterion or by printing its own table.
+# `harness = false` on every bench: each owns its `main`.
 [[bench]]
 name = "perf_budgets"
 harness = false
@@ -90,29 +75,22 @@ harness = false
 name = "sync_lanes"
 harness = false
 
-# The reading renderer, warm, per designed fixture (spec 006 SC-005).
 [[bench]]
 name = "reader_render"
 harness = false
 
-# Conversation search for Focus (spec 010): the executor's calls and the
-# results view's whole exchange, against the 50 ms budget.
 [[bench]]
 name = "search_focus"
 harness = false
 
-# What the metadata and body indexes weigh on disk against the text they
-# were built from (#407, #1466). It prints and asserts nothing.
 [[bench]]
 name = "body_index_size"
 harness = false
 
-# The event hub's emit path, one to eight subscribers (#267, ADR 0013).
 [[bench]]
 name = "event_hub"
 harness = false
 
-# The message window's thread bar at 500 members (spec 013 T086).
 [[bench]]
 name = "thread_bar"
 harness = false

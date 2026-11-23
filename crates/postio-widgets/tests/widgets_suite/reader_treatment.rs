@@ -1,14 +1,6 @@
-//! The reader says how the body on screen is drawn -- in the app's colours
-//! or on paper -- so a surface can size its column by it (specs/007 T207).
-//! The answer is the renderer's own decision, not a value someone sets: a
-//! reader that draws treatments reports what it drew, tells its listeners on
-//! every treated draw, and tells them again after `O` switches it; a reader
-//! that does not draw treatments always answers app colours.
-
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use gtk::gdk;
 use gtk::prelude::*;
 use postio_body::treatment::Treatment;
 use postio_model::message::MessageBody;
@@ -38,10 +30,6 @@ fn reader(name: &str) -> (gtk::Window, Reader) {
 }
 
 pub fn a_reader_reports_its_treatment_and_tells_when_it_changes() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let (window, reader) = reader("treated");
     reader.use_treatments();
     assert_eq!(
@@ -75,10 +63,6 @@ pub fn a_reader_reports_its_treatment_and_tells_when_it_changes() {
 }
 
 pub fn a_reader_that_draws_no_treatments_answers_app_colours() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let (window, reader) = reader("classic");
     let told: Rc<RefCell<Vec<Treatment>>> = Rc::default();
     reader.connect_treatment_changed({
@@ -97,10 +81,6 @@ pub fn a_reader_that_draws_no_treatments_answers_app_colours() {
 }
 
 pub fn a_reader_opens_a_message_in_the_treatment_the_store_remembers_for_its_sender() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let table = Rc::new(postio_ui::sender_treatments::Remembered::new(|_, _| {}));
     table.replace([("news@treatment.example.com".to_owned(), "app".to_owned())]);
     postio_widgets::reader::use_store_treatments(Some(table.clone()));
@@ -112,7 +92,6 @@ pub fn a_reader_opens_a_message_in_the_treatment_the_store_remembers_for_its_sen
         support::until(|| reader.treated().is_some()),
         "the newsletter was never drawn under a treatment"
     );
-    // The rule says paper for this newsletter; the person chose app colours.
     assert_eq!(
         reader.treatment(),
         Treatment::AppColours,

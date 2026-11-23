@@ -1,82 +1,10 @@
-//! Spike S5 (Postio Focus, research R2): can a sentence be found again in
-//! the rendered body from nothing but its excerpt?
-//!
-//! Focus stores a marker's sentence -- a question, a to-do -- as an excerpt
-//! and an offset into the text the detector read, and the open-email dialog
-//! highlights it in the rendered body (spec FR-035, tasks T065 and T066).
-//! Stored offsets cannot be used directly: the render's text index is in
-//! laid-out reading order, with `alt` text in and closed folds out. So the
-//! plan is to find the excerpt with `TextIndex::find` (which ignores case
-//! and diacritics) and, when it occurs more than once, take the occurrence
-//! nearest its proportional position.
-//!
-//! This measures that plan across the render corpus: every sentence a
-//! detector could store, from each of the two texts it might read, located
-//! in the document the reader draws. It changes no code. It prints what it
-//! found -- run it with `--nocapture` to read the table -- and it fails if a
-//! rate falls below what this spike measured, so the locator T066 builds
-//! cannot quietly do worse.
-//!
-//! Two sources of excerpts, because which one the detector reads is not
-//! decided yet (T115):
-//!
-//! * **text first**: the `text/plain` part when there is one, else the HTML
-//!   as `postio_body` flattens it -- what the search index reads;
-//! * **what is drawn**: the HTML flattened when there is HTML, else the
-//!   plain part -- the text of the part the reader actually renders.
-//!
-//! POSTIO-MEASUREMENT: its output is a table a person reads, and it renders
-//! the whole corpus three times over (about ninety seconds in a debug
-//! build), so it runs nightly (`--profile nightly`), where its floors still
-//! hold the rates below.
-//!
-//! # What it found (2026-09-27, 69 fixtures rendered)
-//!
-//! | excerpts read from | sentences | as read | spaces collapsed | present |
-//! |---|---|---|---|---|
-//! | text first         | 1,005     | 90.5%   | 96.8%            | 97.3%   |
-//! | what is drawn      | 1,006     | 92.3%   | 98.7%            | 99.5%   |
-//!
-//! The first run, before eight invitations joined the corpus, rendered 61
-//! fixtures and found 91.7/97.7/98.2 and 92.8/98.8/99.5. The invitations'
-//! plain parts list organisers, guests and links the HTML never draws, and
-//! wrap hard: they cost the text-first reading most.
-//!
-//! * **The index writes all whitespace as one space**, a `<pre>` line break
-//!   included, and `find` compares whitespace as it is: every excerpt that
-//!   spans a hard-wrapped line misses. Collapsing the excerpt's own runs of
-//!   whitespace before `find` recovers six points, with no change here.
-//! * **Blocks and cells are line breaks and tabs in the index** where a
-//!   flattened source has spaces (a table row, a heading run into its
-//!   paragraph): a locator that treats any run of whitespace as any other,
-//!   on both sides, recovers what is left of "present".
-//! * **What is never drawn cannot be found**: a `<title>`, a hidden
-//!   preheader, a blocked image's `alt`, a list-marker image. Own-text
-//!   extraction (T115) should leave them out.
-//! * **The plain alternative can say something else**: reading the
-//!   `text/plain` part of a message the reader draws as HTML loses 13 more
-//!   sentences than reading the HTML.
-//! * **No sentence occurs twice in its own message** anywhere in the corpus,
-//!   so the tiebreak is measured on every body sent twice over: it picks the
-//!   right occurrence 1,939 times in 1,940 (text first) and 1,979 in 1,980
-//!   (what is drawn). The one miss is a line of emoji in `html-cjk-emoji`.
-//!
-//! # The locator T066 built (2026-09-27)
-//!
-//! `TextIndex::locate` is measured beside the plan, on the same excerpts. It
-//! treats any run of whitespace as any other on both sides, so it finds
-//! everything present at all: 98.2% (text first) and 99.5% (what is drawn)
-//! of the corpus as it is. Over every body twice over it chooses the copy
-//! the sentence was read from 1,918 times in 1,918 and 1,948 in 1,948.
-//! That is judged by which half of the drawn text it lands in, not by
-//! counting occurrences: folding drops the emoji line's variation
-//! selectors, so the count's offsets drift, and that is the plan's one
-//! "miss" above. Its floors are these numbers rounded down.
+//! POSTIO-MEASUREMENT: a measurement whose output a person reads; it runs on the nightly timer
+//! (`measurement::` in .config/nextest.toml), not the merge path.
 
-// The render suite's shared fonts and requests: this is a binary of its
-// own, so the nightly can run it apart (`POSTIO-MEASUREMENT`).
-#[path = "render_suite/support/mod.rs"]
-mod support;
+// Spike: can a sentence be found again in the rendered body from nothing but its excerpt? Measures
+// `TextIndex::locate` over the render corpus and fails if a rate falls below its floor.
+
+use crate::support;
 
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -86,42 +14,25 @@ use postio_model::{MessageBody, test_corpus};
 use postio_render::{RenderedDocument, TextIndex};
 use postio_ui::reader::document::{self, Rendering};
 
-/// A sentence the detector could store: its text, and where it starts.
 struct Excerpt {
     text: String,
-    /// In chars, into the source it was read from.
     offset: usize,
 }
 
-/// How an excerpt was found in the index, if it was.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum How {
-    /// By `TextIndex::find`, exactly as it was read: research R2's plan.
     AsRead,
-    /// Only once every run of whitespace in the excerpt was one space: work
-    /// a locator can do itself, with no change to the renderer.
     SpacesCollapsed,
-    /// Only with whitespace made alike on both sides: the index has a line
-    /// break where the excerpt has a space. Needs `find` itself to treat any
-    /// run of whitespace as any other.
     BothCollapsed,
-    /// Not at all: the drawn text does not say it.
     Absent,
 }
 
-/// Which occurrence the plan took.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Which {
-    /// There was only one.
     Only,
-    /// Several; the offset picked the right one.
     Right,
-    /// Several; the offset picked a wrong one.
     Wrong,
-    /// Several, but not as many as the source holds, so "right" has no
-    /// answer.
     Uncounted,
-    /// Found without ranges to choose between, or not found.
     Unresolved,
 }
 
@@ -131,7 +42,6 @@ fn located(how: How, which: Which, hows: &[How]) -> bool {
     hows.contains(&how) && matches!(which, Which::Only | Which::Right)
 }
 
-/// Both readings of a body's text, as the two sources above.
 fn sources(body: &MessageBody) -> [(&'static str, Option<String>); 2] {
     let text = body.text.clone().filter(|text| !text.trim().is_empty());
     let html = body
@@ -146,9 +56,6 @@ fn sources(body: &MessageBody) -> [(&'static str, Option<String>); 2] {
     .map(|(label, source)| (label, source.map(|source| source.replace("\r\n", "\n"))))
 }
 
-/// The sentences of `source` a detector could store: the message's own
-/// text, not quoted history or a signature, split at sentence ends and
-/// blank lines, and long enough to be a question or a request.
 fn excerpts(source: &str) -> Vec<Excerpt> {
     let mut out = Vec::new();
     let mut sentence = String::new();
@@ -167,7 +74,6 @@ fn excerpts(source: &str) -> Vec<Excerpt> {
     };
     for line in source.split_inclusive('\n') {
         let bare = line.trim_end_matches('\n');
-        // A signature ends the message's own text; a quote is not its own.
         if bare == "-- " || bare == "--" {
             break;
         }
@@ -196,7 +102,6 @@ fn excerpts(source: &str) -> Vec<Excerpt> {
     out
 }
 
-/// Case and diacritics folded, as `TextIndex::find` folds them.
 fn fold(text: &str) -> String {
     use unicode_normalization::UnicodeNormalization as _;
     use unicode_normalization::char::is_combining_mark;
@@ -206,13 +111,10 @@ fn fold(text: &str) -> String {
         .collect()
 }
 
-/// `text` with every run of whitespace one space.
 fn collapse(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// How many times the excerpt occurs in `source`, folded, and which of
-/// those it is: the last occurrence starting at or before its offset.
 fn ordinal_in_source(source: &str, excerpt: &Excerpt) -> (usize, usize) {
     let folded = fold(source);
     let needle = fold(&excerpt.text);
@@ -230,7 +132,6 @@ fn ordinal_in_source(source: &str, excerpt: &Excerpt) -> (usize, usize) {
     (count.max(1), ordinal)
 }
 
-/// The plan's tiebreak: the match nearest the excerpt's proportional place.
 fn nearest(matches: &[Range<usize>], index: &TextIndex, excerpt: &Excerpt, source: &str) -> usize {
     let want = excerpt.offset as f64 / source.chars().count().max(1) as f64;
     let index_len = index.text.chars().count().max(1) as f64;
@@ -274,13 +175,6 @@ fn locate(index: &TextIndex, source: &str, excerpt: &Excerpt) -> Outcome {
     (how, Which::Unresolved)
 }
 
-/// Where the locator T066 built puts the excerpt: `TextIndex::locate`, the
-/// real thing, judged beside the plan it was built from.
-///
-/// It treats any run of whitespace as any other on both sides, so it can
-/// find what the plan found only with `How::BothCollapsed`. One call, one
-/// fold of the document, so measuring it keeps this test inside the nightly
-/// profile's budget.
 fn by_the_locator(index: &TextIndex, source: &str, excerpt: &Excerpt) -> Option<Range<usize>> {
     index.locate(postio_render::Excerpt {
         text: &excerpt.text,
@@ -289,13 +183,9 @@ fn by_the_locator(index: &TextIndex, source: &str, excerpt: &Excerpt) -> Option<
     })
 }
 
-/// Every outcome for one source, and the misses to print.
 #[derive(Default)]
 struct Tally {
     outcomes: BTreeMap<Outcome, usize>,
-    /// What the locator T066 built made of the same excerpts: `Only` when
-    /// it found the sentence, `Right` or `Wrong` for the occurrence it chose
-    /// in a body said twice, `Unresolved` when it found nothing.
     locator: BTreeMap<Which, usize>,
     misses: Vec<String>,
 }
@@ -324,7 +214,6 @@ impl Tally {
         self.outcomes.values().sum()
     }
 
-    /// The share located with `hows` allowed, the tiebreak getting it right.
     fn rate(&self, hows: &[How]) -> f64 {
         let located: usize = self
             .outcomes
@@ -335,8 +224,6 @@ impl Tally {
         located as f64 / self.total().max(1) as f64
     }
 
-    /// How often the tiebreak picked the right occurrence, of the times it
-    /// had to choose.
     fn tiebreak(&self) -> (usize, usize) {
         let count = |wanted: Which| -> usize {
             self.outcomes
@@ -349,8 +236,6 @@ impl Tally {
         (right, right + count(Which::Wrong))
     }
 
-    /// The share the locator T066 built found, at the right occurrence
-    /// where there was more than one.
     fn by_the_locator(&self) -> f64 {
         let located: usize = [Which::Only, Which::Right]
             .iter()
@@ -359,15 +244,12 @@ impl Tally {
         located as f64 / self.total().max(1) as f64
     }
 
-    /// How often the locator picked the right occurrence, of the times it
-    /// had to choose.
     fn locator_tiebreak(&self) -> (usize, usize) {
         let count = |wanted: Which| self.locator.get(&wanted).copied().unwrap_or(0);
         let right = count(Which::Right);
         (right, right + count(Which::Wrong))
     }
 
-    /// The share present at all, whitespace aside.
     fn present(&self) -> f64 {
         let present: usize = self
             .outcomes
@@ -400,13 +282,9 @@ impl Tally {
     }
 }
 
-/// `body` drawn the way the reader draws a message: its original rendering,
-/// remote images blocked, light.
 fn render(body: &MessageBody) -> Option<RenderedDocument> {
     let rendered = document::body_html_in(body, RemoteImages::Blocked, Rendering::Original, None);
     if rendered.over_cap.is_some() {
-        // Drawn from its plain part instead: not the text the HTML source
-        // holds, so not a measurement of finding.
         return None;
     }
     let html = document::document_for(
@@ -436,8 +314,6 @@ fn a_sentence_is_found_again_from_its_excerpt() {
             let Some(source) = source else { continue };
             for excerpt in excerpts(&source) {
                 let outcome = locate(&document.text, &source, &excerpt);
-                // No sentence occurs twice in its own message, so finding
-                // it is finding it.
                 let locator = match by_the_locator(&document.text, &source, &excerpt) {
                     Some(_) => Which::Only,
                     None => Which::Unresolved,
@@ -458,14 +334,8 @@ fn a_sentence_is_found_again_from_its_excerpt() {
         }
     }
 
-    // The floors are what the spike measured, rounded down, for each source
-    // on its own: the locator T066 builds must do at least this well, and a
-    // renderer change that loses text from the index shows here first. A
-    // new fixture moves the rates, so the floors are measured again when
-    // the corpus grows -- the eight invitations did, and their plain parts
-    // hold text the HTML never draws. So did the hard-wrapped header
-    // fixtures (#1948): their sentences cross a newline, which `find` keeps
-    // as typed, so they count only once whitespace is collapsed.
+    // The floors are what the spike measured, rounded down: a renderer change that loses text from
+    // the index shows here first, and a new fixture moves the rates.
     for (label, tally) in &tallies {
         let [as_read, collapsed, present, located] = match *label {
             "text first" => [0.89, 0.95, 0.96, 0.96],
@@ -495,8 +365,6 @@ fn a_sentence_is_found_again_from_its_excerpt() {
             "{label}: {:.3} present at all, below the spike's {present}",
             tally.present()
         );
-        // The locator itself (T066) finds everything present at all, so its
-        // floor is the same as "present" for each source.
         assert!(
             tally.by_the_locator() >= located,
             "{label}: the locator found {:.3}, below its measured {located}",
@@ -507,9 +375,8 @@ fn a_sentence_is_found_again_from_its_excerpt() {
 
 #[test]
 fn a_repeated_sentence_is_told_apart_by_where_it_sits() {
-    // No sentence in the corpus occurs twice in its own message, so the
-    // test above never reaches the tiebreak. Every body sent twice over, in
-    // one message, puts every sentence in it twice.
+    // No sentence occurs twice in its own message, so the test above never reaches the tiebreak:
+    // sending every body twice puts every sentence in twice.
     let mut tallies = [
         ("text first", Tally::default()),
         ("what is drawn", Tally::default()),
@@ -532,9 +399,6 @@ fn a_repeated_sentence_is_told_apart_by_where_it_sits() {
                 (source.chars().count(), document.text.text.chars().count());
             for excerpt in excerpts(&source) {
                 let outcome = locate(&document.text, &source, &excerpt);
-                // Both texts are one body and then the same body again, so
-                // the right occurrence is in the copy the excerpt was read
-                // from: the same half of the drawn text.
                 let locator = match by_the_locator(&document.text, &source, &excerpt) {
                     Some(found)
                         if (found.start * 2 < drawn_len) == (excerpt.offset * 2 < source_len) =>

@@ -4,16 +4,8 @@ import Testing
 
 @testable import PostioKit
 
-/// The message window's thread bar and walk (spec 013 T047, US3).
-///
-/// The walk is the controller's, so these drive the real one over the
-/// threads demo store: the keys go to `session.key`, what comes back is
-/// what the window is told, and the window's model is asked which chip is
-/// ringed. A fake source could only restate what the test put in it.
 @MainActor
 struct ThreadBarTests {
-    /// Everything the session says, collected as it arrives, so a test can
-    /// wait for a fact without owning the event loop.
     final class Heard: @unchecked Sendable {
         private let lock = NSLock()
         private var events: [UiEvent] = []
@@ -29,7 +21,6 @@ struct ThreadBarTests {
 
         deinit { task?.cancel() }
 
-        /// Take what has arrived since the last call.
         func drain() -> [UiEvent] {
             lock.withLock {
                 defer { events.removeAll() }
@@ -38,14 +29,11 @@ struct ThreadBarTests {
         }
     }
 
-    /// A window over the threads store, open on Harbor's row, with every
-    /// event the controller says fed to its model as the app does.
     @MainActor final class Window {
         let session: PostioSession
         let model: MessageWindowModel
         let heard: Heard
         var rooms: [UInt32] = []
-        /// The menu's and the outline's models, fed as the app feeds them.
         let menu: ThreadMenuModel
         let outline: ThreadOutlineModel
 
@@ -57,8 +45,6 @@ struct ThreadBarTests {
             outline = ThreadOutlineModel(engine: session)
         }
 
-        /// Wait until `done`, feeding the model as events arrive. A poll in
-        /// short steps: the wait is for the engine's own turns, not a timer.
         @MainActor
         func until(_ what: String, _ done: () -> Bool) async throws {
             for _ in 0..<500 {
@@ -86,7 +72,6 @@ struct ThreadBarTests {
             }
         }
 
-        /// The 1-based number of the ringed chip.
         var ringed: Int? {
             model.bar?.chips.compactMap { chip -> Int? in
                 if case let .message(index, _, _, true, _, _) = chip { return Int(index) + 1 }
@@ -102,7 +87,6 @@ struct ThreadBarTests {
             }
         }
 
-        /// Open Harbor's row in the window.
         @MainActor
         func openHarbor() async throws {
             session.openFocus(.inbox)
@@ -129,8 +113,7 @@ struct ThreadBarTests {
         #expect(window.model.bar?.chips.count == 6)
 
         window.press("[")
-        // The ring follows the bar, the kicker and the reply line the
-        // message read whole: wait for both, which land a turn apart.
+        // The bar, kicker and reply line land a turn apart: wait for both.
         try await window.until("`[` rings the message before and shows it") {
             window.ringed == opened - 1 && window.model.kicker.hasPrefix("Message \(opened - 1) of 6")
                 && window.model.replyTo != nil
@@ -143,8 +126,7 @@ struct ThreadBarTests {
         try await window.until("`[` again") { window.ringed == opened - 2 }
 
         window.press("}")
-        // The ring follows the bar, the banner the message read whole: wait
-        // for both, which land a turn apart.
+        // The ring and the banner land a turn apart: wait for both.
         try await window.until("`}` rings the latest and its banner goes") {
             window.ringed == 6 && window.model.olderBanner == nil
         }
@@ -198,7 +180,6 @@ struct ThreadBarTests {
     }
 
     @Test func theBarRoomIsWhatTheWidthLeavesAfterTheLabelAndTheButton() {
-        // 760 - 2*16 edges - 66 label - 8 - 88 button - 8 = 558, 76 a chip.
         #expect(ThreadBarMetrics.room(window: 760) == 7)
         #expect(ThreadBarMetrics.room(window: 100) == 1, "never none: the message shown draws")
         #expect(ThreadBarMetrics.room(window: 1000) > ThreadBarMetrics.room(window: 800))

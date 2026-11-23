@@ -1,15 +1,7 @@
-//! The review key: which tree a set of runs and a review belong to
-//! (research R13).
-//!
-//! A commit sha would be the obvious key and is the wrong one:
-//! `issue-land.sh` rebases on every attempt, so the sha of a reviewed branch
-//! changes before it lands even when nothing the review looked at did. The
-//! key is instead built from the git *tree* ids of what a review depends on
-//! -- the app's crates and the catalogue -- so a rebase that does not touch
-//! them keeps it, and one that does changes it.
+//! The review key: which tree a set of runs and a review belong to. Built from git tree ids, not a
+//! commit sha, because `issue-land.sh` rebases on every attempt and changes the sha even when
+//! nothing reviewed did.
 
-/// The key for these tree ids: blake3 over them in sorted order, so the
-/// order a caller lists them in does not matter.
 pub fn key(trees: &[&str]) -> String {
     let mut sorted = trees.to_vec();
     sorted.sort_unstable();
@@ -43,8 +35,6 @@ mod tests {
         let k = key(&["aaa", "bbb"]);
         assert_eq!(k.len(), 64, "{k}");
         assert!(k.chars().all(|c| c.is_ascii_hexdigit()), "{k}");
-        // "aa"+"abbb" and "aaa"+"bbb" join to the same text; the key must
-        // not confuse them.
         assert_ne!(key(&["aa", "abbb"]), key(&["aaa", "bbb"]));
     }
 }

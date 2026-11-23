@@ -1,35 +1,17 @@
 import Foundation
 import PostioFFI
 
-/// How an account reads in the settings pane.
-///
-/// Small on purpose. Everything here is a *presentation* decision that the
-/// boundary did not already make: joining the facts, choosing the tag, and
-/// what an empty list says. The facts themselves are worded on the Rust side
-/// (`postio_ui::account`), because two panes assembling their own would be
-/// two descriptions of one account.
 public enum AccountRow {
-    /// The `·`-joined line under the address.
-    ///
-    /// `mailboxes` adds what the canvas draws and the boundary cannot say
-    /// cheaply: how much mail this account has. It is summed from the folder
-    /// counts the window already holds rather than counted again — the
-    /// sidebar has them, they are cached on the mailbox rows, and asking the
-    /// store for a second opinion on every settings open would be a scan for
-    /// a line nobody is waiting on.
-    ///
-    /// `weight` is what the mail takes on disk, worded by
-    /// `postio_ui::format::mail_weight` so both frontends describe a store
-    /// the same way. `nil` when there is nothing to weigh — a fresh account
-    /// says nothing rather than `0 B`, which reads as a failure.
+    /// Summed from the folder counts the window already holds rather than asking the store for a
+    /// second opinion.
+    /// A `nil` weight says nothing rather than `0 B`, which reads as a failure.
     public static func line(
         _ account: AccountFfi,
         mailboxes: [MailboxFfi] = [],
         weight: String? = nil
     ) -> String {
         var facts = account.facts
-        // Folders only: Flagged and Snoozed are views over mail already
-        // counted where it lives, and adding them made 63 messages "72".
+        // Folders only: Flagged and Snoozed are views over mail already counted where it lives.
         let messages = mailboxes
             .filter { $0.account == account.id && !$0.isView }
             .reduce(0) { $0 + Int($1.total) }
@@ -42,58 +24,33 @@ public enum AccountRow {
         return facts.joined(separator: " · ")
     }
 
-    /// `4291` as `4,291` — a five-digit number is read wrong without it.
     private static func formatted(_ count: Int) -> String {
         count.formatted(.number.grouping(.automatic))
     }
 
-    /// The tag beside the address, or `nil` when there is nothing to say.
-    ///
-    /// "default" rather than "primary": it says what the marker *does* — new
-    /// messages come from this account — instead of asserting that this one
-    /// matters more, which is #960's fence.
+    /// "default" rather than "primary": it says what the marker does without asserting this account
+    /// matters more (#960).
     public static func tag(_ account: AccountFfi) -> String? {
         account.isDefault ? "default" : nil
     }
 
-    /// Whether this account needs somebody to do something about it.
-    ///
-    /// An expired token is the case the canvas draws: the account is there,
-    /// the mail is there, and nothing will arrive until somebody signs in
-    /// again.
-    ///
-    /// **The boundary's answer, not a word scanned out of the fact line.**
-    /// This used to look for "expired" or "reconnect" in `facts` — and
-    /// `facts` came from `postio_ui::account::badge`, which can only ever
-    /// return `<backend> · <auth>`. No code path put either word there, so
-    /// the warning mark and the Reconnect button beside it were dead code,
-    /// and the test that covered them handed the fixture a fact by hand and
-    /// passed over an application where the state could not occur (#1584).
+    /// The boundary's answer, not a word scanned out of the fact line: that scan never matched, so
+    /// the warning and Reconnect button were dead code (#1584).
     public static func needsAttention(_ account: AccountFfi) -> Bool {
         account.needsAttention
     }
 
-    /// What the pane says when there are no accounts.
-    ///
-    /// Canvas 3d: never a shrug — and now it can point at the button that
-    /// does it, which is what changed with #1279.
     public static let emptyMessage =
         "No accounts yet. Add one with the + button below."
 
-    /// Whether a removal is safe to offer for this account.
-    ///
-    /// Always, deliberately: the *confirmation* is what makes it safe, not a
-    /// disabled button. What must never happen is a removal that leaves the
-    /// credential behind, and that is `postio_session::checkup`'s job.
+    /// Always: the confirmation makes removal safe, not a disabled button. Leaving no credential
+    /// behind is `postio_session::checkup`'s job.
     public static func canRemove(_ account: AccountFfi) -> Bool {
         account.id > 0
     }
 }
 
 extension MailboxFfi {
-    /// Whether this row is a query rather than a real folder.
-    ///
-    /// A view has nothing to `SELECT`, nothing to sync, and no name of its
-    /// own — and counting one counts its mail twice.
+    /// A view has nothing to `SELECT` or sync, and counting one counts its mail twice.
     public var isView: Bool { id == 0 }
 }

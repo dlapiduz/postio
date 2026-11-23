@@ -1,29 +1,7 @@
-//! Reader view: what bulk mail looks like when the sender stops designing it.
-//!
-//! Marketing and transactional HTML renders as a wall of blue underlined
-//! links against a dark theme, because the sender laid it out for a white
-//! page in nested tables with their own colours, fonts and widths. Ordinary
-//! correspondence now keeps that styling ([`crate::sanitize`], spec FR-019),
-//! which is what makes a newsletter arrive in the three columns it was
-//! written in — and which is exactly why bulk mail still needs somewhere to
-//! opt out to. What reader view answers is not "the styling is gone" but
-//! "this *layout* is not one you want": tables that were columns, spacer
-//! images that were gutters, and thirty links where a person needed one.
-//!
-//! Reader view goes further and reduces the markup to the handful of tags
-//! that carry meaning rather than arrangement. The sender's original stays
-//! one keystroke away, rendered untouched on a sheet of its own — never
-//! repainted in Postio's palette, which is how other clients turn a
-//! white-background logo into an unreadable smear.
-//!
-//! # Everything here is a rule over a string
-//!
-//! No toolkit, no document template, no policy about what the reader *does*
-//! with the answer. That belongs to `postio_ui::reader::document`, which is
-//! also where the plain-part preference lives — it needs the whole
-//! [`MessageBody`], and this module only ever sees markup.
-//!
-//! [`MessageBody`]: postio_model::message::MessageBody
+//! Reader view: reduces bulk mail to the tags that carry meaning, since sanitised newsletters keep
+//! their sender's nested-table layout and colours. The original stays one keystroke away.
+//! Every rule here is over a string; what the reader does with the answer lives in
+//! `postio_ui::reader::document`.
 
 use std::collections::HashSet;
 
@@ -32,12 +10,8 @@ use html5ever::parse_document;
 use html5ever::tendril::TendrilSink;
 use markup5ever_rcdom::{Handle, NodeData, RcDom};
 
-/// The tags reader view keeps.
-///
-/// Meaning, not arrangement: emphasis, code, lists, quotes, paragraphs,
-/// breaks and links. Everything else is unwrapped — its children survive,
-/// its own box does not — so a sentence inside six nested `<td>`s comes out
-/// as a sentence rather than disappearing with the table.
+/// Meaning, not arrangement. Unkept elements are unwrapped, so a sentence inside nested `<td>`s
+/// survives.
 const KEPT: [&str; 11] = [
     "b",
     "strong",
@@ -52,61 +26,30 @@ const KEPT: [&str; 11] = [
     "p",
 ];
 
-/// The one void element worth keeping: a line break carries meaning that
-/// nothing else does.
 const KEPT_VOID: [&str; 1] = ["br"];
 
-/// The attributes that survive on a kept tag.
-///
-/// `href` and nothing else. Not `style`, not `width`, not `bgcolor`, not
-/// `class` — a sender's class names mean nothing here and a sender's
-/// `class="dark"` meeting Postio's own stylesheet is exactly the collision
-/// reader view exists to end.
-///
-/// Dropping `style` here **is the control, not a backstop.** It used to be
-/// defence in depth, because [`crate::sanitize`] stripped every `style`
-/// attribute before this ran. It no longer does (spec FR-019), so this list
-/// is now the only thing standing between a sender's palette and reader
-/// view — which is the whole of what reader view promises.
+/// `href` only. Dropping `style` is the control, not a backstop: `sanitize` keeps a sender's
+/// `style`, so this list alone keeps a sender's palette out of reader view.
 const KEPT_ATTRIBUTES: [&str; 1] = ["href"];
 
-/// What reduction produced.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Reduced {
-    /// The reduced markup.
     pub html: String,
-    /// How many links survived — the calls to action.
     pub links_kept: usize,
-    /// How many were collapsed away.
-    ///
-    /// The canvas draws this as `1 link kept of 23`, which is
-    /// `links_kept` of `links_kept + links_dropped`. A number, because
-    /// "some links were hidden" is the kind of sentence that makes people
-    /// distrust a reader.
     pub links_dropped: usize,
 }
 
 impl Reduced {
-    /// Every link the message had, kept or not.
     pub fn links_total(&self) -> usize {
         self.links_kept + self.links_dropped
     }
 }
 
-/// How many links reader view keeps.
-///
-/// One. A marketing message has one thing it wants you to do and twenty-two
-/// ways to say it — the header logo, the footer, the social icons, the
-/// unsubscribe — and keeping "the ones that look important" is a judgement
-/// this cannot make. Keeping exactly the first is a rule a person can learn:
-/// the primary call to action is what a sender puts first in the body.
+/// One: the primary call to action is what a sender puts first, a rule a person can learn; judging
+/// which links are important is not possible here.
 pub const LINKS_KEPT: usize = 1;
 
-/// Reduce sender markup to what carries meaning.
-///
-/// Expects markup that has already been through [`crate::sanitize`] — this
-/// is a readability pass, not a security one, and running it on raw sender
-/// HTML would be relying on it for something it does not promise.
+/// Expects sanitized markup: this is a readability pass, not a security one.
 pub fn reduce(html: &str) -> Reduced {
     let dom = parse_document(RcDom::default(), ParseOpts::default()).one(html);
     let kept: HashSet<&str> = KEPT.into_iter().collect();
@@ -131,26 +74,15 @@ pub fn reduce(html: &str) -> Reduced {
     }
 }
 
-/// How many anchors have survived so far, and how many have not.
-///
-/// Threaded through the walk rather than counted afterwards, because "which
-/// link is the first one" is a fact about document order and the walk is
-/// what knows it.
+/// Threaded through the walk because "the first link" is a fact about document order.
 #[derive(Default)]
 struct Links {
     kept: usize,
     dropped: usize,
 }
 
-/// Emit `node` and its children into `out`, keeping only what carries
-/// meaning.
-///
-/// An unkept element is **unwrapped, not deleted**: its children are still
-/// visited, so a sentence inside six nested `<td>`s survives its tables. The
-/// exception is a `<script>`/`<style>` subtree, which is content nobody is
-/// meant to read — the sanitizer removes those already, and doing it here
-/// too costs one comparison and means this function is not wrong when
-/// somebody calls it on raw markup.
+/// An unkept element is unwrapped, not deleted. `<script>`/`<style>` subtrees are dropped here too,
+/// so this is not wrong on raw markup.
 fn walk(
     node: &Handle,
     kept: &HashSet<&str>,
@@ -173,10 +105,8 @@ fn walk(
                 out.push_str("<br>");
                 return;
             }
-            // An anchor past the budget keeps its words and loses its href:
-            // the text was a sentence before it was a link, and dropping it
-            // whole is what makes a reduced newsletter read as a list of
-            // gaps.
+            // An anchor past the budget keeps its words: dropping it whole makes a newsletter read
+            // as a list of gaps.
             let anchor = tag == "a";
             let keep_anchor = anchor && links.kept < LINKS_KEPT;
             if anchor && !keep_anchor {
@@ -216,13 +146,8 @@ fn walk(
     }
 }
 
-/// Text into markup, with the four characters that would otherwise be
-/// markup.
-///
-/// Written out rather than reached for from a crate: this is the *output*
-/// side of a reduction whose whole point is that nothing a sender wrote is
-/// interpreted, and an escape that is one dependency away from being wrong
-/// is worth having in front of you.
+/// Written out rather than taken from a crate: this is the output side of a reduction that must
+/// interpret nothing a sender wrote.
 fn escape_into(text: &str, out: &mut String) {
     for character in text.chars() {
         match character {
@@ -235,81 +160,28 @@ fn escape_into(text: &str, out: &mut String) {
     }
 }
 
-/// Whether a `text/plain` part is the sender's markup flattened, rather than
-/// prose they wrote.
-///
-/// Reader view prefers the plain part because it is meant to be the clean
-/// alternative the sender already reduced: prose, with the template gone.
-/// For a great many senders it is nothing of the kind -- it is the HTML run
-/// through a converter, and markdown is what those converters emit. Rendering
-/// it verbatim puts the syntax on screen:
-///
-/// ```text
-/// Assignment.[Bridges Practice #1](https://app.example.test/a/849) 3:59 pm
-/// ```
-///
-/// Seen against a real account, a whole message of it. The HTML beside it had
-/// real headings and real links, and `reduce` exists precisely to keep those
-/// and drop the layout -- so where the plain part is flattened markup, the
-/// markup itself is the better source and reader view should use it.
-///
-/// Matched on the link form alone, and deliberately nothing else. `*` and `-`
-/// start ordinary sentences and `#` starts a comment in half the mail a
-/// developer receives; `](` followed by a scheme does not occur in prose that
-/// was typed. Narrow on purpose: a false positive here costs the facts block
-/// on a message that had one, so this must only fire on text that is
-/// unambiguously generated.
+/// A plain part that is the sender's HTML flattened to markdown. Matches only `](http` links:
+/// a false positive costs the facts block, so it fires on unambiguously generated text.
 pub fn reads_as_flattened_markup(plain: &str) -> bool {
     plain.contains("](http://") || plain.contains("](https://")
 }
 
-/// Whether a body reads like bulk mail, and so should open in reader view.
-///
-/// A heuristic, and the honest word for it. Three signals, all of which are
-/// about *arrangement* rather than content, because that is the difference
-/// between a newsletter and a reply:
-///
-/// * **nested layout tables** — a person writing mail does not put a table
-///   inside a table; a template does it to make columns.
-/// * **many links** — a reply has a few, a campaign has dozens.
-///
-/// **Not styling**, though that was the obvious third one and this function
-/// counted it first. Counting it made the heuristic *look* careful — three
-/// signals, two required — while quietly needing both of the other two, so
-/// the corpus's own newsletter (3 tables, 13 cells, 2 links) was not
-/// recognised as bulk. A signal that is always absent is worse than no
-/// signal, because it raises the bar for everything else.
-///
-/// The reason it was always absent has since gone: [`crate::sanitize`] used
-/// to strip every `style` attribute, and now keeps the ones a sender may set
-/// (spec FR-019). So a styling signal *could* be counted here today. It still
-/// is not, because nothing has shown it separates bulk from correspondence
-/// better than the two above — inline styling is how ordinary mail from a
-/// rich-text composer looks too. Reviving it is a measurement, not an
-/// oversight to correct on sight.
-///
-/// Deliberately not "does it have a `List-Unsubscribe` header" either: that
-/// is a better signal and it is not available here, since this module only
-/// ever sees markup. Whoever has the headers should prefer them and use this
-/// as the fallback.
+/// A heuristic over arrangement, not content: nested layout tables, or many links. Either alone is
+/// enough, since each is unusual in correspondence and being wrong is cheap (`View original` is one
+/// keystroke away).
+/// Styling is not counted: it was always absent when this was written, and inline styling is how
+/// rich-text composers look too; reviving it is a measurement.
+/// A `List-Unsubscribe` header is a better signal but not visible here; callers with headers should
+/// prefer it.
 pub fn reads_as_bulk(html: &str) -> bool {
     let signals = count_signals(html);
-    // Either signal alone is enough, because each one alone is already
-    // unusual in correspondence. A quoted table is one table; a template
-    // nests them to make columns. A reply has a handful of links; a campaign
-    // has dozens. And the cost of being wrong is small and visible in both
-    // directions: the notice says reader view is on and `View original` is
-    // one keystroke away.
     signals.nested_tables > 0 || signals.links >= BULK_LINKS
 }
 
-/// How many links a message needs before that alone looks like a campaign.
 const BULK_LINKS: usize = 10;
 
-/// The arrangement signals, counted in one pass.
 #[derive(Default, Debug)]
 struct Signals {
-    /// Tables inside tables. A person writing mail does not nest tables.
     nested_tables: usize,
     links: usize,
 }
@@ -340,116 +212,45 @@ fn count_into(node: &Handle, tables: usize, signals: &mut Signals) {
     }
 }
 
-/// One `label: value` line lifted out of a plain part.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Fact {
-    /// The left column: short, and written by the sender as a label.
     pub label: String,
-    /// The right column: the fact itself.
     pub value: String,
 }
 
-/// The most rows a block may have.
-///
-/// The canvas draws three. Four is the ceiling because a block longer than
-/// the message it summarises is not a summary — and a template that emits
-/// twenty `label: value` lines is a table of contents, not a set of facts.
+/// Four, because a block longer than the message it summarises is not a summary.
 pub const FACTS_KEPT: usize = 4;
 
-/// The fewest lines that make a block.
-///
-/// Repetition is most of the signal. One line of `label: value` is a
-/// sentence with a colon in it far more often than it is a fact, and a
-/// one-row table above somebody's mail looks fabricated — which is exactly
-/// the failure this feature has to avoid.
+/// One `label: value` line is a sentence with a colon far more often than a fact; repetition is the
+/// signal.
 pub const FACTS_MIN: usize = 2;
 
-/// The longest a label may be, in characters.
-///
-/// A label is a word or two a sender put in front of a fact. Past this it is
-/// a clause, and a clause before a colon is prose.
+/// Past this it is a clause, and a clause before a colon is prose.
 const LABEL_CHARS: usize = 24;
 
-/// The most words a label may have, for the same reason.
 const LABEL_WORDS: usize = 3;
 
-/// Labels that mean this run is mail plumbing rather than facts.
-///
-/// A quoted or forwarded header block has exactly the shape this looks for —
-/// short labels, repeated, one per line — and drawing it as a summary would
-/// put `From`, `To` and `Subject` in a table above a message that already
-/// shows all three in its own header. Only rejected when the *whole* run is
-/// header names: a receipt whose first row happens to be `Date` is still a
-/// receipt.
+/// A quoted or forwarded header block has this shape; it is rejected only when the whole run is
+/// header names.
 const HEADER_LABELS: &[&str] = &[
     "from", "to", "cc", "bcc", "subject", "date", "sent", "reply-to",
 ];
 
-/// Value prefixes that mean the row is a link, not a fact.
-///
-/// A newsletter footer is `Read issue 214: https://...` over
-/// `Unsubscribe: https://...` — two short labels, adjacent, both with a
-/// value. Every rule above passes it, and the block reader view would draw
-/// is the sender's footer restated as a summary.
-///
-/// A link is not a fact, and reader view already has somewhere to put one:
-/// reduction keeps the primary call to action and collapses the rest behind
-/// a count. Lifting a URL up here would say the same thing twice, in the one
-/// place on the page that is supposed to be the facts.
+/// A link is not a fact: reduction already keeps the primary call to action, so lifting a URL here
+/// would say it twice.
 const LINK_PREFIXES: &[&str] = &["http://", "https://", "mailto:", "www."];
 
-/// # Finding the block
-///
-/// Transactional mail buries its facts in a paragraph, and the canvas draws
-/// them as a small table above the body copy: what the tracking number is,
-/// what shipped, where it went. This is the parser that finds them.
-///
-/// # What makes a block
-///
-/// **Repetition, mostly.** A single `label: value` line is a sentence with a
-/// colon in it far more often than it is a fact — so the unit here is a
-/// *contiguous run* of at least [`FACTS_MIN`] lines that all have the shape,
-/// broken by any line that does not (a blank line included). The first run
-/// that qualifies wins; a message with two of them is being over-read
-/// already, and taking the first is a rule a person can predict.
-///
-/// The shape itself is deliberately narrow. A label is short
-/// ([`LABEL_CHARS`], [`LABEL_WORDS`]) and made of letters, digits, spaces and
-/// hyphens — no sentence punctuation, which is what tells `ship to` from
-/// `Please note the following, which matters`. Both sides must be non-empty.
-/// A run whose labels are *all* message-header names is thrown out; see
-/// [`HEADER_LABELS`].
-///
-/// Getting this wrong puts a fabricated-looking table above somebody's mail,
-/// so every rule here refuses rather than guesses, and the result is capped
-/// at [`FACTS_KEPT`].
-///
-/// # Plain text only
-///
-/// The argument is the sender's own plain part — the version they wrote for
-/// reading. Nothing is lifted out of HTML: markup that *looks* like a table
-/// is a layout decision, and reader view's whole premise is that a sender's
-/// layout is not to be trusted.
-/// A plain part with its facts block taken out of it.
+/// A plain part with its facts block taken out. Facts come only from plain text, since markup that
+/// looks like a table is layout; the first contiguous run of `FACTS_MIN` or more `label: value`
+/// lines wins, capped at `FACTS_KEPT`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Lifted {
-    /// The rows, for drawing above the body copy.
     pub rows: Vec<Fact>,
-    /// What is left to read, with the lifted lines gone and the blank line
-    /// they left behind collapsed.
     pub body: String,
 }
 
-/// The facts block, and the prose that remains once it is lifted out.
-///
-/// The rows have to *leave* the body copy, or the reader shows the same three
-/// lines twice — once as the block and once in the paragraph underneath,
-/// which looks like a bug rather than a summary.
-///
-/// Only the lines that actually became rows are removed. A run longer than
-/// [`FACTS_KEPT`] keeps its remainder in the body: the block is the first
-/// four facts, and the rest are still there to read. Nothing a sender wrote
-/// is dropped without being shown somewhere.
+/// The rows leave the body copy, or the reader shows them twice. Only lines that became rows are
+/// removed: a run past `FACTS_KEPT` keeps its remainder in the body.
 pub fn lift(plain: &str) -> Lifted {
     let lines: Vec<&str> = plain.lines().collect();
     let mut run: Vec<Fact> = Vec::new();
@@ -463,8 +264,6 @@ pub fn lift(plain: &str) -> Lifted {
                 }
                 run.push(fact);
             }
-            // Any line that is not a row ends the run, blank or not: the
-            // block the canvas draws is a block on the page too.
             None => {
                 if let Some(block) = block(&mut run) {
                     found = Some((start, block));
@@ -496,10 +295,6 @@ pub fn lift(plain: &str) -> Lifted {
     }
 }
 
-/// Collapse the hole the lifted lines left.
-///
-/// A block with a blank line on each side leaves two of them behind, and a
-/// block at the top leaves the body starting on one.
 fn close_the_gap(body: &str) -> String {
     let mut out = body.trim_start_matches('\n').to_owned();
     while out.contains("\n\n\n") {
@@ -508,9 +303,6 @@ fn close_the_gap(body: &str) -> String {
     out
 }
 
-/// A finished run, if it was long enough and was not a header block.
-///
-/// Clears `run` either way, so the caller can keep walking.
 fn block(run: &mut Vec<Fact>) -> Option<Vec<Fact>> {
     let mut found = std::mem::take(run);
     if found.len() < FACTS_MIN || found.iter().all(is_header_label) {
@@ -524,7 +316,6 @@ fn is_header_label(fact: &Fact) -> bool {
     HEADER_LABELS.contains(&fact.label.to_ascii_lowercase().as_str())
 }
 
-/// One line, if it has the shape.
 fn row(line: &str) -> Option<Fact> {
     let (label, value) = line.trim().split_once(':')?;
     let label = label.trim();
@@ -532,20 +323,8 @@ fn row(line: &str) -> Option<Fact> {
     if label.is_empty() || value.is_empty() {
         return None;
     }
-    // **A CSS declaration is not a fact.** A sender whose plain-text
-    // alternative was generated by stripping their own HTML sweeps the
-    // `<style>` block up with it, and its declarations are `name: value`
-    // lines with short, hyphenated, punctuation-free names -- which is
-    // exactly what a fact looks like to every test below. A real newsletter
-    // opened with
-    //
-    //     text-indent   -1em; } a { border: none !important; } li {
-    //
-    // drawn as the first thing in the message, in the facts block reader view
-    // reserves for what matters most (#1432).
-    //
-    // Braces are the tell and they are decisive: no fact anyone would want
-    // lifted contains one, and every rule that leaks this way does.
+    // A CSS declaration is not a fact: a plain part made by stripping HTML keeps `<style>` text as
+    // `name: value` lines (#1432). Braces are decisive.
     if value.contains('{') || value.contains('}') || label.contains('{') {
         return None;
     }
@@ -559,8 +338,6 @@ fn row(line: &str) -> Option<Fact> {
     if label.chars().count() > LABEL_CHARS || label.split_whitespace().count() > LABEL_WORDS {
         return None;
     }
-    // No sentence punctuation, which is the whole test: a label is a name,
-    // and a name does not contain a full stop or a comma.
     if !label
         .chars()
         .all(|c| c.is_alphanumeric() || c == ' ' || c == '-')
@@ -579,7 +356,6 @@ mod tests {
 
     #[test]
     fn a_sentence_inside_six_nested_tables_comes_out_as_a_sentence() {
-        // The whole point. The tables were columns; the words are the mail.
         let html = "<table><tr><td><table><tr><td><p>Your package is out \
                     for delivery.</p></td></tr></table></td></tr></table>";
         let reduced = reduce(html);
@@ -613,10 +389,7 @@ mod tests {
 
     #[test]
     fn sender_styling_does_not_survive_even_one_attribute() {
-        // Not defence in depth any more: the sanitizer keeps a sender's
-        // `style` now (spec FR-019), so this is the assertion that reader
-        // view still means what it says. A sender's `bgcolor` on a kept tag
-        // would likewise be a sender deciding what colour Postio's reader is.
+        // `sanitize` keeps a sender's `style`, so this asserts reader view still drops it.
         let html = r##"<p style="color:#f0f" bgcolor="#000" width="600" class="hero">text</p>"##;
         let reduced = reduce(html);
         assert!(reduced.html.contains("text"));
@@ -631,8 +404,6 @@ mod tests {
 
     #[test]
     fn the_first_link_is_kept_and_the_rest_are_counted() {
-        // A campaign has one thing it wants you to do and twenty-two ways to
-        // say it. `1 link kept of 23` is the canvas's own wording.
         let mut html =
             String::from(r#"<p><a href="https://example.com/track">Track delivery</a></p>"#);
         for index in 0..22 {
@@ -652,12 +423,8 @@ mod tests {
 
     #[test]
     fn a_collapsed_link_keeps_its_words_and_loses_its_href() {
-        // The text was a sentence before it was a link. Dropping the anchor
-        // and keeping the words is what stops a reduced newsletter reading
-        // like a list of gaps.
-        //
-        // Document order decides which one survives — the first — so the
-        // *second* link here is the collapsed one.
+        // Document order decides which link survives: the first, so the second is the collapsed
+        // one.
         let html = r#"<p><a href="https://example.com/track">Track delivery</a></p>
                       <p>Read our <a href="https://example.com/policy">privacy notice</a> today</p>"#;
         let reduced = reduce(html);
@@ -701,11 +468,8 @@ mod tests {
 
     #[test]
     fn a_template_with_barely_any_links_is_still_bulk() {
-        // The corpus's own newsletter, in miniature: three tables, thirteen
-        // cells, two links. The first version of this heuristic wanted two
-        // signals out of three and one of the three was styling, which
-        // `sanitize` has already erased by the time reader view runs -- so
-        // this shape was not recognised at all. See `reads_as_bulk`.
+        // The corpus newsletter in miniature (3 tables, 13 cells, 2 links); a styling signal would
+        // have missed it.
         let html = "<table><tr><td><table><tr><td>\
                     <a href=\"https://example.com/a\">Shop now</a>\
                     </td></tr></table></td></tr></table>";
@@ -714,8 +478,6 @@ mod tests {
 
     #[test]
     fn plain_text_rendered_as_html_is_not_bulk() {
-        // `quote::text_to_html` output must never be mistaken for a campaign,
-        // or every plain-text message would open reduced for no reason.
         assert!(!reads_as_bulk("<p>Hello Diego —</p><p>Sincerely, Ada</p>"));
     }
 
@@ -731,7 +493,6 @@ mod tests {
 mod facts_tests {
     use super::*;
 
-    /// The rows `lift` found, which is what most of these cases are about.
     fn facts(plain: &str) -> Vec<Fact> {
         lift(plain).rows
     }
@@ -772,9 +533,6 @@ mod facts_tests {
 
     #[test]
     fn one_good_row_on_its_own_is_still_not_a_block() {
-        // The row itself is impeccable -- short label, real value, not a
-        // header name -- so the only thing that can refuse it is the
-        // requirement that the shape repeat.
         assert!(
             facts(
                 "Thanks for your order.\n\
@@ -836,8 +594,6 @@ mod facts_tests {
             .map(|n| format!("field {n}: value {n}\n"))
             .collect::<String>();
         let found = facts(&plain);
-        // Spelled out rather than compared against `FACTS_KEPT`, which is
-        // what the constant would say about itself.
         assert_eq!(
             found.len(),
             4,
@@ -847,14 +603,8 @@ mod facts_tests {
         assert_eq!(found[3].label, "field 4");
     }
 
-    // The three label rules below are tested one at a time, on input that
-    // only that rule refuses. Together they read like one rule; separately
-    // each has to earn its place, and a rule no test can break is a rule
-    // nobody can justify.
-
     #[test]
     fn a_label_carrying_sentence_punctuation_is_prose() {
-        // Short, and few enough words -- only the punctuation is wrong.
         assert!(
             facts(
                 "Good news, everyone: your order shipped\n\
@@ -867,7 +617,6 @@ mod facts_tests {
 
     #[test]
     fn a_label_of_too_many_words_is_prose() {
-        // Short words, no punctuation: only the count is wrong.
         assert!(
             facts(
                 "we will be in touch: soon\n\
@@ -880,7 +629,6 @@ mod facts_tests {
 
     #[test]
     fn a_label_that_runs_long_is_prose() {
-        // Three words, no punctuation: only the length is wrong.
         assert!(
             facts(
                 "delivery confirmation notification: sent\n\
@@ -924,8 +672,7 @@ mod facts_tests {
 
     #[test]
     fn a_run_past_the_cap_keeps_its_remainder_in_the_body() {
-        // Four rows are lifted; the other five are still there to read,
-        // because a summary may be partial but nothing may vanish.
+        // A summary may be partial but nothing may vanish.
         let plain = (1..=9)
             .map(|n| format!("field {n}: value {n}\n"))
             .collect::<String>();
@@ -947,9 +694,6 @@ mod facts_tests {
 
     #[test]
     fn a_blank_line_ends_the_run() {
-        // Nothing but whitespace separates these four rows, and every one of
-        // them would pass on its own. The block the canvas draws is a block
-        // on the page too, so only the first pair is one.
         assert_eq!(
             labels(
                 "tracking: EXTEST0042199317\n\
@@ -983,13 +727,8 @@ mod facts_tests {
 mod css_is_not_a_fact {
     use super::*;
 
-    /// A stylesheet in the plain-text part is not a facts block (#1432).
-    ///
-    /// Reported from a real newsletter, whose text alternative was generated
-    /// by stripping its own HTML -- `<style>` included. Reader view prefers
-    /// the sender's plain part, `lift` reads `text-indent: -1em; } a {` as a
-    /// row, and the message opened with a CSS fragment drawn where the facts
-    /// that matter are supposed to go.
+    /// #1432: a text alternative made by stripping HTML keeps the `<style>` block, and `lift` read
+    /// `text-indent: -1em; } a {` as a row.
     #[test]
     fn a_stylesheet_swept_into_the_text_part_is_not_lifted() {
         let plain = "text-indent: -1em; } a { border: none !important; } li {\n\
@@ -1010,10 +749,7 @@ mod css_is_not_a_fact {
         );
     }
 
-    /// The control: an actual facts block still lifts.
-    ///
-    /// Without this the fix could be "never lift anything" and the test above
-    /// would still pass.
+    /// The control: without it, "never lift" would pass the test above.
     #[test]
     fn a_real_facts_block_still_lifts() {
         let plain = "Order: 4417\n\
@@ -1035,11 +771,7 @@ mod css_is_not_a_fact {
 mod a_plain_part_that_is_really_markup {
     use super::reads_as_flattened_markup;
 
-    /// The shape measured against a real account.
-    ///
-    /// A school's daily summary, whose `text/plain` part is its HTML run
-    /// through a markdown converter. Reader view rendered it verbatim and the
-    /// syntax went on screen, link brackets and all, for the whole message.
+    /// A school's daily summary whose `text/plain` is its HTML run through a markdown converter.
     #[test]
     fn a_converters_markdown_is_not_prose() {
         let flattened = "Assignment.[Bridges Practice #1](https://app.example.test/a/849) 3:59 pm\n\
@@ -1050,12 +782,8 @@ mod a_plain_part_that_is_really_markup {
         ));
     }
 
-    /// The control, and the half that keeps the facts block alive.
-    ///
-    /// Reader view falls back to the HTML when this fires, and the HTML path
-    /// has no facts block -- so a false positive costs a transactional
-    /// message the summary `lift` would have given it. Prose people type, and
-    /// the markdown that is *not* a link, must not trip it.
+    /// The control: a false positive costs a transactional message the `lift` summary, since the
+    /// HTML path has none.
     #[test]
     fn prose_is_not_mistaken_for_markup() {
         for prose in [

@@ -5,18 +5,6 @@ import Testing
 @testable import PostioAppKit
 @testable import PostioKit
 
-/// The tracker that tells the key monitor which window it is listening to.
-///
-/// `KeyboardContextTests` assert the *decision*; this asserts the thing that
-/// feeds it, because the decision being right is worth nothing if nobody ever
-/// says "a compose window has the keyboard". That is the shape of this port's
-/// three worst bugs — built, tested, never mounted — so the tracker is tested
-/// against the notifications AppKit actually sends rather than against a
-/// method call.
-///
-/// No window server needed: `NSWindow.didBecomeKeyNotification` is an
-/// ordinary notification, and a window that was never ordered on screen still
-/// carries an identifier.
 @MainActor
 @Suite struct KeyWindowTrackerTests {
     private func window(_ role: KeyWindow?) -> NSWindow {
@@ -60,9 +48,8 @@ import Testing
     }
 
     @Test func anUntaggedWindowIsTheMainWindow() {
-        // A panel AppKit put up on its own — an open dialog, a font panel.
-        // Whatever it is, it is not a surface with registry bindings, and
-        // answering `.main` keeps the behaviour that was there before.
+        // A panel AppKit put up on its own has no registry bindings; answering `.main` keeps the
+        // old behaviour.
         let tracker = KeyWindowTracker()
         NotificationCenter.default.post(
             name: NSWindow.didBecomeKeyNotification, object: window(nil)
@@ -78,8 +65,6 @@ import Testing
         #expect(tracker.current == .settings)
     }
 
-    /// The whole point, stated as the bug: a letter typed into a compose
-    /// window must not resolve as a list verb.
     @Test func typingIntoAComposeWindowDoesNotReachTheListsVerbs() {
         let tracker = KeyWindowTracker()
         NotificationCenter.default.post(
@@ -95,9 +80,8 @@ import Testing
         )
     }
     @Test func aComposeWindowSaysWhichDraftItIsWriting() {
-        // Several can be open at once, so "the composer" is not a thing on
-        // its own: a verb has to reach the one with the keyboard, or Send in
-        // one window sends another.
+        // Several composers can be open: a verb must reach the one with the keyboard, or Send sends
+        // another.
         let tracker = KeyWindowTracker()
         let window = NSWindow(
             contentRect: .init(x: 0, y: 0, width: 10, height: 10),

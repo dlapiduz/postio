@@ -1,8 +1,3 @@
-//! The Edit and New contact form, from the controller's side
-//! (specs/011-focus-contacts S8, handoff screen 06): the Mac's keys open it,
-//! Escape arms before it discards, Save is one command or says why not, and
-//! the card's switches are the same kind of command.
-
 use crate::search_support::{asks, shown};
 use chrono::{TimeZone, Utc};
 use postio_config::paths::Platform;
@@ -98,7 +93,6 @@ fn card(id: i64, name: &str) -> ContactCardRead {
     }
 }
 
-/// `g c`, the overview answered, page 0 read: the view as a person sees it.
 fn open(focus: &mut FocusController) -> Vec<Effect> {
     let effects = run(focus, CommandId::OpenContacts);
     let [(ticket, Request::ContactsOverview)] = asks(&effects)[..] else {
@@ -130,7 +124,6 @@ fn open(focus: &mut FocusController) -> Vec<Effect> {
     effects
 }
 
-/// The view open with the first person's card read: where ⌘E has someone.
 fn open_with_card(focus: &mut FocusController) {
     let effects = open(focus);
     let [(ticket, Request::ContactCard { stamp, .. })] = asks(&effects)[..] else {
@@ -509,7 +502,6 @@ fn seen_in_mail_is_read_when_the_form_opens_and_add_and_ignore_are_commands() {
             }
         }]
     ));
-    // The form is not made dirty by keeping a detail: Esc closes at once.
     let effects = run(&mut focus, CommandId::Back);
     assert!(focus.contact_edit().is_none(), "{effects:?}");
 }

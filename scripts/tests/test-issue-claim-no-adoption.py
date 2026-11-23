@@ -29,8 +29,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -133,8 +131,6 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as raw:
         base = Path(raw)
         repo, stub_dir = world(base)
-        # The hazard: issue 7's worktree already exists, with a file in it
-        # that stands in for another session's live work.
         stale = base / "worktrees" / "issue-7"
         stale.mkdir(parents=True)
         (stale / "someones-work.rs").write_text("// not yours\n", encoding="utf-8")

@@ -1,6 +1,3 @@
-//! Fonts without fontconfig (research R3): the bundled faces, the generic
-//! families, and per-script fallbacks from what `fontdb` finds installed.
-
 use std::collections::HashSet;
 use std::sync::OnceLock;
 
@@ -11,7 +8,6 @@ use postio_render::fonts::{Bundled, FontSet};
 use postio_ui::reader::document::FACES;
 use skrifa::MetadataProvider as _;
 
-/// Built once: discovery reads every installed face's tables.
 fn fonts() -> &'static FontSet {
     static FONTS: OnceLock<FontSet> = OnceLock::new();
     FONTS.get_or_init(|| {
@@ -43,8 +39,6 @@ fn every_generic_family_resolves() {
     );
 }
 
-/// The visible text of a fixture's HTML: tags dropped, entities left, which
-/// is enough to shape every script in it.
 fn text_of(fixture: &str) -> String {
     let parsed = postio_model::mime::parse(test_corpus::load(fixture).bytes());
     let html = parsed.body.html.expect("an HTML fixture");
@@ -65,9 +59,8 @@ fn text_of(fixture: &str) -> String {
     text
 }
 
-/// Characters some installed face can draw, decided from the faces' own
-/// character maps rather than from FontSet: tofu is only a defect where
-/// the machine had a glyph to give.
+/// Decided from the faces' own character maps, not FontSet: tofu is only a defect where the machine
+/// had a glyph.
 fn coverable(text: &str) -> HashSet<char> {
     let mut database = fontdb::Database::new();
     database.load_system_fonts();
@@ -90,7 +83,6 @@ fn coverable(text: &str) -> HashSet<char> {
     covered
 }
 
-/// Every character that shaped to glyph 0 -- the missing-glyph box.
 fn tofu(text: &str) -> HashSet<char> {
     let mut font_cx: FontContext = fonts().context();
     let mut layout_cx: LayoutContext<()> = LayoutContext::new();
@@ -133,8 +125,6 @@ fn cjk_emoji_and_rtl_text_shapes_without_tofu_where_a_face_covers_it() {
     }
 }
 
-/// Construction registers only the faces discovery found and the bundled
-/// bytes it was handed: no other file, and nothing fetched.
 #[test]
 fn the_font_set_holds_only_discovered_files() {
     let mut database = fontdb::Database::new();

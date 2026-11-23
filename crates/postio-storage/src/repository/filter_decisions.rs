@@ -1,27 +1,9 @@
-//! Focus's filter decisions (spec 007): why a message was filed out of the
-//! inbox, from the fixed vocabulary FR-113 asks for.
-//!
-//! # One vocabulary, spelled three times on purpose
-//!
-//! The reasons are `postio_classify::ReasonKind`'s six, and its `as_str`
-//! spells them as this store's `CHECK` does. [`FilterReason`] is the store's
-//! own copy rather than a dependency on the classifier: nothing here may
-//! need the crate that decides in order to record what was decided, and the
-//! filing pass that turns one into the other (T122) is the place that sees
-//! both and holds them equal. The `CHECK` is the backstop either way -- a
-//! reason outside it is refused, never stored.
-//!
-//! # The reason travels with the message (#2076)
-//!
-//! A decision is a row in this store, and another machine on the same
-//! account has its own store. So the filing pass also gives the message its
-//! reason's keyword ([`FilterReason::keyword`]), which the server keeps and
-//! every machine's sync reads back; [`FilterDecisionRepository::follow`]
-//! turns a keyword on a message in the Archive into a decision there. A
-//! restore takes the keyword off and the message out of the Archive, so the
-//! other machine's copy leaves its Filtered with the row the move removes.
-//! A backend with no keywords (Gmail's) drops it, and filtering stays as
-//! local as it was.
+//! Why a message was filed out of the inbox. [`FilterReason`] is the store's own copy of the
+//! classifier's reasons so recording a decision needs no dependency on the crate that decides; the
+//! `CHECK` is the backstop.
+//! The reason travels with the message (#2076) as a keyword the server keeps;
+//! [`FilterDecisionRepository::follow`] turns it into a decision on another machine. A backend with
+//! no keywords (Gmail) drops it, and filtering stays local.
 
 use chrono::{DateTime, Utc};
 use postio_model::ids::MessageId;
@@ -34,25 +16,17 @@ use crate::sql::{self, RowExt as _};
 use crate::store::Connection;
 use turso::Row;
 
-/// Why a message was filtered: the fixed vocabulary of FR-113.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum FilterReason {
-    /// Unsolicited mail.
     Spam,
-    /// Marketing.
     Promotion,
-    /// An automated notice.
     Notification,
-    /// A receipt or an invoice.
     Receipt,
-    /// Delivery and tracking.
     Shipping,
-    /// A social network's mail.
     Social,
 }
 
 impl FilterReason {
-    /// The reason as the store spells it, and as the Filtered row shows it.
     pub const fn as_str(self) -> &'static str {
         match self {
             FilterReason::Spam => "spam",
@@ -64,26 +38,21 @@ impl FilterReason {
         }
     }
 
-    /// The reason a stored spelling names.
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|reason| reason.as_str() == name)
     }
 
-    /// The keyword a message filtered for this reason carries on the
-    /// server, `$PostioFiltered-notification`: what tells another machine
-    /// why the message is in the Archive.
+    /// What tells another machine why the message is in the Archive.
     pub fn keyword(self) -> Flag {
         Flag::Keyword(format!("$PostioFiltered-{}", self.as_str()))
     }
 
-    /// The reason whose keyword `flags` carry, if any.
     pub fn in_flags(flags: &FlagSet) -> Option<Self> {
         Self::ALL
             .into_iter()
             .find(|reason| flags.contains(&reason.keyword()))
     }
 
-    /// Every reason, in the order the Filtered view's tabs list them.
     pub const ALL: [FilterReason; 6] = [
         FilterReason::Spam,
         FilterReason::Promotion,
@@ -94,22 +63,16 @@ impl FilterReason {
     ];
 }
 
-/// Which layer of the classifier decided (FR-113).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FilterLayer {
-    /// The message's own list, bulk and automated headers.
     Header,
-    /// The shipped automated-senders table.
     Senders,
-    /// The server's word: its own verdict, `$Junk`, or the reason's
-    /// keyword another machine's filing put on the message.
+    /// Its own verdict, `$Junk`, or the reason keyword another machine's filing put on the message.
     Server,
-    /// The person's own model (milestone 2).
     Model,
 }
 
 impl FilterLayer {
-    /// The layer as the store spells it.
     pub const fn as_str(self) -> &'static str {
         match self {
             FilterLayer::Header => "header",
@@ -119,12 +82,10 @@ impl FilterLayer {
         }
     }
 
-    /// The layer a stored spelling names.
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|layer| layer.as_str() == name)
     }
 
-    /// Every layer.
     pub const ALL: [FilterLayer; 4] = [
         FilterLayer::Header,
         FilterLayer::Senders,
@@ -133,45 +94,33 @@ impl FilterLayer {
     ];
 }
 
-/// One message's filter decision.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FilterDecision {
-    /// The message filed out of the inbox.
     pub message: MessageId,
-    /// Why.
     pub reason: FilterReason,
-    /// Who it came from, shown after the reason ("notification · Forge").
     pub source: Option<String>,
-    /// Which layer decided.
     pub layer: FilterLayer,
-    /// When: local midnight bounds "filtered today".
     pub decided_at: DateTime<Utc>,
 }
 
-/// A decision whose message has since gone to the trash is not shown: the
-/// person deleted it from Filtered (C4 forbids deleting automatically, not
-/// deleting), and Undo, moving it back, shows it again. Two lookups by
-/// primary key per decision, never a walk.
+/// A decision whose message went to the trash is hidden (the person deleted it from Filtered; C4
+/// forbids deleting automatically, not deleting), and Undo shows it again. Two primary-key lookups
+/// per decision.
 const NOT_IN_TRASH: &str = "NOT EXISTS (SELECT 1 FROM messages m
                      JOIN mailboxes b ON b.id = m.mailbox_id
                     WHERE m.id = filter_decisions.message_id AND b.role = 'trash')";
 
-/// Reads and writes [`FilterDecision`]s.
 #[derive(Debug)]
 pub struct FilterDecisionRepository<'a> {
     connection: &'a Connection,
 }
 
 impl<'a> FilterDecisionRepository<'a> {
-    /// Borrows a connection.
     pub fn new(connection: &'a Connection) -> Self {
         Self { connection }
     }
 
-    /// Records `decision`, in the filing pass's transaction or as undo of a
-    /// restore puts it back. A message has one decision: recording another
-    /// replaces it, since it is the latest word on why the message is not in
-    /// the inbox.
+    /// A message has one decision: recording another replaces it, as the latest word.
     pub async fn record(&self, decision: &FilterDecision) -> Result<()> {
         sql::execute(
             self.connection,
@@ -196,9 +145,7 @@ impl<'a> FilterDecisionRepository<'a> {
         Ok(())
     }
 
-    /// The decision on `message`, while it stands: what its Filtered row
-    /// and the open message say about why it is there. A decision the
-    /// person took back by restoring the message is not one.
+    /// A decision the person took back by restoring the message is not one.
     pub async fn get(&self, message: MessageId) -> Result<Option<FilterDecision>> {
         sql::first(
             self.connection,
@@ -210,15 +157,9 @@ impl<'a> FilterDecisionRepository<'a> {
         .await
     }
 
-    /// Records what another machine decided, as `flags` say it: a message in
-    /// the Archive carrying a reason's keyword is filtered for that reason,
-    /// as of when it arrived. Answers whether a decision was recorded.
-    ///
-    /// Only where this store has none -- a decision it already holds, or a
-    /// restore the person made here, is its own word -- and only in the
-    /// Archive, which is where filtered mail is: a keyword seen while the
-    /// message is still in an inbox is another machine's filing on its way,
-    /// and the copy that lands in the Archive is the one that gets it.
+    /// Only where this store has none (its own decision or restore wins) and only in the Archive: a
+    /// keyword seen while the message is still in an inbox is another machine's filing on its way,
+    /// and the Archive copy gets it. Answers whether a decision was recorded.
     pub async fn follow(&self, message: MessageId, flags: &FlagSet) -> Result<bool> {
         let Some(reason) = FilterReason::in_flags(flags) else {
             return Ok(false);
@@ -240,10 +181,8 @@ impl<'a> FilterDecisionRepository<'a> {
         Ok(recorded > 0)
     }
 
-    /// Marks the decision on `message` restored at `at`, as `R` does, or
-    /// with `None` makes it stand again, as undo does; answers whether the
-    /// message has a decision that changed. The decision is kept either
-    /// way: a restore is the person's word on it (SC-012).
+    /// With `None`, makes the decision stand again, as undo does. The decision is kept either way:
+    /// a restore is the person's word on it.
     pub async fn restore(&self, message: MessageId, at: Option<DateTime<Utc>>) -> Result<bool> {
         let changed = sql::execute(
             self.connection,
@@ -259,17 +198,14 @@ impl<'a> FilterDecisionRepository<'a> {
         Ok(changed > 0)
     }
 
-    /// How many of `sender`'s messages (an address, as
-    /// `EmailAddress::normalized` spells it) the person restored and has
-    /// not taken back: whether a restore still stands behind the sender's
-    /// `[focus.filter] never` entry. One statement, driven from the
-    /// sender's address.
+    /// How many of `sender`'s messages the person restored and has not taken back: whether a
+    /// restore still stands behind the `[focus.filter] never` entry. One statement, driven from the
+    /// address.
     pub async fn restored_from(&self, sender: &str) -> Result<u32> {
         let count = sql::scalar(self.connection, Self::explain_restored_from(), [sender]).await?;
         Ok(u32::try_from(count).unwrap_or(u32::MAX))
     }
 
-    /// The SQL [`Self::restored_from`] runs.
     pub fn explain_restored_from() -> &'static str {
         "SELECT count(DISTINCT d.message_id)
            FROM addresses a
@@ -278,12 +214,9 @@ impl<'a> FilterDecisionRepository<'a> {
           WHERE a.address_normalized = ?1 AND d.restored_at IS NOT NULL"
     }
 
-    /// The SQL [`Self::count_since`] runs, for `EXPLAIN QUERY PLAN`.
     pub const EXPLAIN_COUNT_SINCE: &'static str =
         "SELECT COUNT(*) FROM filter_decisions WHERE decided_at >= ?1";
 
-    /// How many messages were filed away at or after `since`: "186
-    /// filtered today", with `since` local midnight (spec 007 screen 16).
     pub async fn count_since(&self, since: DateTime<Utc>) -> Result<u32> {
         let count = sql::scalar(
             self.connection,
@@ -294,11 +227,7 @@ impl<'a> FilterDecisionRepository<'a> {
         Ok(u32::try_from(count.max(0)).unwrap_or(u32::MAX))
     }
 
-    /// Each reason with how many messages it keeps filtered now, in the
-    /// order the Filtered view's tabs list them (screen 21).
-    ///
-    /// One statement, one count a reason, each sought through
-    /// `idx_filter_decisions_reason` to the reason's standing decisions.
+    /// One statement, one count per reason, each sought through `idx_filter_decisions_reason`.
     pub async fn tabs(&self) -> Result<Vec<(FilterReason, u32)>> {
         let counts: Vec<i64> = sql::first(self.connection, Self::explain_tabs(), (), |row| {
             (0..FilterReason::ALL.len())
@@ -314,7 +243,6 @@ impl<'a> FilterDecisionRepository<'a> {
             .collect())
     }
 
-    /// The SQL [`Self::tabs`] runs.
     pub fn explain_tabs() -> &'static str {
         static SQL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
         SQL.get_or_init(|| {
@@ -333,8 +261,6 @@ impl<'a> FilterDecisionRepository<'a> {
         })
     }
 
-    /// The standing decisions, newest first -- of `reason` only, when one
-    /// is given -- `limit` of them from `offset`: a page of Filtered.
     pub async fn filtered(
         &self,
         reason: Option<FilterReason>,
@@ -351,9 +277,8 @@ impl<'a> FilterDecisionRepository<'a> {
         sql::all(self.connection, &sql, arguments, read_decision).await
     }
 
-    /// The SQL [`Self::filtered`] runs, for one reason or for all: the
-    /// standing decisions through `idx_filter_decisions_reason` or
-    /// `idx_filter_decisions_standing`, in the index's own order.
+    /// Standing decisions through `idx_filter_decisions_reason` or `idx_filter_decisions_standing`,
+    /// in the index's own order.
     pub fn explain_filtered(one_reason: bool) -> String {
         let (reason, limit, offset) = if one_reason {
             ("reason = ?1 AND ", 2, 3)
@@ -370,9 +295,7 @@ impl<'a> FilterDecisionRepository<'a> {
         )
     }
 
-    /// Deletes the decision on `message`, and answers whether there was one:
-    /// what taking back a sweep of the inbox does, since the person never
-    /// saw that decision stand.
+    /// What taking back a sweep of the inbox does: the person never saw that decision stand.
     pub async fn delete(&self, message: MessageId) -> Result<bool> {
         let deleted = sql::execute(
             self.connection,
