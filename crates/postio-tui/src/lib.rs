@@ -1,16 +1,8 @@
-//! Postio in the terminal (`docs/archive/specs/005-tui-frontend`).
-//!
-//! A frontend like the desktop app: it opens the store in its own process --
-//! one Postio at a time has it, the terminal or the desktop app -- starts a
-//! `postio_host::Host` over it, and reads and writes only through a
-//! [`postio_client::Client`] of that host. What it adds is a terminal's way
-//! of showing and being driven -- and nothing it decides about mail is its
-//! own: keys resolve through `postio_ui::keymap`, the list is
-//! `postio_ui::list`, the rules of a verb are the host's.
-//!
-//! The loop is `app::update(&mut App, Input) -> Vec<Effect>`: pure, so every
-//! behaviour is testable with synthetic input and no terminal at all, and
-//! asserted on the rendered buffer, which is what a person sees.
+//! Postio in the terminal: a frontend that reads and writes only through a `postio_client::Client`
+//! of its own host and decides nothing about mail itself.
+//! The loop is `app::update(&mut App, Input) -> Vec<Effect>`, pure, so tests drive it with
+//! synthetic
+//! input and assert on the rendered buffer.
 
 pub mod app;
 pub mod ask;
@@ -33,6 +25,7 @@ pub mod paths;
 pub mod pickers;
 pub mod places;
 pub mod reader;
+pub mod results;
 pub mod row;
 pub mod rule_dialog;
 pub mod rules;

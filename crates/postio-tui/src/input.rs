@@ -1,19 +1,12 @@
-//! Keys, from a terminal to the one keymap.
-//!
-//! The terminal has no keymap of its own. A crossterm key event is reduced
-//! to the three things every frontend's is -- the character, the key's name,
-//! the modifiers -- and handed to `postio_ui::keymap`, the same resolver the
-//! desktop app uses, with the same `[keys]` overrides (Principle II,
-//! research R4). A command bound in the registry is bound here, and a
-//! rebinding in `config.toml` rebinds it here, without this file knowing.
+//! Keys from a terminal to the one keymap: a crossterm event is reduced to character, name and
+//! modifiers and resolved by `postio_ui::keymap`, with the same `[keys]` overrides as the desktop.
 
 use std::time::Instant;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use postio_ui::keymap::{Chord, KeyContext, Modifiers, Outcome, Resolver};
 
-/// `key` as the keymap spells it; `None` for a release, or a key with no
-/// name here.
+/// `None` for a release, or a key with no name here.
 pub fn chord_of(key: &KeyEvent) -> Option<Chord> {
     if key.kind == KeyEventKind::Release {
         return None;
@@ -35,7 +28,6 @@ pub fn chord_of(key: &KeyEvent) -> Option<Chord> {
         KeyCode::Enter => (None, Some("Return")),
         KeyCode::Esc => (None, Some("Escape")),
         KeyCode::Tab => (None, Some("Tab")),
-        // A terminal reports shift+Tab as its own key.
         KeyCode::BackTab => {
             modifiers = modifiers.with(Modifiers::SHIFT);
             (None, Some("Tab"))
@@ -61,21 +53,15 @@ pub fn chord_of(key: &KeyEvent) -> Option<Chord> {
     Chord::from_platform_key(character, name, modifiers)
 }
 
-/// The keymap, resolving terminal keys.
 #[derive(Debug)]
 pub struct Keys {
     resolver: Resolver,
-    /// The bindings the resolver was built from, for the palette and the
-    /// cheat sheet, which list them.
     commands: postio_core::Keymap,
 }
 
 impl Keys {
-    /// The registry's bindings with `[keys]` applied, and whatever could not
-    /// be honoured.
     pub fn new(commands: &postio_core::Keymap) -> (Keys, Vec<String>) {
-        // The terminal's commands only: a key the one keymap keeps for
-        // another app is bound to nothing here (specs/007-postio-focus R4).
+        // A key the one keymap keeps for another app is bound to nothing here.
         let (resolver, problems) =
             Resolver::from_commands_for(commands, postio_core::Frontend::Terminal);
         (
@@ -87,8 +73,6 @@ impl Keys {
         )
     }
 
-    /// The key that runs `command` with the keyboard in `context`, as the
-    /// cheat sheet spells it -- whatever `[keys]` bound it to.
     pub fn key_for(&self, context: KeyContext, command: &str) -> Option<String> {
         context.chain().iter().find_map(|context| {
             self.resolver
@@ -98,16 +82,14 @@ impl Keys {
         })
     }
 
-    /// The keymap in force: the registry's bindings with `[keys]` applied.
     pub fn keymap(&self) -> &postio_core::Keymap {
         &self.commands
     }
 
-    /// Whether `key` is `command`'s own key, the first `[keys]` left it,
-    /// when that is one chord -- asked without touching a sequence half
-    /// typed. It is how quitting is recognised before any surface sees the
-    /// key; an alternate (`ctrl+w`) is left to the surface, where a text
-    /// field may use it for editing.
+    /// Whether `key` is `command`'s first key, asked without touching a half-typed sequence.
+    /// Quitting
+    /// is recognised this way before any surface sees the key; an alternate (`ctrl+w`) is left to
+    /// the surface, where a text field may use it.
     pub fn is_primary(&self, key: &KeyEvent, command: postio_core::CommandId) -> bool {
         let Some(chord) = chord_of(key) else {
             return false;
@@ -119,7 +101,6 @@ impl Keys {
             .is_some_and(|binding| binding.chords() == [chord])
     }
 
-    /// What `key` means with the keyboard in `context`.
     pub fn press(&mut self, key: &KeyEvent, context: KeyContext, in_text_entry: bool) -> Outcome {
         match chord_of(key) {
             Some(chord) => self
@@ -182,8 +163,7 @@ mod tests {
 
     #[test]
     fn a_legacy_alternate_reaches_its_command() {
-        // T017: a terminal without the kitty protocol sends alt+Return for
-        // what the desktop binds to ctrl+Return.
+        // A terminal without the kitty protocol sends alt+Return for the desktop's ctrl+Return.
         let mut keys = keys(&[]);
         assert_eq!(
             keys.press(

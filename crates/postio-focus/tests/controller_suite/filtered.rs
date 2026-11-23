@@ -711,3 +711,23 @@ fn a_tab_with_nothing_says_so_once_it_has_been_counted() {
         Some(postio_ui::filtered::EMPTY)
     );
 }
+
+#[test]
+fn a_picker_over_a_message_opened_from_filtered_names_it() {
+    let mut focus = mac();
+    let _ = opened(
+        &mut focus,
+        vec![filed(7, "notification", 5), filed(8, "spam", 9)],
+    );
+    let _ = run(&mut focus, CommandId::OpenMessage);
+    let _ = focus.handle_on(Input::Shown(Some(MessageId::new(7))), &List);
+    let effects = run(&mut focus, CommandId::Snooze);
+    let picker = shown(&effects)
+        .into_iter()
+        .find_map(|intent| match intent {
+            Intent::OpenPicker(view) => Some(view),
+            _ => None,
+        })
+        .expect("a snooze picker");
+    assert!(picker.target.contains("Issue 7"), "{:?}", picker.target);
+}

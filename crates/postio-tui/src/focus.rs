@@ -8,8 +8,6 @@ use postio_ui::list::{ListRow, ListWindow, RowKey};
 
 use crate::row::Row;
 
-/// What the terminal can draw: the pane beside the list, nothing stacked,
-/// no contacts view.
 pub fn policy() -> Policy {
     Policy {
         platform: Platform::host(),
@@ -21,7 +19,6 @@ pub fn policy() -> Policy {
     }
 }
 
-/// A row as drawn, and the row the controller reads facts from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Held {
     pub row: Row,
@@ -60,7 +57,6 @@ impl ListRow for Held {
     }
 }
 
-/// The list window, as the controller asks about its rows.
 pub struct RowsView<'a>(pub &'a ListWindow<Held>);
 
 impl Rows for RowsView<'_> {

@@ -166,3 +166,16 @@ fn esc_from_a_search_run_from_the_results_goes_to_the_inbox() {
     let effects = run(&mut focus, CommandId::HistoryBack, &rows);
     assert_eq!(shown(&effects).first(), Some(&Intent::LeaveResults));
 }
+
+#[test]
+fn going_to_a_place_from_the_results_leaves_them() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = focus.landed(&rows, true);
+    let _ = search(&mut focus, "atlas budget", &rows);
+    assert!(focus.in_results());
+    let effects = run(&mut focus, CommandId::GoToInbox, &rows);
+    assert_eq!(shown(&effects).first(), Some(&Intent::LeaveResults));
+    assert!(!focus.in_results());
+    assert_eq!(focus.key_context(), KeyContext::List);
+}

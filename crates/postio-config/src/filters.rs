@@ -25,10 +25,8 @@ pub struct FilterConfig {
 }
 
 impl Config {
-    /// The caller still has to call `patch_filters` afterward; this only touches the in-memory
-    /// table.
-    /// Returns the key, which is derived rather than chosen.
-    pub fn save_filter(&mut self, query: &str) -> String {
+    #[cfg(test)]
+    fn save_filter(&mut self, query: &str) -> String {
         let key = self.unique_filter_key(query);
         self.filters.insert(
             key.clone(),

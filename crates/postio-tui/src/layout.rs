@@ -1,53 +1,34 @@
-//! Where the window's parts sit in a terminal of `W × H` cells.
-//!
-//! Every size here comes from the terminal's width and height and nothing
-//! else, so stepping through mail never moves a frame (terminal.md,
-//! "Units"). The window is the top bar, the strip, an optional banner, the
-//! list and the bottom line; the open message's overlay and the reading pane
-//! are functions of the width.
+//! Where the window's parts sit in a terminal of `W x H` cells. Every size comes from the
+//! terminal's width and height alone, so stepping through mail never moves a frame.
 
 use ratatui::layout::Rect;
 
-/// Narrower than this, or shorter, and nothing is drawn but the sentence.
 pub const MINIMUM: (u16, u16) = (50, 12);
 
-/// The reading pane sits beside the list from this width.
 pub const PANE_FROM: u16 = 128;
 
-/// Columns the list keeps beside a reading pane.
 const PANE_LIST: u16 = 56;
 
-/// The widest the reading pane gets.
 const PANE_WIDEST: u16 = 100;
 
-/// The overlay frame's narrowest and widest.
 const FRAME_NARROWEST: u16 = 76;
 const FRAME_WIDEST: u16 = 100;
 
-/// Below this width the overlay takes the whole width.
 const FRAME_WHOLE: u16 = 80;
 
-/// Whether a terminal of `width` × `height` has room for the window.
 pub fn fits(width: u16, height: u16) -> bool {
     width >= MINIMUM.0 && height >= MINIMUM.1
 }
 
-/// The rows of the window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Window {
-    /// The top bar: Compose, the command field, the sync label, `? keys`.
     pub top: Rect,
-    /// The strip: place, counts, the has-action toggle, filtered and rules.
     pub strip: Rect,
-    /// The banner, when one is shown.
     pub banner: Option<Rect>,
-    /// Day headings and rows: everything else.
     pub list: Rect,
-    /// The bulk bar, the toast, a pending chord, or nothing.
     pub bottom: Rect,
 }
 
-/// The window's rows in `area`, with the banner row when `banner` is shown.
 pub fn window(area: Rect, banner: bool) -> Window {
     let row = |offset: u16| Rect::new(area.x, area.y + offset.min(area.height), area.width, 1);
     let banner_rows = u16::from(banner);
@@ -61,8 +42,6 @@ pub fn window(area: Rect, banner: bool) -> Window {
     }
 }
 
-/// The open message's frame width: `clamp(76, W − 2·max(4, ⌊0.12·W⌋), 100)`,
-/// or the whole width below 80 columns.
 pub fn frame_width(width: u16) -> u16 {
     if width < FRAME_WHOLE {
         return width;
@@ -73,8 +52,6 @@ pub fn frame_width(width: u16) -> u16 {
         .clamp(FRAME_NARROWEST, FRAME_WIDEST)
 }
 
-/// The frame holding the open message in a terminal of `area`: every row but
-/// the top bar and the bottom line, `frame_width` wide and centred.
 pub fn open_frame(area: Rect) -> Rect {
     let width = frame_width(area.width).min(area.width);
     Rect::new(
@@ -85,23 +62,17 @@ pub fn open_frame(area: Rect) -> Rect {
     )
 }
 
-/// Below this many columns of frame, Label, Move and Delete fold into More.
 const MORE_BELOW: u16 = 96;
 
-/// Whether a frame `width` columns wide folds Label, Move and Delete into
-/// More.
 pub fn folds_into_more(width: u16) -> bool {
     width < MORE_BELOW
 }
 
-/// The scrolling column's width in a frame or pane `width` wide:
-/// `min(72, width − 8)`.
 pub fn column_width(width: u16) -> u16 {
     72.min(width.saturating_sub(8))
 }
 
-/// `list` split into what stays the list and the reading pane to its right:
-/// `None` where there is no room for one.
+/// `None` where there is no room for a pane.
 pub fn split_pane(list: Rect) -> Option<(Rect, Rect)> {
     let pane = pane_width(list.width)?;
     Some((
@@ -110,8 +81,6 @@ pub fn split_pane(list: Rect) -> Option<(Rect, Rect)> {
     ))
 }
 
-/// The reading pane's width beside the list: `min(100, W − 56)` from 128
-/// columns, and none below.
 pub fn pane_width(width: u16) -> Option<u16> {
     (width >= PANE_FROM).then(|| PANE_WIDEST.min(width - PANE_LIST))
 }

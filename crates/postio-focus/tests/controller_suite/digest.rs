@@ -402,8 +402,6 @@ fn a_digest_takes_no_verb_meant_for_the_list_behind_it() {
     let _ = open(&mut focus, config(false));
     assert_eq!(focus.key_context(), KeyContext::Digest);
     let _ = focus.handle_on(Input::Point(1), &List);
-    // Not `Archive`: in a digest it archives the digest (`archive_thread`'s
-    // old job, and the next test's).
     for command in [CommandId::Delete, CommandId::ToggleRead] {
         let effects = run(&mut focus, command);
         assert!(asks(&effects).is_empty(), "{command:?}: {effects:?}");
@@ -503,8 +501,8 @@ fn d_in_a_digest_edits_its_rule() {
     assert_eq!(view.from.as_deref(), Some("from:news@ledger.example"));
 }
 
-/// The controller closes the rule sheet and the Mac says nothing back, so the dialog is off the
-/// stack at once and the list's keys are not swallowed.
+/// The controller closes the rule sheet and the Mac says nothing back, so the list's keys are not
+/// swallowed.
 #[test]
 fn back_on_the_rule_dialog_gives_the_keyboard_back() {
     let mut focus = mac();
@@ -545,4 +543,41 @@ fn the_footer_on_a_digest_row_names_the_digest_not_the_row_before() {
     assert_eq!(footer.title, "Newsletters \u{b7} 3 messages");
     let said: Vec<&str> = footer.keys.iter().map(|(_, l)| l.as_str()).collect();
     assert_eq!(said, ["move", "open", "archive digest"]);
+}
+
+#[test]
+fn a_rule_named_from_a_list_of_rules_opens_its_dialog_and_a_missing_one_says_so() {
+    let mut focus = mac();
+    let _ = focus.handle(Input::Config(config(false)));
+    let effects = focus.handle_on(
+        Input::EditRule {
+            name: "Newsletters".to_owned(),
+        },
+        &List,
+    );
+    let view = rule(&effects).expect("the dialog opens");
+    assert_eq!(
+        view.heading,
+        postio_ui::digest::edit_rule_heading("Newsletters")
+    );
+    assert_eq!(view.from.as_deref(), Some("from:news@ledger.example"));
+    assert!(
+        asks(&effects)
+            .iter()
+            .any(|(_, request)| matches!(request, Request::DigestPreview { .. })),
+        "{effects:?}"
+    );
+
+    let mut other = mac();
+    let effects = other.handle_on(
+        Input::EditRule {
+            name: "Gone".to_owned(),
+        },
+        &List,
+    );
+    assert!(rule(&effects).is_none());
+    assert!(shown(&effects).iter().any(|intent| matches!(
+        intent,
+        Intent::Toast { text, .. } if text == postio_ui::focus_target::RULE_MISSING
+    )));
 }

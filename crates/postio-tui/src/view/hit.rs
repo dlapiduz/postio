@@ -1,69 +1,40 @@
-//! Where things are on screen, for the mouse (US5).
-//!
-//! Every frame records each region it draws and what that region stands for;
-//! a mouse event is resolved against the last frame drawn, so a click lands on
-//! what the person saw, not on what the state has since become. The app never
-//! sees a coordinate, only what was clicked.
+//! Where things are on screen, for the mouse. A mouse event is resolved against the last
+//! frame drawn, so a click lands on what the person saw; the app never sees a coordinate.
 
 use ratatui::layout::Rect;
 
-/// What a region of the screen stands for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Target {
-    /// A row of the list, by position in the list.
     Row(u32),
-    /// One of a marked row's drawn answers, by the row's position and the
-    /// command it runs: what its key does, for that row.
     RowAction(u32, &'static str),
-    /// A line of what is being read, by index into its lines; `None` for the
-    /// reader's header.
     Reader(Option<usize>),
     /// The composer's body.
     ComposerBody,
-    /// Another field of the composer.
     ComposerField(crate::composer::Field),
-    /// One of the composer's buttons, by the command it runs.
     ComposerAction(&'static str),
-    /// A line of the command bar, by its place in its list.
     BarRow(usize),
-    /// One of the bar's saved searches.
     BarSaved(usize),
-    /// One of the bar's chips.
-    BarChip(usize),
-    /// The footer's `↵ run`: the chosen line, as `Enter` runs it.
+    ResultRow(u64),
+    ResultTab(usize),
+    ResultChip(u32),
     BarRun,
-    /// The footer's `> commands only`: the same as its key.
     BarCommands,
-    /// A place in the folders popover, by its place in the list.
     PlaceRow(usize),
-    /// A row of a picker, by its place in the list.
     PickRow(usize),
-    /// A control of the window that runs a command, by its id: the top bar's
-    /// and the strip's.
     Command(&'static str),
-    /// The status line's notice offer: its one button (#1952).
     NoticeOffer,
-    /// A row of the menu over the open message, by its place in the menu.
     MenuRow(usize),
-    /// One of a Focus surface's many parts, by its place.
     Surface(crate::surface::Part, usize),
-    /// Something drawn over everything else: clicks there land on nothing
-    /// underneath.
     Overlay,
 }
 
-/// A resolved click: what was under it, and where inside that region.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Hit {
-    /// What was under the pointer.
     pub target: Target,
-    /// Columns in from the region's left edge.
     pub column: u16,
-    /// Rows down from the region's top.
     pub row: u16,
 }
 
-/// One frame's regions, in the order they were drawn.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Hits {
     regions: Vec<(Rect, Target)>,
@@ -78,8 +49,6 @@ impl Hits {
         }
     }
 
-    /// Where `target` was drawn: the smallest rectangle holding every region
-    /// that stands for it.
     pub fn area_of(&self, target: Target) -> Option<Rect> {
         self.regions
             .iter()
@@ -88,13 +57,11 @@ impl Hits {
             .reduce(|a, b| a.union(b))
     }
 
-    /// Every region, in the order drawn.
     #[cfg(test)]
     pub fn regions(&self) -> &[(Rect, Target)] {
         &self.regions
     }
 
-    /// What is at column `x`, row `y`.
     pub fn at(&self, x: u16, y: u16) -> Option<Hit> {
         self.regions
             .iter()

@@ -1,18 +1,9 @@
-//! The terminal runs Focus's engine while it holds the store (FR-186, C29).
-//!
-//! `postio_tui::run::engage_focus` is what `run` calls after the store opens
-//! and before the first sync, and `follow_focus_config` is what re-applies
-//! `[focus]` when the file changes. Both go through the same
-//! `FocusSetup::from_config` `postio-gtk` uses, so the two apps cannot
-//! disagree about what Focus mode runs with.
-
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use postio_host::Host;
 use postio_test_support::scaled;
 
-/// A host over a fresh scratch store, as `run` has after `open`.
 fn host_over(dir: &std::path::Path) -> Host {
     let key = postio_storage::key::StoreKey::generate();
     let (database, blobs) = tokio::runtime::Builder::new_current_thread()

@@ -1,15 +1,5 @@
-//! One harness for driving the terminal app without a terminal.
-//!
-//! Every test that needs an [`App`] with mail in it -- the app's own, the
-//! view's, the `shot` example's -- builds it here, so a change to how a list
-//! is opened, paged or read is made once. The functions are the ways a person
-//! gets to a screen: the app at a size, the places it lists, a list opened
-//! and its pages served, a message opened and read, keys and clicks, and the
-//! screen that results as text.
-//!
-//! Compiled for this crate's tests and, through the `test-support` feature,
-//! for `examples/shot.rs`. Every name and address is fictional and on a
-//! reserved domain.
+//! One harness for driving the terminal app without a terminal, shared by the app's tests, the
+//! view's and the `shot` example (through the `test-support` feature).
 
 pub mod sample;
 
@@ -32,19 +22,14 @@ use crate::row::Row;
 use crate::theme::Theme;
 use crate::view::{draw, hit};
 
-/// The instant every drawn screen thinks it is.
 pub fn now() -> DateTime<Local> {
     Local.with_ymd_and_hms(2026, 9, 23, 12, 0, 0).unwrap()
 }
 
-// -- The app ---------------------------------------------------------------
-
-/// An app of `size` under the default keymap.
 pub fn app(size: (u16, u16)) -> App {
     app_with_keys(size, &Default::default())
 }
 
-/// An app of `size` under the default keymap with `bindings` on top.
 pub fn app_with_keys(size: (u16, u16), bindings: &postio_config::KeyBindings) -> App {
     App::new(
         size,
@@ -52,9 +37,6 @@ pub fn app_with_keys(size: (u16, u16), bindings: &postio_config::KeyBindings) ->
     )
 }
 
-// -- Places ----------------------------------------------------------------
-
-/// The one account the fixtures have.
 pub fn account() -> Account {
     let mut account = Account::new("ada", EmailAddress::new(None::<String>, "ada@example.com"));
     account.id = AccountId::new(1);
@@ -63,7 +45,6 @@ pub fn account() -> Account {
     account
 }
 
-/// A selectable folder of [`account`].
 pub fn folder(id: i64, name: &str, role: MailboxRole, unread: u32) -> Mailbox {
     let mut folder = Mailbox::new(AccountId::new(1), name, None);
     folder.id = MailboxId::new(id);
@@ -73,7 +54,6 @@ pub fn folder(id: i64, name: &str, role: MailboxRole, unread: u32) -> Mailbox {
     folder
 }
 
-/// An Inbox (id 1) and an Archive (id 2), as the places a small mailbox has.
 pub fn places() -> Places {
     Places {
         accounts: vec![account()],
@@ -87,7 +67,6 @@ pub fn places() -> Places {
     }
 }
 
-/// A saved search, as `[saved_searches]` pins one.
 pub fn saved_search(key: &str, name: &str, query: &str) -> Saved {
     Saved {
         key: key.into(),
@@ -96,14 +75,10 @@ pub fn saved_search(key: &str, name: &str, query: &str) -> Saved {
     }
 }
 
-/// Tell `app` about `contents`.
 pub fn seed_places(app: &mut App, contents: Places) {
     update(app, Input::Places(contents));
 }
 
-// -- Lists -----------------------------------------------------------------
-
-/// One synthetic row, `position` places down the Inbox: ids start at 1.
 pub fn row(position: u32) -> Row {
     row_from(
         i64::from(position) + 1,
@@ -114,7 +89,6 @@ pub fn row(position: u32) -> Row {
     )
 }
 
-/// A row from `from`, with an address made of their first name.
 pub fn row_from(id: i64, from: &str, subject: &str, preview: &str, when: DateTime<Utc>) -> Row {
     Row {
         id: MessageId::new(id),
@@ -138,9 +112,7 @@ pub fn row_from(id: i64, from: &str, subject: &str, preview: &str, when: DateTim
     }
 }
 
-/// A moment on `day` of September 2026 at `hour:minute` by the clock of the
-/// machine the test runs on, so the day a row sits under does not depend on
-/// where that is.
+/// Local time, so the day a row sits under does not depend on the machine's zone.
 pub fn local(day: u32, hour: u32, minute: u32) -> DateTime<Utc> {
     Local
         .with_ymd_and_hms(2026, 9, day, hour, minute, 0)
@@ -148,7 +120,6 @@ pub fn local(day: u32, hour: u32, minute: u32) -> DateTime<Utc> {
         .with_timezone(&Utc)
 }
 
-/// A conversation of the Inbox: message and thread both numbered `id`.
 pub fn conversation(
     id: i64,
     from: &str,
@@ -196,7 +167,6 @@ pub fn conversation(
     }
 }
 
-/// `conversation`, unread.
 pub fn unread(
     mut summary: postio_model::listing::ThreadSummary,
 ) -> postio_model::listing::ThreadSummary {
@@ -205,7 +175,6 @@ pub fn unread(
     summary
 }
 
-/// `conversation`, with `marker`.
 pub fn marked(
     mut summary: postio_model::listing::ThreadSummary,
     marker: postio_model::listing::MarkerSummary,
@@ -214,20 +183,16 @@ pub fn marked(
     summary
 }
 
-/// A label of the account, with no colour of its own.
 pub fn label(id: i64, name: &str) -> postio_model::Label {
     let mut label = postio_model::Label::new(AccountId::new(1), name);
     label.id = postio_model::ids::LabelId::new(id);
     label
 }
 
-/// The Focus inbox opened over exactly `rows`, and its pages served from
-/// them: `Row::from` each, as a page arriving does.
 pub fn show_focus(app: &mut App, rows: Vec<postio_ui::focus_list::FocusRow>) {
     show_scope(app, postio_model::FocusScope::Inbox, rows);
 }
 
-/// Focus's `scope` opened over exactly `rows`, and its pages served.
 pub fn show_scope(
     app: &mut App,
     scope: postio_model::FocusScope,
@@ -238,8 +203,6 @@ pub fn show_scope(
     app.serve_for_tests(|position| rows[position as usize].clone());
 }
 
-/// What the strip counts in the inbox of the drawing: 312 conversations, 41
-/// of them unread, 7 with a marker, 186 filtered today.
 pub fn drawing_counts() -> postio_client::protocol::FocusCounts {
     postio_client::protocol::FocusCounts {
         conversations: 312,
@@ -249,7 +212,6 @@ pub fn drawing_counts() -> postio_client::protocol::FocusCounts {
     }
 }
 
-/// Places for an account with filtering on and four digest rules.
 pub fn places_with_features() -> Places {
     Places {
         features: crate::places::Features {
@@ -261,14 +223,12 @@ pub fn places_with_features() -> Places {
     }
 }
 
-/// Whether `effects` ask the host to open `scope`.
 pub fn opens(effects: &[Effect], scope: ListScope) -> bool {
     effects.iter().any(|effect| {
         matches!(effect, Effect::Focus { request: postio_focus::Request::OpenScope { scope: asked, .. }, .. } if *asked == scope)
     })
 }
 
-/// Whether `effects` ask the host to open any place.
 pub fn opens_any(effects: &[Effect]) -> bool {
     effects.iter().any(|effect| {
         matches!(
@@ -281,28 +241,199 @@ pub fn opens_any(effects: &[Effect]) -> bool {
     })
 }
 
-/// The host says `scope` has `total` rows.
+pub fn asked(effects: &[Effect]) -> Vec<(postio_focus::Ticket, postio_focus::Request)> {
+    effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::Focus { ticket, request } => Some((*ticket, request.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+pub fn sent(effects: &[Effect]) -> Vec<postio_core::Command> {
+    asked(effects)
+        .into_iter()
+        .filter_map(|(_, request)| match request {
+            postio_focus::Request::Send { command, .. } => Some(command),
+            _ => None,
+        })
+        .collect()
+}
+
+pub fn labels_arrive(
+    app: &mut App,
+    opened: &[Effect],
+    labels: Vec<postio_model::Label>,
+    counts: Vec<(postio_model::LabelId, u32)>,
+    applied: &[postio_model::LabelId],
+) {
+    for (ticket, request) in asked(opened) {
+        let postio_focus::Request::Labels { threads, stamp, .. } = request else {
+            continue;
+        };
+        let carried = labels
+            .iter()
+            .filter(|label| applied.contains(&label.id))
+            .flat_map(|label| threads.iter().map(|thread| (*thread, label.clone())))
+            .collect();
+        let read = postio_focus::LabelsRead {
+            account: AccountId::new(1),
+            labels: labels.clone(),
+            counts: counts.clone(),
+            carried,
+        };
+        let answer = postio_focus::Reply::Labels {
+            stamp,
+            answer: Ok(read),
+        };
+        update(app, Input::FocusReply(ticket, answer));
+    }
+}
+
+pub fn folders_arrive(
+    app: &mut App,
+    opened: &[Effect],
+    folders: Vec<Mailbox>,
+    recent: Vec<MailboxId>,
+) {
+    for (ticket, request) in asked(opened) {
+        let postio_focus::Request::Folders { stamp } = request else {
+            continue;
+        };
+        let read = postio_focus::FoldersRead {
+            folders: folders.clone(),
+            recent: recent.clone(),
+        };
+        let answer = postio_focus::Reply::Folders {
+            stamp,
+            answer: Ok(read),
+        };
+        update(app, Input::FocusReply(ticket, answer));
+    }
+}
+
+pub fn places_arrive(
+    app: &mut App,
+    opened: &[Effect],
+    folders: &[Mailbox],
+    labels: &[(postio_model::Label, u32)],
+    outbox: &[(AccountId, u32)],
+) {
+    use postio_ui::places as rules;
+    for (ticket, request) in asked(opened) {
+        if request != postio_focus::Request::Places {
+            continue;
+        }
+        let mut read = postio_focus::PlacesRead::default();
+        for folder in folders {
+            read.folders.push((folder.id, rules::place_name(folder)));
+            read.places.push(rules::mailbox_place(folder));
+            read.entries.push(rules::mailbox_entry(folder));
+        }
+        for (account, waiting) in outbox.iter().filter(|(_, waiting)| *waiting > 0) {
+            read.entries.push(rules::outbox_entry(*account, *waiting));
+        }
+        for (label, held) in labels {
+            read.entries.push(rules::label_entry(label, Some(*held)));
+            read.places.push(rules::label_place(label));
+        }
+        for role in [MailboxRole::Snoozed, MailboxRole::Flagged] {
+            read.entries.push(rules::view_entry(role, None));
+        }
+        update(
+            app,
+            Input::FocusReply(ticket, postio_focus::Reply::Places(Ok(read))),
+        );
+    }
+}
+
+pub fn results_arrive(app: &mut App, opened: &[Effect], subjects: &[&str]) {
+    use postio_focus::{Reply, Request};
+    use postio_search::results::{
+        ConversationHit, ConversationKey, ConversationResults, Match, Source,
+    };
+    let found = ConversationResults {
+        hits: subjects
+            .iter()
+            .zip(1_i64..)
+            .map(|(subject, n)| ConversationHit {
+                key: ConversationKey::Thread(postio_model::ThreadId::new(2000 + n)),
+                best: MessageId::new(1000 + n),
+                best_number: 1,
+                mailbox_id: MailboxId::new(1),
+                subject: Some((*subject).to_owned()),
+                from: Some(EmailAddress::new(Some("Ada Moreno"), "ada@example.com")),
+                newest_match: Utc.with_ymd_and_hms(2026, 9, 20, 9, 0, 0).unwrap(),
+                messages: 1,
+                unread: false,
+                has_attachments: false,
+                labels: Vec::new(),
+                score: 1.0,
+                reasons: Vec::new(),
+                matched_messages: 1,
+                matches: vec![Match {
+                    source: Source::Body,
+                    passage: None,
+                    when: None,
+                }],
+            })
+            .collect(),
+        total: subjects.len() as u64,
+        capped: false,
+        messages_searched: 100,
+        corpus_complete: true,
+        contents_complete: true,
+        facets: Default::default(),
+        files: 0,
+        people: 0,
+        names: Default::default(),
+        elapsed: std::time::Duration::from_millis(3),
+    };
+    for (ticket, request) in asked(opened) {
+        let reply = match request {
+            Request::ResultsPage {
+                order,
+                offset,
+                stamp,
+                ..
+            } => Reply::ResultsPage {
+                stamp,
+                order,
+                offset,
+                answer: Ok(Box::new(found.clone())),
+            },
+            Request::Facets { stamp, .. } => Reply::Facets {
+                stamp,
+                answer: Ok(Box::new(found.clone())),
+            },
+            Request::ResultsPassages { stamp, .. } => Reply::ResultsPassages {
+                stamp,
+                answer: Ok(Vec::new()),
+            },
+            _ => continue,
+        };
+        update(app, Input::FocusReply(ticket, reply));
+    }
+}
+
 pub fn open_scope(app: &mut App, scope: ListScope, total: u32) {
     app.open_for_tests(scope, total);
 }
 
-/// The host says the Inbox (id 1) has `total` rows.
 pub fn open_list(app: &mut App, total: u32) -> Vec<Effect> {
     app.open_for_tests(ListScope::Mailbox(MailboxId::new(1)), total);
     Vec::new()
 }
 
-/// Answer the pages of the list with [`row`]s; how many there were.
 pub fn serve(app: &mut App, effects: Vec<Effect>) -> usize {
     serve_with(app, effects, row)
 }
 
-/// Answer the pages of the list with `row_at(position)`; how many there were.
 pub fn serve_with(app: &mut App, _effects: Vec<Effect>, row_at: impl Fn(u32) -> Row) -> usize {
     app.serve_for_tests(|position| held_of(row_at(position)))
 }
 
-/// A row as the controller would have held it.
 pub fn held_of(row: Row) -> Held {
     let source = postio_ui::focus_list::FocusRow::conversation(conversation(
         row.id.get(),
@@ -314,16 +445,11 @@ pub fn held_of(row: Row) -> Held {
     Held { row, source }
 }
 
-/// Open the Inbox with exactly `rows`, and serve its pages from them.
 pub fn show_rows(app: &mut App, rows: &[Row]) {
     let effects = open_list(app, rows.len() as u32);
     serve_with(app, effects, |position| rows[position as usize].clone());
 }
 
-// -- Filtered --------------------------------------------------------------
-
-/// One message Filtered holds, filed away on `day` of September 2026 at
-/// `hour:minute`: from `source`, for `reason`, its subject "Filtered `id`".
 pub fn filtered_row(
     id: i64,
     source: &str,
@@ -343,61 +469,116 @@ pub fn filtered_row(
     }
 }
 
-/// Answer every ask among `effects` from `tabs` and `rows`, and whatever
-/// those asked for in turn; return how many there were.
+/// Returns every effect the app returned on the way, the first `effects` included.
+pub fn serve_focus(
+    app: &mut App,
+    effects: Vec<Effect>,
+    mut reply: impl FnMut(&postio_focus::Request) -> Option<postio_focus::Reply>,
+) -> Vec<Effect> {
+    let mut seen = Vec::new();
+    let mut pending: Vec<Effect> = effects.into_iter().rev().collect();
+    while let Some(effect) = pending.pop() {
+        if let Effect::Focus { ticket, request } = &effect
+            && let Some(answer) = reply(request)
+        {
+            pending.extend(
+                update(app, Input::FocusReply(*ticket, answer))
+                    .into_iter()
+                    .rev(),
+            );
+        }
+        seen.push(effect);
+    }
+    seen
+}
+
 pub fn serve_filtered(
     app: &mut App,
     effects: Vec<Effect>,
     tabs: &[(&str, u32)],
     rows: &[postio_client::protocol::FilteredRow],
-) -> usize {
-    use crate::ask::{Answer, Ask};
-    let mut asked = 0;
-    let mut pending = effects;
-    while let Some(effect) = pending.pop() {
-        let Effect::Ask(ask) = effect else {
-            continue;
-        };
-        asked += 1;
-        let answer = match ask {
-            Ask::FilteredTabs => Answer::FilteredTabs(Ok(tabs
+) -> Vec<Effect> {
+    use postio_focus::{Reply, Request};
+    serve_focus(app, effects, |request| match request {
+        Request::FilteredTabs => Some(Reply::FilteredTabs(Ok(tabs
+            .iter()
+            .map(|(reason, count)| ((*reason).to_owned(), *count))
+            .collect()))),
+        Request::Filtered {
+            reason,
+            offset,
+            stamp,
+        } => Some(Reply::Filtered {
+            stamp: *stamp,
+            offset: *offset,
+            answer: Ok(rows
                 .iter()
-                .map(|(reason, count)| ((*reason).to_owned(), *count))
-                .collect())),
-            Ask::FilteredPage {
-                generation,
-                reason,
-                offset,
-            } => Answer::FilteredPage {
-                generation,
-                offset,
-                rows: Ok(rows
-                    .iter()
-                    .filter(|row| reason.as_ref().is_none_or(|reason| *reason == row.reason))
-                    .skip(offset as usize)
-                    .take(postio_ui::filtered::PAGE as usize)
-                    .cloned()
-                    .collect()),
-            },
-            _ => continue,
-        };
-        pending.extend(update(app, Input::Answer(answer)));
-    }
-    asked
+                .filter(|row| reason.as_ref().is_none_or(|reason| *reason == row.reason))
+                .skip(*offset as usize)
+                .take(postio_ui::filtered::PAGE as usize)
+                .cloned()
+                .collect()),
+        }),
+        _ => None,
+    })
 }
 
-// -- Reading ---------------------------------------------------------------
+pub fn serve_digest(
+    app: &mut App,
+    effects: Vec<Effect>,
+    messages: Vec<postio_model::listing::MessageSummary>,
+    summary: Option<postio_model::summary::DigestSummary>,
+) -> Vec<Effect> {
+    use postio_focus::{Reply, Request};
+    serve_focus(app, effects, |request| match request {
+        Request::DigestRead { stamp, .. } => Some(Reply::DigestRead {
+            stamp: *stamp,
+            rows: Ok(messages.clone()),
+            summary: summary.clone(),
+        }),
+        _ => None,
+    })
+}
 
-/// The message `message` open and read: the cursor rests on it, its
-/// recipients are known and its body has arrived.
+pub fn serve_preview(
+    app: &mut App,
+    effects: Vec<Effect>,
+    preview: postio_client::protocol::DigestPreview,
+) -> Vec<Effect> {
+    use postio_focus::{Reply, Request};
+    serve_focus(app, effects, |request| match request {
+        Request::DigestPreview { stamp, .. } => Some(Reply::DigestPreview {
+            stamp: *stamp,
+            answer: Ok(preview.clone()),
+        }),
+        _ => None,
+    })
+}
+
+pub fn serve_vault(
+    app: &mut App,
+    effects: Vec<Effect>,
+    picture: postio_client::protocol::VaultPicture,
+) -> Vec<Effect> {
+    use postio_focus::{Reply, Request};
+    serve_focus(app, effects, |request| match request {
+        Request::Vault { stamp, .. } => Some(Reply::Vault {
+            stamp: *stamp,
+            answer: Ok(picture.clone()),
+        }),
+        _ => None,
+    })
+}
+
 pub fn open_message(app: &mut App, message: MessageId, to: Vec<EmailAddress>, body: MessageBody) {
-    app.open_reading(message);
+    enter_thread(app, &[message.get()]);
+    let mut row = header(app, message);
+    row.to = to;
     update(
         app,
         Input::Addressed {
             message,
-            to,
-            cc: Vec::new(),
+            row,
             warning: None,
         },
     );
@@ -413,7 +594,62 @@ pub fn open_message(app: &mut App, message: MessageId, to: Vec<EmailAddress>, bo
     );
 }
 
-/// What the open message's column shows, as plain text.
+pub fn header(app: &App, message: MessageId) -> Box<postio_model::Message> {
+    let row = app.row(message);
+    let at = row.map_or_else(|| local(23, 9, 0), |row| row.when);
+    let mut header = postio_model::Message::new(AccountId::new(1), MailboxId::new(1), at);
+    header.id = message;
+    if let Some(row) = row {
+        let address = row.address.clone().unwrap_or_default();
+        header.from = vec![EmailAddress::new(Some(row.from.as_str()), address)];
+    }
+    Box::new(header)
+}
+
+pub fn enter_thread(app: &mut App, ids: &[i64]) -> Vec<Effect> {
+    use postio_model::thread_view::{Line, ThreadMember, ThreadView};
+    let asked = update(app, key(KeyCode::Enter, KeyModifiers::NONE));
+    let mut effects = Vec::new();
+    for effect in asked {
+        let Effect::Focus {
+            ticket,
+            request: postio_focus::Request::ReadThread(thread),
+        } = effect
+        else {
+            effects.push(effect);
+            continue;
+        };
+        let members = ids
+            .iter()
+            .map(|id| ThreadMember {
+                id: MessageId::new(*id),
+                from: Some(EmailAddress::new(Some("Lena Park"), "lena@example.com")),
+                own: false,
+                at: local(23, 11, 22),
+                seen: true,
+                has_attachments: false,
+                line: Line::Preview(String::new()),
+                answers: None,
+                marker: false,
+            })
+            .collect();
+        let view = ThreadView {
+            thread,
+            subject: None,
+            members,
+            draft: None,
+            muted: None,
+            labels: Vec::new(),
+        };
+        let reply = postio_focus::Reply::ThreadRead {
+            thread,
+            view: Ok(Some(view)),
+        };
+        effects.extend(update(app, Input::FocusReply(ticket, reply)));
+    }
+    effects
+}
+
 pub fn reader_text(app: &App) -> String {
     assert!(app.reading().is_some(), "a message is open");
     crate::view::open::document(app, &plain_theme(), 72, now())
@@ -424,9 +660,6 @@ pub fn reader_text(app: &App) -> String {
         .join("\n")
 }
 
-// -- Keys and the pointer --------------------------------------------------
-
-/// `code` with `modifiers`, pressed.
 pub fn key(code: KeyCode, modifiers: KeyModifiers) -> Input {
     Input::Key(KeyEvent {
         code,
@@ -436,27 +669,22 @@ pub fn key(code: KeyCode, modifiers: KeyModifiers) -> Input {
     })
 }
 
-/// The character `c`, pressed.
 pub fn press(c: char) -> Input {
     key(KeyCode::Char(c), KeyModifiers::NONE)
 }
 
-/// `ctrl+c`.
 pub fn ctrl(c: char) -> Input {
     key(KeyCode::Char(c), KeyModifiers::CONTROL)
 }
 
-/// `alt+c`.
 pub fn alt(c: char) -> Input {
     key(KeyCode::Char(c), KeyModifiers::ALT)
 }
 
-/// Type `text` a character at a time; everything the app asked for on the way.
 pub fn type_text(app: &mut App, text: &str) -> Vec<Effect> {
     text.chars().flat_map(|c| update(app, press(c))).collect()
 }
 
-/// A click on `target`.
 pub fn click(target: hit::Target, ctrl: bool, shift: bool) -> Input {
     Input::Pointer(Pointer::Click {
         hit: hit::Hit {
@@ -469,7 +697,6 @@ pub fn click(target: hit::Target, ctrl: bool, shift: bool) -> Input {
     })
 }
 
-/// The wheel turned over `target`.
 pub fn wheel(target: hit::Target, down: bool) -> Input {
     Input::Pointer(Pointer::Wheel {
         hit: hit::Hit {
@@ -481,10 +708,8 @@ pub fn wheel(target: hit::Target, down: bool) -> Input {
     })
 }
 
-/// The keys `spec` spells, in order: a character is that key, and a name in
-/// angle brackets is a named key (`<Enter>`, `<Esc>`, `<Tab>`, `<Del>`, `<Up>`,
-/// `<Down>`, `<Left>`, `<Right>`, `<F3>`, `<F5>`, `<F8>`), optionally after `C-` for
-/// ctrl, `A-` for alt or `S-` for shift (`<C-z>`, `<A-Enter>`, `<S-F3>`).
+/// A character is that key; a name in angle brackets is a named key (`<Enter>`, `<F3>`), with
+/// `C-`, `A-` or `S-` for ctrl, alt, shift (`<C-z>`).
 pub fn keys_of(spec: &str) -> Vec<Input> {
     let mut out = Vec::new();
     let mut rest = spec;
@@ -532,7 +757,6 @@ pub fn keys_of(spec: &str) -> Vec<Input> {
     out
 }
 
-/// Press the keys `spec` spells (see [`keys_of`]); everything the app asked for.
 pub fn press_keys(app: &mut App, spec: &str) -> Vec<Effect> {
     keys_of(spec)
         .into_iter()
@@ -540,8 +764,6 @@ pub fn press_keys(app: &mut App, spec: &str) -> Vec<Effect> {
         .collect()
 }
 
-/// A mouse event at column `x`, row `y` of the screen `app` last drew at
-/// `width` x `height`, resolved as the loop resolves it, and given to the app.
 pub fn mouse_at(
     app: &mut App,
     (width, height): (u16, u16),
@@ -553,7 +775,6 @@ pub fn mouse_at(
     mouse_on(app, &hits, (x, y), kind, modifiers)
 }
 
-/// A mouse event at (`x`, `y`) of the frame whose regions are `hits`.
 pub fn mouse_on(
     app: &mut App,
     hits: &hit::Hits,
@@ -573,7 +794,6 @@ pub fn mouse_on(
     }
 }
 
-/// A left click at (`x`, `y`).
 pub fn click_at(app: &mut App, size: (u16, u16), at: (u16, u16)) -> Vec<Effect> {
     use crossterm::event::{MouseButton, MouseEventKind};
     mouse_at(
@@ -585,7 +805,6 @@ pub fn click_at(app: &mut App, size: (u16, u16), at: (u16, u16)) -> Vec<Effect> 
     )
 }
 
-/// The wheel turned at (`x`, `y`).
 pub fn wheel_at(app: &mut App, size: (u16, u16), at: (u16, u16), down: bool) -> Vec<Effect> {
     use crossterm::event::MouseEventKind;
     let kind = if down {
@@ -596,15 +815,10 @@ pub fn wheel_at(app: &mut App, size: (u16, u16), at: (u16, u16), down: bool) -> 
     mouse_at(app, size, at, kind, KeyModifiers::NONE)
 }
 
-// -- The screen ------------------------------------------------------------
-
-/// The plain theme: no colour, so a screen compares as text.
 pub fn plain_theme() -> Theme {
     Theme::new(Colour::None, Background::Unknown, &Default::default()).0
 }
 
-/// `app` drawn into a `width` x `height` buffer under the plain theme, and the
-/// click targets the drawing left.
 pub fn draw_into(width: u16, height: u16, app: &App) -> (ratatui::buffer::Buffer, hit::Hits) {
     let theme = plain_theme();
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
@@ -615,17 +829,14 @@ pub fn draw_into(width: u16, height: u16, app: &App) -> (ratatui::buffer::Buffer
     (terminal.backend().buffer().clone(), hits)
 }
 
-/// The cells `app` draws at `width` x `height`.
 pub fn buffer(width: u16, height: u16, app: &App) -> ratatui::buffer::Buffer {
     draw_into(width, height, app).0
 }
 
-/// The click targets `app` draws at `width` x `height`.
 pub fn hits_of(width: u16, height: u16, app: &App) -> hit::Hits {
     draw_into(width, height, app).1
 }
 
-/// The screen `app` draws at `width` x `height`, a line to a row.
 pub fn screen(width: u16, height: u16, app: &App) -> String {
     let buffer = buffer(width, height, app);
     (0..buffer.area.height)
@@ -638,10 +849,6 @@ pub fn screen(width: u16, height: u16, app: &App) -> String {
         .join("\n")
 }
 
-// -- Digests ---------------------------------------------------------------
-
-/// A digest delivery of the inbox: `count` messages for `rule`, weekly, from
-/// `senders` people, due at 11:00 on the 23rd.
 pub fn digest_row(
     delivery: i64,
     rule: &str,
@@ -666,7 +873,14 @@ pub fn digest_row(
     })
 }
 
-/// `config.toml`'s rule for "Newsletters": weekly, Sunday, 09:00.
+pub fn with_model() -> postio_config::FocusConfig {
+    postio_config::Config::from_toml_str(
+        "[focus.model]\nendpoint = \"http://127.0.0.1:11434/v1\"\nmodel = \"a-small-model\"\n",
+    )
+    .expect("a config")
+    .focus
+}
+
 pub fn newsletters_rule() -> postio_config::DigestRule {
     postio_config::Config::from_toml_str(
         "[[focus.digests]]\nname = \"Newsletters\"\nmatch = [\"from:sender0@example.com\"]\n\
@@ -678,7 +892,6 @@ pub fn newsletters_rule() -> postio_config::DigestRule {
     .remove(0)
 }
 
-/// What a delivery holds: message `id` from `from`, with its subject.
 pub fn held(
     id: i64,
     from: &str,
@@ -688,7 +901,6 @@ pub fn held(
     conversation(id, from, subject, preview, local(22, 9, id as u32 % 50)).representative
 }
 
-/// A summary citing `cites` in turn, as `(topic, text, message)`.
 pub fn summary_of(cites: &[(&str, &str, i64)]) -> postio_model::summary::DigestSummary {
     use postio_model::summary::{DigestSummary, SummaryReference, SummaryStatement};
     DigestSummary {

@@ -1,48 +1,29 @@
-//! A message, as lines a terminal can draw.
-//!
-//! The body arrives from the host as the store holds it. The reader's own
-//! rules -- reader view or original, the sanitiser, quote folding -- are
-//! `postio_ui::reader::document`'s and `postio_body`'s, the same ones the
-//! desktop and macOS readers apply; then `postio_body::markdown::from_html`,
-//! and `tui-markdown` to style it (research R5).
-//!
-//! Everything from the message is made [`SafeText`] before it is styled, so
-//! no line here can carry a control sequence to the terminal.
+//! A message as lines a terminal can draw: the readers' own rules (`postio_ui::reader::document`,
+//! `postio_body`), then `tui-markdown` to style it. Everything is made `SafeText` before it is
+//! styled, so no line can carry a control sequence to the terminal.
 
 use postio_body::markdown::{END_FOLD, FOLD, IMAGE_SCHEME};
 use postio_ui::terminal::SafeText;
 use ratatui::text::Line;
 
-/// One block of a rendered message.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Block {
-    /// Lines that are always shown.
     Lines(Vec<Line<'static>>),
-    /// Quoted history: folded unless expanded.
     Fold {
-        /// Whether it is folded.
         folded: bool,
-        /// Its lines, when expanded.
         lines: Vec<Line<'static>>,
     },
 }
 
-/// A message's body as blocks of lines.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Rendered {
-    /// The blocks, top to bottom.
     pub blocks: Vec<Block>,
-    /// Every link's destination, in the order they appear.
-    ///
-    /// `tui-markdown` already draws a link as `text (destination)`, so what a
-    /// link leads to is on screen, in full, before anything follows it
-    /// (FR-014). This list is what the mouse opens from; nothing here opens
-    /// anything by itself.
+    /// `tui-markdown` draws a link as `text (destination)`, so where it leads is on screen before
+    /// anything follows it (FR-014). The mouse opens from this list; nothing here opens anything.
     pub links: Vec<SafeText>,
 }
 
 impl Rendered {
-    /// The lines to draw, with folds as they stand.
     pub fn lines(&self) -> Vec<Line<'static>> {
         let mut out = Vec::new();
         for block in &self.blocks {
@@ -71,19 +52,14 @@ impl Rendered {
     }
 }
 
-/// What one drawn line of a message stands for, for a click on it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LineTarget {
-    /// Nothing to act on.
     Text,
-    /// A fold marker: which block it folds.
     Fold(usize),
-    /// A link: which of [`Rendered::links`].
     Link(usize),
 }
 
 impl Rendered {
-    /// What each line of [`Rendered::lines`] stands for, line for line.
     pub fn targets(&self) -> Vec<LineTarget> {
         let of = |line: &Line<'static>| {
             let text = line.to_string();
@@ -114,7 +90,6 @@ impl Rendered {
         out
     }
 
-    /// Fold or unfold block `index`.
     pub fn toggle_fold(&mut self, index: usize) {
         if let Some(Block::Fold { folded, .. }) = self.blocks.get_mut(index) {
             *folded = !*folded;
@@ -122,11 +97,8 @@ impl Rendered {
     }
 }
 
-/// Sanitised, folded HTML as a rendered message.
 pub fn from_html(html: &str) -> Rendered {
     let (markdown, links) = links_in(&placeholders(&postio_body::markdown::from_html(html)));
-    // Everything from the message, made safe before it is styled: every span
-    // `tui-markdown` makes is a slice of this.
     let safe = SafeText::new(&markdown);
 
     let mut blocks = Vec::new();
@@ -176,11 +148,8 @@ pub fn from_html(html: &str) -> Rendered {
     }
 }
 
-/// A plain-text message as it was written.
-///
-/// Never parsed as Markdown: a line that begins `#` is the sender's `#`, not a
-/// heading (US2 scenario 3). Each run of `>` lines is quoted history, folded
-/// as the HTML reader folds a blockquote.
+/// Never parsed as Markdown: a line that begins `#` is the sender's `#`, not a heading. Each
+/// run of `>` lines folds as the HTML reader folds a blockquote.
 pub fn from_text(text: &str) -> Rendered {
     let safe = SafeText::new(text);
     let mut blocks = Vec::new();
@@ -217,7 +186,6 @@ pub fn from_text(text: &str) -> Rendered {
     }
 }
 
-/// The Markdown unchanged, and every link's destination in order.
 fn links_in(markdown: &str) -> (String, Vec<String>) {
     use pulldown_cmark::{Event, Parser, Tag};
     let links = Parser::new(markdown)
@@ -229,7 +197,6 @@ fn links_in(markdown: &str) -> (String, Vec<String>) {
     (markdown.to_owned(), links)
 }
 
-/// Markdown as styled lines that own their text.
 fn styled(markdown: &str) -> Vec<Line<'static>> {
     tui_markdown::from_str(markdown)
         .lines
@@ -247,8 +214,7 @@ fn styled(markdown: &str) -> Vec<Line<'static>> {
         .collect()
 }
 
-/// `![alt](postio-image:N)` as the words `[image: alt]`, escaped so Markdown
-/// draws the brackets rather than reading a link.
+/// Escaped, so Markdown draws the brackets rather than reading a link.
 fn placeholders(markdown: &str) -> String {
     let target = format!("]({IMAGE_SCHEME}:");
     let mut out = String::with_capacity(markdown.len());
@@ -347,7 +313,6 @@ mod tests {
             drawn.contains("Sounds good.") && drawn.contains("Thanks"),
             "{drawn}"
         );
-        // The desktop documents' words (spec 007 FR-034, T067).
         assert!(drawn.contains("▸ 2 quoted lines"), "{drawn}");
         assert!(!drawn.contains("the old words"), "{drawn}");
     }
@@ -400,7 +365,6 @@ mod tests {
 
     #[test]
     fn no_corpus_message_reaches_the_terminal_with_markup_or_a_control_character() {
-        // SC-005, on what the terminal would actually draw.
         let mut checked = 0;
         for fixture in postio_model::test_corpus::all() {
             let message = fixture.parse();
