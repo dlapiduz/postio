@@ -45,7 +45,8 @@ graph TD
 
     subgraph focusdomain ["Focus's engine work"]
         classify["<b>postio-classify</b><br/>filter · hold · mark, in layers<br/><i>no send path · no network</i>"]
-        calendar["<b>postio-calendar</b><br/>invitations · RSVP replies<br/><i>pure leaf</i>"]
+        calendar["<b>postio-calendar</b><br/>events · invitations · edits · merges<br/><i>pure leaf</i>"]
+        dav["<b>postio-dav</b><br/>CalDAV behind one trait<br/><i>no store · no toolkit</i>"]
         ai["<b>postio-ai</b><br/>the user's own model, on this computer<br/><i>no send path · no store · no model</i>"]
         vault["<b>postio-vault</b><br/>Obsidian tasks and notes<br/><i>files only · no network</i>"]
     end
@@ -100,6 +101,8 @@ graph TD
     sync --> imap
     sync --> smtp
     sync --> storage
+    sync --> dav
+    sync --> calendar
     sync --> classify
     ai --> classify
     ai --> config
@@ -119,7 +122,7 @@ graph TD
     classDef pure fill:#eef3f8,stroke:#5980a6,color:#1c2b3a
     classDef guard stroke-dasharray:4 3,stroke:#5980a6
     class model,search,calendar pure
-    class core,app,focus,session,client,tui,mcp,widgets,classify,ai,vault guard
+    class core,app,focus,session,client,tui,mcp,widgets,classify,ai,vault,dav guard
 ```
 
 Arrows are "depends on" and each is a real direct dependency. Omitted:
@@ -150,7 +153,8 @@ depends on and which has no code (ADR 0047).
 | `postio-storage`, `postio-index` | The store (Turso, ADR 0038) and the search index. |
 | `postio-sync`, `postio-transport`, `postio-gmail`, `postio-jmap`, `postio-smtp` | Sync over the `MailBackend` trait; protocol crates. |
 | `postio-classify` | Filter, hold, mark, in layers. No send path, no network. |
-| `postio-calendar` | Invitations and RSVP replies. Pure leaf. |
+| `postio-calendar` | Events, recurrence, edits, merges, invitations. Pure leaf. |
+| `postio-dav` | CalDAV behind one trait (`io-webdav`), and its fake. |
 | `postio-ai` | Asks the user's own model, on this computer. No send path, no store, no model. |
 | `postio-vault` | Appends Markdown to an Obsidian vault. Files only. |
 | `postio-render` | The memory-safe reading renderer (ADR 0042). |
@@ -178,6 +182,7 @@ the check does not walk into `postio-workspace-hack`.
   `postio-sync`) or app (ADR 0043).
 - `postio-classify` takes no send path or network crate (ADR 0009).
   `postio-calendar` takes no store engine, toolkit, async runtime or network.
+- `postio-dav` takes no store or toolkit; `postio-sync` names no WebDAV library.
 - `postio-ai` takes no send path, store, toolkit, inference engine or HTTP
   client but `io-http`; its endpoint can only name this computer.
 - `postio-vault` takes no network crate, toolkit, store engine or async
