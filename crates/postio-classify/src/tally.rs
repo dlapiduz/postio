@@ -5,6 +5,7 @@ use std::fmt::Write as _;
 
 use postio_model::MessageId;
 
+use crate::needs_action::Asked;
 use crate::outcome::{MarkedBy, MarkerKind, Outcome};
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -13,6 +14,7 @@ pub struct Tally {
     filed: BTreeMap<(&'static str, &'static str), Vec<MessageId>>,
     held: BTreeMap<String, Vec<MessageId>>,
     considered: Vec<MessageId>,
+    noticed: Vec<MessageId>,
     not_considered: usize,
     no_body: usize,
     marked: BTreeMap<(&'static str, &'static str), Vec<MessageId>>,
@@ -39,13 +41,16 @@ impl Tally {
         }
     }
 
-    /// `None` with `considered` is a body this machine does not hold.
-    pub fn body(&mut self, id: MessageId, considered: bool, outcome: Option<&Outcome>) {
-        if !considered {
-            self.not_considered += 1;
-            return;
+    /// `None` with a guard that asks is a body this machine does not hold.
+    pub fn body(&mut self, id: MessageId, asked: Asked, outcome: Option<&Outcome>) {
+        match asked {
+            Asked::Person => self.considered.push(id),
+            Asked::Notice => self.noticed.push(id),
+            Asked::Neither => {
+                self.not_considered += 1;
+                return;
+            }
         }
-        self.considered.push(id);
         let Some(outcome) = outcome else {
             self.no_body += 1;
             return;
@@ -77,6 +82,8 @@ impl Tally {
         let _ = writeln!(out, "left in the inbox {}", self.examined - filed - held);
         let _ = write!(out, "considered {}:", self.considered.len());
         ids(&mut out, &self.considered);
+        let _ = write!(out, "noticed {}:", self.noticed.len());
+        ids(&mut out, &self.noticed);
         let _ = writeln!(out, "not considered {}", self.not_considered);
         let _ = writeln!(out, "no body here {}", self.no_body);
         let _ = writeln!(out, "marked {marked}");
@@ -101,6 +108,7 @@ fn by_name(by: MarkedBy) -> &'static str {
         MarkedBy::Calendar => "calendar",
         MarkedBy::Detector => "detector",
         MarkedBy::Model => "model",
+        MarkedBy::Notice => "notice",
     }
 }
 
@@ -179,18 +187,23 @@ mod tests {
     #[test]
     fn the_guard_and_the_markers_are_counted_by_kind_and_source() {
         let mut tally = Tally::new();
-        tally.body(id(1), false, None);
-        tally.body(id(2), true, None);
-        tally.body(id(3), true, Some(&Outcome::default()));
+        tally.body(id(1), Asked::Neither, None);
+        tally.body(id(2), Asked::Person, None);
+        tally.body(id(3), Asked::Person, Some(&Outcome::default()));
         tally.body(
             id(4),
-            true,
+            Asked::Person,
             Some(&marked(MarkerKind::Question, MarkedBy::Detector)),
         );
         tally.body(
             id(6),
-            true,
+            Asked::Person,
             Some(&marked(MarkerKind::Todo, MarkedBy::Model)),
+        );
+        tally.body(
+            id(8),
+            Asked::Notice,
+            Some(&marked(MarkerKind::Todo, MarkedBy::Notice)),
         );
 
         let text = tally.render();
@@ -198,7 +211,9 @@ mod tests {
         assert!(text.contains("considered 4: 2 3 4 6\n"), "{text}");
         assert!(text.contains("not considered 1\n"), "{text}");
         assert!(text.contains("no body here 1\n"), "{text}");
-        assert!(text.contains("marked 2\n"), "{text}");
+        assert!(text.contains("noticed 1: 8\n"), "{text}");
+        assert!(text.contains("marked 3\n"), "{text}");
+        assert!(text.contains("  todo notice 1: 8\n"), "{text}");
         assert!(text.contains("  question detector 1: 4\n"), "{text}");
         assert!(text.contains("  todo model 1: 6\n"), "{text}");
     }

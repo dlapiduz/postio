@@ -162,6 +162,7 @@ fn busy(position: u32) -> postio_tui::row::Row {
         excerpt: Some("Can you approve these by Friday so finance can close the quarter?".into()),
         answer: None,
         cancelled: false,
+        notice: false,
     });
     busy.labels = ["Atlas", "Harbor"]
         .iter()

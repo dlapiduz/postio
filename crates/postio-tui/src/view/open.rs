@@ -201,7 +201,7 @@ fn card(
     let theme = rows.theme;
     let line = postio_ui::focus_row::marker_line(marker, now.with_timezone(&chrono::Utc), &Local)
         .capturing(capture);
-    let accent = theme.style(Role::Accent);
+    let accent = theme.style(super::list::marker_role(&line));
     let surface = theme.style(Role::Surface);
     let width = rows.width;
 
@@ -1171,6 +1171,7 @@ mod tests {
             excerpt: Some(QUOTE.into()),
             answer: None,
             cancelled: false,
+            notice: false,
         });
         let mut rows = vec![FocusRow::Conversation(Conversation {
             summary: harbor,

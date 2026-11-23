@@ -639,7 +639,7 @@ CREATE TABLE contact_sync_links (
     // claimed `Message-ID` so they survive a merge and renumbering.
     Migration {
         from: stamp(0xf0d2_3b2a),
-        to: FINGERPRINT,
+        to: stamp(0x4b4a_60f9),
         statements: r#"
 ALTER TABLE messages ADD COLUMN own_line TEXT;
 CREATE INDEX idx_threads_subject_recent ON threads (account_id, subject, last_at DESC, first_at);
@@ -663,6 +663,41 @@ CREATE TABLE thread_splits (
     split_at       INTEGER NOT NULL,
     PRIMARY KEY (account_id, rfc_message_id)
 );
+"#,
+    },
+    Migration {
+        from: stamp(0x4b4a_60f9),
+        to: FINGERPRINT,
+        statements: r#"
+CREATE TABLE markers_rows AS SELECT * FROM markers;
+DROP TABLE markers;
+CREATE TABLE markers (
+    message_id       INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    kind             TEXT    NOT NULL
+                             CHECK (kind IN ('invite', 'question', 'todo', 'no_reply')),
+    source           TEXT    NOT NULL
+                             CHECK (source IN ('calendar', 'detector', 'model', 'notice',
+                                               'reminder')),
+    span_start       INTEGER,
+    span_end         INTEGER,
+    excerpt          TEXT,
+    starts_at        INTEGER,
+    ends_at          INTEGER,
+    due_at           INTEGER,
+    invite_uid       TEXT,
+    invite_sequence  INTEGER,
+    invite_stamp     INTEGER,
+    invite_state     TEXT    CHECK (invite_state IN ('open', 'cancelled', 'past')),
+    answer           TEXT    CHECK (answer IN ('accepting', 'accepted',
+                                               'declining', 'declined')),
+    answer_until     INTEGER,
+    dismissed_at     INTEGER
+);
+INSERT INTO markers SELECT * FROM markers_rows;
+DROP TABLE markers_rows;
+CREATE INDEX idx_markers_answer_until ON markers (answer_until);
+CREATE INDEX idx_markers_invite ON markers (invite_uid);
+CREATE INDEX idx_markers_dismissed ON markers (dismissed_at, message_id);
 "#,
     },
 ];
@@ -1341,9 +1376,10 @@ CREATE TABLE markers (
     kind             TEXT    NOT NULL
                              CHECK (kind IN ('invite', 'question', 'todo', 'no_reply')),
     -- What made it: a calendar part, the built-in detector, the person's
-    -- own model, or a reminder.
+    -- own model, a reminder, or the notice patterns for automated mail.
     source           TEXT    NOT NULL
-                             CHECK (source IN ('calendar', 'detector', 'model', 'reminder')),
+                             CHECK (source IN ('calendar', 'detector', 'model', 'notice',
+                                               'reminder')),
     -- Character offsets of the sentence in the message's own text; NULL for
     -- an invitation or a reminder.
     span_start       INTEGER,

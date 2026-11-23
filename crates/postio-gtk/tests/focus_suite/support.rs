@@ -713,13 +713,39 @@ impl Fixture {
 
 impl Fixture {
     pub async fn ask(&self, message: MessageId, sentence: &str) {
-        use postio_storage::repository::{Marker, MarkerRepository, MarkerSource};
+        self.mark(
+            message,
+            sentence,
+            postio_model::listing::MarkerKind::Question,
+            postio_storage::repository::MarkerSource::Detector,
+        )
+        .await;
+    }
+
+    pub async fn notice(&self, message: MessageId, sentence: &str) {
+        self.mark(
+            message,
+            sentence,
+            postio_model::listing::MarkerKind::Todo,
+            postio_storage::repository::MarkerSource::Notice,
+        )
+        .await;
+    }
+
+    async fn mark(
+        &self,
+        message: MessageId,
+        sentence: &str,
+        kind: postio_model::listing::MarkerKind,
+        source: postio_storage::repository::MarkerSource,
+    ) {
+        use postio_storage::repository::{Marker, MarkerRepository};
         let connection = self.database.connect().await.expect("a connection");
         MarkerRepository::new(&connection)
             .insert(&Marker {
                 message,
-                kind: postio_model::listing::MarkerKind::Question,
-                source: MarkerSource::Detector,
+                kind,
+                source,
                 span: Some((0, sentence.chars().count() as u32)),
                 excerpt: Some(sentence.to_owned()),
                 starts_at: None,

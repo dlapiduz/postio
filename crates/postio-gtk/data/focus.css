@@ -752,6 +752,15 @@ button.focus-open-fold-line {
   color: var(--postio-accent);
 }
 
+.focus-marker-card.automated .focus-marker-chip {
+  box-shadow: inset 0 0 0 1px var(--postio-ink-secondary);
+  color: var(--postio-ink-secondary);
+}
+
+.focus-marker-card.automated .focus-marker-date {
+  color: var(--postio-ink-secondary);
+}
+
 .focus-marker-quote {
   font-size: 0.9545rem;
   font-style: italic;

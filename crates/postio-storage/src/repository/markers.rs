@@ -21,6 +21,7 @@ pub enum MarkerSource {
     Calendar,
     Detector,
     Model,
+    Notice,
     Reminder,
 }
 
@@ -315,6 +316,7 @@ fn source_name(source: MarkerSource) -> &'static str {
         MarkerSource::Calendar => "calendar",
         MarkerSource::Detector => "detector",
         MarkerSource::Model => "model",
+        MarkerSource::Notice => "notice",
         MarkerSource::Reminder => "reminder",
     }
 }
@@ -324,6 +326,7 @@ fn source_of(name: &str) -> Result<MarkerSource> {
         "calendar" => MarkerSource::Calendar,
         "detector" => MarkerSource::Detector,
         "model" => MarkerSource::Model,
+        "notice" => MarkerSource::Notice,
         "reminder" => MarkerSource::Reminder,
         other => return Err(unknown_enum("markers.source", other)),
     })

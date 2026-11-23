@@ -13,5 +13,6 @@ mod bounce;
 mod duplicates;
 mod kind_corpus;
 mod needs_action;
+mod notices;
 mod signature;
 mod untrusted_instructions;

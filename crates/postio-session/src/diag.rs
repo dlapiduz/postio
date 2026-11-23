@@ -524,7 +524,7 @@ async fn classify_inner(
     connection: &postio_storage::Checkout,
     focus: &postio_config::FocusConfig,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    use postio_classify::{BodyMessage, OwnText, Tally};
+    use postio_classify::{Asked, BodyMessage, OwnText, Tally};
     use postio_model::{MailboxRole, MessageBody};
     use postio_storage::repository::{AccountRepository, MessageRepository, ThreadRepository};
     use postio_sync::{FiledMessage, FocusFiling};
@@ -581,12 +581,13 @@ async fn classify_inner(
                     filed: *filed,
                     identities: &identities,
                 };
-                if !postio_classify::considered(&asked, &rules) {
-                    tally.body(filed.message.id, false, None);
+                let guard = postio_classify::asked(&asked, &rules);
+                if guard == Asked::Neither {
+                    tally.body(filed.message.id, guard, None);
                     continue;
                 }
                 let Some(stored) = messages.body(filed.message.id).await? else {
-                    tally.body(filed.message.id, true, None);
+                    tally.body(filed.message.id, guard, None);
                     continue;
                 };
                 let own = postio_body::own_text(&MessageBody {
@@ -595,7 +596,7 @@ async fn classify_inner(
                 });
                 let outcome =
                     postio_classify::at_body(&asked, &OwnText::new(&own), &NoGuards, &rules);
-                tally.body(filed.message.id, true, Some(&outcome));
+                tally.body(filed.message.id, guard, Some(&outcome));
             }
         }
     }

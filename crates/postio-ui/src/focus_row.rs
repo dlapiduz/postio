@@ -345,6 +345,8 @@ mod tests {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MarkerLine {
     pub chip: &'static str,
+    pub spoken: &'static str,
+    pub automated: bool,
     pub kind: postio_model::listing::MarkerKind,
     pub date: Option<String>,
     pub quote: Option<String>,
@@ -419,8 +421,15 @@ where
         MarkerKind::Todo => ("To-do", None, vec![(CommandId::Snooze, "Snooze")]),
         MarkerKind::NoReply => ("No reply", None, vec![(CommandId::Reply, "Reply")]),
     };
+    let automated = marker.notice && marker.kind == MarkerKind::Todo;
     MarkerLine {
         chip,
+        spoken: if automated {
+            "To-do from an automated sender"
+        } else {
+            chip
+        },
+        automated,
         kind: marker.kind,
         date,
         quote,
@@ -453,6 +462,7 @@ mod marker_tests {
             excerpt: None,
             answer: None,
             cancelled: false,
+            notice: false,
         }
     }
 
@@ -525,6 +535,7 @@ mod marker_tests {
             excerpt: Some("Can you approve these by Friday?".into()),
             answer: None,
             cancelled: false,
+            notice: false,
         };
         let line = marker_line(&question, at(26, 14, 9), &Utc);
         assert_eq!(line.chip, "Question");
@@ -538,6 +549,31 @@ mod marker_tests {
     }
 
     #[test]
+    fn a_notice_s_to_do_reads_as_a_to_do_and_says_who_asks_it() {
+        let person = MarkerSummary {
+            kind: MarkerKind::Todo,
+            when: Some(MarkerWhen::Due(at(30, 12, 0))),
+            excerpt: Some("A payment of $142.18 is due by Wednesday.".into()),
+            answer: None,
+            cancelled: false,
+            notice: false,
+        };
+        let notice = MarkerSummary {
+            notice: true,
+            ..person.clone()
+        };
+
+        let asked = marker_line(&person, at(26, 14, 9), &Utc);
+        let noticed = marker_line(&notice, at(26, 14, 9), &Utc);
+
+        assert_eq!(noticed.chip, "To-do");
+        assert_eq!(noticed.actions, asked.actions);
+        assert!(noticed.automated && !asked.automated);
+        assert_eq!(asked.spoken, "To-do");
+        assert_eq!(noticed.spoken, "To-do from an automated sender");
+    }
+
+    #[test]
     fn a_to_do_names_its_day_and_offers_snooze_and_a_reminder_offers_reply() {
         let todo = MarkerSummary {
             kind: MarkerKind::Todo,
@@ -545,6 +581,7 @@ mod marker_tests {
             excerpt: Some("Please leave comments by Wednesday".into()),
             answer: None,
             cancelled: false,
+            notice: false,
         };
         let line = marker_line(&todo, at(26, 14, 9), &Utc);
         assert_eq!(line.chip, "To-do");
@@ -557,6 +594,7 @@ mod marker_tests {
             excerpt: None,
             answer: None,
             cancelled: false,
+            notice: false,
         };
         let line = marker_line(&reminder, at(28, 14, 9), &Utc);
         assert_eq!(line.chip, "No reply");
@@ -571,6 +609,7 @@ mod marker_tests {
             excerpt: Some("Please leave comments by Wednesday".into()),
             answer: None,
             cancelled: false,
+            notice: false,
         };
         let line = marker_line(&todo, at(26, 14, 9), &Utc).capturing(true);
         assert_eq!(
@@ -593,6 +632,7 @@ mod marker_tests {
             excerpt: Some("Can you approve these by Friday?".into()),
             answer: None,
             cancelled: false,
+            notice: false,
         };
         assert_eq!(
             marker_line(&question, at(26, 14, 9), &Utc)

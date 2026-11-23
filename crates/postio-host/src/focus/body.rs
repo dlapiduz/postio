@@ -469,7 +469,7 @@ fn invitation_marker<Tz: TimeZone>(
     }
 }
 
-/// Reads the body only for mail sent directly to the user, from this machine, never fetched.
+/// Reads the body only for mail a guard asks of, from this machine, never fetched.
 async fn needs_action(
     connection: &Checkout,
     row: Message,
@@ -493,7 +493,7 @@ async fn needs_action(
         corrections: corrections.filter.clone(),
     };
     let model = corrections.model.clone();
-    if !postio_classify::considered(&asked, &rules) {
+    if postio_classify::asked(&asked, &rules) == postio_classify::Asked::Neither {
         return Ok(None);
     }
     let Some(stored) = MessageRepository::new(connection).body(message).await? else {
@@ -561,6 +561,7 @@ fn detected(message: MessageId, text: &OwnText<'_>, candidate: MarkerCandidate) 
         postio_classify::MarkedBy::Model => MarkerSource::Model,
         postio_classify::MarkedBy::Detector => MarkerSource::Detector,
         postio_classify::MarkedBy::Calendar => MarkerSource::Calendar,
+        postio_classify::MarkedBy::Notice => MarkerSource::Notice,
     };
     Some(Marker {
         message,
