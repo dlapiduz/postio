@@ -14,6 +14,7 @@ chrono = { workspace = true, features = ["std"] }
 # `default-features = false` drops `io-imap` and its TLS stack (ADR 0001). A path, not the workspace
 # entry: an inherited dependency cannot turn default features off.
 postio-account = { version = "0.6.2", path = "../postio-account", default-features = false }
+postio-calendar.workspace = true
 postio-classify.workspace = true
 postio-config.workspace = true
 # A body is only indexable at the moment it lands, which is in this crate (`fetch_body`, #327).

@@ -5447,6 +5447,7 @@ dependencies = [
  "base64 0.23.1",
  "chrono",
  "postio-account",
+ "postio-calendar",
  "postio-classify",
  "postio-config",
  "postio-index",
