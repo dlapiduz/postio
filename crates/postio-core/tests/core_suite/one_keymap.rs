@@ -450,6 +450,18 @@ const CONTRACT: &[Row] = &[
     with("filtered_tab_5", "5", &[], Focus, &[Context::Filtered]),
     with("filtered_tab_6", "6", &[], Focus, &[Context::Filtered]),
     with("filtered_tab_7", "7", &[], Focus, &[Context::Filtered]),
+    with(
+        "source_tab_verification",
+        "1",
+        &[],
+        Focus,
+        &[Context::Source],
+    ),
+    with("source_tab_headers", "2", &[], Focus, &[Context::Source]),
+    with("source_tab_raw", "3", &[], Focus, &[Context::Source]),
+    with("copy_source", "mod+c", &[], Focus, &[Context::Source]),
+    with("save_source", "mod+s", &[], Focus, &[Context::Source]),
+    with("unfold_part", "Return", &[], Focus, &[Context::Source]),
     with("next_reference", "]", &[], Focus, &[Context::Digest]),
     with("prev_reference", "[", &[], Focus, &[Context::Digest]),
     with(
@@ -835,5 +847,36 @@ fn saving_a_file_is_command_down() {
     assert_eq!(
         linux.command_for(Context::Results, "ctrl+Down"),
         Some(postio_core::ActionId::Builtin(CommandId::SaveFile))
+    );
+}
+
+#[test]
+fn the_source_surface_answers_its_own_keys_and_esc_closes_it() {
+    let linux = Keymap::resolve_on(&KeyBindings::default(), Platform::Freedesktop);
+    let mac = Keymap::resolve_on(&KeyBindings::default(), Platform::Apple);
+    for (key, id) in [
+        ("1", CommandId::SourceTabVerification),
+        ("2", CommandId::SourceTabHeaders),
+        ("3", CommandId::SourceTabRaw),
+        ("Return", CommandId::UnfoldPart),
+        ("Escape", CommandId::Back),
+        ("ctrl+f", CommandId::FindInMessage),
+        ("ctrl+s", CommandId::SaveSource),
+        ("ctrl+c", CommandId::CopySource),
+    ] {
+        assert_eq!(
+            linux.command_for(Context::Source, key),
+            Some(postio_core::ActionId::Builtin(id)),
+            "`{key}` on the Source surface"
+        );
+    }
+    assert_eq!(
+        mac.command_for(Context::Source, "cmd+s"),
+        Some(postio_core::ActionId::Builtin(CommandId::SaveSource))
+    );
+    assert_eq!(
+        linux.command_for(Context::Source, "a"),
+        None,
+        "a letter that archives in the list means nothing over the source"
     );
 }

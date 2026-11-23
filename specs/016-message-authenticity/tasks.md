@@ -88,7 +88,7 @@ throwaway code is not merged.
 
 ## Phase 3: Foundational (blocks every story)
 
-- [ ] T008 Write failing cases in `crates/postio-core/tests/core_suite/` for the new `Context::Source` and the commands in `contracts/source-surface.md`:
+- [x] T008 Write failing cases in `crates/postio-core/tests/core_suite/` for the new `Context::Source` and the commands in `contracts/source-surface.md`:
   - each has a key, a command-bar row and an accessible action;
   - none collides in `Context::Source`;
   - `view_source`'s title is "Source and verification".
