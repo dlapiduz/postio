@@ -25,6 +25,7 @@ pub mod digest;
 pub mod external;
 pub mod filtered;
 pub mod first_run;
+pub mod focus;
 pub mod folders;
 pub mod input;
 pub mod layout;

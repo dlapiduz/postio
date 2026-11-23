@@ -1,11 +1,3 @@
-//! `executor::relaxation_counts` (spec 010, US6): how many conversations
-//! each way out of an empty search would find.
-//!
-//! Screen 13 offers a few looser searches, each with its count, and SC-008
-//! asks that the count be what the search would show: so each count here
-//! is checked against `search_conversations` asked the relaxed query. One
-//! statement per variant, whatever the corpus (research R7).
-
 use chrono::Duration;
 use postio_index::executor::relaxation_counts;
 use postio_model::AccountScope;
@@ -26,8 +18,6 @@ async fn each_relaxation_counts_what_its_search_would_find() {
         .await
         .expect("a label");
     let days = Duration::days;
-    // Atlas mail from Ada and Grace, some of it in a thread, one with a
-    // file, one labelled; and nothing that says every word at once.
     let plan = file(
         &connection,
         &account,
@@ -131,8 +121,6 @@ async fn each_relaxation_counts_what_its_search_would_find() {
         assert!(!count.capped, "{:?} is counted to the end", variant.query);
     }
 
-    // And over a corpus where something does match, the same holds for a
-    // relaxation that finds several conversations, threaded and not.
     let broad = parse("atlas from:grace -harbor", today());
     let looser = relax(&broad);
     let counts = relaxation_counts(&connection, AccountScope::Unified, &looser, today())
@@ -155,9 +143,6 @@ async fn each_relaxation_counts_what_its_search_would_find() {
     );
 }
 
-/// A way out counts to `TOTAL_HITS_CAP`, and past it says its count is a
-/// floor (D30), as every count drawn past a cap is: screen 13 then reads
-/// "10,000+ threads", never a bare 10,000 that is not the total.
 #[tokio::test]
 async fn a_way_out_past_the_cap_says_its_count_is_a_floor() {
     let (_database, connection, account, inbox) = store().await;
@@ -170,8 +155,6 @@ async fn a_way_out_past_the_cap_says_its_count_is_a_floor() {
             .join(",")
     );
     let received = crate::conversations::now().timestamp_millis() - 86_400_000;
-    // Operator-only, so the walk reads `messages` alone and the metadata
-    // index can stand aside for the load.
     connection.execute("BEGIN", ()).await.expect("begin");
     postio_index::index::defer_documents(&connection)
         .await

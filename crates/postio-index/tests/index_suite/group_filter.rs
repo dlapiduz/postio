@@ -1,7 +1,3 @@
-//! `group:` — "from or to any member", composing with every other operator
-//! the way `list:` and `in:` do (specs/005-contacts FR-042). A member is a
-//! person, so "any member" means any address any member owns.
-
 use super::executor::at;
 
 use postio_index::{SearchRequest, search};
@@ -75,7 +71,6 @@ async fn world() -> World {
         .await
         .expect("create");
 
-    // From ada's other address: a member is a person, not one address.
     let mut from_second_address = Message::new(account.id, inbox, at(6));
     from_second_address.from = vec![EmailAddress::new(None::<String>, "Ada@Home.example")];
     from_second_address.subject = Some("Evening note".into());
@@ -147,8 +142,6 @@ async fn group_negation_excludes_members() {
 
 #[tokio::test]
 async fn an_unknown_group_name_matches_nothing_never_everything() {
-    // Same reasoning as `account:` and `in:`: an unresolvable name is an
-    // empty set of members, not a dropped predicate.
     let world = world().await;
     assert!(run(&world.connection, "group:nonexistent").await.is_empty());
 }
@@ -182,7 +175,6 @@ async fn a_deleted_member_no_longer_widens_the_group() {
 
 #[tokio::test]
 async fn a_group_name_with_a_space_is_found_quoted() {
-    // What `Return` on a group row writes (`postio_ui::contacts::group_mail_query`).
     let world = world().await;
     let groups = ContactGroupRepository::new(&world.connection);
     let ada = ContactRepository::new(&world.connection)
@@ -198,8 +190,6 @@ async fn a_group_name_with_a_space_is_found_quoted() {
     assert!(hits.contains(&world.from_second_address.id), "{hits:?}");
 }
 
-/// `group_mail_query`'s rule, restated: postio-index may not depend on the
-/// UI crate, and the pair is what this test holds together.
 fn postio_ui_query(name: &str) -> String {
     format!("group:\"{name}\"")
 }

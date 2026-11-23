@@ -1,17 +1,3 @@
-//! "Test connection" answers for each server separately, and says what the
-//! server said (#980).
-//!
-//! The button on an account's detail view asks whether the settings that
-//! account **already has** work. That is a different question from
-//! onboarding's, and its whole value is in the answer being specific: which
-//! of the two servers refused, and in its own words, so the person reading it
-//! knows which field to edit.
-//!
-//! Nothing here reaches the network. The connectors are arguments to
-//! `test_connection` for exactly that reason — the same shape
-//! the classic app's onboarding probe took after #282, where the only way to
-//! reach the code was to dial out and so none of it was covered.
-
 use std::sync::Arc;
 
 use postio_account::imap::{ImapScript, ScriptedConnector as ImapScripted};
@@ -51,10 +37,6 @@ async fn store_with_password(account: &Account) -> Arc<dyn SecretStore> {
     Arc::new(store)
 }
 
-/// A server that completes the handshake, for each protocol. Scripted rather
-/// than real: these connectors are public precisely so crates above can test
-/// their connection handling without a socket, and no default-suite test here
-/// may touch the network.
 fn working_imap() -> ImapScripted {
     ImapScripted::new(
         ImapScript::new("* OK [CAPABILITY IMAP4rev1 SASL-IR AUTH=PLAIN] ready")
@@ -72,7 +54,6 @@ fn working_smtp() -> SmtpScripted {
     )
 }
 
-/// A server that cannot be reached at all, saying so in its own words.
 fn unreachable_imap(reason: &str) -> ImapScripted {
     ImapScripted::new(ImapScript::new("* OK ready")).failing_tls(reason)
 }
@@ -83,7 +64,6 @@ fn unreachable_smtp(reason: &str) -> SmtpScripted {
 
 #[tokio::test]
 async fn settings_that_work_are_reported_as_reached() {
-    // The end state, and what the button exists to confirm.
     let account = account();
     let secrets = store_with_password(&account).await;
 
@@ -95,9 +75,6 @@ async fn settings_that_work_are_reported_as_reached() {
 
 #[tokio::test]
 async fn one_server_working_and_the_other_not_is_two_answers() {
-    // What a typo actually produces, and the reason this is not a single
-    // bool: the half that works is the half to stop editing, and only a
-    // per-protocol answer says which.
     let account = account();
     let secrets = store_with_password(&account).await;
 
@@ -125,10 +102,6 @@ fn reason(outcome: &Reachability) -> String {
 
 #[tokio::test]
 async fn each_server_is_reported_in_its_own_words() {
-    // The half that makes the button worth pressing. Both servers are tried
-    // whatever the first one does, and each answer carries the message that
-    // belongs to it -- "it does not work" sends somebody to two screens of
-    // settings with nothing to go on.
     let account = account();
     let secrets = store_with_password(&account).await;
     let incoming = unreachable_imap("imap.example.com refused the connection");
@@ -150,16 +123,8 @@ async fn each_server_is_reported_in_its_own_words() {
 
 #[tokio::test]
 async fn a_credential_that_cannot_be_read_is_reported_without_the_address() {
-    // A locked keyring is the ordinary first-run-after-reboot failure, and it
-    // is not a server problem -- so the reason has to say so rather than
-    // blaming the host. `SecretError` names the account, and this string goes
-    // to a log as well as to the screen, so the local part is redacted on the
-    // way (CLAUDE.md: logs never carry message content, and an address is
-    // the user's).
     let account = account();
     let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::locked());
-    // Working servers on purpose: the refusal has to be about the keyring,
-    // and a broken server would let this pass for the wrong reason.
     let found = test_connection(&account, &secrets, &working_imap(), &working_smtp()).await;
 
     let incoming = reason(&found.incoming);
@@ -175,9 +140,6 @@ async fn a_credential_that_cannot_be_read_is_reported_without_the_address() {
 
 #[tokio::test]
 async fn the_two_answers_are_independent() {
-    // The case that decides the shape of the type: one server working and the
-    // other not is the common outcome of a typo, and it is the outcome the
-    // user most needs told apart. A single bool could not say it.
     let account = account();
     let secrets = store_with_password(&account).await;
 
@@ -198,9 +160,6 @@ async fn the_two_answers_are_independent() {
 
 #[tokio::test]
 async fn a_password_the_server_refuses_says_the_credential_was_refused() {
-    // A rotated app password. Settings offers a new password for this one,
-    // not another test (#1584), so the answer has to say the server said no
-    // to the credential rather than only that it did not connect.
     let account = account();
     let secrets = store_with_password(&account).await;
     let refusing = ImapScripted::new(

@@ -34,9 +34,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# `scripts/lib` is not a package; the CI step that discovers self-tests runs
-# every `scripts/tests/*.py` it finds, so the path goes on `sys.path` here the
-# way the neighbouring tests do it.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import fixture_toolchain  # noqa: E402
@@ -76,8 +73,6 @@ def structural() -> None:
     if "cargo doc" not in helper:
         fail(f"run_rustdoc does not build docs: {helper.strip()!r}")
 
-    # Per changed crate, in the loop that always runs -- not the workspace,
-    # which is the 23m35s job #833 moved off the merge path for good reasons.
     if 'run_rustdoc -p "$crate"' not in source:
         fail(
             "the landing does not build rustdoc per changed crate. A broken "

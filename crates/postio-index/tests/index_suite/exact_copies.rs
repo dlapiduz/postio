@@ -1,13 +1,3 @@
-//! A message filed in two IMAP folders is one hit when the two are exact
-//! copies (#1526, ADR 0046 as amended 2026-11-22).
-//!
-//! IMAP never shares content, so `Sent` and iCloud's `Sent Messages` each
-//! hold their own row of the same message. Search collapses them when they
-//! are the same message by every fact the row keeps: the account, the
-//! `Message-ID`, the size, the `Date` and the people. A `Message-ID` alone
-//! is not enough: a reused or forged one names a different message, and
-//! both must show.
-
 use chrono::{Duration, TimeZone, Utc};
 use postio_index::executor::{facets, relaxation_counts};
 use postio_index::{SearchRequest, search};
@@ -22,8 +12,6 @@ use postio_storage::repository::{MailboxRepository, MessageRepository};
 
 use crate::conversations::{conversations, now, store, today};
 
-/// The message as one folder holds it: its words in the subject and the
-/// body, both indexed.
 fn sent(account: &postio_model::Account, mailbox: MailboxId) -> Message {
     let mut message = Message::new(account.id, mailbox, now() - Duration::hours(3));
     message.rfc_message_id = Some(RfcMessageId::new("<survey-1@example.com>"));
@@ -58,9 +46,6 @@ async fn folder(connection: &Connection, account: &postio_model::Account, name: 
     mailbox.id
 }
 
-/// What each search path makes of `query`: the terminal app's hits and
-/// total, the facets' count for All mail, the conversation search's total,
-/// and the count a way out of no results would offer.
 #[derive(Debug, PartialEq, Eq)]
 struct Seen {
     hits: Vec<MessageId>,
@@ -131,7 +116,6 @@ async fn seen(connection: &Connection, account: &postio_model::Account, query: &
     seen.expect("two orders")
 }
 
-/// Seen once, everywhere: the earliest copy stands for both.
 fn once(message: &Message) -> Seen {
     Seen {
         hits: vec![message.id],
@@ -143,7 +127,6 @@ fn once(message: &Message) -> Seen {
     }
 }
 
-/// Seen twice, everywhere.
 fn twice(first: &Message, second: &Message) -> Seen {
     Seen {
         hits: vec![first.id, second.id],
@@ -188,7 +171,6 @@ async fn a_message_copied_into_a_second_folder_is_one_hit() {
         );
     }
 
-    // The folder chips still offer both folders: each holds the message.
     let parsed = parse("nebula", today());
     let refinements = facets(
         &connection,
@@ -214,7 +196,6 @@ async fn a_message_copied_into_a_second_folder_is_one_hit() {
         );
     }
 
-    // A folder named keeps the copy that is in it.
     let parsed = parse("nebula in:\"Sent Messages\"", today());
     let results = search(
         &connection,
@@ -239,9 +220,6 @@ async fn a_message_copied_into_a_second_folder_is_one_hit() {
     );
 }
 
-/// The earlier copy's body is not here yet. A word only the body says must
-/// still find the message, through the copy that has it, and the subject
-/// still finds it once.
 #[tokio::test]
 async fn a_copy_whose_body_is_not_here_yet_hides_nothing() {
     let (_database, connection, account, _inbox) = store().await;
@@ -259,8 +237,6 @@ async fn a_copy_whose_body_is_not_here_yet_hides_nothing() {
     assert_eq!(seen(&connection, &account, "survey").await, once(&first));
 }
 
-/// The same `Message-ID` on messages that differ in size, `Date` or
-/// sender: a reused or forged ID, or another client's own save. Both show.
 #[tokio::test]
 async fn a_shared_message_id_alone_collapses_nothing() {
     for (what, differ) in [
@@ -302,11 +278,6 @@ async fn a_shared_message_id_alone_collapses_nothing() {
     }
 }
 
-/// Collapsing a copy costs no statement: a search of a message filed twice
-/// issues what a search of it filed once issues. The terminal app's search
-/// collapses in SQL, so it reads no more rows either; the conversation
-/// search reads each occurrence a set names, as it reads a content's
-/// siblings, and folds them as they stream.
 #[tokio::test]
 async fn a_copy_costs_no_statement() {
     use postio_storage::test_support::counting::{Counts, counted_async, install};

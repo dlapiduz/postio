@@ -1,42 +1,23 @@
-//! What leaves this machine: the vocabulary of the egress log (#151).
-//!
-//! Postio's privacy posture is one sentence — *nothing leaves this machine
-//! that the user did not ask for* — and three documents promise it will be
-//! **proven with a request log rather than asserted** (CLAUDE.md's privacy
-//! section, ADR 0003 requirement 7, ADR 0009 Q6). These types are that log's
-//! vocabulary, defined here because the crates that open connections
-//! (`postio-account`, `postio-smtp`) and the crate that stores rows
-//! (`postio-storage`) may not depend on each other; this one is beneath
-//! both.
-//!
-//! **A row is ids, counts and outcomes — never content.** The same rule
-//! every log in this workspace follows (`ARCHITECTURE.md` §11): "Postio
-//! opened a connection to imap.example.com:993 and it succeeded" is the
-//! auditable fact, and nothing here can carry a byte of anyone's mail.
+//! The egress log's vocabulary: proof by request log that nothing leaves the machine unasked (ADR
+//! 0003 req 7, ADR 0009 Q6).
+//! Defined here because the connecting crates and `postio-storage` cannot depend on each other.
+//! A row is ids, counts and outcomes, never content.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::ids::AccountId;
 
-/// Which part of Postio opened the connection.
-///
-/// ADR 0009 Q6 extends this with the model a person runs on this computer
-/// (spec 007 FR-168); OAuth's token endpoints join when #2's flow does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EgressSubsystem {
-    /// The IMAP sync engine.
     Imap,
-    /// The SMTP send path.
     Smtp,
-    /// Account discovery: autoconfig lookups and server probes.
     Discovery,
-    /// The person's own model runtime, on this computer (`postio-ai`).
     Model,
 }
 
 impl EgressSubsystem {
-    /// The stored spelling, stable because rows outlive binaries.
+    /// Stable, because rows outlive binaries.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Imap => "imap",
@@ -46,7 +27,6 @@ impl EgressSubsystem {
         }
     }
 
-    /// The inverse of [`as_str`](Self::as_str), for reading rows back.
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "imap" => Some(Self::Imap),
@@ -58,17 +38,13 @@ impl EgressSubsystem {
     }
 }
 
-/// How the connection attempt ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EgressOutcome {
-    /// A TCP connection was established.
     Connected,
-    /// The attempt failed — refused, unreachable, or timed out.
     Failed,
 }
 
 impl EgressOutcome {
-    /// The stored spelling.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Connected => "connected",
@@ -76,7 +52,6 @@ impl EgressOutcome {
         }
     }
 
-    /// The inverse of [`as_str`](Self::as_str).
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "connected" => Some(Self::Connected),
@@ -86,34 +61,21 @@ impl EgressOutcome {
     }
 }
 
-/// One outbound connection, as the log records it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EgressEvent {
-    /// When the attempt was made.
     pub at: DateTime<Utc>,
-    /// Who made it.
     pub subsystem: EgressSubsystem,
-    /// The account it was made for, or `None` before one exists —
-    /// discovery during onboarding probes servers for an account that has
-    /// not been created yet.
+    /// `None` before an account exists, e.g. discovery during onboarding.
     pub account: Option<AccountId>,
-    /// Where it went.
     pub host: String,
-    /// And on which port.
     pub port: u16,
-    /// How it ended.
     pub outcome: EgressOutcome,
 }
 
-/// Where connectors report the connections they open.
-///
-/// Object-safe and synchronous: it is called from async transports and from
-/// a blocking discovery probe, so an implementation must return immediately
-/// — hand the event to a channel, never to a database on the caller's
-/// thread. `postio-session` owns the implementation that persists;
-/// connectors are handed the trait and know nothing else.
+/// Object-safe and synchronous: called from async transports and a blocking discovery probe, so
+/// `record` must return immediately, handing the event to a channel and never a database.
+/// `postio-session` owns the persisting implementation.
 pub trait EgressSink: Send + Sync {
-    /// Record one connection attempt.
     fn record(&self, event: EgressEvent);
 }
 

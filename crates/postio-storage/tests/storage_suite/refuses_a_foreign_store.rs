@@ -1,14 +1,3 @@
-//! A store this build cannot read is refused, and left exactly as it was.
-//!
-//! There is no migration from the SQLCipher format -- a store in it is rebuilt
-//! by resyncing (ADR 0038). "Rebuilt" has to mean the old file is still there
-//! to be moved aside, so the failure path may not truncate, may not create,
-//! and may not half-write a header over somebody's mailbox.
-//!
-//! Its own test rather than a `storage_suite` module because it is about
-//! `Store::open` refusing, which is the one thing the suite's shared fixtures
-//! cannot set up: they all open successfully.
-
 #![allow(clippy::disallowed_methods)] // the crate's own code prepares through `sql::statement`; a test may reach the engine directly
 
 use postio_storage::{
@@ -19,8 +8,6 @@ use postio_storage::{
 async fn a_store_this_build_cannot_read_is_left_byte_for_byte() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("postio.db");
-    // A file shaped like the old store: a 16-byte random salt where SQLCipher
-    // puts one, then pages of ciphertext. Nothing this build can read.
     let original: Vec<u8> = (0..32_768u32)
         .map(|n| (n.wrapping_mul(2654435761) >> 16) as u8)
         .collect();

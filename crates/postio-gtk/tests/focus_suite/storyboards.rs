@@ -1,11 +1,5 @@
-//! A storyboard, played on Focus through the real window.
-//!
-//! The runner core (`postio_gtk::demo::storyboard`) is what every Focus
-//! filmstrip goes through, so this pins what it promises
-//! (specs/008-storyboards contracts/runner.md): a command is *pressed*, by
-//! the binding Focus has for it in the context it is in, so a broken binding
-//! fails the step; every step is observed and checked; and `run.json` and
-//! the frames land where the output tree says.
+//! Pins what the runner promises: a command is pressed by the binding Focus has for it in its
+//! context, so a broken binding fails the step.
 //!
 //! POSTIO-MEASUREMENT: it plays a whole storyboard through the window, 16 s,
 //! and the passes it belongs with (`every_command`, `storyboard_catalogue`)
@@ -17,8 +11,6 @@ use postio_gtk::demo::storyboard::{Options, run};
 use postio_storyboard::check::Outcome;
 use postio_storyboard::format::parse;
 use postio_storyboard::run::{Status, StepOutcome};
-
-use crate::support;
 
 const WALK: &str = r#"
 source = { kind = "flow", ref = "T076 fixture" }
@@ -34,7 +26,6 @@ command = "archive"
 check = { notice.undo = true }
 "#;
 
-// `send` is the composer's; the list has no binding for it.
 const UNBOUND: &str = r#"
 source = { kind = "flow", ref = "T076 fixture" }
 
@@ -44,9 +35,6 @@ command = "send"
 
 pub fn a_storyboard_plays_on_focus_and_writes_its_run() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let walk = parse(WALK, Path::new("storyboards/list/fixture-walk.toml")).expect("it loads");
         let out = tempfile::tempdir().expect("an output directory");
         let played = run(
@@ -88,7 +76,6 @@ pub fn a_storyboard_plays_on_focus_and_writes_its_run() {
             );
         }
 
-        // `--no-frames`: the same checks, nothing drawn to disk.
         let quiet = tempfile::tempdir().expect("an output directory");
         let played = run(
             &walk,
@@ -112,8 +99,6 @@ pub fn a_storyboard_plays_on_focus_and_writes_its_run() {
             .count();
         assert_eq!(pngs, 0, "no frames were asked for");
 
-        // A command the context does not bind fails the step, rather than
-        // being dispatched by name past a broken binding.
         let unbound =
             parse(UNBOUND, Path::new("storyboards/list/fixture-unbound.toml")).expect("it loads");
         let played = run(&unbound, &Options::default()).await;

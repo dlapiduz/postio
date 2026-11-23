@@ -1,12 +1,5 @@
-//! Persisting the egress log (#151): the sink connectors report to, backed
-//! by the store.
-//!
-//! Connectors call [`EgressSink::record`] from async transports and a
-//! blocking discovery probe, so the sink must return immediately. This one
-//! hands the event to a channel; a dedicated thread drains it into
-//! `egress_log` in batched transactions behind a Background write-gate
-//! permit, so recording a connection never contends with the keystroke
-//! whose sync opened it.
+//! Persisting the egress log (#151). `record` must return immediately, so events go over a channel
+//! to a thread that writes batched transactions behind a Background write-gate permit.
 
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -18,48 +11,27 @@ use postio_model::ids::AccountId;
 use postio_storage::repository::EgressLogRepository;
 use postio_storage::{Store, WritePriority};
 
-/// How long [`EgressRecorder::shutdown`] waits for the writer thread to
-/// close its database connection, same discipline as
-/// `postio_runtime::Engine`'s `SHUTDOWN_GRACE` and `postio_core::Bridge`'s
-/// `DEFAULT_SHUTDOWN_TIMEOUT`: bounded, so a write-gate wait mid-flush cannot
-/// hold a quit or a test open indefinitely.
+/// How long `shutdown` waits for the writer thread to close its connection; bounded so a write-gate
+/// wait cannot hold a quit open.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 
-/// The process-wide recorder: one writer thread, however many connectors.
 pub struct EgressRecorder {
     sender: Mutex<Option<mpsc::Sender<EgressEvent>>>,
-    /// The writer thread, so [`shutdown`](Self::shutdown) — and this type's
-    /// own [`Drop`] — can join it rather than leaving it to finish on its
-    /// own.
-    ///
-    /// # The crash this exists for
-    ///
-    /// The closure `start` spawns owns the `Store` it was given, and
-    /// closing the last connection to a SQLCipher database calls into
-    /// libcrypto (`sqlite3FreeCodecArg`). Left to finish whenever it got
-    /// around to it — the previous design here — that close could still be
-    /// in flight when `main` returned and the process's exit handlers tore
-    /// libcrypto down underneath it: a coredump inside a thread that was, on
-    /// paper, "just an audit log write that does not matter if it is lost"
-    /// (#699). Joining here is what makes that impossible: nothing can call
-    /// `exit()` while this handle is still held.
+    /// The writer thread, joined on shutdown and drop: closing the last SQLCipher connection calls
+    /// into libcrypto, and an unjoined thread could still be in it when exit handlers tore
+    /// libcrypto down, a coredump (#699).
     thread: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl EgressRecorder {
-    /// Start the writer thread over `database` and hand back the recorder.
     pub fn start(database: Store) -> Arc<Self> {
         let (sender, receiver) = mpsc::channel::<EgressEvent>();
         let spawned = std::thread::Builder::new()
             .name("postio-egress".to_string())
             .spawn(move || {
-                // A runtime of its own, on this thread, because the store is
-                // async now and this is a dedicated writer thread rather than
-                // a tokio task. One worker, no work stealing, exactly the
-                // shape this loop already had -- but multi-threaded, because
-                // a `current_thread` runtime refuses `block_in_place` and a
-                // synchronous store read reached from inside one aborts the
-                // process (`postio_session::blocking`).
+                // A runtime of its own: the store is async. Multi-threaded because a
+                // `current_thread` runtime refuses `block_in_place`, and a synchronous store read
+                // from inside one aborts.
                 let runtime = match tokio::runtime::Builder::new_multi_thread()
                     .worker_threads(1)
                     .enable_all()
@@ -72,8 +44,7 @@ impl EgressRecorder {
                     }
                 };
                 while let Ok(first) = receiver.recv() {
-                    // Whatever else queued while we slept goes in the same
-                    // transaction: one commit per burst, not per socket.
+                    // One commit per burst, not per socket.
                     let mut batch = vec![first];
                     while let Ok(event) = receiver.try_recv() {
                         batch.push(event);
@@ -104,8 +75,8 @@ impl EgressRecorder {
         let thread = match spawned {
             Ok(handle) => Some(handle),
             Err(error) => {
-                // The sink still swallows events; the log just stays empty —
-                // failing to audit must not cost the user their sync.
+                // The sink still swallows events; failing to audit must not cost the user their
+                // sync.
                 tracing::error!(%error, "the egress writer thread did not start: {error}");
                 None
             }
@@ -116,9 +87,6 @@ impl EgressRecorder {
         })
     }
 
-    /// This recorder as the sink for one account's connectors: every event
-    /// it forwards carries `account`, which the transports themselves do
-    /// not know.
     pub fn for_account(self: &Arc<Self>, account: AccountId) -> Arc<dyn EgressSink> {
         Arc::new(AccountEgress {
             account,
@@ -126,16 +94,9 @@ impl EgressRecorder {
         })
     }
 
-    /// Stops the writer thread and waits, up to [`SHUTDOWN_GRACE`], for it
-    /// to close its database connection — see [`thread`](Self::thread) for
-    /// why that wait matters.
-    ///
-    /// Idempotent, and safe to call while other clones of this recorder are
-    /// still held elsewhere: a [`record`](EgressSink::record) after this
-    /// point is swallowed exactly like one that raced a closed channel
-    /// always was.
+    /// Stops the writer thread and waits up to `SHUTDOWN_GRACE` for it to close its connection.
+    /// Idempotent; a `record` after it is swallowed.
     pub fn shutdown(&self) {
-        // Dropping the sender is what ends the writer thread's `recv` loop.
         drop(lock(&self.sender).take());
 
         let Some(handle) = lock(&self.thread).take() else {
@@ -148,10 +109,7 @@ impl EgressRecorder {
         if handle.is_finished() {
             let _ = handle.join();
         } else {
-            // Detached, deliberately: a stalled writer must not hold a quit
-            // or a test open. This is the state everything was in before
-            // the handle was kept, so the risk is the one that was always
-            // there.
+            // Detached on purpose: a stalled writer must not hold a quit or a test open.
             tracing::warn!(
                 "the egress writer thread did not stop within {SHUTDOWN_GRACE:?}; leaving it running"
             );
@@ -165,8 +123,7 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 impl EgressSink for EgressRecorder {
     fn record(&self, event: EgressEvent) {
-        // A closed channel means the writer thread is gone; the connection
-        // still happens, it is just not audited — see `shutdown`.
+        // A closed channel means the writer is gone; the connection still happens, unaudited.
         if let Some(sender) = lock(&self.sender).as_ref() {
             let _ = sender.send(event);
         }
@@ -179,7 +136,6 @@ impl Drop for EgressRecorder {
     }
 }
 
-/// [`EgressRecorder`], stamped with the account its connectors serve.
 struct AccountEgress {
     account: AccountId,
     inner: Arc<EgressRecorder>,
@@ -222,8 +178,6 @@ mod tests {
             .for_account(account)
             .record(event("imap.example.com"));
 
-        // The writer is a thread; give it a moment rather than a hook —
-        // the deadline is generous and the pass is immediate in practice.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         let rows = loop {
             let connection = database.connect().await.expect("checkout");
@@ -251,9 +205,6 @@ mod tests {
         let database = test_support::memory().await;
         let recorder = EgressRecorder::start(database);
         recorder.record(event("imap.example.com"));
-        // Give the writer thread a moment to reach its main loop, so
-        // shutdown has something running to actually join rather than a
-        // thread that has not started yet.
         std::thread::sleep(std::time::Duration::from_millis(20));
 
         recorder.shutdown();

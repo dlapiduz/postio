@@ -1,27 +1,9 @@
-//! What one open message costs to ask about (#1589).
-//!
-//! Opening a message used to be four boundary calls that loaded and
-//! decompressed the body **three times** between them, once purely to count
-//! blocked images. Now the split is by what each fact needs: `messageFacts`
-//! is the row's own facts (offer, recipients) with **no body load at all**,
-//! and the two body facts — the notice and the caveat — ride
-//! `readerDocument`'s answer as by-products of the render the pane pays for
-//! anyway. One load, one render, per message open.
-//!
-//! Asserted against expected values, never against the four older calls:
-//! those delegate to this now, so an equivalence test would be a tautology.
-//! The single-fact suites (`notice.rs`, `unsubscribe.rs`) remain the
-//! behavioural record of each fact's own rules.
-
 use chrono::Utc;
 use postio_ffi::{Session, SessionOptions};
 use postio_model::{EmailAddress, Message};
 use postio_storage::repository::{MessageRepository, StoredBody};
 use postio_storage::test_support;
 
-/// One message with everything the facts cover: two remote images to hold
-/// back, a `List-Id` to offer leaving, recipients to name, and a body the
-/// decoder flagged.
 async fn a_message_with_everything() -> (std::sync::Arc<Session>, i64) {
     let database = test_support::memory().await;
     let scratch = tempfile::tempdir().expect("a scratch directory");
@@ -119,9 +101,7 @@ async fn one_call_answers_everything_the_pane_asks() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_plain_personal_message_has_almost_no_facts() {
-    // The common case: no pictures held back, nothing to unsubscribe from,
-    // nothing wrong with the body. Every absent fact must be `None` rather
-    // than an empty something — a blank banner is still a banner.
+    // Every absent fact must be `None`, not an empty value: a blank banner is still a banner.
     let (session, message) = {
         let database = test_support::memory().await;
         let id = {
@@ -159,11 +139,8 @@ async fn a_plain_personal_message_has_almost_no_facts() {
         .await;
     assert!(answers.notice.is_none(), "nothing was held back");
     assert!(answers.caveat.is_none(), "nothing went wrong decoding");
-    // Not `None`: with no `List-Id` the identifier deliberately falls back
-    // to the sender's domain (`postio_ui::unsubscribe::list_identifier`),
-    // which is how a newsletter that never sets the header still gets a
-    // banner. The gate that matters is `send_state` (#1525), and a received
-    // message passes it.
+    // Not `None`: with no `List-Id` the identifier falls back to the sender's domain; the gate is
+    // `send_state` (#1525).
     assert_eq!(
         facts
             .offer
@@ -196,12 +173,8 @@ async fn a_message_that_is_gone_answers_nothing_at_all() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn reader_view_and_original_agree_on_what_was_held_back() {
-    // The load-bearing assumption behind folding the notice into the
-    // document: `held_back` is counted during the sanitize pass, which runs
-    // *before* reader view's reduce, so the two render modes must report
-    // the same counts. If reduce ever started dropping images from the
-    // count, the banner would understate — silently, and only in reader
-    // view — and this is the test that says so out loud instead.
+    // `held_back` is counted in sanitize, before reader view's reduce, so both modes must report
+    // the same counts or the banner understates in reader view.
     let (session, message) = a_message_with_everything().await;
 
     let reduced = session
@@ -225,9 +198,7 @@ async fn reader_view_and_original_agree_on_what_was_held_back() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_allowed_render_claims_no_notice() {
-    // "What would be loaded" cannot be asked of a render that loaded it.
-    // The caller keeps the notice it already has; this answer saying `None`
-    // is what stops a grant flip from erasing the banner's numbers.
+    // The caller keeps its notice; `None` here stops a grant flip erasing the banner's numbers.
     let (session, message) = a_message_with_everything().await;
     let answers = session
         .reader_answers(message, postio_ffi::RemoteImagesFfi::Allowed, false)
@@ -242,14 +213,9 @@ async fn an_allowed_render_claims_no_notice() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn one_open_is_one_body_read_counted_at_the_sql_seam() {
-    // #1589's acceptance line: counted, not timed. The row facts plus the
-    // document — everything a message open asks — inside a statement budget
-    // that a second body load or render pass cannot fit under. The budget
-    // is deliberately snug: the regression this guards added six-plus
-    // statements per extra load, so a comfortable margin would let one back
-    // in quietly.
+    // Counted, not timed, with a snug budget: the regression added six-plus statements per extra
+    // load (#1589).
     let (session, message) = a_message_with_everything().await;
-    // Warm the session's own one-time work so the count is about the open.
     let _ = session.message_facts(message).await;
 
     postio_storage::test_support::counting::reset();
@@ -267,15 +233,8 @@ async fn one_open_is_one_body_read_counted_at_the_sql_seam() {
     session.shutdown();
 }
 
-/// The Mac's message window opens a message with one call that reads its
-/// body once and sanitises it once (#1609, #1589). It used to be two calls
-/// side by side -- the chrome around the body, and the document -- each with
-/// a store read of its own, so every open decompressed the body twice and
-/// read the row four times. Counted at the storage seam, which sees the
-/// store owner's thread as well as this one.
 #[tokio::test(flavor = "multi_thread")]
 async fn opening_a_message_in_focus_reads_and_sanitises_its_body_once() {
-    // The loads are the process's: alone, or a neighbour's are counted too.
     if postio_test_support::alone!("opening_a_message_in_focus_reads_and_sanitises_its_body_once") {
         return;
     }
@@ -294,8 +253,6 @@ async fn opening_a_message_in_focus_reads_and_sanitises_its_body_once() {
     let sanitised = postio_ui::test_support::bodies_sanitised() - sanitised;
     let loads = test_support::counting::body_loads() - loads;
 
-    // What the person sees came along whole: the chrome, the body, and the
-    // facts the render paid for.
     assert_eq!(open.view.message, message);
     assert_eq!(
         open.view.fields[0].people[0].address, "digest@lists.example.org",
@@ -321,10 +278,6 @@ async fn opening_a_message_in_focus_reads_and_sanitises_its_body_once() {
     session.shutdown();
 }
 
-/// The standing grants are read once and kept, not read from disk for every
-/// message drawn (#1589) -- and kept current by the session's own writes,
-/// which are the only ones there are, so a revoke in Settings is true for the
-/// next message drawn.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_allow_list_is_kept_in_memory_and_current_through_its_writes() {
     let (session, message) = a_message_with_everything().await;
@@ -340,8 +293,6 @@ async fn the_allow_list_is_kept_in_memory_and_current_through_its_writes() {
     session.allow_sender("digest@lists.example.org".to_owned());
     assert!(allowed(&session), "a grant is true at once");
 
-    // Gone from disk behind the session's back: the session does not go
-    // back to the file to draw the next message.
     let path = std::env::temp_dir();
     let files: Vec<_> = std::fs::read_dir(&path)
         .expect("the temporary directory")
@@ -354,8 +305,6 @@ async fn the_allow_list_is_kept_in_memory_and_current_through_its_writes() {
                     name.starts_with(&format!("postio-allowed-{}-", std::process::id()))
                 })
         })
-        // This session's, by the grant it holds, should another session in
-        // this process have a file of its own.
         .filter(|path| {
             std::fs::read_to_string(path)
                 .is_ok_and(|text| text.contains("digest@lists.example.org"))

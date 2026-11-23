@@ -1,46 +1,10 @@
-//! Attachment text, read in a process the indexer can kill (spec 010 D28).
-//!
-//! An attachment is bytes a stranger chose, and `pdf-extract` was not
-//! written for that: T121 found a file that overflows its stack and one
-//! that loops it for ever. `postio-extract` refuses both before it starts,
-//! but the next one nobody has found yet would cost a thread spinning for
-//! the life of the application, or the application. So no attachment is
-//! read here. Each one goes to `postio-extract-helper` -- a process of its
-//! own, one per attachment -- as one request on its stdin, and comes back
-//! as one reply on its stdout, in `postio_extract::wire`'s frame.
-//!
-//! # How it can end
-//!
-//! - The helper answers: its reply is the extraction ([`Via::Helper`]).
-//! - It is still going at `Limits::max_time` plus [`HELPER_GRACE`]: it is
-//!   killed and the attachment is `Truncated(Time)` with nothing kept
-//!   ([`Via::Killed`]).
-//! - It dies, by a signal or a non-zero status: `Failed` ([`Via::Crashed`]).
-//! - It answers something that is not a reply, or more than any reply
-//!   could be: `Failed` ([`Via::Garbled`]).
-//! - There is no helper, or it answers for another extractor version (a
-//!   build left behind): a PDF is **not** read here and is recorded
-//!   `Skipped(Unavailable)` ([`Via::Refused`]); OOXML and plain text, read
-//!   by walkers `postio-extract` wrote itself -- iterative, guarded and
-//!   deadline-checked -- are read in this process ([`Via::InProcess`]), so
-//!   a build without the helper still finds words in a spreadsheet.
-//!
-//! # One process per attachment
-//!
-//! Starting one costs a few milliseconds against an extraction of tens of
-//! milliseconds to seconds and the indexer's own breather between batches.
-//! In exchange a kill costs exactly one attachment, and nothing one
-//! hostile file leaves behind -- a heap a bomb inflated, a thread a loop
-//! still holds -- reaches the next.
-//!
-//! # The pipe that cannot kill the application
-//!
-//! The request goes in over one end of a socket pair rather than a pipe.
-//! A write into a pipe whose reader has died raises `SIGPIPE`, which ends
-//! the process that wrote; Rust's own `main` ignores it, but the Mac app's
-//! `main` is Swift's, and a helper killed mid-request would take the app
-//! with it. A socket can say "no signal" for itself: `SO_NOSIGPIPE` on
-//! Apple, `MSG_NOSIGNAL` on each write elsewhere.
+//! Attachment text, read in a process the indexer can kill. Attachments are hostile bytes and
+//! `pdf-extract` can overflow its stack or loop, so each goes to `postio-extract-helper`, one
+//! process per attachment.
+//! A helper past `Limits::max_time` plus `HELPER_GRACE` is killed. With no helper (or another
+//! version) a PDF is skipped and OOXML and plain text are read in process.
+//! The request goes over a socket pair, not a pipe: a write to a dead pipe raises `SIGPIPE`, which
+//! would end the Mac app (Swift's `main` does not ignore it).
 
 use std::io::{self, Read as _, Write};
 use std::path::{Path, PathBuf};
@@ -52,23 +16,16 @@ use std::time::{Duration, Instant};
 
 use postio_extract::{Extracted, Limit, Limits, Outcome, Skip, wire};
 
-/// The environment variable that names the helper, ahead of every place it
-/// is otherwise looked for.
 pub const HELPER_ENV: &str = "POSTIO_EXTRACT_HELPER";
 
-/// The helper's file name, beside the application's executable.
 pub const HELPER_NAME: &str = "postio-extract-helper";
 
-/// How long past `Limits::max_time` a helper may take before it is killed:
-/// starting the process, reading a request of up to `max_input`, and
-/// writing its reply, on a machine that may be busy. The extraction inside
-/// stops itself at `max_time` and answers what it read; this is the margin
-/// for an honest helper to say so.
+/// How long past `Limits::max_time` a helper may take before it is killed: process start, reading
+/// the request and writing the reply on a busy machine.
 pub const HELPER_GRACE: Duration = Duration::from_secs(1);
 
-/// How the indexer reads attachments: which helper, and under what limits.
-/// Cheap to clone; one indexer keeps one for its whole life, so it warns
-/// once about a missing helper rather than once per file.
+/// How the indexer reads attachments: which helper, under what limits. One indexer keeps one, so it
+/// warns once about a missing helper.
 #[derive(Debug, Clone)]
 pub struct Extractor {
     inner: Arc<Inner>,
@@ -81,25 +38,17 @@ struct Inner {
     warned: AtomicBool,
 }
 
-/// The path an extraction took, for the log and for tests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Via {
-    /// The helper answered.
     Helper,
-    /// The helper was killed at its deadline.
     Killed,
-    /// The helper died: a signal, or a status that is not success.
     Crashed,
-    /// The helper answered something that is not a reply.
     Garbled,
-    /// No usable helper, and the format is one this process may read.
     InProcess,
-    /// No usable helper, and the format is a PDF: not read.
     Refused,
 }
 
 impl Via {
-    /// One word for the log.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Helper => "helper",
@@ -111,28 +60,21 @@ impl Via {
         }
     }
 
-    /// Whether this path means the helper could not be used at all.
     pub fn helper_unavailable(self) -> bool {
         matches!(self, Self::InProcess | Self::Refused)
     }
 }
 
-/// One attachment's extraction and the path it took.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Extraction {
-    /// What was read.
     pub extracted: Extracted,
-    /// How.
     pub via: Via,
 }
 
 impl Extractor {
-    /// The helper this application ships: `$POSTIO_EXTRACT_HELPER`, else
-    /// [`HELPER_NAME`] beside the running executable (`Contents/MacOS` in
-    /// the .app, `/app/bin` in the flatpak, `target/<profile>` in a
-    /// build), else in the `target/<profile>` a test binary was built
-    /// under ([`test_profile_dir`]). When none exists the first candidate
-    /// is kept, and each extraction finds it missing.
+    /// The helper this application ships: `$POSTIO_EXTRACT_HELPER`, else beside the running
+    /// executable, else the `target/<profile>` a test binary was built under. When none exists the
+    /// first candidate is kept.
     pub fn locate() -> Self {
         if let Some(path) = std::env::var_os(HELPER_ENV).filter(|path| !path.is_empty()) {
             return Self::with_helper(path);
@@ -157,12 +99,10 @@ impl Extractor {
         Self::with_helper(helper)
     }
 
-    /// The helper at `path`, under the default limits.
     pub fn with_helper(path: impl Into<PathBuf>) -> Self {
         Self::new(path, Limits::default())
     }
 
-    /// The helper at `path`, under `limits`.
     pub fn new(path: impl Into<PathBuf>, limits: Limits) -> Self {
         Self {
             inner: Arc::new(Inner {
@@ -173,32 +113,26 @@ impl Extractor {
         }
     }
 
-    /// Where the helper is looked for.
     pub fn helper(&self) -> &Path {
         &self.inner.helper
     }
 
-    /// Whether there is a file where the helper is looked for: what lets
-    /// the indexer try again the PDFs it skipped while there was not. A
-    /// file from another build passes this and is refused at the first
-    /// extraction, which records those PDFs `unavailable` again.
+    /// Whether there is a file where the helper is looked for, which lets the indexer retry skipped
+    /// PDFs; a file from another build passes and is refused at extraction.
     pub(crate) fn helper_present(&self) -> bool {
         self.inner.helper.is_file()
     }
 
-    /// The limits every extraction runs under.
     pub fn limits(&self) -> &Limits {
         &self.inner.limits
     }
 
-    /// True the first time it is asked after the helper was found
-    /// unusable, false after: the indexer's one warning.
     pub(crate) fn first_warning(&self) -> bool {
         !self.inner.warned.swap(true, Ordering::Relaxed)
     }
 
-    /// Read one attachment. Blocking: it waits up to `max_time` plus
-    /// [`HELPER_GRACE`] for the helper, so call it on the blocking pool.
+    /// Read one attachment. Blocking: waits up to `max_time` plus `HELPER_GRACE`, so call it on the
+    /// blocking pool.
     pub fn extract(&self, bytes: Vec<u8>, mime_type: &str, name: Option<&str>) -> Extraction {
         let limits = &self.inner.limits;
         let bytes = Arc::new(bytes);
@@ -219,11 +153,8 @@ impl Extractor {
     }
 }
 
-/// The helper is missing, cannot be started, or belongs to another build.
 struct Unusable;
 
-/// The most a reply may be: every byte of text the limits allow, generous
-/// room for each unit's location, and the frame. More is not a reply.
 fn reply_cap(limits: &Limits) -> u64 {
     limits.max_text as u64 + limits.max_units as u64 * 1024 + 1024 * 1024
 }
@@ -238,9 +169,7 @@ fn run_helper(
     let deadline = Instant::now() + limits.max_time + HELPER_GRACE;
     let (ours, theirs) = request_channel().map_err(|_| Unusable)?;
     let mut child = Command::new(helper)
-        // The helper needs nothing from the environment, and a log filter
-        // or a credential has no business reaching a parser of strangers'
-        // files.
+        // No log filter or credential should reach a parser of strangers' files.
         .env_clear()
         .stdin(theirs)
         .stdout(Stdio::piped())
@@ -252,10 +181,8 @@ fn run_helper(
         return Ok(failed(Via::Crashed));
     };
 
-    // The request is written and the reply read on threads of their own,
-    // so neither a helper that never reads nor one that never writes can
-    // hold this one past the deadline. Neither is joined: each ends when
-    // the helper's end of its channel closes, which a kill guarantees.
+    // Request and reply run on their own threads so a helper that never reads or writes cannot hold
+    // this past the deadline; a kill ends both.
     let request = (
         Arc::clone(bytes),
         mime_type.to_owned(),
@@ -268,7 +195,6 @@ fn run_helper(
             let (bytes, mime_type, name, limits) = request;
             let mut ours = ours;
             let _ = wire::write_request(&mut ours, &bytes, &mime_type, name.as_deref(), &limits);
-            // Dropping the socket is the helper's end of input.
         });
     if writing.is_err() {
         kill(&mut child);
@@ -311,8 +237,6 @@ fn run_helper(
         return Ok(failed(Via::Garbled));
     }
 
-    // Its output is closed; it should be exiting. A helper that closes its
-    // output and goes on running is still held to the deadline.
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
@@ -358,14 +282,11 @@ fn failed(via: Via) -> Extraction {
     }
 }
 
-/// Kill and reap. A helper that already ended is not an error.
 fn kill(child: &mut Child) {
     let _ = child.kill();
     let _ = child.wait();
 }
 
-/// The request's channel: this process's end, written with no `SIGPIPE`,
-/// and the helper's end as its stdin.
 #[cfg(unix)]
 fn request_channel() -> io::Result<(RequestWriter, Stdio)> {
     let (ours, theirs) = std::os::unix::net::UnixStream::pair()?;
@@ -385,7 +306,6 @@ impl Write for RequestWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         #[cfg(target_vendor = "apple")]
         {
-            // `SO_NOSIGPIPE` is set on the socket itself.
             self.0.write(buf)
         }
         #[cfg(not(target_vendor = "apple"))]
@@ -399,8 +319,6 @@ impl Write for RequestWriter {
     }
 }
 
-/// Elsewhere there is no helper yet: every extraction finds it unusable,
-/// so a PDF is refused and the rest is read in this process.
 #[cfg(not(unix))]
 fn request_channel() -> io::Result<(RequestWriter, Stdio)> {
     Err(io::Error::other("the extraction helper needs a unix host"))
@@ -420,15 +338,9 @@ impl Write for RequestWriter {
     }
 }
 
-/// The `target/<profile>` directory a test binary in `directory` was built
-/// under, where cargo puts the crate's own binaries.
-///
-/// Cargo has put test binaries in two places: `<profile>/deps/` until 1.99,
-/// and `<profile>/build/<package>/<hash>/out/` from 1.100, whose build
-/// directory layout is no longer optional. Only those two shapes are read:
-/// any other directory is not a build, and walking up from an installed
-/// executable to whatever lies above it would offer a helper from a place
-/// nobody put one.
+/// The `target/<profile>` directory a test binary in `directory` was built under: `<profile>/deps/`
+/// until cargo 1.99, `<profile>/build/<package>/<hash>/out/` from 1.100. Other directories are not
+/// a build, so an installed executable never offers a helper from somewhere nobody put one.
 fn test_profile_dir(directory: &Path) -> Option<PathBuf> {
     let named = |path: &Path, name: &str| path.file_name().is_some_and(|last| last == name);
     if named(directory, "deps") {

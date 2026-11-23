@@ -30,8 +30,6 @@ import tempfile
 import time
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -126,12 +124,9 @@ def main() -> int:
             "the drop reached into the sibling",
         )
 
-        # A tree that already has a build keeps it: seeding over live
-        # artifacts would throw away the tree's own work.
         r = seed(repo, worktrees, lane)
         case("a tree that already has target/debug is left alone", r.returncode == 0 and "already" in r.stdout, r.stdout + r.stderr)
 
-        # The claim's opt-out holds here too.
         other = tree(repo, worktrees, "spec-branch")
         r = seed(repo, worktrees, other, env={"POSTIO_CLAIM_SEED": "0"})
         case(

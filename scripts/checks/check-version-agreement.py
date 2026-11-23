@@ -65,8 +65,7 @@ def main() -> int:
             "the changelog entry and the version move together (scripts/release-bump.py)"
         )
 
-    # The macOS bundle is a release asset (#1714); it said 0.1.0 through three
-    # releases because nothing moved it and nothing compared it.
+    # The macOS bundle is a release asset (#1714); nothing moved or compared its version.
     plist = root / INFO_PLIST
     if plist.exists():
         for key, value in PLIST_VERSION.findall(plist.read_text(encoding="utf-8")):

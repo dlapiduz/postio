@@ -1,32 +1,7 @@
-//! The undo stack: *Archived 12 messages — Undo*.
+//! The undo stack: *Archived 12 messages - Undo*, bound to `u`.
 //!
-//! docs/PRODUCT.md §16 and canvas 3b promise that a destructive action is reversible
-//! from a toast, bound to `u`. Two properties make that promise honest.
-//!
-//! **A burst is one unit.** Archiving twelve messages with twelve keystrokes is
-//! one gesture as far as the user is concerned, so it is one entry here — one
-//! toast that says twelve, and one `u` that takes all twelve back. Actions
-//! coalesce while they are the same kind, land inside the coalescing window,
-//! and touch messages the unit has not touched yet; that last condition is what
-//! keeps every action in a unit independent, and independence is what makes
-//! replaying the inverses in recorded order correct.
-//!
-//! **Undo is local.** An entry carries its inverse as [`Command`]s — the same
-//! vocabulary the bus already speaks — and the undo handler applies them
-//! local-first: change SQLite now, enqueue the remote half, emit the event.
-//! Nothing awaits the network, so undo works on a train with no signal and the
-//! server catches up later.
-//!
-//! Inverses are applied *directly* rather than sent back through the bus. A
-//! replayed command would record an undo of the undo, and `u` `u` would toggle
-//! instead of walking back through history.
-//!
-//! # Bounds
-//!
-//! The stack forgets, on purpose: it holds [`UndoStack::MAX_DEPTH`] units, and
-//! a unit older than [`UndoStack::EXPIRY`] is gone. Putting back something
-//! archived an hour ago is a surprise rather than a mercy, and by then the
-//! server has almost certainly moved on.
+//! A burst coalesces into one unit; entries carry inverses as `Command`s applied directly, since
+//! replaying through the bus would record an undo of the undo.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -36,107 +11,54 @@ use serde::{Deserialize, Serialize};
 
 use crate::Command;
 
-/// What kind of action an undo entry takes back.
-///
-/// Only actions of the same kind coalesce, so "Archived 3 messages" can never
-/// quietly include a delete.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UndoKind {
-    /// Messages were archived.
     Archive,
-    /// Messages were moved to the trash.
     Delete,
-    /// Messages were moved to another mailbox.
     Move,
-    /// Messages were flagged.
     Flag,
-    /// Messages were unflagged.
     Unflag,
-    /// Messages were marked read.
     MarkRead,
-    /// Messages were marked unread.
     MarkUnread,
-    /// A label was attached to messages.
     Label,
-    /// Messages were snoozed.
     Snooze,
-    /// Messages were unsnoozed.
     Unsnooze,
-    /// A reminder was set on conversations: they come back if nobody
-    /// replies (specs/007-postio-focus US5).
     Remind,
-    /// Conversations' reminders were cleared.
     Unremind,
-    /// An invitation was accepted: the reply waits out a short window in
-    /// the outbox (specs/007-postio-focus research R9).
     Accept,
-    /// An invitation was declined, the same way.
     Decline,
-    /// Markers were dismissed as wrong (specs/007-postio-focus FR-108).
     DismissMarker,
-    /// Dismissed markers were brought back.
     UndismissMarker,
-    /// Filtered messages were restored to the inbox, and their senders
-    /// pinned (specs/007-postio-focus FR-116).
     Restore,
-    /// Restored messages were filed away again, with their reasons.
     Refilter,
-    /// What was already in the inbox was filed away by Focus's filtering
-    /// rules (specs/007-postio-focus FR-118).
     Sweep,
-    /// A sender was taken out of a digest rule (specs/007-postio-focus
-    /// FR-125).
     StopDigesting,
-    /// A sender was put back in a digest rule.
     ResumeDigesting,
-    /// A send nobody could confirm was settled by hand (#674).
     MarkedSent,
-    /// A send that had stopped was put back on the queue (spec 003).
     RetriedSend,
-    /// A queued send was taken back off the queue, leaving the draft.
     CancelledSend,
-    /// One of an account's roles was pointed at a folder (ADR 0035).
     MapMailboxRole,
-    /// People were joined into one (specs/005-contacts).
     JoinContacts,
-    /// Where a person's mail arrives was changed (specs/011-focus-contacts).
     ContactArrival,
-    /// An address was given to a person, or moved to one.
     ContactAddress,
-    /// An address was made a person of its own.
     DetachAddress,
-    /// A person's preferred address changed.
     PreferredAddress,
-    /// A person was made.
     CreateContact,
-    /// A person was edited.
     EditContact,
-    /// A person was deleted.
     DeleteContact,
-    /// A deleted person was brought back.
     RestoreContact,
-    /// A group was made.
     CreateGroup,
-    /// A group was renamed.
     RenameGroup,
-    /// A group was deleted.
     DeleteGroup,
-    /// People were put in or taken out of a group.
     GroupMembers,
-    /// A thread was muted (specs/013-focus-threads FR-012).
     Mute,
-    /// A thread was unmuted.
     Unmute,
-    /// A message and the replies to it were split into a thread of their
-    /// own (FR-007).
     Split,
-    /// A split was taken back: the messages rejoined their thread.
     Unsplit,
 }
 
 impl UndoKind {
-    /// The toast for `count` messages, already phrased for the user.
     fn describe(self, count: usize) -> String {
         let messages = if count == 1 { "message" } else { "messages" };
         match self {
@@ -148,19 +70,12 @@ impl UndoKind {
             UndoKind::MarkRead => format!("Marked {count} {messages} as read"),
             UndoKind::MarkUnread => format!("Marked {count} {messages} as unread"),
             UndoKind::Label => format!("Labelled {count} {messages}"),
-            // Never plural: this settles one draft, because the question it
-            // answers was asked about one message.
+            // Never plural: it settles one draft.
             UndoKind::MarkedSent => "Marked as sent".to_owned(),
-            // Singular for the same reason: both act on the one draft a
-            // person is looking at, never on a selection.
             UndoKind::RetriedSend => "Sending again".to_owned(),
-            // Says where the message went: a toast that only said the send
-            // was cancelled left the person unsure whether the reply was
-            // thrown away.
+            // Says where the message went, so the person knows the reply was not thrown away.
             UndoKind::CancelledSend => "Send cancelled \u{2014} back in Drafts".to_owned(),
-            // Never counted either: it is about a folder, not about messages.
             UndoKind::MapMailboxRole => "Changed a folder's role".to_owned(),
-            // About people, not messages, so never counted in messages.
             UndoKind::JoinContacts => "Merged contacts".to_owned(),
             UndoKind::ContactArrival => "Changed where mail arrives".to_owned(),
             UndoKind::ContactAddress => "Added an address".to_owned(),
@@ -174,18 +89,15 @@ impl UndoKind {
             UndoKind::RenameGroup => "Renamed a group".to_owned(),
             UndoKind::DeleteGroup => "Deleted a group".to_owned(),
             UndoKind::GroupMembers => "Changed a group".to_owned(),
-            // About a thread, whichever of its messages the person was on.
             UndoKind::Mute => "Muted the thread".to_owned(),
             UndoKind::Unmute => "Unmuted the thread".to_owned(),
             UndoKind::Split => "Split into its own thread".to_owned(),
             UndoKind::Unsplit => "Joined the thread again".to_owned(),
             UndoKind::Snooze => format!("Snoozed {count} {messages}"),
             UndoKind::Unsnooze => format!("Unsnoozed {count} {messages}"),
-            // Counted in conversations: a reminder waits on a reply to the
-            // conversation, whichever of its messages it was set from.
+            // Counted in conversations: a reminder waits on a reply to the conversation.
             UndoKind::Remind => format!("Reminder set on {count} {}", threads(count)),
             UndoKind::Unremind => format!("Reminder cleared on {count} {}", threads(count)),
-            // One answer to one invitation: screen 15's "Accepted · Undo".
             UndoKind::Accept => "Accepted".to_owned(),
             UndoKind::Decline => "Declined".to_owned(),
             UndoKind::DismissMarker => format!("Dismissed {count} {}", markers(count)),
@@ -193,57 +105,42 @@ impl UndoKind {
             UndoKind::Restore => format!("Restored {count} {messages}"),
             UndoKind::Refilter => format!("Filtered {count} {messages} again"),
             UndoKind::Sweep => format!("Filtered {count} {messages} out of the inbox"),
-            // Counted in senders: the verb is about who, not which mail.
             UndoKind::StopDigesting => format!("Stopped digesting {count} {}", senders(count)),
             UndoKind::ResumeDigesting => format!("Digesting {count} {} again", senders(count)),
         }
     }
 }
 
-/// "thread", or its plural, for `count` of them.
 fn threads(count: usize) -> &'static str {
     if count == 1 { "thread" } else { "threads" }
 }
 
-/// "sender", or its plural, for `count` of them.
 fn senders(count: usize) -> &'static str {
     if count == 1 { "sender" } else { "senders" }
 }
 
-/// "marker", or its plural, for `count` of them.
 fn markers(count: usize) -> &'static str {
     if count == 1 { "marker" } else { "markers" }
 }
 
-/// One undoable unit: what happened, and what takes it back.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UndoEntry {
     kind: UndoKind,
-    /// How long the unit is offered, when it is shorter than the stack's
-    /// own expiry: a send that can be cancelled only until it leaves
-    /// ([`UndoEntry::lasting`]).
+    /// Shorter than the stack's expiry for a send that can be cancelled only until it leaves.
     #[serde(default)]
     window: Option<Duration>,
     messages: Vec<MessageId>,
-    /// How many messages the unit covers.
-    ///
-    /// Equal to `messages.len()` for a unit that names its rows, and larger
-    /// for a whole-mailbox one, which knows its size from a `count(*)` and
-    /// deliberately does not know its members. See [`UndoEntry::bulk`].
+    /// Larger than `messages.len()` for a whole-mailbox unit, which knows its size from a
+    /// `count(*)` and not its members.
     count: usize,
-    /// How many rows the person acted on, when that is not how many
-    /// messages they hold: a conversation of three messages is one row, one
-    /// archive and one line in the toast ([`UndoEntry::acting_on`]).
+    /// Set when the rows acted on are not the messages they hold: a three-message conversation is
+    /// one row.
     #[serde(default)]
     rows: Option<usize>,
     inverse: Vec<Command>,
 }
 
 impl UndoEntry {
-    /// Record that `kind` happened to `messages`, and that `inverse` undoes it.
-    ///
-    /// The inverse is expressed in commands so the undo handler can apply it
-    /// with the same local-first machinery the original action used.
     pub fn new(kind: UndoKind, messages: Vec<MessageId>, inverse: Vec<Command>) -> Self {
         UndoEntry {
             kind,
@@ -255,15 +152,8 @@ impl UndoEntry {
         }
     }
 
-    /// Record that `kind` happened to `count` messages that this entry does
-    /// not name, and that `inverse` takes it back.
-    ///
-    /// The whole-mailbox case. *Archived 81,717 messages* needs the number and
-    /// nothing else needs the rows: the inverse is
-    /// [`MessageTarget::Batch`](crate::MessageTarget::Batch), which is a
-    /// predicate the store resolves in one statement. Naming the rows here
-    /// would be the mailbox-sized read the predicate exists to avoid, arriving
-    /// through the undo stack instead of through the selection.
+    /// The whole-mailbox case: the inverse is a `MessageTarget::Batch` predicate, so naming the
+    /// rows would be the mailbox-sized read.
     pub fn bulk(kind: UndoKind, count: usize, inverse: Vec<Command>) -> Self {
         UndoEntry {
             kind,
@@ -275,85 +165,53 @@ impl UndoEntry {
         }
     }
 
-    /// The same entry, said in `rows`: the conversations, or the rows of
-    /// whatever list the person acted on, and not the messages inside them.
-    ///
-    /// *Archived 3 messages* is what the person chose -- three rows -- even
-    /// when the third is a thread of three; the toast that said five told
-    /// them about mail they never picked out. Every message still has its
-    /// way back: only what the toast says is counted this way.
+    /// The toast counts what the person chose (three rows), not the messages inside them; every
+    /// message still has its way back.
     #[must_use]
     pub fn acting_on(mut self, rows: usize) -> Self {
         self.rows = Some(rows);
         self
     }
 
-    /// What the toast counts: the rows acted on, else the messages.
     fn shown(&self) -> usize {
         self.rows.unwrap_or(self.count)
     }
 
-    /// The same entry, offered only for `window` from when it is recorded:
-    /// what [`Recovery::Window`](crate::Recovery::Window) means on the stack
-    /// (specs/007-postio-focus research R9).
-    ///
-    /// An answer to an invitation is the case: its reply waits a few seconds
-    /// in the outbox, and cancelling the send is the way back only until the
-    /// drainer takes it. An entry that outlived that would sit on top of the
-    /// stack answering "too late" and shadow the archive beneath it, so it
-    /// goes with its window, and `mod+z` after that reaches the action
-    /// beneath. It never folds into another unit: each send has its own
-    /// window.
+    /// An invitation answer's reply waits seconds in the outbox, so the entry goes with its window
+    /// or it shadows the archive beneath with "too late". It never folds into another unit.
     #[must_use]
     pub fn lasting(mut self, window: Duration) -> Self {
         self.window = Some(window);
         self
     }
 
-    /// Whether this unit covers rows it cannot name.
     pub fn is_bulk(&self) -> bool {
         self.count != self.messages.len()
     }
 
-    /// What sort of action this was.
     pub fn kind(&self) -> UndoKind {
         self.kind
     }
 
-    /// The messages it applied to, in the order it applied to them.
     pub fn messages(&self) -> &[MessageId] {
         &self.messages
     }
 
-    /// What to do to take it back, in the order to do it.
     pub fn inverse(&self) -> &[Command] {
         &self.inverse
     }
 
-    /// The toast: *Archived 12 messages*.
-    ///
-    /// Derived from the kind and the count rather than stored, so a unit that
-    /// grows by coalescing always describes itself correctly.
+    /// Derived, not stored, so a coalesced unit describes itself correctly.
     pub fn description(&self) -> String {
         self.kind.describe(self.shown())
     }
 
-    /// What `u` says once it has taken the unit back: *Archived 12 messages,
-    /// undone*. The same sentence as the toast that offered the undo, so the
-    /// two cannot be mistaken for one another.
     pub fn undone_description(&self) -> String {
         format!("{}, undone", self.description())
     }
 
-    /// Whether this unit and `other` overlap, which would make replaying their
-    /// inverses in recorded order wrong.
-    ///
-    /// A whole-mailbox unit always answers yes. It cannot say which rows it
-    /// covers — that is the point of it — so there is no honest way to check,
-    /// and the conservative answer is also the right one for the user:
-    /// `Ctrl+A` then `a` is a gesture on its own, and folding the next archive
-    /// into it would put a row the user acted on separately behind the same
-    /// single `u`.
+    /// A whole-mailbox unit always overlaps: it cannot name its rows, and folding the next archive
+    /// into it would put separately acted rows behind one `u`.
     fn overlaps(&self, other: &UndoEntry) -> bool {
         self.is_bulk()
             || other.is_bulk()
@@ -373,7 +231,6 @@ impl UndoEntry {
     }
 }
 
-/// One entry and when it was last added to.
 #[derive(Debug, Clone)]
 struct Recorded {
     entry: UndoEntry,
@@ -381,7 +238,6 @@ struct Recorded {
 }
 
 impl Recorded {
-    /// Whether its own window, if it has one, has closed by `now`.
     fn closed(&self, now: Instant) -> bool {
         self.entry
             .window
@@ -389,7 +245,6 @@ impl Recorded {
     }
 }
 
-/// The undo history: bounded, self-pruning, and coalescing.
 #[derive(Debug, Clone)]
 pub struct UndoStack {
     entries: VecDeque<Recorded>,
@@ -405,24 +260,19 @@ impl Default for UndoStack {
 }
 
 impl UndoStack {
-    /// How long after an action another of the same kind still counts as the
-    /// same gesture. A keystroke burst is well inside it; a new thought is not.
+    /// A keystroke burst is well inside it; a new thought is not.
     pub const COALESCE_WINDOW: Duration = Duration::from_secs(1);
 
-    /// How long an undo stays offered. Past this the local database and the
-    /// server have both moved on.
+    /// Past this the local database and the server have both moved on.
     pub const EXPIRY: Duration = Duration::from_secs(600);
 
-    /// How many units the stack holds before it forgets the oldest.
     pub const MAX_DEPTH: usize = 50;
 
-    /// An empty stack with the application's policy.
     pub fn new() -> Self {
         UndoStack::with_policy(Self::COALESCE_WINDOW, Self::EXPIRY, Self::MAX_DEPTH)
     }
 
-    /// An empty stack with a policy of your own — for tests that need to step
-    /// across the window rather than sleep through it.
+    /// For tests that need to step across the window rather than sleep through it.
     pub fn with_policy(coalesce_within: Duration, expire_after: Duration, depth: usize) -> Self {
         UndoStack {
             entries: VecDeque::new(),
@@ -432,18 +282,14 @@ impl UndoStack {
         }
     }
 
-    /// How many units `u` can still walk back through.
     pub fn depth(&self) -> usize {
         self.entries.len()
     }
 
-    /// Whether there is anything to undo.
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
-    /// The unit `u` would take back, without taking it back — this is what the
-    /// toast is written from.
     pub fn peek(&self) -> Option<&UndoEntry> {
         let now = Instant::now();
         self.entries
@@ -453,33 +299,26 @@ impl UndoStack {
             .map(|recorded| &recorded.entry)
     }
 
-    /// Forget everything. Used when the account changes out from under us.
     pub fn clear(&mut self) {
         self.entries.clear();
     }
 
-    /// Record an action, coalescing it into the current unit if it belongs.
     pub fn record(&mut self, entry: UndoEntry) -> &UndoEntry {
         self.record_at(entry, Instant::now())
     }
 
-    /// Record an action as of `now`.
     pub fn record_at(&mut self, entry: UndoEntry, now: Instant) -> &UndoEntry {
         self.prune(now);
 
         if let Some(last) = self.entries.back_mut()
             && last.entry.kind == entry.kind
-            // An entry with a window of its own is one send, never a burst.
             && last.entry.window.is_none()
             && entry.window.is_none()
             && now.duration_since(last.at) <= self.coalesce_within
-            // Independence within a unit is what lets the inverses replay in
-            // the order they were recorded.
             && !last.entry.overlaps(&entry)
         {
             last.entry.absorb(entry);
-            // The window runs from the last action, so holding a key down
-            // stays one gesture however long it is held.
+            // The window runs from the last action, so holding a key down stays one gesture.
             last.at = now;
             return &self.entries.back().expect("just merged into it").entry;
         }
@@ -491,21 +330,17 @@ impl UndoStack {
         &self.entries.back().expect("just pushed").entry
     }
 
-    /// Take back the most recent unit.
     pub fn undo(&mut self) -> Option<UndoEntry> {
         self.undo_at(Instant::now())
     }
 
-    /// Take back the most recent unit as of `now`.
     pub fn undo_at(&mut self, now: Instant) -> Option<UndoEntry> {
         self.prune(now);
         self.entries.pop_back().map(|recorded| recorded.entry)
     }
 
-    /// Drop units that have aged out. Entries are in time order, so the
-    /// stack's own expiry only ever has to look at the front; an entry whose
-    /// own window closed can be anywhere, and there are at most
-    /// [`Self::MAX_DEPTH`] to look at.
+    /// Entries are in time order, so the stack's expiry only looks at the front; an entry whose own
+    /// window closed can be anywhere.
     fn prune(&mut self, now: Instant) {
         while let Some(oldest) = self.entries.front() {
             if now.saturating_duration_since(oldest.at) > self.expire_after {
@@ -553,10 +388,6 @@ mod tests {
 
     #[test]
     fn a_whole_mailbox_unit_counts_what_it_will_not_name() {
-        // *Archived 81,717 messages* from a `count(*)` and an inverse that is
-        // a predicate. Putting the rows in here would be the mailbox-sized
-        // read the selection predicate exists to avoid, arriving by another
-        // door.
         let entry = UndoEntry::bulk(UndoKind::Archive, 81_717, vec![Command::Undo]);
 
         assert_eq!(entry.description(), "Archived 81717 messages");
@@ -566,9 +397,6 @@ mod tests {
 
     #[test]
     fn a_whole_mailbox_unit_never_coalesces_with_anything() {
-        // It cannot say which rows it covers, so there is no honest way to
-        // check whether the next action overlaps it — and folding them would
-        // put a row the user acted on separately behind the same single `u`.
         let mut stack = UndoStack::new();
         let now = Instant::now();
         stack.record_at(
@@ -592,8 +420,6 @@ mod tests {
 
     #[test]
     fn the_toast_counts_the_rows_acted_on_not_the_messages_inside_them() {
-        // Three conversations of five messages between them: the person
-        // chose three things and is told about three.
         let ids = (1..=5).map(MessageId::new).collect();
         let entry = UndoEntry::new(UndoKind::Archive, ids, vec![Command::Undo]).acting_on(3);
 
@@ -633,9 +459,7 @@ mod tests {
 
     #[test]
     fn an_undone_unit_says_it_was_undone() {
-        // The toast after `u` must not repeat the one before it: "Archived 6
-        // messages" right after they came back says the opposite of what
-        // happened.
+        // The toast after `u` must not repeat the one before it.
         let entry = UndoEntry::new(
             UndoKind::Archive,
             vec![MessageId::new(1), MessageId::new(2)],

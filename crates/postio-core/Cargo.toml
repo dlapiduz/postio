@@ -10,16 +10,12 @@ repository.workspace = true
 
 [dependencies]
 async-channel = { workspace = true }
-# A snooze's and a reminder's time, carried by the command (specs/007-postio-focus
-# research R6). Already in the graph under postio-model, with serde.
 chrono = { workspace = true, features = ["serde"] }
 postio-config.workspace = true
 postio-model.workspace = true
 serde = { workspace = true }
-# `net` is what compiles tokio's IO driver in, and without it
-# `Builder::enable_io` does not even exist. Relying on another crate in
-# the graph to unify it in would make whether this runtime can open a
-# socket depend on who else is being built.
+# `net` compiles in tokio's IO driver; relying on another crate to unify it would make socket
+# support depend on who else is built.
 tokio = { workspace = true, features = ["net", "rt", "rt-multi-thread", "sync", "time"] }
 tracing = { workspace = true }
 postio-workspace-hack.workspace = true

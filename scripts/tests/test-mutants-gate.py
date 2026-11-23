@@ -17,8 +17,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -37,8 +35,6 @@ exit 101
 
 def cargo_mutants_stub(survivors: list[str]) -> str:
     survivors_text = "\\n".join(survivors)
-    # Finds `--output <dir>` in "$@" and writes mutants.out/missed.txt under
-    # it, exactly where the real tool puts its report.
     return f"""#!/usr/bin/env bash
 if [ "$1" = "mutants" ]; then
     args=("$@")
@@ -62,12 +58,8 @@ def run(
 ) -> subprocess.CompletedProcess[str]:
     environment = dict(os.environ)
     environment.update(env_extra)
-    # mutants.sh finds its repo root from *its own* path
-    # (`dirname "${BASH_SOURCE[0]}"`), not from the caller's cwd -- correct
-    # for the real script, but it means invoking the real
-    # scripts/mutants.sh here would read and write this repository's own
-    # docs/mutants-baseline.txt. Running the sandboxed copy under
-    # repo/scripts/ instead makes it resolve entirely inside the sandbox.
+    # mutants.sh finds its repo root from its own path, so the sandboxed copy runs under
+    # repo/scripts/ and cannot touch this repository's docs/mutants-baseline.txt.
     return patience.run(
         ["bash", str(repo / "scripts" / "mutants.sh"), *args],
         env=environment,

@@ -1,19 +1,8 @@
-//! A conversation search's passages, cut from the corpus (spec 010 T028).
-//!
-//! The executor knows a body matched from which index found it, and nothing
-//! about which *part* of the body: the person's own words, or the history
-//! they quoted. That is decided here, when the passage is cut, with the same
-//! quote detector the reader folds by (`postio_body::quote::text_stretches`)
-//! over the same text the index holds (`indexable_text`) -- D6. So these run
-//! over real mail from the `.eml` corpus, where the quoting is what clients
-//! actually send, rather than over strings written to suit the rule.
-
 use postio_model::{AccountScope, BodyState, MailboxId, MessageId};
 use postio_search::results::{ConversationOrder, ConversationResults, Match, Source};
 use postio_storage::repository::{MessageRepository, StoredBody};
 use postio_storage::{Checkout, test_support};
 
-/// One corpus message, stored with its body and indexed as sync would.
 async fn store_fixture(
     connection: &Checkout,
     account: postio_model::AccountId,
@@ -47,8 +36,6 @@ async fn store_fixture(
     message.id
 }
 
-/// A message whose body is indexed but not on this machine: a real state,
-/// in which the search finds it and nothing can be cut.
 async fn store_bodiless(
     connection: &Checkout,
     account: postio_model::AccountId,
@@ -123,7 +110,6 @@ async fn search(world: &World, text: &str) -> ConversationResults {
     .expect("the search runs")
 }
 
-/// The one hit `text` finds, and where the executor says it matched.
 async fn only_hit(world: &World, text: &str) -> (MessageId, Vec<Source>) {
     let results = search(world, text).await;
     assert_eq!(results.hits.len(), 1, "`{text}` finds one conversation");
@@ -214,8 +200,6 @@ async fn a_word_only_in_the_persons_own_words_is_tagged_body() {
 
 #[tokio::test]
 async fn a_word_in_both_is_tagged_once_for_each() {
-    // "lease" is in the subject, in Quinn's own reply and in Ada's quoted
-    // message: three places, each named once.
     let world = world().await;
     let hit = only_hit(&world, "lease").await;
     assert_eq!(hit.0, world.reply);
@@ -271,7 +255,6 @@ async fn a_message_with_no_local_body_keeps_its_sources_without_passages() {
 #[tokio::test]
 async fn the_facets_ids_come_back_with_their_names() {
     let world = world().await;
-    // Both of Quinn's replies say "Ada"; the bodiless message does not.
     let results = search(&world, "ada").await;
     assert_eq!(results.hits.len(), 2);
     assert!(!results.facets.senders.is_empty());
@@ -304,9 +287,6 @@ async fn the_facets_ids_come_back_with_their_names() {
     );
 }
 
-/// The person searching is named among the people, and said to be them:
-/// what offers someone to narrow to leaves them out, as the People tab
-/// does, by every account's and identity's address.
 #[tokio::test]
 async fn the_facets_say_which_person_is_you() {
     let world = world().await;
@@ -334,10 +314,6 @@ async fn the_facets_say_which_person_is_you() {
     );
 }
 
-/// The line that introduces a quote ("On 21/09/2026 16:02, Ada Norwood
-/// wrote:") is neither the person's words nor the history: a passage is
-/// never cut from it, even when it holds the word searched for. "Ada" is
-/// in Quinn's greeting, in that line and in the quote's signature.
 #[tokio::test]
 async fn a_passage_is_never_the_line_that_introduces_a_quote() {
     let world = world().await;
@@ -370,12 +346,6 @@ async fn a_passage_is_never_the_line_that_introduces_a_quote() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Every match in one conversation, for Quick Look (spec 010 US4, T087)
-// ---------------------------------------------------------------------------
-
-/// The mailing-list thread's `fixtures`, stored with their bodies, indexed
-/// and threaded as sync files them: one conversation.
 async fn thread_of(fixtures: &[&str]) -> (World, postio_model::ThreadId, Vec<MessageId>) {
     let world = world().await;
     let mut ids = Vec::new();
@@ -410,7 +380,6 @@ async fn conversation_matches(
     postio_session::search::conversation_matches(&world.connection, &parse(text), key).await
 }
 
-/// What each match is, in order: its message, where, and who wrote it.
 fn places(
     found: &[postio_search::results::ConversationMatch],
 ) -> Vec<(Option<MessageId>, Source, Option<String>)> {
@@ -440,10 +409,6 @@ async fn a_conversations_matches_come_oldest_first_each_with_its_passage() {
         postio_search::results::ConversationKey::Thread(thread),
     )
     .await;
-    // Ada proposed it, Quinn answered it. Each reply also quotes the one
-    // before; a quote of a message the conversation holds is that message's
-    // card already, not a second one -- unless the quote is all its message
-    // matched by (#2184).
     assert_eq!(
         places(&found),
         [
@@ -456,7 +421,6 @@ async fn a_conversations_matches_come_oldest_first_each_with_its_passage() {
         assert_eq!(highlighted(&each.found), ["subscriber"]);
         assert!(each.found.when.is_some(), "when it was said");
     }
-    // Who Ada's went to, for Quick Look's sender line.
     let to: Vec<(Option<String>, String, bool)> = found[0]
         .to
         .iter()
@@ -483,10 +447,6 @@ async fn a_conversations_matches_come_oldest_first_each_with_its_passage() {
     );
 }
 
-/// #2184: "7 of 12 messages match" counts a reply that matched only by
-/// quoting another message of the thread. Leaving its quote out left it
-/// counted and shown nowhere; it keeps the quote, tagged as one, so every
-/// message the row counts is shown.
 #[tokio::test]
 async fn a_reply_that_matches_only_by_its_quote_keeps_it() {
     let (world, thread, ids) = thread_of(&[
@@ -515,7 +475,6 @@ async fn a_reply_that_matches_only_by_its_quote_keeps_it() {
     assert_eq!(deep[0].from, None, "the quote's writer is not the reply's");
     let text = &deep[0].found.passage.as_ref().expect("its passage").text;
     assert!(text.contains("Pure subscriber means"), "{text:?}");
-    // Quinn's reply has words of its own: its quote of Ada is still left out.
     assert!(
         !found
             .iter()
@@ -527,8 +486,6 @@ async fn a_reply_that_matches_only_by_its_quote_keeps_it() {
 
 #[tokio::test]
 async fn a_quote_of_mail_the_conversation_does_not_hold_is_an_earlier_reply() {
-    // Ada's proposal never arrived here: Quinn's quote of it is the only
-    // place her words are.
     let (world, thread, ids) =
         thread_of(&["list-thread-02-reply", "list-thread-04-reply-deep"]).await;
     let found = conversation_matches(
@@ -542,7 +499,6 @@ async fn a_quote_of_mail_the_conversation_does_not_hold_is_an_earlier_reply() {
         [
             (Some(ids[0]), Source::Body, Some("Quinn Abara".to_owned())),
             (Some(ids[0]), Source::Quoted, None),
-            // The deeper reply matched only by quoting Quinn (#2184).
             (Some(ids[1]), Source::Quoted, None),
         ],
         "who wrote a quote is not known: not the person quoting it"
@@ -591,7 +547,6 @@ async fn the_subject_is_one_match_for_the_whole_conversation_and_comes_last() {
 
 #[tokio::test]
 async fn a_message_on_its_own_is_a_conversation_of_one() {
-    // "lease": the subject, Quinn's own reply and Ada's quoted message.
     let world = world().await;
     let found = conversation_matches(
         &world,
@@ -612,12 +567,6 @@ async fn a_message_on_its_own_is_a_conversation_of_one() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Attachment contents (spec 010 step 9, US8, T126)
-// ---------------------------------------------------------------------------
-
-/// A mail whose spreadsheet, downloaded and read, is the only place it says
-/// "kestrel": row 14 of "Summary".
 async fn mail_with_sheet(world: &World) -> (MessageId, postio_model::AttachmentId) {
     use postio_storage::sql::{self, RowExt as _};
     let mut message = postio_model::Message::new(world.account, world.inbox, chrono::Utc::now());
@@ -704,7 +653,6 @@ async fn a_word_inside_an_attachment_has_the_located_unit_as_its_passage() {
         passage.text
     );
     assert_eq!(highlighted(&found[0]), ["kestrel"]);
-    // The words for where it is are postio-ui's.
     assert_eq!(
         postio_ui::search_view::location(&postio_search::results::Location::Sheet {
             name: "Summary".to_owned(),
@@ -736,13 +684,10 @@ async fn quick_look_lists_a_match_inside_an_attachment() {
     assert!(passage.text.contains("Kestrel survey"), "{passage:?}");
 }
 
-/// A file whose contents match is one card, named by the file: its name
-/// matching too does not make it a second (screen 10's one card per file).
 #[tokio::test]
 async fn quick_look_says_a_file_once_when_its_contents_match() {
     let world = world().await;
     let (message, attachment) = mail_with_sheet(&world).await;
-    // "Atlas" is in its name and in row 3.
     let found = conversation_matches(
         &world,
         "atlas",

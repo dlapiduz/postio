@@ -1,10 +1,3 @@
-//! `read_receipt_requested` round-trips through storage and the pane's count
-//! reflects it (#970).
-//!
-//! Postio never sends a read receipt automatically (CLAUDE.md's privacy
-//! section) — this is only the record of how often one was asked, the same
-//! denormalize-at-ingest shape `messages.list_id` already uses.
-
 #![allow(clippy::disallowed_methods)] // the crate's own code prepares through `sql::statement`; a test may reach the engine directly
 
 use postio_model::AccountId;

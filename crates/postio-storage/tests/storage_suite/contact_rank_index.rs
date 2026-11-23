@@ -1,51 +1,6 @@
-//! Contact autocomplete is served by an index, not by sorting the address
-//! book (#990).
-//!
-//! `idx_contacts_rank` was written for the ordering the address-book
-//! decision (its Q6, folded into `specs/005-contacts`) originally described,
-//! `(times_seen DESC, last_seen_at DESC)`. #424 changed the ordering to
-//! recency-first and #430 corrected the decision; the index was not part of
-//! either, so it named an order nothing asked for.
-//!
-//! # Why swapping its columns is not the fix
-//!
-//! `ContactRepository::complete` orders people by
-//!
-//! ```text
-//! CASE WHEN source = 'mail' THEN 1 ELSE 0 END, last_seen_at DESC, times_seen DESC, id
-//! ```
-//!
-//! — a **band** first (contacts the user created outrank ones harvested from
-//! headers), then recency, then frequency. SQLite can satisfy an `ORDER BY`
-//! from an index only when the index's leading columns match it exactly, and
-//! the leading term here is an expression. Measured on 20,000 contacts, an
-//! index of `(last_seen_at DESC, times_seen DESC)` — the swap the issue
-//! proposed — still plans as `SCAN contacts` + `USE TEMP B-TREE FOR ORDER BY`.
-//! Only an index that leads with the same expression removes the sort.
-//!
-//! # Why the sort is worth removing
-//!
-//! Autocomplete runs on every keystroke of a recipient, and the popup opens
-//! on the *empty* prefix — the case where nothing narrows the candidate set
-//! and every contact is a candidate. A temporary b-tree over the whole
-//! address book, per keystroke, is what the 16 ms interaction budget cannot
-//! hold. `LIMIT 20` costs nothing when the index is walked in order and
-//! everything when it is not: the sort has to see every row before it can
-//! know which twenty come first.
-//!
-//! Since specs/005-contacts the rows are people, not addresses, and the index
-//! leads with `state` so the live ones are a range of it: a deleted person is
-//! offered nowhere, and the empty-prefix popup must not wade through them.
-//!
-//! Two things are asserted together, for the reason `draft_indexes.rs` gives:
-//! an index the planner declines to use still returns the right rows, by
-//! scanning, so neither the shape nor the results alone can fail usefully.
-
 use postio_storage::Connection;
 use postio_storage::bind;
 
-/// Enough contacts that a sort over all of them is a real cost, and enough
-/// that SQLite would not simply scan a tiny table whatever the index says.
 const CONTACTS: usize = 20_000;
 
 async fn migrated() -> (postio_storage::Store, postio_storage::Checkout) {
@@ -69,8 +24,6 @@ async fn plan(connection: &Connection, query: &str) -> String {
     postio_storage::test_support::plan(connection, query).await
 }
 
-/// An address book the size of a real one: a person per row, a tenth of
-/// them deleted.
 async fn fill(connection: &Connection) {
     connection
         .execute_batch(&format!(
@@ -87,10 +40,8 @@ async fn fill(connection: &Connection) {
         .expect("fill the address book");
 }
 
-/// The empty-prefix read `ContactRepository::complete` issues, verbatim. Kept
-/// here rather than imported because it is what this test is *about*: if the
-/// repository's ordering changes again, this has to be updated in step, and
-/// a copy that must be kept in step is exactly what makes that visible.
+/// Copied from `ContactRepository::complete`: the SQL the planner sees is what this test is about,
+/// and a copy that must be kept in step makes a change visible.
 const SEARCH: &str = "SELECT id FROM contacts WHERE state = 'live' \
      ORDER BY CASE WHEN source = 'mail' THEN 1 ELSE 0 END, \
               last_seen_at DESC, times_seen DESC, id \
@@ -118,10 +69,6 @@ async fn autocomplete_is_answered_from_the_index_rather_than_by_sorting_everyone
 
 #[tokio::test]
 async fn the_index_leads_with_the_band_that_the_ordering_leads_with() {
-    // The shape half. It is asserted separately from the plan because the
-    // plan can be right for the wrong reason -- a future SQLite that
-    // materialises differently, a table small enough to scan -- and because
-    // this is the sentence that says *why* the index looks unusual.
     let (_store, connection) = migrated().await;
     let sql = definition(&connection, "idx_contacts_rank").await;
     assert!(
@@ -148,11 +95,7 @@ async fn the_index_leads_with_the_band_that_the_ordering_leads_with() {
 
 #[tokio::test]
 async fn the_rows_still_come_back_in_the_order_the_product_promises() {
-    // The results half. An index nothing uses still returns the right rows,
-    // and an index the planner *does* use can return the wrong ones -- so
-    // this asserts the answer rather than the plan: a user-created contact
-    // outranks a harvested one, within a band the more recent wins, and a
-    // deleted person is not among them.
+    // Asserts the answer, not the plan: an index the planner uses can still return the wrong rows.
     let (_store, connection) = migrated().await;
     fill(&connection).await;
 

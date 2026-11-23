@@ -31,8 +31,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -79,8 +77,6 @@ def world(root: Path, landed: bool) -> tuple[Path, Path]:
     git(repo, "push", "-q", "origin", "issue-42-x")
 
     if landed:
-        # The same *patch* on main under a different sha, which is what a
-        # rebase-merge leaves behind and what `git cherry` is for.
         git(repo, "checkout", "-q", "main")
         (repo / "work.txt").write_text("the work\n")
         git(repo, "add", "work.txt")

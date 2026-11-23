@@ -1,9 +1,5 @@
-//! The read behind "delete what the list sent" (#1931): which of an
-//! account's messages a list sent.
-//!
-//! It only *finds* messages. Archiving or deleting them is a command, so it
-//! is queued, undoable and local-first like every other verb. It never
-//! returns a Flagged message.
+//! The read behind "delete what the list sent" (#1931). It only finds messages; archiving or
+//! deleting is a queued, undoable, local-first command. Never returns a Flagged message.
 
 use postio_model::ids::{AccountId, MessageId};
 
@@ -11,44 +7,33 @@ use crate::error::Result;
 use crate::sql::{self, RowExt as _, bind};
 use crate::store::Connection;
 
-/// Who a list's mail is identified by: its `List-Id`, or, for a sender that
-/// sets none, their exact address (never the domain, which would take a whole
-/// provider with it).
+/// A `List-Id`, or for a sender that sets none their exact address, never the domain, which would
+/// take a whole provider with it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ListMail<'a> {
-    /// `messages.list_id`, as stored.
     ListId(&'a str),
-    /// The `From` address, compared lower-cased.
     Sender(&'a str),
 }
 
-/// One page of candidates, and whether the page cut the answer short.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Found {
-    /// The messages, newest first.
     pub ids: Vec<MessageId>,
-    /// `true` when more matched than `limit`.
     pub more: bool,
 }
 
-/// Read candidates for bulk clean-ups on one connection.
 pub struct SweepRepository<'a> {
     connection: &'a Connection,
 }
 
-/// Folders whose mail is already past archiving: deleting from Trash or Junk
-/// is not what "delete what the list sent" means, and Sent and Drafts are the
-/// user's own words.
+/// Deleting from Trash or Junk is not what "delete what the list sent" means, and Sent and Drafts
+/// are the user's own words.
 const SPENT: &str = "('trash', 'junk', 'sent', 'drafts')";
 
 impl<'a> SweepRepository<'a> {
-    /// Borrow `connection`.
     pub fn new(connection: &'a Connection) -> Self {
         Self { connection }
     }
 
-    /// Up to `limit` of `account`'s messages from `from`, newest first, in
-    /// no folder that is already spent and not Flagged. One statement.
     pub async fn list_mail(
         &self,
         account: AccountId,

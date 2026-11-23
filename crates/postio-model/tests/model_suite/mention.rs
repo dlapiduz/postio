@@ -1,17 +1,3 @@
-//! "Please find attached" with nothing attached (spec 002, FR-057).
-//!
-//! The one composer check whose whole value is catching a mistake the person
-//! has already made and cannot see. It costs a confirmation when it is wrong
-//! and saves a second email when it is right, which is why the bar for
-//! firing is "the user said so in their own words" rather than anything
-//! cleverer.
-//!
-//! Two rules do most of the work, and both are about *whose* words these are:
-//! a quoted original is somebody else's, and a signature is boilerplate. A
-//! check that read either would fire on every reply to a message that had an
-//! attachment, which is the fastest way to teach someone to dismiss a
-//! dialog without reading it.
-
 use postio_model::ids::{AccountId, AttachmentId, MessageId};
 use postio_model::mention::mentions_an_attachment;
 use postio_model::{Attachment, Draft};
@@ -57,20 +43,12 @@ fn the_usual_ways_of_saying_it_are_recognised() {
 
 #[test]
 fn a_draft_that_actually_carries_a_part_says_nothing() {
-    // The check is about the *gap*, not about the words. Someone who wrote
-    // "attached" and attached something has made no mistake, and a dialog
-    // would be the app arguing with them.
     let draft = with_a_part(draft_saying("Please find attached the report."));
     assert!(!mentions_an_attachment(&draft));
 }
 
 #[test]
 fn a_quoted_original_is_somebody_elses_words() {
-    // The important one. Replying to "here is the report attached" must not
-    // ask whether *you* forgot an attachment -- and that case is not rare,
-    // it is most of the replies anybody sends to a message with a file on
-    // it. Firing there teaches people to dismiss the dialog unread, which
-    // costs the check its whole value.
     let draft = draft_saying(
         "Thanks, that works.\n\n\
          On 2026-09-10, Ada wrote:\n\
@@ -85,8 +63,6 @@ fn a_quoted_original_is_somebody_elses_words() {
 
 #[test]
 fn a_signature_is_boilerplate_and_not_a_claim() {
-    // Somebody whose signature says "Attachments are scanned" would
-    // otherwise be asked on every message they ever send.
     let draft = draft_saying("Morning.\n\n-- \nAda Lovelace\nAll attachments are virus-scanned.");
     assert!(
         !mentions_an_attachment(&draft),
@@ -96,7 +72,6 @@ fn a_signature_is_boilerplate_and_not_a_claim() {
 
 #[test]
 fn a_word_that_merely_contains_one_is_not_a_mention() {
-    // `unattached`, `attaches`, and the failure mode of a naive `contains`.
     for said in [
         "The unattached bracket is the problem.",
         "The bolt attaches to the frame.",
@@ -116,9 +91,6 @@ fn an_empty_draft_says_nothing() {
 
 #[test]
 fn an_inline_image_counts_as_something_being_attached() {
-    // A pasted screenshot is visibly there, and asking "did you forget an
-    // attachment?" about a message with a picture in it is the app not
-    // looking at what the person can plainly see.
     let mut draft = with_a_part(draft_saying("Attached is the screenshot."));
     draft.attachments[0].content_id = Some("shot@example.invalid".to_owned());
     draft.attachments[0].disposition = postio_model::attachment::Disposition::Inline;

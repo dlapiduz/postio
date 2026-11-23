@@ -1,10 +1,3 @@
-//! `config.toml` applied live through the shared bridge (specs/007-postio-focus
-//! T022): an edit on disk reaches the app on the main loop, validated, and a
-//! broken edit leaves the last good keymap in force.
-//!
-//! What is asserted is the keymap the app would draw its hints from, read in
-//! the callback, not that the watcher was told anything.
-
 use std::cell::RefCell;
 use std::ops::ControlFlow;
 use std::rc::Rc;
@@ -14,8 +7,6 @@ use postio_core::config::ConfigService;
 
 use crate::support::until;
 
-/// What the app saw on each reload: the archive key, and whether the reload
-/// was applied.
 type Seen = Rc<RefCell<Vec<(Option<String>, bool)>>>;
 
 pub fn an_edit_reaches_the_app_and_a_broken_one_keeps_the_last_good_keys() {

@@ -38,10 +38,8 @@ from pathlib import Path
 
 CARGO_TOML = Path("Cargo.toml")
 METAINFO = Path("crates/postio-gtk/data/dev.postio.Postio.metainfo.xml")
-# The macOS bundle ships as a release asset (#1714), so it says the version it
-# was released as. Both keys carry the version: CFBundleVersion is the build
-# number macOS compares to decide which copy is newer, and a semver string
-# compares correctly there.
+# The macOS bundle ships as a release asset (#1714) and says its version; CFBundleVersion is the
+# build number macOS compares, and a semver string compares correctly there.
 INFO_PLIST = Path("macos/Resources/Info.plist")
 PLIST_VERSION_KEY = re.compile(
     r"(<key>(?:CFBundleShortVersionString|CFBundleVersion)</key>\s*<string>)[^<]*(</string>)"

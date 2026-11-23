@@ -1,34 +1,20 @@
-//! The links a reader document offers to `A`, *Open attachment or link*.
-//!
-//! What the person sees is what is offered: the document handed to the
-//! reader, walked for its anchors, each target once, in reading order, with
-//! the words it was written behind -- so a link whose words name one place
-//! and whose target is another shows both before it opens. GTK reads the
-//! same from its laid-out document; a web view's reader asks this.
+//! The links a reader document offers to `A`: each target once, in reading order, with the words it
+//! was written behind so a mismatch shows before it opens.
 
 use html5ever::driver::ParseOpts;
 use html5ever::parse_document;
 use html5ever::tendril::TendrilSink;
 use markup5ever_rcdom::{Handle, NodeData, RcDom};
 
-/// One link a reader document offers.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Link {
-    /// The words it was written behind, its whitespace collapsed; the
-    /// target itself when it was written behind none (an image, say).
     pub words: String,
-    /// Where it goes, in full.
     pub target: String,
 }
 
-/// The schemes a link may open outside the reader: the same three the
-/// reader's own renderer opens (`postio_render::LinkTarget::External`).
 const SCHEMES: [&str; 3] = ["http", "https", "mailto"];
 
-/// Every `http`, `https` and `mailto` link in `html`, in reading order, each
-/// target once (the first words it was written behind are the ones kept).
-/// Anything else -- the reader's own verbs, a fragment, a script -- is not a
-/// place to open.
+/// Each target once; the first words it was written behind are kept.
 pub fn links(html: &str) -> Vec<Link> {
     let dom = parse_document(RcDom::default(), ParseOpts::default()).one(html);
     let mut found = Vec::new();
@@ -39,7 +25,6 @@ pub fn links(html: &str) -> Vec<Link> {
 fn walk(node: &Handle, found: &mut Vec<Link>) {
     if let NodeData::Element { name, attrs, .. } = &node.data {
         match &*name.local {
-            // Not part of what is read.
             "head" | "script" | "style" | "template" => return,
             "a" => {
                 let href = attrs
@@ -71,20 +56,17 @@ fn walk(node: &Handle, found: &mut Vec<Link>) {
     }
 }
 
-/// `href` as the place it opens, when it is one of [`SCHEMES`].
 fn target(href: &str) -> Option<String> {
     let url = ammonia::Url::parse(href.trim()).ok()?;
     SCHEMES.contains(&url.scheme()).then(|| url.to_string())
 }
 
-/// The text under `node`, its whitespace collapsed to single spaces.
 fn words(node: &Handle) -> String {
     let mut text = String::new();
     collect(node, &mut text);
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// Elements whose text is words apart from what is around them.
 const BLOCKS: [&str; 15] = [
     "br",
     "p",

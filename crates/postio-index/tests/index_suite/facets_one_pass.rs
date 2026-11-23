@@ -1,14 +1,3 @@
-//! A conversation search's facets (spec 010, US3): every count the filter
-//! buttons, their popovers and the timeline show, from the same walk as the
-//! hits.
-//!
-//! SC-008 is the property: a facet's count is what its term would return.
-//! Each sender, recipient, label and folder, and the attachment, action and
-//! unread counts, equals the conversation total of the query with that term
-//! added -- so a popover never offers a person "3" and then shows them two.
-//! The months follow D4 (a conversation in the month of its newest match),
-//! and the Date presets count what their `after:` would find.
-
 use chrono::{Duration, NaiveDate};
 use postio_model::{Account, LabelId, MessageId};
 use postio_search::facets::{SearchFacets, months_ending, preset_starts};
@@ -56,16 +45,6 @@ async fn mark(connection: &Connection, message: MessageId, dismissed: bool) {
     }
 }
 
-/// Four conversations saying "atlas", and one that does not:
-///
-/// - a thread: Ada to Bob in the inbox two days ago, unread, with a file and
-///   the Atlas label; Grace to Bob and Carol in the archive forty days ago;
-///   and Ada about lunch, which does not match;
-/// - Grace to Carol in the archive a hundred days ago, labelled `Q3 close`,
-///   with an open question;
-/// - Ada to Bob in the inbox four hundred days ago, before the timeline;
-/// - Dan to Carol in the inbox ten days ago, unread, labelled Atlas, with a
-///   question the person dismissed.
 async fn world() -> (postio_storage::Store, postio_storage::Checkout) {
     let (database, connection, account, inbox) = store().await;
     let archive = test_support::mailbox(&connection, &account, "Archive")
@@ -185,7 +164,6 @@ async fn every_facet_counts_what_its_term_would_find() {
     assert_eq!(total_hits, 4);
     assert!(!facets.capped);
 
-    // What the corpus says, so an empty facet cannot pass the loop below.
     let address = "SELECT address FROM addresses WHERE id = ?1";
     let mut senders = Vec::new();
     for count in &facets.senders {
@@ -253,7 +231,6 @@ async fn every_facet_counts_what_its_term_would_find() {
     assert_eq!(facets.action, 1, "a dismissed question is no action");
     assert_eq!(facets.unread, 2);
 
-    // SC-008: each count is the total of the query with its term added.
     let mut terms: Vec<(String, u64)> = Vec::new();
     for (address, count) in &senders {
         terms.push((format!("from:{address}"), *count));
@@ -291,9 +268,6 @@ async fn a_conversation_is_in_the_month_of_its_newest_match() {
         .iter()
         .map(|month| month.conversations)
         .collect();
-    // October 2025 .. September 2026: the thread (newest match two days
-    // ago, though a match of it is in August) and Dan's in September, the
-    // budget in June; the old one before the timeline begins.
     assert_eq!(counts, [0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 2]);
 }
 
@@ -317,14 +291,9 @@ async fn the_date_presets_count_what_their_after_would_find() {
     }
 }
 
-/// The walk stops at `CONVERSATION_WALK_CAP` (D30), half of
-/// `TOTAL_HITS_CAP`, and says so: every count is then a floor. GTK's
-/// `search` keeps counting to its own cap over the same mailbox.
 #[tokio::test]
 async fn a_match_past_the_cap_makes_every_count_a_floor() {
     let (_database, connection, account, inbox) = store().await;
-    // Past the cap in one statement: an operator-only query walks
-    // `messages` alone, so no body or metadata index is needed for it.
     let cap = postio_search::results::CONVERSATION_WALK_CAP as i64;
     let ids = format!(
         "[{}]",
@@ -334,8 +303,6 @@ async fn a_match_past_the_cap_makes_every_count_a_floor() {
             .join(",")
     );
     let received = now().timestamp_millis() - 86_400_000;
-    // The metadata index stands aside for the load: nothing here searches
-    // it, and ten thousand index writes are most of what the load costs.
     connection.execute("BEGIN", ()).await.expect("begin");
     postio_index::index::defer_documents(&connection)
         .await
@@ -370,7 +337,6 @@ async fn a_match_past_the_cap_makes_every_count_a_floor() {
         walked.rows
     );
 
-    // GTK's search counts the same mailbox to its own, larger cap.
     let query = postio_search::parse("is:unread", today());
     let gtk = postio_index::search(
         &connection,

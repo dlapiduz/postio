@@ -28,16 +28,11 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
 import prereq  # noqa: E402
 
-# Linux-only, declared rather than skipped (#1151): this stands down
-# with a sentence and exit 77, which `run-self-tests.sh` counts and
-# names, so the macOS run does not quietly claim to have covered it.
 prereq.only_on("linux", reason=(
     "install-local.sh probes for gtk4/libadwaita/webkitgtk through pkg-config, which is the build this platform deliberately cannot do"
 ))
@@ -47,8 +42,6 @@ SCRIPT = HERE / "install-local.sh"
 
 FAILURES: list[str] = []
 
-# Records that it ran, and fakes just enough of a build for the install steps
-# that follow it.
 CARGO_STUB = """#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$STUB_DIR/cargo-calls"
 if [ "$1" = "build" ]; then
@@ -59,8 +52,6 @@ fi
 exit 0
 """
 
-# Fails for the modules STUB_PERL_MISSING names, the way a perl without them
-# does: a `Can't locate` on stderr and a non-zero status.
 PKG_CONFIG_STUB = """#!/usr/bin/env bash
 if [ "$1" = "--exists" ]; then
     for missing in $STUB_PKGCONFIG_MISSING; do
@@ -76,14 +67,8 @@ NOOP_STUB = """#!/usr/bin/env bash
 exit 0
 """
 
-# Everything install-local.sh and the stubs above reach for outside the
-# shell's builtins. Symlinked rather than inherited from PATH, so a case can
-# ask what happens when `perl` is not on the machine at all.
-# `cmp` and `cp` are scripts/install-shims.sh's, which install-local.sh now
-# runs first so a fresh clone's build can find `postio-linker`.
 BORROWED = ["bash", "sh", "dirname", "install", "rm", "mkdir", "chmod", "env", "printf", "cat", "cmp", "cp"]
 
-# Resolved before any case narrows PATH down to the stubs.
 BASH = shutil.which("bash") or "/bin/bash"
 
 
@@ -133,8 +118,6 @@ def run(
     for directory in (data_home, prefix, target):
         directory.mkdir()
 
-    # PATH is *only* the stub directory: a case that says "no perl here" has
-    # to mean it, and the machine running this test has a real perl.
     env = dict(os.environ)
     env["PATH"] = str(bin_dir)
     env["STUB_DIR"] = str(stub_dir)

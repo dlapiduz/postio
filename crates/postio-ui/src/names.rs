@@ -1,24 +1,17 @@
-//! The address book the command bar reads a sentence against (screen 07):
-//! "the invoice Ada sent last month" says `from:ada` only because someone
-//! called Ada has written. `postio_search::natural::lower` asks, for a name
-//! as typed, what `from:` or `to:` should say; this answers it from the
-//! account's correspondents.
+//! The address book the command bar reads a sentence against: "the invoice Ada sent" says
+//! `from:ada` only because someone called Ada has written.
 
 use std::collections::{HashMap, HashSet};
 
 use postio_model::Contact;
 
-/// Who a typed name can mean.
 #[derive(Debug, Default, Clone)]
 pub struct Names {
-    /// A whole display name, lowercased, and the address it belongs to.
     whole: HashMap<String, String>,
-    /// A first name or an address's local part, lowercased.
     short: HashSet<String>,
 }
 
 impl Names {
-    /// The directory `contacts` make.
     pub fn new(contacts: &[Contact]) -> Self {
         let mut names = Names::default();
         for contact in contacts {
@@ -42,9 +35,6 @@ impl Names {
         names
     }
 
-    /// What `from:` should say for `typed`: the address, for a whole name
-    /// that names one correspondent; the word itself, for a first name
-    /// someone has; nothing for a name nobody has.
     pub fn lookup(&self, typed: &str) -> Option<String> {
         let key = typed.trim().to_lowercase();
         if key.is_empty() {

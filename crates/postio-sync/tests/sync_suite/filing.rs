@@ -1,10 +1,3 @@
-//! The filing pass (spec 007, `contracts/engine.md`, "The filing pass").
-//!
-//! A host in Focus mode hands every incremental pass a filing pass, and the
-//! pass hands it what arrived, inside the transaction that filed it. Nothing
-//! a first sync files is new mail -- years of inbox, not arrivals -- so
-//! nothing a first sync files reaches it, however the first sync is reached.
-
 use std::sync::Mutex;
 
 use postio_account::backend::{
@@ -45,7 +38,6 @@ async fn local(connection: &Connection) -> Mailbox {
     test_support::mailbox(connection, &account, INBOX).await
 }
 
-/// One message as the probe was handed it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Handed {
     id: MessageId,
@@ -53,7 +45,6 @@ struct Handed {
     role: MailboxRole,
 }
 
-/// A filing pass that files nothing and remembers every call.
 #[derive(Debug, Default)]
 struct Probe {
     calls: Mutex<Vec<Vec<Handed>>>,
@@ -137,7 +128,6 @@ async fn a_pass_that_brings_nothing_new_files_nothing() {
         .await
         .expect("the first sync");
 
-    // Another client reads a message: a change, not an arrival.
     backend
         .store_flags(
             INBOX,
@@ -167,9 +157,6 @@ async fn a_pass_that_brings_nothing_new_files_nothing() {
 
 #[tokio::test]
 async fn a_first_sync_resumed_through_the_incremental_entry_files_nothing() {
-    // A first pass cut short leaves a sync state that never completed, so
-    // the next pass comes through the same call an incremental one does and
-    // plans a full enumeration. Everything it stores is the backlog.
     let backend = server_with_messages(6).await;
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
@@ -212,7 +199,6 @@ async fn a_first_sync_resumed_through_the_incremental_entry_files_nothing() {
     );
 }
 
-/// A newsletter as its sender builds one.
 fn newsletter(n: u32) -> Vec<u8> {
     format!(
         "From: Ledger <news@ledger.example>\r\n\
@@ -223,7 +209,6 @@ fn newsletter(n: u32) -> Vec<u8> {
     .into_bytes()
 }
 
-/// A filing pass that remembers what each arrival's promoted headers said.
 #[derive(Debug, Default)]
 struct Reader {
     said: Mutex<Vec<Option<postio_model::promoted::PromotedHeaders>>>,
@@ -246,10 +231,6 @@ impl FilingPass for Reader {
 
 #[tokio::test]
 async fn an_arrival_is_filed_knowing_its_promoted_headers_and_a_first_sync_is_not() {
-    // Spec 007, research R8: an incremental pass asks for List-Unsubscribe,
-    // Precedence and Auto-Submitted, so the filing pass can tell bulk mail
-    // at arrival; a first sync asks for none of them, and its mail learns
-    // them from its body's headers later.
     let mut mailbox = MockMailbox::new(INBOX).uid_validity(UidValidity::new(VALIDITY));
     mailbox = mailbox.message(MockMessage::new(newsletter(1)));
     let backend = MockBackend::builder().mailbox(mailbox).build();
@@ -325,10 +306,6 @@ async fn an_arrival_is_filed_knowing_its_promoted_headers_and_a_first_sync_is_no
     );
 }
 
-// --- Errors never lose mail ------------------------------------------------------
-
-/// A filing pass that files its first arrival away -- a decision written in
-/// the transaction it was handed -- and then fails.
 #[derive(Debug, Default)]
 struct FilesThenFails;
 
@@ -360,9 +337,6 @@ impl FilingPass for FilesThenFails {
 
 #[tokio::test]
 async fn a_filing_pass_that_fails_loses_no_mail() {
-    // ADR 0008 Q6, contracts/engine.md: a failure leaves the message where
-    // it was, in the inbox, and lets the transaction commit the insert. What
-    // the pass wrote before it failed goes with it.
     let backend = server_with_messages(2).await;
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
@@ -405,7 +379,6 @@ async fn a_filing_pass_that_fails_loses_no_mail() {
         "the failed pass's own write was taken back"
     );
 
-    // The pass moved on: the next one does not fetch it again as new.
     let probe = Probe::default();
     resync_mailbox_filing(
         &connection,
@@ -420,10 +393,6 @@ async fn a_filing_pass_that_fails_loses_no_mail() {
     assert!(probe.calls().is_empty(), "{:?}", probe.calls());
 }
 
-// --- Backends with no MODSEQ -------------------------------------------------------
-
-/// A server that reports no mod-seq, as the JMAP and Gmail adapters do: no
-/// CONDSTORE among its capabilities.
 async fn modseq_less_server_with_messages(count: u32) -> MockBackend {
     let mut mailbox = MockMailbox::new(INBOX).uid_validity(UidValidity::new(VALIDITY));
     for n in 1..=count {
@@ -439,10 +408,6 @@ async fn modseq_less_server_with_messages(count: u32) -> MockBackend {
 
 #[tokio::test]
 async fn a_backend_without_modseq_hands_the_filing_pass_what_arrived() {
-    // JMAP, Gmail and an IMAP server without CONDSTORE never reach the
-    // incremental pull: every pass after the first re-enumerates the folder
-    // (#564). What such a pass inserts is what arrived, and Focus files
-    // nothing for these accounts unless it is handed exactly that.
     let backend = modseq_less_server_with_messages(2).await;
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
@@ -483,8 +448,6 @@ async fn a_backend_without_modseq_hands_the_filing_pass_what_arrived() {
     assert_eq!(calls[0][0].subject.as_deref(), Some("Note 3"));
     assert_eq!(calls[0][0].role, MailboxRole::Inbox);
 
-    // A pass that brings nothing new files nothing, though it reads the
-    // whole folder again.
     let again = Probe::default();
     resync_mailbox_filing(
         &connection,
@@ -499,17 +462,11 @@ async fn a_backend_without_modseq_hands_the_filing_pass_what_arrived() {
     assert!(again.calls().is_empty(), "{:?}", again.calls());
 }
 
-// --- One message type crosses the seam ---------------------------------------------
-
-/// A filing pass that asks the classifier about everything it is handed,
-/// exactly as it was handed it, and remembers the threads.
 #[derive(Debug, Default)]
 struct Classifies {
     threads: Mutex<Vec<Option<postio_model::ThreadId>>>,
 }
 
-/// Nothing guards anything: the user wrote to nobody and took part in
-/// nothing.
 struct Strangers;
 
 impl postio_classify::Facts for Strangers {
@@ -543,8 +500,6 @@ impl FilingPass for Classifies {
         filed: &[FiledMessage<'_>],
     ) -> Result<FilingEffects, SyncError> {
         for message in filed {
-            // What sync handed over is what the classifier takes: one type,
-            // with no copy in between to drop a field.
             let _ = postio_classify::at_filing(message, &Strangers, &Shipped);
             self.threads
                 .lock()
@@ -557,9 +512,6 @@ impl FilingPass for Classifies {
 
 #[tokio::test]
 async fn the_classifier_is_handed_what_sync_filed_with_its_thread() {
-    // tasks.md T102: the two `FiledMessage`s are one, and it carries the
-    // conversation the arrival joined -- without it a message is guarded
-    // and never filtered (T101).
     let backend = server_with_messages(2).await;
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");

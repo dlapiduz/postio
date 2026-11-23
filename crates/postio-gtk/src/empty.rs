@@ -1,11 +1,6 @@
-//! The empty inbox (screen 16; contracts/focus-surface.md, "States"): a tray,
-//! "Inbox is empty" in bold (or, until a first sync has finished, what the
-//! inbox is waiting on: T220), when the next digest comes if there are
-//! digests, and shortcuts to only what exists.
-//!
-//! What it says is `postio_ui::focus_state::empty_inbox`'s; this draws it.
-//! Every shortcut is a button that runs its command, and wears the key the
-//! keymap in force gives that command.
+//! The empty inbox: a tray, a bold heading, when the next digest comes, and shortcuts to only what
+//! exists.
+//! What it says is `postio_ui::focus_state::empty_inbox`'s.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -16,10 +11,8 @@ use postio_widgets::widgets::keyhint;
 use postio_widgets::widgets::space::{S1, S2, S3};
 use postio_widgets::widgets::{Kind, Size};
 
-/// What a shortcut asks the window to do.
 type Handler = Rc<dyn Fn(CommandId)>;
 
-/// The empty page.
 pub struct EmptyInbox {
     root: gtk::Box,
     tray: gtk::Image,
@@ -31,7 +24,6 @@ pub struct EmptyInbox {
 }
 
 impl EmptyInbox {
-    /// The page, saying nothing beyond its heading until it is told.
     pub fn new() -> Rc<Self> {
         let tray = gtk::Image::from_gicon(&gio::ThemedIcon::from_names(&[
             "mail-inbox-symbolic",
@@ -73,25 +65,21 @@ impl EmptyInbox {
         })
     }
 
-    /// Draw the page without its tray: the reading pane's page is about a
-    /// message, not the inbox, and the icon themes draw no envelope every
-    /// desktop has (T232).
+    /// The reading pane's page is about a message, not the inbox, and icon themes draw no envelope
+    /// every desktop has.
     pub fn hide_picture(&self) {
         self.tray.set_visible(false);
     }
 
-    /// Let the page itself hold the keyboard while it stands in the list's
-    /// place (#2195): focusable, drawing no ring, and named by its heading
-    /// for a screen reader. Without it GTK gives the keyboard to the first
-    /// shortcut as the page comes in, where Space or Return would press it.
-    /// The shortcuts stay reachable by Tab, and by their own keys.
+    /// Without it GTK gives the keyboard to the first shortcut as the page comes in, where Space or
+    /// Return would press it (#2195).
+    /// The shortcuts stay reachable by Tab and by their own keys.
     pub fn hold_the_keyboard(&self) {
         self.root.set_focusable(true);
         self.root.set_accessible_role(gtk::AccessibleRole::Group);
         self.name_for_a_screen_reader();
     }
 
-    /// Give the page the keyboard: true if it took it.
     pub fn take_the_keyboard(&self) -> bool {
         self.root.grab_focus()
     }
@@ -103,22 +91,18 @@ impl EmptyInbox {
         }
     }
 
-    /// The bold line the page says now.
     pub fn heading(&self) -> String {
         self.heading.text().to_string()
     }
 
-    /// The page, to place where the list goes.
     pub fn widget(&self) -> &gtk::Box {
         &self.root
     }
 
-    /// Run `handler` with a shortcut's command when it is pressed.
     pub fn connect_command(&self, handler: impl Fn(CommandId) + 'static) {
         self.handler.replace(Some(Rc::new(handler)));
     }
 
-    /// Say `said`.
     pub fn show(self: &Rc<Self>, said: &postio_ui::focus_state::EmptyInbox) {
         self.heading.set_text(&said.heading);
         self.name_for_a_screen_reader();

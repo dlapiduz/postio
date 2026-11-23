@@ -1,12 +1,6 @@
-//! A new-mail notification reads the store on the runtime, never on the GTK
-//! main thread (#1608).
-//!
-//! Focus's notifier is the host's (`Host::focus_notification`), which spawns
-//! the decision on the host's runtime. The event drain runs on the thread
-//! that draws, so a store read inline there stalls every event queued behind
-//! a `NewMail`. Counted, not timed: the counting seam is thread-local, so
-//! what it sees here is exactly what ran on this thread, from the event
-//! being told to the notification being delivered.
+//! A new-mail notification reads the store on the runtime, never on the GTK main thread (#1608): an
+//! inline read there stalls every event queued behind a `NewMail`.
+//! Counted through the thread-local counting seam, so what it sees ran on this thread.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -17,17 +11,9 @@ use crate::support::{self, Fixture};
 
 pub fn a_new_mail_notification_reads_nothing_on_the_main_thread() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let (message, _) = fixture
-            .file(
-                ("Ada Moreno", "ada@example.com"),
-                "Atlas budget",
-                "The numbers.",
-                5,
-            )
+            .file_from_ada("Atlas budget", "The numbers.", 5)
             .await;
         let (host, sink) = fixture.host_telling();
         let window = postio_gtk::window::FocusWindow::new(None);
@@ -37,16 +23,12 @@ pub fn a_new_mail_notification_reads_nothing_on_the_main_thread() {
             host,
             &postio_config::Config::default(),
         ));
-        assert!(
-            crate::settle_until(async || support::subjects(&window).len() == 1).await,
-            "the inbox never reached the screen"
-        );
+        support::rows_shown(&window, 1).await;
         let told: Rc<RefCell<Vec<String>>> = Rc::default();
         window.set_notification_sink({
             let told = Rc::clone(&told);
             move |notification| told.borrow_mut().push(notification.body.clone())
         });
-        // Looking at Filtered, not the inbox: an arrival there is news.
         support::keys(&window, &["g", "f"]);
         crate::settle();
 

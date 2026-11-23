@@ -1,22 +1,9 @@
-//! The canvas's default binding set, end to end.
-//!
-//! The path a key travels is: the command registry in `postio-core` holds the
-//! defaults as data, `postio_core::Keymap::resolve` lays `[keys]` over them,
-//! and `postio_ui::keymap::Keymap::from_commands` turns the result into
-//! something a key press can be matched against. Each of those has its own
-//! tests; what is checked here is that the three of them together produce the
-//! bindings the design canvas draws.
-//!
-//! No display, no GTK main loop: every layer involved is pure.
-
 use postio_config::KeyBindings;
 use postio_config::keys::{binding_problem, expand_mod};
 use postio_config::paths::Platform;
 use postio_core::{CommandId, Context};
 use postio_ui::keymap::{Binding, KeyContext, Keymap, Outcome, Resolver};
 
-/// The whole default set, resolved with no user overrides, for Linux: the
-/// tests below press Linux's spellings (`ctrl+…`), whichever host runs them.
 fn defaults() -> (Keymap, Vec<String>) {
     Keymap::from_commands(&postio_core::Keymap::resolve_on(
         &KeyBindings::default(),
@@ -30,7 +17,6 @@ fn resolver() -> Resolver {
     Resolver::new(keymap)
 }
 
-/// Types a whole binding string and returns what the last press meant.
 fn press(resolver: &mut Resolver, keys: &str, context: KeyContext) -> Outcome {
     let binding: Binding = keys
         .parse()
@@ -42,10 +28,6 @@ fn press(resolver: &mut Resolver, keys: &str, context: KeyContext) -> Outcome {
     }
     outcome
 }
-
-// ---------------------------------------------------------------------------
-// The set builds
-// ---------------------------------------------------------------------------
 
 #[test]
 fn the_whole_default_set_binds_with_nothing_left_unparsed() {
@@ -74,9 +56,7 @@ fn no_default_binding_is_shadowed_by_a_shorter_one() {
 
 #[test]
 fn the_two_binding_parsers_agree() {
-    // `postio-config` validates `[keys]` in prose for the settings panel and
-    // deliberately builds no typed binding; this crate parses for real. Two
-    // parsers of one syntax drift unless something holds them together.
+    // Two parsers of one syntax drift unless something holds them together.
     for binding in [
         "j",
         "A",
@@ -103,11 +83,8 @@ fn the_two_binding_parsers_agree() {
         );
     }
 
-    // The one place the two parsers are *meant* to disagree. `mod` is valid in
-    // a config file and invalid in the resolver, because it is resolved in
-    // between: `Keymap::resolve` turns it into `ctrl` here and `cmd` on macOS.
-    // Written down so that making them agree reads as the regression it would
-    // be -- whichever side got "fixed" would break the other platform.
+    // The one place the parsers disagree on purpose: `mod` is valid in config and resolved to
+    // `ctrl` or `cmd` before the resolver. "Fixing" either side breaks the other platform.
     assert!(
         binding_problem("mod+k").is_none(),
         "`mod` is spellable in config.toml"
@@ -120,14 +97,8 @@ fn the_two_binding_parsers_agree() {
 
 #[test]
 fn every_binding_the_registry_ships_parses() {
-    // Was `DEFAULT_BINDINGS`, which listed 23 of the registry's 79 commands
-    // and has gone (#1227). Over the registry it covers the other 56 too --
-    // including the alternates, which no version of this ever checked.
     for spec in postio_core::registry::all() {
         for binding in spec.bindings() {
-            // Expanded, because the resolver refuses `mod` on purpose -- it is
-            // a config-file word, and `Keymap::resolve` is what turns it into a
-            // key.
             let binding = expand_mod(binding, Platform::Freedesktop);
             binding
                 .parse::<Binding>()
@@ -135,10 +106,6 @@ fn every_binding_the_registry_ships_parses() {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Every canvas binding works
-// ---------------------------------------------------------------------------
 
 #[test]
 fn the_canvas_navigation_set_works_in_the_list() {
@@ -167,7 +134,6 @@ fn the_canvas_navigation_set_works_in_the_list() {
 fn gmails_action_set_works_in_the_list() {
     let mut resolver = resolver();
 
-    // Gmail's keys (docs/PRODUCT.md §8), and the alternates kept beside them.
     for (keys, expected) in [
         ("r", CommandId::Reply),
         ("a", CommandId::ReplyAll),
@@ -237,9 +203,8 @@ fn the_composer_keys_work_and_the_list_keys_do_not() {
         );
     }
 
-    // #426: reply, reply-all and forward are the one exception -- they *do*
-    // resolve while composing, so `Composer::dispatch` gets the chance to
-    // explain why it is refusing instead of the key vanishing silently.
+    // #426: reply, reply-all and forward resolve while composing, so `Composer::dispatch` can
+    // explain its refusal.
     for (keys, expected) in [
         ("r", CommandId::Reply),
         ("a", CommandId::ReplyAll),
@@ -276,8 +241,6 @@ fn every_registry_binding_resolves_in_every_context_it_claims() {
     let mut resolver = resolver();
 
     for spec in postio_core::registry::all() {
-        // The resolver here is Linux's, which leaves out what only the Mac
-        // has.
         if !postio_core::registry::offered_on(spec.id.into(), Platform::Freedesktop) {
             continue;
         }
@@ -285,8 +248,6 @@ fn every_registry_binding_resolves_in_every_context_it_claims() {
             if !spec.available_in(*context) {
                 continue;
             }
-            // Less a key Linux keeps for another command: its
-            // `alt+BackSpace` is back to words, not the Mac's forget-recent.
             for binding in spec.bindings().filter(|binding| {
                 postio_core::registry::binding_offered_on(
                     spec.id.into(),
@@ -306,10 +267,6 @@ fn every_registry_binding_resolves_in_every_context_it_claims() {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Overridable
-// ---------------------------------------------------------------------------
 
 #[test]
 fn a_keys_override_reaches_the_resolver_and_frees_the_default() {
@@ -360,10 +317,8 @@ fn an_unusable_override_leaves_the_command_its_default() {
     );
 }
 
-/// #1825: the search dropdown's own chords reach their commands from inside
-/// its field, where a person is typing -- which takes a chord that holds
-/// Ctrl, Alt or Super. Linux's forget-recent was first `shift+Delete`, a
-/// key the field kept for itself.
+/// #1825: the dropdown's chords must reach their commands while typing, which takes a chord holding
+/// Ctrl, Alt or Super.
 #[test]
 fn the_dropdowns_keys_reach_their_commands_while_typing() {
     let mut resolver = resolver();

@@ -1,13 +1,7 @@
-//! Every command does something a person can see (spec US6, FR-028/029).
-//!
-//! "I pressed it and nothing happened" is the defect that reads as the
-//! application ignoring you, and the macOS app has six open issues of exactly
-//! that shape. A generated pass presses every command bound in every context
-//! from that context's starting state, and this decides what each press came
-//! to: an **effect** (the frame or the shared observation changed), **no
-//! effect** (neither did), or a **listed gap** (it is known to do nothing
-//! yet, with a reason). A listed gap that now has an effect is **stale**: the
-//! list is wrong, and the pass says so rather than letting it rot.
+//! Every command does something a person can see (spec US6). A generated pass presses every command
+//! in every context and decides what each press came to: an effect, no effect, or a listed gap. A
+//! listed gap that now has an effect is stale, and the pass says so rather than letting the list
+//! rot.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -15,17 +9,12 @@ use std::path::Path;
 use postio_ui::observe::Observation;
 use serde::{Deserialize, Serialize};
 
-/// One entry in `storyboards/gaps/<app>.toml`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Gap {
-    /// The command id.
     pub command: String,
-    /// The key context, by name (`list`, `reader`, ...).
     pub context: String,
-    /// Why it has no visible effect yet.
     pub reason: String,
-    /// The issue that tracks it, when there is one.
     #[serde(default)]
     pub tracked: Option<u32>,
 }
@@ -36,7 +25,6 @@ struct GapFile {
     gap: Vec<Gap>,
 }
 
-/// Reads a gap list. A missing file is an empty list.
 pub fn load_gaps(path: &Path) -> Result<Vec<Gap>, String> {
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
@@ -48,47 +36,26 @@ pub fn load_gaps(path: &Path) -> Result<Vec<Gap>, String> {
         .map_err(|error| format!("{}: {error}", path.display()))
 }
 
-/// What one press came to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "result")]
 pub enum Effect {
-    /// Something a person can see changed.
     Effect,
-    /// Nothing changed, and nothing says that is expected.
     NoEffect,
-    /// Nothing changed, as the gap list says.
-    ListedGap {
-        /// The gap list's reason.
-        reason: String,
-    },
-    /// The gap list says nothing should change, and something did.
-    StaleGap {
-        /// The reason the list still gives.
-        reason: String,
-    },
-    /// The command has no binding in this context after all, so it could not
-    /// be pressed.
+    ListedGap { reason: String },
+    StaleGap { reason: String },
     Unbound,
-    /// The keyboard is in a text field and the binding is a bare key, so
-    /// typing wins: the letter is typed, not run. Correct, and not a gap.
     Typing,
-    /// The key was pressed and nothing on the focus chain took it.
     Dropped,
 }
 
-/// One command in one context.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Press {
-    /// The command id.
     pub command: String,
-    /// The key context it was pressed in.
     pub context: String,
-    /// What it came to.
     #[serde(flatten)]
     pub effect: Effect,
 }
 
-/// What a press came to, from the state before and after it and the gap list.
 pub fn judge(
     command: &str,
     context: &str,
@@ -117,7 +84,6 @@ pub fn judge(
     }
 }
 
-/// Counts by result, for the summary line and the exit code.
 pub fn tally(presses: &[Press]) -> BTreeMap<&'static str, usize> {
     let mut counts = BTreeMap::new();
     for press in presses {

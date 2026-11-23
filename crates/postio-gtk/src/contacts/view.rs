@@ -1,7 +1,5 @@
-//! The Contacts view's widgets: the strip, the "Worth a look" line, the
-//! list beside the card, and the footer. It draws what the controller says
-//! (`postio_focus::Intent::Contacts*`) and reports each click as the input a
-//! key would have been.
+//! The Contacts view's widgets: strip, "Worth a look" line, list beside the card, and footer. It
+//! draws what the controller says and reports each click as the input a key would have been.
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
@@ -22,16 +20,12 @@ use super::list::{self, ContactsList};
 use super::merge::{self, MergeHooks};
 use crate::list::Feed;
 
-/// A row's height without a letter heading over it.
 const ROW_HEIGHT: i32 = 52;
 
-/// Runs a command, as its key would have.
 type Act = Rc<dyn Fn(CommandId)>;
 
-/// The view. See the module.
 pub struct ContactsView {
     root: gtk::Box,
-    /// What sits over the body: the merge sheet.
     shell: gtk::Overlay,
     feed: Feed,
     act: Act,
@@ -50,31 +44,21 @@ pub struct ContactsView {
     card_scroller: gtk::ScrolledWindow,
     footer: KeyLine,
     status: gtk::Label,
-    /// What the card was last drawn from, so a redraw can be told from a
-    /// repeat.
     card: RefCell<Option<CardView>>,
-    /// The Edit form, while one is open.
     form: RefCell<Option<Form>>,
-    /// The form the controller last asked for, until it is drawn.
     pending_form: RefCell<Option<EditView>>,
-    /// Where the controller last said the keyboard goes in the form.
     form_focus: Cell<Option<Slot>>,
-    /// The sheet over the view, while there is one.
     merge: RefCell<Option<gtk::Widget>>,
-    /// The footer's hints as the frame set them, for when a form hands the
-    /// footer back.
     frame_hints: RefCell<Vec<postio_ui::hints::Hint>>,
-    /// Set while the controller moves the cursor, so the selection model's
-    /// answer is not reported back as a click.
+    /// Set while the controller moves the cursor, so the selection model's answer is not reported
+    /// back as a click.
     placing: Cell<bool>,
-    /// Set while the controller sets the filter field's text.
+    /// Set while the controller sets the filter text, so it is not echoed back as typing.
     typing_echo: Cell<bool>,
     me: RefCell<Weak<ContactsView>>,
 }
 
 impl ContactsView {
-    /// The view, drawing rows and cards from `feed`'s controller. `act` runs
-    /// a command as its key would.
     pub fn new(feed: Feed, act: impl Fn(CommandId) + 'static) -> Rc<Self> {
         let act: Act = Rc::new(act);
 
@@ -107,8 +91,6 @@ impl ContactsView {
         }
         let strip = gtk::Box::new(gtk::Orientation::Horizontal, S3);
         strip.add_css_class("focus-contacts-strip");
-        // The chevron the handoff draws after the title: it says this is a
-        // place, as the Inbox's does. It is a mark, not a control.
         let chevron = gtk::Image::from_icon_name("pan-down-symbolic");
         chevron.set_accessible_role(gtk::AccessibleRole::Presentation);
         chevron.set_valign(gtk::Align::Center);
@@ -149,8 +131,6 @@ impl ContactsView {
             .hexpand(true)
             .vexpand(true)
             .build();
-        // The card, or the Edit form in its place: no transition (pane
-        // switches are instant).
         let card_host = gtk::Stack::new();
         card_host.set_transition_type(gtk::StackTransitionType::None);
         card_host.set_hexpand(true);
@@ -275,8 +255,6 @@ impl ContactsView {
                     .input(Input::ContactsFilterTyped(entry.text().to_string()));
             }
         });
-        // Return in the field is "I am done typing": the keyboard goes back
-        // to the list.
         self.filter.connect_activate({
             let weak = weak.clone();
             move |_| {
@@ -295,8 +273,6 @@ impl ContactsView {
         });
     }
 
-    /// The commands the view, its card, its form, its sheet and its popover
-    /// have a control for.
     pub fn controls() -> Vec<CommandId> {
         vec![
             CommandId::ContactNew,
@@ -312,28 +288,23 @@ impl ContactsView {
         ]
     }
 
-    /// The view, for the window's pages.
     pub fn widget(&self) -> &gtk::Box {
         &self.root
     }
 
-    /// What lies over the body: the merge sheet and the Edit form go here.
     pub fn overlay(&self) -> &gtk::Overlay {
         &self.shell
     }
 
-    /// Put the keyboard on the list.
     pub fn focus_list(&self) {
         self.list.grab_focus();
     }
 
-    /// Put the keyboard in the filter field: `/`.
     pub fn focus_filter(&self) {
         self.filter.grab_focus();
         self.filter.set_position(-1);
     }
 
-    /// Draw the frame the controller sent.
     pub fn show_frame(&self, view: &postio_focus::ContactsView) {
         self.show_strip(&view.strip);
         self.model.set_total(view.total);
@@ -421,7 +392,6 @@ impl ContactsView {
         }
     }
 
-    /// Rows landed, or the list started over: draw them again.
     pub fn show_rows(&self) {
         let total = self.feed.contacts_total();
         if self.model.n_items() == total {
@@ -432,16 +402,14 @@ impl ContactsView {
         self.show_cursor(self.feed.contacts_cursor());
     }
 
-    /// How far the list is scrolled, in pixels.
     pub fn scroll_offset(&self) -> f64 {
         self.list
             .vadjustment()
             .map_or(0.0, |adjustment| adjustment.value())
     }
 
-    /// Whether row `at` is wholly inside what the list shows. Rows are all
-    /// `ROW_HEIGHT` tall, so this is arithmetic; a list not yet laid out
-    /// shows nothing.
+    /// Rows are all `ROW_HEIGHT` tall, so this is arithmetic; a list not yet laid out shows
+    /// nothing.
     fn row_on_screen(&self, at: u32) -> bool {
         let Some(adjustment) = self.list.vadjustment() else {
             return false;
@@ -454,14 +422,13 @@ impl ContactsView {
             && top + f64::from(ROW_HEIGHT) <= adjustment.value() + adjustment.page_size()
     }
 
-    /// The cursor is on `index` now.
     pub fn show_cursor(&self, index: Option<u32>) {
         self.placing.set(true);
         match index {
             Some(at) if at < self.model.n_items() => {
                 self.selection.set_selected(at);
-                // A row already on screen stays where it is: marking it, or
-                // the rows refreshing under it, must not move the list.
+                // A row already on screen stays put: marking it, or rows refreshing under it, must
+                // not move the list.
                 if !self.row_on_screen(at) {
                     self.list.scroll_to(at, gtk::ListScrollFlags::NONE, None);
                 }
@@ -473,7 +440,6 @@ impl ContactsView {
         self.placing.set(false);
     }
 
-    /// The card, whole; `None` while it is read.
     pub fn show_card(&self, card: Option<CardView>) {
         if *self.card.borrow() == card {
             return;
@@ -489,16 +455,14 @@ impl ContactsView {
         self.card.replace(card);
     }
 
-    /// The Edit form, whole; `None` puts it away and the card is back.
     pub fn show_edit(&self, edit: Option<EditView>) {
         let Some(edit) = edit else {
             self.pending_form.take();
             self.close_form();
             return;
         };
-        // Drawn once the signal that asked for it has returned: a letter
-        // typed in a field redraws the form, and a field cannot be taken
-        // out of the window while it is still announcing its own change.
+        // Drawn once the signal that asked for it has returned: a field cannot be taken out of the
+        // window while it is announcing its own change.
         if self.pending_form.replace(Some(edit)).is_none() {
             let weak = self.weak();
             gtk::glib::idle_add_local_once(move || {
@@ -535,8 +499,6 @@ impl ContactsView {
         self.card_host.add_named(built.widget(), Some("form"));
         self.card_host.set_visible_child_name("form");
         self.footer.set(&edit.hints);
-        // The keyboard stays where it was, caret and all, unless the
-        // controller moved it (a new address row, the group picker).
         let wanted: Slot = edit.focus.into();
         match (before, self.form_focus.get() == Some(wanted)) {
             (Some((slot, at)), true) => built.put_focus(slot, Some(at)),
@@ -560,12 +522,10 @@ impl ContactsView {
         self.list.grab_focus();
     }
 
-    /// Whether the merge sheet is up over the view.
     pub fn merge_open(&self) -> bool {
         self.merge.borrow().is_some()
     }
 
-    /// The merge sheet over the view, or put away.
     pub fn show_merge(&self, sheet: Option<MergeSheetView>) {
         if let Some(old) = self.merge.take() {
             self.shell.remove_overlay(&old);
@@ -639,9 +599,6 @@ impl ContactsView {
         }
     }
 
-    // What a test reads.
-
-    /// The tabs as drawn, with the one chosen.
     pub fn tabs(&self) -> Vec<(String, bool)> {
         let mut tabs = Vec::new();
         let mut child = self.tabs.first_child();
@@ -656,24 +613,20 @@ impl ContactsView {
         tabs
     }
 
-    /// How many people the list holds.
     pub fn total(&self) -> u32 {
         self.model.n_items()
     }
 
-    /// The name of the person at `index`, once its page has landed.
     pub fn name_at(&self, index: u32) -> Option<String> {
         self.feed.contacts_row(index).map(|row| row.name)
     }
 
-    /// The names of the first `count` people the list holds.
     pub fn names(&self, count: u32) -> Vec<String> {
         (0..count.min(self.total()))
             .filter_map(|index| self.name_at(index))
             .collect()
     }
 
-    /// How many of the people the list holds are marked.
     pub fn marked_count(&self) -> usize {
         (0..self.total())
             .filter_map(|index| self.feed.contacts_row(index))
@@ -681,23 +634,19 @@ impl ContactsView {
             .count()
     }
 
-    /// The row the cursor is on.
     pub fn cursor(&self) -> Option<u32> {
         let at = self.selection.selected();
         (at != gtk::INVALID_LIST_POSITION).then_some(at)
     }
 
-    /// The name on the card, once it is read.
     pub fn card_name(&self) -> Option<String> {
         self.card.borrow().as_ref().map(|card| card.name.clone())
     }
 
-    /// The card, as last drawn.
     pub fn card(&self) -> Option<CardView> {
         self.card.borrow().clone()
     }
 
-    /// Every text the Edit form shows, while one is open.
     pub fn form_texts(&self) -> Vec<String> {
         self.form
             .borrow()
@@ -706,7 +655,6 @@ impl ContactsView {
             .unwrap_or_default()
     }
 
-    /// The text of the form's field in `slot`.
     pub fn form_text(&self, slot: Slot) -> Option<String> {
         self.form
             .borrow()
@@ -714,7 +662,6 @@ impl ContactsView {
             .and_then(|form| form.text_of(slot))
     }
 
-    /// Type into the form's field as a person would.
     pub fn test_type_form(&self, slot: Slot, text: &str) {
         // Not under the borrow: a typed letter redraws the form.
         let entry = self
@@ -727,12 +674,10 @@ impl ContactsView {
         }
     }
 
-    /// Whether the Edit form is up.
     pub fn has_form(&self) -> bool {
         self.form.borrow().is_some()
     }
 
-    /// Every text the merge sheet shows, while there is one.
     pub fn merge_texts(&self) -> Vec<String> {
         self.merge
             .borrow()
@@ -741,35 +686,28 @@ impl ContactsView {
             .unwrap_or_default()
     }
 
-    /// What the filter field holds.
     pub fn filter_text(&self) -> String {
         self.filter.text().to_string()
     }
 
-    /// The "Worth a look" line, when there is one.
     pub fn review_text(&self) -> Option<String> {
         self.review
             .is_visible()
             .then(|| texts_of(&self.review).join(" "))
     }
 
-    /// The footer's counts.
     pub fn status(&self) -> String {
         self.status.text().to_string()
     }
 
-    /// Every text the view shows, in order.
     pub fn texts(&self) -> Vec<String> {
         texts_of(&self.root)
     }
 
-    /// Type `text` into the filter as a person would: the field changes and
-    /// says so.
     pub fn test_type_filter(&self, text: &str) {
         self.filter.set_text(text);
     }
 
-    /// Click the tab titled `title`.
     pub fn test_click_tab(&self, title: &str) {
         let mut child = self.tabs.first_child();
         while let Some(tab) = child {
@@ -782,20 +720,17 @@ impl ContactsView {
         }
     }
 
-    /// Whether the keyboard is in the filter field.
     pub fn filter_has_focus(&self) -> bool {
         self.filter.focus_child().is_some() || self.filter.has_focus()
     }
 }
 
-/// Take every child out of `widget`.
 fn clear(widget: &gtk::Box) {
     while let Some(child) = widget.first_child() {
         widget.remove(&child);
     }
 }
 
-/// Every visible label under `root`, in reading order.
 pub(crate) fn texts_of(root: &impl IsA<gtk::Widget>) -> Vec<String> {
     let mut said = Vec::new();
     let mut stack = vec![root.clone().upcast::<gtk::Widget>()];
@@ -817,10 +752,7 @@ pub(crate) fn texts_of(root: &impl IsA<gtk::Widget>) -> Vec<String> {
     said
 }
 
-/// A row of the list: the avatar, the name with its tag, the address in the
-/// mono face, and on the right when and what the mail adds up to. A letter
-/// heading sits over the first row of a letter. `None` is a row whose page is
-/// on its way: the same height, nothing in it.
+/// `None` is a row whose page is on its way: the same height, nothing in it.
 fn row_widget(row: Option<&RowView>) -> gtk::Box {
     let outer = gtk::Box::new(gtk::Orientation::Vertical, 0);
     let Some(row) = row else {

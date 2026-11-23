@@ -8,25 +8,18 @@
 //!
 //! # The format
 //!
-//! Hand-rolled, little-endian, every variable part length-prefixed, and
-//! versioned twice: [`WIRE_VERSION`] for the shape of the frame, and the
-//! reply's [`EXTRACTOR_VERSION`](crate::EXTRACTOR_VERSION) so a helper left
-//! over from another build is told apart from a broken one
-//! ([`Error::Extractor`]) rather than recorded as if this build had read
+//! Hand-rolled, little-endian, every variable part length-prefixed, and versioned twice:
+//! [`WIRE_VERSION`] for the shape of the frame, and the reply's
+//! [`EXTRACTOR_VERSION`](crate::EXTRACTOR_VERSION) so a helper left over from another build is told
+//! apart from a broken one ([`Error::Extractor`]) rather than recorded as if this build had read
 //! the file.
 //!
 //! ```text
-//! request = "PXRQ" u16:wire
-//!           str:mime  u8:has-name [str:name]
-//!           u64:max_input u64:max_text u64:max_units u64:max_time_ms
-//!           u64:max_entry u32:max_ratio
-//!           u64:length bytes
-//! reply   = "PXRS" u16:wire u32:extractor
-//!           u8:outcome u8:detail
-//!           u32:count { location str:text }*count
-//! location = u8:kind, then u32 (page, slide, paragraph, line),
-//!            str u32 (sheet name, row), u32 u32 (table, row), or nothing
-//! str     = u32:length utf-8
+//! request = "PXRQ" u16:wire str:mime  u8:has-name [str:name] u64:max_input u64:max_text
+//! u64:max_units u64:max_time_ms u64:max_entry u32:max_ratio u64:length bytes reply   = "PXRS"
+//! u16:wire u32:extractor u8:outcome u8:detail u32:count { location str:text }*count location =
+//! u8:kind, then u32 (page, slide, paragraph, line), str u32 (sheet name, row), u32 u32 (table,
+//! row), or nothing str     = u32:length utf-8
 //! ```
 //!
 //! # A reply is read as hostile
@@ -41,47 +34,31 @@ use std::time::Duration;
 
 use crate::{Extracted, Limit, Limits, Location, Outcome, Skip, Unit};
 
-/// The shape of the frame. Bump it whenever a field is added, removed or
-/// reordered; a helper and an indexer that disagree then fail loudly
-/// instead of misreading each other.
+/// Bump whenever a field is added, removed or reordered, so a mismatched
+/// helper and indexer fail loudly.
 pub const WIRE_VERSION: u16 = 1;
 
 const REQUEST_MAGIC: &[u8; 4] = b"PXRQ";
 const REPLY_MAGIC: &[u8; 4] = b"PXRS";
 
-/// The longest MIME type or file name a request may carry. Both come from
-/// a message's headers, which are the sender's to write.
+/// Both come from a message's headers, which are the sender's to write.
 const MAX_LABEL: u32 = 64 * 1024;
 
-/// The longest sheet name a reply may carry. Excel stops at 31
-/// characters; this is room for any honest file and no hostile one.
 const MAX_SHEET_NAME: u32 = 64 * 1024;
 
-/// One extraction, as the helper receives it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Request {
-    /// The attachment's bytes.
     pub bytes: Vec<u8>,
-    /// Its MIME type, parameters and all.
     pub mime_type: String,
-    /// Its file name, when it has one.
     pub name: Option<String>,
-    /// How far the extraction may go.
     pub limits: Limits,
 }
 
-/// Why a frame could not be read.
 #[derive(Debug)]
 pub enum Error {
-    /// The stream failed or ended before the frame did.
     Io(io::Error),
-    /// The bytes are not a frame: wrong magic, an impossible length, an
-    /// unknown tag, text that is not UTF-8, or bytes after the end.
     Malformed(&'static str),
-    /// A frame of another [`WIRE_VERSION`].
     Wire(u16),
-    /// A reply from another [`EXTRACTOR_VERSION`](crate::EXTRACTOR_VERSION):
-    /// a helper from another build, not a broken one.
     Extractor(u32),
 }
 
@@ -106,7 +83,6 @@ impl From<io::Error> for Error {
     }
 }
 
-/// Write one request: what the indexer sends the helper.
 pub fn write_request(
     out: &mut impl Write,
     bytes: &[u8],
@@ -138,9 +114,7 @@ pub fn write_request(
     out.flush()
 }
 
-/// Read one request: what the helper receives. The attachment's length is
-/// held to the request's own `max_input`, so the helper never reads more
-/// than the limits it was given allow.
+/// The attachment's length is held to the request's own `max_input`.
 pub fn read_request(input: &mut impl Read) -> Result<Request, Error> {
     let mut magic = [0u8; 4];
     input.read_exact(&mut magic)?;
@@ -184,7 +158,6 @@ pub fn read_request(input: &mut impl Read) -> Result<Request, Error> {
     })
 }
 
-/// Write one reply: what the helper answers.
 pub fn write_reply(out: &mut impl Write, extracted: &Extracted) -> io::Result<()> {
     let mut frame = Vec::with_capacity(
         64 + extracted
@@ -209,8 +182,6 @@ pub fn write_reply(out: &mut impl Write, extracted: &Extracted) -> io::Result<()
     out.flush()
 }
 
-/// Read one reply: what the indexer receives. The whole of `frame` must be
-/// the reply, and nothing after it.
 pub fn read_reply(frame: &[u8]) -> Result<Extracted, Error> {
     let mut input = frame;
     let mut magic = [0u8; 4];
@@ -228,9 +199,8 @@ pub fn read_reply(frame: &[u8]) -> Result<Extracted, Error> {
     }
     let outcome = outcome_of(read_u8(&mut input)?, read_u8(&mut input)?)?;
     let count = read_u32(&mut input)?;
-    // Each unit is at least a kind and an empty string: five bytes. A count
-    // the rest of the frame cannot hold is a lie, refused before it sizes
-    // anything.
+    // Each unit is at least five bytes: a count the frame cannot hold is
+    // refused before it sizes anything.
     if u64::from(count) * 5 > input.len() as u64 {
         return Err(Error::Malformed("more units than the frame holds"));
     }
@@ -247,9 +217,6 @@ pub fn read_reply(frame: &[u8]) -> Result<Extracted, Error> {
     Ok(Extracted { units, outcome })
 }
 
-/// The helper's whole job, over any two streams: read a request, extract
-/// it, write the reply. `postio-extract-helper` is this over stdin and
-/// stdout; tests call it over buffers.
 pub fn serve(input: &mut impl Read, output: &mut impl Write) -> Result<(), Error> {
     let request = read_request(input)?;
     let extracted = crate::extract(
@@ -261,10 +228,6 @@ pub fn serve(input: &mut impl Read, output: &mut impl Write) -> Result<(), Error
     write_reply(output, &extracted)?;
     Ok(())
 }
-
-// ---------------------------------------------------------------------------
-// The pieces.
-// ---------------------------------------------------------------------------
 
 fn outcome_tag(outcome: Outcome) -> (u8, u8) {
     match outcome {
@@ -362,8 +325,6 @@ fn read_location(input: &mut &[u8]) -> Result<Location, Error> {
     })
 }
 
-/// A string as its length and its UTF-8. A string longer than a `u32`
-/// cannot occur: every text is held under `Limits::max_text`.
 fn put_str(out: &mut Vec<u8>, text: &str) {
     let length = u32::try_from(text.len()).unwrap_or(u32::MAX);
     out.extend_from_slice(&length.to_le_bytes());
@@ -379,8 +340,7 @@ fn read_str(input: &mut impl Read, max: u32) -> Result<String, Error> {
         .map_err(|_| Error::Malformed("a string that is not UTF-8"))
 }
 
-/// Exactly `length` bytes, grown as they arrive rather than allocated up
-/// front from a length the other side wrote.
+/// Grown as bytes arrive, not allocated from a length the other side wrote.
 fn read_exactly(input: &mut impl Read, length: u64) -> Result<Vec<u8>, Error> {
     let mut bytes = Vec::new();
     input.take(length).read_to_end(&mut bytes)?;

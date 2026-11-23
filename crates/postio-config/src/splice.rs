@@ -1,24 +1,12 @@
-//! Putting one freshly written section into a person's file.
-//!
-//! Every structured pane (`patch_ui`, `patch_sync`, `patch_compose`,
-//! `patch_keys`, `patch_filters`, `patch_reader`) writes the same way: drop
-//! its table from the document, serialize a fresh one, splice it in at the
-//! end. Six copies of that splice each forgot the same thing -- the fresh
-//! table comes out of `toml` with no blank line above it, so the file read
-//! `editor = ""` straight into `[sync]` -- and one copy is where that is
-//! fixed once.
+//! Every structured pane drops its table, serializes a fresh one and splices it in at the end; one
+//! copy fixes the missing blank line above the fresh table.
 
 use serde::Serialize;
 
 use crate::{ConfigError, Result};
 
-/// `doc` with its `name` table replaced by `wrapper`'s, serialized: the
-/// table set off from whatever is above it by one blank line, as a person
-/// writes TOML and as `toml::to_string_pretty` writes the starter file.
-///
-/// `wrapper` serializes as a document with the one table `name` in it. A
-/// caller with nothing to write (an empty map, which `toml` would spell as a
-/// bare header) removes the section itself instead.
+/// `wrapper` serializes as a document with the one table `name`. A caller with nothing to write (an
+/// empty map, which `toml` would spell as a bare header) removes the section itself.
 pub(crate) fn replace_section<T: Serialize>(text: &str, name: &str, wrapper: &T) -> Result<String> {
     let mut doc = parse(text)?;
     doc.as_table_mut().remove(name);
@@ -37,15 +25,12 @@ pub(crate) fn replace_section<T: Serialize>(text: &str, name: &str, wrapper: &T)
     Ok(doc.to_string())
 }
 
-/// `text` as a document, or the parse error the panes report.
 pub(crate) fn parse(text: &str) -> Result<toml_edit::DocumentMut> {
     text.parse::<toml_edit::DocumentMut>()
         .map_err(|err| ConfigError::parse(None, &err))
 }
 
-/// A blank line above the first header `table` draws: its own, or, for an
-/// implicit parent such as `[saved_searches]` (which has no header of its
-/// own), its first child's.
+/// For an implicit parent such as `[saved_searches]`, its first child's header.
 fn set_off(table: &mut toml_edit::Table) {
     if !table.is_implicit() {
         table.decor_mut().set_prefix("\n");

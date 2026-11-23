@@ -53,48 +53,32 @@ import subprocess
 import sys
 from pathlib import Path
 
-# --- The mechanisms ---------------------------------------------------------
-#
-# Spelled as they appear in code: a header name for the email mechanisms
-# (matching is case-insensitive, since header names are, and a patch writing
-# `disposition-notification-to` should not slip past). The browser-launch
-# entry matches the actual spawn call rather than the bare program name --
-# `postio-gtk`'s attachment-parts panel already prints "xdg-open" as a
-# keybinding hint (a label, not an invocation), and a bare-name match would
-# demand consent prose next to a string that opens nothing.
+# Spelled as they appear in code; header names match case-insensitively. The browser-launch entry
+# matches the spawn call, not the bare program name, which `postio-gtk` prints as a keybinding hint.
 
 TRACKING: dict[str, str] = {
     "disposition-notification-to": "read receipt (MDN)",
     "return-receipt-to": "read receipt (legacy Return-Receipt-To)",
     "list-unsubscribe-post": "List-Unsubscribe One-Click",
     'command::new("xdg-open")': "opens the user's system browser (OAuth consent, ADR 0006)",
-    # The GTK launchers reach the same place by API instead of by spawn:
-    # UriLauncher hands a URL to the system browser, FileLauncher hands a
-    # file to the desktop's opener. Both leave the machine's control the
-    # moment they run (#550).
+    # The GTK launchers reach the same place by API instead of by spawn; both leave the machine's
+    # control (#550).
     "urilauncher::new": "opens the user's system browser (GTK UriLauncher)",
     "filelauncher::new": "opens a file with an external application (GTK FileLauncher)",
-    # The Swift half (ADR 0019). `URLSession` is the one that matters most:
-    # the reader's whole privacy claim is that its web view has no network, so
-    # any HTTP client in the frontend is the tracking pixel arriving through
-    # the back door. The others reach the same places the GTK launchers do.
+    # The Swift half (ADR 0019). `URLSession` matters most: the reader's privacy claim is that its
+    # web view has no network.
     "urlsession": "makes an HTTP request from the frontend (Swift URLSession)",
     "nsworkspace.shared.open": "opens the user's system browser (Swift NSWorkspace)",
     "uiapplication.shared.open": "opens the user's system browser (Swift UIApplication)",
-    # ADR 0009 Q6: a call to a model runtime is a connection like any other.
-    # Postio's is to the person's own, on this computer, and only when they
-    # named it (specs/007-postio-focus FR-166, FR-168).
+    # ADR 0009 Q6: a model runtime call is a connection like any other; Postio's is to the person's
+    # own, on this computer, and only when named.
     "chat/completions": "calls a model runtime (OpenAI-compatible chat completions)",
 }
 
-# The marker that says a human decided how the user asks for this.
 MARKER = "POSTIO-CONSENT:"
 
-# --- Known-benign occurrences ----------------------------------------------
-#
-# Deliberately tiny, and deliberately per-file rather than a pattern: the
-# point of the check is that a *new* occurrence has to be argued for, and an
-# allowlist that accepted a glob would quietly accept the next one too.
+# Deliberately tiny and per-file: a new occurrence has to be argued for, and a glob would accept the
+# next one too.
 
 ALLOWED: dict[str, str] = {
     "crates/postio-model/src/test_corpus.rs": (
@@ -153,8 +137,6 @@ def offences(path: Path) -> list[tuple[int, str, str]]:
         return []
 
     if MARKER in text:
-        # Consent is recorded for this file. Whether it is a *good* consent
-        # path is a review question, not one a grep can answer.
         return []
 
     found = []

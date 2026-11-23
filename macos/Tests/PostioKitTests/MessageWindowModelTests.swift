@@ -4,27 +4,14 @@ import Testing
 
 @testable import PostioKit
 
-/// The message window's state, as the controller's intents leave it
-/// (specs/009-focus-macos T070).
-///
-/// The controller decides which message is open, what `j` reaches, and what
-/// Back closes first; this model only holds the answers and fetches what to
-/// draw. These pin the few things the Mac does itself: a step replaces the
-/// content rather than reopening the window, `[`/`]` show the message the
-/// engine named, `O` asks for the other treatment without reloading the
-/// chrome, `v` puts the source in place, and More and find are reported so
-/// the controller's Back can close them first.
 @MainActor
 struct MessageWindowModelTests {
-    /// Answers from canned records, and remembers what it was asked.
     final class Source: MessageWindowSource, @unchecked Sendable {
         private let lock = NSLock()
         private var _views: [(Int64, UInt32, UInt32)] = []
         private var _documents: [(Int64, TreatmentFfi?, Int32)] = []
         var shown: TreatmentFfi = .paper
         var raw: Result<Data, Error> = .success(Data("Received: by example.com\r\n".utf8))
-        /// When set, every document read waits for it: a body still being
-        /// read while its chrome is in.
         var hold: DispatchSemaphore?
 
         var views: [(Int64, UInt32, UInt32)] { lock.withLock { _views } }
@@ -46,20 +33,14 @@ struct MessageWindowModelTests {
         func rawSource(_ message: Int64) throws -> Data { try raw.get() }
 
         private var _activated: [Int64] = []
-        /// What `activateUnsubscribe` answers: `nil` when it was recorded.
         var refusal: String?
-        /// Every message an unsubscribe was recorded for, in order.
         var activated: [Int64] { lock.withLock { _activated } }
 
         private var _opened: [(Int64, Int64)] = []
-        /// Every attachment asked to be written for opening.
         var opened: [(Int64, Int64)] { lock.withLock { _opened } }
-        /// What opening answers: the file's path, or why not.
         var written: Result<String, Error> = .success("/tmp/postio-test/report.pdf")
-        /// What `A` finds.
         var choices = OpenChoicesFfi(links: [], parts: [], nothing: "Nothing to open", save: "Save", saveAll: "Save all")
         private var _asked: [(Int64, String)] = []
-        /// Every `A` asked: the message and the document it was asked over.
         var asked: [(Int64, String)] { lock.withLock { _asked } }
 
         func openChoices(_ message: Int64, _ document: String) -> OpenChoicesFfi {
@@ -68,10 +49,7 @@ struct MessageWindowModelTests {
         }
 
         private var _saved: [(Int64, Int64?, String)] = []
-        /// Every save asked: the message, the part (`nil` for all of them),
-        /// and where.
         var saved: [(Int64, Int64?, String)] { lock.withLock { _saved } }
-        /// What a save answers: what to say, or why not.
         var saving: Result<String, Error> = .success("Saved report.pdf")
 
         func saveAttachment(_ message: Int64, _ attachment: Int64, to: String) throws -> String {
@@ -94,10 +72,8 @@ struct MessageWindowModelTests {
             return refusal
         }
 
-        /// What the list left behind (#1931); `nil` leaves nothing to offer.
         var leftBehind: ListMailOfferFfi?
         private var _cleared: [(Int64, Bool)] = []
-        /// Every `clearListMail` asked for: the message and whether to delete.
         var cleared: [(Int64, Bool)] { lock.withLock { _cleared } }
 
         func listMailOffer(_ message: Int64) -> ListMailOfferFfi? { leftBehind }
@@ -126,7 +102,6 @@ struct MessageWindowModelTests {
             foldsIntoMore: false, paperFloor: 0.85)
     }
 
-    /// The model, and every reader state it reported, in order.
     final class Reports { var said: [(Bool, Bool)] = [] }
 
     static func model(_ source: Source) -> (MessageWindowModel, Reports) {
@@ -164,7 +139,6 @@ struct MessageWindowModelTests {
             "the window keeps the width it opened with, so j never resizes it")
     }
 
-    /// Wait, a little at a time, for `done`.
     static func until(_ done: () -> Bool) async throws {
         for _ in 0..<400 where !done() {
             try await Task.sleep(for: .milliseconds(5))
@@ -172,8 +146,8 @@ struct MessageWindowModelTests {
     }
 
     @Test func aStepKeepsTheMessageWholeUntilTheNextBodyIsRead() async throws {
-        // A header over the last message's body, or over none, is what the
-        // window flickered through on every `j`.
+        // A header over the last message's body, or over none, is what the window flickered through
+        // on every `j`.
         let source = Source()
         let (model, _) = Self.model(source)
         model.open(message: 7, index: 2, total: 9, mainWidth: 1440)
@@ -248,8 +222,8 @@ struct MessageWindowModelTests {
     }
 
     @Test func aBodyThatLandsWhileOpenIsReadAgainInPlace() async {
-        // #1788: the window drew "Downloading this message" and never
-        // looked again when the words came.
+        // #1788: the window drew "Downloading this message" and never looked again when the words
+        // came.
         let source = Source()
         let (model, _) = Self.model(source)
         model.open(message: 7, index: 2, total: 9, mainWidth: 1440)
@@ -271,8 +245,8 @@ struct MessageWindowModelTests {
     }
 
     @Test func theOpenMessageIsReadAgainWhenTheNetworkReturns() async {
-        // #1986: the plate said "Offline" and the network coming back
-        // re-read nothing, so nothing ever asked for the body.
+        // #1986: the plate said "Offline" and the network returning re-read nothing, so nothing
+        // asked for the body.
         let source = Source()
         let (model, _) = Self.model(source)
         model.open(message: 7, index: 2, total: 9, mainWidth: 1440)
@@ -303,8 +277,6 @@ struct MessageWindowModelTests {
         let (model, _) = Self.model(source)
         model.open(message: 7, index: 2, total: 9, mainWidth: 1440)
         await model.settled()
-        // The walk is the controller's: it says the message, with the row's
-        // own place, and the window shows it without reopening.
         let fresh = model.open(message: 5, index: 2, total: 9, mainWidth: 1440)
         await model.settled()
         #expect(!fresh)
@@ -368,9 +340,6 @@ struct MessageWindowModelTests {
     }
 
     @Test func theFindRunningOutInASearchWindowSaysSoAndTheNextMessageGetsItsFirstMatch() async {
-        // Spec 013 US6: ⌘G steps the message's own matches, stopping at the
-        // last; when there is none the controller is told, and the message
-        // it shows next has its first match selected going forward.
         let source = Source()
         var edges: [Bool] = []
         let model = MessageWindowModel(
@@ -392,10 +361,8 @@ struct MessageWindowModelTests {
         model.found(false)
         #expect(edges == [true], "the matches ran out going forward")
 
-        // The controller shows the next matched message in place.
         model.open(message: 105, index: 0, total: 3, mainWidth: 1440)
         await model.settled()
-        // The body paints (or the patience runs out), then the find runs.
         for _ in 0..<200 where model.find.request == nil {
             try? await Task.sleep(for: .milliseconds(10))
         }
@@ -436,8 +403,6 @@ struct MessageWindowModelTests {
     }
 
     @Test func alwaysForThisSenderKeepsWhatIsShownAndAsksAgain() async {
-        // The choice is the engine's to store (`always_treatment`); once
-        // stored, the message is the sender's remembered choice, not `O`'s.
         let source = Source()
         let (model, _) = Self.model(source)
         model.open(message: 7, index: 2, total: 9, mainWidth: 1440)
@@ -454,9 +419,7 @@ struct MessageWindowModelTests {
     }
 
     @Test func unsubscribingRecordsOneActivationForTheMessageOnScreen() async throws {
-        // Only on deliberate activation: opening the message recorded
-        // nothing, and pressing twice -- the banner's button, then `M` --
-        // records once (#1585).
+        // Opening records nothing, and pressing twice (the button, then `M`) records once (#1585).
         let source = Source()
         let (model, _) = Self.model(source)
         model.open(message: 7, index: 2, total: 9, mainWidth: 1440)
@@ -472,7 +435,6 @@ struct MessageWindowModelTests {
     }
 
     @Test func aListThatLeftMailBehindOffersToClearItAndDeletesNothingUntilAnswered() async throws {
-        // #1931: Archive and Delete are offered, not done.
         let source = Source()
         source.leftBehind = ListMailOfferFfi(
             summary: "Unsubscribed from news.example.org. 14 messages from it are still here",
@@ -495,7 +457,6 @@ struct MessageWindowModelTests {
     }
 
     @Test func theConfiguredDeleteIsTheOneActionTheOfferHands() async throws {
-        // #1952: the setting picks the verb; the model hands it back as is.
         let source = Source()
         source.leftBehind = ListMailOfferFfi(
             summary: "s", count: 2, button: "Delete 2", delete: true)
@@ -513,8 +474,6 @@ struct MessageWindowModelTests {
     }
 
     @Test func theOffersKeyTakesUpTheOneConfiguredAction() async throws {
-        // #1953: `clear_list_mail` is the banner button's command, with the
-        // verb the setting picked; with no offer up it does nothing.
         let source = Source()
         source.leftBehind = ListMailOfferFfi(
             summary: "s", count: 2, button: "Delete 2", delete: true)
@@ -587,9 +546,6 @@ struct MessageWindowModelTests {
         #expect(model.unsubscribeState(of: 7) == .offered)
     }
 
-    // MARK: attachments
-
-    /// Waits for the model's detached work to land on the main actor.
     private func settle(_ model: MessageWindowModel, until done: () -> Bool) async {
         for _ in 0..<200 where !done() { try? await Task.sleep(for: .milliseconds(10)) }
     }

@@ -1,12 +1,5 @@
-//! Scrolling Focus's list over ten thousand conversations, counted rather
-//! than timed (specs/009-focus-macos T035, constitution V).
-//!
-//! A shared runner cannot defend 16 ms, so what is held is the cause of the
-//! budget: the window keeps a bounded number of rows however far the list is
-//! scrolled, a frame that misses reads the pages under it and no more, and a
-//! walk from the first row to the last reads each page once. Each number is
-//! the same on any machine. The table's half -- that it makes a screenful of
-//! views and asks for the rows it draws -- is `FocusListScrollTests.swift`.
+//! Counted rather than timed: the window holds a bounded number of rows, a missed frame reads only
+//! its pages, a walk reads each once.
 //!
 //! POSTIO-MEASUREMENT: it seeds ten thousand conversations, which is ten
 //! seconds of the file's eleven, so it runs on the nightly rather than on
@@ -20,10 +13,8 @@ use postio_storage::test_support;
 use postio_ui::list::{CACHE_PAGES, PAGE_SIZE};
 
 const CONVERSATIONS: usize = 10_000;
-/// Rows a window of the Mac shows at once, a little over the design's 19.
 const VISIBLE: u32 = 20;
 
-/// Wait for `wanted` on the session's event stream.
 async fn heard(session: &Session, wanted: impl Fn(&UiEvent) -> bool) -> bool {
     tokio::time::timeout(
         postio_test_support::scaled(Duration::from_secs(30)),
@@ -40,9 +31,6 @@ async fn heard(session: &Session, wanted: impl Fn(&UiEvent) -> bool) -> bool {
     .unwrap_or(false)
 }
 
-/// Ask for every row of a screen, the way the table does, and wait for the
-/// pages the misses started to land.
-/// Until the session has said nothing for a quarter of a second.
 async fn quiet(session: &Session) {
     let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(30));
     while Instant::now() < deadline {
@@ -86,9 +74,8 @@ async fn walking_ten_thousand_conversations_reads_each_page_once_and_holds_a_few
         "the inbox is counted as ten thousand conversations"
     );
     assert_eq!(session.focus_row_count() as usize, CONVERSATIONS);
-    // Let startup finish saying things. A store event re-reads every page
-    // the list holds, in place (so a delete does not blank the list), and
-    // one landing mid-walk is a refresh, not the scrolling this measures.
+    // Let startup finish: a store event re-reads every held page in place, and one landing mid-walk
+    // is a refresh, not scrolling.
     quiet(&session).await;
 
     let total = CONVERSATIONS as u32;
@@ -105,19 +92,15 @@ async fn walking_ten_thousand_conversations_reads_each_page_once_and_holds_a_few
         position += count;
     }
 
-    // However far it scrolled, the window held its cache and no more.
     let bound = CACHE_PAGES * PAGE_SIZE as usize;
     assert!(
         most_resident <= bound,
         "the window held {most_resident} rows; {CACHE_PAGES} pages is {bound}"
     );
-    // A frame reads the page it is on and, at a boundary, the next one.
     assert!(
         most_in_one_frame <= 2,
         "one screen of {VISIBLE} rows read {most_in_one_frame} pages"
     );
-    // And the walk read each page of the list about once: not once per row
-    // asked for, which would be ten thousand reads.
     let reads = session.focus_page_reads_for_test();
     assert!(
         reads <= pages + 2,

@@ -1,7 +1,3 @@
-//! Reading a thread's members: each message's own line, who it answers, and
-//! the unsent reply (spec 013 R6). One statement over `idx_messages_thread`
-//! and one over `idx_drafts_thread`, however long the thread.
-
 use chrono::{DateTime, TimeZone, Utc};
 use postio_model::listing::MarkerKind;
 use postio_model::{
@@ -26,8 +22,6 @@ struct Seed<'a> {
 }
 
 impl Seed<'_> {
-    /// A member received at `minutes`, with Message-ID `<{id}@example.com>`
-    /// and, when given, an `In-Reply-To`.
     async fn member(
         &self,
         id: &str,
@@ -77,7 +71,6 @@ async fn the_members_come_in_date_order_with_the_line_each_has_to_show() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let seed = seeded(&connection).await;
-    // Created newest first, so only the sort can put them right.
     let third = seed.member("c", Some("b"), "ada", 30).await;
     let first = seed.member("a", None, "ben", 10).await;
     let second = seed.member("b", Some("a"), "test", 20).await;
@@ -147,7 +140,6 @@ async fn answers_is_set_only_for_a_parent_that_is_not_the_previous_member() {
     seed.member("a", None, "ana", 10).await;
     seed.member("b", Some("a"), "ben", 20).await;
     seed.member("c", Some("b"), "ada", 30).await;
-    // Names the first message, case-insensitively: not the one before it.
     let mut fourth = Message::new(seed.account, seed.inbox, at(40));
     fourth.rfc_message_id = Some(RfcMessageId::new("<d@example.com>"));
     fourth.in_reply_to = Some(RfcMessageId::new("<A@Example.com>"));
@@ -159,7 +151,6 @@ async fn answers_is_set_only_for_a_parent_that_is_not_the_previous_member() {
         .add_message(seed.thread, fourth)
         .await
         .expect("added");
-    // Names a message that is not here.
     seed.member("e", Some("elsewhere"), "ana", 50).await;
 
     let members = ThreadRepository::new(&connection)
@@ -234,7 +225,6 @@ async fn the_unsent_reply_is_found_by_the_thread_it_is_in() {
     };
     draft.created_at = at(60);
     draft.updated_at = at(61);
-    // Another thread's draft is not this one's.
     let mut elsewhere = Draft::new(seed.account);
     elsewhere.updated_at = at(90);
     let drafts = DraftRepository::new(&connection);
@@ -252,15 +242,12 @@ async fn the_unsent_reply_is_found_by_the_thread_it_is_in() {
     assert_eq!(found.updated_at, at(61));
 }
 
-/// One thread of `count` messages, each answering the one before it, and a
-/// draft: what reading it costs.
 async fn cost_of_reading(count: usize) -> (postio_storage::test_support::counting::Counts, usize) {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let seed = seeded(&connection).await;
     for n in 0..count {
         let id = format!("m{n}");
-        // Every third message names the first: some `answers` to resolve.
         let parent = match n {
             0 => None,
             n if n % 3 == 0 => Some("m0".to_owned()),
@@ -299,9 +286,7 @@ async fn reading_a_thread_costs_the_same_statements_at_two_members_and_five_hund
         small.statements, large.statements,
         "statements: {small:?} against {large:?}"
     );
-    // A row per member and one for the draft, and nothing read twice. No
-    // counter sees trigger firings, so a trigger on `messages` reads cannot
-    // be asserted here; none fires on a SELECT.
+    // `counting` sees no trigger firings, so a trigger on `messages` reads cannot be asserted here.
     assert_eq!(small.rows, small_members + 1, "{small:?}");
     assert_eq!(large.rows, large_members + 1, "{large:?}");
     // `compiles` is not compared: the statement cache outlives a store, so

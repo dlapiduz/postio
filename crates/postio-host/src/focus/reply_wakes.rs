@@ -1,25 +1,9 @@
-//! A new reply ends a snooze (spec 013 D3, FR-004, research R1).
-//!
-//! Gmail's rule, clarified with the maintainer: a conversation that is not
-//! muted comes back when somebody writes in it.
-//!
-//! - **Archived.** Nothing to do here. The reply is filed in the inbox like
-//!   any arrival, and the conversation is a row there again because it has a
-//!   member in the inbox.
-//! - **Snoozed.** Snooze is per message (`messages.snoozed_until`), so the
-//!   reply arrives awake while its conversation's other messages sleep, and
-//!   the row would hide until their time. This wraps the filing pass and,
-//!   once it has filed, wakes those sleepers with the `Unsnooze` verb's own
-//!   write ([`MessageRepository::unsnooze_threads`]).
-//! - **Labels.** The reply is not given the conversation's labels: the row
-//!   shows their union already, and nothing is written to the server.
-//!
-//! Only mail received wakes a snooze. What the account sent itself, or filed
-//! in Drafts, Junk or Trash, does not: a person's own reply should not bring
-//! back a conversation they put to sleep.
-//!
-//! Cost: nothing for an arrival that joined no conversation, otherwise one
-//! write for the whole batch, however many arrived, and no read.
+//! A new reply ends a snooze unless the conversation is muted. Snooze is per message, so the reply
+//! arrives awake while the others sleep and the row would hide; this wraps the filing pass and
+//! wakes them after.
+//! Only mail received wakes: what the account sent, or filed in Drafts, Junk or Trash, does not.
+//! Labels are not copied; the row shows their union.
+//! Cost: one write per batch, no read.
 
 use std::sync::Arc;
 
@@ -28,15 +12,12 @@ use postio_storage::Connection;
 use postio_storage::repository::MessageRepository;
 use postio_sync::{FiledMessage, FilingEffects, FilingPass, SyncError};
 
-/// The filing pass Focus runs: `inner`, then the snoozes of every
-/// conversation a received message joined are ended.
 #[derive(Debug)]
 pub(crate) struct ReplyWakes {
     inner: Arc<dyn FilingPass>,
 }
 
 impl ReplyWakes {
-    /// Wraps `inner`.
     pub(crate) fn wrapping(inner: Arc<dyn FilingPass>) -> Arc<dyn FilingPass> {
         Arc::new(Self { inner })
     }
@@ -49,14 +30,12 @@ impl FilingPass for ReplyWakes {
         transaction: &Connection,
         filed: &[FiledMessage<'_>],
     ) -> Result<FilingEffects, SyncError> {
-        // A muted thread's replies are archived first and judged by nothing
-        // else, and they wake no snooze (spec 013 FR-012).
+        // A muted thread's replies are archived first and wake no snooze.
         let filed = &super::mute::archive_muted(transaction, filed).await?[..];
         let effects = self.inner.file(transaction, filed).await?;
         let threads = waking(filed);
         if !threads.is_empty() {
-            // Not an error to the filing: the arrivals are filed all the
-            // same, and a snooze that stays is the lesser harm.
+            // Not an error to the filing: the arrivals are filed all the same.
             match MessageRepository::new(transaction)
                 .unsnooze_threads(&threads)
                 .await
@@ -74,25 +53,20 @@ impl FilingPass for ReplyWakes {
     }
 }
 
-/// The conversations whose sleepers `filed` wakes, each once.
 fn waking(filed: &[FiledMessage<'_>]) -> Vec<ThreadId> {
     let mut threads: Vec<ThreadId> = filed
         .iter()
         .filter(|message| received(message.role))
-        // Asleep itself: it was in the store when the conversation was
-        // snoozed (catch-up, a resync), so it is not news. Only a live
-        // arrival is born awake.
+        // Asleep itself: it was in the store when the conversation was snoozed (catch-up, resync),
+        // so it is not news.
         .filter(|message| message.message.snoozed_until.is_none())
         .filter_map(|message| message.thread)
-        // A muted reply never gets here: `mute::archive_muted` took it out.
         .collect();
     threads.sort_unstable();
     threads.dedup();
     threads
 }
 
-/// Whether mail filed into a folder of this role was received, rather than
-/// written by the account or put away.
 fn received(role: MailboxRole) -> bool {
     !matches!(
         role,
@@ -141,7 +115,6 @@ mod tests {
         earlier: Message,
     }
 
-    /// A conversation with one earlier message, asleep, and an inbox.
     async fn a_snoozed_conversation() -> Scene {
         let database = test_support::memory().await;
         let connection = database.connect().await.expect("checkout");
@@ -232,8 +205,6 @@ mod tests {
 
     #[tokio::test]
     async fn a_message_that_is_itself_asleep_was_there_when_the_snooze_was_set() {
-        // Catch-up and resyncs re-file old mail. A snooze writes every member
-        // of the conversation, so an arrival that is asleep is no news.
         let scene = a_snoozed_conversation().await;
         let messages = MessageRepository::new(&scene.connection);
         let old = member(
@@ -270,8 +241,6 @@ mod tests {
 
     #[tokio::test]
     async fn a_reply_into_an_archived_conversation_is_in_the_inbox() {
-        // Guard: green on arrival. The reply is filed in the inbox like any
-        // arrival, so the conversation is back with no help from here.
         let scene = a_snoozed_conversation().await;
         let messages = MessageRepository::new(&scene.connection);
         messages.unsnooze(&[scene.earlier.id]).await.expect("awake");
@@ -286,8 +255,6 @@ mod tests {
 
     #[tokio::test]
     async fn the_reply_is_not_given_the_conversations_labels() {
-        // Guard: green on arrival. Labels are not touched by filing; the row
-        // shows the union of its members'.
         let scene = a_snoozed_conversation().await;
         let reply = arrives(&scene, scene.inbox, MailboxRole::Inbox).await;
         let stored = MessageRepository::new(&scene.connection)
@@ -332,9 +299,6 @@ mod tests {
             wakes.file(&scene.connection, &joined).await.expect("filed");
         })
         .await;
-        // The counter sees reads; the wake is one write, which it does not.
-        // The one read is the mute check, for the batch (spec 013 FR-012),
-        // and it finds no mute: no rows.
         assert_eq!(
             (one.statements, one.rows),
             (1, 0),

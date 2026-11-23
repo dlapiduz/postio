@@ -1,11 +1,5 @@
-//! The message window's thread bar and the words around it (spec 013 US3,
-//! research R8).
-//!
-//! The window shows one message of a thread at a time. These are the pure
-//! parts of what it adds: which chips fit in the bar, the kicker above the
-//! subject, the older-message banner, the sender block's Reply to row and
-//! the label column's count. Both frontends draw what they return, so the
-//! Mac and GTK say identical words.
+//! The message window's thread bar and the words around it, drawn identically by both frontends
+//! (spec 013).
 
 use chrono::{DateTime, Local};
 use postio_core::{CommandId, Keymap};
@@ -14,37 +8,23 @@ use postio_model::thread_view::{Line, ThreadMember, ThreadView};
 
 use crate::{focus_row, hints, row};
 
-/// One chip of the bar.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Chip {
-    /// A message: avatar over "Name · time".
     Message {
-        /// Its place among the members, from 0.
         index: u32,
-        /// The avatar's letters.
         initials: String,
-        /// "Ben · Thu"; "You · 15:22" for the account's own.
         label: String,
-        /// The message on screen: ringed.
         current: bool,
-        /// Not read yet: dotted.
         unread: bool,
-        /// A search matched it: a yellow square.
         matched: bool,
     },
-    /// "… N more": members `from..=to` (indexes) that did not fit.
     More {
-        /// How many it stands for.
         count: u32,
-        /// The first member it stands for.
         from: u32,
-        /// The last member it stands for.
         to: u32,
     },
 }
 
-/// The chips of `members` that fit in `room` chips, the member at `current`
-/// on screen, `matches` the messages a search matched, `now` for the times.
 pub fn chips(
     members: &[ThreadMember],
     current: usize,
@@ -72,9 +52,8 @@ pub fn chips(
     if count as u32 <= room {
         return (0..count).map(chip).collect();
     }
-    // What stays whatever the room: the first, the one on screen and every
-    // unread. The latest that fit are added to it, newest first, for as
-    // long as the chips and the "more" chips between them are within room.
+    // Always kept: the first, the one on screen and every unread; then the latest that fit, newest
+    // first.
     let mut kept = vec![false; count];
     kept[0] = true;
     if let Some(at) = kept.get_mut(current) {
@@ -107,7 +86,6 @@ pub fn chips(
         while index < count && !kept[index] {
             index += 1;
         }
-        // A gap of one costs what its message does, so it shows the message.
         if index - from == 1 {
             bar.push(chip(from));
         } else {
@@ -121,8 +99,6 @@ pub fn chips(
     bar
 }
 
-/// What `kept` costs in chips: each kept message, and one "more" chip for
-/// every run of the others between and after them.
 fn cost(kept: &[bool]) -> u32 {
     let mut chips = 0;
     let mut gap = false;
@@ -138,23 +114,16 @@ fn cost(kept: &[bool]) -> u32 {
     chips
 }
 
-/// Everything the bar draws: the label column, the chips and the button.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThreadBarView {
-    /// The label column's first line: "Thread".
     pub title: String,
-    /// Its second line: "6 · 2 new".
     pub count_line: String,
-    /// The chips, left to right. A thread of one message has none: draw no
-    /// bar.
+    /// A thread of one message has none: draw no bar.
     pub chips: Vec<Chip>,
-    /// The button on the right, which opens the thread menu: "Thread".
     pub menu_label: String,
 }
 
 impl ThreadBarView {
-    /// A bar with nothing in it: said to take the one on screen away. It
-    /// has no chips, which is what a thread of one draws too.
     pub fn empty() -> Self {
         ThreadBarView {
             title: String::new(),
@@ -165,7 +134,6 @@ impl ThreadBarView {
     }
 }
 
-/// The bar of `view` with the member at `current` on screen.
 pub fn bar(
     view: &ThreadView,
     current: usize,
@@ -186,15 +154,10 @@ pub fn bar(
     }
 }
 
-/// "Message 4 of 6": where the message on screen is in its thread. The
-/// window's title line and the kicker both say it this way, and never the
-/// message's place in the inbox beside it.
 pub fn place(index: usize, count: usize) -> String {
     format!("Message {} of {count}", index + 1)
 }
 
-/// "Message 4 of 6 · ] newer · [ older", the keys the keymap has. Only the
-/// directions there is a message in: no "newer" on the latest.
 pub fn kicker(index: usize, count: usize, keymap: &Keymap) -> String {
     let mut said = place(index, count);
     for (command, word, there) in [
@@ -211,20 +174,13 @@ pub fn kicker(index: usize, count: usize, keymap: &Keymap) -> String {
     said
 }
 
-/// A quiet banner under the bar: words, and one button.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BannerView {
-    /// What it says.
     pub text: String,
-    /// The button: "Latest".
     pub action: String,
-    /// The button's key, as the keymap has it: "}".
     pub key: Option<String>,
 }
 
-/// What the window says when the message on screen left its thread (deleted
-/// here or elsewhere) and it moved to `newer`, the next newer message, or
-/// the next older one.
 pub fn gone_notice(newer: bool) -> &'static str {
     if newer {
         "That message is gone. Showing the next newer one."
@@ -233,7 +189,6 @@ pub fn gone_notice(newer: bool) -> &'static str {
     }
 }
 
-/// The banner on a message that is not the latest.
 pub fn older_banner(keymap: &Keymap) -> BannerView {
     BannerView {
         text: "This is an older message. Reply and forward act on it; archive, snooze, \
@@ -244,7 +199,6 @@ pub fn older_banner(keymap: &Keymap) -> BannerView {
     }
 }
 
-/// What the window says when `mod+g` has no match left to go to.
 pub fn no_more_matches(forward: bool) -> &'static str {
     if forward {
         "That is the last match in this thread"
@@ -253,9 +207,6 @@ pub fn no_more_matches(forward: bool) -> &'static str {
     }
 }
 
-/// The banner for a reply that arrived while the window was on another
-/// message: who wrote, the first line of it, and `}` to read it. The reader
-/// stays where they are.
 pub fn new_reply_banner(member: &ThreadMember, keymap: &Keymap) -> BannerView {
     let who = match (&member.from, member.own) {
         (_, true) => "You",
@@ -278,24 +229,15 @@ pub fn new_reply_banner(member: &ThreadMember, keymap: &Keymap) -> BannerView {
     }
 }
 
-/// The banner of a window opened from a search: where among the matched
-/// messages the one on screen is, and the two ways on.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MatchBannerView {
-    /// "\u{2018}rate limit headers\u{2019} \u{b7} match 1 of 3 in this thread (messages 3, 5 and 6)".
     pub text: String,
-    /// The first button: "Next".
     pub next: String,
-    /// Its key, as the keymap has it.
     pub next_key: Option<String>,
-    /// The second: "Back to results".
     pub back: String,
-    /// Its key, as the keymap has it.
     pub back_key: Option<String>,
 }
 
-/// The match banner: `query` as typed, the matched message at `at` of
-/// `numbers` (each message's place in the thread, from 1) on screen.
 pub fn match_banner(query: &str, at: usize, numbers: &[u32], keymap: &Keymap) -> MatchBannerView {
     let listed: Vec<String> = numbers.iter().map(u32::to_string).collect();
     let (last, rest) = listed
@@ -318,8 +260,6 @@ pub fn match_banner(query: &str, at: usize, numbers: &[u32], keymap: &Keymap) ->
     }
 }
 
-/// "Ana Ruiz, Mon 21 Sep (message 1)": the message `index` answers, when
-/// it is not the one just before it.
 pub fn reply_to_row(view: &ThreadView, index: usize) -> Option<String> {
     let answered = view
         .members
@@ -341,7 +281,6 @@ pub fn reply_to_row(view: &ThreadView, index: usize) -> Option<String> {
     Some(format!("{who}, {day} (message {number})"))
 }
 
-/// The label column's second line: "6 · 2 new", or just "6".
 pub fn count_line(view: &ThreadView) -> String {
     let unread = view.members.iter().filter(|member| !member.seen).count();
     match focus_row::new_badge(unread as u32) {
@@ -388,8 +327,6 @@ mod tests {
         }
     }
 
-    /// What a bar says in one line: `3` a message, `3*` the current, `3.`
-    /// unread, `[a-b]` a More.
     fn shape(chips: &[Chip]) -> Vec<String> {
         chips
             .iter()
@@ -417,7 +354,6 @@ mod tests {
         let all = members(6, &[4, 5]);
         let bar = chips(&all, 3, &[], 8, now());
         assert_eq!(shape(&bar), ["0", "1", "2", "3*", "4.", "5."]);
-        // Room for exactly as many as there are is still everything.
         assert_eq!(chips(&all, 3, &[], 6, now()).len(), 6);
     }
 
@@ -462,7 +398,6 @@ mod tests {
         else {
             panic!()
         };
-        // 13:40 today is a clock time, as every row says it.
         assert_eq!(label, "Ben \u{b7} 13:40");
         assert!(*current && *unread);
     }
@@ -486,9 +421,7 @@ mod tests {
             assert!(shown.contains(&want.to_owned()), "{want} in {shown:?}");
         }
         assert_eq!(shown.first().map(String::as_str), Some("0"));
-        // Nothing more than the room, since the kept ones fit in it.
         assert!(bar.len() <= 8, "{shown:?}");
-        // Every member is a chip or inside a More, in order, once.
         let mut next = 0;
         for chip in &bar {
             match chip {
@@ -520,7 +453,6 @@ mod tests {
     #[test]
     fn a_gap_of_one_is_the_message_itself() {
         let all = members(10, &[]);
-        // Kept: 0, 2 (current) and the latest; message 1 alone is a chip.
         let bar = chips(&all, 2, &[], 4, now());
         assert!(
             !bar.iter()

@@ -3,23 +3,14 @@ import PostioFFI
 import PostioKit
 import QuickLookUI
 
-/// What the Files tab hands the system (specs/010-focus-search T130;
-/// design §3.8, FR-031, FR-053): the system's own Quick Look on a copy of
-/// the file, or a save panel to put it somewhere.
-///
-/// The copy is the controller's: written into the app's own temporary
-/// folder when Space or ⌘↓ asked for it (`FocusFileCopy`), and removed
-/// when this says the panel is gone (`focusSearchFileDone`). The panel is
-/// handed a file URL in that folder and never anything else; nothing is
-/// fetched and nothing leaves the machine.
+/// The copy is the controller's, written to the app's temporary folder and removed when this says
+/// the panel is gone (`focusSearchFileDone`). The panel gets only a file URL in that folder;
+/// nothing is fetched and nothing leaves the machine.
 @MainActor
 public final class FilePreview: NSObject {
-    /// Told when the person closed Quick Look, or the save panel is done.
     private let done: () -> Void
-    /// Shows the save panel; a test replaces it.
     private let save: (NSSavePanel, NSWindow?, @escaping (NSApplication.ModalResponse) -> Void) -> Void
 
-    /// The copy Quick Look is showing, while it is up.
     public private(set) var url: URL?
 
     public init(
@@ -37,7 +28,6 @@ public final class FilePreview: NSObject {
         self.save = save
     }
 
-    /// Show what `FocusFileCopy` said, over `window`.
     public func apply(_ copy: FileCopyFfi?, over window: NSWindow?) {
         guard let copy else {
             // The controller closed it: the copy is its to remove, so this
@@ -61,8 +51,6 @@ public final class FilePreview: NSObject {
         }
     }
 
-    /// ⌘↓: a save panel named after the file, in Downloads; the copy is
-    /// written where the person chose, and the controller removes its own.
     private func offerToSave(_ source: URL, named name: String, over window: NSWindow?) {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = name
@@ -71,7 +59,6 @@ public final class FilePreview: NSObject {
         save(panel, window) { [done] response in
             if response == .OK, let destination = panel.url {
                 let files = FileManager.default
-                // The panel asked before replacing a file of that name.
                 if files.fileExists(atPath: destination.path) {
                     try? files.removeItem(at: destination)
                 }
@@ -85,8 +72,6 @@ public final class FilePreview: NSObject {
         }
     }
 
-    // MARK: the panel's controller (the grid, in the responder chain)
-
     func begin(_ panel: QLPreviewPanel) {
         panel.dataSource = self
         panel.delegate = self
@@ -95,8 +80,6 @@ public final class FilePreview: NSObject {
     func end(_ panel: QLPreviewPanel) {
         panel.dataSource = nil
         panel.delegate = nil
-        // Closed by the person -- Esc, the close button, Space in it -- the
-        // controller is told; closed by the controller, `url` is gone.
         if url != nil {
             url = nil
             done()

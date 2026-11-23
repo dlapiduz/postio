@@ -1,30 +1,8 @@
-//! A bounded pool of authenticated sessions.
-//!
-//! Two facts shape this. Servers cap how many connections one account may hold
-//! open — iCloud is not generous — so the pool is bounded and the bound is
-//! respected under concurrent load. And `IDLE` occupies a connection for
-//! minutes at a time doing nothing, so it gets a lane of its own; otherwise
-//! watching the inbox would cost a slot that fetching needs.
-//!
-//! # Fairness
-//!
-//! Waiters are served **interactive first**. Opening a thread must not queue
-//! behind a ten-thousand-message backfill that grabbed every slot, and since a
-//! backfill is made of many small acquisitions rather than one long one, it
-//! yields naturally between chunks. Background work is served whenever no
-//! interactive work is waiting, and gives up after
-//! [`PoolConfig::acquire_timeout`] rather than waiting forever, so sustained
-//! interactive load surfaces as a visible error instead of a silent stall.
-//!
-//! # Health
-//!
-//! A connection is checked when it is taken out, not on a timer: anything
-//! parked longer than [`PoolConfig::idle_timeout`] is closed and replaced
-//! rather than probed, because a probe costs a round trip on every single
-//! acquisition and the answer is stale the moment it arrives. A session whose
-//! command failed transiently is discarded rather than parked — that is what
-//! makes a dropped connection cost one failed operation instead of every
-//! subsequent one.
+//! Bounded, since servers cap connections per account; `IDLE` gets its own lane so watching never
+//! costs a fetch slot.
+//! Waiters are served interactive first, and background gives up after
+//! `PoolConfig::acquire_timeout`. Health is checked on checkout, not on a timer: connections parked
+//! past `idle_timeout` are replaced, and a session that failed transiently is discarded.
 
 use std::collections::VecDeque;
 use std::fmt;
@@ -42,55 +20,28 @@ use crate::secret::{AccountKey, Password, SecretStore};
 use super::selection::Generations;
 use super::{ConnectionSettings, Dispatch, ImapConnector, ImapSession};
 
-/// How many connections a pool opens by default, the watcher included.
-///
-/// Deliberately small. Four is enough for an interactive fetch, a background
-/// backfill, a queued mutation and the watcher, and it leaves room under every
+/// Four covers an interactive fetch, a backfill, a queued mutation and the watcher, under every
 /// provider's per-account limit.
 pub const DEFAULT_MAX_CONNECTIONS: usize = 4;
 
-/// How long a parked connection may sit before it is closed rather than
-/// reused. Comfortably under the 30 minutes RFC 3501 §5.4 allows a server to
-/// wait before dropping an idle client.
+/// Comfortably under the 30 minutes RFC 3501 §5.4 allows a server to wait before dropping an idle
+/// client.
 pub const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
-/// How long an acquisition waits for a slot before giving up.
 pub const DEFAULT_ACQUIRE_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// How long a command may go without a byte from the server before it is
-/// given up on.
-///
-/// The bound is on silence, never on how long an exchange takes: a large
-/// attachment over a slow link legitimately needs minutes, and a deadline
-/// tight enough to catch a hung server would kill it. Sixty seconds is far
-/// longer than any healthy server pauses mid-response and far shorter than
-/// forever, which is what this replaced.
+/// A bound on silence, never on duration: a large attachment over a slow link legitimately needs
+/// minutes.
 pub const DEFAULT_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// How long a cached mailbox selection may answer before the server is asked
-/// to confirm it again.
-///
-/// This is the window in which a `UIDVALIDITY` change nobody has noticed yet
-/// could still be acted on, so it is short; and it is not zero because the
-/// chunks of a backfill follow each other in milliseconds and re-selecting
-/// before each of them would double that operation's round trips. Thirty
-/// seconds costs an interactive user at most one extra `SELECT` per mailbox
-/// per half-minute and a backfill nothing at all. See
-/// [`selection`](super::selection).
+/// The window in which an unnoticed `UIDVALIDITY` change could be acted on; not zero, since
+/// backfill chunks follow each other in milliseconds.
 pub const DEFAULT_SELECTION_MAX_AGE: Duration = Duration::from_secs(30);
 
-/// What a piece of work is competing for.
-///
-/// The distinction is whether somebody is looking at the result: an
-/// [`Interactive`](Priority::Interactive) acquisition is a keystroke away from
-/// a user, a [`Background`](Priority::Background) one is a backfill nobody is
-/// waiting on.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Priority {
-    /// The user is waiting. Served first.
     #[default]
     Interactive,
-    /// Nobody is waiting. Served when nothing interactive is queued.
     Background,
 }
 
@@ -105,32 +56,18 @@ impl Priority {
     }
 }
 
-/// How the pool is sized and aged.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PoolConfig {
-    /// The most connections to hold open at once, including the watcher.
     pub max_connections: usize,
-    /// How long a parked connection may sit before it is closed.
     pub idle_timeout: Duration,
-    /// How long an acquisition waits for a slot.
     pub acquire_timeout: Duration,
-    /// Whether one connection is reserved for `IDLE`.
-    ///
-    /// With this off, watching competes for a general slot, which on a
-    /// two-connection server is the difference between watching *or* fetching.
+    /// With this off, watching competes for a general slot: on a two-connection server, watching or
+    /// fetching.
     pub dedicate_watch_connection: bool,
-    /// How long a cached mailbox selection may answer before the server has
-    /// to confirm it again.
-    ///
-    /// [`Duration::ZERO`] re-`SELECT`s before every operation, which is the
-    /// safest and the most expensive. See [`DEFAULT_SELECTION_MAX_AGE`].
+    /// `Duration::ZERO` re-`SELECT`s before every operation: safest, most expensive.
     pub selection_max_age: Duration,
-    /// How long a command may go without a byte from the server.
-    ///
-    /// Measured between reads, not across the command, so a slow transfer is
-    /// never mistaken for a hung one. [`Duration::ZERO`] waits forever, which
-    /// is what the pool before this bound did. See
-    /// [`DEFAULT_COMMAND_TIMEOUT`].
+    /// Measured between reads, so a slow transfer is never mistaken for a hung one.
+    /// `Duration::ZERO` waits forever.
     pub command_timeout: Duration,
 }
 
@@ -147,45 +84,30 @@ impl Default for PoolConfig {
     }
 }
 
-/// A snapshot of what the pool is doing.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PoolStats {
-    /// Connections currently checked out.
     pub in_use: usize,
-    /// Connections open but parked.
     pub idle: usize,
-    /// Acquisitions waiting for a slot.
     pub waiting: usize,
-    /// Connections opened over the pool's lifetime. Grows when a dead
-    /// connection is replaced, which is what makes replacement observable.
     pub opened: u64,
-    /// The configured ceiling.
     pub capacity: usize,
 }
 
-/// Which lane a connection belongs to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LaneKind {
-    /// Commands: fetch, store, move, list.
     General,
-    /// The long-lived `IDLE` connection.
     Watch,
 }
 
-/// A connection parked between uses.
 struct Parked {
     session: ImapSession,
     since: Instant,
 }
 
-/// One lane's slots, parked connections and waiters.
 #[derive(Default)]
 struct Lane {
-    /// Slots not currently held by anybody.
     permits: usize,
-    /// Open connections nobody is using.
     parked: Vec<Parked>,
-    /// Waiters, highest priority first.
     waiters: [VecDeque<(u64, oneshot::Sender<()>)>; Priority::COUNT],
 }
 
@@ -197,7 +119,6 @@ impl Lane {
         }
     }
 
-    /// Takes a slot, or queues a waiter for one.
     fn take_permit(&mut self, priority: Priority, ticket: u64) -> Option<oneshot::Receiver<()>> {
         if self.permits > 0 {
             self.permits -= 1;
@@ -208,10 +129,7 @@ impl Lane {
         Some(rx)
     }
 
-    /// Hands a slot to the next waiter, or puts it back.
-    ///
-    /// The slot is transferred directly rather than released and re-contended
-    /// for, so a woken waiter cannot lose the slot it was woken for.
+    /// The slot is transferred directly, so a woken waiter cannot lose it.
     fn release_permit(&mut self) {
         for queue in &mut self.waiters {
             while let Some((_, waker)) = queue.pop_front() {
@@ -237,15 +155,11 @@ impl Lane {
         false
     }
 
-    /// Takes a parked connection, dropping any that sat too long.
     fn take_parked(&mut self, idle_timeout: Duration, now: Instant) -> Option<ImapSession> {
         while let Some(parked) = self.parked.pop() {
             if now.duration_since(parked.since) < idle_timeout {
                 return Some(parked.session);
             }
-            // Too old to trust. Dropping the session closes the socket; a
-            // polite LOGOUT would need an await we cannot make here, and the
-            // server has almost certainly dropped it already.
         }
         None
     }
@@ -258,7 +172,6 @@ impl Lane {
 struct PoolInner {
     general: Lane,
     watch: Lane,
-    /// Connections handed out and not yet returned.
     in_use: usize,
     opened: u64,
     tickets: u64,
@@ -266,29 +179,19 @@ struct PoolInner {
     capabilities: Option<Capabilities>,
 }
 
-/// A bounded pool of authenticated IMAP sessions for one account.
-///
-/// Cloning is not offered: wrap it in an `Arc`. One pool is one account's
-/// share of one server's connection budget, and two pools for the same account
-/// would each think they owned the whole allowance.
+/// Not `Clone`: two pools for one account would each think they owned the whole connection
+/// allowance.
 pub struct ConnectionPool {
     settings: ConnectionSettings,
-    /// Where this pool's credential comes from.
-    ///
-    /// A [`TokenSource`] rather than a [`SecretStore`] because a bearer token
-    /// expires and a password does not, and the difference has to be
-    /// somewhere: `invalidate` is what a rejected token needs and what a
-    /// rejected password correctly ignores (#193). `new` still takes a store
-    /// and wraps it, so a password account reaches exactly the same code.
+    /// A `TokenSource`, not a `SecretStore`: `invalidate` is what a rejected bearer token needs and
+    /// a rejected password ignores (#193).
     tokens: Arc<dyn TokenSource>,
     key: AccountKey,
     connector: Arc<dyn ImapConnector>,
     config: PoolConfig,
-    /// Whether the watch lane has a slot of its own; see [`ConnectionPool::new`].
     watch_dedicated: bool,
-    /// What every session in this pool has observed about each mailbox's UID
-    /// generation. Shared so that one connection discovering a renumber stops
-    /// the others from acting on what they cached before it.
+    /// Shared so one connection discovering a renumber stops the others acting on cached
+    /// generations.
     generations: Arc<Generations>,
     inner: Mutex<PoolInner>,
 }
@@ -304,7 +207,6 @@ impl fmt::Debug for ConnectionPool {
 }
 
 impl ConnectionPool {
-    /// Builds a pool. No connection is opened until one is asked for.
     pub fn new(
         settings: ConnectionSettings,
         key: AccountKey,
@@ -321,12 +223,8 @@ impl ConnectionPool {
         )
     }
 
-    /// As [`new`](Self::new), reading the credential from a [`TokenSource`].
-    ///
-    /// What an OAuth account needs: the source owns refresh and expiry, and
-    /// this pool owns the one thing only it can see — that the server just
-    /// refused what the source handed over. ADR 0006 Q5 puts that discipline
-    /// at the layer that saw the rejection, which is here.
+    /// What an OAuth account needs: this pool sees that the server refused what the source handed
+    /// over (ADR 0006 Q5).
     pub fn with_token_source(
         settings: ConnectionSettings,
         key: AccountKey,
@@ -335,10 +233,8 @@ impl ConnectionPool {
         config: PoolConfig,
     ) -> Self {
         let capacity = config.max_connections.max(1);
-        // A dedicated watcher needs a connection of its own *and* one left
-        // over for commands. On a one-connection budget there is nothing to
-        // dedicate, so watching shares the general lane rather than waiting
-        // forever for a slot that was never created.
+        // On a one-connection budget there is nothing to dedicate, so watching shares the general
+        // lane.
         let watch_slots = usize::from(config.dedicate_watch_connection && capacity > 1);
 
         Self {
@@ -364,12 +260,10 @@ impl ConnectionPool {
         }
     }
 
-    /// The server this pool connects to.
     pub fn settings(&self) -> &ConnectionSettings {
         &self.settings
     }
 
-    /// What the pool is doing right now.
     pub fn stats(&self) -> PoolStats {
         let inner = self.lock();
         PoolStats {
@@ -381,23 +275,15 @@ impl ConnectionPool {
         }
     }
 
-    /// The capabilities the server advertised, once a connection has been
-    /// opened. `None` before that: they are read from the server, never
-    /// assumed.
+    /// `None` before the first connection: they are read from the server, never assumed.
     pub fn capabilities(&self) -> Option<Capabilities> {
         self.lock().capabilities.clone()
     }
 
-    /// The command choices this server's capabilities imply, once known.
     pub fn dispatch(&self) -> Option<Dispatch> {
         self.capabilities().map(Dispatch::new)
     }
 
-    /// Runs one operation on a pooled connection.
-    ///
-    /// A connection whose operation failed transiently is discarded rather
-    /// than parked: a dropped socket should cost one failed operation, not
-    /// every operation after it.
     pub async fn execute<T>(
         &self,
         priority: Priority,
@@ -407,17 +293,9 @@ impl ConnectionPool {
         Self::run_on(connection, operation).await
     }
 
-    /// Runs `operation` on `connection`, and decides afterwards whether the
-    /// connection may be parked.
-    ///
-    /// The connection is condemned *before* the operation starts and
-    /// reprieved only by a result that proves the exchange finished: a
-    /// success, or a failure that is not transient (a `NO`, which the server
-    /// answered in full). If the caller drops this future instead -- a job
-    /// superseded, a view closed, an outer timeout -- the operation stops
-    /// wherever it was, possibly with half a response unread or the session
-    /// inside `IDLE`, and the connection must not go back to the pool for
-    /// the next caller to find that out.
+    /// The connection is condemned before the operation and reprieved only by a result proving the
+    /// exchange finished: if the future is dropped, the session may hold half a response or be
+    /// inside `IDLE`.
     async fn run_on<T>(
         mut connection: PooledSession<'_>,
         operation: impl AsyncFnOnce(&mut ImapSession) -> BackendResult<T>,
@@ -431,31 +309,14 @@ impl ConnectionPool {
         result
     }
 
-    /// Says which connection is being thrown away, and why.
-    ///
-    /// The pool has always discarded a connection after a transient failure
-    /// and never said so, which is fine while "transient" means the socket
-    /// died -- the error itself is the story. It stopped being fine when a
-    /// *parse* became a reason to discard: a `SELECT` whose `UIDVALIDITY`
-    /// line was lost, a `UID SEARCH` that listed fewer UIDs than the mailbox
-    /// holds. Those are answers the connection gave and cannot be trusted to
-    /// give again, they are recoverable by retrying elsewhere, and so the
-    /// only trace of them is this line. Without it the successful retry looks
-    /// like nothing ever went wrong, which is exactly the silence these
-    /// guards were added to end.
-    ///
-    /// `warn`, not `debug`: it is rare, it means a server or a protocol
-    /// library misbehaved, and it is the first thing worth seeing in a report
-    /// of mail arriving slowly. No mailbox path and no message content -- the
-    /// error's own context carries what is safe to say.
+    /// A parse can be a reason to discard (a lost `UIDVALIDITY` line, a short `UID SEARCH`), and
+    /// this line is the only trace; `warn` because a server or protocol library misbehaved. No
+    /// mailbox path or content.
     fn discarding(error: &BackendError) {
         tracing::warn!(%error, "discarding the connection that produced this");
     }
 
-    /// Runs one operation on the connection reserved for watching.
-    ///
-    /// Separate from [`execute`](Self::execute) so a long `IDLE` never
-    /// occupies a slot that interactive work needs.
+    /// Separate from `execute` so a long `IDLE` never occupies a slot interactive work needs.
     pub async fn watch<T>(
         &self,
         operation: impl AsyncFnOnce(&mut ImapSession) -> BackendResult<T>,
@@ -466,7 +327,6 @@ impl ConnectionPool {
         Self::run_on(connection, operation).await
     }
 
-    /// Checks out a connection, opening one if the pool has room.
     pub async fn acquire(&self, priority: Priority) -> BackendResult<PooledSession<'_>> {
         self.acquire_lane(LaneKind::General, priority).await
     }
@@ -545,19 +405,11 @@ impl ConnectionPool {
         })
     }
 
-    /// Opens and authenticates one connection.
-    ///
-    /// The endpoint is `host:port` — a server the user chose to talk to, which
-    /// is public information and the first thing anyone needs to know when a
-    /// connection will not come up. The password is not a field here and never
-    /// will be; `retrieve` returns it and it goes straight to the transport.
+    /// Logs the endpoint (`host:port`), never the password.
     #[tracing::instrument(skip_all, fields(endpoint = %self.settings.endpoint()))]
     async fn open(&self) -> BackendResult<ImapSession> {
-        // The invalidate-and-try-once-more discipline lives in `auth` because
-        // the SMTP path needs exactly the same one, and a paragraph written
-        // twice drifts: the way it drifts is that one copy keeps retrying,
-        // which against a revoked grant is an endless pair of round trips to
-        // a server that has already said no (ADR 0006 Q5).
+        // In `auth` because SMTP needs the same discipline; against a revoked grant one retry, not
+        // a loop (ADR 0006 Q5).
         crate::auth::with_credential(
             self.tokens.as_ref(),
             &self.key,
@@ -566,10 +418,8 @@ impl ConnectionPool {
         )
         .await
         .map_err(|error| {
-            // Redacted: `SecretError` names the account so the *user* can
-            // see which one to fix, and that message is right on screen.
-            // A log is a different audience — it gets pasted into issues —
-            // so the domain survives and the local part does not.
+            // Redacted: the error names the account for the user's screen, but a log gets pasted
+            // into issues, so the local part goes.
             tracing::error!(
                 error = %postio_model::address::redact_addresses(&error.to_string()),
                 "no credential for this account"
@@ -578,7 +428,6 @@ impl ConnectionPool {
         })?
     }
 
-    /// One open attempt with the credential it is given.
     async fn open_with(&self, password: &Password) -> BackendResult<ImapSession> {
         tracing::debug!("connecting");
         let mut session =
@@ -601,15 +450,12 @@ impl ConnectionPool {
 
         let mut inner = self.lock();
         inner.opened += 1;
-        // The first connection settles what this server can do. Later ones
-        // refresh it: a provider is allowed to change its mind, and a
-        // capability set that silently went stale is the failure mode ADR 0001
-        // is about.
+        // Later connections refresh it: a provider may change its mind, and a stale capability set
+        // is what ADR 0001 is about.
         inner.capabilities = Some(session.capabilities().clone());
         Ok(session)
     }
 
-    /// Returns a connection to its lane, or drops it.
     fn give_back(&self, lane: LaneKind, session: Option<ImapSession>, discard: bool) {
         let mut inner = self.lock();
         inner.in_use = inner.in_use.saturating_sub(1);
@@ -627,11 +473,8 @@ impl ConnectionPool {
         inner.lane_mut(lane).release_permit();
     }
 
-    /// Closes every parked connection, leaving the pool open.
-    ///
-    /// Connections currently checked out are untouched and finish normally.
-    /// This is "hold nothing open" — after a disconnect, on suspend, or when
-    /// the network went away — not "shut down", which is [`close`](Self::close).
+    /// "Hold nothing open" (after a disconnect, suspend or network loss), not shut down; that is
+    /// `close`.
     pub fn drop_idle(&self) {
         let mut inner = self.lock();
         let inner = &mut *inner;
@@ -640,15 +483,10 @@ impl ConnectionPool {
         }
     }
 
-    /// Closes the pool: parked connections are dropped and new acquisitions
-    /// are refused.
-    ///
-    /// Connections currently checked out are not interrupted; they are dropped
-    /// rather than parked when their holder is done.
+    /// Checked-out connections are dropped rather than parked when their holder is done.
     pub fn close(&self) {
         let mut inner = self.lock();
         inner.closed = true;
-        // One reborrow through the guard, so both lanes can be taken at once.
         let inner = &mut *inner;
         for lane in [&mut inner.general, &mut inner.watch] {
             lane.parked.clear();
@@ -695,10 +533,6 @@ impl PoolInner {
     }
 }
 
-/// A connection checked out of a [`ConnectionPool`].
-///
-/// Returns to the pool when dropped, unless [`discard`](Self::discard) was
-/// called or the pool has been closed.
 pub struct PooledSession<'a> {
     pool: &'a ConnectionPool,
     lane: LaneKind,
@@ -707,16 +541,12 @@ pub struct PooledSession<'a> {
 }
 
 impl PooledSession<'_> {
-    /// Marks this connection as not worth reusing.
-    ///
-    /// [`ConnectionPool::execute`] calls this for you on a transient failure.
-    /// Call it by hand after driving a connection into a state the next caller
-    /// would not expect — an aborted literal, a half-read response.
+    /// Call by hand after driving a connection into an unexpected state: an aborted literal, a
+    /// half-read response.
     pub fn discard(&mut self) {
         self.discard = true;
     }
 
-    /// Whether this connection will be dropped rather than parked.
     pub fn is_discarded(&self) -> bool {
         self.discard
     }
@@ -766,7 +596,6 @@ mod tests {
 
         lane.release_permit();
 
-        // The interactive waiter arrived second and is served first.
         assert!(interactive.is_terminated_or_ready());
         assert!(!background.is_terminated_or_ready());
     }

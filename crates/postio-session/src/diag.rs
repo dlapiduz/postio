@@ -1,15 +1,8 @@
-//! What a store holds, what it costs, and what the background lanes still
-//! owe -- counts, sizes, ids and header tokens, never mail.
-//!
-//! The reports `postio-diag` prints, over a connection to a store it opened
-//! -- the live one, or a copy.
-//!
-//! Every report issues `SELECT` and `PRAGMA` and nothing else.
+//! The reports `postio-diag` prints: counts, sizes, ids and header tokens, never mail. Every report
+//! issues `SELECT` and `PRAGMA` only.
 
 use std::fmt::Write as _;
 
-/// One line of a report: `say!(self, "...", args)`, or `say!(self)` for a
-/// blank one.
 macro_rules! say {
     ($report:expr) => {
         $report.line(format_args!(""))
@@ -21,7 +14,6 @@ macro_rules! say {
 
 use postio_storage::sql::{self, RowExt};
 
-/// The reports there are, and what each tells.
 pub const COMMANDS: &[(&str, &str)] = &[
     (
         "census",
@@ -42,8 +34,6 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ),
 ];
 
-/// Run report `command` over `connection`, a store whose file is `file`
-/// bytes, and answer its text.
 pub async fn report(
     connection: postio_storage::Checkout,
     file: u64,
@@ -77,11 +67,8 @@ struct Report {
 pub(crate) type Outcome = Result<(), postio_storage::Error>;
 
 impl Report {
-    /// `words` searched the way the search box searches them, timed, twice:
-    /// as typed, and quoted. A quoted word is never offered a spelling, so
-    /// the difference is what the offer cost -- the pass that runs only
-    /// when a search finds nothing. Counts and timings; the offered word is
-    /// the mailbox's own, and is not printed.
+    /// `words` searched as the search box searches, timed, as typed and quoted; the difference is
+    /// what the spelling offer costs. The offered word is not printed.
     async fn search(&self, words: &str) -> Outcome {
         use postio_model::AccountScope;
         use postio_search::ResultOrder;
@@ -122,7 +109,6 @@ impl Report {
         Ok(())
     }
 
-    /// Add a line to the report's text.
     fn line(&self, text: std::fmt::Arguments<'_>) {
         let mut out = self.out.lock().expect("the report's text");
         let _ = out.write_fmt(text);
@@ -133,7 +119,6 @@ impl Report {
         sql::scalar(&self.connection, sql, ()).await.unwrap_or(-1)
     }
 
-    /// What the store holds and what it costs.
     async fn census(&self) -> Outcome {
         let messages = self.count("SELECT count(*) FROM messages").await;
         let bodied = self
@@ -164,9 +149,7 @@ impl Report {
         say!(self, "header rows     {headers:>12}");
         say!(self, "queued ops      {queued:>12}");
 
-        // Where the bytes are: the *content* each table holds, since this
-        // engine has no `dbstat` (ADR 0038). The difference between these
-        // sums and the file is index and page overhead.
+        // Content bytes per table: this engine has no `dbstat` (ADR 0038).
         let header_bytes = self
             .count("SELECT coalesce(sum(length(name) + length(value)), 0) FROM message_headers")
             .await;
@@ -218,7 +201,6 @@ impl Report {
             );
         }
 
-        // The interaction budget, on a real store rather than a fixture.
         let deep = std::time::Instant::now();
         let _ = self
             .count(
@@ -278,10 +260,8 @@ impl Report {
         Ok(())
     }
 
-    /// The bodies carrying the decode caveat, and what their parts declared.
-    ///
-    /// A part's media type, charset and transfer encoding are structure, not
-    /// mail; the body is read only to answer two booleans about it.
+    /// The bodies carrying the decode caveat, and what their parts declared; the body is read only
+    /// to answer two booleans.
     async fn encoding(&self) -> Outcome {
         let total = self.count("SELECT count(*) FROM messages").await;
         let bodied = self
@@ -355,8 +335,6 @@ impl Report {
         Ok(())
     }
 
-    /// Rows per page, with and without the body columns: the number that
-    /// decides how many pages a list or a hydrate has to read and decrypt.
     async fn shape(&self) -> Outcome {
         let page = self.count("PRAGMA page_size").await.max(1);
         let (rows, body, rest): (i64, i64, i64) = sql::one(
@@ -420,7 +398,6 @@ impl Report {
         Ok(())
     }
 
-    /// What the background lanes still owe.
     async fn pending(&self) -> Outcome {
         say!(self, "bodies, by state:");
         let states = sql::all(
@@ -441,8 +418,6 @@ impl Report {
                     AND uid IS NOT NULL AND remote_id IS NOT NULL AND deleted_locally = 0",
             )
             .await;
-        // `n/a` on a store from before `body_parsed_with` existed, rather
-        // than a number that would be a guess.
         let refetch = sql::scalar(
             &self.connection,
             "SELECT count(*) FROM messages
@@ -486,9 +461,8 @@ impl Report {
     }
 }
 
-/// The structural tokens of a stored part-header block: media type, charset
-/// and transfer encoding, and how the block ends. Anything else in the block
-/// -- a filename, a description -- is somebody's mail and is not printed.
+/// The structural tokens of a stored part-header block; anything else (a filename, a description)
+/// is mail and is not printed.
 fn tokens(headers: Option<&str>) -> String {
     let Some(headers) = headers else {
         return "no headers".to_owned();

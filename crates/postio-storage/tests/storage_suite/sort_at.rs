@@ -1,11 +1,3 @@
-//! A woken snooze comes back at the top (spec 007, research R7, T093).
-//!
-//! The lists of a folder -- its conversations, its flat rows, and the
-//! unified and Focus inboxes made of them -- are ordered by
-//! `messages.sort_at`: `received_at` when a message is filed, and the wake
-//! time when a snooze wakes. Search and the query views stay on
-//! `received_at`, and so does a conversation's own chronology.
-
 use chrono::{DateTime, TimeDelta, TimeZone, Utc};
 use postio_model::ids::{AccountId, MailboxId, MessageId, ThreadId};
 use postio_model::{EmailAddress, Message, RfcMessageId};
@@ -47,7 +39,6 @@ async fn a_woken_snooze_lists_at_the_top_of_every_list_of_its_folder() {
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let here = (account.id, inbox);
-    // The oldest of three, snoozed, and its time come and gone.
     let (snoozed, snoozed_thread) = file(&connection, here, 1, "<weir@example.com>").await;
     file(&connection, here, 2, "<sluice@example.com>").await;
     let (newest, _) = file(&connection, here, 3, "<lock@example.com>").await;
@@ -115,12 +106,8 @@ async fn a_woken_snooze_lists_at_the_top_of_every_list_of_its_folder() {
         "and of the account's conversations"
     );
 
-    // The message keeps its own time: the row says when it arrived, and the
-    // conversation's chronology does not move.
     assert_eq!(flat[0].received_at, at(1));
 
-    // A walk resumes by the new order: one row at a time, nothing repeats
-    // and nothing is skipped.
     let mut walked = Vec::new();
     let mut after = None;
     loop {

@@ -27,8 +27,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -92,8 +90,6 @@ def installer() -> None:
                 "the installed shim differs from its source in scripts/",
             )
 
-        # A stale copy is replaced: the shim is the source of nothing, the
-        # script in scripts/ is.
         stale = cargo_home / "bin" / "postio-linker"
         if not stale.parent.is_dir():
             return
@@ -106,8 +102,6 @@ def installer() -> None:
             f"exit {result.returncode}; content {stale.read_text()[:40]!r}",
         )
 
-        # Idempotent: nothing to do is still success, and it says so briefly
-        # rather than reinstalling -- this runs before every gate chain.
         before = {name: (cargo_home / "bin" / name).stat().st_mtime_ns for name in SHIMS}
         result = install(cargo_home)
         after = {name: (cargo_home / "bin" / name).stat().st_mtime_ns for name in SHIMS}

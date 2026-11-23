@@ -1,7 +1,6 @@
-//! Fonts without fontconfig (research R3): Postio's bundled faces first,
-//! then every face `fontdb` discovers, with the generic families and the
-//! per-script fallbacks set explicitly. fontconfig is C that reads a
-//! message's codepoints; `fontdb` and fontique are Rust.
+//! Fonts without fontconfig, which is C reading a message's codepoints: bundled
+//! faces first, then every `fontdb` face, with generic families and per-script fallbacks set
+//! explicitly.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -14,9 +13,7 @@ use parley::fontique::{
 };
 use skrifa::MetadataProvider as _;
 
-/// A script, a character only it draws, and the families to try first for
-/// it, most wanted first. Any other installed face covering the character
-/// comes after them.
+/// A script, a character only it draws, and the families to try first, most wanted first.
 const SCRIPTS: &[([u8; 4], char, &[&str])] = &[
     (
         *b"Latn",
@@ -73,10 +70,8 @@ const SCRIPTS: &[([u8; 4], char, &[&str])] = &[
     ),
 ];
 
-/// The emoji a sender writes, drawn in colour where a colour face exists.
 const EMOJI: (char, &[&str]) = ('😀', &["Noto Color Emoji", "Twemoji", "Noto Emoji"]);
 
-/// What `serif` resolves to, if installed; otherwise the bundled sans.
 const SERIFS: &[&str] = &["Liberation Serif", "DejaVu Serif", "Noto Serif"];
 
 /// The names mail asks for most, which no free system ships under that name,
@@ -90,20 +85,13 @@ const ALIASES: &[(&str, &str)] = &[
     ("Liberation Mono", "Courier"),
 ];
 
-/// The faces Postio ships (ADR 0023), and which of them stand for the
-/// generic families. The bytes are the caller's: they live beside the
-/// reader's `@font-face` rules in `postio-ui`.
+/// The bytes are the caller's: they live beside the reader's `@font-face` rules in `postio-ui`.
 pub struct Bundled {
-    /// Every bundled face's file.
     pub faces: Vec<&'static [u8]>,
-    /// The family `sans-serif` and `system-ui` resolve to.
     pub sans: &'static str,
-    /// The family `monospace` resolves to.
     pub mono: &'static str,
 }
 
-/// Every face a render may draw with. Built once per process, off the UI
-/// thread; each render takes a [`FontContext`] from it.
 #[derive(Clone)]
 pub struct FontSet {
     collection: Collection,
@@ -111,7 +99,6 @@ pub struct FontSet {
 }
 
 impl FontSet {
-    /// Register the bundled faces, then discover the installed ones.
     pub fn new(bundled: Bundled) -> FontSet {
         let mut collection = Collection::new(CollectionOptions {
             shared: false,
@@ -147,8 +134,6 @@ impl FontSet {
         set
     }
 
-    /// Register every installed face `fontdb` finds, each file mapped once,
-    /// plus the aliases; return what each family covers.
     fn discover(&mut self) -> Installed {
         let mut database = fontdb::Database::new();
         database.load_system_fonts();
@@ -200,7 +185,6 @@ impl FontSet {
         installed
     }
 
-    /// A context for one render: the same faces, its own caches.
     pub fn context(&self) -> FontContext {
         FontContext {
             collection: self.collection.clone(),
@@ -208,13 +192,10 @@ impl FontSet {
         }
     }
 
-    /// Whether `family` is registered.
     pub fn has_family(&self, family: &str) -> bool {
         self.collection.clone().family_by_name(family).is_some()
     }
 
-    /// The family a CSS generic (`serif`, `sans-serif`, `monospace`, …)
-    /// resolves to first.
     pub fn generic(&self, generic: &str) -> Option<String> {
         let generic = GenericFamily::parse(generic)?;
         let mut collection = self.collection.clone();
@@ -222,7 +203,6 @@ impl FontSet {
         collection.family_name(first).map(str::to_owned)
     }
 
-    /// The installed font files registered, each once.
     pub fn files(&self) -> &[PathBuf] {
         &self.files
     }
@@ -235,7 +215,6 @@ impl FontSet {
     }
 }
 
-/// What each installed family covers, of the sample characters.
 #[derive(Default)]
 struct Installed {
     /// In registration order, so the result is stable run to run.
@@ -264,8 +243,6 @@ impl Installed {
         }
     }
 
-    /// Families covering `sample`: the preferred ones in their order, then
-    /// every other, in registration order.
     fn covering(&self, sample: char, preferred: &[&str]) -> Vec<FamilyId> {
         let covers = |family: &FamilyId| self.covers[family].contains(&sample);
         let mut out: Vec<FamilyId> = preferred
@@ -289,8 +266,8 @@ impl Installed {
     }
 }
 
-/// An installed font file, memory-mapped: only the pages a render touches
-/// become resident (research R3; reading every file cost 198 MiB).
+/// Memory-mapped: only the pages a render touches become resident (reading every file cost 198
+/// MiB).
 #[allow(unsafe_code)]
 fn map_installed(
     database: &mut fontdb::Database,

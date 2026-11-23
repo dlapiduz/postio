@@ -1,6 +1,3 @@
-//! Images reach the page: decoded from the message's own parts, never
-//! fetched (spec FR-003; research R4, R5).
-
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -9,7 +6,6 @@ use postio_model::test_corpus;
 use postio_render::{RenderRequest, Resources, Theme, Viewport};
 use postio_ui::reader::document::{self, Rendering};
 
-/// The composed document of one fixture, and its parts as a resource table.
 fn request(fixture: &str) -> (RenderRequest, Vec<(String, Vec<u8>)>) {
     let parsed = postio_model::mime::parse(test_corpus::load(fixture).bytes());
     let parts: Vec<(String, Vec<u8>)> = parsed
@@ -57,9 +53,8 @@ fn request(fixture: &str) -> (RenderRequest, Vec<(String, Vec<u8>)>) {
     (request, parts)
 }
 
-/// The spike never enabled a decoder format, so every image drew as its
-/// placeholder and nobody saw it. Each inline part must paint its own
-/// pixels: most of a part's distinct colours appear in the raster.
+/// Each inline part must paint its own pixels: most of a part's distinct colours appear in the
+/// raster.
 #[test]
 fn an_inline_cid_image_paints_its_own_pixels() {
     let (request, parts) = request("inline-image-cid");
@@ -88,8 +83,6 @@ fn an_inline_cid_image_paints_its_own_pixels() {
     );
 }
 
-/// The size of the largest box filled with one colour, other than the
-/// page's own: a placeholder is flat, and the fixture's pictures are noise.
 fn largest_flat_box(raster: &postio_render::Raster) -> (u32, u32) {
     let pixels = raster.rgba.as_chunks::<4>().0;
     let mut boxes = std::collections::HashMap::<[u8; 4], (u32, u32, u32, u32, u32)>::new();
@@ -106,10 +99,8 @@ fn largest_flat_box(raster: &postio_render::Raster) -> (u32, u32) {
         .map_or((0, 0), |(w, h, _)| (w, h))
 }
 
-/// A `cid:` naming no part of the message drew as nothing at all: a blank
-/// band of the picture's declared size, saying neither that a picture is
-/// there nor that it is not shown (#1764). It draws as a placeholder of
-/// that size, and is counted as one.
+/// A `cid:` naming no part drew as a blank band (#1764); it draws as a placeholder of its declared
+/// size, counted as one.
 #[test]
 fn a_missing_cid_part_draws_as_a_placeholder_of_its_declared_size() {
     let (request, _) = request("inline-image-cid");
@@ -126,7 +117,6 @@ fn a_missing_cid_part_draws_as_a_placeholder_of_its_declared_size() {
     );
 }
 
-/// One that declares no size is still something a person can see.
 #[test]
 fn a_missing_cid_part_with_no_size_draws_as_a_small_placeholder() {
     let (mut request, _) = request("inline-image-cid");
@@ -141,9 +131,7 @@ fn a_missing_cid_part_with_no_size_draws_as_a_small_placeholder() {
     );
 }
 
-/// A relative URL resolves against the renderer's base, to nothing: without
-/// a base Blitz resolved against a `data:` URL and panicked (research R1;
-/// the evaluation's `POSTIO_EVAL_NO_BASE` shows it).
+/// Without a base Blitz resolved against a `data:` URL and panicked.
 #[test]
 fn a_relative_image_url_resolves_to_nothing_without_a_panic() {
     let (mut request, _) = request("inline-image-cid");
@@ -160,9 +148,7 @@ fn a_relative_image_url_resolves_to_nothing_without_a_panic() {
     );
 }
 
-/// An SVG image paints its own shapes, and never a local file its
-/// `<image href>` names: usvg's default resolver reads any path it is
-/// given, and Blitz used the default (research R5).
+/// usvg's default resolver reads any path it is given, and Blitz used the default.
 #[test]
 fn an_svg_image_paints_its_shapes_and_no_local_file() {
     let probe = tempfile::Builder::new()
@@ -208,7 +194,6 @@ fn an_svg_image_paints_its_shapes_and_no_local_file() {
     assert!(green > 1_000, "the SVG's own rect painted {green} pixels");
 }
 
-/// The process's font set: bundled faces plus discovery, built once.
 fn fonts() -> &'static postio_render::fonts::FontSet {
     static FONTS: std::sync::OnceLock<postio_render::fonts::FontSet> = std::sync::OnceLock::new();
     FONTS.get_or_init(|| {

@@ -1,81 +1,27 @@
-//! Every command reaches something, or this says which ones do not.
-//!
-//! The classic app had had this sweep since #756 —
-//! the classic app's command-wiring test — and its `KNOWN_ORPHANS` list is empty
-//! because the sweep has existed long enough to have emptied it. macOS had
-//! nothing of the kind, which is how a build shipped where `refresh` was in
-//! the File menu, bound to `F5` and `R`, listed in the palette, and answered
-//! by nobody: three surfaces offering a key that did nothing, and a green
-//! suite the whole time.
-//!
-//! **This is the one test in this suite that is about absence.** Everything
-//! else here asserts that a thing works; this asserts that nothing was left
-//! out, which is the only shape that catches a command *not* wired.
-//!
-//! A command is answered if one of three things is true:
-//!
-//! 1. The bus has a handler for it — `Dispatcher::wired`.
-//! 2. The Swift frontend presents a surface for it rather than dispatching
-//!    it — [`INTERCEPTED`], which is `PostioKit`'s `Intercepted.all`. A
-//!    session cannot open a window, so those stop here by design.
-//! 3. Focus's controller answers it on the list — `Session::invoke` hands
-//!    the controller its own commands before anything else
-//!    (specs/009-focus-macos T046), and what it says reaches Swift as
-//!    `UiEvent`s.
-//!
-//! Or it is not offered on the Mac at all — `postio_core::registry::offered_on`,
-//! or a requirement Focus on Apple does not meet — because the Mac has no
-//! surface for it. Settled rather than answered: no menu item, no key, no
-//! palette row, so nothing is drawn that does nothing. That is a decision
-//! recorded in the registry, not debt.
-//!
-//! The Mac is Focus (specs/009-focus-macos), so every command Focus offers is
-//! owed here; the ones whose surface a later task builds are `KNOWN_ORPHANS`,
-//! each citing that task.
-//!
-//! Anything else is an orphan.
+//! Every command is wired, intercepted by Swift, answered by Focus's controller, or not offered on
+//! the Mac; anything else is an orphan.
 
 use postio_core::CommandId;
 
-/// The one list, read from the library rather than written again here.
 const INTERCEPTED: &[CommandId] = postio_ffi::registry::INTERCEPTED;
 
-/// Commands nothing answers on macOS yet, each with the task that will.
-///
-/// **Debt, not permission.** The list may only shrink: a command that gains a
-/// handler and is still listed fails the second assertion below, the same way
-/// a command that loses one fails the first. That is what stops this becoming
-/// a place orphans go to be forgotten -- which is exactly what happened
-/// without a sweep at all.
-///
-/// Every entry is a Focus command whose surface the Mac builds in a later
-/// task of specs/009-focus-macos; the task that builds it deletes the line.
+/// The list may only shrink: a command that gains a handler and is still listed fails the second
+/// assertion.
 const KNOWN_ORPHANS: &[(CommandId, &str)] = &[
-    // The message window's raw source and treatment switch.
     (CommandId::ViewSource, "specs/009-focus-macos T070"),
     (CommandId::SwitchTreatment, "specs/009-focus-macos T070"),
-    // The message window's More menu.
     (CommandId::MoreActions, "specs/009-focus-macos T067"),
     (
         CommandId::ToggleReadingPane,
         "specs/009-focus-macos M4 (the reading pane beside the list comes after parity)",
     ),
-    // The digest rules list (`g d`), and "Digest mail like this" from the
-    // list (`L`): slice 12 built the rule sheet and its like-this button,
-    // not these two ways in.
     (CommandId::GoToDigestRules, "specs/009-focus-macos T114"),
     (CommandId::DigestLikeThis, "specs/009-focus-macos T115"),
-    // Contacts (specs/005-contacts): the commands are in the registry and
-    // answered in `postio_session::actions` as they land, and the surface that
-    // sends them is Focus's, designed in specs/011-focus-contacts.
     (
         CommandId::ContactsToggleEveryone,
         "specs/011-focus-contacts",
     ),
     (CommandId::ContactsToggleDeleted, "specs/011-focus-contacts"),
-    // Threads in Focus (specs/013-focus-threads): the registry holds the
-    // keys first (T022-T023); the tasks that build each surface delete its
-    // line.
     (CommandId::FirstInConversation, "specs/013-focus-threads"),
     (CommandId::LatestInConversation, "specs/013-focus-threads"),
     (
@@ -88,18 +34,42 @@ const KNOWN_ORPHANS: &[(CommandId, &str)] = &[
     (CommandId::ForwardWhat3, "specs/013-focus-threads"),
     (CommandId::ShowNewer, "specs/013-focus-threads"),
     (CommandId::ExpandQuoted, "specs/013-focus-threads"),
+    // Compose formatting (spec 014): the Mac's composer answers these in
+    // its source view and chip row, which T039 and T048 build on a Mac.
+    (CommandId::Heading2, "specs/014-compose-formatting T039"),
+    (CommandId::Heading3, "specs/014-compose-formatting T039"),
+    (CommandId::Heading4, "specs/014-compose-formatting T039"),
+    (CommandId::Heading5, "specs/014-compose-formatting T039"),
+    (CommandId::Heading6, "specs/014-compose-formatting T039"),
+    (CommandId::NormalText, "specs/014-compose-formatting T039"),
+    (
+        CommandId::Strikethrough,
+        "specs/014-compose-formatting T039",
+    ),
+    (CommandId::InlineCode, "specs/014-compose-formatting T039"),
+    (CommandId::CodeBlock, "specs/014-compose-formatting T039"),
+    (CommandId::TaskList, "specs/014-compose-formatting T039"),
+    (CommandId::ToggleTask, "specs/014-compose-formatting T039"),
+    (CommandId::Indent, "specs/014-compose-formatting T039"),
+    (CommandId::Outdent, "specs/014-compose-formatting T039"),
+    (CommandId::Divider, "specs/014-compose-formatting T039"),
+    (CommandId::Table, "specs/014-compose-formatting T039"),
+    (
+        CommandId::ClearFormatting,
+        "specs/014-compose-formatting T039",
+    ),
+    (
+        CommandId::ToggleMarkdownSource,
+        "specs/014-compose-formatting T039",
+    ),
+    (
+        CommandId::AttachRemoteImage,
+        "specs/014-compose-formatting T048",
+    ),
 ];
 
-/// Whether Focus's controller answers `id` on the Mac: on the list with
-/// nothing over it, with the command bar up, or over one of the surfaces it
-/// keeps (Filtered, the digest's window, capture), whose keys are theirs
-/// only while they are up. What `Session::invoke` routes to it first.
-///
-/// The bar counts because the Mac draws it (`CommandBarPanel`, T085): its
-/// own keys -- `BackToWords`, the result order, saving -- reach the
-/// controller only while it is up, which is the only time they mean
-/// anything. So do the search results' (spec 010 step 3): their tabs are
-/// theirs only while the main window shows them.
+/// Whether Focus's controller answers `id`: on the list, with the command bar up, or over a surface
+/// that keeps its keys only while it is up.
 fn the_controller_answers(id: CommandId) -> bool {
     use postio_focus::{FocusController, Input, Policy, SurfaceKind};
     let fresh =
@@ -136,14 +106,8 @@ fn the_controller_answers(id: CommandId) -> bool {
         })
 }
 
-/// Whether the Mac offers `id` at all. See the module note.
-///
-/// Focus on Apple: the registry's own question, asked the way the session asks
-/// it. Scoped away from the platform (`offered_on`), or requiring what the
-/// Mac's frontend is not -- the terminal composer's own verbs
-/// (`Requirement::Terminal`) are in no Mac menu, key or palette, so they owe
-/// it nothing. A single account is assumed in view, so a command that needs
-/// one is owed too.
+/// Scoped away from the platform, or requiring what the Mac is not (the terminal composer), means
+/// not owed.
 fn offered_on_the_mac(id: CommandId) -> bool {
     let state = postio_core::Availability {
         scope: postio_core::Scope::Account(postio_model::ids::AccountId::new(1)),
@@ -154,12 +118,7 @@ fn offered_on_the_mac(id: CommandId) -> bool {
         && postio_core::registry::get(id).requires.met_by(state)
 }
 
-/// The bus the FFI session builds, asked what it answers.
-///
-/// Composed exactly as `postio_host`'s verbs compose it -- the session is the
-/// host's client, and `Host::wired` is what it filters a command by -- so this
-/// is the same list a running Postio would check a command against rather
-/// than a second opinion about one.
+/// Composed as `postio_host` composes it, so this is the list a running Postio checks.
 async fn wired() -> Vec<CommandId> {
     let database = postio_storage::test_support::memory().await;
     let state = postio_core::state::SharedState::default();
@@ -205,9 +164,7 @@ async fn every_command_reaches_a_handler_a_window_or_this_boundary() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_command_that_gained_a_handler_leaves_the_orphan_list() {
-    // The list is debt and is allowed to shrink, never to drift: an entry
-    // that is answered now is a line claiming something untrue about the
-    // application, and the next reader believes it.
+    // An entry that is answered now claims something untrue; the list may only shrink.
     let wired = wired().await;
     for &(id, issue) in KNOWN_ORPHANS {
         let answered = wired.contains(&id)
@@ -224,10 +181,8 @@ async fn a_command_that_gained_a_handler_leaves_the_orphan_list() {
 
 #[test]
 fn nothing_the_mac_does_not_offer_is_also_answered_on_it() {
-    // A command scoped away from the Mac and then given a handler or a
-    // surface there is one of the two decisions being wrong: either the Mac
-    // has the surface after all, or somebody built something nothing can
-    // reach. Either way the registry line should go.
+    // A command scoped away from the Mac but given a handler or surface means one of the two
+    // decisions is wrong.
     for id in CommandId::ALL
         .iter()
         .copied()

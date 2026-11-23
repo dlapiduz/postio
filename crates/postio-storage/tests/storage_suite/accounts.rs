@@ -1,7 +1,3 @@
-//! Accounts and identities: create, read, update, delete, cascade.
-//!
-//! Written before the repositories existed.
-
 use chrono::{TimeZone, Utc};
 
 use postio_model::{
@@ -23,7 +19,6 @@ fn an_account() -> Account {
     account
 }
 
-/// A second account, so "at most one is the default" means something.
 fn another_account() -> Account {
     let mut account = Account::new(
         "Fastmail",
@@ -40,10 +35,6 @@ fn an_identity(address: &str) -> Identity {
         EmailAddress::new(Some("Ada Norwood"), address),
     )
 }
-
-// ---------------------------------------------------------------------------
-// Create and read
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn an_account_round_trips_through_the_database() {
@@ -198,10 +189,6 @@ async fn listing_returns_accounts_in_a_stable_order_and_can_filter_to_enabled() 
     assert_eq!(enabled[0].id, first.id, "a disabled account does not sync");
 }
 
-// ---------------------------------------------------------------------------
-// Update
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn updating_an_account_changes_its_row() {
     let database = test_support::memory().await;
@@ -236,7 +223,6 @@ async fn updating_reconciles_the_identity_list() {
     let id = accounts.create(&mut account).await.expect("create");
     let kept = account.identities[1].id;
 
-    // Drop the first, keep the second, add a third — and reorder.
     let mut third = an_identity("three@example.com");
     third.is_default = true;
     account.identities = vec![third, account.identities[1].clone()];
@@ -278,10 +264,6 @@ async fn updating_an_unpersisted_account_is_an_error_rather_than_a_silent_no_op(
 
     assert!(accounts.update(&mut an_account()).await.is_err());
 }
-
-// ---------------------------------------------------------------------------
-// Identities on their own
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn identities_can_be_managed_without_rewriting_the_account() {
@@ -367,10 +349,6 @@ async fn an_account_has_at_most_one_default_identity() {
     assert_eq!(defaults, [second], "exactly one, and it moved");
 }
 
-// ---------------------------------------------------------------------------
-// Delete and cascade
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn deleting_an_account_takes_everything_that_hangs_off_it() {
     let database = test_support::memory().await;
@@ -424,10 +402,6 @@ async fn deleting_an_account_takes_everything_that_hangs_off_it() {
         "deleting what is gone is false, not an error"
     );
 }
-
-// ---------------------------------------------------------------------------
-// Enable, disable, and pending deletion (#464, ADR 0005 Q6a)
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn set_enabled_flips_only_that_column() {
@@ -587,8 +561,6 @@ async fn reaping_with_nothing_marked_deletes_nothing() {
 
 #[tokio::test]
 async fn an_accounts_named_signatures_round_trip_and_arrive_with_it() {
-    // #12: a signature is the account's, named, and chosen per message — not
-    // a property of the one identity that happens to be selected.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let accounts = AccountRepository::new(&connection);
@@ -609,7 +581,6 @@ async fn an_accounts_named_signatures_round_trip_and_arrive_with_it() {
         .expect("create");
     assert!(long.id.is_assigned());
 
-    // They arrive with the account, in picker order.
     let loaded = accounts
         .get(account.id)
         .await
@@ -629,7 +600,6 @@ async fn an_accounts_named_signatures_round_trip_and_arrive_with_it() {
         "the rich variant is part of the record"
     );
 
-    // Renaming and rewriting one is an update, not a second row.
     long.name = "Full".to_owned();
     long.text = "Lena Tomlin".to_owned();
     signatures.update(&long).await.expect("update");
@@ -642,7 +612,6 @@ async fn an_accounts_named_signatures_round_trip_and_arrive_with_it() {
     assert_eq!(loaded.signatures[0].name, "Full");
     assert_eq!(loaded.signatures[0].text, "Lena Tomlin");
 
-    // And deleting one leaves the other.
     assert!(signatures.delete(short.id).await.expect("delete"));
     let loaded = accounts
         .get(account.id)
@@ -675,7 +644,6 @@ async fn two_accounts_never_see_each_others_signatures() {
         .await
         .expect("create");
 
-    // The same name on both accounts is fine; the uniqueness is per account.
     let loaded = accounts.get(mine.id).await.expect("get").expect("there");
     assert_eq!(loaded.signatures.len(), 1);
     assert_eq!(loaded.signatures[0].text, "Lena");
@@ -683,9 +651,6 @@ async fn two_accounts_never_see_each_others_signatures() {
 
 #[tokio::test]
 async fn oauth_composition_data_round_trips_and_stays_optional() {
-    // #534: what the engine needs at every launch to rebuild an OAuth
-    // account's token source. Optional twice over — password accounts and
-    // broker-fed OAuth accounts both carry none.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let mut account = test_support::account(&connection).await;
@@ -719,11 +684,8 @@ async fn oauth_composition_data_round_trips_and_stays_optional() {
 
 #[tokio::test]
 async fn the_refresh_grant_lifetime_round_trips_and_stays_optional() {
-    // #954: the engine rebuilds the token source from this row at every
-    // launch, and the deadline it re-records on each refresh comes from
-    // here. A field that did not survive the round trip would leave every
-    // restarted account with no deadline at all -- silently, since "no
-    // stated lifetime" is a legitimate answer.
+    // The field must survive the round trip, or every restarted account loses its deadline
+    // silently.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let mut account = test_support::account(&connection).await;
@@ -753,8 +715,6 @@ async fn the_refresh_grant_lifetime_round_trips_and_stays_optional() {
         Some(7),
     );
 
-    // And absent stays absent, which is the ordinary case: most providers
-    // state nothing, and those accounts must behave exactly as before.
     account.oauth.as_mut().unwrap().refresh_token_lifetime_days = None;
     AccountRepository::new(&connection)
         .update(&mut account)
@@ -776,10 +736,6 @@ async fn the_refresh_grant_lifetime_round_trips_and_stays_optional() {
 
 #[tokio::test]
 async fn the_backend_choice_round_trips_and_defaults_to_imap() {
-    // ADR 0018 Q5: the backend is chosen at add-account time from the
-    // preset row's preference and stored on the account; engine::start
-    // reads it back every launch. Imap for every account that predates
-    // the column.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let mut account = test_support::account(&connection).await;
@@ -812,12 +768,8 @@ async fn the_backend_choice_round_trips_and_defaults_to_imap() {
 
 #[tokio::test]
 async fn a_maildir_account_remembers_which_directory_it_is() {
-    // The tree on disk *is* the account (#1278): a maildir row that came back
-    // without its root would be an account pointing at nothing. The root lives
-    // in `accounts.backend_location`, the one column that says where a backend
-    // lives whatever kind it is — JMAP's session resource for one account, a
-    // directory for this one — so this is the assertion that the column has two
-    // readers and not just the one it was named for.
+    // The maildir root lives in `accounts.backend_location`, the one column that says where any
+    // backend lives.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let mut account = test_support::account(&connection).await;
@@ -846,12 +798,8 @@ async fn a_maildir_account_remembers_which_directory_it_is() {
 
 #[tokio::test]
 async fn two_signatures_in_one_account_cannot_share_a_name() {
-    // `signatures.name` is documented "unique per account so the picker never
-    // offers two entries a person cannot tell apart", and `idx_signatures_name`
-    // is what makes that true rather than aspirational. Asserted because a
-    // constraint nothing exercises is one a later migration can drop without
-    // anybody noticing — and #1086 is about to put a *creation* flow in front
-    // of it, where a duplicate stops being hypothetical.
+    // Asserted because a constraint nothing exercises can be dropped by a later migration
+    // unnoticed.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let accounts = AccountRepository::new(&connection);
@@ -871,7 +819,6 @@ async fn two_signatures_in_one_account_cannot_share_a_name() {
         .await
         .expect_err("a second signature called Work must not be stored");
 
-    // The first is untouched: a refused insert is not a partial one.
     let loaded = accounts.get(account.id).await.expect("get").expect("there");
     assert_eq!(loaded.signatures.len(), 1);
     assert_eq!(loaded.signatures[0].text, "— Lena");
@@ -879,9 +826,6 @@ async fn two_signatures_in_one_account_cannot_share_a_name() {
 
 #[tokio::test]
 async fn the_same_name_in_a_different_account_is_fine() {
-    // The other half of "unique *per account*": two people's mail on one
-    // machine both having a "Work" signature is the ordinary case, and a
-    // global constraint would refuse the second.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let accounts = AccountRepository::new(&connection);
@@ -906,11 +850,7 @@ async fn the_same_name_in_a_different_account_is_fine() {
 
 #[tokio::test]
 async fn deleting_the_default_signature_leaves_no_dangling_reference() {
-    // #1086's fourth criterion. `accounts.default_signature_id` is
-    // `REFERENCES signatures(id) ON DELETE SET NULL`, so the row clears
-    // itself — but only with foreign keys actually on, which is exactly the
-    // kind of thing that is true until a connection somewhere forgets to
-    // enable them.
+    // `ON DELETE SET NULL` clears the row only with foreign keys on.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let accounts = AccountRepository::new(&connection);
@@ -953,21 +893,8 @@ async fn deleting_the_default_signature_leaves_no_dangling_reference() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// The default account (#960)
-// ---------------------------------------------------------------------------
-
-/// At most one account is the default, and setting it moves the marker.
-///
-/// The same invariant `Identity.is_default` has one level down, deliberately:
-/// #960's decision is that this is the same idea at the account level, so it
-/// is one concept to learn rather than two, and the composer's resolution
-/// reads as "default account, then that account's default identity".
-///
-/// Enforced in the repository rather than by a partial unique index, because
-/// what a caller asks for is "make this one the default" -- a constraint that
-/// merely refused the second `UPDATE` would leave the caller to clear the
-/// first, which is the race this exists to prevent.
+/// Enforced in the repository, not by a partial unique index: a constraint that merely refused the
+/// second `UPDATE` would leave the caller to clear the first, which is a race.
 #[tokio::test]
 async fn at_most_one_account_is_the_default_and_setting_it_moves_the_marker() {
     let database = test_support::memory().await;
@@ -1001,11 +928,6 @@ async fn at_most_one_account_is_the_default_and_setting_it_moves_the_marker() {
     );
 }
 
-/// A fresh store has no default, and that is a normal state.
-///
-/// #960: `None` is what every existing store has, and it must resolve to
-/// today's behaviour rather than to an error or a migration that picks one on
-/// the user's behalf -- choosing for them is what the issue exists to stop.
 #[tokio::test]
 async fn a_new_account_is_not_the_default_until_somebody_says_so() {
     let database = test_support::memory().await;
@@ -1027,7 +949,6 @@ async fn a_new_account_is_not_the_default_until_somebody_says_so() {
     );
 }
 
-/// Marking one is not a way to rewrite the rest of the row.
 #[tokio::test]
 async fn set_default_flips_only_that_column() {
     let database = test_support::memory().await;
@@ -1052,13 +973,8 @@ async fn set_default_flips_only_that_column() {
     );
 }
 
-/// Asking for an account that is not there says so rather than clearing the
-/// marker nobody asked it to clear.
-///
-/// The dangerous shape is the one where the first statement -- clear every
-/// marker -- lands and the second finds no row: the store would be left with
-/// no default because a caller named a stale id. Both statements are in one
-/// transaction and a missing row rolls it back.
+/// Clear-then-set is one transaction, so a missing row rolls back and a stale id cannot leave the
+/// store with no default.
 #[tokio::test]
 async fn set_default_on_a_missing_account_leaves_the_marker_where_it_was() {
     let database = test_support::memory().await;
@@ -1087,14 +1003,8 @@ async fn set_default_on_a_missing_account_leaves_the_marker_where_it_was() {
     );
 }
 
-/// Removing the account takes the marker with it.
-///
-/// #960 asks that removal never leave a dangling marker. A column on
-/// `accounts` gets that by construction -- the row goes and the marker goes
-/// with it -- which is one of the reasons the decision put it there rather
-/// than in `config.toml`. The soft-delete window is deliberately *not* a
-/// clear: #464's removal is reversible from a toast, and a marker cleared on
-/// the way out would not come back when the account did.
+/// The soft-delete window deliberately does not clear the marker: removal is reversible from a
+/// toast (#464).
 #[tokio::test]
 async fn reaping_a_removed_account_takes_its_default_marker_with_it() {
     let database = test_support::memory().await;

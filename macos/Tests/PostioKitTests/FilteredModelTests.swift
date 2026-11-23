@@ -4,14 +4,6 @@ import Testing
 
 @testable import PostioKit
 
-/// Filtered, as the controller's intents leave it (specs/009-focus-macos
-/// T113, screen 21).
-///
-/// The controller (`crates/postio-focus/src/filtered.rs`) keeps which tab
-/// is showing, which row has the keyboard, the pages read and what each
-/// key does. The Mac draws `FocusFiltered` whole in the list's place and
-/// hands back what the pointer did: a row clicked, a tab or a button
-/// clicked, the end of the rows reached.
 @MainActor
 struct FilteredModelTests {
     final class Engine: FilteredEngine {
@@ -179,8 +171,6 @@ struct FilteredModelTests {
         #expect(model.apply(.focusFilteredFocus(index: 1)) == nil, "no Filtered up to focus in")
     }
 
-    // MARK: selecting, as the list does
-
     @Test func theSelectionBoxesItsRowsAndBringsUpTheBar() {
         let (model, _) = Self.model()
         model.apply(.focusFiltered(view: Self.view()))
@@ -209,7 +199,6 @@ struct FilteredModelTests {
         model.apply(.focusFiltered(view: Self.view(rows: rows, bar: Self.bar("1 selected"))))
         #expect(model.rows.map(\.selected) == [true, false])
         #expect(model.bar?.summary == "1 selected")
-        // Closing forgets it: the next opening starts clean.
         model.apply(.focusCloseSurface(kind: .filtered))
         #expect(model.bar == nil)
     }
@@ -246,8 +235,6 @@ struct FilteredModelTests {
         #expect(model.empty == nil)
     }
 
-    // MARK: threads (spec 013 FR-009)
-
     static func child(_ sender: String, draft: Bool = false) -> ChildRowFfi {
         ChildRowFfi(
             initials: String(sender.prefix(1)), sender: sender, bold: false, tag: nil,
@@ -279,7 +266,6 @@ struct FilteredModelTests {
         }
         #expect((below.id, display) == (1, 4), "the next row is drawn after the children")
 
-        // The keyboard is a display position; a click names one too.
         model.apply(.focusFilteredFocus(index: 2))
         #expect(model.focused == 2)
         model.point(2)

@@ -1,13 +1,3 @@
-//! Sending with no network (US3 scenario 7, FR-055; T082): the message is
-//! in the Outbox the moment Send is pressed, and once the link is back it
-//! leaves once -- not again on the next drain, and not at all while the
-//! link keeps failing.
-//!
-//! Focus's host in this suite never syncs, which is the machine with no
-//! network. The link returning is the drainer the engine runs, driven here
-//! over the mock backend and a scripted SMTP server, as `postio-host`'s own
-//! RSVP cases drive it. Nothing opens a connection.
-
 use chrono::{Duration, Utc};
 use postio_account::backend::{MailBackend as _, MockBackend, MockMailbox};
 use postio_account::secret::{AccountKey, MemorySecretStore, Password, SecretStore as _};
@@ -19,7 +9,6 @@ use postio_storage::BlobStore;
 
 use crate::support::{self, Fixture};
 
-/// An SMTP server that accepts everything, on 587 with STARTTLS.
 pub(crate) fn accepting() -> SmtpScript {
     SmtpScript::new("220 mail.example.com ESMTP ready")
         .on(
@@ -34,16 +23,12 @@ pub(crate) fn accepting() -> SmtpScript {
         .on("QUIT", "221 bye")
 }
 
-/// How many messages a connection carried to the server: each payload
-/// ends with the lone dot.
 fn delivered(connector: &ScriptedConnector) -> usize {
     String::from_utf8_lossy(&connector.log().written)
         .matches("\r\n.\r\n")
         .count()
 }
 
-/// Drain the account's queue over `connector` as of `at`, as the engine
-/// does when there is a link.
 pub(crate) async fn drain(
     fixture: &Fixture,
     backend: &MockBackend,
@@ -74,9 +59,6 @@ async fn in_the_outbox(client: &Client, fixture: &Fixture) -> u32 {
 
 pub fn offline_a_send_is_in_the_outbox_at_once_and_leaves_once() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         {
             let connection = fixture.database.connect().await.expect("a connection");
@@ -91,9 +73,7 @@ pub fn offline_a_send_is_in_the_outbox_at_once_and_leaves_once() {
                 .await
                 .expect("an identity");
         }
-        fixture
-            .file(("Ada Moreno", "ada@example.com"), "Budget", "Numbers.", 5)
-            .await;
+        fixture.file_from_ada("Budget", "Numbers.", 5).await;
         let window = postio_gtk::window::FocusWindow::new(None);
         gtk::prelude::GtkWindowExt::present(&window);
         let session =
@@ -121,7 +101,6 @@ pub fn offline_a_send_is_in_the_outbox_at_once_and_leaves_once() {
             "Ctrl+Return did not send: {}",
             composer.status()
         );
-        // At once, with no network: nothing here waited on a server.
         assert!(
             crate::settle_until(async || in_the_outbox(&client, &fixture).await == 1).await,
             "the message is not in the Outbox"
@@ -140,8 +119,6 @@ pub fn offline_a_send_is_in_the_outbox_at_once_and_leaves_once() {
             .await
             .expect("the password");
 
-        // The link drops before the message goes out: nothing leaves, and
-        // it waits in the Outbox for the next try.
         let dropping = ScriptedConnector::new(accepting()).vanishing_at("MAIL FROM");
         drain(&fixture, &backend, &secrets, &blobs, &dropping, Utc::now()).await;
         assert_eq!(delivered(&dropping), 0, "nothing left over a dropped link");
@@ -151,7 +128,6 @@ pub fn offline_a_send_is_in_the_outbox_at_once_and_leaves_once() {
             "still waiting to go"
         );
 
-        // The link is back: it leaves, once.
         let back = ScriptedConnector::new(accepting());
         let later = Utc::now() + Duration::hours(1);
         let report = drain(&fixture, &backend, &secrets, &blobs, &back, later).await;

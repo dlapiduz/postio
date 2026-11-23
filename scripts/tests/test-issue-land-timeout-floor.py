@@ -28,8 +28,6 @@ import tempfile
 import time
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -40,11 +38,6 @@ REPO_ROOT = HERE.parent
 ISSUE_LAND = HERE / "issue-land.sh"
 WAIT_FOR_CHECKS = HERE / "wait-for-checks.sh"
 CI_EXPECTED_WORKFLOWS = HERE / "checks" / "ci-expected-workflows.py"
-# Sandboxes go under `target/`, which git ignores: inside the worktree because
-# the shared-tree guard only lifts its refusals for worktree paths, and not in
-# its root because a killed run leaves the sandbox behind and `git add -A` in a
-# worktree will commit it. `scripts/checks/check-test-sandboxes.py` says what
-# that cost (#1225).
 SANDBOXES = REPO_ROOT / "target" / "tmp"
 SANDBOXES.mkdir(parents=True, exist_ok=True)
 
@@ -61,9 +54,6 @@ FAILURES: list[str] = []
 
 FIXTURE_CI_YML = "name: CI\non:\n  workflow_dispatch:\n"
 
-# Same shape as #406's stub -- merge succeeds at once, the ref shows up late
-# -- except the delay is 50s, past the *old* 30s default and still short of
-# a defensible new one.
 GH_STUB_LAGGING = """#!/usr/bin/env bash
 if [ "$1" = "--version" ]; then echo "gh version 2.98.0 (2026-01-01)"; exit 0; fi
 printf '%s\\n' "$*" >> "$STUB_DIR/calls"
@@ -153,7 +143,6 @@ def main() -> int:
 
         environment = dict(os.environ)
         environment.pop("RUSTUP_TOOLCHAIN", None)
-        # The point of this test: nothing overrides the timeout.
         environment.pop("POSTIO_LANDED_TIMEOUT", None)
         environment["CARGO_TARGET_DIR"] = str(base / "target")
         environment["GIT_CONFIG_GLOBAL"] = "/dev/null"
@@ -168,9 +157,6 @@ def main() -> int:
             cwd=root, env=environment, capture_output=True, text=True, timeout=180,
         )
 
-        # The script's own poll only returns 0 once the commits are visible on
-        # origin/main, so a successful run already proves the push landed --
-        # no separate wait needed here the way #406's own test needed one.
         landed = git("log", "origin/main", "--format=%s", cwd=root).stdout.decode()
         remotes = git("ls-remote", "--heads", "origin", cwd=root).stdout.decode()
 

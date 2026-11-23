@@ -1,16 +1,3 @@
-//! Acceptance for postio-nux: the `.eml` corpus and the loader that hands it out.
-//!
-//! These tests prove three things, in order of how much they matter:
-//!
-//! 1. The loader finds and reads **every** fixture, and the embedded bytes are
-//!    the bytes on disk — a fixture that exists but is unreachable is worse than
-//!    no fixture at all.
-//! 2. The corpus actually covers the categories every downstream epic depends
-//!    on, so MIME parsing, threading, search and the reader can be written
-//!    test-first against it.
-//! 3. The corpus contains no real personal data, only invented content under
-//!    RFC 2606 reserved domains.
-
 #![cfg(feature = "test-corpus")]
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -31,8 +18,6 @@ fn files_on_disk() -> BTreeSet<String> {
         .filter(|name| name.ends_with(".eml"))
         .collect()
 }
-
-// --------------------------------------------------------------- the loader
 
 #[test]
 fn loader_reaches_every_file_on_disk_and_nothing_else() {
@@ -159,8 +144,6 @@ fn count_matches_the_table_and_the_disk() {
     assert_eq!(test_corpus::count(), files_on_disk().len());
 }
 
-// ------------------------------------------------------------- categories
-
 #[test]
 fn category_names_round_trip() {
     for category in Category::ALL {
@@ -214,8 +197,6 @@ fn by_categories_intersects_and_defaults_to_everything() {
     }
 }
 
-// --------------------------------------------------------------- coverage
-
 #[test]
 fn corpus_covers_every_category_the_downstream_epics_need() {
     assert!(
@@ -224,8 +205,6 @@ fn corpus_covers_every_category_the_downstream_epics_need() {
         test_corpus::count()
     );
 
-    // Minimum counts, not just presence: one fixture per category is enough to
-    // compile a test but not enough to characterize a behaviour.
     let required: &[(Category, usize)] = &[
         (Category::PlainText, 3),
         (Category::Html, 3),
@@ -260,7 +239,6 @@ fn corpus_covers_every_category_the_downstream_epics_need() {
 fn non_utf8_fixtures_really_are_not_utf8() {
     let mut invalid = 0;
     for fixture in test_corpus::by_category(Category::NonUtf8Charset) {
-        // The lossy view always works; that is the point of having it.
         assert!(!fixture.text_lossy().is_empty());
         if fixture.as_str().is_none() {
             invalid += 1;
@@ -270,7 +248,6 @@ fn non_utf8_fixtures_really_are_not_utf8() {
         invalid >= 2,
         "at least two fixtures must carry genuinely non-UTF-8 bytes, found {invalid}"
     );
-    // And a UTF-8 fixture must round-trip through `as_str`.
     assert!(test_corpus::load("plain-text-simple").as_str().is_some());
 }
 
@@ -303,20 +280,13 @@ fn fixtures_carry_the_headers_their_categories_promise() {
     ];
     for (name, needle) in checks {
         let fixture = test_corpus::load(name);
-        // Undo quoted-printable soft line breaks so a needle cannot be split
-        // in half by the 76-column limit.
         let text = fixture.text_lossy().replace("=\r\n", "").replace("=\n", "");
         assert!(text.contains(needle), "{name} should contain {needle:?}");
     }
 }
 
-/// #597: `duplicate-message-id` declared `charset=us-ascii` and then put two
-/// UTF-8 em-dashes in its body, which is not what its `[Threading,
-/// PlainText]` categories or its description are about -- a fixture that
-/// lies about its own charset teaches a dedup/threading test to expect
-/// mojibake for a reason that has nothing to do with what the fixture is
-/// named for. Corpus-wide, not just the one fixture, so nothing else can
-/// grow the same mismatch unnoticed.
+/// #597: a fixture that lies about its charset teaches a threading test to expect mojibake.
+/// Corpus-wide so nothing else grows the mismatch.
 #[test]
 fn a_fixture_declaring_us_ascii_contains_only_ascii_bytes() {
     for fixture in test_corpus::all() {
@@ -343,7 +313,6 @@ fn the_large_attachment_is_actually_large() {
         "the large-attachment fixture is only {} bytes",
         large.len()
     );
-    // ...and nothing else is, so the default suite stays quick.
     for fixture in test_corpus::all() {
         if fixture.has_category(Category::LargeAttachment) {
             continue;
@@ -385,7 +354,6 @@ fn the_mailing_list_thread_is_a_real_thread() {
          the case JWZ threading has to recover from"
     );
 
-    // One reply must have neither, so subject matching is exercised too.
     let orphan = test_corpus::load("list-thread-06-reply-subject-only");
     let text = orphan.text_lossy();
     assert!(!text.contains("References:"));
@@ -393,22 +361,12 @@ fn the_mailing_list_thread_is_a_real_thread() {
     assert!(text.contains("Subject: Re: "));
 }
 
-// --------------------------------------------------------- no personal data
-
-/// TLDs that are reserved outright, so anything under them is safe to invent
-/// addresses in (RFC 6761).
 const RESERVED_TLDS: &[&str] = &["test", "invalid", "example", "localhost"];
 
-/// TLDs under which the second-level name `example` is reserved (RFC 2606).
 const RESERVED_UNDER_EXAMPLE: &[&str] = &["com", "net", "org"];
 
-/// Whether `domain` is one nobody can register, and so one the corpus may use.
-///
-/// This is the same rule `scripts/checks/check-no-personal-data.py` applies to the
-/// whole repository, restated here so the corpus cannot drift away from it.
-/// Deliberately narrower than "RFC 2606 second-level name": `example.de` reads
-/// like a reserved domain and is not one — it is registrable, and an address
-/// there could belong to somebody.
+/// The rule `scripts/checks/check-no-personal-data.py` applies repo-wide. Narrower than "RFC 2606
+/// second-level": `example.de` is registrable.
 fn is_reserved(domain: &str) -> bool {
     let labels: Vec<&str> = domain.split('.').collect();
     let Some(tld) = labels.last() else {
@@ -432,8 +390,6 @@ fn every_address_in_the_corpus_is_an_invented_reserved_domain() {
             if *ch != '@' {
                 continue;
             }
-            // `@media` in a stylesheet is not an address: a real one has a
-            // local part immediately before the `@`.
             let is_local_part_char =
                 |c: char| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '%' | '+' | '-');
             if i == 0 || !is_local_part_char(bytes[i - 1]) {
@@ -467,8 +423,6 @@ fn every_address_in_the_corpus_is_an_invented_reserved_domain() {
 
 #[test]
 fn the_corpus_mentions_nothing_from_a_real_mailbox() {
-    // Cheap tripwire against a fixture ever being pasted in from a real inbox
-    // or from the developer's own mail configuration.
     const FORBIDDEN: &[&str] = &[
         "himalaya",
         "dlapiduz",
@@ -492,8 +446,6 @@ fn the_corpus_mentions_nothing_from_a_real_mailbox() {
         }
     }
 }
-
-// ------------------------------------------------------ the parsed convenience
 
 #[test]
 fn every_fixture_parses_through_the_convenience_without_panicking() {
@@ -522,8 +474,6 @@ fn the_convenience_agrees_with_parsing_by_hand() {
 
     assert_eq!(message, by_hand);
 }
-
-// ------------------------------------------------------------ documentation
 
 #[test]
 fn the_readme_documents_the_parse_convenience() {

@@ -1,10 +1,3 @@
-//! Reading a maildir: its folders, its messages, and their numbers.
-//!
-//! Everything the filesystem knows, turned into the shapes the rest of Postio
-//! speaks — with [`UidList`] supplying the identity a maildir
-//! does not have. Nothing here decides policy: which messages to fetch, when,
-//! and what to do with them stays the sync machinery's, unchanged.
-
 use std::path::{Path, PathBuf};
 
 use io_maildir::client::MaildirClient;
@@ -15,38 +8,26 @@ use postio_model::Flag;
 use super::UidList;
 use crate::backend::BackendError;
 
-/// One folder of a maildir, as Postio names it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Folder {
-    /// The path a caller selects by — `INBOX`, `Archives/2026`.
     pub path: String,
-    /// Where it is on disk.
     pub directory: PathBuf,
 }
 
-/// One message in a folder.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
-    /// Its number, stable across runs — see [`UidList`].
     pub uid: u32,
-    /// The file, so reading a body does not mean listing the folder again.
     pub file: PathBuf,
-    /// The flags in its name, translated to Postio's.
     pub flags: Vec<Flag>,
 }
 
-/// What a folder looks like right now: its messages and its numbers.
 #[derive(Debug, Clone)]
 pub struct Snapshot {
-    /// The messages, lowest number first.
     pub entries: Vec<Entry>,
-    /// This folder's `UIDVALIDITY`.
     pub validity: u32,
-    /// The next number that will be handed out.
     pub next: u32,
 }
 
-/// A maildir tree on this machine.
 #[derive(Debug, Clone)]
 pub struct LocalStore {
     root: PathBuf,
@@ -54,40 +35,27 @@ pub struct LocalStore {
 }
 
 impl LocalStore {
-    /// A store rooted at `root`, in whichever layout it turns out to be.
-    ///
-    /// **Stated, not guessed**: the layout is read off the tree once, here,
-    /// rather than each caller assuming one. A root with dot-prefixed
-    /// children beside its own `cur/new/tmp` is Maildir++ (Dovecot, `~/Mail`
-    /// as one flat directory); anything else is the fs layout, where folders
-    /// are ordinary nested directories.
+    /// The layout is read off the tree once: dot-prefixed children beside the root's `cur/new/tmp`
+    /// mean Maildir++; otherwise folders are nested directories.
     pub fn open(root: impl Into<PathBuf>) -> Result<Self, String> {
         let root = root.into();
         Self::looks_like_a_maildir(&root)?;
         Ok(Self::at(root))
     }
 
-    /// A store rooted at `root`, unchecked.
-    ///
-    /// For a caller that will report an unreadable tree itself, at the moment
-    /// it tries to read it. The layout is still read off the tree here — a
-    /// directory that is not there is simply not Maildir++.
+    /// Unchecked, for a caller that reports an unreadable tree itself.
     pub fn at(root: impl Into<PathBuf>) -> Self {
         let root = root.into();
         let maildirpp = root.join("cur").is_dir() && has_dotted_child(&root);
         Self { root, maildirpp }
     }
 
-    /// Where this store is.
     pub fn root(&self) -> &Path {
         &self.root
     }
 
-    /// Whether `root` is a maildir at all, and what is wrong with it if not.
-    ///
-    /// The message is the one a person reads in the Add Account sheet, so it
-    /// says which directory and what was missing from it — a `~/Downloads`
-    /// picked by mistake must not present itself as an account with no mail.
+    /// The message is shown in the Add Account sheet, so it names the directory and what is
+    /// missing: a `~/Downloads` picked by mistake must not look like an account with no mail.
     pub fn looks_like_a_maildir(root: &Path) -> Result<(), String> {
         if !root.is_dir() {
             return Err(format!("{} is not a directory.", root.display()));
@@ -110,15 +78,13 @@ impl LocalStore {
         }
     }
 
-    /// The folders, `INBOX` first.
     pub fn folders(&self) -> Result<Vec<Folder>, BackendError> {
         let listed = self
             .client()
             .list_maildirs()
             .map_err(|error| unreadable("listing the maildir's folders", error))?;
-        // A folder the walk could not read is left out rather than failing
-        // the listing: the rest are still the person's mail. Counted, never
-        // named, because a folder name is the person's own words.
+        // An unreadable folder is left out rather than failing the listing; counted, never named,
+        // since a folder name is the person's own words.
         if !listed.unreadable.is_empty() {
             tracing::warn!(
                 unreadable = listed.unreadable.len(),
@@ -136,15 +102,12 @@ impl LocalStore {
             })
             .collect();
         folders.sort_by(|left, right| {
-            // Inbox first, then alphabetical — the order every other client
-            // shows; `postio_ui::sidebar` arranges the tree from here.
             (left.path != "INBOX", &left.path).cmp(&(right.path != "INBOX", &right.path))
         });
         folders.dedup_by(|left, right| left.path == right.path);
         Ok(folders)
     }
 
-    /// The folder at `path`, if the store has one.
     pub fn folder(&self, path: &str) -> Result<Folder, BackendError> {
         self.folders()?
             .into_iter()
@@ -154,18 +117,8 @@ impl LocalStore {
             })
     }
 
-    /// Makes the folder `path` names, and answers with it.
-    ///
-    /// **Idempotent, because the trait says the caller wants the folder to
-    /// exist rather than to have made it.** `create_dir_all` is already that,
-    /// which is the whole implementation: two discovery passes over the same
-    /// tree must not turn the second into an error, and a folder that is
-    /// already there keeps the mail in it.
-    ///
-    /// A maildir folder *is* `cur`, `new` and `tmp`. A bare directory would
-    /// list as nothing and read, later, as a folder that lost its mail — so
-    /// the three are what get made, and the folder is not considered created
-    /// until they are all there.
+    /// Idempotent: `create_dir_all` already is. A maildir folder is `cur`, `new` and `tmp`; a bare
+    /// directory would list as nothing and read as a folder that lost its mail.
     pub fn create(&self, path: &str) -> Result<Folder, BackendError> {
         let directory = self.directory_for(path)?;
         for subdir in ["cur", "new", "tmp"] {
@@ -180,21 +133,9 @@ impl LocalStore {
         })
     }
 
-    /// Where a folder named `path` would live — the inverse of
-    /// [`name_of`](Self::name_of), and the only place the layout decides
-    /// anything about a folder that does not exist yet.
-    ///
-    /// Maildir++ spells nesting with dots inside one flat, dot-prefixed name
-    /// beside the root's own `cur/new/tmp`; the fs layout nests ordinary
-    /// directories. Getting this the wrong way round makes a folder the next
-    /// `LIST` cannot see, which looks exactly like a create that silently did
-    /// nothing.
-    ///
-    /// A component that is `.`, `..` or empty is **refused rather than
-    /// normalised**. `path` arrives from a mailbox role, so a traversal here
-    /// is a bug rather than an attack — but the failure mode is making
-    /// directories outside the tree the user pointed at, and "the role
-    /// resolved to a name Postio will not make" is a better answer than that.
+    /// Maildir++ nests with dots in one flat name; the fs layout nests directories. Wrong way round
+    /// makes a folder the next `LIST` cannot see. A component that is `.`, `..` or empty is
+    /// refused, not normalised, so nothing is made outside the user's tree.
     fn directory_for(&self, path: &str) -> Result<PathBuf, BackendError> {
         let parts: Vec<&str> = path.split('/').filter(|part| !part.is_empty()).collect();
         let refuse = |reason: &str| BackendError::Rejected {
@@ -221,12 +162,8 @@ impl LocalStore {
         }
     }
 
-    /// Everything in `folder`, numbered.
-    ///
-    /// Reads the folder's UID list, numbers anything new, forgets the names
-    /// that have gone and writes it back — so the numbers this answers with
-    /// are the numbers the next run will answer with, which is the whole
-    /// reason a second pass does not import the mailbox again.
+    /// Numbers anything new and forgets gone names, then writes it back, so the next run answers
+    /// with the same numbers and a second pass does not import again.
     pub fn snapshot(&self, folder: &Folder, fresh_validity: u32) -> Result<Snapshot, BackendError> {
         let maildir = Maildir::from_path(folder.directory.display().to_string().as_str());
         let listed = self
@@ -252,9 +189,8 @@ impl LocalStore {
         uids.retain(&names);
         entries.sort_by_key(|entry| entry.uid);
 
-        // Best effort, deliberately: a folder Postio cannot write to is still
-        // one it can read, and failing to save costs numbers that move on the
-        // next run — not mail that cannot be opened now.
+        // Best effort: a folder Postio cannot write is still readable, and a failed save costs
+        // numbers that move next run.
         if let Err(error) = uids.save(&folder.directory) {
             tracing::warn!(%error, "a maildir folder's UID list could not be saved");
         }
@@ -266,7 +202,6 @@ impl LocalStore {
         })
     }
 
-    /// One message's bytes.
     pub fn read(&self, file: &Path) -> Result<Vec<u8>, BackendError> {
         std::fs::read(file).map_err(|error| BackendError::Io {
             context: "reading a message out of the maildir".to_owned(),
@@ -274,13 +209,8 @@ impl LocalStore {
         })
     }
 
-    /// Replaces the flags on one message, and reports what they are now.
-    ///
-    /// A maildir keeps flags in the filename, so this is a rename. Letters
-    /// Postio has no name for — `P`, another client's keywords — are left
-    /// where they are: this replaces the five it understands, not the file's
-    /// whole info section, because dropping a keyword Postio cannot read
-    /// would be losing another client's data on a plain "mark as read".
+    /// A rename. Only the five letters Postio understands are replaced: dropping another client's
+    /// keyword on "mark as read" would lose its data.
     pub fn set_flags(&self, folder: &Folder, id: &str, flags: &[Flag]) -> Result<(), BackendError> {
         let client = self.client();
         let maildir = self.maildir(folder);
@@ -294,7 +224,6 @@ impl LocalStore {
             .map_err(|error| unreadable("clearing a message's flags", error))
     }
 
-    /// The flags on one message, read back off its filename.
     pub fn flags(&self, folder: &Folder, id: &str) -> Result<Vec<Flag>, BackendError> {
         let (_path, _subdir, flags) = self
             .client()
@@ -303,7 +232,6 @@ impl LocalStore {
         Ok(flags_of(&flags))
     }
 
-    /// Moves one message into another folder.
     pub fn move_to(&self, folder: &Folder, id: &str, target: &Folder) -> Result<(), BackendError> {
         self.client()
             .r#move(id, self.maildir(folder), self.maildir(target), None)
@@ -311,7 +239,6 @@ impl LocalStore {
             .map_err(|error| unreadable("moving a message between folders", error))
     }
 
-    /// Copies one message into another folder, leaving the original alone.
     pub fn copy_to(&self, folder: &Folder, id: &str, target: &Folder) -> Result<(), BackendError> {
         self.client()
             .copy(id, self.maildir(folder), self.maildir(target), None)
@@ -319,18 +246,14 @@ impl LocalStore {
             .map_err(|error| unreadable("copying a message between folders", error))
     }
 
-    /// Removes one message's file for good.
     pub fn delete(&self, folder: &Folder, id: &str) -> Result<(), BackendError> {
         self.client()
             .delete_entry(self.maildir(folder), id)
             .map_err(|error| unreadable("deleting a message", error))
     }
 
-    /// Writes a new message into a folder, and says what it was called.
-    ///
-    /// It lands in `cur` when it is already read and in `new` otherwise —
-    /// which is what makes a message Postio stored look, to every other
-    /// client sharing this tree, exactly like one delivered there.
+    /// Lands in `cur` when read and `new` otherwise, so every other client sharing the tree sees a
+    /// delivered message.
     pub fn store(
         &self,
         folder: &Folder,
@@ -358,18 +281,13 @@ impl LocalStore {
         client
     }
 
-    /// What Postio calls the folder living at `directory`.
-    ///
-    /// The root is `INBOX` whichever layout this is: in Maildir++ that is what
-    /// the root *is*, and in the fs layout a root holding mail of its own is
-    /// the inbox of the account somebody just pointed at it.
+    /// The root is `INBOX` in either layout.
     fn name_of(&self, directory: &Path) -> Option<String> {
         let relative = directory.strip_prefix(&self.root).ok()?;
         let mut parts: Vec<String> = Vec::new();
         for part in relative.components() {
             let part = part.as_os_str().to_str()?;
             let part = part.strip_prefix('.').unwrap_or(part);
-            // Maildir++ spells nesting with dots inside one flat name.
             parts.extend(part.split('.').map(str::to_owned));
         }
         if parts.is_empty() || parts.iter().all(String::is_empty) {
@@ -382,12 +300,7 @@ impl LocalStore {
     }
 }
 
-/// Maildir's info letters as Postio's flags.
-///
-/// `Trashed` is `\Deleted`; `Passed` and custom keywords become nothing,
-/// because Postio's flag set is IMAP's and neither has an IMAP meaning to
-/// give them. Dropping them here is lossless in the direction that matters —
-/// they stay in the filename, which is where the maildir keeps them.
+/// `Trashed` is `\Deleted`; `Passed` and custom keywords map to nothing but stay in the filename.
 fn flags_of(flags: &MaildirFlags) -> Vec<Flag> {
     [
         (MaildirFlag::Seen, Flag::Seen),
@@ -402,7 +315,6 @@ fn flags_of(flags: &MaildirFlags) -> Vec<Flag> {
     .collect()
 }
 
-/// Postio's flags as maildir's, for a rename.
 fn maildir_flags(flags: &[Flag]) -> MaildirFlags {
     let mut out = MaildirFlags::default();
     for flag in flags {
@@ -412,8 +324,6 @@ fn maildir_flags(flags: &[Flag]) -> MaildirFlags {
             Flag::Flagged => MaildirFlag::Flagged,
             Flag::Draft => MaildirFlag::Draft,
             Flag::Deleted => MaildirFlag::Trashed,
-            // `\\Recent` is a per-session server signal with nowhere to live
-            // in a filename, and a keyword is not one of the five.
             _ => continue,
         };
         out.extend(MaildirFlags::from_iter([letter]));
@@ -421,7 +331,6 @@ fn maildir_flags(flags: &[Flag]) -> MaildirFlags {
     out
 }
 
-/// The five Postio knows about, minus the ones being kept.
 fn removable(kept: &[Flag]) -> Vec<Flag> {
     [
         Flag::Seen,
@@ -458,14 +367,12 @@ fn unreadable(context: &str, error: impl std::fmt::Display) -> BackendError {
 mod tests {
     use super::*;
 
-    /// Builds `cur`, `new` and `tmp` under `directory`.
     fn maildir(directory: &Path) {
         for subdir in ["cur", "new", "tmp"] {
             std::fs::create_dir_all(directory.join(subdir)).unwrap();
         }
     }
 
-    /// Drops a message into a folder's `cur`, returning its filename.
     fn message(folder: &Path, id: &str, info: &str) -> String {
         let name = if info.is_empty() {
             format!("{id}.host")
@@ -541,9 +448,6 @@ mod tests {
         maildir(&tree.path().join(".Archives"));
         maildir(&tree.path().join(".Archives.2026"));
 
-        // Which layout this is, is settled by the names that come back:
-        // read as fs, the dotted children are hidden and nothing but the
-        // inbox would be listed at all.
         let store = LocalStore::open(tree.path()).unwrap();
         let names: Vec<String> = store
             .folders()
@@ -583,9 +487,6 @@ mod tests {
         assert_eq!(first.entries.len(), 2);
         assert_eq!(first.next, 3, "two messages consume UIDs 1 and 2");
 
-        // A second run, through a store opened from scratch: this is the
-        // acceptance criterion — running it twice must not duplicate mail,
-        // and it cannot duplicate mail if the numbers do not move.
         let store = LocalStore::open(tree.path()).unwrap();
         let again = store.snapshot(&store.folder("INBOX").unwrap(), 99).unwrap();
 
@@ -609,9 +510,8 @@ mod tests {
         let store = LocalStore::open(tree.path()).unwrap();
         let before = store.snapshot(&store.folder("INBOX").unwrap(), 7).unwrap();
 
-        // Marking a message read renames the file — the flags live in its
-        // name — so a UID list keyed on the whole name would hand this
-        // message a second number and the mailbox would show it twice.
+        // Marking read renames the file, so a UID list keyed on the whole name would number it
+        // twice.
         std::fs::rename(
             tree.path().join("cur").join("1000.host"),
             tree.path().join("cur").join("1000.host:2,S"),
@@ -663,8 +563,6 @@ mod tests {
     fn the_letters_in_a_filename_become_postio_flags() {
         let tree = tempfile::tempdir().unwrap();
         maildir(tree.path());
-        // `P` (passed) and `X` (an opaque letter another client wrote) have
-        // no IMAP counterpart, and must not become one.
         message(tree.path(), "1000", "DFRSTPX");
 
         let store = LocalStore::open(tree.path()).unwrap();

@@ -1,25 +1,12 @@
-//! A handler that holds the main loop past the frame budget is reported,
-//! with the action that ran just before it.
-//!
-//! The unit tests in `jank.rs` prove the judgement; this proves the probe is
-//! actually watching -- that a heartbeat on a real main loop notices a
-//! handler blocking it, which is the stall a frame clock never sees.
-//!
-//! Skips without a display. Nothing here touches the network.
-
 use std::time::{Duration, Instant};
 
+use gtk::glib;
 use gtk::prelude::*;
-use gtk::{gdk, glib};
 use postio_widgets::jank;
 
 use postio_test_support::logs::Captured;
 
 pub fn a_blocked_main_loop_is_reported_with_the_action_before_it() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let captured = Captured::default();
     let subscriber = tracing_subscriber::fmt()
         .with_writer(captured.clone())
@@ -34,15 +21,12 @@ pub fn a_blocked_main_loop_is_reported_with_the_action_before_it() {
     window.present();
 
     jank::note_action("archive");
-    // The shape of the bug this exists to find: a key handler that reads the
-    // store on the main thread.
     glib::idle_add_local_once(|| std::thread::sleep(Duration::from_millis(40)));
 
     let context = glib::MainContext::default();
     let deadline = Instant::now() + postio_test_support::scaled(Duration::from_millis(3000));
-    // Wait for the main loop's report, not merely for "archive": under load a
-    // slow *frame* is reported with the same action first, and stopping there
-    // left the stall this case is about unread.
+    // Wait for the main loop's report: under load a slow frame is reported with the same action
+    // first.
     while !captured.text().contains("main loop") && Instant::now() < deadline {
         context.iteration(true);
     }

@@ -1,14 +1,3 @@
-//! Reply/reply-all/forward threading, against the corpus's awkward cases.
-//!
-//! postio-p8q's whole point: a wrong `In-Reply-To` or a dropped `References`
-//! entry breaks the conversation in *somebody else's* mail client, silently,
-//! which is exactly what the `list-thread-*` fixtures and `broken-references`
-//! exist to catch before that happens for real. Each test here builds a reply
-//! to a fixture with [`reply::reply`], builds the outgoing message with
-//! [`outgoing::build`] as if it were about to be sent, and re-parses it —
-//! proving the headers as they would actually appear on the wire, not just
-//! the intermediate `Draft`.
-
 #![cfg(feature = "test-corpus")]
 
 use postio_model::account::{Account, Identity};
@@ -160,7 +149,6 @@ fn forwarding_carries_no_threading_headers_at_all() {
     let draft = reply::forward(&source, &account, reply::plain_forward(&source));
     assert!(draft.in_reply_to.is_none());
 
-    // A forward starts a new conversation, so nothing is passed as the parent.
     let built = outgoing::build(&draft, &identity, &[], None, None);
     let sent = mime::parse(&built.raw);
     assert!(sent.in_reply_to.is_none());

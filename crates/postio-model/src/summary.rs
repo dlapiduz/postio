@@ -1,70 +1,40 @@
-//! A digest's summary: statements, each ending in a reference to the message
-//! it came from, pinned to a passage of that message (spec 007 FR-172 to
-//! FR-175, research R16).
-//!
-//! It is the one place Focus shows text a model wrote, so the shape carries
-//! the guarantees:
-//!
-//! - **Plain text.** A statement is a `String` shown as characters. Nothing
-//!   here can hold markup, a link or an image, so a model talked into
-//!   writing `<a href=…>` produces those characters and nothing live
-//!   (FR-174, ADR 0009 Q4).
-//! - **Every statement has a reference.** A reference is a message and an
-//!   excerpt of that message's own text, verbatim, found by a byte search
-//!   when the summary is written and again when it is shown. A statement
-//!   whose reference does not resolve is not kept (FR-173).
-//! - **Numbered by the digest.** A reference's number is its message's place
-//!   among the messages the summary was written from -- the digest's, oldest
-//!   first, those whose bodies were here -- so "cited as 6" names the same
-//!   email wherever it appears in one summary.
+//! A digest's summary: the one place Focus shows text a model wrote. Statements are plain
+//! `String`s, so no markup, link or image can be live (ADR 0009 Q4); each carries a message
+//! reference with a verbatim excerpt, found by byte search when written and when shown, and an
+//! unresolved statement is not kept. A reference's number is its message's place among the
+//! summary's source messages.
 
 use serde::{Deserialize, Serialize};
 
 use crate::ids::MessageId;
 
-/// A digest's summary, as it is stored with its delivery and shown.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DigestSummary {
-    /// The statements, in the order they are read, grouped by topic.
     pub statements: Vec<SummaryStatement>,
-    /// How many messages it was written from.
     pub messages: u32,
-    /// How many people sent them.
     pub senders: u32,
 }
 
-/// One statement of a summary.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SummaryStatement {
-    /// The topic it is grouped under: "Your town".
     pub topic: String,
-    /// What it says, as plain characters.
     pub text: String,
-    /// Where it came from.
     pub reference: SummaryReference,
 }
 
-/// What a statement cites: a message, and a passage of it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SummaryReference {
-    /// Its number: the message's place among those the summary was written
-    /// from, oldest first, from 1.
     pub number: u32,
-    /// The message.
     pub message: MessageId,
-    /// The cited passage, verbatim from the message's own text: what the
-    /// email view highlights.
     pub excerpt: String,
 }
 
 impl DigestSummary {
-    /// Whether it says anything: a summary with no statement left is no
-    /// summary, and the digest opens on its plain list (FR-175).
+    /// A summary with no statement left is no summary, and the digest opens on its plain list.
     pub fn is_empty(&self) -> bool {
         self.statements.is_empty()
     }
 
-    /// The topics, each once, in the order they are first read.
     pub fn topics(&self) -> Vec<&str> {
         let mut topics: Vec<&str> = Vec::new();
         for statement in &self.statements {
@@ -76,9 +46,8 @@ impl DigestSummary {
         topics
     }
 
-    /// The digest row's first line (FR-124): "Summary of 14 messages from
-    /// 6 senders: rail funding vote, …" -- the topics, in order, after the
-    /// counts. `None` when there is nothing to summarise.
+    /// The digest row's first line: "Summary of 14 messages from 6 senders: rail funding vote, …".
+    /// `None` when there is nothing to summarise.
     pub fn line(&self) -> Option<String> {
         if self.is_empty() {
             return None;

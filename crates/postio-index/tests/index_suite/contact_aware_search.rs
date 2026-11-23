@@ -1,12 +1,3 @@
-//! `from:` and `to:` that know people, off unless asked
-//! (specs/011-focus-contacts S4, plan 1.3).
-//!
-//! A person writes `from:lovelace` meaning her, not the words that happen to
-//! be in a header. With contact-aware search on, a word that names a contact
-//! finds the mail of every address they own, and `from:@Group` finds the mail
-//! of every member; off, both mean exactly what they always have, so a
-//! frontend that has not adopted people sees the same results as before.
-
 use chrono::{TimeZone, Utc};
 
 use postio_index::{SearchRequest, search};
@@ -48,7 +39,6 @@ async fn world() -> World {
             .expect("store");
         message.id
     };
-    // None of the header names say "lovelace": only the contact does.
     let from_work = store(Some("A. L."), "ada@work.example", "me@example.test", 9).await;
     let from_home = store(Some("ada"), "ada@home.example", "me@example.test", 8).await;
     let to_work = store(None, "me@example.test", "ada@work.example", 7).await;
@@ -128,9 +118,6 @@ async fn off_from_means_the_words_in_the_header_and_nothing_more() {
     );
 }
 
-/// A group named with `@` is explicit syntax, not a word a header might hold,
-/// so it means the group whether or not the frontend has adopted people
-/// (specs/011-focus-contacts S8): Linux has `from:@Group` too.
 #[tokio::test]
 async fn off_from_at_a_group_still_means_the_group() {
     let world = world().await;

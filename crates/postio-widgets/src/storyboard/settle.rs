@@ -1,8 +1,4 @@
-//! Knowing when a step has finished drawing (research R4).
-//!
-//! A fixed sleep is either too short, and flaky, or too long, and slow, and
-//! it can never report a jump. So frames are sampled on the window's own
-//! frame clock and the step is settled when they stop changing.
+//! Frames are sampled on the window's frame clock and a step is settled when they stop changing.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -11,17 +7,12 @@ use std::time::{Duration, Instant};
 use gtk::gdk;
 use gtk::prelude::*;
 
-/// How long and how often to look.
 #[derive(Debug, Clone)]
 pub struct Settings {
-    /// Consecutive identical samples that make a frame settled.
     pub identical: usize,
-    /// Sample every `stride`th frame-clock tick. Capture has a cost, so a
-    /// slow machine can look less often.
+    /// Capture has a cost, so a slow machine can look less often.
     pub stride: u32,
-    /// How long to keep watching a settled frame for a further change.
     pub watch: Duration,
-    /// How long to wait for the frame to settle at all.
     pub max: Duration,
 }
 
@@ -36,32 +27,14 @@ impl Default for Settings {
     }
 }
 
-/// What watching the step showed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Verdict {
-    /// The frame stopped changing, `ms` after sampling began, and stayed so.
-    Settled {
-        /// Milliseconds from the start of sampling.
-        ms: u64,
-    },
-    /// It changed again after settling; `frames` pictures are kept.
-    Jumped {
-        /// Pictures kept.
-        frames: usize,
-    },
-    /// A sampled frame was empty or one colour; `frames` pictures are kept.
-    Blanked {
-        /// Pictures kept.
-        frames: usize,
-    },
-    /// It never stopped changing within [`Settings::max`].
-    Unsettled {
-        /// Milliseconds it was watched for.
-        ms: u64,
-    },
+    Settled { ms: u64 },
+    Jumped { frames: usize },
+    Blanked { frames: usize },
+    Unsettled { ms: u64 },
 }
 
-/// The step's frame and what was seen on the way to it.
 #[derive(Debug)]
 pub struct Settled {
     /// What watching showed.
@@ -72,19 +45,16 @@ pub struct Settled {
     pub hash: String,
     /// Hex blake3 of every sample, in order.
     pub hashes: Vec<String>,
-    /// The pictures a `Jumped` or `Blanked` verdict names.
     pub extra: Vec<gdk::Texture>,
 }
 
-/// One sampled frame.
 struct Frame {
     texture: gdk::Texture,
     hash: String,
     blank: bool,
 }
 
-/// Hash a frame's pixels, and say whether there is nothing in it: no
-/// pixels, or every pixel the same.
+/// `blank` is set when there are no pixels or every pixel is the same.
 fn frame(texture: gdk::Texture) -> Frame {
     let mut downloader = gdk::TextureDownloader::new(&texture);
     downloader.set_format(gdk::MemoryFormat::R8g8b8a8Premultiplied);
@@ -100,8 +70,7 @@ fn frame(texture: gdk::Texture) -> Frame {
     }
 }
 
-/// A one-pixel transparent picture, for a window that had nothing to draw:
-/// the step still has a frame, and it is visibly empty.
+/// A visibly empty frame for a window with nothing to draw.
 fn empty_texture(width: i32, height: i32) -> gdk::Texture {
     let (width, height) = (width.max(1), height.max(1));
     let pixels = gtk::glib::Bytes::from_owned(vec![0u8; (width * height * 4) as usize]);
@@ -119,7 +88,6 @@ struct Sampling {
     settings: Settings,
     started: Instant,
     ticks: u32,
-    /// Every sample's hash, in order.
     hashes: Vec<String>,
     last: Option<Frame>,
     run: usize,
@@ -133,7 +101,6 @@ impl Sampling {
         self.started.elapsed().as_millis() as u64
     }
 
-    /// Take one sample on a frame-clock tick.
     fn tick(&mut self, window: &gtk::Window) {
         if self.done.is_some() {
             return;
@@ -158,7 +125,6 @@ impl Sampling {
     fn sample(&mut self, frame: Frame) {
         self.hashes.push(frame.hash.clone());
         if let Some((settled, at)) = &self.settled {
-            // Watching a settled frame.
             if frame.blank {
                 self.extra.push(frame.texture.clone());
                 self.done = Some(Verdict::Blanked {
@@ -206,12 +172,8 @@ impl Sampling {
     }
 }
 
-/// Watch `window` until its picture settles.
-///
-/// Turns the main loop, so the window's frame clock runs; the sampler is a
-/// tick callback on it. The step's frame is the settled one; after a jump it
-/// is the one the window ended on, with the settled frame before it among
-/// `extra`.
+/// Turns the main loop so the frame clock runs. After a jump the frame is the one the window
+/// ended on, with the settled one in `extra`.
 pub fn settle(window: &gtk::Window, settings: &Settings) -> Settled {
     let sampling = Rc::new(RefCell::new(Sampling {
         settings: settings.clone(),
@@ -235,9 +197,8 @@ pub fn settle(window: &gtk::Window, settings: &Settings) -> Settled {
         }
     });
 
-    // A blocking iteration lets the frame clock tick; the heartbeat is what
-    // guarantees it returns. If the clock stops altogether (a compositor
-    // that has stopped presenting) the step still ends, as unsettled.
+    // A blocking iteration lets the frame clock tick; the heartbeat guarantees it returns, so a
+    // stopped clock still ends the step as unsettled.
     let context = gtk::glib::MainContext::default();
     let heartbeat = gtk::glib::timeout_add_local(Duration::from_millis(10), || {
         gtk::glib::ControlFlow::Continue
@@ -267,8 +228,7 @@ pub fn settle(window: &gtk::Window, settings: &Settings) -> Settled {
     };
     let mut extra = std::mem::take(&mut sampling.extra);
     let verdict = match verdict {
-        // Nothing was ever drawable: the step has no picture, which is a
-        // blank, and the blank picture is kept.
+        // Nothing was ever drawable: a blank, and the blank picture is kept.
         Verdict::Unsettled { .. } if sampling.hashes.is_empty() => {
             extra.push(texture.clone());
             Verdict::Blanked { frames: 1 }

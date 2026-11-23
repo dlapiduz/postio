@@ -118,9 +118,8 @@ def main() -> int:
     for path in paths:
         date = dates.get(path)
         if date is None:
-            # Added but not yet committed (working-tree-only in a test
-            # fixture, or a file staged in the same run that built this
-            # cache). Nothing to restore it to; leave the checkout mtime.
+            # Added but not committed (a test fixture, or staged in the same run that built this
+            # cache): nothing to restore it to.
             untracked_in_history += 1
             continue
         timestamp = datetime.fromisoformat(date).astimezone(timezone.utc).timestamp()

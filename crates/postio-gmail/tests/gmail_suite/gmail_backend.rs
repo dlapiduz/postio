@@ -1,9 +1,3 @@
-//! The adapter against a scripted Gmail REST server on loopback (#546).
-//!
-//! Each test states what the server answers per method+path prefix, and
-//! the assertions read both what came back through the seam and what the
-//! adapter sent. Nothing touches the network beyond 127.0.0.1.
-
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
@@ -17,8 +11,6 @@ use postio_account::cancel::CancelToken;
 use postio_gmail::GmailBackend;
 use postio_model::{Flag, FlagSet, MailboxRole, RemoteId, Uid};
 
-/// `(method, path-prefix, response-json)` rules, matched in order; a rule
-/// is consumed when matched.
 struct ScriptedServer {
     port: u16,
     rules: Arc<Mutex<VecDeque<(String, String, String)>>>,
@@ -235,9 +227,6 @@ async fn fetched_headers_carry_the_id_verbatim_and_seen_is_inverted_unread() {
 
 #[tokio::test]
 async fn the_metadata_already_says_what_the_promoted_headers_say() {
-    // Gmail's metadata carries every header, so what `List-Unsubscribe`,
-    // `Precedence` and `Auto-Submitted` say is known from the request a
-    // sync already makes, whichever sync it is (spec 007, research R8).
     let server = ScriptedServer::start();
     server.on("GET", "/gmail/v1/users/me/labels", LABELS);
     server.on(

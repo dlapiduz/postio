@@ -1,74 +1,25 @@
-//! What changed between two configurations.
-//!
-//! Reapplying everything on every keystroke would be visibly slow, so a
-//! reload names the sections that actually moved: the keymap only rebuilds on
-//! `keys`, the message list only re-measures its rows on `ui`, the sync
-//! engine only re-plans on `sync`. A consumer that cares about one section
-//! reads one field and ignores the rest.
-//!
-//! [`ConfigChanged::between`] is a pure comparison — it does not know about
-//! the watcher or the event bus. The natural place to call it is right after
-//! [`crate::live::LiveConfig::apply`] reports [`crate::live::Reload::Applied`],
-//! with the configuration from just before the call still in hand:
-//!
-//! ```
-//! use postio_config::change::ConfigChanged;
-//! use postio_config::live::{LiveConfig, Reload};
-//! use postio_config::validate;
-//! use std::path::Path;
-//!
-//! let mut live = LiveConfig::new(Path::new("config.toml"));
-//! let before = live.config().clone();
-//! let reload = live.apply(validate::check_str("[ui]\ndensity = \"compact\"\n"));
-//! let changed = match reload {
-//!     Reload::Applied => ConfigChanged::between(&before, live.config()),
-//!     _ => ConfigChanged::default(),
-//! };
-//! assert!(changed.ui);
-//! assert!(!changed.keys);
-//! ```
-
 use serde::{Deserialize, Serialize};
 
 use crate::Config;
 
-/// Which sections of the configuration moved.
-///
-/// Consumers subscribe to what they care about: the keymap rebuilds on
-/// `keys`, the list re-measures its rows on `ui`, the sync engine re-plans on
-/// `sync`. Nothing else has to do anything.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConfigChanged {
-    /// `[ui]` — density, theme, hover actions, key hints.
     pub ui: bool,
-    /// `[keys]` — bindings, so the keymap must be rebuilt.
     pub keys: bool,
-    /// `[sync]` — IDLE, polling, connection budget.
     pub sync: bool,
-    /// `[saved_searches]` — the saved queries in the sidebar.
     pub filters: bool,
-    /// `[logging]` — the level, so a running app can be made louder without
-    /// being restarted. This is the one section whose whole point is to be
-    /// changed while something is going wrong.
+    /// A running app can be made louder without a restart.
     pub logging: bool,
-    /// `[compose]` — where a signature sits relative to a quote.
     pub compose: bool,
-    /// `[storage]` — the disk ceiling, so lowering it can take effect without
-    /// a restart. Raising it is what a user does when eviction has started
-    /// costing them refetches, and they should not have to restart to stop it.
+    /// Lowering the ceiling takes effect without a restart.
     pub storage: bool,
-    /// `[reader]` — the reading pane's zoom, applied to the open reader.
     pub reader: bool,
-    /// `[focus]` — filtering and the digest rules, for Postio Focus.
     pub focus: bool,
 }
 
 impl ConfigChanged {
-    /// Whether any subsystem needs to do anything at all.
-    ///
-    /// A save that only touches a top-level key this build does not
-    /// recognize — preserved verbatim, never dropped — compares equal on
-    /// every field above and must not repaint anything.
+    /// A save that only touches a top-level key this build does not recognise compares equal on
+    /// every field and must not repaint anything.
     pub fn any(&self) -> bool {
         self.ui
             || self.keys
@@ -81,14 +32,7 @@ impl ConfigChanged {
             || self.focus
     }
 
-    /// Compare two configurations section by section.
-    ///
-    /// Each field is a whole-section equality check rather than a per-key
-    /// diff: a section is small and cheap to compare as a unit, and every
-    /// consumer today reacts at section granularity anyway (rebuild the
-    /// keymap, re-measure rows, re-plan sync). Changing one key inside a
-    /// section — `[ui].density`, say — therefore reports only that section,
-    /// which is the granularity consumers actually need.
+    /// Whole-section equality: every consumer reacts at section granularity.
     pub fn between(old: &Config, new: &Config) -> Self {
         ConfigChanged {
             ui: old.ui != new.ui,
@@ -128,8 +72,6 @@ mod tests {
 
     #[test]
     fn changing_focus_touches_only_focus() {
-        // Focus's own section: filtering, the never-filter list and the
-        // digest rules, applied to a running Focus (spec 007 T060).
         let old = config("[focus]\nfiltering = true\n");
         let new = config("[focus]\nfiltering = false\n");
 
@@ -195,9 +137,6 @@ mod tests {
 
     #[test]
     fn raising_the_log_level_is_a_change_a_subsystem_watches() {
-        // The whole point of `[logging]` being a setting rather than only an
-        // environment variable: turning it up has to reach a process that is
-        // already running and already misbehaving.
         let old = Config::default();
         let new = config("[logging]\nlevel = \"debug\"\n");
 

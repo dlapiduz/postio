@@ -1,19 +1,11 @@
-//! The search seed's attachment files, built in memory (spec 010 T002).
-//!
-//! Five formats, each a few hundred bytes of minimal valid structure, each
-//! saying "Atlas budget" where an extractor will look: the PDF's page text,
-//! the spreadsheet's shared strings, the document's paragraphs, the deck's
-//! slides, the note's lines. No dependency builds them: an OOXML package is
-//! a zip, and a stored-only zip is a few lines of header bytes; a PDF is
-//! text with an offset table.
+//! Five formats of minimal valid structure, each saying "Atlas budget" where an extractor will
+//! look.
+//! No dependency builds them: an OOXML package is a stored-only zip, and a PDF is text with an
+//! offset table.
 
-/// One file the seed attaches.
 pub struct SearchFile {
-    /// The name a message shows it under.
     pub name: &'static str,
-    /// Its MIME type.
     pub mime: &'static str,
-    /// Its bytes.
     pub bytes: Vec<u8>,
 }
 
@@ -21,7 +13,6 @@ const XLSX: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.
 const DOCX: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 const PPTX: &str = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
 
-/// Every file the search seed stores, in a fixed order.
 pub fn search_files() -> Vec<SearchFile> {
     vec![
         SearchFile {
@@ -132,9 +123,6 @@ fn relationships(items: &[(&str, &str, &str)]) -> String {
     text
 }
 
-/// A one-sheet workbook: column A holds the label, column B the number
-/// (blank when it is zero), and every label is a shared string, as a
-/// spreadsheet program writes them.
 fn workbook(sheet: &str, rows: &[(&str, i64)]) -> Vec<u8> {
     let mut strings = String::new();
     let mut cells = String::new();
@@ -201,7 +189,6 @@ fn workbook(sheet: &str, rows: &[(&str, i64)]) -> Vec<u8> {
     ])
 }
 
-/// A word-processing document: one paragraph per line.
 fn document(paragraphs: &[&str]) -> Vec<u8> {
     let body: String = paragraphs
         .iter()
@@ -229,7 +216,6 @@ fn document(paragraphs: &[&str]) -> Vec<u8> {
     ])
 }
 
-/// A presentation: one slide per line, its text in one shape.
 fn deck(slides: &[&str]) -> Vec<u8> {
     let mut parts: Vec<(String, String)> = Vec::new();
     let mut overrides: Vec<(String, &str)> = vec![(
@@ -293,10 +279,8 @@ fn deck(slides: &[&str]) -> Vec<u8> {
     zip(&entries)
 }
 
-/// A PDF with one page per line of text, in Helvetica.
 fn pdf(pages: &[&str]) -> Vec<u8> {
     let count = pages.len();
-    // 1 catalog, 2 pages, 3 font, then a page and its stream per page.
     let mut objects: Vec<String> = vec![
         "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
         format!(
@@ -348,7 +332,6 @@ fn pdf(pages: &[&str]) -> Vec<u8> {
     out
 }
 
-/// A zip archive of stored (uncompressed) entries.
 fn zip(entries: &[(&str, String)]) -> Vec<u8> {
     let mut out = Vec::new();
     let mut directory = Vec::new();
@@ -358,8 +341,6 @@ fn zip(entries: &[(&str, String)]) -> Vec<u8> {
         let offset = out.len() as u32;
         let size = data.len() as u32;
         let length = name.len() as u16;
-        // Local header: signature, version 20, flags 0, method 0 (stored),
-        // DOS time and date, crc, sizes, name length, no extra field.
         out.extend_from_slice(&0x0403_4b50_u32.to_le_bytes());
         out.extend_from_slice(&[20, 0, 0, 0, 0, 0]);
         out.extend_from_slice(&[0, 0, 0x21, 0]);
@@ -370,7 +351,6 @@ fn zip(entries: &[(&str, String)]) -> Vec<u8> {
         out.extend_from_slice(&0_u16.to_le_bytes());
         out.extend_from_slice(name.as_bytes());
         out.extend_from_slice(data);
-        // Its central directory record.
         directory.extend_from_slice(&0x0201_4b50_u32.to_le_bytes());
         directory.extend_from_slice(&[20, 0, 20, 0, 0, 0, 0, 0]);
         directory.extend_from_slice(&[0, 0, 0x21, 0]);
@@ -395,7 +375,6 @@ fn zip(entries: &[(&str, String)]) -> Vec<u8> {
     out
 }
 
-/// CRC-32 (IEEE), bit by bit: the files are small and built once.
 fn crc32(data: &[u8]) -> u32 {
     let mut crc = 0xffff_ffff_u32;
     for byte in data {

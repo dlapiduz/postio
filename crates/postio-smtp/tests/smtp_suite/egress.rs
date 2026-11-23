@@ -1,10 +1,3 @@
-//! The SMTP connector reports every connection to the egress sink (#151).
-//!
-//! Same contract as `postio-account`'s transport, tested the same way: a
-//! loopback listener stands in for the server, so nothing here touches the
-//! network. Success and failure both reach the sink — the log proves the
-//! privacy claim only if it is complete.
-
 use std::sync::{Arc, Mutex};
 
 use postio_model::egress::{EgressEvent, EgressOutcome, EgressSink, EgressSubsystem};
@@ -25,7 +18,6 @@ async fn every_connection_reaches_the_sink_success_and_failure_alike() {
         .await
         .expect("a loopback listener");
     let port = listener.local_addr().expect("an address").port();
-    // Accept and hold whatever arrives, so the connect succeeds.
     tokio::spawn(async move {
         let _held = listener.accept().await;
         std::future::pending::<()>().await;

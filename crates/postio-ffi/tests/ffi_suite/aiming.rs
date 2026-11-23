@@ -1,34 +1,9 @@
-//! The aiming rules mean the same thing on this side of the FFI (#721).
-//!
-//! #589 moved "what does this gesture act on" into `postio_core::aim` so
-//! that two frontends could not answer it differently, and left both as
-//! adapters over it. Proving the *rule* once is easy — `aim`'s own tests do
-//! it. The half a shared function cannot prove is the adapter: reading a
-//! selection, a cursor and a row kind out of whatever model a frontend
-//! keeps. Two adapters can call the same correct function and still
-//! disagree, because they disagree about what they hand it.
-//!
-//! So `postio_core::aim::conformance_cases` is a table, and this is one of
-//! its two readers: each case's rows are delivered into a real
-//! `ListWindow<RowFfi>` — the model this boundary actually serves Swift
-//! from — and the command that comes out is compared against the table.
-//! The classic app's `aiming.rs` filled the GTK list model from the same table
-//! and asserts the same commands. Same rows, same gesture, same command, on
-//! both sides.
-//!
-//! Nothing here touches the network or a display.
-
 use postio_core::aim::{self, Aim, RowKind};
 use postio_core::state::Selection;
 use postio_ffi::RowFfi;
 use postio_model::ids::MessageId;
 use postio_ui::list::ListWindow;
 
-/// A window holding exactly the rows a case describes.
-///
-/// Through `deliver`, not by reaching into the model: the point is that the
-/// *shipped* row type answers `RowFacts` correctly, and a fixture that
-/// bypassed `RowFfi` would prove nothing about the boundary.
 fn window_of(rows: &[(MessageId, RowKind)]) -> ListWindow<RowFfi> {
     let mut window: ListWindow<RowFfi> = ListWindow::new();
     window.reset(rows.len() as u32);
@@ -37,10 +12,6 @@ fn window_of(rows: &[(MessageId, RowKind)]) -> ListWindow<RowFfi> {
         .map(|(id, kind)| {
             let (thread, is_thread) = match kind {
                 RowKind::Thread(thread) => (Some(thread.get()), true),
-                // A message row may still belong to a thread; what makes it a
-                // *message* row is that it does not stand for one. Saying so
-                // here is what keeps `is_thread` load-bearing rather than
-                // inferable from `thread`.
                 RowKind::Message => (None, false),
                 RowKind::Missing => (None, false),
             };
@@ -56,7 +27,6 @@ fn window_of(rows: &[(MessageId, RowKind)]) -> ListWindow<RowFfi> {
     window
 }
 
-/// The parts of a row this test does not care about.
 fn sample_row() -> RowFfi {
     RowFfi {
         id: 0,
@@ -81,9 +51,7 @@ fn sample_row() -> RowFfi {
 #[test]
 fn the_ffi_aims_every_gesture_the_way_the_shared_table_says() {
     for case in aim::conformance_cases() {
-        // A row the case says is `Missing` is one no list holds, so it is
-        // named by the cursor and left out of the window rather than
-        // delivered as something.
+        // A `Missing` row is named by the cursor and left out of the window.
         let held: Vec<(MessageId, RowKind)> = case
             .rows
             .iter()
@@ -109,9 +77,7 @@ fn the_ffi_aims_every_gesture_the_way_the_shared_table_says() {
     }
 }
 
-/// The table has to be exercising the discriminator, not just agreeing with
-/// itself: a `RowFfi` that reported every row as a message would still pass
-/// the loop above if no case depended on a thread row.
+/// A `RowFfi` reporting every row as a message would pass the loop if no case used a thread row.
 #[test]
 fn the_table_actually_distinguishes_a_conversation_row() {
     let thread_cases = aim::conformance_cases()
@@ -130,13 +96,6 @@ fn the_table_actually_distinguishes_a_conversation_row() {
     );
 }
 
-/// The rule reaching the bus, not just the rule being right.
-///
-/// Everything above is pure: it proves `RowFfi` reports what `aim` needs.
-/// What it cannot prove is that `Session::invoke` is wired to any of it —
-/// #589's fourth acceptance criterion, and the reason this issue exists.
-/// So this drives the boundary's own entry point against a real dispatcher
-/// and reads the outcome back out of SQLite.
 mod through_the_boundary {
     use chrono::Utc;
     use postio_core::bridge::Bridge;
@@ -147,8 +106,6 @@ mod through_the_boundary {
     use postio_storage::repository::{MessageRepository, ThreadRepository};
     use postio_storage::test_support;
 
-    /// A session over a store holding one conversation of two messages, with
-    /// the real action handlers on the bus.
     async fn conversation() -> (std::sync::Arc<Session>, Vec<i64>, postio_storage::Store) {
         let database = test_support::memory().await;
         let members = {
@@ -178,8 +135,7 @@ mod through_the_boundary {
         )
         .build();
         let (bridge, _replies) = Bridge::new(bus).expect("a runtime");
-        // Leaked on purpose: the bridge has to outlive the session, and this
-        // process ends with the test.
+        // Leaked: the bridge must outlive the session.
         let bridge = Box::leak(Box::new(bridge));
         let session = Session::open(
             SessionOptions::in_memory_with(database.clone())
@@ -189,11 +145,8 @@ mod through_the_boundary {
         (session, members, database)
     }
 
-    /// Focus's first row, the way the table draws it: open the inbox and
-    /// ask for the row until its page has landed. A session that has only
-    /// opened a list holds no rows, and a cursor pointing at a row nobody
-    /// holds is `RowKind::Missing`, which is deliberately *not* guessed into a
-    /// conversation (#468). The frontend draws, then the user acts.
+    /// A cursor on a row nobody holds is `RowKind::Missing`, deliberately not guessed into a
+    /// conversation (#468).
     async fn first_row(session: &Session) -> FocusRowFfi {
         session.open_focus(FocusScopeFfi::Inbox);
         let deadline = std::time::Instant::now()
@@ -210,7 +163,6 @@ mod through_the_boundary {
         }
     }
 
-    /// Whether the store has this message marked read.
     async fn is_seen(database: &postio_storage::Store, message: i64) -> bool {
         let connection = database.connect().await.expect("a connection");
         MessageRepository::new(&connection)
@@ -235,10 +187,8 @@ mod through_the_boundary {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn flagging_a_conversation_row_flags_its_latest_message_only() {
-        // Spec 013 D2: on a collapsed row, flag acts like reply -- on the
-        // latest message, the one the row draws -- while archive, label and
-        // the rest act on the whole thread. Driven through `invoke` against
-        // the real handlers, so the scope rule is proven to reach the bus.
+        // On a collapsed row flag acts on the latest message, archive and label on the whole thread
+        // (spec 013).
         let (session, members, database) = conversation().await;
         let row = first_row(&session).await;
         assert!(
@@ -252,8 +202,6 @@ mod through_the_boundary {
             "the row draws one of the conversation's messages"
         );
 
-        // The cursor on the row -- the list opens with it there (C30) --
-        // and nothing marked.
         session.invoke("flag");
 
         let flagged = settle_until(async || is_flagged(&database, latest).await).await;
@@ -271,8 +219,7 @@ mod through_the_boundary {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn an_id_this_build_does_not_know_is_ignored_rather_than_fatal() {
-        // It arrives from another process. A boundary that panicked on a
-        // typo would be one Swift could crash.
+        // Arrives from another process; a panic on a typo would crash Swift.
         let (session, _members, _database) = conversation().await;
         session.invoke("no_such_command");
         session.invoke("");
@@ -296,26 +243,11 @@ mod through_the_boundary {
         done().await
     }
 
-    // --- the bus a session builds for itself (user report) ----------------------
-
-    /// A session opened the way the application opens it: no bus supplied.
-    ///
-    /// **This is the shape every real Postio runs in**, and until now no test
-    /// used it for a verb. Every case above hands the session a bus built with
-    /// `actions::wire`, so all of them exercised a bus the shipped application
-    /// never has.
+    /// No bus supplied, the shape every real Postio runs in; the cases above use `actions::wire`.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_session_that_was_given_no_bus_still_runs_its_verbs() {
-        // The report was "emails are not marked read in the UI when open for the
-        // dwell time". The dwell was innocent: it armed, it fired, and it sent
-        // `MarkReadOnDwell` into a bus whose handler was `|_, _| async {}` —
-        // received and dropped. So was every other verb that is not cursor
-        // movement or selection: archive, flag, delete, undo, mark read.
-        //
-        // `dwell.rs` asks the neighbouring question and cannot see this one:
-        // it hands the session a bus built with `actions::wire`, so it proves
-        // the verb travels once somebody has given the session somewhere to
-        // send it. This one gives it nowhere, which is what `openAt` does.
+        // `MarkReadOnDwell` fired into a bus whose handler dropped it, as did every verb but cursor
+        // and selection.
         let database = test_support::memory().await;
         let message = {
             let connection = database.connect().await.expect("a connection");
@@ -326,7 +258,6 @@ mod through_the_boundary {
                 .await
                 .expect("a message")
                 .get();
-            // Threaded, as sync would leave it: Focus lists conversations.
             let threads = ThreadRepository::new(&connection);
             let mut thread = postio_model::Thread::new(account.id);
             threads.create(&mut thread).await.expect("a thread");
@@ -337,14 +268,11 @@ mod through_the_boundary {
             id
         };
 
-        // No `on_bridge`. `SessionOptions::at_default_path` — what `openAt` uses,
-        // and what Swift calls — supplies none either, so this is that path.
+        // No `on_bridge`, as `SessionOptions::at_default_path` (what `openAt` uses) supplies none.
         let session = Session::open(SessionOptions::in_memory_with(database.clone()))
             .expect("a session over the seeded store");
         let row = first_row(&session).await;
 
-        // The reported verb, and it carries its own target: the dwell names
-        // the message it timed, so this tests the *bus* rather than the aim.
         session.mark_read_on_dwell(row.id);
 
         let read = settle_until(async || is_seen(&database, message).await).await;

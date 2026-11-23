@@ -1,20 +1,8 @@
-//! Reader view against the corpus — the mail it exists for.
-//!
-//! The unit tests in `src/reader_view.rs` prove the rules on markup written
-//! to exercise one rule each. This proves them on a real-shaped newsletter:
-//! nested layout tables, inline CSS, a media query, `List-Unsubscribe` and
-//! One-Click. That fixture is in the corpus precisely because contrived
-//! markup does not reproduce what a campaign actually sends.
-
 use postio_body::reader_view::{self, LINKS_KEPT};
 use postio_body::sanitize::{self, RemoteImages};
 use postio_model::test_corpus;
 
-/// The HTML part of a corpus fixture, sanitized the way the reader gets it.
-///
-/// Through `sanitize_body` first, deliberately: reader view is a readability
-/// pass over markup that has already been made safe, and testing it on raw
-/// sender HTML would be proving something the reader never does.
+/// Through `sanitize_body` first: reader view runs over markup already made safe.
 fn sanitized(name: &str) -> String {
     let fixture = test_corpus::load(name);
     let parsed = postio_model::mime::parse(fixture.bytes());
@@ -67,16 +55,12 @@ fn a_real_newsletter_is_recognised_as_bulk() {
 
 #[test]
 fn ordinary_mail_is_not_dragged_into_reader_view() {
-    // The failure that would make this feature hated: a person's actual
-    // correspondence opening reduced. `multipart-alternative` is an ordinary
-    // message that happens to carry an HTML part.
     assert!(
         !reader_view::reads_as_bulk(&sanitized("multipart-alternative")),
         "an ordinary message must not be treated as a campaign"
     );
 }
 
-/// The plain part of a corpus fixture, as the reader gets it.
 fn plain(name: &str) -> String {
     let fixture = test_corpus::load(name);
     let parsed = postio_model::mime::parse(fixture.bytes());
@@ -106,9 +90,6 @@ fn a_shipping_notice_yields_its_tracking_number_item_and_destination() {
 
 #[test]
 fn the_prose_around_the_block_is_not_dragged_into_it() {
-    // The fixture's closing paragraph contains `Note: this notice`, mid
-    // sentence and on its own -- exactly the shape that would produce a
-    // fabricated one-row table.
     let body = plain("transactional-shipping-notice");
     assert!(
         body.contains("Note: this notice"),
@@ -134,18 +115,6 @@ fn a_newsletter_with_no_block_in_its_plain_part_yields_nothing() {
     );
 }
 
-/// FR-019a on a real campaign, not on markup written to pass it (#1396).
-///
-/// `sanitize.rs`'s own test builds a three-column table by hand. This is the
-/// corpus newsletter — nested layout tables, `width="600"` on the shell,
-/// `width="70"` columns, `cellpadding`, `valign` — which is what a campaign
-/// actually sends and what "a message that arranges itself in three columns
-/// MUST appear in three columns" was written about.
-///
-/// The distinction matters here more than usual. Ammonia's per-tag defaults
-/// dropped every one of these until #1396, and the hand-written test and this
-/// one would have failed together — but only this one says the *shape of real
-/// mail* survives, which is the claim FR-019a actually makes.
 #[test]
 fn a_real_newsletters_columns_survive_sanitizing() {
     let clean = sanitized("html-newsletter");
@@ -158,44 +127,28 @@ fn a_real_newsletters_columns_survive_sanitizing() {
         );
     }
 
-    // Its own layout, not a stray from somewhere: the shell table is 600px
-    // wide and the columns inside it are 70, which is the arrangement the
-    // fixture was written with.
     assert!(
         clean.matches("width=\"70\"").count() >= 3,
         "fewer than three columns kept their width, which is the case the \
          requirement names: {clean}"
     );
 
-    // And nothing new reaches the network: the layout attributes admitted in
-    // #1396 name no URL, and the deprecated `background` -- which does load an
-    // image -- is deliberately not among them.
+    // The layout attributes admitted in #1396 name no URL, and the deprecated `background`, which
+    // loads an image, is not among them.
     assert!(
         !clean.contains("background="),
         "an attribute that fetches an image survived: {clean}"
     );
 }
 
-/// Containment, on a message rather than on a string (#1410).
-///
-/// The rules are unit-tested in `sanitize.rs` against markup written to
-/// exercise one each. This is the same hostility inside real message bytes,
-/// reached through `mime::parse` the way the reader reaches it — which is the
-/// path a fixture exists to cover.
-///
-/// It matters more since ADR 0032 put several senders in one document. In a
-/// pane holding one message, a style that escaped its block reached Postio's
-/// own chrome; in a thread it reaches *somebody else's mail*.
-///
-/// FR-019b is the shape of the assertion: refusal is an enumerable list with
-/// a stated reason, not a general suspicion of sender CSS. So the survivors
-/// are checked too — a sanitizer that flattened everything would pass the
-/// first half of this and fail the second.
+/// ADR 0032 puts several senders in one document, so a style that escapes its block reaches
+/// somebody else's mail, not just Postio's chrome (#1410).
+/// The survivors are checked too: a sanitizer that flattened everything would pass the refusal
+/// half.
 #[test]
 fn a_message_cannot_style_its_way_out_of_its_own_block() {
     let clean = sanitized("html-escaping-styles");
 
-    // What `REFUSED` and `REFUSED_UNITS` name, and only that.
     for refused in ["position:", "z-index", "vw", "vh"] {
         assert!(
             !clean.contains(refused),
@@ -219,29 +172,10 @@ fn a_message_cannot_style_its_way_out_of_its_own_block() {
     }
 }
 
-/// What `reads_as_bulk` must not start catching (#1412, T066).
-///
-/// The heuristic is two signals — a nested table, or ten links — and the
-/// pressure on it is to add a third now that the sender's inline styling
-/// survives (#1325, #1396). Measured before changing anything, it has one
-/// real blind spot and two correct answers worth keeping:
-///
-/// | | reads as bulk |
-/// |---|---|
-/// | a table-free campaign with six links | **no** — the blind spot |
-/// | the same with twelve | yes, on the link count |
-/// | a reply quoting one table | no |
-/// | a heavily styled personal note | no |
-///
-/// The blind spot is mild: a campaign that opens in its sender's own layout
-/// is what FR-019a asks for anyway, and reader view exists for mail that is
-/// *unreadable* raw. A style signal would close it and would risk the last
-/// row — correspondence is styled too, and reducing somebody's letter to
-/// prose because they chose Georgia is the worse error of the two.
-///
-/// So this pins the answers rather than changing them. Whoever adds a third
-/// signal has to keep the personal note out, which is the constraint that
-/// makes the change hard and is invisible without a test.
+/// Pins `reads_as_bulk` (#1412): a table-free campaign with six links is not bulk (a mild blind
+/// spot), twelve links is; a reply quoting one table and a heavily styled personal note are not.
+/// A style signal would risk the last case: correspondence is styled too, and reducing somebody's
+/// letter because they chose Georgia is the worse error.
 #[test]
 fn styled_correspondence_is_not_mistaken_for_a_campaign() {
     let letter = sanitize::sanitize_body(
@@ -270,8 +204,6 @@ fn styled_correspondence_is_not_mistaken_for_a_campaign() {
          not: {quoting}"
     );
 
-    // And the corpus newsletter still is one, so the guard rails above have
-    // not been won by making the heuristic answer no to everything.
     assert!(
         reader_view::reads_as_bulk(&sanitized("html-newsletter")),
         "the corpus newsletter stopped reading as bulk"

@@ -1,11 +1,6 @@
 import PostioFFI
 import SwiftUI
 
-/// The merge sheet over the Contacts view (handoff screen 07): 780 wide under
-/// the strip, over a scrim. A card per record with the kept one in the accent
-/// ring, "Why we think so", what the merge would make, and Not the same,
-/// Later and Merge. Every word and every key is the controller's
-/// (`MergeSheetViewFfi`).
 struct MergeSheetView: View {
     let sheet: MergeSheetViewFfi
     let model: ContactsModel

@@ -1,8 +1,3 @@
-//! Who the person wrote to, as a Sent folder syncs (spec 007, T075): every
-//! message the person sent counts once, whether it was filed by this
-//! client's send or brought by a sync of Sent -- and a sent copy the sync
-//! adopts is not counted a second time.
-
 use postio_account::backend::{AppendMessage, MailBackend, MockBackend, MockMailbox, MockMessage};
 use postio_account::cancel::CancelToken;
 use postio_model::{EmailAddress, Mailbox, RfcMessageId, UidValidity};
@@ -14,7 +9,6 @@ use postio_sync::{resync_mailbox, sync_mailbox};
 const SENT: &str = "Sent";
 const VALIDITY: u32 = 1_707_000_000;
 
-/// A message the account (`test@example.com`) sent.
 fn sent_mail(n: u32, to: &str) -> Vec<u8> {
     format!(
         "From: Test User <test@example.com>\r\n\
@@ -68,8 +62,6 @@ async fn a_sent_folder_s_sync_counts_each_message_it_files_once() {
         "the account's own address"
     );
 
-    // A message sent from another client arrives; the pass that brings it
-    // counts it, and one that brings nothing counts nothing again.
     backend
         .append(SENT, &AppendMessage::new(sent_mail(3, "tove@example.org")))
         .await
@@ -97,9 +89,6 @@ async fn a_sent_copy_a_sync_adopts_is_not_counted_twice() {
         .await
         .expect("the first sync of an empty Sent");
 
-    // This client sent it: the copy is filed and counted before the server
-    // has named it, as `postio_sync::send` does, and the append that
-    // followed came back without the server's UID for it.
     let raw = sent_mail(7, "quinn@example.com");
     let mut copy =
         postio_model::mime::parse(&raw).into_message(account.id, sent.id, chrono::Utc::now());
@@ -117,8 +106,6 @@ async fn a_sent_copy_a_sync_adopts_is_not_counted_twice() {
         .await
         .expect("the append");
 
-    // The next pass over Sent finds the server's copy and adopts the row by
-    // its Message-ID rather than filing a second one.
     resync_mailbox(&connection, &backend, &sent, &CancelToken::new(), |_| {})
         .await
         .expect("a pass over Sent");

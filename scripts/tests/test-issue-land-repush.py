@@ -55,11 +55,6 @@ sys.path.insert(0, str(HERE / "lib"))
 
 import fixture_toolchain  # noqa: E402  -- enabled by the sys.path line above
 ISSUE_LAND = HERE / "issue-land.sh"
-# Sandboxes go under `target/`, which git ignores: inside the worktree because
-# the shared-tree guard only lifts its refusals for worktree paths, and not in
-# its root because a killed run leaves the sandbox behind and `git add -A` in a
-# worktree will commit it. `scripts/checks/check-test-sandboxes.py` says what
-# that cost (#1225).
 SANDBOXES = REPO_ROOT / "target" / "tmp"
 SANDBOXES.mkdir(parents=True, exist_ok=True)
 
@@ -149,24 +144,12 @@ def main() -> int:
         git("push", "-q", "origin", "main", cwd=root)
         git("checkout", "-q", "-b", "issue-781-x", cwd=root)
 
-        # ── first landing: pushes the branch ─────────────────────────────
         (root / "dummy" / "src" / "extra.rs").write_text("// one\n", encoding="utf-8")
         first = land(root, target, "-m", "feat(dummy): add a file")
         if first.returncode != 0:
             FAILURES.append(f"the first landing failed:\n{first.stdout}\n{first.stderr}")
             return report()
 
-        # ── and it took the create path, without a lease (#860) ───────────
-        #
-        # A branch the remote has never seen cannot clobber anything, so the
-        # lease buys nothing -- and it can cost a landing. `--force-with-lease`
-        # with no explicit <expect> also turns on `--force-if-includes`, which
-        # inspects the reflog, and #860 watched three green gate chains in a
-        # row die on "(stale info)" for a branch that was not on the remote at
-        # all. Asserted on the announcement rather than on the exit status,
-        # because the leased spelling *also* succeeds here on most days --
-        # which is exactly why the bug survived until a rebase made the reflog
-        # interesting.
         if "no lease: nothing to clobber" not in first.stdout + first.stderr:
             FAILURES.append(
                 "the first push of a never-seen branch did not take the "
@@ -174,11 +157,6 @@ def main() -> int:
                 f"that does not exist:\n{first.stdout}\n{first.stderr}"
             )
 
-        # ── main moves, exactly as it does while a PR sits in review ─────
-        #
-        # This is what forces the rebase on the next run, and so what makes
-        # the second push non-fast-forward. Committed on a detached worktree
-        # of the bare remote's main so the branch under test is untouched.
         elsewhere = base / "elsewhere"
         subprocess.run(
             ["git", "clone", "-q", str(origin), str(elsewhere)], check=True
@@ -188,7 +166,6 @@ def main() -> int:
         git("commit", "-q", "-m", "docs: something else landed", cwd=elsewhere)
         git("push", "-q", "origin", "main", cwd=elsewhere)
 
-        # ── second landing of the same branch, the CI-failure shape ──────
         (root / "dummy" / "src" / "extra.rs").write_text("// two\n", encoding="utf-8")
         second = land(root, target, "-m", "fix(dummy): correct the file")
         if second.returncode != 0:
@@ -202,11 +179,6 @@ def main() -> int:
         elif "non-fast-forward" in second.stderr:
             FAILURES.append(f"the push was rejected:\n{second.stderr}")
 
-        # The control for the create-path assertion above: this push has a
-        # counterpart to lease against, so it must *not* announce the create
-        # path. Without this the string check above would pass on a script
-        # that printed it unconditionally, and would then be asserting
-        # nothing about which branch was taken.
         if "no lease: nothing to clobber" in second.stdout + second.stderr:
             FAILURES.append(
                 "the second push of a branch already on the remote took the "
@@ -214,7 +186,6 @@ def main() -> int:
                 f"for exactly this case:\n{second.stdout}\n{second.stderr}"
             )
 
-        # The remote must now carry the second landing's work.
         remote_log = subprocess.run(
             ["git", "log", "origin/issue-781-x", "--format=%s"],
             cwd=root,
@@ -227,10 +198,6 @@ def main() -> int:
                 f"the remote branch does not carry the second commit:\n{remote_log}"
             )
 
-        # ── the lease still refuses a remote somebody else moved ─────────
-        #
-        # The point of the leased form over a bare --force: our own rebase
-        # goes through, and this must not.
         (elsewhere / "sneak.md").write_text("not ours\n", encoding="utf-8")
         git("add", "-A", cwd=elsewhere)
         git("commit", "-q", "-m", "docs: a commit this worktree never saw", cwd=elsewhere)

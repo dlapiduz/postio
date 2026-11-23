@@ -1,18 +1,3 @@
-//! A host that starts its idle passes gives back the disk nothing is using.
-//!
-//! `BlobStore::collect_garbage`, `purge_temporary` and `evict_to_fit` were
-//! each written, tested and documented, and none had a production caller
-//! (#416, #862). `postio-storage` proves what the sweeps do and proved it
-//! while they were uncalled, so the assertion here is not "the sweep works".
-//! It is **"a store this host opened and started its idle passes over has
-//! been reclaimed"**, which is the sentence that was false:
-//!
-//! - blobs no row names, and debris from an unfinished fetch, are gone;
-//! - with `[storage] max_bytes` set, the oldest referenced blob goes and the
-//!   newer one that fits stays;
-//! - a store with enough free pages to be worth rewriting is rewritten, and
-//!   keeps its mail.
-
 use std::time::{Duration, Instant};
 
 use postio_host::Host;
@@ -23,7 +8,6 @@ fn patience() -> Duration {
     postio_test_support::scaled(Duration::from_secs(60))
 }
 
-/// Poll `done` until it holds or the deadline passes.
 fn settled(rt: &tokio::runtime::Runtime, mut done: impl AsyncFnMut() -> bool) -> bool {
     let deadline = Instant::now() + patience();
     loop {
@@ -58,20 +42,15 @@ fn starting_the_idle_passes_reclaims_what_nothing_references() {
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = blob_store(&directory);
 
-    // What a deleted message leaves behind: bytes on disk that no row names.
     let orphan = blobs
         .put(b"the body of a message that is no longer in the database")
         .expect("put an orphan");
-    // And what a crash mid-fetch leaves: a part file nothing will finish.
     let debris = blobs.temporary_directory().join("9999-0.part");
     std::fs::write(&debris, b"half a message").expect("stage some debris");
     assert!(blobs.contains(&orphan), "the orphan is there to begin with");
 
-    // Backdated past `BLOB_GRACE_PERIOD` rather than shortening it: a blob is
-    // written before the row naming it commits, so inside that window a
-    // healthy blob is indistinguishable from an orphan. Ageing the file
-    // exercises the real constant and the real case, a blob orphaned an hour
-    // ago.
+    // Backdated past `BLOB_GRACE_PERIOD` rather than shortening it, to exercise the real constant:
+    // inside that window a healthy blob is indistinguishable from an orphan.
     let aged = std::time::SystemTime::now() - Duration::from_secs(2 * 60 * 60);
     std::fs::File::options()
         .write(true)
@@ -93,13 +72,8 @@ fn starting_the_idle_passes_reclaims_what_nothing_references() {
     );
 }
 
-/// The third sweep, and the one that carries a policy (#862).
-///
-/// Both blobs are *referenced*: a row points at each. That makes this about
-/// eviction rather than about the garbage collector running a moment
-/// earlier -- a sweep that only takes what nothing wants would leave both,
-/// and both are seconds old, so the grace period would spare them even if
-/// they were orphans.
+/// Both blobs are referenced, so this is about eviction, not the garbage collector: a sweep that
+/// takes only what nothing wants would leave both (#862).
 #[test]
 fn starting_the_idle_passes_with_a_ceiling_evicts_down_to_it() {
     let rt = runtime();
@@ -112,8 +86,8 @@ fn starting_the_idle_passes_with_a_ceiling_evicts_down_to_it() {
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = blob_store(&directory);
 
-    // Two messages, each holding its raw source. Different fill bytes: the
-    // store is content-addressed, so the same bytes twice would be one blob.
+    // Different fill bytes: the store is content-addressed, so the same bytes twice would be one
+    // blob.
     let written = rt.block_on(async {
         let connection = database.connect().await.expect("checkout");
         let messages = postio_storage::repository::MessageRepository::new(&connection);
@@ -137,7 +111,6 @@ fn starting_the_idle_passes_with_a_ceiling_evicts_down_to_it() {
     let (old, new) = (written[0].clone(), written[1].clone());
     assert!(blobs.contains(&old) && blobs.contains(&new));
 
-    // Room for the newer blob and nothing else.
     let ceiling = blobs.len_of(&new).expect("len") + 16;
     let host = Host::start(database, blobs.clone(), |wiring| {
         wiring.with_storage_ceiling(Some(ceiling))
@@ -155,10 +128,8 @@ fn starting_the_idle_passes_with_a_ceiling_evicts_down_to_it() {
     );
 }
 
-/// Enough holes to clear `RECLAIM_FLOOR`, made the cheap way: written and
-/// dropped rather than seeded and deleted. `RECLAIM_FLOOR` and
-/// `RECLAIM_FRACTION` are the constants that ship; a test that moved them
-/// would prove a configuration nobody runs.
+/// `RECLAIM_FLOOR` and `RECLAIM_FRACTION` are the shipping constants; a test that moved them would
+/// prove a configuration nobody runs.
 const HOLE_BYTES: usize = 96 * 1024;
 const DOUBLINGS: u32 = 10; // one row, doubled ten times: 1024 x 96 KiB = 96 MiB
 
@@ -186,21 +157,18 @@ async fn punch_holes(database: &postio_storage::Store) {
         .await
         .expect("drop it");
     drop(connection);
-    // The freelist is only what a checkpoint has settled.
     database.truncate_log().await.expect("checkpoint");
 }
 
 #[test]
 fn starting_the_idle_passes_rewrites_a_store_full_of_holes_and_keeps_its_mail() {
     let rt = runtime();
-    // File-backed: pages are only handed back to a filesystem.
     let database = rt.block_on(test_support::temp());
     let report = rt.block_on(seed_small(&database, 11));
     assert!(report.message_count > 0, "the fixture seeded no mail");
     rt.block_on(punch_holes(&database));
 
-    // The precondition, stated rather than assumed: a pass that never runs
-    // and one that correctly declines look identical from below.
+    // A pass that never runs and one that correctly declines look identical from below.
     assert!(
         rt.block_on(database.is_worth_reclaiming())
             .expect("ask about the holes"),
@@ -235,13 +203,8 @@ fn starting_the_idle_passes_rewrites_a_store_full_of_holes_and_keeps_its_mail() 
     );
 }
 
-/// The tripwire on the half of #381 this engine does not have.
-///
-/// A full vacuum is what it can do; it stalls every writer for its whole
-/// duration, which is why the case above needs a policy in front of it. The
-/// incremental mode has no such cost, so the day the engine accepts it is the
-/// day to step it from the idle passes instead. This is a storage assertion
-/// and could live in `postio-storage`; it sits beside the passes it informs.
+/// Tripwire: the engine has only a full vacuum, which stalls every writer; the day it accepts
+/// incremental mode, step that from the idle passes instead (#381).
 #[test]
 fn the_store_still_cannot_be_told_to_reclaim_its_pages_a_little_at_a_time() {
     let rt = runtime();

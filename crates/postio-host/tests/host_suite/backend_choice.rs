@@ -1,20 +1,3 @@
-//! The backend choice, end to end, through the host (#545, ADR 0018 Q5).
-//!
-//! Two adds against user-overlay preset rows that advertise
-//! `backend = ["jmap", "imap"]`, all on loopback, from a client's side:
-//!
-//! 1. **The JMAP proof works** -- a scripted session endpoint accepts the
-//!    password as a bearer -- and the account row stores `jmap` with the
-//!    session URL, ready for the engine to pick the adapter.
-//! 2. **The JMAP proof is refused** (401) -- the add falls back to the IMAP
-//!    proof against the in-crate `TestServer` and stores `imap`: a credential
-//!    that only speaks IMAP still lands, no dead ends.
-//!
-//! Its own binary, run again as a child: the overlay is found through
-//! `XDG_CONFIG_HOME`, this crate forbids the `unsafe` that setting it
-//! in-process takes, and the provider table is computed once per process
-//! from the environment (`tests/oauth.rs`, #973).
-
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::sync::Arc;
@@ -34,10 +17,8 @@ use postio_storage::repository::AccountRepository;
 use postio_storage::test_support;
 use postio_ui::onboarding::{Status, Submission};
 
-/// Set in the child that does the work.
 const INNER: &str = "POSTIO_BACKEND_CHOICE_INNER";
 
-/// Fails every step: the preset rows answer first.
 struct DeadTransport;
 
 #[async_trait::async_trait]
@@ -67,7 +48,6 @@ impl DiscoveryTransport for DeadTransport {
     }
 }
 
-/// A JMAP session endpoint that accepts exactly one bearer.
 fn session_server(accepted: &'static str) -> u16 {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let port = listener.local_addr().expect("addr").port();
@@ -122,7 +102,6 @@ fn session_server(accepted: &'static str) -> u16 {
     port
 }
 
-/// Resolve `address` from the overlay and add it with `password`.
 fn add(rt: &tokio::runtime::Runtime, client: &Client, address: &str, password: &str) {
     let found = rt
         .block_on(client.discover(address.into()))
@@ -168,7 +147,6 @@ fn the_add_stores_the_first_backend_whose_proof_succeeds() {
     );
 }
 
-/// The scenario, with `XDG_CONFIG_HOME` pointing somewhere of its own.
 fn drive() {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -183,8 +161,6 @@ fn drive() {
             .start(),
     );
     let jmap_ok = session_server("the-api-token");
-    // The refusing endpoint: every bearer is 401, so the fallback row's
-    // JMAP proof always fails.
     let jmap_refusing = session_server("nothing-ever-matches");
 
     let config = std::path::PathBuf::from(std::env::var_os("XDG_CONFIG_HOME").expect("set"));
@@ -241,9 +217,7 @@ session_url = "http://127.0.0.1:{jmap_refusing}/jmap/session/"
     .expect("a host");
     let client = host.connect(ClientKind::Tui);
 
-    // Add 1: the JMAP proof works and jmap is stored.
     add(&rt, &client, "ada@example.test", "the-api-token");
-    // Add 2: the JMAP proof is refused, IMAP lands, imap is stored.
     add(&rt, &client, "grace@fallback.test", "imap-only-password");
 
     let connection = rt.block_on(database.connect()).expect("a connection");

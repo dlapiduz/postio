@@ -1,9 +1,6 @@
-//! What attachments say, as a search finds it (spec 010 step 9, US8).
-//!
-//! The conversation search's third arm ([`super::HITS_JOIN_WITH_FILES`])
-//! says only *that* a message matched in an attachment. Which attachment,
-//! and where in it, is read here, for the few messages that are shown: the
-//! rows of a page, the messages of the conversation Quick Look is open on.
+//! Which attachment matched a message, and where in it, read for the few messages shown (a page's
+//! rows, Quick Look's conversation); the conversation search's third arm says only that a message
+//! matched.
 
 use postio_model::{AccountScope, AttachmentId, MessageId};
 use postio_search::ParsedQuery;
@@ -15,24 +12,15 @@ use postio_storage::sql::{self, RowExt as _};
 use super::{Plan, SearchRequest};
 use crate::error::Result;
 
-/// The first unit of one attachment that a query's words match.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileMatch {
-    /// The message carrying it.
     pub message: MessageId,
-    /// The attachment.
     pub attachment: AttachmentId,
-    /// Its file name; empty when it has none.
     pub name: String,
-    /// Where in it: a page, a sheet's row, a slide.
     pub location: Location,
-    /// That unit's text as extracted: what a passage is cut from.
     pub text: String,
 }
 
-/// The words of `query` as the attachment index matches them: folded, as
-/// the body's half is, since its text is folded the same way. `None` when
-/// the query has no positive words.
 fn folded_match(query: &ParsedQuery) -> Option<turso::Value> {
     Plan::build(&SearchRequest {
         account: AccountScope::Unified,
@@ -44,14 +32,7 @@ fn folded_match(query: &ParsedQuery) -> Option<turso::Value> {
     .body_match_param
 }
 
-/// For each attachment of `messages` whose text `query`'s words match, its
-/// first matching unit, in the order of the messages' ids, then the
-/// attachments' positions. One statement; nothing when the query has no
-/// words.
-///
-/// The match is read in a subquery and joined out, as `HITS_JOIN` reads its
-/// hits: the index answers the match, and the join keeps the messages
-/// asked about.
+/// One statement. The match is read in a subquery and joined out, as `HITS_JOIN` reads its hits.
 pub async fn file_matches(
     connection: &Connection,
     query: &ParsedQuery,
@@ -113,19 +94,10 @@ pub async fn file_matches(
     Ok(found)
 }
 
-/// How many cards the Files tab can hold: the walk is capped as a
-/// conversation search's is, and this caps what one answer carries.
 pub const FILES_CAP: u32 = 1_000;
 
-/// The Files tab (design §3.8): one card per attachment of the mail the
-/// query matches whose name or contents match its words -- or, for a
-/// query with no words, every attachment of that mail -- newest first,
-/// each with where it matched and the words around it.
-///
-/// Three statements: the walk, the attachments of the mail it found, and
-/// where in the files their text matched (none when nothing matched in a
-/// file). An attachment whose bytes were never downloaded can still match
-/// by its name; nothing is fetched to look inside it (FR-050).
+/// An attachment whose bytes were never downloaded can still match by its name; nothing is fetched
+/// to look inside it.
 pub async fn files(
     connection: &Connection,
     request: &super::ConversationRequest<'_>,
@@ -189,8 +161,6 @@ pub async fn files(
     } else {
         file_matches(connection, request.query, &in_files).await?
     };
-    // A name is checked for the words and `filename:`'s values; a unit's
-    // text for the words, as the index matched it.
     let name_terms = super::conversations::file_terms(request.query);
     let words: Vec<String> = request
         .query
@@ -229,8 +199,6 @@ pub async fn files(
                 }),
                 when: Some(when),
             }),
-            // With words, a file that matched neither way is in matching
-            // mail but is not itself a match.
             None if !name_terms.is_empty() => continue,
             None => None,
         };
@@ -261,14 +229,9 @@ pub async fn files(
     Ok(cards.drain(offset..end).collect())
 }
 
-/// What a conversation search reads of its files, in one statement: where
-/// in which attachment the page's rows matched (as [`file_matches`] says
-/// it, for `page`), and how many cards [`files`] lists for the mail that
-/// `carriers` are -- the search's own count, so the Files tab says the same
-/// number before it opens and after (#2178). `in_file` are the walk's
-/// messages whose attachments' text matched; `page` is those of them on the
-/// page. Nothing is read when no message carries a file or matched in one,
-/// so the search keeps its statement budget (spec 010 research R2).
+/// The card count is the search's own, so the Files tab says the same number before it opens and
+/// after (#2178).
+/// Nothing is read when no message carries a file or matched in one, keeping the statement budget.
 pub(super) async fn page_and_cards(
     connection: &Connection,
     query: &ParsedQuery,
@@ -289,9 +252,6 @@ pub(super) async fn page_and_cards(
         )
     };
     let carried = list(&mut carriers.iter().map(|carrier| carrier.id));
-    // The attachments' names, then where their text matched: the match is
-    // read in a subquery and joined out, as `file_matches` reads it, and
-    // only the page's passages carry their text.
     let names = format!(
         "SELECT 0, f.message_id, f.id, coalesce(f.filename, ''), 0, 0, '', ''
            FROM json_each(?1) j
@@ -341,8 +301,6 @@ pub(super) async fn page_and_cards(
             .await?
         }
     };
-    // Each attachment's first matching unit, in the order `file_matches`
-    // gives them: by message, then position, then unit.
     rows.sort_by_key(|row| (row.0, row.1, row.4, row.5));
     let mut matched: std::collections::HashSet<i64> = std::collections::HashSet::new();
     let mut found: Vec<FileMatch> = Vec::new();
@@ -380,11 +338,9 @@ pub(super) async fn page_and_cards(
     Ok((found, cards as u64))
 }
 
-/// The attachments that are files someone sent: a part shown in the body
-/// (a logo by its `cid:`) is not one.
+/// A part shown in the body (a logo by its `cid:`) is not a file someone sent.
 const SENT: &str = "NOT (f.disposition = 'inline' AND f.content_id IS NOT NULL)";
 
-/// One attachment row, as [`files`] reads it.
 struct Row {
     attachment: i64,
     message: i64,

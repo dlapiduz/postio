@@ -38,8 +38,6 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-# The crates whose `data/` holds stylesheets: the desktop app, and the crate
-# holding the widget rules it draws with (ADR 0043; specs/007-postio-focus R1).
 CRATES = ("postio-widgets", "postio-gtk")
 
 
@@ -58,7 +56,6 @@ def styled(stylesheets: list[Path]) -> dict[str, tuple[Path, int]]:
     found: dict[str, tuple[Path, int]] = {}
     for sheet in stylesheets:
         text = sheet.read_text(encoding="utf-8")
-        # Blank comments out without moving line numbers.
         text = COMMENT.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), text)
         # Only selectors: drop declaration blocks, so a value such as a
         # `url(...postio-x.svg)` is never mistaken for one.
@@ -105,8 +102,6 @@ def dead(classes: dict[str, tuple[Path, int]], code: tuple[str, str]) -> list[st
 
 
 def main(argv: list[str]) -> int:
-    # Arguments are for the self-test: `--root <repository>`, or
-    # <stylesheets dir> <sources dir>.
     root = ROOT
     if len(argv) == 3 and argv[1] == "--root":
         root = Path(argv[2])

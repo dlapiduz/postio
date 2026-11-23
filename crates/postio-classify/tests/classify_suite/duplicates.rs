@@ -1,8 +1,3 @@
-//! Scoring two records that may be one person (specs/011-focus-contacts S10,
-//! handoff screen 07). A pair is offered only with evidence a person can
-//! read, and every line the sheet shows is one of the scorer's: no evidence,
-//! no candidate. All names and addresses are invented, on reserved domains.
-
 use postio_classify::duplicates::{Evidence, Pair, Side, describe, score};
 
 fn side(name: &str, addresses: &[&str], title: &str, company: &str) -> Side {
@@ -81,7 +76,6 @@ fn an_address_that_stopped_when_another_began_in_the_same_threads_is_evidence() 
             .iter()
             .any(|e| matches!(e, Evidence::TookOver { threads: 4, .. }))
     );
-    // One thread is a coincidence.
     let once = Pair {
         took_over_in_threads: 1,
         ..Pair::default()
@@ -232,13 +226,11 @@ fn what_a_body_notes_about_its_sender_is_the_signature_the_phones_and_the_resent
             (EvidenceKind::Resent, "a.moreno@example.net".to_owned()),
         ]
     );
-    // "Read signatures" off: the signature is not parsed, the header still is.
     assert_eq!(
         noticed(text, headers, false),
         [(EvidenceKind::Resent, "a.moreno@example.net".to_owned())]
     );
     assert!(noticed("Can you send it?\n", "From: ada@example.org\r\n", true).is_empty());
-    // A folded header is still one header.
     let folded = "Resent-From:\r\n a.moreno@example.net\r\n";
     assert_eq!(
         noticed("", folded, true),

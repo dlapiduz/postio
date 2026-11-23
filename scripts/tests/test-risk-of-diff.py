@@ -100,8 +100,6 @@ def main() -> int:
     forced("a risky path alone does not force it", ["crates/postio-sync/src/a.rs"], False)
     forced("an empty diff does not force it", [], False)
 
-    # Fails safe the same direction ci-changes.sh does: no diff to read is not
-    # evidence of a small one.
     case("no input at all is high", [], "high", "no diff")
     case("none is high too", None, "high", "no diff")
 

@@ -39,11 +39,6 @@ import patience  # noqa: E402  -- enabled by the sys.path line above
 HERE = Path(__file__).resolve().parent.parent
 REPO_ROOT = HERE.parent
 ISSUE_LAND = HERE / "issue-land.sh"
-# Sandboxes go under `target/`, which git ignores: inside the worktree because
-# the shared-tree guard only lifts its refusals for worktree paths, and not in
-# its root because a killed run leaves the sandbox behind and `git add -A` in a
-# worktree will commit it. `scripts/checks/check-test-sandboxes.py` says what
-# that cost (#1225).
 SANDBOXES = REPO_ROOT / "target" / "tmp"
 SANDBOXES.mkdir(parents=True, exist_ok=True)
 
@@ -57,15 +52,6 @@ STUB_CHECKS = [
 ]
 
 FAILURES: list[str] = []
-
-# Every call is appended to $STUB_DIR/calls as one NUL-terminated record,
-# including a multi-line `--body` verbatim, so the test can assert on the
-# actual PR body text rather than on a stub's opinion of it. NUL rather
-# than a newline separator: `--body`'s own content is multi-line, so a
-# newline-joined log cannot tell "the next line of this body" from "the
-# next call" apart. `pr view` reports no open PR (empty output, exit 0),
-# which sends the script down the `pr create` branch every time -- there is
-# nothing here to reuse across cases in one bare git remote.
 
 
 def pinned_channel() -> str:
@@ -159,8 +145,6 @@ fi
 exit 0
 """
 
-# The key takes no `--app`: storyboards play on the one app, and the real
-# script refuses the argument, so the stub does too.
 KEY_STUB = """#!/usr/bin/env bash
 [ "$1" = key ] && [ "$#" -eq 1 ] && { echo "k-current"; exit 0; }
 echo "storyboards.sh: unknown argument '$2'" >&2
@@ -182,17 +166,12 @@ def sandbox(base: Path, existing_pr: bool = False, changed: str = "src/extra.rs"
     gh_path.write_text(GH_STUB, encoding="utf-8")
     gh_path.chmod(0o755)
     (stub_dir / "calls").write_text("", encoding="utf-8")
-    # A host that has GTK, whatever this one has: the stand-in crate is
-    # postio-gtk, and a CI runner without the libraries is refused before
-    # the storyboard warning is ever reached (test-issue-land-unbuildable.py
-    # is where that refusal is tested).
     pkg_config = stub_dir / "bin" / "pkg-config"
     pkg_config.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
     pkg_config.chmod(0o755)
     subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
     root.mkdir()
     build_sandbox(root, channel)
-    # The stand-in crate is the app's crate, so the landing is about it.
     (root / "crates").mkdir()
     shutil.move(str(root / "dummy"), str(root / "crates" / "postio-gtk"))
     manifest = (root / "crates" / "postio-gtk" / "Cargo.toml").read_text()
@@ -292,13 +271,10 @@ def main() -> int:
     case("stale summary", "k-old", False, warned=True, carried="")
     case("current summary", "k-current", False, warned=False, carried="body")
     case("existing PR", "k-current", True, warned=False, carried="comment")
-    # A change to the app's tests changes nothing a storyboard films: moving a
-    # display-free case out of focus_suite drew a warning on #2025.
     case("tests only", None, False, warned=False, carried="", changed="tests/suite.rs")
     print()
     if FAILURES:
         print(f"{len(FAILURES)} case(s) failed.", file=sys.stderr)
-        # The detail, not just the count: on CI this log is all there is.
         for failure in FAILURES:
             print(f"\n--- {failure}", file=sys.stderr)
         return 1

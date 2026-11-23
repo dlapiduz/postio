@@ -42,25 +42,22 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 REGISTRY = ROOT / "crates/postio-core/src/registry.rs"
 
-# `const NAME: &[(&str, &str)] = &[ ... ];`, and the `static` spelling.
 TABLE = re.compile(
     r"(?:const|static)\s+(?P<name>[A-Z0-9_]+)\s*:\s*&(?:'static\s+)?\[\(&(?:'static\s+)?str,\s*&(?:'static\s+)?str\)\]\s*=\s*&\[(?P<body>.*?)\];",
     re.DOTALL,
 )
 PAIR = re.compile(r'\(\s*"(?P<id>[a-z0-9_]+)"\s*,\s*"(?P<key>[^"]+)"\s*\)')
 
-# Key names a binding may use beyond a single character, lowercased. Kept short
-# on purpose: this only has to recognise a *table of bindings*, not validate
-# one -- `postio_config::keys::binding_problem` is what validates.
+# Key names beyond a single character; this recognises a table of bindings,
+# `postio_config::keys::binding_problem` validates one.
 KEY_WORDS = {
     "return", "enter", "escape", "space", "tab", "backspace", "delete",
     "up", "down", "left", "right", "home", "end", "pageup", "pagedown",
 }
 MODIFIERS = ("mod+", "ctrl+", "cmd+", "alt+", "shift+", "super+", "meta+")
 
-# Fewest binding-shaped pairs before a table counts as a binding table. Two
-# could be a coincidence in some unrelated lookup; a real default table is
-# dozens.
+# Fewest binding-shaped pairs before a table counts: two could be a coincidence, a real default
+# table is dozens.
 THRESHOLD = 3
 
 
@@ -69,7 +66,6 @@ def looks_like_a_binding(key: str) -> bool:
     key = key.strip()
     if not key:
         return False
-    # A chord sequence like `g g` is two presses; judge the first.
     first = key.split(" ")[0]
     lowered = first.lower()
     return (

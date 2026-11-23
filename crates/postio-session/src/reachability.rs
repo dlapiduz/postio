@@ -1,44 +1,8 @@
-//! "Test connection": does this account's *stored* configuration work?
-//!
-//! # Why not the discovery probe
-//!
-//! `postio_account::discovery::Probe::run` takes an email address and guesses
-//! — presets, common host names, candidate ports. It answers *"what settings
-//! should this account use?"*, which is onboarding's question. The button on
-//! an existing account's detail view asks the opposite one: *"do the settings
-//! this account already has work?"* Running discovery there would probe hosts
-//! the user has not configured and could report success for a server they are
-//! not using, on the one screen whose whole subject is the stored values
-//! (#980).
-//!
-//! # It needs no new protocol code
-//!
-//! `ImapSession::open` is documented as "connect, secure, authenticate, read
-//! capabilities" and `SmtpSession::open` is its counterpart. Each already *is*
-//! a connection test, so this is composition: the stored `ServerConfig`, the
-//! credential the account's own auth strategy yields, one attempt per
-//! protocol.
-//!
-//! Through `auth::with_credential`, which is the shared invalidate-and-retry
-//! discipline both live paths use (ADR 0006 Q5) — so a token that has gone
-//! stale in the keyring is refreshed once here exactly as it would be by a
-//! real sync, and the test reports what the *next sync* would find rather
-//! than a stale-cache artefact.
-//!
-//! # Reported per protocol
-//!
-//! Incoming and outgoing are separate answers because they are separate
-//! servers — different hosts, different ports, sometimes different
-//! credentials. "It does not work" is not actionable when half of it does,
-//! and the half that does is the half the user should stop editing.
-//!
-//! # Nothing here dials out on its own
-//!
-//! It runs when somebody presses a button, which is `ARCHITECTURE.md` §11's
-//! test for anything that leaves the machine. The connectors are arguments
-//! rather than constructed here, so the tests in the default suite reach no
-//! network at all — the same reason the classic app's onboarding probe took its
-//! transport (#282).
+//! "Test connection": does this account's stored configuration work (#980)? Not the discovery
+//! probe, which guesses settings and could report success for a server the user is not using.
+//! Composes `ImapSession::open` and `SmtpSession::open` through `auth::with_credential`, so a stale
+//! token is refreshed as a real sync would. Incoming and outgoing are reported separately. The
+//! connectors are arguments, so the default suite reaches no network.
 
 use std::sync::Arc;
 
@@ -51,39 +15,24 @@ use postio_smtp::settings::ConnectionSettings as SmtpSettings;
 use postio_smtp::transport::SmtpConnector;
 use secrecy::SecretString;
 
-/// Whether one server answered.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Reachability {
-    /// Connected, secured and authenticated.
     Reached,
-    /// It did not, and this is what the server or the transport said.
-    ///
-    /// The server's own words, carried rather than flattened to "could not
-    /// connect": a bounce that says *"authentication failed"* and one that
-    /// says *"connection refused"* send a person to two different fields, and
-    /// the acceptance for #980 is a real error message rather than a spinner
-    /// that stops.
+    /// It did not; carries the server's own words, since "authentication failed" and "connection
+    /// refused" send a person to different fields.
     Refused {
-        /// What went wrong, phrased for the person reading the settings.
         reason: String,
-        /// What was wrong with the credential, when that is why: the half
-        /// Settings needs to offer a repair rather than a retry (#1584).
         trouble: Option<postio_ui::account::Trouble>,
     },
 }
 
-/// What a test of one account's stored settings found.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reachabilities {
-    /// The incoming (IMAP) server.
     pub incoming: Reachability,
-    /// The outgoing (SMTP) server.
     pub outgoing: Reachability,
 }
 
 impl Reachabilities {
-    /// Each server's answer as the settings window draws it: `Err` with the
-    /// reason it refused.
     pub fn into_results(self) -> (Result<(), String>, Result<(), String>) {
         let result = |reachability| match reachability {
             Reachability::Reached => Ok(()),
@@ -92,7 +41,6 @@ impl Reachabilities {
         (result(self.incoming), result(self.outgoing))
     }
 
-    /// What either server found wrong with the credential, incoming first.
     pub fn trouble(&self) -> Option<postio_ui::account::Trouble> {
         [&self.incoming, &self.outgoing]
             .into_iter()
@@ -103,12 +51,8 @@ impl Reachabilities {
     }
 }
 
-/// [`test_connection`] over the real TLS connectors: what the settings
-/// window's "Test connection" runs, in whichever app shows it.
-///
-/// A connector that will not build is a TLS stack problem, not a server
-/// problem, and both halves say so rather than looking like the account is
-/// misconfigured.
+/// `test_connection` over the real TLS connectors. A connector that will not build is a TLS stack
+/// problem and both halves say so.
 pub async fn test_over_tls(account: &Account, secrets: &Arc<dyn SecretStore>) -> Reachabilities {
     match (
         postio_account::imap::RustlsConnector::new(),
@@ -129,9 +73,8 @@ pub async fn test_over_tls(account: &Account, secrets: &Arc<dyn SecretStore>) ->
     }
 }
 
-/// When each of `accounts` -- an id and its address -- has its stored
-/// sign-in token expire: `None` where nothing was persisted, which is every
-/// password account and any account an external broker signs in (#878).
+/// When each of `accounts` has its stored sign-in token expire: `None` where nothing was persisted
+/// (password accounts, broker-signed accounts) (#878).
 pub async fn token_expiries(
     secrets: &dyn SecretStore,
     accounts: Vec<(postio_model::ids::AccountId, String)>,
@@ -145,12 +88,8 @@ pub async fn token_expiries(
     expiries
 }
 
-/// Try `account`'s stored incoming and outgoing settings, and say what
-/// happened to each.
-///
-/// Both are attempted whatever the first one does: the point of the button is
-/// to find out which half needs fixing, and stopping at the first failure
-/// would hide a second one behind it for another round trip.
+/// Try `account`'s stored incoming and outgoing settings and say what happened to each; both are
+/// attempted so a second failure is not hidden behind the first.
 pub async fn test_connection(
     account: &Account,
     secrets: &Arc<dyn SecretStore>,
@@ -203,10 +142,7 @@ async fn try_outgoing(
         |credential| {
             let settings = settings.clone();
             async move {
-                // One `to_owned`, for the reason `postio-sync`'s send path
-                // gives: `SecretString::from` goes through
-                // `String::into_boxed_str`, which reallocates when capacity
-                // exceeds length and frees the buffer holding the password
+                // One `to_owned`: `SecretString::from` reallocates and frees the password buffer
                 // without overwriting it (#144).
                 let password = SecretString::from(credential.expose().to_owned());
                 SmtpSession::open(&settings, &password, connector).await
@@ -220,10 +156,6 @@ async fn try_outgoing(
     )
 }
 
-/// What one attempt through `auth::with_credential` comes to, `rejected`
-/// saying whether a protocol error is the server refusing the credential.
-///
-/// Its own function so the classification can be asserted without a server.
 fn judged<E: std::fmt::Display>(
     attempt: Result<Result<(), E>, SecretError>,
     rejected: impl Fn(&E) -> bool,
@@ -231,9 +163,7 @@ fn judged<E: std::fmt::Display>(
     use postio_ui::account::Trouble;
     match attempt {
         Ok(Ok(())) => Reachability::Reached,
-        // The credential itself could not be had -- no keyring entry, a
-        // refresh that failed. Redacted, because this string is going on
-        // screen *and* into a log: `SecretError` names the account.
+        // Redacted: this string goes on screen and into a log, and `SecretError` names the account.
         Err(error) => Reachability::Refused {
             reason: postio_model::address::redact_addresses(&error.to_string()),
             trouble: match error {
@@ -261,8 +191,6 @@ mod tests {
     use super::*;
     use postio_ui::account::Trouble;
 
-    /// A protocol error that is or is not the server saying no to the
-    /// credential, standing in for IMAP's and SMTP's own.
     #[derive(Debug)]
     struct Said(&'static str, bool);
 
@@ -281,8 +209,6 @@ mod tests {
 
     #[test]
     fn a_password_the_server_refused_is_credential_trouble() {
-        // A rotated app password: the one failure a retry never mends, so
-        // Settings has to offer a repair rather than "unreachable" (#1584).
         assert_eq!(
             trouble(Ok(Err(Said("authentication failed", true)))),
             Some(Trouble::Rejected)

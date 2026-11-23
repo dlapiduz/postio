@@ -1,32 +1,20 @@
-//! Importing and exporting contacts, in words (specs/011-focus-contacts S11):
-//! what the open and save panels say, and what the sheet after them says.
-//!
-//! The file is the user's: it is read or written only through a panel they
-//! used, on this machine. An import never merges people behind their back --
-//! what looks like someone they have is offered in the review -- and has no
-//! undo, which the sheet says plainly. No toolkit here.
+//! Contacts import and export in words, with no toolkit. The file is read or written only
+//! through a panel the user used; an import never merges silently and has no undo.
 
 use postio_core::{CommandId, Keymap};
 use postio_model::card::ImportSummary;
 
 use crate::contact_edit::EditButton;
 
-/// What the panels say.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PanelWords {
-    /// The open panel's title and prompt.
     pub import_title: String,
-    /// Under it.
     pub import_message: String,
-    /// The save panel's title.
     pub export_title: String,
-    /// Under it.
     pub export_message: String,
-    /// The name it suggests.
     pub export_name: String,
 }
 
-/// The panels' words.
 pub fn panel_words() -> PanelWords {
     PanelWords {
         import_title: "Import Contacts".to_owned(),
@@ -39,16 +27,11 @@ pub fn panel_words() -> PanelWords {
     }
 }
 
-/// The sheet after an import or an export.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IoSheetView {
-    /// "Imported 3 contacts".
     pub title: String,
-    /// What happened, a line each.
     pub lines: Vec<String>,
-    /// "Review", with its key, when the import left people to look at.
     pub review: Option<EditButton>,
-    /// "Done", with its key.
     pub done: EditButton,
 }
 
@@ -56,8 +39,6 @@ fn count(n: usize, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
 }
 
-/// The sheet after reading a file: what was made and changed, what is left to
-/// review, and that there is no undo.
 pub fn import_sheet(summary: &ImportSummary, keymap: &Keymap) -> IoSheetView {
     let touched = summary.people_created + summary.people_updated;
     let title = if touched == 0 && summary.groups_created == 0 {
@@ -117,7 +98,6 @@ pub fn import_sheet(summary: &ImportSummary, keymap: &Keymap) -> IoSheetView {
     }
 }
 
-/// The sheet after writing a file.
 pub fn export_sheet(count_of: usize, keymap: &Keymap) -> IoSheetView {
     IoSheetView {
         title: format!("Exported {}", count(count_of, "contact", "contacts")),

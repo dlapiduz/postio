@@ -1,12 +1,3 @@
-//! Verbs, their aim, and where the cursor goes when mail leaves or comes
-//! back (specs/009-focus-macos T041; contract invariant 4).
-//!
-//! What GTK's window did around `send`, asserted here so both frontends get
-//! it: a verb goes to the selection when there is one and the cursor's row
-//! otherwise, an archive hands the cursor to the survivor below, the
-//! selection goes once acted on, toasts say what the host said, and an
-//! undo puts the cursor on the row it brought back.
-
 use crate::search_support::shown;
 use postio_config::paths::Platform;
 use postio_core::state::{Selection, ViewScope};
@@ -22,7 +13,6 @@ struct List {
 }
 
 impl List {
-    /// `ids` in order, each a conversation of its own unless `0` (a digest).
     fn of(ids: &[i64]) -> Self {
         List {
             rows: ids
@@ -55,8 +45,6 @@ impl Rows for List {
             .position(|row| row.id == message)
             .map(|at| at as u32)
     }
-    /// A digest row, as the frontend's list holds one: its id is minus
-    /// its delivery.
     fn row(&self, position: u32) -> Option<FocusRow> {
         let row = self.rows.get(position as usize)?;
         row.digest.then(|| {
@@ -181,7 +169,6 @@ fn archiving_the_cursors_selected_row_hands_the_cursor_to_the_survivor_below() {
 fn a_digest_row_alone_gives_a_mail_verb_nothing_to_aim_at() {
     let rows = List::of(&[0, 2]);
     let mut focus = focus_on(&rows);
-    // Archive on a digest's row is its own verb (below); Delete is not.
     assert!(asks(&run(&mut focus, CommandId::Delete, &rows)).is_empty());
 }
 
@@ -276,7 +263,6 @@ fn an_undo_puts_the_cursor_on_the_row_it_brought_back() {
             ..
         }]
     ));
-    // The first re-read may not have it yet; the next does.
     assert_eq!(cursor_of(&focus.landed(&after, false)), None);
     let effects = focus.landed(&before, false);
     assert_eq!(cursor_of(&effects), Some(1), "on the row it brought back");
@@ -295,7 +281,6 @@ fn the_controller_says_which_commands_are_its_own() {
         CommandId::Undo,
         CommandId::AcceptInvite,
         CommandId::DismissMarker,
-        // The writing verbs, since slice 7.
         CommandId::Reply,
         CommandId::Compose,
     ] {
@@ -359,7 +344,6 @@ fn posting_is_sending_as_it_is_and_an_answer_keeps_its_toast_long() {
             ..
         }]
     ));
-    // Any other post leaves the toast as long as the usual.
     let _ = focus.handle_on(Input::Post(Command::Refresh), &rows);
     let effects = focus.handle(Input::Event(Event::ActionCompleted {
         description: "Refreshed".into(),

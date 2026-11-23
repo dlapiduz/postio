@@ -1,27 +1,14 @@
 #!/usr/bin/env bash
-# Has the full suite passed on this release commit? Wait for the run on
-# `main` that is already answering.
-#
-# The push that merges a release pull request starts two workflows on the
-# same commit: `release.yml` and `nightly.yml`, which runs the full suite and
-# the storyboard passes after every merge. The release used to run both
-# again beside it -- `release-plan.sh` skips them only for a nightly that has
-# already *passed*, and seconds after the push none has -- so every release
-# paid for the suite twice and waited on the slower copy (2026-11-16: 0.6.1
-# spent 52 minutes in its own storyboard pass while the nightly ran the same
-# one).
-#
-# So the release asks that run instead, and only its `Full suite` and
-# `Storyboard passes` jobs: coverage floors and docs do not stop a release,
-# as they never did. The answer is one of
+# Has the full suite passed on this release commit? Wait for the run on `main` that is already
+# answering: the push that merged the release started `nightly.yml` on the same commit with the same
+# suite, and running it twice cost the slower copy's time. Only that run's `Full suite` and
+# `Storyboard passes` jobs count. The answer is one of
 #
 #   green     every one of those jobs passed: the release may publish.
-#   red       one failed: nothing publishes. Re-run the nightly's failed
-#             jobs, then this job; it reads the latest attempt.
-#   run-here  there is no answer to wait for -- the run was cancelled by a
-#             newer push to `main` (its concurrency group cancels), it never
-#             started, it skipped those jobs, or the wait ran out -- so the
-#             release runs the suite itself, as it always did.
+# red       one failed: nothing publishes. Re-run the nightly's failed jobs, then this job; it reads
+# the latest attempt.
+# run-here  there is no answer to wait for (cancelled by a newer push, never started, skipped, or
+# the wait ran out): the release runs the suite itself.
 #
 # Usage: scripts/release-await-nightly.sh
 #   Reads GITHUB_SHA and GITHUB_REPOSITORY. Prints `answer=<answer>` for
@@ -45,7 +32,6 @@ answer() {
     exit 0
 }
 
-# What the release would otherwise run itself.
 GATES='^(Full suite|Storyboard passes)'
 
 SECONDS=0
@@ -54,7 +40,6 @@ while :; do
         answer run-here "No answer from the nightly on ${SHA} within ${LIMIT}s; running the suite here."
     fi
 
-    # An API that does not answer is asked again, never read as a verdict.
     if ! run=$(gh api "repos/${REPO}/actions/workflows/nightly.yml/runs?head_sha=${SHA}&event=push&per_page=1" \
         --jq '.workflow_runs[0] // empty | "\(.id) \(.status) \(.conclusion) \(.html_url)"'); then
         sleep "$POLL"; continue

@@ -1,19 +1,6 @@
-//! The capture sheet (spec 007 US15, T158; screen 25): `T` on a message
-//! captures a task into the person's Obsidian vault, `N` a note.
-//!
-//! - **The text** is the action sentence, verbatim, when the message has a
-//!   marker that quotes one, and its subject otherwise; `alt+s` puts the
-//!   subject in its place.
-//! - **The due day** comes from the mail when it names one, with quick
-//!   picks beside it.
-//! - **The project** is suggested from the vault with its reason, and
-//!   `mod+p` changes it.
-//! - **The preview** is the exact line `postio-vault` will append, in the
-//!   Obsidian Tasks format with the `postio://` link before the date.
-//!
-//! `mod+Return` writes it, through the host, on this computer. The sheet is
-//! a dialog over the window, like every window over the app (FR-092), and
-//! its keys are `Context::Capture`'s.
+//! The capture sheet: `T` on a message captures a task into the Obsidian vault, `N` a note.
+//! The preview is the exact line `postio-vault` will append; `mod+Return` writes it through the
+//! host.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -31,21 +18,17 @@ use postio_widgets::widgets::keyhint;
 use postio_widgets::widgets::space::{S1, S2, S3};
 use postio_widgets::widgets::{Kind, Size};
 
-/// The dialog's widget name, so the window can tell it from another.
 pub const DIALOG_NAME: &str = "focus-capture";
 
 pub use postio_ui::capture::{Mode, NO_VAULT};
 
-/// The sheet's size: screen 25's.
 const WIDTH: i32 = 660;
 const HEIGHT: i32 = 600;
 
 pub use postio_ui::capture::Source;
 
-/// What a written capture said, for the window's toast.
 type Written = Rc<dyn Fn(String)>;
 
-/// The sheet. See the module.
 pub struct CaptureSheet {
     client: Client,
     dialog: adw::Dialog,
@@ -76,16 +59,13 @@ pub struct CaptureSheet {
     footnote: gtk::Label,
     picture: RefCell<VaultPicture>,
     project: RefCell<Option<Project>>,
-    /// Whether the project on screen is the one the vault suggested.
     suggested: Cell<bool>,
     written: RefCell<Option<Written>>,
-    /// Between presenting and closing.
     open: Rc<Cell<bool>>,
     me: RefCell<std::rc::Weak<CaptureSheet>>,
 }
 
 impl CaptureSheet {
-    /// The commands the sheet has a control for.
     pub fn controls() -> Vec<CommandId> {
         vec![
             CommandId::CaptureTask,
@@ -97,7 +77,6 @@ impl CaptureSheet {
         ]
     }
 
-    /// A closed sheet writing through `client`, its keys from `keymap`.
     pub fn new(client: Client, keymap: &Keymap) -> Rc<Self> {
         let cancel = gtk::Button::new();
         postio_widgets::widgets::button::style(&cancel, Kind::Secondary, Size::Small);
@@ -333,7 +312,6 @@ impl CaptureSheet {
                 sheet.choose_project_at(row.index());
             }
         });
-        // Enter in the filter takes the first project it shows.
         let weak = self.weak();
         self.filter.connect_activate(move |_| {
             if let Some(sheet) = weak.upgrade() {
@@ -342,12 +320,10 @@ impl CaptureSheet {
         });
     }
 
-    /// Run `handler` with what a written capture says.
     pub fn connect_written(&self, handler: impl Fn(String) + 'static) {
         self.written.replace(Some(Rc::new(handler)));
     }
 
-    /// Read every key the sheet shows from `keymap`.
     pub fn set_keymap(&self, keymap: &Keymap) {
         self.keymap.replace(keymap.clone());
         let key = |command| hints::key(keymap, command);
@@ -373,7 +349,6 @@ impl CaptureSheet {
         self.hint.append(&gtk::Label::new(Some(
             "The sentence from the mail, as written \u{b7}",
         )));
-        // A control, as every key is (constitution II): what `alt+s` does.
         let use_subject = gtk::Button::new();
         postio_widgets::widgets::button::style(&use_subject, Kind::Ghost, Size::Small);
         use_subject.set_child(Some(&keyhint::labelled(
@@ -390,8 +365,6 @@ impl CaptureSheet {
         self.show_mode();
     }
 
-    /// Open over `parent` for `source`, as a task or a note, and read the
-    /// vault's projects for it.
     pub fn open(&self, parent: &impl IsA<gtk::Widget>, source: Source, mode: Mode) {
         let text = source
             .sentence
@@ -415,13 +388,11 @@ impl CaptureSheet {
         self.show_project();
         self.open.set(true);
         self.dialog.present(Some(parent));
-        // The keyboard in the text, the text left as it is: selecting it
-        // all would let the first key typed replace the sentence.
+        // Selecting it all would let the first key typed replace the sentence.
         self.entry.grab_focus_without_selecting();
         self.read_vault(subject);
     }
 
-    /// Read the vault's projects, the suggestion and the open tasks.
     fn read_vault(&self, subject: String) {
         let client = self.client.clone();
         let weak = self.weak();
@@ -449,7 +420,6 @@ impl CaptureSheet {
         });
     }
 
-    /// Run `command`, as its key or its control asked.
     pub fn run(&self, command: CommandId) {
         match command {
             CommandId::Back => self.close(),
@@ -485,8 +455,6 @@ impl CaptureSheet {
         self.show_mode();
     }
 
-    /// What depends on task or note: the heading, the due row, the button,
-    /// and the preview.
     fn show_mode(&self) {
         let keymap = self.keymap.borrow().clone();
         let mode = self.mode.get();
@@ -502,8 +470,6 @@ impl CaptureSheet {
         self.show_preview();
     }
 
-    /// The due day and its quick picks: today, the coming Monday,
-    /// Wednesday and Friday, the mail's own day among them, and none.
     fn show_due(&self) {
         while let Some(child) = self.picks.first_child() {
             self.picks.remove(&child);
@@ -512,7 +478,6 @@ impl CaptureSheet {
         let picks = capture::quick_picks(postio_ui::clock::now().date_naive(), chosen);
         for capture::Pick { words, day } in picks {
             let pick = gtk::ToggleButton::with_label(&words);
-            // The day chosen is ringed, the rest are quiet (screen 25).
             let kind = if day == chosen {
                 Kind::Secondary
             } else {
@@ -534,7 +499,6 @@ impl CaptureSheet {
         self.due_day.set_text(&capture::due_label(chosen));
     }
 
-    /// The project chosen, why, and where its note is.
     fn show_project(&self) {
         let picture = self.picture.borrow();
         let project = self.project.borrow().clone();
@@ -543,8 +507,7 @@ impl CaptureSheet {
             .as_ref()
             .filter(|_| self.suggested.get())
             .map(|suggestion| match &suggestion.reason {
-                // The word as the subject has it, which the vault read
-                // folded: the project's own name says it as written.
+                // The vault read folded the word: the project's own name says it as written.
                 Reason::NamedInSubject(_) => suggestion.project.name.as_str(),
             });
         self.project_title.set_text(&capture::project_title(named));
@@ -565,7 +528,6 @@ impl CaptureSheet {
         self.show_preview();
     }
 
-    /// The projects the filter lets through, and the tasks note.
     fn list_projects(&self) {
         while let Some(row) = self.projects.first_child() {
             self.projects.remove(&row);
@@ -622,7 +584,6 @@ impl CaptureSheet {
         self.projects_shown.replace(shown);
     }
 
-    /// Choose the project listed at `index`, and put the list away.
     fn choose_project_at(&self, index: i32) {
         let chosen = usize::try_from(index)
             .ok()
@@ -644,7 +605,6 @@ impl CaptureSheet {
         self.entry.grab_focus();
     }
 
-    /// The note a note entry goes to: the project's, or the tasks note.
     fn note_path(&self) -> std::path::PathBuf {
         self.project
             .borrow()
@@ -653,7 +613,6 @@ impl CaptureSheet {
             .unwrap_or_else(|| self.picture.borrow().tasks_note.clone())
     }
 
-    /// The task as it stands.
     fn task(&self) -> Option<Task> {
         let source = self.source.borrow();
         let source = source.as_ref()?;
@@ -664,7 +623,6 @@ impl CaptureSheet {
         })
     }
 
-    /// The note entry as it stands.
     fn entry(&self) -> Option<NoteEntry> {
         let source = self.source.borrow();
         let source = source.as_ref()?;
@@ -675,7 +633,6 @@ impl CaptureSheet {
         })
     }
 
-    /// The exact line that will be appended.
     fn show_preview(&self) {
         let line = match self.mode.get() {
             Mode::Task => self.task().map(|task| task.line()),
@@ -693,8 +650,6 @@ impl CaptureSheet {
             .set_text(&capture::footnote(self.mode.get(), &place, self.due.get()));
     }
 
-    /// Append what the sheet shows to the vault, through the host; close
-    /// and say so once it is written.
     fn write(&self) {
         let project = self.project.borrow().clone();
         let place = project
@@ -750,34 +705,28 @@ impl CaptureSheet {
         }
     }
 
-    /// Close, writing nothing.
     pub fn close(&self) {
         self.dialog.close();
     }
 
-    /// Whether the sheet is over the window.
     pub fn is_open(&self) -> bool {
         self.open.get()
     }
 
-    /// Whether the sheet is up and drawn.
     pub fn is_shown(&self) -> bool {
         self.dialog
             .child()
             .is_some_and(|child| child.is_mapped() && child.width() > 0)
     }
 
-    /// The text to capture, as it stands.
     pub fn text(&self) -> String {
         self.entry.text().to_string()
     }
 
-    /// The exact line the preview shows.
     pub fn preview(&self) -> String {
         self.preview.text().to_string()
     }
 
-    /// Every label the sheet shows, in order.
     pub fn texts(&self) -> Vec<String> {
         let mut said = Vec::new();
         let mut stack = vec![self.dialog.clone().upcast::<gtk::Widget>()];
@@ -800,7 +749,6 @@ impl CaptureSheet {
         said
     }
 
-    /// The dialog.
     pub fn dialog(&self) -> &adw::Dialog {
         &self.dialog
     }

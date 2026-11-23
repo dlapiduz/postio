@@ -1,13 +1,5 @@
-//! The rows Focus's inbox surfaces among its conversations (spec 007,
-//! contracts/engine.md "Reads", data-model.md "Surfaced rows"): each digest
-//! delivered and not archived, and each reminder that fired and still
-//! stands, with when it came due and where it goes.
-//!
-//! What it reads, whatever the inbox holds: the open deliveries with their
-//! counts and kept summaries (one statement), their senders (one), the
-//! surfaced reminders on conversations still in an inbox (one), and for
-//! each row its place (one) -- and for a reminder its
-//! conversation's latest message (one, and its row). No body is read.
+//! The rows Focus's inbox surfaces: each digest delivered and not archived, and each reminder fired
+//! and still standing. No body is read.
 
 use postio_config::FocusConfig;
 use postio_model::listing::StoreError;
@@ -16,11 +8,8 @@ use postio_storage::repository::{DigestRepository, ReminderRepository, ThreadRep
 
 use crate::Inner;
 
-/// How many senders a digest row names: its line has room for a few, and
-/// the count says the rest.
 const SENDERS_SHOWN: usize = 6;
 
-/// The surfaced rows, newest first.
 pub(crate) async fn surfaced(inner: &Inner) -> Result<Vec<Surfaced>, StoreError> {
     let config = inner.wiring.focus.config();
     let reader = inner.wiring.database.read().await?;
@@ -87,8 +76,6 @@ pub(crate) async fn surfaced(inner: &Inner) -> Result<Vec<Surfaced>, StoreError>
     Ok(rows)
 }
 
-/// How often the rule called `name` comes, as `config` has it, when it is
-/// still there and reads.
 fn cadence_of(config: &FocusConfig, name: &str) -> Option<Cadence> {
     let rule = config
         .digests

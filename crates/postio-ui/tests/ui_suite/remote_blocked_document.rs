@@ -1,8 +1,3 @@
-//! The document the reader hands its renderer, for a sender whose remote
-//! content is blocked (#1926): no network URL under the hostile fixtures'
-//! `vector.example.com` survives into it, in markup, styles or head. This is
-//! the far end of `postio-body`'s `remote_vectors`, past `document_for`.
-
 use postio_body::RemoteImages;
 use postio_ui::reader::document::{self, Rendering};
 

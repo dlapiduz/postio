@@ -1,21 +1,7 @@
-//! Directory and file permissions for the store's private data.
-//!
-//! The store holds mail — message metadata, the FTS5 index, raw message
-//! blobs, attachments — and none of it should be readable by another local
-//! user. On most distributions `$XDG_DATA_HOME` (`~/.local/share`) is `0755`,
-//! so a directory created under it with the process umask (commonly `022`)
-//! is world-traversable, and every file SQLite or the blob store writes
-//! under it inherits the same exposure. `config.toml` is already chmodded
-//! `0600` after writing; the actual mailbox was not.
-//!
-//! [`ensure_private_dir`] creates a missing directory `0700` directly, via
-//! `DirBuilderExt::mode`, rather than creating it with the default mode and
-//! chmodding afterward — a chmod-after-create leaves a window where the
-//! directory is briefly world-traversable, and a process racing to look
-//! inside it does not need a large one. For a directory that already exists
-//! — a store created before this existed, or one whose mode someone loosened
-//! by hand — it repairs the permission instead, which is the only thing a
-//! directory that already exists can be offered.
+//! Permissions for the store's private data: `$XDG_DATA_HOME` is often `0755`, so nothing may be
+//! created at the umask.
+//! [`ensure_private_dir`] creates `0700` directly, since chmod-after-create leaves a
+//! world-traversable window, and repairs an existing directory.
 
 use std::path::Path;
 
@@ -51,9 +37,7 @@ pub(crate) fn ensure_private_dir(path: &Path) -> Result<()> {
     })
 }
 
-/// Tightens an existing file to `0600`. For a file SQLite or another library
-/// already created at its own default mode, where there was no chance to
-/// pass a mode at creation time.
+/// For a file a library already created at its own default mode.
 #[cfg(unix)]
 pub(crate) fn tighten_file(path: &Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
@@ -71,9 +55,7 @@ pub(crate) fn tighten_file(_path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// `OpenOptions` pre-armed to create a new file `0600`, so a blob or other
-/// content this crate writes for the first time is never briefly at the
-/// process umask the way a chmod-after-create would leave it.
+/// Creates a new file `0600`, never briefly at the umask as chmod-after-create would.
 #[cfg(unix)]
 pub(crate) fn private_file_options() -> std::fs::OpenOptions {
     use std::os::unix::fs::OpenOptionsExt;
@@ -109,8 +91,6 @@ mod tests {
 
         assert!(target.is_dir());
         assert_eq!(mode_of(&target), 0o700);
-        // The intermediate directory DirBuilder had to create along the way
-        // is private too -- not just the leaf that was asked for.
         assert_eq!(mode_of(root.path().join("a").as_path()), 0o700);
     }
 

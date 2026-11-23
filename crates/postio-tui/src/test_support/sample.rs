@@ -230,10 +230,7 @@ pub fn state(state: &str, width: u16, height: u16) -> (App, Colour) {
         rows
     };
     crate::test_support::show_focus(&mut app, rows);
-    update(
-        &mut app,
-        Input::FocusCounts(crate::test_support::drawing_counts()),
-    );
+    app.counts_for_tests(crate::test_support::drawing_counts());
 
     // The first message open, for `reading`; otherwise the list.
     if matches!(state, "open" | "open-narrow" | "find" | "pane") {

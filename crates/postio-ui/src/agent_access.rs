@@ -1,27 +1,7 @@
-//! Agent access, as Settings shows it (ADR 0010 Q6, #1832).
-//!
-//! `postio-mcp` keeps two things in files: what is shared, as the
-//! `[mcp.accounts."<address>"]` tables of `config.toml`, and an access log,
-//! one JSON line per tool call, beside the store. Q6 says both are readable
-//! and revocable from the settings panel. This is the half of that which is
-//! not a toolkit: what each line says, in the words both frontends use, and
-//! what revoking means.
-//!
-//! **Revoking** takes the account's table out of `[mcp]`
-//! ([`postio_config::revoke_mcp_account`]) and does nothing else. It does not
-//! signal, disconnect or kill an agent that is running: the server reads
-//! `[mcp]` again on every call, so the next call from a running agent finds
-//! the account gone, and the one in flight finishes with what it was already
-//! allowed. [`REVOKE_NOTE`] says so on screen, so nobody reads a revoke as a
-//! promise about a call that has already started.
-//!
-//! **The log holds ids only** (ARCHITECTURE.md §11). [`wanted`] says which
-//! ids a page of calls mentions, the caller resolves them to rows when it
-//! draws, and [`call_line`] writes the sentence over what it found. An id
-//! that no longer resolves (a deleted message) is counted, not named.
-//! The log does not say which agent made a call, because the protocol does
-//! not tell the server that in a form it can trust: the view groups by
-//! account and by tool, which is what the log can vouch for.
+//! Agent access as Settings shows it: shared accounts from `[mcp]` and the access log (ADR 0010
+//! Q6).
+//! Revoking only removes the account's table; a call in flight finishes, the next sees it gone.
+//! The log holds ids only, resolved by the caller (ARCHITECTURE.md §11).
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -29,58 +9,40 @@ use chrono::{DateTime, Utc};
 use postio_config::McpConfig;
 use serde_json::Value;
 
-/// The pane's title.
 pub const TITLE: &str = "Agents";
 
-/// The line under the title.
 pub const DESCRIPTION: &str =
     "Which accounts an AI agent may read through postio-mcp, and what it has done.";
 
-/// What the footer says about where this is kept.
 pub const STORED_IN: &str = "[mcp] in config.toml · read again on every agent call";
 
-/// The heading over the shared accounts.
 pub const SHARED_HEADING: &str = "Shared with agents";
 
-/// The heading over the recent calls.
 pub const ACTIVITY_HEADING: &str = "Recent activity";
 
-/// What the shared list says when it is empty. Off is the default.
 pub const NOTHING_SHARED: &str =
     "No agent can see any account. Sharing is off until you turn it on in config.toml.";
 
-/// What the activity list says when the log has nothing.
 pub const NO_ACTIVITY: &str = "No agent has used Postio yet.";
 
-/// What revoking does and does not do, shown beside the button.
 pub const REVOKE_NOTE: &str =
     "Revoking takes effect on the agent's next call. A call already running finishes.";
 
-/// The heading over the path an agent's client should launch.
 pub const ENTRY_HEADING: &str = "Point your agent at";
 
-/// The button on one shared account.
 pub const REVOKE_ONE: &str = "Revoke";
 
-/// The button that revokes every account.
 pub const REVOKE_ALL: &str = "Revoke all";
 
-/// How many recent calls the view keeps.
 pub const RECENT: usize = 50;
 
-/// One account an agent may read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SharedAccount {
-    /// The account's address: the key of its table, and what a revoke names.
     pub address: String,
-    /// Which folders: `All folders`, `INBOX, Receipts`, or `No folders`.
     pub folders: String,
-    /// What the agent may do besides read and draft: `Read and draft only`,
-    /// or `Also archive, move and label`.
     pub abilities: String,
 }
 
-/// The accounts `config` shares, by address.
 pub fn shared_accounts(config: &McpConfig) -> Vec<SharedAccount> {
     config
         .accounts
@@ -111,41 +73,27 @@ pub fn shared_accounts(config: &McpConfig) -> Vec<SharedAccount> {
         .collect()
 }
 
-/// How a call ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CallOutcome {
-    /// It answered.
     Answered,
-    /// It asked for something not shared, or not there.
     Refused,
-    /// The store could not be reached.
     Failed,
 }
 
-/// One line of the access log.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentCall {
-    /// When.
     pub at: DateTime<Utc>,
-    /// The tool: `search_mail`.
     pub tool: String,
-    /// Account ids.
     pub accounts: Vec<i64>,
-    /// Folder ids.
     pub mailboxes: Vec<i64>,
-    /// Message ids returned or acted on.
     pub messages: Vec<i64>,
-    /// Draft ids written.
     pub drafts: Vec<i64>,
-    /// Label ids put on or taken off.
     pub labels: Vec<i64>,
-    /// How it ended.
     pub outcome: CallOutcome,
 }
 
-/// The newest `limit` calls in `log`, newest first. A line that is not a
-/// call (a torn write, a future format) is skipped rather than failing the
-/// page: the log is append-only and read while it is being written.
+/// Skips lines that are not calls (torn write, future format): the log is append-only and
+/// read while it is written.
 pub fn parse_log(log: &str, limit: usize) -> Vec<AgentCall> {
     log.lines()
         .rev()
@@ -181,18 +129,14 @@ fn parse_line(line: &str) -> Option<AgentCall> {
     })
 }
 
-/// The ids a page of calls mentions, so the caller resolves each once.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Wanted {
-    /// Account ids.
     pub accounts: BTreeSet<i64>,
-    /// Folder ids.
     pub mailboxes: BTreeSet<i64>,
     /// Message ids. Only a call that touched one message names it.
     pub messages: BTreeSet<i64>,
 }
 
-/// Which ids `calls` need resolved to be drawn.
 pub fn wanted(calls: &[AgentCall]) -> Wanted {
     let mut wanted = Wanted::default();
     for call in calls {
@@ -208,11 +152,8 @@ pub fn wanted(calls: &[AgentCall]) -> Wanted {
 /// What the ids resolved to. Missing entries are ids that no longer exist.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Names {
-    /// Account id to address.
     pub accounts: HashMap<i64, String>,
-    /// Folder id to path.
     pub mailboxes: HashMap<i64, String>,
-    /// Message id to subject.
     pub messages: HashMap<i64, String>,
 }
 
@@ -243,7 +184,6 @@ fn verb(tool: &str, call: &AgentCall) -> String {
     }
 }
 
-/// What a tool asks to do, after "Tried to".
 fn attempt(tool: &str) -> String {
     match tool {
         "list_accounts" => "list the shared accounts".to_owned(),
@@ -324,27 +264,19 @@ pub fn activity_summary(calls: &[AgentCall], now: DateTime<Utc>) -> String {
     }
 }
 
-/// One recent call, as a row draws it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CallRow {
-    /// `5 min ago`.
     pub when: String,
-    /// [`call_line`]'s sentence.
     pub line: String,
-    /// Whether the call was turned away or failed, for the row's emphasis.
     pub refused: bool,
 }
 
-/// The activity list: [`activity_summary`] over its rows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Activity {
-    /// `12 calls · last 5 min ago`, or [`NO_ACTIVITY`].
     pub summary: String,
-    /// Newest first.
     pub calls: Vec<CallRow>,
 }
 
-/// `calls` as of `now`, over what their ids resolved to.
 pub fn activity(calls: &[AgentCall], names: &Names, now: DateTime<Utc>) -> Activity {
     Activity {
         summary: activity_summary(calls, now),
@@ -434,7 +366,6 @@ mod tests {
 
     #[test]
     fn the_activity_is_rows_ready_to_draw_newest_first() {
-        // What both panes draw, so neither maps calls to rows its own way.
         let calls = parse_log(LOG, 10);
         let shown = activity(&calls, &Names::default(), at("2026-10-16T11:35:00+00:00"));
         assert_eq!(shown.summary, "3 calls \u{b7} last 5 min ago");
@@ -491,7 +422,6 @@ mod tests {
         let wanted = wanted(&parse_log(LOG, 10));
         assert_eq!(wanted.accounts, BTreeSet::from([1, 2]));
         assert_eq!(wanted.mailboxes, BTreeSet::from([7]));
-        // The search returned two messages: a count, no subject to look up.
         assert_eq!(wanted.messages, BTreeSet::from([11]));
     }
 

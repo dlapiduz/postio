@@ -1,16 +1,3 @@
-//! Following NetworkManager, against the real system bus.
-//!
-//! The mapping from `NMState` onto what the supervisor understands is unit
-//! tested inside `postio_runtime::network`, with no bus involved. What cannot
-//! be proven without a machine is that NetworkManager is where this build
-//! thinks it is and says what this build thinks it says — so that is what is
-//! here, `#[ignore]`d like every other test in this workspace that needs
-//! something real:
-//!
-//! ```text
-//! cargo test -p postio-runtime --test network -- --ignored --nocapture
-//! ```
-
 use postio_runtime::NetworkState;
 use postio_runtime::network::follow;
 use tokio::sync::watch;
@@ -21,8 +8,6 @@ async fn networkmanager_answers_with_a_state_this_build_understands() {
     let (sink, mut changed) = watch::channel(NetworkState::Unknown);
     tokio::spawn(follow(sink));
 
-    // The first thing `follow` does after connecting is publish the *current*
-    // state, so this does not wait on the network changing.
     tokio::time::timeout(std::time::Duration::from_secs(5), changed.changed())
         .await
         .expect("NetworkManager did not answer within five seconds")
@@ -41,8 +26,8 @@ async fn networkmanager_answers_with_a_state_this_build_understands() {
 #[tokio::test]
 #[ignore = "needs a system bus running NetworkManager"]
 async fn the_listener_stops_when_nobody_is_listening_any_more() {
-    // The engine holds the receiving end. When it stops, this task must not
-    // keep a bus connection open for the life of the process.
+    // The engine holds the receiving end; when it stops this task must not keep a bus connection
+    // open for the process.
     let (sink, changed) = watch::channel(NetworkState::Unknown);
     let listener = tokio::spawn(follow(sink));
     drop(changed);

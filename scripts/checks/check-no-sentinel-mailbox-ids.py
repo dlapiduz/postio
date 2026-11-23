@@ -41,7 +41,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 CRATES = ROOT / "crates"
 
-# `MailboxId::new(-1)`, and the same through a `use`d alias.
 SENTINEL = re.compile(r"MailboxId::new\(\s*-\s*\d+")
 
 
@@ -50,7 +49,6 @@ def offenders() -> list[tuple[Path, int, str]]:
     for path in sorted(CRATES.rglob("*.rs")):
         for number, line in enumerate(path.read_text().splitlines(), start=1):
             stripped = line.lstrip()
-            # Prose may name it; code may not.
             if stripped.startswith("//") or stripped.startswith("*"):
                 continue
             if SENTINEL.search(line):

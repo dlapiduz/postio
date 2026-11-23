@@ -1,25 +1,4 @@
-//! What a first sync leaves resident, under the application's allocator
-//! (#1606).
-//!
-//! A live instance held 908-917 MB resident after a first sync of a large
-//! account, and one mimalloc arena held 624-671 MB of it -- 567 MB of that as
-//! transparent huge pages. The review attributed it, from code and `/proc`,
-//! to per-connection page caches (addressed by #1602), mimalloc's huge pages
-//! and purge delay, and the engine's full-text segment cache. None of those
-//! was measured. This measures what a first sync of one large folder leaves
-//! behind, through the real engine and store against the mock server, with
-//! the application's own allocator, so the allocator's knobs can be compared
-//! by environment:
-//!
-//! ```text
-//! cargo nextest run -p postio-runtime --test first_sync_memory --profile nightly --no-capture
-//! MIMALLOC_ALLOW_THP=0 cargo nextest run ... (same)
-//! ```
-//!
-//! Three samples: before the engine starts, when the folder's headers and
-//! bodies are all local, and after a quiet spell for the allocator to purge.
-//! Each reports RSS, the process peak, and the largest anonymous mapping --
-//! the mimalloc arena -- with how much of it is huge pages.
+//! What a first sync leaves resident under the application's allocator (#1606).
 //!
 //! POSTIO-MEASUREMENT: its output is numbers a person reads and compares
 //! across allocator settings, and a first sync of this size takes a minute.
@@ -35,11 +14,8 @@ use postio_storage::{BlobStore, Store, test_support};
 #[global_allocator]
 static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-/// Messages in the folder: enough that the page caches, the index and the
-/// allocator all reach a steady state, few enough to run in a minute.
 const MESSAGES: u32 = 20_000;
 
-/// `POSTIO_MEASURE_MESSAGES` overrides [`MESSAGES`] for a quicker look.
 fn messages() -> u32 {
     std::env::var("POSTIO_MEASURE_MESSAGES")
         .ok()
@@ -47,7 +23,6 @@ fn messages() -> u32 {
         .unwrap_or(MESSAGES)
 }
 
-/// How long the process is left alone before the last sample.
 const QUIET: Duration = Duration::from_secs(10);
 
 fn message(n: u32) -> Vec<u8> {
@@ -85,7 +60,6 @@ fn sample() -> Sample {
             .and_then(|value| value.parse().ok())
             .unwrap_or(0)
     };
-    // The largest anonymous mapping, which in a mimalloc process is the arena.
     let smaps = std::fs::read_to_string("/proc/self/smaps").unwrap_or_default();
     let (mut arena_rss_kb, mut arena_thp_kb) = (0u64, 0u64);
     let (mut anonymous, mut rss, mut thp) = (false, 0u64, 0u64);
@@ -100,7 +74,6 @@ fn sample() -> Sample {
         let first = words.next().unwrap_or_default();
         if first.contains('-') && first.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
             close(anonymous, rss, thp);
-            // Six fields and no path: an anonymous mapping.
             anonymous = line.split_whitespace().count() == 5;
             rss = 0;
             thp = 0;
@@ -149,9 +122,8 @@ async fn what_a_first_sync_leaves_resident() {
         let connection = database.connect().await.expect("a connection");
         test_support::account(&connection).await
     };
-    // `POSTIO_MEASURE_WITHOUT_FTS=1` drops the header full-text index before
-    // the sync, so a second run says what the engine's segment cache holds:
-    // the difference between the two is its share (#1606).
+    // `POSTIO_MEASURE_WITHOUT_FTS=1` drops the header full-text index so a second run shows the
+    // segment cache's share (#1606).
     let without_fts = std::env::var_os("POSTIO_MEASURE_WITHOUT_FTS").is_some();
     if without_fts {
         let connection = database.connect().await.expect("a connection");
@@ -236,7 +208,5 @@ async fn what_a_first_sync_leaves_resident() {
         headers_at.unwrap_or_default()
     );
 
-    // Only what holds on any machine: memory after a quiet spell is not above
-    // the peak. The numbers are the point.
     assert!(quiet.rss_kb <= quiet.peak_kb);
 }

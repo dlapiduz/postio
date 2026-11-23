@@ -1,13 +1,6 @@
-//! One runner's share of a pass over the catalogue.
-//!
-//! The nightly's two storyboard passes -- the catalogue and the generated
-//! pass over every command -- were one job each way, and grew from twelve
-//! minutes to fifty on a busy runner (0.6.1, 2026-11-16). Split across
-//! runners they cost the slowest shard. `POSTIO_STORYBOARD_SHARD=2/4` takes
-//! the second of four shares, round-robin, as `scripts/storyboards.sh run`
-//! already deals its files to its shards.
+//! One runner's share of a pass over the catalogue. `POSTIO_STORYBOARD_SHARD=2/4` takes the second
+//! of four shares, round-robin, as `scripts/storyboards.sh run` deals its files to its shards.
 
-/// The share of a pass this runner plays: `index` of `count`, from 1.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Shard {
     index: usize,
@@ -15,10 +8,8 @@ pub struct Shard {
 }
 
 impl Shard {
-    /// The whole pass.
     pub const ALL: Self = Self { index: 1, count: 1 };
 
-    /// Reads `k/n`, 1 ≤ k ≤ n.
     pub fn parse(text: &str) -> Result<Self, String> {
         let refused = || format!("{text:?} is not k/n with 1 <= k <= n");
         let (index, count) = text.split_once('/').ok_or_else(refused)?;
@@ -41,12 +32,10 @@ impl Shard {
         }
     }
 
-    /// Whether the item at `position` in the pass's order is this shard's.
     pub fn takes(self, position: usize) -> bool {
         position % self.count == self.index - 1
     }
 
-    /// How many shares the pass is split into.
     pub fn count(self) -> usize {
         self.count
     }

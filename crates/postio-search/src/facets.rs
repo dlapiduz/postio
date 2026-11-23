@@ -1,75 +1,29 @@
-//! Scope and refine: the two ways canvas 2b narrows a search without
-//! retyping it.
-//!
-//! The left column of artboard 2b is a **Scope** list (All mail / Inbox only
-//! / Lists, each with a count) and a **Refine** row of chips (`is:unread`,
-//! `larger:1M`, `is:flagged`, …). They are the same idea twice: take the
-//! query the user already typed, ask what *else* is true of the messages it
-//! matched, and offer that as one click.
-//!
-//! # Why the counts come first
-//!
-//! A facet without a count is a guess, and half of them are dead ends — the
-//! rule in `/ux-architect` is that no surface may offer a step that leads
-//! nowhere. So [`Facets`] is *measured* against the live result set (see
-//! `postio_index::executor::facets`), and [`Facets::suggested`] then drops every
-//! refinement that would match nothing (there is nothing behind it) or
-//! everything (it would narrow nothing). What survives is guaranteed to
-//! change the result set and guaranteed not to empty it.
-//!
-//! # Why the scope is not a chip
-//!
-//! Scope rescopes the query; it does not edit it. Typing `in:inbox` into the
-//! box would do the same thing, but then switching back to All mail means
-//! finding and deleting a token — and the acceptance criterion is that scope
-//! switching happens *without retyping*. So the scope rides alongside the
-//! query in `postio_index::executor::SearchRequest`, and the box keeps saying
-//! what the user typed.
-//!
-//! Refinements are the opposite, and deliberately so: clicking one *appends a
-//! chip*, because it is a token the user could have typed.
+//! Scope and refine: narrowing a search without retyping it. Refinements are measured against the
+//! live result set, and [`Facets::suggested`] drops any that match nothing or everything.
+//! Scope rescopes the query rather than editing it, so switching back to All mail needs no token
+//! deletion; it rides beside the query in `postio_index::executor::SearchRequest`.
 
 use chrono::{Datelike, Months, NaiveDate};
 use postio_model::{AddressId, LabelId, MailboxId};
 
-/// Which slice of the mailbox a search looks at.
-///
-/// Not a mailbox id: this is the standing, no-typing rescope from the canvas'
-/// left column, and it has to mean the same thing before any folder has been
-/// picked. `in:` is still there for naming one folder exactly.
+/// Not a mailbox id: a standing rescope that must mean the same thing before any folder is picked.
+/// `in:` still names one folder exactly.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Scope {
-    /// Every folder except drafts, junk and trash. The default, because
-    /// search is how you find the thing you filed somewhere and forgot --
-    /// and those three are the folders a search almost never means, the ones
-    /// that turned one correspondent's name into sixty-six hits (#1523). Sent
-    /// stays in. An `in:` naming one of the three reaches it; the executor
-    /// lifts the exclusion for any query that names a folder.
+    /// Every folder except drafts, junk and trash, which turned one correspondent's name into
+    /// sixty-six hits (#1523). Sent stays in; an `in:` naming one of the three reaches it.
     #[default]
     AllMail,
-    /// Only what is still in the inbox.
     Inbox,
-    /// Mailing-list traffic.
-    ///
-    /// **Still an approximation, though `List-Id` is indexed now (#9,
-    /// `messages.list_id`; see [`Filter::List`]):** this scope is "in a
-    /// mailbox that is not one of the standard roles" — the folders list
-    /// mail is filed into — rather than "carries a `List-Id`", which is a
-    /// deliberately different question the sidebar's own Lists section (not
-    /// yet built) would answer instead. That is right for the setup the
-    /// canvas draws and wrong for a mailbox that files list mail into the
-    /// inbox; the count says so either way, which is what keeps it honest
-    /// rather than silently empty.
-    ///
-    /// [`Filter::List`]: crate::query::Filter::List
+    /// An approximation: "in a mailbox that is not one of the standard roles" rather than
+    /// "carries a `List-Id`". Wrong for a mailbox that files list mail into the inbox; the count
+    /// says so.
     Lists,
 }
 
 impl Scope {
-    /// Every scope, in the order the canvas' left column lists them.
     pub const ALL: [Scope; 3] = [Scope::AllMail, Scope::Inbox, Scope::Lists];
 
-    /// What the column calls it.
     pub const fn label(self) -> &'static str {
         match self {
             Scope::AllMail => "All mail",
@@ -79,43 +33,28 @@ impl Scope {
     }
 }
 
-/// One scope and how many of the query's matches are in it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ScopeCount {
-    /// The scope.
     pub scope: Scope,
-    /// Matches inside it, counted the same way and to the same cap as
-    /// [`SearchResults::total_hits`](crate::results::SearchResults::total_hits).
     pub hits: u64,
 }
 
-/// One offered narrowing: a token to append, and what it would leave.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Refinement {
-    /// The query token, exactly as it would be typed — `is:unread`.
     pub token: String,
-    /// How many of the current matches it keeps.
     pub hits: u64,
 }
 
-/// How many refine chips the column offers at once.
-///
-/// Four, from the canvas. It is a shortlist, not a filter panel: a column of
-/// twenty chips is a thing to read rather than a thing to click.
+/// A shortlist, not a filter panel: twenty chips is a thing to read rather than click.
 pub const MAX_REFINEMENTS: usize = 4;
 
-/// What a query's result set turned out to be made of.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Facets {
-    /// Matches per scope, in [`Scope::ALL`] order.
     pub scopes: Vec<ScopeCount>,
-    /// Every narrowing that was measured, before [`Facets::suggested`] picks
-    /// which are worth offering.
     pub refinements: Vec<Refinement>,
 }
 
 impl Facets {
-    /// Matches in `scope`, or zero if it was not measured.
     pub fn hits(&self, scope: Scope) -> u64 {
         self.scopes
             .iter()
@@ -124,17 +63,9 @@ impl Facets {
             .unwrap_or(0)
     }
 
-    /// The refinements worth offering, best first, at most
-    /// [`MAX_REFINEMENTS`] of them.
-    ///
-    /// `total` is the size of the result set they were measured against. A
-    /// refinement that keeps none of it is a dead end; one that keeps all of
-    /// it narrows nothing and would appear to do nothing when clicked.
-    /// Neither is offered.
-    ///
-    /// The survivors are ordered by how much they keep, largest first: the
-    /// gentlest useful narrowing is the one it is safest to try, and the
-    /// drastic ones stay reachable one row down rather than leading.
+    /// A refinement that keeps none of the set is a dead end; one that keeps all of it does nothing
+    /// when clicked. Neither is offered; the rest are largest first, the gentlest narrowing
+    /// leading.
     pub fn suggested(&self, total: u64) -> Vec<&Refinement> {
         let mut worth: Vec<&Refinement> = self
             .refinements
@@ -149,13 +80,8 @@ impl Facets {
     }
 }
 
-/// The query `query` becomes when `token` is appended.
-///
-/// Idempotent: a token already in the query comes back unchanged, so
-/// clicking a chip twice cannot produce `is:unread is:unread`. In practice a
-/// refinement disappears from [`Facets::suggested`] the moment it is applied
-/// — it then matches every remaining hit — but that depends on a round trip,
-/// and a double click does not wait for one.
+/// Idempotent: a double click does not wait for the round trip that would remove the chip, so a
+/// token already present comes back unchanged.
 pub fn append(query: &str, token: &str) -> String {
     let token = token.trim();
     if token.is_empty() {
@@ -171,58 +97,36 @@ pub fn append(query: &str, token: &str) -> String {
     format!("{query} {token}")
 }
 
-/// The facets of a conversation search (spec 010): what the filter
-/// buttons, their popovers and the timeline count.
-///
-/// Beside [`Facets`], which GTK's search keeps. Every count is of
-/// conversations, and of the query with that term added (SC-008). Names and
-/// addresses are not here: `postio-session` resolves the ids it returns.
+/// Every count is of conversations, and of the query with that term added. Names are not here:
+/// `postio-session` resolves the ids.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SearchFacets {
     /// Senders, the top 50 by count.
     pub senders: Vec<Count<AddressId>>,
     /// Recipients (To, Cc), the top 50 by count.
     pub recipients: Vec<Count<AddressId>>,
-    /// Labels.
     pub labels: Vec<Count<LabelId>>,
-    /// Folders.
     pub folders: Vec<Count<MailboxId>>,
-    /// Conversations with an attachment.
     pub attachment: u64,
-    /// Conversations with an open marker (`has:action`).
     pub action: u64,
-    /// Conversations with something unread.
     pub unread: u64,
-    /// The timeline: oldest first, ending with today's month
-    /// ([`months_ending`]).
     pub months: [MonthCount; 12],
-    /// The Date popover's presets: last 7 days, last 30 days, this quarter,
-    /// this year, any time.
     pub presets: [u64; 5],
-    /// The match was capped: every count is a floor.
     pub capped: bool,
 }
 
-/// How many conversations one facet value holds.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Count<T> {
-    /// The value: a person, a label, a folder.
     pub id: T,
-    /// Conversations.
     pub conversations: u64,
 }
 
-/// One bar of the timeline.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MonthCount {
-    /// The month's first day.
     pub month: NaiveDate,
-    /// Conversations whose newest match fell in it (D4).
     pub conversations: u64,
 }
 
-/// The first days of the twelve months ending with `today`'s, oldest first:
-/// the timeline's bars.
 pub fn months_ending(today: NaiveDate) -> [NaiveDate; 12] {
     let this = today.with_day(1).unwrap_or(today);
     std::array::from_fn(|index| {
@@ -231,14 +135,9 @@ pub fn months_ending(today: NaiveDate) -> [NaiveDate; 12] {
     })
 }
 
-/// Where the Date popover's five presets start, in [`SearchFacets::presets`]
-/// order: last 7 days, last 30 days, this quarter, this year, and any time
-/// (`None`, no start).
-///
-/// Each is the `after:` its words lower to, so a preset's count is the
-/// count of the query with that `after:` added: "the last 30 days" is
-/// [`crate::natural`]'s rolling `after:` thirty days back, and a quarter or
-/// a year starts on its first day.
+/// Each is the `after:` its words lower to, so a preset's count is the count of the
+/// query with that `after:` added: "the last 30 days" is [`crate::natural`]'s rolling
+/// `after:`, and a quarter or a year starts on its first day.
 pub fn preset_starts(today: NaiveDate) -> [Option<NaiveDate>; 5] {
     let back = |days: u64| today.checked_sub_days(chrono::Days::new(days));
     let quarter = (today.month0() / 3) * 3 + 1;
@@ -275,9 +174,6 @@ mod tests {
     #[test]
     fn the_date_presets_start_where_their_words_would() {
         let day = |y, m, d| chrono::NaiveDate::from_ymd_opt(y, m, d).unwrap();
-        // "the last 7 days" and "the last 30 days" lower to an `after:` that
-        // many days back (`natural`); a quarter and a year from their first
-        // day; any time has no start.
         assert_eq!(
             preset_starts(day(2026, 9, 30)),
             [
@@ -396,8 +292,6 @@ mod tests {
 
         assert!(facets.suggested(0).is_empty());
     }
-
-    // -- appending --------------------------------------------------------
 
     #[test]
     fn a_refinement_appends_as_a_token_the_user_could_have_typed() {

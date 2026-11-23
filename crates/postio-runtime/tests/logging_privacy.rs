@@ -2,31 +2,8 @@
 //!
 //! POSTIO-OWN-BINARY: it installs the global tracing subscriber.
 //!
-//! Email is the most sensitive thing on most people's machines, and a debug
-//! log full of it is exactly the leak `CLAUDE.md` states as a rule. A rule
-//! nothing checks is a rule that lasts until the next person adds a `?message`
-//! to a `tracing` call because it would have been convenient that once.
-//!
-//! So this drives the sync path — the engine, `postio-sync`, `postio-account` and
-//! `postio-storage`, which are the crates message content actually flows
-//! through — with a subscriber capturing **everything at `TRACE`**, and then
-//! looks for the store's own subjects, previews and sender addresses in what
-//! came out.
-//!
-//! # Why it reads the content out of the database
-//!
-//! Asserting against a hard-coded list of forbidden strings would only ever
-//! catch the strings somebody remembered to list. Reading them back out of the
-//! seeded store means the test is checking the *actual* mail this run handled:
-//! add a fixture, and it is covered without touching this file.
-//!
-//! # What is allowed through
-//!
-//! Ids, counts, durations, outcomes, capability names, folder paths and a
-//! server endpoint. A folder is a container the user named, not a message; a
-//! capability list is the server's public advertisement; an endpoint is a
-//! hostname they chose to connect to. None of them says anything about who
-//! wrote to them or what was said.
+//! The forbidden strings are read back out of the seeded store, so a new fixture is covered without
+//! touching this file.
 //!
 //! POSTIO-MEASUREMENT: it runs a corpus through the engine at every log
 //! level, 187 s, the longest case in this crate, so it runs on the nightly
@@ -42,14 +19,10 @@ use postio_storage::repository::{ListQuery, MessageRepository};
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 
-/// A writer every `tracing` line lands in, so a test can read them back.
 use postio_test_support::logs::Captured;
 
-/// Every string in the store that would be a leak if it appeared in a log.
-///
-/// Subjects and sender addresses whole; previews trimmed to a distinctive
-/// prefix, because a whole preview is long enough that a formatter could wrap
-/// or truncate it and the test would pass by accident.
+/// Previews are trimmed to a distinctive prefix: a whole one could be wrapped or truncated by a
+/// formatter and the test pass by accident.
 async fn content_of(
     database: &postio_storage::Store,
     account: postio_model::AccountId,
@@ -62,9 +35,7 @@ async fn content_of(
     assert!(!rows.is_empty(), "the fixture seeded no mail to protect");
 
     let mut secrets = Vec::new();
-    // The account's own address too. It is not message content, but it is the
-    // user's identity, and an error naming it — "no password is stored for
-    // ada@example.com" — is right on screen and wrong in a log.
+    // The account's own address is the user's identity: an error naming it is wrong in a log.
     {
         let account = postio_storage::repository::AccountRepository::new(&connection)
             .list_enabled()
@@ -112,15 +83,8 @@ fn server() -> MockBackend {
 async fn no_message_content_reaches_the_log_at_any_level() {
     let captured = Captured::default();
 
-    // Everything, with no filter at all: this has to hold at `trace` in a
-    // debug build, which is the loudest the application can ever be.
-    //
-    // Globally, not per-thread: the engine does its work on a thread of its
-    // own, and `set_default` would have left that thread — the one that
-    // actually handles mail — with no subscriber and this test asserting over
-    // an empty buffer. That mistake passes, which is the worst kind. Hence
-    // also the assertion further down that the engine's own lines are present
-    // before anything is concluded from their absence.
+    // No filter, at `trace`. Global, not `set_default`: the engine's thread would otherwise have no
+    // subscriber and the test would assert over an empty buffer.
     let subscriber = tracing_subscriber::fmt()
         .with_writer(captured.clone())
         .with_max_level(tracing::Level::TRACE)
@@ -161,8 +125,6 @@ async fn no_message_content_reaches_the_log_at_any_level() {
     })
     .expect("the engine starts");
 
-    // Drive the paths that handle mail: connect, drain, sync a real folder,
-    // and seed a backfill over the seeded messages.
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
     let _ = engine.drain().await;
     let _ = engine.sync(inbox).await;
@@ -170,9 +132,7 @@ async fn no_message_content_reaches_the_log_at_any_level() {
     drop(engine);
 
     let log = captured.text();
-    // Proof that the paths under test actually ran and were observed. Without
-    // it an engine that logged nothing — or a subscriber that never reached
-    // its thread — would pass this test while proving nothing at all.
+    // Proves the paths ran and were observed; an engine that logged nothing would pass otherwise.
     for expected in ["engine{account=", ":drain:", ":sync{"] {
         assert!(
             log.contains(expected),

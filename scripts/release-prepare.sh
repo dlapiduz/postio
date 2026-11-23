@@ -1,25 +1,11 @@
 #!/usr/bin/env bash
-# Make the release pull request for version X.Y.Z.
-#
-# A release is now a version bump that lands like any other change (#1714):
-# this makes a branch off `origin/main` with the notes, the bump and the
-# refreshed lockfile in one commit; `issue-land.sh` opens the pull request;
-# merging it is the release, because `release.yml` publishes whenever `main`
-# names a version that has no tag yet.
-#
-# It used to happen inside the workflow, on a copy of the tree nobody
-# committed -- an automated push to `main` cannot pass the ruleset, and a pull
-# request opened by Actions' own token does not trigger CI -- so `main` said
-# 0.3.0 while v0.4.2 was out, and the AppStream changelog stopped at 0.3.0.
-# Run here, the PR is opened with your token and CI runs on it like anything
-# else.
-#
-# The notes are docs/releases/X.Y.Z.md: the release page, and the AppStream
-# changelog entry the bump renders from them. Write that file first and land it
-# on main (the branch is cut from origin/main) if you want words of your own;
-# otherwise this drafts it from the commit subjects since the last tag. To
-# reword a draft, delete the branch, write the file, and run this again --
-# the changelog entry is rendered once, from whatever the file says then.
+# Make the release pull request for version X.Y.Z (#1714): a branch off `origin/main` with the
+# notes, the bump and the refreshed lockfile in one commit; `issue-land.sh` opens the PR, and
+# merging it is the release. It cannot run in the workflow: an automated push to `main` cannot pass
+# the ruleset and a PR opened by Actions' token triggers no CI. The notes are docs/releases/X.Y.Z.md
+# (also the AppStream changelog, rendered once from it): write it first and land it for words of
+# your own, else this drafts it from commit subjects. To reword a draft, delete the branch and run
+# again.
 #
 # Usage: scripts/release-prepare.sh X.Y.Z
 #   From a clean linked worktree -- never the shared checkout, where switching
@@ -70,8 +56,7 @@ fi
 
 python3 scripts/release-bump.py "$VERSION" --notes-file "$NOTES"
 
-# The internal crates' versions are in Cargo.lock; `metadata` rewrites it
-# without compiling anything.
+# `cargo metadata` rewrites Cargo.lock's internal crate versions without compiling.
 cargo metadata --format-version 1 > /dev/null
 
 git add -A

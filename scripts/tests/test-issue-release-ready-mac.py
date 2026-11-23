@@ -33,8 +33,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -42,9 +40,6 @@ import patience  # noqa: E402  -- enabled by the sys.path line above
 HERE = Path(__file__).resolve().parent.parent
 ISSUE_RELEASE = HERE / "issue-release.sh"
 
-# Every `gh` invocation is appended to `$STUB_DIR/calls.log`, one line per
-# call, so a case can assert on the exact labels a release removed rather
-# than only on the script's own exit status.
 GH_STUB = """#!/usr/bin/env bash
 echo "$@" >> "$STUB_DIR/calls.log"
 if [ "$1" = "--version" ]; then echo "gh version 2.98.0 (2026-01-01)"; exit 0; fi
@@ -101,10 +96,6 @@ def main() -> int:
 
         subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
 
-        # Case 1: a macOS-queue issue, no worktree and no claim lock left --
-        # exactly what a session finds after landing, once it has already
-        # run `issue-release.sh` far enough to drop the worktree, or never
-        # had one because this call is the whole cleanup.
         (stub_dir / "calls.log").unlink(missing_ok=True)
         result = release(base, repo, stub_dir, "51")
         calls = calls_log(stub_dir)
@@ -131,7 +122,6 @@ def main() -> int:
             f"no mention of --abandon in the output:\n{result.stdout}{result.stderr}",
         )
 
-        # Case 2: an ordinary queue issue behaves exactly as it always did.
         (stub_dir / "calls.log").unlink(missing_ok=True)
         result = release(base, repo, stub_dir, "52")
         calls = calls_log(stub_dir)

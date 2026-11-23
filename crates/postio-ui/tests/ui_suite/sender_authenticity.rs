@@ -1,6 +1,3 @@
-//! What the reader says about who a message really came from (#1928): read
-//! the way every frontend does, through the model's parser and the corpus.
-
 use postio_model::mime;
 use postio_model::test_corpus;
 use postio_ui::reader::authenticity::{self, Verdict};

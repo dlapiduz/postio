@@ -1,10 +1,6 @@
 import PostioFFI
 import SwiftUI
 
-/// The known-sender popover's content (handoff screen 04): 400 wide, the
-/// avatar with the name, address and role, three tiles, the open lines, the
-/// arrival control, and the actions on the window's own tint. Every word is
-/// the controller's (`ContactPopoverViewFfi`).
 public struct ContactPopoverView: View {
     let model: ContactPopoverModel
 
@@ -28,8 +24,6 @@ public struct ContactPopoverView: View {
                 actions(view)
             }
             .frame(width: Self.width)
-            // An opaque card on the view's own colour, as screen 04 draws
-            // it, not the popover's vibrant material.
             .background(Color(nsColor: .textBackgroundColor))
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Contact")
@@ -59,8 +53,7 @@ public struct ContactPopoverView: View {
         .padding(.init(top: 16, leading: 16, bottom: 12, trailing: 16))
     }
 
-    /// A sender not yet saved (handoff screen 05): how they reached you, and
-    /// what their signature said, read on this Mac and kept only on Add.
+    /// A sender not yet saved: their signature is read on this Mac and kept only on Add.
     private func introduction(_ intro: PopoverIntroFfi) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(intro.status).font(.system(size: 12.5)).fixedSize(horizontal: false, vertical: true)

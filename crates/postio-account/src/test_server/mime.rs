@@ -1,43 +1,20 @@
-//! Just enough MIME to answer `ENVELOPE`, `BODYSTRUCTURE` and a section
-//! fetch.
-//!
-//! This deliberately does *not* call `postio_model::mime`. The corpus is
-//! parsed here by a second, dumber implementation so that a test which
-//! fetches a message and parses the result is comparing two independent
-//! readings of the same bytes. A server that derived its `BODYSTRUCTURE`
-//! from the parser under test would agree with it about everything,
-//! including its mistakes.
-//!
-//! What it understands: the header block, `Content-Type` and its parameters,
-//! `Content-Transfer-Encoding`, `Content-Disposition`, and nested
-//! `multipart/*` split on its boundary. What it does not: `message/rfc822` is
-//! reported as a leaf rather than recursed into, and no transfer encoding is
-//! ever decoded — a section fetch returns the bytes exactly as they sit in
-//! the file, which is what a real server does.
+//! Parses the corpus with a second, dumber implementation than `postio_model::mime`, so a test
+//! comparing the two compares independent readings. Section fetches return bytes as they sit in the
+//! file, undecoded; `message/rfc822` is a leaf.
 
 use std::ops::Range;
 
-/// One node of a message's MIME tree, as byte ranges into the raw message.
 #[derive(Clone, Debug)]
 pub(super) struct Part {
-    /// `TEXT`, `MULTIPART`, `APPLICATION`, … upper case.
     pub(super) kind: String,
-    /// `PLAIN`, `MIXED`, `PDF`, … upper case.
     pub(super) subtype: String,
-    /// `Content-Type` parameters, names upper case.
     pub(super) params: Vec<(String, String)>,
-    /// `Content-Transfer-Encoding`, upper case, defaulting to `7BIT`.
     pub(super) encoding: String,
-    /// `Content-ID` and `Content-Description`, verbatim.
     pub(super) id: Option<String>,
     pub(super) description: Option<String>,
-    /// `Content-Disposition`, as `(kind, parameters)`.
     pub(super) disposition: Option<(String, Vec<(String, String)>)>,
-    /// The part's own header block, blank line included.
     pub(super) header: Range<usize>,
-    /// Everything after that blank line.
     pub(super) body: Range<usize>,
-    /// Sub-parts, for a `multipart/*`.
     pub(super) children: Vec<Part>,
 }
 
@@ -51,7 +28,6 @@ impl Part {
     }
 }
 
-/// Walks `raw` into a MIME tree.
 pub(super) fn parse(raw: &[u8]) -> Part {
     parse_range(raw, 0..raw.len())
 }
@@ -99,10 +75,7 @@ fn parse_range(raw: &[u8], range: Range<usize>) -> Part {
     part
 }
 
-/// Splits a part into its header block and its body.
-///
-/// The blank line belongs to the header, so that `BODY[HEADER]` ends with one
-/// as RFC 3501 §6.4.5 requires.
+/// The blank line belongs to the header so `BODY[HEADER]` ends with one (RFC 3501 §6.4.5).
 fn split_header(raw: &[u8], range: Range<usize>) -> (Range<usize>, Range<usize>) {
     let slice = &raw[range.clone()];
     if let Some(at) = find(slice, b"\r\n\r\n") {
@@ -116,7 +89,6 @@ fn split_header(raw: &[u8], range: Range<usize>) -> (Range<usize>, Range<usize>)
     (range.clone(), range.end..range.end)
 }
 
-/// Unfolds a header block into `(lower-case name, value)` pairs.
 fn headers(raw: &[u8], range: Range<usize>) -> Vec<(String, String)> {
     let text = String::from_utf8_lossy(&raw[range]);
     let mut fields: Vec<(String, String)> = Vec::new();
@@ -148,8 +120,6 @@ fn field(fields: &[(String, String)], name: &str) -> Option<String> {
         .map(|(_, value)| value.clone())
 }
 
-/// Splits `type/subtype; name=value; …` into its pieces, parameter names
-/// upper case and values unquoted.
 fn content_type_of(value: &str) -> (String, String, Vec<(String, String)>) {
     let mut pieces = value.split(';');
     let head = pieces.next().unwrap_or("").trim();
@@ -178,12 +148,10 @@ fn content_type_of(value: &str) -> (String, String, Vec<(String, String)>) {
     )
 }
 
-/// The byte ranges of each part between `--boundary` delimiters.
 fn split_parts(raw: &[u8], body: Range<usize>, boundary: &str) -> Vec<Range<usize>> {
     let delimiter = format!("--{boundary}");
     let slice = &raw[body.clone()];
 
-    // Offsets of every delimiter line, in order.
     let mut marks: Vec<(usize, bool)> = Vec::new();
     let mut at = 0usize;
     while at < slice.len() {
@@ -205,8 +173,6 @@ fn split_parts(raw: &[u8], body: Range<usize>, boundary: &str) -> Vec<Range<usiz
         let (start, _) = window[0];
         let (end, _) = window[1];
         let start = find(&slice[start..], b"\n").map_or(end, |at| start + at + 1);
-        // The CRLF before the next delimiter belongs to the delimiter, not to
-        // the part.
         let end = trim_trailing_eol(&slice[..end]).len().max(start);
         if start <= end {
             parts.push(body.start + start..body.start + end);
@@ -215,11 +181,6 @@ fn split_parts(raw: &[u8], body: Range<usize>, boundary: &str) -> Vec<Range<usiz
     parts
 }
 
-// ---------------------------------------------------------------------------
-// BODYSTRUCTURE
-// ---------------------------------------------------------------------------
-
-/// Renders `part` as an RFC 3501 §7.4.2 `BODYSTRUCTURE`.
 pub(super) fn body_structure(raw: &[u8], part: &Part) -> String {
     if part.is_multipart() {
         let children: String = part
@@ -277,11 +238,6 @@ fn lines(body: &[u8]) -> usize {
     body.iter().filter(|byte| **byte == b'\n').count()
 }
 
-// ---------------------------------------------------------------------------
-// ENVELOPE
-// ---------------------------------------------------------------------------
-
-/// Renders the RFC 3501 §7.4.2 `ENVELOPE` of a whole message.
 pub(super) fn envelope(raw: &[u8], part: &Part) -> String {
     let fields = headers(raw, part.header.clone());
     let get = |name: &str| field(&fields, name);
@@ -306,7 +262,6 @@ pub(super) fn envelope(raw: &[u8], part: &Part) -> String {
     )
 }
 
-/// Renders an address header as an IMAP address list.
 fn addresses(value: &str) -> String {
     let rendered: Vec<String> = split_addresses(value)
         .iter()
@@ -338,8 +293,6 @@ fn addresses(value: &str) -> String {
     }
 }
 
-/// Splits an address header on the commas that separate addresses, ignoring
-/// the ones inside a quoted display name or an angle-bracketed address.
 fn split_addresses(value: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut current = String::new();
@@ -378,16 +331,8 @@ fn push_address(out: &mut Vec<String>, raw: &str) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Sections
-// ---------------------------------------------------------------------------
-
-/// The bytes an RFC 3501 §6.4.5 section specifier names.
-///
-/// `""` is the whole message, `HEADER`, `TEXT` and `HEADER.FIELDS (…)` are
-/// the message-level sections, and a dotted number walks the MIME tree. A
-/// leaf yields its body; a `multipart/*` node yields its headers and body
-/// together, the way it appears inside its parent.
+/// A leaf yields its body; a `multipart/*` node yields headers and body together, as inside its
+/// parent.
 pub(super) fn section(raw: &[u8], part: &Part, spec: &str) -> Option<Vec<u8>> {
     let spec = spec.trim();
     if spec.is_empty() {
@@ -426,10 +371,7 @@ pub(super) fn section(raw: &[u8], part: &Part, spec: &str) -> Option<Vec<u8>> {
     })
 }
 
-/// Follows a dotted part number down the tree.
-///
-/// RFC 3501: in a message that is not a multipart, part `1` is the message
-/// body itself.
+/// In a non-multipart message, part `1` is the message body itself (RFC 3501).
 fn walk<'a>(part: &'a Part, path: &str) -> Option<&'a Part> {
     let mut current = part;
     for piece in path.split('.') {
@@ -478,12 +420,6 @@ fn selected_headers(raw: &[u8], part: &Part, wanted: &[String]) -> Vec<u8> {
     out.into_bytes()
 }
 
-// ---------------------------------------------------------------------------
-// Strings on the wire
-// ---------------------------------------------------------------------------
-
-/// An IMAP quoted string, falling back to a literal for anything a quoted
-/// string cannot carry.
 pub(super) fn string(value: &str) -> String {
     if value.is_ascii()
         && !value.contains(['\r', '\n'])
@@ -494,7 +430,6 @@ pub(super) fn string(value: &str) -> String {
     format!("{{{}}}\r\n{value}", value.len())
 }
 
-/// The same, but `NIL` for an absent value.
 pub(super) fn nstring(value: Option<&str>) -> String {
     match value {
         None => "NIL".to_owned(),

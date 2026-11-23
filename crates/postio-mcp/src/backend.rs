@@ -1,9 +1,5 @@
-//! Where a tool call's store comes from.
-//!
-//! [`Installed`] opens this installation's store for each call and closes
-//! it after, so the agent holds it only while it is asking (ADR 0041: one
-//! app has the store at a time). [`Held`] serves a host something else
-//! started and keeps: a demo store, or a suite's.
+//! [`Installed`] opens the store per call and closes it after (ADR 0041: one
+//! app has the store at a time). [`Held`] serves a host something else keeps.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -12,15 +8,11 @@ use postio_client::Client;
 use postio_client::protocol::ClientKind;
 use postio_host::{Connector, Host};
 
-/// What a tool call reads and writes through.
 pub trait Backend {
-    /// The store, for one call. `Err` is a sentence for the agent to relay:
-    /// the desktop app has the store, the keyring said no.
+    /// `Err` is a sentence for the agent to relay.
     fn lease(&mut self) -> Result<Lease, String>;
 }
 
-/// The store for one call: a client of a host, and the host itself when the
-/// call opened it, stopped when the lease is dropped.
 pub struct Lease {
     client: Option<Client>,
     host: Option<Host>,
@@ -28,15 +20,12 @@ pub struct Lease {
 }
 
 impl Lease {
-    /// The client a call reads and writes through.
     pub fn client(&self) -> &Client {
         self.client
             .as_ref()
             .expect("held until the lease is dropped")
     }
 
-    /// Whether the client stands beside an open app window, whose undo
-    /// takes back what it does.
     pub fn beside_window(&self) -> bool {
         self.beside_window
     }
@@ -53,8 +42,6 @@ impl Drop for Lease {
     }
 }
 
-/// This installation's store, opened with the key in the OS keyring for
-/// each call and closed after it.
 pub struct Installed {
     config: Option<PathBuf>,
     store: PathBuf,
@@ -62,8 +49,6 @@ pub struct Installed {
 }
 
 impl Installed {
-    /// This installation's store, wired as `config.toml` at `config` says,
-    /// its key in `secrets`.
     pub fn new(
         config: Option<PathBuf>,
         secrets: Arc<dyn postio_account::secret::SecretStore>,
@@ -71,7 +56,6 @@ impl Installed {
         Installed::at(config, postio_session::paths::store_path(), secrets)
     }
 
-    /// [`Installed::new`], over the store at `store`.
     pub fn at(
         config: Option<PathBuf>,
         store: PathBuf,
@@ -103,14 +87,11 @@ impl Backend for Installed {
     }
 }
 
-/// A host something else started and keeps: the app's own, answering on
-/// the agent socket, or a demo's or a suite's.
 pub struct Held {
     connector: Connector,
 }
 
 impl Held {
-    /// Serve the host `connector` connects to.
     pub fn new(connector: Connector) -> Self {
         Held { connector }
     }
@@ -118,8 +99,8 @@ impl Held {
 
 impl Backend for Held {
     fn lease(&mut self) -> Result<Lease, String> {
-        // Beside the app's window when there is one, so what the agent
-        // does is on that window's undo (ADR 0041, amended 2026-10-14).
+        // Beside the app's window when there is one, so the agent's actions are on its undo (ADR
+        // 0041).
         let (client, beside_window) = self.connector.connect_agent();
         Ok(Lease {
             client: Some(client),

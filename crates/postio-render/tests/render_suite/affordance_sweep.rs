@@ -1,8 +1,3 @@
-//! SC-007 across the corpus: every text-bearing fixture can be copied,
-//! found, hit and followed, headlessly, through the renderer's snapshot.
-//! The widget tests exercise one fixture each; this is what makes "every
-//! text-bearing message" true.
-
 use std::sync::Arc;
 
 use postio_body::RemoteImages;
@@ -21,8 +16,6 @@ fn fonts() -> &'static postio_render::fonts::FontSet {
     })
 }
 
-/// Each fixture as the reader composes it, rendered; `None` for one with no
-/// body to read.
 fn rendered(fixture: &test_corpus::Fixture) -> Option<RenderedDocument> {
     let parsed = postio_model::mime::parse(fixture.bytes());
     if parsed.body.is_empty() {
@@ -78,8 +71,6 @@ fn every_text_bearing_fixture_supports_copy_find_hit_and_links() {
             "{name}: copying everything"
         );
 
-        // A word from the message's own text: find it, and see it drawn
-        // inside the message.
         let word = index
             .text
             .split(|c: char| !c.is_alphanumeric())

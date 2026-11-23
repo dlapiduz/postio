@@ -1,18 +1,3 @@
-//! The command registry is the single source of truth behind the keymap, the
-//! command palette, the `?` cheat sheet, the context menu and the focused-row
-//! key hints. These tests encode the structural guarantees docs/PRODUCT.md §8 asks for:
-//! every command has an id, a human title and a default binding, so the three
-//! surfaces cannot drift apart.
-//!
-//! This file used to carry `CONFIG_BINDINGS`, a hand-copied 16-entry table
-//! kept "rather than a dependency on `postio-config`, on purpose — the point
-//! of the test is that the two crates agree without one deriving from the
-//! other". Both crates having their own table is what #1227 turned out to be:
-//! the copies drifted to 16, 23 and 79 entries, and nothing failed. The
-//! registry is the only default table now, so there is nothing left to agree
-//! with — what the canvas settled on is asserted against the *resolved*
-//! keymap below, which is the key a finger actually presses.
-
 use std::collections::{BTreeMap, BTreeSet};
 
 use postio_config::KeyBindings;
@@ -74,9 +59,6 @@ fn command_ids_are_unique() {
 
 #[test]
 fn bindings_are_gmails() {
-    // docs/PRODUCT.md §8 records these as the resolved bindings: Gmail's
-    // keyboard shortcuts wherever Postio has the command (the maintainer's
-    // decision, 2026-10-14), over the canvas's `e` reply and `a` archive.
     let expected = [
         ("reply", "r"),
         ("reply_all", "a"),
@@ -106,25 +88,17 @@ fn bindings_are_gmails() {
         ("first_message", "g g"),
         ("last_message", "G"),
     ];
-    // Against the *resolved* table, not the registry literal: what the canvas
-    // settled on is the key a user presses, and since #669 the registry spells
-    // that `mod+k` so a Mac can render the same decision as Command.
     let keymap = Keymap::resolve_on(&KeyBindings::default(), Platform::Freedesktop);
     for (id, key) in expected {
         let parsed: CommandId = id.parse().expect("known command id");
         assert_eq!(keymap.binding(parsed), Some(key), "binding for {id}");
     }
-    // Gmail's `o` opens, without displacing the `Return` default that
-    // config.toml already documents. `l` no longer does: it is the label
-    // key, and `Right` expands a thread (specs/013-focus-threads D1).
     assert!(
         registry::get(CommandId::OpenMessage)
             .bindings()
             .any(|b| b == "o"),
         "`o` must open the focused message"
     );
-    // Gmail's other halves: `u` back to the list, `U` mark unread, `mod+z`
-    // the undo every other application taught.
     for (id, key) in [
         (CommandId::PrevView, "u"),
         (CommandId::ToggleRead, "U"),
@@ -146,11 +120,6 @@ fn bindings_are_gmails() {
 
 #[test]
 fn the_places_people_go_most_answer_to_two_keys() {
-    // `g` is already this app's "go to" prefix -- `g g` is the first message,
-    // `g l` the folders -- and these extend it to the destinations a person
-    // visits dozens of times a day. The letters are Gmail's (docs/PRODUCT.md
-    // §8): its starred is Postio's flagged, and its all mail the archive,
-    // which is where archived mail is.
     let expected = [
         ("go_to_inbox", "g i"),
         ("go_to_drafts", "g d"),
@@ -188,12 +157,6 @@ fn the_places_people_go_most_answer_to_two_keys() {
     }
 }
 
-/// Search is reachable from the folder list, like the go-to family.
-///
-/// `/` was on the message surfaces only, so pressing it while the keyboard
-/// was in the sidebar did nothing at all -- and "I was in the folder list"
-/// is not a state anyone tracks while reaching for search. Same reasoning as
-/// the go-to family above, and the same fix.
 #[test]
 fn search_is_reachable_from_the_folder_list() {
     let spec = registry::get(CommandId::Search);
@@ -227,10 +190,8 @@ fn ids_serialize_as_their_stable_string() {
 
 #[test]
 fn bindings_do_not_collide_within_a_context() {
-    // A key can mean one command on one platform and another on the other
-    // (`alt+BackSpace`: the terminal's back-to-words on Linux, the Mac's
-    // forget-recent), so a collision is two commands that are both live on
-    // some platform (`offered_on`, `binding_offered_on`).
+    // `alt+BackSpace` means two commands on two platforms, so a collision is two commands both live
+    // on some platform.
     for context in Context::ALL {
         let mut seen: BTreeMap<(bool, &str), CommandId> = BTreeMap::new();
         for spec in registry::for_context(*context) {
@@ -259,7 +220,6 @@ fn bindings_do_not_collide_within_a_context() {
 
 #[test]
 fn destructive_commands_offer_a_way_back() {
-    // docs/PRODUCT.md §1: destructive operations require appropriate confirmation/undo.
     for spec in registry::all() {
         if spec.destructive {
             assert_ne!(
@@ -277,24 +237,14 @@ fn destructive_commands_offer_a_way_back() {
 
 #[test]
 fn recovery_undo_means_the_undo_stack_and_nothing_else_claims_it() {
-    // #1481. `Recovery::Undo` has one meaning -- "reversible from the undo
-    // stack, and `u` works" -- and `Send` claimed it while nothing recorded a
-    // send there: `UndoKind` has no variant for one. So the registry promised
-    // a key that did nothing, and worse than nothing, since `u` after a send
-    // reverses whatever unrelated archive was underneath.
-    //
-    // A send *is* reversible, until the drainer takes it. It is simply not
-    // reversible from that stack, which is what `Recovery::Window` says.
+    // #1481: `Send` claimed `Recovery::Undo` while no `UndoKind` exists for it, so `u` after a send
+    // reversed an unrelated archive.
     assert_eq!(
         registry::get(CommandId::Send).recovery,
         Recovery::Window,
         "a send is reversible for a window, not from the undo stack"
     );
 
-    // And the rule that makes the distinction worth having: every command
-    // claiming `Undo` must be a thing the undo stack can actually hold, which
-    // means a `UndoKind` exists for it. Stated as a list because the stack
-    // takes message operations and the check cannot see across crates.
     for spec in registry::every_action() {
         if spec.recovery != Recovery::Undo {
             continue;
@@ -325,7 +275,6 @@ fn context_filtering_drives_the_palette_and_cheat_sheet() {
         "archiving while composing would swallow a keystroke meant for the body"
     );
 
-    // The palette is reachable from everywhere, or it is not universal.
     for context in Context::ALL {
         assert!(
             registry::get(CommandId::CommandPalette).available_in(*context),
@@ -340,27 +289,12 @@ fn contexts_round_trip_through_strings() {
     for context in Context::ALL {
         assert_eq!(context.as_str().parse::<Context>().unwrap(), *context);
     }
-    // A count, so adding a context is a deliberate act rather than something
-    // that happens on the way past. It was 8 and the ceiling was the same
-    // number, because `ContextSet` packed one bit per context into a `u8`;
-    // `Accounts` (#471) is the ninth and widened it to a `u16`. `Keys`
-    // (#881) is the tenth, still inside that widened ceiling. The ceiling
-    // is no longer written down twice -- `context.rs`'s
-    // `every_context_fits_the_set` derives it from the integer itself, so
-    // this is only the deliberate-act tripwire. Postio Focus's picker, digest
-    // and Filtered view (spec 007) make thirteen, and its capture sheet
-    // (milestone 3) fourteen, and the Mac's search results (spec 010 D17)
-    // fifteen, and Contacts (specs/005-contacts) sixteen, and the contact
-    // popover (specs/011-focus-contacts S6) seventeen: the first to need the
-    // set widened past sixteen bits. The thread outline and the forward
-    // chooser (specs/013-focus-threads) make nineteen.
+    // A count, so adding a context is a deliberate act.
     assert_eq!(Context::ALL.len(), 19);
 }
 
 #[test]
 fn every_registry_entry_can_be_invoked_from_the_palette() {
-    // Selecting a palette row yields a command carrying no more context than the
-    // row itself had; app state resolves `Selection` and the `None` payloads.
     for spec in registry::all() {
         let command = Command::default_for(spec.id);
         assert_eq!(
@@ -387,19 +321,6 @@ fn commands_carry_their_target() {
     assert_eq!(explicit.id(), CommandId::Archive);
 }
 
-// ---------------------------------------------------------------------------
-// Availability that depends on state, not on which surface has focus
-// ---------------------------------------------------------------------------
-
-/// `Move` is the first command whose availability turns on *state* rather
-/// than [`Context`], and ADR 0005 Q4 asks for the shape to be settled here
-/// rather than special-cased at each surface (#182).
-///
-/// A destination has to be one mailbox in one account. In `Scope::Unified`
-/// there is no such thing — the view spans every enabled account — so `Move`
-/// is *unavailable*, not a no-op that silently does nothing. The registry
-/// evaluates that, so the palette, the cheat sheet and the key hints all
-/// agree without any of them knowing why.
 #[test]
 fn move_is_unavailable_in_unified_scope_and_available_in_an_account() {
     let account = Scope::Account(AccountId::new(1));
@@ -423,8 +344,6 @@ fn move_is_unavailable_in_unified_scope_and_available_in_an_account() {
          promises a folder the user cannot have picked"
     );
 
-    // Everything else the list can do is untouched. A state predicate that
-    // quietly narrowed the whole surface would be the worse bug.
     for still_there in [
         CommandId::Archive,
         CommandId::Delete,
@@ -438,9 +357,6 @@ fn move_is_unavailable_in_unified_scope_and_available_in_an_account() {
     }
 }
 
-/// The scope-blind form still answers for everything, because
-/// `docs/keybindings.md` documents the whole vocabulary rather than one
-/// session's state — a reader looking up `m` must find it.
 #[test]
 fn the_scope_blind_listing_still_documents_every_command() {
     let documented: Vec<CommandId> = registry::for_context(Context::List).map(|s| s.id).collect();
@@ -450,13 +366,6 @@ fn the_scope_blind_listing_still_documents_every_command() {
     );
 }
 
-/// Adding a second account is a *command*, not a button somewhere.
-///
-/// ADR 0012 Q1 decided the entry point that way, and `docs/ARCHITECTURE.md`
-/// §2 says why it has to be: a command that is not in the registry does not
-/// exist. It would be in neither the palette nor the `?` cheat sheet, which
-/// is exactly where a keyboard-first user looks for "add another account"
-/// before they go hunting in a settings panel.
 #[test]
 fn adding_an_account_is_reachable_wherever_settings_is() {
     let spec = registry::get(CommandId::AddAccount);
@@ -488,11 +397,6 @@ fn adding_an_account_is_reachable_wherever_settings_is() {
 
 #[test]
 fn the_account_row_actions_are_commands_in_the_account_list() {
-    // ADR 0005 Q6c, #471. #464 gave each account row three affordances as a
-    // GtkSimpleActionGroup, reachable by mouse and by Tab but not by the
-    // palette, the cheat sheet or a bindable key -- because none of them were
-    // registry entries. The registry is what makes those three surfaces work,
-    // so the fix is entries, and this is the table the ADR settled.
     let expected = [
         (
             CommandId::ToggleAccountEnabled,
@@ -500,13 +404,7 @@ fn the_account_row_actions_are_commands_in_the_account_list() {
             false,
             Recovery::None,
         ),
-        // Destructive, and the only one of the three that is: it soft-deletes
-        // an account. `Delete` matches the message verb's spelling:
-        // "delete" has one key.
         (CommandId::RemoveAccount, "Delete", true, Recovery::Undo),
-        // `c` for credential. ADR 0005 Q6c asked for no binding at all; that
-        // rested on "ten commands already have none", and none do. PRODUCT.md
-        // §8 requires one of every command, so it has one.
         (CommandId::UpdateCredential, "c", false, Recovery::None),
     ];
 
@@ -529,17 +427,6 @@ fn the_account_row_actions_are_commands_in_the_account_list() {
     }
 }
 
-/// The default-account marker is set from a keyboard row like the other four
-/// account commands (#960).
-///
-/// `Context::Accounts` already carries `Return`, `Delete`, `c` and `r`, so this is
-/// a fifth row in the registry rather than a new surface — which is what makes
-/// the palette entry, the cheat-sheet row and the focused-row key hint come
-/// from one place and stay in step. `m` for "make default", free within this
-/// context because `Move`'s `m` is scoped to the message surfaces.
-///
-/// `bindings_do_not_collide_within_a_context` is what would catch the shadow
-/// if that ever stopped being true; this test is the decision itself.
 #[test]
 fn setting_the_default_account_is_an_accounts_row_bound_to_m() {
     let spec = registry::get(CommandId::SetDefaultAccount);
@@ -574,36 +461,14 @@ fn setting_the_default_account_is_an_accounts_row_bound_to_m() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Availability before the store is open (#1114)
-// ---------------------------------------------------------------------------
-
-/// The commands that go on meaning something with no store behind the window.
-///
-/// #1114's rule, and the list is short on purpose: **a window on screen with
-/// no store behind it must not offer verbs that cannot run.** What survives is
-/// the chrome — how you find out what you can do, how you leave what you
-/// opened, and where the keyboard is — none of which reads or writes mail.
-///
-/// `EditConfig` is here because it is the one *repair* that needs no store: a
-/// start held up by a keyring or a config problem is exactly when somebody
-/// wants their `config.toml`, and it opens a file in an editor.
 const WITHOUT_A_STORE: &[CommandId] = &[
     CommandId::CommandPalette,
     CommandId::CheatSheet,
     CommandId::Back,
     CommandId::EditConfig,
-    // Leaving means the same with no store as with one (T039).
     CommandId::Quit,
 ];
 
-/// Every command decides, and a new one cannot forget to.
-///
-/// The registry is the single source of the keyboard, the palette and the
-/// cheat sheet, so this is the one place the decision has to be recorded —
-/// and an assertion over the whole table is what makes the next command
-/// author answer the question rather than inherit whatever `requires` happens
-/// to default to.
 #[test]
 fn every_command_but_the_chrome_needs_the_store_open() {
     for id in CommandId::ALL {
@@ -626,10 +491,6 @@ fn every_command_but_the_chrome_needs_the_store_open() {
     }
 }
 
-/// `Alt+E` and `Alt+P` hand the terminal composer's Markdown to `$EDITOR`
-/// and preview it. The desktop's composer edits rich text in place, so it
-/// does not offer them: the maintainer scoped them to the terminal
-/// (spec 005, open question 4).
 #[test]
 fn the_terminal_composers_own_commands_are_offered_only_in_the_terminal() {
     let window = Availability::open(Scope::Account(AccountId::new(1)));
@@ -655,11 +516,6 @@ fn the_terminal_composers_own_commands_are_offered_only_in_the_terminal() {
     );
 }
 
-/// What the palette and the cheat sheet list before the store is open.
-///
-/// They both go through [`registry::reachable_in`], so asserting here is
-/// asserting for both — which is the whole reason the requirement is data on
-/// the row rather than a check at each surface.
 #[test]
 fn the_vocabulary_before_the_store_is_the_chrome_and_nothing_else() {
     let account = Scope::Account(AccountId::new(1));
@@ -718,11 +574,6 @@ fn the_vocabulary_before_the_store_is_the_chrome_and_nothing_else() {
     }
 }
 
-/// `Move` needs *both*, and one requirement per row could not say so.
-///
-/// It was the only row with a requirement before #1114 and it is the row that
-/// proves the field had to become a set: a unified view has no destination to
-/// name, and a window with no store has no folder to move into either.
 #[test]
 fn a_command_can_need_more_than_one_thing_at_once() {
     let requires = registry::get(CommandId::Move).requires;
@@ -750,12 +601,6 @@ fn a_command_can_need_more_than_one_thing_at_once() {
     }
 }
 
-/// Spec 006 FR-031: every message opens as its sender built it, so reader
-/// view became a command rather than a default -- and `view_original`, which
-/// only ever left reader view, is its way back. `mod+shift+o` pairs it with
-/// `mod+o`; the composer's `Detach composer` owns the same key only where
-/// the composer is, and compose takes the reading pane over, so the two
-/// contexts never meet (`bindings_do_not_collide_within_a_context`).
 #[test]
 fn reader_view_is_a_command_beside_view_original() {
     let spec = registry::get(CommandId::ToggleReaderView);
@@ -774,9 +619,6 @@ fn reader_view_is_a_command_beside_view_original() {
     );
 }
 
-/// Spec 006's reading commands (contracts/registry-commands.md): ids are a
-/// file format, chosen once there; each sits where `View original` does,
-/// none is destructive, and each has its default and its alternates.
 #[test]
 fn the_reading_commands_are_registered_as_the_contract_says() {
     let reading = registry::get(CommandId::ViewOriginal).contexts;
@@ -785,7 +627,6 @@ fn the_reading_commands_are_registered_as_the_contract_says() {
             CommandId::DarkenMessage,
             "darken_message",
             "Darken this message",
-            // `D` until the one keymap gave it to Focus's "stop digesting".
             "alt+d",
             &[][..],
         ),
@@ -843,13 +684,6 @@ fn the_reading_commands_are_registered_as_the_contract_says() {
     }
 }
 
-/// Two apps share one registry (specs/007-postio-focus research R4;
-/// specs/009-focus-macos R5, which folded the Mac into Focus), and what an
-/// app is decides what it offers: a command only Focus has is unreachable to
-/// the terminal's pixels, and the requirements that split the frontends keep
-/// their meaning. Read through `reachable_in`'s own test,
-/// `RequirementSet::met_by`, so this is what the palette and the cheat sheet
-/// see.
 #[test]
 fn a_focus_only_command_is_offered_to_focus_and_the_terminal_that_draws_it() {
     use postio_core::registry::{Frontend, RequirementSet};
@@ -893,10 +727,6 @@ fn a_focus_only_command_is_offered_to_focus_and_the_terminal_that_draws_it() {
     );
 }
 
-/// Spec 010 D23 and #1825: the search bar's commands are offered on both
-/// platforms and reachable in the search bar; `alt+BackSpace` is the Mac's
-/// forget-recent and Linux's back-to-words (the terminal's key for it), so
-/// each platform leaves the other's out.
 #[test]
 fn the_search_bar_s_commands_are_offered_on_both_platforms() {
     use postio_config::paths::Platform;
@@ -946,8 +776,6 @@ fn the_search_bar_s_commands_are_offered_on_both_platforms() {
     ));
 }
 
-/// Spec 010 step 3 (R10) and #1825: the results view's commands are
-/// offered on both platforms, and reachable in it.
 #[test]
 fn the_results_views_commands_are_offered_on_both_platforms() {
     use postio_config::paths::Platform;
@@ -964,8 +792,6 @@ fn the_results_views_commands_are_offered_on_both_platforms() {
         assert!(registry::offered_on(action, Platform::Freedesktop), "{id}");
         assert!(registry::get(id).available_in(Context::Results), "{id}");
     }
-    // ⌘[ and ⌘] reach back and forward from the inbox too (D17); the tabs
-    // are the results view's alone.
     for id in [CommandId::HistoryBack, CommandId::HistoryForward] {
         assert!(registry::get(id).available_in(Context::List), "{id}");
     }
@@ -982,8 +808,6 @@ fn the_results_views_commands_are_offered_on_both_platforms() {
     }
 }
 
-/// Spec 010 step 4 (FR-023, D25): the timeline's month steps are the
-/// results view's alone, on both platforms (#1825).
 #[test]
 fn the_timeline_steps_are_the_results_views_alone() {
     use postio_config::paths::Platform;
@@ -1002,8 +826,6 @@ fn the_timeline_steps_are_the_results_views_alone() {
     assert_eq!(CommandId::StepRangeForward.as_str(), "step_range_forward");
 }
 
-/// Spec 010 step 5 (FR-028, D25): Quick Look and its match steps are the
-/// results view's alone, on both platforms (#1825).
 #[test]
 fn quick_look_is_the_results_views_alone() {
     use postio_config::paths::Platform;
@@ -1027,9 +849,6 @@ fn quick_look_is_the_results_views_alone() {
     assert_eq!(CommandId::PrevMatch.as_str(), "prev_match");
 }
 
-/// Spec 010 step 7 (FR-030, D25): the looser searches are picked by number
-/// in the results view alone, on both platforms (#1825);
-/// `BackToWords` reaches the results, where it clears the filters (D24).
 #[test]
 fn relaxations_are_the_results_views_alone() {
     use postio_config::paths::Platform;
@@ -1054,8 +873,6 @@ fn relaxations_are_the_results_views_alone() {
     assert!(registry::get(CommandId::BackToWords).available_in(Context::Search));
 }
 
-/// Spec 010 step 8 (US7, D25): ⌥↩ in the dropdown excludes the focused
-/// person, label or folder, on both platforms (#1825).
 #[test]
 fn exclude_suggestion_is_the_dropdowns_alone() {
     use postio_config::paths::Platform;
@@ -1068,8 +885,6 @@ fn exclude_suggestion_is_the_dropdowns_alone() {
     assert_eq!(id.as_str(), "exclude_suggestion");
 }
 
-/// Spec 010 step 9 (FR-031, D25): ⌘↓ saves the file under the ring on the
-/// Files tab: the results view's alone, on both platforms (#1825).
 #[test]
 fn saving_a_file_is_the_results_views_alone() {
     use postio_config::paths::Platform;

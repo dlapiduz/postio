@@ -1,11 +1,3 @@
-//! Joining people, and taking a join apart (specs/005-contacts User Story 2,
-//! FR-010..FR-017, research R8).
-//!
-//! A join keeps everything -- every address, every sighting, every group,
-//! every note -- and its undo puts both people back exactly as they were.
-//! Detaching gives an address back its own person, with its own history;
-//! adding or moving an address never leaves it with two owners.
-
 use chrono::{DateTime, TimeZone, Utc};
 
 use postio_model::{
@@ -35,8 +27,6 @@ async fn setup() -> (
     (database, connection, account, inbox)
 }
 
-/// Records `times` messages from `email`; with `sent`, messages the user
-/// sent to it instead.
 async fn mail(
     connection: &Connection,
     account: &Account,
@@ -138,7 +128,6 @@ async fn a_join_keeps_every_address_sighting_group_and_note() {
     assert_eq!(get(&connection, home.id).await.state, ContactState::Merged);
     assert_eq!(receipt.into, work.id);
 
-    // Mail to either address now counts toward one person.
     mail(&connection, &account, inbox, "ada@home.example", 1, false).await;
     assert_eq!(owner(&connection, "ada@home.example").await.id, work.id);
     assert_eq!(get(&connection, work.id).await.times_seen, 6);
@@ -335,8 +324,6 @@ async fn an_address_is_never_owned_twice() {
             .any(|a| a.id == new)
     );
 
-    // "Move it": the owner lets go, and a person left with nothing is folded
-    // away -- kept, so an undo has someone to give the address back to.
     let grace_address = grace.addresses[0].id;
     let moved = contacts
         .move_address(grace_address, ada, None)
@@ -347,7 +334,6 @@ async fn an_address_is_never_owned_twice() {
     assert_eq!(owner(&connection, "grace@example.org").await.id, ada);
     assert_eq!(get(&connection, grace.id).await.state, ContactState::Merged);
 
-    // And undoing the move puts grace back exactly.
     contacts
         .move_address(grace_address, grace.id, moved.emptied)
         .await

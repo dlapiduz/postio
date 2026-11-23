@@ -1,8 +1,3 @@
-//! Streaming a message body or MIME part: bounded-window partial fetch,
-//! section addressing, missing messages and cancellation. All replayed with
-//! no socket — see `imap_mailboxes.rs` for the same pattern applied to
-//! `LIST`.
-
 use std::sync::Arc;
 
 use postio_account::backend::{BackendError, BodyPart, CountingSink, UidSet, VecSink};
@@ -39,7 +34,6 @@ async fn pool_over(connector: ScriptedConnector) -> ConnectionPool {
     )
 }
 
-/// The identity the scripted generation (UIDVALIDITY 100) gives `uid`.
 fn rid(uid: u32) -> postio_model::RemoteId {
     postio_model::RemoteId::new(format!("100:{uid}"))
 }
@@ -48,7 +42,6 @@ fn select_reply() -> &'static str {
     "* 5 EXISTS\n* 0 RECENT\n* OK [UIDVALIDITY 100] UIDs valid\n{tag} OK SELECT completed"
 }
 
-/// A `* 1 FETCH` reply carrying one literal window of `payload` at `offset`.
 fn window_reply(section: &str, offset: usize, payload: &str) -> String {
     format!(
         "* 1 FETCH (BODY[{section}]<{offset}> {{{len}}}\r\n{payload})\n{{tag}} OK FETCH completed",
@@ -143,11 +136,8 @@ async fn a_part_smaller_than_one_window_finishes_in_one_round_trip() {
 
 #[tokio::test]
 async fn a_whole_message_larger_than_one_window_still_costs_one_round_trip() {
-    // BodyPart::Whole drives io-imap's real streaming FETCH coroutine
-    // (BODY.PEEK[]) instead of the windowed partial-fetch loop the other
-    // BodyPart variants use, so a message several windows large must still
-    // be exactly one UID FETCH — proving the windowing loop was bypassed,
-    // not just that the bytes eventually arrived.
+    // `BodyPart::Whole` must be one UID FETCH however many windows the message spans, proving the
+    // windowing loop is bypassed.
     let len = u32::try_from(WINDOW * 3 + 17).unwrap();
     let connector = ScriptedConnector::new(
         ImapScript::extensions_hidden_until_login()
@@ -222,10 +212,8 @@ async fn headers_and_text_ask_for_their_own_named_sections() {
 
 #[tokio::test]
 async fn a_flag_update_on_an_earlier_message_is_not_read_as_the_body() {
-    // A server may report another message's flag change inside any reply
-    // (RFC 3501 §7.4.2). Sorted by sequence number, that one comes first
-    // when its message sits earlier in the folder -- and read as the
-    // answer, it has no body section, so the part came back empty.
+    // RFC 3501 §7.4.2: another message's flag change can arrive inside any reply; read as the
+    // answer it has no body section.
     let payload = ascii_payload(37);
     let reply = format!(
         "* 1 FETCH (UID 7 FLAGS (\\Seen))\n\
@@ -333,18 +321,6 @@ async fn a_malformed_section_number_never_reaches_the_wire() {
     assert!(connector.log().tls.is_empty());
 }
 
-// ---------------------------------------------------------------------------
-// Live server. Ignored by default; needs a real account. See
-// `imap_session.rs` for the connect/capability live tests and
-// `imap_mailboxes.rs` for folder discovery — this covers body fetch.
-// ---------------------------------------------------------------------------
-
-/// Reads the live-test credentials, or skips.
-///
-/// `POSTIO_TEST_IMAP_USER` and `POSTIO_TEST_IMAP_PASSWORD` — for a provider
-/// that requires one, an app-specific password. The host comes from Postio's
-/// preset table when it ships one for the address's domain, and
-/// `POSTIO_TEST_IMAP_HOST` overrides it for anything else.
 async fn live_pool() -> Option<ConnectionPool> {
     let user = std::env::var("POSTIO_TEST_IMAP_USER").ok()?;
     let password = std::env::var("POSTIO_TEST_IMAP_PASSWORD").ok()?;
@@ -381,8 +357,6 @@ async fn live_server_streams_a_real_body() {
         panic!("POSTIO_TEST_IMAP_USER and POSTIO_TEST_IMAP_PASSWORD must be set");
     };
 
-    // Discover a real UID to fetch: a bounded header prefix first, same as
-    // `imap_fetch.rs`'s live test, rather than assuming one.
     let uids = UidSet::range(Uid::new(1), Uid::new(500));
     let headers = fetch_headers(
         &pool,
@@ -401,10 +375,6 @@ async fn live_server_streams_a_real_body() {
         return;
     };
 
-    // `CountingSink`, not `VecSink`: this only needs to prove the round trip
-    // and the streaming path work against a real server, not inspect the
-    // content. Read-only (BODY.PEEK carries no \Seen side effect), so there
-    // is nothing to clean up afterward.
     let mut sink = CountingSink::new();
     let fetched = fetch_part(
         &pool,

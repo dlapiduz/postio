@@ -3,14 +3,7 @@ import Testing
 
 @testable import PostioKit
 
-/// Where the search field grows and where the panel hangs (specs/010-focus-
-/// search T054; design §2 "Opening and layout"): the field grows leftward to
-/// 860 wide, its right edge 12 from the window's; the panel hangs 6 below
-/// it with the same left edge and width, and stays inside its window.
-/// Screen coordinates, the origin at the bottom left, as AppKit has them.
 struct CommandBarGeometryTests {
-    /// The field as the toolbar lays it out at `width` for a window at the
-    /// screen's origin, 900 tall: 34 tall, its top 9 under the window's.
     static func field(in window: CGRect) -> CGRect {
         let width = CommandBarGeometry.fieldWidth(window: window.width)
         return CGRect(

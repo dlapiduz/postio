@@ -1,12 +1,5 @@
-//! What Focus says about its own state: the one banner under the header
-//! strip, and the sync label in the top bar (specs/007-postio-focus
-//! contracts/focus-surface.md, "States"; screens 17-19).
-//!
-//! One banner at a time, the one that asks something of the person first:
-//! a rejected password, then no network, then a first sync. The sync label
-//! says the same in a word or two, and otherwise when mail last arrived.
-//! Toolkit-free, so the rule is proven here in a second and the window only
-//! draws what it is told.
+//! What Focus says about its own state: the one banner under the header strip (the one that
+//! asks something of the person first) and the sync label in the top bar.
 
 use chrono::{DateTime, Local, TimeZone};
 use postio_config::FocusConfig;
@@ -15,62 +8,39 @@ use postio_model::{AccountId, MailboxId};
 
 use crate::status::SyncStatus;
 
-/// What an account's banner needs to name: where it signs in, and as whom.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccountFacts {
-    /// The account.
     pub id: AccountId,
-    /// The incoming server's host.
     pub server: String,
-    /// The account's address.
     pub address: String,
-    /// What the account is called, as the sidebar and the settings call it.
     pub name: String,
 }
 
-/// The banner under the header strip, when one is shown.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Banner {
-    /// The server refused an account's password (screen 19).
     SignIn {
-        /// The server that refused it.
         server: String,
-        /// The address it refused.
         address: String,
-        /// Whether the keyring holds no password for it at all, rather than
-        /// one the server refused.
         missing: bool,
     },
-    /// One account's sync is failing for a reason that is not its password
-    /// (ADR 0005 Q10): the account is named, and what it said.
     Failing {
-        /// The account's name.
         account: String,
-        /// Why, in the words the sync reported.
         reason: String,
     },
-    /// The machine has no network (screen 18).
     Offline,
-    /// An account's first sync is running (screen 17).
     FirstSync {
-        /// Messages fetched so far.
         done: u32,
-        /// Messages the pass expects.
         total: u32,
     },
 }
 
-/// What a banner's button does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BannerAction {
-    /// Open the credential flow for the account that failed.
     UpdatePassword,
-    /// Try the network again now rather than at the next backoff.
     Retry,
 }
 
 impl Banner {
-    /// The banner's heading, drawn in bold.
     pub fn heading(&self) -> String {
         match self {
             Banner::SignIn { server, .. } => format!("Can't sign in to {server}"),
@@ -80,7 +50,6 @@ impl Banner {
         }
     }
 
-    /// The sentence after the heading.
     pub fn sentence(&self) -> String {
         match self {
             Banner::SignIn {
@@ -95,8 +64,6 @@ impl Banner {
                 "The server rejected the password for {address}. Mail on this computer is \
                  still available."
             ),
-            // The other accounts' mail is not in question: the list is
-            // still every account's, this one's as of its last sync.
             Banner::Failing { reason, .. } => format!(
                 "{reason} Mail already on this computer, from every account, is still here."
             ),
@@ -111,12 +78,10 @@ impl Banner {
         }
     }
 
-    /// What the banner says, as one line: its heading and its sentence.
     pub fn title(&self) -> String {
         format!("{}. {}", self.heading(), self.sentence())
     }
 
-    /// The button's label and what it does, when the banner has one.
     pub fn action(&self) -> Option<(&'static str, BannerAction)> {
         match self {
             Banner::SignIn { .. } => {
@@ -127,7 +92,6 @@ impl Banner {
         }
     }
 
-    /// How far the first sync has come, from 0 to 1, when it is one.
     pub fn progress(&self) -> Option<f64> {
         match self {
             Banner::FirstSync { done, total } if *total > 0 => {
@@ -137,14 +101,12 @@ impl Banner {
         }
     }
 
-    /// Whether the banner is drawn in the error colour.
     pub fn is_error(&self) -> bool {
         matches!(self, Banner::SignIn { .. } | Banner::Failing { .. })
     }
 }
 
-/// A pass in flight: fetched so far, and expected. `None` for a pass with
-/// nothing to reach, and once it has finished (`SyncStatus`'s own reading).
+/// `None` for a pass with nothing to reach, and once it has finished.
 fn running(status: &SyncStatus) -> Option<(u32, u32)> {
     match status.progress {
         Some((done, total)) if total > 0 && done < total => Some((done, total)),
@@ -156,15 +118,9 @@ fn count(value: u32) -> String {
     crate::selection::count(value)
 }
 
-/// The banner `statuses` call for, if any: a sign-in error first, then an
-/// account that cannot sync, then offline, then a first sync.
-///
-/// Only a refused or missing password is a sign-in banner: its button opens the
-/// credential flow, and retrying a rejected credential is how an account gets
-/// locked. Any other failure names the account and the reason, with Retry.
-/// Only a machine with no network is offline:
-/// `Connecting` is backoff that retries on its own, and every launch passes
-/// through it. Only a pass with no sync behind it is a first sync.
+/// Only a refused or missing password is a sign-in banner: retrying a rejected credential is
+/// how an account gets locked. Only no network is offline (`Connecting` is backoff that
+/// retries itself). Only a pass with no sync behind it is a first sync.
 pub fn banner(statuses: &[(AccountId, SyncStatus)], accounts: &[AccountFacts]) -> Option<Banner> {
     let refused = statuses.iter().find_map(|(account, status)| {
         let ConnectionState::Failing { reason } = status.state else {
@@ -183,8 +139,6 @@ pub fn banner(statuses: &[(AccountId, SyncStatus)], accounts: &[AccountFacts]) -
             missing,
         });
     }
-    // Any other failure names its account and says what the sync said; the
-    // button retries, which is right for everything but a refused password.
     let failing = statuses.iter().find_map(|(account, status)| {
         let ConnectionState::Failing { reason } = status.state else {
             return None;
@@ -192,10 +146,7 @@ pub fn banner(statuses: &[(AccountId, SyncStatus)], accounts: &[AccountFacts]) -
         let facts = accounts.iter().find(|facts| facts.id == *account)?;
         Some(Banner::Failing {
             account: facts.name.clone(),
-            // The sync's own words (the `Event::Error` that names this
-            // account, T260), else the words for the kind of failure, which
-            // is always its own and is what a person can act on (ADR 0005
-            // Q10).
+            // The sync's own words, else the words for the kind of failure (ADR 0005 Q10).
             reason: status
                 .detail
                 .clone()
@@ -220,7 +171,6 @@ pub fn banner(statuses: &[(AccountId, SyncStatus)], accounts: &[AccountFacts]) -
     })
 }
 
-/// What a kind of failure means to the person, when the sync said no more.
 fn failure_words(reason: FailureReason) -> &'static str {
     match reason {
         FailureReason::Auth => "The server rejected the password.",
@@ -231,15 +181,10 @@ fn failure_words(reason: FailureReason) -> &'static str {
     }
 }
 
-/// What the sync label says, and the icon beside it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SyncLabel {
-    /// The words.
     pub text: String,
-    /// The symbolic icon's name.
     pub icon: &'static str,
-    /// What its tooltip and accessible description say beyond the words:
-    /// each folder that can't sync and why, one per line (#1731).
     pub detail: Option<String>,
 }
 
@@ -253,21 +198,13 @@ impl SyncLabel {
     }
 }
 
-/// "Syncing 1,200 of 8,400": how far a pass has come, as the sync label and
-/// the first-sync banner say it.
 pub fn syncing(done: u32, total: u32) -> String {
     format!("Syncing {} of {}", count(done), count(total))
 }
 
-/// The sync label for `statuses`, as of `now`: when mail last arrived is
-/// said as a clock time in `zone`, `last_synced` being the newest of the
-/// accounts' last completed syncs. `folders` names each folder as the
-/// folders popover lists it, for a folder that can't sync.
-///
-/// The link speaks first -- failing, then offline -- then a pass that is
-/// running, then a folder whose last pass failed (#1731), and only then when
-/// mail last synced: "Synced 16:09" claims a comparison a failed folder
-/// never had.
+/// The link speaks first (failing, then offline), then a running pass, then a folder whose
+/// last pass failed (#1731), and only then when mail last synced: "Synced 16:09" claims a
+/// comparison a failed folder never had.
 pub fn sync_label<Tz: TimeZone>(
     statuses: &[(AccountId, SyncStatus)],
     last_synced: Option<DateTime<chrono::Utc>>,
@@ -284,8 +221,6 @@ where
     if states().any(|state| state == ConnectionState::Offline) {
         return SyncLabel::plain("Offline", "network-offline-symbolic");
     }
-    // A list pass, or the backfill that follows it: either is mail still
-    // arriving, and the label says how much.
     let passes: Vec<(u32, u32)> = statuses
         .iter()
         .filter_map(|(_, status)| running(status).or_else(|| status.backfill_running()))
@@ -312,8 +247,6 @@ where
     SyncLabel::plain(text, "emblem-synchronizing-symbolic")
 }
 
-/// "Sent can't sync", or "3 folders can't sync", with each folder's reason
-/// for the tooltip: `None` while every folder's last pass completed.
 fn cannot_sync(
     statuses: &[(AccountId, SyncStatus)],
     folders: &[(MailboxId, String)],
@@ -350,7 +283,6 @@ fn cannot_sync(
     })
 }
 
-/// [`sync_label`] in the machine's own time zone.
 pub fn sync_label_here(
     statuses: &[(AccountId, SyncStatus)],
     last_synced: Option<DateTime<chrono::Utc>>,
@@ -359,48 +291,28 @@ pub fn sync_label_here(
     sync_label(statuses, last_synced, folders, &Local)
 }
 
-/// What the empty inbox says under "Inbox is empty" (screen 16): when the
-/// next digest comes, if there are digests, and shortcuts to only what
-/// exists.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EmptyInbox {
-    /// "Next digest: Weekly · Newsletters, Saturday 16:00", when a digest
-    /// rule names a time.
     pub next_digest: Option<String>,
-    /// The bold line: "Inbox is empty" once a pass has finished and found
-    /// nothing, and otherwise what the inbox is waiting on.
     pub heading: String,
-    /// The line under the heading when it is not the digest's: when mail
-    /// last synced, or how far the first sync has come.
     pub detail: Option<String>,
-    /// Each shortcut: its key under the keymap in force, what it says, and
-    /// the command a click runs.
     pub shortcuts: Vec<(Option<String>, String, CommandId)>,
 }
 
-/// What an inbox with no rows may say (T220). "Empty" is a claim that a
-/// pass has finished and found nothing; before that, no rows only means
-/// mail has not arrived.
+/// "Empty" claims a pass finished and found nothing; before that, no rows only means mail has not
+/// arrived.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InboxSaying {
-    /// A pass has completed: the inbox really is empty.
     Empty {
-        /// When mail last synced, if known.
         last_synced: Option<DateTime<chrono::Utc>>,
     },
-    /// No pass has completed yet and sync is on its way or running.
     Syncing {
-        /// Messages fetched so far and expected, once the engine reports.
         progress: Option<(u32, u32)>,
     },
-    /// No pass has completed and there is no network.
     Offline,
-    /// No pass has completed and sync is failing.
     Failed,
 }
 
-/// What an inbox with no rows says, given every account's sync `statuses`
-/// and when mail `last_synced` (a completed pass, this run or before).
 pub fn inbox_saying(
     statuses: &[(AccountId, SyncStatus)],
     last_synced: Option<DateTime<chrono::Utc>>,
@@ -414,8 +326,6 @@ pub fn inbox_saying(
         return InboxSaying::Failed;
     }
     if states().any(|state| state == ConnectionState::Offline) {
-        // A tracker that has heard nothing reads Offline too; only a
-        // report of progress or a connection says otherwise.
         let heard = statuses
             .iter()
             .any(|(_, s)| s.state != ConnectionState::Offline || s.progress.is_some());
@@ -437,9 +347,6 @@ pub fn inbox_saying(
 }
 
 impl EmptyInbox {
-    /// This page as `saying` has it: the words that say why there are no
-    /// rows, and only the shortcuts that still make sense. `zone` is for
-    /// the clock time; `keymap` for the key that syncs again.
     pub fn saying<Tz: TimeZone>(mut self, saying: &InboxSaying, keymap: &Keymap, zone: &Tz) -> Self
     where
         Tz::Offset: std::fmt::Display,
@@ -474,7 +381,6 @@ impl EmptyInbox {
                 self.detail = Some(format!("Sync failed.{retry}"));
             }
         }
-        // Nothing has been filtered or archived that anyone could count yet.
         self.next_digest = None;
         self.shortcuts
             .retain(|(_, _, command)| *command == CommandId::Compose);
@@ -482,8 +388,6 @@ impl EmptyInbox {
     }
 }
 
-/// The empty inbox for `focus`'s rules, `filtered_today` messages filed
-/// away since midnight, and `keymap`'s keys, as of `now`.
 pub fn empty_inbox<Tz: TimeZone>(
     focus: &FocusConfig,
     filtered_today: u32,
@@ -503,7 +407,6 @@ where
         })
         .min_by_key(|(when, _)| when.clone())
         .map(|(when, rule)| {
-            // A week ahead or less, the weekday says it; further, the date.
             let day = if when.clone() - now.clone() < chrono::Duration::days(7) {
                 when.format("%A %H:%M").to_string()
             } else {
@@ -541,7 +444,6 @@ where
     }
 }
 
-/// A rule's cadence as the line says it: "Weekly".
 fn cadence(written: &str) -> String {
     let written = written.trim().to_ascii_lowercase();
     let mut letters = written.chars();
@@ -551,26 +453,17 @@ fn cadence(written: &str) -> String {
     }
 }
 
-/// A place that is not the inbox, and has nothing in it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EmptyPlace {
-    /// What is snoozed.
     Snoozed,
-    /// What is flagged.
     Flagged,
-    /// The drafts.
     Drafts,
-    /// What is queued to send.
     Outbox,
-    /// Any other folder, by its name.
     Folder(String),
 }
 
-/// What a place with no rows says: why it is empty, and the way out -- never
-/// a blank page that looks like a list that failed to load (ux-architect:
-/// nothing is a dead end). The same page the empty inbox draws, so Focus has
-/// one empty pattern; every place offers the inbox, and the ones a person
-/// fills offer how.
+/// Why a place is empty and the way out, never a blank page that looks like a failed load.
+/// The same page as the empty inbox, so Focus has one empty pattern.
 pub fn empty_place(place: &EmptyPlace, keymap: &Keymap) -> EmptyInbox {
     let key = |command| crate::hints::key(keymap, command);
     let press = |command, what: &str| match key(command) {
@@ -631,10 +524,8 @@ pub fn empty_place(place: &EmptyPlace, keymap: &Keymap) -> EmptyInbox {
     }
 }
 
-/// What the reading pane says with no message open (T232): never blank,
-/// and never a dead end -- the key that opens one, and the key that puts
-/// messages back over the list, each a shortcut a click runs too. Drawn by
-/// the empty inbox's own page, so Focus has one empty pattern.
+/// Never blank and never a dead end: the key that opens a message and the key that puts
+/// messages back over the list. Drawn by the empty inbox's page.
 pub fn empty_pane(keymap: &Keymap) -> EmptyInbox {
     let key = |command| crate::hints::key(keymap, command).map(|key| crate::hints::short(&key));
     EmptyInbox {
@@ -656,44 +547,31 @@ pub fn empty_pane(keymap: &Keymap) -> EmptyInbox {
     }
 }
 
-/// The page a store that will not open shows, when trying again can help.
 pub const CANT_OPEN_MAIL: &str = "Postio can\u{2019}t open your mail";
 
-/// Its button: open the store again.
 pub const TRY_AGAIN: &str = "Try again";
 
-/// The page's heading when the store was written at a schema no update
-/// carries forward (`postio_session::Remedy::StartOver`).
 pub const STORE_FROM_ANOTHER_VERSION: &str = "Your mail store is from another version of Postio";
 
-/// What that page says before "Start a fresh store" is chosen: why trying
-/// again cannot help, what a fresh store keeps, and what stays behind.
 pub const START_OVER: &str = "This version of Postio can\u{2019}t read the store an earlier \
      build wrote, and no update carries it forward, so trying again won\u{2019}t help. \
      A fresh store keeps your accounts and settings and syncs your mail again from the \
      server. Snoozes, reminders, Focus\u{2019}s filing history, and drafts or changes \
      not yet sent stay in the old store, which is set aside, not deleted.";
 
-/// The page's heading when the store is encrypted under a key this
-/// installation does not hold (`postio_session::Unreadable::AnotherKey`).
 pub const STORE_UNDER_ANOTHER_KEY: &str = "Your mail store is locked with another key";
 
-/// What that page says before "Start a fresh store" is chosen. Nothing in
-/// the old store can be read, so unlike [`START_OVER`] it promises no
-/// accounts: the fresh store asks for them, as a first run does.
+/// Nothing in the old store can be read, so unlike `START_OVER` it promises no accounts.
 pub const START_OVER_UNDER_ANOTHER_KEY: &str = "This store was encrypted with a key \
      this installation doesn\u{2019}t have \u{2014} another installation\u{2019}s, or one \
      the keyring replaced \u{2014} so trying again won\u{2019}t help. A fresh store asks \
      for your accounts again and syncs your mail again from the server. The old store, \
      with its snoozes, reminders, and unsent drafts, is set aside, not deleted.";
 
-/// Its button: set the store aside and start a fresh one.
 pub const START_A_FRESH_STORE: &str = "Start a fresh store";
 
-/// The button while that runs.
 pub const STARTING_A_FRESH_STORE: &str = "Starting a fresh store\u{2026}";
 
-/// What is said once a fresh store has opened: where the old one went.
 pub fn started_over(set_aside: &str) -> String {
     format!("Started a fresh store. The old one is in {set_aside}")
 }
@@ -712,7 +590,6 @@ mod tests {
 
     #[test]
     fn a_store_under_another_key_promises_no_accounts() {
-        // Nothing in it decrypts, so nothing comes across (#1598).
         assert!(START_OVER_UNDER_ANOTHER_KEY.contains("set aside, not deleted"));
         assert!(START_OVER_UNDER_ANOTHER_KEY.contains("won\u{2019}t help"));
         assert!(!START_OVER_UNDER_ANOTHER_KEY.contains("keeps your accounts"));
@@ -784,9 +661,6 @@ mod tests {
 
     #[test]
     fn one_account_failing_for_another_reason_is_named_with_its_reason() {
-        // ADR 0005 Q10: a view that cannot include an account says so and
-        // names it. Not its password, so no sign-in; not the network, so no
-        // "offline": one account, and what its server said.
         let accounts = [facts(1), facts(2)];
         let failing = SyncStatus {
             detail: Some("The server's certificate does not verify.".into()),
@@ -821,7 +695,6 @@ mod tests {
             "a failure that is not the password offers Retry"
         );
         assert!(shown.is_error());
-        // A rejected password still outranks it.
         let both = [
             (
                 account(1),
@@ -866,8 +739,6 @@ mod tests {
         let accounts = [facts(1)];
         let calm = [(account(1), status(ConnectionState::Online, None))];
         assert_eq!(banner(&calm, &accounts), None);
-        // Backoff retries on its own: nothing for the person to do, and every
-        // launch passes through it.
         let connecting = [(account(1), status(ConnectionState::Connecting, None))];
         assert_eq!(banner(&connecting, &accounts), None);
     }
@@ -989,7 +860,6 @@ mod tests {
             first.sentence(),
             "5 of 9 messages, newest first. You can read and search what's here."
         );
-        // The one line is the two, joined.
         for banner in [sign_in, Banner::Offline, first] {
             assert_eq!(
                 banner.title(),
@@ -1012,7 +882,6 @@ mod tests {
             "Syncing 12,408 of 18,204"
         );
         assert_eq!(label(ConnectionState::Online, None), "Synced 16:09");
-        // A backfill says how far it has got, and a drained one says nothing.
         let backfill = |done, total| {
             let status = SyncStatus {
                 state: ConnectionState::Online,
@@ -1023,7 +892,6 @@ mod tests {
         };
         assert_eq!(backfill(12_400, 81_744), "Syncing 12,400 of 81,744");
         assert_eq!(backfill(81_744, 81_744), "Synced 16:09");
-        // Reconnecting after a sync: when mail last arrived is still true.
         assert_eq!(label(ConnectionState::Connecting, None), "Synced 16:09");
         let never = sync_label(
             &[(account(1), status(ConnectionState::Connecting, None))],
@@ -1195,9 +1063,6 @@ mod tests {
         assert!(failed.detail.expect("a detail").starts_with("Sync failed."));
     }
 
-    /// #1731: "Synced 16:09" is a claim that every folder was compared. A
-    /// folder whose last pass failed says so, by the name the folders
-    /// popover lists it under, until its next pass completes.
     #[test]
     fn the_label_names_a_folder_that_cannot_sync() {
         let zone = FixedOffset::east_opt(0).expect("UTC");
@@ -1227,25 +1092,20 @@ mod tests {
             Some("Inbox: Refused 3.\nSent Messages: Refused 7.")
         );
 
-        // A folder the places have not named yet is still a folder.
         let unnamed = label(failing(&[9], None));
         assert_eq!(unnamed.text, "A folder can't sync");
         assert_eq!(unnamed.detail.as_deref(), Some("Refused 9."));
 
-        // A pass running says how far it has come; the mark is back when
-        // the wave settles.
         assert_eq!(
             label(failing(&[7], Some((4, 9)))).text,
             "Syncing 4 of 9",
             "progress outranks a folder's mark"
         );
-        // The link outranks every folder.
         let offline = SyncStatus {
             state: ConnectionState::Offline,
             ..failing(&[7], None)
         };
         assert_eq!(label(offline).text, "Offline");
-        // Nothing failing: the label is the ordinary one, with no detail.
         let fine = label(status(ConnectionState::Online, None));
         assert_eq!(fine.text, "Synced 16:09");
         assert_eq!(fine.detail, None);

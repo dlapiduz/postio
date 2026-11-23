@@ -1,44 +1,17 @@
-//! Key hints: the key a surface names beside the thing it does.
-//!
-//! docs/PRODUCT.md §8 says the key hints are *derived* from the registry, the
-//! same one table the keymap, the palette and the cheat sheet read. That was
-//! true of the focused row and the reader's bar, and not of a dozen other
-//! places that typed the key in -- `"c"` beside Compose, `"H"` beside Render
-//! once, `"C-⇧-A"` beside Attach another -- and went on saying it after a
-//! `[keys]` rebind moved the command somewhere else. A hint that lies is worse
-//! than none (#828).
-//!
-//! So a hint is built from a [`Keymap`] and a [`CommandId`], and a command
-//! with no binding produces no hint rather than a blank one. The only other
-//! way to make one is [`fixed`], for a key that is not a command at all --
-//! `Tab` between a form's fields, `Return` on a screen's one button -- and it
-//! asks for the reason, because "it is not a command" is a claim somebody
-//! should be able to check.
-//!
-//! The key is spelled the way the registry spells it (`ctrl+Return`, `e`,
-//! `Escape`), which is what the palette, the cheat sheet and
-//! `docs/keybindings.md` already show: one notation, so a key learned on one
-//! surface is recognised on the next.
-//!
-//! No toolkit here. The classic app's `widgets::keyhint` drew these; a second
-//! frontend draws the same ones.
+//! Key hints: the key a surface names beside what it does, built from a `Keymap` and a `CommandId`
+//! so a rebind cannot leave a stale hint (#828).
+//! A command with no binding produces no hint. `fixed` is the only other way, for a key that is not
+//! a command, and requires a reason.
 
 use postio_core::{CommandId, Keymap};
 
-/// One key, and what it does.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Hint {
-    /// The key, as the registry spells it: `e`, `ctrl+Return`, `j/k`.
     pub key: String,
-    /// What it does, in the surface's words: `reply`, `Compose`.
     pub label: String,
 }
 
-/// The hint for `command`, or `None` when nothing is bound to it.
-///
-/// `None` is the case where the user cleared a binding or lost it to a
-/// collision. The caller draws nothing -- a blank cap would read as a key
-/// that exists and does nothing.
+/// `None` when the binding is cleared or lost to a collision; the caller draws nothing.
 pub fn hint(keymap: &Keymap, command: CommandId, label: &str) -> Option<Hint> {
     keymap.binding(command).map(|key| Hint {
         key: key.to_owned(),
@@ -46,11 +19,8 @@ pub fn hint(keymap: &Keymap, command: CommandId, label: &str) -> Option<Hint> {
     })
 }
 
-/// `key`, as the registry spells it, spelled for a screen reader: the
-/// `aria-keyshortcuts` form GTK's `KeyShortcuts` property carries
-/// (FR-096). Modifiers are named in full and joined by `+`, `Return` is
-/// `Enter`, and a capital letter says its Shift. A sequence (`g i`) has no
-/// ARIA spelling and is left as it is.
+/// The `aria-keyshortcuts` form: modifiers in full joined by `+`, `Return` is `Enter`, a capital
+/// letter says its Shift. A sequence (`g i`) has no ARIA spelling and is left as is.
 pub fn shortcut(key: &str) -> String {
     if key.contains(' ') {
         return key.to_owned();
@@ -64,7 +34,6 @@ pub fn shortcut(key: &str) -> String {
                 match piece {
                     "ctrl" | "control" | "mod" => "Control",
                     "alt" => "Alt",
-                    // A tight cap's spelling ([`short`]), named in full.
                     "shift" | "\u{21e7}" => "Shift",
                     "super" | "meta" | "cmd" => "Meta",
                     other => other,
@@ -74,7 +43,6 @@ pub fn shortcut(key: &str) -> String {
             continue;
         }
         let name = match piece {
-            // A tight cap's spellings ([`short`]), named in full.
             "Return" | "\u{21b5}" => "Enter".to_owned(),
             "Del" => "Delete".to_owned(),
             letter
@@ -92,14 +60,9 @@ pub fn shortcut(key: &str) -> String {
     parts.join("+")
 }
 
-/// `key`, as a cap in a tight row spells it: `Delete` is `Del`, as the
-/// message dialog's action row draws it (the handoff's SPEC section 2), and
-/// `Return` and `shift` are the glyphs Focus's hint lines and the classic
-/// rail already draw, `↵` and `⇧`, so the composer's `ctrl+shift+Return` is
-/// `ctrl+⇧+↵` (T221). Everything else -- `ctrl`, `alt`, the `+` between
-/// them -- keeps the keymap's spelling. What is pressed, and what a screen
-/// reader hears ([`shortcut`]), keeps the binding's own names; only the cap
-/// is shorter.
+/// A cap in a tight row: `Delete` is `Del`, `Return` and `shift` are `↵` and `⇧`; other names
+/// keep the keymap's spelling. What is pressed and what a screen reader hears keep the binding's
+/// names.
 pub fn short(key: &str) -> String {
     if key.contains(' ') {
         return key.to_owned();
@@ -115,16 +78,11 @@ pub fn short(key: &str) -> String {
         .join("+")
 }
 
-/// Just the key for `command`, for a control that draws its own label.
 pub fn key(keymap: &Keymap, command: CommandId) -> Option<String> {
     keymap.binding(command).map(str::to_owned)
 }
 
-/// Two commands that are one idea -- next and previous -- as one hint:
-/// `j/k walk`.
-///
-/// Either half alone still teaches something, so a pair with one side
-/// unbound shows the side that is bound rather than nothing.
+/// A pair with one side unbound shows the side that is bound.
 pub fn pair(keymap: &Keymap, first: CommandId, second: CommandId, label: &str) -> Option<Hint> {
     let key = match (keymap.binding(first), keymap.binding(second)) {
         (Some(a), Some(b)) => format!("{a}/{b}"),
@@ -137,13 +95,8 @@ pub fn pair(keymap: &Keymap, first: CommandId, second: CommandId, label: &str) -
     })
 }
 
-/// Numbered commands that are one idea -- the saved searches, the results'
-/// tabs -- as one hint: `alt+1–4 saved`, `cmd+1–3 switch tab`.
-///
-/// The run is one cap only while its keys are one modifier and the digits
-/// in order, as the defaults are; a rebind that breaks it says the first
-/// and the last apart ([`pair`]), so the cap never names a key that does
-/// something else.
+/// One cap only while the keys are one modifier and digits in order; a rebind that breaks it says
+/// the first and last apart.
 pub fn run(keymap: &Keymap, commands: &[CommandId], label: &str) -> Option<Hint> {
     let (first, last) = (commands.first()?, commands.last()?);
     let keys: Vec<Option<&str>> = commands.iter().map(|id| keymap.binding(*id)).collect();
@@ -164,13 +117,8 @@ pub fn run(keymap: &Keymap, commands: &[CommandId], label: &str) -> Option<Hint>
     }
 }
 
-/// A hint for a key that is not a command.
-///
-/// `because` says why no command could carry it -- `Tab` moving between a
-/// form's fields is the toolkit's, `Return` pressing a screen's only button
-/// is that button's default -- and it is required so the claim is written
-/// where it is made. `scripts/checks/check-key-hints-are-derived.py` counts
-/// the callers against an allowlist with the same reasons.
+/// `because` says why no command could carry the key;
+/// `scripts/checks/check-key-hints-are-derived.py` counts callers against an allowlist.
 pub fn fixed(key: &str, label: &str, because: &'static str) -> Hint {
     debug_assert!(!because.is_empty(), "a fixed key hint says why");
     Hint {
@@ -179,10 +127,6 @@ pub fn fixed(key: &str, label: &str, because: &'static str) -> Hint {
     }
 }
 
-/// A row of hints as one line of text: `j/k walk · Return open · s save`.
-///
-/// The key first, then what it does, because the key is the thing being
-/// taught and the eye finds it at the start of each clause.
 pub fn line<'a>(hints: impl IntoIterator<Item = &'a Hint>) -> String {
     hints
         .into_iter()
@@ -196,10 +140,6 @@ mod tests {
 
     #[test]
     fn a_key_is_spelled_for_a_screen_reader_as_aria_keyshortcuts_spells_it() {
-        // FR-096: a keycap is announced as its control's shortcut. ARIA's
-        // `aria-keyshortcuts` names modifiers in full, joined by `+`, and a
-        // shifted letter by its Shift. ARIA has no spelling for a sequence,
-        // so one is left as the registry spells it.
         assert_eq!(shortcut("e"), "e");
         assert_eq!(shortcut("ctrl+Return"), "Control+Enter");
         assert_eq!(shortcut("ctrl+shift+a"), "Control+Shift+a");
@@ -215,8 +155,6 @@ mod tests {
     fn a_tight_cap_compacts_delete_return_and_shift_and_nothing_else() {
         assert_eq!(short("Delete"), "Del");
         assert_eq!(short("shift+Delete"), "\u{21e7}+Del");
-        // The composer's caps (T221): `ctrl+shift+Return` was the widest
-        // thing in its bar.
         assert_eq!(short("ctrl+Return"), "ctrl+\u{21b5}");
         assert_eq!(short("ctrl+shift+Return"), "ctrl+\u{21e7}+\u{21b5}");
         assert_eq!(short("ctrl+shift+a"), "ctrl+\u{21e7}+a");
@@ -271,10 +209,8 @@ mod tests {
 
     #[test]
     fn an_unbound_command_has_no_hint() {
-        // An override outranks a default, so giving `b` to compose leaves
-        // Snooze -- one key, no alternate -- with no key at all:
-        // palette-only. Compose itself cannot be the example; it has `mod+n`
-        // to fall back on.
+        // An override outranks a default, so Snooze (one key, no alternate) loses its key; Compose
+        // has `mod+n` to fall back on.
         let keymap = rebound(CommandId::Compose, "b");
         assert_eq!(hint(&keymap, CommandId::Snooze, "Snooze"), None);
     }
@@ -292,8 +228,6 @@ mod tests {
 
     #[test]
     fn a_numbered_run_is_one_range_and_a_broken_one_its_ends() {
-        // Screen 01's "⌥1–4 saved" and screen 11's "⌘1–3 switch tab": keys
-        // that are one modifier and consecutive digits are one cap.
         let saved = [
             CommandId::SavedSearch1,
             CommandId::SavedSearch2,
@@ -302,7 +236,6 @@ mod tests {
         ];
         let defaults = run(Keymap::defaults(), &saved, "saved");
         assert_eq!(defaults.map(|h| h.key).as_deref(), Some("alt+1\u{2013}4"));
-        // One of them moved: the run is broken, so its ends are said apart.
         let keymap = rebound(CommandId::SavedSearch3, "alt+9");
         let broken = run(&keymap, &saved, "saved");
         assert_eq!(broken.map(|h| h.key).as_deref(), Some("alt+1/alt+4"));

@@ -1,10 +1,6 @@
-//! The capture sheet's requests (spec 007 US15, FR-180, FR-181): the vault
-//! `[focus.vault]` names, read and appended to on this computer through
-//! `postio-vault`, off the runtime's worker threads since it is plain file
-//! access.
-//!
-//! Nothing here is logged but what happened: a capture's text is the
-//! person's mail, and logs never carry it.
+//! The capture sheet's requests: the `[focus.vault]` vault, read and appended to on this computer
+//! through `postio-vault`, off the runtime's workers (plain file access).
+//! Logs only what happened: a capture's text is the person's mail.
 
 use postio_client::protocol::VaultPicture;
 use postio_model::listing::StoreError;
@@ -12,11 +8,9 @@ use postio_vault::{Captured, NoteEntry, Project, Task, Vault};
 
 use crate::Inner;
 
-/// What is said when no vault is configured.
 pub(crate) const NO_VAULT: &str =
     "No vault to capture into: name one under [focus.vault] in config.toml";
 
-/// The vault `[focus.vault]` names, opened.
 fn open(inner: &Inner) -> Result<Vault, StoreError> {
     let section = inner
         .wiring
@@ -37,7 +31,6 @@ fn failed(error: postio_vault::VaultError) -> StoreError {
     StoreError::new(format!("The vault could not be used: {error}"))
 }
 
-/// Run `work` on the vault, on a thread that may block.
 async fn with_vault<T: Send + 'static>(
     inner: &Inner,
     work: impl FnOnce(Vault) -> Result<T, postio_vault::VaultError> + Send + 'static,
@@ -48,7 +41,6 @@ async fn with_vault<T: Send + 'static>(
         .map_err(|error| StoreError::new(format!("The vault could not be used: {error}")))?
 }
 
-/// The projects, the one suggested for `subject`, and the captured tasks.
 pub(crate) async fn picture(inner: &Inner, subject: String) -> Result<VaultPicture, StoreError> {
     let tasks_note = inner
         .wiring
@@ -68,7 +60,6 @@ pub(crate) async fn picture(inner: &Inner, subject: String) -> Result<VaultPictu
     .await
 }
 
-/// Append `task` to `project`'s note, or the tasks note.
 pub(crate) async fn capture_task(
     inner: &Inner,
     project: Option<Project>,
@@ -84,7 +75,6 @@ pub(crate) async fn capture_task(
     captured
 }
 
-/// Append `entry` to `note`.
 pub(crate) async fn capture_note(
     inner: &Inner,
     note: std::path::PathBuf,

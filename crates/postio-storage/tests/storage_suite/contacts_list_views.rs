@@ -1,10 +1,3 @@
-//! The Contacts list's three views, its keyset pages, and its filter
-//! (specs/005-contacts FR-003..FR-005, research R5).
-//!
-//! What a person sees in the default view is the people they made or
-//! imported and the people they have written to; a newsletter they only
-//! received is one toggle away, and still completes in the composer.
-
 use chrono::{DateTime, TimeZone, Utc};
 
 use postio_model::{
@@ -260,8 +253,6 @@ async fn the_filter_matches_any_name_the_organisation_and_any_part_of_any_addres
 
 #[tokio::test]
 async fn the_users_own_addresses_are_never_listed_even_if_seen_before_they_were_theirs() {
-    // spec edge case: an address that becomes one of the user's identities
-    // after it was recorded is the user's, not a contact.
     let (_db, connection, account, inbox) = setup().await;
     sent(
         &connection,
@@ -289,8 +280,6 @@ async fn the_users_own_addresses_are_never_listed_even_if_seen_before_they_were_
 
 #[tokio::test]
 async fn the_detail_counts_messages_once_however_many_of_their_addresses_they_carry() {
-    // FR-006: "how many distinct messages involve any of their addresses" --
-    // a message to both of ada's addresses is one message, not two.
     let (_db, connection, account, inbox) = setup().await;
     let contacts = ContactRepository::new(&connection);
     let ada = contacts
@@ -339,9 +328,6 @@ async fn the_detail_counts_messages_once_however_many_of_their_addresses_they_ca
 
 #[tokio::test]
 async fn a_page_can_start_part_way_past_a_cursor() {
-    // The app seeks to the nearest page boundary it has already read and
-    // skips the rest, the way the message list's marks do, so a jump deep
-    // into the list is one seek and a short skip rather than a walk.
     let (_db, connection, _account, _inbox) = setup().await;
     let contacts = ContactRepository::new(&connection);
     for i in 0..30 {

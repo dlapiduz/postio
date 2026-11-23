@@ -1,421 +1,173 @@
-<!--
-Sync Impact Report
-==================
-Version change: 1.3.0 → 1.4.0 (was: 1.2.1 → 1.3.0; 1.2.0 → 1.2.1;
-  1.1.0 → 1.2.0; 1.0.0 → 1.1.0; unversioned scaffold → 1.0.0)
-Bump rationale (1.4.0): MINOR. Approved by the maintainer on 2026-10-06,
-  for specs/007-postio-focus (T255), after the classic GTK app was removed
-  (C27, T256).
-  - Additional Constraints → Scope: Postio is one product with several
-    interfaces on the same engine and store -- the GTK interface
-    (`postio-gtk`, the Focus design), the terminal (`postio-tui`), macOS
-    (`macos/` over `postio-ffi`), and others to come -- in place of "two
-    desktop apps".
-  - Principle VII: one separation rule for every interface. An interface
-    holds no SQL and no protocol code: it takes no store engine and no mail
-    protocol as a direct dependency, and reaches mail through Postio's
-    engine crates. The earlier "not even indirectly" form for `postio-gtk`
-    is dropped -- every interface has the engine in its graph, through
-    those crates, by design (ADR 0041). `check-crate-boundaries.py` now
-    enforces the rule for `postio-gtk`, `postio-tui` and `postio-ffi`.
-    `postio-widgets` keeps its stricter rule: no store engine, no protocol,
-    no store-owning crate and no interface, at any depth (ADR 0043).
-  - Principles II and III, wording: the generated surfaces are named as the
-    GTK interface has them, and "saved as a pinned search" replaces "saved
-    to the sidebar". What is generated, and what one query language means,
-    are unchanged.
-  MINOR: no principle is removed; VII states one separation rule for every
-  interface and drops a form of it that no interface could keep.
-Bump rationale (1.3.0): MINOR. Approved by the maintainer on 2026-09-27
-  ("approve as drafted"), for specs/007-postio-focus (T146).
-  - Additional Constraints → Scope names a second desktop app, Postio Focus,
-    on the same store, one app at a time (ADR 0041).
-  - "No AI" is replaced with what it has meant in practice. Postio itself
-    embeds, bundles, downloads and starts no model and no inference engine.
-    Focus may use a model the user runs on this machine and names in
-    `config.toml`. That model is optional, off until it is named, reached only
-    on this machine, and never required; without it a built-in rule-based
-    detector answers (spec 007, FR-165 to FR-170). Other AI features stay
-    deferred to epic E12.
-  - Principle VII's boundary list gains the rules `check-crate-boundaries.py`
-    has enforced since spec 007's T002:
-    - `postio-widgets` held the GTK the desktop apps shared (ADR 0043), and
-      neither depended on the other;
-    - `postio-classify` takes no send path, no network crate and no inference
-      engine;
-    - `postio-calendar` is a pure leaf;
-    - no app links an inference engine, directly or through a dependency.
-
-  This expands both sections and narrows no principle. It changes what "no AI"
-  permits, which is why it waited for the maintainer's approval.
-Bump rationale (1.2.1): PATCH. Principle VI's reader clause is reworded from
-  the mechanism it named ("the reader's WebKit view has JavaScript and network
-  off") to the guarantee: the reader's renderer cannot run script or reach the
-  network (ADR 0042). Spec 006 replaced the WebKit reader with `postio-render`,
-  in which the guarantee holds by construction and
-  `check-renderer-is-memory-safe.py` enforces it; the clause is a
-  clarification that strengthens what it promises, and narrows nothing.
-Bump rationale (1.2.0): MINOR. Additional Constraints → Scope names a second
-  Linux frontend, the terminal one (`postio-tui`), on the same store as the
-  desktop app, one app at a time; the maintainer asked for it on 2026-09-23 ("I want to create a
-  TUI version of postio", and "the same store to be available to the GTK
-  version and TUI"). Principle VII's boundary list gains the rules
-  `check-crate-boundaries.py` already enforces for `postio-client` and
-  `postio-tui`, and ADR 0041's rule that every frontend reaches mail through
-  `postio-client`. This expands both sections; it narrows nothing.
-Bump rationale (1.1.0): MINOR. Development Workflow gains a second sanctioned
-  mode — spec-driven work on one feature branch, with tasks from `tasks.md`
-  instead of an issue each. The issue loop remains the default and is unchanged;
-  this expands the section rather than narrowing it. Approved by the maintainer
-  2026-09-10, who asked for it directly: "all this work is in a feature branch
-  without creating issues for each one of this".
-Bump rationale (1.0.0): First ratified constitution. The file previously held
-  only unfilled [PLACEHOLDER] tokens, so this is an initial adoption rather than
-  an amendment.
-
-Modified principles:
-  [PRINCIPLE_1_NAME] → I. Local-First, and the UI Never Awaits the Network
-  [PRINCIPLE_2_NAME] → II. The Keyboard Is a System, Not a List of Shortcuts
-  [PRINCIPLE_3_NAME] → III. Search Is Navigation, and There Is One Query Language
-  [PRINCIPLE_4_NAME] → IV. Test-First (NON-NEGOTIABLE)
-  [PRINCIPLE_5_NAME] → V. Performance Is a Functional Requirement
-  (added)            → VI. Privacy Is a Feature
-  (added)            → VII. Boundaries Are Enforced, Not Advised
-
-Added sections:
-  Additional Constraints (replaces [SECTION_2_NAME])
-  Development Workflow and Quality Gates (replaces [SECTION_3_NAME])
-  Governance (filled)
-
-Removed sections: none
-
-Modified sections (1.4.0):
-  II. The Keyboard Is a System — the generated surfaces named as the one
-  desktop app has them.
-  III. Search Is Navigation — "saved as a pinned search" for "saved to the
-  sidebar".
-  VII. Boundaries Are Enforced, Not Advised — one separation rule for every
-  interface: no store engine and no protocol as a direct dependency.
-  Additional Constraints — Scope: one product, several interfaces.
-
-Modified sections (1.3.0):
-  VII. Boundaries Are Enforced, Not Advised — adds `postio-widgets` (ADR 0043),
-  `postio-classify`, `postio-calendar`, and no inference engine in any app.
-  Additional Constraints — Scope names Postio Focus (specs/007-postio-focus),
-  and says what "no AI" forbids and what a user-supplied model may do.
-
-Modified sections (1.2.0):
-  VII. Boundaries Are Enforced, Not Advised — adds every frontend reaching
-  mail through `postio-client`, `postio-client` taking no toolkit, WebKit,
-  store engine or protocol, and `postio-tui` no toolkit or WebKit.
-  Additional Constraints — Scope names the terminal frontend
-  (docs/archive/specs/005-tui-frontend).
-
-Modified sections (1.1.0):
-  Development Workflow and Quality Gates — adds "Spec-driven work lands on one
-  feature branch", and makes the commit trailer accept a spec reference where
-  there is no issue.
-
-Deferred TODOs: none. RATIFICATION_DATE is the date of this first adoption
-  (2026-09-08); no earlier adoption of this document exists.
--->
-
 # Postio Constitution
 
 Postio is a local-first, keyboard-first email client for people who have too
 much email: **read less, find anything, act faster.** This document holds the
-rules that outrank convenience. Everything here is enforced by a check, a test,
-or a gate — where it is not, the principle says who enforces it instead.
-
-Product truth is `docs/PRODUCT.md`. Architectural truth is
-`docs/ARCHITECTURE.md` and the ADRs in `docs/decisions/`. This constitution
-governs; those documents describe.
+rules that outrank convenience. Product truth is `docs/PRODUCT.md`;
+architecture is `docs/ARCHITECTURE.md` and `docs/decisions/`. Where this
+document and another disagree, this one wins.
 
 ## Core Principles
 
 ### I. Local-First, and the UI Never Awaits the Network
 
-Every mutating action MUST be local-first, in this order: write to SQLite,
-enqueue the remote effect, emit the change, repaint. The UI MUST NOT await a
-network round trip for any user-visible outcome, and navigation MUST work with
-the network absent. Sync state MUST be visible to the user, and destructive
-operations MUST be confirmed or undoable — an invariant the command registry
-machine-checks, not a habit.
-
-Rationale: this is the mechanism behind "instant" and behind "predictable". An
-action that waits on a server has already failed both promises, and no amount
-of later optimisation recovers it.
+- Every mutating action is: write to the store, enqueue the remote effect,
+  emit the change, repaint.
+- The UI never awaits a network round trip for a visible outcome. Navigation
+  works with the network absent.
+- Sync state is visible. Destructive operations are confirmed or undoable
+  (the command registry machine-checks this).
 
 ### II. The Keyboard Is a System, Not a List of Shortcuts
 
-Every command MUST have a keyboard shortcut, a command-palette entry, and an
-accessible action, and all three MUST derive from exactly one enumerable table,
-`postio-core::registry`. The keymap, the command bar's commands (`Ctrl+K`), the
-`?` key map, the row menu, the keycap in each control, and
-`docs/keybindings.md` are generated from that table; `docs/keybindings.md` is
-regenerated by a test that fails when it drifts.
-
-**A command that is not in the registry does not exist** — not merely unbound,
-but absent from every way a user could discover it. A feature is therefore not
-complete when its widget works: it is complete when its command is in the
-registry. Every binding MUST be overridable from `[keys]` in `config.toml`,
-keyed by command id, which makes command ids a file format and forbids casual
-renaming.
-
-The mouse MUST remain excellent and MUST NEVER be required. The list has a
-cursor *and* a selection and they MUST NOT be conflated — the cursor is where
-the keyboard is, the selection is what `a` would archive.
-
-Rationale: three hand-maintained lists drift within a release and one table
-cannot. This is also what makes accessibility structural rather than a later
-pass — the app is operable without a mouse by construction.
+- Every command has a shortcut, a command-palette entry and an accessible
+  action, all derived from one table, `postio-core::registry`. The keymap,
+  command bar, `?` map, row menu, keycaps and `docs/keybindings.md` are
+  generated from it; a test fails when the doc drifts.
+- A command not in the registry does not exist. A feature is complete when
+  its command is registered.
+- Every binding is overridable from `[keys]` in `config.toml`, keyed by command
+  id. Command ids are a file format: do not rename them casually.
+- The mouse stays excellent and is never required.
+- The list has a cursor and a selection; never conflate them. The cursor is
+  where the keyboard is, the selection is what `a` would archive.
 
 ### III. Search Is Navigation, and There Is One Query Language
 
-Search is a primary way to move around, not a feature in a box, and it MUST
-answer locally within the Principle V budget without a network round trip.
-
-**One query language, everywhere.** The same string MUST mean the same thing
-typed in the search bar, saved as a pinned search, or written into `config.toml`. A
-saved search is a query with a name; a virtual folder is a saved search that is
-pinned; a rule is a saved search plus actions. A second query language MUST NOT
-be introduced — natural-language search lowers to this one rather than
-competing with it.
-
-The parser MUST NOT error on a half-typed query: `is:` and `after:2026-` are
-ordinary intermediate states, and anything unrecognised stays free text. Results
-appear while typing.
-
-**Header search is bounded by structural caps, never by an allowlist of header
-names.** `header:` matches every indexed header, capped by a per-message budget
-rather than by a list of names anyone maintains. A curated list of names must be
-maintained forever; it answers "no match" for every name off it, which a user
-cannot tell from "this message has no such header"; and it converges on the
-vocabulary of whoever curated it, putting one provider into the shape of the
-code, which Principle VII forbids. A header that must be matchable *before* the
-body arrives earns a dedicated operator instead.
-
-Rationale: search is one of the three things Postio must do better than the
-alternatives. A query language that differs between the box, a saved search,
-and the config file is three languages, and the user pays for all three.
+- Search answers locally within the principle V budget.
+- One query language everywhere: the search bar, a saved search and
+  `config.toml` mean the same string the same way. A virtual folder is a
+  pinned saved search; a rule is a saved search plus actions. Natural-language
+  search lowers to this language; no second one is introduced.
+- The parser never errors on a half-typed query (`is:`, `after:2026-`).
+  Unrecognised text is free text. Results appear while typing.
+- `header:` matches every indexed header, bounded by a per-message budget,
+  never by an allowlist of names (an allowlist answers "no match" silently
+  and bakes one provider's vocabulary into code). A header that must match
+  before the body arrives earns its own operator.
 
 ### IV. Test-First (NON-NEGOTIABLE)
 
-Red, green, repeat. The failing test MUST be written and MUST be observed
-failing before the code that satisfies it. Working code MUST NOT be re-broken
-after going green to prove a test; a test never seen red MUST instead be
-tightened until it visibly constrains the behavior. An issue is not done until
-its acceptance criteria are covered by tests.
-
-Tests MUST assert on what a person would see, not on what a layer was handed.
-Every layer in this codebase is tested and passes; the defects that reach users
-live *between* layers, and an assertion that a layer was informed cannot fail
-when nothing informs it.
-
-No test in the default suite may touch the network — live-server tests are
-`#[ignore]`. Protocol code tests against the `MailBackend` mock and the `.eml`
-corpus in `crates/postio-model/tests/corpus/`.
-
-Rationale: the red run is the only evidence a test can fail. Everything else is
-a test-shaped comment.
+- Write the failing test and observe it fail before the code that passes it.
+- Never re-break working code to prove a test. Tighten a test never seen red
+  until it visibly constrains the behaviour.
+- An issue is done when its acceptance criteria are covered by tests.
+- Assert on what a person would see, not on what a layer was handed: defects
+  live between layers that each pass.
+- The default suite never touches the network; live-server tests are
+  `#[ignore]`. Protocol code tests against the `MailBackend` mock and the
+  `.eml` corpus in `crates/postio-model/tests/corpus/`.
 
 ### V. Performance Is a Functional Requirement
 
-The budgets are: startup to usable UI **< 500 ms**, ordinary interaction
-**< 16 ms**, local search **< 100 ms**, transitions **≤ 100 ms or absent**, with
-`prefers-reduced-motion` always honoured. A mailbox MUST NEVER be loaded into
-memory: the list is windowed over paged SQLite, and "select all" is a predicate,
-not a set of ids.
-
-Budgets are gated as **counts, not timings**. When a read path changes, the
-change MUST carry assertions on statements, rows, and trigger firings via
-`postio_storage::test_support::counting`. Wall-clock benches run nightly and
-report; they do not gate.
-
-Rationale: a shared CI runner cannot defend a millisecond budget, but the
-*causes* of a budget — statements issued, rows materialised, per-row work — are
-the same number on every machine.
+- Budgets: startup to usable UI < 500 ms, interaction < 16 ms, local search
+  < 100 ms, transitions <= 100 ms or none; `prefers-reduced-motion` always
+  honoured. `docs/PERFORMANCE.md` says how each is gated.
+- Never load a mailbox into memory. Lists are windowed over the paged store;
+  "select all" is a predicate, not a set of ids.
+- Budgets are gated as counts (statements, rows, trigger firings via
+  `postio_storage::test_support::counting`), not timings. A change to a read
+  path carries count assertions. Wall-clock benches run nightly and report.
 
 ### VI. Privacy Is a Feature
 
-**Nothing leaves this machine that the user did not ask for.** Remote images are
-blocked until allowed per sender; read receipts are never sent automatically;
-one-click unsubscribe fires only on deliberate activation; there is no link
-prefetch, favicon fetch, or speculative connection; the reader's renderer cannot
-run script or reach the network (ADR 0042). No telemetry, no crash reporting, no update ping.
-Credentials live in the OS keyring — never in `config.toml`, never in a log. The
-local store holds the whole mailbox and MUST be encrypted at rest. **Logs MUST
-NOT carry message content**: ids, counts, and outcomes only.
-
-When adding anything that could make a network request, the question is not "is
-this useful" but **"did the user ask for it"**. If the answer is no, it does not
-ship.
-
-This repository is public and its fixtures describe mailboxes. Every email
-address in fixtures, tests, issues, PRs, and commit messages MUST use a reserved
-domain (RFC 2606, or `.test`/`.invalid`/`.example`/`.localhost`), and no real
-person's name or address may appear anywhere.
-
-Rationale: mail is attacker-controlled content that actively tries to phone
-home, and the repository is permanent and public. Both leaks are one careless
-line away and neither can be undone.
+- Nothing leaves this machine that the user did not ask for. The test for
+  anything that could make a request is "did the user ask for it".
+- Remote images are blocked until allowed per sender. Read receipts are never
+  sent automatically. One-click unsubscribe fires only on deliberate
+  activation. No link prefetch, favicon fetch or speculative connection.
+- The reader's renderer cannot run script or reach the network (ADR 0042).
+- No telemetry, crash reporting or update ping.
+- Credentials live in the OS keyring, never in `config.toml` or a log. The
+  local store is encrypted at rest.
+- Logs carry ids, counts and outcomes, never message content.
+- The repository is public. Fixtures, tests, issues, PRs and commits use
+  reserved domains (RFC 2606, `.test`, `.invalid`, `.example`, `.localhost`)
+  and no real person's name or address.
 
 ### VII. Boundaries Are Enforced, Not Advised
 
-The architectural boundaries are checks in `scripts/checks/`, and a change MUST
-satisfy them rather than argue with them: `postio-core` and `postio-session`
-take no GTK; `postio-search` and
-`postio-body` are pure leaves; `postio-model` takes no ammonia/html5ever,
-rusqlite, gtk4, or tokio; `postio-config` takes no rusqlite or gtk4;
-`postio-sync` talks to the `MailBackend` trait and never to `io-imap` types.
-**Every interface is separate from the engine.** An interface -- `postio-gtk`,
-`postio-tui`, `postio-ffi` (macOS), and any that follows -- holds no SQL and no
-protocol code: it takes no store engine and no mail protocol as a direct
-dependency, and reaches mail through Postio's engine crates and
-`postio-client`, one interface holding the store at a time (ADR 0041).
-`postio-client` takes no toolkit, no WebKit, no store engine and no protocol;
-`postio-tui` and `postio-ffi` take no toolkit and no WebKit. The GTK the GTK
-interface draws outside its own window lives in `postio-widgets`, which takes
-no store engine, no protocol and none of the crates that own the store, at any
-depth, and depends on no interface (ADR 0043). `postio-classify` takes no send path, no network crate and no
-inference engine. `postio-calendar` takes no store engine, toolkit, async
-runtime or network crate. No app links an inference engine, directly or
-through any crate it depends on.
+Boundaries are checks in `scripts/checks/` (`check-crate-boundaries.py`);
+satisfy them rather than argue with them. The crate-level rules are in
+`docs/ARCHITECTURE.md`. In short:
 
-**Providers are data, not code.** Server settings live in the preset table.
-Named constants and provider-specific branches are forbidden: Postio is not
-built for any one provider and the code must not say otherwise.
-
-**Pimalaya first.** When a protocol or format need appears, the Pimalaya family
-MUST be surveyed before wire code is written, and a survey more than a few weeks
-old is stale. Replacing hand-rolled protocol code with a Pimalaya crate is
-explicitly welcome.
-
-Rationale: these boundaries are what keep a second frontend and a second backend
-possible, and what keep the workspace's compile times survivable. A boundary
-that lives only in a document has already been crossed.
+- Every interface (`postio-gtk`, `postio-tui`, `postio-ffi`, any that
+  follows) holds no SQL and no protocol code: it takes no store engine and no
+  mail protocol as a direct dependency and reaches mail through the engine
+  crates and `postio-client`. One interface holds the store at a time
+  (ADR 0041).
+- `postio-widgets` takes no store engine, no protocol and no store-owning
+  crate at any depth, and depends on no interface (ADR 0043).
+- `postio-core` and `postio-session` take no GTK; `postio-search`,
+  `postio-body` and `postio-calendar` are pure leaves; `postio-sync` talks to
+  the `MailBackend` trait, never to `io-imap` types.
+- No app links an inference engine, directly or transitively.
+- **Providers are data, not code.** Server settings live in the preset table.
+  No provider-named constants or branches.
+- **Pimalaya first.** Survey the Pimalaya crates before writing wire code; a
+  survey older than a few weeks is stale. Replacing hand-rolled protocol code
+  with a Pimalaya crate is welcome.
 
 ## Additional Constraints
 
-**Scope.** Postio is one product with several interfaces on the same engine
-and store, one interface holding the store at a time (ADR 0041): the GTK
-interface (`postio-gtk`, the Focus design, `specs/007-postio-focus`), the
-terminal (`postio-tui`, `docs/archive/specs/005-tui-frontend`), and macOS (`macos/` over
-`postio-ffi`); more may follow. v1 ships on Linux -- GTK4 and libadwaita,
-Wayland first, and the terminal. IMAP and SMTP, one provider preset table,
-OAuth in scope (ADR 0006).
-
-**No AI in Postio itself.** Postio embeds, bundles, downloads and starts no
-model and no inference engine. Focus may use a model the user runs on this
-machine and names in `config.toml`. That model is:
-
-- optional, and off until the user names it;
-- reached only on this machine;
-- never required: without it, a built-in rule-based detector answers
-  (spec 007, FR-165 to FR-170).
-
-Other AI features stay deferred to epic E12.
-
-Work outside this scope belongs on the roadmap, not in a branch.
-
-**No backwards compatibility.** There are no deployed installs to protect, so
-write the clean version: no compatibility shims, no deprecation paths, no
-"in case something relied on this" branches. A new column takes a plain default
-and old rows may be rebuilt or resynced — state that in one line rather than
-arguing it. Migrations are still written, and a column's *meaning* is still
-explained.
-
-**One fact, one home.** A rule recorded elsewhere is cited, not restated.
-Decisions go in ADRs under `docs/decisions/`; constraints future sessions must
-respect go in `docs/notes/` and are listed in `docs/archive/engineering-notes.md`.
-
-**Logging is `POSTIO_LOG`**, an `EnvFilter`, not `RUST_LOG`.
-
-**A test that needs a display goes in `tests/`, never in `src/`** — a second
-`adw::init()` in a unit-test binary kills the process.
+- **Scope.** One product, several interfaces on the same engine and store:
+  GTK (`postio-gtk`, the Focus design), the terminal (`postio-tui`) and macOS
+  (`macos/` over `postio-ffi`). v1 ships on Linux (GTK4, libadwaita, Wayland
+  first, and the terminal) with IMAP, SMTP, OAuth and one provider preset
+  table (ADR 0006). Work outside scope belongs on the roadmap.
+- **No AI in Postio itself.** Postio embeds, bundles, downloads and starts no
+  model or inference engine. A model the user runs on this machine and names
+  in `config.toml` may be used: optional, off until named, local only, never
+  required (a rule-based detector answers without it; spec 007, FR-165 to
+  FR-170). Other AI features are deferred to epic E12.
+- **No backwards compatibility.** There are no installs to protect: no shims
+  or deprecation paths. Migrations are still written.
+- **One fact, one home.** Cite a rule recorded elsewhere. Decisions go in
+  ADRs; traps in `docs/gotchas.md` or `docs/notes/`.
+- Logging is `POSTIO_LOG` (an `EnvFilter`), not `RUST_LOG`.
+- A test that needs a display goes in `tests/`, never `src/`.
 
 ## Development Workflow and Quality Gates
 
-**The loop is: claim an issue, work it test-first in a worktree of your own,
-land it, take the next one.** An issue is available when it is open, labelled
-`ready`, unassigned, and blocked by nothing still open. `epic`, `icebox`,
-`needs-architecture`, and `needs-maintainer` are never claimed.
-
-**Spec-driven work is the exception, and lands on one feature branch.** A
-feature under `specs/<nnn>-<name>/` that has been through `/speckit-specify`
-and `/speckit-plan` MUST NOT be decomposed into one issue per task. Its
-`tasks.md` is the queue, its `spec.md` is the acceptance, and both are in the
-repository and reviewable — which is what an issue was providing. Such work is
-cut as `feature/<name>`, every task is a commit on it, and it lands to `main`
-once, as a single pull request reviewed against the spec.
-
-Everything else about the loop is unchanged: test-first is not relaxed, the
-gates are the same gates, and CI still decides. What is removed is the issue
-bookkeeping for work whose plan is already written down, not the discipline.
-
-**Three test tiers, and picking the right one is most of what makes iterating
-here cheap**: `scripts/test-fast.sh` between edits, `scripts/test-sanity.sh`
-before landing, the full suite on CI. Iterate at the cheapest layer that can
-fail. Landings run the changed crates' units by default; `--full` requires a
-specific reason, and "this change is about wiring" is not one. Before landing,
-run the integration suites your diff actually touches.
-
-**Landing is `scripts/issue-land.sh --detach`.** It runs fmt, clippy, rustdoc,
-the units and doctests of the changed crates, and `check.sh`, then rebases,
-pushes, opens the PR, and arms auto-merge. CI decides.
-
-**CI gates every pull request and is not routed around.** A red check on a
-branch is that branch's work to fix, on the same branch, however green the
-touched crates were locally — CI is the only thing that proves the
-*combination*. A gate failure in code the diff does not touch is probably not
-the branch's: reproduce it alone, read the backtrace, and search for prior art
-before re-running.
-
-**Uncommitted work is unprotected work.** Commit as you go. Commits are
-`<type>(<scope>): <summary>`, ≤ 50 chars, body explaining *why* at 72 columns,
-ending in `Refs: #<issue>` — or, for spec-driven work, `Refs: specs/<nnn>-<name>`
-and the task id, because there is no issue to reference and the spec is where
-the reason lives. A closing keyword MUST NOT appear in a commit body,
-not even to deny it — GitHub does not read the negation. Closing happens in the
-PR body.
-
-**Say it where it persists.** Terminal output is read once and gone. Why a fix
-is shaped this way goes in the commit body; what was discovered goes on the
-issue; work revealed is filed through `scripts/issue-file.sh`, which searches
-first, because you will not think to.
-
-**Parallel sessions are the normal state.** A worktree belongs to one session;
-`~/src/postio` is for coordination, not work. No worktree path may enter
-anything rustc or a build script sees.
+- **The loop:** claim an issue, work it test-first in your own worktree, land
+  it, take the next. An issue is available when it is open, labelled `ready`,
+  unassigned and unblocked. `epic`, `icebox`, `needs-architecture` and
+  `needs-maintainer` are never claimed.
+- **Spec-driven work** under `specs/<nnn>-<name>/` (past `/speckit-specify`
+  and `/speckit-plan`) is not split into one issue per task. `tasks.md` is
+  the queue and `spec.md` the acceptance. It lands on `feature/<name>`, one
+  commit per task, as one PR reviewed against the spec.
+- **Tiers:** `scripts/test-fast.sh` between edits, the changed crates' units
+  at landing, the full suite on CI. Iterate at the cheapest layer that can
+  fail.
+- **Landing** is `scripts/issue-land.sh --detach`. CI decides and is not
+  routed around: a red check is that branch's work to fix. A failure in code
+  the diff does not touch is probably not the branch's; reproduce it alone
+  and search for prior art first.
+- **Commits** are `<type>(<scope>): <summary>` with a body that says why,
+  ending `Refs: #<issue>` or, for spec work, `Refs: specs/<nnn>-<name>` and
+  the task id. No closing keyword, even negated; the PR body closes.
+  Commit as you go.
+- **Say it where it persists:** why in the commit body, findings on the issue,
+  new work through `scripts/issue-file.sh`.
+- **Parallel sessions are normal.** A worktree belongs to one session;
+  `~/src/postio` is for coordination. No worktree path enters anything rustc
+  or a build script sees.
 
 ## Governance
 
-This constitution supersedes conflicting practice elsewhere in the repository.
-Where it and another document disagree, this document wins and the other MUST be
-corrected.
+- This constitution supersedes conflicting practice. `CLAUDE.md` elaborates
+  it and must not contradict it.
+- **Amendment:** a PR that changes this file and states the version bump.
+  Narrowing or removing a principle needs the maintainer's explicit approval.
+  An amendment that leaves a principle unenforceable lands its check in the
+  same PR or names who enforces it.
+- **Versioning:** MAJOR for a removal or redefinition of a principle or of
+  governance; MINOR for a new principle or materially expanded section; PATCH
+  for wording.
+- **Compliance:** every PR is reviewed against these principles;
+  `scripts/check.sh` is the machine-checked subset. Complexity a principle
+  does not obviously permit is justified in the commit body or ADR. A call
+  only the maintainer can make is labelled `needs-maintainer`; one an agent
+  can make, `needs-architecture`.
 
-**Amendment procedure.** An amendment is a pull request that changes this file,
-states the version bump and its rationale in the body, and updates the Sync
-Impact Report at the top. Amendments that narrow or remove a principle require
-the maintainer's explicit approval; amendments that add a constraint an existing
-check already enforces do not. Any amendment that would leave a principle
-unenforceable MUST land the enforcing check or test in the same pull request, or
-say in the file who enforces it instead.
-
-**Versioning policy.** Semantic versioning on the constitution itself:
-MAJOR for a backward-incompatible removal or redefinition of a principle or of
-governance; MINOR for a new principle or a materially expanded section; PATCH
-for clarifications, wording, and non-semantic refinement.
-
-**Compliance review.** Every pull request is reviewed against these principles,
-and `scripts/check.sh` is the machine-checked subset. Complexity that a
-principle does not obviously permit MUST be justified in the commit body or the
-ADR that introduces it. A decision only the maintainer can make is labelled
-`needs-maintainer` with the question and the options stated; a design or
-architecture call an agent can make is labelled `needs-architecture`.
-
-**Runtime guidance** for agents working in this repository is `CLAUDE.md` and
-the skills it names. `CLAUDE.md` elaborates this constitution and MUST NOT
-contradict it.
-
-**Version**: 1.4.0 | **Ratified**: 2026-09-08 | **Last Amended**: 2026-10-06
+**Version**: 1.4.1 | **Ratified**: 2026-09-08 | **Last Amended**: 2026-11-22

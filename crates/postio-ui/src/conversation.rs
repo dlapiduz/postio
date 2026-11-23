@@ -1,40 +1,18 @@
-//! What a conversation looks like, decided without a toolkit.
-//!
-//! The conversation surfaces — the list row that stands for a thread, and the
-//! pane that stacks its messages (ADR 0015) — draw the same facts twice, and
-//! decided them twice: who is in a conversation was worked out inside a
-//! GTK widget, which made it unreachable from a second frontend and
-//! provable only with a display.
-//!
-//! These are rules, not pixels, so they live here. What the widgets keep is
-//! the drawing.
+//! Conversation rules without a toolkit: who is in a thread, its date span, its order and what
+//! opens expanded (ADR 0015).
 
 use chrono::{DateTime, Datelike, Local, Utc};
 use postio_model::address::EmailAddress;
 
-/// How many names fit before the line starts eliding.
-///
-/// Public because the header's participant chips show the same people this
-/// line names, and two limits that could drift apart would let the faces and
-/// the names disagree about who was elided.
+/// Shared with the header's participant chips so the faces and the names agree about who was
+/// elided.
 pub const NAMES_SHOWN: usize = 3;
 
-/// The people in a conversation, short and newest-biased.
-///
-/// Short names, because every surface that draws this gives it one line
-/// beside something else: a subject and a snippet in the list, a message
-/// count and a date span in the conversation header. A conversation between
-/// four people spelled out in full would push the rest off. First name where
-/// there is a display name, the address's local part where there is not —
-/// the same information a person uses to recognise a thread at a glance.
-///
-/// **Newest-biased when it elides.** Participants arrive in first-seen order,
-/// so the interesting end is the far one: who started the conversation still
-/// identifies it, and who spoke most recently is what changed since you last
-/// looked. Both survive; the middle is what goes.
+/// First names (local part for a bare address), newest-biased when eliding: the first and
+/// last speakers survive and the middle goes.
 pub fn participants(participants: &[EmailAddress]) -> String {
-    // Distinct first, on the full name: one person writing five times is one
-    // name, and two different people can share a first name.
+    // Distinct on the full name: one person writing five times is one name; two people can share a
+    // first name.
     let mut distinct: Vec<&EmailAddress> = Vec::new();
     for address in participants {
         if !distinct
@@ -45,11 +23,7 @@ pub fn participants(participants: &[EmailAddress]) -> String {
         }
     }
 
-    // One participant is not a crowd, and shortening it loses information for
-    // nothing: "Site Office" becomes "Site" and an address with no display
-    // name becomes half of itself. A conversation with one voice reads
-    // exactly like the message row it replaced, which is what the canvas
-    // draws.
+    // One participant is not shortened: "Site Office" must not become "Site".
     if distinct.len() == 1 {
         return distinct[0].display().to_string();
     }
@@ -75,15 +49,8 @@ pub fn participants(participants: &[EmailAddress]) -> String {
     }
 }
 
-/// One participant, shortened to the token that identifies them.
-///
-/// A display name is "Ada Norwood"; an address falls back to its local part,
-/// which is what a sender without a name has to identify them. Trailing
-/// punctuation goes with the quotes. "Bergstrom, Tove" is what Exchange and
-/// most directories write, and its first token is `Bergstrom,` — which the
-/// join above would then turn into "Bergstrom,, Jonas" (#826). Trimmed rather
-/// than split on, because the comma is the only part that is noise: the
-/// surname before it is exactly the short name this wants.
+/// First token of the display name, trailing punctuation trimmed ("Bergstrom, Tove" would
+/// join as "Bergstrom,, Jonas", #826); the local part for an address.
 fn short_name(address: &EmailAddress) -> String {
     let display = address.display().to_string();
     let name = display
@@ -99,21 +66,13 @@ fn short_name(address: &EmailAddress) -> String {
     if !name.is_empty() {
         return name;
     }
-    // Nothing usable was left — a display name that is only punctuation, or
-    // none at all. The local part is what identifies a sender who has not
-    // given a name, which is the same answer the `@` branch above reaches
-    // for; falling back to the raw display here would put the punctuation
-    // straight back into the row.
+    // Nothing usable left (a punctuation-only name): the local part, not the raw display.
     address
         .local_part()
         .map(str::to_owned)
         .unwrap_or_else(|| display.clone())
 }
 
-/// How many messages a conversation holds, said out loud.
-///
-/// Singular at one. A pane that says "1 messages" reads as a bug in
-/// everything else it is telling you.
 pub fn message_count(messages: usize) -> String {
     match messages {
         1 => "1 message".to_owned(),
@@ -121,27 +80,10 @@ pub fn message_count(messages: usize) -> String {
     }
 }
 
-/// The span a conversation covers: `10-25 Aug`, `24 Aug`, `28 Dec 2025 - 3 Jan
-/// 2026`.
-///
-/// Three shapes, and each one exists because the shorter version would be
-/// wrong rather than merely terse:
-///
-/// * **One day** says one date. `24-24 Aug` is not a span, it is a rendering
-///   fault.
-/// * **Within a year**, the month is written once when both ends share it
-///   (`10-25 Aug`) and twice when they do not (`28 Jul - 3 Aug`).
-/// * **Across a year boundary**, both ends carry their year. A conversation
-///   that ran from December into January is exactly the case where "28 Dec -
-///   3 Jan" invites the reader to guess, and guessing wrong makes a
-///   two-week thread look like an eleven-month one.
-///
-/// `now` decides whether a year is worth printing at all: this year is the
-/// ordinary case and saying so on every conversation is noise.
+/// `10-25 Aug`, `24 Aug`, `28 Dec 2025 - 3 Jan 2026`: one day says one date, a shared month
+/// is written once, a year boundary carries both years, and `now` omits the current year.
 pub fn date_span(first: DateTime<Local>, last: DateTime<Local>, now: DateTime<Local>) -> String {
-    // Defensive rather than a contract: the caller sorts oldest-first, and a
-    // pane that drew `25-10 Aug` because one message had a bad Date header
-    // would be reporting the header rather than the conversation.
+    // Defensive: out-of-order dates (a bad `Date` header) must not draw `25-10 Aug`.
     let (first, last) = if first <= last {
         (first, last)
     } else {
@@ -187,20 +129,8 @@ pub fn date_span(first: DateTime<Local>, last: DateTime<Local>, now: DateTime<Lo
     }
 }
 
-/// When one message arrived, as its own header says it: `Mon 25 Aug at 12:00`.
-///
-/// Longer than the list's timestamp on purpose, and the difference is what
-/// each is for. A list row is scanned by the dozen and says the least that
-/// distinguishes one from its neighbours — `10:40`, `25 Aug`. A message
-/// header is read once, about the message you are actually reading, and it is
-/// where "which Tuesday was that" gets answered.
-///
-/// Today and yesterday are words rather than dates: naming the weekday of a
-/// message that arrived this morning tells the reader nothing they do not
-/// already know. Anything older carries its weekday, which is what a bare
-/// date does not answer, and anything from another year carries the year —
-/// a header reading `25 Aug` about a message from 2019 is the kind of wrong
-/// that takes a while to notice.
+/// `Mon 25 Aug at 12:00`. Longer than the list's timestamp on purpose; today and yesterday
+/// are words, and another year carries the year.
 pub fn message_when(at: DateTime<Local>, now: DateTime<Local>) -> String {
     let time = at.format("%H:%M");
     let days = now
@@ -226,62 +156,32 @@ pub fn message_when(at: DateTime<Local>, now: DateTime<Local>) -> String {
     }
 }
 
-/// The three-letter month, in the canvas's own casing.
 fn month(at: DateTime<Local>) -> String {
     at.format("%b").to_string()
 }
 
-/// What the conversation rules need to know about a message.
-///
-/// A trait rather than a row type, because the two frontends carry different
-/// rows — the classic app's list row held `EmailAddress`es and a GTK frontend's
-/// concerns, the FFI's `RowFfi` holds what crosses a C ABI — and neither is
-/// something this crate should own. What the rules actually read is three
-/// facts, and both rows have them.
+/// A trait because the frontends carry different rows (the FFI's `RowFfi` crosses a C ABI).
 pub trait ConversationMessage {
-    /// Whether it has been read. What a conversation opens *expanded*, and
-    /// what `unread_only` keeps — not where it opens, which stopped asking
-    /// with FR-015; see [`opening_focus`].
+    /// What a conversation opens expanded, and what `unread_only` keeps.
     fn seen(&self) -> bool;
 
-    /// When the server received it: the order a conversation is stacked in.
     fn received_at(&self) -> DateTime<Utc>;
 
-    /// The tie-break when two messages claim the same second — the local id,
-    /// which is stable across reads and unique.
+    /// Tie-break for two messages in the same second: the local id, stable and unique.
     fn ordinal(&self) -> i64;
 }
 
-/// How many messages open expanded at most.
-///
-/// Every expanded message is a web view — `WebKitWebView` on GTK,
-/// `WKWebView` on macOS — and "expand everything unread" over a conversation
-/// nobody has read is one per message, which holds neither the interaction
-/// budget nor the memory. Three is what a person reads before they scroll,
-/// and scrolling expands more.
+/// Each expanded message is a web view; expanding every unread one would break the interaction and
+/// memory budgets.
 pub const EAGER_EXPANSION_CAP: usize = 3;
 
-/// How a conversation orders its messages.
-///
-/// Was the GTK frontend's `thread::Order`, when the drill-in column offered
-/// `o` to reverse it (#1003). The column is gone and so is the key: a
-/// conversation stacks oldest first, the way it was had. The type stays
-/// because the ordering itself is still a decision, and one worth being able
-/// to state.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Order {
-    /// Oldest first — how a conversation was actually had, and how the pane
-    /// stacks it.
     #[default]
     Oldest,
-    /// Newest first, matching the message list.
     Newest,
 }
 
-/// The rows a conversation shows, given what is in it and how it is ordered.
-///
-/// Pure, and tested without a display: the ordering is the part worth being
-/// sure about, and it has nothing to do with a toolkit.
 pub fn arrange<T: ConversationMessage + Clone>(
     rows: &[T],
     order: Order,
@@ -292,9 +192,7 @@ pub fn arrange<T: ConversationMessage + Clone>(
         .filter(|row| !unread_only || !row.seen())
         .cloned()
         .collect();
-    // By id after the timestamp, so two messages that claim the same second —
-    // a sender and their own auto-reply, commonly — do not swap places
-    // between one redraw and the next.
+    // By id after the timestamp so same-second messages do not swap between redraws.
     rows.sort_by_key(|row| (row.received_at(), row.ordinal()));
     if order == Order::Newest {
         rows.reverse();
@@ -302,79 +200,16 @@ pub fn arrange<T: ConversationMessage + Clone>(
     rows
 }
 
-/// Which message the pane opens on.
-///
-/// **The most recent, always** — spec FR-015, *"whether or not earlier
-/// messages are unread"*, and the maintainer's own words when the spec was
-/// clarified: the focus is on the last message when the thread opens.
-///
-/// # What this supersedes, and the argument it overrides
-///
-/// This used to be *the first unread*, from ADR 0015, and the reasoning was
-/// good: a conversation you open is one you are part way through, and landing
-/// at the end means scrolling back past everything you have already read. The
-/// case it was strongest on is a wholly unread thread, where the old rule
-/// opened at the beginning because reading from the end backwards is not how
-/// anyone reads.
-///
-/// FR-015 overrides it deliberately. Two things changed underneath it. The
-/// pane now shows every message's body rather than collapsing the read ones
-/// (FR-013), so "landing at the end" no longer means scrolling past collapsed
-/// headers to find anything — the thread is one document and the newest is
-/// where a reply is aimed. And the rail (#1374) makes the position of the
-/// mark a thing you can see and move, so opening somewhere and walking back
-/// is a gesture rather than a hunt.
-///
-/// The overridden argument is recorded rather than deleted because the
-/// wholly-unread case is where it still bites, and whoever revisits this
-/// should be arguing with a rule rather than rediscovering one. ADR 0015 is
-/// amended to match.
-///
-/// # One answer, both frontends
-///
-/// The rule was a function over the GTK app's own row while GTK was the only
-/// frontend. The macOS pane asks the same question across the FFI (#1263),
-/// and two implementations of FR-015 would be two products — so it is generic
-/// over [`ConversationMessage`] and lives here, where neither toolkit can
-/// reach it.
-///
-/// `None` only for an empty conversation, which the pane does not draw.
-///
-/// `messages` is oldest first, which is the order the pane stacks them in.
+/// The newest message, always: the pane shows every body, so a reply is aimed at the newest (ADR
+/// 0015 amended).
+/// `None` only for an empty conversation; `messages` is oldest first.
 pub fn opening_focus<T: ConversationMessage>(messages: &[T]) -> Option<usize> {
     messages.len().checked_sub(1)
 }
 
-/// Which messages are expanded when the conversation opens.
-///
-/// Read messages are collapsed: they are one line, and collapsing them is
-/// what makes a long conversation readable at all. The focused message and
-/// the unread ones nearest it expand, because that is the part being read —
-/// up to `cap`, after which the rest stay one keystroke away rather than
-/// costing a web view each.
-///
-/// The focused message always expands, even when it has been read: focus
-/// means "this is the one you are looking at", and looking at a one-line
-/// header is not reading.
-///
-/// This is the **stacked** pane's rule, and it is the macOS pane's. GTK draws
-/// a conversation as one document now (ADR 0032) and asks
-/// the classic app's conversation view kept its own copy instead, where every
-/// message is open because a collapsed one saves no web process; the stacked
-/// path it keeps is what its widget-level tests drive.
-///
-/// # Backwards, since FR-015
-///
-/// This used to walk *forwards* from the focus, which was right while the
-/// pane opened on the first unread: the focus was the start of the run being
-/// read and everything after it was the rest of that run. FR-015 moved the
-/// opening focus to the newest message (#1385), and forwards from the last
-/// message is nothing at all — a six-message thread opened with one body and
-/// five collapsed headers.
-///
-/// So it walks back from the focus instead. The intent is unchanged: the
-/// message you landed on, and the ones a reader would want with it. Under the
-/// old rule those were ahead of you; under the new one they are behind.
+/// Read messages collapse; the focused message always expands, then unread ones behind it
+/// up to `cap`, since each expansion costs a web view. Walks backwards from the focus,
+/// which is the newest message. The stacked pane's rule; GTK draws one document (ADR 0032).
 pub fn expanded_on_open<T: ConversationMessage>(
     messages: &[T],
     focus: usize,
@@ -401,8 +236,6 @@ pub fn expanded_on_open<T: ConversationMessage>(
 mod tests {
     use super::*;
 
-    // -- the participants line (ADR 0015 Q2, #307) ------------------------
-
     fn people(names: &[(&str, &str)]) -> Vec<EmailAddress> {
         names
             .iter()
@@ -412,10 +245,6 @@ mod tests {
 
     #[test]
     fn one_participant_keeps_their_whole_name() {
-        // A conversation with one voice has to read exactly like the message
-        // row it replaced — every row in a folder is a thread row now, so
-        // shortening here would shorten the ordinary case. "Site Office"
-        // must not become "Site".
         assert_eq!(
             participants(&people(&[("Ada Norwood", "ada@example.com")])),
             "Ada Norwood"
@@ -428,10 +257,7 @@ mod tests {
 
     #[test]
     fn a_last_first_display_name_does_not_leave_its_comma_behind() {
-        // "Bergstrom, Tove" is what Exchange and most directories put in a
-        // display name, and shortening it to the first whitespace token kept
-        // the comma -- so joining the names produced "Bergstrom,, Jonas",
-        // which reads as a rendering fault rather than as two people (#826).
+        // "Bergstrom, Tove" must not join as "Bergstrom,, Jonas" (#826).
         assert_eq!(
             participants(&people(&[
                 ("Quinn Abara", "quinn@example.net"),
@@ -444,9 +270,6 @@ mod tests {
 
     #[test]
     fn a_last_first_name_survives_the_elision_too() {
-        // The elided branch joins with ", " as well, so it has the same
-        // problem and needs the same proof -- this is the shape the shot in
-        // #826 actually showed.
         assert_eq!(
             participants(&people(&[
                 ("Quinn Abara", "quinn@example.net"),
@@ -461,9 +284,7 @@ mod tests {
 
     #[test]
     fn a_trailing_comma_is_not_mistaken_for_the_whole_name() {
-        // The trim must not eat a name that is only punctuation, or a sender
-        // whose display name is a stray comma would vanish from the row
-        // rather than being named by their address.
+        // The trim must not eat a punctuation-only name.
         assert_eq!(
             participants(&people(&[
                 (",", "odd@example.com"),
@@ -487,9 +308,6 @@ mod tests {
 
     #[test]
     fn a_long_conversation_keeps_both_ends_and_drops_the_middle() {
-        // Newest-biased: whoever started it still identifies the
-        // conversation, and whoever spoke last is what changed since you
-        // looked. The middle is what nobody scans for.
         assert_eq!(
             participants(&people(&[
                 ("Ada Norwood", "ada@example.com"),
@@ -516,8 +334,8 @@ mod tests {
 
     #[test]
     fn one_person_writing_repeatedly_and_alone_is_not_a_crowd() {
-        // Deduplication happens before the "is this one voice" test, or a
-        // thread where one person replied to themselves would read as two.
+        // Dedupe before the one-voice test, or a thread of one person replying to themselves reads
+        // as two.
         assert_eq!(
             participants(&people(&[
                 ("Site Office", "site@example.com"),
@@ -537,8 +355,6 @@ mod tests {
 
     #[test]
     fn a_crowd_with_no_display_names_is_named_by_local_parts() {
-        // Several addresses do not fit; their local parts do, and are what
-        // distinguishes them.
         assert_eq!(
             participants(&[
                 EmailAddress::new(None::<&str>, "ada@example.com"),
@@ -550,12 +366,8 @@ mod tests {
 
     #[test]
     fn no_participants_is_empty_rather_than_a_placeholder() {
-        // A message row has none, and `initials_source` falls back to the
-        // sender rather than drawing something that looks like a thread.
         assert_eq!(participants(&[]), "");
     }
-
-    // -- the header's own line (canvas turn 8a, #1004) --------------------
 
     use chrono::TimeZone;
 
@@ -575,7 +387,6 @@ mod tests {
 
     #[test]
     fn a_conversation_had_in_one_day_says_one_date() {
-        // `24-24 Aug` is not a span, it is a rendering fault.
         let day = at(2026, 8, 24);
         assert_eq!(date_span(day, day, at(2026, 9, 3)), "24 Aug");
     }
@@ -599,8 +410,6 @@ mod tests {
 
     #[test]
     fn a_span_across_a_year_carries_both_years() {
-        // The case where the short form invites a guess, and a wrong guess
-        // turns a two-week thread into an eleven-month one.
         assert_eq!(
             date_span(at(2025, 12, 28), at(2026, 1, 3), at(2026, 9, 3)),
             "28 Dec 2025 - 3 Jan 2026"
@@ -621,21 +430,16 @@ mod tests {
 
     #[test]
     fn a_conversation_this_year_does_not_repeat_the_year() {
-        // Noise on every conversation, for the ordinary case.
         assert!(!date_span(at(2026, 8, 10), at(2026, 8, 25), at(2026, 9, 3)).contains("2026"));
     }
 
     #[test]
     fn ends_the_wrong_way_round_still_read_forwards() {
-        // A bad `Date` header should not make the pane report the header
-        // instead of the conversation.
         assert_eq!(
             date_span(at(2026, 8, 25), at(2026, 8, 10), at(2026, 9, 3)),
             "10-25 Aug"
         );
     }
-
-    // -- when one message arrived (#1259) ---------------------------------
 
     #[test]
     fn a_message_from_today_does_not_name_the_day() {
@@ -653,8 +457,6 @@ mod tests {
 
     #[test]
     fn anything_older_carries_its_weekday() {
-        // The header is read once, about the message you are reading: which
-        // day of the week it was is the thing a date alone does not answer.
         let now = at(2026, 8, 25);
         let arrived = at(2026, 8, 10);
         assert_eq!(message_when(arrived, now), "Mon 10 Aug at 12:00");
@@ -662,19 +464,11 @@ mod tests {
 
     #[test]
     fn a_message_from_another_year_says_which() {
-        // `25 Aug` about a message from last year is the kind of wrong that
-        // takes a while to notice.
         let now = at(2026, 1, 3);
         let arrived = at(2025, 12, 28);
         assert_eq!(message_when(arrived, now), "Sun 28 Dec 2025 at 12:00");
     }
 
-    // -- how a conversation stacks, and how much of it opens (ADR 0015 Q4) -
-
-    /// A message in the conversation, read or not.
-    ///
-    /// The rules below are about read state and arrival order, so the fixture
-    /// carries those and a sender; anything a pane would draw is the frontend's.
     #[derive(Clone, Debug, PartialEq)]
     struct Msg {
         id: i64,
@@ -704,7 +498,6 @@ mod tests {
         }
     }
 
-    /// A message that arrived at `second`, whatever its id.
     fn arrived(id: i64, second: i64) -> Msg {
         Msg {
             at: Utc
@@ -714,8 +507,6 @@ mod tests {
             ..message(id, true)
         }
     }
-
-    // -- the order they stack in ------------------------------------------
 
     #[test]
     fn a_conversation_stacks_oldest_first() {
@@ -733,9 +524,7 @@ mod tests {
 
     #[test]
     fn two_messages_in_the_same_second_do_not_swap_between_redraws() {
-        // A sender and their own auto-reply routinely claim the same second.
-        // Without a tie-break the sort is unstable across reads, and the pane
-        // reorders itself under someone who is reading it.
+        // Same-second messages need a tie-break or the pane reorders under the reader.
         let first = arrange(&[arrived(9, 40), arrived(4, 40)], Order::Oldest, false);
         let again = arrange(&[arrived(4, 40), arrived(9, 40)], Order::Oldest, false);
         assert_eq!(
@@ -774,12 +563,8 @@ mod tests {
         );
     }
 
-    // -- where the pane opens ---------------------------------------------
-
     #[test]
     fn a_conversation_opens_on_its_most_recent_message() {
-        // FR-015. Two read, then two unread: the old rule landed on index 2
-        // and this one lands at the end regardless.
         let messages = [
             message(1, true),
             message(2, true),
@@ -797,20 +582,12 @@ mod tests {
 
     #[test]
     fn a_wholly_unread_conversation_still_opens_at_the_end() {
-        // The case the superseded rule was strongest on: it opened at the
-        // beginning, because reading a thread from the end backwards is not
-        // how anyone reads. FR-015 overrides that on purpose -- see
-        // `opening_focus` for the argument, which is recorded rather than
-        // deleted.
         let messages = [message(1, false), message(2, false), message(3, false)];
         assert_eq!(opening_focus(&messages), Some(2));
     }
 
     #[test]
     fn read_state_does_not_move_the_opening_focus_at_all() {
-        // The old rule read every message's `seen` flag and could land
-        // anywhere. This one reads none of them, so a message marked unread
-        // out of order cannot move where the pane opens.
         let unread_early = [message(1, true), message(2, false), message(3, true)];
         let all_read = [message(1, true), message(2, true), message(3, true)];
         assert_eq!(opening_focus(&unread_early), opening_focus(&all_read));
@@ -821,16 +598,8 @@ mod tests {
         assert_eq!(opening_focus::<Msg>(&[]), None);
     }
 
-    // -- what opens expanded ----------------------------------------------
-
     #[test]
     fn everything_after_the_focus_stays_collapsed() {
-        // Read messages are one line. That is what makes a long conversation
-        // readable rather than a wall.
-        //
-        // *After*, not before: the walk reversed with FR-015 (#1385). The
-        // focus is now the newest message rather than the start of the unread
-        // run, so the messages worth opening with it are the ones behind it.
         let messages = [
             message(1, true),
             message(2, true),
@@ -848,11 +617,7 @@ mod tests {
 
     #[test]
     fn a_long_unread_conversation_does_not_expand_all_of_it() {
-        // The cost question, and the reason this rule is worth a test on both
-        // platforms: thirty unread messages is thirty web views, and the cap
-        // is what stops the pane from opening one per message.
         let messages: Vec<Msg> = (0..30).map(|id| message(id, false)).collect();
-        // At the newest, which is where the pane now opens (FR-015).
         let expanded = expanded_on_open(&messages, 29, EAGER_EXPANSION_CAP);
 
         assert_eq!(
@@ -870,9 +635,6 @@ mod tests {
 
     #[test]
     fn the_focused_message_expands_even_when_it_has_been_read() {
-        // Focus means "this is the one you are looking at", and looking at a
-        // one-line header is not reading. This is the fully-read case: focus
-        // lands on the newest and it has to open.
         let messages = [message(1, true), message(2, true), message(3, true)];
         let expanded = expanded_on_open(&messages, 2, EAGER_EXPANSION_CAP);
         assert_eq!(expanded, vec![false, false, true]);
@@ -880,10 +642,6 @@ mod tests {
 
     #[test]
     fn a_read_message_behind_the_focus_stays_collapsed() {
-        // Only the focus is expanded unconditionally; behind it, unread is
-        // what earns a web view. A read message in the middle of the run does
-        // not stop the walk -- it is skipped, and the unread one past it
-        // still opens.
         let messages = [message(1, false), message(2, true), message(3, false)];
         let expanded = expanded_on_open(&messages, 2, EAGER_EXPANSION_CAP);
         assert_eq!(expanded, vec![true, false, true]);
@@ -891,8 +649,6 @@ mod tests {
 
     #[test]
     fn a_cap_of_one_opens_only_what_is_focused() {
-        // The fallback shape ADR 0015 names if the stack proves too
-        // expensive: one reader, the rest collapsed.
         let messages: Vec<Msg> = (0..5).map(|id| message(id, false)).collect();
         let expanded = expanded_on_open(&messages, 1, 1);
         assert_eq!(expanded, vec![false, true, false, false, false]);

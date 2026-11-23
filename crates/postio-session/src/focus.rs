@@ -1,18 +1,7 @@
-//! What Postio Focus's verbs read of `[focus]`, and where they write the
-//! person's corrections to it (spec 007, contracts/config.md).
-//!
-//! **The person's decisions live in `config.toml`, not the store**: a sender
-//! restored from Filtered, a marker kind stopped by repeated dismissal, a
-//! digest rule. A write goes through `postio_config::focus_edit`, which
-//! touches only the entry it is about, and then
-//! `postio_config::save::write_atomically`, the save an editor makes: so the
-//! change reaches every running surface through the watcher exactly as
-//! `$EDITOR`'s would, and nothing else in the file moves.
-//!
-//! It is empty until the host that runs Focus mode installs it
-//! (`postio_host::Host::enable_focus`). The classic app's verbs never have
-//! one, and a Focus verb that needs one says it cannot run
-//! there.
+//! What Focus's verbs read of `[focus]`, and where they write the person's corrections:
+//! `config.toml`, not the store.
+//! Writes go through `postio_config::focus_edit` and `write_atomically`, so the watcher reaches
+//! every surface as `$EDITOR`'s save would. Empty until Focus mode installs it.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
@@ -22,28 +11,17 @@ use postio_model::{ContactArrival, ContactSettings, EmailAddress, StoppedMarker}
 use postio_storage::Store;
 use postio_storage::repository::{ContactRepository, ContactSettingsRepository};
 
-/// Told `[focus]` as it reads after a write, so the filing pass and Focus's
-/// tasks follow the file at once rather than at the watcher's next reload.
 pub type OnFocusWritten = Arc<dyn Fn(&FocusConfig) + Send + Sync>;
 
-/// Focus mode's settings, as its verbs share them: cheap to clone, one for
-/// the whole store, filled when Focus mode is on.
 #[derive(Clone, Default)]
 pub struct FocusSettings {
     installed: Arc<RwLock<Option<Installed>>>,
-    /// Held across a read-modify-write of the file, so two corrections made
-    /// at once -- a command and a rule saved from a dialog -- cannot each
-    /// write over the other's.
+    /// Held across a read-modify-write of the file, so two corrections at once cannot overwrite
+    /// each other.
     writing: Arc<tokio::sync::Mutex<()>>,
-    /// What correspondents decided (ADR 0048), added to `[focus]` wherever
-    /// it is read. Loaded from the store by [`FocusSettings::refresh`].
+    /// What correspondents decided (ADR 0048), added to `[focus]` wherever it is read.
     contacts: Arc<RwLock<Vec<ContactRule>>>,
-    /// Each sender's remembered treatment, `(address, "app" | "paper")`,
-    /// read with the rules in the same turn: a reader that looks senders up
-    /// in memory starts from it.
     treatments: Arc<RwLock<Vec<(String, String)>>>,
-    /// Told `[focus]` whenever it changes, besides the one `written` that
-    /// Focus mode installs: a frontend that keeps its own copy.
     watchers: Arc<Mutex<Vec<OnFocusWritten>>>,
 }
 
@@ -63,10 +41,8 @@ struct Installed {
 }
 
 impl FocusSettings {
-    /// Focus mode is on: its verbs read `config`, and write to the file at
-    /// `path`, telling `written` what `[focus]` then says. `None` for the
-    /// path is a Focus that does not know where its file is: its verbs that
-    /// write say so.
+    /// Focus mode is on: its verbs read `config` and write to the file at `path`. `None` for the
+    /// path means verbs that write say so.
     pub fn install(&self, path: Option<PathBuf>, config: FocusConfig, written: OnFocusWritten) {
         *self.installed.write().expect("never poisoned") = Some(Installed {
             path,
@@ -75,13 +51,10 @@ impl FocusSettings {
         });
     }
 
-    /// Whether Focus mode is on in this process.
     pub fn is_on(&self) -> bool {
         self.installed.read().expect("never poisoned").is_some()
     }
 
-    /// `[focus]` as Focus's verbs read it, when Focus mode is on: the file,
-    /// and what correspondents decided beside it.
     pub fn config(&self) -> Option<FocusConfig> {
         self.installed
             .read()
@@ -90,26 +63,20 @@ impl FocusSettings {
             .map(|installed| self.overlaid(&installed.config))
     }
 
-    /// `raw` -- `[focus]` as the file reads -- with what correspondents
-    /// decided added: what the filing pass and Focus's tasks run with.
     pub fn overlaid(&self, raw: &FocusConfig) -> FocusConfig {
         raw.with_contacts(&self.contacts.read().expect("never poisoned"))
     }
 
-    /// Read what correspondents decided from `database` and tell the filing
-    /// pass and Focus's tasks, as a write to the file would.
     pub async fn refresh(&self, database: &Store) -> Result<(), String> {
         self.load_contacts(database).await?;
         self.publish();
         Ok(())
     }
 
-    /// Read what correspondents decided from `database`, telling nobody:
-    /// what Focus mode does before it installs.
     pub async fn load_contacts(&self, database: &Store) -> Result<(), String> {
         let failed = |_| "Postio could not read what you decided about senders".to_owned();
-        // A warm reader, not a connection of its own: this is read as a window
-        // opens, and opening a connection there is what its budget counts.
+        // A warm reader: this runs as a window opens, and a new connection there is what its budget
+        // counts.
         let reader = database.read().await.map_err(failed)?;
         let treatments = ContactSettingsRepository::new(&reader)
             .treatments()
@@ -132,15 +99,10 @@ impl FocusSettings {
         Ok(())
     }
 
-    /// Each sender's remembered treatment, `(address, "app" | "paper")`, as
-    /// last read ([`FocusSettings::load_contacts`]).
     pub fn treatments(&self) -> Vec<(String, String)> {
         self.treatments.read().expect("never poisoned").clone()
     }
 
-    /// Be told `[focus]` -- the file with what people decided -- whenever a
-    /// verb changes it: the filing pass hears through the host, and a
-    /// frontend with a copy of its own through this.
     pub fn watch(&self, told: OnFocusWritten) {
         self.watchers.lock().expect("never poisoned").push(told);
     }
@@ -152,7 +114,6 @@ impl FocusSettings {
         }
     }
 
-    /// Tell `written` and the watchers what `[focus]` reads as now.
     fn publish(&self) {
         let told = {
             let installed = self.installed.read().expect("never poisoned");
@@ -169,13 +130,11 @@ impl FocusSettings {
         }
     }
 
-    /// Rewrite `config.toml` through `edit`, which is handed the file's text
-    /// and answers its new text, or `None` when the file already says what
-    /// was asked. Answers whether anything was written.
+    /// Rewrite `config.toml` through `edit`, which gets the file's text and answers its new text,
+    /// or `None` when the file already says it; returns whether anything was written.
     ///
-    /// A file that does not read is the person's own edit, mid-way, and is
-    /// never written over: the write is refused with a sentence saying so.
-    /// Neither the file's text nor what was asked is ever logged.
+    /// A file that does not read is the person's own edit mid-way and is never written over.
+    /// Neither the text nor the request is logged.
     pub async fn write(
         &self,
         edit: impl FnOnce(&str) -> Result<Option<String>, String> + Send + 'static,
@@ -184,7 +143,6 @@ impl FocusSettings {
         self.write_locked(edit).await
     }
 
-    /// [`FocusSettings::write`], for a caller that holds the lock.
     async fn write_locked(
         &self,
         edit: impl FnOnce(&str) -> Result<Option<String>, String> + Send + 'static,
@@ -217,15 +175,11 @@ impl FocusSettings {
 }
 
 impl FocusSettings {
-    /// Pin `entry` -- an address, or a whole domain as `@example.org` --
-    /// so it is never filtered, or take the pin back. Answers whether
-    /// anything changed.
+    /// Pin `entry` (an address or a `@example.org` domain) so it is never filtered, or take the pin
+    /// back; returns whether anything changed.
     ///
-    /// An address is the correspondent's, so a second address of theirs is
-    /// covered too (ADR 0048). A domain is not a correspondent and stays in
-    /// the file, and so does an address whose correspondent already has a
-    /// digest: one arrival cannot be both, and the file can say both. Taking
-    /// a pin back clears it wherever it was kept.
+    /// An address is the correspondent's, so their other addresses are covered (ADR 0048). A domain
+    /// stays in the file, as does an address whose correspondent already has a digest.
     pub async fn pin(&self, database: &Store, entry: &str, pinned: bool) -> Result<bool, String> {
         let _writing = self.writing.lock().await;
         let entry = entry.trim().to_owned();
@@ -283,11 +237,6 @@ impl FocusSettings {
         Ok(changed)
     }
 
-    /// Turn `kind` markers off for `sender` -- an address, or a domain --
-    /// or back on. Answers whether anything changed. Kept as [`pin`] keeps
-    /// pins.
-    ///
-    /// [`pin`]: FocusSettings::pin
     pub async fn stop_marker(
         &self,
         database: &Store,
@@ -337,13 +286,10 @@ impl FocusSettings {
         Ok(changed)
     }
 
-    /// Write `rule`, replacing the rule called `replacing` when there is
-    /// one, at `position` among the file's rules when it goes in the file.
+    /// Write `rule`, replacing `replacing` when given, at `position` when it goes in the file.
     ///
-    /// A rule that is one `from:` query for one address is that
-    /// correspondent's digest and is kept on them, under the rule's own name;
-    /// anything else (a domain, a list, several senders) is the file's. A
-    /// rule replaced from either home leaves it.
+    /// A rule that is one `from:` query for one address is kept on that correspondent; anything
+    /// else is the file's.
     pub async fn put_digest(
         &self,
         database: &Store,
@@ -414,8 +360,8 @@ impl FocusSettings {
         self.refresh(database).await
     }
 
-    /// Remove the rule called `name` from wherever it is kept, answering
-    /// where it stood and what it was, so that undo can put it back.
+    /// Remove the rule called `name` from wherever it is kept, answering where it stood and what it
+    /// was so undo can restore it.
     pub async fn remove_digest(
         &self,
         database: &Store,
@@ -450,8 +396,6 @@ impl FocusSettings {
         Ok(removed)
     }
 
-    /// The correspondent at `address`, made if need be, with what they
-    /// decided.
     async fn person(
         &self,
         database: &Store,
@@ -470,8 +414,6 @@ impl FocusSettings {
         Ok((person, settings))
     }
 
-    /// The correspondent at `address` and what they decided, when they
-    /// exist: nobody is made to take something back.
     async fn existing(
         &self,
         database: &Store,
@@ -507,7 +449,6 @@ impl FocusSettings {
             .map_err(failed)
     }
 
-    /// Take the digest off the correspondent with id `contact`.
     async fn clear_digest(&self, database: &Store, contact: i64) -> Result<(), String> {
         let person = postio_model::ContactId::new(contact);
         let failed = |_| "Postio could not remember that about the sender".to_owned();
@@ -522,8 +463,6 @@ impl FocusSettings {
     }
 }
 
-/// Read the file at `path`, edit it, and save it as an editor does: `[focus]`
-/// as it now reads, or `None` when `edit` changed nothing.
 fn write_file(
     path: &std::path::Path,
     edit: impl FnOnce(&str) -> Result<Option<String>, String>,
@@ -550,13 +489,8 @@ fn write_file(
     Ok(Some(config.focus))
 }
 
-/// How many messages one window of a sweep takes: a background batch, so a
-/// sweep never holds the store's writer for long.
 pub(crate) const SWEEP_WINDOW: u32 = 50;
 
-/// The next window of `inbox`'s mail as Focus's inbox holds it, after
-/// `after`, read as the filing pass reads a message: what a sweep and its
-/// preview both walk, so they walk the same mail.
 pub(crate) async fn sweep_window(
     connection: &postio_storage::Connection,
     inbox: postio_model::MailboxId,
@@ -578,7 +512,6 @@ pub(crate) async fn sweep_window(
     Ok(rows)
 }
 
-/// `rows` as the filing pass is handed them: in the inbox.
 pub(crate) fn in_the_inbox(rows: &[postio_model::Message]) -> Vec<postio_sync::FiledMessage<'_>> {
     rows.iter()
         .map(|row| postio_sync::FiledMessage {
@@ -589,10 +522,8 @@ pub(crate) fn in_the_inbox(rows: &[postio_model::Message]) -> Vec<postio_sync::F
         .collect()
 }
 
-/// How many messages a sweep of every inbox would file away now, by
-/// `config`'s filtering (spec 007 FR-118): the count the person sees before
-/// `Command::SweepInbox` moves exactly that. Read only, a window at a
-/// time, through the pass the sweep itself files with.
+/// How many messages a sweep of every inbox would file away now, by `config`'s filtering (FR-118):
+/// read only, through the pass the sweep files with.
 pub async fn sweep_preview(
     database: &postio_storage::Store,
     config: &FocusConfig,

@@ -1,8 +1,3 @@
-//! Importing and exporting contacts across the boundary (specs/011-focus-contacts
-//! S11): the Mac hands over the bytes of a file the user chose and gets back
-//! the sheet to show; an export hands back the file's text. An import
-//! offers merges and never makes one.
-
 use postio_ffi::{Session, SessionOptions};
 use postio_storage::test_support;
 
@@ -80,7 +75,6 @@ async fn review_after_an_import_opens_what_the_import_found_not_the_strongest_ol
     use crate::focus::heard;
 
     let session = session().await;
-    // An older pair of Adas the review already had.
     for (uid, address) in [
         ("urn:uuid:a1", "ada@example.org"),
         ("urn:uuid:a2", "a.m@example.net"),
@@ -92,7 +86,6 @@ async fn review_after_an_import_opens_what_the_import_found_not_the_strongest_ol
         .await
         .expect("imported");
     }
-    // Then an import that finds a Ben who looks like one it already has.
     for (uid, address) in [
         ("urn:uuid:b1", "ben@example.org"),
         ("urn:uuid:b2", "ben@adeyemi.example"),

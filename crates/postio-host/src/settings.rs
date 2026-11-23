@@ -1,13 +1,6 @@
-//! The desktop's settings panels, answered for any frontend.
-//!
-//! Moved from the classic app's `settings_accounts`, `settings_privacy`,
-//! `settings_egress`, `sidebar_backfill` and `orientation`
-//! (`docs/archive/specs/005-tui-frontend` T018). Each read the store itself, a repository
-//! at a time; each read is one request here, and a panel that read several
-//! things at once -- every account's folders, roles and weight -- asks for
-//! them in one call.
-//!
-//! Logs here carry ids, counts and outcomes only.
+//! The desktop's settings panels, answered for any frontend; a panel that reads several things asks
+//! in one call.
+//! Logs carry ids, counts and outcomes only.
 
 use postio_client::protocol::{AccountField, AccountSettings, PrivacyLog};
 use postio_model::ids::{AccountId, MailboxId, SignatureId};
@@ -19,13 +12,10 @@ use postio_storage::repository::{
     MessageRepository, SettingsRepository, SignatureRepository, UnsubscribeRepository,
 };
 
-/// The `settings` row the first-run keyboard orientation owns.
-///
-/// Global, never per account: ADR 0012 Q6 -- a second account joining a
-/// running installation must not teach the keyboard again.
+/// Global, never per account: a second account joining a running installation must not teach the
+/// keyboard again (ADR 0012 Q6).
 const SEEN_KEY: &str = "orientation_seen";
 
-/// The roles the detail view names a folder for.
 const ROLES: [postio_model::MailboxRole; 5] = [
     postio_model::MailboxRole::Sent,
     postio_model::MailboxRole::Archive,
@@ -34,17 +24,9 @@ const ROLES: [postio_model::MailboxRole; 5] = [
     postio_model::MailboxRole::Junk,
 ];
 
-/// Every account the settings show, with its folders and role map, and --
-/// when `weights` -- what its mail weighs.
-///
-/// `list()` rather than the enabled ones: settings is where a disabled
-/// account is enabled again. A row pending removal is on its way out, and
-/// showing it would let it be removed twice.
-///
-/// The weights are a row the store keeps per account (#1508), so asking is
-/// two point reads per account however much mail it holds. A frontend still
-/// asks only while the panel is on screen (#871): what a panel draws is read
-/// when the panel is looked at.
+/// `list()` rather than the enabled ones: settings is where a disabled account is enabled again. A
+/// row pending removal is on its way out and showing it would let it be removed twice. A frontend
+/// asks for weights only while the panel is on screen (#871).
 pub async fn accounts(database: &Store, weights: bool) -> Result<Vec<AccountSettings>, StoreError> {
     let connection = database.read().await?;
     let accounts = AccountRepository::new(&connection).list().await?;
@@ -72,10 +54,8 @@ pub async fn accounts(database: &Store, weights: bool) -> Result<Vec<AccountSett
         } else {
             None
         };
-        // Three questions, three reads: what there is to choose from, what
-        // was chosen, and what each role resolves to as things stand -- the
-        // last from `by_role`, the lookup the send path files a copy
-        // through, so "Automatic" cannot disagree with where mail goes.
+        // A role's resolution comes from `by_role`, the lookup the send path files a copy through,
+        // so "Automatic" cannot disagree with where mail goes.
         let folders = mailboxes
             .list_for_account(id)
             .await
@@ -104,9 +84,8 @@ pub async fn accounts(database: &Store, weights: bool) -> Result<Vec<AccountSett
     Ok(shown)
 }
 
-/// Apply one field's new value to `account`'s row: read it, change the one
-/// field, write the whole row back (#880). A row that has gone is nothing
-/// to edit.
+/// Read, change the one field, write the whole row back (#880). A row that has gone is nothing to
+/// edit.
 pub async fn edit(
     database: &Store,
     account: AccountId,
@@ -123,19 +102,14 @@ pub async fn edit(
         AccountField::ImapPort(value) => row.incoming.port = value,
         AccountField::SmtpHost(value) => row.outgoing.host = value,
         AccountField::SmtpPort(value) => row.outgoing.port = value,
-        // #979: an account may have signatures and prefer none of them.
         AccountField::DefaultSignature(value) => row.default_signature_id = value,
     }
     repository.update(&mut row).await?;
     Ok(())
 }
 
-/// Write a signature, new or edited (#1086). The error is the sentence for
-/// the person who typed it.
-///
-/// An edit leaves the rich variant exactly as it was: the settings' editor
-/// is text-only, and rewriting `html` to `None` would quietly discard a
-/// signature somebody else's tooling wrote.
+/// An edit leaves the rich variant as it was: the editor is text-only, and rewriting `html` to
+/// `None` would discard a signature another tool wrote.
 pub async fn save_signature(
     database: &Store,
     account: AccountId,
@@ -167,16 +141,12 @@ pub async fn save_signature(
     written.map_err(|error| StoreError::new(explain_signature_failure(name, &error)))
 }
 
-/// A store refusal, as the person who typed the signature needs to read it.
-///
-/// `idx_signatures_name` is a unique index on `(account_id, name)`, so a
-/// second "Work" fails, and the constraint's own words are not an answer
-/// anybody can act on.
+/// `idx_signatures_name` is unique on `(account_id, name)`; the constraint's own words are not an
+/// answer anybody can act on.
 fn explain_signature_failure(name: &str, error: &postio_storage::Error) -> String {
     let raw = error.to_string();
-    // The only refusal this form can produce today, and the only one worth
-    // recognising: anything else is a real fault and its own text is more
-    // use than a guess at what it meant.
+    // The only refusal this form can produce; anything else is a real fault and its own text is
+    // more use than a guess.
     if raw.contains("UNIQUE") || raw.contains("constraint") {
         format!("This account already has a signature called “{name}”")
     } else {
@@ -184,8 +154,6 @@ fn explain_signature_failure(name: &str, error: &postio_storage::Error) -> Strin
     }
 }
 
-/// Remove a signature. An account whose default it was is left consistent by
-/// the schema (`ON DELETE SET NULL`).
 pub async fn delete_signature(database: &Store, signature: SignatureId) -> Result<(), StoreError> {
     let connection = database.connect().await?;
     SignatureRepository::new(&connection)
@@ -195,7 +163,6 @@ pub async fn delete_signature(database: &Store, signature: SignatureId) -> Resul
     Ok(())
 }
 
-/// The newest `limit` outbound connections (#151).
 pub async fn egress(
     database: &Store,
     limit: u32,
@@ -204,11 +171,8 @@ pub async fn egress(
     Ok(EgressLogRepository::new(&connection).recent(limit).await?)
 }
 
-/// Every account's unsubscribe activations, newest first (#971), and how
-/// many messages asked for a read receipt (#970).
-///
-/// Not account-scoped on screen: the remote-image allow list the same pane
-/// shows is one file for every account, and these follow its shape.
+/// Not account-scoped on screen: the remote-image allow list the same pane shows is one file for
+/// every account.
 pub async fn privacy(database: &Store) -> Result<PrivacyLog, StoreError> {
     let connection = database.read().await?;
     let accounts = AccountRepository::new(&connection)
@@ -228,18 +192,14 @@ pub async fn privacy(database: &Store) -> Result<PrivacyLog, StoreError> {
             Err(error) => tracing::warn!(%error, "could not count read-receipt requests"),
         }
     }
-    // Each account's rows come back newest first; more than one account
-    // means sorting the combined list the same way.
     shown
         .activations
         .sort_by_key(|activation| std::cmp::Reverse(activation.activated_at));
     Ok(shown)
 }
 
-/// Skip or resume `mailbox`'s background backfill (ADR 0016, #350), and
-/// answer its account's folders as they now stand, so the menu's wording is
-/// right the moment it is reopened. A local column write: no sync pass is
-/// involved, and nothing announces it.
+/// A local column write: no sync pass is involved and nothing announces it. Answers the account's
+/// folders as they now stand.
 pub async fn set_backfill_excluded(
     database: &Store,
     mailbox: MailboxId,
@@ -254,7 +214,6 @@ pub async fn set_backfill_excluded(
     Ok(mailboxes.list_for_account(folder.account_id).await?)
 }
 
-/// Whether some earlier run already showed the keyboard orientation.
 pub async fn orientation_seen(database: &Store) -> Result<bool, StoreError> {
     let reader = database.read().await?;
     let seen = SettingsRepository::new(&reader.checkout())
@@ -263,7 +222,6 @@ pub async fn orientation_seen(database: &Store) -> Result<bool, StoreError> {
     Ok(seen.is_some())
 }
 
-/// Where mail was last moved, newest first: the move picker's Recent.
 pub async fn move_recent(database: &Store) -> Result<Vec<MailboxId>, StoreError> {
     let reader = database.read().await?;
     Ok(SettingsRepository::new(&reader.checkout())
@@ -271,7 +229,6 @@ pub async fn move_recent(database: &Store) -> Result<Vec<MailboxId>, StoreError>
         .await?)
 }
 
-/// Put `mailbox` first in the move picker's Recent.
 pub async fn note_move(database: &Store, mailbox: MailboxId) -> Result<(), StoreError> {
     let connection = database.connect().await?;
     SettingsRepository::new(&connection)
@@ -280,10 +237,8 @@ pub async fn note_move(database: &Store, mailbox: MailboxId) -> Result<(), Store
     Ok(())
 }
 
-/// Write down that this installation is done with the orientation.
-///
-/// The value is when, rather than `"true"`: a row that says only that
-/// something happened is a row nobody can ever debug.
+/// The value is when, not `"true"`: a row that says only that something happened cannot be
+/// debugged.
 pub async fn retire_orientation(database: &Store) -> Result<(), StoreError> {
     let connection = database.connect().await?;
     SettingsRepository::new(&connection)
@@ -294,27 +249,13 @@ pub async fn retire_orientation(database: &Store) -> Result<(), StoreError> {
 
 #[cfg(test)]
 mod tests {
-    //! Opening the settings panel reads a bounded amount, whatever the
-    //! mailbox holds (#1508).
-    //!
-    //! Opening settings is an interaction, budgeted at 16 ms
-    //! (`docs/PRODUCT.md` §18). The panel asks for every account's weight
-    //! and the privacy pane's read-receipt figure, and each used to be an
-    //! aggregate over every message the account held: one statement and
-    //! one row however much it read, so a statement or row count alone is
-    //! blind to it (`docs/notes/2026-09-11-an-aggregate-hides-from-a-row-
-    //! count.md`). Both are asked here: the counts at two sizes, and the
-    //! planner, for every statement the panel issued, whether it can walk
-    //! a table that grows with the store.
 
     use postio_storage::Store;
     use postio_storage::test_support::{self, counting};
 
-    /// An order of magnitude apart, so anything linear shows.
     const SMALL: usize = 200;
     const LARGE: usize = 2_000;
 
-    /// What the panel asks for when it opens.
     async fn open_the_panel(database: &Store) {
         let accounts = super::accounts(database, true).await.expect("the accounts");
         assert!(
@@ -337,8 +278,7 @@ mod tests {
 
         let over_small = counting::counted_async(|| open_the_panel(&small)).await;
         let over_large = counting::counted_async(|| open_the_panel(&large)).await;
-        // Compiles are left out: the first panel compiled what the second
-        // found in the thread's cache, which says nothing about size.
+        // Compiles are left out: the second panel finds the first's in the thread's cache.
         assert_eq!(
             (over_small.statements, over_small.rows),
             (over_large.statements, over_large.rows),

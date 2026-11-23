@@ -29,8 +29,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -40,18 +38,11 @@ import prereq  # noqa: E402
 HERE = Path(__file__).resolve().parent.parent
 CLAIM = HERE / "issue-claim.sh"
 LAND = HERE / "issue-land.sh"
-# Sandboxes go under `target/`, which git ignores: inside the worktree because
-# the shared-tree guard only lifts its refusals for worktree paths, and not in
-# its root because a killed run leaves the sandbox behind and `git add -A` in a
-# worktree will commit it. `scripts/checks/check-test-sandboxes.py` says what
-# that cost (#1225).
 SANDBOXES = HERE.parent / "target" / "tmp"
 SANDBOXES.mkdir(parents=True, exist_ok=True)
 
 FAILURES: list[str] = []
 
-# Answers the handful of questions the scripts ask, and logs every call so the
-# test can assert on the base `gh pr create` was actually given.
 GH_STUB = """#!/usr/bin/env bash
 if [ "$1" = "--version" ]; then echo "gh version 2.98.0 (2026-01-01)"; exit 0; fi
 printf '%s\\n' "$*" >> "$STUB_DIR/calls"
@@ -166,8 +157,6 @@ def world(base: Path, issue: int) -> tuple[Path, Path, Path]:
     root.mkdir()
     build_repo(root)
     git("init", "-q", "-b", "main", cwd=root)
-    # In the repo's own config, not via `-c`: `issue-land.sh` runs a plain
-    # `git commit`, and worktrees inherit this.
     git("config", "user.email", "test@example.com", cwd=root)
     git("config", "user.name", "Test", cwd=root)
     git("add", "-A", cwd=root)
@@ -175,8 +164,6 @@ def world(base: Path, issue: int) -> tuple[Path, Path, Path]:
     git("remote", "add", "origin", str(origin), cwd=root)
     git("push", "-q", "origin", "main", cwd=root)
 
-    # The initiative branch, with a commit of its own so "cut from here" is
-    # distinguishable from "cut from main".
     git("checkout", "-q", "-b", "feature/initiative", cwd=root)
     (root / "INITIATIVE").write_text("the initiative lives here\n", encoding="utf-8")
     git("add", "-A", cwd=root)
@@ -221,11 +208,8 @@ def report(name: str, result, calls: str) -> str:
 
 
 def main() -> int:
-    # Under CI a runner with no cargo is a broken runner, and returning 0
-    # here made this test green having run nothing at all (#1151).
     prereq.require("cargo", present=prereq.have("cargo"))
 
-    # --- A: a worktree claimed with --base lands back onto that base --------
     with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
         base = Path(directory)
         _origin, root, stub_dir = world(base, 7)
@@ -236,8 +220,6 @@ def main() -> int:
         if claimed.returncode != 0 or not tree.exists():
             FAILURES.append(f"A: the claim did not produce a worktree\n{report('A', claimed, '')}")
         else:
-            # Cut from the initiative branch, not from main: its marker file
-            # is the difference.
             if not (tree / "INITIATIVE").exists():
                 FAILURES.append(
                     "A: the worktree was cut from main, so the initiative's own "
@@ -260,7 +242,6 @@ def main() -> int:
             if "--base main" in calls:
                 FAILURES.append(f"A: the PR named main as its base\n{report('A', landed, calls)}")
 
-    # --- B: no base given behaves exactly as it does today ------------------
     with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
         base = Path(directory)
         _origin, root, stub_dir = world(base, 8)
@@ -285,7 +266,6 @@ def main() -> int:
                     f"B: the default stopped being main\n{report('B', landed, calls)}"
                 )
 
-    # --- C: a base that does not exist is refused ---------------------------
     with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
         base = Path(directory)
         _origin, root, stub_dir = world(base, 9)
@@ -300,10 +280,6 @@ def main() -> int:
         if "feature/typo" not in (claimed.stdout + claimed.stderr):
             FAILURES.append(f"C: the refusal did not name the base\n{report('C', claimed, '')}")
 
-        # The refusal has to come *before* anything is claimed. Letting it fall
-        # through to `git fetch` also fails, and looks the same in the exit
-        # code -- but by then the claim directory exists, so a typo locks the
-        # issue behind a claim no session holds and no release will sweep.
         claims = base / "claims"
         leaked = sorted(p.name for p in claims.iterdir()) if claims.exists() else []
         if leaked:

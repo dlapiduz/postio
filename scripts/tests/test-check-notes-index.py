@@ -20,8 +20,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -87,8 +85,6 @@ def main() -> int:
 
         (root / "docs" / "notes" / "not-dated.md").unlink()
 
-        # The index itself is not a note, and an archived note is not
-        # listed: the archive is docs/archive/notes/, outside this check.
         tree(root, [f"- 2026-09-04 — [A thing that happened]({good})"],
              {good: "# A thing that happened\n"})
         r = run(root)

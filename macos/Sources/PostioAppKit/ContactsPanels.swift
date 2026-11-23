@@ -3,8 +3,6 @@ import PostioFFI
 import PostioKit
 import UniformTypeIdentifiers
 
-/// The open and save panels for a vCard (specs/011-focus-contacts S11). The
-/// words are the engine's (`ContactsPanelWordsFfi`); the file is the user's.
 @MainActor
 public struct ContactsPanels: ContactsFilePanels {
     public init() {}

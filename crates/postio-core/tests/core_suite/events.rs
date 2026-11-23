@@ -1,7 +1,3 @@
-//! `Event` is everything the UI reacts to. The frontend never polls state and
-//! never awaits the network, so anything a widget must repaint for has to be
-//! expressible here.
-
 use std::time::Duration;
 
 use postio_core::{Command, CommandId, ConnectionState, Context, Event, MessageTarget};
@@ -93,7 +89,6 @@ fn events_cover_the_repaint_surface() {
         },
     ];
 
-    // Clone + PartialEq + Debug: the GTK layer diffs and logs these.
     for event in &events {
         assert_eq!(event.clone(), *event);
         assert!(!format!("{event:?}").is_empty());
@@ -102,7 +97,6 @@ fn events_cover_the_repaint_surface() {
 
 #[test]
 fn an_undoable_action_announces_itself() {
-    // docs/PRODUCT.md §16: "Archived 12 messages — Undo" is driven by this pairing.
     let command = Command::Archive {
         target: MessageTarget::Selection,
     };

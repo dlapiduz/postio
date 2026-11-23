@@ -1,15 +1,5 @@
-//! Handing freed pages back to the filesystem (#381, and what became of it).
-//!
-//! Deleting a message frees pages *inside* the file and returns nothing to the
-//! filesystem. #381 answered that with `auto_vacuum = INCREMENTAL`, stepped a
-//! little at a time on the housekeeping worker, and this engine has neither
-//! the pragma nor the step — see
-//! `docs/notes/2026-09-13-what-the-engine-swap-could-not-keep.md`.
-//!
-//! What it does have is a full `VACUUM`, and these are the two halves of using
-//! it responsibly: it reclaims, and it is only attempted when the reclaim is
-//! worth what it costs.
-//!
+//! A full `VACUUM` is the only reclaim this engine has
+//! (docs/notes/2026-09-13-what-the-engine-swap-could-not-keep.md).
 //! POSTIO-MEASUREMENT: it fills and frees a store large enough for reclaimed
 //! space to be measurable, 55 s; it runs on the nightly timer.
 
@@ -21,8 +11,6 @@ fn bytes(store: &test_support::TempStore) -> u64 {
         .unwrap_or(0)
 }
 
-/// Delete nine messages in ten, which is what a `UIDVALIDITY` reset or a
-/// cleared archive does to a store.
 async fn a_store_full_of_holes(messages: usize) -> test_support::TempStore {
     let store = test_support::temp().await;
     postio_storage::seed::seed_large(&store, 7, messages).await;
@@ -54,7 +42,6 @@ async fn reclaiming_returns_the_holes_to_the_filesystem_and_keeps_the_mail() {
          from {before} -- the pages are still in the file"
     );
 
-    // And the tenth that was left is still there and still readable.
     let connection = store.connect().await.expect("checkout");
     let survived = postio_storage::sql::scalar(&connection, "SELECT count(*) FROM messages", ())
         .await
@@ -70,10 +57,6 @@ async fn reclaiming_returns_the_holes_to_the_filesystem_and_keeps_the_mail() {
     assert_eq!(subjects, survived, "the reclaim lost what the rows held");
 }
 
-/// The policy itself is `store::reclaim_policy`, six cases at the magnitudes
-/// that matter and no store at all. What needs one is the wiring: that the
-/// pragmas it reads are the pragmas this engine answers, and that a reclaim
-/// actually moves the numbers the policy is reading.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_free_space_a_store_reports_is_the_space_a_reclaim_gives_back() {
     let store = a_store_full_of_holes(20_000).await;
@@ -93,8 +76,6 @@ async fn the_free_space_a_store_reports_is_the_space_a_reclaim_gives_back() {
          {reclaimed}; the two numbers are meant to be about the same thing"
     );
 
-    // And it stops asking. A worker that reclaimed every pass would rewrite
-    // the database on every start.
     assert_eq!(
         store.free_bytes().await.expect("ask again"),
         0,

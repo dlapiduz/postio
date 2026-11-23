@@ -1,22 +1,3 @@
-//! Arm B of the Blitz-or-WebKit evaluation (spec 006 research R0, T023).
-//!
-//! ```sh
-//! cargo run --release -p postio-render --example eval_blitz -- [out-dir]
-//! ```
-//!
-//! The same fixtures as arm A, through the same production pipeline, drawn by
-//! Blitz in-process on the CPU. No display, no network crate, and fonts
-//! through `fontdb` rather than fontconfig. Measures, as arm A does:
-//!
-//! - **G1**: every text run's rectangle and colour from Blitz's own layout,
-//!   the pixels behind it sampled, before and after research R10's rule
-//!   (`postio_render::theme`), applied as style overrides and a restyle.
-//! - **S1**: each designed fixture in light, with the same neutralized
-//!   container geometry as arm A, against its reference.
-//!
-//! Prototype depth: it is an evaluation harness, not the renderer the plan
-//! describes.
-
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -34,13 +15,10 @@ use postio_render::theme::{self, MessageFacts, Presentation, Rgb, Theme};
 use postio_test_support::fidelity::{self, Image};
 use postio_ui::reader::document::{self, Rendering};
 
-/// The reader's width for every render, in CSS pixels.
 const WIDTH: u32 = 800;
 
-/// What Blitz's user-agent sheet leaves out that every browser has.
 const HEAD_IS_NOT_CONTENT: &str = "head, title, meta, link, style, script { display: none }";
 
-/// The same neutral geometry arm A injects for S1.
 const NEUTRAL_CHROME: &str = "html, body { background: #ffffff !important; margin: 0 !important; padding: 0 !important; }\
  .postio-body { padding: 8px !important; border: 0 !important; border-radius: 0 !important; margin: 0 !important; max-width: none !important; min-height: 0 !important; }\
  .postio-body:has(> .postio-canvas) { padding: 0 !important; }\
@@ -53,8 +31,6 @@ fn main() {
         .unwrap_or_else(|| PathBuf::from("target/eval/blitz"));
     std::fs::create_dir_all(&out).expect("the output directory");
     let fonts = font_set();
-    // Sharpness: one fixture at 2x natively, and at 1x enlarged to 2x as a
-    // compositor would -- the spike's texture -- cropped to the same region.
     if let Ok(name) = std::env::var("POSTIO_EVAL_SHARPNESS") {
         let message = Message::of(test_corpus::load(&name));
         SCALE.with(|s| s.set(2.0));
@@ -70,8 +46,6 @@ fn main() {
         );
         return;
     }
-    // A minimal document, drawn on its own: how an engine defect is shown to
-    // be the engine's rather than the fixture's.
     if let Ok(html) = std::env::var("POSTIO_EVAL_PROBE") {
         let message = Message {
             body: MessageBody::default(),
@@ -109,7 +83,6 @@ fn main() {
         return;
     }
 
-    // ── S1 ────────────────────────────────────────────────────────────────
     report.push_str("## S1 fidelity\n\n| fixture | agreeing | lost block | height ok | match |\n|---|---|---|---|---|\n");
     let references = PathBuf::from("crates/postio-test-support/data/reference");
     let (mut matched, mut judged) = (0, 0);
@@ -119,8 +92,7 @@ fn main() {
             continue;
         }
         let message = Message::of(fixture);
-        // Counterfactual only, and labelled so in the report: what S1 would
-        // be if blitz#504 (collapsed borders on borderless tables) were fixed.
+        // Counterfactual only, labelled in the report: S1 if blitz#504 were fixed.
         let chrome = if std::env::var_os("POSTIO_EVAL_COUNTERFACTUAL_504").is_some() {
             format!("{NEUTRAL_CHROME} table {{ border-collapse: separate !important; }}")
         } else {
@@ -154,7 +126,6 @@ fn main() {
         "\n{matched} of {judged} designed fixtures match.\n\n"
     ));
 
-    // ── G1 ────────────────────────────────────────────────────────────────
     report.push_str(
         "## G1 legibility (dark)\n\n| fixture | presentation | runs | below 4.5 before | below 4.5 after | below 7 after |\n|---|---|---|---|---|---|\n",
     );
@@ -166,9 +137,6 @@ fn main() {
         let found = runs_of(&doc);
         let below_before = count_below(&before, &found, 4.5);
 
-        // Each step's overrides are a stylesheet on a fresh layout (see
-        // `Overrides`): the presentation, then the repair against the ground
-        // the presentation left, then the high-contrast repair on top.
         let facts = facts(&doc, &message);
         let presentation = theme::classify(
             facts,
@@ -211,9 +179,6 @@ fn main() {
     print!("{report}");
 }
 
-/// G2 and G3, as arm A measures them, plus the local-file probe research
-/// R5 predicts this arm needs: usvg's default resolver reads any path an
-/// SVG's `<image>` names.
 fn gates(fonts: &FontSet, report: &mut String) {
     use postio_test_support::listener::Listener;
     use std::time::Instant;
@@ -282,7 +247,6 @@ fn legibility_fixtures() -> Vec<&'static Fixture> {
     fixtures
 }
 
-/// One fixture, composed exactly as the reader composes a single message.
 struct Message {
     body: MessageBody,
     parts: HashMap<String, Vec<u8>>,
@@ -295,8 +259,6 @@ impl Message {
         Message::with(fixture, |html| html.to_owned(), RemoteImages::Blocked)
     }
 
-    /// As [`of`](Self::of), with the HTML rewritten first and composed
-    /// under `remote`.
     fn with(fixture: &Fixture, rewrite: impl Fn(&str) -> String, remote: RemoteImages) -> Message {
         let mut parsed = postio_model::mime::parse(fixture.bytes());
         parsed.body.html = parsed.body.html.map(|html| rewrite(&html));
@@ -342,10 +304,8 @@ impl Message {
                 },
             )),
             ua_stylesheets: vec![blitz_dom::UserAgentStylesheet::parse(HEAD_IS_NOT_CONTENT)],
-            // A base a relative URL can resolve against. Without one, Blitz
-            // resolves against a `data:` URL, which cannot be a base, and
-            // panics on the first `<img src="x">` (the evaluation's G3). Under
-            // `POSTIO_EVAL_NO_BASE` the harness leaves it unset, to show that.
+            // A base a relative URL can resolve against; without one Blitz panics on the first
+            // `<img src="x">`.
             base_url: std::env::var_os("POSTIO_EVAL_NO_BASE")
                 .is_none()
                 .then(|| "postio-message://message/".to_owned()),
@@ -361,8 +321,6 @@ impl Message {
     }
 }
 
-/// The document's only source of sub-resources: its own parts and the
-/// bundled faces. Anything else is never requested.
 struct Resources {
     parts: HashMap<String, Vec<u8>>,
 }
@@ -380,8 +338,7 @@ impl NetProvider for Resources {
             }
             return;
         }
-        // An image the message embeds in itself (FR-003): decoded here, never
-        // fetched. Anything else in a `data:` URL was refused upstream.
+        // Embedded images are decoded here, never fetched.
         if let Some(rest) = url.strip_prefix("data:image/")
             && let Some((_, payload)) = rest.split_once(";base64,")
             && let Some(bytes) = decode_base64(payload)
@@ -397,7 +354,6 @@ impl NetProvider for Resources {
     }
 }
 
-/// Standard base64, tolerating whitespace; `None` on anything else.
 fn decode_base64(text: &str) -> Option<Vec<u8>> {
     let value = |c: u8| match c {
         b'A'..=b'Z' => Some(c - b'A'),
@@ -421,9 +377,6 @@ fn decode_base64(text: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// Fonts without fontconfig (research R3): the bundled faces first, as the
-/// generic families -- as in the reference capture -- then every installed
-/// face `fontdb` finds, registered from its bytes.
 struct FontSet {
     collection: Collection,
 }
@@ -437,8 +390,6 @@ impl FontSet {
     }
 }
 
-/// Proportional set size of this process, in MiB: what #1348 measured web
-/// processes by, for the process Blitz draws in.
 fn pss_mib() -> f64 {
     std::fs::read_to_string("/proc/self/smaps_rollup")
         .ok()
@@ -451,8 +402,6 @@ fn pss_mib() -> f64 {
         .map_or(0.0, |kb| kb / 1024.0)
 }
 
-/// S2: the thread `pane_comparison` measures arm A on, composed through the
-/// same pipeline, laid out and painted in-process at 2, 10 and 50 messages.
 fn cost(fonts: &FontSet, report: &mut String) {
     use postio_ui::reader::thread::{Entry, conversation_document};
     use std::time::Instant;
@@ -576,8 +525,6 @@ fn font_set() -> FontSet {
                 .first()
                 .map(|(name, _)| name.as_str())
                 .unwrap_or("");
-            // What fontconfig would have substituted: the two names mail asks
-            // for most, which no free system ships under that name.
             if family == "Liberation Sans" {
                 aliases.push((path.clone(), "Helvetica"));
                 aliases.push((path.clone(), "Arial"));
@@ -606,8 +553,6 @@ fn font_set() -> FontSet {
     FontSet { collection }
 }
 
-/// The device scale renders are made at: 1 unless `POSTIO_EVAL_SCALE` says
-/// otherwise (the sharpness probe sets it per render).
 fn scale() -> f32 {
     SCALE.with(|s| s.get())
 }
@@ -629,8 +574,6 @@ fn paint(doc: &mut BaseDocument) -> Image {
     Image::from_rgba(w as usize, h as usize, buffer)
 }
 
-/// Bilinear 2x enlargement: what a compositor does to a 1x texture shown on
-/// a 2x display.
 fn enlarge(image: &Image) -> Image {
     let (w, h) = (image.width * 2, image.height * 2);
     let mut rgba = vec![0u8; w * h * 4];
@@ -667,7 +610,6 @@ fn crop(image: &Image, x: usize, y: usize, w: usize, h: usize) -> Image {
     Image::from_rgba(w.min(image.width - x), rows, rgba)
 }
 
-/// One text run: its element, its rectangle in CSS px, and its colour.
 struct Run {
     node: NodeId,
     rect: [f64; 4],
@@ -744,7 +686,6 @@ fn colour_of(doc: &BaseDocument, id: NodeId) -> Option<Rgb> {
     Some(srgb(&styles.clone_color()).0)
 }
 
-/// The first opaque background among the element and its ancestors.
 fn ground_of(doc: &BaseDocument, id: NodeId) -> Option<Rgb> {
     let mut next = Some(id);
     while let Some(id) = next {
@@ -831,17 +772,11 @@ fn facts(doc: &BaseDocument, message: &Message) -> MessageFacts {
     }
 }
 
-/// The attribute every element of a composed document is stamped with.
 const STAMP: &str = "data-postio-eval";
 
-/// `html` with every element stamped `data-postio-eval="<n>"`, in document
-/// order, so overrides can be written as a stylesheet.
-///
-/// Why a stylesheet on a fresh layout rather than a mutation: in
-/// blitz-dom 0.3.0-beta.2 a `style` attribute set through `DocumentMutator`
-/// on a `<p>` reached neither computed style nor paint, through two resolves,
-/// while the same call on another element did. A finding for the scorecard,
-/// and routed around here rather than debugged inside a beta engine.
+/// A stylesheet on a fresh layout, not a mutation: in blitz-dom 0.3.0-beta.2 a
+/// `style` attribute set through `DocumentMutator` on a `<p>` reached neither
+/// computed style nor paint.
 fn stamp(html: &str) -> String {
     use html5ever::driver::ParseOpts;
     use html5ever::serialize::{SerializeOpts, TraversalScope, serialize};
@@ -878,7 +813,6 @@ fn stamp(html: &str) -> String {
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
-/// The overrides research R10's rule asks for, as a stylesheet.
 #[derive(Default)]
 struct Overrides {
     rules: Vec<String>,
@@ -902,8 +836,6 @@ impl Overrides {
         }
     }
 
-    /// Repair every run whose colour misses `floor` against its ground,
-    /// keyed by the stamp of the element holding its text.
     fn repair(&mut self, doc: &BaseDocument, runs: &[Run], floor: f64) {
         let fallback = first(doc, "body")
             .and_then(|b| ground_of(doc, b))
@@ -930,10 +862,8 @@ impl Overrides {
     fn css(&self) -> String {
         let mut css = self.rules.join("\n");
         for (stamp, [r, g, b]) in &self.colours {
-            // `:is(#…, [stamp])` takes the id's specificity, three times over:
-            // enough to outrank a sender's own `!important` rule, as an inline
-            // `!important` does in arm A. A rule that only wins on order loses
-            // to `.fine { color: … !important }`.
+            // `:is(#…, [stamp])` takes the id's specificity three times over, enough
+            // to outrank a sender's own `!important` rule.
             let one = format!(":is(#postio-eval-override, [{STAMP}=\"{stamp}\"])");
             css.push_str(&format!(
                 "\n{one}{one}{one} {{ color: rgb({r},{g},{b}) !important }}"

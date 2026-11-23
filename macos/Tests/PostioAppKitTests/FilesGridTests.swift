@@ -5,12 +5,6 @@ import Testing
 @testable import PostioAppKit
 @testable import PostioKit
 
-/// The Files tab's grid (specs/010-focus-search T130; design §3.8, screen
-/// 11): four cards across with 12 between them. The ring is the
-/// controller's; the arrows are the grid's, as they are any collection
-/// view's -- ← and → one card, ↑ and ↓ a row of four -- and say where the
-/// ring goes with `focusSearchPoint`, which moves nothing here until the
-/// controller says it did.
 @MainActor
 struct FilesGridTests {
     final class Engine: ResultsEngine {
@@ -49,7 +43,6 @@ struct FilesGridTests {
                     note: "contents are indexed on this Mac for PDF, Office documents and text")))
     }
 
-    /// A bare arrow key, as the keyboard sends it.
     static func arrow(_ code: UInt16) -> NSEvent {
         let scalar: Int = switch code {
         case 123: NSLeftArrowFunctionKey
@@ -81,7 +74,6 @@ struct FilesGridTests {
         grid.collectionView.keyDown(with: Self.arrow(Self.down))
         #expect(engine.pointed == [2, 0, 5], "one across, one back, a row of four down")
 
-        // Nothing above the first row: the ring stays, and nothing is said.
         grid.collectionView.keyDown(with: Self.arrow(Self.up))
         #expect(engine.pointed == [2, 0, 5])
 

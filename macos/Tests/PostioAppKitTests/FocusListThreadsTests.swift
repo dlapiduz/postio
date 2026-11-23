@@ -5,17 +5,8 @@ import Testing
 @testable import PostioAppKit
 @testable import PostioKit
 
-/// A thread opened in place, as the table draws it (spec 013 US1, T033).
-///
-/// What opens it, where the cursor goes and what the children say are the
-/// controller's (`postio-focus`, and `focus_threads` in the FFI suite); this
-/// pins what the Mac does with the answer: the rows are inserted under the
-/// thread's row and removed again, the keyboard's ring never leaves the row
-/// it was on, and the children are drawn as children.
 @MainActor
 struct FocusListThreadsTests {
-    /// A list the way the FFI hands it over: the rows, and the open
-    /// thread's children among them (display positions).
     final class Rows: FocusRowSource {
         var rows: [FocusRowFfi]
         init(_ rows: [FocusRowFfi]) { self.rows = rows }
@@ -61,7 +52,6 @@ struct FocusListThreadsTests {
                 hint: draft ? nil : ChildHintFfi(keys: ["r", "f"], label: "this one")))
     }
 
-    /// A table over `rows`, with the first page landed.
     static func table(_ rows: Rows) -> FocusListTable {
         let model = FocusListModel(source: rows) { _ in nil }
         let table = FocusListTable(model: model)
@@ -72,8 +62,6 @@ struct FocusListThreadsTests {
         return table
     }
 
-    /// What the controller says after `Right` on the thread row: the
-    /// children are spliced in under it, and the cursor stays on it.
     static func right(_ table: FocusListTable, _ rows: Rows, anchor: Int, children: [FocusRowFfi]) {
         rows.open(under: anchor, children: children)
         table.splice(anchor: anchor, children: children.count)
@@ -82,7 +70,6 @@ struct FocusListThreadsTests {
         table.tableView.layoutSubtreeIfNeeded()
     }
 
-    /// And after `Left`.
     static func left(_ table: FocusListTable, _ rows: Rows, anchor: Int, children: Int) {
         rows.fold(under: anchor, children: children)
         table.unsplice()
@@ -91,11 +78,6 @@ struct FocusListThreadsTests {
         table.tableView.layoutSubtreeIfNeeded()
     }
 
-    /// What the session says when its list moved under the open thread,
-    /// in its order: the list re-read and its page, then the thread folded
-    /// where its row was and opened where it went, then the cursor. All of
-    /// it is said from one landing, so by the time the first is read the
-    /// session's rows are already the new ones: `now`, children and all.
     static func landed(
         _ table: FocusListTable, _ rows: Rows, now: [FocusRowFfi], from: Int, to: Int, children: Int
     ) {
@@ -116,8 +98,6 @@ struct FocusListThreadsTests {
         (table.tableView.rowView(atRow: row, makeIfNecessary: true) as? FocusRowView)?.isCursor
     }
 
-    /// What each row of the table draws, top to bottom: its message's id,
-    /// or "child" for a message of the open thread.
     private func drawn(_ table: FocusListTable) -> [String] {
         table.tableView.layoutSubtreeIfNeeded()
         return (0..<table.tableView.numberOfRows).map { row in
@@ -157,8 +137,6 @@ struct FocusListThreadsTests {
         Self.right(table, rows, anchor: 1, children: Self.kids)
 
         let heights = (0..<6).map { table.tableView(table.tableView, heightOfRow: $0) }
-        // The first row starts the day (32 + 40), the thread is 46, each
-        // child 38, and the row after them is a plain one-liner.
         #expect(heights == [72, 46, 38, 38, 38, 40])
         let model = table.model.row(at: 4)
         #expect(model?.child?.draft == true, "the unsent reply is last")
@@ -187,10 +165,6 @@ struct FocusListThreadsTests {
         #expect(table.model.row(at: 1)?.accessibilityLabel.contains("Ana Ruiz") == true)
     }
 
-    /// Mail landing above the open thread moves its row down, and its
-    /// children go with it: each is drawn once, under the thread's row, and
-    /// `Left` folds every one of them (#2134; GTK's was #2135). Two messages,
-    /// so a row the fold and the splice both slid past is between them.
     @Test func mailLandingAboveAnOpenThreadMovesItsChildrenWithIt() {
         let rows = Rows([Self.row(1), Self.row(2, thread: true), Self.row(3)])
         let table = Self.table(rows)
@@ -207,7 +181,6 @@ struct FocusListThreadsTests {
         #expect(drawn(table) == ["10", "11", "1", "2", "3"], "Left folds every child away")
     }
 
-    /// And mail leaving above it moves the row up, the children with it.
     @Test func mailLeavingAboveAnOpenThreadMovesItsChildrenWithIt() {
         let rows = Rows([Self.row(10), Self.row(11), Self.row(1), Self.row(2, thread: true), Self.row(3)])
         let table = Self.table(rows)

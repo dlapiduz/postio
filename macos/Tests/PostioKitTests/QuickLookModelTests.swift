@@ -4,11 +4,6 @@ import Testing
 
 @testable import PostioKit
 
-/// Quick Look's model (specs/010-focus-search T091; design §3.7, screen
-/// 10). The controller decides what Quick Look shows and when it opens,
-/// moves and closes (`crates/postio-focus/src/results.rs`); every
-/// `FocusQuickLook` is the panel whole. What the Mac keeps is one panel:
-/// a new view while it is up is new content in it, never a second panel.
 @MainActor
 struct QuickLookModelTests {
     final class Engine: QuickLookEngine {
@@ -39,10 +34,8 @@ struct QuickLookModelTests {
         let model = QuickLookModel(engine: Engine())
         #expect(model.apply(.focusQuickLook(view: Self.view("1 of 12"))) == .open)
         #expect(model.view?.position == "1 of 12")
-        // j: the next result, in place.
         #expect(model.apply(.focusQuickLook(view: Self.view("2 of 12"))) == .redraw)
         #expect(model.view?.position == "2 of 12")
-        // ]: the ring moved, nothing else.
         #expect(model.apply(.focusQuickLook(view: Self.view("2 of 12", current: 1))) == .redraw)
         #expect(model.view?.current == 1)
         #expect(model.apply(.focusQuickLook(view: nil)) == .close)

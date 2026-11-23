@@ -1,19 +1,7 @@
-//! Focus's key map is grouped, and every key Focus offers is in a group
-//! (specs/007-postio-focus T031, research R4).
-//!
-//! The key map (screen 20) draws its keys in the groups the design names;
-//! the groups table in `postio_ui::keymap_sheet` says which group a command
-//! sits in, and the registry says its key. A command Focus offers with no
-//! group would be a key the key map never teaches -- which is the failure
-//! the key map exists to prevent, so the table is enumerated here against
-//! the registry, as the one keymap is (SC-015).
-
 use postio_core::{Availability, CommandId, Frontend, Scope, registry};
 use postio_model::AccountId;
 use postio_ui::keymap_sheet::{Group, KEY_MAP_CONTEXTS, group};
 
-/// Focus with mail open in one account: the state in which it offers the
-/// most.
 fn focus() -> Availability {
     Availability {
         frontend: Frontend::Focus,
@@ -21,7 +9,6 @@ fn focus() -> Availability {
     }
 }
 
-/// Every command Focus offers where its key map applies.
 fn offered_by_focus() -> Vec<CommandId> {
     let mut offered: Vec<CommandId> = KEY_MAP_CONTEXTS
         .iter()
@@ -47,8 +34,6 @@ fn every_command_focus_offers_has_a_group() {
 
 #[test]
 fn no_group_holds_a_command_focus_does_not_offer() {
-    // The other way round: a row for a command Focus never offers is a key
-    // the key map teaches and the app does not have.
     let offered = offered_by_focus();
     let stray: Vec<CommandId> = CommandId::ALL
         .iter()

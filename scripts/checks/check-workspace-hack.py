@@ -82,8 +82,6 @@ def main(argv: list[str] | None = None) -> int:
     except subprocess.TimeoutExpired:
         print(f"workspace-hack check FAILED: cargo hakari did not finish in {TIMEOUT_SECONDS}s")
         return 2
-    # Both exit 1 when they would change something, and 2 or more when they
-    # could not run at all -- which is not the same finding.
     for proc, what in (
         (generate, "the hack's contents are out of date"),
         (manage, "a member's dependency on the hack is missing or stale"),

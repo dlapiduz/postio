@@ -2,107 +2,60 @@ import Foundation
 import Observation
 import PostioFFI
 
-/// What Filtered tells the engine (specs/009-focus-macos T113).
-///
-/// `PostioSession` is the one real answer; the protocol is what lets a test
-/// drive `FilteredModel` without a store.
 public protocol FilteredEngine: AnyObject {
-    /// Row `index` was clicked: the controller puts the keyboard there.
     func focusFilteredPoint(_ index: UInt32)
-    /// Row `index` was clicked with ⌘ (`range` false: it goes in or out of
-    /// the selection) or ⇧ (`range` true: the rows from the anchor to it go
-    /// in), as the list's rows are.
     func focusFilteredPick(_ index: UInt32, range: Bool)
-    /// The end of the rows read so far was reached: read the next page.
     func focusFilteredMore()
-    /// A registry command, as a key press would send it.
     func invoke(_ id: String)
-    /// The binding in force for `command`, for its keycap.
     func binding(for command: String) -> String?
 }
 
 extension PostioSession: FilteredEngine {}
 
-/// The registry commands Filtered's buttons are.
 public enum FilteredCommand {
-    /// Restore the focused row, and never filter its sender again (`R`).
     public static let restore = "restore_filtered"
-    /// "Sweep the inbox…".
     public static let sweep = "sweep_inbox"
-    /// Leave Filtered: the header's "‹ Inbox", Escape.
     public static let back = "back"
-    /// Open the focused row's message over Filtered (Return).
     public static let open = "open_message"
 
-    /// The `n`th tab's command, `n` from 1 to 7.
     public static func tab(_ number: Int) -> String { "filtered_tab_\(number)" }
 }
 
-/// Filtered, as the controller's intents leave it (specs/009-focus-macos
-/// T113, screen 21): the mail filtering archived as it arrived, a reason on
-/// each row, tabs `1`-`7` by reason with their counts, `R` to restore.
-///
-/// The controller (`crates/postio-focus/src/filtered.rs`) keeps which tab
-/// shows, which row has the keyboard, the pages read and what each key
-/// does; the words are `postio_ui::filtered`'s. This holds what the last
-/// `FocusFiltered` said, spelled for drawing, and hands back what the
-/// pointer did. It moves nothing itself: a click is told, and the focus
-/// moves when `FocusFilteredFocus` says so.
-///
-/// The one thing decided here is when to ask for the next page: once the
-/// end of the rows on screen is reached, once per page.
-///
-/// No AppKit: the main window draws `FilteredView` from it, and iOS must
-/// stay reachable (#1264).
+/// The controller keeps the tab, rows, keyboard and pages; this holds what the last `FocusFiltered`
+/// said and moves nothing:
+/// a click is told and the focus moves when `FocusFilteredFocus` says so. The one thing decided
+/// here is asking for the next page once per page. No AppKit (#1264).
 @MainActor
 @Observable
 public final class FilteredModel {
-    /// What one applied event changed.
     public enum Change: Equatable {
-        /// Filtered is up, in the list's place.
         case open
-        /// Its tabs, rows or words changed.
         case redraw
-        /// The keyboard moved to another row.
         case focus
-        /// The selection, its boxes or its bar changed.
         case selection
-        /// Filtered is gone; the list is back.
         case close
     }
 
-    /// One reason tab.
     public struct Tab: Equatable, Identifiable {
-        /// Its number, 1 to 7: what its key and its command name.
         public let id: Int
         public let name: String
         public let count: UInt32
-        /// Its number key, as a keycap.
         public let cap: String?
-        /// Whether it is the one showing.
         public let on: Bool
     }
 
-    /// One filtered message.
     public struct Row: Equatable, Identifiable {
-        /// Its place among the rows: what a click tells the controller.
         public let id: Int
         public let message: Int64
         public let sender: String
         public let subject: String
         public let preview: String?
-        /// The reason: "notification · Forge", "spam".
         public let pill: String
         public let time: String
-        /// The day heading above it, on the first row of each day.
         public let heading: String?
-        /// Whether its box is checked.
         public let selected: Bool
-        /// How many messages its conversation holds; more than one and it
-        /// opens in place (spec 013 FR-009).
         public let messages: UInt32
 
-        /// Whether `Right` opens it.
         public var isThread: Bool { messages > 1 }
 
         func with(selected: Bool) -> Row {
@@ -112,12 +65,9 @@ public final class FilteredModel {
         }
     }
 
-    /// One message of the thread open under a row, as the words say it
-    /// (`FocusRowModel.Child`'s, for this table).
     public struct Child: Equatable {
         public let initials: String
         public let sender: String
-        /// Unread: bold, with an accent dot.
         public let unread: Bool
         public let tag: String?
         public let line: String
@@ -125,14 +75,10 @@ public final class FilteredModel {
         public let attachment: Bool
         public let time: String
         public let draft: Bool
-        /// The keycaps of the focused child's hint, and what they act on.
         public let hintKeys: [String]
         public let hintLabel: String?
     }
 
-    /// What the table draws, in order: the rows, and the open thread's
-    /// children among them. `display` is the position the controller's
-    /// keyboard and a click name.
     public enum Item: Equatable, Identifiable {
         case row(Row, display: Int)
         case child(Child, display: Int, last: Bool)
@@ -144,14 +90,11 @@ public final class FilteredModel {
         }
     }
 
-    /// The thread open in place: its row, and its children.
     public struct Open: Equatable {
-        /// The expanded row, an index into `rows`.
         public let anchor: Int
         public let children: [Child]
     }
 
-    /// One footer hint.
     public struct Hint: Equatable, Identifiable {
         public let cap: String
         public let label: String
@@ -159,35 +102,23 @@ public final class FilteredModel {
     }
 
     public private(set) var isOpen = false
-    /// "Filtered".
     public private(set) var title = ""
-    /// "Archived automatically · newest first".
     public private(set) var subtitle = ""
-    /// Right of the tabs: "Nothing here is deleted automatically · …" (C4).
     public private(set) var note = ""
     public private(set) var sweepWords = ""
     public private(set) var sweepCap: String?
-    /// The focused row's button: "Restore, never filter this sender".
     public private(set) var restoreWords = ""
     public private(set) var restoreCap: String?
     public private(set) var tabs: [Tab] = []
     public private(set) var rows: [Row] = []
-    /// The thread open under one of the rows (spec 013 FR-009).
     public private(set) var open: Open?
-    /// The rows with the open thread's children among them.
     public private(set) var items: [Item] = []
-    /// The row with the keyboard: a display position, the children counted.
     public private(set) var focused: Int?
     public private(set) var footer: [Hint] = []
-    /// The bar over the rows while anything is selected: the controller's
-    /// count, verbs and keys, drawn as the list's action bar is.
     public private(set) var bar: ActionBarWords?
-    /// What stands in place of the rows when the tab has none.
     public private(set) var empty: String?
 
-    /// Whether the rows on screen may not be all there is.
     @ObservationIgnored private var more = false
-    /// Whether the next page has been asked for since these rows landed.
     @ObservationIgnored private var askedMore = false
 
     @ObservationIgnored private let engine: FilteredEngine
@@ -196,16 +127,12 @@ public final class FilteredModel {
         self.engine = engine
     }
 
-    /// The keycap for "‹ Inbox": Back's binding.
     public var backCap: String? { KeyCapSpelling.cap(engine.binding(for: FilteredCommand.back)) }
 
-    /// Apply `event` if it is Filtered's, and say what it changed; `nil`
-    /// for every other event.
     @discardableResult
     public func apply(_ event: UiEvent) -> Change? {
         switch event {
         case .focusShowFiltered:
-            // `g f`: the view follows. Up now, so the list gives way at once.
             let was = isOpen
             isOpen = true
             return was ? nil : .open
@@ -244,59 +171,47 @@ public final class FilteredModel {
         }
     }
 
-    /// Row `index` was clicked.
     public func point(_ index: Int) {
         guard items.indices.contains(index) else { return }
         engine.focusFilteredPoint(UInt32(index))
     }
 
-    /// Row `index` was clicked with ⌘: in or out of the selection. The box
-    /// is drawn when the controller says so.
     public func toggle(_ index: Int) {
         guard items.indices.contains(index) else { return }
         engine.focusFilteredPick(UInt32(index), range: false)
     }
 
-    /// Row `index` was clicked with ⇧: the rows from the anchor to it.
     public func extend(_ index: Int) {
         guard items.indices.contains(index) else { return }
         engine.focusFilteredPick(UInt32(index), range: true)
     }
 
-    /// A verb on the bar was pressed: its command, as its key would run it.
     public func run(_ command: String) {
         engine.invoke(command)
     }
 
-    /// Row `index` was double-clicked: the keyboard goes there and its
-    /// message opens over Filtered, as Return would.
     public func open(_ index: Int) {
         guard items.indices.contains(index) else { return }
         engine.focusFilteredPoint(UInt32(index))
         engine.invoke(FilteredCommand.open)
     }
 
-    /// Tab `number` (1 to 7) was clicked.
     public func chooseTab(_ number: Int) {
         engine.invoke(FilteredCommand.tab(number))
     }
 
-    /// The focused row's Restore was clicked.
     public func restore() {
         engine.invoke(FilteredCommand.restore)
     }
 
-    /// "Sweep the inbox…" was clicked.
     public func sweep() {
         engine.invoke(FilteredCommand.sweep)
     }
 
-    /// "‹ Inbox" was clicked.
     public func back() {
         engine.invoke(FilteredCommand.back)
     }
 
-    /// The last row on screen was reached: ask for the next page, once.
     public func reachedEnd() {
         guard isOpen, more, !askedMore else { return }
         askedMore = true
@@ -328,11 +243,9 @@ public final class FilteredModel {
         focused = view.focused.map(Int.init)
         footer = view.footer.map { Hint(cap: KeyCapSpelling.cap($0.key) ?? $0.key, label: $0.label) }
         more = view.more
-        // A page landed (or a tab changed what is listed): the end is new.
         if moved || !view.more { askedMore = false }
     }
 
-    /// The rows with the open thread's children after its row.
     private func rebuild() {
         var out: [Item] = []
         out.reserveCapacity(rows.count + (open?.children.count ?? 0))
@@ -356,7 +269,6 @@ public final class FilteredModel {
             hintLabel: child.hint?.label)
     }
 
-    /// The controller's bar, spelled for the action bar's view.
     private static func words(_ bar: FilteredBarFfi) -> ActionBarWords {
         ActionBarWords(
             summary: bar.summary,
@@ -366,7 +278,6 @@ public final class FilteredModel {
                     isDefault: $0.primary)
             },
             hints: bar.hints.map { hint in
-                // "J/K" is two keys the controller joined.
                 let caps = hint.key.split(separator: "/", omittingEmptySubsequences: true)
                     .map(String.init).compactMap { KeyCapSpelling.cap($0) }
                 return ActionBarWords.Hint(caps: caps, label: hint.label)

@@ -1,19 +1,12 @@
-//! What one extraction may spend, and the reader that enforces it on a
-//! zip entry.
-
 use std::io::{self, Read};
 use std::time::Instant;
 
 use crate::{Limit, Limits, Location, Skip, Unit};
 
-/// Why a walker stopped before the end.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Stop {
-    /// A limit: what was read is kept.
     Limit(Limit),
-    /// Nothing to read, and not a fault.
     Skip(Skip),
-    /// The file is malformed, or its reader panicked.
     Failed,
 }
 
@@ -23,8 +16,6 @@ impl From<Limit> for Stop {
     }
 }
 
-/// The running account of one extraction: the units kept so far, the text
-/// they hold, and the deadline.
 pub(crate) struct Budget<'a> {
     pub(crate) limits: &'a Limits,
     pub(crate) deadline: Instant,
@@ -42,9 +33,7 @@ impl<'a> Budget<'a> {
         }
     }
 
-    /// `Err(Time)` once the deadline has passed. Walkers call it between
-    /// units and every so many XML events, so a slow file stops near its
-    /// limit rather than at its end.
+    /// `Err(Time)` once the deadline has passed; walkers call it between units.
     pub(crate) fn check_time(&self) -> Result<(), Limit> {
         if Instant::now() >= self.deadline {
             Err(Limit::Time)
@@ -53,12 +42,9 @@ impl<'a> Budget<'a> {
         }
     }
 
-    /// Keep one unit. Its whitespace is collapsed to single spaces, and a
-    /// unit that is only whitespace is not kept (its number is still
-    /// spent: a page with no text is still page 2, and the next is 3).
-    ///
-    /// Stops with the limit it reached: the units, the text (the unit that
-    /// crosses it is cut at a character boundary and kept), or the time.
+    /// Whitespace is collapsed; a whitespace-only unit is not kept but its
+    /// number is still spent (page 2 stays page 2). The unit that crosses the
+    /// text limit is cut at a character boundary and kept.
     pub(crate) fn push(&mut self, location: Location, raw: &str) -> Result<(), Limit> {
         self.check_time()?;
         let text = collapse(raw);
@@ -86,7 +72,6 @@ impl<'a> Budget<'a> {
     }
 }
 
-/// Every run of whitespace as one space, trimmed at both ends.
 fn collapse(raw: &str) -> String {
     let mut out = String::with_capacity(raw.len());
     for word in raw.split_whitespace() {
@@ -98,7 +83,6 @@ fn collapse(raw: &str) -> String {
     out
 }
 
-/// The largest index `<= at` that is a character boundary of `text`.
 fn floor_char_boundary(text: &str, at: usize) -> usize {
     let mut at = at.min(text.len());
     while !text.is_char_boundary(at) {
@@ -107,13 +91,11 @@ fn floor_char_boundary(text: &str, at: usize) -> usize {
     at
 }
 
-/// How much of an entry must inflate before its ratio is judged. Small XML
-/// parts compress well and honestly; a bomb shows itself long before this.
+/// Inflated bytes before the ratio is judged: small honest parts compress well.
 const RATIO_GRACE: u64 = 1024 * 1024;
 
-/// A zip entry's reader that stops at [`Limits::max_entry`] inflated bytes
-/// and at [`Limits::max_ratio`] times its compressed size, whatever its
-/// header claims: a header's sizes are the attacker's to write.
+/// Stops at the entry and ratio limits whatever its header claims: the sizes
+/// there are the attacker's to write.
 pub(crate) struct Guarded<R> {
     inner: R,
     read: u64,
@@ -121,8 +103,6 @@ pub(crate) struct Guarded<R> {
     max_entry: u64,
     max_ratio: u64,
     deadline: Instant,
-    /// The limit that stopped it, for the walker to report after the XML
-    /// reader surfaces the error.
     pub(crate) tripped: Option<Limit>,
 }
 

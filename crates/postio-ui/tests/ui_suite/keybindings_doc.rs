@@ -1,21 +1,3 @@
-//! `docs/keybindings.md` is generated from the command registry and the
-//! finder's mode table.
-//!
-//! A hand-written key reference is wrong within a release — that is the whole
-//! reason the registry exists (docs/PRODUCT.md §8: one table, every surface). So the
-//! document is rendered from [`registry::all()`] and this test fails when the
-//! file on disk no longer matches, with `POSTIO_UPDATE_DOCS=1` to rewrite it.
-//!
-//! The `?` cheat sheet renders the same table at runtime; this is the copy
-//! somebody reads before they have installed anything.
-//!
-//! It lives in `postio-ui` rather than `postio-core` because the document is
-//! rendered from two tables now: the registry, and `postio_ui::finder::MODES`
-//! for the modes of the one box. A prefix is not a command and cannot be in
-//! the registry — it selects which question is being asked and has no
-//! invocation, no context of its own and nothing to undo — so the one place
-//! that can see both is the crate that depends on the other.
-
 use postio_config::paths::Platform;
 use std::fmt::Write as _;
 use std::path::PathBuf;
@@ -31,10 +13,7 @@ fn document_path() -> PathBuf {
         })
 }
 
-/// Where a command is available, phrased for a reader rather than a compiler.
 fn where_available(contexts: ContextSet) -> String {
-    // Contacts is the Mac's, and this file documents Linux: a command that is
-    // everywhere but there is everywhere here.
     if contexts
         .with(Context::Contacts)
         .with(Context::ContactPopover)
@@ -74,13 +53,7 @@ fn where_available(contexts: ContextSet) -> String {
     sentence
 }
 
-/// Which apps offer a command, when it is not all of them: the one keymap
-/// gives every command the same key in every app, and an app that does not
-/// offer one leaves its key free (specs/007-postio-focus research R4).
 fn which_apps(requires: RequirementSet) -> &'static str {
-    // Focus is every app but the terminal's composer: the desktop app, the
-    // Mac (specs/009-focus-macos R5) and the terminal, which is Focus drawn
-    // in character cells (spec 007 C29). So a Focus command needs no note.
     if requires.contains(Requirement::Terminal) {
         " (terminal)"
     } else if requires.contains(Requirement::Graphical) {
@@ -91,8 +64,6 @@ fn which_apps(requires: RequirementSet) -> &'static str {
 }
 
 fn keys(binding: &str) -> String {
-    // A sequence reads better as `g g` than as one run of characters, and
-    // backticks keep `?` and `/` from being read as Markdown.
     format!("`{binding}`")
 }
 
@@ -149,15 +120,9 @@ fn render() -> String {
     );
 
     for spec in registry::all() {
-        // This file documents Linux, which leaves out what only the Mac has.
         if !registry::offered_on(spec.id.into(), Platform::Freedesktop) {
             continue;
         }
-        // Expanded first: the registry stores `mod+k`, the reader presses
-        // Ctrl+K. This file documents Linux, so it renders the freedesktop
-        // spelling and reads exactly as it did before #669.
-        // Less a key Linux keeps for another command: its `alt+BackSpace`
-        // is the terminal's back to words, not the Mac's forget-recent.
         let bindings = spec
             .bindings()
             .filter(|binding| {
@@ -170,9 +135,8 @@ fn render() -> String {
         let recovery = match spec.recovery {
             Recovery::None => "",
             Recovery::Undo => "Undoable",
-            // Deliberately not "Undoable": undo does not reach it, and the
-            // keyboard reference is where somebody looks to find out which
-            // key does what (#1481).
+            // Not "Undoable": undo does not reach it, and this reference is where people learn
+            // which key does what (#1481).
             Recovery::Window => "Undo briefly",
             Recovery::Confirm => "Asks first",
         };

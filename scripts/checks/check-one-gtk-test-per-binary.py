@@ -57,11 +57,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 
-# The sibling owns the delicate part -- blanking comments and literals before
-# anything counts a brace, and finding where a `#[test]` item ends. Importing
-# it keeps one implementation of "how to read Rust safely enough for a
-# check", rather than a second copy that drifts. Its filename is not an
-# identifier, so it is loaded by path.
+# The sibling owns blanking comments and literals and finding where a `#[test]` ends; loaded by path
+# because its filename is not an identifier.
 _SIBLING = HERE / "check-no-gtk-init-in-unit-tests.py"
 
 
@@ -105,9 +102,6 @@ def display_tests(source: str, sibling) -> list[str]:
         region = clean[start:stop]
         if not sibling.INIT.search(region):
             continue
-        # `test_regions` also spans `#[cfg(test)] mod` items; an integration
-        # test has none, but name the function when there is one so the
-        # report says which tests collided.
         name = FN_NAME.search(region)
         found.append(name.group(1) if name else "<unnamed>")
     return found

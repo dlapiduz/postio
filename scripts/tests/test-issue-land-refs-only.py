@@ -34,8 +34,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -43,11 +41,6 @@ import patience  # noqa: E402  -- enabled by the sys.path line above
 HERE = Path(__file__).resolve().parent.parent
 REPO_ROOT = HERE.parent
 ISSUE_LAND = HERE / "issue-land.sh"
-# Sandboxes go under `target/`, which git ignores: inside the worktree because
-# the shared-tree guard only lifts its refusals for worktree paths, and not in
-# its root because a killed run leaves the sandbox behind and `git add -A` in a
-# worktree will commit it. `scripts/checks/check-test-sandboxes.py` says what
-# that cost (#1225).
 SANDBOXES = REPO_ROOT / "target" / "tmp"
 SANDBOXES.mkdir(parents=True, exist_ok=True)
 
@@ -62,14 +55,6 @@ STUB_CHECKS = [
 
 FAILURES: list[str] = []
 
-# Every call is appended to $STUB_DIR/calls as one NUL-terminated record,
-# including a multi-line `--body` verbatim, so the test can assert on the
-# actual PR body text rather than on a stub's opinion of it. NUL rather
-# than a newline separator: `--body`'s own content is multi-line, so a
-# newline-joined log cannot tell "the next line of this body" from "the
-# next call" apart. `pr view` reports no open PR (empty output, exit 0),
-# which sends the script down the `pr create` branch every time -- there is
-# nothing here to reuse across cases in one bare git remote.
 GH_STUB = """#!/usr/bin/env bash
 if [ "$1" = "--version" ]; then echo "gh version 2.98.0 (2026-01-01)"; exit 0; fi
 printf '%s\\0' "$*" >> "$STUB_DIR/calls"
@@ -210,10 +195,6 @@ def run_case(*, refs_only: bool, full_suite: bool = False) -> None:
             return
         body = create_calls[0]
 
-        # `--full-suite` asks CI to run the nightly on the pull request
-        # (.github/workflows/full-suite.yml). The label is what asks, and it
-        # has to come from this script's own `gh`: one the workflow token
-        # adds triggers nothing.
         labelled = [c for c in calls if c.startswith("pr edit") and "--add-label full-suite" in c]
         if full_suite:
             expect(f"{prefix}the PR is labelled full-suite", len(labelled) == 1, f"gh calls:\n{calls}")
@@ -317,15 +298,10 @@ def run_negation_case() -> None:
             f"\n{output}",
         )
 
-        # Take the advice the refusal gave, which is the other half of it
-        # being useful: the reworded body must land.
         git("commit", "-q", "--amend", "-m",
             "feat(dummy): add a file\n\nThis does not finish #1189: the "
             "acceptance is not met.\n", cwd=root)
 
-        # A commit that closes some *other* issue is ordinary: a rider closed
-        # alongside the anchor, a fix that finishes something else on the way
-        # past. Only the issue being landed is the contradiction.
         git("commit", "-q", "--allow-empty", "-m",
             "chore(dummy): tidy up\n\nCloses #4242\n", cwd=root)
         (root / "dummy" / "src" / "another.rs").write_text("// nothing\n", encoding="utf-8")

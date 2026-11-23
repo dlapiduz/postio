@@ -28,8 +28,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -39,8 +37,6 @@ SCRIPT = HERE / "issue-file.sh"
 
 FAILURES: list[str] = []
 
-# Prints whatever `$STUB_DIR/found` holds for `issue list`, and records every
-# call so the test can assert the *order*: searched, then filed or not.
 GH_STUB = """#!/usr/bin/env bash
 if [ "$1" = "--version" ]; then echo "gh version 2.98.0 (2026-01-01)"; exit 0; fi
 printf '%s\\n' "$*" >> "$STUB_DIR/calls"
@@ -83,7 +79,6 @@ def main() -> int:
         body.write_text("what happened\n", encoding="utf-8")
         title = "issue-land.sh reports MERGE DID NOT LAND for merges that did land"
 
-        # ── the incident: a CLOSED prior issue ───────────────────────────
         prior = "  #332 CLOSED\tissue-land's merge verification can false-negative\n"
         result = run(stub_dir, prior, "--title", title, "--body-file", str(body))
         if result.returncode != 2:
@@ -104,7 +99,6 @@ def main() -> int:
                 f"{result.stderr}"
             )
 
-        # ── the search really was a search ──────────────────────────────
         asked = calls(stub_dir)
         if "--state all" not in asked:
             FAILURES.append(
@@ -116,7 +110,6 @@ def main() -> int:
                 f"the title's distinctive words are what it searches on:\n{asked}"
             )
 
-        # ── nothing similar: it files ───────────────────────────────────
         result = run(stub_dir, "", "--title", title, "--body-file", str(body))
         if result.returncode != 0:
             FAILURES.append(
@@ -125,7 +118,6 @@ def main() -> int:
         if "issue create" not in calls(stub_dir):
             FAILURES.append(f"it did not file anything:\n{calls(stub_dir)}")
 
-        # ── --anyway: read it, decided it is different ───────────────────
         result = run(stub_dir, prior, "--title", title, "--body-file", str(body), "--anyway")
         if result.returncode != 0:
             FAILURES.append(f"--anyway did not file:\n{result.stderr}")
@@ -137,17 +129,10 @@ def main() -> int:
                 "would make the flag a way to never look"
             )
 
-        # ── --search-only: never files, whatever it finds ────────────────
         result = run(stub_dir, prior, "--search-only", "--title", title)
         if result.returncode != 0 or "issue create" in calls(stub_dir):
             FAILURES.append("--search-only must report and file nothing")
 
-        # ── widening: three terms find nothing, two do ──────────────────
-        # #332 called this bug "issue-land's merge verification can
-        # false-negative" and #392 called it "reports MERGE DID NOT LAND".
-        # Three terms from either title finds neither of the other, because
-        # GitHub ANDs them -- so a search that never widened would have
-        # reported a clean sheet for the exact duplicate this exists to stop.
         widening = stub_dir / "bin" / "gh"
         widening.write_text(
             """#!/usr/bin/env bash
@@ -181,7 +166,6 @@ exit 0
         (stub_dir / "bin" / "gh").write_text(GH_STUB, encoding="utf-8")
         (stub_dir / "bin" / "gh").chmod(0o755)
 
-        # ── a body is required to file, and not to search ────────────────
         result = run(stub_dir, "", "--title", title)
         if result.returncode != 1:
             FAILURES.append(

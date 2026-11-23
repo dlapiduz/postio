@@ -1,16 +1,9 @@
 #!/usr/bin/env bash
-# Wait for this branch's CI checks, and say whether it is safe to merge.
-#
-# `issue-land.sh` used to ask `gh pr checks` and merge if it said "no checks
-# reported". That sentence means two different things -- this branch schedules
-# no workflow, and GitHub has not registered one yet -- and nothing downstream
-# could tell them apart. Lost one way it cost a re-run (#92, #106, #118); lost
-# the other it merged a five-crate change before CI started (#135). See #139.
-#
-# So the branch's own diff decides. The workflow files' `on.pull_request` path
-# filters are the authority on what a change schedules, and
-# ci-expected-workflows.py reads them. `gh` is then only asked whether the
-# checks it predicted have shown up yet.
+# Wait for this branch's CI checks, and say whether it is safe to merge. "No checks reported" means
+# either that the branch schedules no workflow or that GitHub has not registered one yet (#92, #135,
+# #139), so the branch's own diff decides: the workflows' `on.pull_request` path filters (read by
+# ci-expected-workflows.py) say what it schedules, and `gh` is only asked whether the predicted
+# checks have appeared.
 #
 # Usage:  scripts/wait-for-checks.sh <pr-url>
 #
@@ -22,12 +15,8 @@
 #   POSTIO_CHECKS_REGISTER_TIMEOUT  seconds to wait for a due check   (180)
 #   POSTIO_CHECKS_GRACE             seconds to look anyway when none is due (30)
 #   POSTIO_CHECKS_POLL              seconds between polls              (5)
-#   POSTIO_CI_WORKFLOWS_DIR         workflow directory to predict from, in
-#                                   place of this repo's real .github/workflows
-#                                   -- so the self-test exercises this script's
-#                                   own registration/timeout logic against a
-#                                   fixed fixture, not whatever this repo's own
-#                                   CI triggers happen to be enabled today.
+# POSTIO_CI_WORKFLOWS_DIR         workflow directory to predict from, in place of this repo's real
+# .github/workflows
 # No `-e`: the predicate below signals "nothing scheduled" with exit 1, and
 # that is an answer, not a failure.
 set -uo pipefail
@@ -51,17 +40,14 @@ case "$SCHEDULED" in
     0) echo "expecting: $(printf '%s' "$EXPECTED" | tr '\n' ' ')"
        DEADLINE=$REGISTER_TIMEOUT ;;
     1) # Look anyway. Being wrong here merges unchecked code; being wrong the
-       # other way costs half a minute, and the diff is not the only thing
-       # that can schedule a workflow -- a `workflow_dispatch` or a rerun can.
        echo "the diff schedules no workflow; watching briefly anyway."
        DEADLINE=$GRACE ;;
     *) echo "could not read the workflow filters; assuming a check is due." >&2
        DEADLINE=$REGISTER_TIMEOUT ;;
 esac
 
-# Asked positively. `gh pr checks` exits non-zero both while nothing has
-# registered and when a check has failed, so its status cannot answer this;
-# `--json` can, because it reports the checks themselves.
+# Asked positively: `gh pr checks` exits non-zero both while nothing has registered and when a check
+# failed; `--json` reports the checks themselves.
 checks_registered() {
     local json
     json=$(gh pr checks --json name 2>/dev/null || true)
@@ -94,13 +80,9 @@ if ! gh pr checks --watch --fail-fast; then
     exit 1
 fi
 
-# `--watch --fail-fast` exiting 0 is not proof every check's conclusion has
-# actually landed: #161 saw it return success two seconds before CI's own
-# FAILURE was recorded, and the merge went ahead on the red commit. So this
-# waits one more beat for the API to catch up, then asks again without
-# watching and reads the buckets itself -- `gh --json` reports the checks
-# as they stand right now, unlike `--watch`'s exit code, which only proves
-# what it last polled.
+# `--watch --fail-fast` exiting 0 is not proof every conclusion has landed: #161 saw it succeed two
+# seconds before CI's FAILURE was recorded.
+# So wait one beat, then read the buckets with `gh --json` without watching.
 sleep "$POLL"
 BAD=$(gh pr checks --json name,bucket \
     | jq -c '[.[] | select(.bucket != "pass" and .bucket != "skipping")]')

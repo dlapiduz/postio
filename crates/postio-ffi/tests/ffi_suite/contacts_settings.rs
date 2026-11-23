@@ -1,8 +1,3 @@
-//! Settings > Contacts across the boundary (specs/011-focus-contacts D7):
-//! the section is in the Mac's list, the pane's words come from Rust, and a
-//! click on a Suggestions switch reaches the store and comes back as the
-//! redrawn pane.
-
 use postio_ffi::{Session, SessionOptions, SyncModeFfi, SyncScopeFfi, SyncStatusFfi, UiEvent};
 use postio_storage::test_support;
 
@@ -73,7 +68,6 @@ async fn a_click_on_a_switch_changes_the_store_and_redraws_the_pane() {
     );
     assert_eq!(rows, [false, true, true, true]);
 
-    // The third row is "Read signatures for details".
     let s = session.clone();
     tokio::task::spawn_blocking(move || s.focus_contacts_suggestion(2))
         .await

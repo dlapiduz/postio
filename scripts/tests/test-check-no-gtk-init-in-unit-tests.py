@@ -36,8 +36,6 @@ def build_repo(root: Path, source: str, *, track: bool = True) -> None:
     crate.mkdir(parents=True, exist_ok=True)
     (crate / "lib.rs").write_text(source, encoding="utf-8")
 
-    # An integration test that does the same thing, to prove the check looks
-    # only under `src`. `tests/` is where this init belongs.
     tests = root / "crates" / "postio-thing" / "tests"
     tests.mkdir(parents=True, exist_ok=True)
     (tests / "gtk_thing.rs").write_text(
@@ -111,15 +109,12 @@ def main() -> int:
         should_fail=False,
     )
 
-    # Production code *must* initialize GTK somewhere. The desktop app's
-    # `app.rs` does, correctly, on the main thread.
     case(
         "production code may initialize GTK",
         "pub fn run() {\n    if adw::init().is_err() {\n        return;\n    }\n}\n",
         should_fail=False,
     )
 
-    # The regression itself: a toast's unit tests, before they moved.
     case(
         "a unit test that initializes GTK fails",
         "pub fn toast() {}\n"
@@ -144,8 +139,6 @@ def main() -> int:
         expect_text="src/lib.rs:4",
     )
 
-    # `#[test]` alone compiles only under the test profile, so it is a test
-    # region whether or not anybody wrote `#[cfg(test)]` above it.
     case(
         "a bare #[test] fn is a test region too",
         "#[test]\nfn direct() {\n    gtk::init().unwrap();\n}\n",
@@ -153,8 +146,6 @@ def main() -> int:
         expect_text="gtk::init",
     )
 
-    # The scanner has to know where the module ends, or every file with a
-    # test module would condemn the production code that follows it.
     case(
         "code after the test module is not the test module",
         "#[cfg(test)]\n"
@@ -173,8 +164,6 @@ def main() -> int:
         should_fail=False,
     )
 
-    # A brace inside a string literal must not close the module early, or the
-    # init below it would be read as production code and wave through.
     case(
         "a brace in a string literal does not end the module early",
         "#[cfg(test)]\n"
@@ -189,7 +178,6 @@ def main() -> int:
         expect_text="adw::init",
     )
 
-    # Likewise a char literal, which is how `'}'` gets written.
     case(
         "a brace in a char literal does not end the module early",
         "#[cfg(test)]\n"
@@ -204,8 +192,6 @@ def main() -> int:
         expect_text="adw::init",
     )
 
-    # Prose about the rule is not a violation of it. The desktop app's
-    # `app.rs` spells `adw::init()` in doc comments.
     case(
         "a comment naming the call is not a call",
         "#[cfg(test)]\n"
@@ -220,8 +206,6 @@ def main() -> int:
         should_fail=False,
     )
 
-    # The escape hatch. A crate with no lib target may keep one GTK-touching
-    # unit test on purpose; the marker is where that decision is written down.
     case(
         "a recorded exception passes",
         "#[cfg(test)]\n"
@@ -235,13 +219,8 @@ def main() -> int:
         should_fail=False,
     )
 
-    # The marker clears a file for *one* init, which is what its own wording
-    # claims ("the only one"). It used to clear the file outright, so a second
-    # GTK test could be added to the same file without tripping anything --
-    # and it was. It passed locally for weeks, because
-    # whichever test ran second found the display gone and skipped, then
-    # panicked with "two different threads" the first time a runner gave both
-    # of them one at once. The exception the marker records is singular.
+    # The marker clears a file for one init: when it cleared the file outright, a second GTK test
+    # could be added and panicked with "two different threads".
     case(
         "a marked file may keep one init, not two",
         "#[cfg(test)]\n"
@@ -260,8 +239,6 @@ def main() -> int:
         expect_text="second",
     )
 
-    # `git ls-files` is the input, so the check is about the repository rather
-    # than about whatever happens to be in somebody's working tree.
     case(
         "an untracked experiment is not the repository's problem",
         "#[cfg(test)]\nmod tests {\n    #[test]\n    fn go() { adw::init().unwrap(); }\n}\n",

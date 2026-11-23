@@ -1,8 +1,3 @@
-//! The per-account role map (ADR 0035): which of an account's server folders
-//! plays each role, as the user chose it. One row per `(account, role)`, keyed
-//! by path so the choice survives the folder's row being retired and
-//! re-created, and gone with the account.
-
 use postio_storage::Connection;
 
 use postio_model::{Account, AccountId, EmailAddress, MailboxRole};
@@ -86,8 +81,6 @@ async fn an_accounts_map_is_its_own_and_dies_with_it() {
     );
 }
 
-// ── A server's refusal to create a folder (spec 003, FR-031) ────────────────
-
 #[tokio::test]
 async fn a_refusal_is_recorded_per_account_and_role_with_the_servers_own_words() {
     let database = test_support::memory().await;
@@ -105,7 +98,6 @@ async fn a_refusal_is_recorded_per_account_and_role_with_the_servers_own_words()
         .await
         .expect("refuse");
 
-    // Per account: one server saying no says nothing about another's.
     assert_eq!(
         roles.refusals(ada).await.expect("refusals"),
         vec![(MailboxRole::Junk, "Permission denied".to_owned())]
@@ -118,8 +110,6 @@ async fn a_refusal_is_recorded_per_account_and_role_with_the_servers_own_words()
 
 #[tokio::test]
 async fn refusing_the_same_role_twice_keeps_the_current_reason_not_a_second_row() {
-    // What matters is the answer the server is giving now, not how many times
-    // it has given one.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection, "ada@example.com").await;
@@ -142,9 +132,6 @@ async fn refusing_the_same_role_twice_keeps_the_current_reason_not_a_second_row(
 
 #[tokio::test]
 async fn mapping_a_role_by_hand_clears_the_refusal_that_was_standing_against_it() {
-    // The user has answered the question another way, so the record of the
-    // server saying no is stale -- and leaving it would suppress an attempt
-    // nobody is going to make anyway, on a role that now resolves.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection, "ada@example.com").await;

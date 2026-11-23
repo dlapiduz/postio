@@ -1,26 +1,3 @@
-//! Adding the first account without an onboarding screen (#649).
-//!
-//! macOS has no way to configure an account: onboarding is GTK, top to
-//! bottom, and a Mac has no Linux Postio to have set things up with. #649
-//! decided the first slice is the cheapest thing that closes the gap — a
-//! headless provisioning path — with native onboarding deferred behind it.
-//!
-//! The premise that slice was written on has since moved. `[accounts.<id>]`
-//! in `config.toml` was retired by #470 because nothing read it; accounts
-//! live in the encrypted store, written once by onboarding. So "hand-write
-//! eight lines of TOML" is not a path that exists, and what stands in for it
-//! has to make the same two writes onboarding makes.
-//!
-//! **The order of those two writes is the whole of the risk**, and it is
-//! recorded in `onboarding::persist`: the credential first, then the
-//! row. 0.1.0 did it the other way and `postio-67` is what that cost — a
-//! keyring write that failed after the row was committed left an account with
-//! no reachable password, which could not sync, could not authenticate, and
-//! could not be repaired from inside the application, because
-//! `first_account().is_some()` meant onboarding never ran again. The failure
-//! the safe order leaves behind is a credential no row names, which nothing
-//! reads and which is rolled back anyway.
-
 use postio_account::discovery::{AccountSettings, Encryption, ServerSettings, SettingsSource};
 use postio_account::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
 use postio_model::account::{AuthMethod, TransportSecurity};
@@ -30,8 +7,6 @@ use postio_storage::test_support;
 
 const ADDRESS: &str = "ada@example.com";
 
-/// Settings as a preset row would hand them over: implicit TLS on both, the
-/// login the same as the address.
 fn settings() -> AccountSettings {
     AccountSettings {
         email: ADDRESS.to_owned(),
@@ -51,8 +26,6 @@ fn settings() -> AccountSettings {
 
 #[tokio::test]
 async fn a_fresh_store_gains_an_account_and_the_password_goes_to_the_keyring() {
-    // The sentence #649 is about: a store this helper touched has an account
-    // in it, and the password is in the keyring rather than anywhere on disk.
     let database = test_support::temp().await;
     let keyring = MemorySecretStore::new();
 
@@ -89,14 +62,6 @@ async fn a_fresh_store_gains_an_account_and_the_password_goes_to_the_keyring() {
 
 #[tokio::test]
 async fn a_keyring_that_refuses_leaves_no_account_behind() {
-    // `postio-67`, as a test. The row must not be committed until the
-    // credential is safely stored, because an account row with no reachable
-    // password is a state the application cannot get out of: it will not
-    // sync, and its existence is what stops onboarding running again.
-    //
-    // The example this replaced (the classic app's provision example) wrote
-    // the row first and the credential second, so a locked keyring left
-    // exactly that wreck behind.
     let database = test_support::temp().await;
     let keyring = MemorySecretStore::locked();
 
@@ -128,12 +93,6 @@ async fn a_keyring_that_refuses_leaves_no_account_behind() {
 
 #[tokio::test]
 async fn provisioning_an_address_that_is_already_there_leaves_it_alone() {
-    // Re-running the helper is the ordinary case -- a script, a second
-    // attempt after a typo elsewhere -- and it must not produce a second row
-    // for the same address, which would leave `first_account` choosing
-    // between two. Nor may it overwrite a credential that already works: a
-    // re-run with the wrong password in the environment would otherwise
-    // break an account that was syncing perfectly well.
     let database = test_support::temp().await;
     let keyring = MemorySecretStore::new();
 
@@ -182,11 +141,6 @@ async fn provisioning_an_address_that_is_already_there_leaves_it_alone() {
 
 #[test]
 fn discovered_settings_become_a_row_the_engine_can_dial() {
-    // The mapping, which is the one place discovery's vocabulary meets the
-    // store's. `Encryption` and `TransportSecurity` are the same idea spelled
-    // twice, and a mapping that flattened both to TLS would silently dial the
-    // implicit-TLS port with STARTTLS expected -- a connection failure the
-    // user would read as a wrong password.
     let account = account_from(&settings());
 
     assert_eq!(account.incoming.host, "imap.example.com");
@@ -214,10 +168,6 @@ fn discovered_settings_become_a_row_the_engine_can_dial() {
 
 #[test]
 fn a_login_that_differs_from_the_address_is_what_both_servers_are_told() {
-    // iCloud custom domains, and every provider whose login is not the
-    // address mail arrives at. The address is the identity; the login is the
-    // credential's name, and sending the wrong one fails authentication with
-    // a message about the password.
     let account = account_from(&AccountSettings {
         login: "ada@icloud.example".to_owned(),
         ..settings()
@@ -231,13 +181,8 @@ fn a_login_that_differs_from_the_address_is_what_both_servers_are_told() {
     assert_eq!(account.outgoing.username, "ada@icloud.example");
 }
 
-// --- a local maildir (#1278) ------------------------------------------------
-
 #[tokio::test]
 async fn a_local_account_is_one_write_and_no_credential() {
-    // A maildir account signs in to nothing. Writing an empty credential
-    // under the user's address would put a secret-shaped nothing in the
-    // keyring that every later "is this signed in?" has to interpret.
     let database = test_support::memory().await;
     let keyring = MemorySecretStore::new();
 
@@ -288,9 +233,6 @@ async fn adding_the_same_local_store_twice_changes_nothing() {
 
 #[test]
 fn a_home_relative_path_is_stored_as_the_directory_it_names() {
-    // The row is read by whatever process opens the store next, and `~/mail`
-    // means whatever that process's home is. The account *is* the directory,
-    // so the directory is what gets written down.
     let home = std::env::var("HOME").expect("a home directory");
 
     assert_eq!(
@@ -310,17 +252,6 @@ fn a_home_relative_path_is_stored_as_the_directory_it_names() {
 
 #[tokio::test]
 async fn the_helper_is_inert_where_the_repair_route_is_not() {
-    // The whole of #1584's second half, stated as a contrast: the same
-    // store, the same address, the same new password — and two different
-    // answers, because the *route* is what decides, not a default somebody
-    // could flip.
-    //
-    // `provision` is what a shell runs, possibly from a cron entry, possibly
-    // with a stale variable in its environment; it may never overwrite a
-    // credential that works. `repair` is what a person clicking Reconnect on
-    // their own account row runs; overwriting is the entire point of it.
-    // Anything that made the helper "just do the right thing" would break
-    // the first of those to fix the second.
     let database = test_support::temp().await;
     let keyring = MemorySecretStore::new();
 
@@ -383,11 +314,6 @@ async fn the_helper_is_inert_where_the_repair_route_is_not() {
 
 #[tokio::test]
 async fn a_repair_names_an_account_that_would_never_read_a_typed_password() {
-    // An OAuth account's keyring entry under its own address is read by
-    // nothing — its credential lives under a derived key and is minted by a
-    // browser round trip. Storing one here would report success and change
-    // nothing a server ever sees, which is precisely the shape of the bug
-    // #1584 opened with on the other route.
     let database = test_support::temp().await;
     let keyring = MemorySecretStore::new();
 

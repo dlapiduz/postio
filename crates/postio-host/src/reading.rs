@@ -1,9 +1,4 @@
-//! What a reading pane draws of a message, read for every frontend.
-//!
-//! Moved from the classic app's reading pane (`docs/archive/specs/005-tui-frontend` T018):
-//! the desktop read a message's body, its row and its send state on one
-//! connection per message, and a conversation's members on one reader turn
-//! (#1609). The store's owner does both now, and a frontend asks once.
+//! What a reading pane draws of a message, for every frontend.
 
 use postio_client::protocol::{Body, Reading};
 use postio_model::listing::StoreError;
@@ -13,15 +8,9 @@ use postio_storage::Store;
 use postio_storage::repository::{MessageRepository, ThreadRepository};
 use postio_ui::reader::document::Absent;
 
-/// What the host knows of each account's link, and which panes are waiting
-/// on one (#1986).
-///
-/// A pane's plate for a body that is not here depends on whether a request
-/// for it can run, and the frontend is the wrong one to say: GTK and the TUI
-/// said "reachable" always. The engines announce every change of link, so
-/// the host keeps the last word per account, answers each reading from it,
-/// and, when an account comes back, tells the panes that were shown the
-/// offline plate to read again.
+/// A frontend cannot say whether a request can run, so the host keeps the last link word per
+/// account; when an account comes back it tells the panes that showed the offline plate to read
+/// again (#1986).
 #[derive(Default)]
 pub(crate) struct Links {
     state: std::sync::Mutex<LinkState>,
@@ -34,8 +23,8 @@ struct LinkState {
 }
 
 impl Links {
-    /// An account's link changed. Returns the messages whose panes were
-    /// told "offline" and should read again, when it is now reachable.
+    /// Returns the messages whose panes were told "offline", to read again, when it is now
+    /// reachable.
     pub(crate) fn changed(
         &self,
         account: AccountId,
@@ -54,8 +43,7 @@ impl Links {
         }
     }
 
-    /// `body` as drawn for a message of `account`: a body not here reads
-    /// "offline" whenever the account's link cannot run a request, whatever
+    /// A body not here reads "offline" whenever the account's link cannot run a request, whatever
     /// the frontend passed.
     fn settle(&self, account: AccountId, message: MessageId, body: Stored) -> Stored {
         let mut state = self.state.lock().expect("never poisoned");
@@ -76,7 +64,6 @@ impl Links {
     }
 }
 
-/// A stored body, as it crosses to a frontend.
 pub fn wire_body(stored: Stored) -> Body {
     match stored {
         Stored::Ready {
@@ -96,19 +83,15 @@ pub fn wire_body(stored: Stored) -> Body {
     }
 }
 
-/// Everything a pane draws of `message`, read on `connection`.
-///
-/// The parts are metadata the sync already stored -- `BODYSTRUCTURE`, not
-/// bytes -- so asking for them costs a row read and never a fetch.
+/// The parts are stored metadata, so asking costs a row read and never a fetch.
 pub(crate) async fn load(
     connection: &postio_storage::Checkout,
     message: MessageId,
     offline: bool,
     links: &Links,
 ) -> Reading {
-    // The row the body was decided from, rather than a second read of it.
-    // A draft this machine owns is answered from its buffer without reading
-    // the row, so for that one the row is still read here.
+    // A draft this machine owns is answered from its buffer without reading the row, so its row is
+    // still read here.
     let (body, fetched) =
         postio_session::reading::load_with_row(connection, message, offline).await;
     let body = match &fetched {
@@ -127,7 +110,6 @@ pub(crate) async fn load(
             .ok()
             .flatten(),
     };
-    // Judged from the block the body read already carried (#1928).
     let sender_warning = match (&row, &body) {
         (Some(row), Stored::Ready { .. }) => {
             postio_session::reading::sender_warning(connection, row, headers.as_deref()).await
@@ -147,7 +129,6 @@ pub(crate) async fn load(
     }
 }
 
-/// [`load`] for each of `messages`, on one reader turn, in the order asked.
 pub(crate) async fn readings(
     database: &Store,
     messages: &[MessageId],
@@ -162,7 +143,6 @@ pub(crate) async fn readings(
     Ok(read)
 }
 
-/// [`readings`] for `thread`'s first `limit` members, oldest first.
 pub(crate) async fn thread_readings(
     database: &Store,
     thread: postio_model::ThreadId,
@@ -182,45 +162,32 @@ pub(crate) async fn thread_readings(
     Ok(read)
 }
 
-/// How long a body asked for and never delivered stays asked for. After
-/// that, the next reading of it asks again: the fetch failed, or the link
-/// was down, and a person opening it again is asking again.
+/// After that the next reading asks again: the fetch failed or the link was down.
 const ASKED_PATIENCE: std::time::Duration = std::time::Duration::from_secs(60);
 
-/// How long after a fetch that did not come the next reading of the message
-/// asks again (#1985). Short, because the person opening it again is the
-/// retry; not nothing, because the failure itself makes a pane read again,
-/// and a link that fails at once would turn that into a loop.
+/// Short, because the person opening it again is the retry; not nothing, because the failure itself
+/// makes a pane read again and a link that fails at once would loop (#1985).
 #[cfg(not(test))]
 const ASKED_RETRY: std::time::Duration = std::time::Duration::from_secs(5);
 #[cfg(test)]
 const ASKED_RETRY: std::time::Duration = std::time::Duration::from_millis(200);
 
-/// The bodies a reading pane has asked the engines for, and when (#1788).
-///
-/// A pane draws a message whose body is not here as "Downloading this
-/// message", and that is a promise: reading it is the person opening it,
-/// which is the one thing allowed to reach for its words ahead of the
-/// backfill (`ARCHITECTURE.md` §11). Every frontend reads a pane through
-/// [`readings`], so the promise is kept here once rather than in each of
-/// them. A pane is read again on every repaint, though, and a second ask
-/// while the first is on the wire is a second fetch (`Backfill::finished`
-/// re-offers it), so each message is asked for once until its body lands.
+/// A pane drawn as "Downloading this message" is a promise: reading it is the person opening it,
+/// the one thing allowed to reach for its words ahead of the backfill (`ARCHITECTURE.md` §11). A
+/// pane reads again on every repaint and a second ask while the first is on the wire is a second
+/// fetch, so each message is asked for once until its body lands (#1788).
 #[derive(Default)]
 pub(crate) struct AskedBodies {
     asked: std::sync::Mutex<std::collections::HashMap<MessageId, Asked>>,
 }
 
-/// One ask: when, and of which account's engine.
 struct Asked {
     when: std::time::Instant,
     account: Option<AccountId>,
 }
 
 impl AskedBodies {
-    /// `account` has a new engine, and the requests the old one held are
-    /// gone with it: forget what was asked of it, and say which messages, so
-    /// the panes showing them read again and ask the new engine (#1986).
+    /// Returns the messages to read again, so their panes ask the new engine (#1986).
     pub(crate) fn forget_account(&self, account: AccountId) -> Vec<MessageId> {
         let mut asked = self.asked.lock().expect("never poisoned");
         let mut forgotten = Vec::new();
@@ -234,8 +201,6 @@ impl AskedBodies {
         forgotten
     }
 
-    /// The engine says the fetch for `message` ended without its body: the
-    /// ask is over, and a reading after [`ASKED_RETRY`] makes it again.
     pub(crate) fn failed(&self, message: MessageId, now: std::time::Instant) {
         let mut asked = self.asked.lock().expect("never poisoned");
         if let Some(ask) = asked.get_mut(&message) {
@@ -243,17 +208,15 @@ impl AskedBodies {
         }
     }
 
-    /// Which of `readings` to ask the engines for now: those whose body is
-    /// not here and not asked for within [`ASKED_PATIENCE`]. A body that is
-    /// here is forgotten, so a message is never remembered past its fetch.
+    /// A body that is here is forgotten, so a message is never remembered past its fetch.
     pub(crate) fn to_ask(&self, readings: &[Reading], now: std::time::Instant) -> Vec<MessageId> {
         let mut asked = self.asked.lock().expect("never poisoned");
         asked.retain(|_, ask| now.saturating_duration_since(ask.when) < ASKED_PATIENCE);
         let mut ask = Vec::new();
         for reading in readings {
             match reading.body {
-                // A body the server refused is still asked for when the
-                // person opens it: only the seeds leave it alone (#1918).
+                // A refused body is still asked for when the person opens it: only the seeds leave
+                // it alone (#1918).
                 Body::Partial | Body::Failed => {
                     if let std::collections::hash_map::Entry::Vacant(first) =
                         asked.entry(reading.message)
@@ -265,8 +228,6 @@ impl AskedBodies {
                         ask.push(reading.message);
                     }
                 }
-                // Offline is the frontend saying "do not reach"; a foreign
-                // draft, a missing or an empty body has nothing to fetch.
                 Body::Offline | Body::Missing | Body::Empty | Body::ForeignDraft => {}
                 Body::Ready { .. } => {
                     asked.remove(&reading.message);

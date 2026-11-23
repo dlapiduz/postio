@@ -1,10 +1,5 @@
-//! The reading renderer: message bodies drawn in-process, with no network
-//! crate and no C anywhere on the path message content takes (spec 006
-//! FR-001, FR-023a).
-//!
-//! The engine is Blitz (spec 006 research R0, decided by evaluation). The
-//! crate is being built task by task; until it is, it holds the evaluation's
-//! harness in `examples/` and the dependency graph the checks prove.
+//! The reading renderer: message bodies drawn in-process, with no network crate
+//! and no C on the path message content takes.
 
 pub mod fonts;
 mod present;
@@ -22,117 +17,72 @@ pub use resources::Resources;
 pub use theme::{Presentation, Rgb, Theme};
 pub use thread::{DEFAULT_RENDER_DEADLINE, NOTICE_CLASS, Renderer};
 
-/// One message's key in a composed conversation: what its container's
-/// `data-postio-message` carries, and what its `cid:` references resolve in.
 pub type Scope = String;
 
-/// What the UI thread asks the render thread for (data-model.md).
 #[derive(Clone, Debug)]
 pub struct RenderRequest {
     /// Monotonic per reader; a result for a stale generation is dropped.
     pub generation: u64,
-    /// The composed HTML.
     pub document: String,
-    /// The message's plain-text alternative, drawn if the render falls
-    /// back (FR-023).
     pub plain_text: String,
-    /// What is drawn in place of the document if the render falls back:
-    /// the plain text composed as the reader composes a plain-text body, so
-    /// it takes the same column, face and rhythm (T218). `None` draws
-    /// `plain_text` by the renderer's own minimal path.
+    /// The plain text composed as the reader composes a plain-text body, so it takes
+    /// the same column and face. `None` draws `plain_text` by the renderer's own minimal path.
     pub fallback: Option<Fallback>,
-    /// The input cap the sanitizer found the body over, if any: such a
-    /// request is drawn as `plain_text` and never reaches the engine.
+    /// The input cap the sanitizer found the body over, if any: such a request is drawn as
+    /// `plain_text`.
     pub over_cap: Option<postio_body::Cap>,
-    /// Everything the document may load; nothing else is reachable.
     pub resources: std::sync::Arc<Resources>,
-    /// The laid-out width and the two scales, never folded together (R11).
     pub viewport: Viewport,
-    /// The theme every message is classified and repaired against (R10).
     pub theme: Theme,
-    /// The messages the user asked to darken (FR-013a).
     pub darkened: Vec<Scope>,
-    /// The `<details>` folds the user has toggled from how the document
-    /// sets them, by the stable id `postio-ui` stamps as
-    /// `data-postio-fold`. A toggle, not a state: the latest thread message
-    /// starts open and a quote starts closed, and either may be flipped.
+    /// Folds toggled from how the document sets them, by the id `postio-ui` stamps
+    /// as `data-postio-fold`: the latest thread message starts open, a quote closed.
     pub toggled_folds: Vec<String>,
-    /// The messages shown in Reader view (R16).
     pub reader_view: Vec<Scope>,
 }
 
-/// A plain-text body composed by the reader, drawn if a render falls back.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Fallback {
-    /// The whole document, as the reader would draw the message's plain
-    /// text.
     pub document: String,
-    /// Whether the document says why it is showing, in a quiet line above
-    /// the body ([`FallbackReason::notice`]). False when the surface says it
-    /// itself -- Focus's render-mode line -- because a swap is never silent
-    /// (FR-023), and said twice it is noise.
+    /// False when the surface says it itself (Focus's render-mode line): a swap is
+    /// never silent, and said twice it is noise.
     pub notice: bool,
 }
 
-/// The surface a document is laid out for.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Viewport {
-    /// The width in logical (CSS) pixels.
     pub width: f64,
-    /// The surface's fractional scale: 1.0, 1.25, 2.0.
     pub hidpi_scale: f64,
-    /// The user's zoom step, 1.0 being 100% (R11).
     pub zoom: f64,
 }
 
-/// The one thing the widget reads: immutable, and `Send + Sync`, so it
-/// crosses from the render thread without the engine (R7).
+/// Immutable and `Send + Sync`, so it crosses from the render thread without the engine.
 #[derive(Debug)]
 pub struct RenderedDocument {
-    /// Copied from the request.
     pub generation: u64,
-    /// The laid-out size in CSS pixels at this zoom.
     pub size: kurbo::Size,
-    /// The device scale the display list was recorded at.
     pub scale: f64,
-    /// The display list, recorded once and rasterised per tile.
     pub display_list: anyrender::Scene,
-    /// The whole document at a quarter of its scale, at most 16 MiB: what
-    /// is drawn where a tile is not ready yet, so no frame is blank.
+    /// At most 16 MiB: drawn where a tile is not ready, so no frame is blank.
     pub low_res: Raster,
-    /// The copy, find and accessibility text, with its geometry.
     pub text: TextIndex,
-    /// Every link, in document order.
     pub links: Vec<LinkBox>,
-    /// Every message's box and how it is presented, in document order.
     pub messages: Vec<MessageBox>,
-    /// Every fold and whether it is open.
     pub folds: Vec<FoldBox>,
-    /// Where each element with an `id` starts, for fragment links: the id
-    /// as the document spells it, and its top in CSS pixels.
+    /// The id as the document spells it, and its top in CSS pixels.
     pub anchors: Vec<(String, f64)>,
-    /// What the render cost, counted (Principle V).
     pub counts: RenderCounts,
-    /// Whether the sender's markup was drawn, or the plain-text fallback.
     pub outcome: Outcome,
-    /// Messages whose text cannot reach the high-contrast floor on their
-    /// paper: the reader opens them in Reader view instead (FR-013b).
     pub needs_reader_view: Vec<Scope>,
-    /// The scale a paper body was zoomed by to fit its column, on top of
-    /// the reader's own zoom: 1.0 when it fitted, or nothing was on paper,
-    /// and never below [`render::PAPER_FIT_FLOOR`] (T207, T212).
+    /// 1.0 when it fitted or nothing was on paper; never below [`render::PAPER_FIT_FLOOR`].
     pub fit: f64,
-    /// Counts this snapshot among the live ones while it exists.
     _live: Live,
 }
 
 static_assertions::assert_impl_all!(RenderedDocument: Send, Sync);
 
-/// How many snapshots are alive in this process.
 static LIVE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-/// A snapshot's place in [`live_documents`]: counted when made, uncounted
-/// when dropped.
 #[derive(Debug)]
 struct Live(());
 
@@ -149,21 +99,17 @@ impl Drop for Live {
     }
 }
 
-/// How many [`RenderedDocument`]s are alive in this process: the count the
-/// reader's memory claim is held to (SC-006) -- viewing more messages must
-/// not leave more snapshots behind. Test-facing.
+/// Test-facing: viewing more messages must not leave more snapshots behind.
 #[doc(hidden)]
 pub fn live_documents() -> usize {
     LIVE.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 impl RenderedDocument {
-    /// The link under `point`, in document coordinates.
     pub fn link_at(&self, point: Point) -> Option<&LinkBox> {
         self.links.iter().find(|link| link.rect.contains(point))
     }
 
-    /// The fold whose summary is under `point`.
     pub fn fold_at(&self, point: Point) -> Option<&FoldBox> {
         self.folds
             .iter()
@@ -172,8 +118,6 @@ impl RenderedDocument {
 }
 
 impl LinkTarget {
-    /// Where the link goes, as a person reads it: the address, or what the
-    /// verb does.
     pub fn describe(&self) -> String {
         match self {
             LinkTarget::External(url) => url.to_string(),
@@ -184,7 +128,6 @@ impl LinkTarget {
 }
 
 impl Verb {
-    /// The verb's name, as the reader's thread document spells it.
     pub fn name(self) -> &'static str {
         match self {
             Verb::Allow => "allow",
@@ -195,8 +138,6 @@ impl Verb {
     }
 }
 
-/// The document's text in reading order, the one serialisation copy, find
-/// and the screen reader share (R7).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TextIndex {
     /// Tabs between cells, newlines at rows and blocks, `alt` included.
@@ -206,154 +147,99 @@ pub struct TextIndex {
     pub clusters: Vec<Cluster>,
 }
 
-/// A sentence kept by its words, and where it sat in the text it was read
-/// from: what [`TextIndex::locate`] finds again in a rendered body (spec 007
-/// research R2).
-///
-/// The offset cannot address the index directly. The index's text is in
-/// laid-out reading order, with whitespace collapsed, `alt` text in and
-/// closed folds out, so a sentence is found by its words. The offset only
-/// says which occurrence it was when the words repeat.
+/// A sentence kept by its words, and where it sat in the text it was read from.
+/// The offset cannot address the index (laid-out, whitespace collapsed, closed
+/// folds out); it only says which occurrence it was when the words repeat.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Excerpt<'a> {
-    /// The sentence, as it was read.
     pub text: &'a str,
-    /// Where it started, in chars into the text it was read from.
     pub offset: usize,
-    /// That text's length, in chars.
     pub source_len: usize,
 }
 
-/// A run of text drawn in one colour on one ground.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Cluster {
-    /// Chars into [`TextIndex::text`].
     pub range: std::ops::Range<usize>,
-    /// Where it is drawn, in CSS pixels.
     pub rect: Rect,
-    /// The message it belongs to.
     pub scope: Scope,
-    /// The colour it is drawn in, after repair.
     pub color: Rgb,
-    /// The colour painted behind it (R10's ancestor walk).
     pub painted_ground: Rgb,
-    /// Which laid-out line it is on, counted through the document.
     pub line: u32,
 }
 
-/// A link's box and where it goes.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LinkBox {
-    /// Where it is drawn, in CSS pixels.
     pub rect: Rect,
-    /// What activating it does.
     pub target: LinkTarget,
 }
 
 /// What a link does. `javascript:` and every other scheme are not links.
 #[derive(Clone, Debug, PartialEq)]
 pub enum LinkTarget {
-    /// `http`, `https` or `mailto`, opened outside the reader.
     External(url::Url),
-    /// One of the reader's own verbs, for the message that offers it.
     Verb {
-        /// The message offering it.
         scope: Scope,
-        /// Which verb.
         verb: Verb,
     },
-    /// An `id` inside a message.
     Fragment {
         /// The message the `id` is in: fragments never cross messages.
         scope: Scope,
-        /// The sender's `id`, before scoping.
         id: String,
     },
 }
 
-/// A verb a message offers inside the document.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Verb {
-    /// Show this sender's remote images.
     Allow,
-    /// Reply to this message.
     Reply,
-    /// Forward this message.
     Forward,
-    /// Resume the composer on this draft.
     Continue,
 }
 
-/// One message's container.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MessageBox {
-    /// The message.
     pub scope: Scope,
-    /// Its container's box, in CSS pixels.
     pub rect: Rect,
-    /// How the theme rule presented it (R10).
     pub presentation: Presentation,
 }
 
-/// A `<details>` fold.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FoldBox {
-    /// The stable fold id `postio-ui` stamps.
     pub id: String,
-    /// The summary's box, which toggles it.
     pub summary_rect: Rect,
-    /// Whether it is drawn open.
     pub open: bool,
 }
 
-/// What one render cost, counted rather than timed (Principle V).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RenderCounts {
     /// Renders this request made: always 1.
     pub renders: u32,
     /// Style passes: 1, or 2 when colours were repaired.
     pub style_passes: u32,
-    /// DOM nodes laid out.
     pub nodes: u32,
-    /// Clusters in the text index.
     pub text_clusters: u32,
-    /// Runs whose colour was repaired to the floor.
     pub repaired_runs: u32,
-    /// Resources found in the request's table.
     pub resources_resolved: u32,
-    /// Lookups the table could not answer: drawn as nothing, never fetched.
     pub resources_unresolved: u32,
-    /// Images drawn as a sized placeholder.
     pub images_placeholdered: u32,
-    /// Commands in the display list.
     pub display_list_commands: u32,
 }
 
-/// Whether the sender's markup was drawn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Outcome {
-    /// It was.
     Rendered,
-    /// It was not, and the plain-text alternative is drawn instead.
     FellBack(FallbackReason),
 }
 
-/// Why a render fell back to plain text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FallbackReason {
-    /// The engine panicked; the document was dropped.
     Panicked,
-    /// It did not finish within the deadline (FR-023).
     Deadline,
-    /// The sanitizer found the body over this input cap.
     OverCap(postio_body::Cap),
-    /// Nothing in the message could be decoded as a body.
     Undecodable,
 }
 
 impl FallbackReason {
-    /// Why, as the end of a sentence: "this message took too long to lay
-    /// out". What a surface naming the fallback itself says.
     pub fn why(self) -> &'static str {
         match self {
             FallbackReason::Deadline => "this message took too long to lay out",
@@ -363,8 +249,6 @@ impl FallbackReason {
         }
     }
 
-    /// The notice a fallback document carries: never a silent swap
-    /// (FR-023).
     pub fn notice(self) -> String {
         format!("Shown as plain text: {}.", self.why())
     }

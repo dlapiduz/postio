@@ -1,8 +1,5 @@
-//! The words Focus's search dropdown and results view say (spec 010).
-//!
-//! The copy comes from the Mac design (`Design/focus-macos-search`, SPEC
-//! section 2 and screens 01 and 03) and is composed here, once, so the Mac
-//! and any later frontend say the same thing and a test can hold it.
+//! The words Focus's search dropdown and results view say, composed once so every frontend agrees
+//! (spec 010).
 
 use std::time::Duration;
 
@@ -11,8 +8,6 @@ use postio_core::{CommandId, Keymap};
 
 use crate::hints::{self, Hint};
 
-/// The operators the empty dropdown lists under "Search by", each with the
-/// hint after it (screen 01), in the design's order.
 pub fn cheat_sheet() -> [(&'static str, &'static str); 8] {
     [
         ("from:", "person or address"),
@@ -26,10 +21,7 @@ pub fn cheat_sheet() -> [(&'static str, &'static str); 8] {
     ]
 }
 
-/// When a recent search ran, as the right-hand column of its row says it:
-/// "today", "yesterday", the weekday within the last week ("Mon"), then the
-/// day and month ("21 Sep"), with the year for another year. Both times are
-/// read in their own zone, so pass them in the person's.
+/// Both times are read in their own zone, so pass them in the person's.
 pub fn recent_when<Tz: TimeZone>(at: DateTime<Tz>, now: DateTime<Tz>) -> String {
     let (ran, today) = (at.date_naive(), now.date_naive());
     let days = (today - ran).num_days();
@@ -42,7 +34,6 @@ pub fn recent_when<Tz: TimeZone>(at: DateTime<Tz>, now: DateTime<Tz>) -> String 
     }
 }
 
-/// `n` with thousands separators: 18204 is "18,204".
 fn grouped(n: u64) -> String {
     let digits = n.to_string();
     let mut out = String::with_capacity(digits.len() + digits.len() / 3);
@@ -55,25 +46,18 @@ fn grouped(n: u64) -> String {
     out
 }
 
-/// The count `capped` makes a floor of: "10,000+".
 fn count(total: u64, capped: bool) -> String {
     format!("{}{}", grouped(total), if capped { "+" } else { "" })
 }
 
-/// A popover row's or a month's count (spec 010 D30): "24", or "24+" when
-/// the search stopped at its walk's cap and every count is a floor.
 pub fn facet_count(count: u64, capped: bool) -> String {
     self::count(count, capped)
 }
 
-/// A dropdown suggestion's count on the row's right: "412", or "1,000+"
-/// when it stopped at the completion cap and is a floor (spec 010 D29).
 pub fn suggestion_count(count: u64, capped: bool) -> String {
     self::count(count, capped)
 }
 
-/// The dropdown footer's right-hand side: "48 matches · 38 ms", or
-/// "10,000+ matches · 41 ms" when the count stopped at the cap.
 pub fn footer_count(total: u64, elapsed: Duration, capped: bool) -> String {
     let noun = if total == 1 && !capped {
         "match"
@@ -87,27 +71,19 @@ pub fn footer_count(total: u64, elapsed: Duration, capped: bool) -> String {
     format!("{} {noun} \u{b7} {took}", count(total, capped))
 }
 
-/// One "Narrow to" pill: the operator in monospace, the value, and how
-/// many of the results it would keep.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NarrowPill {
-    /// The operator with its colon: "from:", "has:", "label:".
     pub op: String,
-    /// What it is set to: a person, "attachment", a label.
     pub value: String,
-    /// The count, grouped: "9", "1,204", or "1,204+" as a floor.
     pub count: String,
 }
 
 impl NarrowPill {
-    /// The pill as one line, for a screen reader and for tests.
     pub fn label(&self) -> String {
         format!("{} {} {}", self.op, self.value, self.count)
     }
 }
 
-/// The "Narrow to" pill for `op` `value`, which keeps `count` results: a
-/// floor ("1,204+") when the search it narrows stopped at its cap (D30).
 pub fn narrow_pill(op: &str, value: &str, count: u64, capped: bool) -> NarrowPill {
     NarrowPill {
         op: op.to_owned(),
@@ -116,9 +92,6 @@ pub fn narrow_pill(op: &str, value: &str, count: u64, capped: bool) -> NarrowPil
     }
 }
 
-/// The dropdown's last row: "Show all 48 results", or, while a short prefix
-/// is being typed, "Show all 214 results for \u{201c}at\u{201d}". One result is
-/// "Show 1 result"; a capped count is a floor ("10,000+").
 pub fn show_all(total: u64, capped: bool, typed: Option<&str>) -> String {
     let for_typed = typed
         .map(|typed| format!(" for \u{201c}{typed}\u{201d}"))
@@ -129,38 +102,21 @@ pub fn show_all(total: u64, capped: bool, typed: Option<&str>) -> String {
     format!("Show all {} results{for_typed}", count(total, capped))
 }
 
-/// The field's placeholder while it is empty (screen 01).
 pub const PLACEHOLDER: &str = "Search mail, people and files, or type > for commands";
-/// The field's placeholder at rest, 320 wide in the toolbar (McList.dc.html).
 pub const RESTING_PLACEHOLDER: &str = "Search mail or run a command";
-/// The empty dropdown's first section: the searches run lately.
 pub const RECENT: &str = "Recent";
-/// What the Recent section's note says after its key: "⌥⌫ forgets one".
 pub const FORGETS_ONE: &str = "forgets one";
-/// The pinned saved searches' section.
 pub const SAVED_SEARCHES: &str = "Saved searches";
-/// The cheat sheet's section.
 pub const SEARCH_BY: &str = "Search by";
-/// The cheat sheet's last line, before the example sentence.
 pub const JUST_TYPE_IT: &str = "Or just type it:";
-/// Between the example sentence and the query it becomes.
 pub const BECOMES: &str = "becomes";
-/// The plain English the cheat sheet lowers live, as screen 01 has it.
 pub const EXAMPLE: &str = "invoices from ada last month";
-/// The words state's hits.
 pub const TOP_HITS: &str = "Top hits";
-/// The Top hits section's note.
 pub const TOP_HITS_NOTE: &str = "ranked by sender, recency and where the words matched";
-/// The words state's filter pills.
 pub const NARROW_TO: &str = "Narrow to";
-/// What the Show all row says after its count.
 pub const SHOW_ALL_DETAIL: &str = "in the main window, with filters, a timeline and Quick Look";
-/// What the dropdown's one row says under [`nothing_matches`] when the
-/// words find nothing (US6): Return opens the no-results page.
 pub const NOTHING_DETAIL: &str = "Return offers looser searches";
 
-/// How many threads a recent search found: "48 results", or
-/// "5,000+ results" when that search stopped at its walk's cap (D30).
 pub fn results_count(n: u64, capped: bool) -> String {
     match (n, capped) {
         (1, false) => "1 result".to_owned(),
@@ -168,16 +124,11 @@ pub fn results_count(n: u64, capped: bool) -> String {
     }
 }
 
-/// A saved search's pill count: "39", or "5,000+" when its search stopped
-/// at the walk's cap and the count is a floor (D30).
 pub fn saved_count(n: u64, capped: bool) -> String {
     count(n, capped)
 }
 
-/// A top hit's date column: the day and month ("26 Sep"), with the year's
-/// last two digits for another year ("22 Oct 25"), the list's short form
-/// (`row::timestamp`): the design never draws a year, and the full one
-/// does not fit the results' 62-pt column. Both times in the person's zone.
+/// A two-digit year for another year: the full one does not fit the results' 62-pt column.
 pub fn hit_date<Tz: TimeZone>(at: DateTime<Tz>, now: DateTime<Tz>) -> String {
     let (day, today) = (at.date_naive(), now.date_naive());
     if day.year() == today.year() {
@@ -187,9 +138,7 @@ pub fn hit_date<Tz: TimeZone>(at: DateTime<Tz>, now: DateTime<Tz>) -> String {
     }
 }
 
-/// What a folder is called where search names it: the store's name, but
-/// "Inbox" for the inbox, which IMAP names INBOX in any case (RFC 3501
-/// §5.1) and the place list calls Inbox (`places::place_name`).
+/// IMAP names the inbox INBOX in any case (RFC 3501 §5.1); search calls it "Inbox".
 pub fn folder_name(name: &str) -> String {
     if name.eq_ignore_ascii_case("inbox") {
         "Inbox".to_owned()
@@ -198,8 +147,6 @@ pub fn folder_name(name: &str) -> String {
     }
 }
 
-/// A hit's folder column, as the operator that would find it there:
-/// `in:Inbox`, quoted when the name has a space.
 pub fn in_folder(name: &str) -> String {
     let name = folder_name(name);
     if name.contains(char::is_whitespace) {
@@ -209,11 +156,8 @@ pub fn in_folder(name: &str) -> String {
     }
 }
 
-/// Where a hit's row says it is, in its folder column: where a digest
-/// holds it, in place of its folder (`held`: the rule, and whether it has
-/// been delivered; spec 007 US10), else `in:` its folder; and after it,
-/// where there are several accounts, the one it is in (`account`), so the
-/// same message filed in two accounts does not read as one row twice.
+/// `account` is added where there are several, so one message filed in two accounts does not read
+/// as one row twice.
 pub fn hit_place(
     held: Option<(&str, bool)>,
     folder: Option<&str>,
@@ -229,8 +173,7 @@ pub fn hit_place(
     }
 }
 
-/// The arrows, as one hint: the panel's own walk, which the toolkit keeps
-/// (009 FR-004), not a command.
+/// The panel's own walk, which the toolkit keeps; not a command.
 fn arrows(label: &str) -> Hint {
     hints::fixed(
         "Up Down",
@@ -239,9 +182,6 @@ fn arrows(label: &str) -> Hint {
     )
 }
 
-/// The empty dropdown's footer (screen 01): move, run a recent search
-/// again while there are `recents`, the saved searches' keys, and `>` for
-/// commands.
 pub fn empty_hints(keymap: &Keymap, recents: bool) -> Vec<Hint> {
     let mut hints = vec![arrows("move")];
     if recents {
@@ -251,7 +191,6 @@ pub fn empty_hints(keymap: &Keymap, recents: bool) -> Vec<Hint> {
             "Return runs the highlighted row: the field's own key, not a command",
         ));
     }
-    // ⌥1 to ⌥4 as one cap, when the four keys are one modifier and the digits.
     hints.extend(hints::run(
         keymap,
         &[
@@ -270,16 +209,11 @@ pub fn empty_hints(keymap: &Keymap, recents: bool) -> Vec<Hint> {
     hints
 }
 
-/// The empty dropdown's footer on the right (screen 01): what the search
-/// will look through, "local index · 18,204 messages".
 pub fn local_index(messages: u64) -> String {
     let noun = if messages == 1 { "message" } else { "messages" };
     format!("local index \u{b7} {} {noun}", grouped(messages))
 }
 
-/// The words dropdown's footer (screen 03): move, open the highlighted row
-/// -- a message, or all the results -- all results, and Tab for the first
-/// filter.
 pub fn words_hints(keymap: &Keymap) -> Vec<Hint> {
     let mut hints = vec![
         arrows("move"),
@@ -302,16 +236,10 @@ pub fn words_hints(keymap: &Keymap) -> Vec<Hint> {
     hints
 }
 
-// ---------------------------------------------------------------------------
-// The results view (spec 010 step 3, design §3, screens 06 and 07)
-// ---------------------------------------------------------------------------
-
 use postio_search::query::{Filter, State};
 use postio_search::results::{Location, RankReason, Source};
 
-/// [`reason_line`] beside a row whose source tag already says where the
-/// words were: a subject the tag names is not said again as a reason
-/// (#2085), "subject" twice on one row.
+/// A subject the source tag already names is not said again as a reason (#2085).
 pub fn reason_beside(reasons: &[RankReason], sources: &[Source]) -> String {
     let tagged_subject = sources
         .iter()
@@ -324,12 +252,8 @@ pub fn reason_beside(reasons: &[RankReason], sources: &[Source]) -> String {
     reason_line(&kept)
 }
 
-/// Why a top hit ranked, as the line under its sender says it: two parts
-/// at most (D20). The strongest reason first, in D20's order, then how
-/// many of its messages matched when that is more than one ("you replied
-/// · 3 matches"); a single match is not worth saying, so a second reason
-/// takes the place ("frequent sender · file name"). The app says flagged,
-/// never starred (D19).
+/// At most two parts: the strongest reason, then the match count if more than one. Says flagged,
+/// never starred.
 pub fn reason_line(reasons: &[RankReason]) -> String {
     let mut words = reasons.iter().filter_map(|reason| {
         Some(match reason {
@@ -360,8 +284,6 @@ pub fn reason_line(reasons: &[RankReason]) -> String {
         .join(" \u{b7} ")
 }
 
-/// Where the words matched, as a row's source tag says it: "body", "quoted
-/// text", "subject", or the file's name.
 pub fn source_tag(source: &Source) -> String {
     match source {
         Source::Subject => "subject".to_owned(),
@@ -371,12 +293,8 @@ pub fn source_tag(source: &Source) -> String {
     }
 }
 
-/// A row's tag, `sources` the passage's first and then every place it
-/// matched: where the passage came from, and a file that also matched
-/// beside a passage that is not the file's ("body +
-/// Atlas-Q3-budget.xlsx", screen 06). A subject is named only when it is
-/// the passage's source, which is when nothing else matched: otherwise the
-/// row's first line shows it, marked.
+/// A subject is named only when it is the passage's source, i.e. nothing else matched; otherwise
+/// the row's first line shows it.
 pub fn sources_tag(sources: &[Source]) -> String {
     let is_file =
         |source: &Source| matches!(source, Source::FileName { .. } | Source::FileContent { .. });
@@ -393,10 +311,8 @@ pub fn sources_tag(sources: &[Source]) -> String {
     }
 }
 
-/// The match a row's second line shows: the first with a passage; until
-/// one is cut (or when none can be), the first that is not the subject,
-/// which the row's first line already draws; the subject only when nothing
-/// else matched.
+/// The first match with a passage; else the first that is not the subject (the row's first line
+/// draws it); else the subject.
 pub fn shown_match(
     matches: &[postio_search::results::Match],
 ) -> Option<&postio_search::results::Match> {
@@ -407,8 +323,6 @@ pub fn shown_match(
         .or_else(|| matches.first())
 }
 
-/// Where in a file a passage sits, before the passage: "Page 2",
-/// "Sheet ‘Summary’, row 14" (FR-025).
 pub fn location(location: &Location) -> String {
     match location {
         Location::Page(page) => format!("Page {page}"),
@@ -421,32 +335,23 @@ pub fn location(location: &Location) -> String {
     }
 }
 
-/// The Top hits group's note in the results (screen 06).
 pub const TOP_HITS_RESULTS_NOTE: &str = "why each one ranked is under the sender";
-/// The first month group's note: the groups run newest first.
 pub const NEWEST_FIRST: &str = "newest first";
-/// The group of conversations older than the timeline's twelve months.
 pub const EARLIER: &str = "Earlier";
-/// The quiet hint at the right of the results' field.
 pub const TO_EDIT: &str = "/ to edit";
 
-/// A month group's title: "September 2026".
 pub fn month_title(month: chrono::NaiveDate) -> String {
     month.format("%B %Y").to_string()
 }
 
-/// A month group's header as one line: "September 2026 · 9", what a
-/// screen reader says for it.
 pub fn month_group(month: chrono::NaiveDate, n: u64) -> String {
     group_line(&month_title(month), n)
 }
 
-/// Any group's header as one line: "Top hits · 3", "Earlier · 120".
 pub fn group_line(title: &str, n: u64) -> String {
     format!("{title} \u{b7} {}", grouped(n))
 }
 
-/// A count of threads: "48 threads", "1 thread", "10,000+ threads".
 /// Postio says thread, never conversation (#2118).
 fn threads(total: u64, capped: bool) -> String {
     let noun = if total == 1 && !capped {
@@ -457,23 +362,18 @@ fn threads(total: u64, capped: bool) -> String {
     format!("{} {noun}", count(total, capped))
 }
 
-/// The timeline's count line (§3.3): "48 threads".
 pub fn count_line(total: u64, capped: bool) -> String {
     threads(total, capped)
 }
 
-/// The timeline's sub-line (§3.3): "12 files · 6 people · last 12 months".
 pub fn sub_line(files: u64, people: u64, capped: bool) -> String {
     let files = plural(files, capped, "file", "files");
     let people = plural(people, capped, "person", "people");
     format!("{files} \u{b7} {people} \u{b7} last 12 months")
 }
 
-/// The timeline's sub-line for the query's positive `filters` (§3.3,
-/// screen 11): its filters in words, then its files -- "from Ada since
-/// July · 9 files" -- and its people while no person is the filter. With
-/// no filter it is [`sub_line`]. `name_of` gives a person's name for an
-/// address; a person is said by their first name, as [`save_name`] does.
+/// With no filter it is `sub_line`. A person is said by their first name; `name_of` gives it for an
+/// address.
 pub fn narrowed_sub_line(
     filters: &[Filter],
     name_of: &dyn Fn(&str) -> Option<String>,
@@ -505,8 +405,6 @@ pub fn narrowed_sub_line(
             .collect()
     };
     let mut said: Vec<String> = Vec::new();
-    // An adjective first, then who, where, what, and when last, as
-    // "from Ada since July" reads.
     let order = [
         (FilterKind::Unread, ""),
         (FilterKind::From, "from"),
@@ -529,7 +427,6 @@ pub fn narrowed_sub_line(
     }
     if !held(FilterKind::Date).is_empty() {
         let label = filter_button_label(FilterKind::Date, filters, name_of, today);
-        // "Since July" in a sentence: "since July"; a range keeps its months.
         said.push(match label.split_once(' ') {
             Some((first @ ("Since" | "Before"), rest)) => {
                 format!("{} {rest}", first.to_lowercase())
@@ -547,7 +444,6 @@ pub fn narrowed_sub_line(
     line.join(" \u{b7} ")
 }
 
-/// "1 file", "9 files", grouped; "1+ files" when `capped` makes it a floor.
 fn plural(n: u64, capped: bool, one: &str, many: &str) -> String {
     match (n, capped) {
         (1, false) => format!("1 {one}"),
@@ -555,19 +451,15 @@ fn plural(n: u64, capped: bool, one: &str, many: &str) -> String {
     }
 }
 
-/// The results footer's right-hand side (§3.5): "48 threads · local
-/// index · 41 ms".
 pub fn results_footer(total: u64, capped: bool, elapsed: Duration) -> String {
     footer_of(&threads(total, capped), elapsed)
 }
 
-/// The Files tab's count line (#2183): the cards under it, "6 files", not
-/// the search's threads.
+/// Counts the cards under the Files tab, not the search's threads (#2183).
 pub fn files_count_line(files: u64, capped: bool) -> String {
     plural(files, capped, "file", "files")
 }
 
-/// The Files tab's footer: "6 files · local index · 41 ms".
 pub fn files_footer(files: u64, capped: bool, elapsed: Duration) -> String {
     footer_of(&files_count_line(files, capped), elapsed)
 }
@@ -580,29 +472,19 @@ fn footer_of(counted: &str, elapsed: Duration) -> String {
     format!("{counted} \u{b7} local index \u{b7} {took}")
 }
 
-/// One of the filter bar's buttons (§3.2), in its order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FilterKind {
-    /// From ▾: a person.
     From,
-    /// To ▾: a person.
     To,
-    /// Date ▾: `after:` and `before:`.
     Date,
-    /// Anywhere ▾: a folder.
     Anywhere,
-    /// Label ▾.
     Label,
-    /// A toggle: `has:attachment`.
     Attachment,
-    /// A toggle: `has:action`.
     HasAction,
-    /// A toggle: `is:unread`.
     Unread,
 }
 
 impl FilterKind {
-    /// Every button, left to right.
     pub const ALL: [FilterKind; 8] = [
         FilterKind::From,
         FilterKind::To,
@@ -614,7 +496,6 @@ impl FilterKind {
         FilterKind::Unread,
     ];
 
-    /// What the button says with nothing applied.
     pub fn title(self) -> &'static str {
         match self {
             FilterKind::From => "From",
@@ -628,8 +509,7 @@ impl FilterKind {
         }
     }
 
-    /// A toggle button's term, as an operator's keyword and its value:
-    /// what a click adds or takes out. `None` for a button with a popover.
+    /// `None` for a button with a popover.
     pub fn toggle_term(self) -> Option<(&'static str, &'static str)> {
         match self {
             FilterKind::Attachment => Some(("has", "attachment")),
@@ -643,7 +523,6 @@ impl FilterKind {
         }
     }
 
-    /// Whether it opens a popover (▾), rather than toggling.
     pub fn has_popover(self) -> bool {
         matches!(
             self,
@@ -655,8 +534,6 @@ impl FilterKind {
         )
     }
 
-    /// Whether `filter` is one this button applies: a set of values
-    /// (`from:{ada tomas}`, spec 010 D26) is its field's, as one value is.
     pub fn holds(self, filter: &Filter) -> bool {
         let Some(filter) = filter.alternatives().first() else {
             return false;
@@ -674,8 +551,6 @@ impl FilterKind {
     }
 }
 
-/// The month `date` falls in, as a date label says it: "July", or "July
-/// 2025" in another year than `today`'s.
 fn month_word(date: chrono::NaiveDate, today: chrono::NaiveDate) -> String {
     if date.year() == today.year() {
         date.format("%B").to_string()
@@ -684,8 +559,6 @@ fn month_word(date: chrono::NaiveDate, today: chrono::NaiveDate) -> String {
     }
 }
 
-/// A day as a date label says it: the month on its first day, else "14
-/// Jul", with the year in another year.
 fn day_word(date: chrono::NaiveDate, today: chrono::NaiveDate) -> String {
     match (date.day(), date.year() == today.year()) {
         (1, _) => month_word(date, today),
@@ -694,17 +567,12 @@ fn day_word(date: chrono::NaiveDate, today: chrono::NaiveDate) -> String {
     }
 }
 
-/// What a filter button says (§3.2): its title with nothing applied, its
-/// value once one is ("From: Ada Moreno", "Since July", "Label: Atlas"),
-/// "+1" for each more. `filters` are the query's positive clauses this
-/// button holds; `name_of` gives a person's name for an address.
 pub fn filter_button_label(
     kind: FilterKind,
     filters: &[Filter],
     name_of: &dyn Fn(&str) -> Option<String>,
     today: chrono::NaiveDate,
 ) -> String {
-    // A set's values each count, so two people read "Ada Moreno +1".
     let held: Vec<&Filter> = filters
         .iter()
         .flat_map(Filter::alternatives)
@@ -764,20 +632,12 @@ pub fn filter_button_label(
     format!("{title}: {}{more}", value(held[0]))
 }
 
-/// The query field's name for a screen reader (design §5): a combobox.
 pub const A11Y_QUERY: &str = "Search query";
-/// The dropdown's name: the combobox's listbox.
 pub const A11Y_SUGGESTIONS: &str = "Search suggestions";
-/// The Conversations tab's table.
 pub const A11Y_RESULTS: &str = "Search results";
-/// The Files tab's grid.
 pub const A11Y_FILES: &str = "Files";
-/// The People tab's list.
 pub const A11Y_PEOPLE: &str = "People";
 
-/// What a screen reader says for a dropdown row: its words, then the
-/// folder and the date when it has them, "Atlas Q3 budget, 3 results,
-/// in:Inbox, yesterday".
 pub fn dropdown_row_accessible(
     title: &str,
     detail: &str,
@@ -792,9 +652,6 @@ pub fn dropdown_row_accessible(
         .join(", ")
 }
 
-/// What a screen reader says for a result (design §5): "Ada Moreno, Re:
-/// Atlas Q3 budget, matched in body: …, Inbox, 26 Sep". A row with no
-/// passage yet leaves the match out.
 pub fn accessible_row(
     sender: &str,
     subject: &str,
@@ -811,8 +668,6 @@ pub fn accessible_row(
     format!("{sender}, {subject}{matched}, {folder}, {date}")
 }
 
-/// The results footer's keys (§3.5): move, open, select, edit the query,
-/// and Esc back to the inbox. Quick Look's Space joins with step 5.
 pub fn results_hints(keymap: &Keymap) -> Vec<Hint> {
     let mut out = Vec::new();
     out.extend(hints::pair(
@@ -829,8 +684,6 @@ pub fn results_hints(keymap: &Keymap) -> Vec<Hint> {
     out
 }
 
-/// The bulk bar's verbs while results are checked (§3.5): Archive, Label,
-/// Move, Mark read, Snooze, each with its key.
 pub fn bulk_hints(keymap: &Keymap) -> Vec<Hint> {
     crate::focus_dialog::RESULTS_BULK
         .iter()
@@ -838,9 +691,7 @@ pub fn bulk_hints(keymap: &Keymap) -> Vec<Hint> {
         .collect()
 }
 
-/// The bulk bar's right while some results are checked (§3.5): "⇧X select
-/// all 12", every conversation the query matches. `None` when nothing is
-/// bound to Select all.
+/// `None` when nothing is bound to Select all.
 pub fn select_all_hint(keymap: &Keymap, total: u64, capped: bool) -> Option<Hint> {
     hints::hint(
         keymap,
@@ -849,10 +700,6 @@ pub fn select_all_hint(keymap: &Keymap, total: u64, capped: bool) -> Option<Hint
     )
 }
 
-/// The name the Save popover offers for `query` (§3.9): its words,
-/// capitalised, then "from" and "to" with each person's first name --
-/// "Atlas budget from Ada". `name_of` finds an address's name. A query
-/// with no words and no people is its own name.
 pub fn save_name(
     query: &postio_search::ParsedQuery,
     name_of: &dyn Fn(&str) -> Option<String>,
@@ -869,7 +716,6 @@ pub fn save_name(
             .unwrap_or_else(|| address.to_owned())
     };
     for clause in query.filters().filter(|clause| !clause.negated) {
-        // Either of a set's people (D26): "from Ada or Tomás".
         let people = |pick: fn(&Filter) -> Option<&String>| {
             let who: Vec<String> = clause
                 .filter
@@ -899,30 +745,17 @@ pub fn save_name(
     }
 }
 
-/// The Save popover's title (§3.9).
 pub const SAVE_TITLE: &str = "Save as a saved search";
-/// Over its name field.
 pub const SAVE_NAME: &str = "Name";
-/// Its first switch.
 pub const SAVE_PIN: &str = "Pin to saved searches";
-/// Under it, before the key the search will run on.
 pub const SAVE_PIN_NOTE: &str = "Appears at the top of search as";
-/// Under it past the fourth pinned search, which has no ⌥ number.
 pub const SAVE_PIN_NOTE_NO_KEY: &str = "Appears at the top of search";
-/// Its second switch.
 pub const SAVE_NOTIFY: &str = "Notify when new mail matches";
-/// Under it (D15).
 pub const SAVE_NOTIFY_NOTE: &str = "A quiet badge, not a banner";
-/// Its third switch.
 pub const SAVE_ROLLING: &str = "Keep the date rolling";
-/// Its buttons.
 pub const SAVE_CANCEL: &str = "Cancel";
-/// Its buttons.
 pub const SAVE: &str = "Save";
 
-/// Under Keep the date rolling (§3.9, D14): what each way means for a
-/// query since `after`, read on `today` -- "Off: always since 1 July. On:
-/// always the last 90 days".
 pub fn rolling_note(after: chrono::NaiveDate, today: chrono::NaiveDate) -> String {
     let days = (today - after).num_days().max(0);
     format!(
@@ -932,35 +765,24 @@ pub fn rolling_note(after: chrono::NaiveDate, today: chrono::NaiveDate) -> Strin
     )
 }
 
-/// A saved search's quiet badge (§3.9, D15): "3 new", or "99+ new" when
-/// the badge stopped counting at its cap. Never a banner.
+/// A quiet badge, never a banner.
 pub fn new_badge(n: u64, capped: bool) -> String {
     format!("{} new", count(n, capped))
 }
 
-/// The results tabs' words, in their order (§3.2).
 pub const TABS: [&str; 3] = ["Threads", "Files", "People"];
 
-/// A count as a tab says it: "48", "10,000+".
 pub fn tab_count(total: u64, capped: bool) -> String {
     count(total, capped)
 }
 
-/// "‹ Inbox", the results toolbar's way back (§3.1).
 pub const BACK_TO_INBOX: &str = "Inbox";
-/// The results toolbar's Save search button (§3.1).
 pub const SAVE_SEARCH: &str = "Save search";
-/// The quiet word before the Sort menu (§3.2).
 pub const SORT: &str = "Sort";
-/// The Sort menu's ranked order (§3.2).
 pub const BEST_MATCH: &str = "Best match";
-/// The Sort menu's date order (§3.2).
 pub const NEWEST: &str = "Newest";
-/// The timeline's hint on its right (§3.3).
 pub const TIMELINE_HINT: &str = "Matches by month \u{b7} drag across months to narrow";
 
-/// A list popover's own search field (§3.6): what it says while empty.
-/// The Date popover has none.
 pub fn popover_placeholder(kind: FilterKind) -> &'static str {
     match kind {
         FilterKind::From | FilterKind::To => "Filter people in these results",
@@ -970,9 +792,6 @@ pub fn popover_placeholder(kind: FilterKind) -> &'static str {
     }
 }
 
-/// A popover's footer (§3.6, screen 08): Space toggles, ⌥-click
-/// excludes, ↩ applies; the Date popover only applies. The keys are the
-/// popover's own, not commands, spelled as the registry spells keys.
 pub fn popover_hints(kind: FilterKind) -> Vec<Hint> {
     let hint = |key: &str, label: &str| Hint {
         key: key.to_owned(),
@@ -987,28 +806,19 @@ pub fn popover_hints(kind: FilterKind) -> Vec<Hint> {
     out
 }
 
-/// The timeline's sub-line while a popover previews a change (screen
-/// 09): "previewing Jul – Sep · ↩ applies".
 pub fn previewing(what: &str) -> String {
     format!("previewing {what} \u{b7} \u{21a9} applies")
 }
 
-/// One of the Date popover's presets (§3.6, screen 09): what it says, and
-/// the `after:` it writes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DatePreset {
-    /// "Last 30 days".
     pub label: &'static str,
-    /// The `after:` it writes; `None` for Any time, which takes the dates
-    /// out.
+    /// `None` for Any time, which takes the dates out.
     pub start: Option<chrono::NaiveDate>,
-    /// Where its count is in `SearchFacets::presets`.
     pub count_at: usize,
 }
 
-/// The Date popover's presets, top to bottom: Any time, Last 7 days, Last
-/// 30 days, This quarter, This year. Custom… ([`CUSTOM_DATE`]) follows
-/// them and writes nothing itself.
+/// Custom… (`CUSTOM_DATE`) follows them and writes nothing itself.
 pub fn date_presets(today: chrono::NaiveDate) -> [DatePreset; 5] {
     let starts = postio_search::facets::preset_starts(today);
     let preset = |label, count_at: usize| DatePreset {
@@ -1025,22 +835,14 @@ pub fn date_presets(today: chrono::NaiveDate) -> [DatePreset; 5] {
     ]
 }
 
-/// The Date popover's last preset: its field is where a custom date goes.
 pub const CUSTOM_DATE: &str = "Custom\u{2026}";
 
-/// The Date popover's line under its field (screen 09).
 pub const DATE_WORDS_HINT: &str = "Type a date in plain words, or drag across the months.";
 
-/// What the Date popover's plain words became (screen 09): "→
-/// after:2026-07-01".
 pub fn date_parsed(terms: &str) -> String {
     format!("\u{2192} {terms}")
 }
 
-/// The months `first` to `last` (any day in each), as the timeline and
-/// the Date popover say a range: "Jul – Sep", "Sep", or with `year`
-/// "Jul – Sep 2026", and both years when they differ: "Dec 2025 – Feb
-/// 2026".
 pub fn month_range(first: chrono::NaiveDate, last: chrono::NaiveDate, year: bool) -> String {
     let (first, last) = (first.min(last), first.max(last));
     let same_month = (first.year(), first.month()) == (last.year(), last.month());
@@ -1067,14 +869,10 @@ pub fn month_range(first: chrono::NaiveDate, last: chrono::NaiveDate, year: bool
     }
 }
 
-/// The timeline's hint while a range is selected (screen 09): "Jul – Sep
-/// selected · drag to change". The keys that step it follow as a
-/// [`timeline_step`] hint.
 pub fn range_selected(range: &str) -> String {
     format!("{range} selected \u{b7} drag to change")
 }
 
-/// ⌥←/⌥→ "steps a month", while a range is selected.
 pub fn timeline_step(keymap: &Keymap) -> Option<Hint> {
     hints::pair(
         keymap,
@@ -1084,27 +882,20 @@ pub fn timeline_step(keymap: &Keymap) -> Option<Hint> {
     )
 }
 
-/// The Date popover's result line (screen 09): "12 of 21", the
-/// conversations its dates keep of those it opened on.
 pub fn date_result(kept: u64, of: u64, capped: bool) -> String {
     format!("{} of {}", count(kept, capped), count(of, capped))
 }
 
-/// The bulk bar's count while results are checked (§3.5): "5 selected".
 pub fn checked_line(n: u64) -> String {
     format!("{} selected", grouped(n))
 }
 
-/// Quick Look's title (§3.7, screen 10).
 pub const QUICK_LOOK: &str = "Quick Look";
 
-/// Which result Quick Look shows, `at` from 0: "1 of 12".
 pub fn quick_look_position(at: u64, of: u64) -> String {
     format!("{} of {}", grouped(at.saturating_add(1)), grouped(of))
 }
 
-/// The header's hint that the results still walk: "j/k moves through
-/// results while it stays open".
 pub fn quick_look_walk(keymap: &Keymap) -> Option<Hint> {
     hints::pair(
         keymap,
@@ -1114,7 +905,6 @@ pub fn quick_look_walk(keymap: &Keymap) -> Option<Hint> {
     )
 }
 
-/// The header's buttons, each with its key: Open, Archive, Close.
 pub fn quick_look_actions(keymap: &Keymap) -> Vec<Hint> {
     QUICK_LOOK_ACTIONS
         .into_iter()
@@ -1122,9 +912,8 @@ pub fn quick_look_actions(keymap: &Keymap) -> Vec<Hint> {
         .collect()
 }
 
-/// What each of [`quick_look_actions`]' buttons runs, in the same order:
-/// a button left out for want of a key leaves its command out too, so a
-/// frontend never runs one button's command from another.
+/// A button left out for want of a key leaves its command out too, so a frontend never runs one
+/// button's command from another.
 pub fn quick_look_commands(keymap: &Keymap) -> Vec<CommandId> {
     QUICK_LOOK_ACTIONS
         .into_iter()
@@ -1133,17 +922,14 @@ pub fn quick_look_commands(keymap: &Keymap) -> Vec<CommandId> {
         .collect()
 }
 
-/// Quick Look's header buttons, left to right.
 const QUICK_LOOK_ACTIONS: [(CommandId, &str); 3] = [
     (CommandId::OpenMessage, "Open"),
     (CommandId::Archive, "Archive"),
     (CommandId::QuickLook, "Close"),
 ];
 
-/// How many matches Quick Look's cards make, counted as a result's reason
-/// line counts them (#2085): each message whose own words, quote or files
-/// matched once, however many cards it has, and the subject once. `cards`
-/// are each card's message, `None` for the subject's.
+/// Counted as a result's reason line counts them (#2085): each message once however many cards, and
+/// the subject once. `None` is the subject's card.
 pub fn matches_of<T: PartialEq>(cards: impl IntoIterator<Item = Option<T>>) -> usize {
     let mut messages: Vec<T> = Vec::new();
     let mut subject = false;
@@ -1157,23 +943,15 @@ pub fn matches_of<T: PartialEq>(cards: impl IntoIterator<Item = Option<T>>) -> u
     messages.len() + usize::from(subject)
 }
 
-/// An operator term in the search field, drawn as a chip in place
-/// (#2082): byte ranges into the typed text.
+/// Byte ranges into the typed text (#2082).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldChip {
-    /// Where the whole term starts, `-from:ada` included.
     pub start: usize,
-    /// Where it ends.
     pub end: usize,
-    /// Where its operator ends, `-from:` drawn in mono.
     pub operator_end: usize,
-    /// An exclusion: its value struck through.
     pub excluded: bool,
 }
 
-/// The operator terms of `typed`, each a chip in the field; the plain
-/// words between them stay text. A term still being typed is a chip too,
-/// its operator in mono, as screen 04 sets it.
 pub fn field_chips(typed: &str, today: chrono::NaiveDate) -> Vec<FieldChip> {
     use postio_search::query::TokenKind;
     postio_search::parse(typed, today)
@@ -1196,7 +974,6 @@ pub fn field_chips(typed: &str, today: chrono::NaiveDate) -> Vec<FieldChip> {
         .collect()
 }
 
-/// How many matches the thread holds: "4 matches in this thread".
 pub fn matches_line(n: usize) -> String {
     match n {
         1 => "1 match in this thread".to_owned(),
@@ -1204,7 +981,6 @@ pub fn matches_line(n: usize) -> String {
     }
 }
 
-/// The hint after it: "]/[ jump between them".
 pub fn matches_hint(keymap: &Keymap) -> Option<Hint> {
     hints::pair(
         keymap,
@@ -1214,8 +990,6 @@ pub fn matches_hint(keymap: &Keymap) -> Option<Hint> {
     )
 }
 
-/// Where a match card's words are, its left column's first line: "Body",
-/// "Earlier reply" for quoted history, "Subject", or the file's name.
 pub fn match_place(source: &Source) -> String {
     match source {
         Source::Subject => "Subject".to_owned(),
@@ -1225,9 +999,7 @@ pub fn match_place(source: &Source) -> String {
     }
 }
 
-/// A match card's second line: who said it and when, by first name
-/// ("Ada · 26 Sep"); where in a file a file's match is; nothing for the
-/// subject or a quote, whose writer is not known.
+/// Nothing for the subject or a quote, whose writer is not known.
 pub fn match_when<Tz: TimeZone>(
     source: &Source,
     from: Option<&postio_model::EmailAddress>,
@@ -1247,8 +1019,7 @@ pub fn match_when<Tz: TimeZone>(
         .join(" \u{b7} ")
 }
 
-/// When a message was sent, as Quick Look's sender line says it: "Sat 26
-/// Sep, 15:51", with its year when that is not this one's (#2082).
+/// With its year when that is not this one's (#2082).
 pub fn sent_at<Tz: TimeZone>(at: DateTime<Tz>, now: DateTime<Tz>) -> String
 where
     Tz::Offset: std::fmt::Display,
@@ -1261,9 +1032,8 @@ where
     }
 }
 
-/// Who a message went to, on Quick Look's sender line: "to you, Finance
-/// team". You first, then each by the name the header gave them (else the
-/// address), three at most and how many more. `None` when nobody is known.
+/// You first, then each by the header's name (else the address), three at most and a count. `None`
+/// when nobody is known.
 pub fn sent_to(to: &[postio_search::results::Addressee]) -> Option<String> {
     const NAMED: usize = 3;
     let you = to.iter().any(|each| each.own);
@@ -1290,33 +1060,20 @@ pub fn sent_to(to: &[postio_search::results::Addressee]) -> Option<String> {
     })
 }
 
-/// A conversation's size on the sender line, when it is more than one
-/// message: "thread of 3".
 pub fn thread_size(messages: u32) -> Option<String> {
     (messages > 1).then(|| format!("thread of {messages}"))
 }
 
-// ---------------------------------------------------------------------------
-// No results (spec 010 step 7, design §3.10, screen 13)
-// ---------------------------------------------------------------------------
-
-/// The sentence under the no-results title.
 pub const NO_RESULTS_BODY: &str = "Each line below loosens one filter and shows how many \
                                    threads you would get. Pick one, or press its number.";
 
-/// The sentence under the title when no single change finds anything.
 pub const NO_RELAXATIONS_BODY: &str =
     "Loosening any one of them still finds nothing. Clear the filters to start from the words.";
 
-/// Where the looser searches go while they are counted.
 pub const COUNTING_RELAXATIONS: &str = "Counting looser searches\u{2026}";
 
-/// The field's hint while nothing matches, after its key: "⌘⌫ clears
-/// filters" (D24).
 pub const CLEARS_FILTERS: &str = "clears filters";
 
-/// The no-results title (§3.10): "Nothing matches all four filters", for
-/// the `terms` the query holds -- its filters and its words.
 pub fn nothing_matches(terms: usize) -> String {
     match terms {
         0 | 1 => "Nothing matches this search".to_owned(),
@@ -1325,7 +1082,6 @@ pub fn nothing_matches(terms: usize) -> String {
     }
 }
 
-/// `n` in words up to ten, the way a sentence says it: "four".
 fn small_number(n: usize) -> String {
     const WORDS: [&str; 11] = [
         "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
@@ -1335,11 +1091,7 @@ fn small_number(n: usize) -> String {
         .map_or_else(|| n.to_string(), |word| (*word).to_owned())
 }
 
-/// What one looser search changes, in words (§3.10): "Remove “before
-/// March”", "Anyone, not just Ada Moreno", "Look for “budget v4”
-/// anywhere, not just the subject". `query` is the search that found
-/// nothing, whose token the relaxation names; `name_of` gives a person's
-/// name for an address.
+/// `query` is the search that found nothing, whose token the relaxation names.
 pub fn relaxation_line(
     relaxation: &postio_search::relax::Relaxation,
     query: &postio_search::ParsedQuery,
@@ -1359,8 +1111,6 @@ pub fn relaxation_line(
         TokenKind::Filter(clause) => clause,
         _ => return remove(&token.raw),
     };
-    // A set (D26) is named by every value, "Ada Moreno or Tomás Reyes";
-    // what follows reads its first value for which kind it is.
     let values = clause.filter.alternatives();
     let Some(filter) = values.first() else {
         return remove(&token.raw);
@@ -1431,7 +1181,6 @@ pub fn relaxation_line(
     }
 }
 
-/// The commands that pick the looser searches, by number.
 pub const PICK_RELAXATION: [CommandId; 4] = [
     CommandId::PickRelaxation1,
     CommandId::PickRelaxation2,
@@ -1439,8 +1188,6 @@ pub const PICK_RELAXATION: [CommandId; 4] = [
     CommandId::PickRelaxation4,
 ];
 
-/// The footer's keys while nothing matches (screen 13): "1–4 loosen a
-/// filter" for the `offered` looser searches, and "⌘⌫ clear filters".
 pub fn no_results_hints(keymap: &Keymap, offered: usize) -> Vec<Hint> {
     let mut out = Vec::new();
     let last = offered.min(PICK_RELAXATION.len());
@@ -1461,17 +1208,12 @@ pub fn no_results_hints(keymap: &Keymap, offered: usize) -> Vec<Hint> {
     out
 }
 
-/// A looser search's count, on its row's right: "4 threads", or
-/// "10,000+ threads" when its count stopped at its cap (D30).
 pub fn relaxation_count(n: u64, capped: bool) -> String {
     threads(n, capped)
 }
 
-/// The line under the looser searches (§3.10): how much was searched.
-/// "all" only when every message's body is indexed, and "including
-/// attachment contents" only when every attachment on this Mac has been
-/// read (US6 scenario 2) -- never a claim the index cannot back. Searching
-/// the server is not offered (S4).
+/// "all" only when every body is indexed, "including attachment contents" only when every
+/// attachment has been read: never a claim the index cannot back.
 pub fn searched(
     keymap: &Keymap,
     messages: u64,
@@ -1498,8 +1240,6 @@ pub fn searched(
     format!("Searched {what} on {here}{contents}.{rest}")
 }
 
-/// The footer's right while nothing matches (screen 13): "Searched
-/// 18,204 messages · 41 ms".
 pub fn searched_footer(messages: u64, elapsed: Duration) -> String {
     let noun = if messages == 1 { "message" } else { "messages" };
     let took = match elapsed.as_millis() {
@@ -1509,44 +1249,26 @@ pub fn searched_footer(messages: u64, elapsed: Duration) -> String {
     format!("Searched {} {noun} \u{b7} {took}", grouped(messages))
 }
 
-// ---------------------------------------------------------------------------
-// Typing intelligence (spec 010 step 8, design §2, screens 02, 04, 05)
-// ---------------------------------------------------------------------------
-
-/// The short-prefix state's first section.
 pub const SUGGESTIONS: &str = "Suggestions";
-/// Its note.
 pub const SUGGESTIONS_NOTE: &str = "complete the word, or jump to a filter";
-/// After a completed word: what running it does.
 pub const AS_A_WORD: &str = "as a word";
-/// After a label suggestion.
 pub const LABEL: &str = "label";
-/// The short-prefix state's hits.
 pub const TOP_HITS_SO_FAR: &str = "Top hits so far";
-/// Their note.
 pub const TOP_HITS_SO_FAR_NOTE: &str = "update on every keystroke";
-/// The operator state's note for people.
 pub const PEOPLE_NOTE: &str = "by how often you write to each other";
-/// The "Latest from" section's note.
 pub const LATEST_NOTE: &str = "preview of the focused person";
-/// The plain-English bar's title.
 pub const UNDERSTOOD_AS: &str = "Understood as";
-/// Its note on the right.
 pub const UNDERSTOOD_NOTE: &str = "each part is a chip you can edit";
-/// The plain-English state's hits.
 pub const RESULTS: &str = "Results";
 
-/// A mailing list suggestion's detail: "mailing list · atlas-planning.example.org".
 pub fn list_detail(id: &str) -> String {
     format!("mailing list \u{b7} {id}")
 }
 
-/// The files row's title: "Files named “at…”".
 pub fn files_named(typed: &str) -> String {
     format!("Files named \u{201c}{typed}\u{2026}\u{201d}")
 }
 
-/// The files row's detail: the first two names, and how many more.
 pub fn files_detail(names: &[&str]) -> String {
     match names {
         [] => String::new(),
@@ -1556,17 +1278,10 @@ pub fn files_detail(names: &[&str]) -> String {
     }
 }
 
-// ---------------------------------------------------------------------------
-// The Files tab (spec 010 step 9, US8, design §3.8, screen 11)
-// ---------------------------------------------------------------------------
-
-/// The Files tab's header, over the grid.
 pub const FILES_TITLE: &str = "Files whose name or contents match";
 
-/// The header's note beside it: what is searched inside, and -- while
-/// the indexer is still reading files on this Mac -- that it is not done,
-/// so a file not found yet is not taken for one that does not say it.
-/// iWork documents and the text in images are not read (step 9 note).
+/// Says when the indexer is still reading, so a file not found yet is not taken for one that does
+/// not exist. iWork documents and text in images are not read.
 pub fn files_note(keymap: &Keymap, contents_complete: bool) -> String {
     let here = crate::contacts_view::this_computer(keymap);
     if contents_complete {
@@ -1576,24 +1291,15 @@ pub fn files_note(keymap: &Keymap, contents_complete: bool) -> String {
     }
 }
 
-/// What a card's preview is drawn as: a sheet's grid, a page's lines, a
-/// deck's slide, an image, or plain lines.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FilePreview {
-    /// Rows and columns: a spreadsheet.
     Sheet,
-    /// Lines on a page: a PDF, a document.
     Page,
-    /// A slide.
     Slides,
-    /// A picture.
     Image,
-    /// Lines of text.
     Text,
 }
 
-/// A file's type, as its tile says it: the name's extension in capitals
-/// ("XLSX", "PDF"), or the type's own name when the name has none.
 pub fn file_kind(name: &str, mime_type: &str) -> String {
     let extension = std::path::Path::new(name)
         .extension()
@@ -1624,7 +1330,6 @@ pub fn file_kind(name: &str, mime_type: &str) -> String {
     .to_owned()
 }
 
-/// How a card's preview is drawn, from its type.
 pub fn file_preview(name: &str, mime_type: &str) -> FilePreview {
     match file_kind(name, mime_type).as_str() {
         "XLSX" | "XLS" | "CSV" | "NUM" | "ODS" => FilePreview::Sheet,
@@ -1635,7 +1340,6 @@ pub fn file_preview(name: &str, mime_type: &str) -> FilePreview {
     }
 }
 
-/// A card's second line: "Ada Moreno · 26 Sep · 48 KB".
 pub fn file_meta(sender: &str, date: &str, size: u64) -> String {
     [sender, date, &crate::format::human_size(size)]
         .into_iter()
@@ -1644,15 +1348,10 @@ pub fn file_meta(sender: &str, date: &str, size: u64) -> String {
         .join(" \u{b7} ")
 }
 
-/// A card's last line: the message it came in, "in ‘Re: Atlas Q3
-/// budget’".
 pub fn file_subject(subject: &str) -> String {
     format!("in \u{2018}{subject}\u{2019}")
 }
 
-/// What a screen reader says for a card: "Atlas-Q3-budget.xlsx, XLSX,
-/// Ada Moreno · 26 Sep · 48 KB, Sheet ‘Q3’, row 3: Total Atlas budget, in
-/// ‘Re: Atlas Q3 budget’".
 pub fn file_accessible(name: &str, kind: &str, meta: &str, line: &str, subject: &str) -> String {
     [name, kind, meta, line, subject]
         .into_iter()
@@ -1661,31 +1360,22 @@ pub fn file_accessible(name: &str, kind: &str, meta: &str, line: &str, subject: 
         .join(", ")
 }
 
-/// A file whose bytes are not on this Mac cannot be previewed or saved
-/// from here: nothing is fetched to do it (FR-050).
+/// Nothing is fetched to preview or save a file whose bytes are not here.
 pub fn file_not_here(keymap: &Keymap) -> String {
     let here = crate::contacts_view::this_computer(keymap);
     format!("That file isn\u{2019}t on {here} yet: open its message to download it")
 }
 
-/// An arrow key on the Files tab's grid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GridArrow {
-    /// The card before.
     Left,
-    /// The card after.
     Right,
-    /// The card above.
     Up,
-    /// The card below.
     Down,
 }
 
-/// Where `arrow` takes the Files tab's ring from `ring` among `count` cards
-/// laid `columns` across; `None` when it goes nowhere. With no ring yet,
-/// the first card. Down from a row with a shorter row under it lands on
-/// that row's last card, as Finder's grid does (the Mac's
-/// `FilesGrid.target`, which this is).
+/// `None` when it goes nowhere; with no ring yet, the first card. Down onto a shorter row lands on
+/// its last card, as Finder does.
 pub fn grid_step(ring: Option<u64>, arrow: GridArrow, count: u64, columns: u64) -> Option<u64> {
     if count == 0 {
         return None;
@@ -1708,17 +1398,14 @@ pub fn grid_step(ring: Option<u64>, arrow: GridArrow, count: u64, columns: u64) 
     }
 }
 
-/// The results' tabs' commands, in their order: ⌘1–3 (§3.2).
 const RESULTS_TABS: [CommandId; 3] = [
     CommandId::ResultsConversations,
     CommandId::ResultsFiles,
     CommandId::ResultsPeople,
 ];
 
-/// The Files tab's footer (design §3.8): the grid's arrows, Space, open
-/// the message, save, and the tabs. Space hands a copy of the file to the
-/// system: the Mac's Quick Look, or elsewhere the desktop's app for its
-/// type, which is what the key says there (#2183).
+/// Space hands a copy of the file to the system's viewer: Quick Look on the Mac, the desktop's app
+/// elsewhere (#2183).
 pub fn files_hints(keymap: &Keymap) -> Vec<Hint> {
     let mut out = vec![hints::fixed(
         "Up/Down/Left/Right",
@@ -1742,8 +1429,6 @@ pub fn files_hints(keymap: &Keymap) -> Vec<Hint> {
     out
 }
 
-/// A People row's count (design §3.11): the matched messages from and to
-/// them, "3 messages".
 pub fn person_messages(messages: u64) -> String {
     format!(
         "{} {}",
@@ -1752,8 +1437,6 @@ pub fn person_messages(messages: u64) -> String {
     )
 }
 
-/// What a screen reader says for a People row: "Ada Moreno,
-/// ada@example.com, 3 messages, last 26 Sep".
 pub fn person_accessible(name: &str, address: &str, messages: &str, last: &str) -> String {
     let mut said: Vec<String> = [name, address, messages]
         .into_iter()
@@ -1766,8 +1449,6 @@ pub fn person_accessible(name: &str, address: &str, messages: &str, last: &str) 
     said.join(", ")
 }
 
-/// The People tab's footer (design §3.11): move, ↩ runs `from:` them,
-/// and the tabs.
 pub fn people_hints(keymap: &Keymap) -> Vec<Hint> {
     let mut out = Vec::new();
     out.extend(hints::pair(
@@ -1785,8 +1466,6 @@ pub fn people_hints(keymap: &Keymap) -> Vec<Hint> {
     out
 }
 
-/// The operator state's first section: "People matching “ad”", or the
-/// operator's own noun while nothing is typed after it.
 pub fn matching(noun: &str, typed: &str) -> String {
     if typed.is_empty() {
         noun.to_owned()
@@ -1795,9 +1474,6 @@ pub fn matching(noun: &str, typed: &str) -> String {
     }
 }
 
-/// When a person was last written to or heard from, as their row says it:
-/// "today", "yesterday", the day within the last sixty ("19 Sep"), the
-/// month earlier this year ("June"), then the month and year.
 pub fn last_when<Tz: TimeZone>(at: DateTime<Tz>, now: DateTime<Tz>) -> String {
     let (day, today) = (at.date_naive(), now.date_naive());
     match (today - day).num_days() {
@@ -1809,8 +1485,6 @@ pub fn last_when<Tz: TimeZone>(at: DateTime<Tz>, now: DateTime<Tz>) -> String {
     }
 }
 
-/// A person's line under their name: "ada@example.org · 412 messages ·
-/// last today", the messages both ways (D21).
 pub fn person_detail<Tz: TimeZone>(
     address: &str,
     messages: u64,
@@ -1828,12 +1502,10 @@ pub fn person_detail<Tz: TimeZone>(
     line
 }
 
-/// The section under the people: "Latest from Ada Moreno".
 pub fn latest_from(name: &str) -> String {
     format!("Latest from {name}")
 }
 
-/// The operator state's footer, right: what the list is drawn from.
 pub fn operator_source(keyword: &str) -> &'static str {
     match keyword {
         "label" => "Labels, by how many threads carry them",
@@ -1842,14 +1514,10 @@ pub fn operator_source(keyword: &str) -> &'static str {
     }
 }
 
-/// Where a plain-English tile came from, as the line under it says:
-/// "from ‘last month’" -- the sentence's own words, exactly.
 pub fn origin_line(words: &str) -> String {
     format!("from \u{2018}{words}\u{2019}")
 }
 
-/// The plain-English footer's right side: "parsed on this Mac · 3 matches ·
-/// 21 ms" -- nothing left the machine to understand it.
 pub fn parsed_footer(keymap: &Keymap, total: u64, elapsed: Duration, capped: bool) -> String {
     format!(
         "parsed on {} \u{b7} {}",
@@ -1858,8 +1526,6 @@ pub fn parsed_footer(keymap: &Keymap, total: u64, elapsed: Duration, capped: boo
     )
 }
 
-/// The plain-English results' note: the month the dates name, when they
-/// name one ("August 2026 · newest first"), else "newest first".
 pub fn plain_results_note(
     after: Option<chrono::NaiveDate>,
     before: Option<chrono::NaiveDate>,
@@ -1875,8 +1541,6 @@ pub fn plain_results_note(
     }
 }
 
-/// The short-prefix footer (screen 02): Tab completes, move, open, all
-/// results.
 pub fn prefix_hints(keymap: &Keymap) -> Vec<Hint> {
     let mut hints = vec![
         hints::fixed(
@@ -1899,8 +1563,6 @@ pub fn prefix_hints(keymap: &Keymap) -> Vec<Hint> {
     hints
 }
 
-/// In the field, before Escape's cap, while a ghost completes the word
-/// (screen 02): "Tab completes".
 pub fn ghost_hint() -> Hint {
     hints::fixed(
         "Tab",
@@ -1909,8 +1571,6 @@ pub fn ghost_hint() -> Hint {
     )
 }
 
-/// On the highlighted person's, label's or folder's right while an
-/// operator is typed (screen 04): "↩ adds".
 pub fn adds_hint() -> Hint {
     hints::fixed(
         "Return",
@@ -1919,9 +1579,6 @@ pub fn adds_hint() -> Hint {
     )
 }
 
-/// The operator footer (screen 04): Return adds the chip, the exclusion
-/// key excludes it (`-from:`), the arrows choose, Backspace goes back to
-/// words.
 pub fn operator_hints(keymap: &Keymap, keyword: &str) -> Vec<Hint> {
     let mut hints = vec![hints::fixed(
         "Return",
@@ -1942,8 +1599,6 @@ pub fn operator_hints(keymap: &Keymap, keyword: &str) -> Vec<Hint> {
     hints
 }
 
-/// What the operator dropdown's section says when nobody matches what is
-/// typed (#2084), by what it lists.
 pub fn nobody_matches(noun: &str) -> &'static str {
     match noun {
         "Labels" => "No label matches",
@@ -1952,8 +1607,6 @@ pub fn nobody_matches(noun: &str) -> &'static str {
     }
 }
 
-/// The operator dropdown's footer when nothing matches: there is no row to
-/// add or exclude, so it teaches only the way back to words.
 pub fn operator_hints_for_nobody() -> Vec<Hint> {
     vec![hints::fixed(
         "BackSpace",
@@ -1962,8 +1615,6 @@ pub fn operator_hints_for_nobody() -> Vec<Hint> {
     )]
 }
 
-/// The plain-English footer (screen 05): move, open, Tab makes chips, the
-/// words key keeps the sentence.
 pub fn plain_hints(keymap: &Keymap) -> Vec<Hint> {
     let mut hints = vec![
         arrows("move"),
@@ -1982,59 +1633,34 @@ pub fn plain_hints(keymap: &Keymap) -> Vec<Hint> {
     hints
 }
 
-// ---------------------------------------------------------------------------
-// Search answers in threads (spec 013 US6, research R11)
-// ---------------------------------------------------------------------------
-
-/// One line under an expanded result: a message that matched, or the run of
-/// messages between matches that did not.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResultChild {
-    /// A message that matched.
     Match {
-        /// The message.
         message: postio_model::MessageId,
-        /// Its place in the thread, from 1.
         number: u32,
-        /// "message 5", "message 5 \u{b7} file": which message and where.
         tag: String,
-        /// The words around the match; one that names the file for a match
-        /// in an attachment. `None` while no passage is cut.
+        /// `None` while no passage is cut.
         passage: Option<postio_search::results::Passage>,
-        /// Who wrote it, as a thread's child row says it: "Tom\u{e1}s Reyes",
-        /// "You".
         sender: String,
-        /// The avatar's letters.
         initials: String,
-        /// When, as every row says it.
         time: String,
     },
-    /// Messages `from..=to` (from 1) that did not match.
     Gap {
-        /// The first message of the run.
         from: u32,
-        /// The last.
         to: u32,
-        /// Who wrote them, first names: "Ben".
         senders: String,
-        /// The first one's time, as every row says it: "Thu" this week,
-        /// "16 Mar" before it.
         day: String,
     },
 }
 
-/// The children of an expanded result: the messages of `view` that
-/// `matches` name, oldest first, with one [`ResultChild::Gap`] for each run
-/// of messages that did not match -- before the first, between two and
-/// after the last, so every message of the thread is said once (#2178).
-/// `now` is what the times are said against.
+/// One Gap for each run of non-matching messages (before the first, between, after the last), so
+/// every message is said once (#2178).
 pub fn children(
     view: &postio_model::ThreadView,
     matches: &[postio_search::results::ConversationMatch],
     now: DateTime<chrono::Local>,
 ) -> Vec<ResultChild> {
-    // The first match of each message names it: a subject match is the
-    // thread's, and a message the view does not hold is not shown.
+    // A subject match is the thread's; a message the view does not hold is not shown.
     let mut found: Vec<(usize, &postio_search::results::ConversationMatch)> = Vec::new();
     for each in matches {
         let Some(message) = each.message else {
@@ -2051,7 +1677,6 @@ pub fn children(
     if found.is_empty() {
         return Vec::new();
     }
-    // Members `start..end` (from 0), which did not match, as one line.
     let gap = |start: usize, end: usize| {
         let run = &view.members[start..end];
         let mut senders: Vec<String> = Vec::new();
@@ -2100,7 +1725,6 @@ pub fn children(
     out
 }
 
-/// "message 5", or "message 5 \u{b7} file" for a match in an attachment.
 fn match_tag(number: usize, source: &Source) -> String {
     match source {
         Source::FileName { .. } | Source::FileContent { .. } => {
@@ -2111,14 +1735,11 @@ fn match_tag(number: usize, source: &Source) -> String {
     }
 }
 
-/// The match's passage; for a file's content, led by the file's name and
-/// where in it, with the marks moved to follow the words.
 fn child_passage(found: &postio_search::results::Match) -> Option<postio_search::results::Passage> {
     let Source::FileContent {
         name, location: at, ..
     } = &found.source
     else {
-        // A file's name is its own passage, and the rest say their words.
         return found.passage.clone().or_else(|| match &found.source {
             Source::FileName { name, .. } => Some(postio_search::results::Passage {
                 text: name.clone(),
@@ -2144,7 +1765,6 @@ fn child_passage(found: &postio_search::results::Match) -> Option<postio_search:
     })
 }
 
-/// What a gap says: "Message 4 doesn't match \u{b7} Ben, 16 Sep".
 pub fn gap_line(child: &ResultChild) -> String {
     let ResultChild::Gap {
         from,
@@ -2162,14 +1782,10 @@ pub fn gap_line(child: &ResultChild) -> String {
     }
 }
 
-/// The line in place of a multi-match result's snippet: "3 of 6 messages
-/// match".
 pub fn match_summary(matched: usize, total: usize) -> String {
     format!("{matched} of {total} messages match")
 }
 
-/// A single-match thread's snippet: "Message 5 of 8 \u{b7} Tom\u{e1}s: the words",
-/// or "Message 5 of 8 \u{b7} Tom\u{e1}s" while the words are not cut yet.
 pub fn single_match_snippet(number: usize, total: usize, who: &str, words: &str) -> String {
     if words.trim().is_empty() {
         return format!("Message {number} of {total} \u{b7} {who}");
@@ -2186,12 +1802,10 @@ mod tests {
         Utc.with_ymd_and_hms(year, month, day, 15, 30, 0).unwrap()
     }
 
-    // US9, design §3.11: a People row's words and its footer.
     #[test]
     fn quick_look_s_buttons_run_what_they_say_with_a_key_unbound() {
-        // Space given to another command leaves Quick Look no key: its
-        // button is left out, and the buttons after it must not shift onto
-        // the wrong command.
+        // Space given to another command leaves Quick Look no key: its button is dropped and later
+        // ones must not shift onto the wrong command.
         let mut keys = postio_config::KeyBindings::default();
         keys.overrides_mut()
             .insert("next_match".to_owned(), "space".to_owned());
@@ -2245,7 +1859,6 @@ mod tests {
         let hints = people_hints(&keymap);
         let said: Vec<&str> = hints.iter().map(|hint| hint.label.as_str()).collect();
         assert_eq!(said, ["move", "search their mail", "switch tab"]);
-        // Screen 11: the three tabs' keys are one range, "⌘1–3".
         assert_eq!(hints[2].key, "cmd+1\u{2013}3");
         assert_eq!(
             files_hints(&keymap).last().map(|hint| hint.key.as_str()),
@@ -2253,8 +1866,6 @@ mod tests {
         );
     }
 
-    // D29: a suggestion's count past its cap is a floor, grouped as every
-    // count is; an exact one is the number alone.
     #[test]
     fn a_suggestion_count_is_grouped_and_a_capped_one_is_a_floor() {
         assert_eq!(suggestion_count(1_000, true), "1,000+");
@@ -2263,7 +1874,6 @@ mod tests {
         assert_eq!(suggestion_count(0, false), "0");
     }
 
-    // The design's "Search by" grid (screen 01), in its order.
     #[test]
     fn the_cheat_sheet_is_the_designs_eight_entries() {
         assert_eq!(
@@ -2323,17 +1933,13 @@ mod tests {
 
     #[test]
     fn a_recent_search_says_when_it_ran_the_way_the_design_does() {
-        // Wednesday 30 September 2026.
         let now = at(2026, 9, 30);
         assert_eq!(recent_when(now, now), "today");
         assert_eq!(recent_when(now - TimeDelta::days(1), now), "yesterday");
-        // Within the week: the weekday, three letters.
         assert_eq!(recent_when(at(2026, 9, 28), now), "Mon");
         assert_eq!(recent_when(now - TimeDelta::days(6), now), "Thu");
-        // A week or more: the day and month.
         assert_eq!(recent_when(at(2026, 9, 21), now), "21 Sep");
         assert_eq!(recent_when(at(2026, 9, 23), now), "23 Sep");
-        // Another year says so.
         assert_eq!(recent_when(at(2025, 12, 3), now), "3 Dec 2025");
     }
 
@@ -2383,7 +1989,6 @@ mod tests {
         let big = narrow_pill("label:", "Atlas", 1_204, false);
         assert_eq!(big.count, "1,204");
 
-        // Counted over a walk that stopped at its cap: a floor (D30).
         let floor = narrow_pill("label:", "Atlas", 1_204, true);
         assert_eq!(floor.count, "1,204+");
     }
@@ -2394,7 +1999,6 @@ mod tests {
         assert_eq!(results_count(1, false), "1 result");
         assert_eq!(results_count(0, false), "0 results");
         assert_eq!(results_count(18_204, false), "18,204 results");
-        // A search that stopped at its walk's cap remembers a floor (D30).
         assert_eq!(results_count(5_000, true), "5,000+ results");
         assert_eq!(results_count(1, true), "1+ results");
     }
@@ -2413,14 +2017,9 @@ mod tests {
         let now = at(2026, 9, 26);
         assert_eq!(hit_date(now, now), "26 Sep");
         assert_eq!(hit_date(at(2026, 8, 14), now), "14 Aug");
-        // Another year: the list's short form (`row::timestamp`), which
-        // fits the 62-pt date column.
         assert_eq!(hit_date(at(2025, 12, 3), now), "3 Dec 25");
     }
 
-    /// Spec 007 US10 scenario 7, and #1825: a hit says where it is --
-    /// where a digest holds it in place of its folder -- and, where there
-    /// are several accounts, which one, after it.
     #[test]
     fn a_hit_says_where_it_waits_and_in_which_account() {
         assert_eq!(
@@ -2451,8 +2050,6 @@ mod tests {
     fn a_hits_folder_is_written_as_its_operator() {
         assert_eq!(in_folder("Inbox"), "in:Inbox");
         assert_eq!(in_folder("Q3 close"), "in:\"Q3 close\"");
-        // IMAP names the inbox INBOX in any case (RFC 3501 §5.1); the
-        // app calls it Inbox, as the place list does (screen 03).
         assert_eq!(in_folder("INBOX"), "in:Inbox");
         assert_eq!(folder_name("inbox"), "Inbox");
         assert_eq!(folder_name("Receipts"), "Receipts");
@@ -2478,7 +2075,6 @@ mod tests {
                 (">", "commands"),
             ]
         );
-        // With no recent search, there is nothing to run again (#1825).
         assert!(
             !empty_hints(&keymap, false)
                 .iter()
@@ -2546,8 +2142,6 @@ mod tests {
         assert_eq!(show_all(10_000, true, None), "Show all 10,000+ results");
     }
 
-    // -- The results view (spec 010 step 3, design §3, screens 06, 07) --
-
     use postio_search::results::{Location, RankReason, Source};
 
     #[test]
@@ -2557,7 +2151,6 @@ mod tests {
             reason_line(&[Replied, Matches(3)]),
             "you replied · 3 matches"
         );
-        // D19: the app says flagged, never starred.
         assert_eq!(
             reason_line(&[Flagged, Matches(2)]),
             "you flagged · 2 matches"
@@ -2566,7 +2159,6 @@ mod tests {
             reason_line(&[FrequentSender, InFileName, Matches(1)]),
             "frequent sender · file name"
         );
-        // Found by what a file says, not by its name (#2194).
         assert_eq!(
             reason_line(&[FrequentSender, InFileContent, Matches(1)]),
             "frequent sender · file contents"
@@ -2608,7 +2200,6 @@ mod tests {
             }),
             "Atlas-Sep-actuals.pdf"
         );
-        // Screen 06's first row: two places, one tag.
         assert_eq!(
             sources_tag(&[
                 Source::Body,
@@ -2622,8 +2213,6 @@ mod tests {
         );
         assert_eq!(sources_tag(&[Source::Body, Source::Body]), "body");
         assert_eq!(sources_tag(&[]), "");
-        // The tag is the passage's source: a subject that also matched is
-        // drawn by the row's first line, not named again (screen 06).
         assert_eq!(
             sources_tag(&[Source::Body, Source::Subject, Source::Body]),
             "body"
@@ -2632,7 +2221,6 @@ mod tests {
             sources_tag(&[Source::Quoted, Source::Subject, Source::Quoted]),
             "quoted text"
         );
-        // A file's passage is the file alone, whatever else matched.
         assert_eq!(
             sources_tag(&[
                 Source::FileName {
@@ -2659,8 +2247,6 @@ mod tests {
             shown(&[found(Source::Subject, false), found(Source::Body, true)]),
             Some(Source::Body)
         );
-        // No passage yet, or none to cut: still where the body matched, not
-        // the subject the row already shows.
         assert_eq!(
             shown(&[found(Source::Subject, false), found(Source::Body, false)]),
             Some(Source::Body)
@@ -2699,8 +2285,6 @@ mod tests {
 
     #[test]
     fn search_says_thread_never_conversation() {
-        // Postio's word is Thread (#2118): the first tab, and what the
-        // label operator's list is counted in.
         assert_eq!(TABS, ["Threads", "Files", "People"]);
         assert_eq!(
             operator_source("label"),
@@ -2721,9 +2305,6 @@ mod tests {
         assert_eq!(sub_line(0, 2, false), "0 files · 2 people · last 12 months");
     }
 
-    // D30: past the walk's cap every count the results draw is a floor --
-    // the total, a tab, a popover row, a month, the files and the people
-    // -- grouped as every count is.
     #[test]
     fn a_capped_answer_draws_every_count_as_a_floor() {
         assert_eq!(count_line(5_000, true), "5,000+ threads");
@@ -2757,10 +2338,6 @@ mod tests {
         );
     }
 
-    // Screen 11 and McSearch.dc.html: a narrowed query's sub-line says its
-    // filters in words, then its files ("from Ada since July · 9 files");
-    // the people are left out once a person is the filter. With no filter
-    // it is the plain line.
     #[test]
     fn a_narrowed_sub_line_says_the_filters_then_the_files() {
         use postio_search::query::{Filter, State};
@@ -2923,7 +2500,6 @@ mod tests {
 
     #[test]
     fn a_set_is_held_by_its_fields_button_and_reads_as_its_first_value() {
-        // D26: two people checked in the From popover are one set.
         use postio_search::query::Filter;
         let names = |address: &str| (address == "ada@example.com").then(|| "Ada Moreno".to_owned());
         let today = chrono::NaiveDate::from_ymd_opt(2026, 9, 30).unwrap();
@@ -2976,15 +2552,11 @@ mod tests {
 
     #[test]
     fn the_dropdown_and_its_neighbours_are_named_for_a_screen_reader() {
-        // Design §5: the field is a combobox over a listbox; the results
-        // are a table, and each tab's surface says what it holds.
         assert_eq!(A11Y_QUERY, "Search query");
         assert_eq!(A11Y_SUGGESTIONS, "Search suggestions");
         assert_eq!(A11Y_RESULTS, "Search results");
         assert_eq!(A11Y_FILES, "Files");
         assert_eq!(A11Y_PEOPLE, "People");
-        // A suggestion reads its words, then where and when, skipping
-        // what it has no column for.
         assert_eq!(
             dropdown_row_accessible(
                 "Atlas Q3 budget",
@@ -3002,7 +2574,6 @@ mod tests {
 
     #[test]
     fn a_result_reads_aloud_as_who_what_where_it_matched_and_when() {
-        // Design §5.
         assert_eq!(
             accessible_row(
                 "Ada Moreno",
@@ -3082,8 +2653,6 @@ mod tests {
         assert_eq!(said.last().map(|(key, _)| key.as_str()), Some("Escape"));
     }
 
-    // The results view's chrome (§3.1-3.5, screen 06): the words the Mac
-    // draws around the rows, each the design's.
     #[test]
     fn the_results_chrome_says_the_designs_words() {
         assert_eq!(BACK_TO_INBOX, "Inbox");
@@ -3099,7 +2668,6 @@ mod tests {
         assert_eq!(checked_line(1_204), "1,204 selected");
     }
 
-    // Quick Look's words (§3.7, screen 10).
     #[test]
     fn quick_look_says_where_each_match_is_and_when() {
         let keymap = postio_core::Keymap::resolve_on(
@@ -3166,7 +2734,6 @@ mod tests {
             "a file's match says where in it"
         );
         assert_eq!(sent_at(now, now), "Sat 26 Sep, 15:30");
-        // Another year's message says its year (#2082).
         let last_year = now - chrono::Duration::days(365);
         assert_eq!(sent_at(last_year, now), "Fri 26 Sep 2025, 15:30");
         assert_eq!(thread_size(3), Some("thread of 3".to_owned()));
@@ -3258,7 +2825,6 @@ mod tests {
         assert!(field_chips("atlas budget", today).is_empty());
     }
 
-    // Screen 13 (§3.10): the no-results page's words.
     #[test]
     fn a_reason_beside_a_subject_tag_does_not_say_subject_again() {
         let reasons = [
@@ -3288,7 +2854,6 @@ mod tests {
 
     #[test]
     fn a_relaxation_of_a_set_names_every_value() {
-        // D26: a set is dropped as one term, and says each of its values.
         let today = chrono::NaiveDate::from_ymd_opt(2026, 9, 26).unwrap();
         let names = |address: &str| match address {
             "ada@example.com" => Some("Ada Moreno".to_owned()),
@@ -3364,7 +2929,6 @@ mod tests {
         assert_eq!(relaxation_count(4, false), "4 threads");
         assert_eq!(relaxation_count(1, false), "1 thread");
         assert_eq!(relaxation_count(18_204, false), "18,204 threads");
-        // Counted to TOTAL_HITS_CAP, and a floor past it (D30).
         assert_eq!(relaxation_count(10_000, true), "10,000+ threads");
     }
 
@@ -3401,7 +2965,6 @@ mod tests {
     #[test]
     fn the_arrows_walk_the_files_grid_as_finder_does() {
         use GridArrow::{Down, Left, Right, Up};
-        // Six cards, four across: 0 1 2 3 / 4 5.
         assert_eq!(grid_step(None, Right, 6, 4), Some(0), "no ring: the first");
         assert_eq!(grid_step(Some(0), Right, 6, 4), Some(1));
         assert_eq!(grid_step(Some(0), Left, 6, 4), None);
@@ -3418,8 +2981,6 @@ mod tests {
         assert_eq!(grid_step(None, Down, 0, 4), None, "no cards");
     }
 
-    /// #1825: Linux's words call the machine "this computer", as the
-    /// contacts' do; the Mac's say "this Mac".
     #[test]
     fn the_words_name_the_machine_they_run_on() {
         let on = |platform| {
@@ -3583,8 +3144,6 @@ mod tests {
         );
     }
 
-    // -- Search answers in threads (spec 013 US6) --
-
     mod in_threads {
         use super::super::*;
         use chrono::TimeZone;
@@ -3592,8 +3151,6 @@ mod tests {
         use postio_model::{EmailAddress, MessageId, ThreadId};
         use postio_search::results::{ConversationMatch, Match, Passage, Source};
 
-        /// Harbor: eight messages, Mon 21 Sep on, one a day, Ben on the
-        /// even-numbered ones.
         fn harbor() -> ThreadView {
             let members = (1..=8u32)
                 .map(|number| ThreadMember {
@@ -3624,7 +3181,6 @@ mod tests {
             }
         }
 
-        /// Thursday 24 September 2026, the afternoon.
         fn now() -> DateTime<chrono::Local> {
             chrono::Local
                 .with_ymd_and_hms(2026, 9, 24, 15, 0, 0)
@@ -3714,10 +3270,8 @@ mod tests {
             assert_eq!((*message, tag.as_str()), (MessageId::new(3), "message 3"));
         }
 
-        /// #2178: "7 of 12 messages match" over messages 1, 5 and 9 left
-        /// 10-12 unsaid. Every message the expansion does not show is in a
-        /// gap line, before the first match and after the last as well as
-        /// between two.
+        /// #2178: every message the expansion does not show is in a gap line, including before the
+        /// first match and after the last.
         #[test]
         fn the_gaps_account_for_every_message_not_shown() {
             let kids = children(&harbor(), &matches_3_5_6(), now());
@@ -3744,9 +3298,8 @@ mod tests {
             assert_eq!(said, 8, "every message of the eight, once: {kids:?}");
         }
 
-        /// #2178: a gap dated "Mon" beside children dated "16 Mar" read as
-        /// yesterday. A gap says its first message's day as every row says
-        /// a time: the weekday only within the week.
+        /// #2178: a gap says its first message's day as every row says a time, so "Mon" beside "16
+        /// Mar" does not read as yesterday.
         #[test]
         fn a_gap_dates_its_first_message_as_the_rows_do() {
             let mut view = harbor();

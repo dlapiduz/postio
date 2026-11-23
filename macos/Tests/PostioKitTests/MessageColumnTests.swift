@@ -3,9 +3,6 @@ import Testing
 
 @testable import PostioKit
 
-/// The message window's column follows the window the person resized
-/// (spec 009 M1; the pack's message-window SPEC §1): the document's
-/// `columnWidth` is only the width it opened at.
 struct MessageColumnTests {
     static let opened = MessageWindowModelTests.document(shown: .appColours)
 

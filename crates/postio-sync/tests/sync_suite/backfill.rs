@@ -1,6 +1,3 @@
-//! Backfilling message bodies: newest first, out of the user's way, and never
-//! in front of the message they just opened.
-
 use postio_storage::sql::bind;
 use std::time::Duration;
 
@@ -48,8 +45,6 @@ async fn server(count: u32) -> MockBackend {
     backend
 }
 
-/// A file-backed database and a blob store beside it, because a blob store is
-/// a directory and an in-memory database has no directory to sit next to.
 struct Local {
     database: TempStore,
     connection: postio_storage::Checkout,
@@ -134,8 +129,6 @@ async fn shared_content_settles_a_queued_membership_without_another_fetch() {
     );
 }
 
-/// A request for `uid`, received `uid` seconds into the fixture's timeline, so
-/// a higher UID is also the newer message.
 fn request(mailbox: &Mailbox, id: MessageId, uid: u32, size: u64) -> BodyRequest {
     BodyRequest {
         message: id,
@@ -151,7 +144,6 @@ fn request(mailbox: &Mailbox, id: MessageId, uid: u32, size: u64) -> BodyRequest
     }
 }
 
-/// Syncs headers so the local rows exist, and returns them oldest UID first.
 async fn headers(local: &Local, backend: &MockBackend) -> Vec<(MessageId, u32)> {
     sync_mailbox(
         &local.connection,
@@ -180,10 +172,6 @@ async fn headers(local: &Local, backend: &MockBackend) -> Vec<(MessageId, u32)> 
     rows.sort_by_key(|(_, uid)| *uid);
     rows
 }
-
-// ---------------------------------------------------------------------------
-// The user always wins — the acceptance criterion
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn opening_a_message_jumps_the_whole_backlog() {
@@ -223,7 +211,6 @@ async fn the_backlog_never_starves_the_user_more_than_one_body_at_a_time() {
         ));
     }
 
-    // One background body is already in flight; the user opens something.
     let in_flight = backfill.next_body().expect("background work");
     let opened = MessageId::new(500);
     backfill.request_now(request(&local.inbox, opened, 500, 1_024));
@@ -240,8 +227,6 @@ async fn the_backlog_never_starves_the_user_more_than_one_body_at_a_time() {
 async fn a_queued_message_the_user_opens_is_promoted_rather_than_fetched_twice() {
     let local = local().await;
     let mut backfill = Backfill::new(policy());
-    // The *oldest* of the three, so it would be last out of the backlog and
-    // the assertion cannot pass by accident.
     let message = MessageId::new(1);
 
     backfill.enqueue(request(&local.inbox, message, 1, 1_024));
@@ -272,10 +257,6 @@ async fn a_message_already_in_flight_is_not_handed_out_again() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Newest first
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn the_backlog_is_worked_newest_first() {
     let local = local().await;
@@ -302,10 +283,6 @@ async fn the_backlog_is_worked_newest_first() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// The size cap
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn a_body_over_the_cap_is_left_on_the_server_until_it_is_wanted() {
     let local = local().await;
@@ -324,8 +301,6 @@ async fn a_body_over_the_cap_is_left_on_the_server_until_it_is_wanted() {
     );
     assert_eq!(backfill.progress().skipped, 1);
 
-    // …until the user opens it, at which point the cap is beside the point:
-    // they are looking at a spinner and they asked for this.
     backfill.request_now(request(&local.inbox, huge, 1, cap + 1));
     assert_eq!(backfill.next_body().expect("work").request.message, huge);
 }
@@ -345,10 +320,6 @@ async fn no_cap_means_no_cap() {
         .expect("a body of any size is offered when nothing caps it");
     assert_eq!(claim.request.message, MessageId::new(1));
 }
-
-// ---------------------------------------------------------------------------
-// Getting out of the way
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn a_metered_connection_pauses_the_backlog_but_never_the_user() {
@@ -405,10 +376,6 @@ async fn a_policy_with_the_background_lane_off_still_serves_the_user() {
          not whether the reading pane works"
     );
 }
-
-// ---------------------------------------------------------------------------
-// Cancellation and progress — the acceptance criterion
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn cancelling_stops_the_backlog_and_whatever_is_on_the_wire() {
@@ -494,10 +461,6 @@ async fn progress_accounts_for_every_message_that_went_in() {
     assert!(backfill.is_idle());
 }
 
-// ---------------------------------------------------------------------------
-// A folder can opt out of the background lane (ADR 0016, #350)
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn an_excluded_folder_seeds_nothing_into_the_background_lane() {
     let backend = server(5).await;
@@ -523,8 +486,6 @@ async fn an_excluded_folder_seeds_nothing_into_the_background_lane() {
 
 #[tokio::test]
 async fn an_ordinary_folder_still_seeds_once_excluded_elsewhere() {
-    // Regression guard beside the exclusion test above: the new check must
-    // not turn into "nothing ever seeds again".
     let backend = server(5).await;
     let local = local().await;
     headers(&local, &backend).await;
@@ -539,10 +500,6 @@ async fn an_ordinary_folder_still_seeds_once_excluded_elsewhere() {
 
 #[tokio::test]
 async fn opening_a_message_in_an_excluded_folder_still_fetches_its_body() {
-    // Turning off the background lane must not turn off reading: #350's own
-    // acceptance criterion, and the same distinction
-    // `BackfillPolicy::background`'s doc comment already draws for the
-    // account-wide knob.
     let backend = server(1).await;
     let local = local().await;
     let rows = headers(&local, &backend).await;
@@ -572,10 +529,6 @@ async fn opening_a_message_in_an_excluded_folder_still_fetches_its_body() {
     .expect("fetch");
     assert!(matches!(outcome, Outcome::Stored { .. }));
 }
-
-// ---------------------------------------------------------------------------
-// Actually fetching one
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn fetching_a_body_stores_the_raw_message_and_its_decoded_text() {
@@ -726,11 +679,6 @@ async fn a_cancelled_fetch_stores_nothing() {
     let _ = &local.database;
 }
 
-// ---------------------------------------------------------------------------
-// One message that will not come must not be asked for for ever (#1918)
-// ---------------------------------------------------------------------------
-
-/// Fetches `uid`'s body once, the way the backlog would.
 async fn try_body(
     local: &Local,
     backend: &MockBackend,
@@ -749,7 +697,6 @@ async fn try_body(
     .await
 }
 
-/// What a restart would offer: a fresh backfill, seeded from the store.
 async fn offered_after_a_restart(local: &Local) -> usize {
     let mut backfill = Backfill::new(policy());
     seed(&local.connection, &mut backfill, local.inbox.id, 50)
@@ -790,7 +737,6 @@ async fn a_message_the_server_has_no_body_for_is_remembered() {
     let backend = server(2).await;
     let local = local().await;
     let rows = headers(&local, &backend).await;
-    // A UID the server never had: the FETCH is answered with a bare OK.
     let (id, _) = rows[0];
     let outcome = try_body(&local, &backend, id, 9_999)
         .await
@@ -860,7 +806,6 @@ async fn opening_a_marked_message_tries_again_and_a_body_clears_the_mark() {
     let messages = MessageRepository::new(&local.connection);
     assert!(messages.body_failed(id).await.expect("read"));
 
-    // The user opens it: `request_body` goes around the seed's exclusion.
     let mut backfill = Backfill::new(policy());
     assert!(
         request_body(&local.connection, &mut backfill, id)
@@ -898,25 +843,8 @@ async fn a_body_that_cannot_be_parsed_is_settled_not_wedged() {
     assert_eq!(offered_after_a_restart(&local).await, 0);
 }
 
-// ---------------------------------------------------------------------------
-// And it reaches the search index
-// ---------------------------------------------------------------------------
-
-/// Whether `id`'s body has been indexed at all.
-///
-/// `message_bodies_fts` is `content = ''` — contentless — so unlike the
-/// `search_documents.body` column these tests used to read, there is no text
-/// to read back: the index keeps what it needs to answer a query and nothing
-/// else (ADR 0016, and the reason it exists is that the column was the whole
-/// mailbox duplicated inside SQLite). Presence and matching are therefore the
-/// only two questions available, and between them they are the ones these
-/// tests were always really asking.
-/// Whether `id` has been through `index_body` at all.
-///
-/// `body_search` is `NULL` until it has and the **empty string** after it,
-/// even for a message with no words — a row in `message_search_bodies` is the
-/// record that indexing happened, and #500's infinite loop is what "tried,
-/// nothing there" spelled as a missing row cost.
+/// `body_search` is `NULL` until indexed and the empty string after, even for a message with no
+/// words: a missing row spelled "tried, nothing there" caused #500's infinite loop.
 async fn body_is_indexed(connection: &postio_storage::Checkout, id: MessageId) -> bool {
     postio_storage::sql::exists(
         connection,
@@ -927,12 +855,8 @@ async fn body_is_indexed(connection: &postio_storage::Checkout, id: MessageId) -
     .unwrap_or(false)
 }
 
-/// Whether `id`'s indexed body matches `query` — a full-text match
-/// expression, so a bare word or a `"quoted phrase"`.
-///
-/// Folded on the way in, because the engine's tokenizer does not fold
-/// diacritics and `index_body` folded the text it stored. A query that skips
-/// the fold matches nothing an accented body contains.
+/// Folded on the way in: the tokenizer does not fold diacritics and `index_body` folded the stored
+/// text.
 async fn body_matches(connection: &postio_storage::Checkout, id: MessageId, query: &str) -> bool {
     postio_storage::sql::exists(
         connection,
@@ -943,15 +867,6 @@ async fn body_matches(connection: &postio_storage::Checkout, id: MessageId, quer
     .unwrap_or(false)
 }
 
-/// Issue #327: `index_body` existed, was tested, and nothing ever called it.
-///
-/// The metadata columns — sender, recipients, subject, filenames — are kept
-/// current by SQL triggers, so they were always right. `body` is the one
-/// column no trigger can compute: the text lives in the blob store, and the
-/// only moment anything holds it is the moment it is fetched. Nothing did
-/// the call, so `body` was empty on every message ever synced and search
-/// answered a question about a subject and the same question about a body
-/// differently — which is what "search is inconsistent" turned out to mean.
 #[tokio::test]
 async fn a_fetched_body_becomes_searchable_text() {
     let backend = server(2).await;
@@ -980,9 +895,6 @@ async fn a_fetched_body_becomes_searchable_text() {
     .await
     .expect("fetch");
 
-    // The fetch stores; the indexer indexes. A stored body with no search
-    // row is the indexer's queue, and the fetch must leave it there rather
-    // than write the row itself on the sync lane.
     assert!(
         !body_is_indexed(&local.connection, id).await,
         "the fetch wrote the search row itself, on the sync lane"
@@ -995,11 +907,6 @@ async fn a_fetched_body_becomes_searchable_text() {
     );
 }
 
-/// One batch of the indexer, in miniature: everything the store holds a
-/// body for and no search row, indexed the way `postio_session::
-/// spawn_body_indexer` does it. What a test asserts through here is the
-/// contract between the fetch and the indexer, not the indexer itself --
-/// that has its own suite in `postio-session`.
 async fn index_pending(connection: &postio_storage::Checkout) {
     let pending = postio_index::index::messages_missing_body_text(connection, 1_000, None)
         .await
@@ -1022,14 +929,8 @@ async fn index_pending(connection: &postio_storage::Checkout) {
     }
 }
 
-/// The other half of the same call: an HTML-only message is indexed as its
-/// *text*, never as its markup.
-///
-/// Marketing mail, calendar invitations and anything composed in a webmail
-/// client have no `text/plain` alternative at all, so this is the ordinary
-/// case rather than an exotic one. Putting the markup in would make every
-/// such message a hit for `div`, for `href`, and for the host of every
-/// tracking redirect it carries — none of which the message says.
+/// HTML-only mail is indexed as text, never markup, or every such message would hit `div` and
+/// `href`.
 #[tokio::test]
 async fn an_html_only_body_is_indexed_as_text_and_not_as_markup() {
     let raw = b"From: Ada Lovelace <ada@example.com>\r\n\
@@ -1083,14 +984,6 @@ async fn an_html_only_body_is_indexed_as_text_and_not_as_markup() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// The text axis — ADR 0017
-// ---------------------------------------------------------------------------
-
-/// A message whose words are a rounding error beside its attachment.
-///
-/// The shape ADR 0017 is about: on the reference account, messages like this
-/// are 15% of the mail and 90% of the bytes.
 const HUGE: u64 = 40 * 1024 * 1024;
 
 fn with_a_big_attachment(uid: u32) -> MockMessage {
@@ -1104,8 +997,6 @@ fn with_a_big_attachment(uid: u32) -> MockMessage {
                 .with_filename("statement.pdf"),
         ],
     );
-    // The raw bytes exist so the mock can sketch an envelope, and are what a
-    // whole-message fetch would return -- the test asserts nothing pulls them.
     MockMessage::new(
         format!(
             "From: Ada Lovelace <ada@example.com>\r\n\
@@ -1128,12 +1019,8 @@ fn with_a_big_attachment(uid: u32) -> MockMessage {
 
 #[tokio::test]
 async fn backfilling_a_message_fetches_its_text_and_leaves_the_attachment_alone() {
-    // The whole point of ADR 0017. Before it, this fetched `BODY.PEEK[]` --
-    // forty megabytes across the wire to index twenty-six bytes of words.
-    //
-    // The mock rejects a `BODY[<section>]` nobody seeded, and only section 1
-    // is seeded here, so a fetch that reached for the attachment fails the
-    // test rather than quietly costing bandwidth no assertion can see.
+    // The mock rejects a `BODY[<section>]` nobody seeded and only section 1 is seeded, so reaching
+    // for the attachment fails the test.
     let inbox = MockMailbox::new(INBOX)
         .uid_validity(UidValidity::new(VALIDITY))
         .message(with_a_big_attachment(1));
@@ -1182,9 +1069,6 @@ async fn backfilling_a_message_fetches_its_text_and_leaves_the_attachment_alone(
 
 #[tokio::test]
 async fn a_message_with_no_attachments_is_full_once_its_text_is_local() {
-    // `partial` has to mean something, so the other side of it needs proving:
-    // a message whose every part is now local is `full`, and a reader can tell
-    // the two apart without asking the network.
     let inbox = MockMailbox::new(INBOX)
         .uid_validity(UidValidity::new(VALIDITY))
         .message(
@@ -1228,10 +1112,8 @@ async fn a_message_with_no_attachments_is_full_once_its_text_is_local() {
 
 #[tokio::test]
 async fn the_whole_message_is_wanted_when_a_full_row_has_no_raw_source() {
-    // The text axis stores no raw source (ADR 0017) and a message with no
-    // attachments is `full` once its text is local. View source, export and
-    // drag-out still need the bytes, and `full` must not read as "nothing to
-    // fetch" while `raw_blob_id` is empty (#1984).
+    // A message with no attachments is `full` once its text is local, but view source and drag-out
+    // still need raw bytes (#1984).
     let inbox = MockMailbox::new(INBOX)
         .uid_validity(UidValidity::new(VALIDITY))
         .message(
@@ -1304,17 +1186,11 @@ async fn the_whole_message_is_wanted_when_a_full_row_has_no_raw_source() {
 
 #[tokio::test]
 async fn a_row_synced_before_the_text_sections_existed_still_gets_its_body() {
-    // Migration 0008 cannot invent sections for rows already on disk, and
-    // guessing `1` would be wrong for every multipart message. Such a row
-    // falls back to the whole-message fetch -- slower and fatter, but never
-    // a message that silently has no body and never a hole in search.
     let backend = server(1).await;
     let local = local().await;
     let rows = headers(&local, &backend).await;
     let (id, uid) = rows[0];
 
-    // `server()` seeds no BODYSTRUCTURE, so the header pass records no
-    // sections -- exactly the shape of a pre-0008 row.
     let messages = MessageRepository::new(&local.connection);
     assert_eq!(
         messages
@@ -1350,13 +1226,6 @@ async fn a_row_synced_before_the_text_sections_existed_still_gets_its_body() {
 
 #[tokio::test]
 async fn a_payload_with_nothing_to_explain_its_bytes_asks_for_every_byte() {
-    // The fallback under the payload axis. `BODY[2]` comes back encoded with
-    // no headers, so a part whose `BODYSTRUCTURE` was never recorded -- a row
-    // synced before migration 0010 -- has nothing to decode against. Fetching
-    // the whole message is slower and fatter, and it is the only answer that
-    // is not "store base64 and call it a PDF".
-    //
-    // Interactive by construction: nothing speculative reaches this path.
     let inbox = MockMailbox::new(INBOX)
         .uid_validity(UidValidity::new(VALIDITY))
         .message(with_a_big_attachment(1));
@@ -1396,10 +1265,6 @@ async fn a_payload_with_nothing_to_explain_its_bytes_asks_for_every_byte() {
 
 #[tokio::test]
 async fn text_fetched_by_section_reaches_the_search_index() {
-    // #327 was "bodies are never indexed". The text axis is a *second* place
-    // bodies arrive, so it needs its own proof that what it stores is what
-    // the indexer picks up -- otherwise ADR 0017 would quietly reintroduce
-    // the bug it exists to serve.
     let inbox = MockMailbox::new(INBOX)
         .uid_validity(UidValidity::new(VALIDITY))
         .message(with_a_big_attachment(1));
@@ -1432,9 +1297,6 @@ async fn text_fetched_by_section_reaches_the_search_index() {
     );
 }
 
-/// Whether `id` carries an indexed header row for `name`, whose value
-/// contains `value` — the two questions `header:` asks, straight off the
-/// table (ADR 0025 Q2).
 async fn header_is_indexed(
     connection: &postio_storage::Checkout,
     id: MessageId,
@@ -1455,12 +1317,8 @@ async fn header_is_indexed(
 
 #[tokio::test]
 async fn a_fetched_body_reaches_the_header_index() {
-    // #327's shape, in ADR 0025's costume: the catch-up pass is what fills
-    // `message_headers` for mail that was already here, and it runs once per
-    // start. If the fetch path did not index too, mail that arrived while the
-    // application was open would not answer `header:` until it was restarted
-    // -- a feature that works on old mail and not on new is worse than one
-    // that does not work.
+    // The fetch path must index headers too, or mail arriving while the app is open would not
+    // answer `header:` until restart.
     let backend = server(2).await;
     let local = local().await;
     postio_index::index::ensure_schema(&local.connection)
@@ -1497,9 +1355,6 @@ async fn a_fetched_body_reaches_the_header_index() {
 
 #[tokio::test]
 async fn text_fetched_by_section_reaches_the_header_index() {
-    // The text axis is a second place a block arrives, and ADR 0017 says it
-    // is 15% of the reference mailbox. It needs its own proof for the same
-    // reason `text_fetched_by_section_reaches_the_search_index` does.
     let inbox = MockMailbox::new(INBOX)
         .uid_validity(UidValidity::new(VALIDITY))
         .message(with_a_big_attachment(1));
@@ -1533,13 +1388,8 @@ async fn text_fetched_by_section_reaches_the_header_index() {
 
 #[tokio::test]
 async fn text_that_is_not_part_one_is_still_found() {
-    // The reason the section number is stored rather than assumed. A message
-    // whose first part is the attachment -- a scanner, a mail-merge, anything
-    // that puts the payload first -- keeps its words at `2.1`, and a backfill
-    // that reached for `1` would index a PDF's base64 as if it were prose.
-    //
-    // Only `2.1` and `2.2` are seeded, so a fetch of part 1 fails the test
-    // rather than silently costing the bandwidth this exists to save.
+    // Words at `2.1` when the attachment comes first; only `2.1` and `2.2` are seeded, so fetching
+    // part 1 fails the test.
     let structure = postio_account::backend::BodyStructure::from_parts(
         "multipart/mixed",
         [
@@ -1603,23 +1453,10 @@ async fn text_that_is_not_part_one_is_still_found() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// The backlog is bounded — ADR 0017, axis 2
-// ---------------------------------------------------------------------------
-
 #[test]
 fn the_background_backlog_stops_growing_at_its_cap() {
-    // The backlog is an in-memory `BinaryHeap` of requests, each carrying an
-    // owned mailbox path. It is fine at 200 per folder and it is not fine the
-    // first time something re-seeds "the whole folder" -- 81,744 entries is
-    // the reference account, and ADR 0017's rule is that no mailbox is ever
-    // resident in this process.
-    //
-    // Refusing the overflow rather than evicting the oldest: the heap is
-    // newest-first, so what would be evicted is the mail most likely to be
-    // opened, and `seed` re-reads from storage anyway. `body_state` is the
-    // durable record of what still needs fetching; the heap is only a window
-    // onto it.
+    // Overflow is refused, not evicted: the heap is newest-first and `body_state` is the durable
+    // record.
     let mut backfill = Backfill::new(BackfillPolicy {
         max_backlog: 3,
         ..policy()
@@ -1636,10 +1473,6 @@ fn the_background_backlog_stops_growing_at_its_cap() {
 
 #[test]
 fn the_user_is_never_refused_by_the_backlog_cap() {
-    // The rule that decides every question in this module: the interactive
-    // lane always wins. A full backlog is a statement about speculative work,
-    // and the message someone just opened is not speculative -- refusing it
-    // would be the cap turning into a bug wearing a policy's clothes.
     let mut backfill = Backfill::new(BackfillPolicy {
         max_backlog: 1,
         ..policy()
@@ -1659,21 +1492,11 @@ fn the_user_is_never_refused_by_the_backlog_cap() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// The payload axis (ADR 0017, #377)
-// ---------------------------------------------------------------------------
-
-/// A small payload and the base64 the server would hand back for it.
-///
-/// Written out rather than encoded here on purpose: the point of the fixture
-/// is that the bytes on the wire are *not* the bytes in the blob store, and a
-/// test that encoded the expectation itself could not tell the two apart.
+/// Written out, not encoded here: the wire bytes must differ from the stored bytes, and an encoded
+/// expectation could not tell.
 const PDF: &[u8] = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n";
 const PDF_BASE64: &str = "JVBERi0xLjQKJeLjz9MK\r\n";
 
-/// A message whose text is section 1 and whose payload is section 2, with
-/// both seeded on the server the way a real one would be: the text plain, the
-/// payload base64, and `BODYSTRUCTURE` saying so.
 fn with_a_payload(uid: u32, filename: &str) -> MockMessage {
     let structure = postio_account::backend::BodyStructure::from_parts(
         "multipart/mixed",
@@ -1707,8 +1530,6 @@ fn with_a_payload(uid: u32, filename: &str) -> MockMessage {
     .with_part("2", PDF_BASE64.as_bytes())
 }
 
-/// Header-sync one message carrying a payload, then backfill its text, so the
-/// row is left exactly where the payload axis picks it up: `partial`.
 async fn a_partial_message(local: &Local, backend: &MockBackend) -> (MessageId, u32) {
     let rows = headers(local, backend).await;
     let (id, uid) = rows[0];
@@ -1749,9 +1570,6 @@ fn a_payload_is_fetched_when_it_is_opened_and_not_before() {
 
 #[tokio::test]
 async fn opening_an_attachment_fetches_the_part_and_records_where_it_landed() {
-    // The column the schema has had since migration 0001 and the receive path
-    // has never written. Before this, `Attachment::is_downloaded` was false
-    // for every message that ever arrived from a server.
     let inbox = MockMailbox::new(INBOX)
         .uid_validity(UidValidity::new(VALIDITY))
         .message(with_a_payload(1, "statement.pdf"));
@@ -1851,18 +1669,9 @@ async fn a_payload_already_on_this_machine_is_never_fetched_twice() {
 
 #[tokio::test]
 async fn an_evicted_payload_can_be_fetched_again() {
-    // The promise the whole ceiling rests on (#862). `evict_to_fit` deletes
-    // bytes a row still points at -- which is exactly what separates it from
-    // garbage collection -- and it is only safe because those bytes are
-    // refetchable. So the test is not "the file is gone": it is that a store
-    // which has just lost an attachment to its ceiling asks for it again and
-    // gets the same bytes back.
-    //
-    // Structurally that rests on what `forget` writes: `blob_id = NULL` and
-    // `body_state = partial`, which together are precisely what the payload
-    // axis reads as "not here yet". An eviction that cleared one and not the
-    // other would leave the attachment unreachable for ever, and nothing
-    // downstream could tell.
+    // `evict_to_fit` deletes bytes a row still points at, which is safe only because they are
+    // refetchable: `forget` writes `blob_id = NULL` and `partial`, together read as "not here yet"
+    // (#862).
     let inbox = MockMailbox::new(INBOX)
         .uid_validity(UidValidity::new(VALIDITY))
         .message(with_a_payload(1, "statement.pdf"));
@@ -1889,9 +1698,6 @@ async fn an_evicted_payload_can_be_fetched_again() {
     )
     .await
     .expect("fetch");
-    // As the engine does: a claim stays in flight until its outcome is
-    // reported, and a message in flight has its next request held rather than
-    // queued.
     backfill.finished(
         id,
         Outcome::Stored {
@@ -1908,7 +1714,6 @@ async fn an_evicted_payload_can_be_fetched_again() {
         .clone()
         .expect("the payload is here to begin with");
 
-    // A ceiling of nothing at all: the smallest store that is over budget.
     let report = local
         .blobs
         .evict_to_fit(&local.connection, 0)
@@ -1924,8 +1729,6 @@ async fn an_evicted_payload_can_be_fetched_again() {
         "the row stops claiming a part it no longer has"
     );
 
-    // And the part is askable again, from the same call the attachment chip
-    // makes when somebody presses download.
     assert_eq!(
         request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()])
             .await
@@ -1966,10 +1769,6 @@ async fn an_evicted_payload_can_be_fetched_again() {
 
 #[tokio::test]
 async fn two_messages_carrying_the_same_file_share_one_blob() {
-    // Dedup is worth real bytes: on the reference account 22,878 named
-    // attachment parts collapse to 13,099 distinct. Content addressing gets
-    // it for free -- provided the id is taken on the decoded payload and not
-    // on the base64, which differs by line wrapping alone.
     let inbox = MockMailbox::new(INBOX)
         .uid_validity(UidValidity::new(VALIDITY))
         .message(with_a_payload(1, "statement.pdf"))
@@ -2047,7 +1846,6 @@ async fn never_leaves_a_payload_on_the_server_even_when_it_is_opened() {
 
 #[tokio::test]
 async fn a_part_the_message_does_not_have_is_gone_and_asks_nothing() {
-    // #1996: each "nothing to fetch" is its own sentence for the person.
     let inbox = MockMailbox::new(INBOX)
         .uid_validity(UidValidity::new(VALIDITY))
         .message(with_a_payload(1, "statement.pdf"));
@@ -2080,8 +1878,6 @@ async fn a_part_the_message_does_not_have_is_gone_and_asks_nothing() {
 
 #[tokio::test]
 async fn a_part_of_a_message_with_no_server_address_says_so_and_asks_nothing() {
-    // A message moved a moment ago has no UID until the next sync, so there
-    // is nowhere to fetch its part from yet (#1996).
     let inbox = MockMailbox::new(INBOX)
         .uid_validity(UidValidity::new(VALIDITY))
         .message(with_a_payload(1, "statement.pdf"));
@@ -2223,10 +2019,6 @@ async fn a_message_is_full_only_once_its_last_payload_is_local() {
 
 #[tokio::test]
 async fn a_part_asked_for_while_another_is_on_the_wire_is_not_lost() {
-    // Two chips clicked in quick succession. The second request cannot join a
-    // fetch already on the wire, and dropping it silently would leave the
-    // second spinner turning until it timed out -- so it waits for the first
-    // to settle and is offered again.
     let local = local().await;
     let mut backfill = Backfill::new(policy());
 
@@ -2271,16 +2063,8 @@ async fn a_part_asked_for_while_another_is_still_queued_joins_it() {
     assert!(backfill.next_body().is_none());
 }
 
-// ---------------------------------------------------------------------------
-// The disk budget stops the lane — ADR 0017, axis 3
-// ---------------------------------------------------------------------------
-
 #[test]
 fn a_full_store_pauses_the_background_lane_rather_than_thrashing() {
-    // Backfill fetches, eviction frees, backfill fetches the same bytes
-    // again: a store at its ceiling with the lane still running is a loop
-    // that burns a data plan to stay exactly as full as it was. The lane
-    // stops instead, and #352 is the surface that says so.
     let mut backfill = Backfill::new(policy());
     let mailbox = Mailbox::new(postio_model::AccountId::new(1), "INBOX", None);
 
@@ -2294,13 +2078,6 @@ fn a_full_store_pauses_the_background_lane_rather_than_thrashing() {
 
 #[test]
 fn a_full_store_never_refuses_the_user() {
-    // Same rule as every other pause in this module: the interactive lane
-    // wins. Someone opening a message is not speculative work, and a store
-    // over its ceiling is a statement about speculative work.
-    //
-    // It is also the only way out: opening mail is what proves which blobs
-    // are worth keeping, and a client that stopped serving reads when its
-    // cache filled would be a client that had stopped working.
     let mut backfill = Backfill::new(policy());
     let mailbox = Mailbox::new(postio_model::AccountId::new(1), "INBOX", None);
 
@@ -2311,19 +2088,9 @@ fn a_full_store_never_refuses_the_user() {
     assert_eq!(next.request.message, MessageId::new(7));
 }
 
-// ---------------------------------------------------------------------------
-// Inline parts ride with the text — ADR 0017, #751
-// ---------------------------------------------------------------------------
-
-/// Base64 for `PNGBYTES`, so the decoded bytes are recognisable in a failure.
 const SMALL_INLINE: &str = "UE5HQllURVM=";
 
-/// A `multipart/related` message: an HTML body, a small inline image it
-/// references, and an inline image far too big for the text axis to carry.
-///
-/// Only sections `1` and `2` are seeded. The mock rejects a `BODY[<section>]`
-/// nobody seeded, so a fetch that reached for the oversized part fails the
-/// test rather than quietly costing forty megabytes no assertion can see.
+/// Only sections `1` and `2` are seeded, so a fetch of the oversized part fails the test.
 fn with_inline_images(uid: u32) -> MockMessage {
     let structure = postio_account::backend::BodyStructure::from_parts(
         "multipart/related",
@@ -2333,7 +2100,6 @@ fn with_inline_images(uid: u32) -> MockMessage {
                 .with_encoding("7bit"),
             postio_account::backend::PartNode::new("2", "image/png", 8)
                 .with_encoding("base64")
-                // Brackets and all, exactly as `BODYSTRUCTURE` reports it.
                 .with_content_id("<logo@example.com>")
                 .with_disposition(postio_account::backend::Disposition::Inline),
             postio_account::backend::PartNode::new("3", "image/png", HUGE)
@@ -2365,14 +2131,6 @@ fn with_inline_images(uid: u32) -> MockMessage {
 
 #[tokio::test]
 async fn the_text_axis_carries_the_inline_images_the_body_references() {
-    // #751 cause 1, and ADR 0017's "inline parts ride with the text": the rule
-    // was decided, documented, and built by nothing, so `cid:` resolved to no
-    // bytes and every HTML message with its own images drew broken boxes.
-    //
-    // Under the default `AttachmentPolicy::OnOpen` -- payloads stay on the
-    // server until somebody asks -- the inline part under the cap must still
-    // be local when the text lands, because it *is* the text as far as a
-    // person reading the message is concerned.
     let inbox = MockMailbox::new(INBOX)
         .uid_validity(UidValidity::new(VALIDITY))
         .message(with_inline_images(1));
@@ -2434,11 +2192,6 @@ async fn the_text_axis_carries_the_inline_images_the_body_references() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Calendar parts ride with the text -- spec 007, T108
-// ---------------------------------------------------------------------------
-
-/// An invitation as a calendar server builds one.
 const INVITE: &str = "BEGIN:VCALENDAR\r\n\
                       METHOD:REQUEST\r\n\
                       BEGIN:VEVENT\r\n\
@@ -2451,15 +2204,9 @@ const INVITE: &str = "BEGIN:VCALENDAR\r\n\
                       END:VEVENT\r\n\
                       END:VCALENDAR\r\n";
 
-/// A calendar part of a mebibyte: an event with a year of attendees, say.
 const MEBIBYTE: u64 = 1024 * 1024;
 
-/// An invitation: its words, its `text/calendar` alternative, and a second
-/// calendar part of a mebibyte.
-///
-/// Only sections `1` and `2` are seeded. The mock rejects a `BODY[<section>]`
-/// nobody seeded, so a fetch that reached for the big part fails the test
-/// rather than quietly costing a mebibyte no assertion can see.
+/// Only sections `1` and `2` are seeded, so a fetch of the big calendar part fails the test.
 fn an_invitation(uid: u32) -> MockMessage {
     let structure = postio_account::backend::BodyStructure::from_parts(
         "multipart/mixed",
@@ -2499,10 +2246,6 @@ fn an_invitation(uid: u32) -> MockMessage {
 
 #[tokio::test]
 async fn a_calendar_part_is_stored_with_the_body_and_a_mebibyte_one_is_not() {
-    // Focus answers an invitation from the row (US8), and the times it
-    // shows come from the calendar part. So the part rides with the text,
-    // as an inline image does, and is local the moment the body is -- but
-    // only up to 256 KiB, past which it is a payload like any other.
     let inbox = MockMailbox::new(INBOX)
         .uid_validity(UidValidity::new(VALIDITY))
         .message(an_invitation(1));
@@ -2569,9 +2312,6 @@ async fn a_calendar_part_is_stored_with_the_body_and_a_mebibyte_one_is_not() {
 
 #[tokio::test]
 async fn a_message_whose_inline_parts_all_fit_is_full_once_its_text_lands() {
-    // The other side of the cap: when nothing was left on the server, the
-    // message is `full`, so the reader offers "open" rather than "download"
-    // and search knows it is answering from a complete corpus.
     let structure = postio_account::backend::BodyStructure::from_parts(
         "multipart/related",
         [
@@ -2620,10 +2360,6 @@ async fn a_message_whose_inline_parts_all_fit_is_full_once_its_text_lands() {
 
 #[tokio::test]
 async fn a_named_attachment_is_never_dragged_down_the_text_axis() {
-    // The cap is about *inline* parts. A small PDF the sender attached is a
-    // payload however little it weighs, or `attachment_fetch = "on_open"`
-    // would quietly stop meaning anything. The mock has no bytes seeded for
-    // section 2, so reaching for it fails this test.
     let structure = postio_account::backend::BodyStructure::from_parts(
         "multipart/mixed",
         [
@@ -2674,16 +2410,8 @@ async fn a_named_attachment_is_never_dragged_down_the_text_axis() {
     assert_eq!(stored.sync.body_state, BodyState::Partial);
 }
 
-// ---------------------------------------------------------------------------
-// The header block — ADR 0025, #884
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn a_fetched_body_stores_the_header_block_it_arrived_with() {
-    // `header:` has nowhere to match against until this happens. The column
-    // has existed since migration 0001 and both backfill paths passed
-    // `headers: None` on purpose -- "a copy nobody reads is a copy that can go
-    // stale" -- which was right until ADR 0025 gave it a reader.
     let backend = server(1).await;
     let local = local().await;
     let rows = headers(&local, &backend).await;
@@ -2719,17 +2447,6 @@ async fn a_fetched_body_stores_the_header_block_it_arrived_with() {
 
 #[tokio::test]
 async fn the_text_axis_stores_a_block_even_though_it_stores_no_raw_blob() {
-    // The `partial` path -- ~15% of ADR 0017's reference mailbox. It asks for
-    // the text sections by name and stores no raw source at all, so it is the
-    // one state where nothing else would ever bring the block and `header:`
-    // would answer "no such mail" for mail that is right there. It now asks
-    // for `BODY[HEADER]` as well, which is one more section on a fetch that is
-    // already happening.
-    //
-    // The payload fetch below is not what stores it -- `fetch_payloads` writes
-    // no body at all -- and this test said otherwise until the block was
-    // checked against which function actually wrote it. It is here to prove
-    // the block survives the message going from `partial` to `full`.
     let inbox = MockMailbox::new(INBOX)
         .uid_validity(UidValidity::new(VALIDITY))
         .message(with_a_payload(1, "statement.pdf"));
@@ -2779,13 +2496,6 @@ async fn the_text_axis_stores_a_block_even_though_it_stores_no_raw_blob() {
 
 #[tokio::test]
 async fn a_legacy_row_with_no_block_and_no_blob_is_queued_and_filled() {
-    // The third row of #884's repair table, and the only one that touches the
-    // network. A store that has been in use since before blocks were stored
-    // has messages whose body is local, whose raw source was never kept -- the
-    // `partial` path never keeps one -- and whose block therefore cannot be
-    // rebuilt from disk. Without this they would stay unanswerable for ever,
-    // which is the shape of "the feature works only on mail you received after
-    // you upgraded".
     let inbox = MockMailbox::new(INBOX)
         .uid_validity(UidValidity::new(VALIDITY))
         .message(with_a_payload(1, "statement.pdf"));
@@ -2796,7 +2506,6 @@ async fn a_legacy_row_with_no_block_and_no_blob_is_queued_and_filled() {
     let (id, _uid) = a_partial_message(&local, &backend).await;
     let messages = MessageRepository::new(&local.connection);
 
-    // Wind it back to what a pre-#884 store holds: body local, block absent.
     messages
         .set_headers(id, None)
         .await
@@ -2860,7 +2569,6 @@ async fn a_legacy_row_with_no_block_and_no_blob_is_queued_and_filled() {
         "a header fetch must not disturb the words already on this machine"
     );
 
-    // And it stops being offered, or the lane spins (#500).
     assert_eq!(
         seed_header_blocks(&local.connection, &mut backfill, local.inbox.id, 10)
             .await
@@ -2869,33 +2577,6 @@ async fn a_legacy_row_with_no_block_and_no_blob_is_queued_and_filled() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// And it waits its turn
-// ---------------------------------------------------------------------------
-
-/// A backfilled body does not write while a person holds the gate.
-///
-/// #425's rule, and the same omission `resync.rs` had before
-/// `resync_interactive_write.rs` caught it: `postio_storage::WriteGate` is the
-/// whole of this engine's write serialisation -- its busy timeout is **0**
-/// where SQLCipher's was 5,000 ms -- so a writer outside the gate is not
-/// merely rude, it is a collision the engine reports and nobody retries.
-///
-/// The backfill was that writer. Every other path takes a permit;
-/// `backfill.rs` took none, and it writes `messages` (the row, the body, the
-/// attachment blobs) and then `messages.body_search` through the indexer.
-///
-/// Seen on a live account: archiving a message while the body backfill ran
-/// answered *"Could not save that change"*, over
-///
-/// ```text
-/// the local store refused a write: engine: database snapshot is stale,
-/// rollback and retry the transaction
-/// ```
-///
-/// A person's archive is what must not lose, so the backfill is the one that
-/// waits. It takes `WritePriority::Background`, which cannot even *begin*
-/// while an interactive writer is waiting.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_backfilled_body_waits_for_the_write_a_person_is_doing() {
     let backend = server(2).await;
@@ -2903,17 +2584,14 @@ async fn a_backfilled_body_waits_for_the_write_a_person_is_doing() {
     let fetched = headers(&local, &backend).await;
     let (id, uid) = fetched[0];
 
-    // Somebody is mid-archive.
     let permit = local
         .connection
         .write_gate()
         .acquire(postio_storage::WritePriority::Interactive)
         .await;
 
-    // A duration is the assertion here rather than a wait for a condition:
-    // what is being claimed is that something does *not* happen, and that
-    // cannot be settled by waiting for it. Generous enough that a loaded
-    // machine does not read as a pass.
+    // A duration is the assertion because the claim is that something does not happen; generous so
+    // a loaded machine does not read as a pass.
     let raced = tokio::time::timeout(
         Duration::from_millis(750),
         fetch_body(
@@ -2934,7 +2612,6 @@ async fn a_backfilled_body_waits_for_the_write_a_person_is_doing() {
          it with `database snapshot is stale` rather than a retry"
     );
 
-    // And once the person is done, it goes through.
     drop(permit);
     let outcome = fetch_body(
         &local.connection,
@@ -2953,14 +2630,8 @@ async fn a_backfilled_body_waits_for_the_write_a_person_is_doing() {
     );
 }
 
-/// `seed_payloads` walks past a window it cannot use (#318), and the
-/// comparisons that decide when to stop walking were the densest cluster of
-/// surviving mutants in the first baseline (#1470): no test told `queued > 0`
-/// from `>= 0`, or `read < limit` from `<=`. Two partial messages and a
-/// window of one message tell them apart. The second seed finds the newest
-/// already queued and has to reach the older one behind it; the third finds
-/// both queued and has to stop at the folder's end rather than walk for
-/// ever.
+/// Mutant guard (#1470): a window of one message tells `queued > 0` from `>= 0` and `read < limit`
+/// from `<=`.
 #[tokio::test]
 async fn seeding_payloads_walks_past_a_window_that_is_already_queued() {
     let inbox = MockMailbox::new(INBOX)
@@ -3023,27 +2694,10 @@ async fn seeding_payloads_walks_past_a_window_that_is_already_queued() {
     assert_eq!(queued.len(), 2, "each message queued once: {queued:?}");
 }
 
-// ---------------------------------------------------------------------------
-// Asking for a set, not a list (#1551)
-// ---------------------------------------------------------------------------
-
-/// The text axis asks for the same section over and over, so it can be one
-/// command.
-///
-/// A body fetch is almost all round trip. Fetching one message per command
-/// makes a first sync one wait per message — tens of thousands of them, end
-/// to end, which no bandwidth shortens. `prefetch_text_sections` groups the
-/// requests by the section path they want and asks for each group at once.
-///
-/// What this pins is the *shape of the question*: one batched call naming
-/// every message that wants section `1`, rather than one call each. The mock
-/// has no set primitive to be faster with — it is a `Vec` — so it records
-/// what it was asked and answers it the slow way, which is exactly what makes
-/// the assertion about the caller rather than the server.
+/// Pins the shape of the question: one batched call naming every message that wants section `1`.
+/// The mock is a `Vec`, so it records the call and answers the slow way.
 #[tokio::test]
 async fn the_text_axis_asks_for_a_set_of_messages_in_one_command() {
-    // Every message's words at section `1`, which is what most mail looks
-    // like and what makes a set worth asking for.
     let mut inbox = MockMailbox::new(INBOX).uid_validity(UidValidity::new(VALIDITY));
     for uid in 1..=5u32 {
         inbox = inbox.message(
@@ -3099,13 +2753,7 @@ async fn the_text_axis_asks_for_a_set_of_messages_in_one_command() {
     );
 }
 
-/// The header block rides in the batch, so a batch of N bodies is two
-/// commands, not N + 1 (#1941).
-///
-/// Every text fetch also stores the message's `BODY[HEADER]`, and that used to
-/// be one command per message after the sections had been fetched as a set --
-/// which made the batch cost what it saved. Counted in commands the backend
-/// served, the one thing a fast mock and a slow server agree on.
+/// Counted in commands the backend served, which a fast mock and a slow server agree on (#1941).
 #[tokio::test]
 async fn a_batch_of_bodies_is_two_commands_not_one_per_message() {
     let mut inbox = MockMailbox::new(INBOX).uid_validity(UidValidity::new(VALIDITY));
@@ -3168,23 +2816,17 @@ async fn a_batch_of_bodies_is_two_commands_not_one_per_message() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Batches of claims (#1941)
-// ---------------------------------------------------------------------------
-
 fn sized(n: u32, text_size: u64) -> BodyRequest {
     let mailbox = Mailbox::new(postio_model::AccountId::new(1), INBOX, Some('/'));
     request(&mailbox, MessageId::new(i64::from(n)), n, text_size)
 }
 
-/// A batch stops at its byte budget, but never before its first message.
 #[test]
 fn a_batch_is_bounded_by_bytes_and_always_holds_one() {
     let mut backfill = Backfill::new(BackfillPolicy {
         max_body_bytes: None,
         ..policy()
     });
-    // Newest first: uid 4 is the oversize one and leads.
     for (uid, size) in [(1, 1_000), (2, 1_000), (3, 1_000), (4, BATCH_BYTES * 3)] {
         assert!(backfill.enqueue(sized(uid, size)));
     }
@@ -3199,7 +2841,6 @@ fn a_batch_is_bounded_by_bytes_and_always_holds_one() {
     assert!(backfill.next_batch().is_empty());
 }
 
-/// A batch is also bounded by count.
 #[test]
 fn a_batch_is_bounded_by_count() {
     let mut backfill = Backfill::new(policy());
@@ -3212,7 +2853,6 @@ fn a_batch_is_bounded_by_count() {
     assert_eq!(backfill.next_batch().len(), 1);
 }
 
-/// The user's message is never queued behind a batch of background bodies.
 #[test]
 fn a_batch_with_a_message_the_user_opened_holds_only_that() {
     let mut backfill = Backfill::new(policy());
@@ -3229,7 +2869,6 @@ fn a_batch_with_a_message_the_user_opened_holds_only_that() {
     assert_eq!(backfill.next_batch().len(), 9, "the rest follow, once");
 }
 
-/// A claim handed back is offered again, and counted once.
 #[test]
 fn a_released_claim_is_offered_again() {
     let mut backfill = Backfill::new(policy());
@@ -3250,12 +2889,6 @@ fn a_released_claim_is_offered_again() {
     backfill.finished(kept.request.message, Outcome::Stored { bytes: 1 });
 }
 
-/// A batch is an optimisation, so a miss must cost nothing but a round trip.
-///
-/// `fetch_body` takes the cache by option and consults it per section; a
-/// message that was never batched — too large, a section nobody else wanted,
-/// a batch that failed — has to store exactly what it always did. Without
-/// this, the batch would be a second code path that can be wrong on its own.
 #[tokio::test]
 async fn a_body_the_batch_missed_is_fetched_and_stored_the_old_way() {
     let backend = server(1).await;
@@ -3263,7 +2896,6 @@ async fn a_body_the_batch_missed_is_fetched_and_stored_the_old_way() {
     let rows = headers(&local, &backend).await;
     let (id, uid) = rows[0];
 
-    // An empty cache is the miss, stated directly.
     let mut empty = Prefetched::default();
     let outcome = fetch_body(
         &local.connection,
@@ -3292,23 +2924,10 @@ async fn a_body_the_batch_missed_is_fetched_and_stored_the_old_way() {
     );
 }
 
-/// A prefetched batch hands each message its own sections and no others.
-///
-/// `Prefetched` holds a whole window's worth of bytes keyed by
-/// `(remote id, section)`, and `split_for` is what lifts one message's share
-/// out before its fetch runs — taken *before* the await, because the window's
-/// fetches share the cache and run concurrently, so a borrow held across one
-/// would be the second borrower's panic.
-///
-/// The consequence of getting this wrong is not a slow sync, it is one
-/// person's mail stored on another's row. Worth a test on those grounds
-/// alone; that it is also the only exercise this gets inside its own crate —
-/// the engine in `postio-runtime` is the sole caller — is the second reason.
+/// A mis-keyed split would store one person's mail on another's row; `split_for` is taken before
+/// the await because fetches share the cache.
 #[tokio::test]
 async fn a_split_takes_one_messages_sections_and_leaves_the_rest() {
-    // A real batch first, so there is something to split. Same shape as
-    // `the_text_axis_asks_for_a_set_of_messages_in_one_command`: every
-    // message's words at section `1`.
     let mut inbox = MockMailbox::new(INBOX).uid_validity(UidValidity::new(VALIDITY));
     for uid in 1..=3u32 {
         inbox = inbox.message(
@@ -3350,8 +2969,6 @@ async fn a_split_takes_one_messages_sections_and_leaves_the_rest() {
          still there and store it twice"
     );
 
-    // The bytes that came out are this message's, which is the half that
-    // matters: keyed wrong, a split hands one person's mail to another's row.
     let again = prefetched.split_for(&requests[0].remote_id);
     assert!(
         again.is_empty(),
@@ -3361,11 +2978,6 @@ async fn a_split_takes_one_messages_sections_and_leaves_the_rest() {
     assert_eq!(other.len(), 1, "the other messages are untouched by either");
 }
 
-/// One message is not a batch.
-///
-/// Asking for a set of one costs a round trip to save none, so the prefetch
-/// declines rather than paying it — which also means the window's last, lone
-/// claim is never worse off for the batching existing.
 #[tokio::test]
 async fn a_single_request_is_not_worth_a_batch() {
     let backend = server(3).await;
@@ -3390,21 +3002,12 @@ async fn a_single_request_is_not_worth_a_batch() {
     );
 }
 
-/// A message too large for the batch's budget is left on the streaming path.
-///
-/// A batch does not stream — every answer is held at once — so
-/// `PREFETCH_BUDGET` is what stops a window of large messages being pulled
-/// into memory together. A message over it is simply absent from the cache,
-/// and `fetch_body` fetches it the way it always did.
 #[tokio::test]
 async fn a_message_too_large_for_the_budget_is_not_batched() {
     let backend = server(3).await;
     let local = local().await;
     let rows = headers(&local, &backend).await;
 
-    // `size` is `RFC822.SIZE` as the header sync recorded it, and the budget
-    // is measured against it before a byte is asked for. A gigabyte each is
-    // past any budget this will ever have.
     let huge: Vec<_> = rows
         .iter()
         .map(|(id, uid)| request(&local.inbox, *id, *uid, 1_024 * 1_024 * 1_024))
@@ -3423,11 +3026,6 @@ async fn a_message_too_large_for_the_budget_is_not_batched() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// What a body costs the store
-// ---------------------------------------------------------------------------
-
-/// A message addressed to `recipients` people, `n` seconds into the timeline.
 fn addressed(n: u32, recipients: usize) -> Vec<u8> {
     let to = (0..recipients)
         .map(|r| format!("reader{r}@example.net"))
@@ -3445,13 +3043,6 @@ fn addressed(n: u32, recipients: usize) -> Vec<u8> {
     .into_bytes()
 }
 
-/// Storing a body writes the body, not the message again.
-///
-/// A fetched body used to be stored by writing the whole row back --
-/// `MessageRepository::update`, which deletes and re-inserts every recipient,
-/// attachment and label -- when all the fetch had changed was the preview
-/// and where the raw bytes are. Every body of a first sync paid for its
-/// header twice, and a message to a long list paid per name on it.
 #[tokio::test]
 async fn storing_a_body_costs_the_same_however_many_recipients() {
     let inbox = MockMailbox::new(INBOX)
@@ -3508,7 +3099,6 @@ async fn native_whole_fetch_preserves_parts_for_late_memberships() {
     let rows = headers(&local, &backend).await;
     let repo = MessageRepository::new(&local.connection);
     let mut first = repo.get(rows[0].0).await.unwrap().unwrap();
-    // Native adapters provide immutable identity, without IMAP BODYSTRUCTURE.
     first.server.content_identity =
         Some(postio_model::ContentIdentity::new("test-native", "picture"));
     first.content_type = None;

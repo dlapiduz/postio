@@ -1,12 +1,3 @@
-//! `[keys]` reloaded, and the key map, from the controller's side
-//! (specs/009-focus-macos T102; screen 20).
-//!
-//! What GTK's window did in `set_keymap` and its CheatSheet toggle, asserted
-//! here so both frontends get it: a new keymap is what the controller
-//! resolves and what every key it spells names, at once and without a
-//! restart; `?` opens the key map and closes it again, and while it is up
-//! the keyboard is its.
-
 use std::time::Instant;
 
 use crate::search_support::shown;
@@ -25,7 +16,6 @@ fn press(focus: &mut FocusController, key: &str) -> Outcome {
     focus.press(&chord, KeyContext::List, false, Instant::now())
 }
 
-/// The registry's keys, with `command` bound to `key` instead.
 fn rebound(command: &str, key: &str) -> Keymap {
     let mut keys = KeyBindings::default();
     keys.overrides_mut()
@@ -112,10 +102,8 @@ fn question_mark_opens_the_key_map_and_closes_it() {
     assert!(!focus.has_surface());
 }
 
-/// The Mac is not told twice: the controller closed the key map, so the
-/// Mac takes the panel down and says nothing back (an echo could land after
-/// a reopening and close the new one). Closed by its own keys, it is off
-/// the stack at once and the keyboard is the list's again.
+/// The controller closed the key map, so the Mac takes the panel down and says nothing back: an
+/// echo could land after a reopening and close the new one.
 #[test]
 fn the_key_map_closed_by_its_own_keys_gives_the_keyboard_back() {
     for close in [CommandId::CheatSheet, CommandId::Back] {
@@ -148,7 +136,6 @@ fn the_key_map_closed_by_its_own_keys_gives_the_keyboard_back() {
     }
 }
 
-/// A click on the dim is the toolkit's close, which the Mac does report.
 #[test]
 fn the_key_map_closed_by_a_click_outside_gives_the_keyboard_back() {
     let mut focus = focus();
@@ -210,15 +197,12 @@ fn while_the_key_map_is_up_the_keyboard_is_its() {
 
 #[test]
 fn the_bar_up_is_drawn_again_under_the_new_keys() {
-    // GTK handed the new keymap to the bar and every picker: what is on
-    // screen spells its keys anew, not at the next keystroke.
     let mut focus = focus();
     let _ = focus.handle(Input::Command(CommandId::Search));
     let effects = focus.handle(Input::Keymap(rebound("archive", "F9")));
     assert!(
         shown(&effects)
             .iter()
-            // On the Mac the bar's search half is the dropdown (spec 010).
             .any(|intent| matches!(intent, Intent::BarLines(_) | Intent::Dropdown(_))),
         "the bar's lines are drawn again: {effects:?}"
     );

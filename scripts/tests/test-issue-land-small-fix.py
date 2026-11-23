@@ -34,8 +34,6 @@ import patience  # noqa: E402  -- enabled by the sys.path line above
 
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "issue-land.sh"
 
-# The guard, lifted so the branch names can be tried against the real
-# expression rather than a copy of it that can drift.
 LIFT = re.compile(
     r"SMALL=0\n(if \[ -z \"\$ISSUE\" \] && printf .*?\nfi)\n", re.S
 )
@@ -43,9 +41,6 @@ LIFT = re.compile(
 
 def accepts(guard: str, branch: str) -> bool:
     probe = f'BRANCH="{branch}"\nISSUE=""\nSMALL=0\n{guard}\necho "$SMALL"\n'
-    # `patience.run`, not `subprocess.run`: a hand-rolled deadline measures
-    # the process it runs in, and on a shared workstation that is a flake
-    # nobody can reproduce alone (#842, #957).
     out = patience.run(["bash", "-c", probe], capture_output=True, text=True, timeout=30)
     return out.stdout.strip() == "1"
 
@@ -69,9 +64,6 @@ def main() -> int:
             print(f"FAIL: {branch!r} should land as a small fix", file=sys.stderr)
             problems += 1
 
-    # `feature/` is the same route for the opposite size of work: spec-driven
-    # work is not decomposed into one issue per task (constitution 1.1.0), so
-    # its branch has no issue to name and could not otherwise land at all.
     for branch in ["feature/compose-editor", "feature/mailbox-roles"]:
         if not accepts(guard, branch):
             print(
@@ -80,8 +72,6 @@ def main() -> int:
             )
             problems += 1
 
-    # The control. Without these the guard could be `SMALL=1` unconditionally
-    # and every case above would pass.
     for branch in ["main", "wip", "fix/", "fix/a/b", "feature/", "feature/a/b",
                    "random-branch"]:
         if accepts(guard, branch):
@@ -93,7 +83,6 @@ def main() -> int:
             )
             problems += 1
 
-    # And nothing may be closed or referred to when there is no issue.
     if 'CLOSES_LINE="No issue' not in source:
         print(
             "FAIL: a small fix's PR does not say it has no issue -- a reader "
@@ -109,11 +98,6 @@ def main() -> int:
         )
         problems += 1
 
-    # A spec branch is not a small fix, and its PR must not say it is. Its
-    # commits carry `Refs: specs/<nnn>-<name>` (CLAUDE.md), so the PR refers
-    # to the spec; and since its last commit rarely speaks for the whole
-    # branch, the title can be given (#2023 was titled after its last commit
-    # and described as "a small fix").
     feature_blocks = re.findall(r'if \[ "\$FEATURE" = 1 \]; then\n(.*?)\n\s*elif', source, re.S)
     if not any('CLOSES_LINE="Refs: ${SPEC' in block for block in feature_blocks):
         print(

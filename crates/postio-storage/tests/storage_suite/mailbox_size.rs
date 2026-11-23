@@ -1,10 +1,7 @@
-//! What an account's mail costs, before a byte of it is fetched — ADR 0017.
-
 use postio_storage::repository::{MessageRepository, StorageFootprint};
 use postio_storage::sql::bind;
 use postio_storage::test_support;
 
-/// A headers-only message, the state the footprint is computed from.
 fn message(
     mailbox: postio_model::MailboxId,
     account: postio_model::AccountId,
@@ -23,16 +20,11 @@ fn message(
 
 #[tokio::test]
 async fn the_footprint_is_known_from_headers_alone() {
-    // The nicest property of the whole measurement: `BODYSTRUCTURE` arrives
-    // with the header sync, so `messages.size` and `attachments.size` are
-    // populated for mail nobody has downloaded. Postio can say "1.4 GB of
-    // mail, 11 GB of attachments" having spent nothing.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    // A message that is all words, and one that is mostly a PDF.
     let mut plain = message(inbox, account.id, 1);
     plain.size = 2_000;
     messages.create(&mut plain).await.expect("create");
@@ -56,15 +48,12 @@ async fn the_footprint_is_known_from_headers_alone() {
     assert_eq!(footprint.messages, 2);
     assert_eq!(footprint.total_bytes, 1_002_000);
     assert_eq!(footprint.attachment_bytes, 990_000);
-    // What the text axis will actually pull: everything that is not payload.
     assert_eq!(footprint.text_bytes(), 12_000);
     assert_eq!(footprint.local_bytes, 0, "nothing is downloaded yet");
 }
 
 #[tokio::test]
 async fn an_account_with_no_mail_has_an_empty_footprint() {
-    // The empty state owes an answer too, and it must not be a division by
-    // zero or a claim of "0 B of 0 B" that reads like a bug.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, _inbox) = test_support::account_with_inbox(&connection).await;
@@ -80,12 +69,8 @@ async fn an_account_with_no_mail_has_an_empty_footprint() {
 
 #[tokio::test]
 async fn a_footprint_is_a_lower_bound_until_every_folder_has_synced_headers() {
-    // The honesty this issue exists for. While the header pass is still
-    // running the total climbs, and a number that grows every few seconds
-    // looks broken -- so the surface must be able to say "over 1.4 GB" rather
-    // than a total it is about to contradict.
-    //
-    // Complete means every selectable mailbox has a `last_full_sync_at`.
+    // Complete means every selectable mailbox has a `last_full_sync_at`; until then the total
+    // climbs, so the surface must say "over 1.4 GB".
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -117,9 +102,6 @@ async fn a_footprint_is_a_lower_bound_until_every_folder_has_synced_headers() {
 
 #[tokio::test]
 async fn local_bytes_count_only_what_is_actually_downloaded() {
-    // What the progress line divides by. A message whose text is local but
-    // whose payload is not has contributed its text and not its payload --
-    // which is the ordinary steady state under ADR 0017, not a special case.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -142,9 +124,6 @@ async fn local_bytes_count_only_what_is_actually_downloaded() {
     );
 }
 
-/// What the footprint and the read-receipt figure were before the store
-/// kept them (#1508): the aggregates over every message an account holds.
-/// The oracle the kept row is held to.
 async fn recounted(
     connection: &postio_storage::Connection,
     account: postio_model::AccountId,
@@ -185,7 +164,6 @@ async fn recounted(
     .expect("the recount")
 }
 
-/// The kept figures, in [`recounted`]'s order.
 async fn kept(
     messages: &MessageRepository<'_>,
     account: postio_model::AccountId,
@@ -214,9 +192,6 @@ fn with_pdf(mut message: postio_model::Message, size: u64) -> postio_model::Mess
 
 #[tokio::test]
 async fn the_kept_footprint_follows_every_write_that_moves_it() {
-    // A kept figure is only as good as the writes that keep it. Each step
-    // below is one a person or a sync makes, and after each the kept row
-    // must say what counting every message would.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -357,9 +332,6 @@ async fn an_account_that_does_not_exist_weighs_nothing() {
     );
 }
 
-/// A store from before the footprint was kept: an account with mail in
-/// every body state, a payload fetched and one not, a message hidden by a
-/// local delete, and a read-receipt request.
 const BEFORE_IT_WAS_KEPT: &str = "
 INSERT INTO accounts (id, display_name, address, incoming_host, incoming_port,
                       incoming_username, outgoing_host, outgoing_port,
@@ -405,8 +377,8 @@ async fn a_migrated_store_keeps_the_footprint_it_used_to_count() {
         recounted(&connection, account).await,
         "the migration fills the kept row from what the store already held"
     );
-    // Spelled out, so the oracle cannot agree with a migration that filled
-    // nothing because it also counts nothing.
+    // Spelled out, so the oracle cannot agree with a migration that filled nothing because it also
+    // counts nothing.
     assert_eq!(
         migrated,
         (3, 152_000, 130_000, 40_000 + 50_000, 2),
@@ -415,7 +387,6 @@ async fn a_migrated_store_keeps_the_footprint_it_used_to_count() {
          two read-receipt requests"
     );
 
-    // And the triggers are there to keep it.
     messages
         .delete(&[postio_model::MessageId::new(10)])
         .await

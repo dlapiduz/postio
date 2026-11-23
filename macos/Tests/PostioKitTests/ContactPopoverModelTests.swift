@@ -4,10 +4,6 @@ import Testing
 
 @testable import PostioKit
 
-/// The known-sender popover's model (specs/011-focus-contacts S6, handoff
-/// screen 04). The controller says what it draws; the Mac sends back a
-/// click on a segment and a click on an action, and keeps no opinion of its
-/// own about either.
 @MainActor
 struct ContactPopoverModelTests {
     final class Engine: ContactPopoverEngine {
@@ -89,7 +85,6 @@ struct ContactPopoverModelTests {
     }
 
     @Test func theAvatarColourIsTheEnginesOwnRGB() {
-        // Not compared as a Color: the channels are what the engine said.
         let model = ContactPopoverModel(engine: Engine())
         model.apply(.focusContactPopover(view: Self.view()))
         #expect(model.view?.avatar.rgb == 0xb0624a)

@@ -1,15 +1,3 @@
-//! `executor::search_conversations` (spec 010, US2): a search answered as
-//! conversations, the unit the results view lists.
-//!
-//! One hit per conversation -- a thread, or a message threading never joined
-//! to one -- carrying its best message, how many of its messages matched,
-//! and why it ranks where it does (D20). Best match and Newest order the same
-//! hits two ways, `offset`/`limit` page them, and `total` counts
-//! conversations, not messages.
-//!
-//! The mail-building helpers here are `pub(crate)` so the facet and budget
-//! suites build their corpora the same way.
-
 use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
 use postio_index::executor::{ConversationRequest, search_conversations};
 use postio_model::{
@@ -24,7 +12,6 @@ use postio_storage::Connection;
 use postio_storage::repository::{MessageRepository, ThreadRepository};
 use postio_storage::test_support;
 
-/// The clock every case here runs at.
 pub(crate) fn now() -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 9, 30, 12, 0, 0).unwrap()
 }
@@ -33,14 +20,12 @@ pub(crate) fn today() -> NaiveDate {
     now().date_naive()
 }
 
-/// One message to file. Everything but the subject has a quiet default.
 #[derive(Clone, Default)]
 pub(crate) struct Mail {
     pub from: &'static str,
     pub to: &'static [&'static str],
     pub subject: &'static str,
     pub body: &'static str,
-    /// How long before [`now`] it arrived.
     pub ago: Duration,
     pub unread: bool,
     pub flagged: bool,
@@ -48,7 +33,6 @@ pub(crate) struct Mail {
     pub file: Option<&'static str>,
 }
 
-/// Files `mail` in `mailbox`, with its body indexed, and returns it.
 pub(crate) async fn file(
     connection: &Connection,
     account: &Account,
@@ -99,7 +83,6 @@ pub(crate) async fn file(
     message
 }
 
-/// Puts `messages` in one new thread.
 pub(crate) async fn thread(
     connection: &Connection,
     account: &Account,
@@ -117,7 +100,6 @@ pub(crate) async fn thread(
     id
 }
 
-/// An in-memory store with the index installed, one account and its inbox.
 pub(crate) async fn store() -> (
     postio_storage::Store,
     postio_storage::Checkout,
@@ -133,7 +115,6 @@ pub(crate) async fn store() -> (
     (database, connection, account, inbox)
 }
 
-/// Searches `query` as conversations.
 pub(crate) async fn conversations(
     connection: &Connection,
     query: &str,
@@ -207,7 +188,6 @@ async fn a_thread_whose_messages_match_is_one_hit() {
         },
     )
     .await;
-    // The thread's newest message says nothing about it.
     let unrelated = file(
         &connection,
         &account,
@@ -339,8 +319,6 @@ async fn the_reasons_say_why_a_conversation_ranks_where_it_does() {
         },
     )
     .await;
-    // The person has written to Grace a dozen times: two-way frequency
-    // (D21) is what makes a sender frequent.
     connection
         .execute(
             "INSERT INTO correspondents (address_id, sent_count, last_sent_at)
@@ -399,7 +377,6 @@ async fn the_reasons_say_why_a_conversation_ranks_where_it_does() {
 #[tokio::test]
 async fn best_match_and_newest_order_the_same_hits_two_ways() {
     let (_database, connection, account, inbox) = store().await;
-    // About it, and an hour older.
     let about = file(
         &connection,
         &account,
@@ -412,7 +389,6 @@ async fn best_match_and_newest_order_the_same_hits_two_ways() {
         },
     )
     .await;
-    // Mentions it in passing, and newer.
     let passing = file(
         &connection,
         &account,
@@ -471,7 +447,6 @@ async fn offset_and_limit_page_through_conversations() {
             .id,
         );
     }
-    // Two more matching messages in one thread: one conversation, not two.
     let first = file(
         &connection,
         &account,
@@ -553,8 +528,6 @@ async fn it_says_how_many_messages_it_looked_through() {
         "every message the search could have found, matched or not"
     );
     assert!(results.corpus_complete);
-    // No attachment is on this machine, so none is left unread (step 9;
-    // `contents_are_incomplete_while_a_downloaded_attachment_is_unread`).
     assert!(results.contents_complete);
 }
 
@@ -630,10 +603,6 @@ async fn a_filter_narrows_the_hits_without_losing_their_order() {
     assert_eq!(keys(&not), [ConversationKey::Lone(elsewhere.id)]);
 }
 
-/// A message filed in two folders is one content (#1780): the index holds it
-/// once, and a conversation search counts it once, as `search` does, on
-/// every walk -- the free text, a set, a refusal, the folder alone -- and
-/// so does the count a way out of no results offers.
 #[tokio::test]
 async fn a_message_filed_twice_is_one_match() {
     let (_database, connection, account, inbox) = store().await;
@@ -697,12 +666,6 @@ async fn a_message_filed_twice_is_one_match() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Attachment contents (spec 010 step 9, US8, T126)
-// ---------------------------------------------------------------------------
-
-/// Gives `message`'s attachment named `name` its bytes on this machine, as
-/// a download would: the indexer's queue now holds it.
 pub(crate) async fn downloaded(
     connection: &Connection,
     message: MessageId,
@@ -719,7 +682,6 @@ pub(crate) async fn downloaded(
         .expect("the blob is stored");
 }
 
-/// The attachment of `message` named `name`.
 pub(crate) async fn attachment_named(
     connection: &Connection,
     message: MessageId,
@@ -738,8 +700,6 @@ pub(crate) async fn attachment_named(
     .expect("the attachment")
 }
 
-/// What the extractor read from a budget sheet: "kestrel" only on row 14 of
-/// "Summary", nowhere in the mail itself.
 pub(crate) fn budget_sheet() -> postio_extract::Extracted {
     let row = |row: u32, text: &str| postio_extract::Unit {
         location: postio_extract::Location::Sheet {
@@ -758,7 +718,6 @@ pub(crate) fn budget_sheet() -> postio_extract::Extracted {
     }
 }
 
-/// A mail whose only mention of "kestrel" is in its spreadsheet, read.
 pub(crate) async fn mail_with_budget_sheet(
     connection: &Connection,
     account: &Account,
@@ -832,10 +791,8 @@ async fn a_word_only_inside_an_attachment_finds_its_conversation_where_it_is() {
         "every downloaded attachment has been read"
     );
 
-    // Newest finds it too: the arm is the match's, not the ranking's.
     let newest = conversations(&connection, "kestrel", ConversationOrder::Newest, 0, 10).await;
     assert_eq!(keys(&newest), [ConversationKey::Lone(message.id)]);
-    // And beside a set, which walks the match apart from `messages`.
     let narrowed = conversations(
         &connection,
         "kestrel from:ada",
@@ -868,8 +825,6 @@ async fn contents_are_incomplete_while_a_downloaded_attachment_is_unread() {
 #[tokio::test]
 async fn an_attachment_never_downloaded_leaves_the_contents_complete() {
     let (_database, connection, account, inbox) = store().await;
-    // The file is named, its bytes are on the server: nothing here can read
-    // it, and nothing asks for it (FR-050).
     file(
         &connection,
         &account,
@@ -887,7 +842,6 @@ async fn an_attachment_never_downloaded_leaves_the_contents_complete() {
 
 #[tokio::test]
 async fn gtk_search_does_not_reach_attachment_contents() {
-    // D11: the old path, the terminal app's, keeps its corpus.
     let (_database, connection, account, inbox) = store().await;
     let (_, attachment) = mail_with_budget_sheet(&connection, &account, inbox).await;
     postio_index::index::index_attachment_text(&connection, attachment, &budget_sheet())
@@ -910,10 +864,6 @@ async fn gtk_search_does_not_reach_attachment_contents() {
     assert!(found.hits.is_empty(), "{:#?}", found.hits);
 }
 
-// ---------------------------------------------------------------------------
-// The Files tab (spec 010 step 9, US8, T128)
-// ---------------------------------------------------------------------------
-
 async fn files(connection: &Connection, query: &str) -> Vec<postio_search::results::FileHit> {
     let parsed = parse(query, today());
     postio_index::executor::files(
@@ -934,12 +884,10 @@ async fn files(connection: &Connection, query: &str) -> Vec<postio_search::resul
 #[tokio::test]
 async fn the_files_tab_has_one_card_per_matching_attachment_with_its_match() {
     let (_database, connection, account, inbox) = store().await;
-    // The sheet says "kestrel" on row 14 of "Summary".
     let (sheet_mail, sheet) = mail_with_budget_sheet(&connection, &account, inbox).await;
     postio_index::index::index_attachment_text(&connection, sheet, &budget_sheet())
         .await
         .expect("index its text");
-    // A file whose name says it, never downloaded: a card by its name.
     let plan_mail = file(
         &connection,
         &account,
@@ -955,8 +903,6 @@ async fn the_files_tab_has_one_card_per_matching_attachment_with_its_match() {
     )
     .await;
     let plan = attachment_named(&connection, plan_mail.id, "kestrel-plan.pdf").await;
-    // The body says it, the file does not: the mail matches, the file is
-    // no card.
     file(
         &connection,
         &account,
@@ -1050,10 +996,6 @@ async fn with_no_words_every_attachment_of_the_matched_mail_is_a_card() {
     assert_eq!(found[0].matched, None, "no word to have matched");
 }
 
-/// #2178: the Files tab read "Files 7" over the results and "Files 6" once
-/// it opened on six cards. The search's count is the cards the tab lists:
-/// a file in matching mail that matched neither by its name nor by its
-/// contents is no card, and is not counted.
 #[tokio::test]
 async fn the_files_count_is_the_cards_the_tab_lists() {
     let (_database, connection, account, inbox) = store().await;
@@ -1098,10 +1040,6 @@ async fn the_files_count_is_the_cards_the_tab_lists() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// The People tab (spec 010 step 10, US9, T132)
-// ---------------------------------------------------------------------------
-
 async fn people(connection: &Connection, query: &str) -> Vec<postio_search::suggest::Person> {
     let parsed = parse(query, today());
     postio_index::executor::people(
@@ -1121,8 +1059,6 @@ async fn people(connection: &Connection, query: &str) -> Vec<postio_search::sugg
 
 #[tokio::test]
 async fn words_in_the_senders_name_are_its_reason() {
-    // #2085: a hit found only by who sent it says so, as one found by its
-    // subject does.
     let (_database, connection, account, inbox) = store().await;
     let deal = file(
         &connection,
@@ -1148,9 +1084,6 @@ async fn words_in_the_senders_name_are_its_reason() {
 
 #[tokio::test]
 async fn a_subject_every_reply_repeats_is_one_match() {
-    // #2085: "N matches" is what Quick Look shows -- the messages whose own
-    // words or files matched, and the subject once -- not every "Re:" that
-    // carries the subject along.
     let (_database, connection, account, inbox) = store().await;
     let mut ids = Vec::new();
     for (subject, body, ago) in [
@@ -1186,15 +1119,11 @@ async fn a_subject_every_reply_repeats_is_one_match() {
         "the subject once, and the one reply that says it: {:?}",
         found.reasons
     );
-    // #2184: but of its messages one matched, and "K of M messages match"
-    // says that one, the child its expansion shows.
     assert_eq!(found.matched_messages, 1);
 }
 
 #[tokio::test]
 async fn the_people_count_leaves_you_out_as_the_tab_does() {
-    // #2088: the tab strip's People count is the People tab's length --
-    // whoever the match is from or to, you not among them.
     let (_database, connection, account, inbox) = store().await;
     for (from, to, subject, ago) in [
         ("ada", &["test"][..], "Atlas plan", Duration::days(5)),
@@ -1225,7 +1154,6 @@ async fn the_people_count_leaves_you_out_as_the_tab_does() {
 async fn the_people_tab_lists_who_the_matched_mail_is_from_and_to_but_you() {
     let (_database, connection, account, inbox) = store().await;
     let days = Duration::days;
-    // "test" is the account's own address: never a row.
     for (from, to, subject, ago) in [
         ("ada", &["test"][..], "Atlas plan", days(5)),
         ("tomas", &["test", "ada"][..], "Atlas staffing", days(3)),
@@ -1263,7 +1191,6 @@ async fn the_people_tab_lists_who_the_matched_mail_is_from_and_to_but_you() {
     assert_eq!(
         rows,
         [
-            // From her once, to her twice among the three matched.
             ("ada@example.com", Some("ada"), 1, 2),
             ("tomas@example.com", Some("tomas"), 1, 0),
         ],
@@ -1278,9 +1205,6 @@ async fn the_people_tab_lists_who_the_matched_mail_is_from_and_to_but_you() {
     assert_eq!(found[1].last, Some(now() - days(3)));
 }
 
-/// Spec 013 T085 (g): the row of a single-match thread says which message
-/// it is ("Message 3 of 4"), counted as the thread's own read counts its
-/// members: oldest first, a deleted message not among them.
 #[tokio::test]
 async fn a_hit_knows_its_best_message_s_place_in_its_thread() {
     let (_database, connection, account, inbox) = store().await;

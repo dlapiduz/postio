@@ -5,20 +5,10 @@ import Testing
 
 @testable import PostioKit
 
-/// The address book, lent to recipient completion (specs/009-focus-macos
-/// T077; spec 009 "Contacts").
-///
-/// Contacts is asked once, on the first keystroke in a recipient field --
-/// never at launch, never again after an answer -- and what it lends is
-/// names and addresses for one answer, kept nowhere. Mail's own
-/// correspondents complete whatever Contacts said.
 @MainActor
 struct ContactsSourceTests {
-    /// An address book whose authorization a test sets, counting the times
-    /// it is asked for access and read.
     final class Book: ContactBook {
         var authorization: CNAuthorizationStatus
-        /// What a request for access answers, and becomes.
         var grants: Bool
         var people: [LentContact]
         private(set) var asked = 0
@@ -44,7 +34,6 @@ struct ContactsSourceTests {
 
     static let ada = LentContact(name: "Ada Example", addresses: ["ada@example.com", "ada@work.example"])
 
-    /// What the engine answers, recording the `extra` it was lent.
     final class Mail: @unchecked Sendable {
         private(set) var lent: [[ExternalContactFfi]] = []
         func suggestions(_ text: String, _ extra: [ExternalContactFfi]) -> [RecipientSuggestionFfi] {

@@ -1,12 +1,3 @@
-//! A conversation as one document, as the Mac draws it (#1595, ADR 0032).
-//!
-//! The composition is `postio_ui::reader::thread::compose`'s and is tested
-//! there. What is tested here is the boundary's half: that it gathers the
-//! thread from the store the way GTK's pane does -- every message in date
-//! order, each body loaded or said to be coming, the per-sender decision made
-//! against the allow list the Privacy pane edits, the user's own messages
-//! marked -- and says where each message is in the page.
-
 use chrono::{DateTime, TimeZone, Utc};
 use postio_ffi::{Session, SessionOptions};
 use postio_model::{AccountId, BodyState, EmailAddress, MailboxId, Message, Thread};
@@ -19,8 +10,6 @@ fn at(seconds: i64) -> DateTime<Utc> {
         .unwrap()
 }
 
-/// One message of the thread from `address`, with `html` as its body when
-/// there is one.
 async fn message(
     connection: &postio_storage::Checkout,
     account: AccountId,
@@ -55,7 +44,6 @@ async fn message(
     message
 }
 
-/// Ada writes, the user answers, Quinn writes last and has no body yet.
 async fn a_thread() -> (std::sync::Arc<Session>, i64, Vec<i64>) {
     let database = test_support::memory().await;
     let (thread, ids) = {
@@ -66,7 +54,6 @@ async fn a_thread() -> (std::sync::Arc<Session>, i64, Vec<i64>) {
         let threads = ThreadRepository::new(&connection);
         threads.create(&mut thread).await.expect("a thread");
 
-        // Out of order on purpose: date order is the boundary's to apply.
         let quinn = message(
             &connection,
             account.id,
@@ -137,8 +124,6 @@ async fn a_thread_is_one_document_with_every_message_in_date_order() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_sender_the_user_allowed_keeps_their_images_in_the_thread() {
-    // The allow list the Privacy pane edits, read on this side: the Mac does
-    // not decide per sender, it is told.
     let (session, thread, _) = a_thread().await;
     session.allow_sender("ada@example.com".to_owned());
 
@@ -154,8 +139,7 @@ async fn a_sender_the_user_allowed_keeps_their_images_in_the_thread() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_newest_message_says_its_body_is_still_coming() {
-    // It opens even with no body, so the plate has somewhere to appear: a
-    // thread whose last message would not open said nothing about why.
+    // It opens even with no body so the plate has somewhere to appear.
     let (session, thread, _) = a_thread().await;
     let document = session.thread_document(thread, Vec::new()).await;
     assert_eq!(
@@ -169,7 +153,6 @@ async fn the_newest_message_says_its_body_is_still_coming() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_users_own_message_is_marked_as_theirs() {
-    // Canvas 18's outline (#1241), from the account's own address.
     let (session, thread, ids) = a_thread().await;
     let document = session.thread_document(thread, Vec::new()).await;
     let anchor = &document.messages[1].anchor;
@@ -185,9 +168,6 @@ async fn the_users_own_message_is_marked_as_theirs() {
 
 #[test]
 fn a_verb_link_names_its_verb_and_its_message() {
-    // What the pane asks of every navigation before anything reaches the
-    // browser: the parse is `postio_ui::reader::thread::verb_of`'s, the same
-    // rule GTK's reader applies.
     use postio_ffi::{ThreadVerbFfi, ThreadVerbKindFfi, thread_verb};
     assert_eq!(
         thread_verb("postio-reply:42".to_owned()),
@@ -209,7 +189,6 @@ fn a_verb_link_names_its_verb_and_its_message() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn each_anchor_carries_the_sender_the_show_link_would_allow() {
-    // `Show` names a message; what it grants is that message's sender.
     let (session, thread, _) = a_thread().await;
     let document = session.thread_document(thread, Vec::new()).await;
     assert_eq!(
@@ -225,7 +204,6 @@ async fn each_anchor_carries_the_sender_the_show_link_would_allow() {
 
 #[test]
 fn the_document_scripts_are_the_shared_ones() {
-    // The Mac runs these against the page; GTK's reader runs the same rules.
     use postio_ui::reader::thread;
     assert_eq!(
         postio_ffi::thread_scroll_script("m-4".to_owned()),
@@ -243,9 +221,6 @@ fn the_document_scripts_are_the_shared_ones() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_message_that_lost_a_part_says_so_on_its_anchor() {
-    // The caveat is native chrome above the page, the way GTK's
-    // `DecodeNotice` is -- so it crosses beside the page, per message, from
-    // the body load the document already paid for (#1589).
     let database = test_support::memory().await;
     let thread = {
         let connection = database.connect().await.expect("a connection");

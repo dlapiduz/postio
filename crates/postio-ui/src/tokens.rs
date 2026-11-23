@@ -1,38 +1,9 @@
-//! The Industry design system, read at build time and emitted for each
-//! frontend.
-//!
-//! This module is deliberately dependency-free (`std` only) because
-//! `postio-widgets`' `build.rs` compiles it directly (`#[path = …] mod
-//! tokens;`): the build script and the test suite run *exactly* the same
-//! parser and generators, so every generated file can be checked for drift by
-//! a test rather than by eye.
-//!
-//! The pipeline is:
-//!
-//! ```text
-//! Design/_ds/industry-*/styles.css   :root { --color-*, --font-*, --space-*, … }
-//!            |  parse()
-//!            v
-//!        Tokens                      name -> value, source order preserved
-//!            |  generate_metrics(), generate_space_rs(), generate_reader(),
-//!            |  generate_swift()
-//!            v
-//! postio-widgets/data/metrics.css    the spacing, radii, chip and type metrics
-//! postio-widgets/data/space.rs       the spacing ramp, for code
-//! postio-ui/data/reader-tokens.css   the reading pane's palette
-//! macOS's PostioTokens.swift         the same values, for AppKit
-//! ```
-//!
-//! Nothing here retypes a value from the design system: every colour, length,
-//! radius and font stack in the output is either copied from the parsed token
-//! or computed from one (an alpha tint, a ramp step). Retune the source
-//! `styles.css` and the app follows.
+//! The design system's tokens, parsed and emitted for each frontend. `std` only: the
+//! widgets `build.rs` compiles this file directly, so build and tests run the same generator.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
-/// Every token the generator needs from the source `:root` block. Anything the
-/// design system adds beyond this list is still carried through verbatim.
 const REQUIRED: &[&str] = &[
     "color-bg",
     "color-surface",
@@ -56,8 +27,7 @@ const REQUIRED: &[&str] = &[
     "shadow-lg",
 ];
 
-/// Ramp steps the semantic layer maps onto. Checked up front so a retuned
-/// design system fails the build loudly instead of emitting a broken sheet.
+/// Checked up front so a retuned design system fails the build loudly.
 const REQUIRED_RAMPS: &[&str] = &[
     "color-neutral-100",
     "color-neutral-200",
@@ -79,18 +49,11 @@ const REQUIRED_RAMPS: &[&str] = &[
     "color-accent-900",
 ];
 
-/// A text chip's fixed vertical metrics, Postio's own like the mono face.
-///
-/// One source for every pill-shaped control — search refinements, the
-/// did-you-mean offer, finder filter chips, the settings tag, the blocked
-/// count. A chip is sized by its content plus these, and never by a width:
-/// the two chip-sizing bugs already fixed were call sites owning their own
-/// geometry, and these tokens are the ownership moving to one place.
+/// A chip is sized by its content plus these, never by a width.
 const CHIP_HEIGHT: &str = "22px";
 const CHIP_PAD_X: &str = "7px";
 const CHIP_PAD_Y: &str = "2px";
 
-/// Something the parser or generator could not make sense of.
 #[derive(Debug)]
 pub struct TokenError(pub String);
 
@@ -106,7 +69,6 @@ fn err<T>(msg: impl Into<String>) -> Result<T, TokenError> {
     Err(TokenError(msg.into()))
 }
 
-/// The parsed `:root` block, in source order.
 #[derive(Debug, Clone, Default)]
 pub struct Tokens {
     order: Vec<String>,
@@ -114,11 +76,6 @@ pub struct Tokens {
 }
 
 impl Tokens {
-    /// Parse the first `:root { … }` block of a design-system stylesheet.
-    ///
-    /// Values are normalised for GTK on the way in: comments dropped,
-    /// whitespace collapsed, `color-mix(in srgb, <hex> N%, transparent)`
-    /// folded to `rgba()`, and web-only font families (`system-ui`) removed.
     pub fn parse(css: &str) -> Result<Self, TokenError> {
         let css = strip_comments(css);
         let start = match css.find(":root") {
@@ -176,12 +133,10 @@ impl Tokens {
         Ok(tokens)
     }
 
-    /// Token names in source order.
     pub fn names(&self) -> impl Iterator<Item = &str> {
         self.order.iter().map(String::as_str)
     }
 
-    /// The value of a token by name, if the source defined it.
     pub fn get(&self, name: &str) -> Option<&str> {
         self.values.get(name).map(String::as_str)
     }
@@ -193,9 +148,7 @@ impl Tokens {
         }
     }
 
-    /// Override a token — used by tests to prove that retuning the source
-    /// stylesheet really does change the generated CSS. (`build.rs` includes
-    /// this module and never calls it.)
+    /// For tests: proves retuning the source changes the generated CSS. `build.rs` never calls it.
     #[allow(dead_code)]
     pub fn set(&mut self, name: &str, value: &str) {
         if !self.values.contains_key(name) {
@@ -204,7 +157,6 @@ impl Tokens {
         self.values.insert(name.to_string(), value.to_string());
     }
 
-    /// A token tinted to `percent` opacity, folded to a literal `rgba()`.
     fn tint(&self, name: &str, percent: f32) -> Result<String, TokenError> {
         let rgb = parse_hex(self.need(name)?).ok_or_else(|| {
             TokenError(format!(
@@ -215,47 +167,22 @@ impl Tokens {
     }
 }
 
-/// The sizes Postio sets type at, as roles: `--postio-text-<role>`.
-///
-/// In `rem` against GTK's 11pt default, so text scaling moves them all. The
-/// canvas uses these eight; anything else in a stylesheet is either a
-/// one-off with a reason beside it or drift. Named here, beside the other
-/// tokens, so a stylesheet says `var(--postio-text-body)` rather than
-/// retyping 0.8864rem -- which it had done as 0.8863rem five times.
+/// In `rem` against GTK's 11pt default, so text scaling moves them all. Named here so a stylesheet
+/// says `var(--postio-text-body)` rather than retyping a value.
 pub const TYPE_ROLES: &[(&str, &str)] = &[
-    // 10px: the section kicker's capitals.
     ("micro", "0.6818rem"),
-    // 10.5px: mono metadata, key hints, footers.
     ("meta", "0.7159rem"),
-    // 11.5px: a small button, a secondary line.
     ("small", "0.7841rem"),
-    // 12px: a chip's label, a plate's title.
     ("label", "0.8182rem"),
-    // 12.5px: controls and interface text.
     ("ui", "0.8523rem"),
-    // 13px: body text, a row's primary line.
     ("body", "0.8864rem"),
-    // 13.5px: the composer's fields, text meant to be read at length.
     ("reading", "0.9204rem"),
-    // 20px: a pane's title.
     ("title", "1.3636rem"),
 ];
 
-/// The same tokens, as Swift the macOS frontend can compile.
-///
-/// An emitter beside [`generate_metrics`] and [`generate_reader`], from the same
-/// parsed [`Tokens`] and the same required lists — so retuning the design
-/// system moves both frontends or fails the build for both. A Swift file with
-/// `#5980a6` typed into it would be a copy that is right on the day it is
-/// written; Ghostty hand-writes 921 lines of the equivalent and calls it their
-/// worst duplication.
-///
-/// Colours become `NSColor`, lengths `CGFloat`, font families `String`. What
-/// it does **not** yet emit is a dark variant: there is one set of values
-/// here to emit, and a dark ramp is its own work.
+/// Colours become `NSColor`, lengths `CGFloat`, font families `String`. No dark variant is emitted
+/// yet.
 pub fn generate_swift(tokens: &Tokens, source: &str) -> Result<String, TokenError> {
-    // No separate required-token check: `Tokens::parse` already refuses a
-    // design system missing one, so anything that got this far has them.
     let mut out = String::with_capacity(8 * 1024);
     writeln!(out, "// GENERATED FILE — do not edit by hand.").unwrap();
     writeln!(out, "//").unwrap();
@@ -310,29 +237,17 @@ pub fn generate_swift(tokens: &Tokens, source: &str) -> Result<String, TokenErro
             )
             .unwrap();
         }
-        // Anything else — shadows, weights, gradients — has no single AppKit
-        // equivalent and is deliberately not guessed at here. A wrong shadow
-        // is worse than none, and the ones that matter are drawn by hand.
+        // No AppKit equivalent for shadows, weights or gradients; not guessed at.
     }
 
-    // The row states, which are *derived* rather than declared in `:root` —
-    // so the loop above never sees them and macOS had no selection colour at
-    // all. It fell back to `NSTableView`'s system blue, which is not what the
-    // canvas draws and is the whole of "selecting a message looks off".
-    //
-    // Emitted as dynamic colours because the values differ per theme and a
-    // Swift `static let` cannot: the CSS side gets a light block and a dark
-    // block, and this is the same pair behind one name. Same derivations,
-    // from the same `:root`, so retuning the canvas still moves both
-    // frontends at once.
+    // Row states are derived, not declared in `:root`, so the loop above never sees them. Emitted
+    // as dynamic colours because values differ per theme.
     for (swift, doc, light, dark) in [
         (
             "colorSelectedBg",
             "the selected row's tint",
             tokens.tint("color-accent", 12.0)?,
-            // The literal, not `var(--…)`: `colour` parses values, and a CSS
-            // reference is not one. The CSS emitter can pass the reference
-            // through because a browser resolves it; nothing here does.
+            // The literal, not `var(--…)`: `colour` parses values and a CSS reference is not one.
             tokens
                 .get("color-accent-900")
                 .unwrap_or_default()
@@ -375,7 +290,6 @@ pub fn generate_swift(tokens: &Tokens, source: &str) -> Result<String, TokenErro
     Ok(out)
 }
 
-/// `color-bg` becomes `colorBg`, so the Swift reads like Swift.
 fn swift_name(token: &str) -> String {
     let mut out = String::with_capacity(token.len());
     let mut upper = false;
@@ -392,7 +306,6 @@ fn swift_name(token: &str) -> String {
     out
 }
 
-/// `#rrggbb` or `rgba(r, g, b, a)` as sRGB components in 0..=1.
 fn colour(value: &str) -> Option<(f32, f32, f32, f32)> {
     let value = value.trim();
     if let Some(hex) = value.strip_prefix('#') {
@@ -420,25 +333,14 @@ fn colour(value: &str) -> Option<(f32, f32, f32, f32)> {
     ))
 }
 
-/// A CSS `px` length as points.
-///
-/// Fractional on purpose: the spacing ramp is `3.4px`, `6.8px`, `10.2px` — a
-/// geometric scale, not whole pixels. An earlier version parsed to `u32` and
-/// silently emitted *nothing* for every space token, which is the failure mode
-/// worth guarding: a generator that drops what it cannot convert produces a
-/// file that compiles and is missing half the design system.
+/// Fractional on purpose: the spacing ramp is `3.4px` steps, and parsing to `u32` once silently
+/// dropped every space token.
 fn length(value: &str) -> Option<f32> {
     value.trim().strip_suffix("px")?.trim().parse().ok()
 }
 
-/// A spacing token's length rounded to the nearest whole pixel, or `None`
-/// for anything that is not a `space-*` pixel length.
-///
-/// The design system's ramp is `3.4px` steps, which the web renders
-/// sub-pixel and GTK cannot: a margin is an `i32`, and a CSS padding of
-/// 10.2px lands wherever the renderer rounds it. Rounding once, here, is
-/// what lets a margin in Rust and a padding in the stylesheet be the same
-/// number (the reader's WebKit tokens keep the fractional ramp).
+/// Rounded once here so a Rust margin and a stylesheet padding are the same number (the reader
+/// keeps the fractional ramp).
 fn whole_pixels(name: &str, value: &str) -> Option<i32> {
     if !name.starts_with("space-") {
         return None;
@@ -446,27 +348,17 @@ fn whole_pixels(name: &str, value: &str) -> Option<i32> {
     Some(length(value)?.round() as i32)
 }
 
-/// Whether a design-system token is a metric -- spacing or a radius -- which
-/// both desktop apps share, rather than a colour, a face or a shadow, which
-/// each app defines for itself (specs/007-postio-focus research R11).
 fn is_metric(name: &str) -> bool {
     name.starts_with("space-") || name.starts_with("radius-")
 }
 
-/// Generate `postio-widgets/data/metrics.css`: the metrics the desktop app
-/// lays the shared widgets out by -- spacing in whole pixels, radii, chip
-/// sizes and type sizes -- and nothing else.
-///
-/// Colours are the app's own (specs/007-postio-focus research R11): Focus
-/// defines them from libadwaita's named colours.
+/// Colours are each app's own, so they are not emitted.
 pub fn generate_metrics(tokens: &Tokens, source: &str) -> Result<String, TokenError> {
     let metrics: Vec<(&str, String)> = tokens
         .names()
         .filter(|name| is_metric(name))
         .map(|name| {
             let value = tokens.get(name).unwrap_or_default();
-            // The spacing ramp in whole pixels: GTK lays out in them, and the
-            // Rust constants in `space.rs` (generated beside this) are `i32`.
             let value = match whole_pixels(name, value) {
                 Some(px) => format!("{px}px"),
                 None => value.to_owned(),
@@ -533,7 +425,6 @@ pub fn generate_metrics(tokens: &Tokens, source: &str) -> Result<String, TokenEr
     Ok(out)
 }
 
-/// The spacing ramp, as `(step, whole pixels)`: `(3, 10)` for `space-3`.
 pub fn space_scale(tokens: &Tokens) -> Vec<(u32, i32)> {
     tokens
         .names()
@@ -544,9 +435,6 @@ pub fn space_scale(tokens: &Tokens) -> Vec<(u32, i32)> {
         .collect()
 }
 
-/// Generate `postio-widgets/data/space.rs`: the spacing ramp as Rust constants,
-/// `S1` .. `S8`, so a widget's margin and the stylesheet's padding are one
-/// number by construction.
 pub fn generate_space_rs(tokens: &Tokens, source: &str) -> Result<String, TokenError> {
     let scale = space_scale(tokens);
     if scale.is_empty() {
@@ -579,14 +467,8 @@ pub fn generate_space_rs(tokens: &Tokens, source: &str) -> Result<String, TokenE
     Ok(out)
 }
 
-/// Generate `data/reader-tokens.css` from the parsed design system: the
-/// `--r-*` custom properties `data/reader.css`'s structural rules reference.
-///
-/// A `WebView` has its own CSS engine with no notion of the GTK style
-/// context `--postio-*` variables live on, so this emits literal values — the same parser and the same tint/ramp
-/// math, mapped onto the reader's own, smaller role set. Unlike GTK, WebKit
-/// honours `@media (prefers-color-scheme: dark)` directly, so the reader
-/// needs no `postio-dark` class equivalent.
+/// Emits literal values: a `WebView` has no GTK style context for `--postio-*` variables. WebKit
+/// honours `prefers-color-scheme` itself, so no dark class is needed.
 pub fn generate_reader(tokens: &Tokens, source: &str) -> Result<String, TokenError> {
     let mut out = String::with_capacity(2 * 1024);
 
@@ -631,13 +513,10 @@ fn reader_light_roles(t: &Tokens) -> Result<Vec<(&'static str, String)>, TokenEr
         ("--r-ink-secondary", t.tint("color-text", 80.0)?),
         ("--r-dim", t.tint("color-text", 55.0)?),
         ("--r-hairline", t.need("color-divider")?.to_string()),
-        // High-contrast weight for the body container's edge (#323): the
-        // neutral ramp's 400 step.
         (
             "--r-hairline-strong",
             t.need("color-neutral-400")?.to_string(),
         ),
-        // Scheme-independent, so defined once here rather than in both roles.
         ("--r-radius", t.need("radius-sm")?.to_string()),
         ("--r-accent", t.need("color-accent")?.to_string()),
         ("--r-quote-bg", t.tint("color-accent", 6.0)?),
@@ -645,9 +524,6 @@ fn reader_light_roles(t: &Tokens) -> Result<Vec<(&'static str, String)>, TokenEr
     ])
 }
 
-/// The reader in dark: the design system's named reader roles (spec 006
-/// FR-016, #1588), designed rather than derived from the chrome's ramp --
-/// the reading surface sits three steps above the dark chrome.
 fn reader_dark_roles(t: &Tokens) -> Result<Vec<(&'static str, String)>, TokenError> {
     Ok(vec![
         (
@@ -677,8 +553,6 @@ fn reader_dark_roles(t: &Tokens) -> Result<Vec<(&'static str, String)>, TokenErr
     ])
 }
 
-/// One scheme block: semantic roles first, then the libadwaita overrides they
-/// feed. Both lists are ordered, so the output is byte-reproducible.
 fn write_scheme(
     out: &mut String,
     selector: &str,
@@ -697,17 +571,8 @@ fn write_scheme(
     Ok(())
 }
 
-/// How many distinct account hues the palette carries.
-///
-/// A fixed, ordered palette: account *n* gets hue `n % ACCOUNT_HUES`, so the
-/// colour a person learns for an account is stable for as long as the account
-/// keeps its position, and a ninth account reuses the first hue rather than
-/// inventing an unbounded rainbow. Eight is well past what anyone configures
-/// and still leaves 45 degrees between neighbours, which is the smallest gap
-/// that stays distinguishable at the size these are drawn.
+/// Account n gets hue `n % ACCOUNT_HUES`, so an account's colour is stable while its position is.
 pub const ACCOUNT_HUES: usize = 8;
-
-// ── value normalisation ───────────────────────────────────────────────────
 
 fn strip_comments(css: &str) -> String {
     let mut out = String::with_capacity(css.len());
@@ -727,7 +592,6 @@ fn strip_comments(css: &str) -> String {
     out
 }
 
-/// Split on `;` at paren depth zero, so `color-mix(a, b)` survives intact.
 fn split_declarations(block: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut depth = 0usize;
@@ -757,19 +621,13 @@ fn split_declarations(block: &str) -> Vec<String> {
     out
 }
 
-/// GTK CSS is a subset of web CSS. Fold the pieces it would choke on, or that
-/// would silently resolve to something else, into forms it understands.
 fn normalise_value(value: &str) -> Result<String, TokenError> {
     let collapsed = value.split_whitespace().collect::<Vec<_>>().join(" ");
     let folded = fold_color_mix(&collapsed)?;
     Ok(drop_web_font_families(&folded))
 }
 
-/// `color-mix(in srgb, #rrggbb N%, transparent)` -> `rgba(r, g, b, 0.N)`.
-///
-/// GTK 4.16+ parses `color-mix()` itself, but folding it here keeps the
-/// generated sheet free of anything version-dependent and makes the values
-/// readable when someone opens a generated sheet to see what a token became.
+/// Folded here so the generated sheet is free of version-dependent CSS.
 fn fold_color_mix(value: &str) -> Result<String, TokenError> {
     let mut out = String::with_capacity(value.len());
     let mut rest = value;
@@ -830,8 +688,7 @@ fn matching_paren(s: &str) -> Option<usize> {
     None
 }
 
-/// `system-ui` is a web keyword; GTK would treat it as a family name and hand
-/// the row to whatever font happens to answer to it.
+/// `system-ui` is a web keyword; GTK would treat it as a family name.
 fn drop_web_font_families(value: &str) -> String {
     if !value.contains("system-ui") {
         return value.to_string();
@@ -877,20 +734,13 @@ fn hex_digit(b: u8) -> Option<u8> {
     }
 }
 
-/// Two decimals is enough for an alpha and keeps the output byte-stable.
 fn rgba((r, g, b): (u8, u8, u8), alpha: f32) -> String {
     let alpha = (alpha * 100.0).round() / 100.0;
     format!("rgba({r}, {g}, {b}, {alpha})")
 }
 
-/// The accent, light and dark, as `(red, green, blue)`: read from the
-/// generated reader palette rather than typed anywhere.
-///
-/// For a frontend that draws with colours rather than CSS -- the terminal,
-/// which uses the accent for the selected row and the focus on a true-colour
-/// terminal (`docs/archive/specs/005-tui-frontend` FR-054). Parsing the generated file
-/// rather than restating `#5980a6` keeps the rule this module exists for:
-/// retuning the design system moves every frontend, or fails the build.
+/// Read from the generated reader palette, not retyped, so retuning the design system moves every
+/// frontend.
 pub fn accent_rgb() -> ((u8, u8, u8), (u8, u8, u8)) {
     const PALETTE: &str = include_str!("../data/reader-tokens.css");
     let mut accents = PALETTE.lines().filter_map(|line| {
@@ -899,8 +749,6 @@ pub fn accent_rgb() -> ((u8, u8, u8), (u8, u8, u8)) {
         let channel = |at: usize| u8::from_str_radix(hex.get(at..at + 2)?, 16).ok();
         Some((channel(0)?, channel(2)?, channel(4)?))
     });
-    // The generated file always has both, light first; a palette without them
-    // fails the test beside this rather than drawing black.
     let light = accents.next().unwrap_or_default();
     let dark = accents.next().unwrap_or(light);
     (light, dark)
@@ -978,7 +826,6 @@ mod tests {
     }
 }
 
-/// A token error says what went wrong, as an error.
 #[cfg(test)]
 mod token_error_tests {
     use super::{TokenError, err};

@@ -1,11 +1,5 @@
-//! The threads seed (spec 013 T001): the conversations the threads design
-//! draws, filed through the real threading path.
-//!
-//! Nothing here names a thread: each message carries its `Message-ID`,
-//! `In-Reply-To` and `References` and goes through
-//! `ThreadingRepository::thread`, so the grouping the screens show is the
-//! engine's own. Every name is invented and every address is on `example.com`
-//! or `example.net`.
+//! The threads seed: conversations filed through the real threading path, so
+//! the grouping is the engine's own. Every address is on a reserved domain.
 
 use chrono::{DateTime, Duration, Utc};
 use postio_model::{
@@ -19,7 +13,7 @@ use postio_storage::{Connection, Store};
 
 use crate::{record_correspondents, synced, today};
 
-/// The people of the seed, by index. Index 0 is the person at the keyboard.
+/// Index 0 is the person at the keyboard.
 const PEOPLE: [(&str, &str); 9] = [
     ("You", "you@example.com"),
     ("Ana Ruiz", "ana@example.com"),
@@ -41,7 +35,6 @@ const GRACE: usize = 5;
 const PRIYA: usize = 6;
 const MARCUS: usize = 7;
 
-/// Neighbours on the mailing list: names and addresses on `example.net`.
 const NEIGHBOURS: [(&str, &str); 8] = [
     ("Mira Tan", "mira@example.net"),
     ("Odile Brandt", "odile@example.net"),
@@ -53,7 +46,6 @@ const NEIGHBOURS: [(&str, &str); 8] = [
     ("Pavel Novak", "pavel@example.net"),
 ];
 
-/// Who a message is from.
 #[derive(Clone, Copy)]
 enum Who {
     Person(usize),
@@ -74,7 +66,6 @@ impl Who {
     }
 }
 
-/// One message to file.
 struct Turn {
     from: Who,
     at: DateTime<Utc>,
@@ -82,7 +73,6 @@ struct Turn {
     unread: bool,
     /// The turn this one answers; the previous one when `None`.
     answers: Option<usize>,
-    /// A file named on it: the part is declared, its bytes are not here.
     file: Option<(&'static str, u64)>,
 }
 
@@ -98,18 +88,13 @@ fn turn(from: Who, at: DateTime<Utc>, text: &str) -> Turn {
 }
 
 struct Thread {
-    /// Its key in the `Message-ID`s.
     key: &'static str,
     subject: &'static str,
-    /// `Re:` on every message, as a list's replies are.
     always_re: bool,
     list_id: Option<&'static str>,
     turns: Vec<Turn>,
 }
 
-/// `count` turns going back from `last`, `gap` apart, from `speakers` in
-/// rotation, saying the sentences of `lines` in rotation. The newest
-/// `unread` are unread.
 fn run(
     count: usize,
     last: DateTime<Utc>,
@@ -358,12 +343,10 @@ fn rfc_id(key: &str, turn: usize) -> RfcMessageId {
     RfcMessageId::new(format!("<threads.{key}.{turn}@example.test>"))
 }
 
-/// The threads seed's store and its account.
 pub async fn threads_demo() -> (Store, AccountId) {
     let database = postio_storage::test_support::memory().await;
     let connection = database.connect().await.expect("a connection");
     let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection).await;
-    // Where a muted thread's replies go (spec 013 FR-012).
     postio_storage::test_support::mailbox(&connection, &account, "Archive").await;
     postio_storage::repository::IdentityRepository::new(&connection)
         .create(&mut postio_model::Identity::new(
@@ -387,7 +370,6 @@ pub async fn threads_demo() -> (Store, AccountId) {
         }
     }
 
-    // Harbor's unsent reply to Ben's question.
     let (thread_id, answering) = harbor_reply.expect("harbor was filed");
     let mut draft = Draft::new(account.id);
     draft.kind = DraftKind::Reply;
@@ -402,7 +384,6 @@ pub async fn threads_demo() -> (Store, AccountId) {
         .await
         .expect("the draft saves");
 
-    // Indexed as the body indexer would have by now, all at once.
     let bodies: Vec<(i64, &str)> = bodies
         .iter()
         .map(|(message, body)| (message.get(), body.as_str()))
@@ -414,7 +395,6 @@ pub async fn threads_demo() -> (Store, AccountId) {
     (database, account.id)
 }
 
-/// Files every turn of `thread`; the thread's id and its newest message.
 async fn file_thread(
     connection: &Connection,
     account: AccountId,
@@ -424,8 +404,6 @@ async fn file_thread(
 ) -> (postio_model::ThreadId, MessageId) {
     let mut filed: Vec<MessageId> = Vec::new();
     let mut thread_id = None;
-    // The raw sources' ids, from a scratch store under the test keys: the
-    // runner puts the same bytes in the host's own.
     let scratch_dir = tempfile::tempdir().expect("scratch for the blobs");
     let scratch = postio_storage::BlobStore::open(
         scratch_dir.path().to_path_buf(),
@@ -476,7 +454,6 @@ async fn file_thread(
                 .expect("a blob in the scratch store"),
         );
         if let Some(parent) = parent {
-            // The chain back to the first message, nearest last.
             let mut chain = vec![parent];
             let mut at = parent;
             while let Some(up) = thread.turns[at].answers.or(at.checked_sub(1)) {
@@ -546,24 +523,17 @@ fn name_of(who: Who) -> &'static str {
     }
 }
 
-/// What a reply's arrival leaves for the caller to announce, as a sync pass
-/// would: `NewMail` for the message and `ThreadChanged` for its thread. It is
-/// stored in the inbox and not yet filed: the host's filing pass runs over it
-/// (`postio_host::FocusSetup::file_stored`), so a muted thread archives it.
+/// What a reply's arrival leaves for the caller to announce. It is stored in
+/// the inbox, not yet filed: the host's filing pass runs over it.
 #[derive(Debug, Clone, Copy)]
 pub struct Arrival {
-    /// The mailbox it landed in.
     pub mailbox: MailboxId,
-    /// The thread it joined.
     pub thread: postio_model::ThreadId,
-    /// The message.
     pub message: MessageId,
 }
 
-/// Ana's reply in the Harbor thread (spec 013 US4, screen 08): written,
-/// threaded through the engine's own path (`In-Reply-To` and `References`
-/// from Ben's last message), with its body and the inbox counted. Delivered
-/// again, it is another reply, one minute on.
+/// Ana's reply in the Harbor thread, threaded through the engine's own path;
+/// delivered again, it is another reply, one minute on.
 pub async fn deliver_harbor_reply(store: &Store, account: AccountId) -> Result<Arrival, String> {
     let text = |error: postio_storage::Error| error.to_string();
     let connection = store.connect().await.map_err(|error| error.to_string())?;
@@ -574,8 +544,6 @@ pub async fn deliver_harbor_reply(store: &Store, account: AccountId) -> Result<A
         .map_err(text)?
         .ok_or("the account has no inbox")?
         .id;
-    // The newest member answers the reply: the chain of rfc ids is what
-    // the threading pass links by.
     let mut chain: Vec<RfcMessageId> = (0..6).map(|turn| rfc_id("harbor", turn)).collect();
     let mut sent = 0;
     while !messages
@@ -596,8 +564,7 @@ pub async fn deliver_harbor_reply(store: &Store, account: AccountId) -> Result<A
     let mut message = Message::new(account, inbox, at);
     message.date = Some(at);
     message.from = vec![Who::Person(ANA).address()];
-    // To you and copied to Lena: a reply addressed to you alone would reach
-    // the inbox even through a mute.
+    // Copied to Lena: a reply to you alone would reach the inbox through a mute.
     message.to = vec![Who::Person(YOU).address()];
     message.cc = vec![Who::Person(LENA).address()];
     message.subject = Some("Re: Harbor API draft v3".to_owned());
@@ -641,9 +608,7 @@ pub async fn deliver_harbor_reply(store: &Store, account: AccountId) -> Result<A
     })
 }
 
-/// The message `index` of `thread` as it arrived, the source the engine
-/// keeps: what a forward as attachments or of the whole thread needs on this
-/// machine. A pure function of the seed, so the row and the blob agree.
+/// A pure function of the seed, so the row and the blob agree.
 fn raw_source(thread: &Thread, index: usize) -> Vec<u8> {
     let turn = &thread.turns[index];
     let parent = turn.answers.or(index.checked_sub(1));
@@ -671,7 +636,6 @@ fn raw_source(thread: &Thread, index: usize) -> Vec<u8> {
         ));
     }
     match turn.file {
-        // The part the row declares, with a few bytes of it.
         Some((name, _)) => raw.push_str(&format!(
             "MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"edge\"\r\n\r\n\
              --edge\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n{}\r\n\
@@ -688,12 +652,9 @@ fn raw_source(thread: &Thread, index: usize) -> Vec<u8> {
     raw.into_bytes()
 }
 
-/// What the seed's one attached file holds on this machine.
 const FILE_BYTES: &[u8] = b"%PDF-1.4\n";
 
-/// The threads seed's raw sources, put in `blobs`: its rows name them
-/// (`raw_blob_id`), so Forward as attachments and Forward the whole thread
-/// find every message on this machine, as they do once mail has synced.
+/// Puts the threads seed's raw sources in `blobs`, so forwards find every message.
 ///
 /// # Errors
 ///

@@ -55,13 +55,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Deterministic, offline, and about this tree rather than about the world.
-# See the module docstring for why `advisories` is not among them.
 CHECKS = ["bans", "licenses", "sources"]
 
-# cargo-deny takes a while on a cold registry and should never be the thing
-# that hangs a land. Generous enough for a cold run, bounded enough to fail
-# visibly rather than sit there.
+# Bounded so cargo-deny on a cold registry cannot hang a land.
 TIMEOUT_SECONDS = 300
 
 
@@ -80,7 +76,6 @@ def main() -> int:
         return 1
 
     if shutil.which("cargo-deny") is None:
-        # Loud, not silent. See the module docstring.
         print(
             "dependency-policy check SKIPPED: cargo-deny is not installed, so "
             "deny.toml went unread.\n"
@@ -115,9 +110,8 @@ def main() -> int:
         return 1
 
     if result.returncode != 0:
-        # cargo-deny's own diagnostics name the crate, the licence and the path
-        # that pulled it in, which is more than this script could reconstruct.
-        # Its output goes to stderr; pass it through rather than summarising.
+        # cargo-deny's diagnostics name the crate, licence and path; pass its stderr through rather
+        # than summarising.
         sys.stderr.write(result.stderr)
         print(
             "\ndependency-policy check FAILED: see cargo-deny's output above.\n"

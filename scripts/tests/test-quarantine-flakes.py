@@ -22,7 +22,6 @@ SCRIPT = Path(__file__).resolve().parent.parent / "quarantine-flakes.py"
 spec = importlib.util.spec_from_file_location("quarantine_flakes", SCRIPT)
 assert spec and spec.loader
 quarantine = importlib.util.module_from_spec(spec)
-# Registered before it runs: its dataclasses look their module up by name.
 sys.modules["quarantine_flakes"] = quarantine
 spec.loader.exec_module(quarantine)
 
@@ -57,7 +56,6 @@ def occurrence(test: str, source: str, related: bool = False, days: int = 1):
 
 
 def main() -> int:
-    # Reading a log.
     found = quarantine.failures_in_log(LOG)
     case(
         "a FAIL and a TIMEOUT in a table suite are read, each once, colours and all",
@@ -70,7 +68,6 @@ def main() -> int:
         found,
     )
 
-    # Deciding.
     flaky = "row_menu::a_right_click"
     two_prs = [occurrence(flaky, "pr#1792"), occurrence(flaky, "pr#1805")]
     case(
@@ -107,7 +104,6 @@ def main() -> int:
         quarantine.candidates(two_prs, {flaky}, NOW) == [],
     )
 
-    # Editing the table.
     table = """\
 const IGNORED: &[&str] = &[
     // Needs a portal.

@@ -11,17 +11,13 @@ repository.workspace = true
 [dependencies]
 postio-model = { workspace = true }
 postio-workspace-hack.workspace = true
-# Pimalaya's parser, pinned exactly: it is young (0.x, two months old when
-# adopted) and it parses files a stranger handed the user, so a new version is
-# a deliberate bump that re-runs this crate's round-trip corpus, never a
-# `cargo update` side effect. The four features are its defaults, listed so the
-# set is a decision made here rather than inherited (specs/005-contacts R9).
+# Pinned exactly: the parser is young and reads files a stranger handed the user, so a bump re-runs
+# the round-trip corpus (specs/005-contacts R9).
 vcard-rs = { version = "=0.6.0", default-features = false, features = ["parser", "quoted-printable", "base64", "encoding"] }
 
 [lints]
 workspace = true
 
-# cargo-machete looks for `vcard_rs` in the source; the library is named
-# `vcard` (its `[lib] name`), so every `use vcard::...` goes unseen.
+# The library is named `vcard`, so cargo-machete does not see `vcard_rs` used.
 [package.metadata.cargo-machete]
 ignored = ["vcard-rs"]

@@ -3,33 +3,11 @@ import PostioFFI
 import PostioKit
 import SwiftUI
 
-/// The pickers at the row: snooze, remind, label and move
-/// (specs/009-focus-macos T092; screens 11 to 14; contracts/mac-surfaces.md,
-/// "Popovers").
-///
-/// An `NSPopover` with `.transient` behaviour, hung from what the
-/// controller names (`FocusOpenPicker`'s anchor): under the cursor's row at
-/// the subject column, or under the message window's action button.
-/// `PickerView` draws it around an AppKit field this owns:
-///
-/// - **a filter** (label, move) above the rows, holding the keyboard from
-///   the start. While it is empty the resolver gives a bare digit or Space
-///   to the picker; anything else is typing, and every change is
-///   `focusPickerTyped`.
-/// - **a date field** (snooze, remind) under the rows, which takes the
-///   keyboard only when the controller says (`FocusPickerField`, Tab).
-///   Until then the keyboard is on the popover's `PickerKeyView`, so the
-///   number keys, Space, Return and Tab resolve as the picker's commands.
-///
-/// ↑/↓ and Return in either field, and ↑/↓ on the key view, go to
-/// `PickerModel`, which keeps the highlight. Escape resolves to Back before
-/// the field sees it.
-///
-/// Closing: the controller closes it (`FocusCloseSurface(.picker)`), and
-/// `close()` is not reported back -- the controller took it off its stack
-/// itself (T085's rule for the bar). Any other close -- a click outside,
-/// the popover dismissing itself -- is the toolkit's, and `closedByToolkit`
-/// is called once, for the engine to say `focusSurfaceClosed(.picker)`.
+/// An `NSPopover` with `.transient` behaviour. The filter (label, move) holds the keyboard from the
+/// start; the date field (snooze, remind) takes it only when the controller says (Tab), until then
+/// `PickerKeyView` has it so number keys, Space, Return and Tab resolve as the picker's commands. A
+/// close by the controller is not reported back; any other is the toolkit's, and `closedByToolkit`
+/// is called once.
 @MainActor
 public final class PickerPopover: NSObject, NSPopoverDelegate, NSSearchFieldDelegate {
     private let model: PickerModel
@@ -41,7 +19,6 @@ public final class PickerPopover: NSObject, NSPopoverDelegate, NSSearchFieldDele
     private let hosting: NSHostingController<PickerView<PickerFieldHost>>
     private let controller = NSViewController()
 
-    /// Whether it is on screen.
     public var isShown: Bool { popover.isShown }
 
     public init(model: PickerModel, closedByToolkit: @escaping () -> Void) {
@@ -94,15 +71,10 @@ public final class PickerPopover: NSObject, NSPopoverDelegate, NSSearchFieldDele
         controller.view = container
         popover.contentViewController = controller
         popover.behavior = .transient
-        // Absent rather than slow (PRODUCT.md §18): the picker is there
-        // when the key is.
         popover.animates = false
         popover.delegate = self
     }
 
-    /// Show the picker the model holds, hung from `rect` in `view`, with
-    /// the keyboard where its kind wants it: the filter, or the key view
-    /// until Tab.
     public func show(relativeTo rect: NSRect, of view: NSView) {
         guard view.window != nil else { return }
         let field = model.field == .filter ? filter as NSTextField : date
@@ -112,16 +84,12 @@ public final class PickerPopover: NSObject, NSPopoverDelegate, NSSearchFieldDele
         if popover.isShown {
             popover.positioningRect = rect
         } else {
-            // Below the row: in a flipped view (the table, SwiftUI's
-            // hosting views) that is the larger y.
             popover.show(relativeTo: rect, of: view, preferredEdge: view.isFlipped ? .maxY : .minY)
         }
         let window = popover.contentViewController?.view.window
         window?.makeFirstResponder(model.filters ? filter : keyView)
     }
 
-    /// The picker was drawn again: the field follows the controller's words
-    /// when they differ from what it holds, and the size follows the rows.
     public func reload() {
         guard popover.isShown else { return }
         let field = model.field == .filter ? filter as NSTextField : date
@@ -129,7 +97,6 @@ public final class PickerPopover: NSObject, NSPopoverDelegate, NSSearchFieldDele
         resize()
     }
 
-    /// `Tab` in a date picker: the field takes the keyboard.
     public func focusField() {
         guard popover.isShown else { return }
         date.window?.makeFirstResponder(date)
@@ -137,13 +104,11 @@ public final class PickerPopover: NSObject, NSPopoverDelegate, NSSearchFieldDele
         resize()
     }
 
-    /// Close it because the controller did. Not reported back.
     public func close() {
         guard popover.isShown else { return }
         popover.performClose(nil)
     }
 
-    /// Type `text` at the end of whichever field it holds, as a replay does.
     public func type(_ text: String) {
         let field = model.field == .filter ? filter as NSTextField : date
         if let editor = field.currentEditor() as? NSTextView {
@@ -154,11 +119,8 @@ public final class PickerPopover: NSObject, NSPopoverDelegate, NSSearchFieldDele
         }
     }
 
-    /// Size the popover to what it draws: now, and again once SwiftUI has
-    /// taken the model's change in -- the hosting controller answers
-    /// `sizeThatFits` from the view it last updated, so a measure taken in
-    /// the same turn as a redraw is the old rows' (the move picker's rows
-    /// arrived into a popover sized for none).
+    /// The hosting controller answers `sizeThatFits` from the view it last updated, so a measure in
+    /// the same turn as a redraw sees the old rows.
     private func resize() {
         measure()
         DispatchQueue.main.async { [weak self] in self?.measure() }
@@ -171,14 +133,9 @@ public final class PickerPopover: NSObject, NSPopoverDelegate, NSSearchFieldDele
         popover.contentSize = NSSize(width: PickerMetrics.width, height: height)
     }
 
-    // MARK: NSPopoverDelegate
-
     public func popoverDidClose(_ notification: Notification) {
-        // Closed by the controller: the model has already forgotten it.
         if model.closedByToolkit() { closedByToolkit() }
     }
-
-    // MARK: NSTextFieldDelegate
 
     public func controlTextDidChange(_ obj: Notification) {
         guard let field = obj.object as? NSTextField else { return }
@@ -194,11 +151,8 @@ public final class PickerPopover: NSObject, NSPopoverDelegate, NSSearchFieldDele
         case #selector(NSResponder.insertNewline(_:)):
             model.confirm()
         case #selector(NSResponder.cancelOperation(_:)):
-            // A fallback: the key monitor resolves Escape to Back first.
             model.back()
         case #selector(NSResponder.insertTab(_:)), #selector(NSResponder.insertBacktab(_:)):
-            // The field keeps the keyboard; there is nowhere else in the
-            // picker for Tab to go.
             break
         default:
             return false
@@ -207,10 +161,6 @@ public final class PickerPopover: NSObject, NSPopoverDelegate, NSSearchFieldDele
     }
 }
 
-/// What holds the keyboard in a date picker until Tab: the key monitor
-/// resolves the number keys, Space, Return and Tab as the picker's
-/// commands, and the arrows, which no binding takes in a picker, reach
-/// this and move the highlight.
 final class PickerKeyView: NSView {
     weak var model: PickerModel?
 
@@ -224,13 +174,11 @@ final class PickerKeyView: NSView {
     override func moveDown(_ sender: Any?) { model?.move(by: 1) }
     override func insertNewline(_ sender: Any?) { model?.confirm() }
     override func cancelOperation(_ sender: Any?) { model?.back() }
-    // Anything typed here that no binding took is not a picker's: say
-    // nothing rather than beep at every letter.
+    // Anything typed here that no binding took says nothing rather than beeping at every letter.
     override func insertText(_ insertString: Any) {}
     override func doCommand(by selector: Selector) {}
 }
 
-/// The picker's AppKit field, as SwiftUI places it in `PickerView`.
 public struct PickerFieldHost: NSViewRepresentable {
     let field: NSTextField
 

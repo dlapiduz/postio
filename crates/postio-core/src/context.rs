@@ -1,129 +1,54 @@
-//! Where the keyboard is pointing: which surface owns the next keystroke.
+//! Which surface owns the next keystroke: a coarse mode, not a widget.
 //!
-//! A context is *not* a widget — `postio-core` knows nothing about widgets. It
-//! is the coarse mode the user is in, and it is what makes one key mean two
-//! things without ambiguity: `Escape` leaves the search field in
-//! [`Context::Search`] and closes the composer in [`Context::Composer`].
-//!
-//! Every [`CommandSpec`](crate::CommandSpec) carries the set of contexts it is
-//! meaningful in, which is what the palette and the `?` cheat sheet filter on.
-//!
-//! Availability is not key routing. A command being available in
-//! [`Context::Search`] says the user can reach it there; whether a bare letter
-//! key reaches it, or is swallowed as typed text by a focused entry, is the
-//! keymap resolver's decision in the frontend.
+//! Availability is not key routing: whether a bare letter reaches a command or is swallowed by a
+//! focused entry is the frontend resolver's call.
 
 use std::fmt;
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
-/// The surface that owns the keyboard.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Context {
-    /// The message list: rows, selection, bulk actions.
     List,
-    /// The conversation pane: the whole thread stacked beside the list.
-    ///
-    /// Was `Thread`, when a thread meant a column that replaced the list
-    /// (#1003). The conversation moved into the reading pane and the column
-    /// went; the context stayed, because the surface it names still exists
-    /// and still owns the keyboard while you are reading a conversation. Its
-    /// keys walk messages inside the stack rather than rows in a column.
+    /// Was `Thread` before the conversation moved into the reading pane (#1003); its keys walk
+    /// messages inside the stack.
     Conversation,
-    /// The reading pane showing one message.
     Reader,
-    /// Compose: the reading pane by default, or a window of its own on ask.
-    ///
-    /// One context either way. The composer is the same widget reparented, so
-    /// a binding that works in the pane works in the detached window without
-    /// a second context to keep in step -- see `CommandId::DetachComposer`.
+    /// One context either way: the composer is the same widget reparented
+    /// (`CommandId::DetachComposer`).
     Composer,
-    /// The search field and its results.
     Search,
-    /// The `Ctrl+K` command palette overlay.
     Palette,
-    /// The folder list, once the keyboard is in it.
-    ///
-    /// A real context rather than a focus flag, because that is what makes
-    /// the folder commands reachable from the palette and printable in the
-    /// cheat sheet without either of them learning about the sidebar. Before
-    /// it existed there was no way to change mailbox without the mouse.
+    /// A real context, not a focus flag, so folder commands reach the palette and cheat sheet.
     Sidebar,
-    /// The parts panel: a message's MIME tree, walkable from the keyboard.
-    ///
-    /// Also a real context rather than a focus flag, and for the same
-    /// reason `Sidebar` had to become one: without it, `j` in the panel
-    /// reached the window's own resolver first and moved the message
-    /// selection instead of walking the tree — see `postio-14b`.
+    /// A real context so `j` in the panel is not taken by the window's resolver first
+    /// (`postio-14b`).
     Parts,
-    /// The account list in settings, once the keyboard is in it.
-    ///
-    /// Scoped to the `accounts_list` widget and named for it, the way
-    /// `Sidebar` and `Parts` are — deliberately *not* a `Context::Settings`
-    /// spanning the whole panel. That panel also holds a `GtkTextView` of the
-    /// literal `config.toml`, and a context named for the panel would put
-    /// bare-letter bindings live while somebody types TOML: `d` removing an
-    /// account instead of inserting a `d`. Scoping to the list closes that by
-    /// construction rather than by remembering (ADR 0005 Q6c, #471).
+    /// Scoped to the account list, not the whole settings panel, so bare-letter bindings are not
+    /// live while someone types TOML (ADR 0005 Q6c, #471).
     Accounts,
-    /// The keybinding list in settings, once the keyboard is in it.
-    ///
-    /// Scoped to the rebind list widget rather than the whole panel, for
-    /// the exact reason [`Context::Accounts`] already gives: `[keys]`'s own
-    /// escape hatch is a `GtkTextView` over raw TOML, and a bare-letter
-    /// binding must not fire while someone is typing there (#881).
+    /// Scoped to the rebind list, for the reason `Accounts` gives (#881).
     Keys,
-    /// A picker anchored to a row: snooze, remind, label or move
-    /// (specs/007-postio-focus research R6).
-    ///
-    /// Its own context, and not layered over the list, for the reason
-    /// [`Context::Parts`] is not: the picker sits over a row, and a letter
-    /// falling through to the list would act on the mail underneath while
-    /// the person's eyes are on the picker. Its keys are the picker
-    /// commands, the number keys among them.
+    /// Its own context, not layered over the list: a letter falling through would act on the mail
+    /// underneath.
     Picker,
-    /// A digest's window: its messages, its summary, its rule (spec 007
-    /// US10). `A` there archives the whole digest.
     Digest,
-    /// The Filtered view: what Focus archived on arrival, by reason (spec
-    /// 007 US9). `R` there restores.
     Filtered,
-    /// The capture sheet: a task or a note from a message, written into the
-    /// person's Obsidian vault (spec 007 US15, milestone 3). Its own context,
-    /// for the picker's reason: it sits over the mail, and its keys --
-    /// `mod+p` for the project, `alt+s` for the subject, `mod+Return` to
-    /// write -- mean nothing to the list underneath.
+    /// Its own context, for the picker's reason: its keys mean nothing to the list underneath.
     Capture,
-    /// The results view: the main window as a search's results, with the
-    /// list's verbs on its rows (spec 010 D17). Its own context, not
-    /// `Search`'s: the field is not focused there, so `a` archives a result
-    /// rather than typing a letter, and not `List`'s, so `mod+1` picks a tab
-    /// there and nothing in the inbox.
+    /// Not `Search`'s (the field is not focused, so `a` archives a result) nor `List`'s (`mod+1`
+    /// picks a tab).
     Results,
-    /// The Contacts surface's list and card, once the keyboard is in them
-    /// (specs/005-contacts).
-    ///
-    /// Scoped to the list and the card rather than the whole surface, the way
-    /// `Accounts` and `Keys` are: it also holds a filter field and an editor,
-    /// and a bare-letter binding must not fire while someone types a name
-    /// there. One context for every kind of row it shows -- person, address,
-    /// group, suggestion -- and a command acts on the focused row's kind;
-    /// sub-contexts per kind would split one surface into four headings.
+    /// Scoped to the list and card, so bare letters do not fire while typing in the filter or
+    /// editor.
+    /// One context for every row kind; a command acts on the focused row's kind.
     Contacts,
-    /// The contact popover, hung from a sender's name (specs/011-focus-contacts
-    /// S6): a small surface over the mail with its own keys -- `Return` is all
-    /// the mail, `c` writes -- that mean nothing to the list beneath it.
     ContactPopover,
-    /// The thread outline: the conversation's messages as a list over the
-    /// reader (specs/013-focus-threads D5). Its own context, because `u`
-    /// there means "first unread" while it is `prev_view` in the reader
-    /// beneath it.
+    /// Its own context: `u` means "first unread" here but `prev_view` in the reader beneath.
     Outline,
-    /// The question "Forward what?" (specs/013-focus-threads D7): `1`, `2`
-    /// and `3` choose. Not the picker's context, which already gives each
-    /// digit to `picker_choose_n`, so the two would bind a digit twice.
+    /// Not the picker's context, which already gives each digit to `picker_choose_n`.
     ForwardChooser,
 }
 
@@ -138,28 +63,21 @@ impl Context {
         Context::Palette,
         Context::Sidebar,
         Context::Parts,
-        // At the end, so the `?` sheet grows a section rather than reordering
-        // the ones people have learned (ADR 0005 Q6c).
+        // At the end, so the `?` sheet grows a section rather than reordering the ones people
+        // learned (ADR 0005 Q6c).
         Context::Accounts,
         Context::Keys,
-        // Focus's surfaces (spec 007), at the end for the same reason.
         Context::Picker,
         Context::Digest,
         Context::Filtered,
         Context::Capture,
-        // The Mac's search results (spec 010), at the end for the same
-        // reason.
         Context::Results,
-        // Contacts (specs/005-contacts), at the end for the same reason.
         Context::Contacts,
-        // The popover (specs/011-focus-contacts S6).
         Context::ContactPopover,
-        // The threads design (specs/013-focus-threads).
         Context::Outline,
         Context::ForwardChooser,
     ];
 
-    /// The stable serialized name, matching the `Deserialize` spelling.
     pub const fn as_str(self) -> &'static str {
         match self {
             Context::List => "list",
@@ -184,18 +102,13 @@ impl Context {
         }
     }
 
-    /// This context on its own, as a set.
     pub const fn as_set(self) -> ContextSet {
         ContextSet::of(self)
     }
 
     const fn bit(self) -> u32 {
-        // `u32`, not `u8`: the eight original contexts filled a byte exactly,
-        // and `Accounts` made the ninth. That was not a silent overflow --
-        // `ContextSet::ANY` is const-evaluated, so it was a compile error and
-        // could never have reached a running build (#471). The room here is
-        // for the next one; `every_context_fits_the_set` is what says when
-        // this needs widening again.
+        // `u32` so adding contexts is not a silent overflow; `every_context_fits_the_set` says when
+        // to widen.
         1 << (self as u32)
     }
 }
@@ -206,12 +119,10 @@ impl fmt::Display for Context {
     }
 }
 
-/// The error from parsing an unknown context name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnknownContext(String);
 
 impl UnknownContext {
-    /// The text that did not name a context.
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -237,11 +148,7 @@ impl FromStr for Context {
     }
 }
 
-/// The set of contexts a command is available in — its context predicate.
-///
-/// A set rather than a closure on purpose: a predicate you can only *call* can
-/// answer "is this command available here?" but not "what is available here?",
-/// and the palette and cheat sheet need the second question answered.
+/// A set rather than a closure: the palette and cheat sheet need to ask what is available here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ContextSet(u32);
 
@@ -249,13 +156,7 @@ impl ContextSet {
     /// The empty set. No command may keep this — see the registry tests.
     pub const EMPTY: ContextSet = ContextSet(0);
 
-    /// Every context, for commands like the palette that are always reachable.
-    ///
-    /// Derived from [`Context::ALL`] rather than written as a literal. It was
-    /// `0b0011_1111`, and adding a seventh context silently left it meaning
-    /// "the first six" — a command declared reachable everywhere would have
-    /// been unreachable in the new one, which is the kind of bug that shows up
-    /// as a key that does nothing in one pane.
+    /// Derived from `Context::ALL`, so a new context cannot be left out of "everywhere".
     pub const ANY: ContextSet = {
         let mut bits = 0u32;
         let mut index = 0;
@@ -266,29 +167,20 @@ impl ContextSet {
         ContextSet(bits)
     };
 
-    /// A set holding exactly one context.
     pub const fn of(context: Context) -> ContextSet {
         ContextSet(context.bit())
     }
 
-    /// This set plus one more context, usable in a `const` table.
-    ///
-    /// For the entries that are "one of the named groups, and also somewhere
-    /// else" -- `Undo` over the message surfaces plus the account list. The
-    /// alternative is a second slice constant named for a single use, which
-    /// reads worse at the call site than the sentence it is standing in for.
     pub const fn with(self, context: Context) -> ContextSet {
         ContextSet(self.0 | context.bit())
     }
 
-    /// This set less `context`: "everywhere but there", for the one command
-    /// whose key another surface takes for its own (`add_account`'s
+    /// "Everywhere but there", for the one command whose key another surface takes (`add_account`'s
     /// `mod+shift+n` is New contact in Contacts).
     pub const fn without(self, context: Context) -> ContextSet {
         ContextSet(self.0 & !context.bit())
     }
 
-    /// A set built from a slice, usable in a `const` table.
     pub const fn from_slice(contexts: &[Context]) -> ContextSet {
         let mut bits = 0u32;
         let mut index = 0;
@@ -299,26 +191,19 @@ impl ContextSet {
         ContextSet(bits)
     }
 
-    /// Whether `context` is in the set — the predicate itself.
     pub const fn contains(self, context: Context) -> bool {
         self.0 & context.bit() != 0
     }
 
-    /// Whether the set holds no context at all.
-    /// Whether the two sets share a context.
-    ///
-    /// Two commands can carry the same binding as long as this is false: `a`
-    /// archives in the list and types a letter in the composer.
+    /// Whether the two sets share a context; two commands may share a binding when this is false.
     pub const fn intersects(self, other: ContextSet) -> bool {
         self.0 & other.0 != 0
     }
 
-    /// Whether this set names no context at all.
     pub const fn is_empty(self) -> bool {
         self.0 == 0
     }
 
-    /// The contexts in the set, in [`Context::ALL`] order.
     pub fn iter(self) -> impl Iterator<Item = Context> {
         Context::ALL
             .iter()

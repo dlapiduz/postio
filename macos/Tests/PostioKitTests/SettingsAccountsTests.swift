@@ -19,10 +19,8 @@ import Testing
     }
 
     @Test func aimingAtNothingHitsNothing() {
-        // The whole of ADR 0005 Q6c's reasoning: `d` with no row under the
-        // keyboard must remove nothing. Falling back to the first account
-        // would take somebody's mail off this Mac on a keystroke aimed at
-        // no row at all.
+        // `d` with no row under the keyboard must remove nothing: falling back to the first account
+        // would take someone's mail on a keystroke aimed at no row (ADR 0005 Q6c).
         let pane = SettingsAccounts()
         #expect(pane.focused(in: [account(1, "ada@example.com")]) == nil)
     }
@@ -35,17 +33,15 @@ import Testing
     }
 
     @Test func aRowRemovedUnderTheCursorIsNotSomeOtherRow() {
-        // Two settings windows, or a removal that landed while the command
-        // was in flight. The cursor still holds an id and the id is gone;
-        // the answer is nothing, never "the nearest one".
+        // The cursor still holds an id that is gone; the answer is nothing, never "the nearest
+        // one".
         let pane = SettingsAccounts()
         pane.put(cursor: 2)
         #expect(pane.focused(in: [account(1, "ada@example.com")]) == nil)
     }
 
     @Test func twoOfTheSameWishInARowAreTwoWishes() {
-        // Add an account, cancel the sheet, press it again. A view watching
-        // the value alone would see nothing the second time.
+        // A view watching the value alone would see nothing the second time.
         let pane = SettingsAccounts()
         pane.ask(.add)
         let first = pane.wishToken
@@ -55,19 +51,14 @@ import Testing
     }
 
     @Test func aCredentialWishNamesTheAccountItIsFor() {
-        // The sheet asks for one account's password. Carrying the id with
-        // the wish is what stops it being asked for whichever row the pane
-        // happens to be drawing when the sheet opens.
         let pane = SettingsAccounts()
         pane.ask(.updateCredential(7))
         #expect(pane.wish == .updateCredential(7))
     }
 
     @Test func aWishIsTakenOnceByWhicheverPaneIsThereToTakeIt() {
-        // `⇧⌘N` with the Settings window closed opens it, and the pane that
-        // appears was not there to see the token move -- so it takes the
-        // wish when it appears. Taken, not read: a second appearance must not
-        // open a second sheet nobody asked for.
+        // The pane that appears did not see the token move, so it takes the wish on appearing;
+        // taken, not read, so a second appearance opens no second sheet.
         let accounts = SettingsAccounts()
         accounts.ask(.add)
         #expect(accounts.take() == .add)

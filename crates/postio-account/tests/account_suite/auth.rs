@@ -1,32 +1,14 @@
-//! The token-source seam: a credential is obtained by strategy, not by build.
-//!
-//! ADR 0006 Q1: the broker path (`oama`, `ortie`, `mutt_oauth2.py`) works by
-//! running a program, and its one obligation beyond `CommandSecretStore` is
-//! expiry semantics — a token the server rejected must be re-obtained on the
-//! next ask, or delegation works for exactly one token lifetime and then
-//! looks like a broken account.
-//!
-//! No test here touches the network. The broker is a shell script writing to
-//! a file in a per-test scratch directory, which is how a counter survives
-//! between invocations of a process that exits. The directory follows the
-//! repository's own pattern (a named path under `temp_dir()`, created on
-//! use), because `.cargo/config.toml` points TMPDIR at `target/tmp`, which
-//! does not exist until something makes it.
-
 use std::sync::Arc;
 
 use postio_account::auth::{BrokerTokenSource, StoredPasswordSource, TokenSource};
 use postio_account::secret::{AccountKey, MemorySecretStore, Password, SecretError, SecretStore};
 
-/// A scratch directory of this test's own, under the configured TMPDIR.
 fn scratch(name: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("postio-auth-{name}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     dir
 }
 
-/// A broker that answers `token-1`, `token-2`, … on successive invocations,
-/// so a test can tell a cached answer from a re-obtained one.
 fn counting_broker(directory: &std::path::Path) -> BrokerTokenSource {
     let counter = directory.join("count");
     let script = format!(
@@ -119,8 +101,6 @@ async fn a_stored_password_answers_both_trait_methods() {
     let source = StoredPasswordSource::new(Arc::new(store));
 
     let token = source.access_token(&key()).await.expect("the password");
-    // Invalidating a stored password is a no-op: it does not expire, and a
-    // rejected one is the user's to change, not Postio's to refetch.
     source.invalidate(&key()).await;
     let again = source.access_token(&key()).await.expect("still there");
 

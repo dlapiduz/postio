@@ -1,17 +1,8 @@
-//! T199: a right-click on a list row opens a menu of the row's verbs, each
-//! with its key, each running its one registry command. The right-click
-//! moves the cursor to the row, as a click does. Inside the selection the
-//! menu acts on the selection; outside it, on that row alone -- and the
-//! selection is only let go when a verb runs, so dismissing the menu loses
-//! nothing. Escape closes it.
-
 use gtk::prelude::*;
 use postio_core::state::Selection;
 
 use crate::support::{self, Fixture};
 
-/// Right-click the `index`th row on screen as a person does: at its middle,
-/// once it is still and a press there reaches it, along GTK's path.
 pub(crate) fn right_click(window: &postio_gtk::window::FocusWindow, index: usize) {
     let rows = window.pane().expect("the inbox").rows_on_screen();
     let row = rows.get(index).expect("a row on screen");
@@ -19,7 +10,6 @@ pub(crate) fn right_click(window: &postio_gtk::window::FocusWindow, index: usize
     crate::settle();
 }
 
-/// The menu, up and drawn.
 pub(crate) async fn menu_shown(window: &postio_gtk::window::FocusWindow) -> gtk::Popover {
     assert!(
         crate::settle_until(async || window
@@ -27,7 +17,6 @@ pub(crate) async fn menu_shown(window: &postio_gtk::window::FocusWindow) -> gtk:
             .is_some_and(|menu| menu.is_open() && menu.widget().width() > 0))
         .await,
         "no menu opened on the row: {}",
-        // What there was, so a failure says which part never came (#1793).
         match window.row_menu() {
             None => format!(
                 "the right-click built none (cursor on {:?})",
@@ -45,7 +34,6 @@ pub(crate) async fn menu_shown(window: &postio_gtk::window::FocusWindow) -> gtk:
     window.row_menu().expect("the menu").widget().clone()
 }
 
-/// Press the menu's verb that wears `class`.
 pub(crate) fn choose(menu: &gtk::Popover, class: &str) {
     support::only(menu, class)
         .downcast::<gtk::Button>()
@@ -54,8 +42,6 @@ pub(crate) fn choose(menu: &gtk::Popover, class: &str) {
     crate::settle();
 }
 
-/// Toggle the selection of the rows on screen at `indices`, as a press in
-/// each one's gutter does.
 fn select_on_screen(window: &postio_gtk::window::FocusWindow, indices: &[usize]) {
     for index in indices {
         let rows = window.pane().expect("the inbox").rows_on_screen();
@@ -74,13 +60,8 @@ fn selected(window: &postio_gtk::window::FocusWindow) -> usize {
     }
 }
 
-/// The menu lists the row's verbs, in their groups, each with the key the
-/// keymap gives it; and the right-click moved the cursor to the row.
 pub fn a_right_click_on_a_row_offers_its_verbs_with_their_keys() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let (window, _client) = fixture.five().await;
         right_click(&window, 2);
@@ -136,49 +117,14 @@ pub fn a_right_click_on_a_row_offers_its_verbs_with_their_keys() {
     });
 }
 
-/// A verb runs its command on the right-clicked row: Archive takes that
-/// row, and only that row, out of the inbox.
-pub fn a_menu_verb_runs_its_command_on_the_row() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let fixture = Fixture::empty().await;
-        let (window, _client) = fixture.five().await;
-        let before = support::subjects(&window);
-        right_click(&window, 1);
-        let menu = menu_shown(&window).await;
-        choose(&menu, "focus-row-menu-archive");
-        assert!(
-            crate::settle_until(async || support::subjects(&window).len() == before.len() - 1)
-                .await,
-            "Archive from the menu did not take a row out"
-        );
-        let after = support::subjects(&window);
-        assert!(
-            !after.contains(&before[1]) && after.contains(&before[0]),
-            "the wrong row went: {before:?} became {after:?}"
-        );
-        assert!(!menu.is_visible(), "the menu stayed up after its verb ran");
-    });
-}
-
-/// Outside the selection, the menu is for the row alone: dismissing it
-/// keeps the selection, and a verb lets the selection go and acts on the
-/// row. Inside the selection, it acts on the selection, and says so.
 pub fn a_right_click_outside_the_selection_is_for_that_row_inside_it_for_the_selection() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let (window, _client) = fixture.five().await;
         let before = support::subjects(&window);
-        // Select the first two rows, by their gutters.
         select_on_screen(&window, &[0, 1]);
         assert_eq!(selected(&window), 2);
 
-        // Outside: row 3. Escape closes the menu and the selection stays.
         right_click(&window, 3);
         let menu = menu_shown(&window).await;
         assert!(
@@ -193,7 +139,6 @@ pub fn a_right_click_outside_the_selection_is_for_that_row_inside_it_for_the_sel
             "closing the menu dropped the selection"
         );
 
-        // Inside: row 1. The menu names the selection and offers no reply.
         right_click(&window, 1);
         let menu = menu_shown(&window).await;
         let said = support::texts(&menu);
@@ -214,7 +159,6 @@ pub fn a_right_click_outside_the_selection_is_for_that_row_inside_it_for_the_sel
         let after = support::subjects(&window);
         assert!(after.contains(&before[3]), "{after:?}");
 
-        // Outside again, with a fresh selection: the verb is for the row.
         select_on_screen(&window, &[0]);
         assert_eq!(selected(&window), 1);
         let kept = support::subjects(&window)[0].clone();

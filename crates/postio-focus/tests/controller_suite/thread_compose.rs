@@ -1,10 +1,3 @@
-//! Replying to an older message, forwarding a thread (spec 013 US7,
-//! FR-022, FR-023; decision T3).
-//!
-//! Driven as a frontend would: a fake list, the keys the registry binds,
-//! the draft the composer holds when the controller asks for it, and the
-//! replies a client would give.
-
 use crate::search_support::{asks, shown};
 use chrono::{TimeZone, Utc};
 use postio_config::paths::Platform;
@@ -20,7 +13,6 @@ use postio_ui::compose::{ChooserView, OlderReplyView};
 use postio_ui::focus_list::{FocusRow, lone};
 
 struct List {
-    /// How many messages each row's thread holds.
     messages: u32,
 }
 
@@ -68,8 +60,6 @@ fn member_id(thread: ThreadId, index: usize) -> MessageId {
     MessageId::new(thread.get() * 100 + index as i64)
 }
 
-/// Six messages, Ana's at even places and Ben's at odd ones, the last two
-/// unread.
 fn view(thread: ThreadId) -> ThreadView {
     let at = Utc.with_ymd_and_hms(2026, 9, 21, 9, 0, 0).unwrap();
     ThreadView {
@@ -106,7 +96,6 @@ fn run(focus: &mut FocusController, command: CommandId, rows: &List) -> Vec<Effe
     focus.handle_on(Input::Command(command), rows)
 }
 
-/// The inbox, landed, its cursor on Harbor.
 fn inbox(messages: u32) -> (FocusController, List) {
     let rows = List { messages };
     let mut focus = focus();
@@ -117,8 +106,6 @@ fn inbox(messages: u32) -> (FocusController, List) {
     (focus, rows)
 }
 
-/// Harbor opened with Return: the window is on message 5 (index 4), the
-/// first unread, and its thread is walked.
 fn window() -> (FocusController, List) {
     let (mut focus, rows) = inbox(6);
     let effects = run(&mut focus, CommandId::OpenMessage, &rows);
@@ -142,7 +129,6 @@ fn window() -> (FocusController, List) {
     (focus, rows)
 }
 
-/// The window on message 4 of 6, Ben's.
 fn window_on_message_4() -> (FocusController, List) {
     let (mut focus, rows) = window();
     let _ = run(&mut focus, CommandId::PrevInConversation, &rows);
@@ -194,8 +180,6 @@ fn draft(subject: &str) -> Draft {
     draft
 }
 
-/// Press `command` with the composer on top and give the controller the
-/// draft it asks for; the effects after the draft arrived.
 fn with_draft(
     focus: &mut FocusController,
     rows: &List,
@@ -223,8 +207,6 @@ fn answer(
     let (ticket, _) = requests(effects).into_iter().next().expect("a request");
     focus.handle_on(Input::Reply(ticket, reply), rows)
 }
-
-// ---- The forward chooser ----
 
 #[test]
 fn f_in_a_thread_of_six_opens_the_composer_with_the_chooser_on_this_message() {
@@ -279,7 +261,6 @@ fn f_in_a_one_message_thread_shows_no_chooser() {
         ))
     );
     assert_eq!(chooser_of(&effects), None);
-    // And the chooser's keys have nothing to choose.
     let two = run(&mut focus, CommandId::ForwardWhat2, &rows);
     assert!(intents(&two).is_empty() && requests(&two).is_empty());
 }
@@ -424,12 +405,9 @@ fn a_thread_with_messages_not_here_says_how_many_and_stays_as_it_was() {
         "the draft and the chooser stay as they were"
     );
     assert!(requests(&refused).is_empty(), "nothing is fetched");
-    // The form is still This: choosing it again is nothing.
     let again = run(&mut focus, CommandId::ForwardWhat1, &rows);
     assert!(intents(&again).is_empty() && requests(&again).is_empty());
 }
-
-// ---- Replying to an older message ----
 
 #[test]
 fn replying_to_message_4_of_6_says_it_is_not_the_latest() {
@@ -523,7 +501,6 @@ fn alt_e_in_the_composer_switches_to_the_latest_and_keeps_what_was_typed() {
     assert_eq!(placed.in_reply_to, Some(member_id(ThreadId::new(500), 5)));
     assert_eq!(placed.body_markdown.as_deref(), Some("typed by the person"));
     assert_eq!(older_reply_of(&done), Some(None), "the bar goes");
-    // Nothing older to leave now.
     let again = run(&mut focus, CommandId::ReplyToLatest, &rows);
     assert!(intents(&again).is_empty());
 }

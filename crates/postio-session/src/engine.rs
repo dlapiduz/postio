@@ -1,26 +1,9 @@
-//! Building the sync engine for an account.
-//!
-//! Everything here is a choice about *this* installation rather than about
-//! how mail works: which TLS stack dials the server, where the password is
-//! kept, how many connections to hold open. That is what a composition root
-//! is for, and it is why `postio-runtime` takes these as parts rather than
-//! constructing them — a test hands it a mock backend and an in-memory
-//! keyring through the same door.
-//!
-//! # Nothing here dials anything
-//!
-//! `ImapBackend::new` builds a pool and opens no connection; the engine's
-//! supervisor decides when to. So a Postio started with no network, or with
-//! a password the keyring will not give up, still opens its window and says
-//! so — which is the whole point of being local-first.
-//!
-//! [`NetworkSource::NetworkManager`] is asked for here rather than defaulted
-//! to inside the engine, because a listener that opened a system-bus
-//! connection on its own would make every test behave differently on a
-//! desktop and on a CI runner. A machine without NetworkManager loses nothing
-//! but the promptness of a reconnect. An engine over a substitute server
-//! (`Wiring::with_mail`) does not ask: that server is not on the desktop's
+//! Building the sync engine for an account: choices about this installation (TLS stack, keyring,
+//! pool size), taken as parts by `postio-runtime` so tests can substitute them.
+//! Nothing here dials: `ImapBackend::new` opens no connection, so Postio starts and says so with no
 //! network.
+//! `NetworkSource::NetworkManager` is asked for here, not defaulted in the engine, so tests behave
+//! the same on a desktop and in CI; an engine over `Wiring::with_mail` does not ask.
 
 use std::sync::Arc;
 
@@ -34,23 +17,11 @@ use postio_account::secret::{AccountKey, SecretStore};
 use postio_model::{Account, AccountId};
 use postio_runtime::engine::{Engine, EngineParts, NetworkSource, SystemClock};
 
-/// Start the engine for `account`, from this installation's [`Wiring`].
-///
-/// `None` when the transports cannot be built at all — a system with no
-/// usable TLS stack, say. That costs the account its sync and nothing else:
-/// the local store still opens and everything already synced still reads.
-///
-/// The wiring is handed in whole rather than as parts for the reason the
-/// module docs give: every choice an engine is built from — the store, the
-/// keyring, the backfill and watch policies, the egress log — is the
-/// composition root's, made once for the installation and the same for
-/// every account. Three callers used to unpack the same eight fields in the
-/// same order, and a ninth field would have been nine edits.
+/// Start the engine for `account`, from this installation's `Wiring`. `None` when the transports
+/// cannot be built (no usable TLS stack); the local store still opens.
 pub fn start(account: &Account, wiring: &Wiring) -> Option<Engine> {
     let key = AccountKey::new(account.address.address.clone());
 
-    // Both transports report to the egress log (#151): every connection
-    // this engine opens is a row the user can audit.
     let egress = wiring.egress.for_account(account.id);
     let connector = match RustlsConnector::new() {
         Ok(connector) => Arc::new(
@@ -71,15 +42,9 @@ pub fn start(account: &Account, wiring: &Wiring) -> Option<Engine> {
         }
     };
 
-    // One `TokenSource` for this account, and both sides of it get *this*
-    // instance (ADR 0006 Q5). A second source built for SMTP would look
-    // identical and would be the bug: a rejection seen while fetching would
-    // be invisible while sending, and two simultaneous refreshes on a
-    // provider that rotates its refresh token invalidate each other.
-    //
-    // A password account is a `TokenSource` too. That is the point of the
-    // seam — the composition root chooses which kind of credential this
-    // account has, and nothing downstream asks again.
+    // One `TokenSource` per account, shared by both sides (ADR 0006 Q5): a second one for SMTP
+    // would not see a rejection seen while fetching, and two refreshes on a rotating-refresh-token
+    // provider invalidate each other.
     let tokens = token_source(account, &wiring.secrets);
 
     let (backend, smtp) = match &wiring.mail {
@@ -90,7 +55,6 @@ pub fn start(account: &Account, wiring: &Wiring) -> Option<Engine> {
         }
     };
 
-    // With the wiring's filing slot, which only Focus mode fills.
     match Engine::spawn_filing(
         EngineParts {
             account: account.id,
@@ -118,15 +82,9 @@ pub fn start(account: &Account, wiring: &Wiring) -> Option<Engine> {
     }
 }
 
-/// Who tells an engine about the network: NetworkManager, unless the mail
-/// goes somewhere else.
-///
-/// A [`MailOverride`](crate::MailOverride) is a server that is not on the
-/// machine's network -- a test's mock -- so what the desktop says about that
-/// network says nothing about whether it answers. Following it anyway made
-/// every host test over a mock depend on the machine's own NetworkManager,
-/// and behave differently on a laptop whose Wi-Fi blinked than on a runner
-/// with no NetworkManager at all ([`NetworkSource`]'s own warning).
+/// Who tells an engine about the network: NetworkManager, unless the mail goes somewhere else. A
+/// mock server is not on the machine's network, so following the desktop would make host tests
+/// depend on it.
 fn network_for(mail: Option<&crate::MailOverride>) -> NetworkSource {
     match mail {
         Some(_) => NetworkSource::Ignored,
@@ -134,11 +92,8 @@ fn network_for(mail: Option<&crate::MailOverride>) -> NetworkSource {
     }
 }
 
-/// The adapter the account's stored backend choice names (#545, ADR 0018
-/// Q5): the one place a protocol is picked, so nothing downstream asks
-/// again. A `jmap` row whose stored session URL no longer parses falls
-/// back to the IMAP adapter with an error in the log — the incoming
-/// server is stored either way, and a degraded sync beats none.
+/// The adapter the account's stored backend choice names (#545, ADR 0018 Q5). A `jmap` row whose
+/// session URL no longer parses falls back to IMAP with an error logged.
 fn backend_for(
     account: &Account,
     key: AccountKey,
@@ -164,11 +119,8 @@ fn backend_for(
             return Arc::new(postio_gmail::GmailBackend::with_token_source(key, tokens));
         }
         postio_model::account::Backend::Maildir { root } => {
-            // Deliberately unchecked: a maildir account has no incoming
-            // server to fall back to, so a tree that has moved must not be a
-            // failure to *build* the backend — it is a failure to connect,
-            // which is where the seam already puts the directory's name in
-            // front of the person who moved it.
+            // Unchecked: a maildir account has no incoming server to fall back to, so a moved tree
+            // fails at connect, not at build.
             return Arc::new(postio_account::maildir::MaildirBackend::at(root));
         }
         postio_model::account::Backend::Imap => {}
@@ -184,21 +136,9 @@ fn backend_for(
     )))
 }
 
-/// The account's IMAP server, as the connection pool wants it.
-///
-/// Field for field. The two types exist separately because `postio-model`
-/// describes an account and `postio-account` describes a connection, and neither
-/// should have to change when the other does.
-/// Which strategy obtains this account's credential (ADR 0006 Q1, #534).
-///
-/// The account's own data decides: an [`OAuthConfig`] on the row means the
-/// sign-in flow ran with the user's own client, and refreshes go through
-/// it — the client secret, when one exists, read from the keyring under
-/// its derived key. No config means the keyring entry *is* the credential:
-/// a stored password, an app password, or a broker-minted token that an
-/// external tool keeps fresh — all the same shape to the sessions.
-///
-/// [`OAuthConfig`]: postio_model::account::OAuthConfig
+/// Which strategy obtains this account's credential (ADR 0006 Q1, #534): an `OAuthConfig` on the
+/// row means refresh through the user's own client; none means the keyring entry is the credential
+/// (password, app password or broker-fed token).
 pub(crate) fn token_source(
     account: &Account,
     secrets: &Arc<dyn SecretStore>,
@@ -211,10 +151,8 @@ pub(crate) fn token_source(
                         secrets.clone(),
                         token_url,
                         oauth.client_id.clone(),
-                        // The provider's stated refresh lifetime, copied onto
-                        // the row at sign-in. Read here rather than looked up
-                        // so a launch needs neither the preset table nor a
-                        // network to know when this grant dies (#954).
+                        // Copied onto the row at sign-in so a launch needs neither the preset table
+                        // nor a network (#954).
                         oauth
                             .refresh_token_lifetime_days
                             .map(|days| std::time::Duration::from_secs(u64::from(days) * 86_400)),
@@ -222,9 +160,8 @@ pub(crate) fn token_source(
                 );
             }
             Err(error) => {
-                // A row this build cannot parse must not cost the account
-                // its mail: the keyring may still hold a workable token,
-                // and saying so beats an engine that never starts.
+                // A row this build cannot parse must not cost the account its mail; the keyring may
+                // hold a workable token.
                 tracing::error!(
                     %error,
                     "the account's stored OAuth token endpoint is not a URL; \
@@ -246,33 +183,17 @@ pub(crate) fn settings(
         server.security,
         server.username.clone(),
     );
-    // The stored mechanism, carried through — dropping it here is #533:
-    // every account authenticated as Password however it was stored, and
-    // the OAUTHBEARER/XOAUTH2 paths #193 wired in were reachable from
-    // tests only.
+    // Carry the stored mechanism through; dropping it authenticated every account as Password
+    // (#533).
     settings.auth = auth;
     settings
 }
 
-// ---------------------------------------------------------------------------
-// One engine per enabled account
-// ---------------------------------------------------------------------------
-
-/// Why the root refused to start the engines it was asked for.
-///
-/// A refusal rather than a silent truncation: an account whose engine never
-/// started is an account whose mail silently stops arriving, and "some of your
-/// mail is syncing" is the kind of half-state a mail client must never be in
-/// without saying so (#183).
+/// A refusal rather than a silent truncation: an account whose engine never started silently stops
+/// receiving mail (#183).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StartupRefusal {
-    /// More enabled accounts than the connection pool can serve at once.
-    TooManyAccounts {
-        /// How many enabled accounts were found.
-        accounts: usize,
-        /// How many engines this pool can carry.
-        budget: usize,
-    },
+    TooManyAccounts { accounts: usize, budget: usize },
 }
 
 impl std::fmt::Display for StartupRefusal {
@@ -290,28 +211,14 @@ impl std::fmt::Display for StartupRefusal {
 
 impl std::error::Error for StartupRefusal {}
 
-/// How many engines a pool of `max_connections` can carry.
-///
-/// One connection per engine, and one left for the frontend — which reads on
-/// every repaint and must never be the caller that waits. Saturating rather
-/// than panicking on a one-connection pool: the answer there is "no engines",
-/// which [`start_all`] reports as a refusal with a sentence rather than
-/// starting one and deadlocking against the UI.
+/// How many engines a pool of `max_connections` can carry: one per engine, one left for the
+/// frontend, which reads on every repaint and must not wait.
 pub fn engine_budget(max_connections: usize) -> usize {
     max_connections.saturating_sub(1)
 }
 
-/// Start one engine per *enabled* account.
-///
-/// ADR 0005 Q3: the first account is not special, so there is no
-/// `first_account` here — any code that treats one differently fails exactly
-/// once, in the field. Every enabled account gets an engine of its own, with
-/// its own connection, its own queue and its own backoff, so one unreachable
-/// server cannot stall the others.
-///
-/// Refuses rather than truncating when there are more accounts than the pool
-/// can serve. Starting nine of ten engines would leave the tenth account
-/// looking permanently offline with nothing in the interface explaining why.
+/// Start one engine per enabled account (ADR 0005 Q3: the first account is not special). Refuses
+/// rather than truncating when there are more accounts than the pool can serve.
 pub async fn start_all(
     accounts: &[Account],
     wiring: &Wiring,
@@ -328,8 +235,6 @@ pub async fn start_all(
 
     let mut engines = Vec::with_capacity(enabled.len());
     for account in enabled {
-        // A transport that cannot be built costs *that* account its sync and
-        // nothing else — `start` already logs why. The others still run.
         if let Some(engine) = start(account, wiring) {
             engines.push((account.id, engine));
         }
@@ -337,23 +242,9 @@ pub async fn start_all(
     Ok(engines)
 }
 
-/// Start the engine for an account joining an application that is already
-/// running (#64, ADR 0012 Q2).
-///
-/// The same work [`start_all`] does per account, with the one thing that
-/// genuinely differs when an account arrives on its own: the budget is
-/// asked about *the set this account is joining*, not about a set being
-/// started from nothing. `accounts` is how many enabled accounts there will
-/// be once this one is among them — which is what the caller has just
-/// written to the store, and what the pool will have to serve.
-///
-/// Refuses rather than starting an engine the pool cannot carry, for
-/// [`start_all`]'s own reason: an account whose engine never started is an
-/// account whose mail silently stops arriving, and the caller is on a
-/// surface where it can say so.
-///
-/// `Ok(None)` is the same "no usable transport" answer [`start`] gives, and
-/// costs that account its sync and nothing else.
+/// Start the engine for an account joining a running application (#64, ADR 0012 Q2). `accounts`
+/// counts the enabled accounts once this one is among them; refuses as `start_all` does. `Ok(None)`
+/// means no usable transport.
 pub async fn start_joining(
     account: &Account,
     accounts: usize,
@@ -384,9 +275,6 @@ mod tests {
 
     #[test]
     fn the_backend_follows_the_accounts_stored_choice() {
-        // #545, ADR 0018 Q5: the adapter is the account's data, chosen at
-        // add time from the preset row's preference. One code path above
-        // the seam — this match is the whole of it.
         let secrets: Arc<dyn postio_account::secret::SecretStore> =
             Arc::new(postio_account::secret::MemorySecretStore::new());
         let mut account = postio_model::Account::new(
@@ -432,12 +320,6 @@ mod tests {
 
     #[test]
     fn the_token_source_follows_the_accounts_oauth_shape() {
-        // #534, ADR 0006 Q1: which strategy obtains the credential is the
-        // account's data. A password account reads the keyring as it
-        // always has; an OAuth account that signed in with its own client
-        // refreshes through that client; an OAuth account with *no* client
-        // of its own is broker-fed — its token is already in the keyring,
-        // which is exactly the stored-password shape (#533's path).
         let secrets: Arc<dyn postio_account::secret::SecretStore> =
             Arc::new(postio_account::secret::MemorySecretStore::new());
         let mut account = postio_model::Account::new(
@@ -474,9 +356,7 @@ mod tests {
 
     #[test]
     fn the_connection_settings_carry_the_accounts_auth_method() {
-        // #533: this mapping dropped `auth` on the floor, so an account
-        // stored as XOAUTH2 authenticated with LOGIN — the mechanisms #193
-        // wired into the sessions were reachable from tests only.
+        // #533: this mapping dropped `auth`, so an XOAUTH2 account authenticated with LOGIN.
         let server = postio_model::account::ServerConfig {
             host: "imap.example.com".to_owned(),
             port: 993,
@@ -494,9 +374,6 @@ mod tests {
 
     #[test]
     fn a_pool_keeps_one_connection_back_for_the_frontend() {
-        // The UI reads on every repaint; an engine that took the last
-        // connection would make the window wait on the network it is not
-        // allowed to wait on.
         assert_eq!(engine_budget(4), 3);
         assert_eq!(engine_budget(2), 1);
     }

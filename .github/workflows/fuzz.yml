@@ -1,24 +1,11 @@
 name: Fuzz
 
-# Hostile input, on a timer.
-#
-# Every message Postio parses is attacker-controlled. The `.eml` corpus is
-# excellent at correctness but contains only inputs somebody thought of; this
-# is the job that tries the ones nobody thought of. The workspace forbids
-# `unsafe`, so what it is hunting is panics, unbounded memory, and sanitizer
-# bypasses -- a mail that crashes the client on sight is a denial of service
-# the user re-triggers on every startup.
-#
-# A schedule rather than per-PR, and deliberately so: fuzzing is not a gate. A
-# find is a bug report, not a reason to block a change that did not cause it,
-# and a five-minute run proves nothing about a diff either way. The instrumented
-# build is also expensive, which is the other reason `fuzz/` is a workspace of
-# its own -- `cargo test --workspace` never touches it.
-#
-# PAUSED 2026-08-25: same reason as ci.yml and bench.yml. A weekly run spends
-# this private repository's limited free minutes whether anything is found or
-# not, and the account has already run out once. workflow_dispatch-only until
-# the repo is public; restore by uncommenting the schedule below.
+# Hostile input, on a timer: the `.eml` corpus holds only inputs somebody thought of. The hunt is
+# for panics, unbounded memory and sanitizer bypasses.
+# Not a gate: a find is a bug report, and the instrumented build is expensive, so `fuzz/` is its own
+# workspace.
+# PAUSED 2026-08-25: workflow_dispatch-only to save a private repository's free minutes; restore the
+# schedule below when public.
 on:
   # schedule:
   #   - cron: "0 4 * * 1"
@@ -38,12 +25,8 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  # The checkers, before anything is fuzzed with them. A property that cannot
-  # fail reports "clean" forever, and a scheduled job built on one is theatre --
-  # so `postio_fuzz::properties` carries tests that feed each check a
-  # deliberate violation and assert it notices, plus a pass over the whole
-  # `.eml` corpus. Seconds, and it is what makes the matrix below mean
-  # anything.
+  # The checkers first: a property that cannot fail reports "clean" forever, so
+  # `postio_fuzz::properties` feeds each a deliberate violation.
   properties:
     name: Fuzz properties
     runs-on: ubuntu-26.04
@@ -54,8 +37,6 @@ jobs:
       - name: Install the fuzzing toolchain
         run: rustup toolchain install nightly-2026-08-24 --profile minimal
 
-      # `fuzz/` sits under the root `.cargo/config.toml`, which names
-      # `postio-linker` and `postio-cc` (#1101); make them resolve.
       - name: Install the linker and cc shims
         run: scripts/install-shims.sh
       - name: Test the checkers
@@ -66,8 +47,7 @@ jobs:
     needs: properties
     name: Fuzz ${{ matrix.target }}
     runs-on: ubuntu-26.04
-    # Each target on its own runner: a find in one must not cut short the two
-    # that had not run yet, and `fail-fast` would do exactly that.
+    # One runner per target, with no `fail-fast`: a find in one must not cut short the others.
     strategy:
       fail-fast: false
       matrix:
@@ -76,18 +56,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/python
 
-      # The one place in this repository that installs a toolchain rather than
-      # letting rust-toolchain.toml decide, and the reason is not preference:
-      # libFuzzer needs `-Z sanitizer=address`, which does not exist on stable
-      # at any version. The date is what keeps it a pin -- a bare `nightly`
-      # here would float exactly like the `rustup default stable` that #38 is
-      # about, and `scripts/checks/check-toolchain-pinned.py` still refuses that
-      # spelling. Keep this in step with fuzz/rust-toolchain.toml.
+      # The one pinned nightly in the repository: libFuzzer needs `-Z sanitizer=address`, absent on
+      # stable.
+      # A dated pin, not a bare `nightly` (`check-toolchain-pinned.py` refuses that); keep in step
+      # with fuzz/rust-toolchain.toml.
       - name: Install the fuzzing toolchain
         run: rustup toolchain install nightly-2026-08-24 --profile minimal
 
-      # `fuzz/` sits under the root `.cargo/config.toml`, which names
-      # `postio-linker` and `postio-cc` (#1101); make them resolve.
       - name: Install the linker and cc shims
         run: scripts/install-shims.sh
 
@@ -117,16 +92,13 @@ jobs:
             cargo install cargo-fuzz --locked --version 0.13.2 --force
           fi
 
-      # None of the three targets links GTK, WebKit or SQLite -- they reach
-      # postio-model, postio-body and postio-search, which are the pure leaves.
-      # That is why this job needs no apt step and the others do.
+      # No target links GTK, WebKit or SQLite (they reach the pure leaves), so no apt step.
 
       - name: Seed the corpus
         run: scripts/fuzz-seed.sh ${{ matrix.target }}
 
-      # `-rss_limit_mb` is a finding, not a guard rail: unbounded memory on a
-      # 2 GB message is the denial of service, so let libFuzzer call it.
-      # `-timeout` likewise catches the input that takes a minute to parse.
+      # `-rss_limit_mb` and `-timeout` are findings, not guard rails: unbounded memory or a
+      # minute-long parse is the denial of service.
       - name: Fuzz
         working-directory: fuzz
         run: |
@@ -136,12 +108,8 @@ jobs:
             -timeout=25 \
             -print_final_stats=1
 
-      # A crash artifact is the input that reproduced it -- for parse_message
-      # that is a whole message, mutated out of the corpus but still made of
-      # somebody's mail. Logs on a public repository are public, so it is
-      # uploaded and never printed: `check-no-personal-data.py` redacts by
-      # default for the same reason, and a job that echoed the bytes would
-      # publish exactly what the redaction protects.
+      # A crash artifact is a mutated piece of somebody's mail. Logs on a public repository are
+      # public, so it is uploaded and never printed.
       - name: Upload the crash artifact
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

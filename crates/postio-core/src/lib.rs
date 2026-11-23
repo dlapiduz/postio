@@ -1,53 +1,5 @@
-//! Postio's UI-agnostic runtime: **commands in, events out**.
-//!
-//! The frontend sends a [`Command`] down and repaints from the [`Event`]s that
-//! come back. It never reaches into storage, never speaks a protocol and never
-//! awaits the network. That is what keeps a second frontend possible, and CI
-//! enforces the half of it that can be enforced: this crate must not depend on
-//! `gtk4` or `libadwaita` (`scripts/checks/check-crate-boundaries.py`).
-//!
-//! # The registry is the source of truth
-//!
-//! docs/PRODUCT.md §8 requires every command to have a keyboard shortcut, a
-//! command-palette entry and an accessible action. Rather than three lists that
-//! drift, there is one enumerable table — [`registry`] — and the keymap, the
-//! `Ctrl+K` palette, the `?` cheat sheet, the right-click menu and the key
-//! hints on the focused row are all generated from it. A command that is not in
-//! the registry does not exist.
-//!
-//! ```
-//! use postio_core::{Command, CommandId, Context, registry};
-//!
-//! // The palette, generated rather than hand-written:
-//! let rows: Vec<(&str, &str)> = registry::for_context(Context::List)
-//!     .map(|spec| (spec.title, spec.default_binding))
-//!     .collect();
-//! assert!(rows.contains(&("Archive", "e")));
-//!
-//! // Choosing a row yields the command to dispatch.
-//! assert_eq!(
-//!     Command::default_for(CommandId::Archive).id(),
-//!     CommandId::Archive
-//! );
-//! ```
-//!
-//! # One path from intent to change
-//!
-//! [`dispatch`] routes every command — from a key, the palette, a menu or the
-//! mouse — to the single handler registered for it, and turns every failure
-//! into an [`Event`] rather than a panic.
-//!
-//! # Commands go through the bridge
-//!
-//! [`bridge`] owns the tokio runtime and is the only place the asynchronous
-//! backend touches the UI main loop: the frontend sends on a [`CommandSender`]
-//! (never blocking) and drains an [`EventStream`] from its own loop, so no
-//! backend work runs on the UI thread and no GTK type reaches this crate.
-//!
-//! # What lives elsewhere
-//!
-//! App state and the undo stack are separate issues in epic E6; this module is
-//! the vocabulary they share.
+//! Commands in, events out. The registry is the one source for keys, palette, menus and
+//! hints (PRODUCT §8); no GTK here (`check-crate-boundaries.py`).
 
 pub mod action;
 pub mod aim;
@@ -67,7 +19,7 @@ pub mod state;
 pub mod test_support;
 pub mod undo;
 
-pub use action::{ActionId, ExtId};
+pub use action::ActionId;
 pub use bridge::{Bridge, CommandHandler, CommandSender, EventSink, EventStream};
 pub use command::{
     Command, CommandId, ContactAddressAction, ContactEditAction, ContactGroupNewAction,

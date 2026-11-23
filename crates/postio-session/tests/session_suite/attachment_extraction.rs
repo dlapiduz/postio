@@ -1,17 +1,3 @@
-//! Extraction in a child process (spec 010 D28, T153).
-//!
-//! The indexer never reads an attachment in its own process: it hands the
-//! bytes to `postio-extract-helper` and kills it at the deadline. These
-//! are the ways that can go: the real helper, built from this source and
-//! handed over by cargo, answering exactly what an in-process extraction
-//! would; and stand-ins written here as shell scripts for the helpers
-//! nobody can build on purpose -- one that never answers, one that dies,
-//! one that answers garbage, one from another build -- plus no helper at
-//! all.
-//!
-//! The stand-ins are scripts rather than modes of the real helper so the
-//! shipped binary carries no test switch a file could reach.
-
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -23,7 +9,6 @@ use postio_storage::repository::MessageRepository;
 use postio_storage::sql::{self, RowExt as _};
 use postio_storage::{BlobStore, Checkout, test_support};
 
-/// The helper built from this source.
 const HELPER: &str = env!("CARGO_BIN_EXE_postio-extract-helper");
 
 fn seed_file(name: &str) -> postio_demo::SearchFile {
@@ -35,9 +20,6 @@ fn seed_file(name: &str) -> postio_demo::SearchFile {
 
 #[test]
 fn a_test_binary_finds_the_helper_cargo_built_beside_it() {
-    // A test binary runs from `target/<profile>/build/<package>/<hash>/out/`
-    // (`deps/` before Cargo 1.100); the helper is built
-    // one level up, where the application's executable would be.
     if std::env::var_os(postio_session::HELPER_ENV).is_none() {
         assert_eq!(
             std::fs::canonicalize(Extractor::locate().helper()).expect("found"),
@@ -61,7 +43,6 @@ fn the_helper_answers_every_seed_file_as_an_in_process_extraction_does() {
     }
 }
 
-/// A stand-in helper: `body` as a shell script, executable, in `dir`.
 #[cfg(unix)]
 fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
     use std::os::unix::fs::PermissionsExt as _;
@@ -102,8 +83,6 @@ fn a_helper_that_never_answers_is_killed_at_its_deadline() {
         max_time: Duration::from_millis(200),
         ..Limits::default()
     };
-    // One that never reads its input, so the writer is stuck too, and one
-    // that reads it and then spins.
     for (name, body) in [
         ("deaf", "while :; do :; done"),
         ("spin", "cat >/dev/null\nwhile :; do :; done"),
@@ -134,8 +113,6 @@ fn a_helper_that_never_answers_is_killed_at_its_deadline() {
 #[test]
 fn with_no_usable_helper_a_pdf_is_never_read_here_and_text_still_is() {
     let dir = tempfile::tempdir().expect("scratch");
-    // A reply from an extractor this build is not: wire 1, extractor
-    // u32::MAX, complete, no units.
     let stale = script(
         dir.path(),
         "stale",
@@ -165,7 +142,6 @@ printf 'PXRS\001\000\377\377\377\377\000\000\000\000\000\000'",
     }
 }
 
-/// Every attachment row with this file name.
 async fn attachment_named(connection: &Checkout, name: &str) -> AttachmentId {
     sql::first(
         connection,
@@ -193,7 +169,6 @@ async fn outcome_of(connection: &Checkout, attachment: AttachmentId) -> Option<S
     .expect("its record")
 }
 
-/// One message with one stored attachment.
 async fn stored(
     connection: &Checkout,
     blobs: &BlobStore,
@@ -220,8 +195,6 @@ async fn stored(
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn a_pass_kills_the_helper_that_hangs_and_indexes_the_next_attachment() {
-    // A callsite caches whether anyone listens, process-wide: alone, or a
-    // neighbour that reached it first with no subscriber decides for this one.
     if postio_test_support::alone!(
         "a_pass_kills_the_helper_that_hangs_and_indexes_the_next_attachment"
     ) {
@@ -260,7 +233,6 @@ async fn a_pass_kills_the_helper_that_hangs_and_indexes_the_next_attachment() {
     .await;
     drop(connection);
 
-    // The real helper, except for the file that sends it into a loop.
     let dir = tempfile::tempdir().expect("scratch");
     let helper = script(
         dir.path(),
@@ -311,8 +283,6 @@ async fn a_pass_kills_the_helper_that_hangs_and_indexes_the_next_attachment() {
         "{text:?}"
     );
 
-    // What the log says: which attachment, how it ended and by what path;
-    // never a name or a word of the file.
     let log = captured.text();
     assert!(
         log.contains(&format!("attachment={}", hangs.get())),
@@ -331,9 +301,6 @@ async fn a_pass_kills_the_helper_that_hangs_and_indexes_the_next_attachment() {
     }
 }
 
-/// A PDF met while the helper was missing is recorded so the pass ends --
-/// and is read once the helper is there, on the next pass, rather than
-/// waiting for an extractor version that happens to move.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_pdf_skipped_for_want_of_the_helper_is_read_once_the_helper_is_there() {
     let database = test_support::temp().await;
@@ -374,13 +341,11 @@ async fn a_pdf_skipped_for_want_of_the_helper_is_read_once_the_helper_is_there()
     );
     drop(connection);
 
-    // Still no helper: nothing to do, and nothing tried again.
     let again = postio_session::index_local_attachments_with(&database, &blobs, &missing)
         .await
         .expect("the pass runs");
     assert_eq!(again, 0, "no helper, no retry");
 
-    // The helper arrives -- an install, a build -- and the next pass reads it.
     let helper = Extractor::with_helper(HELPER);
     let read = postio_session::index_local_attachments_with(&database, &blobs, &helper)
         .await

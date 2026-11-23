@@ -1,15 +1,8 @@
-//! The boundary's lifecycle and event drain, driven the way Swift drives it.
-//!
-//! Nothing here needs a display, a keyring, a D-Bus session or the network,
-//! which is what lets it run on macOS and Linux alike — the point of the seam
-//! being proven on the cheap platform (ADR 0019).
-
 use std::sync::Arc;
 
 use postio_core::bridge::{Bridge, handler_fn};
 use postio_ffi::{Session, SessionOptions, UiEvent};
 
-/// A session over an in-memory store, with no disk and no keyring.
 fn session() -> Arc<Session> {
     Session::open(SessionOptions::in_memory()).expect("an in-memory session opens")
 }
@@ -17,8 +10,8 @@ fn session() -> Arc<Session> {
 #[test]
 fn an_in_memory_session_opens_without_a_store_on_disk() {
     let session = session();
-    // The store is real: a session that reported success while holding
-    // nothing would pass every later assertion in this file vacuously.
+    // A session that reported success while holding nothing would pass every later assertion
+    // vacuously.
     assert!(
         session.is_open(),
         "the session reported open but holds no store"
@@ -28,9 +21,8 @@ fn an_in_memory_session_opens_without_a_store_on_disk() {
 
 #[test]
 fn shutdown_is_idempotent() {
-    // Swift's app lifecycle can deliver a termination twice — a window close
-    // racing an explicit quit — and a boundary that panicked on the second
-    // one would take the process down during ordinary shutdown.
+    // Swift can deliver a termination twice (a window close racing a quit); a panic would take the
+    // process down in ordinary shutdown.
     let session = session();
     session.shutdown();
     session.shutdown();
@@ -40,7 +32,6 @@ fn shutdown_is_idempotent() {
 fn an_emitted_event_reaches_the_drain() {
     let session = session();
 
-    // Exactly what the engine does when a mailbox's list changes.
     session.emit_for_test(postio_core::Event::MessageListChanged {
         account: 7.into(),
         mailbox: 42.into(),
@@ -61,11 +52,8 @@ fn an_emitted_event_reaches_the_drain() {
 
 #[test]
 fn an_unmodelled_event_becomes_other_rather_than_being_dropped() {
-    // Tier 2 is ignorable, not silent. A variant the boundary does not model
-    // yet still reaches Swift as `Other { kind }`, so an unknown event is a
-    // log line on the far side rather than an event that never happened --
-    // which is the difference between a frontend that is behind and one that
-    // is wrong.
+    // Tier 2 is ignorable, not silent: an unmodelled event reaches Swift as `Other { kind }`, a log
+    // line rather than a lost event.
     let session = session();
     session.emit_for_test(postio_core::Event::MailboxesChanged { account: 1.into() });
     let event = session.next_event_blocking().expect("an event arrives");
@@ -81,8 +69,8 @@ fn an_unmodelled_event_becomes_other_rather_than_being_dropped() {
 
 #[test]
 fn the_drain_ends_when_the_session_shuts_down() {
-    // Swift's drain is `while let event = await session.nextEvent()`. If the
-    // stream never ends, that Task never finishes and the app cannot quit.
+    // Swift drains with `while let event = await session.nextEvent()`; a stream that never ends
+    // keeps the app from quitting.
     let session = session();
     session.shutdown();
     assert!(
@@ -93,9 +81,8 @@ fn the_drain_ends_when_the_session_shuts_down() {
 
 #[test]
 fn a_bridge_supplied_session_uses_the_caller_s_runtime() {
-    // The classic app built its own `Bridge` and handed the parts to `Wiring`.
-    // The macOS app does the same through the boundary, so the constructor
-    // has to accept an existing runtime rather than insisting on its own.
+    // The macOS app builds its own `Bridge` as the classic one does, so the constructor must accept
+    // an existing runtime.
     let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
     let session = Session::open(SessionOptions::in_memory_on(
         bridge.handle(),

@@ -1,6 +1,3 @@
-//! `with:` -- from, to, cc or bcc is any of the listed addresses, by exact
-//! address (specs/005-contacts R6, contracts/query-with.md).
-
 use chrono::{TimeZone, Utc};
 
 use postio_index::{SearchRequest, search};
@@ -50,7 +47,6 @@ async fn world() -> World {
     let from_work = store(&|m| m.from = vec![address("Ada@Work.example")], 9).await;
     let to_home_cc = store(&|m| m.cc = vec![address("ada@home.example")], 8).await;
     let bcc_work = store(&|m| m.bcc = vec![address("ada@work.example")], 7).await;
-    // The string appears only in a display name: not an address match.
     let named_only = store(
         &|m| {
             m.to = vec![EmailAddress::new(
@@ -156,8 +152,6 @@ async fn negated_with_is_everything_else() {
 
 #[tokio::test]
 async fn a_hit_from_a_named_person_carries_the_users_name() {
-    // FR-032 reaches search results too: the hit's sender is the name the
-    // user gave the address's owner, as in the list.
     let world = world().await;
     postio_storage::repository::ContactRepository::new(&world.connection)
         .create(

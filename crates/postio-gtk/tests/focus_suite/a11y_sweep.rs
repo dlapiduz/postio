@@ -1,15 +1,3 @@
-//! Every surface Focus draws, as a screen reader meets it: the generic sweep
-//! of the classic app's `gtk_accessibility.rs`, over Focus's own surfaces.
-//!
-//! GTK has an audit as a test API (`gtk_test_accessible_has_property` and
-//! friends), so the tree can be walked without a screen reader in the loop.
-//! The sweep opens each surface by the key a person presses, proves it is
-//! up by the application's own notion of open (an audit of a surface that
-//! never opened walks the same tree again and passes for free), walks the
-//! window for any control a screen reader cannot name, closes it, and proves
-//! it closed. The harness runs under `GTK_A11Y=test`; `a11y.rs` proves the
-//! backend is recording before any conclusion is drawn.
-//!
 //! POSTIO-MEASUREMENT: the generic sweep over every surface; it runs on the
 //! nightly timer with `every_command`, where `profile.ci-full` already gives
 //! it its own clock and retries.
@@ -20,8 +8,6 @@ use postio_gtk::window::FocusWindow;
 
 use crate::support;
 
-/// Roles a screen reader announces by name. A control it cannot name is a
-/// control it cannot offer.
 const NEEDS_A_NAME: &[AccessibleRole] = &[
     AccessibleRole::Button,
     AccessibleRole::Checkbox,
@@ -37,7 +23,6 @@ const NEEDS_A_NAME: &[AccessibleRole] = &[
     AccessibleRole::ToggleButton,
 ];
 
-/// Roles that say "I am a widget" and nothing a screen reader can use.
 const SAYS_NOTHING: &[AccessibleRole] = &[AccessibleRole::Generic, AccessibleRole::Widget];
 
 fn any_descendant_named(widget: &gtk::Widget) -> bool {
@@ -51,7 +36,6 @@ fn any_descendant_named(widget: &gtk::Widget) -> bool {
     false
 }
 
-/// Whether any label inside `widget` carries text.
 fn has_text(widget: &gtk::Widget) -> bool {
     if let Some(label) = widget.downcast_ref::<gtk::Label>() {
         return !label.text().is_empty();
@@ -66,12 +50,8 @@ fn has_text(widget: &gtk::Widget) -> bool {
     false
 }
 
-/// Whether a screen reader would have something to call this widget: a set
-/// `Label`, a `LabelledBy` relation, or a label of its own inside. GTK's test
-/// API says whether a property was ever set and has no safe way to read its
-/// value back (the classic audit did, through `unsafe`, which this crate
-/// forbids), so a label set to the empty string reads as named here; the
-/// rows' spoken sentences are asserted by value in `a11y`.
+/// GTK's test API has no safe way to read a property's value (reading needs `unsafe`, which this
+/// crate forbids), so a label set to the empty string reads as named here.
 fn named(widget: &gtk::Widget) -> bool {
     if gtk::test_accessible_has_property(widget, AccessibleProperty::Label) {
         return true;
@@ -79,8 +59,6 @@ fn named(widget: &gtk::Widget) -> bool {
     if gtk::test_accessible_has_relation(widget, AccessibleRelation::LabelledBy) {
         return true;
     }
-    // A list item is named from its content: the row inside it is the widget
-    // that carries the sentence, and is audited itself.
     if widget.accessible_role() == AccessibleRole::ListItem && any_descendant_named(widget) {
         return true;
     }
@@ -92,8 +70,8 @@ fn named(widget: &gtk::Widget) -> bool {
     has_text(widget)
 }
 
-/// libadwaita's toast grows a dismiss button of its own, icon-only and with
-/// a tooltip, which is not a name. Postio's own button on that toast is named.
+/// libadwaita's toast grows a dismiss button of its own, icon-only with a tooltip, which is not a
+/// name.
 fn upstream_gap(widget: &gtk::Widget) -> bool {
     widget
         .parent()
@@ -104,9 +82,6 @@ fn upstream_gap(widget: &gtk::Widget) -> bool {
             .is_some_and(|icon| icon == "window-close-symbolic")
 }
 
-/// Walk the tree and collect what a screen reader could not use. `inside` is
-/// whether some ancestor is already a named control: a `GtkMenuButton` wraps
-/// an unnamed toggle of its own, which is an implementation detail.
 fn audit(widget: &gtk::Widget, path: &str, inside: bool, problems: &mut Vec<String>) {
     let role = widget.accessible_role();
     let here = format!("{path} > {}", widget.type_().name());
@@ -132,7 +107,6 @@ fn audit(widget: &gtk::Widget, path: &str, inside: bool, problems: &mut Vec<Stri
     }
 }
 
-/// Audit everything currently on screen, and say which surface it was.
 fn expect_usable(window: &FocusWindow, surface: &str) {
     let mut problems = Vec::new();
     audit(
@@ -149,12 +123,9 @@ fn expect_usable(window: &FocusWindow, surface: &str) {
     );
 }
 
-/// A surface that is not on screen until something opens it.
 struct Surface {
     name: &'static str,
-    /// What a person presses to open it.
     open: fn(&FocusWindow),
-    /// Whether it is on screen, by the application's own notion of open.
     shown: fn(&FocusWindow) -> bool,
 }
 
@@ -162,10 +133,8 @@ fn escape(window: &FocusWindow) {
     support::press(window, "Escape", gtk::gdk::ModifierType::empty());
 }
 
-/// The digest comes first: its row is reached by a fixed walk from the top
-/// of the list, which the surfaces after it would have moved the cursor from.
-/// Settings comes last: keys pressed while its dialog is still closing go to
-/// the dialog's search entry, so nothing that opens by a bare key follows it.
+/// The digest comes first: its row is reached by a fixed walk from the top of the list. Settings
+/// comes last: keys pressed while its dialog is closing go to its search entry.
 fn surfaces() -> Vec<Surface> {
     vec![
         Surface {
@@ -223,7 +192,6 @@ fn surfaces() -> Vec<Surface> {
     ]
 }
 
-/// The tallest row on screen, measured at a fixed width.
 fn row_height(window: &FocusWindow) -> i32 {
     window
         .pane()
@@ -237,9 +205,6 @@ fn row_height(window: &FocusWindow) -> i32 {
 
 pub fn every_widget_in_focus_s_surfaces_has_a_role_and_a_name() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (fixture, _delivery, _held) = crate::digest::delivered_holding().await;
         let (window, _client) = fixture.open().await;
         assert!(
@@ -247,8 +212,6 @@ pub fn every_widget_in_focus_s_surfaces_has_a_role_and_a_name() {
             "the inbox and its digest never reached the screen: {:?}",
             support::subjects(&window)
         );
-        // The harness proves the backend is recording in `a11y.rs`; a probe
-        // here keeps this audit honest on its own.
         let probe = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         probe.update_property(&[gtk::accessible::Property::Label("probe")]);
         assert!(
@@ -257,8 +220,6 @@ pub fn every_widget_in_focus_s_surfaces_has_a_role_and_a_name() {
              GTK_A11Y=test, so something has overridden it"
         );
 
-        // The landmark: the list is a list a screen reader can navigate, and
-        // its rows are rows.
         let pane = window.pane().expect("the list");
         assert!(
             gtk::test_accessible_has_role(pane.view(), AccessibleRole::List),
@@ -293,8 +254,7 @@ pub fn every_widget_in_focus_s_surfaces_has_a_role_and_a_name() {
     });
 }
 
-/// 96 dpi in 1024ths is GTK's own default. Anchored rather than
-/// read-and-doubled: a headless compositor has no font configuration, and
+/// Anchored rather than read-and-doubled: a headless compositor has no font configuration, and
 /// doubling an unset DPI is not a DPI.
 fn normal_dpi(settings: &gtk::Settings) -> i32 {
     match settings.gtk_xft_dpi() {
@@ -303,13 +263,8 @@ fn normal_dpi(settings: &gtk::Settings) -> i32 {
     }
 }
 
-/// At 200% text the list and an open message are still usable: everything a
-/// screen reader meets is still named, and a message still opens.
 pub fn at_200_percent_text_the_window_stays_usable() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_fixture, window) = support::three_in_the_inbox().await;
         let settings = gtk::Settings::default().expect("a settings object");
         let normal = normal_dpi(&settings);
@@ -329,15 +284,9 @@ pub fn at_200_percent_text_the_window_stays_usable() {
     });
 }
 
-/// Rows grow with the type: if a row's height came from constants rather
-/// than from the cascade, it would not move at all and the text would
-/// overflow it. Held out (see `IGNORED`): Focus's rows are 40 and 72 pixels
-/// whatever the text size.
+/// Held out (see `IGNORED`): Focus's rows are 40 and 72 pixels whatever the text size.
 pub fn at_200_percent_text_rows_grow_with_the_type() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_fixture, window) = support::three_in_the_inbox().await;
         let settings = gtk::Settings::default().expect("a settings object");
         let normal = normal_dpi(&settings);

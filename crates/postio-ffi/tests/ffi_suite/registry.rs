@@ -1,11 +1,3 @@
-//! The command registry, as the frontend sees it.
-//!
-//! `PRODUCT.md` §8: *a command that is not in the registry does not exist* —
-//! not merely unbound, but absent from every way a user could discover it. The
-//! corollary for a second frontend is that the registry has to *reach* it, or
-//! the macOS palette and cheat sheet become a hand-maintained list that drifts
-//! from the Linux one the first time either is edited.
-
 use postio_ffi::{Session, SessionOptions, UiRecovery};
 
 fn session() -> std::sync::Arc<Session> {
@@ -17,9 +9,7 @@ fn every_registry_row_crosses() {
     let session = session();
     let crossed = session.commands();
 
-    // Against the registry's own count, so a command added on the Rust side
-    // cannot quietly fail to reach the frontend. A hardcoded number here
-    // would go stale and start asserting the past.
+    // Against the registry's own count, not a hardcoded number that would go stale.
     assert_eq!(
         crossed.len(),
         postio_core::registry::all().count(),
@@ -52,12 +42,9 @@ fn a_row_carries_what_a_palette_and_a_menu_need() {
 
 #[test]
 fn destructive_commands_carry_their_recovery() {
-    // `PRODUCT.md`: destructive operations are confirmed or undoable, and the
-    // registry is where that is machine-checked. A frontend that cannot see
-    // `destructive` cannot confirm, and one that cannot see `recovery` cannot
-    // tell "ask first" from "offer an undo" -- so both have to cross, and
-    // `Recovery::None` on a destructive command must be impossible here as it
-    // is on the Rust side.
+    // A frontend that cannot see `destructive` cannot confirm, nor tell "ask first" from "offer an
+    // undo" without `recovery`;
+    // `Recovery::None` on a destructive command must be impossible.
     let session = session();
     for spec in session.commands() {
         if spec.destructive {
@@ -75,10 +62,8 @@ fn destructive_commands_carry_their_recovery() {
 
 #[test]
 fn ids_are_the_strings_config_uses() {
-    // The whole reason commands cross as strings: `[keys]` in `config.toml`
-    // names these exact ids, so a binding, a palette row and a log line all
-    // spell a command the same way -- and a new command reaches the macOS UI
-    // with no Swift change.
+    // `[keys]` names these exact ids, so a binding, a palette row and a log line spell a command
+    // one way and a new command needs no Swift change.
     let session = session();
     let crossed = session.commands();
 
@@ -94,11 +79,8 @@ fn ids_are_the_strings_config_uses() {
 
 #[test]
 fn the_registry_needs_no_session() {
-    // Deliberately constructs nothing. On macOS opening a session reads the
-    // store's key from the login Keychain (ADR 0014), and an unsigned build
-    // has a new code identity on every rebuild — so a session here would
-    // raise a modal prompt on a developer's machine and hang a headless run.
-    // The registry is a `const` table; asking for it should cost nothing.
+    // Constructs no session: on macOS it reads the Keychain key (ADR 0014) and an unsigned build
+    // changes identity every rebuild, raising a modal prompt.
     let crossed = postio_ffi::commands();
     assert_eq!(crossed.len(), postio_core::registry::all().count());
     assert!(crossed.iter().any(|spec| spec.id == "archive"));
@@ -106,17 +88,11 @@ fn the_registry_needs_no_session() {
 
 #[test]
 fn the_free_function_and_the_session_method_agree() {
-    // One implementation behind both, so a frontend that reaches for either
-    // sees the same vocabulary.
     let session = session();
     assert_eq!(session.commands(), postio_ffi::commands());
     session.shutdown();
 }
 
-/// The Mac's menu bar is Focus's (specs/009-focus-macos T105): every command
-/// Focus offers on this platform is under its menu, and nothing else is.
-/// `MenuPlan` draws whatever carries a section, so a command only the
-/// three-pane apps answer would otherwise be a menu item that does nothing.
 #[test]
 fn the_menus_hold_what_focus_offers_here_and_nothing_else() {
     let platform = postio_ffi::PLATFORM;

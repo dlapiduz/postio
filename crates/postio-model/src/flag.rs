@@ -1,5 +1,3 @@
-//! Message flags and keywords.
-
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
 use std::fmt;
@@ -7,49 +5,28 @@ use std::hash::{Hash, Hasher};
 
 use serde::{Deserialize, Serialize};
 
-/// A flag on a message.
-///
-/// # Invariants
-///
-/// * **One canonical representation per flag.** [`Flag::parse`] folds every
-///   spelling of a well-known flag onto its variant, so `\Seen`, `\SEEN` and
-///   `\seen` are the same value, and there is no `Keyword("\\Seen")`.
-/// * **Keywords are case-insensitive** (RFC 3501 keywords are), so a
-///   [`FlagSet`] can never hold both `Work` and `work`. The case that was first
-///   seen is preserved for display.
-/// * **[`Flag::Recent`] is transient.** It is a per-session server signal and is
-///   never persisted; strip it with [`FlagSet::persistable`] before storing.
-/// * **[`Flag::Deleted`] is the IMAP `\Deleted` flag**, meaning "marked for
-///   expunge on the server" — it is not Postio's local delete, which is
-///   [`LocalSyncState::deleted_locally`](crate::LocalSyncState::deleted_locally).
+/// `Flag::parse` folds every spelling of a well-known flag onto its variant (`\Seen`, `\SEEN`), so
+/// there is no `Keyword("\\Seen")`.
+/// Keywords are case-insensitive (RFC 3501): a `FlagSet` never holds both `Work` and `work`; the
+/// first-seen case is kept for display.
+/// `Recent` is per-session and never persisted (`FlagSet::persistable`). `Deleted` is IMAP's
+/// expunge mark, not Postio's local delete.
 #[derive(Debug, Clone)]
 pub enum Flag {
-    /// `\Seen` — the message has been read.
     Seen,
-    /// `\Answered` — the message has been replied to.
     Answered,
-    /// `\Flagged` — "Flagged" in the sidebar (not "Starred").
     Flagged,
-    /// `\Deleted` — marked for expunge on the server.
     Deleted,
-    /// `\Draft` — an unsent draft.
     Draft,
-    /// `\Recent` — transient, never persisted.
     Recent,
-    /// `$Forwarded` — the message has been forwarded.
     Forwarded,
-    /// `$Junk` — classified as junk.
     Junk,
-    /// `$NotJunk` — explicitly classified as not junk.
     NotJunk,
-    /// Any other server keyword. Compared case-insensitively.
     Keyword(String),
 }
 
 impl Flag {
-    /// Parses a wire flag or keyword into its canonical variant.
-    ///
-    /// Never fails: anything unrecognized becomes a [`Flag::Keyword`].
+    /// Never fails: anything unrecognized becomes a `Keyword`.
     pub fn parse(raw: impl AsRef<str>) -> Self {
         let raw = raw.as_ref().trim();
         match raw.to_ascii_lowercase().as_str() {
@@ -66,7 +43,6 @@ impl Flag {
         }
     }
 
-    /// The canonical wire spelling.
     pub fn as_str(&self) -> &str {
         match self {
             Self::Seen => "\\Seen",
@@ -82,12 +58,10 @@ impl Flag {
         }
     }
 
-    /// Whether this flag is a per-session server signal that must not be stored.
     pub fn is_transient(&self) -> bool {
         matches!(self, Self::Recent)
     }
 
-    /// Sort rank, so system flags order ahead of keywords deterministically.
     fn rank(&self) -> u8 {
         match self {
             Self::Seen => 0,
@@ -159,17 +133,13 @@ impl<'de> Deserialize<'de> for Flag {
     }
 }
 
-/// The set of flags on a message.
-///
-/// A set, not a list: insertion order carries no meaning, duplicates collapse,
-/// and iteration is in a stable canonical order so two equal sets always
-/// serialize identically.
+/// A set, not a list: order carries no meaning and iteration is canonical, so equal sets serialize
+/// identically.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct FlagSet(BTreeSet<Flag>);
 
 impl FlagSet {
-    /// An empty set.
     pub fn new() -> Self {
         Self::default()
     }
@@ -184,27 +154,22 @@ impl FlagSet {
         self.0.remove(flag)
     }
 
-    /// Whether the flag is present.
     pub fn contains(&self, flag: &Flag) -> bool {
         self.0.contains(flag)
     }
 
-    /// Iterates in canonical order.
     pub fn iter(&self) -> std::collections::btree_set::Iter<'_, Flag> {
         self.0.iter()
     }
 
-    /// The number of distinct flags.
     pub fn len(&self) -> usize {
         self.0.len()
     }
 
-    /// Whether no flags are set.
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 
-    /// The same set with every transient flag removed, ready to persist.
     pub fn persistable(&self) -> Self {
         Self(
             self.0
@@ -215,32 +180,26 @@ impl FlagSet {
         )
     }
 
-    /// Whether `\Seen` is set.
     pub fn is_seen(&self) -> bool {
         self.contains(&Flag::Seen)
     }
 
-    /// Whether `\Seen` is absent.
     pub fn is_unread(&self) -> bool {
         !self.is_seen()
     }
 
-    /// Whether `\Flagged` is set.
     pub fn is_flagged(&self) -> bool {
         self.contains(&Flag::Flagged)
     }
 
-    /// Whether `\Answered` is set.
     pub fn is_answered(&self) -> bool {
         self.contains(&Flag::Answered)
     }
 
-    /// Whether `\Draft` is set.
     pub fn is_draft(&self) -> bool {
         self.contains(&Flag::Draft)
     }
 
-    /// Whether `\Deleted` is set (marked for expunge on the server).
     pub fn is_deleted(&self) -> bool {
         self.contains(&Flag::Deleted)
     }

@@ -1,93 +1,56 @@
-//! The fixed shapes a model may answer in, and the check every answer passes
-//! before it is believed (research R16: "Schemas stay flat, and responses
-//! are validated on the client").
-//!
-//! A [`Schema`] is declared once, as data, and serves twice: as the JSON
-//! Schema the request constrains the runtime's output with
-//! (`response_format: json_schema`), and as the check the answer is held
-//! to here. A runtime that ignores the constraint -- and some do -- is
-//! caught by the second, because nothing about the first is trusted.
-//!
-//! **Flat.** An answer is one object of plain fields, and at most one field
-//! may be a list of rows, each itself an object of plain fields. Small
-//! local models keep to a flat shape far more reliably than to a deep one,
-//! and a flat shape is one this check can hold completely.
+//! The fixed, flat shapes a model may answer in, and the check every answer passes. A runtime may
+//! ignore the response constraint, so nothing about it is trusted.
 
 use serde_json::{Map, Value, json};
 
-/// One answer's shape: a name the request carries, and its fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Schema {
-    /// What the request calls it.
     pub name: &'static str,
-    /// Every field, each required.
     pub fields: &'static [Field],
 }
 
-/// One field of an answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Field {
-    /// Its key.
     pub name: &'static str,
-    /// What it may hold.
     pub kind: Kind,
 }
 
-/// What a field may hold.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
-    /// A string of at most `max` characters.
     Text {
-        /// The most characters it may have.
         max: usize,
     },
-    /// One of these strings, exactly.
     Choice(&'static [&'static str]),
-    /// A whole number in `min..=max`.
     Integer {
-        /// The least it may be.
         min: i64,
-        /// The most it may be.
         max: i64,
     },
     /// A day, `YYYY-MM-DD`, or the empty string for none.
     Date,
-    /// At most `max` rows, each an object of these fields, none of which
-    /// may itself be rows.
     Rows {
-        /// The most rows it may hold.
         max: usize,
-        /// Each row's fields.
         fields: &'static [Field],
     },
 }
 
-/// Why an answer was not believed. Said by field name and rule, never by
-/// what the answer held.
+/// Said by field name and rule, never by what the answer held.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SchemaError {
-    /// The answer was not a JSON object.
     #[error("the answer is not an object")]
     NotAnObject,
-    /// A field the schema requires is missing.
     #[error("the answer has no `{0}`")]
     Missing(&'static str),
-    /// A field the schema does not have.
     #[error("the answer has a field the schema does not")]
     Unknown,
-    /// A field holds the wrong kind of value, or one out of its bounds.
     #[error("the answer's `{0}` is not what the schema allows")]
     Invalid(&'static str),
 }
 
 impl Schema {
-    /// The JSON Schema for the request's `response_format`: every field
-    /// required, nothing else allowed.
     pub fn json(&self) -> Value {
         object(self.fields)
     }
 
-    /// Whether this schema is flat: no rows inside rows.
     pub fn is_flat(&self) -> bool {
         self.fields.iter().all(|field| match field.kind {
             Kind::Rows { fields, .. } => fields
@@ -97,8 +60,6 @@ impl Schema {
         })
     }
 
-    /// `answer`, if it keeps to the schema exactly: an object with every
-    /// field, no other, each within its kind and bounds.
     pub fn check(&self, answer: Value) -> Result<Map<String, Value>, SchemaError> {
         let Value::Object(fields) = answer else {
             return Err(SchemaError::NotAnObject);
@@ -153,7 +114,6 @@ fn check_fields(schema: &[Field], fields: &Map<String, Value>) -> Result<(), Sch
     Ok(())
 }
 
-/// Rows may hold only plain fields.
 fn schema_depth_ok(kind: Kind) -> bool {
     match kind {
         Kind::Rows { fields, .. } => fields

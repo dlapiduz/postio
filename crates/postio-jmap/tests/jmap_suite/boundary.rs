@@ -1,10 +1,3 @@
-//! The two protocol crates never see each other.
-//!
-//! Same shape and same reason as `postio-sync/tests/boundary.rs`: workspace
-//! feature unification puts `io-imap` in the resolved graph whatever this
-//! crate's manifest asks for, so the graph check cannot express this rule —
-//! the manifest is what holds the line, and this test guards the manifest.
-
 use std::path::PathBuf;
 
 fn manifest() -> String {

@@ -1,19 +1,6 @@
-//! Filling Focus's list, and keeping it in step (research R2, slice 2).
-//!
-//! Moved from `postio-gtk`'s `list/feed.rs` so the Mac fills its list by the
-//! same rules. Opening a place counts it, reads which folders are inboxes and
-//! what Focus surfaces among its conversations, then has the list change
-//! over; a page asked for is read with its label pills and the surfaced rows
-//! spliced in; an engine event re-reads what it moved, by `postio_ui::paging`'s
-//! one policy. Focus's inbox never inserts an arrival at the top, because
-//! Focus may hold it for a digest or file it away first, and only a re-read
-//! of what is on screen can say which (`ListScope::reaction`).
-//!
-//! What the toolkit's list counts as stale is the toolkit's: each page asked
-//! for carries the list's own stamp (GTK's model generation, the Mac's
-//! window generation), and every answer for that page echoes it back for the
-//! list to check. What the feed itself counts as stale is a place that is no
-//! longer in view.
+//! Filling Focus's list and keeping it in step: opening a place, paging, and re-reading what an
+//! engine event moved. Focus's inbox never inserts an arrival at the top, because Focus may hold
+//! it for a digest or file it away first; only a re-read can say which (`ListScope::reaction`).
 
 use postio_core::Event;
 use postio_model::listing::MessageSummary;
@@ -25,103 +12,65 @@ use postio_ui::surfaced::Spliced;
 
 use crate::{Intent, Request};
 
-/// One thing the feed wants done: drawn, or asked of the engine. The
-/// controller gives each ask its ticket.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Step {
     Show(Intent),
     Ask(Request),
-    /// Open this place through the feed, as `FocusController::open` does.
     Open(ListScope),
-    /// Call back with `Input::Timer(token)` once `after` has passed.
     Timer {
-        /// Handed back when it fires.
         token: u64,
-        /// How long to wait.
         after: std::time::Duration,
     },
 }
 
-/// A page's rows as the store answered them, before the feed shapes them.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PageAnswer {
-    /// A scope that lists conversations, with each row's label pills.
     Threads {
-        /// How many conversations the scope holds, as of this read.
         total: u32,
-        /// The conversations, most recently active first.
         rows: Vec<ThreadSummary>,
-        /// The label pills of those conversations, read in one round trip.
         labels: Vec<(ThreadId, Label)>,
     },
-    /// A scope that lists messages: Drafts.
     Messages {
-        /// How many messages the scope holds, as of this read.
         total: u32,
-        /// The messages, newest first.
         rows: Vec<MessageSummary>,
     },
 }
 
-/// What opening a place learned, in one round.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Opened {
-    /// The place that was opened.
     pub scope: ListScope,
-    /// The enabled accounts: what Focus's inbox is made of, and what
-    /// "select everything" reaches.
     pub accounts: Vec<postio_model::AccountId>,
-    /// Every enabled account's folders, and whether each is an inbox.
     pub folders: Vec<(MailboxId, bool)>,
-    /// How many conversations the place holds.
     pub total: Result<u32, String>,
-    /// What Focus surfaces among them, for a place that splices; `None` for
-    /// one that does not.
+    /// `None` for a place that does not splice.
     pub surfaced: Option<Result<Vec<Surfaced>, String>>,
 }
 
-/// The timer a sync pass's thread changes share: [`Input::Timer`](crate::Input::Timer) with this
-/// token repaints the list once. Apart from the composer's small counts and
-/// the open message's high bit.
+/// `Input::Timer` with this token repaints the list once. Apart from the composer's small counts
+/// and the open message's high bit.
 pub(crate) const THREAD_REFRESH_TIMER: u64 = 1 << 62;
 
-/// How long the list waits after the first thread change before it repaints,
-/// so a sync pass that changes many threads (each emits one
-/// `ThreadChanged`) reads the pages once, not once per thread.
+/// So a sync pass that changes many threads (each emits one `ThreadChanged`) reads the pages once.
 pub(crate) const THREAD_REFRESH_WAIT: std::time::Duration = std::time::Duration::from_millis(60);
 
-/// The list's state, as the feed keeps it.
 #[derive(Debug, Default)]
 pub(crate) struct Feed {
     paging: Paging,
-    /// The row count the list draws: conversations plus surfaced rows.
     total: u32,
-    /// How many conversations the store holds, without the surfaced rows.
     stored: u32,
-    /// Every page asked of the store, in order: "only the visible window is
-    /// read" (spec 007 US1 scenario 7) is a question about which pages.
     pages_asked: Vec<u32>,
-    /// Whether the first page of the place in view has landed.
     landed: bool,
-    /// Whether the place in view was opened and its rows have not yet been
-    /// shown to a cursor (`take_opened`).
     opened: bool,
-    /// The rows Focus's inbox surfaces among its conversations.
     surfaced: Vec<FocusRow>,
-    /// Where they sit.
     spliced: Spliced,
-    /// A repaint for changed threads is waiting out [`THREAD_REFRESH_WAIT`].
     refresh_armed: bool,
-    /// The newest stamp the list has asked a page under: only an answer for
-    /// it may move the totals, as the list's own generation guarded them.
+    /// Only an answer for it may move the totals.
     newest_stamp: Option<u64>,
 }
 
 impl Feed {
-    /// Show `scope`: count it and read what it splices, then change over.
-    ///
-    /// The rows already on screen stay until the new place's first page
-    /// lands, so a change of place never flashes empty.
+    /// The rows already on screen stay until the new place's first page lands, so a change of place
+    /// never flashes empty.
     pub(crate) fn open(&mut self, scope: ListScope) -> Request {
         self.paging.open(scope);
         self.landed = false;
@@ -132,8 +81,6 @@ impl Feed {
         }
     }
 
-    /// The answer to [`open`](Self::open): the list changes over, and its
-    /// first page is asked for.
     pub(crate) fn opened(&mut self, opened: Opened) -> Vec<Step> {
         if self.paging.scope() != Some(opened.scope) {
             // Another place was opened while this one was being counted.
@@ -152,15 +99,13 @@ impl Feed {
         vec![Step::Show(Intent::ReplaceSource { total: self.total })]
     }
 
-    /// The list wants `page`, under its own `stamp`.
     pub(crate) fn wanted(&mut self, page: u32, stamp: u64) -> Vec<Step> {
         let Some(Fetch::Scope(request)) = self.paging.fetch_for(page) else {
             return vec![Step::Show(Intent::GiveUp { stamp, page })];
         };
-        // The page's positions, in the store's terms. The store's total may
-        // have moved since it was last read, so the run asked for assumes
-        // conversations fill every position that is not a surfaced row, and
-        // the answer's own total places them.
+        // The store's total may have moved since it was last read, so the run asked for assumes
+        // conversations fill every position that is not a surfaced row; the answer's total places
+        // them.
         let asked = self.spliced.page(request.offset, request.limit, u32::MAX);
         self.pages_asked.push(page);
         self.newest_stamp = Some(self.newest_stamp.map_or(stamp, |newest| newest.max(stamp)));
@@ -180,7 +125,6 @@ impl Feed {
         ]
     }
 
-    /// A page's answer: shaped, spliced and delivered, or asked again.
     pub(crate) fn page(
         &mut self,
         page: u32,
@@ -216,8 +160,7 @@ impl Feed {
                 ]
             }
             Ok(PageAnswer::Messages { total, rows }) => {
-                // Drafts lists messages, not conversations: each is a row of
-                // its own, with no label pills and nothing spliced in.
+                // Drafts lists messages: each is a row of its own, with no label pills.
                 let rows = rows
                     .into_iter()
                     .map(|message| FocusRow::conversation(focus_list::lone(message)))
@@ -250,7 +193,6 @@ impl Feed {
         }
     }
 
-    /// Bring the list into step with `event`, by `postio_ui::paging`'s table.
     pub(crate) fn event(&mut self, event: &Event) -> Vec<Step> {
         let mut effects = Vec::new();
         if let Event::MessagesRemoved {
@@ -265,8 +207,6 @@ impl Feed {
             }));
         }
         let surfaced_moved = matches!(event, Event::SurfacedChanged);
-        // A thread that gained a reply has a row whose people, count, new
-        // badge and time moved: the pages in view are read again.
         if matches!(event, Event::ThreadChanged { .. }) {
             // A pass emits one per thread, back to back: the first starts
             // the wait and the rest join it.
@@ -282,9 +222,8 @@ impl Feed {
         match self.paging.plan(event) {
             Plan::Ignore if !surfaced_moved => {}
             _ if self.splices_now() => {
-                // What is surfaced may have moved with the mail -- an
-                // archived reminder's row goes with its conversation -- so it
-                // is read again before the pages are.
+                // What is surfaced may have moved with the mail (an archived reminder's row goes
+                // with its conversation): read it before the pages.
                 effects.push(Step::Ask(Request::Surfaced));
             }
             Plan::Ignore => {}
@@ -295,8 +234,6 @@ impl Feed {
         effects
     }
 
-    /// The wait for thread changes has run out: the pages in view are read
-    /// again, once, whatever changed while it ran.
     pub(crate) fn thread_refresh_due(&mut self) -> Vec<Step> {
         if !std::mem::take(&mut self.refresh_armed) {
             return Vec::new();
@@ -304,8 +241,6 @@ impl Feed {
         vec![Step::Show(Intent::RefreshList)]
     }
 
-    /// The surfaced rows, read again after an event: placed, then the pages
-    /// re-read around them.
     pub(crate) fn resurfaced(&mut self, surfaced: Result<Vec<Surfaced>, String>) -> Vec<Step> {
         if !self.splices_now() {
             return Vec::new();
@@ -340,8 +275,6 @@ impl Feed {
         self.paging.scope().is_some_and(splices)
     }
 
-    /// The place in view, once one is open.
-    /// The digest whose row is `row`, among what Focus surfaces.
     pub(crate) fn digest(&self, row: postio_model::MessageId) -> Option<focus_list::Digest> {
         self.surfaced.iter().find_map(|surfaced| match surfaced {
             FocusRow::Digest(digest) if surfaced.id() == row => Some(digest.clone()),
@@ -353,37 +286,30 @@ impl Feed {
         self.paging.scope()
     }
 
-    /// How many rows the place in view has, as the store last said.
     pub(crate) fn total(&self) -> u32 {
         self.total
     }
 
-    /// Every page asked of the store, in order.
     pub(crate) fn pages_asked(&self) -> &[u32] {
         &self.pages_asked
     }
 
-    /// Whether the first page of the place in view has landed: a list still
-    /// waiting for it is loading, not empty.
+    /// A list still waiting for it is loading, not empty.
     pub(crate) fn has_landed(&self) -> bool {
         self.landed
     }
 
-    /// Whether a place was opened and its first page has landed since this
-    /// was last asked: true once per opening, so the cursor goes to the new
-    /// list's first row once and a later re-read leaves it where it is.
+    /// True once per opening, so the cursor goes to the new list's first row once and a later
+    /// re-read leaves it.
     pub(crate) fn take_opened(&mut self) -> bool {
         self.landed && std::mem::take(&mut self.opened)
     }
 
-    /// Whether `mailbox` is one of the inboxes Focus's own inbox is made of.
     pub(crate) fn is_inbox(&self, mailbox: MailboxId) -> bool {
         self.paging.is_inbox(mailbox)
     }
 
-    /// The cursor's `index` among the messages of a list of `total` rows,
-    /// and how many messages it holds: digests are not counted, matching the
-    /// strip, which counts what the store holds.
+    /// Digests are not counted, matching the strip, which counts what the store holds.
     pub(crate) fn message_place(&self, index: u32, total: u32) -> (u32, u32) {
         let digests: Vec<usize> = self
             .surfaced
@@ -396,8 +322,6 @@ impl Feed {
     }
 }
 
-/// Whether `scope` has rows spliced among its conversations: Focus's own
-/// inbox, and nothing else.
 fn splices(scope: ListScope) -> bool {
     scope == ListScope::Focus(FocusScope::Inbox)
 }

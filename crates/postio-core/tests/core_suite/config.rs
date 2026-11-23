@@ -1,11 +1,3 @@
-//! Configuration, as core consumes it.
-//!
-//! `config.toml` *is* the settings — the design promises *applied live ·
-//! nothing to save* — so core owns the live handle, resolves `[keys]` onto the
-//! command registry, and re-emits what changed. Two properties matter most: a
-//! broken file must leave the user with the bindings they had a moment ago, and
-//! a save that changes nothing anybody cares about must not repaint anything.
-
 use std::time::{Duration, Instant};
 
 use postio_config::paths::Platform;
@@ -15,16 +7,8 @@ use postio_core::bridge::event_channel;
 use postio_core::config::{ConfigService, Keymap, SharedConfig};
 use postio_core::{CommandId, Context, Event, registry};
 
-/// How long a wait on the event stream may go silent before it is called a
-/// hang.
-///
-/// A *liveness* bound, not a latency claim — the waits below are already
-/// event-driven, so this deadline does no measuring; it only turns a genuine
-/// hang into a failure with a name. It is deliberately enormous: at 10
-/// seconds it doubled as a performance budget for inotify delivery plus the
-/// watcher's debounce, and a box with four sessions compiling walked through
-/// it once (#219). The engineering-notes "tests that fail under load"
-/// doctrine is the long form.
+/// A liveness bound, not a latency claim: deliberately enormous, since a tight deadline was walked
+/// through under load (#219).
 const PATIENCE: Duration = Duration::from_secs(120);
 
 fn bindings(overrides: &[(&str, &str)]) -> KeyBindings {
@@ -47,15 +31,6 @@ fn service_with(toml: &str) -> ConfigService {
     service
 }
 
-// -- Resolving [keys] onto the registry --------------------------------------
-
-/// An override landing on a default's key is reported, for any of the 79.
-///
-/// The half of #1227 that `postio-config`'s validator gave up when its own
-/// default table went: it could only see collisions between two `[keys]`
-/// entries, and against defaults it knew 23 commands. This is the complete
-/// answer, and it has to stay complete — `flag` is one of the 56 the old table
-/// had never heard of.
 #[test]
 fn an_override_that_takes_a_default_key_is_reported() {
     for (taker, victim, key) in [
@@ -81,14 +56,6 @@ fn an_override_that_takes_a_default_key_is_reported() {
     }
 }
 
-/// Every default the registry ships expands to something the validator will
-/// take, on both platforms.
-///
-/// Moved here from `postio-config` with the default table itself (#1227).
-/// There it ran over 23 commands; here it runs over all of them, which is the
-/// point — `cmd` only ever appears as expansion *output*, so nothing else
-/// would catch it going missing from `MODIFIERS`, and the failure mode is a
-/// Mac on which every default is rejected as unusable.
 #[test]
 fn every_registry_default_expands_to_something_the_validator_accepts() {
     for platform in [Platform::Freedesktop, Platform::Apple] {
@@ -106,12 +73,6 @@ fn every_registry_default_expands_to_something_the_validator_accepts() {
     }
 }
 
-/// The accelerators a Linux user has today, spelled out.
-///
-/// Also moved from `postio-config` (#1227), and it has to ask the keymap
-/// rather than the config crate now: `mod+k` is the registry's, and the file
-/// says nothing. A change here is a change to what somebody's fingers already
-/// know, so it should cost a deliberate edit.
 #[test]
 fn the_mod_defaults_are_control_on_linux_and_command_on_apple() {
     let linux = Keymap::resolve_on(&KeyBindings::default(), Platform::Freedesktop);
@@ -135,8 +96,6 @@ fn the_mod_defaults_are_control_on_linux_and_command_on_apple() {
 
 #[test]
 fn without_a_file_the_registry_defaults_are_the_keymap() {
-    // Both platforms, from either host: a command a platform does not offer
-    // has no key there by design, and every other command keeps its default.
     for platform in [
         postio_config::paths::Platform::Freedesktop,
         postio_config::paths::Platform::Apple,
@@ -193,9 +152,6 @@ fn an_override_rebinds_the_command_and_keeps_its_alternates() {
 
 #[test]
 fn a_leftover_archive_thread_binding_is_reported_and_ignored() {
-    // `archive_thread` is gone (specs/013-focus-threads FR-006): a `[keys]`
-    // line from before is a warning naming the id and nothing else, and the
-    // rest of the keymap resolves as if it were absent.
     let keymap = Keymap::resolve_on(
         &bindings(&[("archive_thread", "E"), ("archive", "w")]),
         Platform::Freedesktop,
@@ -214,9 +170,7 @@ fn a_leftover_archive_thread_binding_is_reported_and_ignored() {
 
 #[test]
 fn a_key_resolves_only_in_the_contexts_its_command_lives_in() {
-    // Named rather than host-derived: this asserts an accelerator, and since
-    // #669 the accelerator for the palette differs by platform. Left as
-    // `resolve` it passed on Linux and failed on a Mac.
+    // Named platform, since the palette accelerator differs by platform.
     let keymap = Keymap::resolve_on(&KeyBindings::default(), Platform::Freedesktop);
 
     assert_eq!(
@@ -251,8 +205,6 @@ fn the_palette_is_command_k_on_a_mac_and_control_k_does_not_reach_it() {
 
 #[test]
 fn an_unusable_binding_falls_back_to_the_default_and_says_why() {
-    // `postio-config` rejects the file outright for this, but the keymap must
-    // not fall over if one ever reaches it.
     let keymap = Keymap::resolve(&bindings(&[("archive", "ctrl+")]));
 
     assert_eq!(keymap.binding(CommandId::Archive), Some("e"));
@@ -278,28 +230,14 @@ fn an_override_for_a_command_this_build_does_not_know_is_only_a_warning() {
 
 #[test]
 fn an_override_takes_a_key_from_the_default_that_had_it() {
-    // `e` is Archive's default. Someone who writes `delete = "e"` has said
-    // what they want, and a default is only a suggestion — so the override
-    // takes the key and Archive gives it up rather than the line being
-    // ignored.
-    //
-    // This reverses an earlier rule (registry order wins, the override is
-    // dropped). That rule was there so a key could never be silently
-    // shadowed, and nothing here is silent: the command that lost its key
-    // says so in `problems()`, which the settings panel shows. What the old
-    // rule did instead was ignore a line the user had written, and make which
-    // of two commands won depend on the order of a table they have never
-    // seen — so adding a command with a popular default could quietly take a
-    // key somebody was already using. See `postio-7bc`.
+    // A default is only a suggestion: the override takes `e` and Archive says so in `problems()`
+    // (`postio-7bc`).
     let keymap = Keymap::resolve(&bindings(&[("delete", "e")]));
 
     assert_eq!(
         keymap.command_for(Context::List, "e"),
         Some(ActionId::Builtin(CommandId::Delete))
     );
-    // Archive lost `e` and keeps its chord: the canvas' second keyboard layer
-    // means most commands have two bindings, so losing one is no longer the
-    // same as losing all of them.
     assert_ne!(
         keymap.binding(CommandId::Archive),
         Some("e"),
@@ -312,9 +250,6 @@ fn an_override_takes_a_key_from_the_default_that_had_it() {
         "and what it keeps is the chord, which is not what was taken"
     );
 
-    // A command whose *only* binding is taken is palette-only rather than
-    // dead, which is the case this test was written for. `b` is Snooze's
-    // under the Gmail keymap, and Snooze has no second layer.
     let keymap = Keymap::resolve(&bindings(&[("flag", "b")]));
     assert_eq!(
         keymap.binding(CommandId::Snooze),
@@ -333,8 +268,6 @@ fn an_override_takes_a_key_from_the_default_that_had_it() {
 
 #[test]
 fn two_overrides_wanting_one_key_are_settled_by_registry_order() {
-    // Between two explicit choices there is nothing to prefer, so the order
-    // is at least deterministic, and the one that loses is told.
     let keymap = Keymap::resolve_on(
         &bindings(&[("archive", "q"), ("delete", "q")]),
         postio_config::paths::Platform::Freedesktop,
@@ -358,8 +291,6 @@ fn two_overrides_wanting_one_key_are_settled_by_registry_order() {
         keymap.problems()
     );
 }
-
-// -- Live reload -------------------------------------------------------------
 
 #[test]
 fn editing_keys_rebinds_without_a_restart() {
@@ -428,8 +359,6 @@ fn only_the_sections_that_changed_are_reported() {
 
 #[test]
 fn a_change_no_subsystem_cares_about_repaints_nothing() {
-    // An unknown top-level key round-trips rather than being dropped, but
-    // nothing in the application is waiting on it.
     let mut service = service_with("[keys]\narchive = \"x\"\n");
 
     let update = service.apply(validate::check_str(
@@ -453,11 +382,8 @@ fn the_config_in_force_is_readable_for_the_subsystems_that_want_it() {
     assert_eq!(config.ui.density, postio_config::Density::Compact);
 }
 
-// -- Watching the file --------------------------------------------------------
-
 #[test]
 fn a_save_in_an_external_editor_lands_without_a_restart() {
-    // `Ctrl+E` opens $EDITOR; whatever happens in there has to arrive here.
     let directory = tempfile::tempdir().expect("a temporary directory");
     let path = directory.path().join("config.toml");
     std::fs::write(&path, "[keys]\narchive = \"x\"\n").expect("write the fixture");
@@ -474,7 +400,6 @@ fn a_save_in_an_external_editor_lands_without_a_restart() {
     let (events, stream) = event_channel();
     let watcher = config.watch(events).expect("the watcher starts");
 
-    // The editor's save, rename dance and all.
     std::fs::write(&path, "[keys]\narchive = \"z\"\n").expect("save from the editor");
 
     let deadline = Instant::now() + PATIENCE;
@@ -522,13 +447,8 @@ fn the_watcher_reports_which_sections_moved() {
 
 #[test]
 fn the_registry_defaults_are_resolved_once_for_the_whole_process() {
-    // Resolution is quadratic in the number of commands: every claim asks
-    // every binding already made whether the key is taken, and each of those
-    // questions looks the command up in the registry for its contexts. A
-    // widget that only wants "whatever the defaults are" must not pay for
-    // that per instance. `MessageRowView` did, once per row GTK constructed,
-    // which is most of why switching folders spent about a second rebuilding
-    // the list (#1216).
+    // Resolution is quadratic in the number of commands; a widget wanting the defaults must not pay
+    // per instance (#1216).
     assert!(std::ptr::eq(Keymap::defaults(), Keymap::defaults()));
     assert_eq!(
         Keymap::defaults(),
@@ -538,8 +458,6 @@ fn the_registry_defaults_are_resolved_once_for_the_whole_process() {
 
 #[test]
 fn asking_for_the_defaults_repeatedly_resolves_nothing() {
-    // The pointer check above is satisfied by any cache; this is the one that
-    // fails if `defaults` starts resolving behind it.
     let _ = Keymap::defaults();
     let before = postio_core::test_support::keymap_resolutions();
     for _ in 0..200 {

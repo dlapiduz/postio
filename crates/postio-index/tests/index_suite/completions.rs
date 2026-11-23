@@ -1,15 +1,3 @@
-//! `executor::completions` (spec 010, US7, FR-042): what a prefix could
-//! become, each with what it would find.
-//!
-//! The index has no term dictionary (research R1), so the words come from
-//! the best documents of a `prefix*` match, metadata first, as
-//! `words_near` recovers them (D22); bodies are read only when the
-//! metadata says fewer than three words. Each suggestion's count is the
-//! conversation total its query gives (US7's independent test), so each is
-//! checked against `search_conversations` asked that query. People for
-//! `from:` and `to:` are ranked two-way (D21): they wrote to you plus you
-//! wrote to them, ties by the latest either way.
-
 use chrono::Duration;
 use postio_index::executor::completions;
 use postio_model::{AccountScope, MessageId};
@@ -21,14 +9,12 @@ use postio_storage::test_support::counting::{counted_async, install};
 
 use crate::conversations::{Mail, conversations, file, now, store};
 
-/// The conversations `query` finds: what a suggestion's count must say.
 async fn total(connection: &Connection, query: &str) -> u64 {
     conversations(connection, query, ConversationOrder::Newest, 0, 1)
         .await
         .total
 }
 
-/// Gives `message` the mailing list `id`, as a list's mail carries it.
 async fn on_list(connection: &Connection, message: MessageId, id: &str) {
     connection
         .execute(
@@ -71,7 +57,6 @@ async fn a_prefix_offers_the_word_a_label_a_list_and_files_each_counted() {
         .await;
         ids.push(message.id);
     }
-    // Two carry the label, one came through the list.
     for id in &ids[..2] {
         LabelRepository::new(&connection)
             .attach(*id, atlas)
@@ -79,7 +64,6 @@ async fn a_prefix_offers_the_word_a_label_a_list_and_files_each_counted() {
             .expect("label it");
     }
     on_list(&connection, ids[2], "atlas-planning.example.org").await;
-    // Nothing else begins with "at", and some mail says nothing of it.
     file(
         &connection,
         &account,
@@ -149,7 +133,6 @@ async fn a_prefix_offers_the_word_a_label_a_list_and_files_each_counted() {
 async fn bodies_are_read_only_when_the_metadata_says_fewer_than_three_words() {
     let (_database, connection, account, inbox) = store().await;
     let days = Duration::days;
-    // Three words beginning "har" in subjects, and one more only a body says.
     for (subject, body, ago) in [
         ("Harbor review", "plain text", days(1)),
         ("Hardware order", "plain text", days(2)),
@@ -211,9 +194,6 @@ async fn bodies_are_read_only_when_the_metadata_says_fewer_than_three_words() {
     assert!(with_bodies.statements <= 4);
 }
 
-/// A person who owns `address` and has been seen `seen` times in `account`,
-/// last at `last_seen` (milliseconds), deleted when `deleted`: what sync and
-/// the address book leave in the store (specs/005-contacts).
 async fn person(
     connection: &postio_storage::Checkout,
     account: i64,
@@ -268,7 +248,6 @@ async fn person(
 async fn from_offers_people_ranked_by_how_often_you_write_to_each_other() {
     let (_database, connection, account, _inbox) = store().await;
     let at = |days: i64| (now() - Duration::days(days)).timestamp_millis();
-    // (address, name, they wrote, you wrote, last either way in days ago)
     let people = [
         ("ada@example.com", Some("Ada Moreno"), 5, 0, 1),
         ("adam@example.net", Some("Adam Okoro"), 1, 6, 9),
@@ -345,7 +324,6 @@ async fn from_offers_people_ranked_by_how_often_you_write_to_each_other() {
     assert!(found.words.is_empty() && found.labels.is_empty());
     assert!(cost.statements <= 4, "{} statements", cost.statements);
 
-    // Nothing typed yet: everyone, most written-to first.
     let everyone = completions(&connection, AccountScope::Unified, "", Some(Field::To))
         .await
         .expect("completions");
@@ -414,10 +392,6 @@ async fn label_and_in_offer_labels_and_folders_with_their_counts() {
 
 #[tokio::test]
 async fn a_completion_count_stops_at_its_cap_and_says_it_is_a_floor() {
-    // D29 (maintainer, 2026-10-09): a suggestion as common as `as` is not
-    // counted to the end of the mailbox. Three times the cap of messages
-    // carry one label, each its own conversation; the count walks no
-    // further than the cap needs and says it stopped.
     use postio_index::executor::COMPLETION_COUNT_CAP;
     let (_database, connection, account, inbox) = store().await;
     let mut many = postio_model::Label::new(account.id, "Atlas");
@@ -434,8 +408,6 @@ async fn a_completion_count_stops_at_its_cap_and_says_it_is_a_floor() {
             .join(",")
     );
     let received = now().timestamp_millis() - 86_400_000;
-    // An operator's count walks `messages` and the label's set alone, so
-    // the metadata index stands aside for the load.
     connection.execute("BEGIN", ()).await.expect("begin");
     postio_index::index::defer_documents(&connection)
         .await
@@ -482,7 +454,6 @@ async fn a_completion_count_stops_at_its_cap_and_says_it_is_a_floor() {
         cost.rows
     );
 
-    // Under the cap, the count is exact and says so.
     connection
         .execute(
             "DELETE FROM message_labels WHERE message_id > (SELECT min(id) + 9 FROM messages)",
@@ -499,9 +470,6 @@ async fn a_completion_count_stops_at_its_cap_and_says_it_is_a_floor() {
 
 #[tokio::test]
 async fn from_never_offers_you_however_often_you_write() {
-    // You are on every message you sent, so you write to "each other"
-    // more than anyone: ranked so, you came first under `from:`. The
-    // People tab leaves your own addresses out (T132); so does this.
     let (_database, connection, account, _inbox) = store().await;
     let own: String = connection
         .query("SELECT address FROM accounts", ())

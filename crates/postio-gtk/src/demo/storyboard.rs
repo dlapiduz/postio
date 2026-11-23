@@ -1,35 +1,9 @@
-//! Focus's storyboard runner: play a storyboard against a real window over a
-//! seeded store, and record what happened at every step
-//! (specs/008-storyboards, contracts/runner.md).
-//!
-//! Focus is the one desktop app (ADR 0043), and this is the runner design
-//! review plays its interactions on. It keeps the promises
-//! `contracts/runner.md` makes of every runner:
-//!
-//! * **The real window.** `demo::start` runs the host and adopts the window
-//!   over it as the application starts, so the real verbs act and the events
-//!   they raise reach the toast. Nothing is dialled: the store is in memory
-//!   and sync never starts.
-//! * **Commands are pressed.** A `command` step looks up the binding Focus
-//!   has for it in the context the window is in at that moment, through the
-//!   same fallback layers the resolver uses and only for commands Focus
-//!   offers, and presses it. A command the context does not bind fails the
-//!   step as unbound; it is never dispatched by name.
-//! * **Keys go along the focus chain** (research R3), so a key swallowed by
-//!   a dialog or lost on a removed widget is reported, not assumed delivered.
-//! * **What is checked is what is on screen**: `FocusWindow::observe`.
-//!
-//! The clock is frozen at a fixed instant, animations are off, the window has
-//! a fixed size, and frames come from one renderer (research R5). The
-//! process-level half is the example binary's hermetic re-exec.
-//!
-//! # Seeds and presets
-//!
-//! A seed is a condition of the store ([`Seed`]); a preset is a condition
-//! of the window that no key reaches without a server or a person -- a
-//! Settings section, the account form a provider lookup fills, the page a
-//! locked keyring leaves -- applied by hand after the window is up.
-//! Anything a command reaches is a step instead.
+//! Focus's storyboard runner (specs/008-storyboards): plays a storyboard against a real window over
+//! a seeded store and records every step.
+//! A command is pressed through the binding the window's context has for it, never dispatched by
+//! name; keys go along the focus chain.
+//! A preset is a window condition no key reaches (a Settings section, a locked keyring), applied by
+//! hand once the window is up.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -57,37 +31,22 @@ use super::{Seed, Started};
 use crate::window::FocusWindow;
 use postio_ui::settings::Section;
 
-/// What Focus does not observe, so a check on it is not applicable rather
-/// than a pass (contracts/observation.md § Focus): Back is a cascade, not a
-/// stack; the list is windowed over the store, so a row's index is not its
-/// place on screen; the open message shows one message, not a conversation.
+/// What Focus does not observe, so a check on it is not applicable rather than a pass.
 pub const UNOBSERVED: &[&str] = &["back_depth", "rows.first_visible", "reading.focused"];
 
-/// The instant the clock is frozen at: 16:09 on the day after the storage
-/// seed's anchor (2026-06-01), the time the references were drawn at, so the
-/// demo inbox's "today" rows read as the design draws them.
+/// 16:09 on the day after the storage seed's anchor, the time the references were drawn at.
 pub const FROZEN_AT: &str = "2026-06-02T16:09:00Z";
 
-/// How to play a storyboard.
 #[derive(Debug, Clone)]
 pub struct Options {
-    /// Where the output tree goes; `None` writes nothing.
     pub out: Option<PathBuf>,
-    /// Whether frames are sampled, drawn and written.
     pub frames: bool,
-    /// How input reaches the window.
     pub delivery: Delivery,
-    /// Sample a frame every this many ticks (research R4: two, because one
-    /// capture costs more than a frame).
+    /// Sample a frame every this many ticks: two, because one capture costs more than a frame.
     pub stride: u32,
-    /// The variant, axis by axis.
     pub variant: BTreeMap<String, String>,
-    /// Axes the storyboard asked for that this runner does not have,
-    /// recorded in the run so the page can say so.
     pub ignored_axes: Vec<String>,
-    /// The review key of the tree this runs on.
     pub tree_key: String,
-    /// The commit, for information.
     pub commit: String,
 }
 
@@ -106,11 +65,8 @@ impl Default for Options {
     }
 }
 
-/// The variants to play `board` in on Focus, and the axes it asked for that
-/// Focus does not have: with `every`, each variant it asks for (the
-/// pre-review sweep); without, the one it asks for by default, which keeps
-/// an app default wherever the storyboard allows it -- so `inbox-dark` is
-/// still filmed dark on the per-edit run.
+/// With `every`, each variant asked for; otherwise the one asked for by default, which keeps an app
+/// default wherever allowed, so `inbox-dark` is still filmed dark.
 pub fn variants_to_play(
     board: &Storyboard,
     every: bool,
@@ -123,11 +79,8 @@ pub fn variants_to_play(
     }
 }
 
-/// The system's Adwaita Sans and Adwaita Mono files under `roots`, in name
-/// order. The chrome is drawn in them (C25), so the runner's fontconfig has
-/// to be handed them beside Postio's own faces: without them regular text
-/// falls back to whichever installed face matches `sans-serif` -- the
-/// monospace one -- and the films misdraw the app.
+/// The runner's fontconfig must have them beside Postio's faces: else regular text falls back to
+/// the monospace `sans-serif` match.
 pub fn chrome_faces(roots: &[PathBuf]) -> Vec<PathBuf> {
     let mut found = Vec::new();
     let mut pending: Vec<PathBuf> = roots.to_vec();
@@ -151,12 +104,8 @@ pub fn chrome_faces(roots: &[PathBuf]) -> Vec<PathBuf> {
     found
 }
 
-/// What Focus's runner can do, for applicability and `runner list`.
 pub fn runner_info() -> RunnerInfo {
-    // Each axis lists the app's default first
-    // ([`postio_storyboard::apply::default_variant`]). Focus has no contrast
-    // or density axis: it follows the system's scheme and contrast, and its
-    // row is one design (`classic-parity.md` rows 18 and 19).
+    // Focus has no contrast or density axis: it follows the system's scheme and contrast.
     let axes = [
         ("scheme", &["light", "dark"][..]),
         ("width", &["normal", "wide", "narrow"][..]),
@@ -181,47 +130,24 @@ pub fn runner_info() -> RunnerInfo {
     }
 }
 
-/// A window condition no key reaches without a server or a person,
-/// applied by hand once the window is up.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Preset {
-    /// Settings, open at a section.
     Settings(Section),
-    /// Settings, the seeded account's detail open.
     AccountForm,
-    /// Settings, a new signature being written for the seeded account.
     SignatureEditor,
-    /// Settings, Accounts with three accounts and how much mail each holds:
-    /// the weights a backfill measures.
     AccountWeights,
-    /// The add-account dialog, a provider found for the address typed.
     AddAccountRoute,
-    /// The add-account dialog, waiting for the browser's sign-in.
     AddAccountBrowser,
-    /// The add-account dialog, asking how much mail to keep.
     AddAccountSyncWindow,
-    /// Sync & storage scrolled down to the folders it backs up locally,
-    /// below the pane's fold.
     SyncBackfill,
-    /// Filtering, turned off: what the page says while every message
-    /// arrives in the inbox.
     FilteringOff,
-    /// Filtering with what a person has told it: senders never filtered,
-    /// one entry that pins nobody, and a marker kind turned off.
     FilteringLists,
-    /// The page a store that will not open leaves: here, a locked keyring.
     Locked,
-    /// Agents with two accounts shared, where to point an agent, and what
-    /// agents did lately, one call of them refused.
     AgentsShared,
-    /// A vault named under `[focus.vault]`: the demo's three projects, in
-    /// a throwaway folder, so `T` and `N` open capture rather than say how
-    /// to name one. Part of the config the window starts with.
     Vault,
 }
 
 impl Preset {
-    /// Every preset Focus can apply.
     pub const ALL: [Preset; 21] = [
         Preset::Settings(Section::Accounts),
         Preset::Settings(Section::Filtering),
@@ -246,8 +172,7 @@ impl Preset {
         Preset::Vault,
     ];
 
-    /// The name a storyboard uses. Settings' Appearance section is not one:
-    /// Focus does not show it (`Section::shown_in`).
+    /// Settings' Appearance section is not a preset: Focus does not show it.
     pub fn id(self) -> &'static str {
         match self {
             Preset::Settings(Section::Filtering) => "settings/filtering",
@@ -274,25 +199,20 @@ impl Preset {
         }
     }
 
-    /// The preset a storyboard's name stands for.
     pub fn from_id(id: &str) -> Option<Preset> {
         Preset::ALL.into_iter().find(|preset| preset.id() == id)
     }
 
-    /// Puts `started`'s window in this condition, and waits for it to draw.
     fn apply(self, started: &Started) -> Result<(), String> {
         let window = &started.window;
         match self {
-            // Applied before the window opened, in its config (`acting`).
             Preset::Vault => Ok(()),
             Preset::Settings(Section::Sync) | Preset::SyncBackfill => {
                 let panel = open_settings(window, Section::Sync)?;
-                // The mail's weight, as a backfill measures it, and the
-                // folders it is backing up, which sit below the pane's fold.
                 show_mail_weight(&panel, started.account);
                 pump(Duration::from_millis(800));
-                // Sync & storage opens at its top, as it does for a person;
-                // the folders are a second view, scrolled to.
+                // Sync & storage opens at its top for a person; the folders are a second view,
+                // scrolled to.
                 if self == Preset::SyncBackfill {
                     panel.reveal_backfill();
                     pump(Duration::from_millis(200));
@@ -300,8 +220,6 @@ impl Preset {
                 Ok(())
             }
             Preset::Settings(Section::Accounts) => {
-                // The same measurement Sync & storage shows: one account,
-                // one weight, wherever Settings says it.
                 let panel = open_settings(window, Section::Accounts)?;
                 show_mail_weight(&panel, started.account);
                 pump(Duration::from_millis(300));
@@ -309,8 +227,7 @@ impl Preset {
             }
             Preset::Settings(Section::Agents) => {
                 let panel = open_settings(window, Section::Agents)?;
-                // What the pane's own read of a missing log says, set here
-                // so the frame does not wait on that read.
+                // Set here so the frame does not wait on the pane's own read of a missing log.
                 panel.set_agent_activity(postio_ui::agent_access::activity(
                     &[],
                     &Default::default(),
@@ -337,8 +254,6 @@ impl Preset {
             Preset::Settings(section) => open_settings(window, section).map(drop),
             Preset::FilteringOff | Preset::FilteringLists => {
                 let panel = open_settings(window, Section::Filtering)?;
-                // What the switch writes, or what `R` in Filtered and a
-                // third dismissal write: the file, which the page reads.
                 let text = panel.text();
                 let text = if self == Preset::FilteringOff {
                     postio_config::focus_edit::set_filtering(&text, false)
@@ -375,8 +290,7 @@ impl Preset {
                 show_add_account(window, self)
             }
             Preset::Locked => {
-                // The sentence the opener would say: the store is encrypted
-                // under a key the keyring holds, so a locked keyring is mail
+                // The store is encrypted under a key the keyring holds: a locked keyring is mail
                 // that cannot be opened, not a password that cannot be read.
                 let refusal = postio_account::secret::SecretError::Locked {
                     keyring: "login".to_owned(),
@@ -390,29 +304,22 @@ impl Preset {
     }
 }
 
-/// `[focus.filter]` as a person's corrections leave it: two senders never
-/// filtered, an entry that pins nobody, and a marker kind turned off.
 const FILTER_LISTS: &str = "[focus.filter]\n\
 never = [\"ada@example.org\", \"@harbor.example\", \"grace\"]\n\
 stop_markers = [{ sender = \"news@ledger.example\", kind = \"question\" }]\n";
 
-/// `[mcp]` sharing two accounts: one wholly, with archive and label, and
-/// one only its inbox, to read and draft.
 const AGENTS_SHARED: &str = "[mcp.accounts.\"lena.tomlin@example.com\"]\n\
 mailboxes = [\"*\"]\n\
 actions = [\"archive\", \"label\"]\n\
 [mcp.accounts.\"ops@example.org\"]\n\
 mailboxes = [\"INBOX\"]\n";
 
-/// Three calls an agent made, the oldest refused, as `mcp-access.log` holds
-/// them: ids only.
 const AGENT_LOG: &str = "\
 {\"at\":\"2026-06-01T16:10:00Z\",\"tool\":\"archive_messages\",\"accounts\":[2],\"mailboxes\":[],\"messages\":[],\"drafts\":[],\"labels\":[],\"outcome\":\"refused\"}
 {\"at\":\"2026-06-02T08:12:00Z\",\"tool\":\"search_mail\",\"accounts\":[1],\"mailboxes\":[10],\"messages\":[101,102,103],\"drafts\":[],\"labels\":[],\"outcome\":\"answered\"}
 {\"at\":\"2026-06-02T08:55:00Z\",\"tool\":\"read_message\",\"accounts\":[1],\"mailboxes\":[10],\"messages\":[101],\"drafts\":[],\"labels\":[],\"outcome\":\"answered\"}
 ";
 
-/// What [`AGENT_LOG`]'s ids resolve to.
 fn agent_names() -> postio_ui::agent_access::Names {
     postio_ui::agent_access::Names {
         accounts: [
@@ -425,14 +332,12 @@ fn agent_names() -> postio_ui::agent_access::Names {
     }
 }
 
-/// The runner's clock: 2 June 2026, 09:00 UTC.
 fn frozen_now() -> chrono::DateTime<chrono::Utc> {
     chrono::DateTime::parse_from_rfc3339("2026-06-02T09:00:00Z")
         .expect("a fixed instant")
         .with_timezone(&chrono::Utc)
 }
 
-/// Opens Settings by its command, as `ctrl+,` does, and shows `section`.
 fn open_settings(
     window: &FocusWindow,
     section: Section,
@@ -446,13 +351,11 @@ fn open_settings(
     }
     let panel = open().ok_or("Settings closed")?.panel().clone();
     panel.show_section(section);
-    // A section's rows land a read after the pane does.
     pump(Duration::from_millis(500));
     Ok(panel)
 }
 
-/// The one account's mail weight, as a backfill measures it, which no seed
-/// has a server to measure: Accounts and Sync & storage both read it.
+/// No seed has a server to measure it.
 fn show_mail_weight(
     panel: &postio_widgets::settings::SettingsPanel,
     account: postio_model::AccountId,
@@ -471,8 +374,6 @@ fn show_mail_weight(
     );
 }
 
-/// Three accounts and how much mail each holds, hand-fed to Settings: the
-/// weights a backfill measures, which no seed has a server to measure.
 fn show_account_weights(panel: &postio_widgets::settings::SettingsPanel) {
     let footprint = |total: u64, attachments: u64, local: u64, complete: bool| {
         postio_core::event::MailFootprint {
@@ -513,17 +414,12 @@ fn show_account_weights(panel: &postio_widgets::settings::SettingsPanel) {
     );
 }
 
-/// Opens the add-account dialog by its command and puts its screen on the
-/// step `preset` names: a provider found for the address, the browser being
-/// waited on, or how much mail to keep. Each of those needs a server or a
-/// person to reach, so the screen is told.
-/// The provider is an invented one on a reserved domain: providers are data,
-/// and no picture speaks for a real one.
+/// Each step needs a server or a person to reach, so the screen is told. The provider is invented,
+/// on a reserved domain: providers are data.
 fn show_add_account(window: &FocusWindow, preset: Preset) -> Result<(), String> {
     use postio_widgets::onboarding::{BrowserSignIn, Onboarding, Server, Settings, Status};
 
     window.act(CommandId::AddAccount);
-    // The form is in the dialog over the window, not the window's content.
     let find = || {
         let dialog = window.add_account_dialog()?;
         let mut pending: Vec<gtk::Widget> = vec![dialog.upcast()];
@@ -583,9 +479,8 @@ fn show_add_account(window: &FocusWindow, preset: Preset) -> Result<(), String> 
     Ok(())
 }
 
-/// Where a run's window keeps its `config.toml`, which Settings shows and
-/// writes: one path per storyboard, the same every run, so a frame of the
-/// foot strip that prints it is the same picture twice.
+/// One path per storyboard, the same every run, so a frame of the foot strip that prints it is the
+/// same picture twice.
 fn config_path(name: &str) -> PathBuf {
     std::env::temp_dir()
         .join("postio-storyboard")
@@ -593,13 +488,8 @@ fn config_path(name: &str) -> PathBuf {
         .join("config.toml")
 }
 
-/// Seeds a store, starts the host over it and adopts a Focus window, the way
-/// the application starts. The returned window is presented and waited on
-/// until its first rows are drawn.
-///
-/// `hold_body` takes one seeded body away before the window opens, for a
-/// storyboard whose `body_arrived` step brings it back. `vault` names the
-/// demo's vault in the config the window starts with ([`Preset::Vault`]).
+/// `hold_body` takes one seeded body away before the window opens, for a `body_arrived` step to
+/// bring back.
 async fn acting(
     seed: Seed,
     size: (i32, i32),
@@ -632,8 +522,6 @@ async fn acting(
         state: ConnectionState::Online,
     });
     if seed == Seed::Backfilling {
-        // A backfill in flight, with the size of the account's mail beside
-        // it (#411), as the engine says it.
         started.sink.emit(Event::BackfillProgress {
             account,
             done: 12_400,
@@ -648,11 +536,8 @@ async fn acting(
     Ok(started)
 }
 
-/// Waits until the attachment indexer has read every file on disk, so the
-/// search seed finds what its files say from step 0 however slow the
-/// machine: a file found only by its contents is otherwise a card on one
-/// runner and missing on another (#2178). The indexer is the app's own,
-/// started with the host; only its finish is waited on.
+/// Without it, a file found only by its contents is a card on one runner and missing on another
+/// (#2178).
 async fn wait_for_attachment_text(store: &postio_storage::Store) -> Result<(), String> {
     use postio_storage::sql::RowExt as _;
     let deadline = Instant::now() + Duration::from_secs(60);
@@ -678,8 +563,6 @@ async fn wait_for_attachment_text(store: &postio_storage::Store) -> Result<(), S
     }
 }
 
-/// Turns the main loop until the inbox's rows are drawn (or, for the empty
-/// seed, until a moment has passed), so step 0 is a window with mail in it.
 fn wait_for_first_page(window: &FocusWindow, seed: Seed) {
     let deadline = Instant::now() + Duration::from_secs(20);
     let context = glib::MainContext::default();
@@ -698,7 +581,6 @@ fn wait_for_first_page(window: &FocusWindow, seed: Seed) {
     heartbeat.remove();
 }
 
-/// Turns the main loop until `done`, or `max` passes; whether it was done.
 fn pump_until(max: Duration, mut done: impl FnMut() -> bool) -> bool {
     let deadline = Instant::now() + max;
     let context = glib::MainContext::default();
@@ -713,8 +595,6 @@ fn pump_until(max: Duration, mut done: impl FnMut() -> bool) -> bool {
     reached
 }
 
-/// Runs a store write to its end on the demo's runtime, off this thread, while
-/// the main loop keeps turning, and returns what it answered.
 fn off_thread<T: Send + 'static>(
     work: impl std::future::Future<Output = Result<T, String>> + Send + 'static,
 ) -> Result<T, String> {
@@ -730,7 +610,6 @@ fn off_thread<T: Send + 'static>(
     answer.unwrap_or_else(|| Err("the store did not answer in time".to_owned()))
 }
 
-/// Turns the main loop for `duration`, so timers and frames happen.
 fn pump(duration: Duration) {
     let context = glib::MainContext::default();
     let heartbeat =
@@ -742,14 +621,8 @@ fn pump(duration: Duration) {
     heartbeat.remove();
 }
 
-/// Applies what of the variant a window can take: scheme, size, text scale.
-/// Returns the requested axes this runner does not have.
-/// What GTK would otherwise draw by the clock: animations, and the overlay
-/// scrollbar's indicator. The indicator shows when a list scrolls and hides
-/// once it has been still for a while, so whether a frame caught it
-/// depended on how long the step took -- the same step filmed two ways
-/// under load (storyboard_determinism). It is a transient, never what a
-/// person settles on, so frames leave it out.
+/// The overlay scrollbar's indicator shows when a list scrolls and hides after a while, so whether
+/// a frame caught it depended on step timing; frames leave it out.
 fn hold_still() {
     if let Some(settings) = gtk::Settings::default() {
         settings.set_gtk_enable_animations(false);
@@ -783,9 +656,8 @@ fn apply_variant(variant: &BTreeMap<String, String>) -> ((i32, i32), Vec<String>
         Some("narrow") => (900, 700),
         _ => (1280, 800),
     };
-    // Text scale is a process-wide setting: set it from the DPI the process
-    // started with, every run, so one storyboard's 200% is not the next
-    // one's starting size.
+    // Text scale is process-wide: set it from the DPI the process started with, every run, so one
+    // storyboard's 200% is not the next one's start.
     if let Some(settings) = gtk::Settings::default() {
         static BASE_DPI: std::sync::OnceLock<i32> = std::sync::OnceLock::new();
         let base = *BASE_DPI.get_or_init(|| settings.gtk_xft_dpi());
@@ -804,8 +676,6 @@ fn apply_variant(variant: &BTreeMap<String, String>) -> ((i32, i32), Vec<String>
     (size, ignored)
 }
 
-/// The step's checks and prose for Focus -- an override's, if it has one
-/// -- and the reason it is skipped, if it is.
 fn for_focus<'a>(
     board: &'a Storyboard,
     step: &'a Step,
@@ -828,7 +698,6 @@ fn for_focus<'a>(
     (checks, expect, skip)
 }
 
-/// The step as written, for a reader of the run.
 fn describe(input: &Input) -> String {
     match input {
         Input::Command(id) => format!("command {id}"),
@@ -851,7 +720,6 @@ fn context_name(window: &FocusWindow) -> String {
     format!("{:?}", window.key_context()).to_lowercase()
 }
 
-/// Presses every chord of `binding`, in order.
 fn press(window: &FocusWindow, binding: &Binding, delivery: Delivery) -> StepOutcome {
     for chord in binding.chords() {
         match delivery {
@@ -871,9 +739,7 @@ fn press(window: &FocusWindow, binding: &Binding, delivery: Delivery) -> StepOut
     StepOutcome::Delivered
 }
 
-/// Delivers one step's input: what happened to it, and what was delivered.
-/// `Err` is a step this runner cannot play at all, which makes the run
-/// unavailable rather than failed.
+/// `Err` is a step this runner cannot play, which makes the run unavailable rather than failed.
 fn deliver_input(
     window: &FocusWindow,
     input: &Input,
@@ -890,8 +756,6 @@ fn deliver_input(
             CommandId::from_str(id).map_err(|_| format!("unknown command `{id}`"))?;
             let context = window.key_context();
             delivered.context = Some(context_name(window));
-            // Only what Focus offers is bound, as the resolver it presses
-            // keys through binds it.
             let (keymap, _) = Keymap::from_commands_for(&window.keymap(), Frontend::Focus);
             let binding = context
                 .chain()
@@ -918,8 +782,7 @@ fn deliver_input(
             press(window, &binding, delivery)
         }
         Input::Type(text) => {
-            // The composer's body is a web view over an editable document,
-            // not a `GtkText`; it takes text through the editor itself.
+            // The composer's body is a web view, not a `GtkText`: it takes text through the editor.
             let composer_body = |_widget: &gtk::Widget, typed: &str| -> bool {
                 let Some(composer) = window.composer() else {
                     return false;
@@ -942,7 +805,6 @@ fn deliver_input(
             pump(Duration::from_millis(*ms));
             StepOutcome::Delivered
         }
-        // Waited for by the caller, which evaluates the checks.
         Input::Wait(Wait::Until(_)) => StepOutcome::Delivered,
         Input::Event(event) => {
             let account = acting.account;
@@ -962,9 +824,6 @@ fn deliver_input(
                     total: 81_744,
                     footprint: None,
                 }),
-                // Written to the store the host reads and then said on the
-                // hub, as a sync pass does: the window hears what the app
-                // would.
                 EnvEvent::NewMail => {
                     let store = acting.store.clone();
                     let (mailbox, message) =
@@ -976,14 +835,12 @@ fn deliver_input(
                         messages: vec![message],
                     })
                 }
-                // As `NewMail` is, and then the thread said changed, as a
-                // sync pass says it (spec 013 US4).
                 EnvEvent::Reply => {
                     let store = acting.store.clone();
                     let arrival = off_thread(async move {
                         let arrival = postio_demo::deliver_harbor_reply(&store, account).await?;
-                        // Through the filing pass every arrival takes: a muted
-                        // thread's reply is archived there, not here.
+                        // Through the filing pass every arrival takes: a muted thread's reply is
+                        // archived there.
                         postio_host::FocusSetup::default()
                             .file_stored(&store, arrival.message, arrival.thread)
                             .await
@@ -998,9 +855,8 @@ fn deliver_input(
                     })
                     .map_err(|error| format!("the reply could not be filed: {error}"))?;
                     let (arrival, landed) = arrival;
-                    // Sync says an arrival to the inbox; a reply the filing
-                    // pass archived (a muted thread's) is none, and only the
-                    // thread changed.
+                    // A reply the filing pass archived (a muted thread's) is no arrival, only a
+                    // changed thread.
                     (landed != arrival.mailbox
                         || acting.sink.emit(Event::NewMail {
                             account,
@@ -1034,7 +890,6 @@ fn deliver_input(
     Ok((outcome, delivered))
 }
 
-/// The 1-based step a `same_as` names.
 fn step_number(board: &Storyboard, reference: &StepRef) -> Option<usize> {
     match reference {
         StepRef::Index(n) => usize::try_from(*n).ok(),
@@ -1053,7 +908,6 @@ fn region_name(observation: &Observation) -> String {
         .unwrap_or_default()
 }
 
-/// Waits until `checks` hold against what the window shows, or `max` passes.
 fn wait_until(
     window: &FocusWindow,
     board: &Storyboard,
@@ -1086,8 +940,6 @@ fn wait_until(
     }
 }
 
-/// Lets a step finish, then records its frames: plain and outlined, plus the
-/// extra frames a jump or a blank kept.
 fn settle_and_capture(
     window: &FocusWindow,
     options: &Options,
@@ -1095,11 +947,8 @@ fn settle_and_capture(
     settings: &settle::Settings,
     writer: Option<&RunWriter>,
 ) -> (Settle, Option<Frame>, Option<String>) {
-    // Settled the same way whether or not frames are kept. "No frames"
-    // means nothing is written, not that the step is given less time: a
-    // check run that waited less than a filmed one would disagree with it
-    // about anything on a timer, which is how a live search's debounce
-    // made the two read #1744 differently.
+    // Settled the same whether or not frames are kept: a check run that waited less would disagree
+    // with a filmed one about anything on a timer (#1744).
     let settled = settle::settle(window.upcast_ref(), settings);
     if !options.frames {
         let verdict = match settled.verdict {
@@ -1143,8 +992,6 @@ fn settle_and_capture(
         });
     let region = region_name(&window.observe());
     let outlined_name = RunWriter::outlined(step);
-    // A composition in a window of its own is laid over the main window's
-    // picture, the keyboard outlined where it is, in that window.
     let detached = window
         .composer()
         .and_then(|composer| composer.detached_window())
@@ -1181,11 +1028,7 @@ fn renderer() -> String {
     std::env::var("GSK_RENDERER").unwrap_or_else(|_| "default".to_owned())
 }
 
-/// Plays `board` on Focus and returns the run, writing it to the output tree
-/// when `options.out` is set.
-///
-/// Awaited on the GTK main thread after `adw::init`, inside a multi-threaded
-/// tokio runtime -- the arrangement `shot` and the focus suite already make.
+/// Awaited on the GTK main thread after `adw::init`, inside a multi-threaded tokio runtime.
 pub async fn run(board: &Storyboard, options: &Options) -> Run {
     let seed = board.seed.clone().unwrap_or_else(|| "small".to_owned());
     let mut played = Run {
@@ -1287,7 +1130,6 @@ pub async fn run(board: &Storyboard, options: &Options) -> Run {
     let resolve = |reference: &StepRef| step_number(board, reference);
     let mut history: Vec<serde_json::Value> = Vec::new();
 
-    // Step 0: the starting state, as the window gives it.
     let (settle, frame, outlined) = settle_and_capture(
         &window,
         options,
@@ -1394,10 +1236,8 @@ pub async fn run(board: &Storyboard, options: &Options) -> Run {
     finish(played)
 }
 
-/// Commands the generated pass never presses, because they reach outside the
-/// window: the network (FR-013), the desktop, or a file chooser that would
-/// sit waiting for a person. Reported as skipped, with the reason, so the
-/// list is visible and argued with rather than silently shrinking coverage.
+/// Commands the generated pass never presses because they reach outside the window: the network,
+/// the desktop, or a file chooser that would wait for a person.
 pub const NEVER_PRESSED: &[(&str, &str)] = &[
     ("refresh", "syncs, which dials the server"),
     ("retry_send", "sends, which dials the server"),
@@ -1412,32 +1252,20 @@ pub const NEVER_PRESSED: &[(&str, &str)] = &[
     ("update_credential", "may open a browser to sign in"),
 ];
 
-/// How each context is reached from a fresh window: the commands that put
-/// the keyboard there, in Focus's own words. Focus has no panes to cycle
-/// between: its contexts are the list, the surfaces a key opens over it --
-/// the search bar, Filtered, the digest window, the open message, the
-/// composer -- and nothing else. A context the setup does not land in is
-/// reported, not pressed in.
+/// Commands that put the keyboard in each context from a fresh window. A context the setup does not
+/// land in is reported, not pressed in.
 pub const CONTEXTS: &[(&str, &[&str])] = &[
-    // Focus opens with the cursor on the first row: the list is the start.
     ("list", &[]),
     ("search", &["search"]),
     ("filtered", &["go_to_filtered"]),
-    // The digest row is the second row of the small seed's inbox.
     ("digest", &["next_message", "open_message"]),
-    // The first row is a message with an invitation card.
     ("reader", &["open_message"]),
     ("composer", &["compose"]),
 ];
 
-/// Commands that act on a thread of more than one message, which the small
-/// seed's inbox has none of: each is pressed in its context over the long
-/// thread's seed (one conversation of seven messages, the last two unread),
-/// from the setup given, so that there is something for it to do: the
-/// outline reads a thread opened under the cursor, and the "this message"
-/// verbs refuse a row that stands for a whole thread. A reply
-/// is opened to the thread's first message, so that a newer one is behind it;
-/// `expand_quoted` unfolds a forwarded thread, so it is pressed over one.
+/// Commands that act on a thread of more than one message, which the small seed's inbox has none
+/// of: each is pressed over the long thread's seed.
+/// A reply is opened to the thread's first message so a newer one is behind it.
 const THREAD_COMMANDS: &[(&str, &str, &[&str])] = &[
     ("list", "expand_thread", &[]),
     ("list", "collapse_thread", &["expand_thread"]),
@@ -1465,21 +1293,15 @@ const THREAD_COMMANDS: &[(&str, &str, &[&str])] = &[
     ("composer", "expand_quoted", &["forward", "forward_what_2"]),
 ];
 
-/// One context's coverage, or why it could not be reached.
 #[derive(Debug, Clone)]
 pub struct ContextCoverage {
-    /// The context.
     pub context: String,
-    /// What each bound command came to.
     pub presses: Vec<postio_storyboard::coverage::Press>,
-    /// Commands not pressed, and why.
     pub skipped: Vec<(String, String)>,
-    /// Set when the setup did not reach this context.
     pub unreachable: Option<String>,
 }
 
 impl ContextCoverage {
-    /// As JSON, for `coverage.json`.
     pub fn to_json(&self) -> serde_json::Value {
         serde_json::json!({
             "context": self.context,
@@ -1492,19 +1314,14 @@ impl ContextCoverage {
     }
 }
 
-/// The generated pass (spec US6): every command bound in every context,
-/// each from a fresh window in that context's starting state, judged on
-/// whether anything a person can see changed.
 pub async fn every_command(gap_list: &std::path::Path) -> Result<Vec<ContextCoverage>, String> {
     use postio_storyboard::coverage::{Effect, Press, judge, load_gaps};
     let gaps = load_gaps(gap_list)?;
     let gaps = gaps.as_slice();
 
-    // One context, to run a gap list's entries again without the other
-    // five minutes: `POSTIO_STORYBOARD_CONTEXT=composer`.
+    // One context, to rerun a gap list's entries: `POSTIO_STORYBOARD_CONTEXT=composer`.
     let only = std::env::var("POSTIO_STORYBOARD_CONTEXT").ok();
-    // This runner's share of the presses, counted across every context, so
-    // the shards stay even however the commands fall between contexts.
+    // Counted across every context, so the shards stay even however commands fall between contexts.
     let shard = postio_storyboard::shard::Shard::from_env();
     let mut position = 0;
     let mut all = Vec::new();
@@ -1518,7 +1335,6 @@ pub async fn every_command(gap_list: &std::path::Path) -> Result<Vec<ContextCove
             skipped: Vec::new(),
             unreachable: None,
         };
-        // The commands bound here, found from a window set up for it.
         let Some(started) = fresh(setup).await else {
             coverage.unreachable = Some("the seeded store fed no window".to_owned());
             all.push(coverage);
@@ -1558,9 +1374,8 @@ pub async fn every_command(gap_list: &std::path::Path) -> Result<Vec<ContextCove
             let started = match thread {
                 Some((_, _, setup)) => {
                     let started = fresh_over(Seed::LongThread, setup).await;
-                    // What the setup opened -- the thread read for a reply's
-                    // quote or a forward's messages -- lands a moment after
-                    // the key that asked for it.
+                    // What the setup opened (a thread read for a quote) lands a moment after the
+                    // key that asked for it.
                     pump(Duration::from_millis(1500));
                     started
                 }
@@ -1576,8 +1391,8 @@ pub async fn every_command(gap_list: &std::path::Path) -> Result<Vec<ContextCove
             };
             let before_frame = settle::settle(window.upcast_ref(), &settings);
             let before = window.observe();
-            // Typing wins: with the keyboard in a text field, a command bound
-            // to a bare key is a letter, not a command, and that is right.
+            // Typing wins: with the keyboard in a text field, a bare-key command is a letter, not a
+            // command.
             let (keymap, _) = Keymap::from_commands_for(&window.keymap(), Frontend::Focus);
             let bare = window
                 .key_context()
@@ -1638,12 +1453,10 @@ pub async fn every_command(gap_list: &std::path::Path) -> Result<Vec<ContextCove
     Ok(all)
 }
 
-/// A fresh, seeded, acting window, with `setup` pressed.
 async fn fresh(setup: &[&str]) -> Option<Started> {
     fresh_over(Seed::Small, setup).await
 }
 
-/// As [`fresh`], over `seed`.
 async fn fresh_over(seed: Seed, setup: &[&str]) -> Option<Started> {
     postio_ui::clock::freeze(
         chrono::DateTime::parse_from_rfc3339(FROZEN_AT)
@@ -1665,10 +1478,8 @@ async fn fresh_over(seed: Seed, setup: &[&str]) -> Option<Started> {
         );
         pump(Duration::from_millis(200));
     }
-    // The composer's body is an editor that paints and listens only once its
-    // script has loaded (#1716): judged before that, any press "changes" the
-    // frame as the editor finishes drawing, and the composer's gaps flicker
-    // between stale and no effect from one pass to the next.
+    // The composer's body paints and listens only once its script has loaded (#1716): judged
+    // earlier, any press "changes" the frame as the editor finishes drawing.
     if started.window.observe().composer.open
         && let Some(composer) = started.window.composer()
     {
@@ -1684,9 +1495,6 @@ async fn fresh_over(seed: Seed, setup: &[&str]) -> Option<Started> {
 mod tests {
     use super::chrome_faces;
 
-    /// The chrome is Adwaita Sans and Mono (C25), which the hermetic
-    /// fontconfig must be handed or regular text falls back to whatever
-    /// face it finds first -- the monospace one.
     #[test]
     fn the_chrome_faces_are_found_under_the_system_font_roots() {
         let root = tempfile::tempdir().unwrap();

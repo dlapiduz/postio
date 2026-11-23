@@ -1,13 +1,8 @@
 //! What a frontend asks of the store's host, and what it answers.
-//!
-//! `docs/archive/specs/005-tui-frontend/contracts/protocol.md` is the contract. The host
-//! is in the frontend's own process (ADR 0041), so a request is a value
-//! handed over a channel and never encoded: these are the vocabulary of
-//! [`crate::Client`] and `postio-host`, nothing more.
-//!
-//! **Nothing here waits on the network.** Every [`Req`] is answered from the
-//! host's local state; anything remote is a [`Command`], whose outcome arrives
-//! later as events (Principle I).
+//! The host is in the frontend's own process (ADR 0041), so a request is a value handed over a
+//! channel, never encoded.
+//! Nothing here waits on the network: every `Req` is answered from local state; anything remote is
+//! a `Command` whose outcome arrives as events.
 
 use chrono::{DateTime, Utc};
 use postio_core::{Command, InvocationId, StateSnapshot};
@@ -20,782 +15,425 @@ use postio_model::listing::{
 use postio_model::mailbox::Mailbox;
 use postio_model::{Account, Draft, DraftId};
 
-/// What kind of frontend is connecting: labels the connection in the host's
-/// log.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ClientKind {
-    /// `postio-tui`.
     Tui,
-    /// Postio, the desktop app: Focus (spec 007).
     Focus,
-    /// The macOS frontend, through `postio-ffi`.
     Ffi,
-    /// `postio-mcp`: an AI agent's tool calls (ADR 0010).
     Mcp,
-    /// A test.
     Test,
 }
 
-/// What Focus's header strip counts (spec 007 FR-018; data-model
-/// `FocusCounts`): the rows of its inbox, how many are unread, and how many
-/// draw a marker -- the has-action toggle's number. The filtered-today and
-/// digest-rule counts join them with their features.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct FocusCounts {
-    /// The conversations in Focus's inbox.
     pub conversations: u32,
-    /// Of those, the ones with unread mail.
     pub unread: u32,
-    /// Of those, the ones that draw a marker.
     pub has_action: u32,
-    /// Messages filed away since local midnight: "186 filtered today".
     pub filtered_today: u32,
 }
 
-/// One row of Focus's Filtered view (screen 21): the message, why it was
-/// filtered and by whom, and when.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FilteredRow {
-    /// The message, as a list row.
     pub message: postio_model::listing::MessageSummary,
-    /// Why, as the store spells it: "notification".
     pub reason: String,
-    /// Who it came from, shown after the reason: "Forge".
     pub source: Option<String>,
-    /// When it was filed away.
     pub at: chrono::DateTime<chrono::Utc>,
 }
 
-/// The host's name for one connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ClientId(pub u64);
 
-/// A request a frontend makes of the host. Each is answered by exactly one
-/// [`Resp`] with the same id.
+/// Each is answered by exactly one `Resp` with the same id.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Req {
-    /// Run a command, aimed with the frontend's own selection; its effects
-    /// arrive as events.
+    /// Aimed with the frontend's own selection; its effects arrive as events.
     Send(Command, StateSnapshot),
-    /// The same, learning the id its events will carry.
     SendTracked(Command, StateSnapshot),
-    /// Run a command at every conversation `query` matches but the rows
-    /// `except` stands for (each a conversation's best message): ⇧X in
-    /// Focus's search results (spec 010 US5). A predicate the host walks
-    /// with the results' own match, in order with every other command, so
-    /// one undo takes the whole back.
+    /// Every conversation `query` matches but the rows `except` stands for (each a conversation's
+    /// best message):
+    /// a predicate the host walks in order with every other command, so one undo takes the whole
+    /// back.
     SendMatching {
-        /// The verb; its target is the match.
         command: Command,
-        /// Which accounts the search is over.
         account: postio_model::AccountScope,
-        /// The query, as the results ran it.
         query: postio_search::ParsedQuery,
-        /// Rows taken back out of the selection.
         except: Vec<MessageId>,
     },
-    /// One page of a list.
     Page(PageRequest),
-    /// How many rows a list would show.
     Count(ListScope),
-    /// The rows for these messages, in the order given.
     Rows(Vec<MessageId>),
-    /// The rows a scope's list shows for these messages.
     RowsIn(ListScope, Vec<MessageId>),
-    /// These messages left a mailbox; said before the list re-reads.
+    /// Said before the list re-reads.
     NoteRemoved(MailboxId, Vec<MessageId>),
-    /// An account's folders.
     Mailboxes(AccountId),
-    /// What the sidebar draws beside Drafts and the Outbox.
     DraftCounts(AccountId),
-    /// Every account, in the sidebar's order.
     Accounts,
-    /// A message's body, or why there is none yet.
     Body(MessageId),
-    /// A conversation's messages, oldest first, as list rows.
     Conversation(postio_model::ThreadId),
-    /// A thread's members with their lines, its unsent reply and its labels
-    /// (spec 013).
     Thread(postio_model::ThreadId),
-    /// Stop a thread's new replies reaching the inbox (spec 013 FR-012).
-    /// Undoable.
     Mute(postio_model::ThreadId),
-    /// Let a muted thread's replies reach the inbox again. Undoable.
     Unmute(postio_model::ThreadId),
-    /// Take a message, and every message that replies to it, out of its
-    /// thread into one of their own (spec 013 FR-007). Undoable by one undo.
     Split(MessageId),
-    /// Which of these threads are muted, and the replies filed away since:
-    /// one statement for a page.
     MutedOf(Vec<postio_model::ThreadId>),
-    /// A new forward of a thread (spec 013 FR-023): of its latest message
-    /// for `This`, of every message for `Thread`, each as an `.eml` for
-    /// `Attachments`. Reads the local store only.
+    /// Reads the local store only.
     ForwardThread {
-        /// The thread.
         thread: postio_model::ThreadId,
-        /// What to carry.
         form: postio_model::ForwardForm,
     },
-    /// The forward in `draft` changed to carry `form`, its typed text kept.
     SetForwardForm {
-        /// The draft as it stands.
         draft: Box<Draft>,
-        /// What to carry now.
         form: postio_model::ForwardForm,
     },
-    /// The reply in `draft` changed to answer the thread's latest received
-    /// message: the quote and `In-Reply-To` move, the typed text stays
-    /// (spec 013 FR-022).
+    /// The quote and `In-Reply-To` move; the typed text stays.
     ReplyToLatest {
-        /// The draft as it stands.
         draft: Box<Draft>,
     },
-    /// Leave the list this message came from: record the activation, and
-    /// answer the list's name. Only ever on a person's deliberate act.
+    /// Only on a person's deliberate act.
     Unsubscribe(MessageId),
-    /// What the list `message` came from has sent that "delete what the list
-    /// sent" would reach (#1931): its ids, newest first, and a name.
     ListMail(MessageId),
-    /// A message's parts: its attachments, and inline parts.
     Parts(MessageId),
-    /// Write one part to `to`, fetching it first if it was never downloaded.
+    /// Fetches the part first if it was never downloaded.
     SavePart {
-        /// Whose.
         message: MessageId,
-        /// Which part.
         attachment: postio_model::ids::AttachmentId,
-        /// Where; the frontend chose it.
         to: std::path::PathBuf,
     },
-    /// Write one part to a private temporary file for the system to open,
-    /// and answer where.
+    /// Writes to a private temporary file and answers where.
     OpenPart {
-        /// Whose.
         message: MessageId,
-        /// Which part.
         attachment: postio_model::ids::AttachmentId,
     },
-    /// Everything a reading pane draws of each of these messages -- body,
-    /// row and send state -- read on one turn of the store, in the order
-    /// asked. `offline` is the frontend's: it decides whether a body not
-    /// here yet is "downloading" or "offline".
+    /// `offline` is the frontend's: it decides whether a body not here yet is "downloading" or
+    /// "offline".
     Readings {
-        /// Which messages.
         messages: Vec<MessageId>,
-        /// Whether the frontend has no connection at all right now.
         offline: bool,
     },
-    /// [`Req::Readings`] for a conversation's first `limit` members, oldest
-    /// first: what a frontend prepares before the conversation is opened.
     ThreadReadings {
-        /// Which conversation.
         thread: postio_model::ThreadId,
-        /// The most members read.
         limit: u32,
-        /// As [`Req::Readings`].
         offline: bool,
     },
-    /// One inline part of `message`, by its `Content-ID`, when its bytes are
-    /// on this machine. Never fetched: a remote read here would be the
-    /// tracking pixel the reader blocks.
+    /// Never fetched: a remote read here would be the tracking pixel the reader blocks.
     InlinePart {
-        /// Whose; a `Content-ID` means nothing outside its own message.
         message: MessageId,
-        /// The `cid:` it was asked for by.
         content_id: String,
     },
-    /// Write each part to its path, fetching what was never downloaded, and
-    /// answer how many could not be written. One batch, one answer: `S`.
+    /// One batch, one answer: how many could not be written.
     SaveParts {
-        /// Whose.
         message: MessageId,
-        /// Which parts, and where each goes; the frontend chose them.
         parts: Vec<(postio_model::ids::AttachmentId, std::path::PathBuf)>,
     },
-    /// A message's stored words, or none: what a search preview draws under
-    /// the excerpt it already has. Never fetched, and no reason given -- a
-    /// preview with no body keeps the excerpt.
+    /// Never fetched; a preview with no body keeps the excerpt.
     StoredBody(MessageId),
-    /// Write each message's raw source to its path, fetching what was never
-    /// downloaded, and answer the paths in the order asked. The first that
-    /// cannot be written ends the export: a drop of fewer files than were
+    /// The first path that cannot be written ends the export: a drop of fewer files than were
     /// dragged must say so.
     ExportMessages(Vec<(MessageId, std::path::PathBuf)>),
-    /// Autosave a draft as composition `generation`. Answered in order with
-    /// every other draft write from this client (see `DraftWriter`).
+    /// Answered in order with every other draft write from this client (see `DraftWriter`).
     SaveDraft {
-        /// Which composition: a second save of one before the first's id
-        /// came back still updates the same row.
+        /// A second save before the first's id came back still updates the same row.
         generation: u64,
-        /// The draft as it stands.
         draft: Box<Draft>,
     },
-    /// Queue a draft to send, now or at `at`.
     QueueSend {
-        /// Which composition.
         generation: u64,
-        /// The draft as it stands.
         draft: Box<Draft>,
-        /// When, for a scheduled send.
         at: Option<DateTime<Utc>>,
     },
-    /// A composition closed with nothing worth keeping: its row goes.
     DiscardDraft {
-        /// Which composition.
         generation: u64,
-        /// Its id, when the frontend knows it and the host may not.
         known: Option<DraftId>,
     },
-    /// Recipient completion for what has been typed so far.
     Recipients {
-        /// Whose contacts.
         account: AccountId,
-        /// What has been typed.
         prefix: String,
     },
-    /// The account's correspondents, for the finder's `@`.
     Correspondents(AccountId),
-    /// The person at an address, made now from the stored mail when the
-    /// catch-up has not reached them (specs/011-focus-contacts).
+    /// Made now from the stored mail when the catch-up has not reached them.
     ContactForAddress(String),
-    /// What the known-sender popover shows for an address: the person, their
-    /// counts, what is open between them and the user, and where their mail
-    /// arrives (specs/011-focus-contacts S6).
     ContactGlance(String),
-    /// A page of the Contacts list for a kind tab: past `after` (a sort key
-    /// and a person) and then `skip` more, at most `limit` rows.
+    /// Rows past `after` (a sort key and a person), then `skip` more, at most `limit`.
     ContactsPage {
-        /// The tab.
         tab: postio_model::ContactTab,
-        /// Where the page starts, past this row.
         after: Option<(String, postio_model::ContactId)>,
-        /// Rows to pass over after that.
         skip: u32,
-        /// At most this many.
         limit: u32,
     },
-    /// The people in a tab matching what was typed, at most `cap`.
     ContactsFiltered {
-        /// The tab.
         tab: postio_model::ContactTab,
-        /// What was typed.
         text: String,
-        /// At most this many.
         cap: u32,
     },
-    /// The strip's counts, the review queue and the catch-up's progress.
     ContactsOverview,
-    /// Everything a person's card shows.
     ContactCard(postio_model::ContactId),
-    /// The name of every contact group, by name.
     ContactGroups,
-    /// What a sync with the Mac's Contacts would do, from a snapshot of their
-    /// side: a dry run, which writes nothing anywhere.
+    /// A dry run: writes nothing anywhere.
     ContactsSyncPlan {
-        /// The other side's records.
         records: Vec<postio_contact_sync::ExternalRecord>,
-        /// What syncs.
         scope: postio_contact_sync::Scope,
-        /// Whether the plan may ask their side to change.
         mode: postio_contact_sync::Mode,
     },
-    /// Apply the Postio side of the sync plan the person was shown: contacts
-    /// for the records only their side has, and the fields it changed. Writes
-    /// Postio's own database; their side is never written.
+    /// Writes Postio's own database; their side is never written.
     ContactsSyncBringIn {
-        /// The other side's records, as the preview was made from.
         records: Vec<postio_contact_sync::ExternalRecord>,
-        /// What syncs.
         scope: postio_contact_sync::Scope,
-        /// Whether the plan may ask their side to change.
         mode: postio_contact_sync::Mode,
-        /// The fingerprint of the plan the person was shown.
         shown: u64,
     },
-    /// Read the cards in a `.vcf` the user chose and apply them.
     ContactsImport(Vec<u8>),
-    /// One `.vcf` of the people the Contacts list holds.
     ContactsExport,
-    /// What the mail says about a person that the Edit form can keep.
     ContactSeen(postio_model::ContactId),
-    /// Which Settings > Contacts Suggestions switches are on.
     ContactSuggestions,
-    /// Turn one of them on or off; answers with all four.
     ContactSuggestionSet(postio_model::Suggestion, bool),
-    /// The groups of records that look like one person, with the evidence;
-    /// those holding any of these people first.
     ContactReview(Vec<postio_model::ContactId>),
-    /// Where a person is in a tab's list, or `None`.
     ContactPosition(postio_model::ContactId, postio_model::ContactTab),
-    /// The group these records make, with whatever evidence there is.
     ContactMergeOf(Vec<postio_model::ContactId>),
-    /// Everything recipient completion can offer for an account, read once
-    /// so each keystroke is answered from memory rather than by a query.
+    /// Read once so each keystroke is answered from memory, not a query.
     RecipientDirectory(AccountId),
-    /// The account's labels, for the finder's `+` and the label picker.
     Labels(AccountId),
-    /// How many conversations carry each of the account's labels, for
-    /// Focus's label picker (spec 007 US5, screen 13).
     LabelCounts(AccountId),
-    /// Make a label the account does not have yet, or answer the one it
-    /// has by that name in any case: the label picker's "Create label".
+    /// Answers the existing label of that name, in any case.
     CreateLabel {
-        /// Whose label.
         account: AccountId,
-        /// Its name, as typed.
         name: String,
     },
-    /// The labels on each of these conversations, for a page of Focus's
-    /// list: its label pills (spec 007 T043).
     ThreadLabels(Vec<postio_model::ThreadId>),
-    /// Focus's header strip: its conversations, unread and has-action
-    /// counts (spec 007 FR-018, T048).
     FocusCounts,
-    /// What this client's Undo would take back now, in the toast's words:
-    /// what a platform's Edit menu names its Undo item with
-    /// (specs/009-focus-macos T044).
     UndoTop,
-    /// The message a reply or forward is built from, and its account.
     ReplySource(MessageId),
-    /// The local draft behind a Drafts row, if there is one.
     DraftBehind(MessageId),
-    /// The local draft with this id, if there is one: a thread's unsent
-    /// reply, which has no message of its own to name.
     DraftById(DraftId),
-    /// Take a queued draft back to edit it, if it has not started sending.
     CancelSend(DraftId),
-    /// Why a draft's last send attempt gave up.
     SendFailure(DraftId),
-    /// The signature a new draft starts with.
     DefaultSignature {
-        /// Which account.
         account: AccountId,
-        /// The mailbox selected, whose own signature overrides the account's.
         selected: Option<MailboxId>,
     },
-    /// Store the file at this path as an attachment.
     Attach {
-        /// Where the file is.
         path: std::path::PathBuf,
-        /// Its type, when the frontend can sniff one better than the host's
-        /// fallback: the desktop asks shared-mime-info, which the terminal
-        /// may not have.
+        /// Set when the frontend can sniff a type better than the host's fallback (the desktop asks
+        /// shared-mime-info).
         mime_type: Option<String>,
     },
-    /// The bytes of a part the composer holds, by the blob they were stored
-    /// under: what an inline image in a draft draws.
     AttachmentBytes(postio_model::ids::BlobId),
-    /// Record that a frontend's session began, and answer the draft
-    /// `account` was still writing when the last session died without
-    /// ending cleanly (#491). Nothing after a clean exit, or for a draft
-    /// holding nothing worth keeping. Asked once per process: the ask itself
-    /// marks the session open.
+    /// Answers the draft `account` was still writing when the last session died unclean (#491);
+    /// nothing after a clean exit.
+    /// The ask itself marks the session open, so ask once per process.
     RecoverDraft(AccountId),
-    /// Search, as the desktop's search bar does.
     Search(Search),
-    /// The desktop search's hits, as its surfaces draw them: the parsed
-    /// query the box built, excerpts for the first `snippets` hits, the
-    /// sender and folder of each, and the suggestion for a query that
-    /// found nothing.
     SearchHits {
-        /// Which accounts.
         account: postio_model::AccountScope,
-        /// The query, as the box parsed it.
         query: postio_search::ParsedQuery,
-        /// The standing rescope from the results' left column.
         scope: postio_search::facets::Scope,
-        /// Ranked, or newest first.
         order: postio_search::ResultOrder,
-        /// How many hits, from the best, get an excerpt.
         snippets: u32,
     },
-    /// What the results' columns say about a search: its count in every
-    /// scope and the refinements worth offering. A read of its own, after
-    /// the hits, so the number being watched never waits for these.
+    /// A read of its own, after the hits, so the number being watched never waits for these.
     Facets {
-        /// Which accounts: the scope the hits were counted under.
         account: postio_model::AccountScope,
-        /// The query, as the box parsed it.
         query: postio_search::ParsedQuery,
-        /// The scope on screen.
         scope: postio_search::facets::Scope,
     },
-    /// Focus's search (spec 010): one page of conversations, with the
-    /// facets' counts and names. Cancellable: dropping the call stops it.
+    /// Cancellable: dropping the call stops it.
     Conversations {
-        /// Which accounts.
         account: postio_model::AccountScope,
-        /// The query, as the bar parsed it.
         query: postio_search::ParsedQuery,
-        /// Best match or newest first.
         order: postio_search::results::ConversationOrder,
-        /// How many conversations to skip.
         offset: u32,
-        /// How many to return.
         limit: u32,
     },
-    /// The passages of the hits on screen, each body match told apart into
-    /// the person's own words and quoted history. A read of its own, after
-    /// the conversations (D7). Cancellable.
+    /// A read of its own, after the conversations.
     Passages {
-        /// The query the hits were found by.
         query: postio_search::ParsedQuery,
-        /// Each hit's best message and where it matched.
         hits: Vec<(MessageId, Vec<postio_search::results::Source>)>,
-        /// What the asking row does with a message's first line.
         first_line: postio_search::passage::FirstLine,
     },
-    /// The Files tab: a page of the attachments whose name or contents
-    /// match, each with its match (spec 010 US8). Cancellable.
     Files {
-        /// Which accounts.
         account: postio_model::AccountScope,
-        /// The query.
         query: postio_search::ParsedQuery,
-        /// How many cards to skip.
         offset: u32,
-        /// How many to answer.
         limit: u32,
     },
-    /// The People tab: who the matched mail is from and to, the person's
-    /// own addresses left out, each with how many matched messages and the
-    /// newest (spec 010 US9). Cancellable.
     People {
-        /// Which accounts.
         account: postio_model::AccountScope,
-        /// The query.
         query: postio_search::ParsedQuery,
-        /// How many people to skip.
         offset: u32,
-        /// How many to answer.
         limit: u32,
     },
-    /// Copy an attachment's bytes, when they are on this machine, into
-    /// `dir` -- a temporary folder the frontend owns -- for the system's
-    /// Quick Look or a save (FR-053). Never fetched: an attachment whose
-    /// bytes are not here answers nothing (FR-050).
+    /// Never fetched: an attachment whose bytes are not here answers nothing.
     AttachmentCopy {
-        /// Which attachment.
         attachment: postio_model::ids::AttachmentId,
-        /// Where the copy goes; nothing is written outside it.
         dir: std::path::PathBuf,
     },
-    /// Every match in one conversation, oldest first, each with its
-    /// passage and who wrote it: Quick Look's cards (spec 010 US4).
-    /// Cancellable.
     ConversationMatches {
-        /// The query the conversation was found by.
         query: postio_search::ParsedQuery,
-        /// Which conversation.
         key: postio_search::results::ConversationKey,
     },
-    /// The ways out of a search that found nothing, each with what it would
-    /// find. Cancellable.
     Relaxations {
-        /// Which accounts.
         account: postio_model::AccountScope,
-        /// The query that found nothing.
         query: postio_search::ParsedQuery,
-        /// The day dates in the variants are read against.
         today: chrono::NaiveDate,
     },
-    /// What a prefix could become (spec 010 US7, FR-042): with no `field`
-    /// the words, labels, lists and file names it begins; with one, the
-    /// operator's values -- people for `from:` and `to:`, labels, folders.
-    /// Each counted as its query counts. Cancellable.
     Suggest {
-        /// Which accounts the counts are over.
         account: postio_model::AccountScope,
-        /// What is typed: the word, or the operator's value so far.
         prefix: String,
-        /// The operator being typed, when one is.
         field: Option<postio_search::query::Field>,
     },
-    /// The searches a person ran, newest first (spec 010 D16). Cancellable.
     RecentSearches,
-    /// A search was committed: the results view opened, a hit was opened
-    /// from the dropdown, or a saved search ran. The host stamps the time.
     RememberSearch {
-        /// The query, exactly as run.
         query: String,
-        /// Conversations it matched, as the footer said.
         hits: u64,
-        /// The search stopped at its walk's cap: `hits` is a floor (D30).
+        /// `hits` is a floor when the walk's cap stopped the search.
         capped: bool,
     },
-    /// Forget one recent search.
     ForgetSearch(String),
-    /// How many conversations each saved search matches, and how many of
-    /// those arrived since the person last looked. Cancellable.
     SavedCounts {
-        /// Which accounts the counts are over.
         account: postio_model::AccountScope,
-        /// The day relative dates in the queries are read against.
         today: chrono::NaiveDate,
-        /// Every saved search as `(key, query text)`. A search whose key is
-        /// not listed is no longer saved, and its seen-progress is dropped.
+        /// A search whose key is not listed is no longer saved, and its seen-progress is dropped.
         searches: Vec<(String, String)>,
     },
-    /// The saved search under this key has been viewed: its badge counts
-    /// from now (spec 010 D15).
     MarkSeen(String),
-    /// Change an account the way the settings' account commands do.
     Account(AccountOp),
-    /// Look up the servers for a new account's address.
     Discover {
-        /// The address as typed.
         address: String,
-        /// How the frontend stops the probe: the person typed another
-        /// address, pressed Connect, or walked away from the form (#57).
         stop: Stop,
     },
-    /// Begin a browser sign-in for a new account; answered with the consent
-    /// URL, which nothing opens: the frontend shows it, and opens it only
+    /// Answered with the consent URL, which nothing opens: the frontend shows it and opens it only
     /// when asked.
     BeginOAuth {
-        /// What the form held.
         submission: Box<postio_ui::onboarding::Submission>,
-        /// What the host does once the account is saved.
         then: AfterSave,
     },
-    /// Wait for the sign-in for this address to finish, and the account to
-    /// be saved.
     FinishOAuth(String),
-    /// Give up the sign-in for this address.
     CancelOAuth(String),
-    /// Prove a new account's credentials and save it (the password goes to
-    /// the keyring and nowhere else).
+    /// The password goes to the keyring and nowhere else.
     AddAccount {
-        /// What the form held.
         submission: Box<postio_ui::onboarding::Submission>,
-        /// What the host does once the account is saved.
         then: AfterSave,
     },
-    /// Every account the settings show -- all but those being removed --
-    /// each with its folders and role map, and, when `weights`, what its
-    /// mail weighs. One read for the whole panel.
     AccountSettings {
-        /// Whether to measure each account's mail: a scan of every message
-        /// it holds, asked for only while the panel is on screen.
+        /// `weights` scans every message an account holds: ask only while the panel is on screen.
         weights: bool,
     },
-    /// Change one field of an account's row.
     EditAccount(AccountId, AccountField),
-    /// Write a signature, new or edited; an edit keeps the rich variant this
-    /// form does not show. A refusal's sentence is for the person who typed.
+    /// An edit keeps the rich variant this form does not show.
     SaveSignature {
-        /// Whose.
         account: AccountId,
-        /// Which, for an edit; `None` for a new one.
         signature: Option<postio_model::SignatureId>,
-        /// Its name.
         name: String,
-        /// Its text.
         text: String,
     },
-    /// Remove a signature.
     DeleteSignature(postio_model::SignatureId),
-    /// Rebuild an account's local search index and answer when it is over;
-    /// progress arrives as events meanwhile. [`AccountOp::RebuildIndex`]
-    /// starts the same rebuild and answers at once.
+    /// Answers when the rebuild is over; `AccountOp::RebuildIndex` starts the same rebuild and
+    /// answers at once.
     RebuildIndex(AccountId),
-    /// The newest outbound connections the egress log holds, at most this
-    /// many (#151).
     EgressLog(u32),
-    /// The privacy pane's figures: every unsubscribe activation, newest
-    /// first, and how many messages asked for a read receipt.
     PrivacyLog,
-    /// Skip or resume a folder's background backfill, and answer its
-    /// account's folders as they now stand.
     SetBackfillExcluded {
-        /// Which folder.
         mailbox: MailboxId,
-        /// Whether it is skipped.
         excluded: bool,
     },
-    /// Whether some earlier run already showed the keyboard orientation.
     OrientationSeen,
-    /// Write down that this installation is done with the orientation.
     RetireOrientation,
-    /// Where mail was last moved, newest first: the move picker's Recent
-    /// (spec 007 T098).
     MoveRecent,
-    /// Each filter reason with how many messages it keeps filtered: the
-    /// Filtered view's tabs (spec 007 T124).
     FilteredTabs,
-    /// What a digest delivery holds, as list rows, newest first: the
-    /// digest window's plain list (spec 007 T137).
     DeliveryMessages(postio_model::DeliveryId),
-    /// How many messages each named rule holds now, waiting for its next
-    /// delivery: the `g d` list's "holds N" (spec 007 T139).
     DigestWaiting(Vec<String>),
-    /// Which of these messages a digest holds, and for which rule: what a
-    /// search result says instead of its folder (spec 007 T140).
     Held(Vec<MessageId>),
-    /// The account a message is in: whose labels its picker offers (spec
-    /// 007 T170).
     AccountOf(MessageId),
-    /// A page of the Filtered view, newest first.
     Filtered {
-        /// One reason, as the store spells it, or every reason.
         reason: Option<String>,
-        /// The first row.
         offset: u32,
-        /// How many rows.
         limit: u32,
     },
-    /// Put this folder first in the move picker's Recent.
     NoteMove(MailboxId),
-    /// Fetch this message's body ahead of the backfill: a person opened it.
     /// Posted; the body arrives as `BodyLoaded`.
     FetchBody(MessageId),
-    /// A forward of `message` was opened: fetch these sections of it ahead
-    /// of the send, so the attachments it carries are local by then (#1690).
-    /// Answered with whether they are coming. Sent only for a forward -- a reply carries nothing, and
-    /// nothing leaves the machine that the person did not ask for.
+    /// Sent only for a forward: a reply carries nothing, and nothing leaves the machine the person
+    /// did not ask for (#1690).
     FetchCarried {
-        /// The message being forwarded.
         message: MessageId,
-        /// MIME section paths of the parts the forward carries.
         parts: Vec<String>,
     },
-    /// `[storage] max_bytes` changed: bring the blob store under it.
     StorageCeiling(Option<u64>),
-    /// Save an account whose credentials a frontend already proved: the
-    /// password to the keyring first, then the row, as the desktop's
-    /// first-run screen writes them (`postio_session::onboarding::persist`).
+    /// The password goes to the keyring first, then the row.
     SaveAccount {
-        /// What the form held.
         submission: Box<postio_ui::onboarding::Submission>,
-        /// Which backend the proof signed in with.
         backend: postio_model::account::Backend,
     },
-    /// Store pasted image bytes as an inline part.
+    /// The one network request a composer makes, on its press alone. Answered as the attachment, or
+    /// why it stays a link.
+    AttachRemoteImage {
+        draft: postio_model::DraftId,
+        href: String,
+    },
     InlineImage {
-        /// The image.
         bytes: Vec<u8>,
-        /// Its type, `image/…`.
         mime_type: String,
     },
-    /// How many messages a sweep of the inbox would file away now, by
-    /// Focus's filtering rules (spec 007 FR-118): what the sweep says before
-    /// it moves anything. Answered as a count.
     SweepPreview,
-    /// A message's raw RFC 822 source, as `view_source` shows it: read from
-    /// the blob store, or fetched from the server on this request when it
-    /// was never downloaded (spec 007 FR-033). Answered as bytes.
+    /// Fetched from the server on this request when never downloaded.
     RawSource(MessageId),
-    /// The rows Focus's inbox surfaces among its conversations: the digests
-    /// delivered and not archived, and the reminders that fired, each with
-    /// its time and position (spec 007, contracts/engine.md).
     Surfaced,
-    /// What the capture sheet reads from the vault for a message with
-    /// `subject` (spec 007 US15): its projects, the one suggested, and the
-    /// tasks Postio captured. Fails with a sentence when no `[focus.vault]`
-    /// is configured.
+    /// Fails with a sentence when no `[focus.vault]` is configured.
     Vault {
-        /// The message's subject, which the suggestion is read from.
         subject: String,
     },
-    /// Append `task` to `project`'s note, or the tasks note with none.
     CaptureTask {
-        /// The project chosen.
         project: Option<postio_vault::Project>,
-        /// The task.
         task: postio_vault::Task,
     },
-    /// Append `entry` to `note`, relative to the vault.
     CaptureNote {
-        /// The note.
         note: std::path::PathBuf,
-        /// The entry.
         entry: postio_vault::NoteEntry,
     },
-    /// A digest's summary, with every reference resolved again as it is
-    /// read: `None` when none is written, or none is left to show (spec 007
-    /// FR-172 to FR-175).
     DigestSummary(postio_model::DeliveryId),
-    /// "Digest mail like this" for a message (spec 007 FR-171): the rule
-    /// the person's model picks from the queries Postio builds for it, with
-    /// its preview. Answered `None` when no model with `like_this` on is
-    /// configured -- the command is absent -- or the model picked none.
+    /// `None` when no model with `like_this` on is configured, or the model picked none.
     DigestLikeThis(MessageId),
-    /// What a digest rule matching `queries` would have caught since
-    /// `since`: the rule dialog's preview, through the executor (spec 007
-    /// FR-120, FR-127).
     DigestPreview {
-        /// The rule's queries, in the one query language; any matching holds.
         queries: Vec<String>,
-        /// How far back: the last 90 days, in the dialog.
         since: DateTime<Utc>,
     },
-    /// Write a digest rule to `config.toml`: a new one, or `replacing` the
-    /// rule of that name where it stands (spec 007 FR-120).
     SaveDigestRule {
-        /// The rule being edited, by its name as it was.
         replacing: Option<String>,
-        /// The rule as the dialog says it.
         rule: DigestRuleDraft,
     },
-    /// Take a digest rule out of `config.toml` and release what it held into
-    /// the inbox (spec 007 FR-126); answered with how many it released.
     DeleteDigestRule(String),
-    /// Take a filtering entry back: stop never filtering `entry` (an
-    /// address, or a whole domain), or with `kind` turn that marker back on.
-    /// Whichever home holds it -- the file, or the person it names -- is
-    /// where it goes from.
     TakeBackFilter {
-        /// The pinned address or domain, or the marker's sender.
         entry: String,
-        /// `question` or `todo` for a marker; `None` for a pin.
         kind: Option<String>,
     },
-    /// Every sender's remembered treatment, `(address, "app" | "paper")`:
-    /// what a reader that looks senders up from memory keeps.
     Treatments,
-    /// Always draw `address`'s mail in `treatment` -- `app` or `paper` -- or
-    /// forget the choice with `None`. The treatment is the person's, so it
-    /// covers every address they own.
+    /// The treatment is the person's, so it covers every address they own.
     SetTreatment {
-        /// The sender.
         address: String,
-        /// The choice, or none to forget it.
         treatment: Option<String>,
     },
 }
 
-/// A digest rule as the rule dialog writes it (spec 007 screen 24): what
-/// becomes one `[[focus.digests]]` entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DigestRuleDraft {
-    /// What the digest is called; unique among the rules.
     pub name: String,
-    /// Queries in the one query language; the rule holds a message when
-    /// any of them matches. The dialog writes `from:<address>`.
+    /// The rule holds a message when any query matches. The dialog writes `from:<address>`.
     pub queries: Vec<String>,
-    /// How often it comes.
     pub cadence: postio_model::listing::Cadence,
-    /// On which day: a weekday for a weekly digest, a day of the month for a
-    /// monthly one, none for a daily one.
+    /// A weekday for weekly, a day of the month for monthly, none for daily.
     pub day: Option<RuleDay>,
-    /// At what time, on this machine's clock.
+    /// On this machine's clock.
     pub at: chrono::NaiveTime,
 }
 
-/// The day a digest comes on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuleDay {
-    /// A weekday, for a weekly digest.
     Weekday(chrono::Weekday),
-    /// A day of the month, 1 to 28, for a monthly digest.
+    /// 1 to 28.
     OfMonth(u32),
 }
 
 impl DigestRuleDraft {
-    /// The rule `form` holds, due as `schedule` says, or the sentence saying
-    /// why it cannot be written. The one place a schedule becomes a cadence,
-    /// a day and a time; the rule dialogs of every frontend end here.
+    /// The one place a schedule becomes a cadence, a day and a time. `Err` is a sentence for the
+    /// person.
     pub fn from_form(
         form: &postio_ui::rule_form::RuleForm,
         schedule: &postio_ui::digest::Schedule,
@@ -818,379 +456,222 @@ impl DigestRuleDraft {
     }
 }
 
-/// The rule "Digest mail like this" proposes (spec 007 FR-171): queries in
-/// the one language, never text a model wrote, and what they would have
-/// caught.
+/// Queries in the one language, never text a model wrote.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LikeThisRule {
-    /// The rule's queries, for `[[focus.digests]] match`.
     pub queries: Vec<String>,
-    /// What it would have caught in the last 90 days.
     pub preview: DigestPreview,
 }
 
-/// What a digest rule would have caught (spec 007 screen 24): "Would have
-/// caught 9 messages in the last 90 days", then the first four.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DigestPreview {
-    /// How many messages its queries match in the window.
     pub count: u32,
-    /// The newest of them, at most four.
     pub first: Vec<MessageSummary>,
 }
 
-/// What queueing a draft to send did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Queued {
-    /// The Drafts folder whose list moved, if one did.
     pub drafts: Option<MailboxId>,
-    /// The draft now waiting to send: what taking the send back names.
     pub draft: DraftId,
 }
 
-/// The host's answer to one [`Req`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Resp {
-    /// Done; nothing to report.
     Done,
-    /// A tracked send was queued; its events carry this id.
     Tracked(InvocationId),
     /// The runtime has stopped and took no command.
     Stopped,
-    /// A page.
     Page(ListPage),
-    /// A count.
     Count(u32),
-    /// Rows.
     Rows(Vec<MessageSummary>),
-    /// A thread as a window or an expansion reads it, or none when it is
-    /// gone.
     Thread(Option<Box<postio_model::ThreadView>>),
-    /// The thread a split made.
     Split(postio_model::ThreadId),
-    /// A forward built, or why it was refused.
     Forwarded(postio_model::Forwarded),
-    /// The muted threads of a page, each with its replies since.
     Muted(Vec<(postio_model::ThreadId, u32)>),
-    /// Rows, in the scope's shape.
     ListRows(ListRows),
-    /// Folders.
     Mailboxes(Vec<Mailbox>),
-    /// Draft counts.
     DraftCounts(DraftCounts),
-    /// The accounts.
     Accounts(Vec<Account>),
-    /// A body.
     Body(Body),
-    /// The list a message was unsubscribed from.
     Unsubscribed(String),
-    /// A list's mail, as the offer after an unsubscribe counts it.
     ListMail(ListMailFound),
-    /// A message's parts.
     Parts(Vec<postio_model::Attachment>),
-    /// Where a part was written.
     Saved(std::path::PathBuf),
-    /// What a reading pane draws of each message asked for.
     Readings(Vec<Reading>),
-    /// An inline part's bytes and type, or nothing when they are not here.
     InlinePart(Option<(Vec<u8>, String)>),
-    /// How many parts of a batch could not be saved.
     SavedParts(u32),
-    /// Whether a forward's carried parts are coming, and why not.
     Carried(postio_model::fetch::PayloadAsk),
-    /// The id a saved draft has.
     DraftSaved(DraftId),
-    /// A draft was queued.
     Queued(Queued),
-    /// Recipient suggestions, best first.
     Recipients(Vec<RecipientCandidate>),
-    /// Correspondents, most often seen first.
     Correspondents(Vec<postio_model::Contact>),
-    /// The person at an address, if the store knows one.
     ContactFor(Option<Box<postio_model::Contact>>),
-    /// The answer to [`Req::ContactGlance`].
     ContactGlance(Option<Box<postio_model::ContactGlance>>),
-    /// The answer to [`Req::ContactsPage`].
     ContactsPage(postio_model::ContactsPageRead),
-    /// The answer to [`Req::ContactsFiltered`].
     ContactsFiltered(Vec<postio_model::ContactListRow>),
-    /// The answer to [`Req::ContactsOverview`].
     ContactsOverview(postio_model::ContactsOverview),
-    /// The answer to [`Req::ContactCard`].
     ContactCard(Option<Box<postio_model::ContactCardRead>>),
-    /// The answer to [`Req::ContactGroups`].
     ContactGroups(Vec<String>),
-    /// The answer to [`Req::ContactsSyncPlan`].
     ContactsSyncPlan(Box<postio_contact_sync::Plan>),
-    /// The answer to [`Req::ContactsSyncBringIn`].
     ContactsBroughtIn(Box<postio_contact_sync::BroughtIn>),
-    /// The answer to [`Req::ContactsImport`].
     ContactsImported(Box<postio_model::card::ImportSummary>),
-    /// The answer to [`Req::ContactsExport`]: the file's text and how many
-    /// people it holds.
+    /// The file's text and how many people it holds.
     ContactsExported(String, usize),
-    /// The answer to [`Req::ContactSeen`].
     ContactSeen(Vec<postio_model::SeenItem>),
-    /// The answer to [`Req::ContactSuggestions`] and
-    /// [`Req::ContactSuggestionSet`].
     ContactSuggestions(postio_model::ContactSuggestions),
-    /// The answer to [`Req::ContactPosition`].
     ContactPosition(Option<u32>),
-    /// The answer to [`Req::ContactReview`].
     ContactReview(Vec<postio_model::MergeGroup>),
-    /// The answer to [`Req::ContactMergeOf`].
     ContactMergeOf(Option<Box<postio_model::MergeGroup>>),
-    /// Each sender's remembered treatment.
     Treatments(Vec<(String, String)>),
-    /// What recipient completion can offer.
     RecipientDirectory(RecipientDirectory),
-    /// Labels, by name.
     Labels(Vec<postio_model::Label>),
-    /// Folders, newest first: the move picker's Recent.
     MoveRecent(Vec<MailboxId>),
-    /// Each filter reason with its count, in the tabs' order.
     FilteredTabs(Vec<(String, u32)>),
-    /// Counts, in the order asked for.
     Counts(Vec<u32>),
-    /// Each held message, its rule, and whether its digest was delivered.
     Held(Vec<(MessageId, String, bool)>),
-    /// An account, or none for a message not in the store.
     AccountOf(Option<AccountId>),
-    /// A page of filtered mail.
     Filtered(Vec<FilteredRow>),
-    /// Each label with how many conversations carry it; a label nothing
-    /// carries is left out.
+    /// A label nothing carries is left out.
     LabelCounts(Vec<(postio_model::LabelId, u32)>),
-    /// One label, or none when it could not be made.
     Label(Option<postio_model::Label>),
-    /// Each conversation's labels, in the order they were made.
     ThreadLabels(Vec<(postio_model::ThreadId, postio_model::Label)>),
-    /// Focus's counts.
     FocusCounts(FocusCounts),
-    /// What Undo would take back, or `None` when nothing can be.
     UndoTop(Option<String>),
-    /// A reply's source message and its account.
     ReplySource(Option<Box<(postio_model::Message, Account)>>),
-    /// A draft, or none.
     Draft(Option<Box<Draft>>),
-    /// Why a send failed, if it did.
     SendFailure(Option<String>),
-    /// A signature, or none.
     Signature(Option<postio_model::SignatureId>),
-    /// A stored attachment, or none when the file could not be read.
     Attached(Option<postio_model::Attachment>),
-    /// Stored bytes, or none when they are not here.
+    RemoteImage(Result<postio_model::Attachment, postio_ui::compose::RemoteRefusal>),
     Bytes(Option<Vec<u8>>),
-    /// What a search found, or nothing when the store could not be read.
     Found(Option<Found>),
-    /// The desktop search's hits, or nothing when the store could not be
-    /// read.
     Hits(Option<Box<Hits>>),
-    /// A search's facet counts, or nothing when they did not run.
     Facets(Option<postio_search::facets::Facets>),
-    /// One page of a conversation search, or nothing when the store could
-    /// not be read.
     Conversations(Option<Box<Conversations>>),
-    /// Each hit's matches with their passages, in the order asked.
     Passages(Vec<(MessageId, Vec<postio_search::results::Match>)>),
-    /// One conversation's matches, oldest first; empty when it could not be
-    /// read.
+    /// Empty when the conversation could not be read.
     Matches(Vec<postio_search::results::ConversationMatch>),
-    /// The Files tab's cards; empty when the store could not be read.
+    /// Empty when the store could not be read.
     Files(Vec<postio_search::results::FileHit>),
-    /// The People tab's rows; empty when the store could not be read.
+    /// Empty when the store could not be read.
     People(Vec<postio_search::suggest::Person>),
-    /// Where a copy was written, or nothing when it could not be.
     Path(Option<std::path::PathBuf>),
-    /// The ways out that would find something, most first; empty when none
-    /// would, or when they could not be counted.
+    /// Empty when none would find anything, or they could not be counted.
     Relaxed(
         Vec<(
             postio_search::relax::Relaxation,
             postio_search::results::Counted,
         )>,
     ),
-    /// What a prefix could become; empty when the store could not be read.
+    /// Empty when the store could not be read.
     Suggestions(Box<postio_search::suggest::Suggestions>),
-    /// The remembered searches, newest first.
     Recent(Vec<RecentSearch>),
-    /// Each saved search asked, counted, in the order asked.
     SavedCounts(Vec<SavedCount>),
-    /// A message's stored words; empty when there are none here.
+    /// Empty when there are none here.
     StoredBody(postio_model::MessageBody),
-    /// Where each exported message was written, in the order asked.
     Exported(Vec<std::path::PathBuf>),
-    /// The accounts the settings show, with their folders and weights.
     AccountSettings(Vec<AccountSettings>),
-    /// Outbound connections, newest first.
     Egress(Vec<postio_model::egress::EgressEvent>),
-    /// The privacy pane's figures.
     Privacy(PrivacyLog),
-    /// Whether the orientation was seen before.
     Seen(bool),
-    /// What discovery found, as the first-run screen shows it.
     Onboarding(Box<postio_ui::onboarding::Status>),
-    /// Where the browser sign-in waits for the person.
     Consent(Box<postio_ui::onboarding::BrowserSignIn>),
-    /// The rows Focus's inbox surfaces, newest first.
     Surfaced(Vec<postio_model::listing::Surfaced>),
-    /// A digest rule's preview.
     DigestPreview(DigestPreview),
-    /// The rule "Digest mail like this" proposes, if any.
     DigestLikeThis(Option<LikeThisRule>),
-    /// A digest's summary, if it has one to show.
     DigestSummary(Option<postio_model::summary::DigestSummary>),
-    /// A message's raw source, every byte as the server sent it.
     RawSource(Vec<u8>),
-    /// What the capture sheet reads from the vault.
     Vault(VaultPicture),
-    /// What a capture appended.
     Captured(postio_vault::Captured),
-    /// The read could not be answered; the sentence is for the user.
+    /// The sentence is for the user.
     Failed(StoreError),
 }
 
-/// A message's body as the store holds it, or which kind of "no body" this
-/// is. The frontend applies the reader's rules to it -- sanitising, reader
-/// view, folding -- with the same shared code every reader uses.
+/// The frontend applies the reader's rules (sanitising, reader view, folding) with the code every
+/// reader shares.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Body {
-    /// The words are here.
     Ready {
-        /// The text and HTML parts.
         body: postio_model::MessageBody,
-        /// Whether those words are a guess rather than what was sent.
         encoding_problems: bool,
     },
-    /// Headers are here; the body has not been fetched yet.
     Partial,
-    /// Not fetched, and nothing is fetching: offline.
     Offline,
-    /// Recorded, but the bytes are not in the store.
     Missing,
-    /// Fetched, and there is no text or HTML part.
     Empty,
-    /// A draft written by another client: nothing here to edit.
     ForeignDraft,
-    /// Headers are here; the server would not give up the body when last
-    /// asked (#1918). Opening the message asks again.
+    /// The server would not give up the body when last asked (#1918); opening the message asks
+    /// again.
     Failed,
 }
 
-/// Everything a reading pane draws of one message, read on one turn.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reading {
-    /// Which message.
     pub message: MessageId,
-    /// Its body, or which kind of "no body" this is.
     pub body: Body,
-    /// Its row -- the header, the parts, the list it came from -- or `None`
-    /// when the message is gone.
     pub row: Option<Box<postio_model::Message>>,
-    /// Whether it is a message being sent, and in which state; `None` for
-    /// ordinary mail.
     pub send_state: Option<postio_model::DraftState>,
-    /// The one quiet line the header shows when the sender may not be who
-    /// they say -- failed authentication, or a display name that names
-    /// another address (#1928). `None` for ordinary mail.
+    /// The quiet line shown when the sender may not be who they say (#1928).
     pub sender_warning: Option<String>,
 }
 
-/// What the settings' account commands do to an account.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccountOp {
-    /// Sync it, or stop.
     SetEnabled {
-        /// Which.
         account: AccountId,
-        /// Whether it should sync.
         enabled: bool,
     },
-    /// Remove it: marked for deletion, and undone by [`AccountOp::Restore`]
-    /// until the deletion is carried out.
+    /// Marked for deletion; undone by `AccountOp::Restore` until the deletion is carried out.
     Remove(AccountId),
-    /// Take back a removal.
     Restore(AccountId),
-    /// Make it the account new mail is written from.
     SetDefault(AccountId),
-    /// Rebuild its local search index; progress arrives as events.
     RebuildIndex(AccountId),
 }
 
-/// One field of an account's row, as the settings' detail view edits it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AccountField {
-    /// The name shown in the sidebar.
     DisplayName(String),
-    /// The incoming server's hostname.
     ImapHost(String),
-    /// The incoming server's port.
     ImapPort(u16),
-    /// The outgoing server's hostname.
     SmtpHost(String),
-    /// The outgoing server's port.
     SmtpPort(u16),
-    /// Which signature the composer starts on, or none of them.
     DefaultSignature(Option<postio_model::SignatureId>),
 }
 
-/// One account as the settings panel shows it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccountSettings {
-    /// The row.
     pub account: Account,
-    /// Every folder it can open, by server path, in listing order.
     pub folders: Vec<String>,
-    /// The roles pointed somewhere by hand, and where.
     pub chosen: Vec<(postio_model::MailboxRole, String)>,
-    /// What each role resolves to right now, mapped or not.
     pub resolved: Vec<(postio_model::MailboxRole, String)>,
-    /// The roles the server refused a folder for, and what it said.
     pub refused: Vec<(postio_model::MailboxRole, String)>,
-    /// What its mail weighs, when asked for and measurable.
     pub weight: Option<postio_core::event::MailFootprint>,
 }
 
-/// What the privacy pane draws.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PrivacyLog {
-    /// Every account's unsubscribe activations, newest first.
     pub activations: Vec<postio_model::UnsubscribeActivation>,
-    /// How many messages, in every account, asked for a read receipt.
     pub read_receipts: u64,
 }
 
-/// What the host does with a new account once it is saved.
-///
-/// The terminal's first run syncs at once. A desktop app starts the sync
-/// itself: its first run asks how far back to sync after the account is
-/// saved and before any mail is fetched, its add-account dialog brings the
-/// new account into a window that is already running, and a credential
-/// update is over an account whose sync is running already. A second engine
-/// for one account, or one started under the wrong sync window, is what
-/// [`AfterSave::Wait`] keeps out.
+/// A desktop app starts the sync itself (after the first-run window choice, in a running window, or
+/// for a credential update);
+/// `AfterSave::Wait` keeps out a second engine for one account, or one under the wrong sync window.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum AfterSave {
-    /// Start the account's sync.
     #[default]
     Sync,
     /// Save it and nothing more: the frontend starts what it needs.
     Wait,
 }
 
-/// A frontend's way to stop work it asked the host for, where it stands.
-///
-/// A discovery probe opens connections to servers the person has not named
-/// yet, so one the person has moved on from -- another address typed,
-/// Connect pressed, the form closed -- must stop at once rather than hold a
-/// socket open for an answer nobody reads (#57, ADR 0012 Q3). The host is in
-/// the frontend's process (ADR 0041), so this is shared, not sent: whatever
-/// the host hangs on [`Stop::on_stop`] runs inside [`Stop::stop`], on the
-/// frontend's own thread, before `stop` returns.
+/// A discovery probe opens connections to servers the person has not named yet, so one they moved
+/// on from must stop at once (#57, ADR 0012 Q3).
+/// Shared, not sent: the `on_stop` hooks run inside `stop`, on the frontend's thread, before it
+/// returns.
 #[derive(Clone, Default)]
 pub struct Stop(std::sync::Arc<std::sync::Mutex<Stopping>>);
 
-/// Whether a [`Stop`] has fired, and what runs when it does.
 #[derive(Default)]
 struct Stopping {
     stopped: bool,
@@ -1198,13 +679,11 @@ struct Stopping {
 }
 
 impl Stop {
-    /// A stop nobody has pulled.
     pub fn new() -> Stop {
         Stop::default()
     }
 
-    /// Stop the work, now: every hook runs before this returns. Pulling it
-    /// again does nothing.
+    /// Every hook runs before this returns; pulling it again does nothing.
     pub fn stop(&self) {
         let hooks = {
             let mut stopping = self
@@ -1219,7 +698,6 @@ impl Stop {
         }
     }
 
-    /// Whether it has been pulled.
     pub fn is_stopped(&self) -> bool {
         self.0
             .lock()
@@ -1227,7 +705,6 @@ impl Stop {
             .stopped
     }
 
-    /// Run `hook` when the stop is pulled, or now, if it already has been.
     pub fn on_stop(&self, hook: impl FnOnce() + Send + 'static) {
         let mut stopping = self
             .0
@@ -1248,7 +725,6 @@ impl std::fmt::Debug for Stop {
     }
 }
 
-/// Two stops are equal when they are the same stop.
 impl PartialEq for Stop {
     fn eq(&self, other: &Stop) -> bool {
         std::sync::Arc::ptr_eq(&self.0, &other.0)
@@ -1257,69 +733,43 @@ impl PartialEq for Stop {
 
 impl Eq for Stop {}
 
-/// A search, as a frontend's search bar asks it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Search {
-    /// Which accounts.
     pub account: postio_model::AccountScope,
-    /// The query as typed, in Postio's query language; the host parses it.
     pub query: String,
-    /// Newest first rather than best match first.
     pub newest_first: bool,
-    /// The standing rescope a facet picks, the query left as typed.
     pub scope: postio_search::facets::Scope,
 }
 
-/// What a search found: the matching messages, best first, and what the
-/// readout says about them (`postio_ui::search::Outcome`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Found {
-    /// The messages, in the order the list shows them.
     pub ids: Vec<MessageId>,
-    /// How many matched.
     pub hits: u64,
-    /// Whether `hits` is a floor rather than the true count.
     pub capped: bool,
-    /// Whether every message searched had a body to search.
     pub corpus_complete: bool,
-    /// How long it took.
     pub elapsed: std::time::Duration,
 }
 
-/// What a desktop search found, as its surfaces draw it.
-///
-/// A wrapper only for [`Resp`]'s `Eq`: a hit's rank is an `f64`, which has
-/// no total equality. It is never NaN -- the executor folds `bm25` with
-/// finite weights -- so equality here is reflexive in practice.
+/// A wrapper only for `Resp`'s `Eq`: a hit's rank is an `f64`, never NaN (the executor folds `bm25`
+/// with finite weights).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Hits(pub postio_search::SearchResults);
 
 impl Eq for Hits {}
 
-/// What a conversation search found, as Focus's results view draws it.
-///
-/// A search a person ran: one row of the dropdown's Recent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecentSearch {
-    /// The query, exactly as run.
     pub query: String,
-    /// When it last ran.
     pub last_run_at: chrono::DateTime<chrono::Utc>,
-    /// Conversations it matched, as the footer said.
     pub hits: u64,
-    /// Its search stopped at the walk's cap: `hits` is a floor (D30).
     pub capped: bool,
 }
 
-/// What a saved search's pill and quiet badge count (spec 010 D15, D30).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SavedCount {
-    /// Its `[saved_searches.<key>]` key.
     pub key: String,
-    /// The conversations it matches; a floor past the walk's cap.
     pub total: postio_search::results::Counted,
-    /// How many of them have a match received since it was last viewed;
-    /// zero before it was first viewed, and a floor past the badge's cap.
+    /// Zero before it was first viewed.
     pub new: postio_search::results::Counted,
 }
 
@@ -1330,40 +780,25 @@ pub struct Conversations(pub postio_search::results::ConversationResults);
 
 impl Eq for Conversations {}
 
-/// What recipient completion can offer an account: its groups, each with
-/// its members' addresses, and its contacts in the order the store ranks
-/// them. A group with no members is left out, since it would expand to
-/// nothing.
+/// A group with no members is left out, since it would expand to nothing.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RecipientDirectory {
-    /// Named groups with their members' addresses, in the store's order.
     pub groups: Vec<(String, Vec<postio_model::EmailAddress>)>,
-    /// Contacts, best first, each with how often the user wrote to it:
-    /// what `postio_ui::recipients::suggest` ranks by (spec 007 T076).
     pub contacts: Vec<postio_ui::recipients::Correspondent>,
 }
 
-/// What the capture sheet reads from the vault (spec 007 US15, FR-181).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct VaultPicture {
-    /// The vault's projects, by name.
     pub projects: Vec<postio_vault::Project>,
-    /// The project suggested for the message, and why.
     pub suggestion: Option<postio_vault::Suggestion>,
-    /// The note a task goes to with no project, relative to the vault.
     pub tasks_note: std::path::PathBuf,
-    /// Every task Postio captured, in the tasks note and the projects'.
     pub tasks: Vec<postio_vault::CapturedTask>,
 }
 
-/// The mail a list has left behind, found for the offer that follows an
-/// unsubscribe (#1931). Flagged mail and mail already in Trash, Junk, Sent or
-/// Drafts is not in it.
+/// Flagged mail and mail already in Trash, Junk, Sent or Drafts is not in it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListMailFound {
-    /// The `List-Id`, or the sender's address when the message named no list.
     pub name: String,
-    /// The messages, newest first, one page: act on these as one command.
     pub ids: Vec<MessageId>,
     /// More matched than the page held, so `ids.len()` is a floor.
     pub more: bool,

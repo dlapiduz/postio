@@ -1,8 +1,5 @@
-//! Which mail is old enough to empty from Junk and Trash (#1932).
-//!
-//! Finds candidates only; the deleting is [`crate::actions::purge`]. One page
-//! per call, oldest first, so a pass over a mailbox of a hundred thousand
-//! reads a few hundred ids at a time and never the mailbox.
+//! Candidates for emptying Junk and Trash (#1932); the deleting is [`crate::actions::purge`]. One
+//! page per call, oldest first, so a pass never reads the mailbox.
 
 use chrono::{DateTime, Utc};
 use postio_model::MailboxRole;
@@ -13,29 +10,22 @@ use crate::error::Result;
 use crate::sql::{self, RowExt as _, bind};
 use crate::store::Connection;
 
-/// One page of expired mail, grouped as the purge needs it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Expired {
-    /// `(mailbox, message)`, oldest first.
     pub messages: Vec<(MailboxId, MessageId)>,
-    /// More matched than the page held.
     pub more: bool,
 }
 
-/// Read expired mail on one connection.
 pub struct ExpiryRepository<'a> {
     connection: &'a Connection,
 }
 
 impl<'a> ExpiryRepository<'a> {
-    /// Borrow `connection`.
     pub fn new(connection: &'a Connection) -> Self {
         Self { connection }
     }
 
-    /// Up to `limit` of `account`'s messages in folders of `role` received
-    /// before `before`, oldest first. Never a Flagged message, and none
-    /// already hidden by a delete in flight. One statement.
+    /// Never a Flagged message, and none already hidden by a delete in flight. One statement.
     pub async fn expired_in(
         &self,
         account: AccountId,

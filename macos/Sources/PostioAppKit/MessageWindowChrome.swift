@@ -2,12 +2,6 @@ import AppKit
 import PostioKit
 import SwiftUI
 
-/// The message window's title area (specs/009-focus-macos T067; SPEC
-/// section 2): a unified toolbar, which is what makes the title bar 52pt
-/// and centres the traffic lights in it, holding the subject and position
-/// line in the centre and the `k j` cap and the previous/next pair on the
-/// right. The views are SwiftUI's (`MessageWindowTitle`,
-/// `MessageWindowStepper`), reading the model, so a step redraws them.
 @MainActor
 public final class MessageWindowChrome: NSObject, NSToolbarDelegate {
     static let title = NSToolbarItem.Identifier("postio.message.title")
@@ -32,13 +26,10 @@ public final class MessageWindowChrome: NSObject, NSToolbarDelegate {
         toolbar.centeredItemIdentifiers = [Self.title]
     }
 
-    /// Put the title area on `window`.
     public func install(on window: NSWindow) {
         window.titleVisibility = .hidden
         window.toolbarStyle = .unified
         window.toolbar = toolbar
-        // The title area and the action row are one tinted band (SPEC
-        // section 2); the hairline is under the action row, not between.
         window.titlebarSeparatorStyle = .none
         window.backgroundColor = .windowBackgroundColor
     }
@@ -69,8 +60,6 @@ public final class MessageWindowChrome: NSObject, NSToolbarDelegate {
         default:
             return nil
         }
-        // Not a glass button: the title is text, and the pair draws its
-        // own joined outline.
         item.isBordered = false
         return item
     }

@@ -1,12 +1,3 @@
-//! The cursor, the selection and the has-action filter, from the
-//! controller's side (specs/009-focus-macos T039; contract invariants 1-3).
-//!
-//! What GTK's window did with `SingleSelection` and `SelectionState`,
-//! asserted here so both frontends get it: the cursor and the selection are
-//! different things, `x` never moves the cursor, `J`/`K` walk over a digest
-//! without taking it, `!` keeps the cursor on the same message, and every
-//! list opens on its first row.
-
 use crate::search_support::shown;
 use postio_config::paths::Platform;
 use postio_core::CommandId;
@@ -14,7 +5,6 @@ use postio_core::state::Selection;
 use postio_focus::{Effect, FocusController, Input, Intent, Policy, RowFacts, Rows};
 use postio_model::{AccountId, MessageId, ThreadId};
 
-/// A list of conversations, with digests at the positions named.
 struct List {
     rows: Vec<RowFacts>,
 }
@@ -79,7 +69,6 @@ fn run(focus: &mut FocusController, command: CommandId, rows: &List) -> Vec<Effe
 
 #[test]
 fn a_list_that_lands_opens_on_its_first_row() {
-    // C30: every list opens with the cursor on its first row.
     let rows = List::of(5, &[]);
     let mut focus = focus();
     let _ = focus.open(postio_model::ListScope::Focus(
@@ -109,7 +98,6 @@ fn a_cursor_the_person_moved_before_the_list_landed_stays_put() {
     let effects = focus.landed(&rows, true);
     assert_eq!(cursor_of(&effects), Some(2), "{effects:?}");
     assert_eq!(focus.cursor(), Some(2));
-    // The next place opened is a new list: its first row.
     let _ = focus.open(postio_model::ListScope::Focus(
         postio_model::FocusScope::Inbox,
     ));
@@ -178,7 +166,6 @@ fn shift_j_extends_over_a_digest_without_taking_it() {
 
 #[test]
 fn capital_x_selects_everything_as_a_predicate() {
-    // C19: a predicate over the view, not the rows on screen.
     let rows = List::of(3, &[]);
     let mut focus = focus();
     let _ = focus.handle(Input::Accounts(vec![AccountId::new(1)]));
@@ -232,7 +219,6 @@ fn has_action_clears_the_selection_and_keeps_the_cursor_on_its_message() {
         "the narrowed list is opened"
     );
 
-    // The narrowed list holds message 102 at position 0.
     let narrowed = List {
         rows: vec![RowFacts {
             id: MessageId::new(102),
@@ -244,7 +230,6 @@ fn has_action_clears_the_selection_and_keeps_the_cursor_on_its_message() {
     let effects = focus.landed(&narrowed, true);
     assert_eq!(cursor_of(&effects), Some(0), "on the same message");
 
-    // Off again: the message is at position 2 of the inbox.
     let _ = run(&mut focus, CommandId::ToggleHasAction, &narrowed);
     let effects = focus.landed(&inbox, true);
     assert_eq!(cursor_of(&effects), Some(2));
@@ -278,8 +263,6 @@ fn a_reread_that_is_not_an_opening_leaves_the_cursor_where_it_is() {
 
 #[test]
 fn a_click_moves_the_cursor_and_leaves_the_selection() {
-    // The pointer's cursor is the keyboard's: a click on a row is where `a`
-    // lands next, and it selects nothing (spec 007 FR-016).
     let rows = List::of(4, &[]);
     let mut focus = focus();
     let _ = focus.landed(&rows, true);
@@ -351,7 +334,6 @@ fn a_shift_click_takes_the_range_from_the_anchor_skipping_digests() {
         1,
         "one gesture, one selection drawn"
     );
-    // Upwards, from the same anchor: the gesture's start stays put.
     let effects = focus.handle_on(
         Input::Pick {
             position: 0,
@@ -386,7 +368,6 @@ fn a_cursor_the_frontend_moved_is_where_j_goes_from() {
     assert_eq!(focus.cursor(), Some(3));
     let effects = run(&mut focus, CommandId::NextMessage, &rows);
     assert_eq!(cursor_of(&effects), Some(4), "j walks on from where it is");
-    // A shift-click counts from the cursor the frontend left, with no anchor.
     focus.cursor_is(Some(1));
     let effects = focus.handle_on(
         Input::Pick {
@@ -403,7 +384,6 @@ fn a_cursor_the_frontend_moved_is_where_j_goes_from() {
             MessageId::new(103)
         ]))
     );
-    // No cursor at all (an emptied list): j starts at the first row.
     focus.cursor_is(None);
     assert_eq!(focus.cursor(), None);
     let effects = run(&mut focus, CommandId::NextMessage, &rows);
@@ -431,7 +411,6 @@ fn leaving_the_list_drops_the_selection_and_the_filter_and_keeps_the_cursor() {
     assert!(!focus.has_action(), "`!` is off in another place");
     assert!(focus.selection().is_empty());
 
-    // The `!` that was pending is forgotten: the next list opens on row 0.
     let effects = focus.landed(&rows, true);
     assert_eq!(cursor_of(&effects), Some(0));
 }
@@ -458,7 +437,6 @@ fn clearing_the_selection_leaves_the_cursor_and_the_filter() {
 
 #[test]
 fn the_selection_remembers_the_conversations_each_row_stood_for() {
-    // A row scrolled out of the window is still aimed at in full (T161).
     let rows = List::of(4, &[]);
     let mut focus = focus();
     let _ = focus.landed(&rows, true);
@@ -475,8 +453,6 @@ fn the_selection_remembers_the_conversations_each_row_stood_for() {
     assert!(focus.selection_reach().is_empty());
 }
 
-/// A reply came to `thread`: the list is read again once the burst it
-/// came in is over.
 fn reply_came(focus: &mut FocusController, thread: i64, rows: &List) {
     let effects = focus.handle_on(
         Input::Event(postio_core::Event::ThreadChanged {
@@ -500,8 +476,6 @@ fn reply_came(focus: &mut FocusController, thread: i64, rows: &List) {
     );
 }
 
-/// `rows` re-read with `thread`'s row drawn from its reply, message 900,
-/// and moved to the top, as newest first puts it.
 fn replied_to_top(rows: &List, thread: i64) -> List {
     let mut moved: Vec<RowFacts> = rows
         .rows

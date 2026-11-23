@@ -1,6 +1,3 @@
-//! What the cases share: a corpus message as the reader composes it, and
-//! a main loop turned until something is on screen.
-
 use std::sync::Arc;
 
 use gtk::glib;
@@ -10,15 +7,12 @@ use postio_render::Resources;
 use postio_ui::reader::document::{self, Rendering};
 use postio_widgets::body_view::Content;
 
-/// The render deadline for every case that is not about the deadline: the
-/// production bound, scaled by `POSTIO_TEST_PATIENCE`, so a debug build on a
-/// busy runner does not fall back by accident (spec 006 research R6).
+/// Scaled by `POSTIO_TEST_PATIENCE` so a debug build on a busy runner does not fall back by
+/// accident.
 pub fn reader_deadline() -> std::time::Duration {
     postio_test_support::scaled(postio_widgets::body_view::DEFAULT_RENDER_DEADLINE)
 }
 
-/// The corpus message `name` as the single-message reader composes it, with
-/// its parts and faces.
 pub fn content(name: &str) -> Content {
     let parsed = postio_model::mime::parse(test_corpus::load(name).bytes());
     let resources = Resources::new();
@@ -50,8 +44,6 @@ pub fn content(name: &str) -> Content {
     }
 }
 
-/// A conversation of one message, `scope`, whose body is `body`: composed by
-/// the reader's own thread document, with its quoted text folded.
 pub fn conversation(scope: &str, body: &str) -> Content {
     use postio_ui::reader::thread::{Entry, conversation_document};
     let sanitized =
@@ -80,9 +72,8 @@ pub fn conversation(scope: &str, body: &str) -> Content {
     content
 }
 
-/// One turn of the main loop, blocking until something happens. The
-/// heartbeat bounds the block: the frame clock paints on the compositor's
-/// frame callbacks, which only a blocking iteration waits for.
+/// The heartbeat bounds the block: the frame clock paints on compositor frame callbacks, which only
+/// a blocking iteration waits for.
 fn pump() {
     let heartbeat = glib::timeout_add_local(std::time::Duration::from_millis(10), || {
         glib::ControlFlow::Continue
@@ -91,7 +82,6 @@ fn pump() {
     heartbeat.remove();
 }
 
-/// Run the main loop until `done`, painting frames; false on timeout.
 pub fn until(done: impl Fn() -> bool) -> bool {
     let deadline =
         std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));

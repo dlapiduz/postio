@@ -33,7 +33,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "issue-land.sh"
 
-# message from `gh`, expected fragment of our output, expected exit status
 CASES = [
     (
         "",  # succeeds
@@ -103,9 +102,6 @@ def main() -> int:
         stub_dir.mkdir()
 
         for message, expected, expected_status in CASES:
-            # `sleep` is stubbed away too: the retrying branches wait fifteen
-            # seconds between them, which is right in a landing and absurd in
-            # a test.
             (stub_dir / "sleep").write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
             (stub_dir / "sleep").chmod(0o755)
             gh = stub_dir / "gh"
@@ -138,11 +134,6 @@ def main() -> int:
             elif expected not in output:
                 failures.append(f"{label!r}: said nothing about {expected!r}.\n{output}")
 
-        # The two ways back to a branch whose checks went red, which is what
-        # these lines are for. An issue branch resumes through the claim
-        # script; a small fix has no issue to resume and the script has to
-        # name the branch instead, or the one route back is a command that
-        # takes an issue number the landing never had.
         (stub_dir / "gh").write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
         (stub_dir / "gh").chmod(0o755)
         for small, expected in ((False, "issue-claim.sh --resume 42"),

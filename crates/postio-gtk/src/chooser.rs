@@ -1,7 +1,6 @@
-//! `A`: open an attachment or a link (US2 scenario 9). A small dialog lists
-//! the open message's links and its parts; each link shows the words it was
-//! written behind and, under them, its full target -- what will open, seen
-//! before it opens. Nothing opens until a row is chosen.
+//! `A`: opens an attachment or a link. Each link shows its words and, under them, its full target,
+//! seen before it opens;
+//! nothing opens until a row is chosen.
 
 use std::rc::Rc;
 
@@ -9,36 +8,25 @@ use adw::prelude::*;
 use gtk::glib;
 use postio_model::ids::AttachmentId;
 
-/// The dialog's widget name, so it can be told from another dialog.
 pub const DIALOG_NAME: &str = "focus-open-choice";
 
-/// The dialog's size.
 const WIDTH: i32 = 560;
 const HEIGHT: i32 = 420;
 
-/// One thing `A` offers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Choice {
-    /// A link in the body.
     Link {
-        /// The words it was written behind.
         words: String,
-        /// Where it goes, in full.
         target: String,
     },
-    /// A part of the message.
     Part {
-        /// Its file name.
         name: String,
-        /// Its size, as a person reads it.
         size: String,
-        /// Which part.
         id: AttachmentId,
     },
 }
 
 impl Choice {
-    /// What the row says: its words or name, and its target or size.
     pub fn said(&self) -> (String, String) {
         match self {
             Choice::Link { words, target } => (words.clone(), target.clone()),
@@ -47,41 +35,23 @@ impl Choice {
     }
 }
 
-/// What a person asked of the chooser.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pick {
-    /// Open the `n`th thing offered.
     Open(usize),
-    /// Save the `n`th thing offered, a part, to a file.
     Save(usize),
-    /// Save every part to a folder.
     SaveAll,
 }
 
-/// What the file-chooser portal is asked for (T240).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SavePick {
-    /// A file to write one part to, offered under `suggested`.
-    File {
-        /// The part's name, made safe to write.
-        suggested: String,
-    },
-    /// A folder to write every part into.
+    File { suggested: String },
     Folder,
-    /// A `.vcf` to read contacts from (specs/011-focus-contacts S11).
     Cards,
-    /// A `.vcf` to write contacts to, offered under `suggested`.
-    CardsFile {
-        /// The file's name.
-        suggested: String,
-    },
+    CardsFile { suggested: String },
 }
 
-/// A dialog offering `choices`, with `at` the row it opens on; `chosen` is
-/// called with what a person picks, and the dialog closes.
-///
-/// A part's row has its own Save, and the header has Save all while there
-/// is a part to save: both ask the portal, and neither does until pressed.
+/// `chosen` is called with what a person picks, and the dialog closes. Neither Save asks the portal
+/// until pressed.
 pub fn dialog(
     choices: &[Choice],
     at: Option<usize>,
@@ -173,7 +143,6 @@ pub fn dialog(
     dialog
 }
 
-/// The title of the row `dialog` has selected: where a chip opened it.
 pub fn selected(dialog: &adw::Dialog) -> Option<String> {
     let mut stack = vec![dialog.child()?];
     while let Some(widget) = stack.pop() {

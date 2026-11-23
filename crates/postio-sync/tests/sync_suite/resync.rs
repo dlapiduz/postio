@@ -1,10 +1,3 @@
-//! Incremental resync: what changed since last time, and the `UIDVALIDITY`
-//! trap.
-//!
-//! No network and no server: `MockBackend` is the in-memory mail store the
-//! whole sync engine is developed against (see
-//! `crates/postio-account/src/backend/mock.rs`).
-
 use postio_account::backend::{Fault, MailBackend, MockBackend, MockMailbox, MockMessage};
 use postio_account::cancel::CancelToken;
 use postio_model::{AccountId, Flag, FlagSet, Mailbox, Uid, UidValidity};
@@ -26,7 +19,6 @@ async fn times_ada_was_seen(connection: &Connection, _account_id: AccountId) -> 
 const INBOX: &str = "INBOX";
 const VALIDITY: u32 = 1_707_000_000;
 
-/// The identity the pinned generation gives `uid`.
 fn rid(uid: u32) -> postio_model::RemoteId {
     postio_model::RemoteId::new(format!("{VALIDITY}:{uid}"))
 }
@@ -55,8 +47,6 @@ async fn local(connection: &Connection) -> (AccountId, Mailbox) {
     (account.id, inbox)
 }
 
-/// Runs the initial sync so the local store matches `backend`, as a fixture
-/// step for tests that are about what happens *after* that.
 async fn bootstrap(connection: &Checkout, backend: &MockBackend, mailbox: &Mailbox) {
     sync_mailbox(connection, backend, mailbox, &CancelToken::new(), |_| {})
         .await
@@ -87,8 +77,6 @@ async fn a_reconnect_with_no_server_changes_fetches_essentially_nothing() {
         .expect("resync");
 
     assert_eq!(outcome, Outcome::UpToDate);
-    // Only the one SELECT this pass had to make to find out nothing changed —
-    // no FETCH at all.
     assert_eq!(backend.calls() - calls_before, 1);
     assert_eq!(known_uids(&connection, &inbox).await, vec![1, 2, 3]);
 }
@@ -101,7 +89,6 @@ async fn a_server_side_flag_change_and_deletion_both_reflect_locally() {
     let (_account, inbox) = local(&connection).await;
     bootstrap(&connection, &backend, &inbox).await;
 
-    // Another client flags message 2 as seen...
     backend
         .store_flags(
             INBOX,
@@ -110,7 +97,6 @@ async fn a_server_side_flag_change_and_deletion_both_reflect_locally() {
         )
         .await
         .expect("flag");
-    // ...and deletes message 3 outright.
     backend
         .store_flags(
             INBOX,
@@ -167,10 +153,6 @@ async fn a_server_side_flag_change_and_deletion_both_reflect_locally() {
     );
 }
 
-/// RFC 7162 §3.2 obliges a server to raise `HIGHESTMODSEQ` on an expunge only
-/// if it supports QRESYNC. A CONDSTORE-only server may leave it alone, so a
-/// pass whose only news is a deletion sees the same value it recorded, plans
-/// `UpToDate`, and the deleted message stays in the list for ever.
 #[tokio::test]
 async fn a_deletion_that_leaves_highestmodseq_alone_still_reflects_locally() {
     let backend = server_with_messages(3).await;
@@ -188,8 +170,6 @@ async fn a_deletion_that_leaves_highestmodseq_alone_still_reflects_locally() {
         )
         .await
         .expect("mark deleted");
-    // Another client's flag change moved the value; take it into the local
-    // state first so the expunge below is the only news.
     resync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
         .await
         .expect("settle the flag change");
@@ -213,10 +193,6 @@ async fn a_deletion_that_leaves_highestmodseq_alone_still_reflects_locally() {
     );
 }
 
-/// A message the server holds but whose `FETCH` line the client cannot
-/// decode looks, to a fetch, exactly like an expunged one. The vanish check
-/// must not take the first for the second: that deletes mail the server still
-/// has (#1913).
 #[tokio::test]
 async fn a_message_the_client_cannot_decode_is_not_taken_for_expunged() {
     let backend = server_with_messages(4).await;
@@ -254,8 +230,6 @@ async fn a_message_the_client_cannot_decode_is_not_taken_for_expunged() {
     );
 }
 
-/// One message expunged elsewhere must not cost a download of the folder:
-/// presence is one `SEARCH`, not an envelope and structure per known message.
 #[tokio::test]
 async fn one_expunge_in_a_large_folder_does_not_refetch_every_header() {
     const FOLDER: u32 = 300;
@@ -302,8 +276,6 @@ async fn one_expunge_in_a_large_folder_does_not_refetch_every_header() {
     assert_eq!(known_uids(&connection, &inbox).await.len(), 299);
 }
 
-/// A listing that under-reports is an answer that might be partial, and the
-/// one thing a partial answer cannot be used for is deleting.
 #[tokio::test]
 async fn a_short_uid_listing_deletes_nothing() {
     let backend = server_with_messages(6).await;
@@ -337,8 +309,6 @@ async fn a_short_uid_listing_deletes_nothing() {
     );
 }
 
-/// With no listing to ask for, the check is a chunked fetch, and it still
-/// deletes only what the arithmetic says went.
 #[tokio::test]
 async fn without_a_uid_listing_the_check_still_finds_the_expunge() {
     let backend = server_with_messages(5).await;
@@ -373,10 +343,6 @@ async fn without_a_uid_listing_the_check_still_finds_the_expunge() {
     );
 }
 
-/// postio-66j's "watch out for": a flag change resyncs the message that
-/// already has a contact sighting from bootstrap, and must not add another
-/// one — `times_seen` counting flag changes as new mail would overstate every
-/// correspondent every time the user reads or archives something.
 #[tokio::test]
 async fn a_flag_only_change_does_not_double_count_the_correspondent() {
     let backend = server_with_messages(3).await;
@@ -419,10 +385,6 @@ async fn a_message_the_change_feed_never_mentions_still_arrives() {
     let (_account, inbox) = local(&connection).await;
     bootstrap(&connection, &backend, &inbox).await;
 
-    // A delivery whose `MODSEQ` does not exceed the `HIGHESTMODSEQ` we hold,
-    // so `CHANGEDSINCE` — which is strictly greater-than — will not report it.
-    // RFC 7162 §3.1.2.1 says this cannot happen; servers say otherwise, and a
-    // message that never appears is the worst failure a mail client has.
     backend
         .append(INBOX, &postio_account::backend::AppendMessage::new(note(3)))
         .await
@@ -490,7 +452,6 @@ async fn a_conforming_server_costs_no_extra_round_trip_for_arrivals() {
     let (_account, inbox) = local(&connection).await;
     bootstrap(&connection, &backend, &inbox).await;
 
-    // A flag change *is* reported by the change feed, and moves no UIDs.
     backend
         .store_flags(
             INBOX,
@@ -523,11 +484,6 @@ async fn a_uid_validity_change_wipes_and_rebuilds_the_mailbox() {
 
     let new_validity = UidValidity::new(1_900_000_000);
     backend.change_uid_validity(INBOX, new_validity);
-    // A real server only ever reports a UIDVALIDITY change once, at the
-    // SELECT that reveals it, and behaves consistently under the new
-    // generation from then on; the mock's stricter guard on every other call
-    // exists to catch code that skips checking SELECT's answer, which is not
-    // what is under test here.
     backend.acknowledge_uid_validity(INBOX);
 
     let outcome = resync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
@@ -592,8 +548,6 @@ async fn a_transient_backend_failure_during_resync_is_not_treated_as_a_resync_re
     assert!(matches!(error, postio_sync::SyncError::Backend(_)));
 }
 
-/// The dwell's two halves, in the order it does them: the local write, then
-/// the operation that will carry it to the server.
 async fn read_locally_and_enqueue(
     connection: &Connection,
     account: AccountId,
@@ -619,17 +573,6 @@ async fn read_locally_and_enqueue(
 
 #[tokio::test]
 async fn a_read_that_has_not_drained_survives_the_resync_that_has_not_heard_it() {
-    // #317, end to end through the real resync rather than through
-    // `upsert_batch` directly. The report was "reading a message does not mark
-    // it read": it does, and then a pass arriving before the drainer writes
-    // the server's still-unseen copy back over it.
-    //
-    // The server has to have a *reason* to report the message, or an
-    // incremental pass fetches nothing and there is no overwrite to survive --
-    // which is how the first version of this test passed against the bug. So
-    // somebody flags it elsewhere: that bumps `MODSEQ`, the message comes back
-    // in the `CHANGEDSINCE` batch carrying its whole flag set, and that set
-    // does not contain the `\Seen` the server has not been told about.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = local(&connection).await;
@@ -650,10 +593,8 @@ async fn a_read_that_has_not_drained_survives_the_resync_that_has_not_heard_it()
         "the fixture arrives unread, or this test is about nothing"
     );
 
-    // The cursor rests on it: read locally, queued for the server.
     read_locally_and_enqueue(&connection, account, message.id).await;
 
-    // Meanwhile, on another client, it gets flagged.
     let mut flagged = FlagSet::new();
     flagged.insert(Flag::Flagged);
     backend
@@ -689,17 +630,10 @@ async fn a_read_that_has_not_drained_survives_the_resync_that_has_not_heard_it()
 
 #[tokio::test]
 async fn a_modseq_less_backend_resyncs_in_place_without_discarding_rows() {
-    // #564: a backend that reports no mod-seq (the JMAP and Gmail adapters,
-    // and any IMAP server without CONDSTORE) plans Full(NoModSeq) on every
-    // pass. The generation held, so nothing about the cached rows is wrong —
-    // the pass must refresh them in place, never wipe first: a wipe every
-    // watch tick refetches the world and loses local rows whose flags have
-    // not drained.
     let mut mailbox = MockMailbox::new(INBOX).uid_validity(UidValidity::new(VALIDITY));
     for n in 1..=3u32 {
         mailbox = mailbox.message(MockMessage::new(note(n)));
     }
-    // No CONDSTORE among the capabilities: statuses carry no mod-seq.
     let backend = MockBackend::builder()
         .capabilities(["IMAP4rev1"])
         .mailbox(mailbox)
@@ -774,25 +708,6 @@ async fn a_modseq_less_backend_resyncs_in_place_without_discarding_rows() {
     );
 }
 
-/// An interrupted first pass must be resumed, not started over (#1176).
-///
-/// `enumerate`'s own doc promises it: "Cancelling `cancel` between batches
-/// stops the pass without losing anything already committed — the next call
-/// resumes exactly where this one stopped", and `Coverage::Missing` exists to
-/// make that resume cheap. The resume never happens, because the state an
-/// interrupted pass leaves behind is exactly the state `resync_mailbox` wipes.
-///
-/// `complete_full_sync` runs at the *end* of an enumeration, so a pass that is
-/// cut short leaves rows on disk and `last_full_sync_at` still `None`. The
-/// next pass therefore plans `Full(NeverSynced)` — and `NeverSynced` is
-/// grouped with `GenerationChanged` for the wipe, even though nothing
-/// renumbered. Every pass throws away the last one's work and starts from
-/// zero, which for a mailbox too big to finish in one pass is forever: the
-/// sidebar says `never synced` because it never has.
-///
-/// The second pass here is cancelled before it can fetch anything, which is
-/// what makes this about the wipe and nothing else: whatever the pass would
-/// have gone on to do, it must not have already destroyed what was there.
 #[tokio::test]
 async fn a_pass_that_fetches_nothing_does_not_throw_away_what_the_last_one_stored() {
     let backend = server_with_messages(6).await;
@@ -800,7 +715,6 @@ async fn a_pass_that_fetches_nothing_does_not_throw_away_what_the_last_one_store
     let connection = database.connect().await.expect("checkout");
     let (_account, inbox) = local(&connection).await;
 
-    // A first pass, cut short after its first committed batch.
     let cancel = CancelToken::new();
     let _ = sync_mailbox_with_batch_size(&connection, &backend, &inbox, 1, &cancel, |_| {
         cancel.cancel();
@@ -820,7 +734,6 @@ async fn a_pass_that_fetches_nothing_does_not_throw_away_what_the_last_one_store
         "an interrupted pass must not have recorded a completed full sync"
     );
 
-    // The next pass, cancelled before it can ask the server for anything.
     let cancel = CancelToken::new();
     cancel.cancel();
     let _ = resync_mailbox(&connection, &backend, &inbox, &cancel, |_| {}).await;
@@ -834,21 +747,6 @@ async fn a_pass_that_fetches_nothing_does_not_throw_away_what_the_last_one_store
     );
 }
 
-/// A mailbox stamped as synced but holding almost nothing re-enumerates.
-///
-/// The state a short UID listing used to leave behind, and the reason the
-/// `EXISTS` check in `initial` is not enough on its own: that one stops a
-/// *fresh* sync from getting into this state, and does nothing for a store
-/// already in it. `last_full_sync_at` is set, so `SyncState::plan` looks at
-/// the protocol state, correctly says `Incremental`, and asks what changed
-/// since a sync that never enumerated anything. The backlog is not slow, it
-/// is unreachable, and it stays unreachable across every restart — a real
-/// INBOX sat at one message of thousands until its store was deleted.
-///
-/// `EXISTS` is what breaks the deadlock: the server says how many the mailbox
-/// holds on every `SELECT`, and a local count below it that nothing local
-/// explains means mail is missing. `Coverage::Missing` then fetches only what
-/// is absent, so the repair costs the mail it was short of and nothing else.
 #[tokio::test]
 async fn a_mailbox_holding_less_than_exists_re_enumerates() {
     let backend = server_with_messages(5).await;
@@ -857,8 +755,6 @@ async fn a_mailbox_holding_less_than_exists_re_enumerates() {
     let (_account, inbox) = local(&connection).await;
 
     bootstrap(&connection, &backend, &inbox).await;
-    // Poison it the way a short listing did: the mailbox is stamped as fully
-    // synced, and holds one of the five messages the server reports.
     let thinned = ids_for(&connection, &inbox, &[1, 2, 3, 4]).await;
     MessageRepository::new(&connection)
         .delete(&thinned)
@@ -892,19 +788,6 @@ async fn a_mailbox_holding_less_than_exists_re_enumerates() {
     );
 }
 
-/// ...but not while the queue still owes the server an explanation.
-///
-/// The dangerous half. A mailbox is also short of `EXISTS` immediately after
-/// the user archives something: the row has left this mailbox locally and the
-/// server, not yet told, goes on counting it. Re-enumerating then refetches
-/// the very message they archived and puts it back — the mail client undoing
-/// the user's gesture in front of them.
-///
-/// A `failed` row is the sharp case and the one seen in the wild: iCloud
-/// answered an archive's `COPY` without a tagged response, the row ended
-/// `failed`, and the local move stands with the server never told. That gap
-/// is permanent until the user clears it, so a check that only looked at
-/// `pending` would resurrect that message on every single pass.
 #[tokio::test]
 async fn a_gap_the_queue_explains_is_left_alone() {
     let backend = server_with_messages(5).await;
@@ -923,7 +806,6 @@ async fn a_gap_the_queue_explains_is_left_alone() {
         .expect("by_uid")
         .expect("the message is there")
         .id;
-    // Archived locally: gone from this mailbox, server not yet told.
     MessageRepository::new(&connection)
         .delete(&[archived])
         .await
@@ -961,7 +843,6 @@ async fn a_gap_the_queue_explains_is_left_alone() {
     );
 }
 
-/// The local ids behind a set of UIDs, for tests that thin a mailbox out.
 async fn ids_for(
     connection: &Connection,
     mailbox: &Mailbox,

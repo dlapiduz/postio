@@ -1,12 +1,3 @@
-//! The command bus: one dispatch path for every source of intent.
-//!
-//! A keystroke, a palette row, a context-menu item and a click all become the
-//! same [`Command`] and reach the same handler, which is what makes the
-//! keyboard and the mouse behave identically without either being reimplemented
-//! in terms of the other. Everything here runs headless — no UI, no database,
-//! no network — because that is the acceptance criterion: a whole workflow must
-//! be executable through commands alone.
-
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -16,8 +7,6 @@ use postio_core::dispatch::{CommandError, Dispatcher};
 use postio_core::{Command, CommandId, Context, Event, MessageTarget, registry};
 use postio_model::MessageId;
 
-/// Drive a dispatcher without a runtime of the caller's own: exactly how the
-/// application runs it, through the bridge.
 fn run(dispatcher: Dispatcher, commands: impl IntoIterator<Item = Command>) -> Vec<Event> {
     let (bridge, events) = Bridge::new(dispatcher).expect("the runtime starts");
     for command in commands {
@@ -34,8 +23,6 @@ fn drain(events: &EventStream) -> Vec<Event> {
 fn message(id: i64) -> MessageId {
     MessageId::new(id)
 }
-
-// -- The dispatch path -------------------------------------------------------
 
 #[test]
 fn a_command_reaches_the_handler_registered_for_it() {
@@ -67,8 +54,6 @@ fn a_command_reaches_the_handler_registered_for_it() {
 
 #[test]
 fn key_palette_and_menu_paths_converge_on_one_handler() {
-    // Three surfaces, one registry, one handler. If these ever diverge, the
-    // mouse and the keyboard start behaving differently.
     let calls = Arc::new(AtomicUsize::new(0));
     let counter = Arc::clone(&calls);
 
@@ -82,20 +67,17 @@ fn key_palette_and_menu_paths_converge_on_one_handler() {
         })
         .build();
 
-    // The keymap: a keystroke resolves through the registry.
     let from_key = Command::default_for(
         registry::lookup_binding(Context::List, "e")
             .expect("`e` is archive")
             .id,
     );
-    // The palette: a row is a registry entry.
     let from_palette = Command::default_for(
         registry::all()
             .find(|spec| spec.title == "Archive")
             .expect("the palette lists archive")
             .id,
     );
-    // The context menu: the same table, filtered by context.
     let from_menu = Command::default_for(
         registry::for_context(Context::Reader)
             .find(|spec| spec.id == CommandId::Archive)
@@ -143,11 +125,8 @@ fn one_handler_can_serve_several_commands() {
     );
 }
 
-// -- Failures are events, never panics ---------------------------------------
-
 #[test]
 fn a_command_with_no_handler_is_rejected_out_loud() {
-    // Silence would be a wiring bug that only shows up as a dead keystroke.
     let events = run(
         Dispatcher::builder().build(),
         [Command::default_for(CommandId::Undo)],
@@ -199,7 +178,6 @@ fn a_handler_that_fails_surfaces_an_error_event() {
 
 #[test]
 fn a_panicking_handler_does_not_take_the_bus_down_with_it() {
-    // One bad handler must cost the user one action, not the application.
     let recovered = Arc::new(AtomicUsize::new(0));
     let counter = Arc::clone(&recovered);
 
@@ -230,17 +208,11 @@ fn counter_of(events: &[Event], predicate: impl Fn(&Event) -> bool) -> usize {
     events.iter().filter(|event| predicate(event)).count()
 }
 
-// -- A whole workflow, through commands alone --------------------------------
-
-/// A stand-in for the parts of the application the bus talks to. The real one
-/// is storage plus the operation queue; the shape of the dispatch path is the
-/// same either way, which is what lets this test exist at all.
 #[derive(Debug, Default)]
 struct FakeMail {
     inbox: Mutex<Vec<MessageId>>,
     archive: Mutex<Vec<MessageId>>,
     selection: Mutex<Vec<MessageId>>,
-    /// What the sync engine would be asked to replay against the server.
     queued: Mutex<Vec<String>>,
 }
 
@@ -259,7 +231,6 @@ impl FakeMail {
             MessageTarget::Thread(_) | MessageTarget::Threads(_) => {
                 self.inbox.lock().unwrap().clone()
             }
-            // A predicate over the queue, which this fake has none of.
             MessageTarget::Batch { .. } => Vec::new(),
         }
     }
@@ -294,7 +265,6 @@ fn mail_dispatcher(mail: Arc<FakeMail>) -> Dispatcher {
                 if moved.is_empty() {
                     return Err(CommandError::rejected("no messages selected"));
                 }
-                // Local first: move it now, tell the server later.
                 mail.inbox.lock().unwrap().retain(|id| !moved.contains(id));
                 mail.archive.lock().unwrap().extend(moved.iter().copied());
                 mail.queued
@@ -350,7 +320,6 @@ fn a_whole_workflow_runs_through_commands_alone() {
         ],
     );
 
-    // The local truth changed, in order, without a UI in sight.
     assert_eq!(
         *mail.archive.lock().unwrap(),
         Vec::<MessageId>::new(),
@@ -399,7 +368,6 @@ fn a_command_that_cannot_run_yet_is_rejected_rather_than_guessed_at() {
 
 #[test]
 fn dispatch_is_serialized_so_state_never_races() {
-    // Archive-then-undo is only meaningful if the bus is a queue.
     let order = Arc::new(Mutex::new(Vec::new()));
     let recorder = Arc::clone(&order);
 
@@ -414,7 +382,6 @@ fn dispatch_is_serialized_so_state_never_races() {
                     unreachable!()
                 };
                 let id = messages[0];
-                // Yield in the middle: a racing dispatcher would interleave.
                 tokio::task::yield_now().await;
                 recorder.lock().unwrap().push(id.get());
                 Ok(())

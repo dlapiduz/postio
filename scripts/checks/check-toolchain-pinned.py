@@ -74,35 +74,20 @@ import subprocess
 import sys
 from pathlib import Path
 
-# `rustup default <channel>` / `rustup toolchain install <channel>` where the
-# channel is a floating name rather than a version. `1.98.0` is fine; `stable`
-# is the bug.
-#
-# A *dated* nightly -- `nightly-2026-08-24` -- is not floating and is not the
-# bug: it names one compiler as exactly as `1.98.0` does, and it is the only
-# way to spell what libFuzzer needs, since `-Z sanitizer=address` does not
-# exist on stable at any version. `fuzz/` is built with one, on a schedule,
-# and never decides whether a PR is green. The rule this file is about is
-# "the compiler must be a decision somebody made", not "the compiler must be
-# stable" -- so the date is what makes it acceptable, and a bare `nightly`
-# stays refused. See #147.
-#
-# The optional `run:` allows for the one-line form. Without it this matched
-# only the `run: |` block spelling, so `run: rustup default stable` on a single
-# line -- the shorter and likelier way to reintroduce the bug -- went straight
-# past the guard.
+# `rustup default <channel>` or `rustup toolchain install <channel>` with a floating channel:
+# `1.98.0` is fine, `stable` is the bug.
+# A dated nightly (`nightly-2026-08-24`) names one compiler exactly and is the only spelling
+# libFuzzer's `-Z sanitizer=address` allows (#147); a bare `nightly` stays refused.
+# The optional `run:` covers the one-line form, which went past the guard before.
 FLOATING = re.compile(
     r"^\s*(?:-\s*)?(?:run:\s*)?rustup\s+(?:default|toolchain\s+install)\s+"
     r"(stable|beta|nightly)(?!-\d{4}-\d{2}-\d{2})\b",
     re.MULTILINE,
 )
 
-# `channel = "1.98.0"` in rust-toolchain.toml. Deliberately strict: a channel
-# name here floats just as hard as it did in the workflow.
 EXACT = re.compile(r'^\s*channel\s*=\s*"(\d+\.\d+(?:\.\d+)?)"\s*$', re.MULTILINE)
 
 
-# `rust-version = "1.90"` in `[workspace.package]`. Two or three components.
 RUST_VERSION = re.compile(
     r'^\s*rust-version\s*=\s*"(\d+\.\d+(?:\.\d+)?)"\s*$', re.MULTILINE
 )
@@ -176,9 +161,8 @@ def floating_workflows(root: Path) -> list[str]:
 
 PYTHON_ACTION = "./.github/actions/python"
 
-# What running the repository's Python looks like inside a `run:` body: the
-# interpreter, a `.py` script, or any script under `scripts/` (most of which
-# call python3). A cache key or `with:` value is not a run body.
+# Running the repository's Python in a `run:` body: the interpreter, a `.py` script, or any script
+# under `scripts/`; a cache key or `with:` value is not one.
 RUNS_PYTHON = re.compile(
     r"\bpython3?\b|\.py\b|(?<![\w./-])scripts/\w|\.claude/hooks"
 )

@@ -1,49 +1,8 @@
-//! `MailBackend`: the seam between Postio and a mail server.
-//!
-//! Everything above this trait — the sync engine, the runtime, the UI — speaks
-//! domain types and knows nothing about IMAP. Everything below it is one
-//! protocol's problem. That is not a stylistic preference: `io-imap` is
-//! pre-1.0 and published six minor releases in eleven weeks, one of which
-//! broke nearly every public signature. ADR 0001 makes the boundary a hard
-//! requirement, and this module is where it is drawn.
-//!
-//! # The rules
-//!
-//! 1. **No protocol type crosses this line.** Not in an argument, not in a
-//!    return value, not in an error. A test in `tests/backend.rs` reads the
-//!    sources in this directory and fails if one names `io_imap`.
-//! 2. **Capabilities are detected, never assumed.** Everything that depends on
-//!    an extension goes through [`Capabilities::require`], and the set comes
-//!    from the list read *after* authentication. iCloud advertises neither
-//!    CONDSTORE nor QRESYNC nor IDLE nor UIDPLUS before login.
-//! 3. **The caller owns batching and cancellation.** [`UidSet::chunks`] splits
-//!    a large fetch; a [`CancelToken`] stops one. A backend never decides to
-//!    hold ten thousand messages in memory on the caller's behalf.
-//! 4. **Bytes stream.** Bodies and attachments go to a [`BodySink`], never
-//!    into a returned buffer.
-//!
-//! # Testing against it
-//!
-//! [`MockBackend`] is an in-memory implementation with injectable faults and
-//! latency. It is not `#[cfg(test)]`: `postio-sync` is developed against it,
-//! and the whole sync engine can therefore be built and tested with no server
-//! and no network at all.
-//!
-//! ```
-//! # use postio_account::backend::{MailBackend, MailboxFilter, MockBackend, MockMailbox};
-//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! // The folders are named here, deliberately: `MockBackend::new` has none,
-//! // so a test that needs an inbox has to say where it came from. See its
-//! // own docs for the bug that arrangement was hiding.
-//! let backend = MockBackend::builder().mailbox(MockMailbox::new("INBOX")).build();
-//! let capabilities = backend.connect().await?;
-//! let mailboxes = backend.list_mailboxes(&MailboxFilter::all()).await?;
-//!
-//! assert!(capabilities.supports_incremental_sync());
-//! assert_eq!(mailboxes[0].path, "INBOX");
-//! # Ok(())
-//! # }
-//! ```
+//! The seam between Postio and a mail server (ADR 0001). No protocol type crosses it (a test in
+//! `tests/backend.rs` fails if a source here names `io_imap`); capabilities are detected after
+//! authentication, never assumed.
+//! The caller owns batching (`UidSet::chunks`) and cancellation (`CancelToken`); bodies stream to a
+//! `BodySink`, never a returned buffer.
 
 mod capability;
 mod error;
@@ -74,107 +33,48 @@ pub use self::mock::{
 pub use self::sink::{BodySink, CountingSink, VecSink};
 pub use self::uid_set::UidSet;
 
-/// Re-exported so a caller can describe a MIME part without also depending on
-/// `postio-model` directly.
 pub use postio_model::Disposition;
 
-/// A mail server, as the rest of Postio sees one.
-///
-/// Implementations are shared across tasks (`Arc<dyn MailBackend>`) and every
-/// method takes `&self`: connection state, pooling and serialization are the
-/// backend's problem, not the caller's. A caller that wants two fetches at
-/// once simply issues two.
-///
-/// # Errors
-///
-/// Callers branch on [`BackendError::is_transient`],
-/// [`is_authentication_failure`](BackendError::is_authentication_failure) and
-/// [`requires_full_resync`](BackendError::requires_full_resync) — never on the
-/// variant — so that adding a variant cannot silently change how existing code
-/// retries.
-///
-/// # Adding a protocol
-///
-/// This trait is the porting surface. A JMAP or Exchange backend implements
-/// these methods and nothing above `postio-sync` changes. The concepts that
-/// look IMAP-shaped are the ones every mail protocol has under some name:
-/// a folder, a server-assigned message id ([`RemoteId`] — opaque here; the
-/// IMAP adapter packs its generation-and-uid pair into one and keeps the
-/// renumbering dance behind this seam, per ADR 0018 Q2), and a change
-/// counter ([`ModSeq`]). A protocol without one reports `None` and the sync
-/// engine falls back to comparing listings.
+/// Shared across tasks (`Arc<dyn MailBackend>`); every method takes `&self`, so pooling and
+/// serialization are the backend's problem.
+/// Callers branch on `is_transient`, `is_authentication_failure` and `requires_full_resync`, never
+/// on the variant.
+/// A protocol without a change counter (`ModSeq`) reports `None` and sync falls back to comparing
+/// listings (ADR 0018 Q2).
 #[async_trait]
 pub trait MailBackend: Send + Sync + fmt::Debug {
-    /// Short name of this backend, for diagnostics.
     fn describe(&self) -> &'static str;
 
-    /// The same server, on the same connections, for work nobody is waiting
-    /// on -- or `None` where the backend has no priorities to give.
-    ///
-    /// A backfill holding every shared connection makes a click wait for one
-    /// to come free; a backend that queues by priority hands the next free
-    /// connection to the click instead. The sync engine takes this for the
-    /// archive's headers and the background lane's bodies, and keeps `self`
-    /// for whatever a person is waiting on.
+    /// `None` where the backend has no priorities. A backfill holding every shared connection makes
+    /// a click wait; a priority-queued backend hands the next free connection to the click.
     fn for_background(&self) -> Option<std::sync::Arc<dyn MailBackend>> {
         None
     }
 
-    /// Opens a session and authenticates.
-    ///
-    /// Returns the capability set observed **after** authentication. An empty
-    /// set is [`BackendError::EmptyCapabilities`], never a silent downgrade:
-    /// see ADR 0001, Q3.
+    /// Returns the capability set observed after authentication. An empty set is
+    /// `EmptyCapabilities`, never a silent downgrade (ADR 0001 Q3).
     async fn connect(&self) -> BackendResult<Capabilities>;
 
     /// Closes the session. Closing an already-closed backend succeeds.
     async fn disconnect(&self) -> BackendResult<()>;
 
-    /// The capability set from the current session.
     async fn capabilities(&self) -> BackendResult<Capabilities>;
 
-    /// Lists mailboxes, resolving each one's role at the edge.
     async fn list_mailboxes(&self, filter: &MailboxFilter) -> BackendResult<Vec<MailboxSummary>>;
 
-    /// Creates `path` on the server, subscribing to it where the protocol
-    /// separates the two.
-    ///
-    /// **Idempotent from the caller's point of view.** A server reporting that
-    /// the mailbox already exists is success, not failure: two clients may
-    /// race, and the caller wants the folder to *exist*, not to have been the
-    /// one that made it.
-    ///
-    /// Called only by discovery, and only for a reserved role that resolves to
-    /// no folder — never for `INBOX`, which RFC 3501 names and every server
-    /// has. A server that refuses is reported as
-    /// [`BackendError::Rejected`] so the refusal can be recorded and not
-    /// retried on every pass; it is never fatal to a discovery pass.
-    ///
-    /// No default implementation on purpose. One returning `Ok(())` would
-    /// report success for something that never happened, and one returning an
-    /// error would let a new backend forget to answer. A backend that cannot
-    /// create a folder has to say so.
+    /// Idempotent: an already-existing mailbox is success, since two clients may race.
+    /// Called only by discovery, for a reserved role that resolves to no folder. A refusal is
+    /// `Rejected` so it is recorded and not retried every pass.
+    /// No default implementation: `Ok(())` would report success for nothing, and an error would let
+    /// a backend forget to answer.
     async fn create_mailbox(&self, path: &str) -> BackendResult<()>;
 
-    /// Opens a mailbox and reports its state.
     async fn select(&self, path: &str, mode: SelectMode) -> BackendResult<MailboxStatus>;
 
-    /// Reports a mailbox's state without opening it.
-    ///
-    /// This is the cheap per-mailbox change check for every folder that is not
-    /// the one being watched.
     async fn status(&self, path: &str) -> BackendResult<MailboxStatus>;
 
-    /// Fetches metadata — envelope, structure, flags, size — for `uids`.
-    ///
-    /// No body bytes are downloaded. With `changed_since`, only messages whose
-    /// modification sequence is *greater than* it are returned, which is what
-    /// makes an incremental flag pull cheap.
-    ///
-    /// The caller is expected to have split large sets with
-    /// [`UidSet::chunks`]: this returns everything it fetched at once, and a
-    /// ten-thousand-message set fetched in one call is a ten-thousand-message
-    /// allocation.
+    /// With `changed_since`, only messages whose modification sequence is greater than it are
+    /// returned. Callers split large sets with `UidSet::chunks`: everything is returned at once.
     async fn fetch_headers(
         &self,
         mailbox: &str,
@@ -183,21 +83,10 @@ pub trait MailBackend: Send + Sync + fmt::Debug {
         cancel: &CancelToken,
     ) -> BackendResult<Vec<FetchedMessage>>;
 
-    /// [`fetch_headers`](Self::fetch_headers), and what the three headers
-    /// Focus promotes say: `List-Unsubscribe`, `Precedence` and
-    /// `Auto-Submitted` (spec 007, research R8), in
-    /// [`FetchedMessage::promoted`].
-    ///
-    /// What an incremental pass files new mail with, so the filing pass
-    /// knows bulk and automated mail at arrival. A first sync asks
-    /// [`fetch_headers`](Self::fetch_headers) instead: every message it
-    /// enumerates would pay for the fields, which is the cost ADR 0025
-    /// refuses to put on everyone.
-    ///
-    /// The default answers what `fetch_headers` does, with the facts not
-    /// known -- right for a backend that cannot ask for three header fields
-    /// on their own, whose messages then learn them from their body's
-    /// headers when it arrives.
+    /// Also reads the three promoted headers (`List-Unsubscribe`, `Precedence`, `Auto-Submitted`)
+    /// into `FetchedMessage::promoted`. Incremental passes use it; a first sync does not, since
+    /// every enumerated message would pay for the fields (ADR 0025).
+    /// The default answers like `fetch_headers` with the facts unknown.
     async fn fetch_headers_for_filing(
         &self,
         mailbox: &str,
@@ -209,11 +98,8 @@ pub trait MailBackend: Send + Sync + fmt::Debug {
             .await
     }
 
-    /// Streams one part of one message into `sink`.
-    ///
-    /// The sink sees the bytes as they arrive and is the only place they exist
-    /// in full. On failure or cancellation, [`BodySink::finish`] is *not*
-    /// called and whatever reached the sink must be discarded.
+    /// On failure or cancellation `BodySink::finish` is not called and whatever reached the sink
+    /// must be discarded.
     async fn fetch_part(
         &self,
         mailbox: &str,
@@ -223,7 +109,6 @@ pub trait MailBackend: Send + Sync + fmt::Debug {
         cancel: &CancelToken,
     ) -> BackendResult<FetchedBody>;
 
-    /// Streams a whole message into `sink`.
     async fn fetch_body(
         &self,
         mailbox: &str,
@@ -235,37 +120,12 @@ pub trait MailBackend: Send + Sync + fmt::Debug {
             .await
     }
 
-    /// Fetches **one section of many messages** in as few round trips as the
-    /// backend can manage.
-    ///
-    /// # Why this exists (#1551)
-    ///
-    /// [`fetch_part`](Self::fetch_part) is one message per call, and a body
-    /// fetch is almost all round trip: a first sync over a large archive is
-    /// one wait per message with nothing overlapping. IMAP can answer a whole
-    /// `UID FETCH 1,5,9 BODY.PEEK[1]` in one, and the text axis asks for the
-    /// same section path over and over — most mail's words are at `1` or
-    /// `1.1` — so grouping by section is what turns tens of thousands of
-    /// waits into hundreds.
-    ///
-    /// # What it does not do
-    ///
-    /// It does not stream. Every answer is held in memory at once, which is
-    /// the trade a batch makes and the reason the caller must bound the set
-    /// by `RFC822.SIZE` before calling — see `postio_sync::backfill`, which
-    /// batches only messages small enough that the whole group fits a stated
-    /// budget, and leaves large ones on the streaming path.
-    ///
-    /// # The default is correct, only slow
-    ///
-    /// Looping over [`fetch_part`](Self::fetch_part) answers the same bytes,
-    /// so a backend that has no batch primitive — JMAP fetches by id, and the
-    /// mock is a `Vec` — needs to do nothing. Only IMAP overrides it.
-    ///
-    /// Answers one entry per id **that the server returned**, in any order. A
-    /// message the server no longer has is absent rather than an error: the
-    /// caller is backfilling a queue derived from a local table and an
-    /// expunge between the two is ordinary.
+    /// Fetches one section of many messages in few round trips: grouping by section turns tens of
+    /// thousands of waits into hundreds (#1551).
+    /// Does not stream: every answer is held in memory, so the caller must bound the set by
+    /// `RFC822.SIZE` first.
+    /// The default loops over `fetch_part`. One entry per id the server returned, any order; a
+    /// message expunged since is absent, not an error.
     async fn fetch_sections(
         &self,
         mailbox: &str,
@@ -288,7 +148,6 @@ pub trait MailBackend: Send + Sync + fmt::Debug {
         Ok(answered)
     }
 
-    /// Changes flags on `ids` and reports what they are now.
     async fn store_flags(
         &self,
         mailbox: &str,
@@ -296,11 +155,7 @@ pub trait MailBackend: Send + Sync + fmt::Debug {
         change: &FlagChange,
     ) -> BackendResult<Vec<FlagUpdate>>;
 
-    /// Moves messages between mailboxes.
-    ///
-    /// The returned mapping is empty unless the server speaks
-    /// [`Capability::UidPlus`]; without it the destination UIDs have to be
-    /// found by searching, which is the caller's decision to make.
+    /// The mapping is empty unless the server speaks UIDPLUS.
     async fn move_messages(
         &self,
         from: &str,
@@ -308,7 +163,6 @@ pub trait MailBackend: Send + Sync + fmt::Debug {
         to: &str,
     ) -> BackendResult<Vec<UidMapping>>;
 
-    /// Copies messages between mailboxes, leaving the source intact.
     async fn copy_messages(
         &self,
         from: &str,
@@ -316,47 +170,26 @@ pub trait MailBackend: Send + Sync + fmt::Debug {
         to: &str,
     ) -> BackendResult<Vec<UidMapping>>;
 
-    /// Expunges messages marked `\Deleted`, and reports which went.
-    ///
-    /// With `ids`, only those are considered — the `UID EXPUNGE` of RFC 4315,
-    /// which is what stops Postio from expunging a message another client
-    /// marked in the same mailbox. A server without that extension cannot
-    /// honour a targeted expunge at all, and declines rather than widening it
-    /// to everything marked `\Deleted`.
-    ///
-    /// **An IMAP server reports the removals as sequence numbers**, not UIDs,
-    /// so a real backend returns an empty list here however much it removed:
-    /// turning a sequence number into an identity needs a map this layer does
-    /// not keep, and a plausible wrong id is worse than none. Treat a
-    /// successful expunge as "resync this mailbox", and read the returned ids
-    /// only from implementations that genuinely know them, such as
-    /// [`MockBackend`].
+    /// With `ids`, only those are expunged (`UID EXPUNGE`, RFC 4315), so another client's
+    /// `\Deleted` marks survive; a server without it declines rather than widen.
+    /// An IMAP server reports sequence numbers, so a real backend returns an empty list: treat
+    /// success as "resync this mailbox".
     async fn expunge(
         &self,
         mailbox: &str,
         ids: Option<&[RemoteId]>,
     ) -> BackendResult<Vec<RemoteId>>;
 
-    /// Uploads a message into a mailbox.
-    ///
-    /// Returns where it landed when the server speaks
-    /// [`Capability::UidPlus`], and `None` otherwise.
+    /// Returns where it landed under UIDPLUS, `None` otherwise.
     async fn append(
         &self,
         mailbox: &str,
         message: &AppendMessage,
     ) -> BackendResult<Option<UidMapping>>;
 
-    /// Finds the one message in `mailbox` whose RFC 5322 `Message-ID`
-    /// header is `message_id`, if the backend can search at all.
-    ///
-    /// The cross-account move saga's confirmation fallback (#188, ADR 0005
-    /// Q9): on a server without UIDPLUS an append proves nothing, and this
-    /// targeted `UID SEARCH HEADER Message-ID` is what stands in. The
-    /// default answers `None` — "this backend cannot search" — which the
-    /// saga reads as *unconfirmed*: it stops and asks, it never guesses.
-    /// More than one match also answers the newest, since any copy proves
-    /// arrival.
+    /// The cross-account move saga's confirmation fallback (#188, ADR 0005 Q9). The default answers
+    /// `None`, "cannot search", which the saga reads as unconfirmed. More than one match answers
+    /// the newest.
     async fn find_by_message_id(
         &self,
         mailbox: &str,
@@ -366,25 +199,10 @@ pub trait MailBackend: Send + Sync + fmt::Debug {
         Ok(None)
     }
 
-    /// Every UID that currently exists in `mailbox`, if the backend can say.
-    ///
-    /// What a first sync needs in order to ask only for messages that are
-    /// *there*. Without it the caller has nothing to go on but the UID
-    /// ceiling, so it walks `1..=UIDNEXT-1` in chunks and pays a round trip
-    /// for every chunk whose UIDs were all expunged — a cost proportional to
-    /// `UIDNEXT` rather than to how much mail the folder holds. Measured
-    /// against a real account, that was 46% of a first sync's wall clock
-    /// spent fetching nothing (#78, #727).
-    ///
-    /// The default answers `None` — "this backend cannot enumerate" — and the
-    /// caller falls back to that walk, which is what every backend did before
-    /// this existed. A protocol whose listing is already cheap has no reason
-    /// to implement it.
-    ///
-    /// Ordering is not promised; the caller sorts. Neither is freshness: this
-    /// is a snapshot, and a message may be expunged between this call and the
-    /// fetch that asks for it. That is ordinary and already handled — a
-    /// `FETCH` for a UID that has gone returns nothing rather than failing.
+    /// Without it the caller walks `1..=UIDNEXT-1` in chunks, paying a round trip per
+    /// fully-expunged chunk (46% of a first sync's wall clock on a real account, #78, #727).
+    /// The default answers `None`, "cannot enumerate". Unordered, and a snapshot: a UID expunged
+    /// since returns nothing from `FETCH`.
     async fn existing_uids(
         &self,
         mailbox: &str,
@@ -394,29 +212,11 @@ pub trait MailBackend: Send + Sync + fmt::Debug {
         Ok(None)
     }
 
-    /// Every message's flags in `mailbox`, and nothing else: `UID FETCH 1:*
-    /// (UID FLAGS)` on IMAP, if the backend can say.
-    ///
-    /// What a flag sweep reads (`postio_model::SweepPolicy`). It is *not*
-    /// [`fetch_headers`](Self::fetch_headers) with the headers ignored: the
-    /// point is that nothing but a UID and a flag list per message crosses
-    /// the wire, a few dozen bytes each, so a folder of sixty thousand
-    /// messages is a response measured in megabytes and not in the hundreds
-    /// of megabytes that refetching its envelopes and structures would be.
-    ///
-    /// The answer is the server's whole truth about flags, so a message that
-    /// was *not* listed was not there. It carries no `MODSEQ`: the caller is
-    /// comparing states, not asking what changed.
-    ///
-    /// The default answers `None`, "this backend cannot list flags alone",
-    /// and the caller then goes on trusting the change feed. That is right
-    /// for every backend but IMAP, because the others have a change feed
-    /// that is not CONDSTORE's and is reliable ([`change_feed`] says so):
-    /// Maildir reads the flags off the file names it already lists, JMAP
-    /// asks `Email/changes` against a state string, and Gmail walks the
-    /// `history` list. None of them is ever asked for a sweep.
-    ///
-    /// [`change_feed`]: Self::change_feed
+    /// Only a UID and flag list per message crosses the wire, so a sixty-thousand-message folder
+    /// costs megabytes, not hundreds.
+    /// The whole truth about flags: an unlisted message was not there. No `MODSEQ`.
+    /// The default answers `None`, "cannot list flags alone"; other backends have a reliable
+    /// `change_feed` and are never swept.
     async fn fetch_flags(
         &self,
         mailbox: &str,
@@ -426,44 +226,19 @@ pub trait MailBackend: Send + Sync + fmt::Debug {
         Ok(None)
     }
 
-    /// How far to believe this server's account of what changed.
-    ///
-    /// [`ChangeFeed::Unreliable`] makes the sync engine read every flag now
-    /// and then (`postio_model::SweepPolicy`) rather than only what
-    /// `CHANGEDSINCE` reports. The default is
-    /// [`Reliable`](ChangeFeed::Reliable): a server is believed until it is
-    /// known not to deserve it, and the IMAP backend looks that up in the
-    /// provider preset table, where it is data.
+    /// `Unreliable` makes the sync engine read every flag now and then rather than only what
+    /// `CHANGEDSINCE` reports. The IMAP backend looks this up in the provider preset table.
     fn change_feed(&self) -> ChangeFeed {
         ChangeFeed::Reliable
     }
 
-    /// Waits for the server to say something about `mailbox`.
-    ///
-    /// Returns as soon as anything arrives, when `timeout` elapses, or when
-    /// `cancel` fires — the last two with an empty vector, because "nothing
-    /// happened" is not a failure.
-    ///
-    /// The events are deliberately raw. They say *that* the mailbox changed,
-    /// not what it now contains; the correct response is a resync pull, not
-    /// applying them as a diff.
-    ///
-    /// # What a watcher is not told
-    ///
-    /// A server reports what *other* connections did. Changes this backend
-    /// itself made came back in their own command responses and are not
-    /// repeated here, so a caller must never wait on a watch to confirm its
-    /// own write — it already has the answer.
-    ///
-    /// [`MockBackend`] is more talkative than that: having one connection and
-    /// no way to tell whose change it was, it queues every change made
-    /// through it, including the caller's own. That is the safe direction to
-    /// be wrong in — the engine is exercised on a resync path that a real
-    /// second client can also trigger — but it means a watcher against a real
-    /// server fires *less* often than the mock suggests. Anything that
-    /// depends on the difference is depending on the mock, not on the
-    /// protocol; `crates/postio-account/tests/backend_parity.rs` marks the seam
-    /// where the two part company.
+    /// Returns on any event, on `timeout`, or on `cancel`; the last two with an empty vector, since
+    /// "nothing happened" is not a failure.
+    /// Events are raw: they say that the mailbox changed, not what it holds. Respond with a resync
+    /// pull, not a diff.
+    /// A real server reports only other connections' changes, so never wait on a watch to confirm
+    /// your own write. The mock queues every change, the caller's own included
+    /// (`tests/backend_parity.rs` marks the seam).
     async fn idle(
         &self,
         mailbox: &str,

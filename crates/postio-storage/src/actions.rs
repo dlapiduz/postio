@@ -1,38 +1,7 @@
-//! The mutating half of an action: the rows, and the operation that follows.
-//!
-//! # Why these live here and not in `postio-session`
-//!
-//! ADR 0008 Q5 decides that a rule's action is not its own kind of write:
-//!
-//! > Every action is local-first, exactly like a keystroke: SQLite write,
-//! > enqueue the remote operation, emit the event. **There is no rules-only
-//! > mutation path**, which means rules inherit offline behaviour,
-//! > reconciliation and event flow for free.
-//!
-//! Two callers therefore need the same verb — the command bus, when a person
-//! presses `a`, and the rules pass, when a message arrives — and ADR 0028
-//! puts the shared half below both rather than beside either. The half that
-//! moves down is the one that touches SQLite; what stays up in
-//! `postio_session::actions` is everything that only a person's gesture
-//! has: resolving what the selection meant, pushing an undo entry, and
-//! emitting the events the panes repaint from.
-//!
-//! Nothing here knows what a `Command`, an `UndoKind` or an `Applied` is, and
-//! `check-crate-boundaries.py` is what keeps it that way.
-//!
-//! # Why the caller owns the transaction
-//!
-//! ADR 0008 Q3:
-//!
-//! > Header-only rules run in the sync pass that inserts the message, **in
-//! > the same transaction as the insert, before any event is emitted.** The
-//! > user never sees it land in the Inbox first.
-//!
-//! The sync pass owns that transaction, so a verb here cannot open one of its
-//! own — it would commit the filing separately from the insert that brought
-//! the message in, and a failure between the two would leave a message filed
-//! by a rule and never inserted. The interactive path opens a transaction and
-//! passes it in; the rules pass hands over the one it is already inside.
+//! The mutating half of an action: the rows plus the queued operation, shared by the command bus
+//! and the rules pass (ADR 0008, ADR 0028).
+//! The caller owns the transaction, so a rule's filing commits with the insert that brought the
+//! message in.
 
 use std::collections::BTreeMap;
 
@@ -49,34 +18,17 @@ use crate::repository::{
 };
 use crate::store::Connection;
 
-/// Which server operation a relocation is.
-///
-/// The only thing the caller chooses about the queue row, and deliberately
-/// not `UndoKind`: what a relocation means to the *undo stack* is a session
-/// concept, and what it means to the *server* is this.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Relocation {
-    /// An ordinary move between two of the account's mailboxes.
     Move,
-    /// A move to the account's trash, which the server is told about as a
-    /// delete. Never a hard delete — the mail is recoverable exactly as a
-    /// hand-trashed message is.
+    /// Told to the server as a delete, never a hard delete.
     Trash,
 }
 
-/// Move messages to `destination` and enqueue the operation that tells the
-/// server.
+/// `by_source` groups messages by the mailbox they leave: one `enqueue_many` per source.
 ///
-/// `by_source` groups the messages by the mailbox they are leaving, because
-/// the operation names that mailbox: one `enqueue_many` per source rather
-/// than one `enqueue` per message, so a multi-select spanning a handful of
-/// folders costs a handful of statements rather than one per row.
-///
-/// Every message must belong to `account` and every destination must be one
-/// of that account's own mailboxes. A destination in another account is not a
-/// move at all but ADR 0005 Q9's three-phase saga, and resolving that is the
-/// caller's business — this verb would write a row claiming a mailbox the
-/// account does not own.
+/// Every message and destination must belong to `account`; a cross-account move is a saga (ADR 0005
+/// Q9), not this.
 pub async fn relocate(
     transaction: &Connection,
     account: AccountId,
@@ -98,38 +50,15 @@ pub async fn relocate(
                 to: destination,
             },
         };
-        // The queue row first, and now it matters. `enqueue_many` snapshots
-        // `remote_id` and `move_to` clears it, so swapping these two lines
-        // enqueues an operation with no coordinate to address the server
-        // with -- which is what #289 said, and became true again the moment
-        // the move started clearing that column.
-        //
-        // It did not always. `move_to` used to null `uid`, `uid_validity` and
-        // `mod_seq` and leave `remote_id` behind, which made the two orders
-        // equivalent and this comment a caveat about a hazard that was not
-        // real yet. It also left an archived message carrying coordinates
-        // minted in the folder it came from, so the next command on it
-        // compared the source's generation against the destination's and
-        // reported a UIDVALIDITY change that never happened. Seen on a live
-        // account, on the first archive.
+        // Queue first: `enqueue_many` snapshots `remote_id`, which `move_to` clears.
         queue.enqueue_many(account, ids, &operation, at).await?;
         messages.move_to(ids, destination).await?;
     }
     Ok(())
 }
 
-/// Give `rows` the keyword of `reason`, or with `None` take every reason's
-/// keyword off them, and queue the change for the server: how a filter
-/// decision reaches the account's other machines (#2076,
-/// [`FilterReason::keyword`]).
-///
-/// Call it before [`relocate`] moves the rows: the queue rows snapshot the
-/// server coordinate the move clears, and the server then moves messages
-/// that already carry their reason. One `enqueue_many` each way, whatever
-/// the number of rows, as [`relocate`] does, so the filing pass reads
-/// nothing more per arrival. A keyword is no flag a thread counts, so no
-/// thread is recomputed. `rows` are the caller's, as read; each must belong
-/// to `account`.
+/// Call before [`relocate`]: queue rows snapshot the server coordinate the move clears. `rows` must
+/// belong to `account`.
 pub async fn mark_filtered(
     transaction: &Connection,
     account: AccountId,
@@ -185,20 +114,10 @@ pub async fn mark_filtered(
     Ok(())
 }
 
-/// Set or clear one flag on `rows`, and keep their threads honest.
+/// Returns the messages to repaint: every message in every touched thread, since thread aggregates
+/// and membership are recomputed in the caller's transaction (#754).
 ///
-/// Answers the messages whose rows a caller should repaint: every message in
-/// every thread the change touched, not only the ones whose flags moved. The
-/// threads keep two things the rows alone cannot (#754) -- the denormalised
-/// aggregates the account-scoped page reads straight off `threads`, and the
-/// membership that names the row the conversation list draws -- so both are
-/// recomputed inside the caller's transaction. Nothing can then observe a
-/// read message under an unread thread.
-///
-/// `rows` must already have been read: the verb needs each message's current
-/// flags to compute the new set, and its thread to recompute. Rows whose flag
-/// is already `wanted` are the caller's to filter -- this writes what it is
-/// given.
+/// `rows` must already be read; rows already at `wanted` are the caller's to filter.
 pub async fn set_flag(
     transaction: &Connection,
     account: AccountId,
@@ -249,13 +168,7 @@ pub async fn set_flag(
     Ok(siblings)
 }
 
-/// Delete `ids` from `mailbox` for good: hidden at once, and queued as a
-/// [`Operation::Purge`] each so the server catches up.
-///
-/// Nothing here is undoable and nothing offers to be: it is what auto-emptying
-/// Junk and Trash does (#1932), and the mail was already in the Trash or Junk
-/// a person put it in. Queue rows first, for the reason [`relocate`] gives:
-/// `enqueue_many` snapshots the server coordinate.
+/// Not undoable (auto-empty of Junk and Trash, #1932). Queue rows first, as in [`relocate`].
 pub async fn purge(
     transaction: &Connection,
     account: AccountId,
