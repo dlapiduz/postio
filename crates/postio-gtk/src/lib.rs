@@ -40,7 +40,6 @@ pub mod save_popover;
 pub mod scope_footer;
 pub mod search_popover;
 pub mod settings;
-pub mod source;
 mod split;
 pub mod startup;
 pub mod style;

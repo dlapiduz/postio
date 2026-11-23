@@ -707,8 +707,12 @@ const CASES: &[(&str, fn())] = &[
         open_choice::o_offers_the_links_and_parts_and_opens_only_what_is_chosen as fn(),
     ),
     (
-        "view_source::v_shows_the_raw_message_from_the_list_and_from_the_open_message",
-        view_source::v_shows_the_raw_message_from_the_list_and_from_the_open_message as fn(),
+        "view_source::v_opens_the_source_on_verification_and_the_digits_pick_its_tabs",
+        view_source::v_opens_the_source_on_verification_and_the_digits_pick_its_tabs as fn(),
+    ),
+    (
+        "view_source::v_in_the_open_message_stacks_the_source_and_escape_takes_one_rung",
+        view_source::v_in_the_open_message_stacks_the_source_and_escape_takes_one_rung as fn(),
     ),
     (
         "open_message::a_message_opens_at_its_top_every_time",

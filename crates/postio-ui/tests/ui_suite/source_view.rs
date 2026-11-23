@@ -20,11 +20,11 @@ fn sender(fixture: &str) -> Vec<EmailAddress> {
 fn view_of(fixture: &str, provider: Option<Provider<'_>>) -> SourceView {
     let text = header_text(fixture);
     let from = sender(fixture);
-    source::view(&SourceInput {
+    source::view(SourceInput {
         subject: "Notes",
         from: &from,
         headers: Some(&text),
-        raw: Some(test_corpus::load(fixture).bytes()),
+        raw: Some(test_corpus::load(fixture).bytes().to_vec()),
         raw_state: RawState::Here,
         body: BodyState::Here,
         provider,
@@ -188,7 +188,7 @@ fn the_fixed_line_closes_every_verification_tab() {
 #[test]
 fn a_message_without_its_body_says_the_checks_arrive_with_it() {
     let from = sender("auth-results-verified");
-    let view = source::view(&SourceInput {
+    let view = source::view(SourceInput {
         subject: "Notes",
         from: &from,
         headers: None,
@@ -219,7 +219,7 @@ fn a_message_without_its_body_says_the_checks_arrive_with_it() {
 fn a_raw_fetch_in_flight_names_the_account() {
     let from = sender("auth-results-verified");
     let text = header_text("auth-results-verified");
-    let view = source::view(&SourceInput {
+    let view = source::view(SourceInput {
         subject: "Notes",
         from: &from,
         headers: Some(&text),
@@ -244,7 +244,7 @@ fn a_raw_fetch_in_flight_names_the_account() {
 fn mail_the_person_sent_is_not_judged() {
     let from = sender("auth-results-forged-lower");
     let text = header_text("auth-results-forged-lower");
-    let view = source::view(&SourceInput {
+    let view = source::view(SourceInput {
         subject: "Notes",
         from: &from,
         headers: Some(&text),

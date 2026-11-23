@@ -88,6 +88,7 @@ mod imp {
         pub pane: RefCell<Option<ListPane>>,
         pub chrome: RefCell<Option<Rc<Chrome>>>,
         pub client: RefCell<Option<Client>>,
+        pub source: RefCell<Option<(MessageId, postio_widgets::source::SourceDialog)>>,
         pub waiting: Cell<Option<Waiting>>,
         pub waiting_since: Cell<Option<std::time::Instant>>,
         pub on_retry: RefCell<Option<Rc<dyn Fn()>>>,
@@ -190,6 +191,7 @@ mod imp {
                 pane: RefCell::default(),
                 chrome: RefCell::default(),
                 client: RefCell::default(),
+                source: RefCell::default(),
                 waiting: Cell::default(),
                 waiting_since: Cell::default(),
                 on_retry: RefCell::default(),
@@ -888,7 +890,7 @@ impl FocusWindow {
             now.push(SurfaceKind::Composer);
         } else if let Some(dialog) = self.visible_dialog() {
             let name = dialog.widget_name();
-            if name == crate::source::DIALOG_NAME
+            if name == postio_widgets::source::DIALOG_NAME
                 && !self.reading_beside()
                 && self.reading().is_some_and(|reading| reading.is_open())
             {
@@ -904,7 +906,7 @@ impl FocusWindow {
                 SurfaceKind::Settings
             } else if name == KEY_MAP {
                 SurfaceKind::KeyMap
-            } else if name == crate::source::DIALOG_NAME {
+            } else if name == postio_widgets::source::DIALOG_NAME {
                 SurfaceKind::Source
             } else {
                 SurfaceKind::Dialog
@@ -976,7 +978,7 @@ impl FocusWindow {
             SurfaceKind::Source => {
                 if let Some(dialog) = self
                     .visible_dialog()
-                    .filter(|dialog| dialog.widget_name() == crate::source::DIALOG_NAME)
+                    .filter(|dialog| dialog.widget_name() == postio_widgets::source::DIALOG_NAME)
                 {
                     dialog.close();
                 }
@@ -1283,9 +1285,14 @@ impl FocusWindow {
     }
 
     fn is_typing(&self) -> bool {
-        gtk::prelude::GtkWindowExt::focus(self)
-            .is_some_and(|focus| focus.is::<gtk::Text>() || focus.is::<gtk::TextView>())
-            || self.composer_body_has_keyboard()
+        // A read-only text view (the Source surface's pages) takes no typing, so its keys stay
+        // commands.
+        gtk::prelude::GtkWindowExt::focus(self).is_some_and(|focus| {
+            focus.is::<gtk::Text>()
+                || focus
+                    .downcast_ref::<gtk::TextView>()
+                    .is_some_and(gtk::prelude::TextViewExt::is_editable)
+        }) || self.composer_body_has_keyboard()
     }
 
     /// Settings' account list is the one context only this window can see.
@@ -2200,6 +2207,7 @@ impl FocusWindow {
             Intent::Toast { text, kind } => self.show_toast(text, kind),
             Intent::Reader(verb) => self.show_reader_verb(*verb),
             Intent::OpenSource { message, .. } => self.view_source(*message),
+            Intent::Source(verb) => self.source_verb(*verb),
             Intent::OpenMessage {
                 message,
                 index,
@@ -3180,12 +3188,18 @@ impl FocusWindow {
                 if let Some(compose) = self.compose() {
                     compose.composer().fetch_settled(*message, sections);
                 }
+                if *sections == postio_model::fetch::Sections::Whole
+                    && self.source_of() == Some(*message)
+                {
+                    self.refresh_source(*message);
+                }
             }
             Event::BodyReachable { message, .. } => {
                 if let Some(reading) = self.reading() {
                     reading.body_landed(*message);
                 }
             }
+
             _ => {}
         }
         self.hear_sync(event);
@@ -5039,10 +5053,20 @@ impl FocusWindow {
         }
     }
 
-    pub fn source_shown(&self) -> Option<String> {
-        self.visible_dialog()
-            .filter(|dialog| dialog.widget_name() == crate::source::DIALOG_NAME)
-            .and_then(|dialog| crate::source::shown(&dialog))
+    pub fn source(&self) -> Option<postio_widgets::source::SourceDialog> {
+        self.imp()
+            .source
+            .borrow()
+            .as_ref()
+            .map(|(_, dialog)| dialog.clone())
+    }
+
+    fn source_of(&self) -> Option<MessageId> {
+        self.imp()
+            .source
+            .borrow()
+            .as_ref()
+            .map(|(message, _)| *message)
     }
 
     fn view_source(&self, message: MessageId) {
@@ -5053,18 +5077,79 @@ impl FocusWindow {
         glib::spawn_future_local(async move {
             // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
             // answers on its own runtime (ADR 0041).
-            let read = client.raw_source(message).await;
+            let read = client.source_view(message, false).await;
             let Some(window) = window.upgrade() else {
                 return;
             };
             match read {
-                Ok(raw) => crate::source::dialog(&raw, &window.keymap()).present(Some(&window)),
+                Ok(view) => window.present_source(message, view),
                 Err(error) => {
                     window.imp().toast.show_notice(&error.to_string());
                     window.follow_toast();
                 }
             }
         });
+    }
+
+    fn present_source(&self, message: MessageId, view: postio_ui::source::SourceView) {
+        let weak = self.downgrade();
+        let dialog =
+            postio_widgets::source::SourceDialog::new(view, &self.keymap(), move |command| {
+                if let Some(window) = weak.upgrade() {
+                    window.run_in_controller(command);
+                }
+            });
+        let weak = self.downgrade();
+        dialog.dialog().connect_closed(move |_| {
+            if let Some(window) = weak.upgrade() {
+                window.imp().source.replace(None);
+                window.sync_surfaces();
+            }
+        });
+        dialog.dialog().present(Some(self));
+        self.imp().source.replace(Some((message, dialog)));
+        self.sync_surfaces();
+    }
+
+    fn refresh_source(&self, message: MessageId) {
+        let Some(client) = self.imp().client.borrow().clone() else {
+            return;
+        };
+        let window = self.downgrade();
+        glib::spawn_future_local(async move {
+            // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
+            // answers on its own runtime (ADR 0041).
+            let read = client.source_view(message, false).await;
+            if let (Some(window), Ok(view)) = (window.upgrade(), read)
+                && let Some(dialog) = window
+                    .source()
+                    .filter(|_| window.source_of() == Some(message))
+            {
+                dialog.set_view(view);
+            }
+        });
+    }
+
+    fn source_verb(&self, verb: postio_focus::SourceVerb) {
+        use postio_focus::SourceVerb;
+        let Some(dialog) = self.source() else {
+            return;
+        };
+        match verb {
+            SourceVerb::Tab(tab) => dialog.show_tab(tab),
+            SourceVerb::Copy => {
+                let bytes = dialog.bytes();
+                if !bytes.is_empty() {
+                    self.clipboard().set_text(&String::from_utf8_lossy(&bytes));
+                }
+            }
+            SourceVerb::Save => {}
+            SourceVerb::Unfold => {
+                dialog.unfold();
+            }
+            SourceVerb::Find => dialog.find(),
+            _ => {}
+        }
     }
 
     pub fn set_remote_runtime(&self, runtime: tokio::runtime::Handle) {
@@ -5710,9 +5795,12 @@ impl FocusWindow {
             .is_some_and(|compose| compose.composer().is_detached());
         let sign_in = self.add_account_dialog().is_some();
         let settings = self.settings_dialog().is_some();
-        let small_dialog = [crate::source::DIALOG_NAME, crate::chooser::DIALOG_NAME]
-            .into_iter()
-            .find(|name| dialog_named(name));
+        let small_dialog = [
+            postio_widgets::source::DIALOG_NAME,
+            crate::chooser::DIALOG_NAME,
+        ]
+        .into_iter()
+        .find(|name| dialog_named(name));
         let reading_here = self.visible_dialog().is_none() && self.reading_beside();
         // The merge sheet over the Contacts view takes every key until answered.
         let merging = self.contacts().is_some_and(|view| view.merge_open());
@@ -5912,6 +6000,12 @@ impl FocusWindow {
             });
 
         let mut app = std::collections::BTreeMap::new();
+        if let Some(dialog) = self.source() {
+            app.insert(
+                "focus.source.tab".to_owned(),
+                serde_json::Value::String(dialog.tab().id().to_owned()),
+            );
+        }
         app.insert(
             "focus.sync".to_owned(),
             serde_json::Value::String(self.sync_said()),

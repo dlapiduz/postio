@@ -62,15 +62,16 @@ pub async fn view(
             .any(|own| row.from.iter().any(|from| from.same_address(own)))
     });
     let fetch = raw.is_none() && !offline;
-    let view = postio_ui::source::view(&SourceInput {
+    let here = raw.is_some();
+    let view = postio_ui::source::view(SourceInput {
         subject: row.subject.as_deref().unwrap_or("(no subject)"),
         from: &row.from,
         headers: headers.as_deref(),
-        raw: raw.as_deref(),
-        raw_state: match (&raw, fetch) {
-            (Some(_), _) => RawState::Here,
-            (None, true) => RawState::Fetching,
-            (None, false) => RawState::Offline,
+        raw,
+        raw_state: match (here, fetch) {
+            (true, _) => RawState::Here,
+            (false, true) => RawState::Fetching,
+            (false, false) => RawState::Offline,
         },
         body,
         provider: preset.map(|preset| Provider {

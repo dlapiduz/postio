@@ -1380,3 +1380,21 @@ pub async fn rows_shown(window: &postio_gtk::window::FocusWindow, count: usize) 
         "the inbox never reached {count} rows"
     );
 }
+
+/// A Source dialog over a two-line message, for the checks every dialog meets.
+pub fn source_dialog(keymap: &postio_core::Keymap) -> adw::Dialog {
+    let view = postio_ui::source::view(postio_ui::source::SourceInput {
+        subject: "x",
+        from: &[],
+        headers: None,
+        raw: Some(b"From: a@example.com\r\n\r\nx".to_vec()),
+        raw_state: postio_ui::source::RawState::Here,
+        body: postio_ui::source::BodyState::Here,
+        provider: None,
+        sent_by_you: false,
+        account: "Work",
+    });
+    postio_widgets::source::SourceDialog::new(view, keymap, |_| {})
+        .dialog()
+        .clone()
+}

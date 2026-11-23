@@ -59,7 +59,7 @@ pub struct SourceInput<'a> {
     pub from: &'a [EmailAddress],
     /// The stored header block, as `postio_model::headers::block_of` keeps it.
     pub headers: Option<&'a str>,
-    pub raw: Option<&'a [u8]>,
+    pub raw: Option<Vec<u8>>,
     pub raw_state: RawState,
     pub body: BodyState,
     pub provider: Option<Provider<'a>>,
@@ -137,6 +137,8 @@ pub struct Hop {
 pub struct RawView {
     pub segments: Vec<RawSegment>,
     pub state_line: Option<String>,
+    /// Every byte, which a fold's range indexes; what copy acts on. Empty when not here.
+    pub bytes: Vec<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -152,9 +154,10 @@ pub enum RawSegment {
 pub const FIXED_LINE: &str = "These checks are about the sending domain and the message's integrity. They don't tell you the person is who you think.";
 pub const NOT_CHECKED_HERE: &str = "DKIM, SPF and DMARC were not checked on this computer. Your provider checked them when the mail arrived.";
 
-pub fn view(input: &SourceInput<'_>) -> SourceView {
+pub fn view(mut input: SourceInput<'_>) -> SourceView {
     // The raw bytes, when here, hold every header; the stored block may be cut at its limit.
-    let parsed = match input.raw {
+    let raw = input.raw.take();
+    let parsed = match raw.as_deref() {
         Some(raw) => Some(postio_model::mime::parse_headers(raw).headers),
         None => input.headers.map(headers::parse_block),
     };
@@ -164,7 +167,7 @@ pub fn view(input: &SourceInput<'_>) -> SourceView {
         .map(|headers| authenticity::verification(headers, input.from, trusted));
     SourceView {
         title: format!("Source · {}", input.subject),
-        verification: verification(input, report.as_ref()),
+        verification: verification(&input, report.as_ref()),
         headers: HeadersView {
             rows: parsed
                 .as_ref()
@@ -175,8 +178,9 @@ pub fn view(input: &SourceInput<'_>) -> SourceView {
                 .then(|| "More headers arrive with the body.".to_owned()),
         },
         raw: RawView {
-            segments: input.raw.map(segments).unwrap_or_default(),
-            state_line: raw_state_line(input),
+            segments: raw.as_deref().map(segments).unwrap_or_default(),
+            state_line: raw_state_line(&input, raw.is_some()),
+            bytes: raw.unwrap_or_default(),
         },
     }
 }
@@ -327,8 +331,8 @@ fn without_comments(value: &str) -> String {
     out
 }
 
-fn raw_state_line(input: &SourceInput<'_>) -> Option<String> {
-    if input.raw.is_some() {
+fn raw_state_line(input: &SourceInput<'_>, here: bool) -> Option<String> {
+    if here {
         return None;
     }
     match input.raw_state {

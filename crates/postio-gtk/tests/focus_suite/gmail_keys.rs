@@ -356,7 +356,7 @@ impl World {
                 || window.bar().is_some_and(|bar| bar.is_open())
                 || window.places().is_some_and(|places| places.is_open())
                 || window.row_menu().is_some_and(|menu| menu.is_open())
-                || window.source_shown().is_some()
+                || window.source().is_some()
                 || !window.choices_shown().is_empty()
                 || window.observe().composer.open
                 || window.observe().selection.count > 0;
@@ -570,7 +570,7 @@ impl Snap {
                 .map(|reading| reading.body_text())
                 .unwrap_or_default(),
             more: reading.as_ref().is_some_and(|reading| reading.more_open()),
-            source: window.source_shown().is_some(),
+            source: window.source().is_some(),
             choices: window.choices_shown().len(),
             capture: window
                 .capture()
