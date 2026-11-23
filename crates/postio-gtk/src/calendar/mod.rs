@@ -325,7 +325,15 @@ impl AgendaView {
         title.add_css_class("focus-calendar-card-title");
         title.set_xalign(0.0);
         title.set_wrap(true);
-        self.card.append(&title);
+        title.set_hexpand(true);
+        let close = postio_widgets::widgets::button::close_button();
+        close.set_valign(gtk::Align::Start);
+        let act = Rc::clone(&self.act);
+        close.connect_clicked(move |_| act(CommandId::Back));
+        let header = gtk::Box::new(gtk::Orientation::Horizontal, S2);
+        header.append(&title);
+        header.append(&close);
+        self.card.append(&header);
         self.card
             .update_property(&[gtk::accessible::Property::Label(&open.title)]);
         let mut lines = vec![open.when.clone()];
@@ -351,6 +359,8 @@ impl AgendaView {
         keys.widget().set_margin_top(S2);
         self.card.append(keys.widget());
         self.card.set_visible(true);
+        self.card.set_focusable(true);
+        self.card.grab_focus();
     }
 }
 
