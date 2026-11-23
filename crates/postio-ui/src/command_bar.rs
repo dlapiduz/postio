@@ -2,11 +2,10 @@
 //! for.
 
 use postio_core::{ActionId, CommandId, Context, Keymap};
-use postio_model::MailboxId;
 use postio_model::ids::MessageId;
-use postio_search::{ResultOrder, SearchHit};
+use postio_search::SearchHit;
 
-use crate::finder::{self, Blend, Destination, Place, PlaceKind};
+use crate::finder::{self, Blend, Destination};
 
 pub const FOLDER_ROWS: u32 = 30;
 
@@ -253,22 +252,6 @@ pub fn correspondent_lines(hits: &[finder::ContactHit]) -> Vec<Line> {
     lines
 }
 
-pub fn folder_for(places: &[Place], name: &str) -> Option<(String, MailboxId)> {
-    let wanted = name.to_lowercase();
-    places
-        .iter()
-        .filter(|place| matches!(place.kind, PlaceKind::Mailbox | PlaceKind::Folder))
-        .find(|place| place.name.to_lowercase().starts_with(&wanted))
-        .and_then(|place| match place.destination {
-            Destination::Mailbox(mailbox) => Some((place.name.clone(), mailbox)),
-            _ => None,
-        })
-}
-
-pub fn folder_heading(name: &str, count: u32) -> String {
-    format!("{name} \u{b7} folder \u{b7} {count} threads \u{b7} newest first")
-}
-
 pub fn conversations(hits: Vec<SearchHit>) -> Vec<SearchHit> {
     let mut seen = Vec::new();
     let mut rows = Vec::new();
@@ -300,50 +283,6 @@ pub fn search_title(query: &str, instead: Option<&str>) -> String {
     }
 }
 
-pub fn results_heading(count: usize) -> String {
-    format!(
-        "Threads \u{b7} {count} match{}",
-        if count == 1 { "" } else { "es" }
-    )
-}
-
-pub fn showing_results_for(term: &str) -> String {
-    format!("Showing results for {term}")
-}
-
-pub fn search_instead(typed: &str) -> (String, &'static str) {
-    (
-        format!("Search instead for \u{201c}{typed}\u{201d}"),
-        "exactly as typed",
-    )
-}
-
-pub fn order_words(order: ResultOrder) -> (String, String) {
-    let (now, other) = match order {
-        ResultOrder::Relevance => ("relevance", "date"),
-        ResultOrder::Newest => ("date", "relevance"),
-    };
-    (format!("Sorted by {now}"), format!("switch to {other}"))
-}
-
-/// Held mail shows where it waits (`held`: rule and delivered flag) in place of its folder.
-pub fn result_place(
-    hit: &SearchHit,
-    held: &[(MessageId, String, bool)],
-    folders: &[(MailboxId, String)],
-) -> Option<String> {
-    match held
-        .iter()
-        .find(|(message, _, _)| *message == hit.message_id)
-    {
-        Some((_, rule, delivered)) => Some(crate::digest::held_place(rule, *delivered)),
-        None => folders
-            .iter()
-            .find(|(id, _)| *id == hit.mailbox_id)
-            .map(|(_, name)| format!("in:{name}")),
-    }
-}
-
 pub fn said_of(from: &postio_model::EmailAddress) -> String {
     from.name.clone().unwrap_or_else(|| from.address.clone())
 }
@@ -351,6 +290,7 @@ pub fn said_of(from: &postio_model::EmailAddress) -> String {
 #[cfg(test)]
 mod tests {
     use chrono::Utc;
+    use postio_model::MailboxId;
     use postio_model::ids::ThreadId;
 
     use super::*;
@@ -366,16 +306,6 @@ mod tests {
             preview: None,
             snippet: String::new(),
             score: 0.0,
-        }
-    }
-
-    fn place(name: &str, kind: PlaceKind, id: i64) -> Place {
-        Place {
-            kind,
-            name: name.to_owned(),
-            count: None,
-            go: None,
-            destination: Destination::Mailbox(MailboxId::new(id)),
         }
     }
 
@@ -465,21 +395,6 @@ mod tests {
     }
 
     #[test]
-    fn in_completes_the_first_folder_by_prefix() {
-        let places = vec![
-            place("Archive", PlaceKind::Mailbox, 1),
-            place("Receipts", PlaceKind::Folder, 2),
-            place("Receipts-old", PlaceKind::Folder, 3),
-            place("Travel", PlaceKind::Label, 4),
-        ];
-        assert_eq!(
-            folder_for(&places, "REC"),
-            Some(("Receipts".to_owned(), MailboxId::new(2)))
-        );
-        assert_eq!(folder_for(&places, "tra"), None);
-    }
-
-    #[test]
     fn the_empty_bar_says_what_typing_does_and_runs_nothing() {
         let lines = empty_lines();
         let said: Vec<(&str, Option<&str>)> = lines
@@ -534,37 +449,6 @@ mod tests {
         assert_eq!(
             search_title("\"factura telefonica\"", None),
             "Search mail for \"factura telefonica\""
-        );
-    }
-
-    #[test]
-    fn the_words_the_bar_says() {
-        assert_eq!(results_heading(1), "Threads \u{b7} 1 match");
-        assert_eq!(results_heading(3), "Threads \u{b7} 3 matches");
-        assert_eq!(
-            order_words(ResultOrder::Newest),
-            (
-                "Sorted by date".to_owned(),
-                "switch to relevance".to_owned()
-            )
-        );
-        assert_eq!(
-            folder_heading("Receipts", 4),
-            "Receipts \u{b7} folder \u{b7} 4 threads \u{b7} newest first"
-        );
-    }
-
-    #[test]
-    fn held_mail_says_where_it_waits_rather_than_its_folder() {
-        let folders = vec![(MailboxId::new(1), "Archive".to_owned())];
-        let held = vec![(MessageId::new(5), "News".to_owned(), false)];
-        assert_eq!(
-            result_place(&hit(5, None), &held, &folders).as_deref(),
-            Some("held \u{b7} News")
-        );
-        assert_eq!(
-            result_place(&hit(6, None), &held, &folders).as_deref(),
-            Some("in:Archive")
         );
     }
 }
