@@ -163,11 +163,14 @@ impl Actions {
         }
         if let Some(given) = marker.answer {
             return Err(CommandError::rejected(match given {
-                InviteAnswer::Accepting | InviteAnswer::Declining => {
+                InviteAnswer::Accepting
+                | InviteAnswer::Declining
+                | InviteAnswer::TentativePending => {
                     "Your answer is on its way; undo takes it back while it waits"
                 }
                 InviteAnswer::Accepted => "You accepted that invitation already",
                 InviteAnswer::Declined => "You declined that invitation already",
+                InviteAnswer::Tentative => "You answered that invitation tentatively already",
             }));
         }
         let (invitation, object) = invitation_of(&blobs, &row)
@@ -203,6 +206,12 @@ impl Actions {
                 InviteAnswer::Declining,
                 "Declined",
                 "declined",
+            ),
+            Answer::Tentative => (
+                UndoKind::Tentative,
+                InviteAnswer::TentativePending,
+                "Tentative",
+                "tentatively accepted",
             ),
         };
         let ics = postio_calendar::reply(&invitation, &attendee, answer);
@@ -301,6 +310,7 @@ impl Actions {
         let partstat = match answer {
             Answer::Accept => "ACCEPTED",
             Answer::Decline => "DECLINED",
+            Answer::Tentative => "TENTATIVE",
         };
         let placed = async {
             let connection = self.database.connect().await?;

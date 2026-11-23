@@ -1998,6 +1998,7 @@ impl FocusController {
                 | CommandId::ToggleHasAction
                 | CommandId::Back
                 | CommandId::AcceptInvite
+                | CommandId::TentativeInvite
                 | CommandId::DeclineInvite
                 | CommandId::DismissMarker
                 | CommandId::OpenMessage

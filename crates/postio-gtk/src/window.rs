@@ -1447,7 +1447,8 @@ impl FocusWindow {
                 | CommandId::Forward
                 | CommandId::Compose
                 | CommandId::AcceptInvite
-                | CommandId::DeclineInvite),
+                | CommandId::DeclineInvite
+                | CommandId::TentativeInvite),
             ) => self.act(id),
             // The message on screen going away is the controller's: it aims at the message alone
             // and steps on to the row that takes its place once the list lets it go.
@@ -1923,7 +1924,7 @@ impl FocusWindow {
             CommandId::RemindIfNoReply => self.open_when(When::Remind),
             CommandId::AddLabel => self.open_labels(),
             CommandId::Move => self.open_moves(),
-            CommandId::AcceptInvite | CommandId::DeclineInvite => {
+            CommandId::AcceptInvite | CommandId::DeclineInvite | CommandId::TentativeInvite => {
                 if let Some(message) = self.aimed_message() {
                     self.answer(message, id);
                 }
@@ -2962,10 +2963,9 @@ impl FocusWindow {
 
     fn answer(&self, message: MessageId, id: CommandId) {
         let message = Some(message);
-        self.post(match id {
-            CommandId::DeclineInvite => Command::DeclineInvite { message },
-            _ => Command::AcceptInvite { message },
-        });
+        if let Some(answer) = postio_core::command::answer_invite(id, message) {
+            self.post(answer);
+        }
     }
 
     /// With a message open over the list, an undo takes it back to the conversation it brought

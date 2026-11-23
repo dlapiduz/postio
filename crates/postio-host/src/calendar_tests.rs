@@ -217,3 +217,38 @@ fn an_update_to_an_accepted_event_moves_it_and_says_so() {
     let note = marker_note(&world, update).expect("a note");
     assert!(note.starts_with("Moved to "), "{note}");
 }
+
+#[test]
+fn a_tentative_answer_puts_the_event_on_the_calendar_as_tentative() {
+    let world = World::new();
+    crate::verbs_tests::sending(&world);
+    let request = crate::verbs_tests::invited(&world);
+    let (client, events) = world.frontend(ClientKind::Focus);
+
+    answer(
+        &world,
+        &client,
+        &events,
+        Command::TentativeInvite {
+            message: Some(request),
+        },
+    );
+
+    assert_eq!(
+        crate::verbs_tests::answer_on(&world, request),
+        Some(postio_model::listing::InviteAnswer::TentativePending)
+    );
+    let shown = agenda(&world);
+    assert_eq!(shown[0].my_partstat.as_deref(), Some("TENTATIVE"));
+    assert_eq!(
+        postio_ui::calendar::agenda_rows(&shown, Utc::now(), &chrono::Local)
+            .iter()
+            .find_map(|row| match row {
+                postio_ui::calendar::AgendaRow::Occurrence(row) =>
+                    row.chip.as_ref().map(|chip| chip.label()),
+                postio_ui::calendar::AgendaRow::Day { .. } => None,
+            })
+            .as_deref(),
+        Some("Tentative")
+    );
+}

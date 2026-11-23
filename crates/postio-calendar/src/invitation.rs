@@ -70,6 +70,7 @@ pub struct Attendee {
 pub enum Answer {
     Accept,
     Decline,
+    Tentative,
 }
 
 /// Only `At` is an instant on its own; a floating 10:00 must not be shown as 10:00 UTC.

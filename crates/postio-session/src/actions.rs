@@ -77,6 +77,7 @@ pub const WIRED: &[CommandId] = &[
     CommandId::ContactGroupRemove,
     CommandId::MuteThread,
     CommandId::SplitThread,
+    CommandId::TentativeInvite,
 ];
 
 /// How long `Command::Snooze` hides a message when it names no time.
@@ -291,6 +292,12 @@ impl Actions {
             Command::AcceptInvite { message } => {
                 vec![
                     self.answer(*message, postio_calendar::Answer::Accept)
+                        .await?,
+                ]
+            }
+            Command::TentativeInvite { message } => {
+                vec![
+                    self.answer(*message, postio_calendar::Answer::Tentative)
                         .await?,
                 ]
             }

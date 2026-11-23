@@ -160,13 +160,14 @@ impl<'a> MarkerRepository<'a> {
         "SELECT message_id FROM markers WHERE answer_until <= ?1 ORDER BY answer_until LIMIT 256"
     }
 
-    /// `accepting` becomes `accepted` and `declining` `declined`. Answers whether one was waiting.
+    /// A waiting answer becomes final. Answers whether one was waiting.
     pub async fn settle_answer(&self, message: MessageId) -> Result<bool> {
         let settled = sql::execute(
             self.connection,
             "UPDATE markers
                 SET answer = CASE answer WHEN 'accepting' THEN 'accepted'
                                          WHEN 'declining' THEN 'declined'
+                                         WHEN 'tentative_pending' THEN 'tentative'
                                          ELSE answer END,
                     answer_until = NULL
               WHERE message_id = ?1 AND answer_until IS NOT NULL",
@@ -359,6 +360,8 @@ fn answer_name(answer: InviteAnswer) -> &'static str {
         InviteAnswer::Accepted => "accepted",
         InviteAnswer::Declining => "declining",
         InviteAnswer::Declined => "declined",
+        InviteAnswer::TentativePending => "tentative_pending",
+        InviteAnswer::Tentative => "tentative",
     }
 }
 
@@ -368,6 +371,8 @@ pub(crate) fn answer_of(name: &str) -> Result<InviteAnswer> {
         "accepted" => InviteAnswer::Accepted,
         "declining" => InviteAnswer::Declining,
         "declined" => InviteAnswer::Declined,
+        "tentative_pending" => InviteAnswer::TentativePending,
+        "tentative" => InviteAnswer::Tentative,
         other => return Err(unknown_enum("markers.answer", other)),
     })
 }

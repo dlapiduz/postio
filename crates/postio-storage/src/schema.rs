@@ -1369,7 +1369,8 @@ CREATE TABLE markers (
     -- How the person answered; the `-ing` two last while the reply's window
     -- is open.
     answer           TEXT    CHECK (answer IN ('accepting', 'accepted',
-                                               'declining', 'declined')),
+                                               'declining', 'declined',
+                                               'tentative_pending', 'tentative')),
     -- While an answer's reply waits out its window in the outbox, when the
     -- window closes (research R9): Focus's due timer then makes the answer
     -- final. NULL otherwise.

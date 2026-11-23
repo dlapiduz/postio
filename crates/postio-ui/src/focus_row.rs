@@ -402,6 +402,7 @@ where
             let status = match marker.answer {
                 Some(InviteAnswer::Accepting | InviteAnswer::Accepted) => Some("Accepted"),
                 Some(InviteAnswer::Declining | InviteAnswer::Declined) => Some("Declined"),
+                Some(InviteAnswer::TentativePending | InviteAnswer::Tentative) => Some("Tentative"),
                 None if marker.cancelled => Some("Cancelled"),
                 None if over => Some("Past"),
                 None => None,
@@ -420,7 +421,7 @@ where
         MarkerKind::Todo => ("To-do", None, vec![(CommandId::Snooze, "Snooze")]),
         MarkerKind::NoReply => ("No reply", None, vec![(CommandId::Reply, "Reply")]),
     };
-    let open = matches!(status, None | Some("Accepted"));
+    let open = matches!(status, None | Some("Accepted" | "Tentative"));
     let note = match (&marker.when, marker.moved_from) {
         _ if !open => None,
         (Some(MarkerWhen::Event { starts_at, .. }), Some(_)) => Some(format!(

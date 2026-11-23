@@ -126,7 +126,7 @@ the plan's research section it settles. Spike code is not merged.
   - an update moves the event, with `Moved`.
 
   Then implement them in `crates/postio-host/src/calendar/` and the marker code in `crates/postio-host/src/focus/`.
-- [ ] T019 [US2] Add `tentative_invite` (`alt+y`) beside `accept_invite` in `crates/postio-calendar/src/reply.rs` and the RSVP path, with cases
+- [x] T019 [US2] Add `tentative_invite` (`alt+y`) beside `accept_invite` in `crates/postio-calendar/src/reply.rs` and the RSVP path, with cases
 - [ ] T020 [US2] Draw the new chips in each frontend's marker (`crates/postio-widgets/src/`, `crates/postio-tui/src/view/list.rs`, `macos/Sources/PostioKit/`), with one frontend case each
 
 ## Phase 6: User Story 7, pop out (P2)

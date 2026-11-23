@@ -19,6 +19,15 @@ use postio_model::{
 /// About ten seconds, the toast's own life; here so every frontend's toast says the window the
 /// engine keeps.
 pub const RSVP_WINDOW: std::time::Duration = std::time::Duration::from_secs(10);
+
+pub fn answer_invite(id: CommandId, message: Option<MessageId>) -> Option<Command> {
+    match id {
+        CommandId::AcceptInvite => Some(Command::AcceptInvite { message }),
+        CommandId::DeclineInvite => Some(Command::DeclineInvite { message }),
+        CommandId::TentativeInvite => Some(Command::TentativeInvite { message }),
+        _ => None,
+    }
+}
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Declares every command once. Entries after the `;` are invocations of a verb another id already

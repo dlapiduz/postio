@@ -640,7 +640,10 @@ impl Outbox {
     }
 }
 
-fn answer_on(world: &World, message: MessageId) -> Option<postio_model::listing::InviteAnswer> {
+pub(crate) fn answer_on(
+    world: &World,
+    message: MessageId,
+) -> Option<postio_model::listing::InviteAnswer> {
     crate::tests::marker_on(world, message).and_then(|marker| marker.answer)
 }
 

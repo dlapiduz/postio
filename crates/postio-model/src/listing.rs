@@ -124,6 +124,8 @@ pub enum InviteAnswer {
     Accepted,
     Declining,
     Declined,
+    TentativePending,
+    Tentative,
 }
 
 /// Read with `surfaced()` on `Event::SurfacedChanged` and spliced in at `position`.

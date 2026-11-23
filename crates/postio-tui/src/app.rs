@@ -2026,18 +2026,16 @@ impl App {
                 );
                 return self.say(&sentence);
             }
-            "accept_invite" | "decline_invite" => {
+            "accept_invite" | "decline_invite" | "tentative_invite" => {
                 let message = self
                     .reading
                     .as_ref()
                     .map(|reading| reading.shown.id)
                     .or_else(|| self.cursor_message());
                 if let Some(message) = message {
-                    let command = if id == "accept_invite" {
-                        postio_core::CommandId::AcceptInvite
-                    } else {
-                        postio_core::CommandId::DeclineInvite
-                    };
+                    let command = id
+                        .parse::<postio_core::CommandId>()
+                        .unwrap_or(postio_core::CommandId::DeclineInvite);
                     return self.answer(message, command);
                 }
             }
@@ -2204,12 +2202,10 @@ impl App {
     ) -> Vec<Effect> {
         let message = Some(message);
         self.answering = true;
-        vec![Effect::Send(match id {
-            postio_core::CommandId::DeclineInvite => {
-                postio_core::Command::DeclineInvite { message }
-            }
-            _ => postio_core::Command::AcceptInvite { message },
-        })]
+        postio_core::command::answer_invite(id, message)
+            .map(Effect::Send)
+            .into_iter()
+            .collect()
     }
 
     /// A move with no folder and a label with no label are half a request: `None` means "ask".
