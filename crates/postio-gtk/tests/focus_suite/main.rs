@@ -12,6 +12,7 @@ mod bar;
 mod body_lands;
 mod buttons;
 mod calendar;
+mod calendar_pop_out;
 mod capture;
 mod chrome;
 mod close_buttons;
@@ -143,6 +144,23 @@ const CASES: &[(&str, fn())] = &[
     (
         "gmail_keys::every_menu_key",
         gmail_keys::every_menu_key as fn(),
+    ),
+    (
+        "calendar_pop_out::mod_shift_o_moves_calendar_into_its_own_window_and_back_with_its_ring",
+        calendar_pop_out::mod_shift_o_moves_calendar_into_its_own_window_and_back_with_its_ring
+            as fn(),
+    ),
+    (
+        "calendar_pop_out::destinations_present_the_window_that_shows_them",
+        calendar_pop_out::destinations_present_the_window_that_shows_them as fn(),
+    ),
+    (
+        "calendar_pop_out::closing_the_calendar_window_or_mod_w_pops_calendar_back_in",
+        calendar_pop_out::closing_the_calendar_window_or_mod_w_pops_calendar_back_in as fn(),
+    ),
+    (
+        "calendar_pop_out::calendar_popped_out_at_quit_reopens_in_its_own_window",
+        calendar_pop_out::calendar_popped_out_at_quit_reopens_in_its_own_window as fn(),
     ),
     (
         "calendar::slash_searches_events_and_escape_brings_the_agenda_back",

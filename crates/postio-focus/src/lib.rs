@@ -1676,6 +1676,10 @@ impl FocusController {
         self.surfaces.route(id)
     }
 
+    pub fn focused_window(&self) -> Window {
+        self.focused
+    }
+
     pub fn key_context(&self) -> postio_ui::keymap::KeyContext {
         if self.focused == Window::Calendar && self.calendar_popped() {
             return postio_ui::keymap::KeyContext::CalendarWindow;
@@ -1987,6 +1991,9 @@ impl FocusController {
     }
 
     pub fn answers(&self, id: CommandId) -> bool {
+        if self.focused == Window::Calendar && self.calendar_popped() {
+            return true;
+        }
         if self.surfaces.top() == Some(SurfaceKind::Bar) && bar::bar_key(id) {
             return true;
         }

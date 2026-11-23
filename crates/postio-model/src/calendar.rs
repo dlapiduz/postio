@@ -111,7 +111,6 @@ pub struct EventDetail {
     pub writable: bool,
 }
 
-/// Remembered across starts; a position is not, since Wayland gives it to the compositor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct CalendarWindowState {
     pub popped: bool,

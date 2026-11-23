@@ -12,3 +12,4 @@ Read before touching widgets, CSS or key handling. `/gtk-design` has the rest.
 - **Changes the app makes for the user stay off the undo stack, with no toast** (`Recording::Incidental`).
 - **`GtkListView` builds about 205 rows ahead.** Use 1,000 or more test rows to tell recycling from none.
 - **An app-priority CSS provider resolves `prefers-color-scheme` against its own setting.** `postio_gtk::style::install` keeps it in step with `AdwStyleManager`.
+- **A second window's keyboard is the controller's fact, not `is_active`'s.** The popped-out Calendar reports `Input::WindowFocused` when it becomes active, and its keys are forwarded to the main window's one resolver; under a headless compositor `is_active` can lag, so tests and observations read `Feed::focused_window`. The storyboard runner films the main window only: a second window shows in the observation's `app.focus.*` fields, not in the frames.

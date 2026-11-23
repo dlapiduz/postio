@@ -4,7 +4,7 @@ use postio_storage::repository::{CalendarRepository, StoredEvent, StoredOccurren
 
 use crate::support::{self, Fixture};
 
-async fn with_events(fixture: &Fixture) {
+pub async fn with_events(fixture: &Fixture) {
     let connection = fixture.database.connect().await.expect("a connection");
     let calendars = CalendarRepository::new(&connection);
     let local = calendars.local().await.expect("local").id;

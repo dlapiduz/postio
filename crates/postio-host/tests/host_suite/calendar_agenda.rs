@@ -269,3 +269,34 @@ async fn the_calendar_window_s_state_is_remembered_without_a_position() {
         state
     );
 }
+
+#[tokio::test]
+async fn an_inbox_page_with_invitations_reads_their_clashes_in_one_more_statement() {
+    let (database, account) = postio_demo::seeded(postio_demo::Seed::Small).await;
+    let connection = database.connect().await.expect("connection");
+    let inbox = postio_storage::repository::MailboxRepository::new(&connection)
+        .by_role(account, postio_model::MailboxRole::Inbox)
+        .await
+        .expect("read")
+        .expect("an inbox")
+        .id;
+    let groups = postio_storage::repository::ThreadRepository::new(&connection)
+        .focus_page_at(
+            &postio_storage::repository::FocusListQuery {
+                inboxes: vec![(account, inbox)],
+                limit: 50,
+                after: None,
+            },
+            0,
+        )
+        .await
+        .expect("the page reads with its invitations");
+    assert!(
+        groups.iter().any(|group| group
+            .row
+            .marker
+            .as_ref()
+            .is_some_and(|marker| marker.kind == postio_model::listing::MarkerKind::Invite)),
+        "the demo inbox has an invitation"
+    );
+}

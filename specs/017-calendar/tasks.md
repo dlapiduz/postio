@@ -145,7 +145,7 @@ focused window.
 
   Then implement a new `crates/postio-focus/src/surface_host.rs`.
 - [x] T022 [US7] Write a failing case in `crates/postio-host/tests/host_suite/` for the `calendar.window` settings row (`{ popped, width, height }`, no position), then implement it
-- [ ] T023 [US7] GTK: the Calendar window on the window machinery ADR 0034's detached composers use, in `crates/postio-gtk/src/`. `present()` the target window with the key event's activation token. Add `crates/postio-gtk/tests/focus_suite/calendar_pop_out.rs`, one case per row of `contracts/calendar-mode.md` that pops out. T002's `pop-out` goes green. Note any compositor focus trap in `docs/gotchas/gtk.md`
+- [x] T023 [US7] GTK: the Calendar window on the window machinery ADR 0034's detached composers use, in `crates/postio-gtk/src/`. `present()` the target window with the key event's activation token. Add `crates/postio-gtk/tests/focus_suite/calendar_pop_out.rs`, one case per row of `contracts/calendar-mode.md` that pops out. T002's `pop-out` goes green. Note any compositor focus trap in `docs/gotchas/gtk.md`
 - [ ] T024 [P] [US7] Mac: an `NSWindow` with frame autosave in `macos/Sources/PostioKit/`, with `macos/Tests/PostioKitTests/` cases
 - [ ] T025 [US7] Run `/ux-review` on both storyboards, and fix or contest the verdicts
 - [ ] T026 [US7] File the follow-up that folds `detach_composer` into `pop_out`, with `scripts/issue-file.sh` (plan R9)

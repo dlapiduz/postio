@@ -153,6 +153,8 @@ mod imp {
         pub filtered: RefCell<Option<Rc<crate::filtered::FilteredView>>>,
         pub contacts: RefCell<Option<Rc<crate::contacts::ContactsView>>>,
         pub calendar: RefCell<Option<Rc<crate::calendar::AgendaView>>>,
+        pub calendar_size: Cell<(i32, i32)>,
+        pub calendar_window: RefCell<Option<(adw::Window, Rc<crate::calendar::AgendaView>)>>,
         pub results: RefCell<Option<Rc<crate::results::ResultsPane>>>,
         pub contacts_io: RefCell<Option<postio_ui::contacts_io::IoSheetView>>,
         pub contact_popover:
@@ -246,6 +248,8 @@ mod imp {
                 filtered: RefCell::default(),
                 contacts: RefCell::default(),
                 calendar: RefCell::default(),
+                calendar_size: Cell::new((900, 700)),
+                calendar_window: RefCell::default(),
                 results: RefCell::default(),
                 contacts_io: RefCell::default(),
                 contact_popover: RefCell::default(),
@@ -1764,7 +1768,7 @@ impl FocusWindow {
         {
             return self.run_in_controller(id);
         }
-        if self.calendar().is_some()
+        if (self.calendar().is_some() || self.imp().calendar_window.borrow().is_some())
             && let Some(pane) = self.pane()
             && pane.feed().answers(id)
         {
@@ -2278,7 +2282,19 @@ impl FocusWindow {
                 }
             }
             Intent::Contacts(view) => self.show_contacts(view),
+            Intent::Calendar(view) if view.popped => {
+                if let Some((_, agenda)) = self.imp().calendar_window.borrow().as_ref() {
+                    agenda.show_frame(view);
+                }
+            }
             Intent::Calendar(view) => self.show_calendar(view),
+            Intent::CalendarWindow(open) => self.calendar_window(*open),
+            Intent::PresentWindow(postio_focus::Window::Calendar) => {
+                if let Some((host, _)) = self.imp().calendar_window.borrow().as_ref() {
+                    host.present();
+                }
+            }
+            Intent::PresentWindow(_) => self.present(),
             Intent::CalendarFocusFilter => {
                 if let Some(view) = self.calendar() {
                     view.focus_filter();
@@ -2916,6 +2932,27 @@ impl FocusWindow {
         self.place_reading();
         feed.open(ListScope::Focus(FocusScope::Inbox));
         self.focus_list();
+        let window = self.downgrade();
+        let reopen = client.clone();
+        glib::spawn_future_local(async move {
+            let Ok(state) = reopen.calendar_window().await else {
+                return;
+            };
+            let Some(window) = window.upgrade() else {
+                return;
+            };
+            if state.width > 0 && state.height > 0 {
+                let size = (
+                    i32::try_from(state.width).unwrap_or(900),
+                    i32::try_from(state.height).unwrap_or(700),
+                );
+                window.imp().calendar_size.set(size);
+            }
+            if state.popped {
+                window.press_command(CommandId::GoToCalendar);
+                window.press_command(CommandId::PopOut);
+            }
+        });
 
         // Exactly one reader of the client's events, on the main loop: clones of the receiver would
         // compete for them.
@@ -5274,7 +5311,124 @@ impl FocusWindow {
 
     /// Public because a headless compositor grants no focus, so a test says what the notification
     /// would.
+    fn calendar_window(&self, open: bool) {
+        let imp = self.imp();
+        if !open {
+            if let Some((host, _)) = imp.calendar_window.take() {
+                self.remember_calendar_window(false, host.default_width(), host.default_height());
+                host.destroy();
+            }
+            return;
+        }
+        if imp.calendar_window.borrow().is_some() {
+            return;
+        }
+        let Some(pane) = self.pane() else {
+            return;
+        };
+        let agenda = crate::calendar::AgendaView::new(
+            pane.feed().clone(),
+            glib::clone!(
+                #[weak(rename_to = window)]
+                self,
+                move |command| window.press_command(command)
+            ),
+        );
+        let (width, height) = imp.calendar_size.get();
+        let host = adw::Window::builder()
+            .title("Calendar")
+            .default_width(width)
+            .default_height(height)
+            .build();
+        host.set_application(self.application().as_ref());
+        let layout = adw::ToolbarView::new();
+        layout.add_top_bar(&adw::HeaderBar::new());
+        layout.set_content(Some(agenda.widget()));
+        host.set_content(Some(&layout));
+        let keys = gtk::EventControllerKey::new();
+        keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+        keys.connect_key_pressed(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            #[weak]
+            agenda,
+            #[upgrade_or]
+            glib::Propagation::Proceed,
+            move |_, key, _, state| {
+                if agenda.filter().has_focus() || agenda.filter().focus_child().is_some() {
+                    if !matches!(key, gdk::Key::Escape) {
+                        return glib::Propagation::Proceed;
+                    }
+                }
+                window.handle_key(key, state)
+            }
+        ));
+        host.add_controller(keys);
+        host.connect_is_active_notify(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |host| {
+                if host.is_active()
+                    && let Some(pane) = window.pane()
+                {
+                    pane.feed().input(postio_focus::Input::WindowFocused(
+                        postio_focus::Window::Calendar,
+                    ));
+                }
+            }
+        ));
+        host.connect_close_request(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            #[upgrade_or]
+            glib::Propagation::Proceed,
+            move |_| {
+                window.run_in_controller(CommandId::PopIn);
+                glib::Propagation::Stop
+            }
+        ));
+        imp.calendar_window
+            .replace(Some((host.clone(), Rc::clone(&agenda))));
+        self.remember_calendar_window(true, width, height);
+        host.present();
+        agenda.focus_list();
+    }
+
+    fn remember_calendar_window(&self, popped: bool, width: i32, height: i32) {
+        self.imp().calendar_size.set((width, height));
+        let Some(client) = self.imp().client.borrow().clone() else {
+            return;
+        };
+        let state = postio_model::calendar::CalendarWindowState {
+            popped,
+            width: u32::try_from(width).unwrap_or(900),
+            height: u32::try_from(height).unwrap_or(700),
+        };
+        glib::spawn_future_local(async move {
+            if client.set_calendar_window(state).await.is_err() {
+                tracing::warn!("the calendar window's state was not saved");
+            }
+        });
+    }
+
+    pub fn calendar_window_open(&self) -> bool {
+        self.imp().calendar_window.borrow().is_some()
+    }
+
+    pub fn calendar_window_agenda(&self) -> Option<Rc<crate::calendar::AgendaView>> {
+        self.imp()
+            .calendar_window
+            .borrow()
+            .as_ref()
+            .map(|(_, agenda)| Rc::clone(agenda))
+    }
+
     pub fn focus_changed(&self, active: bool) {
+        if active && let Some(pane) = self.pane() {
+            pane.feed().input(postio_focus::Input::WindowFocused(
+                postio_focus::Window::Main,
+            ));
+        }
         if let Some(reading) = self.reading() {
             reading.set_window_active(active);
         }
@@ -5788,7 +5942,13 @@ impl FocusWindow {
             Region::Reader
         } else if digest.is_some() {
             Region::Dialog
-        } else if let Some(calendar) = self.calendar() {
+        } else if let Some(calendar) = self.calendar().or_else(|| {
+            self.calendar_window_agenda().filter(|_| {
+                self.pane().is_some_and(|pane| {
+                    pane.feed().focused_window() == postio_focus::Window::Calendar
+                })
+            })
+        }) {
             if calendar.open_event().is_some() {
                 Region::Dialog
             } else {
@@ -6065,14 +6225,23 @@ impl FocusWindow {
             .and(imp.empty.borrow().as_ref())
             .map(|page| page.heading());
         app.insert("focus.empty.heading".to_owned(), serde_json::json!(empty));
-        if let Some(calendar) = self.calendar() {
+        let popped = self.calendar_window_agenda();
+        let focused = match self.pane().map(|pane| pane.feed().focused_window()) {
+            Some(postio_focus::Window::Calendar) if popped.is_some() => "calendar",
+            _ => "main",
+        };
+        app.insert(
+            "focus.window.focused".to_owned(),
+            serde_json::json!(focused),
+        );
+        if let Some(calendar) = self.calendar().or_else(|| popped.clone()) {
             app.insert(
                 "focus.calendar.view".to_owned(),
                 serde_json::json!("agenda"),
             );
             app.insert(
                 "focus.calendar.window".to_owned(),
-                serde_json::json!("main"),
+                serde_json::json!(if popped.is_some() { "own" } else { "main" }),
             );
             app.insert(
                 "focus.calendar.open".to_owned(),
