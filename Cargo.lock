@@ -5919,7 +5919,6 @@ name = "postio-signature"
 version = "0.6.2"
 dependencies = [
  "base64 0.23.1",
- "chrono",
  "mime-rs",
  "pgp",
  "postio-model",
