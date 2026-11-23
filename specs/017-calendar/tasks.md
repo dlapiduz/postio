@@ -57,7 +57,7 @@ test that is green on arrival is a guard, and says so.
   - unknown `X-` properties and a VTODO;
   - an `EMAIL` alarm;
   - hostile URLs in `DESCRIPTION`, `ATTACH` and `CONFERENCE`.
-- [ ] T002 [P] Write `storyboards/calendar/agenda-walk.toml` and `storyboards/calendar/pop-out.toml` from `contracts/calendar-mode.md`, and see both red on `main` with `scripts/storyboards.sh`
+- [x] T002 [P] Write `storyboards/calendar/agenda-walk.toml` and `storyboards/calendar/pop-out.toml` from `contracts/calendar-mode.md`, and see both red on `main` with `scripts/storyboards.sh`
 
 ## Phase 2: Spikes (gating)
 
