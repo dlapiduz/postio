@@ -65,6 +65,7 @@ def build_fixture(
     focus_dev_deps: str = "",
     classify_deps: str = "",
     calendar_deps: str = "",
+    signature_deps: str = "",
     ai_deps: str = "",
     vault_deps: str = "",
     storyboard_deps: str = "",
@@ -92,6 +93,7 @@ def build_fixture(
         write_crate(root, "crates", "postio-gtk", focus_deps, focus_dev_deps)
     write_crate(root, "crates", "postio-classify", classify_deps)
     write_crate(root, "crates", "postio-calendar", calendar_deps)
+    write_crate(root, "crates", "postio-signature", signature_deps)
     write_crate(root, "crates", "postio-ai", ai_deps)
     write_crate(root, "crates", "postio-vault", vault_deps)
     write_crate(root, "crates", "postio-storyboard", storyboard_deps)
@@ -449,6 +451,15 @@ def main() -> int:
             ),
             expected_status=1,
             must_mention=("postio-calendar", "tokio"),
+        )
+        check_case(
+            "postio-signature gains an async runtime",
+            build_fixture(
+                tmp_path / "signature-tokio",
+                signature_deps='tokio = { path = "../../vendor/tokio" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-signature", "tokio"),
         )
         check_case(
             "an app binary gains an inference engine",
