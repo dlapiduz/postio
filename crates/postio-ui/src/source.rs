@@ -61,6 +61,19 @@ pub struct SourceInput<'a> {
     pub provider: Option<Provider<'a>>,
     pub sent_by_you: bool,
     pub account: &'a str,
+    pub signature: Option<SignatureInput>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignatureInput {
+    pub status: String,
+    pub reason: Option<String>,
+    pub scope: String,
+    pub fingerprint: Option<String>,
+    pub sources: Vec<String>,
+    pub first_seen: Option<i64>,
+    pub accepted_at: Option<i64>,
+    pub address: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -415,11 +428,17 @@ fn verification(
                 .collect(),
             ..Section::default()
         });
+        if let Some(signature) = &input.signature {
+            sections.push(signature_section(signature));
+        }
         sections.push(local(input));
         sections.push(limits);
         return VerificationView { sections };
     };
     sections.push(provider_section(input, report));
+    if let Some(signature) = &input.signature {
+        sections.push(signature_section(signature));
+    }
     if !report.not_believed.is_empty() {
         sections.push(Section {
             title: "Headers Postio does not believe".to_owned(),
@@ -616,6 +635,87 @@ fn doubted(report: &AuthReport) -> Line {
     }
 }
 
+fn signature_section(signature: &SignatureInput) -> Section {
+    let address = signature.address.as_str();
+    let source = signature
+        .sources
+        .iter()
+        .map(|source| match source.as_str() {
+            "autocrypt" => format!("{address}'s Autocrypt header"),
+            "gnupg" => "your GnuPG keyring".to_owned(),
+            "file" => "a file you imported".to_owned(),
+            "attachment" => "a key attached to a message".to_owned(),
+            other => other.to_owned(),
+        })
+        .collect::<Vec<_>>()
+        .join(" and ");
+    let seen = signature
+        .first_seen
+        .and_then(|at| chrono::DateTime::from_timestamp(at, 0))
+        .map(|at| format!(", first seen {}", at.format("%-d %B %Y")))
+        .unwrap_or_default();
+    let intro = match (signature.status.as_str(), signature.scope.as_str()) {
+        ("good", "whole") => format!("Good signature by a key from {source}{seen}."),
+        ("good", _) => "Part of this message is signed: a list or a forward added text the signature doesn't cover.".to_owned(),
+        ("bad", _) => "Bad signature: the message changed after it was signed.".to_owned(),
+        ("revoked", _) => {
+            "Revoked key: the key that made this signature has been revoked.".to_owned()
+        }
+        ("not_here_yet", _) => "The signed message isn't fully on this computer yet; Postio will check the signature when it is.".to_owned(),
+        _ => match signature.reason.as_deref() {
+            Some("no_key") => {
+                "Can't check: no key for this signature is on this computer.".to_owned()
+            }
+            Some(reason) if reason.starts_with("weak_hash:") => format!(
+                "Can't check: this signature uses {}, which is no longer safe.",
+                reason
+                    .trim_start_matches("weak_hash:")
+                    .to_ascii_uppercase()
+                    .replace("SHA", "SHA-")
+            ),
+            Some("weak_key") => "Can't check: the key is too short to be safe.".to_owned(),
+            Some("expired") => "Bad signature: it was made after its key expired.".to_owned(),
+            Some("not_yet_valid") => {
+                "Bad signature: it was made before its key existed.".to_owned()
+            }
+            Some("unsupported") => "Can't check: Postio can't check this kind of message yet.".to_owned(),
+            _ => "Can't check: the signature couldn't be read.".to_owned(),
+        },
+    };
+    let mut lines = Vec::new();
+    if signature.status == "good" {
+        lines.push(Line::text(
+            "Signed means this message hasn't changed since this key signed it. It doesn't tell you who holds that key.",
+        ));
+        match signature
+            .accepted_at
+            .and_then(|at| chrono::DateTime::from_timestamp(at, 0))
+        {
+            Some(at) => lines.push(Line::text(format!(
+                "You accepted this key for {address} on {}.",
+                at.format("%-d %B %Y")
+            ))),
+            None => lines.push(Line::text(format!("Accept this key for {address}"))),
+        }
+    }
+    Section {
+        title: "Signature".to_owned(),
+        intro: Some(intro),
+        mono: signature.fingerprint.as_deref().map(grouped),
+        lines,
+        ..Section::default()
+    }
+}
+
+fn grouped(fingerprint: &str) -> String {
+    fingerprint
+        .as_bytes()
+        .chunks(4)
+        .map(|chunk| String::from_utf8_lossy(chunk).into_owned())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn local(input: &SourceInput<'_>) -> Section {
     let name = match (authenticity::impersonation(input.from), input.from.first()) {
         (Some(claimed), Some(sender)) => format!(
@@ -626,7 +726,16 @@ fn local(input: &SourceInput<'_>) -> Section {
     };
     Section {
         title: "What Postio checked on this computer".to_owned(),
-        lines: vec![Line::text(name), Line::text(NOT_CHECKED_HERE)],
+        lines: [Line::text(name)]
+            .into_iter()
+            .chain(
+                input
+                    .signature
+                    .as_ref()
+                    .map(|_| Line::text("The signature was checked on this computer.")),
+            )
+            .chain([Line::text(NOT_CHECKED_HERE)])
+            .collect(),
         ..Section::default()
     }
 }

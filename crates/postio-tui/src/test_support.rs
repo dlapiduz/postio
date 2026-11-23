@@ -723,6 +723,7 @@ pub fn source_view(raw: &[u8]) -> postio_ui::source::SourceView {
         provider: None,
         sent_by_you: false,
         account: "Work",
+        signature: None,
     })
 }
 

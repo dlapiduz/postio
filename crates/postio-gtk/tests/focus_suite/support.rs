@@ -1433,6 +1433,7 @@ pub fn source_dialog(keymap: &postio_core::Keymap) -> adw::Dialog {
         provider: None,
         sent_by_you: false,
         account: "Work",
+        signature: None,
     });
     postio_widgets::source::SourceDialog::new(view, keymap, |_| {})
         .dialog()

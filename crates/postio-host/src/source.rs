@@ -34,6 +34,7 @@ pub async fn view(
             .and_then(|stored| stored.headers),
         BodyState::Partial => None,
     };
+    let signature = signature(&connection, &row).await?;
     let account = AccountRepository::new(&connection)
         .get(row.account_id)
         .await
@@ -73,6 +74,7 @@ pub async fn view(
         account: account
             .as_ref()
             .map_or("your account", |account| account.display_name.as_str()),
+        signature,
     });
     Ok(Opened { view, fetch })
 }
@@ -108,4 +110,54 @@ fn envelope(row: &postio_model::Message) -> String {
         }
     }
     block.join("\r\n")
+}
+
+async fn signature(
+    connection: &postio_storage::Checkout,
+    row: &postio_model::Message,
+) -> Result<Option<postio_ui::source::SignatureInput>, String> {
+    let keys = postio_storage::repository::KeyRepository::new(connection);
+    let Some(verdict) = keys
+        .verdict(row.id)
+        .await
+        .map_err(|error| error.to_string())?
+    else {
+        return Ok(None);
+    };
+    let Some(from) = row.from.first() else {
+        return Ok(None);
+    };
+    let held = keys
+        .for_address(from)
+        .await
+        .map_err(|error| error.to_string())?;
+    let signer = held
+        .iter()
+        .find(|key| Some(&key.fingerprint) == verdict.fingerprint.as_ref());
+    let sources = match signer {
+        Some(key) => keys
+            .sources(&key.fingerprint)
+            .await
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .map(|source| format!("{source:?}").to_ascii_lowercase())
+            .collect(),
+        None => Vec::new(),
+    };
+    let accepted = keys
+        .accepted(from)
+        .await
+        .map_err(|error| error.to_string())?
+        .filter(|(key, _)| Some(key) == verdict.fingerprint.as_ref())
+        .map(|(_, at)| at);
+    Ok(Some(postio_ui::source::SignatureInput {
+        status: verdict.status,
+        reason: verdict.reason,
+        scope: verdict.scope,
+        fingerprint: verdict.fingerprint,
+        sources,
+        first_seen: signer.map(|key| key.first_seen),
+        accepted_at: accepted,
+        address: from.address.clone(),
+    }))
 }

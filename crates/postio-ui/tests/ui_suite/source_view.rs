@@ -31,6 +31,7 @@ fn view_of(fixture: &str, provider: Option<Provider<'_>>) -> SourceView {
         provider,
         sent_by_you: false,
         account: "Work",
+        signature: None,
     })
 }
 
@@ -206,6 +207,7 @@ fn a_message_without_its_body_says_the_checks_arrive_with_it() {
         provider: Some(PROVIDER),
         sent_by_you: false,
         account: "Work",
+        signature: None,
     });
     assert_eq!(
         section(&view, PROVIDER_CHECKED).intro.as_deref(),
@@ -238,6 +240,7 @@ fn a_raw_fetch_in_flight_names_the_account() {
         provider: Some(PROVIDER),
         sent_by_you: false,
         account: "Work",
+        signature: None,
     });
     assert_eq!(
         view.raw.state_line.as_deref(),
@@ -264,6 +267,7 @@ fn mail_the_person_sent_is_not_judged() {
         provider: Some(PROVIDER),
         sent_by_you: true,
         account: "Work",
+        signature: None,
     });
     let titles: Vec<&str> = view
         .verification
@@ -473,6 +477,7 @@ fn a_body_without_its_headers_on_an_account_that_is_not_syncing_says_so_on_every
         provider: Some(PROVIDER),
         sent_by_you: false,
         account: "Work",
+        signature: None,
     });
     assert_eq!(
         section(&view, PROVIDER_CHECKED).intro.as_deref(),
@@ -524,4 +529,151 @@ fn the_footer_teaches_the_surfaces_own_keys() {
         ]
     );
     assert_eq!(footer.keys[0].0, "1");
+}
+
+fn signed_view(signature: source::SignatureInput) -> SourceView {
+    let from = vec![EmailAddress::new(Some("Ada Moreno"), "ada@example.com")];
+    source::view(SourceInput {
+        subject: "Rota",
+        from: &from,
+        headers: None,
+        envelope: Some("From: Ada Moreno <ada@example.com>"),
+        raw: None,
+        raw_state: RawState::Here,
+        body: BodyState::Here,
+        provider: None,
+        sent_by_you: false,
+        account: "Work",
+        signature: Some(signature),
+    })
+}
+
+fn good() -> source::SignatureInput {
+    source::SignatureInput {
+        status: "good".to_owned(),
+        reason: None,
+        scope: "whole".to_owned(),
+        fingerprint: Some("E8DF9987513ECF47E8487A06199C11946D36705D".to_owned()),
+        sources: vec!["autocrypt".to_owned()],
+        first_seen: Some(1_772_528_400),
+        accepted_at: None,
+        address: "ada@example.com".to_owned(),
+    }
+}
+
+const SIGNATURE: &str = "Signature";
+
+#[test]
+fn a_good_signature_says_whose_key_where_it_came_from_and_what_it_does_not_prove() {
+    let view = signed_view(good());
+    let signature = section(&view, SIGNATURE);
+    assert_eq!(
+        signature.intro.as_deref(),
+        Some(
+            "Good signature by a key from ada@example.com's Autocrypt header, first seen 3 March 2026."
+        )
+    );
+    assert_eq!(
+        signature.mono.as_deref(),
+        Some("E8DF 9987 513E CF47 E848 7A06 199C 1194 6D36 705D")
+    );
+    assert_eq!(
+        texts(signature),
+        [
+            "Signed means this message hasn't changed since this key signed it. It doesn't tell you who holds that key.",
+            "Accept this key for ada@example.com",
+        ]
+    );
+    let local = texts(section(&view, LOCAL));
+    assert!(
+        local.contains(&"The signature was checked on this computer."),
+        "{local:?}"
+    );
+}
+
+#[test]
+fn an_accepted_key_says_when_and_offers_nothing_more() {
+    let view = signed_view(source::SignatureInput {
+        accepted_at: Some(1_772_701_200),
+        ..good()
+    });
+    let lines = texts(section(&view, SIGNATURE));
+    assert!(
+        lines.contains(&"You accepted this key for ada@example.com on 5 March 2026."),
+        "{lines:?}"
+    );
+    assert!(
+        lines
+            .iter()
+            .all(|line| !line.starts_with("Accept this key")),
+        "{lines:?}"
+    );
+}
+
+#[test]
+fn every_other_verdict_says_why_and_never_good() {
+    for (status, reason, scope, said) in [
+        (
+            "bad",
+            Some("tampered"),
+            "whole",
+            "Bad signature: the message changed after it was signed.",
+        ),
+        (
+            "cant_check",
+            Some("no_key"),
+            "whole",
+            "Can't check: no key for this signature is on this computer.",
+        ),
+        (
+            "cant_check",
+            Some("weak_hash:sha1"),
+            "whole",
+            "Can't check: this signature uses SHA-1, which is no longer safe.",
+        ),
+        (
+            "not_here_yet",
+            None,
+            "whole",
+            "The signed message isn't fully on this computer yet; Postio will check the signature when it is.",
+        ),
+        (
+            "revoked",
+            None,
+            "whole",
+            "Revoked key: the key that made this signature has been revoked.",
+        ),
+        (
+            "good",
+            None,
+            "part",
+            "Part of this message is signed: a list or a forward added text the signature doesn't cover.",
+        ),
+    ] {
+        let view = signed_view(source::SignatureInput {
+            status: status.to_owned(),
+            reason: reason.map(str::to_owned),
+            scope: scope.to_owned(),
+            ..good()
+        });
+        let intro = section(&view, SIGNATURE).intro.clone().unwrap_or_default();
+        assert_eq!(intro, said, "{status} {reason:?} {scope}");
+        assert!(!intro.contains("Good"), "{status}: never Good");
+    }
+}
+
+#[test]
+fn a_key_from_the_gnupg_keyring_says_so() {
+    let view = signed_view(source::SignatureInput {
+        sources: vec!["gnupg".to_owned()],
+        ..good()
+    });
+    assert!(
+        section(&view, SIGNATURE)
+            .intro
+            .as_deref()
+            .is_some_and(|intro| intro.contains("from your GnuPG keyring")),
+        "{:?}",
+        section(&view, SIGNATURE).intro
+    );
 }

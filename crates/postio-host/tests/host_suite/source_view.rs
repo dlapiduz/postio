@@ -109,9 +109,9 @@ fn a_local_source_opens_in_a_bounded_number_of_reads() {
             "the large part is folded"
         );
         assert_eq!(
-            counts.statements, 8,
+            counts.statements, 9,
             "keyed lookups only: the message row with its attachments, labels and recipients, \
-             its body, and its account with identities and signatures: {counts:?}"
+             its body, its verdict, and its account with identities and signatures: {counts:?}"
         );
         assert!(counts.rows <= 8, "no mailbox scan: {counts:?}");
     });
