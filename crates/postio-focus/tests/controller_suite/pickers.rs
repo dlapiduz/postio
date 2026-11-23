@@ -839,3 +839,25 @@ fn a_name_typed_early_that_turns_out_to_exist_is_put_on_not_made() {
     );
     assert!(closes_the_picker(&effects));
 }
+
+#[test]
+fn a_reminder_for_the_draft_is_handed_back_and_sends_nothing() {
+    let rows = List::of(1);
+    let mut focus = mac();
+    let effects = focus.open_draft_reminder("Plans");
+    let view = opened(&effects);
+    assert_eq!(view.kind, PickerKind::Remind);
+    assert_eq!(view.target, "Plans");
+    let effects = focus.handle_on(Input::PickerChoose(token(&view, "Tomorrow")), &rows);
+    assert!(closes_the_picker(&effects), "{effects:?}");
+    assert!(
+        asked(&effects).is_empty(),
+        "no mail was aimed at: {effects:?}"
+    );
+    assert!(
+        shown(&effects).contains(&Intent::DraftReminder {
+            at: local_at(2026, 9, 27, 9, 0).to_utc()
+        }),
+        "{effects:?}"
+    );
+}

@@ -440,7 +440,6 @@ fn cases() -> Vec<Case> {
                 ctl("↓ j", "j"),
                 ctl("Esc ✕", "<Esc>"),
                 ctl("Archive e", "e"),
-                ctl("Snooze b", "b"),
                 ctl("Reply r", "r"),
             ],
             holds: false,

@@ -354,31 +354,31 @@ pub fn state(state: &str, width: u16, height: u16) -> (App, Colour) {
             typed(&mut app, "h");
         }
         "label" => {
-            typed(&mut app, "l");
+            let opened = crate::test_support::type_text(&mut app, "l");
             let mut atlas = crate::test_support::label(7, "Atlas");
             atlas.color = Some("#3584e4".into());
-            update(
+            crate::test_support::labels_arrive(
                 &mut app,
-                Input::LabelPicker {
-                    account: AccountId::new(1),
-                    labels: vec![
-                        atlas,
-                        crate::test_support::label(8, "Harbor"),
-                        crate::test_support::label(9, "Kitchen reno"),
-                    ],
-                    counts: vec![
-                        (postio_model::LabelId::new(7), 12),
-                        (postio_model::LabelId::new(8), 5),
-                    ],
-                    applied: [postio_model::LabelId::new(8)].into(),
-                },
+                &opened,
+                vec![
+                    atlas,
+                    crate::test_support::label(8, "Harbor"),
+                    crate::test_support::label(9, "Kitchen reno"),
+                ],
+                vec![
+                    (postio_model::LabelId::new(7), 12),
+                    (postio_model::LabelId::new(8), 5),
+                ],
+                &[postio_model::LabelId::new(8)],
             );
         }
         "move" => {
-            typed(&mut app, "v");
-            update(
+            let opened = crate::test_support::type_text(&mut app, "v");
+            crate::test_support::folders_arrive(
                 &mut app,
-                Input::RecentMoves(vec![MailboxId::new(6), MailboxId::new(2)]),
+                &opened,
+                crate::test_support::places().folders,
+                vec![MailboxId::new(2), MailboxId::new(1)],
             );
         }
         "bar-folder" => {

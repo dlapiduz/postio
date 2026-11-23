@@ -149,6 +149,8 @@ struct Open {
     pending: Option<(String, bool)>,
     folders: Vec<Mailbox>,
     recent: Vec<MailboxId>,
+    /// Chooses the reminder for the draft being written, which no mail is aimed at.
+    draft: bool,
 }
 
 #[derive(Debug, Default)]
@@ -524,6 +526,21 @@ impl FocusController {
         )
     }
 
+    pub(crate) fn picker_for_draft(&mut self, target: String) -> Vec<Step> {
+        let aimed = Aimed {
+            aims: Vec::new(),
+            everything: None,
+            message: None,
+            from_list: false,
+            from_results: false,
+        };
+        let steps = self.open_picker(PickerKind::Remind, Anchor::OpenMessage, target, aimed);
+        if let Some(open) = self.pickers.open.as_mut() {
+            open.draft = true;
+        }
+        steps
+    }
+
     fn open_picker(
         &mut self,
         kind: PickerKind,
@@ -560,6 +577,7 @@ impl FocusController {
             pending: None,
             folders: Vec::new(),
             recent: Vec::new(),
+            draft: false,
         });
         let mut steps = self
             .surfaces
@@ -687,6 +705,14 @@ impl FocusController {
     }
 
     fn picker_act(&mut self, command: Command) -> Vec<Step> {
+        if self.pickers.open.as_ref().is_some_and(|open| open.draft) {
+            let Command::RemindIfNoReply { at: Some(at), .. } = command else {
+                return Vec::new();
+            };
+            let mut steps = self.close_picker(true);
+            steps.push(Step::Show(Intent::DraftReminder { at }));
+            return steps;
+        }
         let Some(aimed) = self.pickers.open.as_ref().map(|open| open.aimed.clone()) else {
             return Vec::new();
         };

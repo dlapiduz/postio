@@ -685,25 +685,6 @@ mod tests {
     }
 
     #[test]
-    fn a_picker_over_the_open_message_is_about_it_and_snoozes_it() {
-        let mut app = reading_the_second((120, 30));
-        update(&mut app, press('b'));
-        let drawn = screen(120, 30, &app);
-        assert!(drawn.contains("Ledger · Filtered 12"), "{drawn}");
-        let effects = update(&mut app, press('2'));
-        assert!(
-            effects
-                .iter()
-                .any(|effect| matches!(effect, Effect::Send(Command::Snooze { .. }))),
-            "{effects:?}"
-        );
-        assert_eq!(
-            resolved(&app),
-            Some(postio_core::Resolved::Messages(vec![MessageId::new(12)]))
-        );
-    }
-
-    #[test]
     fn escape_goes_back_to_filtered_on_the_same_row() {
         let mut app = reading_the_second((120, 30));
         update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));

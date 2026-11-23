@@ -281,6 +281,83 @@ pub fn opens_any(effects: &[Effect]) -> bool {
     })
 }
 
+/// What `effects` ask of the host, with the tickets to answer by.
+pub fn asked(effects: &[Effect]) -> Vec<(postio_focus::Ticket, postio_focus::Request)> {
+    effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::Focus { ticket, request } => Some((*ticket, request.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The commands `effects` ask the host to run on mail.
+pub fn sent(effects: &[Effect]) -> Vec<postio_core::Command> {
+    asked(effects)
+        .into_iter()
+        .filter_map(|(_, request)| match request {
+            postio_focus::Request::Send { command, .. } => Some(command),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The host answers the label picker's read: `labels` with their counts,
+/// `applied` carried by what it was aimed at.
+pub fn labels_arrive(
+    app: &mut App,
+    opened: &[Effect],
+    labels: Vec<postio_model::Label>,
+    counts: Vec<(postio_model::LabelId, u32)>,
+    applied: &[postio_model::LabelId],
+) {
+    for (ticket, request) in asked(opened) {
+        let postio_focus::Request::Labels { threads, stamp, .. } = request else {
+            continue;
+        };
+        let carried = labels
+            .iter()
+            .filter(|label| applied.contains(&label.id))
+            .flat_map(|label| threads.iter().map(|thread| (*thread, label.clone())))
+            .collect();
+        let read = postio_focus::LabelsRead {
+            account: AccountId::new(1),
+            labels: labels.clone(),
+            counts: counts.clone(),
+            carried,
+        };
+        let answer = postio_focus::Reply::Labels {
+            stamp,
+            answer: Ok(read),
+        };
+        update(app, Input::FocusReply(ticket, answer));
+    }
+}
+
+/// The host answers the move picker's read.
+pub fn folders_arrive(
+    app: &mut App,
+    opened: &[Effect],
+    folders: Vec<Mailbox>,
+    recent: Vec<MailboxId>,
+) {
+    for (ticket, request) in asked(opened) {
+        let postio_focus::Request::Folders { stamp } = request else {
+            continue;
+        };
+        let read = postio_focus::FoldersRead {
+            folders: folders.clone(),
+            recent: recent.clone(),
+        };
+        let answer = postio_focus::Reply::Folders {
+            stamp,
+            answer: Ok(read),
+        };
+        update(app, Input::FocusReply(ticket, answer));
+    }
+}
+
 /// The host says `scope` has `total` rows.
 pub fn open_scope(app: &mut App, scope: ListScope, total: u32) {
     app.open_for_tests(scope, total);

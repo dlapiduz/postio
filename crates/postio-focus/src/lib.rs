@@ -424,6 +424,10 @@ pub enum Intent {
     OpenPicker(PickerView),
     PickerRows(PickerView),
     PickerField,
+    /// The remind picker opened for the draft chose this time; nothing was sent.
+    DraftReminder {
+        at: chrono::DateTime<chrono::Utc>,
+    },
     Banner(Option<BannerView>),
     SyncLabel(postio_ui::focus_state::SyncLabel),
     Empty(Option<postio_ui::focus_state::EmptyInbox>),
@@ -1541,6 +1545,13 @@ impl FocusController {
                 self.effects(steps)
             }
         }
+    }
+
+    /// Open the remind picker for the draft being written; its choice comes back as
+    /// `Intent::DraftReminder`.
+    pub fn open_draft_reminder(&mut self, target: &str) -> Vec<Effect> {
+        let steps = self.picker_for_draft(target.to_owned());
+        self.effects(steps)
     }
 
     pub fn places(&self, filter: &str) -> Vec<(u64, postio_ui::places::Entry)> {

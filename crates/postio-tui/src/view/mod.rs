@@ -144,7 +144,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
         if let Some((bar, ctx)) = app.bar() {
             bar::draw(frame, area, bar, &ctx, now, theme, &mut hits);
         }
-        if let Some((open, keymap)) = app.picker() {
+        if let Some(open) = app.picker() {
             let beside = app
                 .pane()
                 .and_then(|_| crate::layout::split_pane(window.list));
@@ -163,7 +163,6 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
                 frame,
                 &place,
                 open,
-                keymap,
                 &|command| app.hint(command),
                 theme,
                 &mut hits,

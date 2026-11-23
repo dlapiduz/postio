@@ -23,7 +23,7 @@ impl App {
         effects
     }
 
-    fn carry_out(&mut self, said: Vec<Said>) -> Vec<Effect> {
+    pub(super) fn carry_out(&mut self, said: Vec<Said>) -> Vec<Effect> {
         let mut effects = Vec::new();
         for one in said {
             match one {
@@ -112,7 +112,7 @@ impl App {
                 vec![Effect::Redraw]
             }
             Intent::Toast { text, kind } => self.toast(&text, &kind),
-            _ => Vec::new(),
+            other => self.show_picker_intent(&other).unwrap_or_default(),
         }
     }
 
@@ -154,6 +154,10 @@ impl App {
                 | C::AcceptInvite
                 | C::DeclineInvite
                 | C::DismissMarker
+                | C::Move
+                | C::AddLabel
+                | C::Snooze
+                | C::RemindIfNoReply
         ) || postio_ui::focus_target::dispatch(command).is_some()
     }
 
