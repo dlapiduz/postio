@@ -263,3 +263,154 @@ fn mail_the_person_sent_is_not_judged() {
         .collect();
     assert_eq!(titles, ["You sent this", LIMITS]);
 }
+
+fn headers_of(fixture: &str, provider: Option<Provider<'_>>) -> source::HeadersView {
+    view_of(fixture, provider).headers
+}
+
+#[test]
+fn headers_are_unfolded_and_decoded_with_the_written_form_kept() {
+    let rows = headers_of("encoded-word-subject-and-names", Some(PROVIDER)).rows;
+    let row = |name: &str| {
+        rows.iter()
+            .find(|row| row.name == name)
+            .unwrap_or_else(|| panic!("no {name} row"))
+    };
+    let subject = row("Subject");
+    assert!(
+        subject.value.starts_with("Réunion du comité: "),
+        "{:?}",
+        subject.value
+    );
+    assert!(
+        subject
+            .raw
+            .as_deref()
+            .is_some_and(|raw| raw.starts_with("=?utf-8?Q?R=C3=A9union")),
+        "{subject:?}"
+    );
+    assert_eq!(
+        row("From").value,
+        "Françoise Lemaître <f.lemaitre@fr.example>"
+    );
+    assert_eq!(row("Date").raw, None, "decoding changed nothing");
+    let names: Vec<&str> = rows.iter().map(|row| row.name.as_str()).collect();
+    assert_eq!(
+        &names[..4],
+        ["Message-ID", "Date", "From", "To"],
+        "the message's own order"
+    );
+    for row in &rows {
+        assert!(
+            !row.value.contains(['\r', '\n', '\t']),
+            "{} is still folded",
+            row.name
+        );
+    }
+}
+
+#[test]
+fn received_headers_are_hops_newest_first_with_their_delays() {
+    let hops = headers_of("header-folding-received-chain", Some(PROVIDER)).hops;
+    let seen: Vec<(Option<&str>, Option<&str>, Option<&str>)> = hops
+        .iter()
+        .map(|hop| (hop.from.as_deref(), hop.by.as_deref(), hop.delay.as_deref()))
+        .collect();
+    assert_eq!(
+        seen,
+        [
+            (
+                Some("mx4.example.net"),
+                Some("imap.example.net"),
+                Some("3 s")
+            ),
+            (
+                Some("relay-b.notify.example.org"),
+                Some("mx4.example.net"),
+                Some("2 s")
+            ),
+            (None, Some("relay-b.notify.example.org"), None),
+        ]
+    );
+    assert_eq!(
+        hops[0].at.as_deref(),
+        Some("Thu, 12 Feb 2026 06:12:44 +0000")
+    );
+}
+
+#[test]
+fn the_trust_boundary_sits_under_the_providers_header() {
+    let provider = Provider {
+        name: "Example Mail",
+        authserv_ids: &["mx4.example.net"],
+    };
+    let rows = headers_of("header-folding-received-chain", Some(provider)).rows;
+    let marked: Vec<(usize, &str, &str)> = rows
+        .iter()
+        .enumerate()
+        .filter_map(|(at, row)| {
+            row.boundary_above
+                .as_deref()
+                .map(|line| (at, row.name.as_str(), line))
+        })
+        .collect();
+    assert_eq!(
+        marked,
+        [(
+            5,
+            "DKIM-Signature",
+            "Above: written by Example Mail. Below: came with the message."
+        )]
+    );
+    assert!(
+        headers_of("header-folding-received-chain", None)
+            .rows
+            .iter()
+            .all(|row| row.boundary_above.is_none()),
+        "no trusted header, no boundary"
+    );
+}
+
+#[test]
+fn the_raw_tab_folds_a_large_part_and_loses_no_byte() {
+    let raw = test_corpus::load("attachment-large").bytes();
+    let view = view_of("attachment-large", Some(PROVIDER)).raw;
+    let folds: Vec<(&str, &std::ops::Range<usize>)> = view
+        .segments
+        .iter()
+        .filter_map(|segment| match segment {
+            source::RawSegment::Fold { label, range } => Some((label.as_str(), range)),
+            source::RawSegment::Text(_) => None,
+        })
+        .collect();
+    assert_eq!(folds.len(), 1, "{folds:?}");
+    let (label, range) = folds[0];
+    assert!(range.len() > 64 * 1024);
+    assert!(
+        label.starts_with("base64 · ") && label.ends_with(" KB · site-survey-full.bin"),
+        "{label}"
+    );
+    let mut rebuilt = Vec::new();
+    for segment in &view.segments {
+        match segment {
+            source::RawSegment::Text(text) => rebuilt.extend_from_slice(text.as_bytes()),
+            source::RawSegment::Fold { range, .. } => {
+                rebuilt.extend_from_slice(&raw[range.clone()])
+            }
+        }
+    }
+    assert_eq!(
+        rebuilt, raw,
+        "the folds and the text are every byte, in order"
+    );
+
+    let small = view_of("plain-text-simple", Some(PROVIDER)).raw;
+    assert_eq!(
+        small.segments,
+        [source::RawSegment::Text(
+            test_corpus::load("plain-text-simple")
+                .text_lossy()
+                .into_owned()
+        )]
+    );
+}
