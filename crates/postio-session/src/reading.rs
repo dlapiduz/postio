@@ -124,20 +124,26 @@ pub async fn load_with_row(
     )
 }
 
-/// The one line a reading says about who the sender really is, or `None` (#1928). `headers` is the
-/// stored header block; which servers to believe comes from the account's provider
-/// (`authserv_ids`). Mail the user sent is never judged.
-pub async fn sender_warning(
+/// What the reader's header says about who the sender is and whether the content is signed
+/// (#1928, spec 016). `headers` is the stored header block; which servers to believe comes from the
+/// account's provider (`authserv_ids`). Mail the user sent is never judged.
+pub async fn authenticity(
     connection: &postio_storage::Checkout,
     row: &postio_model::Message,
     headers: Option<&str>,
-) -> Option<String> {
+) -> postio_ui::reader::authenticity::HeaderAuthenticity {
+    use postio_ui::reader::authenticity::{HeaderAuthenticity, Signature};
     let headers = headers.map(postio_model::headers::parse_block);
+    let keys = postio_storage::repository::KeyRepository::new(connection);
+    let verdict = keys.verdict(row.id).await.ok().flatten();
     let wants_account = headers
         .as_ref()
         .is_some_and(|headers| headers.contains("Authentication-Results"));
-    if !wants_account && postio_ui::reader::authenticity::impersonation(&row.from).is_none() {
-        return None;
+    if verdict.is_none()
+        && !wants_account
+        && postio_ui::reader::authenticity::impersonation(&row.from).is_none()
+    {
+        return HeaderAuthenticity::default();
     }
     let account = postio_storage::repository::AccountRepository::new(connection)
         .get(row.account_id)
@@ -149,7 +155,7 @@ pub async fn sender_warning(
             .chain(account.identities.iter().map(|identity| &identity.address))
             .any(|own| row.from.iter().any(|from| from.same_address(own)))
     {
-        return None;
+        return HeaderAuthenticity::default();
     }
     let trusted: &[String] = match (&account, wants_account) {
         (Some(account), true) => {
@@ -157,7 +163,22 @@ pub async fn sender_warning(
         }
         _ => &[],
     };
-    postio_ui::reader::authenticity::warning(&headers.unwrap_or_default(), &row.from, trusted)
+    let accepted = match (&verdict, row.from.first()) {
+        (Some(_), Some(from)) => keys.accepted(from).await.ok().flatten().map(|(key, _)| key),
+        _ => None,
+    };
+    let signature = verdict.map(|verdict| Signature {
+        status: verdict.status,
+        scope: verdict.scope,
+        signer: verdict.fingerprint,
+        accepted,
+    });
+    postio_ui::reader::authenticity::header(
+        &headers.unwrap_or_default(),
+        &row.from,
+        trusted,
+        signature.as_ref(),
+    )
 }
 
 /// One inline part of `message`, by its `Content-ID`, scoped to that message so a sender cannot

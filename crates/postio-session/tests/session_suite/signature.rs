@@ -149,3 +149,36 @@ async fn evicted_bytes_are_not_here_yet_and_resolve_when_they_return() {
     scene.check(&[signed]).await;
     assert_eq!(scene.status(signed).await.as_deref(), Some("good"));
 }
+
+#[tokio::test]
+async fn the_reading_says_signed_and_signed_accepted_once_the_key_is_accepted() {
+    use postio_ui::reader::authenticity::Mark;
+    let scene = Scene::new().await;
+    let carrier = scene.arrive("autocrypt-header", false).await;
+    let signed = scene.arrive("pgp-signed-good", true).await;
+    scene.check(&[carrier, signed]).await;
+    let connection = scene.database.connect().await.expect("a connection");
+    let messages = MessageRepository::new(&connection);
+    let row = messages.get(signed).await.expect("a read").expect("a row");
+    let block = postio_model::headers::block_of(test_corpus::load("pgp-signed-good").bytes())
+        .map(|block| block.text);
+    let mark = async || {
+        postio_session::reading::authenticity(&connection, &row, block.as_deref())
+            .await
+            .mark
+    };
+    assert_eq!(mark().await, Some(Mark::Signed));
+    let keys = KeyRepository::new(&connection);
+    let signer = keys
+        .verdict(signed)
+        .await
+        .expect("a read")
+        .expect("a verdict")
+        .fingerprint;
+    keys.accept(&ada(), &signer.expect("a signer"), 1)
+        .await
+        .expect("accepted");
+    assert_eq!(mark().await, Some(Mark::SignedAccepted));
+    keys.unaccept(&ada()).await.expect("taken back");
+    assert_eq!(mark().await, Some(Mark::Signed));
+}

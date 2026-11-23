@@ -616,8 +616,7 @@ pub struct Reading {
     pub body: Body,
     pub row: Option<Box<postio_model::Message>>,
     pub send_state: Option<postio_model::DraftState>,
-    /// The quiet line shown when the sender may not be who they say (#1928).
-    pub sender_warning: Option<String>,
+    pub authenticity: postio_ui::reader::authenticity::HeaderAuthenticity,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

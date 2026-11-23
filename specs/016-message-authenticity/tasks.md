@@ -156,7 +156,7 @@ throwaway code is not merged.
   - evicted raw is `not_here_yet`, and resolves after the fetch.
 
   Implement the verdict job in a new `crates/postio-session/src/signature.rs`, called from the body stage.
-- [ ] T037 [US3] Write `contracts/header-mark.md`'s table as failing unit cases in `crates/postio-ui/src/reader/authenticity.rs`, then implement `HeaderAuthenticity` and `Mark`. Replace `Reading.sender_warning` with `Reading.authenticity` in `crates/postio-client/src/protocol.rs` and every reader of it (`grep -rn sender_warning crates/ macos/`)
+- [x] T037 [US3] Write `contracts/header-mark.md`'s table as failing unit cases in `crates/postio-ui/src/reader/authenticity.rs`, then implement `HeaderAuthenticity` and `Mark`. Replace `Reading.sender_warning` with `Reading.authenticity` in `crates/postio-client/src/protocol.rs` and every reader of it (`grep -rn sender_warning crates/ macos/`)
 - [ ] T038 [US3] Draw the mark:
   - GTK: in `crates/postio-widgets/src/reader/message_header.rs` and `crates/postio-gtk/src/open_header.rs`, a neutral chip that runs `view_source`, with no icon and no accent;
   - terminal: in `crates/postio-tui/src/view/open.rs`;

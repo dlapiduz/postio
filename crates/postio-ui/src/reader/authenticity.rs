@@ -117,6 +117,79 @@ pub fn warning<T: AsRef<str>>(
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Signature {
+    pub status: String,
+    pub scope: String,
+    pub signer: Option<String>,
+    pub accepted: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum Mark {
+    Signed,
+    SignedAccepted,
+}
+
+impl Mark {
+    pub fn label(self) -> &'static str {
+        match self {
+            Mark::Signed => "Signed",
+            Mark::SignedAccepted => "Signed · accepted",
+        }
+    }
+
+    pub fn accessible_name(self, address: &str) -> String {
+        match self {
+            Mark::Signed => "Signed. Open verification".to_owned(),
+            Mark::SignedAccepted => {
+                format!("Signed with the key you accepted for {address}. Open verification")
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct HeaderAuthenticity {
+    pub warning: Option<String>,
+    pub mark: Option<Mark>,
+}
+
+pub fn header<T: AsRef<str>>(
+    headers: &Headers,
+    from: &[EmailAddress],
+    trusted: &[T],
+    signature: Option<&Signature>,
+) -> HeaderAuthenticity {
+    let mut lines: Vec<String> = warning(headers, from, trusted).into_iter().collect();
+    let mut mark = None;
+    if let Some(signature) = signature {
+        let address = from.first().map_or("", |sender| sender.address.as_str());
+        match (signature.status.as_str(), signature.scope.as_str()) {
+            ("bad", _) => {
+                lines.push("The signature on this message does not match its content.".to_owned());
+            }
+            ("revoked", _) => {
+                lines.push("This message was signed with a key that has been revoked.".to_owned())
+            }
+            ("good", "whole") => match &signature.accepted {
+                Some(accepted) if Some(accepted) == signature.signer.as_ref() => {
+                    mark = Some(Mark::SignedAccepted);
+                }
+                Some(_) => lines.push(format!(
+                    "Signed with a different key than the one you accepted for {address}."
+                )),
+                None => mark = Some(Mark::Signed),
+            },
+            _ => {}
+        }
+    }
+    HeaderAuthenticity {
+        warning: (!lines.is_empty()).then(|| lines.join(" ")),
+        mark,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Method {
     Spf,
     Dkim,
@@ -798,5 +871,108 @@ mod tests {
         let seen = verification(&headers, &from("billing@example.com"), &none);
         assert!(seen.provider.is_none());
         assert_eq!(seen.not_believed.len(), 1);
+    }
+
+    fn signed(status: &str, scope: &str) -> Signature {
+        Signature {
+            status: status.to_owned(),
+            scope: scope.to_owned(),
+            signer: Some("AAAA".to_owned()),
+            accepted: None,
+        }
+    }
+
+    fn mark_of(signature: Option<Signature>) -> HeaderAuthenticity {
+        header(
+            &Headers::new(),
+            &from("ada@example.com"),
+            &["mx.example.net"],
+            signature.as_ref(),
+        )
+    }
+
+    #[test]
+    fn the_header_table_one_row_at_a_time() {
+        let different =
+            "Signed with a different key than the one you accepted for ada@example.com.";
+        let accepted = |key: &str| Signature {
+            accepted: Some(key.to_owned()),
+            ..signed("good", "whole")
+        };
+        for (signature, mark, warning) in [
+            (None, None, None),
+            (Some(signed("good", "whole")), Some(Mark::Signed), None),
+            (Some(accepted("AAAA")), Some(Mark::SignedAccepted), None),
+            (Some(accepted("BBBB")), None, Some(different)),
+            (Some(signed("good", "part")), None, None),
+            (Some(signed("good", "inline")), None, None),
+            (
+                Some(signed("bad", "whole")),
+                None,
+                Some("The signature on this message does not match its content."),
+            ),
+            (
+                Some(signed("revoked", "whole")),
+                None,
+                Some("This message was signed with a key that has been revoked."),
+            ),
+            (Some(signed("cant_check", "whole")), None, None),
+            (Some(signed("not_here_yet", "whole")), None, None),
+        ] {
+            let said = mark_of(signature.clone());
+            assert_eq!(
+                (said.mark, said.warning.as_deref()),
+                (mark, warning),
+                "{signature:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_domain_warning_comes_first_and_the_mark_stands_beside_it() {
+        let mut headers = Headers::new();
+        headers.push(
+            "Authentication-Results",
+            "mx.example.net; dmarc=fail header.from=example.com",
+        );
+        let said = header(
+            &headers,
+            &from("ada@example.com"),
+            &["mx.example.net"],
+            Some(&signed("bad", "whole")),
+        );
+        assert_eq!(
+            said.warning.as_deref(),
+            Some(
+                "This message failed sender verification: it may not be from example.com. \
+                 The signature on this message does not match its content."
+            )
+        );
+        let good = header(
+            &headers,
+            &from("ada@example.com"),
+            &["mx.example.net"],
+            Some(&signed("good", "whole")),
+        );
+        assert_eq!(
+            good.mark,
+            Some(Mark::Signed),
+            "the mark is about the content, the line about the domain"
+        );
+        assert!(good.warning.is_some());
+    }
+
+    #[test]
+    fn the_mark_says_its_words_and_its_accessible_name() {
+        assert_eq!(Mark::Signed.label(), "Signed");
+        assert_eq!(Mark::SignedAccepted.label(), "Signed · accepted");
+        assert_eq!(
+            Mark::Signed.accessible_name("ada@example.com"),
+            "Signed. Open verification"
+        );
+        assert_eq!(
+            Mark::SignedAccepted.accessible_name("ada@example.com"),
+            "Signed with the key you accepted for ada@example.com. Open verification"
+        );
     }
 }
