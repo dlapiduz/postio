@@ -75,7 +75,7 @@ docs/decisions/README.md 934
 docs/field-report.md 1717
 docs/gotchas.md 103
 docs/gotchas/build.md 589
-docs/gotchas/gtk.md 304
+docs/gotchas/gtk.md 323
 docs/gotchas/macos.md 339
 docs/gotchas/safety.md 247
 docs/gotchas/store.md 785
