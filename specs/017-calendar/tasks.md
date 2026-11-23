@@ -135,7 +135,7 @@ the plan's research section it settles. Spike code is not merged.
 focused window.
 **Independent test**: quickstart "Slice A2"; US7's scenarios.
 
-- [ ] T021 [US7] Write failing cases in `crates/postio-focus/src/` for the surface host:
+- [x] T021 [US7] Write failing cases in `crates/postio-focus/src/` for the surface host:
   - `pop_out` moves `CalendarMode` unchanged;
   - `g e` and the mail destinations route to the window that shows them;
   - each window has its own History;

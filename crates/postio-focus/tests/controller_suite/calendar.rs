@@ -306,3 +306,86 @@ fn slash_searches_events_names_what_it_ignored_and_escape_brings_the_agenda_back
     let effects = run(&mut focus, CommandId::Back);
     assert!(shown(&effects).contains(&Intent::CloseSurface(SurfaceKind::Calendar)));
 }
+
+#[test]
+fn pop_out_moves_calendar_whole_into_its_own_window_and_pop_in_brings_it_back() {
+    let (mut focus, _) = opened();
+    let _ = run(&mut focus, CommandId::NextMessage);
+
+    let out = run(&mut focus, CommandId::PopOut);
+    let shown_out = shown(&out);
+    assert!(shown_out.contains(&Intent::CalendarWindow(true)));
+    assert!(shown_out.contains(&Intent::CloseSurface(SurfaceKind::Calendar)));
+    assert!(shown_out.contains(&Intent::PresentWindow(postio_focus::Window::Calendar)));
+    let view = frame(&out).expect("drawn in its window");
+    assert!(view.popped);
+    assert_eq!(ringed(&view), "Standup", "the ring came along");
+    assert_eq!(focus.key_context(), KeyContext::CalendarWindow);
+
+    let back = run(&mut focus, CommandId::PopIn);
+    assert!(shown(&back).contains(&Intent::CalendarWindow(false)));
+    let view = frame(&back).expect("drawn in the main window");
+    assert!(!view.popped);
+    assert_eq!(ringed(&view), "Standup");
+    assert_eq!(focus.key_context(), KeyContext::Calendar);
+}
+
+#[test]
+fn escape_at_the_calendar_window_s_root_closes_nothing() {
+    let (mut focus, _) = opened();
+    let _ = run(&mut focus, CommandId::PopOut);
+
+    let effects = run(&mut focus, CommandId::Back);
+
+    assert!(shown(&effects).is_empty(), "{effects:?}");
+    assert_eq!(focus.key_context(), KeyContext::CalendarWindow);
+}
+
+#[test]
+fn destinations_go_to_the_window_that_shows_them() {
+    let (mut focus, _) = opened();
+    let _ = run(&mut focus, CommandId::PopOut);
+
+    let effects = run(&mut focus, CommandId::GoToInbox);
+    assert!(shown(&effects).contains(&Intent::PresentWindow(postio_focus::Window::Main)));
+    assert_eq!(
+        focus.key_context(),
+        KeyContext::List,
+        "the main window has the keyboard"
+    );
+
+    let effects = run(&mut focus, CommandId::GoToCalendar);
+    assert_eq!(
+        shown(&effects),
+        [Intent::PresentWindow(postio_focus::Window::Calendar)]
+    );
+    assert_eq!(focus.key_context(), KeyContext::CalendarWindow);
+}
+
+#[test]
+fn close_window_pops_calendar_in_closes_a_detached_composer_and_quits_the_main_window() {
+    let (mut focus, _) = opened();
+    let _ = run(&mut focus, CommandId::PopOut);
+    let effects = run(&mut focus, CommandId::CloseWindow);
+    assert!(shown(&effects).contains(&Intent::CalendarWindow(false)));
+    assert!(!shown(&effects).contains(&Intent::Quit));
+
+    let _ = run(&mut focus, CommandId::Back);
+    let effects = run(&mut focus, CommandId::CloseWindow);
+    assert_eq!(shown(&effects), [Intent::Quit], "the main window's X quits");
+}
+
+#[test]
+fn close_window_in_a_detached_composer_closes_that_composer() {
+    let mut focus = linux();
+    let _ = focus.handle_on(Input::SurfaceOpened(SurfaceKind::Composer), &NoRows);
+    let _ = focus.handle_on(
+        Input::WindowFocused(postio_focus::Window::Composer),
+        &NoRows,
+    );
+
+    let effects = run(&mut focus, CommandId::CloseWindow);
+
+    assert!(shown(&effects).contains(&Intent::CloseSurface(SurfaceKind::Composer)));
+    assert!(!shown(&effects).contains(&Intent::Quit));
+}

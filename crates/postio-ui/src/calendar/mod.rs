@@ -387,6 +387,7 @@ pub fn footer(keymap: &postio_core::Keymap) -> Vec<crate::hints::Hint> {
             "move",
         ),
         hint(keymap, CommandId::OpenMessage, "open"),
+        hint(keymap, CommandId::Search, "search"),
         pair(
             keymap,
             CommandId::CalendarPrevious,
@@ -394,10 +395,16 @@ pub fn footer(keymap: &postio_core::Keymap) -> Vec<crate::hints::Hint> {
             "week",
         ),
         hint(keymap, CommandId::CalendarToday, "today"),
-        hint(keymap, CommandId::NewEvent, "new event"),
         hint(keymap, CommandId::PopOut, "own window"),
+        hint(keymap, CommandId::Back, "back"),
     ]
     .into_iter()
     .flatten()
     .collect()
+}
+
+pub fn open_keys(keymap: &postio_core::Keymap) -> Vec<crate::hints::Hint> {
+    crate::hints::hint(keymap, postio_core::CommandId::Back, "close")
+        .into_iter()
+        .collect()
 }

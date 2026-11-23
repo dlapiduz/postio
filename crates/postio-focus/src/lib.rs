@@ -34,6 +34,7 @@ mod perform;
 mod pickers;
 mod results;
 mod states;
+mod surface_host;
 mod surfaces;
 mod thread_expand;
 mod thread_menu;
@@ -74,6 +75,7 @@ pub use results::{
     ResultsView, SaveView, TermEdit, file_copies,
 };
 pub use states::{AccountsRead, BannerButton, BannerView};
+pub use surface_host::Window;
 pub use surfaces::{Host, ReaderVerb, Route, SurfaceKind};
 pub use thread_menu::OutlineInput;
 pub use verbs::{Aimed, Everything, ToastKind};
@@ -237,6 +239,7 @@ pub enum Input {
     ContactsFilterTyped(String),
     ContactsPoint(u32),
     CalendarPoint(usize),
+    WindowFocused(Window),
     CalendarFilterTyped(String),
     ContactSplit(String),
     ContactMergeKeep(u32),
@@ -463,6 +466,8 @@ pub enum Intent {
     WriteTo(String),
     Contacts(Box<contacts::ContactsView>),
     Calendar(Box<calendar::CalendarView>),
+    CalendarWindow(bool),
+    PresentWindow(Window),
     CalendarFocusFilter,
     ContactsRows {
         first: u32,
@@ -975,6 +980,7 @@ pub struct FocusController {
     contact_popover: Option<contact_popover::ContactPopover>,
     contacts: Option<contacts::Contacts>,
     calendar: Option<calendar::Calendar>,
+    focused: Window,
     contacts_settings: Option<contacts_settings::Settings>,
     import_found: Vec<postio_model::ContactId>,
     import_cursor: Option<postio_model::ContactId>,
@@ -1021,6 +1027,7 @@ impl FocusController {
             contact_popover: None,
             contacts: None,
             calendar: None,
+            focused: Window::Main,
             contacts_settings: None,
             import_found: Vec::new(),
             import_cursor: None,
@@ -1119,8 +1126,24 @@ impl FocusController {
             return self.effects(steps);
         }
         match input {
-            Input::Command(CommandId::Quit | CommandId::CloseWindow) => {
-                vec![Effect::Show(Intent::Quit)]
+            Input::Command(CommandId::Quit) => vec![Effect::Show(Intent::Quit)],
+            Input::Command(CommandId::CloseWindow) => {
+                let steps = self.close_window(rows);
+                self.effects(steps)
+            }
+            Input::Command(id) if self.focused == Window::Calendar && self.calendar_popped() => {
+                let steps = self.calendar_window_command(id, rows);
+                self.effects(steps)
+            }
+            Input::Command(CommandId::GoToCalendar) if self.calendar_popped() => {
+                self.focused = Window::Calendar;
+                vec![Effect::Show(Intent::PresentWindow(Window::Calendar))]
+            }
+            Input::Command(CommandId::PopOut)
+                if self.surfaces.top() == Some(SurfaceKind::Calendar) =>
+            {
+                let steps = self.pop_out();
+                self.effects(steps)
             }
             Input::Command(id @ (CommandId::HistoryBack | CommandId::HistoryForward))
                 if self.surfaces.top().is_none() =>
@@ -1484,6 +1507,10 @@ impl FocusController {
                 let steps = self.calendar_filter_typed(text);
                 self.effects(steps)
             }
+            Input::WindowFocused(window) => {
+                self.focused = window;
+                Vec::new()
+            }
             Input::CalendarPoint(row) => {
                 let steps = self.calendar_point(row);
                 self.effects(steps)
@@ -1650,6 +1677,9 @@ impl FocusController {
     }
 
     pub fn key_context(&self) -> postio_ui::keymap::KeyContext {
+        if self.focused == Window::Calendar && self.calendar_popped() {
+            return postio_ui::keymap::KeyContext::CalendarWindow;
+        }
         if self.surfaces.top().is_none() && self.results.is_some() {
             return postio_ui::keymap::KeyContext::Results;
         }
@@ -2208,7 +2238,7 @@ impl FocusController {
         if !self.surfaces.has(SurfaceKind::Contacts) {
             self.contacts = None;
         }
-        if !self.surfaces.has(SurfaceKind::Calendar) {
+        if !self.surfaces.has(SurfaceKind::Calendar) && !self.calendar_popped() {
             self.calendar = None;
         }
         self.forget_thread_surfaces();

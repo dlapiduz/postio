@@ -28,6 +28,9 @@ pub struct CalendarView {
     pub open: Option<EventView>,
     pub filter: String,
     pub hint: Option<String>,
+    pub popped: bool,
+    pub search_key: Option<String>,
+    pub open_keys: Vec<Hint>,
 }
 
 #[derive(Debug)]
@@ -47,6 +50,7 @@ pub(crate) struct Calendar {
     ignored: Vec<String>,
     search_stamp: u64,
     agenda: Option<(Vec<AgendaEntry>, Option<usize>)>,
+    pub(crate) popped: bool,
 }
 
 impl Calendar {
@@ -67,6 +71,7 @@ impl Calendar {
             ignored: Vec::new(),
             search_stamp: 0,
             agenda: None,
+            popped: false,
         }
     }
 
@@ -125,6 +130,7 @@ impl FocusController {
         matches!(
             id,
             CommandId::Back
+                | CommandId::PopOut
                 | CommandId::NextMessage
                 | CommandId::PrevMessage
                 | CommandId::FirstMessage
@@ -233,6 +239,12 @@ impl FocusController {
             (Some(at), None) => self.calendar_step(at as i64),
             _ => Vec::new(),
         }
+    }
+
+    pub(crate) fn calendar_at_root(&self) -> bool {
+        self.calendar
+            .as_ref()
+            .is_none_or(|calendar| calendar.open.is_none() && calendar.filter.is_empty())
     }
 
     pub(crate) fn calendar_filter_typed(&mut self, text: String) -> Vec<Step> {
@@ -412,6 +424,13 @@ impl FocusController {
                 .map(|detail| words::event_view(detail, &Local, today)),
             filter: calendar.filter.clone(),
             hint: words::ignored_hint(&calendar.ignored),
+            popped: calendar.popped,
+            search_key: self
+                .bar
+                .keymap()
+                .binding(CommandId::Search)
+                .map(str::to_owned),
+            open_keys: words::open_keys(self.bar.keymap()),
         })))]
     }
 }
@@ -423,7 +442,7 @@ fn calendar_filter(focus: &FocusController) -> &str {
         .map_or("", |calendar| calendar.filter.as_str())
 }
 
-fn is_destination(id: CommandId) -> bool {
+pub(crate) fn is_destination(id: CommandId) -> bool {
     matches!(
         id,
         CommandId::GoToInbox
