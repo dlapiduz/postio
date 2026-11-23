@@ -1501,7 +1501,7 @@ impl<'a> ThreadRepository<'a> {
     /// [`Self::participants_for`] relies on with `min()`).
     pub fn explain_focus_markers(&self, inboxes: usize, threads: usize, lone: usize) -> String {
         let columns = "k.kind, k.starts_at, k.ends_at, k.due_at, k.excerpt, k.answer, \
-                       k.invite_state, k.moved_from, k.invite_uid";
+                       k.invite_state, k.moved_from, k.invite_uid, k.source";
         let mut arms = Vec::new();
         if threads > 0 {
             arms.push(format!(
@@ -2846,6 +2846,7 @@ fn read_marker_summary(row: &Row, first: usize) -> Result<MarkerSummary> {
         cancelled: state == Some(super::InviteState::Cancelled),
         clash: None,
         moved_from: row.col::<Option<i64>>(first + 7)?.map(from_millis),
+        notice: row.col::<String>(first + 9)? == "notice",
     })
 }
 

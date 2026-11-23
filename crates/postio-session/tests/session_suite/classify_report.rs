@@ -110,6 +110,10 @@ async fn the_report_counts_what_the_classifier_did_and_names_no_mail() {
         text.contains("considered 1:"),
         "only Ada's mail is asked: {text}"
     );
+    assert!(
+        text.contains("noticed 1:"),
+        "the no-reply sender is read for a notice: {text}"
+    );
     assert!(text.contains("  question detector 1:"), "{text}");
     for mail in [
         "Ledger",

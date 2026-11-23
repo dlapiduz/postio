@@ -666,6 +666,10 @@ const CASES: &[(&str, fn())] = &[
         marker_card::the_highlight_starts_and_ends_on_the_sentences_own_words as fn(),
     ),
     (
+        "marker_card::a_notice_s_card_draws_its_chip_in_the_secondary_ink",
+        marker_card::a_notice_s_card_draws_its_chip_in_the_secondary_ink as fn(),
+    ),
+    (
         "marker_card::the_card_dismisses_its_marker",
         marker_card::the_card_dismisses_its_marker as fn(),
     ),
@@ -1274,6 +1278,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "colours::the_rows_repaint_in_dark_at_once_and_the_marker_keeps_the_accent",
         colours::the_rows_repaint_in_dark_at_once_and_the_marker_keeps_the_accent as fn(),
+    ),
+    (
+        "colours::a_notice_s_to_do_is_drawn_in_the_secondary_ink_and_says_whose_it_is",
+        colours::a_notice_s_to_do_is_drawn_in_the_secondary_ink_and_says_whose_it_is as fn(),
     ),
     (
         "marked_rows::a_marked_row_is_two_lines_whatever_its_state",

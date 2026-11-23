@@ -3732,6 +3732,38 @@ fn a_question_sent_to_the_user_is_marked_with_its_sentence_and_nothing_connects(
     assert!(egress(&world).is_empty(), "{:?}", egress(&world));
 }
 
+#[test]
+fn a_bill_from_an_automated_sender_is_marked_as_a_notices_to_do() {
+    const OWED: &str = "A payment of $142.18 is due by October 3.";
+    let world = World::new();
+    let bill = letter_from_tove(
+        &world,
+        saturday_noon(),
+        &format!("Your statement is ready. {OWED}\n\nHarbour Bank"),
+        |message| {
+            message.from = vec![postio_model::EmailAddress::new(
+                Some("Harbour Bank"),
+                "statements@service.example",
+            )];
+            message.promoted = Some(postio_model::promoted::PromotedHeaders {
+                unsubscribe_offered: false,
+                automation: postio_model::promoted::BULK_SENDER,
+            });
+        },
+    );
+
+    focus_caught_up(&world);
+
+    let marker = marker_on(&world, bill).expect("a marker");
+    assert_eq!(marker.kind, postio_model::listing::MarkerKind::Todo);
+    assert_eq!(marker.excerpt.as_deref(), Some(OWED));
+    assert_eq!(
+        marker.source,
+        postio_storage::repository::MarkerSource::Notice
+    );
+    assert!(marker.due_at.is_some(), "the day it is due");
+}
+
 fn own_line_of(world: &World, message: MessageId) -> Option<String> {
     world.rt.block_on(async {
         let connection = world.database.connect().await.expect("a connection");

@@ -234,6 +234,7 @@ mod tests {
             cancelled: false,
             clash: None,
             moved_from: None,
+            notice: false,
         };
         show_focus(
             &mut app,
@@ -504,6 +505,7 @@ mod tests {
             cancelled: false,
             clash: None,
             moved_from: None,
+            notice: false,
         };
         show_focus(
             &mut app,

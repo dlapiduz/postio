@@ -327,7 +327,7 @@ fn second_line<'a>(
             .collect::<Vec<_>>()
             .join("  "),
     };
-    let accent = theme.style(Role::Accent);
+    let accent = theme.style(marker_role(&line));
     let room = width.saturating_sub(start + MARGIN + right.width() + 2);
     let mut spans = vec![bar, Span::raw(" ".repeat(start - 1))];
     let mut used = 0;
@@ -374,6 +374,14 @@ fn selection_mark(theme: &Theme) -> Style {
     }
 }
 
+pub(super) fn marker_role(line: &postio_ui::focus_row::MarkerLine) -> Role {
+    if line.automated {
+        Role::Dim
+    } else {
+        Role::Accent
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use postio_model::listing::{Cadence, MarkerKind, MarkerSummary, MarkerWhen};
@@ -396,6 +404,7 @@ mod tests {
             cancelled: false,
             clash: None,
             moved_from: None,
+            notice: false,
         }
     }
 
@@ -561,6 +570,38 @@ mod tests {
     }
 
     #[test]
+    fn a_notice_s_to_do_is_drawn_in_the_dim_ink() {
+        use crate::caps::{Background, Colour};
+        use crate::theme::{Role, Theme};
+        let mut app = inbox((120, 36));
+        let mut bill = conversation(9, "Harbour Bank", "Your statement", "", local(23, 8, 0));
+        bill.marker = Some(MarkerSummary {
+            kind: MarkerKind::Todo,
+            when: None,
+            excerpt: Some("A payment of $142.18 is due.".into()),
+            answer: None,
+            cancelled: false,
+            clash: None,
+            moved_from: None,
+            notice: true,
+        });
+        show_focus(&mut app, vec![FocusRow::conversation(bill)]);
+        let theme = Theme::new(Colour::TrueColor, Background::Dark, &Default::default()).0;
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 36)).unwrap();
+        terminal
+            .draw(|frame| {
+                crate::view::draw(frame, &app, &theme, crate::test_support::now());
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let (x, y) = at_word(&screen(120, 36, &app), "To-do");
+        let chip = &buffer[(x, y)];
+        assert_eq!(Some(chip.fg), theme.style(Role::Dim).fg, "the chip");
+        assert_ne!(Some(chip.fg), theme.style(Role::Accent).fg);
+    }
+
+    #[test]
     fn a_click_on_reply_opens_the_reply_to_that_row() {
         let mut app = inbox((120, 36));
         let mut ada = unread(conversation(9, "Ines Calvo", "Budget", "", local(23, 8, 0)));
@@ -572,6 +613,7 @@ mod tests {
             cancelled: false,
             clash: None,
             moved_from: None,
+            notice: false,
         });
         show_focus(&mut app, vec![FocusRow::conversation(ada)]);
         let drawn = screen(120, 36, &app);
@@ -685,6 +727,7 @@ mod tests {
             cancelled: false,
             clash: None,
             moved_from: None,
+            notice: false,
         });
         show_focus(&mut app, vec![FocusRow::conversation(summary)]);
         let drawn = screen(120, 36, &app);

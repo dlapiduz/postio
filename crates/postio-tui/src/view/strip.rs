@@ -290,6 +290,7 @@ mod tests {
             cancelled: false,
             clash: None,
             moved_from: None,
+            notice: false,
         };
         let rows = (2..=3)
             .map(|id| {
@@ -333,6 +334,7 @@ mod tests {
                 cancelled: false,
                 clash: None,
                 moved_from: None,
+                notice: false,
             },
         ));
         show_scope(&mut app, FocusScope::HasAction, vec![marked_row]);

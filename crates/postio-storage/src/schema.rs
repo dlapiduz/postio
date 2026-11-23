@@ -667,6 +667,41 @@ CREATE TABLE thread_splits (
     },
     Migration {
         from: stamp(0x4b4a_60f9),
+        to: stamp(0x5474_ba4d),
+        statements: r#"
+CREATE TABLE markers_rows AS SELECT * FROM markers;
+DROP TABLE markers;
+CREATE TABLE markers (
+    message_id       INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    kind             TEXT    NOT NULL
+                             CHECK (kind IN ('invite', 'question', 'todo', 'no_reply')),
+    source           TEXT    NOT NULL
+                             CHECK (source IN ('calendar', 'detector', 'model', 'notice',
+                                               'reminder')),
+    span_start       INTEGER,
+    span_end         INTEGER,
+    excerpt          TEXT,
+    starts_at        INTEGER,
+    ends_at          INTEGER,
+    due_at           INTEGER,
+    invite_uid       TEXT,
+    invite_sequence  INTEGER,
+    invite_stamp     INTEGER,
+    invite_state     TEXT    CHECK (invite_state IN ('open', 'cancelled', 'past')),
+    answer           TEXT    CHECK (answer IN ('accepting', 'accepted',
+                                               'declining', 'declined')),
+    answer_until     INTEGER,
+    dismissed_at     INTEGER
+);
+INSERT INTO markers SELECT * FROM markers_rows;
+DROP TABLE markers_rows;
+CREATE INDEX idx_markers_answer_until ON markers (answer_until);
+CREATE INDEX idx_markers_invite ON markers (invite_uid);
+CREATE INDEX idx_markers_dismissed ON markers (dismissed_at, message_id);
+"#,
+    },
+    Migration {
+        from: stamp(0x5474_ba4d),
         to: FINGERPRINT,
         statements: include_str!("schema/migrate-calendar.sql"),
     },
@@ -1346,9 +1381,10 @@ CREATE TABLE markers (
     kind             TEXT    NOT NULL
                              CHECK (kind IN ('invite', 'question', 'todo', 'no_reply')),
     -- What made it: a calendar part, the built-in detector, the person's
-    -- own model, or a reminder.
+    -- own model, a reminder, or the notice patterns for automated mail.
     source           TEXT    NOT NULL
-                             CHECK (source IN ('calendar', 'detector', 'model', 'reminder')),
+                             CHECK (source IN ('calendar', 'detector', 'model', 'notice',
+                                               'reminder')),
     -- Character offsets of the sentence in the message's own text; NULL for
     -- an invitation or a reminder.
     span_start       INTEGER,

@@ -45,10 +45,8 @@ pub fn at_body_with(
     .at_body(message, text, facts, rules)
 }
 
-/// Layer 4; `postio-ai` implements it. Asked only what layers 1-3 left open, and it answers only in
-/// the fixed schema, with no field for words of its own (ADR 0009), checked before it is believed.
-/// `Ok(None)` is "not this"; [`Unavailable`] means the question goes to whatever answers without
-/// the model.
+/// Layer 4: answers only in the fixed schema, checked before it is believed (ADR 0009). `Ok(None)`
+/// is "not this"; [`Unavailable`] sends the question to whatever answers without the model.
 pub trait ModelLayer {
     fn filter(&self, message: &FiledMessage<'_>) -> Result<Option<ReasonKind>, Unavailable>;
 
@@ -165,10 +163,8 @@ struct Corrections;
 
 impl Stage for Corrections {}
 
-/// Only what reaches the inbox is Focus's to file away; there [`crate::filters`] names a reason
-/// when structure and headers give one, else the question stays open. The built-in needs-action
-/// detector is not one of its stages: it answers last, and only when no model is connected, since
-/// the user's model answers in its place.
+/// Only what reaches the inbox is Focus's to file away. The needs-action detector is not a stage:
+/// it answers last, and only when the user's model does not.
 struct StructureAndRules;
 
 impl Stage for StructureAndRules {
@@ -287,16 +283,20 @@ impl<'a> Pipeline<'a> {
         decisions.outcome()
     }
 
-    /// Asked only of mail sent directly to the user whose text does not speak to a machine;
-    /// answered by the user's model in place of the built-in detector, never both.
+    /// Never of text that speaks to a machine; a notice is the built-in patterns' alone.
     fn needs_action(
         &self,
         message: &BodyMessage<'_>,
         text: &OwnText<'_>,
         rules: &dyn Rules,
     ) -> Option<MarkerCandidate> {
-        if !needs_action::considered(message, rules) || needs_action::speaks_to_a_machine(text) {
+        if needs_action::speaks_to_a_machine(text) {
             return None;
+        }
+        if !needs_action::considered(message, rules) {
+            return needs_action::noticed(message, rules)
+                .then(|| needs_action::notice(message, text))
+                .flatten();
         }
         let Some(model) = self.model else {
             return needs_action::detect(message, text);

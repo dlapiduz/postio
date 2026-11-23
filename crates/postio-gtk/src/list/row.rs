@@ -867,7 +867,12 @@ impl RowWidget {
         let line = marker_line(marker, postio_ui::clock::now().to_utc(), &chrono::Local)
             .capturing(capture);
         let width = self.width() as f32;
-        drawn.accent = Some(palette.accent);
+        let mark = if line.automated {
+            palette.dim
+        } else {
+            drawn.accent = Some(palette.accent);
+            palette.accent
+        };
 
         // The actions first, from the right edge in, so the quote knows its room.
         let keymap = self.imp().keymap.borrow().clone();
@@ -975,7 +980,7 @@ impl RowWidget {
         snapshot.append_border(
             &gtk::gsk::RoundedRect::from_rect(frame, 4.0),
             &[1.0; 4],
-            &[palette.accent; 4],
+            &[mark; 4],
         );
         self.put(
             snapshot,
@@ -983,7 +988,7 @@ impl RowWidget {
             x + 6.0,
             self.second_line(),
             chip_width as f32,
-            &palette.accent,
+            &mark,
         );
         drawn.texts.push(line.chip.to_owned());
         x += boxed + 10.0;
@@ -995,7 +1000,7 @@ impl RowWidget {
                 x,
                 self.second_line(),
                 (right - x).max(0.0),
-                &palette.accent,
+                &mark,
             ) + 10.0;
             drawn.texts.push(date.clone());
         }
@@ -1021,14 +1026,7 @@ impl RowWidget {
             let attributes = layout.attributes().unwrap_or_default();
             attributes.insert(pango::AttrInt::new_style(pango::Style::Italic));
             layout.set_attributes(Some(&attributes));
-            self.put(
-                snapshot,
-                &layout,
-                x,
-                self.second_line(),
-                right - x,
-                &palette.accent,
-            );
+            self.put(snapshot, &layout, x, self.second_line(), right - x, &mark);
             drawn.texts.push(quoted);
         }
         for said in actions.into_iter().rev() {
@@ -1235,7 +1233,7 @@ pub fn spoken(item: &FocusRow) -> String {
     }
     if let Some(marker) = &summary.marker {
         let line = marker_line(marker, postio_ui::clock::now().to_utc(), &chrono::Local);
-        let mut said = line.chip.to_owned();
+        let mut said = line.spoken.to_owned();
         if let Some(date) = &line.date {
             said.push(' ');
             said.push_str(date);

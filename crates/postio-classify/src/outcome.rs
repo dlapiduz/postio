@@ -119,6 +119,7 @@ pub enum MarkedBy {
     Calendar,
     Detector,
     Model,
+    Notice,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

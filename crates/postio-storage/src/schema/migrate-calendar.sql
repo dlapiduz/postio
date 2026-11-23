@@ -120,9 +120,10 @@ CREATE TABLE markers (
     kind             TEXT    NOT NULL
                              CHECK (kind IN ('invite', 'question', 'todo', 'no_reply')),
     -- What made it: a calendar part, the built-in detector, the person's
-    -- own model, or a reminder.
+    -- own model, a reminder, or the notice patterns for automated mail.
     source           TEXT    NOT NULL
-                             CHECK (source IN ('calendar', 'detector', 'model', 'reminder')),
+                             CHECK (source IN ('calendar', 'detector', 'model', 'notice',
+                                               'reminder')),
     -- Character offsets of the sentence in the message's own text; NULL for
     -- an invitation or a reminder.
     span_start       INTEGER,

@@ -164,6 +164,7 @@ fn busy(position: u32) -> postio_tui::row::Row {
         cancelled: false,
         clash: None,
         moved_from: None,
+        notice: false,
     });
     busy.labels = ["Atlas", "Harbor"]
         .iter()

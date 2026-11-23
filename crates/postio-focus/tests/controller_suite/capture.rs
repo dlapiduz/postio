@@ -71,6 +71,7 @@ impl Rows for List {
                     cancelled: false,
                     clash: None,
                     moved_from: None,
+                    notice: false,
                 }),
                 copies: Vec::new(),
                 muted: None,

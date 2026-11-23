@@ -1,0 +1,217 @@
+# A notice's to-do (spec 007 screens.md, "A notice's to-do"): automated mail
+# the person guard never asks, marked only by a few strong patterns.
+#
+# `addressing`: `automated` is an Auto-Submitted machine; `bulk` is a bulk
+# sending service's header and no list header; `table` is a sender the
+# shipped table knows as a machine and files nowhere; `promotion` offers an
+# unsubscribe; `list` carries a List-Id; `direct` is a person.
+# `label`: `todo` with the clause quoted verbatim and its due day, or `none`.
+# Every name and address is invented; every domain is reserved.
+
+sent = "2026-05-04"
+
+[user]
+name = "Ada Norwood"
+address = "ada@example.com"
+
+[[message]]
+id = "payment-due-by"
+addressing = "bulk"
+text = '''
+Hello Ada,
+
+Your May statement is now available. A payment of $142.18 is due by June 3.
+
+Thank you for banking with Harbour Bank.
+'''
+label = "todo"
+quote = "A payment of $142.18 is due by June 3."
+due = "2026-06-03"
+
+[[message]]
+id = "minimum-payment-due-on"
+addressing = "automated"
+text = '''
+Your credit card statement is ready. Your minimum payment of £25.00 is due on 12 May.
+'''
+label = "todo"
+quote = "Your minimum payment of £25.00 is due on 12 May."
+due = "2026-05-12"
+
+[[message]]
+id = "amount-due-line"
+addressing = "table"
+text = '''
+Your electricity bill is ready.
+
+Amount due: $87.40, due May 20.
+'''
+label = "todo"
+quote = "Amount due: $87.40, due May 20."
+due = "2026-05-20"
+
+[[message]]
+id = "invoice-overdue"
+addressing = "automated"
+text = '''
+Hello,
+
+Your invoice INV-2041 for $310.00 is now overdue. Pay online or call us.
+
+Ledgerly Billing
+'''
+label = "todo"
+quote = "Your invoice INV-2041 for $310.00 is now overdue."
+
+[[message]]
+id = "bill-past-due"
+addressing = "bulk"
+text = '''
+Your water bill of $48.20 is past due. Please pay at your earliest convenience.
+'''
+label = "todo"
+quote = "Your water bill of $48.20 is past due."
+
+[[message]]
+id = "complete-forms-before-appointment"
+addressing = "automated"
+text = '''
+Hi Ada,
+
+This is a reminder from Riverside Clinic. Please complete your intake forms before your appointment on May 7.
+
+See you soon.
+'''
+label = "todo"
+quote = "Please complete your intake forms before your appointment on May 7."
+due = "2026-05-07"
+
+[[message]]
+id = "complete-check-in"
+addressing = "table"
+text = '''
+Complete your online check-in by May 9 to keep your appointment.
+'''
+label = "todo"
+quote = "Complete your online check-in by May 9 to keep your appointment."
+due = "2026-05-09"
+
+[[message]]
+id = "renew-by"
+addressing = "automated"
+text = '''
+Your library card expires soon. Renew your card by June 30 to keep borrowing.
+'''
+label = "todo"
+quote = "Renew your card by June 30 to keep borrowing."
+due = "2026-06-30"
+
+[[message]]
+id = "update-card-by"
+addressing = "bulk"
+text = '''
+The card on file expires this month. Please update your payment method by May 31.
+'''
+label = "todo"
+quote = "Please update your payment method by May 31."
+due = "2026-05-31"
+
+[[message]]
+id = "receipt-paid"
+addressing = "automated"
+text = '''
+Thank you for your payment of $142.18, received on May 2.
+'''
+label = "none"
+
+[[message]]
+id = "autopay-scheduled"
+addressing = "bulk"
+text = '''
+Your payment of $142.18 will be withdrawn automatically on June 3. No action is needed.
+'''
+label = "none"
+
+[[message]]
+id = "autopay-no-action-later"
+addressing = "automated"
+text = '''
+A payment of $60.00 is due on May 28.
+
+You are enrolled in autopay, so no action is required.
+'''
+label = "none"
+
+[[message]]
+id = "update-no-day"
+addressing = "automated"
+text = '''
+Your subscription renews on 1 October. Please update your payment details before then to avoid interruption.
+'''
+label = "none"
+
+[[message]]
+id = "order-arrives"
+addressing = "automated"
+text = '''
+Your order of $59.99 will arrive by May 8.
+'''
+label = "none"
+
+[[message]]
+id = "already-paid"
+addressing = "automated"
+text = '''
+If your payment of $48.20 is already on its way by May 6, please disregard this reminder.
+'''
+label = "none"
+
+[[message]]
+id = "question-about-due-date"
+addressing = "automated"
+text = '''
+Questions about the $25.00 payment due on May 12? Visit our help centre.
+'''
+label = "none"
+
+[[message]]
+id = "appointment-confirmed"
+addressing = "automated"
+text = '''
+Your appointment on May 7 at 10:00 is confirmed.
+'''
+label = "none"
+
+[[message]]
+id = "footer-payment"
+addressing = "bulk"
+text = '''
+Your statement is ready to view.
+
+This email was sent to ada@example.com. Payment of any balance is due by the date on your statement.
+'''
+label = "none"
+
+[[message]]
+id = "promotion-save"
+addressing = "promotion"
+text = '''
+Renew your membership by May 10 and save $20!
+'''
+label = "none"
+
+[[message]]
+id = "list-dues"
+addressing = "list"
+text = '''
+Club dues of $15.00 are due by June 3.
+'''
+label = "none"
+
+[[message]]
+id = "person-invoice"
+addressing = "direct"
+text = '''
+Hi Ada, the invoice for $310.00 is now overdue. Thanks, Mateo
+'''
+label = "none"

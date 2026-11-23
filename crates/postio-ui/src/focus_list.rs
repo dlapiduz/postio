@@ -95,6 +95,7 @@ impl FocusRow {
                 cancelled: false,
                 clash: None,
                 moved_from: None,
+                notice: false,
             }),
             copies: Vec::new(),
             muted: None,
@@ -303,6 +304,7 @@ mod tests {
             cancelled: false,
             clash: None,
             moved_from: None,
+            notice: false,
         });
         assert!(FocusRow::conversation(marked).two_lines());
     }
