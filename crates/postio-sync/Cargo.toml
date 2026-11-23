@@ -16,6 +16,7 @@ chrono = { workspace = true, features = ["std"] }
 postio-account = { version = "0.6.2", path = "../postio-account", default-features = false }
 postio-calendar.workspace = true
 postio-classify.workspace = true
+postio-dav.workspace = true
 postio-config.workspace = true
 # A body is only indexable at the moment it lands, which is in this crate (`fetch_body`, #327).
 postio-index.workspace = true

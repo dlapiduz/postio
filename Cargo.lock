@@ -5450,6 +5450,7 @@ dependencies = [
  "postio-calendar",
  "postio-classify",
  "postio-config",
+ "postio-dav",
  "postio-index",
  "postio-model",
  "postio-smtp",
