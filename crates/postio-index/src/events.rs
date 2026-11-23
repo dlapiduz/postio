@@ -70,6 +70,16 @@ pub async fn index_event(
     Ok(())
 }
 
+pub async fn forget_event(connection: &Connection, event: EventId) -> Result<()> {
+    sql::execute(
+        connection,
+        "DELETE FROM event_search WHERE event_id = ?1",
+        [event.get()],
+    )
+    .await?;
+    Ok(())
+}
+
 pub async fn search_events<Z: TimeZone>(
     connection: &Connection,
     query: &ParsedQuery,

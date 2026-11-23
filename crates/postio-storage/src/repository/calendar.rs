@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use postio_model::calendar::{
     AgendaAnchor, AgendaCursor, AgendaEntry, Calendar, EventStatus, NewCalendar,
 };
-use postio_model::ids::{AccountId, CalendarId, EventId, MessageId};
+use postio_model::ids::{AccountId, CalendarId, EventChangeId, EventId, MessageId};
 use turso::Row;
 
 use super::{from_millis, to_millis};
@@ -78,6 +78,47 @@ pub struct StoredEvent {
     pub status: EventStatus,
     pub my_partstat: Option<String>,
     pub source_message: Option<MessageId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeldEvent {
+    pub id: EventId,
+    pub calendar: CalendarId,
+    pub uid: String,
+    pub href: Option<String>,
+    pub etag: Option<String>,
+    pub object: Vec<u8>,
+    pub recurs: bool,
+    pub my_partstat: Option<String>,
+    pub source_message: Option<MessageId>,
+    pub writable: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChangeKind {
+    Create,
+    Update,
+    Delete,
+}
+
+impl ChangeKind {
+    fn text(self) -> &'static str {
+        match self {
+            ChangeKind::Create => "create",
+            ChangeKind::Update => "update",
+            ChangeKind::Delete => "delete",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EventChange {
+    pub id: EventChangeId,
+    pub event: Option<EventId>,
+    pub calendar: CalendarId,
+    pub kind: ChangeKind,
+    pub base: Option<Vec<u8>>,
+    pub base_etag: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -303,6 +344,94 @@ impl CalendarRepository<'_> {
             self.connection,
             "DELETE FROM events WHERE source_message_id = ?1 AND href IS NULL",
             [message.get()],
+        )
+        .await
+    }
+
+    pub async fn held(&self, event: EventId) -> Result<Option<HeldEvent>> {
+        sql::first(
+            self.connection,
+            "SELECT e.id, e.calendar_id, e.uid, e.href, e.etag, e.object, e.recurs, e.my_partstat,
+                    e.source_message_id, c.writable
+               FROM events e JOIN calendars c ON c.id = e.calendar_id
+              WHERE e.id = ?1",
+            [event.get()],
+            |row| {
+                Ok(HeldEvent {
+                    id: EventId::new(row.col(0)?),
+                    calendar: CalendarId::new(row.col(1)?),
+                    uid: row.col(2)?,
+                    href: row.col(3)?,
+                    etag: row.col(4)?,
+                    object: row.col(5)?,
+                    recurs: row.col(6)?,
+                    my_partstat: row.col(7)?,
+                    source_message: row.col::<Option<i64>>(8)?.map(MessageId::new),
+                    writable: row.col(9)?,
+                })
+            },
+        )
+        .await
+    }
+
+    pub async fn delete_event(&self, event: EventId) -> Result<u64> {
+        sql::execute(
+            self.connection,
+            "DELETE FROM events WHERE id = ?1",
+            [event.get()],
+        )
+        .await
+    }
+
+    pub async fn record_change(
+        &self,
+        event: Option<EventId>,
+        calendar: CalendarId,
+        kind: ChangeKind,
+        base: Option<(&[u8], Option<&str>)>,
+        at: DateTime<Utc>,
+    ) -> Result<EventChangeId> {
+        let (object, etag) =
+            base.map_or((None, None), |(object, etag)| (Some(object.to_vec()), etag));
+        let id: i64 = sql::one(
+            self.connection,
+            "INSERT INTO event_changes (event_id, calendar_id, kind, base_object, base_etag, state,
+                                        created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'queued', ?6) RETURNING id",
+            bind![
+                event.map(EventId::get),
+                calendar.get(),
+                kind.text(),
+                object,
+                etag,
+                to_millis(at),
+            ],
+            |row| row.col(0),
+        )
+        .await?;
+        Ok(EventChangeId::new(id))
+    }
+
+    pub async fn change(&self, id: EventChangeId) -> Result<Option<EventChange>> {
+        sql::first(
+            self.connection,
+            "SELECT id, event_id, calendar_id, kind, base_object, base_etag FROM event_changes
+              WHERE id = ?1",
+            [id.get()],
+            |row| {
+                Ok(EventChange {
+                    id: EventChangeId::new(row.col(0)?),
+                    event: row.col::<Option<i64>>(1)?.map(EventId::new),
+                    calendar: CalendarId::new(row.col(2)?),
+                    kind: match row.col::<String>(3)?.as_str() {
+                        "create" => ChangeKind::Create,
+                        "delete" => ChangeKind::Delete,
+                        _ => ChangeKind::Update,
+                    },
+                    base: row.col(4)?,
+                    base_etag: row.col(5)?,
+                })
+            },
         )
         .await
     }

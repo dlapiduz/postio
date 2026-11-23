@@ -10,6 +10,8 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use chrono::{DateTime, Utc};
+use postio_model::calendar::{EditScope, EventFields, EventTarget};
+use postio_model::ids::{CalendarId, EventChangeId, EventId};
 use postio_model::{
     AccountId, AddressId, ContactGroup, ContactGroupId, ContactId, ContactState, DraftId,
     EmailAddress, JoinReceipt, LabelId, MailboxId, MailboxRole, MessageId, OperationRange,
@@ -534,8 +536,18 @@ commands! {
         message: Option<MessageId> = None,
     } => "tentative_invite",
     /// Never sends: inviting is `SaveAndSendEvent`, so a save cannot reach anyone by accident.
-    SaveEvent => "save_event",
-    SaveAndSendEvent => "save_and_send_event",
+    SaveEvent {
+        event: Option<EventTarget> = None,
+        calendar: Option<CalendarId> = None,
+        fields: Option<EventFields> = None,
+        scope: Option<EditScope> = None,
+    } => "save_event",
+    SaveAndSendEvent {
+        event: Option<EventTarget> = None,
+        calendar: Option<CalendarId> = None,
+        fields: Option<EventFields> = None,
+        scope: Option<EditScope> = None,
+    } => "save_and_send_event",
     EmailAttendees => "email_attendees",
     ;
     /// The same verb as `ToggleRead` (same handler, one registry entry), differing only in not
@@ -556,6 +568,21 @@ commands! {
     UnsweepInbox {
         target: MessageTarget,
     } => SweepInbox,
+    DeleteEvent {
+        event: EventTarget,
+        scope: Option<EditScope>,
+    } => Delete,
+    MoveEventTo {
+        event: EventTarget,
+        start: DateTime<Utc>,
+        scope: Option<EditScope>,
+    } => MoveEvent,
+    DuplicateEventOf {
+        event: EventId,
+    } => DuplicateEvent,
+    RevertEventChange {
+        change: EventChangeId,
+    } => SaveEvent,
 }
 
 impl fmt::Display for CommandId {

@@ -57,6 +57,12 @@ pub enum UndoKind {
     Unmute,
     Split,
     Unsplit,
+    AddEvent,
+    SaveEvent,
+    DeleteEvent,
+    MoveEvent,
+    DuplicateEvent,
+    InviteToEvent,
 }
 
 impl UndoKind {
@@ -93,6 +99,12 @@ impl UndoKind {
             UndoKind::Mute => "Muted the thread".to_owned(),
             UndoKind::Unmute => "Unmuted the thread".to_owned(),
             UndoKind::Split => "Split into its own thread".to_owned(),
+            UndoKind::AddEvent => "Event added".to_owned(),
+            UndoKind::SaveEvent => "Event saved".to_owned(),
+            UndoKind::DeleteEvent => "Event deleted".to_owned(),
+            UndoKind::MoveEvent => "Event moved".to_owned(),
+            UndoKind::DuplicateEvent => "Event duplicated".to_owned(),
+            UndoKind::InviteToEvent => "Invitations on their way".to_owned(),
             UndoKind::Unsplit => "Joined the thread again".to_owned(),
             UndoKind::Snooze => format!("Snoozed {count} {messages}"),
             UndoKind::Unsnooze => format!("Unsnoozed {count} {messages}"),

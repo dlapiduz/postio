@@ -1,5 +1,5 @@
 use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
-use postio_index::events::{EventDocument, ensure, index_event, search_events};
+use postio_index::events::{EventDocument, ensure, forget_event, index_event, search_events};
 use postio_model::calendar::{EventStatus, NewCalendar};
 use postio_model::ids::{CalendarId, EventId};
 use postio_storage::Connection;
@@ -173,4 +173,26 @@ async fn an_operator_with_no_event_meaning_narrows_nothing_and_says_so() {
 
     assert_eq!(events, [ids[1]]);
     assert_eq!(ignored, ["has"]);
+}
+
+#[tokio::test]
+async fn a_forgotten_event_is_not_found_and_the_rest_still_are() {
+    let (database, ids) = store().await;
+    let connection = database.connect().await.expect("connection");
+    let indexed = || async {
+        postio_storage::sql::one(
+            &connection,
+            "SELECT count(*) FROM event_search",
+            (),
+            |row| postio_storage::sql::RowExt::col::<i64>(row, 0),
+        )
+        .await
+        .expect("counted")
+    };
+    assert_eq!(indexed().await, 3);
+
+    forget_event(&connection, ids[0]).await.expect("forgotten");
+
+    assert_eq!(indexed().await, 2, "its row is gone, not only unmatched");
+    assert_eq!(found(&database, "cafe").await.0, [ids[2]]);
 }

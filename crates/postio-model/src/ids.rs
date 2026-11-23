@@ -91,6 +91,7 @@ local_id!(DeliveryId);
 local_id!(ReminderId);
 local_id!(CalendarId);
 local_id!(EventId);
+local_id!(EventChangeId);
 
 macro_rules! scalar_id {
     ($(#[$doc:meta])* $name:ident, $inner:ty) => {

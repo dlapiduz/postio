@@ -156,7 +156,7 @@ focused window.
 **Independent test**: quickstart "Slice B"; US3 scenarios 1 to 4.
 
 - [x] T027 [P] [US3] Write failing cases in `crates/postio-calendar/src/` for `patch` (byte-faithful edits over the `X-` and VTODO fixtures), the three recurrence scopes, and `request` (REQUEST, CANCEL), then implement them
-- [ ] T028 [US3] Write failing cases in `crates/postio-host/tests/host_suite/calendar_verbs.rs`, one per row of `contracts/event-verbs.md`'s rules:
+- [x] T028 [US3] Write failing cases in `crates/postio-host/tests/host_suite/calendar_verbs.rs`, one per row of `contracts/event-verbs.md`'s rules:
   - store write and `event_changes` before the repaint, with no connection before it;
   - undo;
   - the scope picker;

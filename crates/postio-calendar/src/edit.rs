@@ -25,6 +25,7 @@ pub struct Edits {
     pub start: Option<DateTime<Utc>>,
     pub end: Option<DateTime<Utc>>,
     pub shift: Option<Duration>,
+    pub length: Option<Duration>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -208,7 +209,38 @@ fn apply<Z: TimeZone>(event: &mut IcalCst<'static>, edits: &Edits, reader: &Z) {
             }
         }
     }
+    let first = lines(event, "DTSTART").next().cloned();
+    if let Some(length) = edits.length
+        && let Some(start) = first
+        && let Some(civil) = Civil::read(&start.raw_value_str())
+    {
+        let end = civil.shifted(length).write();
+        match line_mut(event, "DTEND") {
+            Some(line) => set_text(line, &end),
+            None => {
+                drop_lines(event, &["DURATION"]);
+                let mut line = start;
+                line.name = ical::tree::leaf::IcalLeaf::from("DTEND");
+                set_text(&mut line, &end);
+                insert_line(event, line);
+            }
+        }
+    }
     bump_sequence(event);
+}
+
+pub fn with_uid(ics: &[u8], uid: &str) -> Result<Vec<u8>, CalendarError> {
+    let mut root = parse_owned(ics)?;
+    drop_lines(&mut root, &["METHOD"]);
+    for item in &mut root.items {
+        if let IcalItem::Component(child) = item
+            && is_event(child)
+        {
+            set_or_add(child, "UID", uid);
+            set_or_add(child, "SEQUENCE", "0");
+        }
+    }
+    Ok(root.to_bytes())
 }
 
 fn bump_sequence(event: &mut IcalCst<'static>) {
@@ -654,6 +686,40 @@ mod tests {
             "{:?}",
             starts(&edited)
         );
+    }
+
+    #[test]
+    fn a_new_length_moves_the_end_and_a_duration_becomes_an_end() {
+        let daily = b"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//t//EN\r\nBEGIN:VEVENT\r\nUID:d@example.com\r\nDTSTAMP:20260101T000000Z\r\nDTSTART:20261001T090000Z\r\nDURATION:PT15M\r\nSUMMARY:Standup\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        let edits = Edits {
+            length: Some(TimeDelta::minutes(45)),
+            ..Edits::default()
+        };
+        let edited = patch(daily, &edits, &Scope::All, &reader())
+            .expect("patched")
+            .object;
+        let text = String::from_utf8(edited.clone()).expect("utf-8");
+
+        assert!(
+            text.contains("DTEND:20261001T094500Z") && !text.contains("DURATION"),
+            "{text}"
+        );
+        let occurrence = &crate::expand(
+            &edited,
+            at("2026-10-01T00:00:00Z")..at("2026-10-02T00:00:00Z"),
+        )
+        .expect("expands")[0];
+        assert_eq!(occurrence.end - occurrence.start, TimeDelta::minutes(45));
+    }
+
+    #[test]
+    fn a_duplicate_is_its_own_event_from_its_first_sequence() {
+        let copy = with_uid(DST, "copy@example.com").expect("copied");
+        let events = crate::parse_object(&copy).expect("parses");
+
+        assert!(events.iter().all(|event| event.uid == "copy@example.com"));
+        assert_eq!(starts(&copy), starts(DST));
+        assert!(!String::from_utf8_lossy(&copy).contains("SEQUENCE:2"));
     }
 
     #[test]

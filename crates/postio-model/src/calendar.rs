@@ -117,3 +117,28 @@ pub struct CalendarWindowState {
     pub width: u32,
     pub height: u32,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct EventTarget {
+    pub occurrence: AgendaCursor,
+    pub recurrence_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum EditScope {
+    This,
+    ThisAndFollowing,
+    All,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct EventFields {
+    pub title: String,
+    pub start: DateTime<Utc>,
+    pub end: DateTime<Utc>,
+    pub all_day: bool,
+    pub location: String,
+    pub notes: String,
+    pub attendees: Vec<crate::EmailAddress>,
+    pub minutes_before: Option<i64>,
+}
