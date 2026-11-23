@@ -706,7 +706,7 @@ fn smime_section(signature: &SignatureInput) -> Section {
     Section {
         title: "Signature".to_owned(),
         intro: Some(intro),
-        mono: signature.fingerprint.as_deref().map(grouped),
+        mono: signature.fingerprint.as_deref().map(fingerprint),
         lines,
         ..Section::default()
     }
@@ -770,19 +770,10 @@ fn signature_section(signature: &SignatureInput) -> Section {
     Section {
         title: "Signature".to_owned(),
         intro: Some(intro),
-        mono: signature.fingerprint.as_deref().map(grouped),
+        mono: signature.fingerprint.as_deref().map(fingerprint),
         lines,
         ..Section::default()
     }
-}
-
-fn grouped(fingerprint: &str) -> String {
-    fingerprint
-        .as_bytes()
-        .chunks(4)
-        .map(|chunk| String::from_utf8_lossy(chunk).into_owned())
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 fn local(input: &SourceInput<'_>) -> Section {
