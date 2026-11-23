@@ -115,6 +115,8 @@ impl Req {
             Req::ContactCard(_) => "ContactCard",
             Req::AgendaPage { .. } => "AgendaPage",
             Req::EventDetail(_) => "EventDetail",
+            Req::CalendarWindow => "CalendarWindow",
+            Req::SetCalendarWindow(_) => "SetCalendarWindow",
             Req::EventSearch { .. } => "EventSearch",
             Req::ContactGroups => "ContactGroups",
             Req::ContactsSyncBringIn { .. } => "ContactsSyncBringIn",
@@ -702,6 +704,29 @@ impl Client {
                 Resp::EventSearch { entries, ignored } => Some((entries, ignored)),
                 _ => None,
             },
+        )
+        .await
+    }
+
+    pub async fn calendar_window(
+        &self,
+    ) -> Result<postio_model::calendar::CalendarWindowState, StoreError> {
+        self.read(
+            Req::CalendarWindow,
+            "the calendar window",
+            only!(Resp::CalendarWindow),
+        )
+        .await
+    }
+
+    pub async fn set_calendar_window(
+        &self,
+        state: postio_model::calendar::CalendarWindowState,
+    ) -> Result<(), StoreError> {
+        self.read(
+            Req::SetCalendarWindow(state),
+            "the calendar window",
+            |resp| matches!(resp, Resp::Done).then_some(()),
         )
         .await
     }

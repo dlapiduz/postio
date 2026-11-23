@@ -5328,6 +5328,7 @@ dependencies = [
  "postio-workspace-hack",
  "rustix 1.1.6",
  "secrecy",
+ "serde_json",
  "tempfile",
  "tokio",
  "toml",

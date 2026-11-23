@@ -242,3 +242,30 @@ async fn a_search_finds_events_by_their_words_and_bounds_and_names_what_it_ignor
     );
     assert_eq!(found.ignored, ["is"]);
 }
+
+#[tokio::test]
+async fn the_calendar_window_s_state_is_remembered_without_a_position() {
+    let database = test_support::memory().await;
+    let state = postio_model::calendar::CalendarWindowState {
+        popped: true,
+        width: 900,
+        height: 700,
+    };
+
+    assert_eq!(
+        postio_host::calendar::calendar_window(&database)
+            .await
+            .expect("read"),
+        Default::default(),
+        "a new store has Calendar in the main window"
+    );
+    postio_host::calendar::set_calendar_window(&database, state)
+        .await
+        .expect("saved");
+    assert_eq!(
+        postio_host::calendar::calendar_window(&database)
+            .await
+            .expect("read"),
+        state
+    );
+}

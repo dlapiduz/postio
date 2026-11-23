@@ -171,6 +171,8 @@ pub enum Req {
         limit: u32,
     },
     EventDetail(postio_model::calendar::AgendaCursor),
+    CalendarWindow,
+    SetCalendarWindow(postio_model::calendar::CalendarWindowState),
     EventSearch {
         text: String,
         limit: u32,
@@ -519,6 +521,7 @@ pub enum Resp {
     ContactsPage(postio_model::ContactsPageRead),
     AgendaPage(Vec<postio_model::calendar::AgendaEntry>),
     EventDetail(Option<Box<postio_model::calendar::EventDetail>>),
+    CalendarWindow(postio_model::calendar::CalendarWindowState),
     EventSearch {
         entries: Vec<postio_model::calendar::AgendaEntry>,
         ignored: Vec<String>,

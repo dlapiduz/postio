@@ -325,3 +325,30 @@ async fn widen<Z: TimeZone>(
     tracing::info!(events = count, "widened the calendar window");
     Ok(())
 }
+
+const WINDOW_STATE_KEY: &str = "calendar.window";
+
+pub async fn calendar_window(
+    database: &Store,
+) -> Result<postio_model::calendar::CalendarWindowState, StoreError> {
+    let connection = database.read().await.map_err(failed)?;
+    let stored = SettingsRepository::new(&connection)
+        .get(WINDOW_STATE_KEY)
+        .await
+        .map_err(failed)?;
+    Ok(stored
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default())
+}
+
+pub async fn set_calendar_window(
+    database: &Store,
+    state: postio_model::calendar::CalendarWindowState,
+) -> Result<(), StoreError> {
+    let connection = database.connect().await.map_err(failed)?;
+    let text = serde_json::to_string(&state).map_err(failed)?;
+    SettingsRepository::new(&connection)
+        .set(WINDOW_STATE_KEY, &text)
+        .await
+        .map_err(failed)
+}

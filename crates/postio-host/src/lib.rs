@@ -994,6 +994,16 @@ impl Inner {
                 },
                 Err(error) => Resp::Failed(error),
             },
+            Req::CalendarWindow => match calendar::calendar_window(&self.wiring.database).await {
+                Ok(state) => Resp::CalendarWindow(state),
+                Err(error) => Resp::Failed(error),
+            },
+            Req::SetCalendarWindow(state) => {
+                match calendar::set_calendar_window(&self.wiring.database, state).await {
+                    Ok(()) => Resp::Done,
+                    Err(error) => Resp::Failed(error),
+                }
+            }
             Req::EventDetail(cursor) => {
                 match calendar::event_detail(&self.wiring.database, cursor).await {
                     Ok(detail) => Resp::EventDetail(detail.map(Box::new)),
