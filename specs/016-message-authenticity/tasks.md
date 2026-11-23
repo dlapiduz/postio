@@ -148,7 +148,7 @@ throwaway code is not merged.
   - other mail is unchanged.
 
   Implement it in `crates/postio-sync/src/backfill.rs`.
-- [ ] T035 [US3] Write a failing case in `crates/postio-storage/tests/storage_suite/blob.rs` for the eviction order: unsigned raw first, then payloads, then signed raw. Implement it in `crates/postio-storage/src/blob.rs` (`evictable`). Rewrite `docs/decisions/0017-backfill-cost-attachments-memory-disk-encryption.md` in place to the new keep rule and order
+- [x] T035 [US3] Write a failing case in `crates/postio-storage/tests/storage_suite/blob.rs` for the eviction order: unsigned raw first, then payloads, then signed raw. Implement it in `crates/postio-storage/src/blob.rs` (`evictable`). Rewrite `docs/decisions/0017-backfill-cost-attachments-memory-disk-encryption.md` in place to the new keep rule and order
 - [ ] T036 [US3] Write failing cases in `crates/postio-session/tests/session_suite/signature.rs`:
   - a signed fixture arrives and a verdict row is written off the UI path;
   - an Autocrypt key is recorded;

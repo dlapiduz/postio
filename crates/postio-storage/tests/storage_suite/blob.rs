@@ -842,3 +842,42 @@ async fn a_store_already_under_its_budget_evicts_nothing() {
     assert_eq!(report.removed, 0);
     assert!(store.contains(&raw));
 }
+
+#[tokio::test]
+async fn signed_mail_keeps_its_raw_source_longest() {
+    let (_directory, store) = store();
+    let database = database().await;
+    let connection = database.connect().await.expect("checkout");
+
+    let signed_raw = store.put(&vec![b's'; 40_000]).expect("put");
+    let plain_raw = store.put(&vec![b'r'; 40_000]).expect("put");
+    let payload = store.put(&vec![b'p'; 40_000]).expect("put");
+    let signed = insert_message_at(&connection, 1_000, Some(&signed_raw)).await;
+    connection
+        .execute(
+            "UPDATE messages SET content_type = 'multipart/signed' WHERE id = ?1",
+            bind![signed],
+        )
+        .await
+        .expect("a signed message");
+    let plain = insert_message_at(&connection, 2_000, Some(&plain_raw)).await;
+    attach(&connection, plain, &payload, 40_000).await;
+
+    let one = store.len_of(&signed_raw).expect("len") + 16;
+    store
+        .evict_to_fit(&connection, 2 * one)
+        .await
+        .expect("evict");
+    assert!(
+        !store.contains(&plain_raw),
+        "unsigned raw source goes first, though newer"
+    );
+    assert!(store.contains(&payload) && store.contains(&signed_raw));
+
+    store.evict_to_fit(&connection, one).await.expect("evict");
+    assert!(!store.contains(&payload), "then attachment payloads");
+    assert!(
+        store.contains(&signed_raw),
+        "a signature needs the exact bytes, so signed raw source goes last"
+    );
+}
