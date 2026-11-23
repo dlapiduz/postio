@@ -150,3 +150,57 @@ async fn a_verdict_is_one_row_per_message_read_back_by_its_id() {
         "a re-check replaces it"
     );
 }
+
+#[tokio::test]
+async fn a_contacts_card_lists_their_keys_with_sources_and_acceptance() {
+    use postio_model::CardKey;
+    use postio_storage::repository::ContactRepository;
+    let database = test_support::memory().await;
+    let connection = database.connect().await.unwrap();
+    let contacts = ContactRepository::new(&connection);
+    let person = contacts.person_for_email(&ada()).await.unwrap();
+    let keys = KeyRepository::new(&connection);
+    let addresses = [ada()];
+    keys.record(&key("AAAA", KeySource::Autocrypt, &addresses, 100))
+        .await
+        .unwrap();
+    keys.record(&key("AAAA", KeySource::File, &addresses, 200))
+        .await
+        .unwrap();
+    keys.record(&key("BBBB", KeySource::Gnupg, &addresses, 300))
+        .await
+        .unwrap();
+    keys.record(&key(
+        "CCCC",
+        KeySource::File,
+        &[EmailAddress::new(None::<String>, "grace@example.net")],
+        50,
+    ))
+    .await
+    .unwrap();
+    keys.accept(&ada(), "AAAA", 400).await.unwrap();
+
+    let card = contacts.card(person, 0).await.unwrap().expect("a card");
+    assert_eq!(
+        card.keys,
+        [
+            CardKey {
+                fingerprint: "AAAA".to_owned(),
+                sources: vec!["autocrypt".to_owned(), "file".to_owned()],
+                address: "ada@example.com".to_owned(),
+                first_seen: 100,
+                revoked: false,
+                accepted: true,
+            },
+            CardKey {
+                fingerprint: "BBBB".to_owned(),
+                sources: vec!["gnupg".to_owned()],
+                address: "ada@example.com".to_owned(),
+                first_seen: 300,
+                revoked: false,
+                accepted: false,
+            },
+        ],
+        "grace's key is not ada's"
+    );
+}

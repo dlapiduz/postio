@@ -144,6 +144,10 @@ const CASES: &[(&str, fn())] = &[
         gmail_keys::every_menu_key as fn(),
     ),
     (
+        "contacts::the_card_lists_the_contacts_keys_and_where_each_came_from",
+        contacts::the_card_lists_the_contacts_keys_and_where_each_came_from as fn(),
+    ),
+    (
         "contacts::g_c_opens_the_people_j_k_walk_them_the_card_follows_and_escape_goes_home",
         contacts::g_c_opens_the_people_j_k_walk_them_the_card_follows_and_escape_goes_home
             as fn(),

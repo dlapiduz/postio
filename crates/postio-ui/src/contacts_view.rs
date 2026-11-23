@@ -303,6 +303,34 @@ pub struct CardView {
     pub lines: Vec<CardLine>,
     pub files_title: Option<String>,
     pub files: Vec<FileChipView>,
+    pub keys_title: Option<String>,
+    pub keys: Vec<KeyLine>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyLine {
+    pub fingerprint: String,
+    pub text: String,
+}
+
+pub fn key_lines(keys: &[postio_model::CardKey]) -> Vec<KeyLine> {
+    keys.iter()
+        .map(|key| {
+            let mut text = format!(
+                "From {}",
+                crate::source::key_sources(&key.sources, &key.address)
+            );
+            if key.revoked {
+                text.push_str(" · revoked");
+            } else if key.accepted {
+                text.push_str(&format!(" · accepted for {}", key.address));
+            }
+            KeyLine {
+                fingerprint: crate::source::fingerprint(&key.fingerprint),
+                text,
+            }
+        })
+        .collect()
 }
 
 pub fn is_correspondent(kind: ContactKind) -> bool {
@@ -772,6 +800,8 @@ pub fn card(card: &ContactCardRead, keymap: &Keymap, now: DateTime<Local>) -> Ca
         } else {
             Vec::new()
         },
+        keys_title: (!card.keys.is_empty()).then(|| "Keys".to_owned()),
+        keys: key_lines(&card.keys),
     }
 }
 
@@ -1052,6 +1082,7 @@ mod tests {
             }],
             issues: Vec::new(),
             address_notes: Vec::new(),
+            keys: Vec::new(),
         }
     }
 

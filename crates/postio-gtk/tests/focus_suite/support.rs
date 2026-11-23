@@ -605,6 +605,24 @@ impl Fixture {
             .expect("a verdict");
     }
 
+    pub async fn write_key(&self, address: &str, fingerprint: &str) {
+        let connection = self.database.connect().await.expect("a connection");
+        postio_storage::repository::KeyRepository::new(&connection)
+            .record(&postio_storage::repository::NewKey {
+                fingerprint,
+                kind: postio_storage::repository::KeyKind::OpenPgp,
+                keyblock: b"keyblock bytes",
+                primary_uid: None,
+                revoked: false,
+                addresses: &[postio_model::EmailAddress::new(None::<String>, address)],
+                source: postio_storage::repository::KeySource::Gnupg,
+                message: None,
+                at: 1,
+            })
+            .await
+            .expect("a key");
+    }
+
     pub async fn write_raw(&self, message: MessageId, raw: &[u8]) {
         let blobs = BlobStore::open(self.blobs.path().to_path_buf(), &test_support::blob_keys())
             .expect("a blob store");

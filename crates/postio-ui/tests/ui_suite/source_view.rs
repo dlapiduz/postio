@@ -763,3 +763,38 @@ fn settings_says_what_the_gnupg_keyring_gave() {
         "Off: Postio reads no file outside its own store."
     );
 }
+
+#[test]
+fn a_contacts_card_names_each_key_its_sources_and_what_was_accepted() {
+    use postio_model::CardKey;
+    use postio_ui::contacts_view::{KeyLine, key_lines};
+    let key = |fingerprint: &str, sources: &[&str], revoked, accepted| CardKey {
+        fingerprint: fingerprint.to_owned(),
+        sources: sources.iter().map(|source| (*source).to_owned()).collect(),
+        address: "ada@example.com".to_owned(),
+        first_seen: 1,
+        revoked,
+        accepted,
+    };
+    assert_eq!(
+        key_lines(&[
+            key("E8DF9987513ECF47", &["autocrypt", "file"], false, true),
+            key("199C11946D36705D", &["gnupg"], false, false),
+            key("AAAABBBB", &["attachment"], true, true),
+        ]),
+        [
+            KeyLine {
+                fingerprint: "E8DF 9987 513E CF47".to_owned(),
+                text: "From ada@example.com's Autocrypt header and a file you imported · accepted for ada@example.com".to_owned(),
+            },
+            KeyLine {
+                fingerprint: "199C 1194 6D36 705D".to_owned(),
+                text: "From your GnuPG keyring".to_owned(),
+            },
+            KeyLine {
+                fingerprint: "AAAA BBBB".to_owned(),
+                text: "From a key attached to a message · revoked".to_owned(),
+            },
+        ]
+    );
+}

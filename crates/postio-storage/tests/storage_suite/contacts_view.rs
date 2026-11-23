@@ -333,4 +333,21 @@ async fn a_card_is_read_whole_from_the_rings() {
             "bounded by the ring: {sql}"
         );
     }
+    let keys = ContactRepository::explain_card_keys(1);
+    assert_eq!(
+        unbounded(
+            &connection,
+            &keys,
+            &[
+                "public_key_addresses",
+                "public_keys",
+                "addresses",
+                "public_key_sources",
+                "contact_accepted_keys"
+            ]
+        )
+        .await,
+        Vec::<String>::new(),
+        "every key table is reached by index: {keys}"
+    );
 }

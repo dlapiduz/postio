@@ -637,18 +637,7 @@ fn doubted(report: &AuthReport) -> Line {
 
 fn signature_section(signature: &SignatureInput) -> Section {
     let address = signature.address.as_str();
-    let source = signature
-        .sources
-        .iter()
-        .map(|source| match source.as_str() {
-            "autocrypt" => format!("{address}'s Autocrypt header"),
-            "gnupg" => "your GnuPG keyring".to_owned(),
-            "file" => "a file you imported".to_owned(),
-            "attachment" => "a key attached to a message".to_owned(),
-            other => other.to_owned(),
-        })
-        .collect::<Vec<_>>()
-        .join(" and ");
+    let source = key_sources(&signature.sources, address);
     let seen = signature
         .first_seen
         .and_then(|at| chrono::DateTime::from_timestamp(at, 0))
@@ -852,4 +841,27 @@ pub fn imported_line(imported: &Imported) -> String {
     } else {
         format!("Imported {keys} for {}.", imported.addresses.join(", "))
     }
+}
+
+pub fn key_sources(sources: &[String], address: &str) -> String {
+    sources
+        .iter()
+        .map(|source| match source.as_str() {
+            "autocrypt" => format!("{address}'s Autocrypt header"),
+            "gnupg" => "your GnuPG keyring".to_owned(),
+            "file" => "a file you imported".to_owned(),
+            "attachment" => "a key attached to a message".to_owned(),
+            other => other.to_owned(),
+        })
+        .collect::<Vec<_>>()
+        .join(" and ")
+}
+
+pub fn fingerprint(fingerprint: &str) -> String {
+    fingerprint
+        .as_bytes()
+        .chunks(4)
+        .map(|chunk| String::from_utf8_lossy(chunk).into_owned())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
