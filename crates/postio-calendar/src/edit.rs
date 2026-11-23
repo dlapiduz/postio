@@ -683,6 +683,36 @@ pub fn merge(base: &[u8], ours: &[u8], theirs: &[u8]) -> Result<Option<Vec<u8>>,
     Ok(Some(merged.to_bytes()))
 }
 
+pub fn answered(ics: &[u8], me: &str, partstat: &str) -> Result<Vec<u8>, CalendarError> {
+    let mut root = parse_owned(ics)?;
+    drop_lines(&mut root, &["METHOD"]);
+    let mailto = format!("mailto:{}", me.to_ascii_lowercase());
+    for item in &mut root.items {
+        let IcalItem::Component(child) = item else {
+            continue;
+        };
+        if !is_event(child) {
+            continue;
+        }
+        for item in &mut child.items {
+            let IcalItem::Prop(line) = item else { continue };
+            let mine = line.name.get().eq_ignore_ascii_case("ATTENDEE")
+                && line.raw_value_str().trim().eq_ignore_ascii_case(&mailto);
+            if !mine {
+                continue;
+            }
+            line.params.retain(|param| {
+                let name = param.name.get();
+                !name.eq_ignore_ascii_case("PARTSTAT") && !name.eq_ignore_ascii_case("RSVP")
+            });
+            let mut param = ical::tree::param::node::IcalParamNode::parse("PARTSTAT=NEEDS-ACTION");
+            param.values = vec![ical::tree::leaf::IcalLeaf::from(partstat.to_owned())];
+            line.params.push(param);
+        }
+    }
+    Ok(root.to_bytes())
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::{FixedOffset, TimeDelta};
@@ -985,5 +1015,23 @@ mod tests {
         .expect("rival")
         .object;
         assert_eq!(merge(UNKNOWN, &ours, &rival).expect("parsed"), None);
+    }
+
+    #[test]
+    fn an_answer_sets_only_my_partstat_and_drops_the_method() {
+        let invite = include_bytes!("../tests/fixtures/hostile-urls.ics");
+        let answered = String::from_utf8(
+            answered(invite, "Ada.Norwood@example.com", "TENTATIVE").expect("answered"),
+        )
+        .expect("utf-8");
+
+        assert!(
+            answered.contains(
+                "ATTENDEE;CN=Ada Norwood;PARTSTAT=TENTATIVE:mailto:ada.norwood@example.com"
+            ),
+            "{answered}"
+        );
+        assert!(!answered.contains("NEEDS-ACTION"));
+        assert!(!answered.contains("METHOD:"));
     }
 }

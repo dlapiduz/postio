@@ -12,7 +12,7 @@ mod reply;
 mod test_support;
 
 pub use edit::{
-    Edited, Edits, NewEvent, Scope, merge, new_object, patch, remove, request, with_uid,
+    Edited, Edits, NewEvent, Scope, answered, merge, new_object, patch, remove, request, with_uid,
 };
 pub use event::{Alarm, AlarmAction, Event, Status, Trigger, parse_object};
 pub use expand::{Occurrence, expand};
