@@ -98,7 +98,7 @@ throwaway code is not merged.
   - relaxed alignment;
   - ARC sets named by instance;
   - the trusted header chosen exactly as today (the existing cases stay green).
-- [ ] T011 Implement `AuthReport`, `MethodResult`, `ArcSet` and `Verification` in `crates/postio-ui/src/reader/authenticity.rs`, keeping `warning()`'s behaviour unchanged
+- [x] T011 Implement `AuthReport`, `MethodResult`, `ArcSet` and `Verification` in `crates/postio-ui/src/reader/authenticity.rs`, keeping `warning()`'s behaviour unchanged
 
 ## Phase 4: User Story 1 and 2, the Source surface (P1) 🎯 first slice
 

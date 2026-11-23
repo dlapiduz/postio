@@ -116,14 +116,223 @@ pub fn warning<T: AsRef<str>>(
     (!parts.is_empty()).then(|| parts.join(" "))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Method {
+    Spf,
+    Dkim,
+    Dmarc,
+    Arc,
+    Other(String),
+}
+
+impl Method {
+    fn named(name: &str) -> Method {
+        match name {
+            "spf" => Method::Spf,
+            "dkim" => Method::Dkim,
+            "dmarc" => Method::Dmarc,
+            "arc" => Method::Arc,
+            other => Method::Other(other.to_owned()),
+        }
+    }
+}
+
+/// DMARC's relaxed alignment: the result's domain and From's share an organisational domain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Alignment {
+    Aligned,
+    NotAligned,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MethodResult {
+    pub method: Method,
+    /// As written, lower-cased: `pass`, `fail`, `softfail`, `neutral`, `none`, ...
+    pub result: String,
+    pub domain: Option<String>,
+    pub selector: Option<String>,
+    pub policy: Option<String>,
+    pub aligned: Alignment,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthReport {
+    pub authserv_id: String,
+    pub trusted: bool,
+    /// Index among the message's headers of the same name, topmost first.
+    pub position: usize,
+    /// `Some` for an `ARC-Authentication-Results`, its instance.
+    pub arc_instance: Option<u32>,
+    pub results: Vec<MethodResult>,
+}
+
+/// Named only: Postio never verifies a seal, which would need the sealer's DNS.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArcSet {
+    pub instance: u32,
+    pub sealer: String,
+    pub cv: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Verification {
+    pub provider: Option<AuthReport>,
+    /// How many headers the provider's authserv-id wrote; only the topmost is believed.
+    pub provider_headers: usize,
+    pub not_believed: Vec<AuthReport>,
+    /// By instance, oldest first.
+    pub arc: Vec<ArcSet>,
+}
+
+/// The same trust rule as `verdict`: the topmost header from the provider is believed, and every
+/// other `Authentication-Results` and every `ARC-Authentication-Results` is not.
+pub fn verification<T: AsRef<str>>(
+    headers: &Headers,
+    from: &[EmailAddress],
+    trusted: &[T],
+) -> Verification {
+    let from_domain = from
+        .first()
+        .and_then(EmailAddress::domain)
+        .map(str::to_ascii_lowercase);
+    let from_domain = from_domain.as_deref();
+    let mut out = Verification::default();
+    for (position, value) in headers
+        .get_all("Authentication-Results")
+        .into_iter()
+        .enumerate()
+    {
+        let Some(parsed) = parse(value) else { continue };
+        let ours = trusts(trusted, &parsed.authserv_id);
+        out.provider_headers += usize::from(ours);
+        let believed = ours && out.provider.is_none();
+        let report = parsed.report(position, believed, None, from_domain);
+        if believed {
+            out.provider = Some(report);
+        } else {
+            out.not_believed.push(report);
+        }
+    }
+    for (position, value) in headers
+        .get_all("ARC-Authentication-Results")
+        .into_iter()
+        .enumerate()
+    {
+        let (instance, rest) = arc_instance(value);
+        if let Some(parsed) = parse(rest) {
+            out.not_believed
+                .push(parsed.report(position, false, instance, from_domain));
+        }
+    }
+    out.arc = headers
+        .get_all("ARC-Seal")
+        .into_iter()
+        .filter_map(|value| {
+            let tags = tags(value);
+            Some(ArcSet {
+                instance: tags.get("i")?.parse().ok()?,
+                sealer: tags.get("d")?.to_ascii_lowercase(),
+                cv: tags.get("cv").map(|cv| cv.to_ascii_lowercase()),
+            })
+        })
+        .collect();
+    out.arc.sort_by_key(|set| set.instance);
+    out
+}
+
+fn arc_instance(value: &str) -> (Option<u32>, &str) {
+    match value.split_once(';') {
+        Some((head, rest)) => match head.trim().strip_prefix("i=") {
+            Some(n) => (n.trim().parse().ok(), rest),
+            None => (None, value),
+        },
+        None => (None, value),
+    }
+}
+
+fn tags(value: &str) -> std::collections::BTreeMap<String, String> {
+    value
+        .split(';')
+        .filter_map(|tag| tag.split_once('='))
+        .map(|(key, value)| {
+            (
+                key.trim().to_ascii_lowercase(),
+                value.split_whitespace().collect::<String>(),
+            )
+        })
+        .collect()
+}
+
+fn aligned(domain: Option<&str>, from: Option<&str>) -> Alignment {
+    match (domain, from) {
+        (Some(domain), Some(from)) => {
+            if organisational(domain) == organisational(from) {
+                Alignment::Aligned
+            } else {
+                Alignment::NotAligned
+            }
+        }
+        _ => Alignment::Unknown,
+    }
+}
+
+fn organisational(host: &str) -> String {
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    psl::domain(host.as_bytes())
+        .and_then(|domain| std::str::from_utf8(domain.as_bytes()).ok())
+        .map(str::to_owned)
+        .unwrap_or(host)
+}
+
 #[derive(Debug)]
 struct Result {
     method: String,
     result: String,
     properties: Vec<(String, String)>,
+    comment: String,
 }
 
 impl Result {
+    fn report(&self, from: Option<&str>) -> MethodResult {
+        let method = Method::named(&self.method);
+        let domain = match method {
+            Method::Dkim => self.property("header.d").or(self.property("header.i")),
+            Method::Dmarc => self.property("header.from"),
+            Method::Spf => self
+                .property("smtp.mailfrom")
+                .or(self.property("smtp.helo")),
+            _ => None,
+        }
+        .map(|value| value.rsplit('@').next().unwrap_or(value).to_owned());
+        let selector = (method == Method::Dkim)
+            .then(|| self.property("header.s").map(str::to_owned))
+            .flatten();
+        // Gmail and Fastmail write the policy as a comment, `(p=REJECT ...)`.
+        let policy = (method == Method::Dmarc)
+            .then(|| {
+                self.properties
+                    .iter()
+                    .find(|(key, _)| key.starts_with("policy."))
+                    .map(|(_, value)| value.clone())
+                    .or_else(|| {
+                        self.comment
+                            .split(|c: char| c.is_whitespace() || c == ',')
+                            .find_map(|word| word.strip_prefix("p="))
+                            .map(str::to_ascii_lowercase)
+                    })
+            })
+            .flatten();
+        MethodResult {
+            aligned: aligned(domain.as_deref(), from),
+            method,
+            result: self.result.clone(),
+            domain,
+            selector,
+            policy,
+        }
+    }
+
     fn property(&self, key: &str) -> Option<&str> {
         self.properties
             .iter()
@@ -138,17 +347,34 @@ struct Parsed {
     results: Vec<Result>,
 }
 
+impl Parsed {
+    fn report(
+        &self,
+        position: usize,
+        trusted: bool,
+        arc_instance: Option<u32>,
+        from: Option<&str>,
+    ) -> AuthReport {
+        AuthReport {
+            authserv_id: self.authserv_id.clone(),
+            trusted,
+            position,
+            arc_instance,
+            results: self.results.iter().map(|r| r.report(from)).collect(),
+        }
+    }
+}
+
 fn parse(value: &str) -> Option<Parsed> {
-    let value = strip_comments(value);
-    let mut sections = value.split(';');
-    let authserv_id = sections
-        .next()?
+    let mut sections = sections(value).into_iter();
+    let (head, _) = sections.next()?;
+    let authserv_id = head
         .split_whitespace()
         .next()?
         .trim_end_matches('.')
         .to_ascii_lowercase();
     let results = sections
-        .filter_map(|section| {
+        .filter_map(|(section, comment)| {
             let mut words = section.split_whitespace();
             let (method, result) = words.next()?.split_once('=')?;
             let method = method.split('/').next()?.to_ascii_lowercase();
@@ -165,6 +391,7 @@ fn parse(value: &str) -> Option<Parsed> {
                 method,
                 result: result.to_ascii_lowercase(),
                 properties,
+                comment,
             })
         })
         .collect();
@@ -174,15 +401,31 @@ fn parse(value: &str) -> Option<Parsed> {
     })
 }
 
-fn strip_comments(value: &str) -> String {
+/// Each `;`-separated section with its comments taken out, and their text kept beside it: a `;`
+/// inside a comment does not end a section.
+fn sections(value: &str) -> Vec<(String, String)> {
     let mut depth = 0usize;
-    let mut out = String::with_capacity(value.len());
+    let mut out = vec![(String::new(), String::new())];
     for c in value.chars() {
+        let (text, comment) = out.last_mut().expect("never empty");
         match c {
-            '(' => depth += 1,
-            ')' => depth = depth.saturating_sub(1),
-            _ if depth == 0 => out.push(c),
-            _ => {}
+            '(' => {
+                if depth > 0 {
+                    comment.push(c);
+                }
+                depth += 1;
+            }
+            ')' => {
+                depth = depth.saturating_sub(1);
+                if depth > 0 {
+                    comment.push(c);
+                } else {
+                    comment.push(' ');
+                }
+            }
+            _ if depth > 0 => comment.push(c),
+            ';' => out.push((String::new(), String::new())),
+            _ => text.push(c),
         }
     }
     out
@@ -385,7 +628,14 @@ mod tests {
         let provider = seen.provider.expect("the provider's header");
         assert_eq!(provider.authserv_id, "mx.example.net");
         assert!(provider.trusted);
-        let rows: Vec<(Method, &str, Option<&str>, Option<&str>, Option<&str>)> = provider
+        type Row<'a> = (
+            Method,
+            &'a str,
+            Option<&'a str>,
+            Option<&'a str>,
+            Option<&'a str>,
+        );
+        let rows: Vec<Row> = provider
             .results
             .iter()
             .map(|r| {
