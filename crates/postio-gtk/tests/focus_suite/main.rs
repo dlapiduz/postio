@@ -1271,6 +1271,10 @@ const CASES: &[(&str, fn())] = &[
         threads::clicking_the_more_chip_opens_the_outline as fn(),
     ),
     (
+        "threads::the_outline_keeps_its_width_however_many_people_wrote",
+        threads::the_outline_keeps_its_width_however_many_people_wrote as fn(),
+    ),
+    (
         "threads::a_search_childs_row_says_who_wrote_it_and_when",
         threads::a_search_childs_row_says_who_wrote_it_and_when as fn(),
     ),

@@ -17,7 +17,12 @@ const MENU_WIDTH: i32 = 340;
 const OUTLINE_WIDTH: i32 = 440;
 const ROW_HEIGHT: i32 = 34;
 
-fn popover(parent: &impl IsA<gtk::Widget>, class: &str, width: i32) -> gtk::Popover {
+fn popover(
+    parent: &impl IsA<gtk::Widget>,
+    class: &str,
+    width: i32,
+    body: &gtk::Box,
+) -> gtk::Popover {
     let popover = gtk::Popover::new();
     popover.add_css_class(class);
     popover.set_has_arrow(false);
@@ -25,7 +30,10 @@ fn popover(parent: &impl IsA<gtk::Widget>, class: &str, width: i32) -> gtk::Popo
     // Hung from the button's right edge: the button is at the dialog's right, and a popover centred
     // on it would run past the window.
     popover.set_halign(gtk::Align::End);
-    popover.set_size_request(width, -1);
+    // The popover's own size counts its shadow; the box a person sees is the unpadded contents,
+    // which is the body (focus.css).
+    body.set_size_request(width, -1);
+    popover.set_child(Some(body));
     popover.set_parent(parent);
     let held = popover.downgrade();
     parent.connect_destroy(move |_| {
@@ -58,10 +66,9 @@ impl ThreadMenu {
     }
 
     pub fn new(parent: &impl IsA<gtk::Widget>) -> Rc<Self> {
-        let popover = popover(parent, "focus-thread-menu", MENU_WIDTH);
         let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
         body.add_css_class("focus-thread-menu-body");
-        popover.set_child(Some(&body));
+        let popover = popover(parent, "focus-thread-menu", MENU_WIDTH, &body);
         let menu = Rc::new(ThreadMenu {
             popover,
             body,
@@ -175,7 +182,7 @@ pub struct OutlinePopover {
     popover: gtk::Popover,
     body: gtk::Box,
     filter: gtk::Entry,
-    chips: gtk::Box,
+    chips: adw::WrapBox,
     rows: gtk::Box,
     footer: gtk::Label,
     shown: RefCell<OutlineView>,
@@ -187,12 +194,17 @@ pub struct OutlinePopover {
 
 impl OutlinePopover {
     pub fn new(parent: &impl IsA<gtk::Widget>) -> Rc<Self> {
-        let popover = popover(parent, "focus-outline", OUTLINE_WIDTH);
         let filter = gtk::Entry::new();
         filter.add_css_class("focus-outline-filter");
         filter.set_placeholder_text(Some("Filter this thread"));
-        let chips = gtk::Box::new(gtk::Orientation::Horizontal, space::S2);
-        chips.add_css_class("focus-outline-people");
+        // A popover takes its child's natural width, and a row of chips side by side is as wide
+        // as all of them: the chips wrap within the outline's width instead (#2233).
+        let chips = adw::WrapBox::builder()
+            .child_spacing(space::S2)
+            .line_spacing(space::S2)
+            .natural_line_length(0)
+            .css_classes(["focus-outline-people"])
+            .build();
         let rows = gtk::Box::new(gtk::Orientation::Vertical, 0);
         rows.add_css_class("focus-outline-rows");
         let scroller = gtk::ScrolledWindow::builder()
@@ -213,7 +225,7 @@ impl OutlinePopover {
         body.append(&footer);
         // `u` and the arrows are the outline's until `/` takes the keyboard to the field.
         body.set_focusable(true);
-        popover.set_child(Some(&body));
+        let popover = popover(parent, "focus-outline", OUTLINE_WIDTH, &body);
         let outline = Rc::new(OutlinePopover {
             popover,
             body,
@@ -348,6 +360,8 @@ impl OutlinePopover {
             words.set_xalign(0.0);
             words.set_hexpand(true);
             words.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            // An ellipsized label still asks for its whole line; the row fills the outline instead.
+            words.set_max_width_chars(1);
             let date = gtk::Label::new(Some(&row.date));
             date.add_css_class("dim-label");
             let dot = gtk::Label::new(Some(if row.unread { "\u{25cf}" } else { " " }));
