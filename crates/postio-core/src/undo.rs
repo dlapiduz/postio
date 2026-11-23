@@ -66,17 +66,25 @@ pub enum UndoKind {
 }
 
 impl UndoKind {
-    fn describe(self, count: usize) -> String {
-        let messages = if count == 1 { "message" } else { "messages" };
+    fn describe(self, count: usize, holding: usize) -> String {
+        // Rows holding more messages than there are rows were threads: one word would hide what went.
+        let messages = if holding > count {
+            format!("{count} {} ({holding} messages)", threads(count))
+        } else {
+            format!(
+                "{count} {}",
+                if count == 1 { "message" } else { "messages" }
+            )
+        };
         match self {
-            UndoKind::Archive => format!("Archived {count} {messages}"),
-            UndoKind::Delete => format!("Deleted {count} {messages}"),
-            UndoKind::Move => format!("Moved {count} {messages}"),
-            UndoKind::Flag => format!("Flagged {count} {messages}"),
-            UndoKind::Unflag => format!("Unflagged {count} {messages}"),
-            UndoKind::MarkRead => format!("Marked {count} {messages} as read"),
-            UndoKind::MarkUnread => format!("Marked {count} {messages} as unread"),
-            UndoKind::Label => format!("Labelled {count} {messages}"),
+            UndoKind::Archive => format!("Archived {messages}"),
+            UndoKind::Delete => format!("Deleted {messages}"),
+            UndoKind::Move => format!("Moved {messages}"),
+            UndoKind::Flag => format!("Flagged {messages}"),
+            UndoKind::Unflag => format!("Unflagged {messages}"),
+            UndoKind::MarkRead => format!("Marked {messages} as read"),
+            UndoKind::MarkUnread => format!("Marked {messages} as unread"),
+            UndoKind::Label => format!("Labelled {messages}"),
             // Never plural: it settles one draft.
             UndoKind::MarkedSent => "Marked as sent".to_owned(),
             UndoKind::RetriedSend => "Sending again".to_owned(),
@@ -106,8 +114,8 @@ impl UndoKind {
             UndoKind::DuplicateEvent => "Event duplicated".to_owned(),
             UndoKind::InviteToEvent => "Invitations on their way".to_owned(),
             UndoKind::Unsplit => "Joined the thread again".to_owned(),
-            UndoKind::Snooze => format!("Snoozed {count} {messages}"),
-            UndoKind::Unsnooze => format!("Unsnoozed {count} {messages}"),
+            UndoKind::Snooze => format!("Snoozed {messages}"),
+            UndoKind::Unsnooze => format!("Unsnoozed {messages}"),
             // Counted in conversations: a reminder waits on a reply to the conversation.
             UndoKind::Remind => format!("Reminder set on {count} {}", threads(count)),
             UndoKind::Unremind => format!("Reminder cleared on {count} {}", threads(count)),
@@ -116,9 +124,9 @@ impl UndoKind {
             UndoKind::Tentative => "Accepted tentatively".to_owned(),
             UndoKind::DismissMarker => format!("Dismissed {count} {}", markers(count)),
             UndoKind::UndismissMarker => format!("Brought back {count} {}", markers(count)),
-            UndoKind::Restore => format!("Restored {count} {messages}"),
-            UndoKind::Refilter => format!("Filtered {count} {messages} again"),
-            UndoKind::Sweep => format!("Filtered {count} {messages} out of the inbox"),
+            UndoKind::Restore => format!("Restored {messages}"),
+            UndoKind::Refilter => format!("Filtered {messages} again"),
+            UndoKind::Sweep => format!("Filtered {messages} out of the inbox"),
             UndoKind::StopDigesting => format!("Stopped digesting {count} {}", senders(count)),
             UndoKind::ResumeDigesting => format!("Digesting {count} {} again", senders(count)),
         }
@@ -137,6 +145,12 @@ fn markers(count: usize) -> &'static str {
     if count == 1 { "marker" } else { "markers" }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+struct Rows {
+    chosen: usize,
+    holding: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UndoEntry {
     kind: UndoKind,
@@ -150,7 +164,7 @@ pub struct UndoEntry {
     /// Set when the rows acted on are not the messages they hold: a three-message conversation is
     /// one row.
     #[serde(default)]
-    rows: Option<usize>,
+    rows: Option<Rows>,
     inverse: Vec<Command>,
 }
 
@@ -179,16 +193,23 @@ impl UndoEntry {
         }
     }
 
-    /// The toast counts what the person chose (three rows), not the messages inside them; every
-    /// message still has its way back.
+    /// The toast counts what the person chose (three rows) and, when those are threads, the
+    /// `holding` messages inside them, already-filed ones included; every message still has its
+    /// way back.
     #[must_use]
-    pub fn acting_on(mut self, rows: usize) -> Self {
-        self.rows = Some(rows);
+    pub fn acting_on(mut self, rows: usize, holding: usize) -> Self {
+        self.rows = Some(Rows {
+            chosen: rows,
+            holding,
+        });
         self
     }
 
-    fn shown(&self) -> usize {
-        self.rows.unwrap_or(self.count)
+    fn shown(&self) -> Rows {
+        self.rows.unwrap_or(Rows {
+            chosen: self.count,
+            holding: self.count,
+        })
     }
 
     /// An invitation answer's reply waits seconds in the outbox, so the entry goes with its window
@@ -217,7 +238,8 @@ impl UndoEntry {
 
     /// Derived, not stored, so a coalesced unit describes itself correctly.
     pub fn description(&self) -> String {
-        self.kind.describe(self.shown())
+        let shown = self.shown();
+        self.kind.describe(shown.chosen, shown.holding)
     }
 
     pub fn undone_description(&self) -> String {
@@ -237,7 +259,11 @@ impl UndoEntry {
 
     fn absorb(&mut self, other: UndoEntry) {
         if self.rows.is_some() || other.rows.is_some() {
-            self.rows = Some(self.shown() + other.shown());
+            let (mine, theirs) = (self.shown(), other.shown());
+            self.rows = Some(Rows {
+                chosen: mine.chosen + theirs.chosen,
+                holding: mine.holding + theirs.holding,
+            });
         }
         self.messages.extend(other.messages);
         self.count += other.count;
@@ -378,14 +404,14 @@ mod tests {
     #[test]
     fn the_toast_counts_and_pluralizes() {
         assert_eq!(
-            UndoKind::CancelledSend.describe(1),
+            UndoKind::CancelledSend.describe(1, 1),
             "Send cancelled \u{2014} back in Drafts",
             "a cancelled send says where the message went"
         );
-        assert_eq!(UndoKind::Archive.describe(1), "Archived 1 message");
-        assert_eq!(UndoKind::Archive.describe(12), "Archived 12 messages");
+        assert_eq!(UndoKind::Archive.describe(1, 1), "Archived 1 message");
+        assert_eq!(UndoKind::Archive.describe(12, 12), "Archived 12 messages");
         assert_eq!(
-            UndoKind::MarkUnread.describe(2),
+            UndoKind::MarkUnread.describe(2, 2),
             "Marked 2 messages as unread"
         );
     }
@@ -433,11 +459,11 @@ mod tests {
     }
 
     #[test]
-    fn the_toast_counts_the_rows_acted_on_not_the_messages_inside_them() {
+    fn the_toast_counts_the_threads_acted_on_and_the_messages_inside_them() {
         let ids = (1..=5).map(MessageId::new).collect();
-        let entry = UndoEntry::new(UndoKind::Archive, ids, vec![Command::Undo]).acting_on(3);
+        let entry = UndoEntry::new(UndoKind::Archive, ids, vec![Command::Undo]).acting_on(3, 5);
 
-        assert_eq!(entry.description(), "Archived 3 messages");
+        assert_eq!(entry.description(), "Archived 3 threads (5 messages)");
         assert_eq!(
             entry.messages().len(),
             5,
@@ -455,18 +481,30 @@ mod tests {
             vec![MessageId::new(1), MessageId::new(2)],
             vec![Command::Undo],
         )
-        .acting_on(1);
+        .acting_on(1, 2);
         stack.record_at(two, now);
         let merged = stack.record_at(entry(UndoKind::Archive, 3), now);
 
-        assert_eq!(merged.description(), "Archived 2 messages");
+        assert_eq!(merged.description(), "Archived 2 threads (3 messages)");
         assert_eq!(merged.messages().len(), 3);
+    }
+
+    #[test]
+    fn rows_of_one_message_each_are_counted_as_messages() {
+        let ids = vec![MessageId::new(1), MessageId::new(2)];
+        let entry = UndoEntry::new(UndoKind::Delete, ids, vec![Command::Undo]).acting_on(3, 3);
+
+        assert_eq!(
+            entry.description(),
+            "Deleted 3 messages",
+            "one row was already in Trash, and the person chose three"
+        );
     }
 
     #[test]
     fn a_cancelled_send_says_the_message_is_a_draft_again() {
         assert_eq!(
-            UndoKind::CancelledSend.describe(1),
+            UndoKind::CancelledSend.describe(1, 1),
             "Send cancelled \u{2014} back in Drafts"
         );
     }
