@@ -5109,6 +5109,9 @@ impl FocusWindow {
             if let Some(window) = weak.upgrade() {
                 window.imp().source.replace(None);
                 window.sync_surfaces();
+                if !window.reading().is_some_and(|reading| reading.is_open()) {
+                    window.focus_cursor_soon();
+                }
             }
         });
         dialog.dialog().present(Some(self));

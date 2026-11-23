@@ -1609,13 +1609,12 @@ impl Inner {
                 } else {
                     self.engine_for_message(message).await
                 };
-                match source::view(
-                    &self.wiring.database,
-                    &self.wiring.blobs,
-                    message,
-                    offline || engine.is_none(),
-                )
-                .await
+                let absent = match (offline, &engine) {
+                    (true, _) => postio_ui::source::RawState::Offline,
+                    (false, None) => postio_ui::source::RawState::Unreachable,
+                    (false, Some(_)) => postio_ui::source::RawState::Fetching,
+                };
+                match source::view(&self.wiring.database, &self.wiring.blobs, message, absent).await
                 {
                     Ok(opened) => {
                         if opened.fetch

@@ -24,6 +24,7 @@ fn view_of(fixture: &str, provider: Option<Provider<'_>>) -> SourceView {
         subject: "Notes",
         from: &from,
         headers: Some(&text),
+        envelope: None,
         raw: Some(test_corpus::load(fixture).bytes().to_vec()),
         raw_state: RawState::Here,
         body: BodyState::Here,
@@ -192,6 +193,7 @@ fn a_message_without_its_body_says_the_checks_arrive_with_it() {
         subject: "Notes",
         from: &from,
         headers: None,
+        envelope: Some("From: ada@example.org\r\nSubject: Notes"),
         raw: None,
         raw_state: RawState::Offline,
         body: BodyState::Partial,
@@ -223,6 +225,7 @@ fn a_raw_fetch_in_flight_names_the_account() {
         subject: "Notes",
         from: &from,
         headers: Some(&text),
+        envelope: None,
         raw: None,
         raw_state: RawState::Fetching,
         body: BodyState::Here,
@@ -248,6 +251,7 @@ fn mail_the_person_sent_is_not_judged() {
         subject: "Notes",
         from: &from,
         headers: Some(&text),
+        envelope: None,
         raw: None,
         raw_state: RawState::Here,
         body: BodyState::Here,
@@ -447,4 +451,48 @@ fn each_tab_reads_as_text_for_a_terminal() {
         &raw[..raw.len().min(400)]
     );
     assert!(raw.len() < 64 * 1024, "the folded part is not in the text");
+}
+
+#[test]
+fn a_body_without_its_headers_on_an_account_that_is_not_syncing_says_so_on_every_tab() {
+    let from = sender("auth-results-verified");
+    let view = source::view(SourceInput {
+        subject: "Notes",
+        from: &from,
+        headers: None,
+        envelope: Some("From: Ada Example <ada@example.org>\r\nSubject: Notes"),
+        raw: None,
+        raw_state: RawState::Unreachable,
+        body: BodyState::Here,
+        provider: Some(PROVIDER),
+        sent_by_you: false,
+        account: "Work",
+    });
+    assert_eq!(
+        section(&view, PROVIDER_CHECKED).intro.as_deref(),
+        Some(
+            "The headers that carry these checks aren't on this computer, and Work isn't syncing."
+        )
+    );
+    let names: Vec<&str> = view
+        .headers
+        .rows
+        .iter()
+        .map(|row| row.name.as_str())
+        .collect();
+    assert_eq!(
+        names,
+        ["From", "Subject"],
+        "the envelope, never a blank tab"
+    );
+    assert_eq!(
+        view.headers.note.as_deref(),
+        Some("More headers arrive with the body.")
+    );
+    assert_eq!(
+        view.raw.state_line.as_deref(),
+        Some(
+            "This message isn't on this computer, and Work isn't syncing, so Postio can't fetch it."
+        )
+    );
 }

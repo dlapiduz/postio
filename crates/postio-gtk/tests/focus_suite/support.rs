@@ -1387,6 +1387,7 @@ pub fn source_dialog(keymap: &postio_core::Keymap) -> adw::Dialog {
         subject: "x",
         from: &[],
         headers: None,
+        envelope: None,
         raw: Some(b"From: a@example.com\r\n\r\nx".to_vec()),
         raw_state: postio_ui::source::RawState::Here,
         body: postio_ui::source::BodyState::Here,

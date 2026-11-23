@@ -46,6 +46,8 @@ pub enum RawState {
     Here,
     Fetching,
     Offline,
+    /// The account has no sync running, so nothing can be fetched.
+    Unreachable,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,6 +61,8 @@ pub struct SourceInput<'a> {
     pub from: &'a [EmailAddress],
     /// The stored header block, as `postio_model::headers::block_of` keeps it.
     pub headers: Option<&'a str>,
+    /// From, To, Subject and the like as a header block, drawn when no stored header is here.
+    pub envelope: Option<&'a str>,
     pub raw: Option<Vec<u8>>,
     pub raw_state: RawState,
     pub body: BodyState,
@@ -194,12 +198,14 @@ pub fn view(mut input: SourceInput<'_>) -> SourceView {
         title: format!("Source · {}", input.subject),
         verification: verification(&input, report.as_ref()),
         headers: HeadersView {
-            rows: parsed
-                .as_ref()
-                .map(|headers| rows(headers, input.provider, report.as_ref()))
-                .unwrap_or_default(),
+            rows: match (&parsed, input.envelope) {
+                (Some(headers), _) => rows(headers, input.provider, report.as_ref()),
+                (None, Some(envelope)) => rows(&headers::parse_block(envelope), None, None),
+                (None, None) => Vec::new(),
+            },
             hops: parsed.as_ref().map(hops).unwrap_or_default(),
-            note: (input.body == BodyState::Partial)
+            note: parsed
+                .is_none()
                 .then(|| "More headers arrive with the body.".to_owned()),
         },
         raw: RawView {
@@ -367,6 +373,10 @@ fn raw_state_line(input: &SourceInput<'_>, here: bool) -> Option<String> {
             "This message isn't on this computer yet. Postio will show it when {} is back online.",
             input.account
         )),
+        RawState::Unreachable => Some(format!(
+            "This message isn't on this computer, and {} isn't syncing, so Postio can't fetch it.",
+            input.account
+        )),
     }
 }
 
@@ -393,11 +403,34 @@ fn verification(
     }
     let mut sections = Vec::new();
     let Some(report) = report.filter(|_| input.body == BodyState::Here) else {
+        let account = input.account;
+        let intro = match (input.body, input.raw_state) {
+            (BodyState::Partial, _) => {
+                "The headers that carry these checks arrive with the message body.".to_owned()
+            }
+            (BodyState::Here, RawState::Fetching) => {
+                format!("The headers that carry these checks are on their way from {account}.")
+            }
+            (BodyState::Here, RawState::Unreachable) => format!(
+                "The headers that carry these checks aren't on this computer, and {account} isn't syncing."
+            ),
+            (BodyState::Here, _) => format!(
+                "The headers that carry these checks aren't on this computer yet. Postio will read them when {account} is back online."
+            ),
+        };
+        let state = match input.raw_state {
+            RawState::Fetching => format!("{account} is sending them now."),
+            RawState::Offline => format!("{account} is offline."),
+            RawState::Unreachable => format!("{account} isn't syncing."),
+            RawState::Here => String::new(),
+        };
         sections.push(Section {
             title: "What your provider checked".to_owned(),
-            intro: Some(
-                "The headers that carry these checks arrive with the message body.".to_owned(),
-            ),
+            intro: Some(intro),
+            lines: (input.body == BodyState::Partial && !state.is_empty())
+                .then(|| Line::text(state))
+                .into_iter()
+                .collect(),
             ..Section::default()
         });
         sections.push(local(input));

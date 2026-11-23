@@ -716,6 +716,7 @@ pub fn source_view(raw: &[u8]) -> postio_ui::source::SourceView {
         subject: "Harbor",
         from: &[],
         headers: None,
+        envelope: None,
         raw: Some(raw.to_vec()),
         raw_state: postio_ui::source::RawState::Here,
         body: postio_ui::source::BodyState::Here,

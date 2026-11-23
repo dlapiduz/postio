@@ -1075,3 +1075,7 @@ button.postio-source-tab.postio-source-tab-on {
 .postio-source-text {
   padding: var(--postio-space-3);
 }
+
+.postio-source-title {
+  font-weight: bold;
+}

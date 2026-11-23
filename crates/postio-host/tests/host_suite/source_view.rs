@@ -86,9 +86,14 @@ fn a_local_source_opens_in_a_bounded_number_of_reads() {
         let mut opened = None;
         let counts = counting::counted_async(|| async {
             opened = Some(
-                postio_host::source::view(&scene.database, &scene.blobs, message, false)
-                    .await
-                    .expect("the source opens"),
+                postio_host::source::view(
+                    &scene.database,
+                    &scene.blobs,
+                    message,
+                    postio_ui::source::RawState::Fetching,
+                )
+                .await
+                .expect("the source opens"),
             );
         })
         .await;
@@ -118,9 +123,14 @@ fn absent_bytes_say_fetching_at_once_and_ask_for_the_fetch() {
     current_thread().block_on(async {
         let scene = Scene::new().await;
         let message = scene.file("auth-results-verified", false).await;
-        let opened = postio_host::source::view(&scene.database, &scene.blobs, message, false)
-            .await
-            .expect("the source opens");
+        let opened = postio_host::source::view(
+            &scene.database,
+            &scene.blobs,
+            message,
+            postio_ui::source::RawState::Fetching,
+        )
+        .await
+        .expect("the source opens");
         assert!(opened.fetch, "the person asked for these bytes");
         assert_eq!(
             opened.view.raw.state_line.as_deref(),
@@ -142,7 +152,7 @@ fn offline_says_so_and_asks_for_nothing() {
     current_thread().block_on(async {
         let scene = Scene::new().await;
         let message = scene.file("auth-results-verified", false).await;
-        let opened = postio_host::source::view(&scene.database, &scene.blobs, message, true)
+        let opened = postio_host::source::view(&scene.database, &scene.blobs, message, postio_ui::source::RawState::Offline)
             .await
             .expect("the source opens");
         assert!(!opened.fetch);
@@ -164,9 +174,14 @@ fn an_envelope_without_its_body_says_the_checks_arrive_with_it() {
     current_thread().block_on(async {
         let scene = Scene::new().await;
         let message = scene.file_envelope_only().await;
-        let opened = postio_host::source::view(&scene.database, &scene.blobs, message, true)
-            .await
-            .expect("the source opens");
+        let opened = postio_host::source::view(
+            &scene.database,
+            &scene.blobs,
+            message,
+            postio_ui::source::RawState::Offline,
+        )
+        .await
+        .expect("the source opens");
         assert_eq!(
             opened.view.verification.sections[0].intro.as_deref(),
             Some("The headers that carry these checks arrive with the message body.")

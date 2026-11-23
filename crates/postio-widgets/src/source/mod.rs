@@ -58,7 +58,8 @@ impl SourceDialog {
     ) -> SourceDialog {
         let command = Rc::new(command);
         let title = gtk::Label::new(None);
-        title.add_css_class("postio-plate-title");
+        title.add_css_class("postio-source-title");
+        title.set_max_width_chars(80);
         title.set_ellipsize(gtk::pango::EllipsizeMode::End);
         let close = button::close_button();
         close.set_valign(gtk::Align::Center);
@@ -341,7 +342,7 @@ impl Inner {
 fn text_view(name: &str) -> gtk::TextView {
     let text = gtk::TextView::new();
     text.set_editable(false);
-    text.set_cursor_visible(true);
+    text.set_cursor_visible(false);
     text.set_monospace(true);
     text.set_wrap_mode(gtk::WrapMode::WordChar);
     text.add_css_class("postio-source-text");
@@ -362,6 +363,7 @@ fn section_widget(section: &Section) -> gtk::Box {
     let block = gtk::Box::new(gtk::Orientation::Vertical, space::S2);
     block.add_css_class("postio-source-section");
     let title = plain(&section.title);
+    title.set_selectable(false);
     title.add_css_class("heading");
     block.append(&title);
     if let Some(intro) = &section.intro {
