@@ -230,14 +230,20 @@ pub fn accepting_from_the_source_is_a_button_and_its_notice_shows_over_the_sourc
         support::keys(&window, &["j", "V"]);
         assert!(crate::settle_until(async || on(&window, Tab::Verification)).await);
         let source = window.source().expect("the source");
-        let accept = support::buttons(source.dialog())
-            .into_iter()
-            .find(|button| {
-                support::texts(button)
-                    .iter()
-                    .any(|text| text.starts_with("Accept this key"))
-            })
-            .expect("Accept is a button on the Verification tab");
+        let accept_button = || {
+            support::buttons(source.dialog())
+                .into_iter()
+                .find(|button| {
+                    support::texts(button)
+                        .iter()
+                        .any(|text| text.starts_with("Accept this key"))
+                })
+        };
+        assert!(
+            crate::settle_until(async || accept_button().is_some()).await,
+            "Accept is a button on the Verification tab"
+        );
+        let accept = accept_button().expect("still there");
         assert!(
             support::texts(&accept).iter().any(|text| text == "a"),
             "it wears its key: {:?}",
