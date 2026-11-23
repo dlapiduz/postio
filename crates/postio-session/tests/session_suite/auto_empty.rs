@@ -1,7 +1,3 @@
-//! Auto-emptying Junk and Trash (#1932), through the pass a running Postio
-//! calls: what is due is hidden and queued for the server, what is not is
-//! left, and off does nothing at all.
-
 use chrono::{Duration, TimeZone, Utc};
 use postio_core::retention::AutoEmpty;
 use postio_model::{Flag, MailboxRole, Message, MessageId, Operation};
@@ -107,7 +103,6 @@ async fn due_mail_is_purged_and_flagged_or_young_mail_is_kept() {
     assert_eq!(report.purged, 2);
     assert_eq!(queued_purges(&world).await, 2);
 
-    // What is left due is nothing: the two are hidden, the rest are not due.
     let connection = world.database.connect().await.expect("checkout");
     for (role, mailbox, gone) in [
         (MailboxRole::Junk, world.junk, old_junk),
@@ -126,7 +121,6 @@ async fn due_mail_is_purged_and_flagged_or_young_mail_is_kept() {
         );
     }
 
-    // And a second pass has nothing left to do.
     let again = postio_session::auto_empty::run(&world.database, policy, now())
         .await
         .expect("pass");

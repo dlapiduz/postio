@@ -1,17 +1,7 @@
-//! Reconnection against the `MailBackend` mock: a flapping network, a refused
-//! password, and a laptop lid.
-//!
-//! The schedule itself is unit-tested in `src/connect.rs` — it is arithmetic
-//! and needs no backend. What needs one is the state machine around it: that a
-//! drop is noticed, that recovery is automatic, and that some failures stop it
-//! dead.
-
 use chrono::{DateTime, TimeDelta, TimeZone, Utc};
 use postio_account::backend::{Fault, MailBackend, MockBackend, MockMailbox};
 use postio_sync::connect::{Blocker, Link, NetworkState, ReconnectPolicy, Supervisor};
 
-/// A fixed entropy, so every delay below is exactly the midpoint of its jitter
-/// window and the arithmetic in the assertions is legible.
 const MIDPOINT: u64 = 500;
 
 fn at(second: i64) -> DateTime<Utc> {
@@ -24,7 +14,6 @@ fn backend() -> MockBackend {
         .build()
 }
 
-/// The default policy with a stability window short enough to step over.
 fn policy() -> ReconnectPolicy {
     ReconnectPolicy {
         stability: std::time::Duration::from_secs(30),
@@ -38,10 +27,6 @@ fn retry_at(link: &Link) -> DateTime<Utc> {
         other => panic!("expected Waiting, got {other:?}"),
     }
 }
-
-// ---------------------------------------------------------------------------
-// Coming up
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn the_first_poll_connects() {
@@ -73,10 +58,6 @@ async fn a_healthy_connection_is_left_alone() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Going down and coming back
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn a_failed_attempt_backs_off_and_then_succeeds() {
     let backend = backend();
@@ -89,7 +70,6 @@ async fn a_failed_attempt_backs_off_and_then_succeeds() {
         .expect("a change");
 
     assert_eq!(supervisor.attempts(), 1);
-    // Equal jitter at the midpoint: half the 1s backoff plus half of the rest.
     assert_eq!(retry_at(&change), at(0) + TimeDelta::milliseconds(750));
 
     assert_eq!(
@@ -138,7 +118,6 @@ async fn a_drop_noticed_by_a_command_puts_the_link_into_backoff() {
     supervisor.poll(&backend, at(0), MIDPOINT).await;
     assert!(supervisor.link().is_online());
 
-    // A fetch died mid-command; the drainer reports what it saw.
     let error = backend.status("nope").await.expect_err("no such mailbox");
     assert_eq!(
         supervisor.observe(&error, at(1)),
@@ -158,10 +137,6 @@ async fn a_drop_noticed_by_a_command_puts_the_link_into_backoff() {
     assert!(!supervisor.link().is_online());
 }
 
-// ---------------------------------------------------------------------------
-// Flapping — the acceptance criterion
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn a_flapping_link_converges_instead_of_thrashing() {
     let backend = backend();
@@ -169,13 +144,10 @@ async fn a_flapping_link_converges_instead_of_thrashing() {
     let mut now = at(0);
     let mut attempts_at_each_drop = Vec::new();
 
-    // Ten cycles of: connect, immediately lose it.
     for _ in 0..10 {
-        // The connection comes up.
         supervisor.poll(&backend, now, MIDPOINT).await;
         assert!(supervisor.link().is_online(), "up at {now}");
 
-        // …and dies a second later, well inside the stability window.
         now += TimeDelta::seconds(1);
         backend.inject(Fault::Disconnect);
         let error = backend.status("INBOX").await.expect_err("dropped");
@@ -191,8 +163,6 @@ async fn a_flapping_link_converges_instead_of_thrashing() {
          reconnects as fast as the link can fail"
     );
 
-    // Convergence: the tenth wait is vastly longer than the first, so the
-    // client has stopped hammering the server.
     let first = policy().delay(1, MIDPOINT);
     let tenth = policy().delay(10, MIDPOINT);
     assert!(
@@ -221,7 +191,6 @@ async fn a_connection_that_holds_clears_the_count() {
         "still provisional: it has not held yet"
     );
 
-    // The window is measured from when it came up, which was at(20).
     supervisor.poll(&backend, at(49), MIDPOINT).await;
     assert_eq!(supervisor.attempts(), 2, "one second short");
 
@@ -232,10 +201,6 @@ async fn a_connection_that_holds_clears_the_count() {
         "thirty seconds up is a recovery, so the next outage starts fresh"
     );
 }
-
-// ---------------------------------------------------------------------------
-// Never spin on a hard failure — the acceptance criterion
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn an_auth_failure_stops_and_asks_the_user() {
@@ -251,7 +216,6 @@ async fn an_auth_failure_stops_and_asks_the_user() {
     assert!(blocker.needs_credentials());
     assert!(!blocker.reason().is_empty());
 
-    // And it does not try again, however long anyone waits.
     let before = backend.calls();
     for minute in 1..30 {
         assert_eq!(
@@ -327,10 +291,6 @@ async fn a_server_that_asks_us_to_wait_is_obeyed() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// The network itself
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn losing_the_network_parks_the_link_without_spending_attempts() {
     let backend = backend();
@@ -366,14 +326,12 @@ async fn the_network_coming_back_reconnects_at_once() {
     let backend = backend();
     let mut supervisor = Supervisor::new(policy());
 
-    // A long backoff is already in force…
     for second in 0..6 {
         backend.inject(Fault::Io("network is unreachable".to_owned()));
         supervisor.poll(&backend, at(second * 60), MIDPOINT).await;
     }
     supervisor.set_network(NetworkState::Down, at(400));
 
-    // …and then the lid opens.
     let change = supervisor.set_network(NetworkState::Up, at(500));
     assert!(matches!(change, Some(Link::Waiting { .. })));
     assert_eq!(
@@ -394,7 +352,6 @@ async fn the_link_coming_up_collapses_a_backoff_that_never_saw_it_go_down() {
     let backend = backend();
     let mut supervisor = Supervisor::new(policy());
 
-    // Six failures, so a long backoff is in force.
     for minute in 0..6 {
         backend.inject(Fault::Io("network is unreachable".to_owned()));
         supervisor.poll(&backend, at(minute * 60), MIDPOINT).await;
@@ -403,10 +360,6 @@ async fn the_link_coming_up_collapses_a_backoff_that_never_saw_it_go_down() {
     let due = retry_at(supervisor.link());
     assert!(due > at(310), "the sixth wait is still outstanding at 310s");
 
-    // NetworkManager reports connectivity *without* ever having reported a
-    // loss: a move from "connected, no internet" to "connected", or simply the
-    // first signal after the app started while the link was already down.
-    // Nobody said Offline, so nothing has collapsed the wait.
     let change = supervisor
         .set_network(NetworkState::Up, at(310))
         .expect("a change");
@@ -476,7 +429,6 @@ async fn losing_track_of_the_network_is_not_news_that_it_came_back() {
         .expect("a change");
     let due = retry_at(&change);
 
-    // NetworkManager stopped, or was never there after all.
     assert_eq!(supervisor.set_network(NetworkState::Unknown, at(1)), None);
 
     assert_eq!(
@@ -508,8 +460,6 @@ async fn a_network_nobody_reported_on_is_still_worth_trying() {
     let backend = backend();
     let mut supervisor = Supervisor::new(policy());
 
-    // Never told about NetworkManager at all — the case on a machine that does
-    // not run it, and the case before the first signal arrives.
     assert_eq!(
         supervisor.poll(&backend, at(0), MIDPOINT).await,
         Some(Link::Online { since: at(0) }),
@@ -517,10 +467,6 @@ async fn a_network_nobody_reported_on_is_still_worth_trying() {
          worse than trying and failing"
     );
 }
-
-// ---------------------------------------------------------------------------
-// A revoked grant, all the way to the user — ADR 0006 Q5, #194
-// ---------------------------------------------------------------------------
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -531,13 +477,8 @@ use postio_account::secret::{AccountKey, Password, SecretError};
 use postio_account::test_server::{TestMailbox, TestServer};
 use postio_model::AuthMethod;
 
-/// A source whose grant is gone: every token it can mint is refused, and
-/// invalidating only makes it mint a different refused one.
-///
-/// The shape that matters. A source handing back the *same* token twice is
-/// already covered — the retry is skipped outright — and it would hide the
-/// question being asked here, which is what happens when the retry really
-/// runs and really fails.
+/// Every token it mints is refused, and invalidating mints a different refused one, so the retry
+/// really runs and really fails.
 #[derive(Debug)]
 struct RevokedGrant {
     minted: AtomicUsize,
@@ -561,14 +502,8 @@ fn authenticate_attempts(server: &TestServer) -> usize {
         .count()
 }
 
-/// The last criterion of #194, and the one no single layer can state: a grant
-/// the provider has revoked costs exactly one retry, blocks the link, and
-/// then stops — no timer brings it back.
-///
-/// Composed rather than duplicated, which is the point. The pool decides
-/// *one retry*; the supervisor decides *stop asking*; neither knows about the
-/// other. What this asserts is that the two together do not add up to a
-/// client hammering a token endpoint that has already said no.
+/// A revoked grant (#194) costs exactly one retry, blocks the link, and no timer brings it back:
+/// the pool decides one retry, the supervisor decides to stop.
 #[tokio::test]
 async fn a_revoked_grant_reaches_attention_after_exactly_one_retry() {
     let server = TestServer::builder()
@@ -601,10 +536,6 @@ async fn a_revoked_grant_reaches_attention_after_exactly_one_retry() {
         "one attempt and one retry — never a third"
     );
 
-    // An hour later, and again an hour after that. `Link::Blocked` is where
-    // the schedule stops: a client that kept trying would be asking a
-    // provider that has already said no, at whatever cadence the backoff had
-    // reached.
     let minted = tokens.minted.load(Ordering::SeqCst);
     for hour in 1..=2 {
         assert_eq!(
@@ -624,8 +555,6 @@ async fn a_revoked_grant_reaches_attention_after_exactly_one_retry() {
         "nor asked the source to mint another token"
     );
 
-    // And it comes back the moment the user has done something about it,
-    // which is what makes blocking safe rather than terminal.
     assert!(matches!(
         supervisor.retry_now(at(7_200)),
         Some(Link::Waiting { .. })

@@ -32,8 +32,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -58,8 +56,6 @@ def build_repo(root: Path, test_source: str) -> None:
     tests.mkdir(parents=True, exist_ok=True)
     (tests / "gtk_thing.rs").write_text(test_source, encoding="utf-8")
 
-    # The check loads its sibling by path, so both have to be reachable from
-    # the copy under test. Ship them into the throwaway repo together.
     checks = root / "scripts" / "checks"
     checks.mkdir(parents=True, exist_ok=True)
     (checks / CHECK.name).write_text(CHECK.read_text(encoding="utf-8"), encoding="utf-8")
@@ -102,7 +98,6 @@ def check_source(name: str, source: str, *, expect_fail: bool, detail: str) -> N
 
 
 def main() -> int:
-    # ── the bug this check exists for ────────────────────────────────────
     check_source(
         "two display-needing tests in one file is refused",
         f"#[test]\nfn first() {{\n{GUARD}}}\n\n#[test]\nfn second() {{\n{GUARD}}}\n",
@@ -110,7 +105,6 @@ def main() -> int:
         detail="the check let through exactly the shape of #355",
     )
 
-    # ── and the shapes that must keep working ────────────────────────────
     check_source(
         "one display-needing test is fine",
         f"#[test]\nfn only() {{\n{GUARD}}}\n",
@@ -131,7 +125,6 @@ def main() -> int:
         detail="a harness case file is a plain pub fn and has nothing to flag",
     )
 
-    # ── the reason it blanks Rust rather than grepping ───────────────────
     check_source(
         "adw::init named in a comment does not count",
         f"#[test]\nfn draws() {{\n{GUARD}}}\n\n"
@@ -147,7 +140,6 @@ def main() -> int:
         detail="a string literal was counted as a second GTK test",
     )
 
-    # ── the custom harness is the sanctioned way to hold several ─────────
     check_source(
         "several harness cases in one file are fine",
         f"pub fn first() {{\n{GUARD}}}\n\npub fn second() {{\n{GUARD}}}\n",

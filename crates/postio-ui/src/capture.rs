@@ -1,5 +1,4 @@
-//! What a capture -- a task or a note written to the vault from a message --
-//! is made from and what it says, with no toolkit in it.
+//! What a capture (a task or note written to the vault from a message) is made from and says.
 
 use chrono::{Datelike, NaiveDate, Weekday};
 use postio_model::MessageId;
@@ -7,27 +6,18 @@ use postio_model::listing::{MarkerKind, MarkerWhen};
 
 use crate::focus_list::FocusRow;
 
-/// The message a capture is made from, as the row or the open message says.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Source {
-    /// The message, which the line's link opens.
     pub message: MessageId,
-    /// Who sent it.
     pub sender: String,
-    /// Its subject.
     pub subject: String,
-    /// When it arrived, as a person reads it.
     pub when: String,
-    /// The sentence its marker quotes, verbatim, when it has one.
     pub sentence: Option<String>,
-    /// The day the mail says it is due, when it says.
     pub due: Option<NaiveDate>,
 }
 
-/// What a capture is made from: the row under the cursor when it is the
-/// message aimed at, with its marker's sentence and day; otherwise only the
-/// open message's title. `None` when the row is a digest, which is no one
-/// message.
+/// The row under the cursor when it is the message aimed at, else the open message's title. `None`
+/// for a digest.
 pub fn source(
     message: MessageId,
     cursor: Option<&FocusRow>,
@@ -66,21 +56,16 @@ pub fn source(
     })
 }
 
-/// What is said when `t` or `n` finds no vault to capture into.
 pub const NO_VAULT: &str =
     "Name a vault under [focus.vault] in config.toml to capture tasks and notes";
 
-/// A task or a note.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
-    /// A line in the Obsidian Tasks format.
     Task,
-    /// An entry appended to a note.
     Note,
 }
 
 impl Mode {
-    /// The field's title.
     pub fn field(self) -> &'static str {
         match self {
             Mode::Task => "Task",
@@ -88,7 +73,6 @@ impl Mode {
         }
     }
 
-    /// The write button's words.
     pub fn button(self) -> &'static str {
         match self {
             Mode::Task => "Add task",
@@ -96,7 +80,6 @@ impl Mode {
         }
     }
 
-    /// The preview's title.
     pub fn preview_title(self) -> &'static str {
         match self {
             Mode::Task => "This exact line will be appended",
@@ -104,13 +87,11 @@ impl Mode {
         }
     }
 
-    /// Whether the due row shows: only a task has a day.
     pub fn has_due(self) -> bool {
         self == Mode::Task
     }
 }
 
-/// What the project is called when there is none.
 pub const INBOX: &str = "Inbox";
 
 /// The first `weekday` after `today`, never `today` itself.
@@ -122,18 +103,13 @@ pub fn next_weekday(today: NaiveDate, weekday: Weekday) -> NaiveDate {
     today + chrono::Duration::days(ahead)
 }
 
-/// One quick pick for the due day.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pick {
-    /// What it says: "Today", "Mon", "None".
     pub words: String,
-    /// The day it chooses; `None` for no due day.
     pub day: Option<NaiveDate>,
 }
 
-/// The due day's quick picks, in day order: today, the coming Monday,
-/// Wednesday and Friday, the day the mail itself names (`due`) among them
-/// when it is none of those, and last "None".
+/// Today, the coming Mon/Wed/Fri, the mail's own due day if it is none of those, then "None".
 pub fn quick_picks(today: NaiveDate, due: Option<NaiveDate>) -> Vec<Pick> {
     let mut days = vec![today];
     for weekday in [Weekday::Mon, Weekday::Wed, Weekday::Fri] {
@@ -163,8 +139,6 @@ pub fn quick_picks(today: NaiveDate, due: Option<NaiveDate>) -> Vec<Pick> {
     picks
 }
 
-/// The chosen due day, written out: "Friday, 2 October 2026", or "No due
-/// date".
 pub fn due_label(due: Option<NaiveDate>) -> String {
     match due {
         Some(day) => day.format("%A, %-d %B %Y").to_string(),
@@ -172,9 +146,6 @@ pub fn due_label(due: Option<NaiveDate>) -> String {
     }
 }
 
-/// The project's title: why it was suggested when the vault's suggestion is
-/// the one on screen (`named_in_subject` is the project the subject names),
-/// otherwise just "Project".
 pub fn project_title(named_in_subject: Option<&str>) -> String {
     match named_in_subject {
         Some(name) => format!("Project \u{b7} suggested: the subject names {name}"),
@@ -182,27 +153,22 @@ pub fn project_title(named_in_subject: Option<&str>) -> String {
     }
 }
 
-/// The tasks note's line when there is no project: "path (no project)".
 pub fn inbox_note(tasks_note: &str) -> String {
     format!("{tasks_note} (no project)")
 }
 
-/// Whether a project called `name` is listed under the filter `wanted`.
 pub fn project_listed(name: &str, wanted: &str) -> bool {
     name.to_lowercase().contains(&wanted.to_lowercase())
 }
 
-/// Whether the no-project Inbox is listed under the filter `wanted`.
 pub fn inbox_listed(wanted: &str) -> bool {
     INBOX.to_lowercase().contains(&wanted.to_lowercase())
 }
 
-/// A project row's count: "3 open".
 pub fn open_count(open: usize) -> String {
     format!("{open} open")
 }
 
-/// The line under the preview: where the capture goes, and when it is due.
 pub fn footnote(mode: Mode, place: &str, due: Option<NaiveDate>) -> String {
     match mode {
         Mode::Task => format!(
@@ -216,8 +182,6 @@ pub fn footnote(mode: Mode, place: &str, due: Option<NaiveDate>) -> String {
     }
 }
 
-/// What capture says once its line is written: "Task added to Review ·
-/// due Fri", "Note added to Inbox".
 pub fn added(mode: Mode, place: &str, due: Option<NaiveDate>) -> String {
     match (mode, due) {
         (Mode::Task, Some(day)) => format!("Task added to {place} \u{b7} due {}", day.format("%a")),
@@ -226,8 +190,6 @@ pub fn added(mode: Mode, place: &str, due: Option<NaiveDate>) -> String {
     }
 }
 
-/// The capture window's line naming its message: "From Ada · Quarterly
-/// review · Mon".
 pub fn from_line(source: &Source) -> String {
     format!(
         "From {} \u{b7} {} \u{b7} {}",

@@ -4,9 +4,6 @@ import Testing
 
 @testable import PostioKit
 
-/// The header strip's words from the counts (screen 01): "312 · 41
-/// unread", "Has action · 7", and on the right the filtered count only
-/// while it says something (C10).
 @Suite struct HeaderStripTests {
     static let keys: [String: String] = [
         "go_to_folders": "g o",
@@ -20,8 +17,6 @@ import Testing
         filteredToday: "186 filtered today", digestRules: "4 digest rules")
 
     @Test func theWordsAreTheEnginesAsTheyCame() {
-        // Composed in Rust by the functions GTK's strip uses; nothing here
-        // words a count of its own (spec 009 FR-004).
         let words = HeaderStripWords(strip: Self.strip, hasActionOn: false) { Self.keys[$0] }
         #expect(words.place == "Inbox")
         #expect(words.counts == "312 \u{b7} 41 unread")
@@ -31,8 +26,6 @@ import Testing
     }
 
     @Test func theButtonNamesThePlaceTheListShows() {
-        // `FocusPlace`: after `g a` or a pick in the popover, Inbox ▾ says
-        // where the list is (screen 10).
         let words = HeaderStripWords(strip: Self.strip, place: "Receipts", hasActionOn: false) {
             Self.keys[$0]
         }
@@ -40,7 +33,6 @@ import Testing
     }
 
     @Test func whatTheEngineLeavesOutIsNotDrawn() {
-        // C10: the filtered and digest counts only while in use, decided in Rust.
         let quiet = FocusStripFfi(
             counts: "312", unread: 0, hasAction: "Has action \u{b7} 0", filteredToday: nil, digestRules: nil)
         let words = HeaderStripWords(strip: quiet, hasActionOn: false) { Self.keys[$0] }

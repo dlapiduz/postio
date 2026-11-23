@@ -13,13 +13,13 @@
 
 pub mod sample;
 
+use crate::focus::Held;
 use chrono::{DateTime, Local, TimeZone, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 use postio_model::mailbox::{Mailbox, MailboxRole};
 use postio_model::{
     Account, AccountId, EmailAddress, ListScope, MailboxId, MessageBody, MessageId,
 };
-use postio_ui::paging::{Fetch, Page};
 use postio_ui::terminal::SafeText;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -233,16 +233,9 @@ pub fn show_scope(
     scope: postio_model::FocusScope,
     rows: Vec<postio_ui::focus_list::FocusRow>,
 ) {
-    app.note_surfaced(&rows);
-    let rows: Vec<Row> = rows.into_iter().map(Row::from).collect();
-    let effects = update(
-        app,
-        Input::Opened {
-            scope: ListScope::Focus(scope),
-            total: rows.len() as u32,
-        },
-    );
-    serve_with(app, effects, |position| rows[position as usize].clone());
+    let rows: Vec<Held> = rows.into_iter().map(Held::of).collect();
+    app.open_for_tests(ListScope::Focus(scope), rows.len() as u32);
+    app.serve_for_tests(|position| rows[position as usize].clone());
 }
 
 /// What the strip counts in the inbox of the drawing: 312 conversations, 41
@@ -268,53 +261,57 @@ pub fn places_with_features() -> Places {
     }
 }
 
-/// The host says the Inbox (id 1) has `total` rows.
-pub fn open_list(app: &mut App, total: u32) -> Vec<Effect> {
-    update(
-        app,
-        Input::Opened {
-            scope: ListScope::Mailbox(MailboxId::new(1)),
-            total,
-        },
-    )
+/// Whether `effects` ask the host to open `scope`.
+pub fn opens(effects: &[Effect], scope: ListScope) -> bool {
+    effects.iter().any(|effect| {
+        matches!(effect, Effect::Focus { request: postio_focus::Request::OpenScope { scope: asked, .. }, .. } if *asked == scope)
+    })
 }
 
-/// Answer every fetch among `effects` with [`row`]s for its range; return how
-/// many there were.
+/// Whether `effects` ask the host to open any place.
+pub fn opens_any(effects: &[Effect]) -> bool {
+    effects.iter().any(|effect| {
+        matches!(
+            effect,
+            Effect::Focus {
+                request: postio_focus::Request::OpenScope { .. },
+                ..
+            }
+        )
+    })
+}
+
+/// The host says `scope` has `total` rows.
+pub fn open_scope(app: &mut App, scope: ListScope, total: u32) {
+    app.open_for_tests(scope, total);
+}
+
+/// The host says the Inbox (id 1) has `total` rows.
+pub fn open_list(app: &mut App, total: u32) -> Vec<Effect> {
+    app.open_for_tests(ListScope::Mailbox(MailboxId::new(1)), total);
+    Vec::new()
+}
+
+/// Answer the pages of the list with [`row`]s; how many there were.
 pub fn serve(app: &mut App, effects: Vec<Effect>) -> usize {
     serve_with(app, effects, row)
 }
 
-/// Answer every fetch among `effects` with `row_at(position)` for each
-/// position in its range that the list has; return how many there were.
-pub fn serve_with(app: &mut App, effects: Vec<Effect>, row_at: impl Fn(u32) -> Row) -> usize {
-    let mut fetched = 0;
-    let mut pending = effects;
-    while let Some(effect) = pending.pop() {
-        if let Effect::Fetch {
-            generation,
-            page,
-            fetch: Fetch::Scope(request),
-            ..
-        } = effect
-        {
-            fetched += 1;
-            let total = app.total();
-            let rows = (request.offset..request.offset + request.limit)
-                .filter(|position| *position < total)
-                .map(&row_at)
-                .collect();
-            pending.extend(update(
-                app,
-                Input::Page {
-                    generation,
-                    page,
-                    rows: Ok(Page { total, rows }),
-                },
-            ));
-        }
-    }
-    fetched
+/// Answer the pages of the list with `row_at(position)`; how many there were.
+pub fn serve_with(app: &mut App, _effects: Vec<Effect>, row_at: impl Fn(u32) -> Row) -> usize {
+    app.serve_for_tests(|position| held_of(row_at(position)))
+}
+
+/// A row as the controller would have held it.
+pub fn held_of(row: Row) -> Held {
+    let source = postio_ui::focus_list::FocusRow::conversation(conversation(
+        row.id.get(),
+        row.from.as_str(),
+        row.subject.as_str(),
+        row.preview.as_str(),
+        row.when,
+    ));
+    Held { row, source }
 }
 
 /// Open the Inbox with exactly `rows`, and serve its pages from them.

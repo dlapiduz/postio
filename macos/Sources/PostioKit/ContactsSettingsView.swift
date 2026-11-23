@@ -1,11 +1,6 @@
 import PostioFFI
 import SwiftUI
 
-/// Settings > Contacts (specs/011-focus-contacts D7, handoff screen 08): the
-/// explainer, "Sync with", "What syncs" and the four Suggestions switches.
-/// Every word, which switch is on and what a click does is Rust's; this draws
-/// them and sends the click. Sync is a dry run: the button says what a sync
-/// would do and nothing is written to either side.
 public struct ContactsSettingsView: View {
     let model: ContactsSettingsModel
 
@@ -43,8 +38,6 @@ public struct ContactsSettingsView: View {
     private func heading(_ text: String) -> some View {
         Text(text).font(.system(size: 12, weight: .bold)).foregroundStyle(.secondary)
     }
-
-    // MARK: Sync with
 
     private func syncWith(_ sync: SyncSectionFfi) -> some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -154,8 +147,6 @@ public struct ContactsSettingsView: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
-
-    // MARK: Suggestions
 
     private func suggestions(_ view: SuggestionsViewFfi) -> some View {
         VStack(alignment: .leading, spacing: 8) {

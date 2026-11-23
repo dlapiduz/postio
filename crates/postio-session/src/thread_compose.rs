@@ -1,19 +1,7 @@
-//! Replying to an older message and forwarding a whole thread (spec 013 US7).
-//!
-//! Local only: every function here reads the store and the blob store and
-//! fetches nothing (FR-028, constitution I and VI). A form that needs a
-//! message that is not on this machine is refused with the messages named,
-//! and the person decides what to do about it.
-//!
-//! # The typed text is told from the rest by position
-//!
-//! A reply's body is the person's words, then the attribution and the quote
-//! (`postio_body::requote` finds the seam by the same detector the reader
-//! folds by). A forward's is the person's words, then a line opening
-//! `postio_body::forward::MARKER` and the forwarded content
-//! (`typed_above` / `with_typed`). Nothing is stored beside the draft to say
-//! where one ends: the body says it, in both halves, so a draft saved and
-//! reopened is switched the same way.
+//! Replying to an older message and forwarding a whole thread (spec 013 US7). Local only: a form
+//! that needs a message not on this machine is refused with the messages named.
+//! The typed text is told from the rest by position, not stored: a reply's words precede the
+//! attribution and quote, a forward's precede `postio_body::forward::MARKER`.
 
 use postio_body::forward::{self, Member};
 use postio_model::ids::{BlobId, MessageId};
@@ -26,7 +14,6 @@ use postio_storage::{BlobStore, Checkout, Store};
 
 use crate::reading::{Body, load_body_or_reason};
 
-/// A message with its body, when the body is here.
 struct Loaded {
     message: Message,
     local: bool,
@@ -38,8 +25,6 @@ async fn load(connection: &Checkout, id: MessageId) -> Result<Loaded, String> {
         .await
         .map_err(|error| error.to_string())?
         .ok_or("That message is gone")?;
-    // `offline` only changes the reason a body is missing, never whether it is
-    // read, so it does not matter here.
     let local = match load_body_or_reason(connection, id, false).await {
         Body::Ready { body, .. } => {
             message.body = body;
@@ -61,7 +46,6 @@ async fn members_of(connection: &Checkout, thread: ThreadId) -> Result<Vec<Threa
     Ok(members)
 }
 
-/// A new forward of `thread` in `form`: of its latest message for `This`.
 pub async fn forward_thread(
     database: &Store,
     blobs: &BlobStore,
@@ -88,8 +72,6 @@ pub async fn forward_thread(
     rebuild(&connection, blobs, draft, anchor, thread, members, form).await
 }
 
-/// `draft`, a forward, carrying `form`, the words typed above the forwarded
-/// content kept.
 pub async fn set_forward_form(
     database: &Store,
     blobs: &BlobStore,
@@ -230,9 +212,6 @@ async fn rebuild(
         }
     };
 
-    // What any form carries is replaced; what the person attached themselves
-    // stays. A form's own files are the thread's attachments and its raw
-    // sources, by content hash, or a part carried without its bytes.
     let formed: std::collections::HashSet<BlobId> = loaded
         .iter()
         .flat_map(|member| {
@@ -264,10 +243,8 @@ async fn rebuild(
     Ok(Forwarded::Draft(Box::new(draft)))
 }
 
-/// What the thread is called in a forward's subject: its oldest message's
-/// subject as sent. The stored thread subject is the normalised one the
-/// threader compares by (lower case, no `Re:`), which is not what a person
-/// would recognise.
+/// What the thread is called in a forward's subject: its oldest message's subject as sent, not the
+/// normalised one the threader compares by.
 fn thread_subject_line(loaded: &[Loaded]) -> String {
     loaded
         .iter()
@@ -275,9 +252,6 @@ fn thread_subject_line(loaded: &[Loaded]) -> String {
         .unwrap_or_default()
 }
 
-/// One message as a forward carries it: the conventional header block, then
-/// the message, opening with `forward::MARKER` and with no caret line above
-/// (`with_typed` leaves one).
 fn forwarded_message(message: &Message, rich: bool) -> MessageBody {
     let plain = reply::plain_forward(message);
     let text = plain
@@ -290,15 +264,12 @@ fn forwarded_message(message: &Message, rich: bool) -> MessageBody {
             "fwd",
         );
         let mut document = postio_body::forwarded(&quote, &reply::forward_header(message));
-        // The caret's blank paragraph is `with_typed`'s to leave.
         document.blocks.remove(0);
         document.to_html()
     });
     MessageBody { text, html }
 }
 
-/// `draft`, a reply, answering its thread's latest received message: the
-/// words above the quote stay, the quote and `In-Reply-To` move.
 pub async fn reply_to_latest(database: &Store, mut draft: Draft) -> Result<Draft, String> {
     let connection = database.read().await.map_err(|error| error.to_string())?;
     let thread = match draft.thread_id {

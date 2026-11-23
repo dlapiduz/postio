@@ -1,10 +1,7 @@
-//! What the user decided about a correspondent (specs/011-focus-contacts S3,
-//! ADR 0048): where their mail arrives, which markers are off, how their HTML
-//! mail is drawn.
-//!
-//! The engine reads every live person's decisions in one statement
-//! ([`ContactSettingsRepository::derived`]); a reader that looks a sender up
-//! by address uses [`ContactSettingsRepository::treatment_for`].
+//! A correspondent's decisions: where their mail arrives, which markers are off, how their HTML is
+//! drawn (ADR 0048).
+//! The engine reads all of them in one statement ([`ContactSettingsRepository::derived`]); a sender
+//! lookup uses [`ContactSettingsRepository::treatment_for`].
 
 use postio_model::{ContactArrival, ContactId, ContactSettings, DigestSetting};
 
@@ -12,21 +9,14 @@ use crate::error::{Error, Result};
 use crate::sql::{self, RowExt as _, bind};
 use crate::store::Connection;
 
-/// One person's decisions with the addresses they apply to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DerivedSettings {
-    /// Who.
     pub contact: ContactId,
-    /// What the person is called: the name set, else the mail's, else their
-    /// address.
     pub name: String,
-    /// Every address they own, lowercased.
     pub addresses: Vec<String>,
-    /// What they decided.
     pub settings: ContactSettings,
 }
 
-/// Reads and writes a correspondent's decisions.
 #[derive(Debug)]
 pub struct ContactSettingsRepository<'a> {
     connection: &'a Connection,
@@ -36,12 +26,10 @@ const COLUMNS: &str = "arrival, digest_name, digest_cadence, digest_day, digest_
      stop_markers, notify, html_treatment, remind_days, archive_after_days, ignored";
 
 impl<'a> ContactSettingsRepository<'a> {
-    /// Borrows a connection.
     pub fn new(connection: &'a Connection) -> Self {
         Self { connection }
     }
 
-    /// What `contact` decided; the default when they decided nothing.
     pub async fn get(&self, contact: ContactId) -> Result<ContactSettings> {
         Ok(sql::first(
             self.connection,
@@ -53,8 +41,7 @@ impl<'a> ContactSettingsRepository<'a> {
         .unwrap_or_default())
     }
 
-    /// Records what `contact` decided. A person who decided nothing keeps no
-    /// row.
+    /// A person who decided nothing keeps no row.
     pub async fn put(&self, contact: ContactId, settings: &ContactSettings) -> Result<()> {
         if settings.is_default() {
             sql::execute(
@@ -99,9 +86,7 @@ impl<'a> ContactSettingsRepository<'a> {
         Ok(())
     }
 
-    /// Every live person's rules (a pin, a digest, a marker turned off) with
-    /// the addresses they apply to: what the engine reads. One statement.
-    /// A treatment alone is not a rule and is not here.
+    /// One statement. A treatment alone is not a rule and is not included.
     pub async fn derived(&self) -> Result<Vec<DerivedSettings>> {
         let rows = sql::all_unbounded(self.connection, Self::explain_derived(), (), |row| {
             Ok((
@@ -135,7 +120,6 @@ impl<'a> ContactSettingsRepository<'a> {
         Ok(people)
     }
 
-    /// The SQL [`Self::derived`] runs.
     pub fn explain_derived() -> &'static str {
         "SELECT c.id, c.name, c.seen_name, p.address, a.address_normalized,
                 s.arrival, s.digest_name, s.digest_cadence, s.digest_day, s.digest_at,
@@ -148,8 +132,7 @@ impl<'a> ContactSettingsRepository<'a> {
           ORDER BY c.id, a.id"
     }
 
-    /// How `address`'s mail is always drawn, if the person it belongs to
-    /// decided: `app` or `paper`.
+    /// `app` or `paper`, if the person decided.
     pub async fn treatment_for(&self, address: &str) -> Result<Option<String>> {
         sql::first(
             self.connection,
@@ -162,8 +145,6 @@ impl<'a> ContactSettingsRepository<'a> {
         .await
     }
 
-    /// Every address with a treatment, for a reader that looks senders up
-    /// from memory. One statement.
     pub async fn treatments(&self) -> Result<Vec<(String, String)>> {
         sql::all_unbounded(
             self.connection,
@@ -178,7 +159,6 @@ impl<'a> ContactSettingsRepository<'a> {
     }
 }
 
-/// The settings columns, starting at `at`.
 fn read(row: &turso::Row, at: usize) -> Result<ContactSettings> {
     let arrival: Option<String> = row.col(at)?;
     let arrival = arrival

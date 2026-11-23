@@ -1,5 +1,3 @@
-//! Selection, copy and links over the snapshot (spec 006 FR-017, FR-019).
-
 use gtk::prelude::*;
 use gtk::{gdk, glib};
 use postio_widgets::body_view::BodyView;
@@ -31,10 +29,6 @@ fn clipboard_text(clipboard: &gdk::Clipboard) -> Option<String> {
 }
 
 pub fn a_drag_across_cells_selects_and_copies_them_as_rows() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let (window, _scroller, view) = shown("html-transactional-receipt");
     let doc = view.document().expect("a snapshot");
     let from = doc.text.rects(doc.text.find("The Salt Road")[0].clone())[0];
@@ -68,10 +62,6 @@ pub fn a_drag_across_cells_selects_and_copies_them_as_rows() {
 }
 
 pub fn double_and_triple_clicks_select_a_word_and_a_line() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let (window, _scroller, view) = shown("html-transactional-receipt");
     let doc = view.document().expect("a snapshot");
     let lichens = doc.text.find("Lichens")[0].clone();
@@ -86,8 +76,6 @@ pub fn double_and_triple_clicks_select_a_word_and_a_line() {
     window.destroy();
 }
 
-/// A conversation of one message whose body has `body`, composed by the
-/// reader's own thread document.
 fn thread(body: &str) -> postio_widgets::body_view::Content {
     use postio_ui::reader::thread::{Entry, conversation_document};
     let sanitized = postio_body::sanitize::sanitize_body_in(
@@ -95,7 +83,6 @@ fn thread(body: &str) -> postio_widgets::body_view::Content {
         postio_body::RemoteImages::Blocked,
         Some("7"),
     );
-    // Quoted text is folded after sanitizing, as the reader does it.
     let folded = postio_body::fold_html_quotes(&sanitized.html);
     let entry = Entry {
         scope: "7",
@@ -138,10 +125,6 @@ fn show(content: postio_widgets::body_view::Content) -> (gtk::Window, BodyView) 
 }
 
 pub fn links_are_followed_by_pointer_and_keyboard() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let (window, view) = show(thread(
         "<p>See <a href=\"https://example.com/plan\">the plan</a>.</p>\
          <p><a href=\"javascript:alert(1)\">not a link</a></p>",
@@ -152,7 +135,6 @@ pub fn links_are_followed_by_pointer_and_keyboard() {
         move |url| launched.borrow_mut().push(url.to_owned())
     });
     let doc = view.document().expect("a snapshot");
-    // Hover: the tooltip names where the link really goes.
     let plan = doc
         .links
         .iter()
@@ -164,13 +146,11 @@ pub fn links_are_followed_by_pointer_and_keyboard() {
         view.tooltip_text().as_deref(),
         Some("https://example.com/plan")
     );
-    // A script URL is not a link at all.
     assert!(
         !doc.links
             .iter()
             .any(|l| format!("{:?}", l.target).contains("javascript"))
     );
-    // Tab walks the links in document order; Return follows the focused one.
     let order: Vec<String> = (0..doc.links.len())
         .map(|_| {
             view.focus_next_link(true);
@@ -187,10 +167,6 @@ pub fn links_are_followed_by_pointer_and_keyboard() {
 }
 
 pub fn clicking_a_fold_opens_it() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let (window, view) = show(thread(
         "<p>my reply</p><blockquote>the words they wrote before</blockquote>",
     ));
@@ -222,13 +198,7 @@ pub fn clicking_a_fold_opens_it() {
     window.destroy();
 }
 
-/// 001 FR-037 without script: page down moves one real page, and page up
-/// comes back.
 pub fn a_page_is_one_real_page() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     use postio_ui::reader::thread::{Entry, conversation_document};
     let long = "<p>A paragraph that goes on for a while.</p>".repeat(40);
     let bodies: Vec<String> = ["7", "11", "15"]

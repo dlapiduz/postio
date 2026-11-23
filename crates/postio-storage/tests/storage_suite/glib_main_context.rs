@@ -1,24 +1,8 @@
-//! A store read is pollable on the GTK main context, with no tokio runtime.
-//!
-//! `check-runtime-crossings.py` exists because awaiting a runtime-dependent
-//! future inside `glib::spawn_future_local` panics with *"there is no reactor
-//! running"* the first time the line is reached — which shipped in 0.1.0 and
-//! made the app unable to add an account. The check names eight awaits on that
-//! context that are not channel receives, and every one of them is a plain
-//! call the storage port turned into an await.
-//!
-//! So the question is not about those eight. It is about the engine: **does a
-//! Turso future need a reactor?** This asks it directly and is the thing the
+//! Does a Turso future need a reactor? This is what the
 //! eight `POSTIO-GLIB-SAFE` markers point at — a marker is a decision written
-//! down, and a decision about an engine's behaviour should have a measurement
-//! under it.
-//!
-//! Deliberately not `#[tokio::test]`: the whole claim is that there is *no
-//! runtime anywhere*, and that would supply one and make the case pass for the
-//! wrong reason.
+//! down, and it needs a measurement under it. Deliberately not `#[tokio::test]`, which supplies a
+//! runtime.
 
-// GLib is a Linux dev-dependency (see Cargo.toml): the GTK app is the only
-// frontend that polls the store on its main loop.
 #![cfg(target_os = "linux")]
 
 #[test]

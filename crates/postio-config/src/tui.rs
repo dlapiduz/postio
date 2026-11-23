@@ -1,50 +1,25 @@
-//! `[tui]` — how the terminal frontend looks and behaves.
-//!
-//! ```toml
-//! [tui]
-//! preview = "toggle"    # or "split": the composer's rendered preview
-//! mouse = true          # false leaves the terminal's own text selection
-//!
-//! [tui.colors]
-//! flagged = "#ff8800"   # any role, by name, palette number or #rrggbb
-//! ```
-//!
-//! Keys stay under `[keys]`, keyed by command id, shared with the desktop app:
-//! there is no terminal keymap to configure (Principle II). The colour roles
-//! are the terminal frontend's own (`postio-tui`'s `theme`), which is where an
-//! unknown role or an unreadable colour is reported -- this crate carries the
-//! strings and does not guess at a list it does not own.
-
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
 use crate::Extras;
 
-/// How the composer shows the message it would send.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Preview {
-    /// One key swaps the editor for the preview and back.
     #[default]
     Toggle,
-    /// The editor and the preview side by side.
     Split,
 }
 
-/// The `[tui]` section.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TuiConfig {
-    /// How the composer's preview is shown.
     #[serde(default)]
     pub preview: Preview,
-    /// Whether the terminal frontend takes the mouse.
     #[serde(default = "yes")]
     pub mouse: bool,
-    /// Colour overrides by role name.
     #[serde(default)]
     pub colors: BTreeMap<String, String>,
-    /// Keys in `[tui]` this version of Postio does not know.
     #[serde(flatten)]
     pub extras: Extras,
 }

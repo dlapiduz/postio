@@ -626,11 +626,7 @@ mod more {
             command,
             Command::Move { to: Some(to), .. } if *to == MailboxId::new(2)
         )));
-        assert!(
-            !effects
-                .iter()
-                .any(|effect| matches!(effect, Effect::Open(_)))
-        );
+        assert!(!crate::test_support::opens_any(&effects));
     }
 
     #[test]

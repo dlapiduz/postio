@@ -1,10 +1,3 @@
-//! End-to-end tests for [`postio_index::search`]: a real (in-memory) schema,
-//! real rows, a parsed query and the executor wired together.
-//!
-//! Ranking's *orderings* are covered by the pure `rank_score` unit tests in
-//! `executor.rs` — nothing here needs to reproduce those, only confirm the
-//! executor calls through to it and returns results in that order.
-
 use chrono::{TimeZone, Utc};
 use postio_index::{SearchRequest, search};
 use postio_model::AccountScope;
@@ -106,9 +99,6 @@ async fn list_names_a_mailing_list_by_its_list_id_not_by_a_recipient_address() {
         .await
         .expect("update message");
 
-    // Mentions the list's address only among its recipients, with no
-    // `List-Id` of its own — the old approximation would have matched this
-    // one too.
     let mut off_list = message(
         &connection,
         &account,
@@ -141,8 +131,6 @@ async fn list_names_a_mailing_list_by_its_list_id_not_by_a_recipient_address() {
     assert_eq!(results.hits[0].message_id, on_list.id);
 }
 
-/// A message from `from` to `to`, with `subject` and one attachment named
-/// `filename`.
 async fn addressed(
     connection: &Connection,
     account: &postio_model::Account,
@@ -166,7 +154,6 @@ async fn addressed(
     message
 }
 
-/// The messages `text` finds, newest first, checking the count agrees.
 async fn found_by(
     connection: &Connection,
     account: postio_model::AccountId,
@@ -187,9 +174,6 @@ async fn found_by(
 
 #[tokio::test]
 async fn a_field_operator_finds_its_value_in_its_own_field_only() {
-    // #1699: `from:ada@example.com` found mail sent *to* that address,
-    // because the sender shared a word ("example") with it. Each field
-    // operator asks for its value, as a phrase, in its own field.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     postio_index::index::ensure_schema(&connection)
@@ -223,8 +207,6 @@ async fn a_field_operator_finds_its_value_in_its_own_field_only() {
     assert_eq!(found("to:ada@example.com").await, vec![to_ada.id]);
     assert_eq!(found("from:grace@example.com").await, vec![to_ada.id]);
     assert_eq!(found("to:grace@example.com").await, vec![from_ada.id]);
-    // The phrase is in the other message's filename, and that message's
-    // subject shares a word with it: still not a subject match.
     assert_eq!(found("subject:\"quarterly report\"").await, vec![]);
     assert_eq!(found("subject:report").await, vec![from_ada.id]);
     assert_eq!(found("filename:report").await, vec![to_ada.id]);
@@ -326,8 +308,6 @@ async fn a_structured_only_query_orders_newest_first_and_carries_no_snippet() {
     assert!(results.hits.iter().all(|hit| hit.snippet.is_empty()));
 }
 
-/// A result row can show the message's first line without reading a body:
-/// the hit carries the preview the list shows.
 #[tokio::test]
 async fn a_hit_carries_the_messages_first_line() {
     let database = test_support::memory().await;
@@ -418,14 +398,6 @@ async fn search_never_crosses_accounts() {
     assert_eq!(results.hits[0].message_id, mine.id);
 }
 
-/// The boundary #408 settled: the executor does not snippet any more.
-///
-/// `snippet()` is an FTS5 function over indexed content and the body index
-/// has none (#407). Rather than give `postio-index` a blob-store dependency
-/// so it could reconstruct one -- it is a rusqlite-only leaf and
-/// `check-crate-boundaries.py` keeps it that way -- the excerpt is cut by
-/// `postio_search::highlight::snippet` from the body text, by whoever can
-/// read it. The session layer's search is that caller.
 #[tokio::test]
 async fn a_matching_query_leaves_the_snippet_for_a_layer_that_can_read_bodies() {
     let database = test_support::memory().await;
@@ -514,12 +486,6 @@ async fn filename_and_has_attachment_operators_filter_correctly() {
     assert_eq!(results.hits[0].message_id, with_attachment.id);
 }
 
-// ---------------------------------------------------------------------------
-// Scope and facets — canvas 2b's left column
-// ---------------------------------------------------------------------------
-
-/// An account with an inbox and a folder list mail is filed into, plus the
-/// same subject in both so a query spans the scopes.
 async fn split_across_scopes(connection: &Connection) -> (postio_model::Account, u64) {
     let (account, inbox) = test_support::account_with_inbox(connection).await;
     let folder = test_support::mailbox(connection, &account, "lkml").await;
@@ -598,8 +564,6 @@ async fn the_scope_column_counts_what_switching_would_find() {
     let (account, total) = split_across_scopes(&connection).await;
 
     let query = parse("quarterly", at(12).date_naive());
-    // Measured from inside the Inbox scope: the other rows still have to say
-    // what is behind them, or switching is a guess.
     let request = SearchRequest {
         account: AccountScope::Account(account.id),
         query: &query,
@@ -625,8 +589,6 @@ async fn refinements_are_measured_against_the_result_set_and_not_the_mailbox() {
         .expect("schema");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
-    // Two hits, one of them unread; and an unread message the query misses,
-    // which must not be counted.
     let mut matching_unread = Message::new(account.id, inbox, at(9));
     matching_unread.subject = Some("Quarterly report".to_string());
     let mut matching_read = Message::new(account.id, inbox, at(10));
@@ -660,7 +622,6 @@ async fn refinements_are_measured_against_the_result_set_and_not_the_mailbox() {
         .expect("`is:unread` is always measured");
     assert_eq!(unread.hits, 1, "the third unread message is not a hit");
 
-    // One of two, so it narrows without emptying: exactly what gets offered.
     let offered: Vec<&str> = facets
         .suggested(2)
         .iter()
@@ -700,8 +661,6 @@ async fn a_folder_the_matches_are_in_is_offered_as_a_token_that_parses_back() {
         .find(|refinement| refinement.token.starts_with("in:"))
         .expect("the matches are in folders, so a folder chip is offered");
 
-    // A chip is a token the user could have typed, so it has to survive being
-    // typed: appending it and re-running must narrow to what the chip claimed.
     let refined = postio_search::facets::append(query.input(), &folder.token);
     let refined = parse(&refined, at(12).date_naive());
     let request = SearchRequest {
@@ -801,11 +760,6 @@ async fn a_query_that_matches_nothing_offers_nothing_rather_than_dead_ends() {
     assert!(facets.suggested(0).is_empty());
 }
 
-// ---------------------------------------------------------------------------
-// Two indexes, one query — #408
-// ---------------------------------------------------------------------------
-
-/// A message with a subject and a body, both indexed.
 async fn with_body(
     connection: &Connection,
     account: &postio_model::Account,
@@ -845,9 +799,6 @@ async fn found(
 
 #[tokio::test]
 async fn free_text_reaches_the_body_index_and_the_metadata_index() {
-    // The union. Before #407 both lived in one `messages_fts`, so one `MATCH`
-    // covered them; a message matching in either is still one hit and neither
-    // may be lost.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     postio_index::index::ensure_schema(&connection)
@@ -884,13 +835,8 @@ async fn free_text_reaches_the_body_index_and_the_metadata_index() {
 
 #[tokio::test]
 async fn two_words_need_both_in_the_body_too() {
-    // The body half of the match is folded to meet the folded body text,
-    // and folding the whole expression lowercased its `AND` too: to the
-    // index a lowercase `and` is a word, not an operator, so two words
-    // asked the bodies for either word *or "and"*. On a real mailbox that
-    // was most of it -- 10,000 hits for a phrase that matched 87, and two
-    // hundred seconds to count them, which stopped the search box. One
-    // body has both words; the other has only "and".
+    // The body half is folded; folding the whole expression lowercased `AND` into a word, so two
+    // words matched bodies for either word or "and" (10,000 hits for a phrase matching 87).
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     postio_index::index::ensure_schema(&connection)
@@ -931,11 +877,6 @@ async fn two_words_need_both_in_the_body_too() {
 
 #[tokio::test]
 async fn a_subject_match_outranks_a_body_match() {
-    // The ranking decision, stated as the behaviour it exists to produce
-    // rather than as a number. Somebody searching "invoice" wants the message
-    // *about* invoices above the one that mentions them in passing, and the
-    // single six-column bm25 used to deliver that through its own length
-    // normalisation. Two scores means saying it on purpose.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     postio_index::index::ensure_schema(&connection)
@@ -943,7 +884,6 @@ async fn a_subject_match_outranks_a_body_match() {
         .expect("schema");
     let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
-    // Same age, so recency cannot be what decides it.
     let mentions_it = with_body(
         &connection,
         &account,
@@ -971,9 +911,6 @@ async fn a_subject_match_outranks_a_body_match() {
 
 #[tokio::test]
 async fn matching_in_both_indexes_beats_matching_in_either() {
-    // Why the two scores are summed rather than the better one taken: a
-    // message whose subject *and* body are about the thing is the most
-    // relevant thing there is.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     postio_index::index::ensure_schema(&connection)
@@ -1007,9 +944,8 @@ async fn matching_in_both_indexes_beats_matching_in_either() {
 
 #[tokio::test]
 async fn a_negated_term_excludes_a_body_match_too() {
-    // `-spam` has to mean it wherever the word is. While the exclusion asked
-    // only `messages_fts`, a message whose only "spam" was in its body came
-    // back from a query that had explicitly refused it.
+    // `-spam` has to mean it wherever the word is: an exclusion that asked only `messages_fts`
+    // returned a message whose only "spam" was in its body.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     postio_index::index::ensure_schema(&connection)
@@ -1044,9 +980,6 @@ async fn a_negated_term_excludes_a_body_match_too() {
 
 #[tokio::test]
 async fn only_negated_free_text_still_excludes_a_body_match() {
-    // The other exclusion path: with no positive term there is no `MATCH` to
-    // fold the negation into, so it is built condition by condition — and
-    // that half had to learn about the body index as well.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     postio_index::index::ensure_schema(&connection)
@@ -1081,9 +1014,6 @@ async fn only_negated_free_text_still_excludes_a_body_match() {
 
 #[tokio::test]
 async fn a_body_that_was_re_indexed_no_longer_matches_its_old_words() {
-    // Through the executor, not only through the table: a contentless index
-    // is delete-then-insert, and a stale row would show up here as search
-    // returning a message for words it no longer contains.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     postio_index::index::ensure_schema(&connection)
@@ -1113,10 +1043,6 @@ async fn a_body_that_was_re_indexed_no_longer_matches_its_old_words() {
 
 #[tokio::test]
 async fn newest_order_answers_in_date_order_however_the_ranking_disagrees() {
-    // #499: the list column says `Newest ▾` and has to be able to mean it.
-    // Relevance is the default and stays ranked; asking for `Newest` must
-    // come back in plain date order even when the ranking would put an
-    // older message first -- here, the one whose subject says the word.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     postio_index::index::ensure_schema(&connection)
@@ -1124,9 +1050,6 @@ async fn newest_order_answers_in_date_order_however_the_ranking_disagrees() {
         .expect("schema");
     let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
-    // Enough non-matching mail that "report" is worth something: bm25's
-    // IDF term goes to zero when every document in the corpus matches, and
-    // a two-message corpus would leave the ranking to recency alone.
     for i in 0..20 {
         message(
             &connection,
@@ -1139,7 +1062,6 @@ async fn newest_order_answers_in_date_order_however_the_ranking_disagrees() {
         .await;
     }
 
-    // Older, and about the thing: its subject says it.
     let dense = with_body(
         &connection,
         &account,
@@ -1149,7 +1071,6 @@ async fn newest_order_answers_in_date_order_however_the_ranking_disagrees() {
         at(6),
     )
     .await;
-    // Newer, and a glancing match in passing.
     let recent = with_body(
         &connection,
         &account,
@@ -1210,24 +1131,6 @@ async fn newest_order_answers_in_date_order_however_the_ranking_disagrees() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Saying so when the corpus is still filling (#352)
-// ---------------------------------------------------------------------------
-//
-// Headers sync long before bodies, so between a first sync and the end of
-// backfill a free-text query answers from a subset of the mailbox and says
-// nothing about it. The result count reads as "this is what your mailbox
-// contains" either way, which is the quiet kind of wrong.
-//
-// Transient, under ADR 0016: every folder backfills to completion by default,
-// so this is a state that ends — which is why it is a boolean rather than the
-// count #352 originally asked for, and why the surface says "still syncing".
-
-/// Puts `message` in the state a downloaded body leaves it in.
-///
-/// `Message::new` starts at `not_fetched`, and indexing text does not move it
-/// — the backfill lane sets it when it stores the blob. So a test that wants
-/// "this body is here" has to say so, the same way sync does.
 async fn body_here(connection: &Connection, message: &Message) {
     connection
         .execute(
@@ -1238,7 +1141,6 @@ async fn body_here(connection: &Connection, message: &Message) {
         .expect("mark the body present");
 }
 
-/// Puts `message` in the state a body that has not arrived yet is in.
 async fn body_not_here(connection: &Connection, message: &Message) {
     connection
         .execute(
@@ -1287,8 +1189,6 @@ async fn a_search_over_a_corpus_still_filling_reports_it() {
         "every message here has a body, so there is nothing to caveat"
     );
 
-    // A second message whose body has not been fetched. It cannot match on
-    // anything it says, and the count is a floor because of it.
     let absent = message(&connection, &account, mailbox, "bob", "Quarterly", at(8)).await;
     body_not_here(&connection, &absent).await;
 
@@ -1299,8 +1199,6 @@ async fn a_search_over_a_corpus_still_filling_reports_it() {
          so the hit count reads as the whole mailbox when it is not (#352)"
     );
 
-    // And the caveat is about the corpus, not about this query: a search that
-    // matches nothing is just as incomplete as one that matches everything.
     assert!(
         !search_for(&connection, &account, "nothingmatchesthis")
             .await
@@ -1310,8 +1208,6 @@ async fn a_search_over_a_corpus_still_filling_reports_it() {
 
 #[tokio::test]
 async fn the_caveat_goes_away_when_the_bodies_arrive() {
-    // The acceptance criterion that keeps this from becoming permanent
-    // furniture. Under ADR 0016 every account ends up here.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     postio_index::index::ensure_schema(&connection)
@@ -1345,9 +1241,6 @@ async fn the_caveat_goes_away_when_the_bodies_arrive() {
 
 #[tokio::test]
 async fn the_caveat_is_about_the_scope_that_was_searched() {
-    // "Complete" has to mean complete *here*. An inbox whose bodies are all
-    // local must not inherit a caveat earned by an archive nobody searched --
-    // the claim on screen is about the search that was just run.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     postio_index::index::ensure_schema(&connection)
@@ -1396,14 +1289,6 @@ async fn the_caveat_is_about_the_scope_that_was_searched() {
     );
 }
 
-/// #746: `sender_times_seen` reaches the ranker from the `contacts` table.
-///
-/// The hydrate statement was rewritten to probe contacts by a hoisted
-/// column (see `hydrate_probes_contacts_by_address_key` for the plan); this
-/// pins the *semantics* of that rewrite: the value still correlates to the
-/// right message's sender. Bob's message is newer, so recency alone would
-/// rank it first — only ada's contact affinity flowing through can flip the
-/// order this asserts.
 #[tokio::test]
 async fn sender_affinity_from_contacts_reaches_the_ranking() {
     let database = test_support::memory().await;
@@ -1433,8 +1318,6 @@ async fn sender_affinity_from_contacts_reaches_the_ranking() {
     .await;
     connection
         .execute(
-            // What sync would have recorded for a sender seen eighty times in
-            // this account (specs/005-contacts R2).
             "INSERT INTO contact_sightings (address_id, account_id, times_seen)
              SELECT id, ?1, 80 FROM addresses WHERE address_normalized = ?2",
             bind![account.id.get(), "ada@example.com"],
@@ -1459,11 +1342,6 @@ async fn sender_affinity_from_contacts_reaches_the_ranking() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// `header:` — ADR 0025's operator, and the only one that is not an FTS MATCH
-// ---------------------------------------------------------------------------
-
-/// A message carrying `headers`, indexed the way the sync path indexes one.
 async fn with_headers(
     connection: &Connection,
     account: &postio_model::Account,
@@ -1503,9 +1381,6 @@ async fn header_finds_a_message_by_a_field_it_carries() {
         vec![mutt.id],
         "presence, whatever the value says"
     );
-    // The wire case is not the stored case and neither is what a person
-    // types; RFC 5322 field names are case-insensitive and every spelling
-    // has to reach the one row.
     assert_eq!(
         found(&connection, account.id, "header:X-MAILER").await,
         vec![mutt.id]
@@ -1514,8 +1389,6 @@ async fn header_finds_a_message_by_a_field_it_carries() {
 
 #[tokio::test]
 async fn a_header_value_is_matched_as_a_substring_case_insensitively() {
-    // ADR 0025 Q6, and the motivating example: `X-Mailer` is
-    // `Mutt 1.5.24 (2015-08-30)`, so an equality match would never fire.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     postio_index::index::ensure_schema(&connection)
@@ -1554,11 +1427,6 @@ async fn a_header_value_is_matched_as_a_substring_case_insensitively() {
 
 #[tokio::test]
 async fn a_name_from_one_header_never_pairs_with_a_value_from_another() {
-    // #884's acceptance criterion, and the reason ADR 0025 rejected a single
-    // FTS index over the whole block: there, `header:x-mailer=bulk` would
-    // match this message, because it does have an `X-Mailer` and the word
-    // `bulk` does appear in its headers. A normalized row makes the binding
-    // structural rather than something a test has to hope for.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     postio_index::index::ensure_schema(&connection)
@@ -1630,8 +1498,6 @@ async fn a_header_name_is_matched_exactly_and_never_as_a_substring() {
 
 #[tokio::test]
 async fn any_occurrence_of_a_repeated_header_can_match() {
-    // `Received` chains are why `Headers` keeps duplicates and why the table
-    // has an `ordinal`. ADR 0025 Q6: any of them matching is a match.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     postio_index::index::ensure_schema(&connection)
@@ -1701,10 +1567,6 @@ async fn a_negated_header_excludes_and_composes_with_other_operators() {
 
 #[tokio::test]
 async fn a_wildcard_in_a_header_value_is_matched_literally() {
-    // `%` and `_` mean something to `LIKE`, and header values are full of
-    // them: a MIME boundary, a spam score. Without escaping,
-    // `header:x-spam-status=100%` would match every message that has an
-    // `X-Spam-Status` at all -- a wrong answer that reads like a right one.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     postio_index::index::ensure_schema(&connection)
@@ -1744,12 +1606,6 @@ async fn a_wildcard_in_a_header_value_is_matched_literally() {
 
 #[tokio::test]
 async fn a_message_whose_headers_are_not_indexed_yet_is_not_a_false_negative_for_presence() {
-    // The population ADR 0025 Q5 is about, stated as a search result rather
-    // than as a pass: a message the catch-up has not reached carries no rows,
-    // so `header:` cannot answer for it. What it must never do is answer
-    // *wrongly* -- claiming the field is absent is a lie, so the honest
-    // behaviour is that it is simply not a hit yet, and the pass is what
-    // turns it into one.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     postio_index::index::ensure_schema(&connection)
@@ -1777,7 +1633,6 @@ async fn a_message_whose_headers_are_not_indexed_yet_is_not_a_false_negative_for
     );
 }
 
-/// One "quarterly" in the inbox, and one each in drafts, junk and trash.
 async fn a_quarterly_in_every_role(connection: &Connection) -> postio_model::Account {
     let (account, inbox) = test_support::account_with_inbox(connection).await;
     message(
@@ -1815,10 +1670,6 @@ async fn a_quarterly_in_every_role(connection: &Connection) -> postio_model::Acc
 
 #[tokio::test]
 async fn all_mail_leaves_out_drafts_junk_and_trash_unless_in_names_one() {
-    // Maintainer's decision (#1523): a search is navigation, and what a
-    // person is navigating to is almost never a draft of what they were
-    // going to say, something they binned, or spam. Sent stays in. An
-    // explicit `in:` reaches any of the three, because then they said so.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     postio_index::index::ensure_schema(&connection)
@@ -1850,7 +1701,6 @@ async fn all_mail_leaves_out_drafts_junk_and_trash_unless_in_names_one() {
     assert_eq!(hits("quarterly in:junk").await, 1, "in: reaches junk");
     assert_eq!(hits("quarterly in:drafts").await, 1, "in: reaches drafts");
 
-    // The scope column counts what switching would show, so it has to agree.
     let query = parse("quarterly", at(12).date_naive());
     let request = SearchRequest {
         account: AccountScope::Account(account.id),
@@ -1871,8 +1721,6 @@ async fn all_mail_leaves_out_drafts_junk_and_trash_unless_in_names_one() {
 
 #[tokio::test]
 async fn a_body_the_server_refuses_does_not_keep_the_corpus_incomplete() {
-    // #1918: a message the server will not give a body for is owed one for
-    // ever, so the caveat "not every body has arrived" could never clear.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     postio_index::index::ensure_schema(&connection)
@@ -1902,10 +1750,6 @@ async fn a_body_the_server_refuses_does_not_keep_the_corpus_incomplete() {
 
 #[tokio::test]
 async fn whether_the_corpus_is_complete_is_read_off_the_folders_not_the_messages() {
-    // #1612: on a store whose backfill had finished -- the steady state --
-    // the completeness check walked every message in the account, reading
-    // each row for `body_state`, which is in no index. One statement, one
-    // row, so a statement count cannot see it; the plan can.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     postio_index::index::ensure_schema(&connection)
@@ -1937,8 +1781,6 @@ async fn whether_the_corpus_is_complete_is_read_off_the_folders_not_the_messages
         plan.join("\n")
     );
 
-    // And it stays one statement, however many bodies the server refused
-    // (#1918): the subtraction is inside it, not a second read.
     let (sql, params) = postio_index::executor::corpus_complete_sql(&request);
     let counted = postio_storage::test_support::counting::counted_async(async || {
         let _: bool = postio_storage::sql::one(&connection, &sql, params.clone(), |row| {
@@ -1953,10 +1795,6 @@ async fn whether_the_corpus_is_complete_is_read_off_the_folders_not_the_messages
 
 #[tokio::test]
 async fn a_message_moved_today_is_as_old_as_its_own_date() {
-    // A message archived or resynced today arrives in its folder today: the
-    // server's arrival date is the move, not the mail. Ranked by that, last
-    // month's invoice -- archived this morning -- beat this week's, which
-    // was still where it landed. Age is the earlier of the two dates.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     postio_index::index::ensure_schema(&connection)
@@ -2019,9 +1857,6 @@ async fn a_message_moved_today_is_as_old_as_its_own_date() {
     );
 }
 
-/// One sender's issues, found by the sender's name: as good a match as each
-/// other, so the newest leads, whatever the bodies say or how often each of
-/// the sender's addresses was seen.
 #[tokio::test]
 async fn a_senders_mail_found_by_its_name_comes_newest_first() {
     let database = test_support::memory().await;
@@ -2078,8 +1913,6 @@ async fn a_senders_mail_found_by_its_name_comes_newest_first() {
     assert_eq!(order, newest_first);
 }
 
-/// A message whose subject says part of what was asked beats one that only
-/// mentions it all in passing, when the two are otherwise as good.
 #[tokio::test]
 async fn a_subject_that_says_part_of_the_query_beats_a_passing_mention() {
     let database = test_support::memory().await;
@@ -2141,11 +1974,6 @@ async fn a_subject_that_says_part_of_the_query_beats_a_passing_mention() {
         bingo.id
     );
 }
-
-// ---------------------------------------------------------------------------
-// Phrases, and the forgiving search the command bar asks for (ADR 0037 as
-// amended): exact first, then near words -- never for a rule.
-// ---------------------------------------------------------------------------
 
 async fn forgiving_world() -> (
     postio_storage::Store,
@@ -2285,8 +2113,6 @@ async fn a_forgiving_search_finds_a_misspelling_in_a_body() {
     );
 }
 
-/// `text` searched as conversations (spec 010), forgiving or not, `limit`
-/// of them from `offset`.
 async fn conversed(
     database: &postio_storage::Store,
     account: &postio_model::Account,
@@ -2320,9 +2146,6 @@ fn bests(results: &postio_search::results::ConversationResults) -> Vec<postio_mo
     results.hits.iter().map(|hit| hit.best).collect()
 }
 
-/// ADR 0037 as amended, for the dropdown and the results (#1825): the
-/// conversation search forgives as the bar's did -- the word first, then
-/// the words near it -- and its count is the list it gives.
 #[tokio::test]
 async fn a_forgiving_conversation_search_finds_a_plural_after_the_word() {
     use postio_search::results::ConversationOrder::BestMatch;
@@ -2392,9 +2215,6 @@ async fn a_forgiving_conversation_search_pages_as_one_list() {
     );
 }
 
-/// A mailbox where a misspelling's neighbours are mostly the wrong word:
-/// sixty trips beside one girl scout troop, every one saying "your" and
-/// "or" -- the word a disjunction becomes if it is lowercased.
 async fn crowded_world() -> (
     postio_storage::Store,
     postio_model::Account,
@@ -2422,7 +2242,6 @@ async fn crowded_world() -> (
         ("troop", "Girl scout troop meeting", "Bring the cookies", 3),
         ("tour", "Redfin home tour confirmed", "See you Saturday", 4),
         ("your home", "Your Redfin home value", "Updated estimate", 5),
-        // So "girl" has a word it begins, and is widened too.
         ("girls", "Girls night", "Bring snacks", 6),
     ] {
         let message = with_body(&connection, &account, mailbox, subject, body, at(hour)).await;
@@ -2434,8 +2253,6 @@ async fn crowded_world() -> (
 
 #[tokio::test]
 async fn a_misspelling_is_read_beside_the_words_around_it() {
-    // "trop" is one edit from "trip", which sixty messages hold, and from
-    // "troop", which one does; the words beside it say which was meant.
     let (database, account, made) = crowded_world().await;
     assert_eq!(
         searched(&database, &account, "girl scout trop", true).await,
@@ -2445,8 +2262,6 @@ async fn a_misspelling_is_read_beside_the_words_around_it() {
 
 #[tokio::test]
 async fn a_word_spelled_right_is_not_widened_to_its_neighbours() {
-    // "tour" is a word the mailbox holds: "your", one edit away, is not
-    // what was meant.
     let (database, account, made) = crowded_world().await;
     assert_eq!(
         searched(&database, &account, "redfn home tour", true).await,
@@ -2456,7 +2271,6 @@ async fn a_word_spelled_right_is_not_widened_to_its_neighbours() {
 
 #[tokio::test]
 async fn a_rule_or_saved_search_stays_exact() {
-    // ADR 0037: a rule acts on what its query says, never on a near miss.
     let (database, account, made) = forgiving_world().await;
     assert_eq!(
         searched(&database, &account, "ticket", false).await,
@@ -2469,25 +2283,17 @@ async fn a_rule_or_saved_search_stays_exact() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// The path GTK uses, pinned (spec 010 T003, FR-046)
-// ---------------------------------------------------------------------------
-
-/// One message of the pinned corpus: who, where, what, when, and its state.
 struct Pinned {
     from: &'static str,
     folder: &'static str,
     subject: &'static str,
     body: &'static str,
-    /// Days after 2026-06-01, at noon.
     day: i64,
     unread: bool,
     flagged: bool,
     file: Option<&'static str>,
 }
 
-/// Twenty-one messages across an inbox, an archive and a receipts folder.
-/// A row's number in this table is its index in the recorded answers below.
 const PINNED: [Pinned; 21] = [
     Pinned {
         from: "ada",
@@ -2701,9 +2507,6 @@ const PINNED: [Pinned; 21] = [
     },
 ];
 
-/// What the GTK path answered for one query over [`PINNED`] when it was
-/// pinned (rows are indexes into the table, in the order the hits came): the hits' rows in order, the total, the matches per scope
-/// (all mail, inbox, lists) and the refinements offered.
 struct Answer {
     query: &'static str,
     scope: Scope,
@@ -2714,13 +2517,6 @@ struct Answer {
     offered: &'static [(&'static str, u64)],
 }
 
-/// `executor::search` and `executor::facets` over a fixed corpus: the answers
-/// the GTK app gets today. Every phase of spec 010 adds a second path
-/// (`search_conversations`, `Fold`, the attachment-text arm, `label:` and
-/// `has:action`); this test is what proves none of them moved the first
-/// (FR-046, D11). It was green on arrival and must stay so. A change that
-/// moves one of these answers on purpose edits the table in the same commit
-/// and says why.
 #[tokio::test]
 async fn gtk_search_path_is_pinned() {
     let database = test_support::memory().await;

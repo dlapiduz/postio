@@ -1,11 +1,3 @@
-//! US1 scenario 1: given a synced store and no network, when Focus starts,
-//! the inbox is drawn -- without waiting on any server.
-//!
-//! The store is a fixture, opened by a host as Focus's startup opens one,
-//! and nothing here can reach a network: no sync is started, and the
-//! account's server is never dialled. What is asserted is what a person
-//! sees: the rows on screen, newest first, saying what the mail says.
-
 use gtk::prelude::*;
 use postio_gtk::startup;
 use postio_gtk::window::FocusWindow;
@@ -14,17 +6,9 @@ use crate::support::{self, Fixture};
 
 pub fn the_inbox_is_listed_from_the_store_with_no_network() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         fixture
-            .file(
-                ("Ada Moreno", "ada@example.com"),
-                "Atlas budget",
-                "The numbers are attached.",
-                30,
-            )
+            .file_from_ada("Atlas budget", "The numbers are attached.", 30)
             .await;
         fixture
             .file(

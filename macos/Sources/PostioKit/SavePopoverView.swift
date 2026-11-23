@@ -2,65 +2,40 @@ import Observation
 import PostioFFI
 import SwiftUI
 
-/// What the Save popover tells the engine (specs/010-focus-search T100).
-///
-/// `PostioSession` is the one real answer; the protocol is what lets a test
-/// drive `SavePopoverModel` without a store.
 public protocol SavePopoverEngine: AnyObject {
-    /// Save ↩: keep the results' query under `name`, as the switches say.
     func focusSearchSave(_ name: String, pin: Bool, notify: Bool, rolling: Bool)
 }
 
 extension PostioSession: SavePopoverEngine {}
 
-/// The Save popover, as the controller's last `FocusSavePopover` drew it
-/// (design §3.9, screen 12): the name it offers, the terms as read-only
-/// chips and the three switches as they start. What is the Mac's is what
-/// the field and the switches hold while the person changes them; Save
-/// sends all four down, and the controller takes the popover away.
-///
-/// No AppKit (#1264): `SavePopover` presents it and `SavePopoverView` draws
-/// it.
+/// Save sends the field and all three switches down as they stand, and the controller takes the
+/// popover away. No AppKit (#1264).
 @MainActor
 @Observable
 public final class SavePopoverModel {
-    /// What one applied event changed.
     public enum Change: Equatable {
-        /// It opened: hang it from the Save search button.
         case open
-        /// It closed.
         case close
     }
 
-    /// What it draws; `nil` while it is closed.
     public private(set) var view: SaveViewFfi?
-    /// The Name field.
     public var name = ""
-    /// Pin to saved searches.
     public var pin = true
-    /// Notify when new mail matches.
     public var notify = false
-    /// Keep the date rolling.
     public var rolling = false
 
-    /// Called when the popover's own content asked to close: whoever
-    /// presents it takes it down.
     @ObservationIgnored public var dismiss: (() -> Void)?
 
     @ObservationIgnored private let engine: SavePopoverEngine
-    /// Save was sent and the controller has not taken it down yet: Return
-    /// reaches both the field and the key monitor, and is one save.
+    /// Return reaches both the field and the key monitor; this makes it one save.
     @ObservationIgnored private var sent = false
 
     public init(engine: SavePopoverEngine) {
         self.engine = engine
     }
 
-    /// Whether it is up.
     public var isOpen: Bool { view != nil }
 
-    /// Apply `event` if it is the Save popover's, and say what it changed;
-    /// `nil` for every other event.
     @discardableResult
     public func apply(_ event: UiEvent) -> Change? {
         guard case let .focusSavePopover(next) = event else { return nil }
@@ -78,30 +53,23 @@ public final class SavePopoverModel {
         return .open
     }
 
-    /// Save ↩.
     public func save() {
         guard view != nil, !sent else { return }
         sent = true
         engine.focusSearchSave(name, pin: pin, notify: notify, rolling: rolling)
     }
 
-    /// Cancel, Esc, or a click away: nothing is written.
     public func cancel() {
         guard view != nil else { return }
         view = nil
         dismiss?()
     }
 
-    /// The toolkit took it down -- a click away. Nothing is written.
     public func closedByToolkit() {
         view = nil
     }
 }
 
-/// The Save popover's content (design §3.9, screen 12): 364 wide, "Save as
-/// a saved search", the Name field, the terms as small mono chips, three
-/// switches with a line under each, and Cancel / Save ↩. Every word is the
-/// controller's (`SaveViewFfi`).
 public struct SavePopoverView: View {
     @Bindable var model: SavePopoverModel
 
@@ -178,7 +146,6 @@ public struct SavePopoverView: View {
     }
 }
 
-/// The terms, read-only: small mono chips that wrap.
 private struct FlowChips: View {
     let chips: [String]
 
@@ -197,8 +164,6 @@ private struct FlowChips: View {
     }
 }
 
-/// Lays its views out in rows, left to right, wrapping at the width it is
-/// offered.
 struct WrapLayout: Layout {
     var spacing: CGFloat
 

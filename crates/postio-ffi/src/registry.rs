@@ -1,21 +1,12 @@
-//! The command vocabulary, as the frontend sees it.
-
-/// How the user gets back from a command that changed something.
-///
-/// Crosses because the frontend has to honour the invariant, not merely be
-/// told about it: `PRODUCT.md` requires that destructive operations are
-/// confirmed or undoable, and a frontend that cannot tell "ask first" from
-/// "offer an undo" cannot do either correctly.
+/// How the user gets back from a command that changed something: the frontend must tell "ask first"
+/// from "offer an undo".
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum UiRecovery {
-    /// Nothing to recover from; the command changed no durable state.
     None,
-    /// Reversible from the undo stack, and worth an "— Undo" toast.
     Undo,
-    /// Reversible for a limited time through its own affordance, not from the
-    /// undo stack (#1481). A send is the case: the window is the queue's.
+    /// Reversible for a limited time through its own affordance, not the undo stack (#1481); a send
+    /// is the case.
     Window,
-    /// Irreversible enough to ask first.
     Confirm,
 }
 
@@ -31,48 +22,27 @@ impl From<postio_core::registry::Recovery> for UiRecovery {
     }
 }
 
-/// The surface a command is reachable from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum UiContext {
-    /// The message list: rows, selection, bulk actions.
     List,
-    /// The conversation pane: the whole thread stacked beside the list.
     Conversation,
-    /// The reading pane showing one message.
     Reader,
-    /// Compose, in the pane or a window of its own.
     Composer,
-    /// The search field and its results.
     Search,
-    /// The command palette overlay.
     Palette,
-    /// The folder list, once the keyboard is in it.
     Sidebar,
-    /// The parts panel: a message's MIME tree.
     Parts,
-    /// The account list in settings.
     Accounts,
-    /// The keybinding list in settings.
     Keys,
-    /// A picker anchored to a row: Postio Focus's (spec 007). macOS has no
-    /// surface for it yet, and resolves nothing there.
+    /// A picker anchored to a row; macOS has no surface for it yet, and resolves nothing there.
     Picker,
-    /// A digest's window: Postio Focus's (spec 007).
     Digest,
-    /// The Filtered view: Postio Focus's (spec 007).
     Filtered,
-    /// The capture sheet: Postio Focus's (spec 007, milestone 3).
     Capture,
-    /// The Mac's search results, the main window's other mode (spec 010
-    /// D17).
     Results,
-    /// The Contacts surface's list and card.
     Contacts,
-    /// The contact popover (specs/011-focus-contacts S6).
     ContactPopover,
-    /// The thread outline: Postio Focus's (specs/013-focus-threads).
     Outline,
-    /// The "Forward what?" chooser: Postio Focus's (specs/013-focus-threads).
     ForwardChooser,
 }
 
@@ -104,13 +74,9 @@ impl From<postio_core::Context> for UiContext {
 }
 
 impl From<UiContext> for postio_core::Context {
-    /// The way back, for a frontend reporting where the keyboard is.
-    ///
-    /// Written out rather than derived, and the pair is checked by
-    /// `every_context_survives_the_round_trip`: a mapping that silently sent
-    /// two surfaces to one would make a key resolve against the wrong context,
-    /// which looks like a binding that stopped working rather than like a
-    /// conversion bug.
+    /// The way back, written out rather than derived and checked by
+    /// `every_context_survives_the_round_trip`: a mapping that sent two surfaces to one would
+    /// resolve keys against the wrong context.
     fn from(context: UiContext) -> Self {
         use postio_core::Context;
         match context {
@@ -137,34 +103,19 @@ impl From<UiContext> for postio_core::Context {
     }
 }
 
-/// A top-level menu, in the order a menu bar shows them.
-///
-/// The grouping is `postio_core::menu`'s, not Swift's, and #657 is explicit
-/// about why: a menu bar is a grouped rendering of a flat registry, and a
-/// frontend that decided the grouping itself would disagree with the other
-/// frontend the first time a command was added. Crossing it means adding a
-/// command in Rust puts it in the macOS menu with no Swift change, which is
-/// the acceptance criterion.
+/// A top-level menu, in menu-bar order. The grouping is `postio_core::menu`'s (#657), so a command
+/// added in Rust reaches the macOS menu with no Swift change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum MenuSectionFfi {
-    /// The application menu: settings, accounts, the config file.
-    ///
-    /// Present only where the platform has one. `menus()` leaves it out
-    /// elsewhere and its commands arrive under `Edit` instead.
+    /// Present only where the platform has one; `menus()` leaves it out elsewhere and its commands
+    /// arrive under `Edit`.
     App,
-    /// New mail, drafts, attachments, and getting things out of Postio.
     File,
-    /// Undo, selection, and the editing verbs a text surface expects.
     Edit,
-    /// What is on screen: panes, sidebars, ordering, folding.
     View,
-    /// Moving: between messages, folders, panes and parts.
     Go,
-    /// Acting on mail: reply, archive, flag, move, snooze, label.
     Message,
-    /// The composer's rich-text verbs.
     Format,
-    /// The cheat sheet, where a Mac user looks for the keys.
     Help,
 }
 
@@ -184,25 +135,18 @@ impl From<postio_core::menu::MenuSection> for MenuSectionFfi {
     }
 }
 
-/// Every menu, in menu-bar order, with the title each shows.
-///
-/// The order crosses as a list rather than being reconstructed from the enum,
-/// because an enum's declaration order is not part of a uniffi contract and a
-/// frontend sorting by it would be relying on something nothing promises.
+/// Every menu, in menu-bar order: the order crosses as a list because an enum's declaration order
+/// is not part of a uniffi contract.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct MenuFfi {
-    /// Which menu this is.
     pub section: MenuSectionFfi,
-    /// The title a menu bar shows.
     pub title: String,
 }
 
-/// The menu bar's own shape: every section, in order.
 #[uniffi::export]
 pub fn menus() -> Vec<MenuFfi> {
-    // The Mac's ([`crate::PLATFORM`]), whatever the host: macOS gets an
-    // application menu first and freedesktop does not, and the commands fold
-    // accordingly -- see `postio_core::menu::section_on`.
+    // The Mac's (`crate::PLATFORM`), whatever the host: macOS gets an application menu first and
+    // the commands fold accordingly (`postio_core::menu::section_on`).
     postio_core::menu::MenuSection::bar_for(crate::PLATFORM)
         .into_iter()
         .map(|section| MenuFfi {
@@ -212,40 +156,25 @@ pub fn menus() -> Vec<MenuFfi> {
         .collect()
 }
 
-/// One row of the registry, on its way to a palette, a cheat sheet or a menu.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct CommandSpecFfi {
-    /// The stable id. `[keys]` in `config.toml` names this exact string, and
-    /// so does every log line — which is why commands cross as strings rather
-    /// than as a mirrored enum: a new command reaches the frontend without the
-    /// boundary or the frontend changing.
+    /// The stable id, which `[keys]` and every log line name; commands cross as strings so a new
+    /// one reaches the frontend with no change.
     pub id: String,
-    /// The title, as the palette and cheat sheet show it.
     pub title: String,
-    /// The built-in binding, in the syntax the keymap resolver parses.
-    ///
-    /// The *default*, not necessarily what is in force: `[keys]` can override
-    /// it, and a frontend drawing a menu accelerator from this alone would
-    /// show the wrong key for a rebound command. Reading the binding actually
-    /// in force needs the config to cross, which it does not yet.
+    /// The default binding in the keymap resolver's syntax, not necessarily what is in force:
+    /// `[keys]` can override it.
     pub default_binding: String,
     /// Secondary bindings for the same command — the arrows beside `j`/`k`.
     pub alternate_bindings: Vec<String>,
-    /// The surfaces this command is reachable from.
-    ///
-    /// Crosses so the palette can offer what the focused surface can actually
-    /// run. Offering a command that will be ignored is worse than omitting it.
+    /// The surfaces it is reachable from, so the palette offers only what the focused surface can
+    /// run.
     pub contexts: Vec<UiContext>,
-    /// Whether the command destroys something the user would have to rebuild.
     pub destructive: bool,
     /// How the user gets back. Never [`UiRecovery::None`] when `destructive`.
     pub recovery: UiRecovery,
-    /// Which menu this belongs under, or `None` when it is deliberately not
-    /// a menu item.
-    ///
-    /// `postio_core::menu::section_for`'s answer, which is exhaustive over
-    /// the command vocabulary — so this is never "nobody has got round to it
-    /// yet", always a decision somebody had to write down.
+    /// Which menu this belongs under, or `None` when deliberately not a menu item
+    /// (`postio_core::menu::section_for`).
     pub menu: Option<MenuSectionFfi>,
 }
 
@@ -267,47 +196,27 @@ impl From<&'static postio_core::registry::CommandSpec> for CommandSpecFfi {
                 .collect(),
             destructive: spec.destructive,
             recovery: spec.recovery.into(),
-            // Folded for the Mac's bar, so a command's `menu` agrees with the
-            // bar `menus()` describes.
             menu: postio_core::menu::section_on(spec.id, crate::PLATFORM).map(MenuSectionFfi::from),
         }
     }
 }
 
-/// The commands the Swift frontend presents a surface for, rather than
-/// dispatching.
-///
-/// Each one *is* a window or an overlay, and a session cannot present one —
-/// so they stop at the frontend by design rather than by omission. The list
-/// is here rather than only in Swift so that two things can hold it: the
-/// coverage sweep in `ffi_suite/command_coverage.rs`, which would otherwise
-/// report every one of them as an orphan, and
-/// `PostioKit.Intercepted`, which matches them by string in a `switch` and
-/// therefore needs compile-time constants of its own.
-///
-/// Duplicated, in other words, and **checked from both sides** — which is the
-/// only kind of duplication this repository allows across the boundary. A
-/// list copied into Swift and checked from neither side is how `/` comes to
-/// open nothing, with no error anywhere to say why.
+/// The commands the Swift frontend presents a surface for rather than dispatching. Held here and in
+/// `PostioKit.Intercepted`, and checked from both sides: a list copied into Swift and checked from
+/// neither is how `/` comes to open nothing.
 pub const INTERCEPTED: &[postio_core::CommandId] = {
     use postio_core::CommandId as C;
     &[
-        // Not `/`, `mod+k`, `g o` or the go-to keys: Focus's controller
-        // opens the command bar and the folders popover and goes to each
-        // place (specs/009-focus-macos T082), and the Mac draws what it says
-        // (T085, T086). Not `?` either: the controller opens and closes the
-        // key map, and the Mac draws it (T103, T106).
+        // Not `/`, `mod+k`, `g o`, the go-to keys or `?`: Focus's controller opens the command bar,
+        // folders popover and key map, and the Mac draws them.
         C::Back,
         C::Settings,
         C::ScrollReaderDown,
         C::ScrollReaderUp,
-        // Whether a message is drawn as its sender wrote it. Not
-        // `open_message`: Focus's controller opens the message from the
-        // list, from Filtered and from the digest's list, and the Mac has
-        // no handler of its own for it (specs/009-focus-macos T113-T114).
+        // Whether a message is drawn as its sender wrote it. Not `open_message`: Focus's controller
+        // opens messages and the Mac has no handler for it.
         C::PrevView,
         C::ViewOriginal,
-        // Reader view for one message, the other half of the same choice.
         C::ToggleReaderView,
         // The reader's zoom: `WKWebView.pageZoom`, and `[reader] zoom` in
         // the file GTK reads too.
@@ -324,9 +233,8 @@ pub const INTERCEPTED: &[postio_core::CommandId] = {
         // AppKit's own Quit is the menu item; the registry's is the palette
         // row and whatever `[keys]` binds it to (#1706).
         C::Quit,
-        // The two banner buttons that were not yet commands: the
-        // blocked-images notice's "Always allow" and the unsubscribe banner's
-        // one deliberate act, from the keyboard and the palette (#1706).
+        // The blocked-images notice's "Always allow" and the unsubscribe banner's one deliberate
+        // act (#1706).
         C::AlwaysShowImages,
         C::Unsubscribe,
         // `o`: the message window's attachments, as a menu this frontend
@@ -338,10 +246,9 @@ pub const INTERCEPTED: &[postio_core::CommandId] = {
         // The picker is a surface, and the four times it offers come from
         // the boundary so both frontends mean the same thing by them.
         C::ScheduleSend,
-        // The settings window's account verbs. Each acts on the row that
-        // window's keyboard is on -- a cursor no session holds -- and adding
-        // an account, replacing a credential and opening `config.toml` all
-        // need a surface besides.
+        // The settings window's account verbs act on the row its keyboard is on, a cursor no
+        // session holds; adding an account, replacing a credential and opening `config.toml` need a
+        // surface besides.
         C::AddAccount,
         C::EditConfig,
         C::ToggleAccountEnabled,
@@ -367,8 +274,7 @@ pub const INTERCEPTED: &[postio_core::CommandId] = {
         // An open panel, and a picture that has to land at the caret of a
         // document only the window holds (#1571).
         C::InsertImage,
-        // ⌘H in the composer: the draft's own reminder, which only its
-        // window holds until it is saved (specs/009-focus-macos T079). On
+        // ⌘H in the composer: the draft's own reminder, which only its window holds until saved. On
         // the list and the open message `h` is the controller's picker.
         C::RemindIfNoReply,
         // The panels for a vCard: a file is read or written only through a
@@ -380,13 +286,10 @@ pub const INTERCEPTED: &[postio_core::CommandId] = {
         C::ToggleFold,
         C::NextInConversation,
         C::PrevInConversation,
-        // Not `c`, `e`, `E` or `f`: Focus's controller opens the composer
-        // and says what it answers (specs/009-focus-macos T073), and the
-        // Mac draws it (T079).
+        // Not `c`, `e`, `E` or `f`: Focus's controller opens the composer and the Mac draws it.
     ]
 };
 
-/// Every command, in cheat-sheet order.
 pub fn commands() -> Vec<CommandSpecFfi> {
     postio_core::registry::all()
         .map(CommandSpecFfi::from)
@@ -404,12 +307,8 @@ mod tests {
 
     #[test]
     fn the_menu_grouping_crosses_with_the_commands() {
-        // #657's acceptance criterion, asserted where a Linux runner can see
-        // it: a command added in Rust reaches the macOS menu with no Swift
-        // change. What makes that true is that the *grouping* crosses, not
-        // just the commands -- a frontend given a flat list would have to
-        // decide the arrangement itself, which is the second copy the whole
-        // boundary exists to avoid.
+        // A command added in Rust reaches the macOS menu with no Swift change: the grouping
+        // crosses, not just the commands (#657).
         let crossed = commands();
         assert!(
             crossed.iter().any(|spec| spec.menu.is_some()),
@@ -440,12 +339,8 @@ mod tests {
 
     #[test]
     fn every_context_survives_the_round_trip() {
-        // Both directions are hand-written `match`es over ten variants, and
-        // the compiler checks that each is exhaustive but not that they are
-        // inverses. A pair that sent `Reader` out and `List` back would give
-        // the resolver the wrong context for every key pressed in the reading
-        // pane -- which reads as bindings that do not work, not as a
-        // conversion bug, and would be looked for in the keymap.
+        // Both directions are hand-written matches: the compiler checks exhaustiveness but not that
+        // they are inverses, and a mismatch reads as bindings that do not work.
         for context in postio_core::Context::ALL {
             let crossed = UiContext::from(*context);
             assert_eq!(
@@ -458,10 +353,8 @@ mod tests {
 
     #[test]
     fn a_command_reachable_everywhere_lists_every_context() {
-        // Guards the `available_in` filter above: a bug that returned an empty
-        // context set would make every palette empty, and a bug that returned
-        // all of them would offer archive inside the composer. Both are
-        // invisible without a command whose real answer is known.
+        // Guards the `available_in` filter: an empty context set would empty every palette, an
+        // all-contexts one would offer archive inside the composer.
         let all = commands();
         assert!(
             all.iter().any(|spec| !spec.contexts.is_empty()),

@@ -63,26 +63,20 @@ import sys
 import tokenize
 from pathlib import Path
 
-# Where `Instant::now()` is mentioned at all -- the cheap first pass.
 MENTIONS_NOW = re.compile(r"Instant::now\s*\(\s*\)")
-# The deadline shape itself, tested against the whole statement rather than
-# the line: rustfmt breaks a long `let deadline = ...` wherever it likes, and
-# a check the formatter can silence is not a check. `Instant::now() < deadline`
-# in a loop condition has no `+` and is not a deadline being *set*.
+# Tested against the whole statement, since rustfmt breaks a `let deadline = ...` anywhere.
+# `Instant::now() < deadline` has no `+` and sets no deadline.
 DEADLINE = re.compile(r"(?:\w+::)*Instant::now\s*\(\s*\)\s*\+")
-# What proves the expression answers to POSTIO_TEST_PATIENCE.
 SCALED = re.compile(r"\bscaled\s*\(|\bpatience\s*\(\s*\)|\bPATIENCE\b")
-# The escape, which must be followed by a reason rather than left bare.
 MARKER = re.compile(r"POSTIO-FIXED-DEADLINE:\s*(?P<reason>\S.*)")
 BARE_MARKER = re.compile(r"POSTIO-FIXED-DEADLINE:")
 
-# How far above the deadline the marker may sit: a helper function documents
-# its own fixed deadline in the doc comment, not on the `let` line.
+# How far above the deadline the marker may sit: a helper documents its fixed deadline in its doc
+# comment.
 LOOKBACK = 8
 
-# `Instant::now() + limit`, where `limit` was bound above. One hop, same file:
-# a deadline is often computed once and reused, and refusing that would push
-# every call site into repeating the `scaled` call.
+# `Instant::now() + limit` with `limit` bound above: one hop, same file, so call sites need not
+# repeat `scaled`.
 BARE_NAME = re.compile(r"^\s*\+?\s*(?P<name>[A-Za-z_]\w*)\s*;?\s*$")
 
 
@@ -138,7 +132,6 @@ def offenders(path: Path) -> list[tuple[int, str]]:
             continue
         if SCALED.search(expression):
             continue
-        # `Instant::now() + limit`: follow `limit` to where it was bound.
         addend = expression.split("+", 1)[1] if "+" in expression else ""
         named = BARE_NAME.match(addend)
         if named:
@@ -177,8 +170,6 @@ def python_offenders(path: str) -> list[tuple[int, str]]:
                               tokenize.INDENT, tokenize.DEDENT)
         ]
     except (tokenize.TokenError, IndentationError, SyntaxError):
-        # Not this check's business to fail on a file that will not parse;
-        # running it is what reports that.
         return []
 
     found = []
@@ -225,8 +216,6 @@ def python_offenders(path: str) -> list[tuple[int, str]]:
 
 def main() -> int:
     try:
-        # git pathspec `*` matches `/` too, so one pattern reaches
-        # `tests/suite/case.rs` as well as `tests/case.rs`.
         sources = sorted(set(tracked("crates/*/tests/*.rs")))
         self_tests = sorted(set(tracked("scripts/tests/*.py")))
     except CheckError as error:

@@ -1,0 +1,63 @@
+# Spec 014 US7: every construct is written by switching the body to
+# Markdown and back (`toggle_markdown_source`, ctrl+alt+s).
+#
+# The interim editing surface until ADR 0039's native composer (spec 014
+# D8). A reply: the person's words switch to Markdown with the caret where it
+# was, the quote is one chip line they cannot edit, a task and a table are
+# typed as Markdown, and switching back shows them formatted, the quote
+# untouched. Red on the base, which has no source view to switch to.
+apps   = ["focus"]
+source = { kind = "spec", ref = "specs/014-compose-formatting US7" }
+vary   = { width = ["wide", "narrow"] }
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+check   = { cursor.index = 0 }
+
+[[step]]
+command = "reply"
+check   = { composer.open = true, keyboard.field = "body", app.focus.composer.view = "rich" }
+expect  = "A reply opens in the rich view with the caret in the body, above the quote."
+
+[[step]]
+type    = "Thanks, two things:"
+check   = { keyboard.field = "body", app.focus.compose.typed = "Thanks, two things:" }
+expect  = "The words are typed above the quote."
+
+[[step]]
+id      = "markdown"
+command = "toggle_markdown_source"
+check   = { keyboard.field = "body", keyboard.typing = true, app.focus.composer.view = "markdown", app.focus.composer.source = "Thanks, two things:\n\nOn 2026-06-02, Hollis Varga wrote:" }
+expect  = "The body is Markdown text in a monospace face -- the words, then the reply's attribution line -- under a strip that reads \"Editing as Markdown · ctrl+alt+s for rich text\" (\"Markdown · ctrl+alt+s\" when narrow). The caret is still after \"things:\". Below the words the quote is one chip line, \"▸ Quoted message · kept as sent\", and the toolbar's Markdown toggle shows pressed."
+
+[[step]]
+key     = "Return"
+
+[[step]]
+key     = "Return"
+
+[[step]]
+command = "task_list"
+check   = { app.focus.composer.view = "markdown", app.focus.composer.source = "Thanks, two things:\n\n- [ ] \n\nOn 2026-06-02, Hollis Varga wrote:" }
+expect  = "Task list starts a task item, `- [ ] `, with the caret after its box: the same edit the terminal makes."
+
+[[step]]
+type    = "call the vendor"
+check   = { app.focus.composer.source = "Thanks, two things:\n\n- [ ] call the vendor\n\nOn 2026-06-02, Hollis Varga wrote:" }
+expect  = "The task's words follow its box, as Markdown."
+
+[[step]]
+id      = "rich"
+command = "toggle_markdown_source"
+check   = { keyboard.field = "body", keyboard.typing = true, app.focus.composer.view = "rich", app.focus.compose.typed = "Thanks, two things:\n\n- [ ] call the vendor" }
+expect  = "The rich view is back: the words, then an open task, \"☐ call the vendor\", drawn as a list item with its box. The caret is at the end of the task's words. The quote below is the same quote, untouched."
+
+[[step]]
+command = "strikethrough"
+check   = { app.focus.composer.view = "rich", app.focus.composer.status = "Strikethrough is in the Markdown view for now · ctrl+alt+s" }
+expect  = "In the rich view, Strikethrough says where it is for now on a line under the editor -- \"Strikethrough is in the Markdown view for now · ctrl+alt+s\" -- and nothing in the message changes."
+
+[[step]]
+key     = "mod+z"
+check   = { app.focus.composer.view = "rich", app.focus.compose.typed = "Thanks, two things:" }
+expect  = "One undo takes back the whole Markdown session: the reply is as it was before the switch, the words typed and no task."

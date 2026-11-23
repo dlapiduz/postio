@@ -1,9 +1,3 @@
-//! The connection pool: bounds, fairness, and replacing dead connections.
-//!
-//! Every session here is opened against a recorded transcript, so the pool's
-//! real behaviour — how many connections it opens, which waiter it serves
-//! first, when it throws one away — is observable without a server.
-
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
@@ -18,8 +12,6 @@ use postio_model::TransportSecurity;
 
 const ACCOUNT: &str = "someone@example.com";
 
-/// A pool over a scripted iCloud server, plus the connector so a test can ask
-/// how many connections were actually opened.
 async fn pool_with(
     config: PoolConfig,
     connector: ScriptedConnector,
@@ -49,10 +41,6 @@ async fn pool_with(
 async fn pool(config: PoolConfig) -> (ConnectionPool, ScriptedConnector) {
     pool_with(config, ScriptedConnector::extensions_hidden_until_login()).await
 }
-
-// ---------------------------------------------------------------------------
-// Bounds
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn nothing_is_connected_until_something_is_asked_for() {
@@ -161,18 +149,12 @@ async fn waiting_too_long_for_a_slot_is_a_timeout_and_a_retryable_one() {
     assert!(matches!(error, BackendError::TimedOut { .. }));
     assert!(error.is_transient());
 
-    // The slot was not lost when the waiter gave up.
     drop(held);
     assert!(pool.acquire(Priority::Interactive).await.is_ok());
 }
 
-// ---------------------------------------------------------------------------
-// Fairness
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn an_interactive_waiter_is_served_before_a_background_one_that_queued_first() {
-    // A backfill must not make opening a thread wait behind it.
     let config = PoolConfig {
         max_connections: 1,
         dedicate_watch_connection: false,
@@ -218,8 +200,7 @@ async fn an_interactive_waiter_is_served_before_a_background_one_that_queued_fir
 
 #[tokio::test]
 async fn the_watcher_has_a_connection_of_its_own() {
-    // IDLE parks a connection for minutes. If it competed for a general slot,
-    // watching the inbox would cost the slot a fetch needs.
+    // IDLE parks a connection for minutes; competing for a general slot would starve fetches.
     let config = PoolConfig {
         max_connections: 2,
         dedicate_watch_connection: true,
@@ -230,7 +211,6 @@ async fn the_watcher_has_a_connection_of_its_own() {
 
     let _command = pool.acquire(Priority::Interactive).await.unwrap();
 
-    // The only general slot is taken, and the watcher is still served.
     let watched = pool
         .watch(async |session| Ok(session.endpoint().to_owned()))
         .await;
@@ -253,14 +233,9 @@ async fn a_one_connection_budget_lets_the_watcher_share_rather_than_deadlock() {
     assert_eq!(pool.stats().opened, 1);
 }
 
-// ---------------------------------------------------------------------------
-// Health
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn a_dead_connection_is_thrown_away_and_replaced() {
-    // The transcript answers the two handshake commands and then goes silent,
-    // so the first command after the handshake sees the connection drop.
+    // The transcript goes silent after the handshake, so the first command sees the drop.
     let (pool, connector) = pool_with(
         PoolConfig::default(),
         ScriptedConnector::extensions_hidden_until_login().closing_after(2),
@@ -276,7 +251,6 @@ async fn a_dead_connection_is_thrown_away_and_replaced() {
     assert!(error.is_transient());
     assert_eq!(pool.stats().idle, 0, "a dead connection was parked");
 
-    // The next caller gets a fresh connection rather than the corpse.
     pool.execute(Priority::Interactive, async |_| Ok(()))
         .await
         .unwrap();
@@ -335,10 +309,6 @@ async fn a_caller_can_discard_a_connection_it_left_in_a_strange_state() {
     assert_eq!(pool.stats().in_use, 0);
 }
 
-// ---------------------------------------------------------------------------
-// Failure and shutdown
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn a_rejected_password_surfaces_and_does_not_consume_the_pool() {
     let script = ImapScript::new("* OK [CAPABILITY IMAP4rev1 SASL-IR AUTH=PLAIN] ready")
@@ -353,8 +323,6 @@ async fn a_rejected_password_surfaces_and_does_not_consume_the_pool() {
     assert!(error.is_authentication_failure());
     assert_eq!(pool.stats().opened, 0);
 
-    // The slot the failed attempt held was given back, so the pool is not
-    // permanently one connection smaller after a bad password.
     assert_eq!(pool.stats().in_use, 0);
     assert!(
         pool.execute(Priority::Interactive, async |_| Ok(()))

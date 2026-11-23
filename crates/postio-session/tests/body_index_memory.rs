@@ -31,7 +31,6 @@ static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 const BODIES: usize = 20_000;
 
-/// `POSTIO_MEASURE_BODIES` overrides [`BODIES`] for a quicker look.
 fn bodies() -> usize {
     std::env::var("POSTIO_MEASURE_BODIES")
         .ok()
@@ -39,8 +38,6 @@ fn bodies() -> usize {
         .unwrap_or(BODIES)
 }
 
-/// A body of a few hundred words, varied enough that the index holds a real
-/// vocabulary rather than one repeated term.
 fn body(n: usize) -> String {
     let words = [
         "interlock",

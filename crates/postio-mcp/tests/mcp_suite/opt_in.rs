@@ -1,11 +1,7 @@
-//! Off by default, opt-in per account and per folder, revoked on the next
-//! call (ADR 0010 Q6).
-
 use serde_json::{Value, json};
 
 use crate::harness::{ADA, COMMON, EVERY_FOLDER, INBOX_ONLY, OTHER, World};
 
-/// The message ids a search for `query` returned.
 fn found(world: &mut World, query: &str) -> Vec<i64> {
     let result = world.call("search_mail", json!({"query": query, "limit": 50}));
     assert!(!result.is_error(), "{}", result.0);

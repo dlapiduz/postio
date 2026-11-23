@@ -1,18 +1,8 @@
 #!/usr/bin/env bash
-# Measure line coverage for the pure/logic crates and gate it against
-# scripts/coverage-floors.json.
-#
-# One crate at a time, never one workspace percentage: the GTK crates' tests
-# need a compositor and will always read lower than postio-model's for
-# reasons that say nothing about quality, and a single global number would
-# hide a real regression in one crate behind an unrelated improvement in
-# another. See #98 and scripts/coverage-floors.json's own comment.
-#
-# Runs entirely on this machine -- cargo-llvm-cov's own instrumented build,
-# no upload, no third party ever sees a number. That is a requirement, not
-# an incidental choice: this project's privacy posture is part of the
-# product, and a coverage badge service is exactly the kind of remote
-# request ADR 0011 §5 already ruled out for the docs site.
+# Measure line coverage for the pure/logic crates and gate it against scripts/coverage-floors.json.
+# One crate at a time, never one workspace percentage: GTK crates read lower for reasons unrelated
+# to quality (#98).
+# Entirely local: ADR 0011 §5 rules out remote coverage services.
 #
 #   scripts/coverage.sh              # gate every crate in the floors file
 #   scripts/coverage.sh postio-model # just one, still gated
@@ -23,10 +13,8 @@ cd "$REPO"
 
 FLOORS="$REPO/scripts/coverage-floors.json"
 
-# Checked before anything reaches cargo, for the same reason scripts/fuzz.sh
-# checks for cargo-fuzz first: an absent subcommand produces an error that
-# names neither the missing tool nor the fix, several minutes into an
-# instrumented rebuild of the workspace.
+# Checked before cargo: an absent subcommand errors without naming the tool, minutes into an
+# instrumented rebuild.
 if ! command -v cargo-llvm-cov >/dev/null 2>&1; then
     echo "cargo-llvm-cov is not installed, so coverage cannot be measured." >&2
     echo >&2
@@ -50,24 +38,9 @@ for name in floors:
 ")
 fi
 
-# Measure against this tree, not against whatever is left in target/.
-#
-# cargo-llvm-cov derives coverage from instrumented artifacts and the .profraw
-# files a run leaves behind. Reuse a target directory that was built from a
-# different commit -- which is exactly what a CI cache with `restore-keys`
-# hands you, since a prefix match restores an older key's directory -- and the
-# measurement mixes stale region maps and stale profiles with current ones.
-#
-# It is not a small effect and it does not look like an error. The same branch
-# measured postio-model at 94.25% on a run that missed the cache and 91.56% on
-# the next run that hit it, with every test passing both times (#781). Floors
-# compared against a number like that are measuring the cache, and the answer
-# to a failure is to re-baseline, which ratchets the floor down to whatever
-# the last restore happened to contain.
-#
-# Workspace artifacts only: the dependency graph is untouched, so this costs a
-# rebuild of our own crates rather than of GTK and WebKit, and the cache goes
-# on earning its keep for the part that is safe to reuse.
+# Measure against this tree: a target dir from another commit (a CI `restore-keys` hit) mixes stale
+# region maps and profiles, giving 94.25% vs 91.56% on the same branch (#781). Only workspace
+# artifacts are cleared, so the dependency cache still pays.
 echo "clearing stale coverage artifacts for this workspace..."
 env -u RUSTUP_TOOLCHAIN cargo llvm-cov clean --workspace
 
@@ -83,19 +56,10 @@ if '$crate' not in floors:
 print(floors['$crate'])
 ")
 
-    # Kept apart from the parse below, and stderr kept rather than discarded.
-    # When the measurement itself fails -- a crate that will not build under
-    # instrumentation, a runner that ran out of memory -- `cargo llvm-cov`
-    # writes nothing to stdout, and piping that straight into `json.load`
-    # turned a tool failure into `JSONDecodeError: Expecting value: line 1
-    # column 1`, a Python traceback naming neither the crate nor the reason.
-    # That is what this looked like on CI, and it cost a run to find out.
-    # Through nextest, not `cargo test`: the measurement tier is held off the
-    # merge path by nextest's `default-filter`, which `cargo test` cannot
-    # read, so it ran here -- two 253 MiB stores and a 400,000-message seed
-    # inside an instrumented build, on a runner that has run out of disk
-    # once already (#1456). cargo-llvm-cov drives nextest with the same
-    # profile, and the floors measure the same tests every other run does.
+    # stderr kept apart from the parse: a failed measurement writes nothing to stdout, and piping
+    # that to `json.load` gave an opaque JSONDecodeError.
+    # Through nextest, not `cargo test`: only nextest's `default-filter` keeps the measurement tier
+    # off this job (#1456).
     if ! report=$(env -u RUSTUP_TOOLCHAIN cargo llvm-cov nextest -p "$crate" --json --summary-only); then
         echo >&2
         echo "could not measure coverage for '$crate': cargo llvm-cov failed." >&2

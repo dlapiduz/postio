@@ -1,24 +1,5 @@
-//! Writing and replying (research R2, slice 7; spec 007 US3, screens 05
-//! and 06).
-//!
-//! Moved from `postio-gtk`'s window (`refuses_reply`'s arm, the draft a row
-//! opens, `offered_on_open_draft`, `settle_send` and the add-account offer)
-//! and from `postio-widgets`' composer (its debounced autosave, and the
-//! generation that keeps one composition's save off the next one's row).
-//! The draft's words stay the toolkit's -- the fields and the editing
-//! surface hold them, and the frontend saves them -- so what is here is
-//! when: when the composer opens and what it answers, when what is written
-//! is saved, and what is said when a composition ends.
-//!
-//! A *composition* is one draft's time in the composer, numbered from 1.
-//! It begins when the composer is put on the stack with something to write
-//! and ends when it leaves -- Esc, its window's close button, another
-//! secondary window replacing it on the Mac (M4), or another composition
-//! taking its place. An edit arms the autosave's one timer ([`AUTOSAVE`]);
-//! each later edit re-arms it, so a burst of typing is one save. A
-//! composition that ends having been written in is saved at once, and once
-//! that save has landed the toast says the draft was kept ("Draft saved
-//! locally 16:12"). One untouched closes without a word, as GTK's did.
+//! Writing and replying: when the composer opens, when what is written is saved (one autosave
+//! timer, re-armed by each edit), and what is said when a composition ends.
 
 use std::time::Duration;
 
@@ -32,121 +13,79 @@ use crate::cursor::Rows;
 use crate::feed::Step;
 use crate::{DraftEdit, FocusController, Intent, Request, SurfaceKind, ToastKind};
 
-/// How long the composer waits after an edit before saving what is
-/// written: a burst of keystrokes is one save, and a crash loses at most
-/// this much of a sentence (`postio-widgets`' `AUTOSAVE_DEBOUNCE`).
+/// A burst of keystrokes is one save; a crash loses at most this much of a sentence.
 pub const AUTOSAVE: Duration = Duration::from_millis(1500);
 
-/// What the composer is asked to write.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ComposerKind {
-    /// A new message, answering nothing.
     New,
-    /// A reply to the message's sender.
     Reply,
-    /// A reply to everyone on the message.
     ReplyAll,
-    /// The message, forwarded: in what form (spec 013 FR-023). Every
-    /// forward opens as [`postio_model::ForwardForm::This`]; the chooser
-    /// changes it afterwards.
     Forward {
-        /// What the forward carries.
         form: postio_model::ForwardForm,
     },
-    /// The draft behind the message, to go on writing.
     Draft,
-    /// An unsent reply shown in a thread, which has no message of its own to
-    /// name: the draft itself, to go on writing (`Intent::Composer`'s
+    /// An unsent reply shown in a thread: it has no message of its own (`Intent::Composer`'s
     /// `message` is `None`).
     ThreadDraft {
-        /// The draft.
         draft: DraftId,
     },
 }
 
-/// One draft's time in the composer.
 #[derive(Debug, Clone, Copy)]
 struct Composition {
-    /// Which, counting from 1: what [`Intent::SaveDraft`] names.
     number: u64,
-    /// Whether anything has been written in it: what makes ending it a
-    /// save, and the save a toast.
     written: bool,
-    /// The autosave's timer, while an edit is waiting out the quiet period.
     pending: Option<u64>,
 }
 
-/// A forward in a thread of two or more: what the chooser is drawn from.
 #[derive(Debug, Clone)]
 struct Chooser {
-    /// The card chosen.
     form: ForwardForm,
-    /// How many messages the thread has.
     messages: usize,
-    /// The thread, for a forward of the whole of it.
     thread: Option<postio_model::ThreadId>,
     /// The composer opened on a form other than This and the engine has
     /// not built it yet: a refusal falls back to This.
     opening: bool,
-    /// Whose message "This message" forwards, and when it arrived.
     of: Option<(String, chrono::DateTime<chrono::Utc>)>,
 }
 
-/// A reply to a message that is not the latest.
 #[derive(Debug, Clone)]
 struct Older {
     facts: OlderReplyFacts,
-    /// The messages after the one answered, oldest first.
     newer: Vec<MessageId>,
-    /// Whether they are on show.
     shown: bool,
 }
 
-/// What a composition's thread, if it has one, adds to the composer (spec
-/// 013 US7). Begun afresh with each composition.
 #[derive(Debug, Default)]
 struct ThreadCompose {
     chooser: Option<Chooser>,
     older: Option<Older>,
-    /// The quoted messages' collapsed rows are expanded.
     quoted_expanded: bool,
 }
 
-/// The composer, as the controller keeps it.
 #[derive(Debug, Default)]
 pub(crate) struct Compose {
-    /// The form the next forward opens on, when a menu entry names one.
     next_form: Option<ForwardForm>,
-    /// The chooser, the older-reply bar and the quoted rows of the
-    /// composition in the composer.
     thread: ThreadCompose,
-    /// The composition in the composer, while it is open.
     open: Option<Composition>,
-    /// Compositions begun so far.
     begun: u64,
-    /// Timers handed out so far: a token is never reused.
     timers: u64,
-    /// Compositions that ended written, whose last save has not landed:
-    /// its landing is said in the toast.
     ending: Vec<u64>,
-    /// The accounts are known and there are none: nothing to write from.
     no_account: bool,
 }
 
 impl Compose {
-    /// The form the next forward opens on, or `None` for This message.
     pub(crate) fn forward_as(&mut self, form: Option<ForwardForm>) {
         self.next_form = form;
     }
 
-    /// Whether the accounts Focus writes from, as last said, are none.
     pub(crate) fn set_no_account(&mut self, none: bool) {
         self.no_account = none;
     }
 }
 
-/// Whether `id` is one of the verbs this slice answers.
 pub(crate) fn compose_key(id: CommandId) -> bool {
     matches!(
         id,
@@ -162,9 +101,7 @@ pub(crate) fn compose_key(id: CommandId) -> bool {
 }
 
 impl FocusController {
-    /// `c`, `e`, `E`, `f` and the send verbs, from wherever they were
-    /// pressed; `None` when `id` is none of them, or the surface on top has
-    /// nothing for them to aim at and its own rules apply.
+    /// `None` when `id` is none of them, or the surface on top has nothing for them to aim at.
     pub(crate) fn compose_verb(&mut self, id: CommandId, rows: &dyn Rows) -> Option<Vec<Step>> {
         let kind = match id {
             CommandId::Compose => return Some(self.write(ComposerKind::New, None)),
@@ -173,7 +110,6 @@ impl FocusController {
             CommandId::Forward => ComposerKind::Forward {
                 form: self.compose.next_form.unwrap_or_default(),
             },
-            // The latest message of the thread, from the window or a row.
             CommandId::ReplyToLatest => {
                 let message = self.aimed_for_writing(rows)?;
                 if focus_target::refuses_reply(self.send_state_of(message, rows)) {
@@ -205,9 +141,6 @@ impl FocusController {
         Some(self.write_in(kind, Some(message), Some(rows)))
     }
 
-    /// A command while the composer is on top: Esc ends the composition,
-    /// `c`, `e`, `E` and `f` begin another, and every other key is the
-    /// composer's own (its fields', its marks', Send's).
     pub(crate) fn composer_command(&mut self, id: CommandId, rows: &dyn Rows) -> Vec<Step> {
         if id == CommandId::Back {
             self.surfaces.dismiss(SurfaceKind::Composer);
@@ -230,8 +163,6 @@ impl FocusController {
         self.compose_verb(id, rows).unwrap_or_default()
     }
 
-    /// Whether the composer, on top, answers `id` here rather than leaving
-    /// it to the toolkit's composer.
     pub(crate) fn composer_answers(id: CommandId) -> bool {
         id == CommandId::Back
             || compose_key(id)
@@ -245,11 +176,8 @@ impl FocusController {
             )
     }
 
-    /// The message `e`, `E`, `f` and the send verbs aim at: the message open
-    /// over the list, the email open in the digest's window, or the
-    /// cursor's row (`postio_ui::focus_target::aimed_message`). `None` over
-    /// a surface that is about something else -- the bar, a picker,
-    /// Filtered, capture -- whose own rules then apply.
+    /// `None` over a surface about something else (the bar, a picker, Filtered, capture), whose own
+    /// rules apply.
     fn aimed_for_writing(&self, rows: &dyn Rows) -> Option<MessageId> {
         match self.surfaces.top() {
             Some(SurfaceKind::Message) => self.surfaces.reading(),
@@ -262,15 +190,11 @@ impl FocusController {
         }
     }
 
-    /// The send state of `message`'s row, when the list holds its row: a
-    /// draft being written, on its way, stopped; `None` for received mail.
     fn send_state_of(&self, message: MessageId, rows: &dyn Rows) -> Option<DraftState> {
         let row = rows.row(rows.position_of(message)?)?;
         row.as_conversation()?.summary.representative.send_state
     }
 
-    /// Whether the open message is a draft on its way or stopped whose
-    /// action row offers `id` (T239).
     fn offered_on_open_draft(&self, id: CommandId, rows: &dyn Rows) -> bool {
         let Some(reading) = self.surfaces.reading() else {
             return false;
@@ -279,8 +203,6 @@ impl FocusController {
             .is_some_and(|verbs| verbs.contains(&id))
     }
 
-    /// `Return` on the open message: Edit, when it is a draft on its way or
-    /// stopped that offers it; `None` for mail that opens to be read.
     pub(crate) fn edit_open_draft(&mut self, rows: &dyn Rows) -> Option<Vec<Step>> {
         if !self.offered_on_open_draft(CommandId::OpenMessage, rows) {
             return None;
@@ -289,16 +211,12 @@ impl FocusController {
         Some(self.write(ComposerKind::Draft, Some(reading)))
     }
 
-    /// Open the composer on `kind`, answering `message`: the composition in
-    /// it ends first, saved, and on the Mac the composer takes the place of
-    /// the secondary window that was open (M4). A new message with no
-    /// account to write from offers to add one instead (T172).
+    /// The composition in it ends first, saved; on the Mac the composer replaces the open secondary
+    /// window (M4).
     pub(crate) fn write(&mut self, kind: ComposerKind, message: Option<MessageId>) -> Vec<Step> {
         self.write_in(kind, message, None)
     }
 
-    /// [`Self::write`], with the list the message was aimed in when there is
-    /// one: a collapsed row says how many messages its thread has.
     fn write_in(
         &mut self,
         kind: ComposerKind,
@@ -317,8 +235,7 @@ impl FocusController {
         // Before the composer is refilled: what it holds is the ending
         // composition's, and saved after the refill it would be the new one.
         let mut steps = self.end_composition();
-        // A draft is written, not read: the message it was open in closes,
-        // on Linux too, as GTK's window closed its reading dialog.
+        // A draft is written, not read: the message it was open in closes.
         if matches!(kind, ComposerKind::Draft | ComposerKind::ThreadDraft { .. })
             && self.surfaces.dismiss(SurfaceKind::Message)
         {
@@ -344,8 +261,6 @@ impl FocusController {
         steps
     }
 
-    /// The thread `message` is a member of, as the window or the expanded
-    /// row last read it.
     fn thread_view_of(&self, message: MessageId) -> Option<&ThreadView> {
         let has = |view: &ThreadView| view.members.iter().any(|member| member.id == message);
         self.walk
@@ -360,8 +275,6 @@ impl FocusController {
             })
     }
 
-    /// The latest message of `message`'s thread that was received, when the
-    /// thread has been read: the one `alt+e` answers.
     fn latest_received(&self, message: MessageId) -> Option<MessageId> {
         let view = self.thread_view_of(message)?;
         view.members
@@ -371,8 +284,6 @@ impl FocusController {
             .map(|member| member.id)
     }
 
-    /// The *What to forward* chooser, when `message`'s thread has two
-    /// messages or more (FR-023).
     fn offer_chooser(
         &mut self,
         message: MessageId,
@@ -428,8 +339,6 @@ impl FocusController {
         )
     }
 
-    /// The bar under the title of a reply to a message that is not the
-    /// latest one received (FR-022).
     fn offer_older_reply(&mut self, message: MessageId) -> Vec<Step> {
         let Some(view) = self.thread_view_of(message) else {
             return Vec::new();
@@ -469,8 +378,6 @@ impl FocusController {
         words::older_reply(&older.facts, older.shown, self.keymap())
     }
 
-    /// `1`, `2`, `3` or a click on a card: the composer is asked for its
-    /// draft, which the engine then rebuilds in that form.
     pub(crate) fn forward_form_chosen(&mut self, form: ForwardForm) -> Vec<Step> {
         if !self.surfaces.has(SurfaceKind::Composer) {
             return Vec::new();
@@ -485,7 +392,6 @@ impl FocusController {
         }
     }
 
-    /// `alt+e` in a reply to an older message.
     fn reply_to_latest_asked(&mut self) -> Vec<Step> {
         if self.compose.thread.older.is_none() {
             return Vec::new();
@@ -495,8 +401,6 @@ impl FocusController {
         ))]
     }
 
-    /// The composer's draft, as the controller asked for it: the engine
-    /// changes it.
     pub(crate) fn composer_draft(
         &mut self,
         edit: DraftEdit,
@@ -511,7 +415,6 @@ impl FocusController {
         })]
     }
 
-    /// The engine rebuilt the forward in `form`, or said why it could not.
     pub(crate) fn forwarded(
         &mut self,
         form: ForwardForm,
@@ -524,10 +427,8 @@ impl FocusController {
             })]
         };
         match answer {
-            // Said, and the form stays as it was; nothing was fetched.
             Ok(Forwarded::NotLocal(missing)) => {
                 let mut steps = notice(words::forward_not_local(form, missing.len()));
-                // An open that was refused is a forward of This message.
                 if let Some(chooser) = self.compose.thread.chooser.as_mut()
                     && chooser.opening
                 {
@@ -558,7 +459,6 @@ impl FocusController {
         }
     }
 
-    /// The engine moved the reply to the latest message, or said why not.
     pub(crate) fn replied_to_latest(
         &mut self,
         answer: Result<Box<postio_model::Draft>, String>,
@@ -582,8 +482,6 @@ impl FocusController {
         }
     }
 
-    /// `mod+shift+Down`: the messages newer than the one answered, on show
-    /// read-only, or put away.
     fn show_newer_toggled(&mut self) -> Vec<Step> {
         let Some(older) = self.compose.thread.older.as_mut() else {
             return Vec::new();
@@ -597,8 +495,6 @@ impl FocusController {
         ]
     }
 
-    /// `mod+shift+q`: the quoted messages' collapsed rows, expanded or
-    /// collapsed again.
     fn quoted_toggled(&mut self) -> Vec<Step> {
         if self.compose.open.is_none() {
             return Vec::new();
@@ -608,8 +504,6 @@ impl FocusController {
         vec![Step::Show(Intent::QuotedExpanded(expanded))]
     }
 
-    /// The frontend opened the composer itself (a `mailto:` link): a
-    /// composition begins, the one it replaces ending first.
     pub(crate) fn composer_opened(&mut self) -> Vec<Step> {
         let steps = self.end_composition();
         self.begin_composition();
@@ -626,8 +520,6 @@ impl FocusController {
         });
     }
 
-    /// The composition in the composer ends: saved now when anything was
-    /// written in it, its pending timer forgotten.
     fn end_composition(&mut self) -> Vec<Step> {
         let Some(ending) = self.compose.open.take() else {
             return Vec::new();
@@ -641,9 +533,8 @@ impl FocusController {
         })]
     }
 
-    /// The composer left the stack some way the controller did not take it
-    /// off -- its window's close button, another window replacing it (M4):
-    /// its composition ends, saved.
+    /// The composer left the stack some way the controller did not take it off (its window's close
+    /// button, another window replacing it (M4)): its composition ends, saved.
     pub(crate) fn composer_gone(&mut self) -> Vec<Step> {
         if self.compose.open.is_none() || self.surfaces.has(SurfaceKind::Composer) {
             return Vec::new();
@@ -651,7 +542,6 @@ impl FocusController {
         self.end_composition()
     }
 
-    /// Something was written: the autosave waits [`AUTOSAVE`] from now.
     pub(crate) fn composer_edited(&mut self) -> Vec<Step> {
         let Some(open) = self.compose.open.as_mut() else {
             return Vec::new();
@@ -666,7 +556,6 @@ impl FocusController {
         }]
     }
 
-    /// A timer ran out: the autosave's, when it is the one still armed.
     pub(crate) fn timer(&mut self, token: u64) -> Vec<Step> {
         let Some(open) = self.compose.open.as_mut() else {
             return Vec::new();
@@ -680,8 +569,6 @@ impl FocusController {
         })]
     }
 
-    /// A save landed. An ended composition's is said: kept, at what time.
-    /// A failure is said whichever composition it was.
     pub(crate) fn draft_saved(
         &mut self,
         composition: u64,
@@ -713,11 +600,8 @@ impl FocusController {
         }
     }
 
-    /// Cancel, retry or settle the send of the draft behind `message`
-    /// (T239): asked which draft first, so the host acts on that one. One
-    /// the open message offers moves it out of the list it was opened
-    /// from, so it closes and the keyboard goes home; the next row -- a
-    /// draft being written, often -- is not opened in its place.
+    /// One the open message offers moves out of the list it was opened from, so it closes and the
+    /// keyboard goes home; the next row is not opened in its place.
     fn settle(&mut self, id: CommandId, message: MessageId, rows: &dyn Rows) -> Vec<Step> {
         let mut steps = Vec::new();
         if self.surfaces.reading() == Some(message) && self.offered_on_open_draft(id, rows) {
@@ -734,8 +618,6 @@ impl FocusController {
         steps
     }
 
-    /// Which draft is behind the message a send verb aimed at: settle it,
-    /// or say that it is no draft being sent.
     pub(crate) fn draft_behind(&mut self, command: CommandId, draft: Option<DraftId>) -> Vec<Step> {
         match draft {
             Some(draft) => vec![Step::Ask(Request::Post(focus_target::settle_command(

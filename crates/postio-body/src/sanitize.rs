@@ -1,35 +1,10 @@
-//! Sanitizing a message body before it ever reaches the `WebView`.
-//!
-//! This is defense in depth, not the primary control — the primary control is
-//! that the reader never gives the `WebView` a live path to a remote host in
-//! the first place (`postio-cid:` for inline parts, no scheme at all for
-//! anything else; see the frontend's reader view). A bug here should degrade
-//! markup, never to a live tracking pixel.
-//!
-//! [`ammonia`] does most of the work from its own defaults: `<script>` is
-//! removed tag-and-contents and every `on*` handler is dropped. A sender's
-//! CSS is kept, not stripped (spec 006 FR-019): `style` attributes pass
-//! through [`contain_declarations`], and `<style>` rules are lifted out and
-//! scoped to the message by [`crate::styles`], so they style the sender's
-//! markup and nothing of Postio's.
-//! What this module adds on top:
-//!
-//! * `<iframe>`, `<object>`, `<embed>`, `<svg>`, `<math>`, `<noscript>` and
-//!   `<title>` are removed tag-and-contents too. `<noscript>` is the
-//!   interesting one: with scripting off, the HTML spec has a browser parse
-//!   its content as *markup* rather than inert text, which turns a sender's
-//!   "if you can't run our JavaScript, at least load this" fallback into
-//!   exactly the tracking pixel disabling JavaScript was supposed to stop.
-//!   `<title>` is the dull one and was the long-lived one: dropping the
-//!   element while keeping its text put the sender's document title in the
-//!   body, at the top of most bulk mail.
-//! * Every `src` is rewritten: a `cid:` reference becomes the app's own
-//!   [`CID_SCHEME`], and — unless the caller passes [`RemoteImages::Allowed`]
-//!   — anything pointing at a remote host is dropped outright rather than
-//!   left for the network layer to refuse.
-//! * `href` is never touched. Links stay live text; `view.rs` intercepts the
-//!   click and hands it to the system browser instead of ever navigating the
-//!   pane.
+//! Sanitizing a message body before the `WebView`: defense in depth, since the primary control is
+//! that the reader gives it no live path to a remote host.
+//! `ammonia`'s defaults remove `<script>` and `on*` handlers; a sender's CSS is kept (`style`
+//! through `contain_declarations`, `<style>` scoped by `crate::styles`).
+//! `<iframe>`, `<object>`, `<embed>`, `<svg>`, `<math>`, `<noscript>` and `<title>` go with their
+//! contents (a `<noscript>` fallback parses as markup with scripting off and would load a tracking
+//! pixel). `cid:` becomes `CID_SCHEME` and remote `src` is dropped unless `RemoteImages::Allowed`.
 
 use std::borrow::Cow;
 use std::collections::HashSet;
@@ -43,28 +18,15 @@ use html5ever::serialize::{SerializeOpts, TraversalScope, serialize};
 use html5ever::tendril::TendrilSink;
 use markup5ever_rcdom::{Handle, NodeData, RcDom, SerializableHandle};
 
-/// The class every sender's content is wrapped in (`contain_body`), and the
-/// outermost thing a sender's own CSS is allowed to name.
-///
-/// Postio's chrome -- the message head, the blocked-images notice, the
-/// per-message actions -- sits *outside* it, so a scoped rule naming any of
-/// them is well-formed and matches nothing. That is the point: a message must
-/// not be able to hide the notice saying its images were blocked.
+/// The class every sender's content is wrapped in (`contain_body`). Postio's chrome sits outside
+/// it, so a scoped rule cannot hide the blocked-images notice.
 pub const BODY_CLASS: &str = "postio-body";
 
-/// The attribute `contain_body` stamps on that container to name the message.
-///
-/// [`message_selector`] is the other half. They are two constants rather than
-/// one because one is written into HTML and the other into CSS, and a test in
-/// `postio_ui::reader::document` asserts the container carries what the
-/// selector matches -- the joint is exactly where this would rot silently.
+/// Two constants with `message_selector` because one goes into HTML and the other into CSS; a test
+/// in `postio_ui::reader::document` holds them together.
 pub const MESSAGE_ATTRIBUTE: &str = "data-postio-message";
 
-/// The selector that confines a sender's stylesheet to their own message.
-///
-/// `None` is the single-message reader: one message in the document, so the
-/// container alone is enough. A scope is a message's own database id, and it
-/// is escaped rather than trusted -- an id carrying a quote would otherwise
+/// `None` is the single-message reader. A scope is escaped, not trusted: a quote in an id would
 /// close the attribute selector and free every rule after it.
 pub fn message_selector(scope: Option<&str>) -> String {
     match scope {
@@ -76,14 +38,8 @@ pub fn message_selector(scope: Option<&str>) -> String {
     }
 }
 
-/// The prefix every sender `id` is rewritten under (spec 006 FR-005).
-///
-/// Per message, so two messages in one conversation document cannot share
-/// an id and one sender's `#header` cannot aim at another's element. Inside
-/// Postio's own `postio-` namespace on purpose: a sender may not write a
-/// `postio-` name ([`is_postio_name`]), so nothing a sender writes can
-/// produce one of these, and none of Postio's own ids (`m-<scope>` for a
-/// message, `pos-<n>` for a scroll marker) starts this way.
+/// Per message, so two messages in one conversation cannot share an id. Inside the `postio-`
+/// namespace, which a sender may not write (`is_postio_name`).
 pub fn sender_id_prefix(scope: Option<&str>) -> String {
     match scope {
         Some(scope) => format!("postio-s{scope}-"),
@@ -91,140 +47,76 @@ pub fn sender_id_prefix(scope: Option<&str>) -> String {
     }
 }
 
-/// Whether a class or id belongs to Postio's own namespace.
-///
-/// ASCII case-insensitive, because an HTML class match is case-sensitive but
-/// a sender needs only one spelling that Postio's own CSS happens to match.
+/// Case-insensitive, since a sender needs only one spelling Postio's CSS happens to match.
 fn is_postio_name(name: &str) -> bool {
     name.get(..7)
         .is_some_and(|start| start.eq_ignore_ascii_case("postio-"))
 }
 
-/// A string safe to sit inside a double-quoted CSS string.
 fn escape_css_string(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-/// The scheme the reading pane resolves inline (`cid:`) images through.
-///
-/// Kept out of `ammonia`'s default URL schemes, so it has to be added
-/// explicitly — see [`sanitize_body`].
 pub const CID_SCHEME: &str = "postio-cid";
 
-/// Whether remote (`http`/`https`) image references may stay in the markup.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum RemoteImages {
-    /// Strip every remote `src`. The default, and the whole point of
-    /// `postio-xxz`: nothing loads before the reader decides to allow it.
     #[default]
     Blocked,
-    /// Leave remote `src` values in place — the sender is allow-listed, or
-    /// the user asked to see this message's images once.
     Allowed,
 }
 
-/// The result of sanitizing one HTML body.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sanitized {
-    /// The cleaned markup.
     pub html: String,
-    /// The sender's own stylesheets, rewritten so nothing in them reaches
-    /// outside this message ([`crate::styles`]).
-    ///
-    /// Separate from [`Sanitized::html`] on purpose: the sender's `<style>`
-    /// element never survives, and what a reader emits is CSS Postio parsed
-    /// and rewrote itself. Passing the tag through would leave the engine
-    /// reading the sender's text rather than Postio's, which is the whole
-    /// difference between admitting a stylesheet and trusting one.
-    ///
-    /// Empty for a message with no `<style>` block, which is most of them.
+    /// Separate from `html`: the sender's `<style>` never survives; this is CSS Postio parsed and
+    /// rewrote. Empty without a `<style>` block.
     pub styles: String,
-    /// How many remote (`http`/`https`) references were stripped.
-    ///
-    /// a frontend's remote-image banner uses whether this is
-    /// nonzero to decide whether a message actually has anything for it to
-    /// say — a newsletter with no images should not get a "remote images
-    /// blocked" banner it can never have anything to show for. The parts
-    /// panel's held-back count (the parts panel's `set_held_back`)
-    /// uses the number itself.
+    /// Whether nonzero decides if the remote-image banner has anything to say; the parts panel's
+    /// held-back count uses the number.
     pub remote_blocked: u32,
-    /// How many of the stripped remote references were **likely trackers**
-    /// rather than ordinary pictures.
-    ///
-    /// Disjoint from [`Sanitized::remote_blocked`]: a reference is counted in
-    /// one or the other, never both, so the parts panel can say "3 remote
-    /// images and 1 likely tracker" from the two numbers directly.
-    ///
-    /// "Likely" is the honest word and the wording the panel uses. See
-    /// [`is_likely_tracker`] for what the heuristic does and does not claim.
+    /// Disjoint from `remote_blocked`, so the panel can say "3 remote images and 1 likely tracker";
+    /// see `is_likely_tracker` for the heuristic's limits.
     pub trackers: u32,
-    /// The page the sender styled, lifted off `<html>` and `<body>` (spec 006
-    /// FR-006). Empty when the sender styled no page.
     pub canvas: Canvas,
-    /// The `color-scheme` the sender declared, if any (spec 006 FR-013(a)).
     pub color_scheme: Option<ColorScheme>,
-    /// What this message asked for that was refused, each once, in
-    /// [`REFUSALS`] order: counted, not silently lost (spec 006 FR-003).
+    /// Each refusal once, in `REFUSALS` order: counted, not silently lost.
     pub refusals: Vec<Refused>,
-    /// The input cap the body exceeded, if any (spec 006 research R6). A
-    /// body over a cap is not handed on: `html` and `styles` are empty, and
-    /// the reader shows the plain-text alternative with a notice.
+    /// A body over a cap is not handed on: `html` and `styles` are empty, and the reader shows the
+    /// plain-text alternative with a notice.
     pub over_cap: Option<Cap>,
 }
 
-/// An input cap: what bounds the work a message can ask of a renderer that
-/// cannot be stopped mid-layout (spec 006 research R6).
+/// Bounds the work a message can ask of a renderer that cannot be stopped mid-layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Cap {
-    /// More than [`MAX_ELEMENTS`] elements.
     Elements,
-    /// Nested deeper than [`MAX_DEPTH`].
     Depth,
-    /// More than [`MAX_BYTES`] of markup.
     Bytes,
 }
 
-/// The most elements a body may have.
 pub const MAX_ELEMENTS: usize = 50_000;
-/// The deepest a body may nest.
 pub const MAX_DEPTH: usize = 256;
-/// The most markup a body may have, in bytes.
 pub const MAX_BYTES: usize = 2 * 1024 * 1024;
 
-/// The page a sender styled: what `<html>` and `<body>` said, lifted onto the
-/// message's own box because the sanitizer's output is a fragment and has no
-/// `<body>` to carry it (spec 006 FR-006).
-///
-/// Only the attributes and inline style of the two elements. A `body { … }`
-/// rule in the sender's stylesheet needs no lifting: `crate::styles` already
-/// resolves it to the message's container.
+/// Lifted onto the message's own box because the sanitizer's output is a fragment with no `<body>`;
+/// a `body { … }` rule in a stylesheet is already resolved by `crate::styles`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Canvas {
-    /// Declarations for the message's box, contained like any a sender
-    /// writes: `bgcolor` and `text` as colours, then `<html>`'s and
-    /// `<body>`'s own `style`.
     pub style: String,
-    /// The page's background colour as written, if it is a colour.
     pub background: Option<String>,
-    /// The page's text colour as written, if it is a colour.
     pub text: Option<String>,
-    /// The page's link colour (`link=`), emitted as a scoped `a` rule.
     pub link: Option<String>,
 }
 
-/// A `color-scheme` a sender declared in `<meta name="color-scheme">`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColorScheme {
-    /// Light only.
     Light,
-    /// Dark only.
     Dark,
-    /// Both: the sender styled a dark variant.
     LightDark,
 }
 
 impl ColorScheme {
-    /// The value as it goes in `data-postio-color-scheme`.
     pub fn as_str(self) -> &'static str {
         match self {
             ColorScheme::Light => "light",
@@ -235,7 +127,6 @@ impl ColorScheme {
 }
 
 impl Sanitized {
-    /// A body over `cap`: nothing of it is handed on.
     fn over(cap: Cap) -> Sanitized {
         Sanitized {
             html: String::new(),
@@ -249,81 +140,47 @@ impl Sanitized {
         }
     }
 
-    /// Every remote reference that was stripped, whatever kind it was.
-    ///
-    /// What the banner asks: it decides whether it has anything to offer at
-    /// all, and a message whose only remote reference was a beacon still has
-    /// something to show if the user insists.
+    /// What the banner asks: a message whose only remote reference was a beacon still has something
+    /// to show if the user insists.
     pub fn held_back(&self) -> u32 {
         self.remote_blocked + self.trackers
     }
 }
 
-/// Why a declaration a sender wrote does not reach the screen.
-///
-/// Spec FR-019b permits exactly these two reasons and no others. The point is
-/// not the enum, it is that the set is *enumerable*: a property is refused by
-/// appearing in [`REFUSED`] with a reason beside it, never by a judgement made
-/// somewhere on the render path where no test can find it.
+/// Refusals are enumerable: a property is refused by appearing in `REFUSED` with a reason, never by
+/// a judgement on the render path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Refusal {
-    /// It would let the message act on something outside its own box —
-    /// the container `crate::sanitize` puts every sender's content in.
     Containment,
-    /// It would let the message reach the network or report on the reader.
     Privacy,
-    /// It would run, or is only there to run: script, handlers, active
-    /// content (spec 006 FR-002).
     NoScript,
 }
 
-/// One kind of thing the sanitizer refuses (spec 006 FR-005).
-///
-/// Each names what a sender wrote, not what Postio did about it; the reason
-/// is beside it in [`REFUSALS`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Refused {
-    /// An element, removed with or without its text.
     Element(&'static str),
-    /// A kind of attribute or attribute value.
     Attribute(&'static str),
-    /// A CSS property ([`REFUSED`]).
     Property(&'static str),
-    /// A CSS at-rule ([`REFUSED_AT_RULES`]).
     AtRule(&'static str),
-    /// A CSS length unit ([`REFUSED_UNITS`]).
     Unit(&'static str),
-    /// A kind of resource reference.
     Resource(&'static str),
 }
 
-/// Every `on…` event handler attribute.
 pub const ON_HANDLERS: &str = "on*";
-/// A class or id in Postio's own `postio-` namespace.
 pub const POSTIO_NAMES: &str = "postio- names";
-/// A link whose URL runs script: `javascript:`.
 pub const SCRIPT_URLS: &str = "javascript: URLs";
-/// A remote image, by `src`, `background` or CSS `url()`, while blocked.
 pub const REMOTE_IMAGE: &str = "remote image";
-/// A `postio-cid:` reference written by the sender rather than rewritten by
-/// Postio: an attempt to name a part by Postio's own scheme, which under
-/// ADR 0032's conversation document can be another message's.
+/// A `postio-cid:` the sender wrote rather than Postio: naming a part by Postio's scheme, which
+/// under ADR 0032 can be another message's.
 pub const FOREIGN_PARTS: &str = "postio-cid: references";
-/// A `data:` URI that is not an image: a page, a script, a document. An
-/// embedded image is the message's own and allowed (spec 006 FR-003); a
-/// `data:` link is a page opened from inside mail.
+/// An embedded image is the message's own and allowed; a `data:` link is a page opened from inside
+/// mail.
 pub const NON_IMAGE_DATA: &str = "non-image data: URIs";
 
-/// Everything the sanitizer refuses, with the reason it may (spec 006 FR-005,
-/// 001 FR-019b).
-///
-/// One list, so the set of removals is enumerable and a test can walk it:
-/// every entry is provoked and must be both refused and reported in
-/// [`Sanitized::refusals`]. [`REFUSED`], [`REFUSED_AT_RULES`] and
-/// [`REFUSED_UNITS`] stay where the code that applies them reads them; a test
-/// holds them to this list.
+/// One list so removals are enumerable: a test provokes every entry and requires it refused and
+/// reported in `Sanitized::refusals`; `REFUSED`, `REFUSED_AT_RULES` and `REFUSED_UNITS` are held to
+/// it.
 pub const REFUSALS: &[(Refused, Refusal)] = &[
-    // Elements.
     (Refused::Element("script"), Refusal::NoScript),
     (Refused::Element("noscript"), Refusal::Privacy),
     (Refused::Element("iframe"), Refusal::Privacy),
@@ -340,11 +197,9 @@ pub const REFUSALS: &[(Refused, Refusal)] = &[
     (Refused::Element("button"), Refusal::Privacy),
     (Refused::Element("textarea"), Refusal::Privacy),
     (Refused::Element("select"), Refusal::Privacy),
-    // Attributes.
     (Refused::Attribute(ON_HANDLERS), Refusal::NoScript),
     (Refused::Attribute(SCRIPT_URLS), Refusal::NoScript),
     (Refused::Attribute(POSTIO_NAMES), Refusal::Containment),
-    // CSS.
     (Refused::Property("position"), Refusal::Containment),
     (Refused::Property("z-index"), Refusal::Containment),
     (Refused::Property("top"), Refusal::Containment),
@@ -380,26 +235,19 @@ pub const REFUSALS: &[(Refused, Refusal)] = &[
     (Refused::Unit("lvh"), Refusal::Containment),
     (Refused::Unit("dvw"), Refusal::Containment),
     (Refused::Unit("dvh"), Refusal::Containment),
-    // Resources.
     (Refused::Resource(REMOTE_IMAGE), Refusal::Privacy),
     (Refused::Resource(FOREIGN_PARTS), Refusal::Containment),
     (Refused::Resource(NON_IMAGE_DATA), Refusal::Containment),
 ];
 
-/// What one sanitize pass counted and refused, shared by the attribute
-/// filter, the canvas and the stylesheet scoper.
 #[derive(Debug, Default)]
 pub(crate) struct Tally {
-    /// Remote references held back, for the banner and the parts panel.
     pub(crate) blocked: AtomicU32,
     refused: Mutex<Vec<Refused>>,
-    /// The message this pass sanitizes, for `cid:` rewriting in CSS.
     scope: Option<String>,
 }
 
 impl Tally {
-    /// A tally for the message named `scope` (`None`: the single-message
-    /// reader).
     pub(crate) fn for_scope(scope: Option<&str>) -> Tally {
         Tally {
             scope: scope.map(str::to_owned),
@@ -407,7 +255,6 @@ impl Tally {
         }
     }
 
-    /// `cid:` as this message's own part URI.
     pub(crate) fn part_uri(&self, content_id: &str) -> String {
         let id = percent_encode(
             content_id
@@ -416,20 +263,18 @@ impl Tally {
                 .trim_end_matches('>'),
         );
         match &self.scope {
-            // The separator is a literal `/`, and the encoded id can never
-            // hold one -- see `sanitize_body_in`.
+            // The separator is a literal `/`; the encoded id can never hold one (see
+            // `sanitize_body_in`).
             Some(scope) => format!("{CID_SCHEME}:{scope}/{id}"),
             None => format!("{CID_SCHEME}:{id}"),
         }
     }
 
-    /// A remote image held back: counted, and reported as refused.
     pub(crate) fn block(&self) {
         self.blocked.fetch_add(1, Ordering::Relaxed);
         self.refuse(Refused::Resource(REMOTE_IMAGE));
     }
 
-    /// Note that `what` was refused. Each kind is reported once.
     pub(crate) fn refuse(&self, what: Refused) {
         let mut refused = self
             .refused
@@ -440,7 +285,6 @@ impl Tally {
         }
     }
 
-    /// Everything refused, in [`REFUSALS`] order.
     fn refusals(&self) -> Vec<Refused> {
         let refused = self
             .refused
@@ -455,7 +299,6 @@ impl Tally {
 }
 
 impl Refused {
-    /// Why this is refused, from [`REFUSALS`].
     pub fn reason(self) -> Refusal {
         REFUSALS
             .iter()
@@ -465,17 +308,8 @@ impl Refused {
     }
 }
 
-/// The attributes a table-based layout is built from (spec FR-019a).
-///
-/// `width` and `height` carry the column proportions, `align`/`valign` the
-/// placement, `bgcolor` the colour, and `cellpadding`/`cellspacing`/`border`
-/// the spacing — between them four of the five things FR-019a says must
-/// survive, for the one layout technique email actually uses.
-///
-/// The counterpart of [`REFUSED`]: that list is what a *declaration* may not
-/// say, for a stated containment or privacy reason. This is what an
-/// *attribute* may say, and nothing here reaches beyond the message's own
-/// block or the network.
+/// The attributes a table-based layout is built from. The counterpart of `REFUSED`: nothing here
+/// reaches beyond the message's block or the network.
 pub(crate) const TABLE_LAYOUT: &[&str] = &[
     "width",
     "height",
@@ -490,21 +324,14 @@ pub(crate) const TABLE_LAYOUT: &[&str] = &[
     "span",
 ];
 
-/// Every CSS property a sender may not set, with the reason it may not.
-///
-/// Matched on the property name only. A refusal drops that one declaration
-/// and leaves the rest of the sender's rule alone: refusing `position` is not
-/// licence to discard the `color` written beside it.
+/// Matched on the property name only; a refusal drops that one declaration, not the rest of the
+/// rule.
 pub const REFUSED: &[(&str, Refusal)] = &[
-    // Both position against something outside the message: the viewport, or
-    // an ancestor the message does not own. Either one lifts content out of
-    // the box `contain_body` draws around it (#323), which is the edge a
+    // `position` and `z-index` lift content out of the box `contain_body` draws (#323), the edge a
     // reader uses to tell Postio's words from a sender's.
     ("position", Refusal::Containment),
-    // The offsets `position` would have used. Without a position they mean
-    // nothing in a browser, but an engine that applies them to a static box
-    // (Blitz does) lifts it out of its message all the same: html-escaping-
-    // styles' `top:-400px` drew its line 312px above the message.
+    // Offsets mean nothing without a position in a browser, but Blitz applies them to a static box
+    // and lifts it out of its message.
     ("top", Refusal::Containment),
     ("right", Refusal::Containment),
     ("bottom", Refusal::Containment),
@@ -516,95 +343,50 @@ pub const REFUSED: &[(&str, Refusal)] = &[
     ("inset-inline", Refusal::Containment),
     ("inset-inline-start", Refusal::Containment),
     ("inset-inline-end", Refusal::Containment),
-    // Moves what is painted without moving what is laid out, so a message
-    // can draw over whatever sits above or beside it.
+    // Moves what is painted without moving layout, so a message could draw over what sits beside
+    // it.
     ("transform", Refusal::Containment),
     ("translate", Refusal::Containment),
     ("rotate", Refusal::Containment),
     ("scale", Refusal::Containment),
-    // Stacking order is how a message would draw *over* the application's own
-    // chrome rather than beside it.
+    // Stacking order would let a message draw over the application's own chrome.
     ("z-index", Refusal::Containment),
 ];
 
-/// Every at-rule a sender may not use, with the reason it may not.
-///
-/// The counterpart of [`REFUSED`] for the other half of a stylesheet, and
-/// deliberately the same shape and the same [`Refusal`] enum: spec FR-019b's
-/// point is that the set of refusals is *enumerable*, and two tables in one
-/// place is one place. Nothing here is refused by a judgement made somewhere
-/// on the render path.
-///
-/// Not exhaustive, and does not need to be. [`crate::styles`] admits a named
-/// set — `@media`, `@supports`, `@container`, `@layer`, `@keyframes` — and
-/// refuses everything else by omission, which is the safe direction: a CSS
-/// feature Postio has never heard of is not one it can reason about the reach
-/// of. This table is the subset that has been thought about and has a reason
-/// worth writing down.
+/// Same shape as `REFUSED`. Not exhaustive: `crate::styles` admits a named set (`@media`,
+/// `@supports`, `@container`, `@layer`, `@keyframes`) and refuses the rest by omission; this lists
+/// those with a reason worth writing down.
 pub const REFUSED_AT_RULES: &[(&str, Refusal)] = &[
-    // Fetches when the stylesheet parses, carrying the referer and the
-    // reader's IP. It needs no `<img>`, so neither `contain_declarations` nor
-    // the document's `img-src` touches it.
+    // Fetches when the stylesheet parses, with the referer and the reader's IP, and needs no
+    // `<img>`.
     ("import", Refusal::Privacy),
-    // Same fetch, one indirection later: a `src` naming a remote host is a
-    // request made the moment a glyph is needed. ADR 0023 has Postio serve
-    // its own faces rather than fetch them; a sender does not get an
-    // exception to that.
+    // A remote `src` fetches when a glyph is needed; ADR 0023 serves Postio's own faces.
     ("font-face", Refusal::Privacy),
-    // Rebinds what element names mean, which is the one thing that could make
-    // a scoped selector match something other than what it reads as.
+    // Rebinds element names, which could make a scoped selector match something else.
     ("namespace", Refusal::Containment),
-    // Both speak for the whole document rather than for one message in it.
     ("charset", Refusal::Containment),
     ("page", Refusal::Containment),
 ];
 
-/// Not here on purpose: `top`, `right`, `bottom`, `left` and `inset`.
-///
-/// They were in the first draft of this table and should not have been. They
-/// offset an element against its containing block, and with `position`
-/// refused every element stays `static`, where an offset does nothing at all.
-/// Refusing them buys no containment and costs fidelity — a sender's
-/// `top: 0` inside their own relatively-positioned card is ordinary layout.
-/// Refuse what grants the power, not what depends on it.
-///
-/// Units that answer to the window rather than to the message's own box.
-/// A refusal by *value* rather than by property, because `width` is
-/// unremarkable until it is `100vw` — at which point a message is deciding
-/// how wide the reading pane is.
+/// Units that answer to the window, not the message's box: `width` is unremarkable until `100vw`.
+/// `top`, `right`, `bottom`, `left` and `inset` are absent on purpose: with `position` refused
+/// every element is `static` and an offset does nothing. Refuse what grants the power, not what
+/// depends on it.
 pub const REFUSED_UNITS: &[&str] = &[
     "vw", "vh", "vmin", "vmax", "svw", "svh", "lvw", "lvh", "dvw", "dvh",
 ];
 
-/// Sanitize one HTML body for the reading pane.
-///
-/// `cid:` references become [`CID_SCHEME`] URIs; the reader's renderer
-/// resolves those against the message's local parts, and the frontend's URI-scheme handler
-/// does for the composer (a dangling reference resolves to nothing — the corpus has one on purpose).
+/// `cid:` becomes a `CID_SCHEME` URI the reader resolves against local parts; a dangling reference
+/// resolves to nothing (the corpus has one on purpose).
 pub fn sanitize_body(html: &str, remote: RemoteImages) -> Sanitized {
     sanitize_body_in(html, remote, None)
 }
 
-/// [`sanitize_body`], naming the message the body belongs to.
-///
-/// A `postio-cid:` URI names a `Content-ID` and nothing else, which is exact
-/// while one document is one message. ADR 0032 puts a whole thread in one
-/// document, and then it is not: two messages in a thread may each carry a
-/// part called `logo`, and a sender may reference a `Content-ID` they know
-/// belongs to someone else's message in the same thread.
-///
-/// `scope` stamps the message on every rewritten reference, so the handler
-/// resolves against *that* message's parts rather than against whichever one
-/// happens to be open. `/` is the separator and is safe: `percent_encode`
-/// escapes it, so an encoded `Content-ID` never contains a literal one and
-/// the split cannot be confused however odd the id.
-///
-/// The scope is Postio's and is applied on the way out, so a body that
-/// arrives already naming a message does not keep that name — it is
-/// percent-encoded into the id like any other sender text.
-///
-/// `None` is the single-message reader, and produces exactly what
-/// [`sanitize_body`] always did.
+/// ADR 0032 puts a thread in one document, where two messages may each carry a part called `logo`
+/// and a sender could name another message's `Content-ID`. `scope` stamps the message on every
+/// rewritten reference.
+/// `/` is a safe separator because `percent_encode` escapes it. A scope the body already carries is
+/// percent-encoded like any sender text. `None` is the single-message reader.
 pub fn sanitize_body_in(html: &str, remote: RemoteImages, scope: Option<&str>) -> Sanitized {
     if html.len() > MAX_BYTES {
         return Sanitized::over(Cap::Bytes);
@@ -612,7 +394,6 @@ pub fn sanitize_body_in(html: &str, remote: RemoteImages, scope: Option<&str>) -
     if nests_past(html, PRESCAN_DEPTH) {
         return Sanitized::over(Cap::Depth);
     }
-    // Owned: the filter is a `'static` closure and cannot borrow the caller's.
     let scope_for_styles = scope.map(str::to_owned);
     let scope = scope.map(str::to_owned);
     let tally = Arc::new(Tally::for_scope(scope.as_deref()));
@@ -620,24 +401,12 @@ pub fn sanitize_body_in(html: &str, remote: RemoteImages, scope: Option<&str>) -
     let tracker_count = Arc::new(AtomicU32::new(0));
     let trackers = Arc::clone(&tracker_count);
 
-    // Which remote references look like beacons, decided before ammonia runs.
-    //
-    // `attribute_filter` is handed one attribute at a time and cannot see the
-    // element's `width`, `height` or `style`, so the size an `<img>` declares
-    // is simply not knowable from inside it. This walk answers that question
-    // once, and the filter looks its `src` up.
-    //
-    // Skipped entirely when nothing is being blocked: the answer would not be
-    // used, and a second parse of a large newsletter is not free.
-    //
-    // On the one parse `document_facts` makes, after the caps have been
-    // checked on it: this walk recurses too.
-    //
-    // Taken from the DOM before ammonia runs, because ammonia removes
-    // `<style>` tag-and-contents, returns a fragment with no `<html>` or
-    // `<body>` left to read, and removes `<meta>`. One walk collects all
-    // three. The scoped result is returned beside the markup rather than
-    // spliced back into it -- see `Sanitized::styles`.
+    // Which remote references look like beacons, decided before ammonia runs: `attribute_filter`
+    // sees one attribute at a time, so it cannot know an `<img>`'s declared size.
+    // Skipped when nothing is blocked (a second parse of a large newsletter is not free). Runs on
+    // the one parse `document_facts` makes after the caps, since this walk recurses.
+    // Stylesheets, page and `<meta>` are taken from the DOM before ammonia removes them; the scoped
+    // result is returned beside the markup (see `Sanitized::styles`).
     let (facts, dom) = match document_facts(html, &tally) {
         Ok(parsed) => parsed,
         Err(cap) => return Sanitized::over(cap),
@@ -653,52 +422,28 @@ pub fn sanitize_body_in(html: &str, remote: RemoteImages, scope: Option<&str>) -
         .rm_tags([
             "link", "base", "meta", "form", "input", "button", "textarea", "select",
         ])
-        // `title` is here rather than in `rm_tags` because the two differ in
-        // exactly the way that matters: `rm_tags` drops the element and keeps
-        // its text, which for a `<title>` means the sender's document title
-        // becomes the first line of their message.
+        // `title` is not in `rm_tags`, which would keep its text: the sender's document title would
+        // become the first line of the message.
         .add_clean_content_tags([
             "iframe", "object", "embed", "svg", "math", "noscript", "title",
         ])
-        // `cid` has to be allowed on the *input* side too: ammonia checks
-        // `url_schemes` against a URL attribute's original value before
-        // `attribute_filter` ever runs, so a `cid:` reference would be
-        // stripped before this module gets a chance to rewrite it to
-        // `CID_SCHEME`. Nothing re-validates the filter's output against
-        // `url_schemes` afterward, so `CID_SCHEME` itself does not need to be
-        // listed here — it is added anyway, for the reader it is documenting
-        // intent to.
+        // `cid` must be allowed on input too: ammonia checks `url_schemes` against the original
+        // value before `attribute_filter` can rewrite it. `CID_SCHEME` is listed for intent only.
         .add_url_schemes(["cid", CID_SCHEME, "data"])
-        // The sender's own styling, admitted on every element (spec FR-019).
-        // An inline declaration needs no scoping of its own: it applies to
-        // the element it sits on, which is already inside the container
-        // `contain_body` draws around this message. What it still needs is
-        // the refusals below, which is what `contain_declarations` is for.
+        // Inline declarations need no scoping, as they sit inside the container `contain_body`
+        // draws; they still need the refusals in `contain_declarations`.
         .add_generic_attributes(["style"])
-        // Spec 006 FR-005, #1545: a sender's stylesheet selects on the classes
-        // and ids its own markup carries, so stripping them made every such
-        // rule dead. Kept, except that a sender may not wear Postio's names
-        // and every id is rewritten per message -- see `rewrite_attribute`.
+        // #1545: a sender's stylesheet selects on its own classes and ids, so stripping them killed
+        // every such rule. A sender may not wear Postio's names and ids are rewritten per message
+        // (`rewrite_attribute`).
         .add_generic_attributes(["class", "id"])
-        // The layout attributes a table-based message arranges itself with
-        // (spec FR-019a). HTML email is table-based because that is what
-        // renders in Outlook, so dropping these did not cost an exotic
-        // newsletter its polish -- it collapsed the ordinary one into a single
-        // column. Ammonia's per-tag defaults do not carry them and
-        // `add_generic_attributes` only added `style`.
-        //
-        // FR-019b is why they come back rather than staying dropped: a
-        // refusal needs a stated reason, containment or privacy, and
-        // "ammonia's default list did not mention it" is neither. What makes
-        // admitting them safe is that containment is enforced elsewhere and
-        // does not depend on this list -- `contain_body`'s non-visible
-        // overflow holds an over-wide table inside its own message's block
-        // (#1334), and `contain_declarations` refuses the properties that
-        // escape one. None of these reach the network.
+        // Table-layout attributes: HTML email is table-based because that is what Outlook renders,
+        // and dropping them collapsed ordinary newsletters into one column. Containment is enforced
+        // elsewhere (`contain_body`'s overflow, #1334, and `contain_declarations`), and none reach
+        // the network.
         .add_tags(["colgroup", "col"])
-        // `<font>` keeps only the style `crate::hints` wrote from its
-        // attributes; `<center>` is the one layout element mail still uses.
-        // Neither reaches beyond its own text.
+        // `<font>` keeps only the style `crate::hints` wrote from its attributes; `<center>` is the
+        // one layout element mail still uses.
         .add_tags(["font", "center"])
         .add_tag_attributes("table", TABLE_LAYOUT)
         .add_tag_attributes("thead", TABLE_LAYOUT)
@@ -723,8 +468,6 @@ pub fn sanitize_body_in(html: &str, remote: RemoteImages, scope: Option<&str>) -
             )
         });
 
-    // Presentational attributes into the style they mean (spec 006 FR-007),
-    // on the same parse; serialized again only if one was found.
     let hinted = crate::hints::apply(&dom.document).then(|| serialize_document(&dom));
     let input = hinted.as_deref().unwrap_or(html);
     let selector = message_selector(scope_for_styles.as_deref());
@@ -753,23 +496,15 @@ pub fn sanitize_body_in(html: &str, remote: RemoteImages, scope: Option<&str>) -
     }
 }
 
-/// What the sanitizer needs from the whole document before ammonia reduces
-/// it to a fragment: the sender's stylesheets, their page, and the colour
-/// scheme they declared.
 #[derive(Default)]
 struct DocumentFacts {
-    /// Every `<style>` element's text, in document order, joined -- joined
-    /// rather than kept apart because they are scoped identically and a
-    /// browser would cascade them in this order anyway. `<style>` inside
-    /// `<template>` or an already-removed subtree is not special-cased: it is
-    /// still this sender's CSS, and it still ends up scoped to this sender's
-    /// message.
+    /// Joined in document order, since they are scoped identically and a browser cascades them that
+    /// way. A `<style>` inside `<template>` or a removed subtree is still this sender's CSS.
     stylesheets: String,
     page: Page,
     color_scheme: Option<ColorScheme>,
 }
 
-/// What `<html>` and `<body>` said about the page, raw.
 #[derive(Default)]
 struct Page {
     bgcolor: Option<String>,
@@ -779,15 +514,12 @@ struct Page {
     body_style: Option<String>,
 }
 
-/// An attribute's value, if it is a colour.
 fn colour(value: &Option<String>) -> Option<&str> {
     value.as_deref().map(str::trim).filter(|v| is_colour(v))
 }
 
 impl Page {
-    /// The canvas: colours validated as colours, styles contained like any
-    /// declaration a sender writes. The body's own style outranks its
-    /// attributes, and both outrank `<html>`'s, as they would in a browser.
+    /// The body's own style outranks its attributes, and both outrank `<html>`'s, as in a browser.
     fn canvas(&self, remote: RemoteImages, tally: &Tally) -> Canvas {
         let from_style = |style: &Option<String>, properties: &[&str]| {
             style
@@ -826,10 +558,8 @@ impl Page {
 
 fn document_facts(html: &str, tally: &Tally) -> Result<(DocumentFacts, RcDom), Cap> {
     let dom = parse_document(RcDom::default(), ParseOpts::default()).one(html);
-    // Before anything recursive walks the tree: `collect_facts`, the hints
-    // and ammonia all recurse once per level, and a message nested tens of
-    // thousands deep overflowed the stack here -- which aborts the process,
-    // with no unwind to catch.
+    // Before anything recursive walks the tree: a message nested tens of thousands deep overflowed
+    // the stack, which aborts with no unwind.
     if let Some(cap) = over_cap(&dom.document) {
         return Err(cap);
     }
@@ -838,25 +568,19 @@ fn document_facts(html: &str, tally: &Tally) -> Result<(DocumentFacts, RcDom), C
     Ok((facts, dom))
 }
 
-/// How deep the markup scan lets a body nest before refusing it unparsed.
-/// Above the real cap on purpose: the scan cannot see every end tag HTML
-/// implies, so it only stops what is plainly beyond [`MAX_DEPTH`], and the
-/// parsed tree decides the rest.
+/// Above the real cap on purpose: the scan cannot see every end tag HTML implies, so it stops only
+/// what is plainly beyond `MAX_DEPTH`.
 const PRESCAN_DEPTH: usize = MAX_DEPTH * 4;
 
-/// Elements whose end tag HTML lets a sender leave out, and void ones:
-/// the scan does not count them as nesting, or an ordinary message of
-/// unclosed `<p>`s would look ten thousand deep.
+/// Not counted as nesting, or an ordinary message of unclosed `<p>`s would look ten thousand deep.
 const FLAT: &[&str] = &[
     "p", "li", "dt", "dd", "tr", "td", "th", "option", "optgroup", "tbody", "thead", "tfoot",
     "colgroup", "rb", "rt", "rp", "area", "base", "br", "col", "embed", "hr", "img", "input",
     "link", "meta", "source", "track", "wbr",
 ];
 
-/// Whether the markup plainly nests deeper than `limit`, from one linear
-/// scan of its tags. The tree builder's work grows with the square of the
-/// depth -- forty thousand levels took over thirty seconds to parse -- so
-/// the depth cap cannot wait for the parse.
+/// One linear scan: the tree builder's work grows with the square of depth (forty thousand levels
+/// took over thirty seconds), so the cap cannot wait for the parse.
 fn nests_past(html: &str, limit: usize) -> bool {
     let bytes = html.as_bytes();
     let mut depth = 0usize;
@@ -901,7 +625,6 @@ fn nests_past(html: &str, limit: usize) -> bool {
     false
 }
 
-/// Where `needle` starts at or after `from`, case-insensitively.
 fn find(bytes: &[u8], from: usize, needle: &[u8]) -> Option<usize> {
     bytes
         .get(from..)?
@@ -910,8 +633,7 @@ fn find(bytes: &[u8], from: usize, needle: &[u8]) -> Option<usize> {
         .map(|offset| from + offset)
 }
 
-/// The first element-count or depth cap `root` exceeds, found without
-/// recursion.
+/// Iterative, so deep input cannot overflow the stack.
 fn over_cap(root: &Handle) -> Option<Cap> {
     let mut elements = 0usize;
     let mut stack: Vec<(Handle, usize)> = vec![(root.clone(), 0)];
@@ -938,7 +660,6 @@ fn over_cap(root: &Handle) -> Option<Cap> {
     None
 }
 
-/// The document as markup again, after the hints rewrote it.
 fn serialize_document(dom: &RcDom) -> String {
     let mut bytes = Vec::new();
     let handle: SerializableHandle = dom.document.clone().into();
@@ -946,12 +667,10 @@ fn serialize_document(dom: &RcDom) -> String {
         traversal_scope: TraversalScope::ChildrenOnly(None),
         ..SerializeOpts::default()
     };
-    // Writing into a Vec cannot fail.
     let _ = serialize(&mut bytes, &handle, options);
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
-/// The refused elements, as [`REFUSALS`] names them.
 fn refused_element(name: &str) -> Option<&'static str> {
     REFUSALS.iter().find_map(|(what, _)| match what {
         Refused::Element(element) if element.eq_ignore_ascii_case(name) => Some(*element),
@@ -969,8 +688,6 @@ fn collect_facts(node: &Handle, facts: &mut DocumentFacts, tally: &Tally) {
                 .find(|attr| str::eq_ignore_ascii_case(&attr.name.local, wanted))
                 .map(|attr| attr.value.to_string())
         };
-        // What ammonia will remove without a filter ever seeing it, noted
-        // here so the report says so (spec 006 FR-003).
         if let Some(refused) = refused_element(element) {
             tally.refuse(Refused::Element(refused));
         }
@@ -1018,8 +735,7 @@ fn collect_facts(node: &Handle, facts: &mut DocumentFacts, tally: &Tally) {
     }
 }
 
-/// Whether a URL runs script when followed, however its scheme is spelled:
-/// browsers ignore ASCII whitespace and control characters inside it.
+/// Browsers ignore ASCII whitespace and control characters inside the scheme.
 fn runs_script(url: &str) -> bool {
     let compact: String = url
         .chars()
@@ -1029,8 +745,6 @@ fn runs_script(url: &str) -> bool {
     compact.to_ascii_lowercase().starts_with("javascript:")
 }
 
-/// A `color-scheme` value, read the way CSS reads it: the keywords present,
-/// in any order, with `only` and `normal` meaning nothing to declare.
 fn color_scheme(content: &str) -> Option<ColorScheme> {
     let words: Vec<String> = content
         .split_ascii_whitespace()
@@ -1046,8 +760,6 @@ fn color_scheme(content: &str) -> Option<ColorScheme> {
     }
 }
 
-/// The colour a style declares for the first of `properties` that holds a
-/// colour and nothing else.
 fn declared_colour(style: &str, properties: &[&str]) -> Option<String> {
     let declarations: Vec<(String, String)> = split_declarations(style)
         .into_iter()
@@ -1069,12 +781,8 @@ fn declared_colour(style: &str, properties: &[&str]) -> Option<String> {
     })
 }
 
-/// Whether a value is a colour and nothing more: a hex colour, a keyword, or
-/// an `rgb()`/`hsl()`-family function of numbers.
-///
-/// Conservative on purpose. The value goes into a `style` Postio writes, and
-/// an attribute is attacker-controlled text: `red;position:fixed` is not a
-/// colour, and neither is anything with a `url(` in it.
+/// Conservative on purpose: the value goes into a `style` Postio writes and an attribute is
+/// attacker-controlled (`red;position:fixed` is not a colour, nor is anything with `url(`).
 pub(crate) fn is_colour(value: &str) -> bool {
     let value = value.trim();
     if let Some(hex) = value.strip_prefix('#') {
@@ -1136,9 +844,7 @@ fn rewrite_attribute<'u>(
         return Some(Cow::Owned(format!("{}{id}", sender_id_prefix(scope))));
     }
     if is_data_uri(value) {
-        // An embedded image is the message's own (spec 006 FR-003); anything
-        // else in a `data:` URI -- a page, a document, a link to one -- is
-        // not an image and is not kept.
+        // An embedded image is the message's own; any other `data:` URI is not kept.
         if attribute == "src" && is_data_image(value) {
             return Some(Cow::Borrowed(value));
         }
@@ -1149,8 +855,6 @@ fn rewrite_attribute<'u>(
         && let Some(fragment) = value.trim().strip_prefix('#')
         && !fragment.is_empty()
     {
-        // An in-message link follows its target's rewritten id. A link out
-        // of the message is not a fragment and is never touched.
         return Some(Cow::Owned(format!(
             "#{}{fragment}",
             sender_id_prefix(scope)
@@ -1159,13 +863,8 @@ fn rewrite_attribute<'u>(
     if attribute != "src" {
         return Some(Cow::Borrowed(value));
     }
-    // Postio's own scheme, written by the sender. There is no legitimate
-    // reason for it to appear in arriving markup -- `cid:` is what a message
-    // uses -- and it is an attempt to address the reader's internals: under
-    // ADR 0032's one-document conversation it names *another message's*
-    // parts, and even in a single-message document it reaches past what the
-    // rewrite below decides. Dropped rather than rewritten, because a
-    // reference nobody can justify is not one to guess the intent of.
+    // Postio's own scheme written by the sender names the reader's internals (under ADR 0032,
+    // another message's parts): dropped, not rewritten.
     if names_foreign_parts(value) {
         tally.refuse(Refused::Resource(FOREIGN_PARTS));
         return None;
@@ -1186,17 +885,12 @@ fn rewrite_attribute<'u>(
     Some(Cow::Borrowed(value))
 }
 
-/// Keep the declarations a sender may set, drop the ones they may not.
-///
-/// Whole declarations, one at a time. Refusing `position` is not licence to
-/// discard the `color` written beside it — a message that loses its palette
-/// because it also tried to pin itself is a message rendered wrongly, and the
-/// user cannot tell that from a sender who never set a colour.
+/// Whole declarations: refusing `position` must not discard the `color` beside it, which would
+/// render the message wrongly with no visible cause.
 pub(crate) fn contain_declarations(value: &str, remote: RemoteImages, tally: &Tally) -> String {
     let mut kept: Vec<Cow<'_, str>> = Vec::new();
     for declaration in split_declarations(value) {
         let Some((property, declared)) = declaration.split_once(':') else {
-            // Not a declaration at all. Dropped rather than guessed at.
             continue;
         };
         let property = property.trim().to_ascii_lowercase();
@@ -1210,11 +904,9 @@ pub(crate) fn contain_declarations(value: &str, remote: RemoteImages, tally: &Ta
             tally.refuse(Refused::Unit(unit));
             continue;
         }
-        // Before the single-URL handling below, which reads only the first
-        // `url(` and so could not see `image-set("https://..")`, a second
-        // layer after a `cid:` one, an escaped `\75 rl(`, or `src("..")`
-        // (#1926). Anything remote anywhere in the value drops the whole
-        // declaration; the panel counts it with the images.
+        // Before the single-URL handling, which reads only the first `url(` and misses
+        // `image-set("https://..")`, an escaped `\75 rl(` or `src("..")` (#1926). Any remote
+        // reference drops the declaration.
         if remote == RemoteImages::Blocked && names_remote(declared) {
             tally.block();
             continue;
@@ -1225,15 +917,10 @@ pub(crate) fn contain_declarations(value: &str, remote: RemoteImages, tally: &Ta
                 continue;
             }
             if is_remote(&url) && remote == RemoteImages::Blocked {
-                // Counted with the images, because that is what it is: the
-                // panel says "6 remote images blocked" and a background is
-                // one of them.
                 tally.block();
                 continue;
             }
             if let Some(id) = url.trim().strip_prefix("cid:") {
-                // A sender's own inline part, named from CSS: the same
-                // rewrite a `src` gets, so it resolves against this message.
                 let property = declaration.split_once(':').map_or("", |(p, _)| p.trim());
                 let rewritten = replace_css_url(declared, &tally.part_uri(id));
                 kept.push(Cow::Owned(format!("{property}: {rewritten}")));
@@ -1245,13 +932,9 @@ pub(crate) fn contain_declarations(value: &str, remote: RemoteImages, tally: &Ta
     kept.join("; ")
 }
 
-/// Whether a declaration's value names a remote resource in any spelling.
-///
-/// Read as CSS tokens, so an escaped function name (`\75 rl(`) arrives as
-/// the function it is, and a string handed to `image-set()` or `src()` is a
-/// string like any other. Anything remote inside a string or an unquoted
-/// `url()` counts, at any depth. A plain-text scan for a scheme backs it, for
-/// the spellings a browser would reject but a later parser might not.
+/// Read as CSS tokens, so an escaped function name (`\75 rl(`) is the function it is and a string
+/// given to `image-set()` or `src()` counts. A plain-text scheme scan backs it for spellings a
+/// later parser might accept.
 fn names_remote(value: &str) -> bool {
     let lower = value.to_ascii_lowercase();
     if ["http://", "https://", "ftp://"]
@@ -1288,11 +971,8 @@ fn names_remote(value: &str) -> bool {
     walk(&mut cssparser::Parser::new(value))
 }
 
-/// Split on `;`, except inside `url(...)` or a quoted string.
-///
-/// A naive `split(';')` is wrong on the one value that matters most here:
-/// `url(data:image/png;base64,...)` carries a semicolon of its own, and
-/// cutting there turns an inline image into two fragments of nonsense.
+/// `url(data:image/png;base64,...)` carries its own semicolon, so a naive `split(';')` would cut an
+/// inline image in two.
 pub(crate) fn split_declarations(value: &str) -> Vec<&str> {
     let mut out = Vec::new();
     let mut depth = 0usize;
@@ -1317,10 +997,7 @@ pub(crate) fn split_declarations(value: &str) -> Vec<&str> {
         .collect()
 }
 
-/// Whether a value sizes itself against the window rather than its own box.
-///
-/// Matched as a unit suffix on a number, so a `font-family: "Vivaldi"` is not
-/// mistaken for one on the strength of containing `vi`.
+/// Matched as a unit suffix on a number, so `font-family: "Vivaldi"` is not mistaken for `vi`.
 fn viewport_unit(value: &str) -> Option<&'static str> {
     let lowered = value.to_ascii_lowercase();
     let bytes = lowered.as_bytes();
@@ -1335,7 +1012,6 @@ fn viewport_unit(value: &str) -> Option<&'static str> {
     })
 }
 
-/// Whether a URL is a `data:` URI, however its scheme is spelled.
 fn is_data_uri(value: &str) -> bool {
     value
         .trim_start()
@@ -1343,7 +1019,6 @@ fn is_data_uri(value: &str) -> bool {
         .is_some_and(|scheme| scheme.eq_ignore_ascii_case("data:"))
 }
 
-/// Whether a `data:` URI carries an image.
 fn is_data_image(value: &str) -> bool {
     value
         .trim_start()
@@ -1351,7 +1026,6 @@ fn is_data_image(value: &str) -> bool {
         .is_some_and(|kind| kind.eq_ignore_ascii_case("image/"))
 }
 
-/// Whether a reference uses Postio's own part scheme, however it is spelled.
 fn names_foreign_parts(value: &str) -> bool {
     value
         .trim_start()
@@ -1359,7 +1033,6 @@ fn names_foreign_parts(value: &str) -> bool {
         .starts_with(&format!("{CID_SCHEME}:"))
 }
 
-/// `value` with its first `url(...)` pointing at `uri` instead.
 fn replace_css_url(value: &str, uri: &str) -> String {
     let lower = value.to_ascii_lowercase();
     let Some(start) = lower.find("url(") else {
@@ -1371,7 +1044,6 @@ fn replace_css_url(value: &str, uri: &str) -> String {
     format!("{}url({uri}){}", &value[..start], &value[end + 1..])
 }
 
-/// The URL a value references, if it references one.
 fn css_url(value: &str) -> Option<String> {
     let start = value.to_ascii_lowercase().find("url(")? + 4;
     let rest = &value[start..];
@@ -1384,16 +1056,9 @@ fn css_url(value: &str) -> Option<String> {
     )
 }
 
-/// The remote `src` values in `html` whose `<img>` declares beacon dimensions.
-///
-/// Returned as the set of URL strings rather than as a count, because the
-/// counting has to happen where the blocking happens — ammonia decides what
-/// actually gets stripped, and a reference this walk sees but the sanitizer
-/// removes for some other reason must not be counted as held back.
-///
-/// A URL used twice in one message, once as a picture and once as a beacon,
-/// is counted as a beacon both times. That is a real limitation and an
-/// unreal message.
+/// Returned as URL strings, not a count: counting happens where blocking happens, since a reference
+/// this walk sees but the sanitizer removes for another reason must not count.
+/// A URL used as both picture and beacon counts as a beacon both times.
 fn likely_tracker_sources(document: &Handle) -> HashSet<String> {
     let mut found = HashSet::new();
     collect_beacons(document, &mut found);
@@ -1423,27 +1088,12 @@ fn collect_beacons(node: &Handle, found: &mut HashSet<String>) {
     }
 }
 
-/// Whether an `<img>`'s own declarations mark it as a beacon rather than a
-/// picture.
-///
-/// The maintainer settled this on 2026-08-25 (#174): **declared dimensions of
-/// 2px or less in either axis, or a declaration that it is not to be shown at
-/// all.** Nothing else. In particular nothing reads the host or the path — a
-/// list of known tracking vendors is the provider hard-coding CLAUDE.md
-/// forbids, and it would rot from the day it was written while mislabelling
-/// every real picture served from a path with `pixel` in it.
-///
-/// # What it does not claim
-///
-/// It under-counts on purpose. A beacon that declares no size at all is
-/// indistinguishable from an ordinary image that declares no size, and
-/// ordinary images that declare no size are the common case — so silence is
-/// read as a picture. This is a wording signal for the parts panel and
-/// nothing more: **both kinds are blocked identically**, and a beacon this
-/// misses is still never fetched. Being wrong here costs a noun, not a
-/// request.
+/// Settled by the maintainer (#174): declared dimensions of 2px or less in either axis, or a
+/// declaration that it is not shown. Nothing reads the host or path: a vendor list is provider
+/// hard-coding and mislabels real pictures.
+/// It under-counts on purpose, since a beacon with no declared size looks like an ordinary image.
+/// Both kinds are blocked identically, so being wrong costs a noun, not a request.
 fn is_likely_tracker(width: Option<String>, height: Option<String>, style: Option<String>) -> bool {
-    /// The largest an axis can be and still be a beacon rather than a picture.
     const BEACON_PX: f32 = 2.0;
 
     let tiny = |value: &str| length_px(value).is_some_and(|px| px <= BEACON_PX);
@@ -1460,7 +1110,6 @@ fn is_likely_tracker(width: Option<String>, height: Option<String>, style: Optio
         let (property, value) = (property.trim(), value.trim());
         match property {
             "width" | "height" | "max-width" | "max-height" if tiny(value) => return true,
-            // Said outright: this is not here to be looked at.
             "display" if value == "none" => return true,
             "visibility" if value == "hidden" => return true,
             _ => {}
@@ -1469,12 +1118,8 @@ fn is_likely_tracker(width: Option<String>, height: Option<String>, style: Optio
     false
 }
 
-/// A declared length in CSS pixels, for the handful of spellings a mail body
-/// actually uses.
-///
-/// `None` for anything else — a percentage, `auto`, `em`, or nonsense. A
-/// length this cannot read is not evidence of a beacon, so it is not treated
-/// as one.
+/// `None` for a percentage, `auto`, `em` or nonsense: a length this cannot read is not evidence of
+/// a beacon.
 fn length_px(value: &str) -> Option<f32> {
     let value = value.trim();
     let number = value
@@ -1486,44 +1131,26 @@ fn length_px(value: &str) -> Option<f32> {
     number.is_finite().then_some(number)
 }
 
-/// Whether `value` names a remote host rather than something local
-/// (`postio-cid:`, `data:`, or a bare fragment/relative path a sender's
-/// markup left dangling).
-///
-/// The scheme is compared case-insensitively, because that is what it means:
-/// RFC 3986 §3.1 makes schemes case-insensitive and WebKit resolves them that
-/// way. #147's `sanitize_html` fuzz target found this the hard way — a pixel
-/// spelled `HTTPS://` was left in the document and reported as nothing held
-/// back, so the reader fetched it and the badge said zero. Blocking a sender
-/// defeats by holding shift is not blocking.
-///
-/// ASCII case only, deliberately: a scheme is ASCII by grammar, and
-/// `to_lowercase` on attacker-controlled text would allocate for every
-/// attribute in every message to fold characters no scheme can contain.
+/// Case-insensitive (RFC 3986 §3.1, as WebKit resolves it): a pixel spelled `HTTPS://` was once
+/// left in and reported as nothing held back (#147).
+/// ASCII only: a scheme is ASCII by grammar, and `to_lowercase` would allocate for every attribute
+/// of every message.
 pub(crate) fn is_remote(value: &str) -> bool {
     let value = value.trim();
     ["http://", "https://", "ftp://"]
         .iter()
-        // `get`, not a slice: an attribute value is attacker-controlled text
-        // and may begin with a multi-byte character, so `value[..8]` panics
-        // when byte 8 lands inside one. The fuzz target found that in this
-        // very function, 71 executions after it was written.
+        // `get`, not a slice: an attribute value is attacker-controlled and may start with a
+        // multi-byte character, which panics `value[..8]`.
         .any(|scheme| {
             value
                 .get(..scheme.len())
                 .is_some_and(|prefix| prefix.eq_ignore_ascii_case(scheme))
         })
-        // Protocol-relative: no scheme to fold, and whatever the document was
-        // loaded over is what it would use.
         || value.starts_with("//")
 }
 
-/// Percent-encode a `Content-ID` for use as a URI's opaque part.
-///
-/// RFC 3986's unreserved set passes through unescaped; everything else —
-/// `@`, `%`, whitespace, non-ASCII — is escaped. Content-IDs are usually
-/// plain ASCII already; this is just so a stray odd one cannot produce a
-/// URI the frontend's URI-scheme handler parses differently than it means.
+/// RFC 3986's unreserved set passes unescaped, so an odd Content-ID cannot yield a URI the scheme
+/// handler parses differently.
 pub(crate) fn percent_encode(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for byte in value.bytes() {
@@ -1537,8 +1164,6 @@ pub(crate) fn percent_encode(value: &str) -> String {
     out
 }
 
-/// The inverse of `percent_encode`, for the frontend's URI-scheme handler to recover the
-/// `Content-ID` a request named.
 pub fn percent_decode(value: &str) -> String {
     let bytes = value.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -1562,18 +1187,8 @@ pub fn percent_decode(value: &str) -> String {
 mod tests {
     use super::*;
 
-    /// FR-019a: what a sender arranges MUST reach the screen (#1396).
-    ///
-    /// The maintainer's fourth requirement for this pane was *"the mail should
-    /// render the layout the sender intended"*, and the spec names the
-    /// minimum: structural layout, colour, typographic emphasis and font
-    /// choice, and spacing — *"a message that arranges itself in three columns
-    /// MUST appear in three columns"*.
-    ///
-    /// The table case is the one that matters. HTML email is table-based
-    /// because that is what renders in Outlook; a newsletter laying itself out
-    /// in `display:flex` is the rarity. Dropping table attributes passes the
-    /// technique almost nobody uses and fails the one almost everybody does.
+    /// A message that arranges itself in three columns must appear in three columns: dropping table
+    /// attributes fails the technique almost everybody uses (#1396).
     #[test]
     fn a_senders_layout_reaches_the_screen() {
         let three_columns = concat!(
@@ -1599,10 +1214,8 @@ mod tests {
         }
     }
 
-    /// The other five of FR-019a's list, which arrive as inline declarations
-    /// and already survived — asserted so that tightening
-    /// `contain_declarations` for a containment reason cannot quietly take
-    /// one of them with it.
+    /// Asserted so tightening `contain_declarations` for containment cannot quietly take colour,
+    /// emphasis or spacing with it.
     #[test]
     fn colour_emphasis_and_spacing_reach_the_screen_too() {
         for (what, html, kept) in [
@@ -1637,27 +1250,8 @@ mod tests {
         }
     }
 
-    /// A `<style>` element does not survive, and neither does its `@import`
-    /// (#1383).
-    ///
-    /// This is where the reader's only route to a CSS-borne fetch is closed
-    /// today. `@import` is valid only inside a stylesheet, and the admitted
-    /// route for a sender's styling is the inline `style` *attribute*, which
-    /// cannot carry one — so the element going is what makes
-    /// `style-src 'unsafe-inline'` an unexercised second layer rather than the
-    /// only thing standing between a sender and an open-rate beacon that needs
-    /// no pixel.
-    ///
-    /// Written down because #1326 is about admitting `<style>` blocks, and the
-    /// day that lands this test should fail and be replaced by one that proves
-    /// the `@import` is stripped from a stylesheet Postio does admit.
     #[test]
     fn a_style_element_is_admitted_scoped_and_never_as_markup() {
-        // Replaces `a_style_element_and_its_import_do_not_survive` (#1383),
-        // which asserted `<style>` was dropped whole. That was true and is
-        // the reason a sender had no route to a CSS-borne fetch at all; #1326
-        // admits the block, so the assertion that still matters is that
-        // `@import` is stripped from a stylesheet Postio now *does* serve.
         let hostile = r##"<style>@import url(https://tracker.example.net/s.css);
              p { color: red }</style><p style="color:green">text</p>"##;
         let clean = sanitize_body_in(hostile, RemoteImages::Allowed, Some("7"));
@@ -1680,9 +1274,8 @@ mod tests {
              the CSS it parsed, it does not pass the sender's tag through: {}",
             clean.html
         );
-        // The control: the attribute route is admitted too, so the assertions
-        // above are about `<style>` rather than about styling being dropped
-        // wholesale -- which would make them pass for the wrong reason.
+        // The control: inline `style` is admitted too, so the assertions are about `<style>` and
+        // not about styling being dropped.
         assert!(
             clean.html.contains("color:green") || clean.html.contains("color: green"),
             "an inline style attribute must still survive, or this test is \
@@ -1693,21 +1286,15 @@ mod tests {
 
     #[test]
     fn a_scope_cannot_break_out_of_the_selector_it_names() {
-        // A scope is a message's own database id, so a quote in one is not a
-        // sender's doing today. It is escaped anyway, for the same reason
-        // `message_anchor` escapes it: an unescaped value would close the
-        // attribute selector and free every rule written after it, and the
-        // day one of those assumptions stops holding is not the day to find
-        // out.
+        // A scope is a database id, so a quote in one is not a sender's doing today; it is escaped
+        // anyway, since an unescaped value would close the attribute selector.
         let selector = message_selector(Some(r#"a" ] , * { color: red } x["#));
         let opening = format!(".{BODY_CLASS}[{MESSAGE_ATTRIBUTE}=\"");
         let inside = selector
             .strip_prefix(&opening)
             .and_then(|rest| rest.strip_suffix("\"]"))
             .unwrap_or_else(|| panic!("not one attribute selector: {selector}"));
-        // Escaped pairs removed first, so what is counted is the quotes that
-        // would actually close the string. Counting raw `"` would call the
-        // escaped one a breakout and the test would fail on correct code.
+        // Escaped pairs removed first, so only quotes that would close the string are counted.
         assert!(
             !inside.replace("\\\\", "").replace("\\\"", "").contains('"'),
             "an unescaped quote closes the string and frees every rule after \
@@ -1749,9 +1336,8 @@ mod tests {
 
     #[test]
     fn the_unscoped_reader_still_gets_a_container_selector() {
-        // The single-message pane has one message and no scope, but the
-        // chrome outside `.postio-body` is the same chrome and a sender must
-        // not be able to name it there either.
+        // The single-message pane has no scope, but the chrome outside `.postio-body` is the same
+        // and must not be nameable.
         let clean = sanitize_body(
             "<style>.postio-blocked { display: none }</style>",
             RemoteImages::Blocked,
@@ -1789,8 +1375,6 @@ mod tests {
 
     #[test]
     fn a_remote_image_with_no_dimensions_at_all_is_not_a_tracker() {
-        // Most senders declare nothing. Guessing "tracker" from silence would
-        // label the ordinary case, which is worse than under-counting.
         let out = sanitize_body(
             r#"<img src="https://example.com/photo.jpg">"#,
             RemoteImages::Blocked,
@@ -1813,7 +1397,6 @@ mod tests {
 
     #[test]
     fn an_image_declared_hidden_is_a_likely_tracker() {
-        // No dimensions, but it says outright that it is not to be seen.
         let out = sanitize_body(
             r#"<img src="https://example.com/b.gif" style="display:none">"#,
             RemoteImages::Blocked,
@@ -1823,9 +1406,7 @@ mod tests {
 
     #[test]
     fn a_url_that_merely_looks_like_a_beacon_is_not_one() {
-        // Path- and domain-based guessing is out of bounds: it mislabels a
-        // real picture served from a path with "track" in it, and a vendor
-        // list would need updating forever.
+        // Path- and domain-based guessing mislabels real pictures, and a vendor list rots.
         let out = sanitize_body(
             r#"<img src="https://example.com/track/pixel/beacon.gif?id=9" width="480" height="240">"#,
             RemoteImages::Blocked,
@@ -1863,8 +1444,6 @@ mod tests {
 
     #[test]
     fn an_inline_pixel_is_not_a_tracker_because_nothing_is_fetched_for_it() {
-        // `cid:` resolves against the message's own parts. There is no host
-        // to report to, so its size says nothing.
         let out = sanitize_body(
             r#"<img src="cid:x" width="1" height="1">"#,
             RemoteImages::Blocked,
@@ -1904,31 +1483,19 @@ mod tests {
             "{}",
             out.styles
         );
-        // This assertion used to be `remote_blocked == 0`, with the reason
-        // "a stripped <style> is not a stripped *image*: the banner has
-        // nothing to report about a message that never referenced one".
-        // #1326 makes that premise false. The message did reference one --
-        // in CSS -- and now that Postio parses the CSS it can see that. The
-        // banner should say so, because from the reader's side a background
-        // that did not load is exactly as blocked as an `<img>` that did not.
+        // A CSS background reference counts with the images: to the reader it is as blocked as an
+        // `<img>` (#1326).
         assert_eq!(out.remote_blocked, 1);
     }
 
     #[test]
     fn an_inline_style_survives_so_the_senders_layout_does() {
-        // Was `an_inline_style_attribute_is_stripped_so_postio_css_always_wins`.
-        // Postio's CSS no longer always wins: a message renders as its sender
-        // built it (spec FR-019, FR-019a), and a newsletter that arrives as
-        // one column when it was written as three is the thing that decision
-        // exists to fix.
         let out = sanitize_body(r#"<p style="color:red">hi</p>"#, RemoteImages::Blocked);
         assert!(out.html.contains("color"), "{}", out.html);
     }
 
     #[test]
     fn layout_colour_and_spacing_all_survive() {
-        // FR-019a's floor, in one message: structural layout, colour,
-        // typographic emphasis and spacing.
         let out = sanitize_body(
             r#"<div style="display:flex;gap:12px;width:60%"><p style="color:#c00;font-weight:700;margin:8px">hi</p></div>"#,
             RemoteImages::Blocked,
@@ -1944,9 +1511,6 @@ mod tests {
 
     #[test]
     fn a_message_cannot_pin_itself_over_the_application() {
-        // `fixed` and `sticky` both position against something outside the
-        // message's own box, which is how a message escapes the container
-        // `contain_body` puts it in (#323).
         for escape in ["position:fixed", "position: sticky"] {
             let out = sanitize_body(
                 &format!(r#"<p style="{escape};top:0;color:red">hi</p>"#),
@@ -1957,11 +1521,7 @@ mod tests {
                 "{escape} survived: {}",
                 out.html
             );
-            // Its offset goes with it: without a position it means nothing,
-            // and an engine that applies it anyway lifts the box out.
             assert!(!out.html.contains("top"), "{}", out.html);
-            // The rest of the declaration is untouched -- refusing a property
-            // is not licence to drop the ones beside it.
             assert!(out.html.contains("color:red"), "{}", out.html);
         }
     }
@@ -1978,8 +1538,6 @@ mod tests {
 
     #[test]
     fn a_message_cannot_size_itself_against_the_window() {
-        // Viewport units answer to the window, not to the message's box, so
-        // `100vw` is a message deciding how wide the pane is.
         let out = sanitize_body(
             r#"<p style="width:100vw;height:100vh;padding:4px">hi</p>"#,
             RemoteImages::Blocked,
@@ -2005,9 +1563,8 @@ mod tests {
 
     #[test]
     fn an_uppercase_url_in_a_style_is_held_back_too() {
-        // RUSTSEC-2026-0373: ammonia matched a quoted `url("")` case-
-        // sensitively, so `URL("https://...")` skipped its filtering. Postio
-        // does not rely on that filtering; this is the advisory's payload.
+        // RUSTSEC-2026-0373: ammonia matched a quoted `url("")` case-sensitively; this is the
+        // advisory's payload.
         for style in [
             r#"background:URL("https://evil.example/ping");color:red"#,
             r#"background:UrL('https://evil.example/ping');color:red"#,
@@ -2028,9 +1585,6 @@ mod tests {
 
     #[test]
     fn every_refused_property_states_a_reason() {
-        // FR-019b: a property may be refused for containment or for privacy,
-        // and for nothing else. "Dropped because it was easier" is what this
-        // test exists to make impossible to add quietly.
         assert!(
             !REFUSED.is_empty(),
             "the refused set is the whole of the containment story"
@@ -2045,8 +1599,6 @@ mod tests {
 
     #[test]
     fn noscript_content_is_removed_not_unwrapped() {
-        // With scripting off, unwrapped <noscript> content is exactly the
-        // beacon disabling JavaScript was meant to stop.
         let out = sanitize_body(
             r#"<noscript><img src="https://tracker.example.org/o.gif"></noscript><p>body</p>"#,
             RemoteImages::Allowed,
@@ -2054,19 +1606,8 @@ mod tests {
         assert_eq!(out.html, "<p>body</p>");
     }
 
-    /// A `<title>` is the document's name, not a line of the message.
-    ///
-    /// Ammonia drops an element that is not allow-listed but *keeps its text*
-    /// — that is what makes unwrapping safe for a `<span>`. For a `<title>` it
-    /// means the sender's document title arrives as the first words of their
-    /// body, which is how `html-newsletter.eml` came to render "Harbour
-    /// Lantern Weekly - Issue 214" above its own masthead. Every template
-    /// builder emits one, so this is most bulk mail, not an edge.
-    ///
-    /// `<title>` alone, because it is the only head element with text that
-    /// was not already handled: ammonia's own defaults remove `<script>` and
-    /// `<style>` tag-and-contents, and `link`, `base` and `meta` are stripped
-    /// as elements and carry no text to keep.
+    /// Ammonia keeps the text of an unlisted element, so a `<title>` became the first words of the
+    /// body (`html-newsletter.eml` rendered its issue title above its masthead).
     #[test]
     fn a_documents_title_is_not_a_line_of_its_body() {
         let out = sanitize_body(
@@ -2077,12 +1618,8 @@ mod tests {
         assert_eq!(out.html, "<p>body</p>");
     }
 
-    /// #147, found by the `sanitize_html` fuzz target. URL schemes are
-    /// case-insensitive (RFC 3986 §3.1) and WebKit treats them that way, so a
-    /// tracking pixel spelled `HTTPS://` was fetched while Postio reported
-    /// nothing held back. Blocking that a sender defeats by pressing shift is
-    /// not blocking, and this is the promise in PRODUCT.md that nothing leaves
-    /// the machine unasked.
+    /// #147, from the `sanitize_html` fuzz target: schemes are case-insensitive (RFC 3986 §3.1), so
+    /// a pixel spelled `HTTPS://` was fetched while nothing was reported held back.
     #[test]
     fn a_remote_image_cannot_dodge_blocking_by_changing_case() {
         for spelling in [
@@ -2099,23 +1636,17 @@ mod tests {
         }
     }
 
-    /// The regression the `sanitize_html` target caught 71 executions after
-    /// the case-insensitivity fix above was written — in the fix itself, not
-    /// in anything older. Comparing a prefix by slicing `value[..8]` panics
-    /// when byte 8 lands inside a multi-byte character, and an attribute value
-    /// is attacker-controlled text that can start with any character at all.
+    /// Slicing `value[..8]` panics when byte 8 lands inside a multi-byte character, and attribute
+    /// values are attacker-controlled.
     #[test]
     fn a_multibyte_attribute_value_does_not_split_a_character() {
         for value in ["日本語です", "é", "\u{fffd}\u{fffd}\u{fffd}", "🐟🐟🐟"] {
             let html = format!(r#"<img src="{value}">"#);
-            // The assertion is that this returns at all.
             let out = sanitize_body(&html, RemoteImages::Blocked);
             assert_eq!(out.remote_blocked, 0, "{value} is not remote");
         }
     }
 
-    /// The other half: case-folding must not start blocking things that are
-    /// local. `postio-cid:` and `data:` are resolved on this machine.
     #[test]
     fn case_folding_does_not_make_a_local_reference_remote() {
         for local in [
@@ -2146,9 +1677,6 @@ mod tests {
 
     #[test]
     fn each_remote_image_is_counted_not_just_flagged() {
-        // The parts panel's held-back count (postio-m2ex) needs a real
-        // number, not the bool this used to be — three blocked images must
-        // read as 3, not as "some".
         let out = sanitize_body(
             r#"<img src="https://a.example.org/1.gif">
                <img src="https://a.example.org/2.gif">
@@ -2241,19 +1769,6 @@ mod tests {
 mod conversation_scope_tests {
     use super::*;
 
-    /// One document holding a whole thread needs `cid:` to say *whose*.
-    ///
-    /// A `postio-cid:` URI names a `Content-ID` and nothing else, and the
-    /// handler resolves it against whichever message is open. That is exact
-    /// when one document is one message. Put a thread in one document (ADR
-    /// 0032) and it is ambiguous: two messages may each carry a part called
-    /// `logo`, and a sender may reference a `Content-ID` they know belongs to
-    /// somebody else's message in the same thread.
-    ///
-    /// So a scoped sanitize stamps the message on the URI. The separator is
-    /// `/`, which is safe because `percent_encode` escapes it -- a
-    /// `Content-ID` can never contain a literal one, so the split is
-    /// unambiguous however odd the id.
     #[test]
     fn a_scoped_body_stamps_its_message_on_every_cid() {
         let html = r#"<img src="cid:logo"><img src="cid:a/b">"#;
@@ -2271,7 +1786,6 @@ mod conversation_scope_tests {
         );
     }
 
-    /// Unscoped is what a single-message reader still asks for, unchanged.
     #[test]
     fn an_unscoped_body_is_exactly_what_it_always_was() {
         let html = r#"<img src="cid:logo">"#;
@@ -2286,9 +1800,6 @@ mod conversation_scope_tests {
         );
     }
 
-    /// The scope is Postio's, never the sender's: it is stamped on the way
-    /// out, so markup that arrives already naming another message cannot
-    /// keep it.
     #[test]
     fn a_sender_cannot_name_another_message() {
         let html = r#"<img src="cid:9/secret"><img src="postio-cid:9/secret">"#;
@@ -2305,9 +1816,6 @@ mod conversation_scope_tests {
         );
     }
 
-    /// #1545: a sender's stylesheet selects on the classes and ids its own
-    /// markup carries, and stripping them made every such rule dead. Spec
-    /// 006 FR-005: kept, unless keeping one is a containment problem.
     #[test]
     fn a_senders_classes_and_ids_survive() {
         let clean = sanitize_body_in(
@@ -2327,10 +1835,8 @@ mod conversation_scope_tests {
         );
     }
 
-    /// A sender element may not wear Postio's own names. `postio-latest` is
-    /// the marker on the newest message and `postio-blocked` the notice that
-    /// images were held back: a message dressing itself in either could
-    /// impersonate the chrome (spec 006 FR-025, 001 FR-025).
+    /// `postio-latest` and `postio-blocked` are chrome markers; a message wearing either could
+    /// impersonate the chrome.
     #[test]
     fn a_sender_cannot_wear_postios_names() {
         let clean = sanitize_body_in(
@@ -2346,10 +1852,6 @@ mod conversation_scope_tests {
         assert!(!lowered.contains("postio-y"), "{}", clean.html);
     }
 
-    /// Two messages in one conversation document both saying `id="header"`
-    /// would be two elements with one id, and one sender's `#header` rule
-    /// would be aimed at the other's element. Rewritten per message, and the
-    /// sender's in-message links and selectors follow.
     #[test]
     fn ids_are_per_message_and_their_links_and_selectors_follow() {
         let html = r##"<style>#header { color: #123456 }</style><a href="#header">top</a><h1 id="header">News</h1>"##;
@@ -2376,7 +1878,6 @@ mod conversation_scope_tests {
             seven.styles
         );
         assert!(!seven.styles.contains("#header "), "{}", seven.styles);
-        // A link out of the message is not a fragment and is left alone.
         let out = sanitize_body_in(
             r##"<a href="https://example.com/#header">out</a>"##,
             RemoteImages::Blocked,
@@ -2389,9 +1890,7 @@ mod conversation_scope_tests {
         );
     }
 
-    /// The single-message reader has no scope, and still must not produce an
-    /// id Postio uses itself: `m-<scope>` for a message, `pos-<n>` for scroll
-    /// markers. A sender `id="7"` must not become `m-7`.
+    /// An unscoped sender `id="7"` must not become `m-7`, Postio's own id for a message.
     #[test]
     fn an_unscoped_id_cannot_collide_with_postios_own() {
         let clean = sanitize_body(
@@ -2406,12 +1905,8 @@ mod conversation_scope_tests {
         );
     }
 
-    /// Spec 006 FR-006: the page a sender styled is their canvas.
-    ///
-    /// Mail puts its white page on `<body>`, and cleaning the body as a
-    /// fragment dropped `<body>` with everything on it, while the dark text
-    /// colours written inside survived -- which is exactly black text on
-    /// the dark reader ground.
+    /// Mail puts its white page on `<body>`; cleaning as a fragment dropped it while the dark text
+    /// colours survived, giving black text on the dark ground.
     #[test]
     fn the_senders_page_becomes_the_messages_canvas() {
         let clean = sanitize_body_in(
@@ -2464,8 +1959,6 @@ mod conversation_scope_tests {
         assert_eq!(none.canvas, Canvas::default());
     }
 
-    /// An attribute is attacker-controlled text that ends up in a `style`:
-    /// only a colour is a colour.
     #[test]
     fn a_canvas_attribute_that_is_not_a_colour_is_ignored() {
         let clean = sanitize_body(
@@ -2486,7 +1979,6 @@ mod conversation_scope_tests {
         );
     }
 
-    /// The canvas is contained like any declaration a sender writes.
     #[test]
     fn the_canvas_style_goes_through_the_same_refusals() {
         let clean = sanitize_body(
@@ -2519,8 +2011,6 @@ mod conversation_scope_tests {
         );
     }
 
-    /// Spec 006 FR-013(a): a sender who declares dark support gets their own
-    /// dark design, so the declaration has to survive `<meta>` removal.
     #[test]
     fn a_declared_color_scheme_is_carried() {
         for (content, expected) in [
@@ -2545,7 +2035,6 @@ mod conversation_scope_tests {
         );
     }
 
-    /// A snippet that asks for `what`, and the text that must not survive it.
     fn provoke(what: Refused) -> (String, String) {
         match what {
             Refused::Element(name) => {
@@ -2598,10 +2087,6 @@ mod conversation_scope_tests {
         }
     }
 
-    /// Spec 006 FR-005 / 001 FR-019b: every removal is listed with its reason,
-    /// and every listed removal is one the sanitizer actually makes -- and
-    /// says it made. "Dropped because it was easier" is not in the list
-    /// because it is not a reason.
     #[test]
     fn every_listed_refusal_is_made_and_reported() {
         for (what, reason) in REFUSALS {
@@ -2632,8 +2117,6 @@ mod conversation_scope_tests {
         }
     }
 
-    /// The per-kind tables stay where the code that applies them reads them;
-    /// this is the one list that says what they add up to.
     #[test]
     fn the_css_tables_are_reachable_through_the_list() {
         for (property, reason) in REFUSED {
@@ -2663,7 +2146,6 @@ mod conversation_scope_tests {
         assert!(REFUSALS.contains(&(Refused::Element("svg"), Refusal::NoScript)));
     }
 
-    /// A message with nothing to refuse reports nothing.
     #[test]
     fn an_innocent_message_reports_no_refusals() {
         let clean = sanitize_body(
@@ -2673,9 +2155,7 @@ mod conversation_scope_tests {
         assert!(clean.refusals.is_empty(), "{:?}", clean.refusals);
     }
 
-    /// Spec 006 FR-003: an image embedded in the message itself needs no
-    /// network and no consent. ammonia's default schemes dropped `data:`, so
-    /// every embedded logo vanished -- silently, since nothing listed it.
+    /// ammonia's default schemes dropped `data:`, so every embedded logo vanished silently.
     #[test]
     fn an_embedded_image_survives_and_nothing_else_embedded_does() {
         let png = "data:image/png;base64,iVBORw0KGgo=";
@@ -2738,16 +2218,12 @@ mod cap_tests {
         assert_eq!(out.over_cap, Some(Cap::Depth));
     }
 
-    /// Nesting far past any stack's patience: the cap is found without
-    /// recursing, on a test thread's small default stack.
     #[test]
     fn a_body_nested_forty_thousand_deep_does_not_overflow_the_sanitizer() {
         let out = sanitize_body(&nested(40_000), RemoteImages::Blocked);
         assert!(out.over_cap.is_some());
     }
 
-    /// Mail that never closes its paragraphs or list items is sloppy, not
-    /// deep: the scan does not count elements whose end tag may be left out.
     #[test]
     fn thousands_of_unclosed_paragraphs_are_not_deep() {
         let html = format!("<div>{}</div>", "<p>line<li>item".repeat(3_000));

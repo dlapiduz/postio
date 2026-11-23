@@ -42,8 +42,6 @@ jobs:
           rustup default stable
 """
 
-# The same bug in one line instead of a block. This is the shorter spelling and
-# so the likelier way to reintroduce it, and the check used to miss it.
 WORKFLOW_FLOATING_INLINE = """\
 jobs:
   build:
@@ -52,9 +50,6 @@ jobs:
         run: rustup default stable
 """
 
-# What fuzz.yml does. A dated nightly names one compiler as exactly as a
-# version does, and `-Z sanitizer=address` has no stable spelling at any
-# version, so this must be allowed -- see #147.
 WORKFLOW_DATED_NIGHTLY = """\
 jobs:
   fuzz:
@@ -63,7 +58,6 @@ jobs:
         run: rustup toolchain install nightly-2026-08-24 --profile minimal
 """
 
-# A bare `nightly` is still the bug: it floats exactly like `stable` does.
 WORKFLOW_BARE_NIGHTLY = """\
 jobs:
   fuzz:
@@ -73,8 +67,6 @@ jobs:
 """
 
 
-# Rule 5: the interpreter. A job that runs the repository's scripts must set up
-# the Python mise.toml names, through the one composite action.
 PYTHON_ACTION = """\
 runs:
   using: composite
@@ -87,7 +79,6 @@ runs:
         python-version: ${{ steps.version.outputs.version }}
 """
 
-# A literal version in the action is a second pin: it never reads mise.toml.
 PYTHON_ACTION_LITERAL = """\
 runs:
   using: composite
@@ -127,7 +118,6 @@ jobs:
           python3 scripts/commit-msg.py --title "$T"
 """
 
-# The action before the checkout reads a mise.toml that is not there yet.
 WORKFLOW_PYTHON_BEFORE_CHECKOUT = """\
 jobs:
   checks:
@@ -138,7 +128,6 @@ jobs:
         run: scripts/check.sh
 """
 
-# `scripts/` in a cache key or a comment is not a script being run.
 WORKFLOW_PYTHON_NOT_RUN = """\
 jobs:
   build:
@@ -152,8 +141,6 @@ jobs:
           cargo build
 """
 
-# Only the composite action may name setup-python; a job doing it itself
-# carries its own version, which is the drift this rule exists to stop.
 WORKFLOW_SETUP_PYTHON_DIRECT = """\
 jobs:
   checks:
@@ -209,8 +196,6 @@ def case(
         root = Path(directory)
         build_tree(root, toolchain=toolchain, workflow=workflow, manifest=manifest, mise=mise,
                    python_action=python_action)
-        # The check finds its root from its own location, not the cwd, so it
-        # has to be run from a copy that lives inside the throwaway tree.
         scripts = root / "scripts"
         scripts.mkdir()
         (scripts / CHECK.name).write_bytes(CHECK.read_bytes())
@@ -231,7 +216,6 @@ def case(
 def main() -> int:
     exact = '[toolchain]\nchannel = "1.98.0"\n'
 
-    # ── the shape that is correct ────────────────────────────────────────
     case(
         "an exact pin with a workflow that honours it passes",
         toolchain=exact,
@@ -239,7 +223,6 @@ def main() -> int:
         expected=0,
     )
 
-    # ── the state issue #38 describes ────────────────────────────────────
     case(
         "no rust-toolchain.toml at all fails",
         toolchain=None,
@@ -259,9 +242,6 @@ def main() -> int:
         expected=1,
     )
 
-    # ── the fuzzing exception, and its edge ──────────────────────────────
-    # A dated nightly is a pin. A bare one is not. The distinction is the
-    # whole reason fuzz.yml is allowed to exist alongside this check.
     case(
         "a dated nightly is a pin, not a float",
         toolchain=exact,
@@ -275,9 +255,6 @@ def main() -> int:
         expected=1,
     )
 
-    # ── rule 3: an MSRV nothing ever builds ──────────────────────────────
-    # The manifest said 1.90 while the pin said 1.98, so the claim rested on
-    # nothing. These pin the rule's edges rather than just its happy path.
     def manifest_with(version: str | None) -> str:
         head = "[workspace]\nresolver = \"3\"\nmembers = []\n\n[workspace.package]\n"
         return head if version is None else head + f'rust-version = "{version}"\n'
@@ -303,8 +280,6 @@ def main() -> int:
         manifest=manifest_with(None),
         expected=0,
     )
-    # Numeric comparison, not lexicographic: "1.9" > "1.10" as strings, and a
-    # check that got this wrong would pass the one case most likely to appear.
     case(
         "an MSRV of 1.9 against a 1.10 pin fails",
         toolchain='[toolchain]\nchannel = "1.100.0"\n',
@@ -313,12 +288,8 @@ def main() -> int:
         expected=1,
     )
 
-    # ── a pin that is not a pin ──────────────────────────────────────────
-    # `channel = "stable"` in the file floats exactly like the workflow did,
-    # so it must not be mistaken for a fix.
-    # mise sets RUSTUP_TOOLCHAIN for every shell in the repository, and that
-    # beats rust-toolchain.toml. `rust = "latest"` in mise.toml resolved to
-    # whatever was installed -- 1.98 -- and outlived the 1.99 bump (2026-10-01).
+    # `channel = "stable"` floats like the workflow did, and mise's RUSTUP_TOOLCHAIN beats
+    # rust-toolchain.toml (`rust = "latest"` outlived the 1.99 bump).
     for label, mise_toml, expected in (
         ("mise.toml naming rust is a second pin and fails", '[tools]\npython = "3.14.7"\nrust = "latest"\n', 1),
         ("mise.toml naming an exact rust fails too", '[tools]\nrust = "1.99.0"\n', 1),
@@ -336,9 +307,6 @@ def main() -> int:
             expected=expected,
         )
 
-    # ── RUSTUP_TOOLCHAIN, which beats the file ───────────────────────────
-    # Reported, never fatal by default: CI's verdict must not depend on a
-    # developer's shell. `--strict` is for whoever wants it enforced.
     case(
         "a mismatched RUSTUP_TOOLCHAIN warns but passes",
         toolchain=exact,
@@ -363,7 +331,6 @@ def main() -> int:
         expected=0,
     )
 
-    # ── rule 5: CI runs the Python mise.toml names ───────────────────────
     mise_py = '[tools]\npython = "3.14.7"\n'
     for label, workflow, action, expected in (
         ("a job running scripts/ without the python action fails", WORKFLOW_PYTHON_BARE, PYTHON_ACTION, 1),

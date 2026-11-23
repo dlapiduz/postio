@@ -4,14 +4,6 @@ import Testing
 
 @testable import PostioKit
 
-/// The folders and labels popover's state (specs/009-focus-macos T086,
-/// screen 10).
-///
-/// The controller reads the places in one request and says when it has
-/// (`FocusOpenPlaces`, then `FocusPlacesChanged`); `focusPlaces(filter)`
-/// answers from that read, in the popover's order, with the words each row
-/// says. This holds the filter and the highlight, and goes where Return
-/// says.
 @MainActor
 struct PlacesModelTests {
     final class Engine: PlacesEngine {
@@ -60,7 +52,6 @@ struct PlacesModelTests {
         #expect(model.entries.map(\.name) == ["Inbox", "Drafts", "Receipts", "Reading list", "Harbor", "Kids"])
         #expect(model.entries.map(\.count) == ["312", "2", "214", "37", "71", nil])
         #expect(model.entries.map(\.cap) == ["g i", "g d", nil, nil, nil, nil])
-        // A heading goes wherever the section changes.
         #expect(model.entries.map(\.heading) == ["Mailboxes", nil, "Folders", nil, "Labels", nil])
         #expect(model.placeholder == "Go to folder or label")
     }
@@ -136,7 +127,6 @@ struct PlacesModelTests {
         model.filterChanged("r")
         model.move(by: 1)
         let highlighted = model.entries[model.highlighted ?? 0].name
-        // The read lands: new tokens, the same places.
         engine.places = engine.places.map { place in
             var place = place
             place.token += 100
@@ -173,9 +163,6 @@ struct PlacesModelTests {
     }
 
     @Test func theFirstReadLandingPutsTheHighlightOnTheFirstPlace() {
-        // Before the read lands only the uncounted views are listed; the
-        // highlight on the first of them is not a choice to keep (screen 10
-        // opens on Inbox).
         let (model, engine) = Self.model()
         let snoozed = Self.entry(9, "Mailboxes", "Snoozed", mark: .role(role: .snoozed))
         var full = engine.places
@@ -197,8 +184,6 @@ struct PlacesModelTests {
     }
 
     @Test func thePopoverHangsRightwardFromTheButtonsLeftEdge() {
-        // The button at the window's left; a popover centred on it would
-        // put half its 392 outside the window.
         let button = CGRect(x: 0, y: 0, width: 70, height: 24)
         let rect = PlacesView.Metrics.positioningRect(button: button)
         #expect(rect.midX - PlacesView.Metrics.width / 2 >= -PlacesView.Metrics.leadIn)

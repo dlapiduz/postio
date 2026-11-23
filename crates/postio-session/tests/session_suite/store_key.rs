@@ -1,14 +1,3 @@
-//! The store key, from the keyring to the store — ADR 0014 Q3.
-//!
-//! The material itself is `postio-storage`'s and tested there. What this is
-//! about is the *service*: minting one on first run, reading the same one
-//! back on every run after, and what happens when the keyring will not answer.
-//!
-//! Nothing here touches a real keyring. `MemorySecretStore::reopen` is a
-//! restart with the same keyring, which is exactly the question — a service
-//! that minted a fresh key on the second open would look fine on first run
-//! and lose every mailbox on the second.
-
 use postio_account::secret::{AccountKey, MemorySecretStore, Password, SecretError, SecretStore};
 use postio_session::{STORE_KEY_ENTRY, store_key};
 
@@ -37,9 +26,6 @@ async fn a_first_run_mints_a_key_and_keeps_it() {
 
 #[tokio::test]
 async fn a_second_open_reads_the_key_back_rather_than_minting_another() {
-    // The whole point. A store is encrypted under the key of its first open,
-    // and a service that minted a new one per run would produce a mail client
-    // that loses its mailbox every time it starts.
     let keyring = MemorySecretStore::new();
 
     let first = store_key(&keyring).await.expect("first open");
@@ -51,10 +37,6 @@ async fn a_second_open_reads_the_key_back_rather_than_minting_another() {
 
 #[tokio::test]
 async fn a_locked_keyring_refuses_and_says_how_to_unlock() {
-    // No plaintext fallback, and no fresh key either. Minting one here would
-    // be worse than refusing: it would encrypt the next thing written under a
-    // key the existing store knows nothing about, and the mailbox would be
-    // gone rather than merely unavailable.
     let keyring = MemorySecretStore::locked();
 
     let refused = store_key(&keyring)
@@ -83,9 +65,6 @@ async fn a_locked_keyring_refuses_and_says_how_to_unlock() {
 
 #[tokio::test]
 async fn an_entry_that_is_not_a_key_is_refused_rather_than_replaced() {
-    // A corrupt entry is a store that cannot be opened; a *replaced* entry is
-    // a store that can never be opened again. So this refuses, loudly, and
-    // leaves what is there for a person to deal with.
     let keyring = MemorySecretStore::new();
     keyring
         .store(&entry(), &Password::new("this is not a key"))
@@ -111,11 +90,6 @@ async fn an_entry_that_is_not_a_key_is_refused_rather_than_replaced() {
 
 #[tokio::test]
 async fn an_empty_entry_is_a_failed_write_and_is_minted_over() {
-    // The one entry that is safe to replace: nothing can have been encrypted
-    // under an empty key, so the store behind it is either absent or already
-    // unopenable. Treating it as a first run is what gives a half-finished
-    // first run a way out, and it is the same tolerance `startup_route`
-    // already extends to an empty password.
     let keyring = MemorySecretStore::new();
     keyring
         .store(&entry(), &Password::new(""))
@@ -130,14 +104,6 @@ async fn an_empty_entry_is_a_failed_write_and_is_minted_over() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Before there is a runtime, because there is no store yet either
-// ---------------------------------------------------------------------------
-
-/// Deliberately not a `#[tokio::test]`: the whole point of the blocking form
-/// is that startup has no runtime when it needs the key. The store has to be
-/// open before the command bus can be built, and the bus has to exist before
-/// the runtime that pumps it.
 #[test]
 fn the_key_can_be_read_with_no_runtime_running() {
     let keyring = MemorySecretStore::new();
@@ -150,10 +116,6 @@ fn the_key_can_be_read_with_no_runtime_running() {
 
 #[test]
 fn a_locked_keyring_means_there_is_no_store_to_open() {
-    // What the app's startup branches on. `open_store` is only reached on the
-    // `Ok` arm, so this is the point at which "a locked keyring means the mail
-    // does not open" is decided -- before a `Database` exists, rather than by
-    // something downstream noticing later.
     let refused = postio_session::store_key_blocking(&MemorySecretStore::locked())
         .expect_err("a locked keyring cannot answer");
 
@@ -164,23 +126,10 @@ fn a_locked_keyring_means_there_is_no_store_to_open() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Nothing about the key reaches a log
-// ---------------------------------------------------------------------------
-
-/// A writer every `tracing` line lands in, so a test can read them back.
-///
-/// The same shape `postio-runtime`'s `logging_privacy.rs` uses, for the same
-/// reason: a rule nothing checks is a rule that lasts until the next person
-/// adds a `?key` to a `tracing` call because it would have been convenient
-/// that once.
 use postio_test_support::logs::Captured;
 
 #[tokio::test]
 async fn no_key_material_reaches_the_log_at_any_level() {
-    // A callsite caches whether anyone listens, process-wide: alone, or a
-    // neighbour that reached it first with no subscriber silences it here,
-    // and a log nothing reached passes for one that kept the key out.
     if postio_test_support::alone!("no_key_material_reaches_the_log_at_any_level") {
         return;
     }
@@ -193,8 +142,6 @@ async fn no_key_material_reaches_the_log_at_any_level() {
 
     let minted = {
         let _guard = tracing::subscriber::set_default(subscriber);
-        // Every path through the service, in one capture: a first run, a
-        // reopen, a locked keyring and a corrupt entry.
         let keyring = MemorySecretStore::new();
         let minted = store_key(&keyring).await.expect("first run");
         store_key(&keyring.reopen()).await.expect("second run");
@@ -212,8 +159,6 @@ async fn no_key_material_reaches_the_log_at_any_level() {
     let log = captured.text();
     let hex = minted.to_hex();
     assert!(!log.contains(hex.as_str()), "the key is in the log: {log}");
-    // And no fragment of it either: a truncated key is still most of a key,
-    // and half of thirty-two bytes is not a brute force anybody would mind.
     for window in hex.as_bytes().windows(16) {
         let fragment = std::str::from_utf8(window).expect("hex is ascii");
         assert!(
@@ -223,30 +168,10 @@ async fn no_key_material_reaches_the_log_at_any_level() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// What opening a store the old engine wrote does instead
-// ---------------------------------------------------------------------------
-
-/// The two tests that stood here proved a **pre-release migration**: an
-/// unencrypted store from before ADR 0014 was rewritten encrypted on the way
-/// in, and a store with undrained work refused rather than being migrated
-/// under it. Both are gone with their subject.
-///
-/// There is no migration path at all now (`docs/archive/specs/004-turso-store`). The engine
-/// changed underneath the file, so a store the old one wrote cannot be *read*,
-/// let alone rewritten — and the maintainer's instruction was explicit that it
-/// is rebuilt by resyncing rather than converted. `open_store_at` says so in a
-/// comment where the migration call used to be.
-///
-/// What survives of them is the question they were really asking, which is the
-/// one below: does a store that cannot be opened produce a sentence a person
-/// can act on, rather than a failure the app absorbs?
 #[tokio::test]
 async fn a_store_this_build_cannot_read_refuses_with_a_sentence() {
     let directory = tempfile::tempdir().expect("a directory");
     let path = directory.path().join("postio.db");
-    // Not a database at all -- the cheapest possible "this file is not a store
-    // this build can read", and the same arm every unreadable store takes.
     std::fs::write(&path, b"this is not a database").expect("write the file");
 
     let key = postio_storage::key::StoreKey::from_bytes([0x2a; 32]);
@@ -254,18 +179,12 @@ async fn a_store_this_build_cannot_read_refuses_with_a_sentence() {
         .await
         .expect_err("a file that is not a store must not open");
 
-    // The sentence goes on a screen (#404), so it has to name the problem
-    // rather than a state a person cannot act on.
     assert!(
         !said.is_empty() && said.chars().any(char::is_alphabetic),
         "the refusal must say something: {said:?}"
     );
 }
 
-/// A store this build wrote opens again, with the same key, carrying its mail.
-///
-/// The other half of the pair above, and the one that would catch a refusal
-/// that had become unconditional.
 #[tokio::test]
 async fn a_store_this_build_wrote_opens_again_with_its_mail() {
     use postio_model::Message;
@@ -302,11 +221,6 @@ async fn a_store_this_build_wrote_opens_again_with_its_mail() {
     assert_eq!(subject, "Zarquon");
 }
 
-/// A store another key wrote is refused in one sentence, not two stacked.
-///
-/// `WrongStoreKey` writes its own opening ("the local store will not open:
-/// …"), and prefixing another in front of it put a lowercase "the" straight
-/// after a full stop on the screen that shows it (#404).
 #[tokio::test]
 async fn a_store_under_another_key_is_refused_in_one_sentence() {
     let directory = tempfile::tempdir().expect("a directory");
@@ -338,10 +252,6 @@ async fn a_store_under_another_key_is_refused_in_one_sentence() {
     );
 }
 
-/// A store under another key is offered a fresh start, never "Try again"
-/// (#1598): the key does not change between attempts, so every retry meets
-/// the same refusal. Starting over sets the old store aside -- not deleted
-/// -- and leaves one that opens under this installation's key.
 #[tokio::test]
 async fn a_store_under_another_key_is_started_over_not_retried() {
     let directory = tempfile::tempdir().expect("a directory");
@@ -383,8 +293,6 @@ async fn a_store_under_another_key_is_started_over_not_retried() {
         .expect("the fresh store opens under this installation's key");
 }
 
-/// A locked keyring is the one refusal retrying gets past: the person
-/// unlocks it. It is never offered a fresh store (#1598).
 #[test]
 fn a_locked_keyring_is_only_ever_tried_again() {
     let locked = SecretError::Locked {

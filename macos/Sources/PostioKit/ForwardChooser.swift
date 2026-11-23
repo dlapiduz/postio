@@ -1,19 +1,7 @@
 import PostioFFI
 import SwiftUI
 
-// The composer's *What to forward* chooser (spec 013 US7, FR-023; the Mac
-// threads handoff SPEC section 6, screen 10): three cards above To, each with
-// its number key, the chosen one ringed in the accent.
-//
-// The controller composes the cards and the words (`postio_ui::compose`) and
-// decides what a choice does: `1` `2` `3` (the registry's
-// `forward_what_1..3`, bound in `UiContext.forwardChooser`) and a click both
-// end in the controller asking for the draft and the engine rebuilding it.
-// This draws, and says which card was clicked.
-
-/// How a key reaches the chooser, and what it asks.
 public enum ForwardChooserKeys {
-    /// The registry's command for a card: what its number key runs.
     public static func command(for form: ForwardFormFfi) -> String {
         switch form {
         case .this: return "forward_what_1"
@@ -22,7 +10,6 @@ public enum ForwardChooserKeys {
         }
     }
 
-    /// The card a chooser command stands for; `nil` for any other command.
     public static func form(for command: String) -> ForwardFormFfi? {
         switch command {
         case "forward_what_1": return .this
@@ -32,28 +19,19 @@ public enum ForwardChooserKeys {
         }
     }
 
-    /// The contexts a key in the compose window is asked in, first to last.
-    ///
-    /// The chooser answers while it holds the keyboard (`chooserFocused`:
-    /// it appeared and no field has taken the keyboard since; Tab moves to
-    /// To), and never while text is being typed: a `2` typed into To or the
-    /// body is a `2`. Its context answers first, and anything it does not
-    /// bind (Escape, Send) falls through to the composer's, so a chooser
-    /// takes nothing from the window.
+    /// The chooser answers while it holds the keyboard and never while text is typed: a `2` typed
+    /// into To is a `2`.
+    /// Anything it does not bind (Escape, Send) falls through to the composer's.
     public static func contexts(base: UiContext, chooserFocused: Bool, typing: Bool) -> [UiContext] {
         guard base == .composer, chooserFocused, !typing else { return [base] }
-        // The context's own chain ends in the composer's and Global's,
-        // so Escape and Send keep working while it has focus.
         return [.forwardChooser]
     }
 }
 
-/// The three cards.
 public struct ForwardChooserView: View {
     let chooser: ChooserFfi
     let choose: (ForwardFormFfi) -> Void
 
-    /// `choose` is a click on a card.
     public init(chooser: ChooserFfi, choose: @escaping (ForwardFormFfi) -> Void) {
         self.chooser = chooser
         self.choose = choose
@@ -79,8 +57,6 @@ public struct ForwardChooserView: View {
     }
 }
 
-/// One card: the title and its number key, the line under them, a ring
-/// when chosen.
 struct ForwardCard: View {
     let card: ChooserCardFfi
     let selected: Bool
@@ -116,35 +92,21 @@ struct ForwardCard: View {
     }
 }
 
-/// One forwarded message, folded: "1 · Ana Ruiz · 2026-09-21 09:12 · Kicking
-/// off v3...".
 public struct ForwardedRow: Equatable, Sendable {
-    /// Its place in the thread, from 1.
     public let number: Int
-    /// Who and when, as the forward headed it.
     public let header: String
-    /// Its first words.
     public let first: String
 
-    /// What the collapsed row says.
     public var words: String {
         first.isEmpty ? "\(number) \u{b7} \(header)" : "\(number) \u{b7} \(header) \u{b7} \(first)"
     }
 }
 
-/// A forwarded thread's body, told apart from what is typed above it.
-///
-/// The engine writes the content as `postio_body::forward` does: a line
-/// `---------- Forwarded messages ----------`, then each message as a header
-/// line (`Who · 2026-09-21 09:12`) and its words. The marker is also what the
-/// engine finds the typed text by, so folding at it hides nothing that is
+/// The marker is also what the engine finds the typed text by, so folding at it hides nothing
 /// typed.
 public enum ForwardedRows {
-    /// The line that opens a forwarded thread.
     static let marker = "---------- Forwarded messages ----------"
 
-    /// `body` with the forwarded thread folded away, or `nil` for a body
-    /// that forwards none.
     public static func fold(_ body: String) -> QuoteFoldFfi? {
         var start = body.startIndex
         while start < body.endIndex {
@@ -162,7 +124,6 @@ public enum ForwardedRows {
         return nil
     }
 
-    /// The messages in `quote`, one row each.
     public static func rows(in quote: String) -> [ForwardedRow] {
         var rows: [ForwardedRow] = []
         var waiting: String?
@@ -182,7 +143,6 @@ public enum ForwardedRows {
         return rows
     }
 
-    /// `Who · 2026-09-21 09:12`.
     static func isHeader(_ line: String) -> Bool {
         guard let at = line.range(of: " \u{b7} ", options: .backwards) else { return false }
         let when = Array(line[at.upperBound...])
@@ -197,8 +157,6 @@ public enum ForwardedRows {
     }
 }
 
-/// The forwarded messages as rows, under what is typed: each a quiet bar,
-/// with the key that opens them all.
 public struct ForwardedRowsView: View {
     let rows: [ForwardedRow]
     let cap: String?

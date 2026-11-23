@@ -1,12 +1,7 @@
-//! The list row's right-click menu (T199): the row's verbs, as the open
-//! message's toolbar and the bulk bar offer them, each with its key.
-//!
-//! The menu runs nothing itself. A press hands the command's id to the
-//! window, which runs it through the same `act` its key reaches: one verb,
-//! one meaning, from a key, the command bar, a toolbar or this menu. Which
-//! verbs, in which order, and what a right-click does to the cursor and the
-//! selection, are recorded in `specs/007-postio-focus/screens.md`
-//! ("The row menu").
+//! The list row's right-click menu: the row's verbs, each with its key. The menu runs nothing
+//! itself: a press hands the command to the window, which runs it through the same `act` its key
+//! reaches. Verbs, order and what a right-click does to the cursor are in
+//! `specs/007-postio-focus/screens.md`.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -16,8 +11,6 @@ use gtk::{gdk, glib};
 use postio_core::{CommandId, Keymap};
 use postio_widgets::widgets::{Kind, Size, keyhint, space::S1};
 
-/// One verb: its command, the words the menu says, and the class a test
-/// finds it by.
 struct Verb {
     command: CommandId,
     label: &'static str,
@@ -32,9 +25,7 @@ const fn verb(command: CommandId, label: &'static str, class: &'static str) -> V
     }
 }
 
-/// The menu, in groups: open; answer; triage (the bulk bar's first verbs,
-/// in its order); file; and Delete apart at the end, where a slip of the
-/// pointer is least likely to land on it.
+/// Delete is apart at the end, where a slip of the pointer is least likely to land on it.
 const GROUPS: &[&[Verb]] = &[
     &[verb(CommandId::OpenMessage, "Open", "focus-row-menu-open")],
     &[
@@ -66,8 +57,6 @@ const GROUPS: &[&[Verb]] = &[
     &[verb(CommandId::Delete, "Delete", "focus-row-menu-delete")],
 ];
 
-/// The verbs a reply needs a single message for: offered on one row, not
-/// on a selection, as the open message's toolbar is for one message.
 const ONE_MESSAGE: &[CommandId] = &[
     CommandId::OpenMessage,
     CommandId::Reply,
@@ -75,37 +64,25 @@ const ONE_MESSAGE: &[CommandId] = &[
     CommandId::Forward,
 ];
 
-/// What the row under the menu is, for the verbs that word or show
-/// themselves by it.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Facts {
-    /// Whether the conversation has unread mail.
     pub unread: bool,
-    /// Whether it is flagged.
     pub flagged: bool,
-    /// Whether the list is the Snoozed one, where Unsnooze applies.
     pub snoozed: bool,
 }
 
-/// What a press asks the window to run.
 type Handler = Rc<dyn Fn(CommandId)>;
 
-/// The menu, built once and shown over whichever row was right-clicked.
 pub struct RowMenu {
     popover: gtk::Popover,
     heading: gtk::Label,
-    /// Each verb's button and the cap that shows its key.
     items: Vec<(CommandId, gtk::Button, gtk::Label)>,
-    /// The rule above each group but the first, and the items that group
-    /// holds: shown when the group and something above it are.
     rules: Vec<(std::ops::Range<usize>, gtk::Separator)>,
     handler: RefCell<Option<Handler>>,
-    /// Watching the window for a press outside the menu.
     outside: RefCell<Option<(glib::WeakRef<gtk::Widget>, gtk::GestureClick)>>,
 }
 
 impl RowMenu {
-    /// The menu, its keys read from `keymap`.
     pub fn new(keymap: &Keymap) -> Rc<Self> {
         let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
         column.add_css_class("focus-row-menu");
@@ -150,9 +127,9 @@ impl RowMenu {
             .build();
         popover.add_css_class("focus-row-menu-popover");
         popover.set_widget_name("focus-row-menu");
-        // As the pickers: no grab, which a compositor may dismiss at once
-        // where no pointer serial was given; the window's keyboard reaches
-        // the menu through `press`, and a press outside closes it.
+        // As the pickers: no grab, which a compositor may dismiss at once where no pointer serial
+        // was given; the window's keyboard reaches the menu through `press`, and a press outside
+        // closes it.
         popover.set_autohide(false);
         popover.set_accessible_role(gtk::AccessibleRole::Menu);
 
@@ -177,7 +154,6 @@ impl RowMenu {
         menu
     }
 
-    /// Every command the menu offers.
     pub fn commands() -> Vec<CommandId> {
         GROUPS
             .iter()
@@ -185,7 +161,6 @@ impl RowMenu {
             .collect()
     }
 
-    /// Read every key from `keymap`: a verb with no binding shows no cap.
     pub fn set_keymap(&self, keymap: &Keymap) {
         for (command, _, cap) in &self.items {
             let key = keymap.binding(*command).unwrap_or_default();
@@ -195,16 +170,12 @@ impl RowMenu {
         crate::a11y::teach_shortcuts(&self.popover);
     }
 
-    /// Run `handler` with the command a pressed verb stands for.
     pub fn connect_command(&self, handler: impl Fn(CommandId) + 'static) {
         self.handler.replace(Some(Rc::new(handler)));
     }
 
-    /// Show the menu from `parent`, at `at` in its coordinates.
-    ///
-    /// `selected` is how the selection it will act on is named ("3
-    /// selected"), or `None` when it acts on the row alone; `unread` says
-    /// how to word the read and flag verbs for that one row.
+    /// `selected` names the selection it acts on ("3 selected"), or is `None` when it acts on the
+    /// row alone.
     pub fn open(
         &self,
         parent: &impl IsA<gtk::Widget>,
@@ -252,7 +223,6 @@ impl RowMenu {
                     && (*command != CommandId::Unsnooze || facts.snoozed),
             );
         }
-        // A group's rule shows when something above it and in it does.
         let shown = |items: &[(CommandId, gtk::Button, gtk::Label)]| {
             items.iter().any(|(_, button, _)| offered(button))
         };
@@ -269,25 +239,20 @@ impl RowMenu {
         }
     }
 
-    /// Close the menu, running nothing.
     pub fn close(&self) {
         self.popover.popdown();
     }
 
-    /// Whether the menu is up.
     pub fn is_open(&self) -> bool {
         self.popover.is_visible()
     }
 
-    /// The popover, for a test to read.
     pub fn widget(&self) -> &gtk::Popover {
         &self.popover
     }
 
-    /// A key the window was given while the menu is up: Escape closes it,
-    /// and a verb's own key runs that verb from the menu. Whether the key
-    /// was the menu's; the rest (the arrows, Enter, Tab) are left to GTK,
-    /// which walks the menu's buttons with them.
+    /// Whether the key was the menu's; the arrows, Enter and Tab are left to GTK, which walks the
+    /// menu's buttons with them.
     pub fn press(&self, command: Option<CommandId>, key: gdk::Key) -> bool {
         if key == gdk::Key::Escape {
             self.close();
@@ -315,8 +280,7 @@ impl RowMenu {
         }
     }
 
-    /// Close the menu on a press in the window it opened over: the popup is
-    /// its own surface, so a press the window sees is outside it.
+    /// The popup is its own surface, so a press the window sees is outside it.
     fn watch_outside(&self, parent: &gtk::Widget) {
         let Some(root) = parent.root().map(|root| root.upcast::<gtk::Widget>()) else {
             return;
@@ -346,8 +310,7 @@ impl RowMenu {
     }
 }
 
-/// Whether the menu offers `item` this time: its own visible flag, not
-/// whether it is on screen, which it is not until the menu pops up.
+/// Its own visible flag, not whether it is on screen, which it is not until the menu pops up.
 fn offered(item: &gtk::Button) -> bool {
     item.property::<bool>("visible")
 }

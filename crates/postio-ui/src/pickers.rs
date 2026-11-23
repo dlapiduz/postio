@@ -1,26 +1,16 @@
-//! What Focus's pickers say (spec US5; contracts/focus-surface.md,
-//! "Pickers"): the snooze, remind, label and move popovers anchored to the
-//! focused row. The widgets are `postio-widgets`'; the words, the times and
-//! what a typed date means are here, where a test can hold them in a
-//! second.
+//! What Focus's pickers say: the snooze, remind, label and move popovers anchored to the focused
+//! row; the words, times and what a typed date means.
 
 use chrono::{DateTime, Local};
 use postio_core::{CommandId, Keymap};
 
-/// The snooze picker's title (screen 11).
 pub const SNOOZE_TITLE: &str = "Snooze until";
-/// The remind picker's title (screen 12).
 pub const REMIND_TITLE: &str = "Remind me if no one replies by";
-/// The label picker's title (screen 13).
 pub const LABEL_TITLE: &str = "Labels";
-/// The move picker's title (screen 14).
 pub const MOVE_TITLE: &str = "Move to folder";
 
-/// What the typed-date field says while it is empty.
 pub const DATE_PLACEHOLDER: &str = "Or type a date: \u{201c}tue 9am\u{201d}";
 
-/// When a preset or a typed date lands, as its row says it: the time alone
-/// for today ("18:00"), and the day with it otherwise ("Sun 27 Sep, 08:00").
 pub fn when_label(at: DateTime<Local>, now: DateTime<Local>) -> String {
     if at.date_naive() == now.date_naive() {
         at.format("%H:%M").to_string()
@@ -29,23 +19,15 @@ pub fn when_label(at: DateTime<Local>, now: DateTime<Local>) -> String {
     }
 }
 
-/// What a date typed into a picker means, read on this machine: `None` for
-/// words that are not a date, and for a moment already past -- nothing can
-/// be snoozed or reminded into the past.
+/// `None` for words that are not a date and for a moment already past.
 pub fn typed(text: &str, now: DateTime<Local>) -> Option<DateTime<Local>> {
     postio_search::date::parse_when(text, now).filter(|at| *at > now)
 }
 
-/// What the date field says under itself while nothing is typed.
 pub const TYPE_A_DATE: &str = "Tab to type";
 
-/// What the date field says under words that are no date still ahead.
 pub const NOT_A_DATE: &str = "A day and a time: \u{201c}tue 9am\u{201d}";
 
-/// What the date field says under `text`, typed at `now`: how to start,
-/// when the words land ([`when_label`]), or what it wants instead. GTK's
-/// when picker said these as literals; they are here so the Mac's says
-/// the same.
 pub fn date_hint(text: &str, now: DateTime<Local>) -> String {
     if text.trim().is_empty() {
         return TYPE_A_DATE.to_owned();
@@ -56,11 +38,8 @@ pub fn date_hint(text: &str, now: DateTime<Local>) -> String {
     }
 }
 
-/// What a picker acts on when the whole list is selected.
 pub const EVERY_THREAD: &str = "Every thread";
 
-/// What a picker acts on, as its title row names it: the sender and the
-/// subject for one thread, and how many for a selection.
 pub fn target(threads: usize, sender: &str, subject: &str) -> String {
     if threads > 1 {
         format!("{threads} threads")
@@ -69,7 +48,6 @@ pub fn target(threads: usize, sender: &str, subject: &str) -> String {
     }
 }
 
-/// The snooze picker's footnote, with the key that goes to snoozed mail.
 pub fn snooze_footnote(keymap: &Keymap) -> String {
     let mut said =
         "The message leaves the inbox and comes back at the top at that time.".to_owned();
@@ -79,8 +57,6 @@ pub fn snooze_footnote(keymap: &Keymap) -> String {
     said
 }
 
-/// The remind picker's footnote: what a reply does, and what the marker
-/// will say, dated `now`.
 pub fn remind_footnote(now: DateTime<Local>) -> String {
     format!(
         "If anyone replies first, the reminder is cancelled. If not, the \
@@ -90,19 +66,14 @@ pub fn remind_footnote(now: DateTime<Local>) -> String {
     )
 }
 
-/// The label picker's filter placeholder.
 pub const LABEL_FILTER: &str = "Filter, or type a new label";
-/// The move picker's filter placeholder.
 pub const MOVE_FILTER: &str = "Filter folders";
-/// What a label row says when the target already carries it.
 pub const APPLIED: &str = "\u{2713} applied";
 
-/// The row that makes a label nobody has: `Create label “Receipts”`.
 pub fn create_label(name: &str) -> String {
     format!("Create label \u{201c}{}\u{201d}", name.trim())
 }
 
-/// The label picker's footnote, with its keys.
 pub fn label_footnote(keymap: &Keymap) -> String {
     let mut said = Vec::new();
     if let Some(key) = crate::hints::key(keymap, CommandId::PickerToggle) {
@@ -117,7 +88,6 @@ pub fn label_footnote(keymap: &Keymap) -> String {
     said.join(" \u{b7} ")
 }
 
-/// The move picker's footnote, with its keys.
 pub fn move_footnote(keymap: &Keymap) -> String {
     let mut said = Vec::new();
     match crate::hints::key(keymap, CommandId::PickerConfirm) {
@@ -130,8 +100,6 @@ pub fn move_footnote(keymap: &Keymap) -> String {
     said.join(" \u{b7} ")
 }
 
-/// Which of `names` a filter keeps, in order: every name containing
-/// `filter`, in any case.
 pub fn filtered<'a>(names: impl IntoIterator<Item = &'a str>, filter: &str) -> Vec<usize> {
     let wanted = filter.trim().to_lowercase();
     names
@@ -142,16 +110,11 @@ pub fn filtered<'a>(names: impl IntoIterator<Item = &'a str>, filter: &str) -> V
         .collect()
 }
 
-/// Whether `filter` names a label none of `names` is, in any case: when
-/// the label picker offers to create it.
 pub fn offers_create<'a>(names: impl IntoIterator<Item = &'a str>, filter: &str) -> bool {
     let wanted = filter.trim().to_lowercase();
     !wanted.is_empty() && !names.into_iter().any(|name| name.to_lowercase() == wanted)
 }
 
-/// The labels a picker shows as applied: those every one of the
-/// conversations it acts on carries. `carried` is each `(thread, label)`
-/// pair the conversations hold; with no conversations nothing is applied.
 pub fn applied_labels(
     carried: impl IntoIterator<Item = (postio_model::ThreadId, postio_model::Label)>,
     threads: &[postio_model::ThreadId],
@@ -168,17 +131,12 @@ pub fn applied_labels(
         .collect()
 }
 
-/// One row of the label picker.
 #[derive(Debug, Clone, PartialEq)]
 pub enum LabelRow {
-    /// "Create label “…”": the typed name, trimmed.
     Create(String),
-    /// A label the account has.
     Label(postio_model::Label),
 }
 
-/// The label picker's rows for `filter`: "Create label" first when the
-/// filter names none of the labels, then the labels it keeps.
 pub fn label_rows(labels: &[postio_model::Label], filter: &str) -> Vec<LabelRow> {
     let names = labels.iter().map(|label| label.name.as_str());
     let mut rows = Vec::new();
@@ -193,8 +151,6 @@ pub fn label_rows(labels: &[postio_model::Label], filter: &str) -> Vec<LabelRow>
     rows
 }
 
-/// What a label's row says on the right: "applied" when the conversations
-/// carry it, otherwise how many conversations do.
 pub fn label_detail(applied: bool, count: u32) -> String {
     if applied {
         APPLIED.to_owned()
@@ -203,8 +159,6 @@ pub fn label_detail(applied: bool, count: u32) -> String {
     }
 }
 
-/// `labels` with `label` added, in name order, as the picker lists them
-/// once a label has been made.
 pub fn with_label(
     mut labels: Vec<postio_model::Label>,
     label: postio_model::Label,
@@ -214,25 +168,19 @@ pub fn with_label(
     labels
 }
 
-/// How many of Recent get a number key and a row.
 pub const RECENT: usize = 2;
 
-/// The heading over the last destinations.
 pub const RECENT_HEADING: &str = "Recent";
 
-/// The heading over every folder.
 pub const ALL_FOLDERS_HEADING: &str = "All folders";
 
-/// Whether mail can be moved to `folder` from the picker: the person's own
-/// folders and the archive. Sending, drafting, snoozing and deleting have
-/// verbs of their own, and the inbox is where the mail already is.
+/// The person's own folders and the archive; sending, drafting, snoozing and deleting have verbs of
+/// their own.
 pub fn is_destination(folder: &postio_model::Mailbox) -> bool {
     use postio_model::MailboxRole;
     matches!(folder.role, MailboxRole::Regular | MailboxRole::Archive)
 }
 
-/// The destinations in the order the picker keeps them: the archive first,
-/// then by name.
 pub fn order_destinations(folders: &mut [postio_model::Mailbox]) {
     folders.sort_by_key(|folder| {
         (
@@ -242,24 +190,15 @@ pub fn order_destinations(folders: &mut [postio_model::Mailbox]) {
     });
 }
 
-/// One row of the move picker.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MoveRow {
-    /// The folder it moves to.
     pub folder: postio_model::MailboxId,
-    /// The section heading it opens, when it opens one.
     pub section: Option<&'static str>,
-    /// The folder's name.
     pub name: String,
-    /// How many conversations it holds.
     pub count: String,
-    /// Whether it has a number key: the Recent rows.
     pub numbered: bool,
 }
 
-/// The move picker's rows for `filter`: Recent first -- at most [`RECENT`]
-/// of the last destinations still listed, numbered -- then every folder
-/// Recent does not already list.
 pub fn move_rows(
     folders: &[postio_model::Mailbox],
     recent: &[postio_model::MailboxId],
@@ -301,9 +240,7 @@ pub fn move_rows(
     rows
 }
 
-/// Whether a key pressed in a picker is typing rather than the picker's:
-/// anything typed into a field is text -- except into an empty filter,
-/// where there is nothing to type into yet and a bare digit or space is the
+/// Typing in a field is text, except in an empty filter, where a bare digit or space is the
 /// picker's (`1` chooses, `Space` toggles).
 pub fn is_typing(in_field: bool, in_empty_filter: bool, bare: bool, digit_or_space: bool) -> bool {
     in_field && !(in_empty_filter && bare && digit_or_space)
@@ -342,7 +279,6 @@ mod tests {
 
     #[test]
     fn tue_9am_is_the_coming_tuesday_and_the_past_is_nothing() {
-        // US5 scenario 2.
         let now = saturday_afternoon();
         assert_eq!(typed("tue 9am", now), Some(local_at(2026, 9, 29, 9, 0)));
         assert_eq!(typed("yesterday 9am", now), None, "the past");
@@ -380,8 +316,6 @@ mod tests {
             "space toggles a label \u{b7} Return closes \u{b7} typing a name that \
              doesn\u{2019}t exist offers \u{201c}Create label\u{201d}."
         );
-        // Undo is Gmail's `z` on both platforms, asserted from either host,
-        // so a Mac run is not a red Linux expectation.
         for (platform, undo) in [
             (postio_config::paths::Platform::Freedesktop, "z"),
             (postio_config::paths::Platform::Apple, "z"),

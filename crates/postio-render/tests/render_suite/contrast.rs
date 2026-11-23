@@ -1,7 +1,3 @@
-//! SC-001 on painted pixels: across the corpus, in light, dark and high
-//! contrast, no text is drawn below the floor against what is actually
-//! behind it -- 4.5:1, or 7:1 in high contrast, at every size (FR-012).
-
 use crate::support;
 
 use crate::support::{DARK, HIGH_CONTRAST, LIGHT, render, request};
@@ -9,8 +5,6 @@ use postio_model::test_corpus;
 use postio_render::theme::{self, Rgb};
 use postio_render::{Presentation, Raster, Theme};
 
-/// The commonest colour in one row of pixels across `x0..x1`, leaving out
-/// anything close to `ink`.
 fn commonest(raster: &Raster, y: i64, x0: i64, x1: i64, ink: Rgb) -> Option<([u8; 3], usize)> {
     let (w, h) = (raster.width as i64, raster.height as i64);
     if !(0..h).contains(&y) {
@@ -28,8 +22,6 @@ fn commonest(raster: &Raster, y: i64, x0: i64, x1: i64, ink: Rgb) -> Option<([u8
     counts.into_iter().max_by_key(|(px, n)| (*n, *px))
 }
 
-/// Whether `px` is `ink` anti-aliased over `ground`: on the line between
-/// them, give or take rounding.
 fn is_fringe(px: [u8; 3], ink: Rgb, ground: [u8; 3]) -> bool {
     let ink = [ink.r, ink.g, ink.b].map(|c| (c * 255.0).round());
     let (px, ground) = (px.map(f64::from), ground.map(f64::from));
@@ -48,12 +40,8 @@ fn is_fringe(px: [u8; 3], ink: Rgb, ground: [u8; 3]) -> bool {
         && (0..3).all(|c| (px[c] - (ground[c] + t * (ink[c] - ground[c]))).abs() <= 6.0)
 }
 
-/// The ground behind a cluster: the commonest colour in a band just above
-/// and below its box, leaving out its own ink -- glyph edges, an underline
-/// -- which is anything close to its colour. A row below the box that is
-/// only the anti-aliased fringe of an underline over the row above is the
-/// underline, not a second ground: where a link's underline falls against
-/// the box moves with the font's metrics, and the ground must not.
+/// Leaves out its own ink. A row below that is only an underline's anti-aliased
+/// fringe is not a second ground: where an underline falls moves with font metrics.
 fn ground_behind(raster: &Raster, rect: postio_render::Rect, scale: f64, ink: Rgb) -> Option<Rgb> {
     let (x0, x1) = ((rect.x0 * scale) as i64, (rect.x1 * scale) as i64);
     let above = commonest(raster, (rect.y0 * scale) as i64 - 2, x0, x1, ink);
@@ -67,9 +55,6 @@ fn ground_behind(raster: &Raster, rect: postio_render::Rect, scale: f64, ink: Rg
     Some(Rgb::from_u8(r, g, b))
 }
 
-/// Every cluster below the floor in `theme`, as `(text, ratio)` -- in the
-/// presentation the reader would show: a message whose paper cannot reach
-/// the high-contrast floor opens in Reader view (FR-013b).
 fn below(name: &str, theme: Theme) -> Vec<(String, f64)> {
     let Some(request) = request(name, theme) else {
         return Vec::new();
@@ -133,8 +118,6 @@ fn no_text_is_below_the_floor_in_any_theme() {
     );
 }
 
-/// A sender's own dark design is honoured, not trusted: it stays theirs,
-/// and it still meets the floor.
 #[test]
 fn a_senders_illegible_dark_design_is_repaired() {
     let doc = render(&request("html-illegible-sender-dark", DARK).expect("a body"));

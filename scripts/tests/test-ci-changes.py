@@ -27,8 +27,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -66,7 +64,6 @@ def case(
 
 
 def main() -> int:
-    # Anything Rust-shaped builds.
     case("a crate source file", "pull_request", ["crates/postio-core/src/lib.rs"], "yes", "no", "yes")
     case("a crate's Cargo.toml", "pull_request", ["crates/postio-body/Cargo.toml"], "yes", "no", "yes")
     case("the root manifest", "pull_request", ["Cargo.toml"], "yes", "no", "yes")
@@ -83,10 +80,8 @@ def main() -> int:
                    "install-shims.sh", "install-nextest.sh", "jobserver.sh",
                    "ci-drop-workspace-artifacts.sh", "lib/drop-workspace-artifacts.sh"):
         case(f"a build-affecting script: {script}", "pull_request", [f"scripts/{script}"], "yes", "no", "yes")
-    # A test fixture is Rust-shaped too: the corpus is read by tests.
     case("a corpus fixture", "pull_request", ["crates/postio-model/tests/corpus/x.eml"], "yes", "no", "yes")
 
-    # Nothing Rust-shaped does not.
     case("a tooling script", "pull_request", ["scripts/issue-land.sh"], "no", "no", "no")
     case("a tooling self-test", "pull_request", ["scripts/tests/test-issue-land-merge.py"], "no", "no", "no")
     case("a repository check", "pull_request", ["scripts/checks/check-no-personal-data.py"], "no", "no", "no")
@@ -100,15 +95,10 @@ def main() -> int:
     case("the book", "pull_request", ["docs/book/src/index.md"], "no", "yes", "no")
     case("a design canvas", "pull_request", ["Design/Mail Client.dc.html"], "no", "no", "no")
     case("another workflow", "pull_request", [".github/workflows/hooks.yml"], "no", "no", "no")
-    # Like the nightly it calls: a workflow of its own, with nothing for
-    # ci.yml's compile jobs to prove about the workspace.
     case("the full-suite-on-request workflow", "pull_request",
          [".github/workflows/full-suite.yml"], "no", "no", "no")
     case("mise pins", "pull_request", ["mise.toml"], "no", "no", "no")
 
-    # The macOS half. Swift cannot reach a Rust build, and a Rust change
-    # regenerates the bindings the Swift compiles against -- so the two keys
-    # are not the same question and neither implies the other's `no`.
     case("Swift source", "pull_request", ["macos/Sources/Postio/Shell.swift"], "no", "no", "yes")
     case("a Swift test", "pull_request", ["macos/Tests/PostioKitTests/ReaderTests.swift"],
          "no", "no", "yes")
@@ -119,22 +109,11 @@ def main() -> int:
     for script in ("macos-build.sh", "macos-test.sh", "macos-bundle.sh", "ffi-bindgen.sh"):
         case(f"a macOS build script: {script}", "pull_request", [f"scripts/{script}"],
              "no", "no", "yes")
-    # test-ffi-bindgen.py runs in the macOS job, which builds postio-ffi
-    # anyway, rather than among the tooling self-tests, where that build was
-    # 15 of the job's 16 minutes. So a change to it has to start the macOS job.
     case("the bindings generator's self-test", "pull_request",
          ["scripts/tests/test-ffi-bindgen.py"], "no", "no", "yes")
-    # The boundary crate is where the two halves meet: its Rust is tested on a
-    # cheap Linux runner (ADR 0019 Q7) and its bindings are what the Swift
-    # links against, so it obliges both.
     case("the boundary crate", "pull_request", ["crates/postio-ffi/src/session.rs"],
          "yes", "no", "yes")
 
-    # ...and the crates on the far side of it. The desktop app, the widgets it
-    # draws with and `postio-bench` are outside `postio-ffi`'s dependency
-    # closure, so no binding the Swift compiles against can change because
-    # one of them did. The GTK crates are also the most-changed in the
-    # repository, which is where the saving is.
     case("the GTK frontend", "pull_request", ["crates/postio-gtk/src/window.rs"],
          "yes", "no", "no")
     case("the shared widgets", "pull_request", ["crates/postio-widgets/src/lib.rs"],
@@ -146,32 +125,25 @@ def main() -> int:
     case("two outside crates", "pull_request",
          ["crates/postio-gtk/src/window.rs", "crates/postio-widgets/src/lib.rs"],
          "yes", "no", "no")
-    # One file inside the closure is enough to oblige the macOS runner, however
-    # much of the diff cannot reach it.
     case("an outside crate beside an inside one", "pull_request",
          ["crates/postio-gtk/src/window.rs", "crates/postio-core/src/lib.rs"],
          "yes", "no", "yes")
     case("an outside crate beside Swift", "pull_request",
          ["crates/postio-gtk/src/window.rs", "macos/Sources/Postio/Shell.swift"],
          "yes", "no", "yes")
-    # The root manifest and the toolchain reach everything, so they still do.
     case("the root manifest still obliges macOS", "pull_request", ["Cargo.toml"],
          "yes", "no", "yes")
     case("the toolchain still obliges macOS", "pull_request", ["rust-toolchain.toml"],
          "yes", "no", "yes")
-    # A crate this script has never heard of is inside the closure until
-    # proven otherwise -- the direction that costs minutes, not merges.
     case("an unknown crate fails safe", "pull_request", ["crates/postio-newthing/src/lib.rs"],
          "yes", "no", "yes")
 
-    # Mixed: the Rust file decides.
     case("docs plus a crate", "pull_request",
          ["docs/PRODUCT.md", "crates/postio-core/src/lib.rs"], "yes", "yes", "yes")
     case("Swift plus a crate", "pull_request",
          ["macos/Sources/Postio/Shell.swift", "crates/postio-core/src/lib.rs"],
          "yes", "no", "yes")
 
-    # The safe direction.
     case("an empty list", "pull_request", [], "yes", "yes", "yes")
     case("a path nobody classified", "pull_request", ["something/new.txt"], "yes", "yes", "yes")
     case("a push with a range is classified like a PR", "push", ["docs/PRODUCT.md"], "no", "yes", "no")

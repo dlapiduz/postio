@@ -1,17 +1,7 @@
-//! The results' filter popovers and their month chart (spec 010 step 4,
-//! design §3.3 and §3.6, screens 08 and 09).
-//!
-//! The controller holds which popover is open, the query it will put back,
-//! its rows and which are checked; every check, preset and word goes down
-//! and the next `Intent::Popover` redraws it whole. What is GTK's is the
-//! toolkit's own, as on the Mac (`FilterPopoverModel.swift`): which row the
-//! arrows rest on (the highlight Space toggles), and what the fields hold
-//! while they are typed in. A close the controller made is never said
-//! back; one the toolkit made -- Escape, a click away -- is, once.
-//!
-//! The month chart is the timeline's and the Date popover's: a bar a month,
-//! oldest first, as tall as the controller says, and a drag across them
-//! said once, on release, as the bars it covered.
+//! The results' filter popovers and their month chart. The controller holds which popover is open
+//! and its rows; every check, preset and word goes down and the next `Intent::Popover` redraws it
+//! whole. A close the controller made is never said back; one the toolkit made (Escape, a click
+//! away) is, once.
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
@@ -23,23 +13,18 @@ use postio_ui::search_view::FilterKind;
 use postio_widgets::widgets::keyhint;
 use postio_widgets::widgets::space::{S1, S2, S3};
 
-/// The tallest bar, in the timeline and the Date popover.
 const BAR_HEIGHT: i32 = 36;
-/// A bar's width.
 const BAR_WIDTH: i32 = 18;
 
 type MonthsHandler = Rc<dyn Fn(u32, u32)>;
 
-/// A bar a month, and a drag across them.
 pub struct MonthChart {
     root: gtk::Box,
     report: RefCell<Option<MonthsHandler>>,
-    /// Where a drag began, in the chart's coordinates.
     from: Cell<Option<f64>>,
 }
 
 impl MonthChart {
-    /// An empty chart.
     pub fn new() -> Rc<Self> {
         let root = gtk::Box::new(gtk::Orientation::Horizontal, S1);
         root.add_css_class("focus-month-chart");
@@ -75,17 +60,14 @@ impl MonthChart {
         chart
     }
 
-    /// What lays it out.
     pub fn widget(&self) -> &gtk::Box {
         &self.root
     }
 
-    /// A drag ended over bars `first..=last`, 0 the oldest.
     pub fn connect_months(&self, report: impl Fn(u32, u32) + 'static) {
         self.report.replace(Some(Rc::new(report)));
     }
 
-    /// Draw `months`, oldest first.
     pub fn show(&self, months: &[MonthBar]) {
         while let Some(child) = self.root.first_child() {
             self.root.remove(&child);
@@ -101,14 +83,13 @@ impl MonthChart {
             }
             let room = gtk::Box::new(gtk::Orientation::Vertical, 0);
             room.set_size_request(BAR_WIDTH, BAR_HEIGHT);
-            // The bar fills its room and no more: unset, its expansion
-            // would be handed up to the page and take its height.
+            // The bar fills its room and no more: unset, its expansion would be handed up to the
+            // page and take its height.
             room.set_vexpand(false);
             column.set_vexpand(false);
             let bar = gtk::Box::new(gtk::Orientation::Vertical, 0);
             bar.add_css_class("focus-month-bar");
             let height = (month.height.clamp(0.0, 1.0) * f64::from(BAR_HEIGHT)).round() as i32;
-            // A month with matches is never drawn as nothing.
             let height = if month.conversations > 0 {
                 height.max(2)
             } else {
@@ -131,7 +112,6 @@ impl MonthChart {
         }
     }
 
-    /// The months drawn, and whether each is selected: what a test reads.
     pub fn bars(&self) -> Vec<(String, bool)> {
         let mut bars = Vec::new();
         let mut child = self.root.first_child();
@@ -147,12 +127,10 @@ impl MonthChart {
         bars
     }
 
-    /// A drag across bars `first..=last`, as a person's would end.
     pub fn drag(&self, first: u32, last: u32) {
         self.say(first, last);
     }
 
-    /// The bar under `x`, the nearest at either end.
     fn bar_at(&self, x: f64) -> Option<u32> {
         let mut index = 0u32;
         let mut last = None;
@@ -177,7 +155,6 @@ impl MonthChart {
     }
 }
 
-/// The filter popover that is up.
 pub struct FilterPopover {
     popover: gtk::Popover,
     field: gtk::Entry,
@@ -188,18 +165,13 @@ pub struct FilterPopover {
     rows: gtk::ListBox,
     hints: gtk::Box,
     view: RefCell<Option<PopoverView>>,
-    /// The row the arrows rest on, an index into the view's rows.
     highlight: Cell<Option<usize>>,
-    /// Set while the controller closes it or puts its words in the field,
-    /// so neither is said back.
     quiet: Cell<bool>,
     say: Rc<dyn Fn(Input)>,
     me: RefCell<Weak<FilterPopover>>,
 }
 
 impl FilterPopover {
-    /// A popover that tells the controller what happens in it through
-    /// `say`.
     pub fn new(say: impl Fn(Input) + 'static) -> Rc<Self> {
         let field = gtk::Entry::new();
         field.add_css_class("focus-popover-field");
@@ -237,9 +209,8 @@ impl FilterPopover {
         popover.set_child(Some(&content));
         popover.set_position(gtk::PositionType::Bottom);
         popover.set_has_arrow(false);
-        // From its button's start, never centred on it: the buttons sit at
-        // the window's edge, and a compositor that does not slide a popup
-        // back inside would draw it cut off.
+        // From its button's start, never centred on it: a compositor that does not slide a popup
+        // back inside would draw it cut off at the window's edge.
         popover.set_halign(gtk::Align::Start);
         popover.add_css_class("focus-filter-popover");
 
@@ -343,8 +314,6 @@ impl FilterPopover {
         });
     }
 
-    /// Draw `view` hung from `button`, or close with `None`: the
-    /// controller's `Intent::Popover`.
     pub fn show(&self, view: Option<&PopoverView>, button: Option<&gtk::Widget>) {
         let Some(view) = view else {
             if self.view.take().is_some() {
@@ -460,8 +429,6 @@ impl FilterPopover {
         while let Some(child) = self.rows.first_child() {
             self.rows.remove(&child);
         }
-        // The list's scroller with it: the Date popover has no rows, and an
-        // empty scroller still holds its room.
         if let Some(scroller) = self.rows.ancestor(gtk::ScrolledWindow::static_type()) {
             scroller.set_visible(!rows.is_empty());
         }
@@ -477,9 +444,7 @@ impl FilterPopover {
         }
     }
 
-    /// One key in the popover: the arrows move the highlight, Space
-    /// toggles it, Return keeps what it previews. Escape is the toolkit's,
-    /// which closes it.
+    /// Escape is the toolkit's, which closes it.
     fn press(&self, key: gtk::gdk::Key, state: gtk::gdk::ModifierType) -> bool {
         let count = self
             .view
@@ -511,7 +476,6 @@ impl FilterPopover {
         }
     }
 
-    /// Row `index` toggled: Space or a click, excluded with Alt held.
     fn toggle(&self, index: usize, exclude: bool) {
         let token = self
             .view
@@ -524,8 +488,6 @@ impl FilterPopover {
         }
     }
 
-    /// Its button is about to be drawn again: take the popover off it, so
-    /// it does not go with it.
     pub fn unhang(&self) {
         if self.popover.parent().is_some() {
             self.quiet.set(true);
@@ -535,8 +497,6 @@ impl FilterPopover {
         }
     }
 
-    /// Its button was drawn again: hang it from the new one, up again while
-    /// the controller still has it open.
     pub fn rehang(&self, button: &gtk::Widget) {
         if self.view.borrow().is_none() {
             return;
@@ -558,24 +518,20 @@ impl FilterPopover {
         });
     }
 
-    /// Which button's kind it hangs from, while it is open.
     pub fn kind(&self) -> Option<FilterKind> {
         self.view.borrow().as_ref().map(|view| view.kind)
     }
 
-    /// Return: keep what it previewed. The controller closes it.
     pub fn apply(&self) {
         if self.view.borrow().is_some() {
             (self.say)(Input::PopoverDone { apply: true });
         }
     }
 
-    /// Whether a popover is up.
     pub fn is_open(&self) -> bool {
         self.view.borrow().is_some() && self.popover.is_visible()
     }
 
-    /// The rows' titles, and whether each is checked: what a test reads.
     pub fn rows(&self) -> Vec<(String, bool)> {
         self.view
             .borrow()
@@ -589,33 +545,27 @@ impl FilterPopover {
             .unwrap_or_default()
     }
 
-    /// The row the arrows rest on.
     pub fn highlighted(&self) -> Option<usize> {
         self.highlight.get()
     }
 
-    /// Press `key` in the popover, as its key controller hears it.
     pub fn key(&self, key: gtk::gdk::Key) -> bool {
         self.press(key, gtk::gdk::ModifierType::empty())
     }
 
-    /// Type `text` into its field.
     pub fn type_in(&self, text: &str) {
         self.field.set_text(text);
     }
 
-    /// The Date popover's chart.
     pub fn chart(&self) -> &MonthChart {
         &self.chart
     }
 
-    /// Close it as a click away does.
     pub fn dismiss(&self) {
         self.popover.popdown();
     }
 }
 
-/// One row: its check, who or what it is, how many, and its share bar.
 fn row_widget(row: &PopoverRow) -> gtk::Box {
     let line = gtk::Box::new(gtk::Orientation::Horizontal, S2);
     line.add_css_class("focus-popover-row");

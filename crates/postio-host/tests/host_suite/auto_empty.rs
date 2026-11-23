@@ -1,7 +1,3 @@
-//! A host that starts its idle passes empties Junk and Trash as configured
-//! (#1932): old mail is purged through the queue, Flagged and young mail is
-//! left, and with the setting off (the default) nothing is.
-
 use std::time::{Duration, Instant};
 
 use chrono::{Duration as Days, Utc};

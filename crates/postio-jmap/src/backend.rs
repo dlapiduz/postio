@@ -1,13 +1,6 @@
-//! The [`MailBackend`] implementation.
-//!
-//! One rule shapes everything here: the engine addresses messages by
-//! [`RemoteId`], and for JMAP that id is the server's `Email` id verbatim.
-//! The `uid` this adapter reports is a *synthetic enumeration position* —
-//! where the email sat in the `receivedAt`-ascending order of its mailbox
-//! at fetch time — because the engine's pull machinery counts a uid range
-//! (ADR 0018 Q3 keeps that IMAP-shaped until the native delta seam). A
-//! position is not an identity: rows are matched by `remote_id`, so a
-//! position shifting between passes costs a re-fetch, never a mix-up.
+//! The [`MailBackend`] implementation. The engine addresses messages by
+//! [`RemoteId`], the server's `Email` id verbatim; the reported `uid` is a synthetic
+//! position, so rows match by `remote_id` and a shifting position costs a re-fetch.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -35,7 +28,6 @@ use crate::convert;
 use crate::error::backend_error;
 use crate::session::JmapConnection;
 
-/// A [`MailBackend`] speaking RFC 8620/8621.
 pub struct JmapBackend {
     connection: JmapConnection,
 }
@@ -49,14 +41,12 @@ impl fmt::Debug for JmapBackend {
 }
 
 impl JmapBackend {
-    /// A backend against `session_url`, authenticating with `token`.
     pub fn new(session_url: Url, token: &str) -> Self {
         Self {
             connection: JmapConnection::new(session_url, token),
         }
     }
 
-    /// A backend whose bearer comes from the account's token source.
     pub fn with_token_source(
         session_url: Url,
         key: postio_account::secret::AccountKey,
@@ -67,7 +57,6 @@ impl JmapBackend {
         }
     }
 
-    /// The mailbox object whose assembled path is `path`.
     async fn mailbox(&self, path: &str) -> BackendResult<JmapMailbox> {
         let wanted = path.to_owned();
         let (mailbox, _) = self
@@ -95,7 +84,6 @@ impl JmapBackend {
         Ok(mailbox)
     }
 
-    /// `path`'s server id, or [`BackendError::NoSuchMailbox`].
     async fn mailbox_id(&self, path: &str) -> BackendResult<String> {
         self.mailbox(path)
             .await?
@@ -105,7 +93,6 @@ impl JmapBackend {
             })
     }
 
-    /// Every mailbox, with its id, for path assembly.
     async fn mailboxes(&self) -> BackendResult<Vec<JmapMailbox>> {
         self.connection
             .run(&CancelToken::new(), |client| {
@@ -117,7 +104,6 @@ impl JmapBackend {
             .await
     }
 
-    /// The flags each of `ids` carries now, per `Email/get`.
     async fn flags_of(&self, ids: Vec<String>) -> BackendResult<Vec<FlagUpdate>> {
         self.connection
             .run(&CancelToken::new(), move |client| {
@@ -140,10 +126,7 @@ impl JmapBackend {
     }
 }
 
-/// The capability names this backend reports, over whatever URNs the
-/// session advertised: enough that the engine gates correctly. None of
-/// CONDSTORE, UIDPLUS or IDLE is claimed — see the crate docs for what
-/// each omission means.
+/// None of CONDSTORE, UIDPLUS or IDLE is claimed.
 fn capabilities(session_urns: impl IntoIterator<Item = String>) -> Capabilities {
     Capabilities::from_names(session_urns)
 }
@@ -191,12 +174,8 @@ impl MailBackend for JmapBackend {
     }
 
     async fn create_mailbox(&self, path: &str) -> BackendResult<()> {
-        // Not yet. JMAP can create a folder, but this adapter has no reason
-        // to until it is a backend someone runs (v1 is IMAP and SMTP), and a
-        // stub that silently succeeded would tell discovery a folder exists
-        // when none does. Reported as a refusal so the caller records it and
-        // stops asking, which is exactly the behaviour a server that will
-        // never allow it should get.
+        // Unsupported: a stub that succeeded would tell discovery a folder exists.
+        // Reported as a refusal so the caller records it and stops asking.
         let _ = path;
         Err(BackendError::Rejected {
             command: "CREATE".to_owned(),
@@ -212,15 +191,12 @@ impl MailBackend for JmapBackend {
         let mailbox = self.mailbox(path).await?;
         Ok(MailboxStatus {
             path: path.to_owned(),
-            // One generation, for ever: JMAP ids never renumber.
             generation: Generation::new(convert::GENERATION),
-            // The enumeration ceiling: positions run 1..=total.
             uid_next: Uid::new(mailbox.total_emails + 1),
             exists: mailbox.total_emails,
             unseen: Some(mailbox.unread_emails),
             highest_mod_seq: None,
             permanent_flags: FlagSet::new(),
-            // RFC 8621 keywords are free-form.
             can_create_keywords: true,
             read_only: false,
         })
@@ -234,7 +210,6 @@ impl MailBackend for JmapBackend {
         cancel: &CancelToken,
     ) -> BackendResult<Vec<FetchedMessage>> {
         if changed_since.is_some() {
-            // Unreachable through the engine: CONDSTORE is never claimed.
             return Err(BackendError::Unsupported {
                 capability: postio_account::backend::Capability::CondStore,
             });
@@ -292,15 +267,12 @@ impl MailBackend for JmapBackend {
         cancel: &CancelToken,
     ) -> BackendResult<FetchedBody> {
         if !matches!(part, BodyPart::Whole) {
-            // Fetched headers carry no BODYSTRUCTURE, so nothing above the
-            // seam ever learns a section to ask for; the backfill's
-            // no-sections path fetches the whole message instead.
+            // Fetched headers carry no BODYSTRUCTURE, so the backfill takes its no-sections path.
             return Err(BackendError::Unsupported {
                 capability: postio_account::backend::Capability::Binary,
             });
         }
 
-        // The raw blob id, then the blob itself.
         let email_id = id.as_str().to_owned();
         let (blob_id, session) = {
             let wanted = email_id.clone();
@@ -385,10 +357,8 @@ impl MailBackend for JmapBackend {
             })
             .await?;
 
-        // "Reports what they are now": read the keywords back, so the
-        // caller applies the server's truth rather than this adapter's
-        // guess. Ids the set did not update are dropped — the seam reads an
-        // empty update as "not in this mailbox any more".
+        // Read the keywords back so the caller applies the server's truth; ids
+        // the set did not update are dropped (an empty update means "not in this mailbox").
         self.flags_of(updated).await
     }
 
@@ -418,9 +388,8 @@ impl MailBackend for JmapBackend {
         let targets: Vec<String> = match ids {
             Some(ids) => ids.iter().map(|id| id.as_str().to_owned()).collect(),
             None => {
-                // The untargeted form destroys what is marked, exactly like
-                // `EXPUNGE`: everything in this mailbox carrying the
-                // `$deleted` marker `store_flags` left.
+                // The untargeted form destroys everything carrying the `$deleted` marker, like
+                // `EXPUNGE`.
                 let mailbox_id = self.mailbox_id(mailbox).await?;
                 self.connection
                     .run(&CancelToken::new(), move |client| {
@@ -485,8 +454,6 @@ impl MailBackend for JmapBackend {
             .collect();
         let received_at = message.internal_date.map(|date| date.to_rfc3339());
 
-        // Two calls, two streams: each request stands alone, per the
-        // session module's connection story.
         let blob_id = self
             .connection
             .run(&CancelToken::new(), move |client| {
@@ -520,7 +487,6 @@ impl MailBackend for JmapBackend {
             .await?;
 
         Ok(created.map(|id| UidMapping {
-            // No uid space to land in: the identity is the whole answer.
             source: Uid::new(0),
             destination: Uid::new(0),
             uid_validity: UidValidity::new(convert::GENERATION),
@@ -534,10 +500,7 @@ impl MailBackend for JmapBackend {
         timeout: Duration,
         cancel: &CancelToken,
     ) -> BackendResult<Vec<MailboxEvent>> {
-        // No IDLE capability is claimed, so the watcher polls `status`
-        // instead of calling this; honouring the contract anyway costs a
-        // sleep. The Event Source push channel is the native seam's job
-        // (ADR 0018 Q3).
+        // No IDLE is claimed, so the watcher polls `status` instead of calling this.
         let deadline = tokio::time::Instant::now() + timeout;
         while tokio::time::Instant::now() < deadline {
             if cancel.is_cancelled() {
@@ -585,8 +548,6 @@ impl JmapBackend {
             })
             .await?;
 
-        // A JMAP move keeps the id: the mapping's destination identity is
-        // the same message.
         Ok(moved
             .into_iter()
             .map(|id| UidMapping {
@@ -599,7 +560,6 @@ impl JmapBackend {
     }
 }
 
-/// The flag change as an RFC 7396 patch.
 fn patch_for(change: &FlagChange) -> JmapEmailPatch {
     match change {
         FlagChange::Add(flags) => flags
@@ -625,7 +585,6 @@ fn patch_for(change: &FlagChange) -> JmapEmailPatch {
     }
 }
 
-/// RFC 6570 level-1 expansion of the session's blob templates.
 fn expand_download_url(template: &str, account_id: &str, blob_id: &str) -> BackendResult<Url> {
     template
         .replace("{accountId}", account_id)

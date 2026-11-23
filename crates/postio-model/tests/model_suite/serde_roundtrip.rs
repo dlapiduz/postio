@@ -1,5 +1,3 @@
-//! Acceptance: every domain type round-trips through serde.
-
 use chrono::{DateTime, TimeZone, Utc};
 use postio_model::*;
 
@@ -47,8 +45,6 @@ fn sample_account() -> Account {
         enabled: true,
         identities: vec![sample_identity()],
         signatures: Vec::new(),
-        // A real number rather than `None`, so the round trip exercises the
-        // field instead of proving `None` survives serialisation.
         max_message_size: Some(25_000_000),
         default_signature_id: Some(SignatureId::new(4)),
         backend: postio_model::account::Backend::Imap,
@@ -182,8 +178,6 @@ fn sample_thread() -> Thread {
 }
 
 fn sample_contact() -> Contact {
-    // Two addresses, a preferred one that is not the first, and every
-    // optional field filled: a `None` proves nothing about the `Some` arm.
     Contact {
         id: ContactId::new(21),
         name: Some("Alice".into()),
@@ -239,19 +233,13 @@ fn sample_draft() -> Draft {
             text: Some("sure".into()),
             html: Some("<p>sure</p>".into()),
         },
-        // `true` rather than the default, for this file's own reason: a
-        // field set to its default proves nothing about a round trip.
         rich: true,
         body_markdown: Some("sure".into()),
         labels: vec![LabelId::new(2), LabelId::new(4)],
-        // Populated, for the reason `rfc_message_id` is below.
         calendar_reply: Some("BEGIN:VCALENDAR\r\nMETHOD:REPLY\r\nEND:VCALENDAR\r\n".into()),
         remind_at: Some(Utc.with_ymd_and_hms(2026, 9, 29, 7, 0, 0).unwrap()),
         attachments: vec![],
         state: DraftState::Editing,
-        // Populated rather than `None`: this test exists to prove a field
-        // survives a round trip, and a `None` proves nothing about the
-        // `Some` arm — which is the one carrying ADR 0021's guarantee.
         rfc_message_id: Some(postio_model::RfcMessageId::new("reserved@example.com")),
         server: ServerIdentifiers::default(),
         created_at: at(3_200),
@@ -313,8 +301,6 @@ fn enums_and_value_objects_round_trip() {
 fn ids_serialize_transparently() {
     assert_eq!(serde_json::to_string(&AccountId::new(4)).unwrap(), "4");
     assert_eq!(serde_json::to_string(&Uid::new(7)).unwrap(), "7");
-    // An address is its own entity now that people own addresses
-    // (specs/005-contacts R1): its id is as opaque as any other.
     assert_eq!(serde_json::to_string(&AddressId::new(9)).unwrap(), "9");
     assert_eq!(
         serde_json::to_string(&RfcMessageId::new("<a@b>")).unwrap(),

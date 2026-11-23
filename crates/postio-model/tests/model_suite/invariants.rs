@@ -1,9 +1,5 @@
-//! Acceptance: documented invariants for ids and flags are enforced in code.
-
 use chrono::{TimeZone, Utc};
 use postio_model::*;
-
-// ---------------------------------------------------------------- id invariants
 
 #[test]
 fn unassigned_is_the_only_unassigned_value() {
@@ -26,7 +22,6 @@ fn a_new_entity_starts_unassigned() {
 
 #[test]
 fn ids_of_different_entities_are_distinct_types() {
-    // Compile-time property: this is a type-level assertion, not a runtime one.
     fn takes_message_id(_: MessageId) {}
     takes_message_id(MessageId::new(1));
     assert_eq!(AccountId::from(3i64).get(), 3);
@@ -38,12 +33,9 @@ fn ids_of_different_entities_are_distinct_types() {
 fn rfc_message_id_is_normalized_but_keeps_angle_brackets() {
     let id = RfcMessageId::new("  <A@Example.com>  ");
     assert_eq!(id.as_str(), "<A@Example.com>");
-    // Comparison for threading is case-insensitive on the domain-ish whole value.
     assert_eq!(id, RfcMessageId::new("<a@example.COM>"));
     assert_eq!(RfcMessageId::new("a@b").as_str(), "<a@b>");
 }
-
-// -------------------------------------------------------------- flag invariants
 
 #[test]
 fn flags_have_exactly_one_canonical_representation() {
@@ -112,8 +104,6 @@ fn keywords_are_case_insensitive_so_a_set_holds_one_of_them() {
     assert_eq!(flags.len(), 1);
 }
 
-// ------------------------------------------------------------ mailbox roles
-
 #[test]
 fn special_use_attributes_map_to_roles() {
     assert_eq!(
@@ -150,7 +140,6 @@ fn special_use_attributes_map_to_roles() {
 
 #[test]
 fn icloud_folder_names_are_recognised_by_name() {
-    // iCloud does not advertise SPECIAL-USE for these; the names are non-standard.
     assert_eq!(
         MailboxRole::guess_from_name("Sent Messages"),
         MailboxRole::Sent
@@ -171,7 +160,6 @@ fn icloud_folder_names_are_recognised_by_name() {
         MailboxRole::guess_from_name("Projects/Postio"),
         MailboxRole::Regular
     );
-    // Common alternatives from other providers.
     assert_eq!(
         MailboxRole::guess_from_name("Sent Items"),
         MailboxRole::Sent
@@ -207,8 +195,6 @@ fn a_role_knows_whether_it_is_special() {
     assert_eq!(MailboxRole::default(), MailboxRole::Regular);
 }
 
-// ------------------------------------------------------------------- addresses
-
 #[test]
 fn addresses_display_as_rfc5322_and_compare_case_insensitively() {
     let a = EmailAddress::new(Some("Alice"), "Alice@Example.com");
@@ -222,8 +208,6 @@ fn addresses_display_as_rfc5322_and_compare_case_insensitively() {
     assert_eq!(a.display(), "Alice");
     assert_eq!(EmailAddress::new(None::<String>, "a@b").display(), "a@b");
 }
-
-// --------------------------------------------------------------------- headers
 
 #[test]
 fn headers_preserve_order_and_duplicates_but_look_up_case_insensitively() {
@@ -240,8 +224,6 @@ fn headers_preserve_order_and_duplicates_but_look_up_case_insensitively() {
     assert_eq!(headers.iter().count(), 3);
 }
 
-// -------------------------------------------------------- message + threading
-
 #[test]
 fn message_exposes_what_jwz_threading_needs() {
     let mut message = Message::new(
@@ -253,7 +235,6 @@ fn message_exposes_what_jwz_threading_needs() {
     message.in_reply_to = Some(RfcMessageId::new("<b@x>"));
     message.references = vec![RfcMessageId::new("<a@x>"), RfcMessageId::new("<b@x>")];
 
-    // References, with In-Reply-To appended when it is not already the last link.
     let chain: Vec<_> = message.reference_chain().cloned().collect();
     assert_eq!(
         chain,
@@ -343,7 +324,6 @@ fn account_finds_its_default_identity() {
         signature: None,
         is_default: false,
     });
-    // With no identity marked default, the first one wins.
     assert_eq!(account.default_identity().unwrap().display_name, "Work");
 
     account.identities.push(Identity {
@@ -394,8 +374,6 @@ fn an_address_tracks_how_often_it_was_seen_and_names_its_person() {
         address.last_seen_at,
         Some(Utc.timestamp_opt(20, 0).unwrap())
     );
-    // The display name the mail carried is the person's name until the user
-    // gives one.
     assert_eq!(Contact::new(address).display_name(), "Alice");
 }
 
@@ -420,28 +398,15 @@ fn message_body_knows_when_it_is_empty() {
     assert!(!body.is_empty());
 }
 
-// ── Explicit role overrides ──────────────────────────────────────────────
-//
-// The two tiers above cover the providers Postio targets. They cannot cover a
-// self-hosted server that advertises no SPECIAL-USE and names its folders in
-// a language `match_name` has never heard of — and on that server `a`, `d`
-// and the rest refuse permanently, with no way for the user to fix it (#164).
-// So there is a third tier above both, written by hand.
-
 #[test]
 fn an_override_outranks_the_server_attribute_and_the_name() {
     let overrides = RoleOverrides::from_pairs([(MailboxRole::Archive, "Vecchia Posta")]);
 
-    // Nothing the server says about this folder — no attribute, no
-    // recognisable name — and it still resolves, which is the whole point.
     assert_eq!(
         overrides.resolve(Vec::<String>::new(), "Vecchia Posta"),
         MailboxRole::Archive
     );
 
-    // Above SPECIAL-USE too, not merely above the name guess. A server that
-    // marks a folder `\Junk` is usually right, but "usually" is what an
-    // override is for: the user has looked and disagreed.
     assert_eq!(
         overrides.resolve(["\\Junk"], "Vecchia Posta"),
         MailboxRole::Archive
@@ -452,14 +417,6 @@ fn an_override_outranks_the_server_attribute_and_the_name() {
 fn without_a_matching_override_nothing_changes() {
     let overrides = RoleOverrides::from_pairs([(MailboxRole::Archive, "Vecchia Posta")]);
 
-    // Every existing case still resolves exactly as it did, *for roles nobody
-    // has pinned*. An override is a third tier, not a replacement for the two
-    // that already work.
-    //
-    // The one exception is the pinned role itself, which is taken from
-    // whatever held it before — see
-    // `a_pinned_role_is_taken_from_whatever_held_it_before`. That is not a
-    // caveat to this rule, it is the rule that makes `by_role` answerable.
     assert_eq!(
         overrides.resolve(["\\Sent"], "Posta Inviata"),
         MailboxRole::Sent
@@ -476,9 +433,6 @@ fn without_a_matching_override_nothing_changes() {
 
 #[test]
 fn an_empty_override_set_is_exactly_todays_behaviour() {
-    // The default has to be free and invisible: every account that never
-    // writes `[mailboxes]` goes through this, so if it differed from
-    // `resolve` at all it would be a silent change for everybody.
     let overrides = RoleOverrides::default();
     for (attributes, name) in [
         (vec!["\\Archive".to_owned()], "Sent Messages"),
@@ -496,9 +450,6 @@ fn an_empty_override_set_is_exactly_todays_behaviour() {
 
 #[test]
 fn an_override_matches_the_path_a_server_reports_not_the_leaf() {
-    // Config names the folder the way the server does, delimiters and all,
-    // because that is the only spelling that is unambiguous: two folders can
-    // both be called "Old" under different parents.
     let overrides = RoleOverrides::from_pairs([(MailboxRole::Archive, "Lists/Old")]);
     assert_eq!(
         overrides.resolve(Vec::<String>::new(), "Lists/Old"),
@@ -513,10 +464,6 @@ fn an_override_matches_the_path_a_server_reports_not_the_leaf() {
 
 #[test]
 fn two_folders_cannot_both_be_the_archive() {
-    // Roles are looked up by role -- `by_role(account, Archive)` -- so two
-    // folders wearing one role is a state nothing downstream can act on.
-    // Config is a map keyed by role, so the shape already forbids it; this
-    // says so, because the constructor takes pairs and could have allowed it.
     let overrides = RoleOverrides::from_pairs([
         (MailboxRole::Archive, "First"),
         (MailboxRole::Archive, "Second"),
@@ -537,11 +484,6 @@ fn two_folders_cannot_both_be_the_archive() {
 
 #[test]
 fn a_pinned_role_is_taken_from_whatever_held_it_before() {
-    // The server has a folder called Archive, marked `\Archive`, and the user
-    // has pointed `archive` somewhere else. Both cannot be the archive:
-    // `by_role(account, Archive)` returns one row, so leaving two would make
-    // archiving go to an arbitrary one of them — and which one could change
-    // between runs.
     let overrides = RoleOverrides::from_pairs([(MailboxRole::Archive, "Vecchia Posta")]);
 
     assert_eq!(
@@ -554,7 +496,6 @@ fn a_pinned_role_is_taken_from_whatever_held_it_before() {
         "the folder that used to be the archive has to give the role up"
     );
 
-    // Only the pinned role is taken. Everything else resolves as before.
     assert_eq!(
         overrides.resolve(["\\Sent"], "Sent Messages"),
         MailboxRole::Sent

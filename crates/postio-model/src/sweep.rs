@@ -1,88 +1,46 @@
-//! When to stop trusting a server's change feed and read every flag.
-//!
-//! # Why this exists
-//!
-//! `CHANGEDSINCE` is how an incremental resync learns that a flag moved. It
-//! is only as good as the server's bookkeeping, and some servers are known to
-//! be bad at it: iCloud, Yahoo and Exchange under-report CONDSTORE changes,
-//! and iCloud never pushes a flag change to an `IDLE` session. A flag set on
-//! another device is then missed, and since the stored `HIGHESTMODSEQ`
-//! advances past it anyway, missed for good.
-//!
-//! The cure is to stop asking *what changed* and ask *what is*: a flags-only
-//! listing of the whole folder (`UID FETCH 1:* (UID FLAGS)`), compared with
-//! the store. That costs a few dozen bytes per message, so how often to pay it
-//! is a trade, and [`SweepPolicy::decide`] is where the trade is made. It is a
-//! pure function of the folder's size, the passes since the last sweep and
-//! how far the server's feed is trusted, so it is cheap to test and the
-//! thresholds are data in [`SweepPolicy`], not constants at the call site.
-//!
-//! The decision is deliberately separate from [`SyncState::plan`], which
-//! answers a different question (what the *mailbox* needs) from state the
-//! server just reported. This one is about the server itself.
-//!
-//! [`SyncState::plan`]: crate::SyncState::plan
+//! A server's `CHANGEDSINCE` feed is only as good as its bookkeeping: iCloud, Yahoo and Exchange
+//! under-report changes and iCloud never pushes flag changes to `IDLE`, so a missed flag is missed
+//! for good once `HIGHESTMODSEQ` advances. The cure is a flags-only listing of the whole folder
+//! compared with the store; `SweepPolicy::decide` trades its cost, with thresholds as data.
+//! Separate from `SyncState::plan`, which is about the mailbox.
 
 use serde::{Deserialize, Serialize};
 
-/// How far a server's `CHANGEDSINCE` answer can be believed.
-///
-/// A property of the provider, so it lives in the provider preset table
-/// (`condstore_reliable`), and a backend reports it with
+/// A property of the provider (preset `condstore_reliable`), reported by
 /// `MailBackend::change_feed`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ChangeFeed {
-    /// The feed is complete, as RFC 7162 requires. The default: a server is
-    /// believed until it is known not to deserve it.
+    /// RFC 7162 requires it complete; a server is believed until known otherwise.
     #[default]
     Reliable,
-    /// The feed is known to miss flag changes.
     Unreliable,
 }
 
-/// What a resync pass does about flags, besides asking for the change feed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FlagPass {
-    /// Believe the change feed.
     Trust,
-    /// Read every flag in the folder and reconcile the store with it.
     Sweep,
 }
 
-/// The thresholds of [`SweepPolicy::decide`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SweepPolicy {
-    /// A folder holding at most this many messages is swept on every pass:
-    /// at this size the listing is tens of kilobytes, cheaper than being
-    /// wrong.
+    /// At this size the listing is tens of kilobytes, cheaper than being wrong.
     pub every_pass_up_to: u32,
-    /// A larger folder is swept once in this many passes. The passes in
-    /// between still use the change feed, which catches most changes at no
-    /// extra cost. A value of 0 or 1 sweeps every pass.
+    /// Passes between sweeps still use the change feed. 0 or 1 sweeps every pass.
     pub larger_every: u32,
 }
 
 impl SweepPolicy {
-    /// What ships: the figures Aerion settled on, which are what a mailbox of
-    /// ordinary size makes cheap (2000 messages is one short response) and a
-    /// large archive makes worth rationing (a sweep of 60,000 is not).
+    /// 2000 messages is one short response; a sweep of 60,000 is worth rationing.
     pub const DEFAULT: Self = Self {
         every_pass_up_to: 2_000,
         larger_every: 10,
     };
 
-    /// Whether this pass should sweep.
-    ///
-    /// `exists` is the folder's message count as the server just reported it.
-    /// `passes_since_sweep` is how many passes have run since the last sweep
-    /// without one: 0 right after a sweep. A server whose feed is
-    /// [`Reliable`](ChangeFeed::Reliable) is never swept, because the sweep
-    /// would be paid for on every folder of every account to guard against a
-    /// fault that server does not have.
-    ///
-    /// An unreliable server's *large* folder sweeps on the pass that makes
-    /// `larger_every` of them since the last sweep, so with 10, nine passes
-    /// trust the feed and the tenth sweeps.
+    /// `exists` is the folder's message count as just reported; `passes_since_sweep` is 0 right
+    /// after a sweep. A `Reliable` server is never swept, since the sweep would be paid on every
+    /// folder to guard against a fault it does not have. A large folder of an unreliable server
+    /// sweeps once per `larger_every` passes.
     pub fn decide(&self, exists: u32, passes_since_sweep: u32, feed: ChangeFeed) -> FlagPass {
         match feed {
             ChangeFeed::Reliable => FlagPass::Trust,

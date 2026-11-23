@@ -1,20 +1,14 @@
-//! Focus's action rows as buttons: the verbs are `postio_ui::focus_dialog`'s,
-//! and this dresses each as an [`Action`] a bar can build.
-
 use std::sync::OnceLock;
 
 use postio_ui::focus_dialog::Verb;
 use postio_widgets::widgets::Action;
 
-/// What identifies a table: its prefix, its first slug and its length.
 type Key = (&'static str, Option<&'static str>, usize);
 
-/// The tables dressed so far.
 type Dressed = std::sync::Mutex<Vec<(Key, &'static [Action])>>;
 
-/// `verbs` as actions whose CSS class is `prefix` and the verb's slug
-/// (`focus-open-reply-all`). An `Action` holds `&'static str`s, so each
-/// distinct table is dressed once, the first time it is asked for, and kept.
+/// An `Action` holds `&'static str`s, so each distinct table is dressed once, the first time it is
+/// asked for, and kept.
 pub fn actions(prefix: &'static str, verbs: &'static [Verb]) -> &'static [Action] {
     static DRESSED: OnceLock<Dressed> = OnceLock::new();
     let key = (prefix, verbs.first().map(|verb| verb.slug), verbs.len());

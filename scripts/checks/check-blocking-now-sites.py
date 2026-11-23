@@ -38,18 +38,13 @@ import json
 import sys
 from pathlib import Path
 
-# The crates whose code runs on the GTK main thread: the desktop app, and the
-# crate holding what it draws (ADR 0043; specs/007-postio-focus R1).
 ROOTS = [
     "crates/postio-widgets/src",
     "crates/postio-gtk/src",
 ]
 NEEDLE = "blocking::now("
 
-# file -> how many `blocking::now(` calls it may hold. May only shrink.
 ALLOWED = {
-    # The settings presenters, and their debt (specs/007-postio-focus T233):
-    # accounts 9 and the credential's 1.
     "crates/postio-widgets/src/present/settings/accounts.rs": 10,
     "crates/postio-widgets/src/present/settings/egress.rs": 1,
     "crates/postio-widgets/src/present/settings/privacy.rs": 1,
@@ -67,7 +62,6 @@ def count(path: Path) -> int:
 def main(argv: list[str]) -> int:
     root = Path(__file__).resolve().parents[2]
     allowed_sites = ALLOWED
-    # For the self-test: a fixture repository, and the allowances it holds.
     args = argv[1:]
     while args:
         if args[0] == "--root" and len(args) > 1:

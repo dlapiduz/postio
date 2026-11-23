@@ -1,25 +1,14 @@
-//! Reading a delivery failure (specs/011-focus-contacts S10).
-//!
-//! A pure function over the message's `Content-Type` and the text of its
-//! delivery-status part. It names the address that failed, and only for a
-//! permanent failure (a `5.x.x` status) in a
-//! `multipart/report; report-type=delivery-status` message; a delay, a read
-//! receipt and ordinary mail say nothing. No I/O, no network.
+//! A pure function over a message's `Content-Type` and delivery-status text: it names the failed
+//! address only for a permanent (`5.x.x`) failure in a `multipart/report;
+//! report-type=delivery-status`.
 
-/// A permanent delivery failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Bounce {
-    /// The address that could not be delivered to, lowercased.
     pub address: String,
-    /// The status that said so, `5.1.1`.
     pub status: String,
 }
 
-/// The failure `body` reports, if `content_type` says it is a delivery report.
-///
-/// `sender` is who the report came from; it is not needed to decide, and is
-/// kept so a caller that has it can say so, but a report is a report whoever
-/// sends it.
+/// `sender` is unused: a report is a report whoever sends it.
 pub fn detect(content_type: Option<&str>, sender: Option<&str>, body: &str) -> Option<Bounce> {
     let _ = sender;
     let kind = content_type?.to_ascii_lowercase();
@@ -39,7 +28,6 @@ pub fn detect(content_type: Option<&str>, sender: Option<&str>, body: &str) -> O
                     status = Some(value.split_whitespace().next().unwrap_or("").to_owned());
                 }
             }
-            // `rfc822; a.moreno@example.net`
             "final-recipient" if address.is_none() => {
                 let who = value.rsplit_once(';').map_or(value, |(_, who)| who).trim();
                 if is_address(who) {

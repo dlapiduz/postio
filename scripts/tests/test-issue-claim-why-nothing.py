@@ -31,8 +31,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -104,10 +102,6 @@ def main() -> int:
         git("remote", "add", "origin", str(origin), cwd=repo)
         git("push", "-q", "origin", "main", cwd=repo)
 
-        # A branch holding work that is genuinely not on main -- the case
-        # the backstop exists for, and since #1063 the only one that still
-        # blocks. A branch whose commits already merged is deleted and the
-        # issue claimed, which `test-issue-claim-stale-branch.py` covers.
         git("checkout", "-q", "-b", "issue-42-a-perfectly-claimable", cwd=repo)
         (repo / "work.txt").write_text("unlanded\n", encoding="utf-8")
         git("add", "-A", cwd=repo)

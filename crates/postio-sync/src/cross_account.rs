@@ -1,23 +1,7 @@
-//! The cross-account move saga's server halves (#188, ADR 0005 Q9).
-//!
-//! Two per-account queues carry one move: the target account's drainer runs
-//! [`copy`] (phases 1–2: append and confirm), the source account's runs
-//! [`remove`] (phase 3: `\Deleted` + expunge). The saga row — see
-//! `postio_storage::repository::CrossAccountMoveRepository` — is what the
-//! queues share instead of a transaction, and its phase walk is what makes
-//! the only reachable failure a duplicate, never a loss:
-//!
-//! - [`copy`] is **idempotent by Message-ID**: it confirms before it
-//!   appends, with the same lookup confirmation itself uses, so a replay
-//!   after a crash finds the earlier copy instead of making a second.
-//! - An append it cannot confirm — no UIDPLUS, and the search found
-//!   nothing — parks the saga in `unconfirmed` and **fails loudly**. It
-//!   never guesses and never deletes.
-//! - [`remove`] refuses to run until the saga says `confirmed`. A remove
-//!   drained before its copy simply retries later; there is no interleaving
-//!   of the two drainers that deletes an unproven message.
-//! - A target that no longer exists — folder deleted, account removed
-//!   mid-saga — aborts the saga with the source intact (Q13).
+//! Server halves of the cross-account move saga (#188, ADR 0005 Q9): `copy` on the target's
+//! drainer, `remove` on the source's.
+//! `copy` is idempotent by Message-ID and fails loudly when it cannot confirm; `remove` waits for
+//! `confirmed`. The only failure is a duplicate, never a loss.
 
 use postio_account::backend::{AppendMessage, MailBackend};
 use postio_model::ids::CrossAccountMoveId;
@@ -29,7 +13,6 @@ use postio_storage::repository::{
 
 use crate::drain::Outcome;
 
-/// Phases 1–2, on the **target** account's drainer.
 pub(crate) async fn copy(
     backend: &dyn MailBackend,
     blobs: Option<&BlobStore>,
@@ -48,7 +31,6 @@ pub(crate) async fn copy(
     };
 
     match saga.phase {
-        // A replayed operation after the work is done: nothing to do.
         MovePhase::Confirmed | MovePhase::Done => return Outcome::Applied,
         MovePhase::Aborted => {
             return Outcome::Obsolete {
@@ -58,9 +40,7 @@ pub(crate) async fn copy(
         MovePhase::Copying | MovePhase::Unconfirmed => {}
     }
 
-    // The target must still exist to receive anything. If it is gone — the
-    // folder deleted, the account removed — the saga aborts and the source
-    // copy stays exactly where it is (Q13).
+    // A missing target aborts the saga with the source intact (Q13).
     let Some(target_path) = target_path(connection, &saga).await else {
         return abort(
             &sagas,
@@ -71,9 +51,8 @@ pub(crate) async fn copy(
         .await;
     };
 
-    // Confirm before append — both the idempotency rule and phase 2 itself.
-    // A crash after a successful APPEND replays this operation, and the
-    // search finds that copy rather than making another.
+    // Confirm before append: a replay after a crash finds the earlier copy instead of making
+    // another.
     if let Some(rfc) = saga.rfc_message_id.as_deref() {
         match backend.find_by_message_id(&target_path, rfc).await {
             Ok(Some(uid)) => {
@@ -93,9 +72,7 @@ pub(crate) async fn copy(
     }
 
     if saga.phase == MovePhase::Unconfirmed {
-        // The append already ran and nothing can prove where it landed. The
-        // ADR's answer is exact: stop and ask. Loud, settled, and the
-        // source copy untouched.
+        // The append ran and nothing can prove where it landed: stop and ask, source untouched.
         return failed(
             "the message was uploaded but its arrival could not be confirmed; \
              nothing was deleted — check the destination folder"
@@ -103,7 +80,6 @@ pub(crate) async fn copy(
         );
     }
 
-    // Phase 1: the append itself.
     let Some(bytes) = raw_bytes(blobs, &saga) else {
         return Outcome::Retry {
             reason: "the message's raw copy is not local yet".to_owned(),
@@ -130,8 +106,6 @@ pub(crate) async fn copy(
         }
     };
 
-    // Phase 2: the proof. APPENDUID is one; the Message-ID search is the
-    // fallback; neither is a guess.
     if let Some(mapping) = mapping {
         return match sagas
             .confirm(saga_id, Some(&mapping.destination_remote_id()))
@@ -159,7 +133,6 @@ pub(crate) async fn copy(
     )
 }
 
-/// Phase 3, on the **source** account's drainer.
 pub(crate) async fn remove(
     backend: &dyn MailBackend,
     connection: &Connection,
@@ -184,9 +157,7 @@ pub(crate) async fn remove(
                 reason: "the move was abandoned; nothing to remove".to_owned(),
             };
         }
-        // **The rule that cannot be traded away.** Until the copy is
-        // proven, this operation waits — however many times the drainer
-        // comes back, however the two queues interleave.
+        // Until the copy is proven this waits, however the two queues interleave.
         MovePhase::Copying | MovePhase::Unconfirmed => {
             return Outcome::Retry {
                 reason: "the destination has not confirmed its copy yet".to_owned(),
@@ -196,8 +167,7 @@ pub(crate) async fn remove(
         MovePhase::Confirmed => {}
     }
 
-    // Spelled out rather than chained: `and_then` takes a closure, and a
-    // closure cannot await.
+    // Spelled out rather than chained: a closure cannot await.
     let path = match saga.source_mailbox {
         Some(mailbox) => MailboxRepository::new(connection)
             .get(mailbox)
@@ -207,17 +177,8 @@ pub(crate) async fn remove(
             .map(|mailbox| mailbox.path),
         None => None,
     };
-    // The queue row's snapshot first, the live row second (ADR 0026, #531).
-    //
-    // `enqueue` took the snapshot before the local write that hid the source
-    // row, so it names where the message was when the user asked. The live
-    // row is the fallback for operations enqueued before the column existed
-    // — and, on the forward path, is usually the same answer.
-    //
-    // It matters most where the two differ: an inverse saga's source is the
-    // provisional copy, which is born with no identity at all (#940) and
-    // gains one only when phase 2 confirms. Re-deriving from that row is how
-    // a removal reaches no server and reports success.
+    // The queue row's snapshot first, the live row second (ADR 0026, #531): an inverse saga's
+    // source is a provisional copy with no identity until phase 2 confirms (#940).
     let remote_id = match snapshot.first().cloned() {
         Some(id) => Some(id),
         None => match saga.source_message {
@@ -231,14 +192,8 @@ pub(crate) async fn remove(
         },
     };
     let (Some(path), Some(remote_id)) = (path, remote_id) else {
-        // Nothing names a server copy: it is already gone — another client
-        // removed it, or a resync did — or it never had a coordinate at all.
-        //
-        // Settled either way, because retrying cannot produce a coordinate
-        // that does not exist, but **said out loud**: the two cases are
-        // indistinguishable from here and only one of them is healthy, so a
-        // silent `done` is how a removal that should have happened stops
-        // being noticeable. Ids only; the mail is not named.
+        // No server copy is named: settled, because retrying cannot produce a coordinate, but
+        // logged since only one cause is healthy. Ids only.
         tracing::info!(
             saga = saga_id.get(),
             source_message = ?saga.source_message.map(postio_model::MessageId::get),
@@ -308,7 +263,6 @@ fn failed(reason: String) -> Outcome {
     Outcome::Failed { reason }
 }
 
-/// The one flag phase 3 sets.
 fn deleted_flag() -> postio_model::FlagSet {
     let mut flags = postio_model::FlagSet::new();
     flags.insert(postio_model::Flag::Deleted);

@@ -1,5 +1,3 @@
-//! The one write: a draft, local, and never sent (ADR 0010 Q4).
-
 use postio_model::Operation;
 use serde_json::json;
 
@@ -43,8 +41,6 @@ fn a_new_draft_is_saved_and_nothing_is_sent() {
         result.notice()
     );
     assert_eq!(sends(&world), 0);
-    // The queue is read for real: the draft's copy for the server's Drafts
-    // folder is in it, as the composer's autosave puts one there.
     assert!(
         world
             .queued()

@@ -1,11 +1,3 @@
-//! A Mac controller, an inbox and a search engine that answers the results
-//! view's reads from a fixed set of conversations: what `results.rs` and
-//! `history.rs` drive (spec 010 step 3).
-//!
-//! The engine is the shape the host's is: a page of conversations in the
-//! order asked, every answer carrying the same totals and facets, months
-//! counted by each conversation's newest match (D4).
-
 #![allow(dead_code)]
 
 use chrono::{DateTime, Local, NaiveDate, TimeZone, Utc};
@@ -22,7 +14,6 @@ use postio_search::results::{
     FacetNames, Match, Passage, RankReason, Source,
 };
 
-/// An inbox of `len` conversations.
 pub struct List {
     pub rows: Vec<RowFacts>,
 }
@@ -57,12 +48,10 @@ impl Rows for List {
     }
 }
 
-/// Saturday 26 September 2026, mid-afternoon, as the screens are.
 pub fn today() -> DateTime<Local> {
     Local.with_ymd_and_hms(2026, 9, 26, 15, 0, 0).unwrap()
 }
 
-/// The Mac's controller, its clock stopped on the screens' day.
 pub fn mac() -> FocusController {
     let mut focus = FocusController::new(Policy::for_platform(Platform::Apple));
     let _ = focus.handle(Input::Clock(Some(today())));
@@ -79,7 +68,6 @@ pub fn shown(effects: &[Effect]) -> Vec<Intent> {
         .collect()
 }
 
-/// The footer an effect list draws last, if any.
 pub fn footer_of(effects: &[Effect]) -> Option<postio_ui::scope::FooterView> {
     shown(effects)
         .into_iter()
@@ -90,8 +78,6 @@ pub fn footer_of(effects: &[Effect]) -> Option<postio_ui::scope::FooterView> {
         })
 }
 
-/// [`shown`] without the footer: what a case about another surface asserts
-/// on. Whose footer is up is `footers.rs`'s question (#2218).
 pub fn shown_but_the_footer(effects: &[Effect]) -> Vec<Intent> {
     shown(effects)
         .into_iter()
@@ -116,7 +102,6 @@ pub fn asked(effects: &[Effect]) -> Vec<Request> {
         .collect()
 }
 
-/// The last results view among `effects`.
 pub fn results_view(effects: &[Effect]) -> Option<ResultsView> {
     shown(effects)
         .into_iter()
@@ -127,7 +112,6 @@ pub fn results_view(effects: &[Effect]) -> Option<ResultsView> {
         })
 }
 
-/// The last query view among `effects`.
 pub fn query_view(effects: &[Effect]) -> Option<QueryView> {
     shown(effects)
         .into_iter()
@@ -138,7 +122,6 @@ pub fn query_view(effects: &[Effect]) -> Option<QueryView> {
         })
 }
 
-/// The last filter popover among `effects`: `Some(None)` when it closed.
 pub fn popover_view(effects: &[Effect]) -> Option<Option<PopoverView>> {
     shown(effects)
         .into_iter()
@@ -149,7 +132,6 @@ pub fn popover_view(effects: &[Effect]) -> Option<Option<PopoverView>> {
         })
 }
 
-/// The last no-results page among `effects`: `Some(None)` when it went.
 pub fn no_results_view(effects: &[Effect]) -> Option<Option<postio_focus::NoResultsView>> {
     shown(effects)
         .into_iter()
@@ -160,7 +142,6 @@ pub fn no_results_view(effects: &[Effect]) -> Option<Option<postio_focus::NoResu
         })
 }
 
-/// The last Quick Look among `effects`: `Some(None)` when it closed.
 pub fn quick_look_view(effects: &[Effect]) -> Option<Option<QuickLookView>> {
     shown(effects)
         .into_iter()
@@ -171,9 +152,6 @@ pub fn quick_look_view(effects: &[Effect]) -> Option<Option<QuickLookView>> {
         })
 }
 
-/// Every match in conversation `n`, oldest first, as the engine reads
-/// them: an earlier message from Ben, the best message's own words, the
-/// subject.
 pub fn conversation_matches(key: ConversationKey) -> Vec<ConversationMatch> {
     let ConversationKey::Thread(thread) = key else {
         return Vec::new();
@@ -231,7 +209,6 @@ pub fn conversation_matches(key: ConversationKey) -> Vec<ConversationMatch> {
     ]
 }
 
-/// The query each results read among `effects` asked for.
 pub fn queries_asked(effects: &[Effect]) -> Vec<String> {
     asked(effects)
         .into_iter()
@@ -254,26 +231,20 @@ pub fn tomas() -> EmailAddress {
     EmailAddress::new(Some("Tom\u{e1}s Reyes"), "tomas@example.com")
 }
 
-/// The person searching: an address of their own account.
 pub fn you() -> EmailAddress {
     EmailAddress::new(Some("You"), "you@example.com")
 }
 
-/// Who most of the conversations were written to.
 pub fn ben() -> EmailAddress {
     EmailAddress::new(Some("Ben Adeyemi"), "ben@example.com")
 }
 
-/// Conversations in the engine, newest first: more than a page of them.
 pub const CONVERSATIONS: i64 = 120;
 
-/// When conversation `n` (0 the newest) last matched: one every two days
-/// back from the 26th of September, so the 120 span September to February.
 pub fn when(n: i64) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 9, 26, 12, 0, 0).unwrap() - chrono::TimeDelta::days(n * 2)
 }
 
-/// Conversation `n`: its best message is `1000 + n`.
 pub fn conversation(n: i64) -> ConversationHit {
     let from = if n % 2 == 0 { ada() } else { tomas() };
     ConversationHit {
@@ -321,15 +292,12 @@ pub fn conversation(n: i64) -> ConversationHit {
     }
 }
 
-/// The order the engine ranks them by Best match: 7, 2 and 30 first.
 pub fn best_match() -> Vec<i64> {
     let mut order = vec![7, 2, 30];
     order.extend((0..CONVERSATIONS).filter(|n| ![7, 2, 30].contains(n)));
     order
 }
 
-/// The timeline the engine counts: each conversation in the month of its
-/// newest match (D4).
 pub fn months() -> [MonthCount; 12] {
     let firsts = months_ending(today().date_naive());
     firsts.map(|month| MonthCount {
@@ -343,8 +311,6 @@ pub fn months() -> [MonthCount; 12] {
     })
 }
 
-/// How many conversations the engine finds for `query`: a `from:` Ada
-/// keeps hers, the even ones, and `-from:` Ada the others.
 pub fn matching(query: &postio_search::ParsedQuery) -> Vec<i64> {
     let ada = |negated: bool| {
         query.filters().any(|clause| {
@@ -353,14 +319,12 @@ pub fn matching(query: &postio_search::ParsedQuery) -> Vec<i64> {
         })
     };
     let (only, never) = (ada(false), ada(true));
-    // Nothing is called "v4" (screen 13's "budget v4").
     if query.filters().any(|clause| {
         !clause.negated
             && matches!(&clause.filter, postio_search::query::Filter::Subject(words) if words.contains("v4"))
     }) {
         return Vec::new();
     }
-    // `after:` and `before:` keep the days they name, by the newest match.
     let (mut after, mut before) = (None, None);
     for clause in query.filters().filter(|clause| !clause.negated) {
         match clause.filter {
@@ -377,7 +341,6 @@ pub fn matching(query: &postio_search::ParsedQuery) -> Vec<i64> {
         .collect()
 }
 
-/// The engine's answer to a page of `query` in `order`.
 pub fn page(
     query: &postio_search::ParsedQuery,
     order: ConversationOrder,
@@ -446,7 +409,6 @@ pub fn page(
         ],
         attachment: 1,
         months: months(),
-        // Last 7 days, last 30 days, this quarter, this year, any time.
         presets: [2, 6, 12, 17, found.len() as u64],
         ..SearchFacets::default()
     };
@@ -492,7 +454,6 @@ pub fn page(
     }
 }
 
-/// A passage for `message`, with "atlas" and "budget" marked.
 pub fn passage_for(message: MessageId) -> Passage {
     let text = format!("the final numbers for the Atlas budget, message {message}");
     let start = text.find("Atlas").unwrap();
@@ -504,7 +465,6 @@ pub fn passage_for(message: MessageId) -> Passage {
     }
 }
 
-/// The engine's answer to one results request, if it is one.
 pub fn reply_to(request: &Request) -> Option<Reply> {
     match request {
         Request::ResultsPage {
@@ -567,8 +527,6 @@ pub fn reply_to(request: &Request) -> Option<Reply> {
     }
 }
 
-/// Answer every results read among `effects`, and the reads those answers
-/// ask, until none is left: the effects of it all, `effects` first.
 pub fn settle(focus: &mut FocusController, effects: Vec<Effect>, rows: &List) -> Vec<Effect> {
     let mut all = effects.clone();
     let mut waiting = effects;
@@ -587,7 +545,6 @@ pub fn settle(focus: &mut FocusController, effects: Vec<Effect>, rows: &List) ->
     }
 }
 
-/// `/`, `words` typed, then ⌘↩: the results asked for, not yet answered.
 pub fn show_all(focus: &mut FocusController, words: &str, rows: &List) -> Vec<Effect> {
     let _ = run(focus, CommandId::Search, rows);
     let _ = focus.handle_on(
@@ -599,18 +556,15 @@ pub fn show_all(focus: &mut FocusController, words: &str, rows: &List) -> Vec<Ef
     run(focus, CommandId::ShowAllResults, rows)
 }
 
-/// `/`, `words`, ⌘↩, and every read answered.
 pub fn search(focus: &mut FocusController, words: &str, rows: &List) -> Vec<Effect> {
     let effects = show_all(focus, words, rows);
     settle(focus, effects, rows)
 }
 
-/// The first day of a month, for the group titles.
 pub fn month(year: i32, month: u32) -> NaiveDate {
     NaiveDate::from_ymd_opt(year, month, 1).unwrap()
 }
 
-/// Where the engine's copy of `attachment` would be.
 pub fn copy_of(attachment: postio_model::AttachmentId) -> std::path::PathBuf {
     std::env::temp_dir()
         .join("postio-files")
@@ -618,8 +572,6 @@ pub fn copy_of(attachment: postio_model::AttachmentId) -> std::path::PathBuf {
         .join("copy")
 }
 
-/// The Files tab's cards for "atlas budget" (screen 11): a sheet matched
-/// inside, a PDF matched inside, and a file matched by its name only.
 pub fn files() -> Vec<postio_search::results::FileHit> {
     use postio_model::AttachmentId;
     use postio_search::results::{FileHit, Location};
@@ -699,8 +651,6 @@ pub fn files() -> Vec<postio_search::results::FileHit> {
     ]
 }
 
-/// The People tab's rows for "atlas": Ada, then Tomás, as the engine
-/// orders them -- most matched messages first.
 pub fn people() -> Vec<postio_search::suggest::Person> {
     use postio_search::suggest::Person;
     vec![

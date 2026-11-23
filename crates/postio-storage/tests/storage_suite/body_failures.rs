@@ -1,9 +1,3 @@
-//! A body the server will not give up is remembered on the store (#1918).
-//!
-//! The backfill used to forget it at every restart and the reader could not
-//! tell it from a body still on its way. The mark is keyed to the message's
-//! `MODSEQ`, so a message that changed is a message worth trying again.
-
 use chrono::{TimeZone, Utc};
 use postio_model::{BodyState, Message, MessageId, ModSeq, RemoteId, Uid, UidValidity};
 use postio_storage::repository::MessageRepository;

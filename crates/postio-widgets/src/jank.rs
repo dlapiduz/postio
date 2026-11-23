@@ -1,31 +1,6 @@
-//! Frames that miss their budget, and what was asked for just before.
-//!
-//! CLAUDE.md's budget is 16 ms per interaction, and the counts that gate a
-//! pull request are the *causes* of that budget -- statements, rows, scans --
-//! because a shared runner cannot time anything. What they cannot say is
-//! which keystroke, on this machine, with this mailbox, took 40 ms. This can:
-//!
-//! ```text
-//! POSTIO_LOG=postio_widgets::jank=debug cargo run -p postio-gtk
-//! ```
-//!
-//! Two kinds of stall, because they are caught in different places:
-//!
-//! - **A frame**: the frame clock's `update` to its `after-paint`, which is
-//!   animation ticks, layout and snapshot -- what GTK itself spent drawing.
-//! - **The main loop**: a heartbeat that expects to run every
-//!   [`HEARTBEAT`] and notes how late it was. A key handler that reads the
-//!   store synchronously blocks here, between frames, where the frame clock
-//!   never sees it.
-//!
-//! Each is attributed to the last action dispatched within
-//! [`ATTRIBUTION_WINDOW`], by name -- which is what makes a line in the log
-//! something a person can act on.
-//!
-//! Off unless that target is enabled when the window is built, and then it
-//! costs nothing: no heartbeat wakes an idle machine, no signal handler is
-//! connected. Retuning `[logging]` live does not install it on a running
-//! window; restart with the filter set.
+//! Frames that miss their budget, attributed to the last action dispatched within
+//! [`ATTRIBUTION_WINDOW`]. Enable with `POSTIO_LOG=postio_widgets::jank=debug` before the window is
+//! built; off, it costs nothing, and retuning `[logging]` does not install it on a running window.
 
 use std::cell::{Cell, RefCell};
 use std::fmt::Display;
@@ -35,25 +10,15 @@ use std::time::{Duration, Instant};
 use gtk::glib;
 use gtk::prelude::*;
 
-/// What one frame, or one turn of the main loop, may take.
 pub const FRAME_BUDGET: Duration = Duration::from_millis(16);
 
-/// How often the main-loop heartbeat expects to run.
 pub const HEARTBEAT: Duration = Duration::from_millis(8);
 
-/// How long after an action a stall is still blamed on it.
-///
-/// Long enough to cover an action's own frame and the repaint it causes, and
-/// short enough that a stall a second later is not pinned on a keystroke that
-/// had long finished.
 pub const ATTRIBUTION_WINDOW: Duration = Duration::from_millis(500);
 
-/// Where a stall was seen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
-    /// Drawing: the frame clock's update to after-paint.
     Frame,
-    /// Between frames: a handler held the main loop.
     MainLoop,
 }
 
@@ -66,34 +31,23 @@ impl Kind {
     }
 }
 
-/// One stall over budget, and what it is blamed on.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Stall {
-    /// Where it was seen.
     pub kind: Kind,
-    /// How long it took.
     pub took: Duration,
-    /// The last action dispatched before it, if one was recent enough to
-    /// blame, and how long before the stall ended it was.
     pub after: Option<(String, Duration)>,
 }
 
-/// The action last dispatched on this thread, and when.
 #[derive(Debug, Default)]
 pub struct LastAction(RefCell<Option<(String, Instant)>>);
 
 impl LastAction {
-    /// Note that `action` was just dispatched.
     pub fn note(&self, action: impl Display, at: Instant) {
         *self.0.borrow_mut() = Some((action.to_string(), at));
     }
 
-    /// Whether `took`, ending at `now`, is a stall -- and if so, what it is
-    /// blamed on.
-    ///
-    /// `None` when it was inside [`FRAME_BUDGET`]. An action is blamed only if
-    /// it came within [`ATTRIBUTION_WINDOW`] of `now`; an older one would be
-    /// a guess dressed as a finding.
+    /// An action is blamed only within [`ATTRIBUTION_WINDOW`]; an older one would be a guess
+    /// dressed as a finding.
     pub fn judge(&self, kind: Kind, took: Duration, now: Instant) -> Option<Stall> {
         if took <= FRAME_BUDGET {
             return None;
@@ -111,9 +65,6 @@ thread_local! {
     static PROBING: Cell<bool> = const { Cell::new(false) };
 }
 
-/// Note that `action` was just dispatched, for a stall that follows it.
-///
-/// Free when the probe is off: nothing is formatted.
 pub fn note_action(action: impl Display) {
     if PROBING.with(Cell::get) {
         LAST.with(|last| last.note(action, Instant::now()));
@@ -137,8 +88,6 @@ fn report(kind: Kind, took: Duration) {
     }
 }
 
-/// Watch `widget`'s frames and the main loop, if `postio_widgets::jank` is
-/// enabled at debug.
 pub fn install<W: IsA<gtk::Widget>>(widget: &W) {
     if !tracing::enabled!(tracing::Level::DEBUG) {
         return;
@@ -162,7 +111,6 @@ pub fn install<W: IsA<gtk::Widget>>(widget: &W) {
     if widget.is_realized() {
         watch(widget.as_ref());
     } else {
-        // Once: a frame clock belongs to the surface, which a realize makes.
         let done = Cell::new(false);
         widget.connect_realize(move |widget| {
             if !done.replace(true) {

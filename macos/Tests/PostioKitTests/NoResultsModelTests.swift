@@ -4,9 +4,6 @@ import Testing
 
 @testable import PostioKit
 
-/// The no-results page's model (specs/010-focus-search T106; design §3.10,
-/// screen 13). The controller says what the page draws and when it goes;
-/// a click on a way out runs it as its number would.
 @MainActor
 struct NoResultsModelTests {
     final class Engine: NoResultsEngine {

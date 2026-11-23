@@ -1,11 +1,7 @@
-//! Settings in Focus (T234; `specs/007-postio-focus/screens.md`, "Settings"):
-//! the shared settings panel in a dialog over the list, in the message
-//! dialog's frame.
-//!
-//! The panel is `postio_widgets::settings::SettingsPanel`, and its presenters are `postio_widgets::present::settings`, over
-//! the same client the window reads through. What is Focus's here is the
-//! frame -- the dialog, its header and its size -- and the [`Outside`] the
-//! presenters ask for what is not the host's to answer.
+//! Settings in Focus: the shared `SettingsPanel` in a dialog over the list, in the message dialog's
+//! frame.
+//! What is Focus's is the frame and the `Outside` the presenters ask for what is not the host's to
+//! answer.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -22,28 +18,16 @@ use postio_widgets::present::settings::accounts::Accounts;
 use postio_widgets::present::settings::{Later, Outside, Reached, Reindexing};
 use postio_widgets::settings::SettingsPanel;
 
-/// The dialog's widget name, which the window's keyboard reads to know
-/// Settings has it.
 pub const DIALOG_NAME: &str = "focus-settings";
 
-/// What Settings needs from the process that opened the store: where the
-/// connection test and the token-expiry line run, the keyring they read, and
-/// whether attachments are fetched eagerly. Set by `startup::adopt_at`.
 #[derive(Clone)]
 pub struct Seams {
-    /// The host's runtime, which a connection test is polled on.
     pub runtime: tokio::runtime::Handle,
-    /// The keyring a connection test and the token-expiry line read.
     pub secrets: Arc<dyn postio_account::secret::SecretStore>,
-    /// `[sync] attachment_fetch = "eager"`, which an account row's weight
-    /// mentions.
     pub attachments_eager: bool,
-    /// What agents did lately, read from the log beside the store and
-    /// resolved in it, for the Agents pane (#1832). Run on `runtime`.
     pub agent_activity: AgentActivity,
 }
 
-/// Reads the agents' access log, for [`Seams::agent_activity`].
 pub type AgentActivity = Arc<
     dyn Fn() -> std::pin::Pin<
             Box<dyn std::future::Future<Output = postio_ui::agent_access::Activity> + Send>,
@@ -51,38 +35,30 @@ pub type AgentActivity = Arc<
         + Sync,
 >;
 
-/// The settings dialog: built on the first open and kept, so a section, a
-/// scroll position and a half-typed search survive closing it.
+/// Built on the first open and kept, so a section, a scroll position and a half-typed search
+/// survive closing it.
 pub struct Settings {
     dialog: adw::Dialog,
     panel: SettingsPanel,
-    /// The dialog's own toasts: one over the window would be under the
-    /// dialog's scrim, where a removal's Undo cannot be reached.
+    /// One over the window would be under the dialog's scrim, where a removal's Undo cannot be
+    /// reached.
     toast: postio_widgets::widgets::toast::Toast,
     accounts: RefCell<Option<Accounts>>,
     open: Cell<bool>,
-    /// Whether the dialog is following its window's size yet.
     following: Cell<bool>,
 }
 
 impl Settings {
-    /// The dialog over `client`, with what `outside` answers for its
-    /// presenters.
     pub fn new(client: Client, outside: Rc<dyn Outside>) -> Rc<Settings> {
         let panel = SettingsPanel::new();
-        // The message dialog is at most 820 wide, so a pane is at most 606:
-        // too narrow for two columns side by side (screens.md, Settings, "One column").
+        // The message dialog is at most 820 wide, so a pane is at most 606: too narrow for two
+        // columns side by side.
         panel.set_narrow(true);
         panel.set_vexpand(true);
 
-        // The header: the message dialog's (screens.md, "Settings"). The
-        // find-a-setting field where the open message has its steps, the
-        // title centred, and the one X at the right end (T192).
         let search = panel.search_field();
         search.set_valign(gtk::Align::Center);
         search.add_css_class("focus-settings-search");
-        // Narrow: the title stays centred in a
-        // dialog as narrow as 640.
         search.set_width_chars(16);
         let title = gtk::Label::new(Some("Settings"));
         title.add_css_class("focus-open-title");
@@ -127,7 +103,6 @@ impl Settings {
                 }
             }
         });
-        // The panel's own Escape, from wherever its keyboard is.
         settings.panel.connect_dismissed({
             let settings = Rc::downgrade(&settings);
             move || {
@@ -141,14 +116,12 @@ impl Settings {
             move |_| {
                 if let Some(settings) = settings.upgrade() {
                     settings.open.set(false);
-                    // Hidden while closed: the
-                    // presenters read what costs only while it shows.
+                    // Hidden while closed: the presenters read what costs only while it shows.
                     settings.panel.set_visible(false);
                 }
             }
         });
 
-        // The presenters, over the window's client (T233).
         postio_widgets::present::settings::egress::install(&settings.panel, client.clone());
         postio_widgets::present::settings::backfill::install(&settings.panel, client.clone());
         glib::spawn_future_local({
@@ -170,30 +143,25 @@ impl Settings {
         settings
     }
 
-    /// The panel inside the dialog.
     pub fn panel(&self) -> &SettingsPanel {
         &self.panel
     }
 
-    /// The dialog.
     pub fn dialog(&self) -> &adw::Dialog {
         &self.dialog
     }
 
-    /// Whether the dialog is over the window.
     pub fn is_open(&self) -> bool {
         self.open.get()
     }
 
-    /// Present the dialog over `window`, sized as the message dialog is
-    /// for it, and following it as it is resized.
     pub fn present(self: &Rc<Self>, window: &gtk::Window) {
         if self.open.replace(true) {
             return;
         }
         self.follow(window);
-        // Read fresh on every open: whatever a reader last wrote to the
-        // remote-image allow list shows here without watching the file.
+        // Read fresh on every open, so what a reader last wrote to the remote-image allow list
+        // shows without watching the file.
         let path = crate::open::allowlist_path();
         self.panel.set_remote_image_allowlist(
             postio_ui::allowlist::RemoteImageAllowList::load_from(&path),
@@ -205,7 +173,6 @@ impl Settings {
         self.panel.grab_focus();
     }
 
-    /// The message dialog's size for a window `width` by `height`.
     fn fit(&self, width: i32, height: i32) {
         let (width, height) = if width > 0 && height > 0 {
             (width, height)
@@ -223,8 +190,6 @@ impl Settings {
         }
     }
 
-    /// Fit the dialog to `window` now, and again whenever it is resized: its
-    /// surface's `layout` says when, as the open message follows it.
     fn follow(self: &Rc<Self>, window: &gtk::Window) {
         let (width, height) = match (window.width(), window.height()) {
             (width, height) if width > 0 && height > 0 => (width, height),
@@ -247,36 +212,30 @@ impl Settings {
         });
     }
 
-    /// Close the dialog, if it is open.
     pub fn close(&self) {
         if self.open.get() {
             self.dialog.close();
         }
     }
 
-    /// Press the toast's Undo, if one is showing: whether it was.
     pub fn undo(&self) -> bool {
         self.toast.activate_undo()
     }
 
-    /// The key the dialog's Undo shows beside its word.
     pub fn set_undo_key(&self, key: Option<String>) {
         self.toast.set_undo_key(key);
     }
 
-    /// `description` on the dialog's toast, with an Undo that runs `undo`.
     pub fn offer_undo(&self, description: &str, undo: Box<dyn Fn()>) {
         self.toast.show_removable(description, undo);
     }
 
-    /// What the store just said, as far as the account rows care.
     pub fn hear(&self, event: &postio_core::Event) {
         if let Some(accounts) = self.accounts.borrow().as_ref() {
             accounts.hear(event);
         }
     }
 
-    /// Read the account rows again: an account was added.
     pub fn refresh_accounts(&self) {
         let accounts = self.accounts.borrow().clone();
         if let Some(accounts) = accounts {
@@ -288,15 +247,9 @@ impl Settings {
     }
 }
 
-/// What Focus answers for its settings: the connection test and the
-/// token-expiry line from this process, a removal's undo on the window's
-/// toast, and a role mapping's command through the window.
 pub struct FocusOutside {
-    /// The window the dialog is over.
     pub window: glib::WeakRef<crate::window::FocusWindow>,
-    /// What the store's opener left for Settings, if it has opened one.
     pub seams: Option<Seams>,
-    /// The client the window reads through.
     pub client: Client,
 }
 
@@ -387,17 +340,10 @@ impl Outside for FocusOutside {
     }
 }
 
-/// The reference window the dialog is sized for before it knows its own:
-/// the references' 1440x900.
 const REFERENCE_WINDOW: (i32, i32) = (1440, 900);
 
 impl Settings {
-    /// The commands Settings has a control for: its foot strip's "Open in
-    /// $EDITOR". (Filtering's Open Filtered runs `go_to_filtered`, which the
-    /// strip's count already answers for.)
     pub fn controls() -> Vec<postio_core::CommandId> {
-        // The account verbs are on each account row's menu and its detail
-        // view (T258 gives them keys).
         use postio_core::CommandId::*;
         vec![
             EditConfig,
@@ -409,8 +355,6 @@ impl Settings {
         ]
     }
 
-    /// Take `keymap` as the keys in force: the foot strip's cap, the
-    /// Keyboard section's rows, and what could not be bound.
     pub fn set_keymap(&self, keymap: &postio_core::Keymap, problems: &[String]) {
         self.panel.set_keymap(keymap);
         self.panel.set_keymap_problems(problems);
@@ -418,31 +362,24 @@ impl Settings {
 }
 
 impl crate::window::FocusWindow {
-    /// Settings, once it has been opened.
     pub fn settings(&self) -> Option<Rc<Settings>> {
         self.imp_settings().borrow().clone()
     }
 
-    /// The settings dialog, while it is over the window.
     pub fn settings_dialog(&self) -> Option<adw::Dialog> {
         self.settings()
             .filter(|settings| settings.is_open())
             .map(|settings| settings.dialog().clone())
     }
 
-    /// What Settings asks of the process that opened the store.
     pub fn set_settings_seams(&self, seams: Seams) {
         self.imp().settings_seams.replace(Some(seams));
     }
 
-    /// Open `config.toml` with `open` rather than the person's editor: what a
-    /// test records `mod+e` with (T235).
     pub fn set_editor(&self, open: impl Fn(&std::path::Path) + 'static) {
         self.imp().editor.replace(Some(Rc::new(open)));
     }
 
-    /// `mod+comma` and the main menu's Settings: open it, or close it if it
-    /// is open.
     pub(crate) fn toggle_settings(&self) {
         match self.settings().filter(|settings| settings.is_open()) {
             Some(settings) => settings.close(),
@@ -450,7 +387,6 @@ impl crate::window::FocusWindow {
         }
     }
 
-    /// Settings over the list, built on its first open.
     fn open_settings(&self) {
         let Some(client) = self.client() else {
             return;
@@ -464,8 +400,8 @@ impl crate::window::FocusWindow {
             let for_take_back = client.clone();
             let runtime = self.imp().runtime.borrow().clone();
             let settings = Settings::new(client, outside);
-            // A person's pin or marker is theirs, not the buffer's: the host
-            // takes it back, and the window hears of it as of any change.
+            // A person's pin or marker is theirs, not the buffer's: the host takes it back, and the
+            // window hears of it as of any change.
             settings.panel().connect_contact_take_back(move |undo| {
                 let client = for_take_back.clone();
                 let (entry, kind) = match undo {
@@ -474,7 +410,6 @@ impl crate::window::FocusWindow {
                         (sender.clone(), Some(kind.clone()))
                     }
                 };
-                // On the host's runtime, which the client's future needs.
                 let Some(runtime) = runtime.clone() else {
                     return;
                 };
@@ -490,8 +425,7 @@ impl crate::window::FocusWindow {
                     let Some(window) = window.upgrade() else {
                         return;
                     };
-                    // A command that goes somewhere in the list goes there,
-                    // not behind the dialog: Filtering's Open Filtered.
+                    // A command that goes somewhere in the list goes there, not behind the dialog.
                     if id == postio_core::CommandId::GoToFiltered
                         && let Some(settings) = window.settings()
                     {
@@ -500,11 +434,6 @@ impl crate::window::FocusWindow {
                     window.act(id);
                 }
             });
-            // Contacts' Suggestions are the controller's: the pane asks
-            // which are on when it is looked at, a flip is the click it
-            // is, and the answer redraws it (`Intent::ContactsSettings`).
-            // Agents (#1832): where to point an agent's client, and what
-            // agents did, read from the log when the pane is looked at.
             settings.panel().set_agent_entry(
                 std::env::current_exe()
                     .ok()
@@ -567,8 +496,7 @@ impl crate::window::FocusWindow {
             let keymap = self.keymap();
             let (_, problems) = crate::keys::resolver(&keymap);
             settings.set_keymap(&keymap, &problems);
-            // Told at once that it went, as the open message is: the
-            // footer behind it comes back (#2218).
+            // Otherwise the controller hears of it only at the next key (#2218).
             settings.dialog().connect_closed({
                 let window = self.downgrade();
                 move |_| {
@@ -585,12 +513,9 @@ impl crate::window::FocusWindow {
             .panel()
             .set_contact_rules(self.imp().focus_config.borrow().contacts().to_vec());
         settings.present(self.upcast_ref());
-        // And that it came: Settings has no footer behind it (#2218).
         self.sync_surfaces();
     }
 
-    /// `mod+e`, from anywhere in Focus: `config.toml` in `$VISUAL` or
-    /// `$EDITOR` (T235). With no file to open, the toast says so.
     pub(crate) fn edit_config(&self) {
         let Some(path) = self.config_path() else {
             self.say("There is no config.toml to edit");
@@ -603,9 +528,8 @@ impl crate::window::FocusWindow {
         }
     }
 
-    /// A key while Settings is up (Escape and `mod+comma` close it: the
-    /// controller's): `mod+e` opens the file, and everything else is its controls' -- typing in a
-    /// field types.
+    /// Escape and `mod+comma` close Settings (the controller's); everything else is its controls':
+    /// typing in a field types.
     pub(crate) fn settings_key(&self, outcome: postio_ui::keymap::Outcome) -> glib::Propagation {
         use postio_core::CommandId;
         let postio_ui::keymap::Outcome::Command(id) = outcome else {
@@ -616,8 +540,7 @@ impl crate::window::FocusWindow {
                 self.edit_config();
                 glib::Propagation::Stop
             }
-            // The Accounts section's keys, resolved only while the keyboard
-            // is on an account row (`key_context`), act on that row (T258).
+            // Resolved only while the keyboard is on an account row (`key_context`).
             Ok(
                 verb @ (CommandId::ToggleAccountEnabled
                 | CommandId::RemoveAccount
@@ -628,7 +551,6 @@ impl crate::window::FocusWindow {
                 self.account_verb(verb);
                 glib::Propagation::Stop
             }
-            // `mod+z` takes back the removal its toast offers.
             Ok(CommandId::Undo) => {
                 let undone = self.settings().is_some_and(|settings| settings.undo());
                 if undone {
@@ -641,10 +563,8 @@ impl crate::window::FocusWindow {
         }
     }
 
-    /// An account verb, from its key or the command bar (T258): it acts on
-    /// the account row Settings has focused. With Settings shut it opens
-    /// Settings to pick one, and with no row focused it does nothing: the
-    /// first account is never a guess at whose mail to remove.
+    /// With no row focused it does nothing: the first account is never a guess at whose mail to
+    /// remove.
     pub(crate) fn account_verb(&self, verb: postio_core::CommandId) {
         use postio_core::CommandId;
         use postio_widgets::settings::AccountAction;
@@ -669,37 +589,29 @@ impl crate::window::FocusWindow {
             CommandId::SetDefaultAccount => {
                 panel.request_account_action(account, AccountAction::SetDefault)
             }
-            // A role is mapped from the account's detail view, where its
-            // folders are.
             CommandId::MapMailboxRole => panel.open_account_detail(account),
             _ => {}
         }
     }
 
-    /// Whether the keyboard is on an account row in Settings, which is when
-    /// the Accounts section's keys are the keyboard's.
     pub(crate) fn settings_on_an_account(&self) -> bool {
         self.settings().is_some_and(|settings| {
             settings.is_open() && settings.panel().focused_account().is_some()
         })
     }
 
-    /// Whether Settings' Keyboard section is waiting for a key to bind.
     pub(crate) fn settings_takes_every_key(&self) -> bool {
         self.settings()
             .is_some_and(|settings| settings.is_open() && settings.panel().is_capturing())
     }
 
-    /// The file was saved and loads without error: what Settings' "Revert
-    /// file" goes back to (T235).
+    /// What Settings' "Revert file" goes back to.
     pub(crate) fn settings_note_known_good(&self, text: &str) {
         if let Some(settings) = self.settings() {
             settings.panel().note_known_good(text);
         }
     }
 
-    /// Take `[compose]` as the file says now: the next reply or forward
-    /// places its signature by it (T235).
     pub fn set_compose_config(&self, compose: postio_config::ComposeConfig) {
         if let Some(composer) = self.composer() {
             place_signatures(&composer, &compose);
@@ -707,8 +619,6 @@ impl crate::window::FocusWindow {
         self.imp().compose_config.replace(compose);
     }
 
-    /// Take `[reader]` as the file says now: the open message reads at its
-    /// zoom, and so does the next (T235).
     pub fn set_reader_config(&self, reader: &postio_config::ReaderConfig) {
         self.imp().zoom.set(Some(reader.zoom));
         if let Some(reading) = self.reading() {
@@ -728,8 +638,7 @@ impl crate::window::FocusWindow {
         self.imp().config_path.borrow().clone()
     }
 
-    /// `description` on the toast, with an Undo that runs `undo`: a removed
-    /// account's, which the global undo stack never holds.
+    /// A removed account's, which the global undo stack never holds.
     pub(crate) fn offer_undo(&self, description: &str, undo: Box<dyn Fn()>) {
         self.teach_undo_key();
         match self.settings().filter(|settings| settings.is_open()) {
@@ -738,7 +647,6 @@ impl crate::window::FocusWindow {
         }
     }
 
-    /// Hand `command` to the host, as the window's own verbs are.
     pub(crate) fn post_command(&self, command: postio_core::Command) {
         if let Some(client) = self.client() {
             let window = self.downgrade();
@@ -756,8 +664,6 @@ impl crate::window::FocusWindow {
     }
 }
 
-/// Tell `composer` where a signature goes on a reply and on a forward, as
-/// `compose` says.
 pub(crate) fn place_signatures(
     composer: &postio_widgets::composer::Composer,
     compose: &postio_config::ComposeConfig,

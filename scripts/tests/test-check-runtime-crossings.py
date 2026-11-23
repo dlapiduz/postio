@@ -85,7 +85,6 @@ def case(name: str, source: str, *, should_fail: bool, expect_text: str = "") ->
 def main() -> int:
     print("check-runtime-crossings self-test")
 
-    # ── the bug this check exists for ────────────────────────────────────
     case(
         "the 0.1.0 keyring await is caught",
         """
@@ -100,7 +99,6 @@ fn submit() {
         expect_text="secrets.store",
     )
 
-    # ── and its fix is not ───────────────────────────────────────────────
     case(
         "spawning it and taking the answer over a channel passes",
         """
@@ -117,7 +115,6 @@ fn submit() {
         should_fail=False,
     )
 
-    # ── the awaits a crossing is made of ─────────────────────────────────
     case(
         "a stream next passes",
         """
@@ -132,11 +129,6 @@ fn wire() {
         should_fail=False,
     )
 
-    # ── a runtime spawn nested inside the crossing is not the crossing ───
-    #
-    # This is the shape onboarding.rs actually has: the second write is
-    # decided on the main context and performed on the runtime. Flagging it
-    # would make the check unusable on the code it was written for.
     case(
         "an await inside a nested runtime.spawn is left alone",
         """
@@ -154,7 +146,6 @@ fn submit() {
         should_fail=False,
     )
 
-    # ── an owned-up-to exception ─────────────────────────────────────────
     case(
         "a marked await passes",
         """
@@ -228,7 +219,6 @@ fn two() {
         expect_text="secrets.store",
     )
 
-    # ── the tokio timer that this check found in the save-attachment path ─
     case(
         "an indirect tokio await is caught at the call that reaches it",
         """
@@ -243,7 +233,6 @@ fn save() {
         expect_text="part_bytes",
     )
 
-    # ── things that look like awaits and are not ─────────────────────────
     case(
         "an await in a comment or a string is not code",
         """
@@ -264,13 +253,6 @@ fn wire() {
         should_fail=False,
     )
 
-    # ── a char literal is not a string, and reading it as one loses the
-    #    rest of the file (#1103) ────────────────────────────────────────
-    #
-    # `'"'` holds one double quote. Scanned as the start of a string literal
-    # it inverts the quote parity of everything after it, so real code is
-    # blanked as "string" and string contents are read as code -- and a
-    # crossing past that point silently stops being seen.
     case(
         "a char literal holding a quote does not swallow the crossing after it",
         '''

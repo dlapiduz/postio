@@ -1,9 +1,6 @@
-//! The digest rule dialog (spec 007 US10, T138; screen 24): "Digest this
-//! sender", from `d` on a message, "Digest these…" in the bulk bar, or `d`
-//! in a digest to edit its rule. The address, how often and when, what
-//! the rule would have caught over the last 90 days -- through the
-//! executor, as search counts it -- the note, and Create, which writes the
-//! rule to `config.toml`.
+//! The digest rule dialog: "Digest this sender" from `d` on a message, "Digest these…" in the bulk
+//! bar, or `d` in a digest to edit its rule.
+//! Create writes the rule to `config.toml`.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -21,17 +18,14 @@ use postio_ui::{digest, hints};
 use postio_widgets::widgets::keyhint;
 use postio_widgets::widgets::space::{S1, S2, S3};
 
-/// The dialog's name, for the window to find it by.
 pub const DIALOG_NAME: &str = "focus-digest-rule";
 
-/// The dialog's width (contracts/focus-surface.md).
 const WIDTH: i32 = 620;
 
 use postio_ui::digest::{CADENCES, PREVIEW_DAYS, WEEKDAYS};
 
 type Saved = Rc<dyn Fn(String)>;
 
-/// The dialog. See the module.
 pub struct RuleDialog {
     client: Client,
     dialog: adw::Dialog,
@@ -59,7 +53,6 @@ pub struct RuleDialog {
 }
 
 impl RuleDialog {
-    /// A closed dialog, reading and writing through `client`.
     pub fn new(client: Client, keymap: &Keymap) -> Rc<Self> {
         let cancel = gtk::Button::new();
         cancel.add_css_class("flat");
@@ -92,8 +85,6 @@ impl RuleDialog {
         from.set_hexpand(true);
         from.set_selectable(true);
         from.set_wrap(true);
-        // "Match a list or a search instead…" (US14, T155): swaps `from`
-        // for a typed `list:` or query rule, previewed the same way.
         let query_entry = gtk::Entry::new();
         query_entry.set_hexpand(true);
         query_entry.set_placeholder_text(Some(digest::QUERY_PLACEHOLDER));
@@ -108,9 +99,8 @@ impl RuleDialog {
             "Match a list or a search instead…",
         ))));
         match_instead.set_halign(gtk::Align::Start);
-        // "Digest mail like this" (US14, FR-171): only when a message is
-        // given -- which the window only does once the user has brought a
-        // model with `like_this` on (`ModelFeature::LikeThis`).
+        // Present only when a message is given, which the window does only once the user has
+        // brought a model with `like_this` on.
         let like_this_button = gtk::Button::new();
         like_this_button.add_css_class("flat");
         like_this_button.add_css_class("focus-rule-like-this");
@@ -289,21 +279,16 @@ impl RuleDialog {
         this
     }
 
-    /// Run `saved` with the rule's name once Create has written it.
     pub fn connect_saved(&self, saved: impl Fn(String) + 'static) {
         self.saved.replace(Some(Rc::new(saved)));
     }
 
-    /// The dialog, for the window to find.
     pub fn dialog(&self) -> &adw::Dialog {
         &self.dialog
     }
 
-    /// Open over `parent` for a new rule holding mail from `senders`.
-    /// `like_this`, when given, is the message "Digest mail like this"
-    /// checks other mail against -- the window gives one only once the
-    /// user has brought a model with `like_this` on (US14, FR-171); with
-    /// none, the control is absent.
+    /// `like_this` is the message "Digest mail like this" checks other mail against; with none the
+    /// control is absent.
     pub fn open_new(
         &self,
         parent: &impl IsA<gtk::Widget>,
@@ -320,9 +305,6 @@ impl RuleDialog {
         self.open(parent);
     }
 
-    /// Open over `parent` to edit `rule` where it stands in `config.toml`.
-    /// "Digest mail like this" is never offered while editing (US14 is
-    /// about a new rule from a selected message).
     pub fn open_edit(&self, parent: &impl IsA<gtk::Widget>, rule: &DigestRule) {
         let form = RuleForm::edit(rule);
         self.heading.set_text(form.heading());
@@ -334,9 +316,8 @@ impl RuleDialog {
             .to_owned();
         let senders = !form.query_mode();
         self.form.replace(form);
-        // A rule whose every query is `from:` reads as senders, editable
-        // through the plain label; anything else -- a `list:` or free
-        // query -- opens straight into the query entry it was made with.
+        // A rule whose every query is `from:` reads as senders; anything else opens into the query
+        // entry.
         if senders {
             self.show_senders(&shown);
         } else {
@@ -348,7 +329,6 @@ impl RuleDialog {
         self.open(parent);
     }
 
-    /// Put `schedule` in the cadence, day and time controls.
     fn show_schedule(&self, schedule: &digest::Schedule) {
         self.cadence.set_selected(schedule.cadence as u32);
         self.weekday.set_selected(schedule.weekday as u32);
@@ -356,8 +336,6 @@ impl RuleDialog {
         self.at.set_text(&schedule.at);
     }
 
-    /// Show `text` as the plain-senders "From" line: the label, with the
-    /// query entry, its link and "Digest mail like this" all put away.
     fn show_senders(&self, text: &str) {
         self.from.set_text(text);
         self.from.set_visible(true);
@@ -367,8 +345,6 @@ impl RuleDialog {
             .set_visible(self.form.borrow().like_this().is_some());
     }
 
-    /// "Match a list or a search instead…": swap the senders' label for a
-    /// typed query, starting from `text` (US14 scenario 1).
     fn enter_query_mode(&self, text: &str) {
         self.from.set_visible(false);
         self.match_instead.set_visible(false);
@@ -379,35 +355,27 @@ impl RuleDialog {
         self.apply_query(text);
     }
 
-    /// What typing into the query entry does: one query per comma-
-    /// separated piece becomes the rule's `match` list, previewed the same
-    /// way a sender's `from:` is (US14 scenario 2, ADR 0008: the one query
-    /// language).
+    /// One query per comma-separated piece becomes the rule's `match` list, previewed as a sender's
+    /// `from:` is (ADR 0008).
     fn apply_query(&self, text: &str) {
-        // The entry filled with the queries the rule already has is not a
-        // person typing: an edited rule keeps its own name.
+        // The entry filled with the rule's own queries is not a person typing: an edited rule keeps
+        // its name.
         if self.form.borrow().queries() != digest::split_queries(text) {
             self.form.borrow_mut().set_query(text);
         }
         self.read_preview();
     }
 
-    /// "Match a list or a search instead…", clicked.
     pub fn match_instead(&self) {
         self.enter_query_mode("");
     }
 
-    /// Set the query entry's text, as if typed: what a test drives instead
-    /// of a keystroke-by-keystroke `Entry`.
     pub fn set_query(&self, text: &str) {
         self.query_entry.set_text(text);
     }
 
-    /// "Digest mail like this", clicked: ask the user's model which
-    /// candidate query is alike, and preview it once it answers. Absent
-    /// when `like_this` names no message (US14, FR-171); a model that
-    /// finds nothing alike, or answers with none, says so rather than
-    /// entering query mode on nothing.
+    /// A model that finds nothing alike, or answers with none, says so rather than entering query
+    /// mode on nothing.
     pub fn like_this(&self) {
         let Some(message) = self.form.borrow().like_this() else {
             return;
@@ -429,7 +397,6 @@ impl RuleDialog {
         });
     }
 
-    /// Create: write the rule, then close; or say why not.
     pub fn create(&self) {
         let draft = match self.draft() {
             Ok(draft) => draft,
@@ -462,7 +429,6 @@ impl RuleDialog {
         });
     }
 
-    /// Every text the dialog shows, in order: what a test reads.
     pub fn texts(&self) -> Vec<String> {
         let mut said = Vec::new();
         let mut stack: Vec<gtk::Widget> = self.dialog.child().into_iter().collect();
@@ -497,8 +463,6 @@ impl RuleDialog {
         self.read_preview();
     }
 
-    /// The day menu the cadence asks for: a weekday, a day of the month,
-    /// or none.
     fn show_day(&self) {
         let cadence = CADENCES[self.cadence.selected().min(2) as usize].0;
         self.on.set_visible(cadence != Cadence::Daily);
@@ -522,7 +486,6 @@ impl RuleDialog {
         self.error.set_visible(sentence.is_some());
     }
 
-    /// The rule as the dialog says it, or why it cannot be one.
     fn draft(&self) -> Result<DigestRuleDraft, String> {
         let schedule = digest::Schedule {
             cadence: self.cadence.selected() as usize,
@@ -533,7 +496,6 @@ impl RuleDialog {
         DigestRuleDraft::from_form(&self.form.borrow(), &schedule)
     }
 
-    /// What the rule would have caught over the last 90 days.
     fn read_preview(&self) {
         let generation = self.generation.get() + 1;
         self.generation.set(generation);

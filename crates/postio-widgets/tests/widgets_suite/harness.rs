@@ -1,16 +1,11 @@
-//! The harness itself: a case in `CASES` is listed, and a listed case runs.
-
 use std::process::Command;
 
-/// Set on the copy of this binary the case below starts, so that a harness
-/// that runs more than it was asked for fails here rather than starting
-/// copies of itself without end.
+/// Set on the case's child process so a harness that runs more than asked fails instead of spawning
+/// copies of itself.
 const CHILD: &str = "POSTIO_WIDGETS_SUITE_CHILD";
 
-/// A case with nothing in it, which the harness must still list and run.
 pub fn an_empty_case() {}
 
-/// Asks this binary, as a runner does, for its list and for one case by name.
 pub fn an_empty_case_is_listed_and_runs() {
     assert!(
         std::env::var_os(CHILD).is_none(),

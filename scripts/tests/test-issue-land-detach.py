@@ -27,8 +27,6 @@ import tempfile
 import time
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -76,7 +74,6 @@ def main() -> int:
              f"stdout does not name {log}:\n{result.stdout}")
         case("it says how to check", "--status" in result.stdout, result.stdout)
 
-        # The child is on its own: wait for it to finish rather than for us.
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
             if log.exists() and "issue-land exit" in log.read_text(encoding="utf-8"):
@@ -97,7 +94,6 @@ def main() -> int:
         case("--status reports the outcome", "exit 2" in status.stdout and "finished" in status.stdout,
              status.stdout)
 
-        # Nothing to report is an answer, not an error.
         (log).unlink()
         status = patience.run(
             ["bash", "scripts/issue-land.sh", "--status"],

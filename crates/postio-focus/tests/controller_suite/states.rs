@@ -1,13 +1,3 @@
-//! What Focus says about its own state, from the controller's side
-//! (specs/009-focus-macos T095; screens 16 to 19).
-//!
-//! What GTK's window did in `hear_sync`, `note_account`, `show_state` and
-//! `show_empty_or_list`, asserted here so both frontends get it: the first
-//! word about an account is news, the banner and the sync label say what
-//! `postio_ui::focus_state` says for where every account stands, a refused
-//! password offers to update it, and an inbox with no rows says why, with
-//! only the shortcuts that lead somewhere.
-
 use crate::search_support::asks;
 use chrono::{DateTime, Local, TimeZone};
 use postio_client::protocol::FocusCounts;
@@ -24,7 +14,6 @@ use postio_ui::focus_state::{self, AccountFacts, Banner, EmptyInbox, EmptyPlace,
 const INBOX: ListScope = ListScope::Focus(FocusScope::Inbox);
 const ADA: AccountId = AccountId::new(1);
 
-/// Nine thirty on a Tuesday, where every clock in these tests is stopped.
 fn at() -> DateTime<Local> {
     Local
         .with_ymd_and_hms(2026, 9, 29, 9, 30, 0)
@@ -92,13 +81,10 @@ fn empties(effects: &[Effect]) -> Vec<Option<EmptyInbox>> {
         .collect()
 }
 
-/// The key `command` has under the controller's keymap, as a banner's
-/// button names it.
 fn key(focus: &FocusController, command: CommandId) -> Option<String> {
     postio_ui::hints::key(focus.keymap(), command)
 }
 
-/// The strip's counts arrive, `conversations` in the inbox.
 fn counted(focus: &mut FocusController, conversations: u32, filtered_today: u32) -> Vec<Effect> {
     let Effect::Ask(ticket, Request::FocusCounts) = focus.refresh_counts() else {
         panic!("refreshing asks for the counts");
@@ -113,8 +99,6 @@ fn counted(focus: &mut FocusController, conversations: u32, filtered_today: u32)
     ))
 }
 
-/// Answer the accounts read `effects` asked for: a store whose mail last
-/// synced `last_synced`, `None` for one never synced.
 fn read_accounts(
     focus: &mut FocusController,
     effects: &[Effect],
@@ -249,7 +233,6 @@ fn a_refused_password_offers_to_update_it() {
     }));
     assert_eq!(labels(&effects), vec!["Sync failed".to_owned()]);
     let (ticket, _) = asks(&effects).pop().expect("who the account is");
-    // A reply asked before an invalidation is still who the account is.
     focus.invalidate();
     let effects = focus.handle(Input::Reply(
         ticket,

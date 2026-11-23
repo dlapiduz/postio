@@ -1,15 +1,7 @@
-//! Focus's list at the boundary (specs/009-focus-macos T027).
-//!
-//! The rules are the controller's (`postio_focus`, ADR 0045), exactly as GTK
-//! drives them: opening a place counts it and changes the list over, a page
-//! is read with its pills and the surfaced rows spliced in, an engine event
-//! re-reads what it moved. [`FocusDriver`] is the Mac's driver: it runs each
-//! request the controller asks for on the session's runtime, keeps the rows
-//! in a `ListWindow` the table reads synchronously, and tells Swift what to
-//! redraw through the session's own events.
-//!
-//! A row crosses with the words a row draws, made by the same presenters the
-//! GTK row uses, so the two cannot word a row differently.
+//! Focus's list at the boundary. The controller (`postio_focus`, ADR 0045) holds the rules;
+//! `FocusDriver` runs its requests on the session's runtime, keeps rows in a `ListWindow` the table
+//! reads synchronously, and tells Swift what to redraw. Rows carry words from the same presenters
+//! as GTK's.
 
 use std::sync::{Arc, Mutex};
 
@@ -26,16 +18,11 @@ use postio_ui::thread_list::{self, Slot, Splice};
 use crate::event::UiEvent;
 use crate::{ChildRowFfi, ThreadRowFfi};
 
-/// Which of Focus's lists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum FocusScopeFfi {
-    /// Focus's inbox, with what it surfaces spliced in.
     Inbox,
-    /// Only the conversations that need an action (`!`).
     HasAction,
-    /// Snoozed mail (`g z`).
     Snoozed,
-    /// Flagged mail (`g *`).
     Flagged,
 }
 
@@ -50,38 +37,22 @@ impl From<FocusScopeFfi> for ListScope {
     }
 }
 
-/// A surface over Focus's list, which takes the keyboard.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum SurfaceKindFfi {
-    /// One message, in its window.
     Message,
-    /// A digest's window.
     Digest,
-    /// The composer.
     Composer,
-    /// The capture sheet.
     Capture,
-    /// Settings.
     Settings,
-    /// The key map.
     KeyMap,
-    /// Any other dialog or sheet.
     Dialog,
-    /// The command bar.
     Bar,
-    /// The Filtered view.
     Filtered,
-    /// A picker anchored to a row.
     Picker,
-    /// A row's menu.
     RowMenu,
-    /// The known-sender popover, hung from a sender's name.
     ContactPopover,
-    /// The Contacts view, in the list's place.
     Contacts,
-    /// Thread ▾'s menu, over the message window.
     ThreadMenu,
-    /// The thread outline, over the message window.
     Outline,
 }
 
@@ -134,18 +105,12 @@ impl SurfaceKindFfi {
     }
 }
 
-/// What the open message does, as its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum ReaderVerbFfi {
-    /// Close the More menu.
     CloseMore,
-    /// Close find.
     CloseFind,
-    /// Find in the message.
     FindInMessage,
-    /// The next match.
     FindNext,
-    /// The previous match.
     FindPrevious,
     /// ⌘G in a window opened from a search: the next match in the message,
     /// and when it has none, `focus_match_edge(true)`.
@@ -153,11 +118,8 @@ pub enum ReaderVerbFfi {
     /// ⇧⌘G in a window opened from a search: the previous match, and when
     /// there is none, `focus_match_edge(false)`.
     PrevMatch,
-    /// App colours or the original.
     SwitchTreatment,
-    /// The raw source, in place of the content.
     ViewSource,
-    /// The More menu.
     ShowMore,
 }
 
@@ -180,49 +142,37 @@ impl ReaderVerbFfi {
     }
 }
 
-/// What kind of row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum FocusRowKindFfi {
-    /// A conversation.
     Conversation,
-    /// A reminder that found no reply, drawn as its conversation.
     Reminder,
-    /// A digest delivery: one row for everything it holds.
     Digest,
-    /// A message of the expanded thread, drawn under its row (spec 013).
     Child,
 }
 
-/// A label pill: its name, and its stored colour if it has one.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct LabelPillFfi {
-    /// The label's name.
     pub name: String,
     /// The colour the label was given, as `#rrggbb`, if any.
     pub color: Option<String>,
 }
 
-/// The colour a label's dot is drawn in, `#rrggbb`: `stored` when the
-/// label has one, else one of its own from its name, kept off the accent
-/// whose hue is `accent_hue` degrees (FR-012, FR-091). The rule GTK's dots
-/// follow (`postio_ui::label_colour`), so a label is one colour in both
-/// apps; a label with no colour of its own was a grey dot on the Mac.
+/// The colour a label's dot is drawn in, `#rrggbb`: `stored` when the label has one, else derived
+/// from its name, kept off the accent whose hue is `accent_hue` degrees
+/// (`postio_ui::label_colour`).
 #[uniffi::export]
 pub fn label_dot_colour(name: String, stored: Option<String>, accent_hue: f64) -> String {
     use postio_ui::label_colour::{Rgb, label_colour};
     label_colour(&name, stored.as_deref().and_then(Rgb::from_hex), accent_hue).to_hex()
 }
 
-/// One action a marked row offers, with its button's words.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct FocusRowActionFfi {
-    /// The registry command it runs.
     pub command: String,
     /// The button's words: "Reply", "Accept".
     pub label: String,
 }
 
-/// A marked row's second line.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct MarkerLineFfi {
     /// The kind chip: "Invite", "Question", "To-do" or "No reply".
@@ -233,60 +183,43 @@ pub struct MarkerLineFfi {
     pub quote: Option<String>,
     /// What stands where the actions would: "Accepted", "Past".
     pub status: Option<String>,
-    /// The actions that answer it, in order.
     pub actions: Vec<FocusRowActionFfi>,
 }
 
-/// One row of Focus's list, with the words it draws.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct FocusRowFfi {
-    /// What kind of row.
     pub kind: FocusRowKindFfi,
     /// The message the row opens, or the digest delivery for a digest row.
     pub id: i64,
-    /// The conversation, for a conversation or reminder row.
     pub thread: Option<i64>,
-    /// Every conversation the row stands for, each copy of a conversation
-    /// folded from several accounts (spec 007 T161): what a verb reaches.
+    /// Every conversation the row stands for, one per account copy: what a verb reaches.
     pub threads: Vec<i64>,
-    /// The sender column: names, or "Digest" words for a digest.
     pub sender: String,
     /// The address of the sender the column names first: what a click on
     /// the name asks the popover about. `None` for a digest, or a message
     /// with no sender.
     pub from_address: Option<String>,
-    /// The subject column.
     pub subject: String,
-    /// The first line, as sent.
     pub preview: Option<String>,
     /// The time column: "16:02", "Tue", "12 Sep".
     pub time: String,
     /// The day heading this row sits under: "Today · Saturday 26 September".
     pub day_heading: String,
-    /// Unread is bold.
     pub unread: bool,
-    /// How many messages, when more than one.
     pub count_badge: Option<String>,
-    /// Whether a paperclip is drawn.
     pub has_attachments: bool,
-    /// A draft on its way or stopped says which.
     pub send_state: Option<String>,
     /// The label pills, at most two.
     pub pills: Vec<LabelPillFfi>,
-    /// The marker's line, for a marked row.
     pub marker: Option<MarkerLineFfi>,
     /// Whether opening it writes rather than reads: a draft not yet on its
     /// way, which opens in the composer.
     pub writes: bool,
-    /// What a thread row says beyond a conversation row's columns: its
-    /// participants, new badge, latest line and chevron.
     pub thread_row: Option<ThreadRowFfi>,
-    /// The child this row is, when `kind` is `Child`.
     pub child: Option<ChildRowFfi>,
 }
 
 impl FocusRowFfi {
-    /// `row` in words, as of now, in the local zone.
     pub(crate) fn of(row: &FocusRow) -> Self {
         let now = postio_ui::clock::now();
         let today = now.date_naive();
@@ -403,14 +336,11 @@ fn conversation_row(
     }
 }
 
-/// A row the driver holds: the words it crossed with, and the row they
-/// were made from -- what the controller reads a capture's source, `d`'s
-/// senders and a digest's delivery from (`Rows::row`).
+/// A row the driver holds: the words it crossed with, and the row they were made from
+/// (`Rows::row`).
 #[derive(Debug, Clone)]
 pub(crate) struct HeldRow {
-    /// What the table draws.
     pub(crate) ffi: FocusRowFfi,
-    /// What it was made from.
     pub(crate) row: FocusRow,
 }
 
@@ -438,7 +368,6 @@ impl postio_ui::list::ListRow for HeldRow {
     }
 }
 
-/// The Mac's rows, as the controller asks about them.
 struct RowsView<'a>(&'a ListWindow<HeldRow>);
 
 impl RowsView<'_> {
@@ -476,7 +405,6 @@ impl postio_focus::Rows for RowsView<'_> {
         self.0
             .position_of_key(postio_ui::list::RowKey::Thread(thread))
     }
-    /// A picker names the row by its sender column and subject.
     fn said(&self, position: u32) -> Option<(String, String)> {
         self.0
             .resident_at(position)
@@ -489,7 +417,6 @@ impl postio_focus::Rows for RowsView<'_> {
     }
 }
 
-/// Focus's list for the Mac: the controller, and the rows it delivered.
 pub(crate) struct FocusDriver {
     focus: Mutex<FocusController>,
     list: Mutex<ListWindow<HeldRow>>,
@@ -498,29 +425,22 @@ pub(crate) struct FocusDriver {
     local: async_channel::Sender<UiEvent>,
     /// Pages read from the store, so a test can count what scrolling cost.
     page_reads: std::sync::atomic::AtomicUsize,
-    /// Conversation searches that ran to the end, so a test can count
-    /// what typing quickly cost (spec 010 D8).
+    /// Conversation searches that ran to the end, so a test can count what typing quickly cost.
     search_reads: std::sync::atomic::AtomicUsize,
-    /// Each search lane's task in flight: a newer request of the lane
-    /// aborts it, which drops the client's call, and the host stops the
-    /// read when its reply channel closes (spec 010 D8, D9).
+    /// Each search lane's task in flight: a newer request aborts it, which drops the client's call,
+    /// and the host stops the read when its reply channel closes.
     lanes: Mutex<std::collections::HashMap<postio_focus::Lane, tokio::task::AbortHandle>>,
-    /// The `config.toml` a saved search is written to, when there is one.
     config_path: Mutex<Option<std::path::PathBuf>>,
-    /// The thread open in place, as the controller said. Read by the table
-    /// through display positions. A leaf lock: nothing is taken while it is
-    /// held, so it can never be one end of a cycle.
+    /// The thread open in place, read by the table through display positions. A leaf lock: nothing
+    /// is taken while held.
     expanded: Mutex<Option<Expanded>>,
     /// The account's own addresses: what "you" in a thread row is decided
     /// by (`focus_row::participants`). Read once the driver starts.
     me: Mutex<Vec<postio_model::EmailAddress>>,
 }
 
-/// An expanded thread: where it is, and what sits under it.
 struct Expanded {
-    /// The expanded row's position among the rows.
     anchor: u32,
-    /// One per message, then the unsent reply.
     children: Vec<ChildRowFfi>,
 }
 
@@ -546,7 +466,6 @@ impl FocusDriver {
         .started()
     }
 
-    /// Read who "you" is, off the caller's thread.
     fn started(self: Arc<Self>) -> Arc<Self> {
         let driver = Arc::clone(&self);
         self.runtime.spawn(async move {
@@ -562,7 +481,6 @@ impl FocusDriver {
         self
     }
 
-    /// The splice the table's display positions go through, or none.
     fn splice(&self) -> Option<Splice> {
         self.expanded
             .lock()
@@ -574,8 +492,6 @@ impl FocusDriver {
             })
     }
 
-    /// `row` as the table draws it at row position `position`: with its
-    /// thread words and its chevron as of now.
     fn present(&self, held: &HeldRow, position: u32) -> FocusRowFfi {
         let mut ffi = held.ffi.clone();
         let (FocusRow::Conversation(conversation)
@@ -644,10 +560,8 @@ impl FocusDriver {
         })
     }
 
-    /// The Mac's chevron click on `position` (a display position): the
-    /// cursor goes to the row and the thread opens, or folds when it is the
-    /// one open. The two commands are the controller's, as `Right` and
-    /// `Left` are.
+    /// The Mac's chevron click on `position` (a display position): the cursor goes to the row and
+    /// the thread opens, or folds when open.
     pub(crate) fn chevron_clicked(self: &Arc<Self>, position: u32) {
         self.input(Input::Point(position));
         let open = self.splice().is_some_and(
@@ -660,15 +574,12 @@ impl FocusDriver {
         });
     }
 
-    /// Show `scope`: counted first, then the list changes over.
     pub(crate) fn open(self: &Arc<Self>, scope: ListScope) {
         let effects = self.focus.lock().expect("focus lock").open(scope);
         self.apply(effects);
     }
 
-    /// Run `id` through the controller when it is one of its own -- the
-    /// cursor's, the selection's, `!`, a verb on the list -- and say whether
-    /// it was. The rest go where they always did.
+    /// Run `id` through the controller when it is one of its own, and say whether it was.
     pub(crate) fn command(self: &Arc<Self>, id: postio_core::CommandId) -> bool {
         if !self.focus.lock().expect("focus lock").answers(id) {
             return false;
@@ -694,8 +605,7 @@ impl FocusDriver {
             .handle_on(input, &RowsView(&list))
     }
 
-    /// Something the frontend reports that is not a command: a click, a
-    /// scroll to the top. Applied over the list as it is held now.
+    /// Something the frontend reports that is not a command, applied over the list as held now.
     pub(crate) fn input(self: &Arc<Self>, input: Input) {
         let effects = {
             let list = self.list.lock().expect("list lock");
@@ -707,7 +617,6 @@ impl FocusDriver {
         self.apply(effects);
     }
 
-    /// `Tab` in the bar: whether the controller used it.
     pub(crate) fn bar_tab(self: &Arc<Self>) -> bool {
         let effects = self.focus.lock().expect("focus lock").handle(Input::BarTab);
         let used = !effects.is_empty();
@@ -715,8 +624,6 @@ impl FocusDriver {
         used
     }
 
-    /// Resolve one key press in `context` through the controller's
-    /// resolver, the one the keymap in force built.
     pub(crate) fn press(
         &self,
         chord: &postio_ui::keymap::Chord,
@@ -730,18 +637,14 @@ impl FocusDriver {
             .press(chord, context, in_text_entry, now)
     }
 
-    /// The keys in force, as the controller holds them.
     pub(crate) fn keymap(&self) -> postio_core::Keymap {
         self.focus.lock().expect("focus lock").keymap().clone()
     }
 
-    /// The folders popover's places holding `filter`, with their tokens.
     pub(crate) fn places(&self, filter: &str) -> Vec<(u64, postio_ui::places::Entry)> {
         self.focus.lock().expect("focus lock").places(filter)
     }
 
-    /// Where a saved search is written: the `config.toml` this session
-    /// reads, when it reads a file.
     pub(crate) fn set_config_path(&self, path: Option<std::path::PathBuf>) {
         *self.config_path.lock().expect("config path lock") = path;
     }
@@ -759,12 +662,10 @@ impl FocusDriver {
         (focus.has_surface() || focus.in_results()).then(|| focus.key_context())
     }
 
-    /// How many rows the results table has.
     pub(crate) fn result_count(&self) -> u64 {
         self.focus.lock().expect("focus lock").result_count()
     }
 
-    /// The People tab's row at `position`, drawn.
     pub(crate) fn result_person(&self, position: u64) -> Option<postio_focus::PersonRow> {
         self.focus
             .lock()
@@ -777,8 +678,8 @@ impl FocusDriver {
         self.focus.lock().expect("focus lock").result_file(position)
     }
 
-    /// The result at `position`, or `None` while its page is on its way: a
-    /// miss asks for the page, and `FocusResultsPage` says when it landed.
+    /// The result at `position`, or `None` while its page is on its way: a miss asks for the page,
+    /// and `FocusResultsPage` says when.
     pub(crate) fn result_row(self: &Arc<Self>, position: u64) -> Option<postio_focus::ResultRow> {
         let effects = {
             let mut focus = self.focus.lock().expect("focus lock");
@@ -791,7 +692,6 @@ impl FocusDriver {
         None
     }
 
-    /// The Contacts list's row at `index`; a miss asks for its page.
     pub(crate) fn contacts_row(
         self: &Arc<Self>,
         index: u32,
@@ -807,35 +707,28 @@ impl FocusDriver {
         None
     }
 
-    /// How many rows the Contacts list has.
     pub(crate) fn contacts_total(&self) -> u32 {
         self.focus.lock().expect("focus lock").contacts_total()
     }
 
-    /// Where the Contacts cursor is.
     pub(crate) fn contacts_cursor(&self) -> Option<u32> {
         self.focus.lock().expect("focus lock").contacts_cursor()
     }
 
-    /// The card beside the list, once read.
     pub(crate) fn contacts_card(&self) -> Option<postio_ui::contacts_view::CardView> {
         self.focus.lock().expect("focus lock").contacts_card()
     }
 
-    /// Settings > Contacts' Suggestions section, once it has been read.
     pub(crate) fn contacts_settings(
         &self,
     ) -> Option<postio_ui::contacts_settings::SuggestionsView> {
         self.focus.lock().expect("focus lock").contacts_settings()
     }
 
-    /// The Edit contact form, while one is open.
     pub(crate) fn contact_edit(&self) -> Option<postio_ui::contact_edit::EditView> {
         self.focus.lock().expect("focus lock").contact_edit()
     }
 
-    /// The message under the cursor, once its page has landed: what a verb
-    /// that is not the list's own aims at.
     pub(crate) fn cursor_message(&self) -> Option<postio_model::MessageId> {
         // The list, then the controller: the one order every path takes
         // both in, so two threads can never hold one each.
@@ -853,58 +746,45 @@ impl FocusDriver {
             .map(|row| postio_model::MessageId::new(row.id))
     }
 
-    /// The place the list is showing, once one has been opened: the
-    /// controller's, which `!` changes as well as `open`.
     pub(crate) fn scope(&self) -> Option<ListScope> {
         self.focus.lock().expect("focus lock").scope()
     }
 
-    /// The list, as a source of facts about its rows: what `aim` asks to
-    /// tell a conversation row from a message. Held only while a verb is
-    /// aimed.
+    /// The list as a source of facts about its rows, held only while a verb is aimed.
     pub(crate) fn rows(&self) -> std::sync::MutexGuard<'_, ListWindow<HeldRow>> {
         self.list.lock().expect("list lock")
     }
 
-    /// How many pages have been read from the store since the session opened.
     #[cfg(feature = "testing")]
     pub(crate) fn page_reads(&self) -> usize {
         self.page_reads.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    /// How many conversation searches ran to the end.
     #[cfg(feature = "testing")]
     pub(crate) fn search_reads(&self) -> usize {
         self.search_reads.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    /// How many rows the window is holding.
     #[cfg(feature = "testing")]
     pub(crate) fn resident_rows(&self) -> usize {
         self.list.lock().expect("list lock").resident_rows()
     }
 
-    /// How many rows the table draws: the list's, and the open thread's
-    /// children among them.
     pub(crate) fn row_count(&self) -> u32 {
         let rows = self.list.lock().expect("list lock").total();
         thread_list::len(self.splice(), rows)
     }
 
-    /// The row at `position`, or `None` while its page is on its way: a miss
-    /// asks for the page behind the caller, and `FocusPageReady` says when to
-    /// draw it. Synchronous; what the table calls for every visible row.
-    /// The row standing for `message`, if its page is resident; reads
-    /// nothing.
+    /// The row at `position`, or `None` while its page is on its way: a miss asks for the page, and
+    /// `FocusPageReady` says when.
+    /// Synchronous. The row standing for `message`, if its page is resident; reads nothing.
     pub(crate) fn row_of(&self, message: i64) -> Option<FocusRowFfi> {
         let list = self.list.lock().expect("list lock");
         let position = list.position_of(postio_model::MessageId::new(message))?;
         list.resident_at(position).map(|held| held.ffi.clone())
     }
 
-    /// The row at `position` if its page is resident, else `None`: never
-    /// asks for the page. For a table that must re-measure rows it already
-    /// drew, without reading pages it was not looking at.
+    /// The row at `position` if its page is resident, else `None`: never asks for the page.
     pub(crate) fn row_resident(&self, position: u32) -> Option<FocusRowFfi> {
         match thread_list::slot(self.splice(), position) {
             Slot::Row(row) => {
@@ -939,7 +819,6 @@ impl FocusDriver {
         None
     }
 
-    /// An engine event, by the controller's rules.
     pub(crate) fn event(self: &Arc<Self>, event: &Event) {
         let effects = self.handle_over_rows(Input::Event(event.clone()));
         self.apply(effects);
@@ -960,8 +839,6 @@ impl FocusDriver {
     fn show(self: &Arc<Self>, intent: Intent) {
         match intent {
             Intent::ReplaceSource { total } => {
-                // A different list has no thread open (the controller
-                // forgot its expansion when it opened it).
                 let open = self.expanded.lock().expect("expanded lock").take();
                 if let Some(open) = open {
                     self.say(UiEvent::FocusUnsplice {
@@ -1004,10 +881,8 @@ impl FocusDriver {
                 self.list.lock().expect("list lock").abandon(stamp, page);
             }
             Intent::RefreshList => {
-                // Re-read the pages held, in place, as GTK's refresh does:
-                // each keeps drawing until its page comes back, and the page
-                // replaces it there. Blanking them first drew the whole list
-                // collapsing and growing back on every delete.
+                // Re-read the pages held in place: each keeps drawing until its page returns;
+                // blanking them first made the list collapse and regrow on every delete.
                 let (held, stamp) = {
                     let mut list = self.list.lock().expect("list lock");
                     let held: Vec<u32> = list
@@ -1018,8 +893,6 @@ impl FocusDriver {
                     (held, list.generation())
                 };
                 if held.is_empty() {
-                    // Nothing held to keep: read the top, which carries the
-                    // count, the way a first read does.
                     let total = {
                         let mut list = self.list.lock().expect("list lock");
                         list.invalidate();
@@ -1040,8 +913,6 @@ impl FocusDriver {
                 }
             }
             Intent::Filled => {
-                // The list landed: the cursor goes to its first row, back to
-                // what `!` kept, or to what an undo brought back.
                 let effects = {
                     let list = self.list.lock().expect("list lock");
                     let mut focus = self.focus.lock().expect("focus lock");
@@ -1122,7 +993,6 @@ impl FocusDriver {
             Intent::ReplyTo(text) => self.say(UiEvent::FocusReplyTo { text }),
             Intent::KeyboardHome => self.say(UiEvent::FocusKeyboardHome),
             Intent::ListToTop => self.say(UiEvent::FocusListToTop),
-            // A toast with a way to put it right is drawn with its button.
             Intent::Toast {
                 text,
                 kind: postio_focus::ToastKind::Offer { label, command },
@@ -1132,7 +1002,6 @@ impl FocusDriver {
                 command: command.to_string(),
             }),
             Intent::Toast { text, kind } => {
-                // How long it stays is the controller's, always said.
                 let seconds = Some(kind.seconds());
                 let (kind, undoable) = match kind {
                     postio_focus::ToastKind::Completed { undoable, .. } => {
@@ -1212,8 +1081,8 @@ impl FocusDriver {
                 let sheet = crate::focus_keymap::sheet(&self.keymap());
                 self.say(UiEvent::FocusOpenKeyMap { sheet });
             }
-            // The digest's window draws its own email: `FocusDigest`
-            // carries it, so a message hosted there has no event of its own.
+            // The digest's window draws its own email via `FocusDigest`, so a message hosted there
+            // has no event.
             Intent::OpenMessage {
                 host: postio_focus::Host::Digest,
                 ..
@@ -1278,8 +1147,7 @@ impl FocusDriver {
             }),
             Intent::ContactsFocusFilter => self.say(UiEvent::FocusContactsFocusFilter),
             Intent::Composer { kind, message } => {
-                // A thread's unsent reply has no message: its own id rides in
-                // `message`.
+                // A thread's unsent reply has no message: its own id rides in `message`.
                 let message = match kind {
                     postio_focus::ComposerKind::ThreadDraft { draft } => Some(draft.get()),
                     _ => message.map(|message| message.get()),
@@ -1319,8 +1187,6 @@ impl FocusDriver {
         }
     }
 
-    /// Keep `save` in this session's `config.toml`
-    /// ([`postio_focus::save_search`]).
     fn save_search(
         &self,
         save: &postio_focus::SaveSearch,
@@ -1369,10 +1235,8 @@ impl FocusDriver {
         }
     }
 
-    /// Hand the controller `Input::Timer(token)` once `after` has passed,
-    /// on the session's runtime: the composer's autosave. A timer whose
-    /// token the controller has moved on from changes nothing when it
-    /// fires, so none is ever cancelled here.
+    /// Hand the controller `Input::Timer(token)` once `after` has passed (the composer's autosave).
+    /// A superseded token changes nothing, so no timer is cancelled.
     fn timer(self: &Arc<Self>, token: u64, after: std::time::Duration) {
         let driver = Arc::clone(self);
         self.runtime.spawn(async move {

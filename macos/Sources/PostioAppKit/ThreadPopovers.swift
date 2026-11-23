@@ -3,14 +3,6 @@ import PostioFFI
 import PostioKit
 import SwiftUI
 
-/// Thread ▾'s menu as an `NSPopover` (spec 013 US5, T066; screen 04): hung
-/// from the button in the thread bar, 340 wide. The controller opens and
-/// closes it (`FocusThreadMenu`, `FocusCloseSurface(.threadMenu)`); a close
-/// the toolkit made -- a click away -- is reported through `onToolkitClose`
-/// for the engine to say `focusSurfaceClosed(.threadMenu)`.
-///
-/// ↑/↓ and Return reach `ThreadMenuModel` through a key view that holds the
-/// keyboard; the entries' own keys resolve as the Reader's commands.
 @MainActor
 public final class ThreadMenuPopover: NSObject, NSPopoverDelegate {
     private let model: ThreadMenuModel
@@ -44,12 +36,10 @@ public final class ThreadMenuPopover: NSObject, NSPopoverDelegate {
         controller.view = container
         popover.contentViewController = controller
         popover.behavior = .transient
-        // Absent rather than slow: the menu is there when the key is.
         popover.animates = false
         popover.delegate = self
     }
 
-    /// Show the menu the model holds, under `rect` in `view`.
     public func show(relativeTo rect: NSRect, of view: NSView) {
         guard view.window != nil else { return }
         hosting.view.layoutSubtreeIfNeeded()
@@ -61,7 +51,6 @@ public final class ThreadMenuPopover: NSObject, NSPopoverDelegate {
         popover.contentViewController?.view.window?.makeFirstResponder(keyView)
     }
 
-    /// Close it because the controller did. Not reported back.
     public func close() {
         guard popover.isShown else { return }
         popover.performClose(nil)
@@ -72,8 +61,6 @@ public final class ThreadMenuPopover: NSObject, NSPopoverDelegate {
     }
 }
 
-/// What holds the keyboard in the menu: the arrows move the highlight and
-/// Return chooses; every other key was the resolver's before it got here.
 final class ThreadMenuKeyView: NSView {
     weak var model: ThreadMenuModel?
 
@@ -90,11 +77,6 @@ final class ThreadMenuKeyView: NSView {
     override func doCommand(by selector: Selector) {}
 }
 
-/// The outline as an `NSPopover` (screen 05): 440 wide, from the same
-/// button. The filter is an `NSSearchField`, which holds the keyboard from
-/// the start; ↑/↓ and Return in it go to `ThreadOutlineModel`, and every
-/// change of its text is `focusOutlineTyped`. `/` puts the keyboard back in
-/// it (`FocusOutlineFocusFilter`).
 @MainActor
 public final class ThreadOutlinePopover: NSObject, NSPopoverDelegate, NSSearchFieldDelegate {
     private let model: ThreadOutlineModel
@@ -126,8 +108,6 @@ public final class ThreadOutlinePopover: NSObject, NSPopoverDelegate, NSSearchFi
         popover.delegate = self
     }
 
-    /// Show the outline the model holds, under `rect` in `view`, with the
-    /// keyboard in the filter.
     public func show(relativeTo rect: NSRect, of view: NSView) {
         guard view.window != nil else { return }
         sync()
@@ -137,26 +117,21 @@ public final class ThreadOutlinePopover: NSObject, NSPopoverDelegate, NSSearchFi
         focusFilter()
     }
 
-    /// It was drawn again: the field follows the controller's words when
-    /// they differ from what it holds, and the size follows the rows.
     public func reload() {
         guard popover.isShown else { return }
         sync()
     }
 
-    /// `/`: the keyboard goes to the filter.
     public func focusFilter() {
         guard popover.isShown else { return }
         filter.window?.makeFirstResponder(filter)
     }
 
-    /// Close it because the controller did. Not reported back.
     public func close() {
         guard popover.isShown else { return }
         popover.performClose(nil)
     }
 
-    /// Type `text` at the end of the filter, as a replay does.
     public func type(_ text: String) {
         if let editor = filter.currentEditor() as? NSTextView {
             editor.insertText(text, replacementRange: editor.selectedRange())
@@ -179,13 +154,9 @@ public final class ThreadOutlinePopover: NSObject, NSPopoverDelegate, NSSearchFi
         popover.contentSize = NSSize(width: ThreadOutlineMetrics.width, height: height)
     }
 
-    // MARK: NSPopoverDelegate
-
     public func popoverDidClose(_ notification: Notification) {
         if model.closedByToolkit() { onToolkitClose() }
     }
-
-    // MARK: NSSearchFieldDelegate
 
     public func controlTextDidChange(_ obj: Notification) {
         guard let field = obj.object as? NSTextField else { return }
@@ -197,7 +168,6 @@ public final class ThreadOutlinePopover: NSObject, NSPopoverDelegate, NSSearchFi
         case #selector(NSResponder.moveUp(_:)): model.move(by: -1)
         case #selector(NSResponder.moveDown(_:)): model.move(by: 1)
         case #selector(NSResponder.insertNewline(_:)): model.show()
-        // Escape resolves to Back before the field sees it; a fallback.
         case #selector(NSResponder.cancelOperation(_:)): break
         default: return false
         }

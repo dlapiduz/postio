@@ -1,23 +1,7 @@
-//! Building outgoing RFC 5322 messages from a [`Draft`].
-//!
-//! This is the other half of [`mime::parse`](crate::mime::parse): that module
-//! turns bytes the network handed us into the domain model, this one turns a
-//! composed [`Draft`] back into bytes for `postio-smtp` to send. Both stay in
-//! `postio-model` for the same reason — [`mail_builder`], like [`mail_parser`],
-//! is a pure format library with no I/O — and neither one touches the blob
-//! store: [`OutgoingAttachment`] pairs a [`Draft`]'s attachment metadata with
-//! bytes the caller already resolved, exactly as [`ParsedPart`](crate::mime::ParsedPart)
-//! does for the parsing side.
-//!
-//! # Threading
-//!
-//! `In-Reply-To` and `References` need the RFC `Message-ID` chain of the
-//! message being replied to, which is not part of a [`Draft`] — a `Draft`
-//! only carries the *local* id of that message ([`Draft::in_reply_to`]), so
-//! [`build`] takes the parent [`Message`] itself and computes both headers
-//! from [`Message::reference_chain`]. [`crate::reply`] is what builds the
-//! reply `Draft` in the first place; this is only where its headers get
-//! written.
+//! The other half of `mime::parse`: turns a composed `Draft` into bytes for `postio-smtp`. Pure
+//! format library, no blob store:
+//! `OutgoingAttachment` carries bytes the caller resolved. `build` takes the parent `Message`,
+//! since a `Draft` carries only its local id.
 
 use chrono::Utc;
 use mail_builder::MessageBuilder;
@@ -35,54 +19,34 @@ use crate::draft::Draft;
 use crate::ids::RfcMessageId;
 use crate::message::Message;
 
-/// A domain to fall back on when an identity's address has none.
-///
-/// RFC 2606 reserves `.invalid` for exactly this: an address that should never
-/// resolve. It is only reached when an `Identity` was built without a valid
-/// `@domain`, which the account setup flow does not allow.
+/// RFC 2606 reserves `.invalid`; reached only if an `Identity` was built without a valid `@domain`.
 const FALLBACK_DOMAIN: &str = "invalid";
 
-/// One of a draft's attachments, resolved to its bytes.
-///
-/// `postio-model` has no blob store, so the caller reads
-/// [`Draft::attachments`] against it and hands the bytes back paired with the
-/// metadata they belong to.
+/// `postio-model` has no blob store, so the caller reads the bytes and pairs them with their
+/// metadata.
 #[derive(Debug, Clone, Copy)]
 pub struct OutgoingAttachment<'a> {
-    /// The attachment's metadata, from [`Draft::attachments`].
     pub attachment: &'a Attachment,
-    /// Its decoded bytes.
     pub content: &'a [u8],
 }
 
-/// A calendar object to send with the message: the `text/calendar` part an
-/// RSVP carries (`specs/007-postio-focus` FR-102, research R9).
-///
-/// It goes in the `multipart/alternative`, beside the text a person reads,
-/// which is where RFC 6047 §2.4 puts an iTIP message and where every
-/// calendar client looks for one.
+/// The `text/calendar` part an RSVP carries, in the `multipart/alternative` beside the text, where
+/// RFC 6047 §2.4 puts an iTIP message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CalendarPart<'a> {
-    /// The iTIP method, repeated as the part's `method=` parameter.
     pub method: CalendarMethod,
-    /// The iCalendar object, as `postio-calendar` writes it: UTF-8 with CRLF
-    /// line endings.
+    /// UTF-8 with CRLF line endings, as `postio-calendar` writes it.
     pub ics: &'a [u8],
 }
 
-/// The iTIP method of a calendar part Postio sends (RFC 5546 §1.4).
-///
-/// Postio answers invitations and organises none, so an answer is the only
-/// kind it has to send. A closed set keeps anything else out of a header
-/// parameter.
+/// Postio answers invitations and organises none, so a reply is all it sends; a closed set keeps
+/// anything else out of a header parameter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CalendarMethod {
-    /// `REPLY`: an attendee's answer to an invitation (RFC 5546 §3.2.3).
     Reply,
 }
 
 impl CalendarMethod {
-    /// The method's name as the `method=` parameter spells it.
     pub const fn as_str(self) -> &'static str {
         match self {
             CalendarMethod::Reply => "REPLY",
@@ -90,40 +54,18 @@ impl CalendarMethod {
     }
 }
 
-/// A [`Draft`] built into raw bytes, ready to hand to SMTP.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuiltMessage {
-    /// The complete RFC 5322 message: headers and body.
     pub raw: Vec<u8>,
-    /// The `Message-ID` this build generated.
     pub message_id: RfcMessageId,
 }
 
-/// Builds `draft` into an outgoing message sent as `identity`.
-///
-/// `attachments` must correspond to `draft.attachments`, resolved to their
-/// bytes by the caller; an attachment is embedded inline via `cid:` when it is
-/// [`Disposition::Inline`] and carries a `content_id`, and as a regular
-/// attachment otherwise.
-///
-/// `in_reply_to` is the message `draft` answers, when it answers one —
-/// the same message [`Draft::in_reply_to`] names by local id, resolved by the
-/// caller to the domain object this crate needs. Its `Message-ID` becomes
-/// `In-Reply-To`, and its own chain plus that id becomes `References`; see
-/// [`Message::reference_chain`] for why that is the whole rule. A parent with
-/// no `Message-ID` of its own (the sender omitted one) contributes no
-/// `In-Reply-To`, but its chain still becomes `References` if it has one.
-///
-/// The `Message-ID` comes from [`Draft::rfc_message_id`] when the draft has
-/// reserved one, and is generated fresh otherwise. That is ADR 0021's first
-/// decision and it is not cosmetic: a `Send` is resolved — and therefore
-/// rebuilt — on every drain attempt, so generating one here unconditionally
-/// made a retried send a second *distinct* message rather than a duplicate
-/// anything downstream could recognise. The date is always the current time.
-///
-/// `calendar` is the answer to an invitation, when this message is one: its
-/// part joins the draft's text and HTML in the `multipart/alternative`. With
-/// `None` the message is exactly what it would be without the parameter.
+/// An attachment is embedded inline via `cid:` when it is `Disposition::Inline` with a
+/// `content_id`. `in_reply_to`'s `Message-ID` becomes `In-Reply-To` and its chain plus that id
+/// becomes `References`; a parent with no `Message-ID` contributes no `In-Reply-To`. The
+/// `Message-ID` comes from `Draft::rfc_message_id` when reserved, else fresh (ADR 0021): a `Send`
+/// is rebuilt on every drain attempt, so generating one unconditionally made a retried send a
+/// distinct message. `calendar` joins the text and HTML in the `multipart/alternative`.
 pub fn build(
     draft: &Draft,
     identity: &Identity,
@@ -141,28 +83,15 @@ pub fn build(
     )
 }
 
-/// Builds `draft` into the copy filed in the account's **Drafts** mailbox.
-///
-/// Identical to [`build`] except for one header: this one carries `Bcc`.
-///
-/// The rule [`build`] exists to enforce — that a bcc'd address never travels
-/// inside the message — is about the bytes handed to `DATA`, which reach every
-/// `To` and `Cc` recipient as they stand. A copy in the user's own Drafts
-/// folder reaches nobody. Dropping `Bcc` there would instead lose the
-/// recipients the user typed: a draft picked up on their phone would look
-/// finished and send to fewer people than they asked for, silently.
-///
-/// The two entry points are separate rather than a boolean because the wrong
-/// answer to that boolean discloses a bcc'd address to every other recipient,
-/// and that is not a mistake worth making reachable by passing `true`.
+/// Identical to `build` except it carries `Bcc`: the copy in the user's own Drafts reaches nobody,
+/// and dropping `Bcc` there would lose typed recipients. Separate entry points, not a boolean,
+/// because the wrong answer discloses a bcc'd address to every recipient.
 pub fn build_draft(
     draft: &Draft,
     identity: &Identity,
     attachments: &[OutgoingAttachment<'_>],
     in_reply_to: Option<&Message>,
 ) -> BuiltMessage {
-    // An RSVP is queued to send, never filed as a draft, so the Drafts copy
-    // has no calendar part to carry.
     assemble(
         draft,
         identity,
@@ -173,12 +102,9 @@ pub fn build_draft(
     )
 }
 
-/// Whether the assembled message carries a `Bcc` header.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Bcc {
-    /// For bytes that go to a recipient. See [`build`].
     Omit,
-    /// For the copy in the user's own Drafts folder. See [`build_draft`].
     Include,
 }
 
@@ -209,28 +135,13 @@ fn assemble(
     }
     match recipient_list(&draft.to) {
         Some(to) => builder = builder.to(to),
-        // A message whose only recipients are bcc'd has nothing to name, and
-        // dropping the Bcc header correctly leaves it addressed to nobody:
-        // no `To`, no `Cc`, the recipients only in the envelope. That is
-        // valid and reads as broken -- clients show "(no recipients)", and a
-        // missing `To` is a well-known spam signal, so the honest message
-        // becomes the one least likely to arrive.
-        //
-        // `undisclosed-recipients:;` is an RFC 5322 group with no members:
-        // it says "there are recipients and they are not named here" in the
-        // one way every client already understands. Only when there is
-        // genuinely nothing else to name -- adding it beside a real `To`
-        // would announce to every recipient that somebody is hidden, which
-        // is not what Bcc means either.
-        // `Bcc::Omit` only -- the sent copy. The Drafts copy keeps a real
-        // `Bcc` header, so it *does* name its recipients, and telling it they
-        // are undisclosed would be the one message in the mailbox that
-        // contradicts itself.
+        // A message whose only recipients are bcc'd would have no `To` and read as broken (a
+        // missing `To` is a spam signal), so it gets the empty group `undisclosed-recipients:;`.
+        // Only when nothing else names a recipient, and only for `Bcc::Omit`: beside a real `To` it
+        // would announce a hidden recipient, and the Drafts copy keeps its real `Bcc`.
         None if bcc == Bcc::Omit && draft.cc.is_empty() && !draft.bcc.is_empty() => {
-            // A raw header rather than `Address::new_group`, which quotes the
-            // group name: `"undisclosed-recipients": ;` parses as the same
-            // group but is not the spelling clients recognise on sight, and
-            // being recognised is the entire reason this header is here.
+            // A raw header, not `Address::new_group`, which quotes the name: that is not the
+            // spelling clients recognise on sight.
             builder = builder.header("To", Raw::new(UNDISCLOSED_RECIPIENTS));
         }
         None => {}
@@ -238,26 +149,19 @@ fn assemble(
     if let Some(cc) = recipient_list(&draft.cc) {
         builder = builder.cc(cc);
     }
-    // Bcc is written only for the Drafts copy. Whatever bytes DATA carries go
-    // to every envelope recipient as-is, so a Bcc header on an outgoing
-    // message would hand every To/Cc recipient the bcc'd list — the opposite
-    // of what Bcc means. A bcc'd address is still a `RCPT TO` the caller adds
-    // to the envelope; it is just never inside a message anybody else
-    // receives. See `postio-sync`'s send path, and `build_draft`.
+    // Bcc is written only for the Drafts copy: DATA's bytes reach every envelope recipient, so a
+    // Bcc header would hand them the bcc'd list. A bcc'd address is still a `RCPT TO` the caller
+    // adds to the envelope.
     if bcc == Bcc::Include
         && let Some(addresses) = recipient_list(&draft.bcc)
     {
         builder = builder.bcc(addresses);
     }
     if let Some(text) = &draft.body.text {
-        // The public field directly, not `.body()`: that method sets a
-        // *different* one (`MessageBuilder::body`), a raw override that
-        // replaces the whole text/html/attachments assembly rather than
-        // supplying one part of it -- found by a test that came back with
-        // no HTML part at all. `.text_body(value)` is what should run here,
-        // it just always spells its own `Content-Type` as bare
-        // `text/plain`; this is that same assignment with the header
-        // `flowed_text_part` built instead.
+        // The public field, not `.body()`, which is a raw override replacing the whole
+        // text/html/attachments assembly;
+        // `.text_body()` always spells bare `text/plain`, so this assigns the `format=flowed`
+        // header directly.
         builder.text_body = Some(match draft.body_markdown {
             Some(_) => fixed_text_part(text.clone()),
             None => flowed_text_part(text.clone()),
@@ -280,14 +184,9 @@ fn assemble(
     BuiltMessage { raw, message_id }
 }
 
-/// `builder` with `calendar` as the last alternative to the text and HTML.
-///
-/// mail-builder assembles text, HTML and attachments itself, and has no place
-/// for a third alternative. So this takes the parts it was given and builds
-/// the same tree it would -- an alternative, inside a mixed part when there
-/// are attachments -- with the calendar in the alternative, which is where
-/// RFC 6047 section 2.4 puts it. Without a calendar none of this runs, so
-/// every other message is exactly what mail-builder writes.
+/// mail-builder has no place for a third alternative, so this builds the same tree it would with
+/// the calendar in the `multipart/alternative` (RFC 6047 §2.4). Without a calendar none of this
+/// runs.
 fn with_calendar<'x>(
     mut builder: MessageBuilder<'x>,
     calendar: CalendarPart<'_>,
@@ -316,33 +215,13 @@ fn with_calendar<'x>(
     builder
 }
 
-/// `value` with every line break folded into a single space.
-///
-/// **A header value may not contain CR or LF** (RFC 5322 §2.2) except as
-/// folding whitespace, and the generator writes what it is handed. Left
-/// alone, everything after a break becomes a *header*: #864 reached a `Bcc`
-/// this way, which is a copy of a reply going somewhere the sender never saw
-/// and which the composer's own recipient chips would not show, because it
-/// was never in the draft.
-///
-/// **Fold rather than refuse.** Refusing is the more honest-looking answer
-/// and is the wrong one here: the value arrives from *received mail* — an
-/// RFC 2047 encoded word can carry any octet, so a hostile `Subject` decodes
-/// with real breaks in it and `reply` copies it into a draft. Refusing would
-/// mean a message you cannot reply to, handing the sender of that message a
-/// veto over your mail client. Folding keeps the reply working.
-///
-/// A single space is not an arbitrary choice either: it is exactly what
-/// unfolding a *legitimately* folded header produces (§2.2.3), so a value
-/// that only ever contained folding whitespace comes out unchanged in
-/// meaning. Any run of breaks plus the horizontal whitespace around them
-/// collapses to one space, because `"a\r\n\tb"` unfolds to `"a b"` and
-/// `"a\r\n\r\nb"` should not become `"a  b"`.
-///
-/// Applied to every unstructured value handed to the builder, in one place,
-/// on purpose: sanitising at the composer would leave the other sources open
-/// — a draft restored from its row, a `mailto:` URL, a rules action, the FFI
-/// and MCP surfaces — and those are the ones nobody thinks of.
+/// A header value may not contain CR or LF (RFC 5322 §2.2) except as folding; left alone, text
+/// after a break becomes a header (#864 reached a `Bcc`).
+/// Folded rather than refused: the value can come from received mail (an RFC 2047 word can carry
+/// any octet), and refusing would give a hostile sender a veto over your reply.
+/// A single space is what unfolding a legitimately folded header produces. Applied in one place,
+/// since sanitising at the composer would leave restored drafts, `mailto:`, rules, FFI and MCP
+/// open.
 fn header_text(value: &str) -> String {
     if !value.contains(['\r', '\n']) {
         return value.to_owned();
@@ -354,15 +233,12 @@ fn header_text(value: &str) -> String {
             folded.push(character);
             continue;
         }
-        // The break, and whatever whitespace it ran into, is one space.
         while characters
             .peek()
             .is_some_and(|next| matches!(next, '\r' | '\n' | ' ' | '\t'))
         {
             characters.next();
         }
-        // Not at either end: a value that began or ended with a break did not
-        // mean to start or finish with a space.
         if !folded.is_empty() && characters.peek().is_some() {
             folded.push(' ');
         }
@@ -370,32 +246,16 @@ fn header_text(value: &str) -> String {
     folded
 }
 
-/// `id` unless it carries a line break, in which case it is not a `msg-id`.
-///
-/// Structured rather than unstructured, so folding is wrong: a space inside
-/// `<...>` does not make a valid identifier, it makes a different invalid
-/// one. Dropping loses nothing real — a threading header that names a
-/// malformed id threads nothing — and it closes the same injection, which
-/// reaches `In-Reply-To` *and* `References` from one hostile value.
-///
-/// Not reachable through `mime::parse` today: a `Message-ID` header with a
-/// literal break in it ends at the break, so the parser never yields one.
-/// It is defended anyway because the parser is not the only way a `Message`
-/// is built, and because this is the kind of assumption that stops being
-/// true quietly.
+/// Structured, so folding is wrong: a space inside `<...>` makes a different invalid id. Dropping
+/// loses nothing (a malformed id threads nothing) and closes the same injection, which reaches
+/// `In-Reply-To` and `References` from one hostile value.
 fn usable_message_id(id: &RfcMessageId) -> Option<String> {
     let text = id.without_brackets();
     (!text.contains(['\r', '\n'])).then(|| text.to_owned())
 }
 
-/// Sets `In-Reply-To` and `References` from `parent`.
-///
-/// `References` is exactly what a message threading *into* `parent` would
-/// have claimed as its own ancestors: `parent`'s [`Message::reference_chain`]
-/// — its own `References` plus its `In-Reply-To`, deduplicated the same way —
-/// with `parent`'s `Message-ID` appended at the end. That is the RFC 5322
-/// rule stated the other way around, and it is why threading a reply here
-/// costs nothing beyond what parsing already computed for `parent`.
+/// `References` is what a message threading into `parent` would have claimed as ancestors: its
+/// `reference_chain` plus its own `Message-ID`.
 fn add_threading_headers<'x>(builder: MessageBuilder<'x>, parent: &Message) -> MessageBuilder<'x> {
     let mut references: Vec<String> = parent
         .reference_chain()
@@ -435,16 +295,9 @@ fn add_attachment<'x>(
     }
 }
 
-/// The `text/plain` MIME part for `text`, declared `format=flowed`.
-///
-/// Unconditional, not detected: `postio-model` has no HTML parser and no
-/// wrapping logic of its own — see the crate's own module docs on why an
-/// `ammonia` dependency does not belong on the crate everything else in the
-/// workspace waits on — so it cannot ask whether `text` actually is
-/// soft-wrapped RFC 3676 text. It does not have to. `postio_body::render`
-/// is the only path anything upstream uses to fill `draft.body.text`
-/// (issue #333), so by the time a string reaches here that has already
-/// happened; this only has to say so on the wire.
+/// Unconditional, not detected: `postio-model` has no HTML parser or wrapping logic, and
+/// `postio_body::render` is the only path that fills `draft.body.text` (#333), so this only has to
+/// say so on the wire.
 fn flowed_text_part(text: String) -> MbMimePart<'static> {
     MbMimePart::new(
         MbContentType::new("text/plain")
@@ -454,11 +307,8 @@ fn flowed_text_part(text: String) -> MbMimePart<'static> {
     )
 }
 
-/// The `text/plain` MIME part for a draft written in Markdown.
-///
-/// Fixed, not flowed: the text is the Markdown as typed (FR-021), whose line
-/// breaks carry meaning -- a list item, a line of code, a hard break -- and a
-/// reader honouring `format=flowed` would join the lines that depend on them.
+/// Fixed, not flowed: Markdown's line breaks carry meaning (a list item, a code line) and a
+/// `format=flowed` reader would join them.
 fn fixed_text_part(text: String) -> MbMimePart<'static> {
     MbMimePart::new(
         MbContentType::new("text/plain").attribute("charset", "utf-8"),
@@ -466,12 +316,9 @@ fn fixed_text_part(text: String) -> MbMimePart<'static> {
     )
 }
 
-/// A non-empty address list, or `None` — mail-builder writes a header even for
-/// an empty list, and a message has no reason to carry an empty `Cc`.
-/// The group name a message with nothing to name is addressed to.
-///
-/// What a message with nothing to name is addressed to, exactly as it goes on
-/// the wire: an RFC 5322 group with no members.
+/// A non-empty address list, or `None`: mail-builder writes a header even for an empty list.
+/// The group name a message with nothing to name is addressed to: an RFC 5322 group with no
+/// members.
 const UNDISCLOSED_RECIPIENTS: &str = "undisclosed-recipients:;";
 
 fn recipient_list(addresses: &[EmailAddress]) -> Option<MbAddress<'static>> {
@@ -487,25 +334,16 @@ fn mb_address(address: &EmailAddress) -> MbAddress<'static> {
     MbAddress::new_address(address.name.clone(), address.address.clone())
 }
 
-/// Mints the `Message-ID` a draft will send under, to be stored on
-/// [`Draft::rfc_message_id`] before the first attempt (ADR 0021).
-///
-/// The same generator [`build`] falls back to, exposed so that whoever
-/// *reserves* an id and whoever *writes the header* cannot produce ids of two
-/// different shapes. `domain` is the sending identity's domain;
-/// [`FALLBACK_DOMAIN`] is the answer when it has none.
+/// The same generator `build` falls back to, so whoever reserves an id and whoever writes the
+/// header produce one shape (ADR 0021).
+/// `domain` is the identity's domain; `FALLBACK_DOMAIN` when it has none.
 pub fn reserve_message_id(domain: Option<&str>) -> RfcMessageId {
     generate_message_id(domain.unwrap_or(FALLBACK_DOMAIN))
 }
 
-/// A fresh, unique `Message-ID` under `domain`.
-///
-/// Built from [`make_boundary`], the same pseudo-unique token mail-builder
-/// uses for MIME boundaries, rather than pulling in a UUID dependency or the
-/// hostname of this machine — which the `Message-ID` `mail-builder` would
-/// generate on its own carries, and which CLAUDE.md's "nothing leaves this
-/// machine that the user did not ask for" says a header on every outgoing
-/// message is not the place for.
+/// Built from `make_boundary` rather than a UUID dependency or this machine's hostname, which
+/// mail-builder's own `Message-ID` would carry: nothing leaves the machine that the user did not
+/// ask for.
 fn generate_message_id(domain: &str) -> RfcMessageId {
     RfcMessageId::new(format!("{}@{domain}", make_boundary(".")))
 }
@@ -550,14 +388,6 @@ mod tests {
 
     #[test]
     fn the_text_part_advertises_format_flowed() {
-        // #333: `postio-model` cannot depend on `postio-body` to check
-        // whether `draft.body.text` actually is RFC 3676 wrapped -- see
-        // `flowed_text_part`'s own doc for why it advertises the header
-        // unconditionally instead. `mime::parse` exposes no accessor for a
-        // Content-Type parameter, so this reads the header off the raw
-        // bytes directly, the same way `bcc_recipients_never_appear_in_the_sent_bytes`
-        // already does for a header this crate cares about but has no
-        // parsed field for.
         let ada = identity("ada@example.com");
         let built = build(&draft(), &ada, &[], None, None);
         let raw = String::from_utf8_lossy(&built.raw);
@@ -571,18 +401,12 @@ mod tests {
             "the text part should advertise RFC 3676: {raw}"
         );
 
-        // And the parser still finds the body it always did -- the header
-        // is additive, not a second way to spell the same part.
         let parsed = mime::parse(&built.raw);
         assert_eq!(parsed.body.text.as_deref(), Some("Looking now."));
     }
 
     #[test]
     fn a_draft_written_in_markdown_sends_its_markdown_as_fixed_text() {
-        // FR-021: the text part of a message written in the terminal is the
-        // Markdown as typed. Markdown's line breaks are meaningful -- a
-        // list item, a code line -- so a reader that reflowed it as
-        // format=flowed would join the lines it depends on.
         let markdown = "- one\n- two\n\n    let x = 1;\n".to_owned();
         let mut draft = draft();
         draft.body.text = Some(markdown.clone());
@@ -597,7 +421,6 @@ mod tests {
             "a markdown text part is fixed: {raw}"
         );
         let parsed = mime::parse(&built.raw);
-        // The wire spells line ends CRLF; the lines themselves are the ones typed.
         let text = parsed.body.text.unwrap_or_default().replace("\r\n", "\n");
         assert_eq!(text, markdown);
         assert!(parsed.body.html.is_some(), "the HTML part still travels");
@@ -605,7 +428,6 @@ mod tests {
 
     #[test]
     fn a_markdown_draft_with_nothing_to_style_is_text_alone() {
-        // US3 scenario 3: plain words send one text/plain part.
         let mut draft = draft();
         draft.body_markdown = Some("Looking now.".to_owned());
 
@@ -628,13 +450,6 @@ mod tests {
         assert_ne!(first.message_id, second.message_id);
     }
 
-    /// The whole of ADR 0021's first decision, from this crate's side.
-    ///
-    /// A `Send` is resolved — and therefore rebuilt — on **every** drain
-    /// attempt, so a fresh id per build means a retried send is a second,
-    /// distinct message rather than a duplicate anything downstream could
-    /// recognise. Once the draft carries a reserved id, every build of it is
-    /// the same message.
     #[test]
     fn a_reserved_message_id_survives_every_rebuild() {
         let ada = identity("ada@example.com");
@@ -650,16 +465,12 @@ mod tests {
             RfcMessageId::new("reserved.once@example.com"),
             "and it is the reserved one, not a fresh id that happens to repeat"
         );
-        // Not merely reported: it has to reach the bytes, because the
-        // receiving side reads the header and never the return value.
         assert_eq!(
             mime::parse(&first.raw).rfc_message_id,
             Some(RfcMessageId::new("reserved.once@example.com")),
         );
     }
 
-    /// The Drafts-folder copy is the same message as the one that will be
-    /// sent, so it carries the same id once one is reserved.
     #[test]
     fn the_drafts_copy_carries_the_reserved_id_too() {
         let ada = identity("ada@example.com");
@@ -683,28 +494,19 @@ mod tests {
 
     #[test]
     fn a_header_value_folds_its_line_breaks_into_single_spaces() {
-        // Unchanged when there is nothing to fold, including the whitespace
-        // somebody meant to be there.
         assert_eq!(header_text("Tuesday notes"), "Tuesday notes");
         assert_eq!(header_text("two  spaces"), "two  spaces");
 
-        // A break is a space, which is what unfolding a legitimately folded
-        // header produces.
         assert_eq!(header_text("a\r\nb"), "a b");
         assert_eq!(header_text("a\nb"), "a b");
         assert_eq!(header_text("a\rb"), "a b");
 
-        // A break and the whitespace it ran into are *one* space: `a\r\n\tb`
-        // is the folded spelling of `a b`, and `a\r\n\r\nb` should not come
-        // out wider than a single fold.
         assert_eq!(header_text("a\r\n\tb"), "a b");
         assert_eq!(header_text("a\r\n \r\n b"), "a b");
 
-        // At either end there is nothing to join, so no space is invented.
         assert_eq!(header_text("\r\nX-Injected: yes"), "X-Injected: yes");
         assert_eq!(header_text("subject\r\n"), "subject");
 
-        // And the injection itself: whatever follows the break is text now.
         assert_eq!(
             header_text("ok\r\nBcc: eve@example.org"),
             "ok Bcc: eve@example.org"
@@ -713,9 +515,6 @@ mod tests {
 
     #[test]
     fn a_message_id_carrying_a_line_break_is_dropped_rather_than_folded() {
-        // Structured, so folding is wrong: a space inside `<...>` makes a
-        // different invalid id rather than a valid one. Dropping loses
-        // nothing — an id that malformed threads nothing.
         assert_eq!(
             usable_message_id(&RfcMessageId::new("<a@example.com>")).as_deref(),
             Some("a@example.com")
@@ -747,16 +546,6 @@ mod tests {
 
     #[test]
     fn a_bcc_only_message_says_undisclosed_recipients_rather_than_nothing() {
-        // FR-022, and the spec's fifth clarification. Dropping the Bcc header
-        // is right and leaves a message addressed to nobody: no `To`, no `Cc`,
-        // recipients only in the envelope. That is valid and reads as broken --
-        // clients show "(no recipients)", and a missing `To` is a well-known
-        // spam signal, so the honest message is the one most likely not to
-        // arrive.
-        //
-        // `undisclosed-recipients:;` is an RFC 5322 group with no members: it
-        // says "there are recipients and they are not being named" in the one
-        // way every client already understands.
         let ada = identity("ada@example.com");
         let mut draft = draft();
         draft.to.clear();
@@ -790,10 +579,6 @@ mod tests {
 
     #[test]
     fn the_drafts_copy_of_a_bcc_only_message_names_its_recipients_instead() {
-        // The Drafts copy keeps the Bcc header, so it already says who the
-        // message is for. Giving it the placeholder as well would produce the
-        // one message in the mailbox that contradicts itself -- addressed to
-        // nobody in `To` and to somebody in `Bcc`.
         let ada = identity("ada@example.com");
         let mut draft = draft();
         draft.to.clear();
@@ -817,11 +602,6 @@ mod tests {
 
     #[test]
     fn a_message_with_real_recipients_is_never_given_the_placeholder() {
-        // The other half, and the one that makes the rule above safe to state:
-        // `undisclosed-recipients:;` must appear only when there is genuinely
-        // nothing to name. Adding it beside a real `To` would tell every
-        // recipient that somebody else is hidden -- which is not what Bcc
-        // means either.
         let ada = identity("ada@example.com");
         let mut draft = draft();
         draft.bcc = vec![EmailAddress::new(None::<String>, "quiet@example.com")];
@@ -838,9 +618,6 @@ mod tests {
 
     #[test]
     fn the_drafts_copy_keeps_the_bcc_the_sent_bytes_drop() {
-        // The Drafts folder is the user's own mailbox and reaches nobody. A
-        // draft picked up on another client with its Bcc silently gone would
-        // look finished and send to fewer people than the user asked for.
         let ada = identity("ada@example.com");
         let mut draft = draft();
         draft.bcc = vec![EmailAddress::new(None::<String>, "quiet@example.com")];
@@ -964,9 +741,6 @@ mod tests {
         assert!(parsed.subject.is_none());
     }
 
-    // --- The calendar part (specs/007-postio-focus T111) ----------------------
-
-    /// An RSVP as `postio-calendar` writes one: CRLF, folded, a quoted `CN`.
     const REPLY_ICS: &str = "BEGIN:VCALENDAR\r\n\
         PRODID:-//Postio//Postio//EN\r\n\
         VERSION:2.0\r\n\
@@ -988,8 +762,6 @@ mod tests {
         }
     }
 
-    /// The message's MIME tree as nested content types, e.g.
-    /// `multipart/mixed[multipart/alternative[text/plain, text/calendar], ...]`.
     fn tree(raw: &[u8]) -> String {
         use mail_parser::{MessageParser, MessagePart};
 
@@ -1014,7 +786,6 @@ mod tests {
         render(message.root_part())
     }
 
-    /// The first part whose content type is `text/calendar`.
     fn calendar_part_of(raw: &[u8]) -> (String, Option<String>, Vec<u8>) {
         use mail_parser::MessageParser;
 
@@ -1115,8 +886,6 @@ mod tests {
 
     #[test]
     fn a_reply_still_reads_as_its_text_to_a_person() {
-        // The receiving side's view: the text is the body, and the calendar is
-        // a part beside it, which is what calendar clients act on.
         let built = build(
             &draft(),
             &identity("ada@example.com"),
@@ -1220,10 +989,8 @@ mod tests {
         assert!(parsed.references.is_empty());
     }
 
-    /// A control character in an address cannot start a header line. With
-    /// `mail-builder` 1.0 the address was written raw between `<` and `>`,
-    /// so a CR LF in one injected a `Bcc:` field into the bytes that go to
-    /// every recipient; 2.0 drops control characters when it writes one.
+    /// A control character in an address cannot start a header line: mail-builder 1.0 wrote it raw,
+    /// injecting a `Bcc:` field.
     #[test]
     fn a_control_character_in_an_address_cannot_inject_a_header() {
         let ada = identity("ada@example.com");

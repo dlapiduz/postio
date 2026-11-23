@@ -1,9 +1,3 @@
-//! Turning the server's folder list into local rows.
-//!
-//! This is the step whose absence made the first live run report success over
-//! an empty mailbox: every layer read the local `mailboxes` table, and nothing
-//! ever wrote it. See `postio-755`.
-
 use postio_account::backend::{MailBackend, MockBackend, MockMailbox};
 use postio_model::{Account, EmailAddress, MailboxRole, Message, RoleOverrides};
 use postio_storage::Connection;
@@ -25,8 +19,6 @@ async fn an_account(connection: &Connection) -> Account {
     account
 }
 
-/// A server with the folders a real account has, roles carried by the RFC 6154
-/// attributes rather than by their names.
 async fn a_server() -> MockBackend {
     let backend = MockBackend::builder()
         .mailbox(MockMailbox::new("INBOX"))
@@ -61,16 +53,9 @@ async fn discovery_writes_the_servers_folders_into_the_local_table() {
         .await
         .expect("discover");
 
-    // Six: the four the server lists and the two it does not have, all of
-    // them new to this account.
     assert_eq!(report.added, 6, "{report:?}");
     assert_eq!(
         paths(&connection, &account).await,
-        // The four the server lists, plus the two it does not have. Every
-        // account ends a pass with a folder for all six reserved roles, so a
-        // server with no Drafts and no Junk gets them created (spec 003
-        // FR-026). What this test is about is the four on the *left* being
-        // written at all, which is the step whose absence `postio-755` was.
         vec![
             "Archive",
             "Deleted Messages",
@@ -86,9 +71,6 @@ async fn discovery_writes_the_servers_folders_into_the_local_table() {
 
 #[tokio::test]
 async fn a_folders_role_comes_from_the_servers_attributes_not_its_name() {
-    // "Sent Messages" and "Deleted Messages" are what some servers call them.
-    // A client that matched on the English word would file mail into the wrong
-    // folder on every account that does not speak English.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection).await;
@@ -116,8 +98,6 @@ async fn a_folders_role_comes_from_the_servers_attributes_not_its_name() {
 
 #[tokio::test]
 async fn discovering_twice_keeps_the_same_rows() {
-    // Everything else points at these ids: sync state, messages, the queue.
-    // A discovery that reinserted would orphan every one of them.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection).await;
@@ -163,9 +143,6 @@ async fn discovering_twice_keeps_the_same_rows() {
 
 #[tokio::test]
 async fn discovery_preserves_what_a_sync_pass_recorded() {
-    // The rows carry sync state — UIDVALIDITY, the highest MODSEQ — and losing
-    // it would turn every reconnection into a full re-enumeration of every
-    // folder.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection).await;
@@ -203,10 +180,6 @@ async fn discovery_preserves_what_a_sync_pass_recorded() {
 
 #[tokio::test]
 async fn discovery_does_not_reset_a_folders_backfill_exclusion() {
-    // ADR 0016, #350: excluding a folder from background backfill is a local
-    // preference, the same shape `signature_id` (#394) already is. A LIST
-    // response says nothing about it, so a reconnection must not silently
-    // re-include a folder the user deliberately excluded.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection).await;
@@ -239,8 +212,6 @@ async fn discovery_does_not_reset_a_folders_backfill_exclusion() {
 
 #[tokio::test]
 async fn a_folder_the_server_no_longer_lists_keeps_its_mail() {
-    // The row is not deleted: `messages.mailbox_id` cascades, so deleting a
-    // folder because one LIST did not mention it would delete the user's mail.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection).await;
@@ -263,7 +234,6 @@ async fn a_folder_the_server_no_longer_lists_keeps_its_mail() {
         .await
         .expect("file a message in it");
 
-    // The folder is renamed or removed on the server.
     let smaller = MockBackend::builder()
         .mailbox(MockMailbox::new("INBOX"))
         .mailbox(MockMailbox::new("Sent Messages").attributes(["\\Sent"]))
@@ -274,12 +244,6 @@ async fn a_folder_the_server_no_longer_lists_keeps_its_mail() {
         .await
         .expect("discover");
 
-    // Four, not the two the server dropped: the first pass created Drafts and
-    // Junk, which `a_server()` does not have, so the account had six folders
-    // and the smaller listing mentions two of them (spec 003 FR-026). The
-    // count is incidental to what this test is about -- the row surviving with
-    // its mail -- but it is asserted rather than loosened, because a number
-    // that drifts silently is how a retirement bug hides.
     assert_eq!(report.vanished, 4, "{report:?}");
     let after = mailboxes
         .get(archive.id)
@@ -330,8 +294,6 @@ async fn a_folder_that_comes_back_is_usable_again() {
 
 #[tokio::test]
 async fn an_empty_listing_is_not_read_as_every_folder_being_gone() {
-    // A server that answers LIST with nothing, or a listing that failed part
-    // way, must not empty the sidebar. Nothing is evidence of nothing.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection).await;
@@ -348,11 +310,6 @@ async fn an_empty_listing_is_not_read_as_every_folder_being_gone() {
         .expect("discover");
 
     assert_eq!(report.vanished, 0, "{report:?}");
-    // Six: the four `a_server()` lists, plus the Drafts and Junk the first
-    // pass created because that server has neither (spec 003 FR-026). The
-    // point of this test is the *empty* listing changing nothing, which is
-    // what `vanished` above asserts; this line says the sidebar still has
-    // everything it had.
     assert_eq!(paths(&connection, &account).await.len(), 6);
 }
 
@@ -386,9 +343,6 @@ async fn a_child_folder_is_linked_to_its_parent() {
 
     assert_eq!(child.parent_id, Some(inbox.id));
 
-    // A second pass over the same hierarchy: the link is already correct,
-    // so `link_parents` has nothing to write this time -- reconnecting must
-    // not re-link (and re-write) every folder on every account it touches.
     discover(&connection, &backend, account.id, &RoleOverrides::default())
         .await
         .expect("a second discovery");
@@ -407,10 +361,6 @@ async fn a_child_folder_is_linked_to_its_parent() {
 
 #[tokio::test]
 async fn a_missing_intermediate_level_still_leaves_the_leaf_usable() {
-    // The server lists a leaf two levels deep but never lists the level in
-    // between -- a hierarchy IMAP allows and some servers produce. The leaf
-    // is still a perfectly good folder; it just has nowhere local to sit
-    // under, so it sits at the top rather than failing discovery outright.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection).await;
@@ -440,8 +390,6 @@ async fn a_missing_intermediate_level_still_leaves_the_leaf_usable() {
 
 #[tokio::test]
 async fn a_folder_that_cannot_hold_messages_is_recorded_as_such() {
-    // `\Noselect` is how a server spells "this is only a level in the
-    // hierarchy". Selecting one is an error, so the engine must not try.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection).await;
@@ -464,11 +412,6 @@ async fn a_folder_that_cannot_hold_messages_is_recorded_as_such() {
     assert!(!lists.selectable);
 }
 
-// ── Explicit role overrides (#164) ───────────────────────────────────────
-
-/// A server that gives no help at all: no `SPECIAL-USE`, and folder names in
-/// a language `match_name` has never been taught. Before an override existed,
-/// `a` and `d` refused on this account permanently.
 async fn an_unhelpful_server() -> MockBackend {
     let backend = MockBackend::builder()
         .mailbox(MockMailbox::new("INBOX"))
@@ -496,8 +439,6 @@ async fn an_override_gives_a_role_to_a_folder_nothing_else_could_name() {
     let account = an_account(&connection).await;
     let backend = an_unhelpful_server().await;
 
-    // Without one, exactly the state the issue describes: no archive folder,
-    // so every role-driven verb refuses.
     discover(&connection, &backend, account.id, &RoleOverrides::default())
         .await
         .expect("discover");
@@ -537,9 +478,6 @@ async fn an_override_outranks_what_the_server_said() {
     let account = an_account(&connection).await;
     let backend = a_server().await;
 
-    // This server advertises `\Archive` on the folder called Archive. The
-    // user has looked and disagreed, and there is no reading of that in which
-    // Postio knows better.
     let overrides = RoleOverrides::from_pairs([(MailboxRole::Junk, "Archive")]);
     discover(&connection, &backend, account.id, &overrides)
         .await
@@ -551,17 +489,8 @@ async fn an_override_outranks_what_the_server_said() {
     );
 }
 
-/// **The behaviour the issue flagged as undecided, decided.**
-///
-/// Changing a mapping re-labels folders. It never moves mail.
-///
-/// A role is a property of a *mailbox* row — which folder plays which part —
-/// and not of any message. Messages live in folders, and re-pointing `archive`
-/// at a different folder says nothing about where anything already is. The
-/// alternative, moving mail to match, would mean Postio issuing IMAP moves
-/// that the user never asked for, on a config edit, against the rule that
-/// nothing leaves this machine unasked. It would also be irreversible: change
-/// the line back and the labels swap back, but moved mail stays moved.
+/// Changing a mapping re-labels folders and never moves mail: a role belongs to a mailbox row, and
+/// moving mail on a config edit would be an unasked, irreversible IMAP move.
 #[tokio::test]
 async fn remapping_a_role_moves_the_label_and_never_the_mail() {
     let database = test_support::memory().await;
@@ -578,7 +507,6 @@ async fn remapping_a_role_moves_the_label_and_never_the_mail() {
         .await
         .expect("discover");
 
-    // Put a message in the folder that is the archive today.
     let archive = MailboxRepository::new(&connection)
         .list_for_account(account.id)
         .await
@@ -593,7 +521,6 @@ async fn remapping_a_role_moves_the_label_and_never_the_mail() {
         .await
         .expect("create message");
 
-    // Now point `archive` somewhere else.
     let overrides = RoleOverrides::from_pairs([(MailboxRole::Archive, "Vecchia Posta")]);
     discover(&connection, &backend, account.id, &overrides)
         .await
@@ -626,11 +553,6 @@ async fn remapping_a_role_moves_the_label_and_never_the_mail() {
 
 #[tokio::test]
 async fn a_role_follows_the_folder_when_the_server_renames_it() {
-    // #943. The Sent folder is renamed on the server (by another client, or
-    // by the provider). The old row is retired and keeps its role; the new
-    // row is born with the same role; and `by_role` picks between them by
-    // path order. "Sent" sorts before "Sent Items", so every sent copy from
-    // here on is filed into a folder the server no longer has.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection).await;
@@ -670,12 +592,6 @@ async fn a_role_follows_the_folder_when_the_server_renames_it() {
 
 #[tokio::test]
 async fn one_folder_per_role_survives_discovery() {
-    // #943, as found on a live account: the server has its own Sent folder
-    // and a user folder another client created that merely looks like one.
-    // The IMAP edge arbitrates the pair (`resolve_roles`) and demotes the
-    // loser; discovery then throws that verdict away by re-deriving the
-    // role from the name, and both rows wear it. `by_role` picks between
-    // them by path order, and "Sent" sorts before "Sent Messages".
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection).await;
@@ -706,8 +622,6 @@ async fn one_folder_per_role_survives_discovery() {
     );
 }
 
-/// iCloud's shape: the provider's own Sent folder beside one another client
-/// made, and nothing declared, so the alphabet would pick `Sent`.
 async fn a_silent_server_with_two_sent_folders() -> MockBackend {
     let backend = MockBackend::builder()
         .mailbox(MockMailbox::new("INBOX"))
@@ -728,8 +642,6 @@ async fn sent_path(connection: &Connection, account: &Account) -> Option<String>
 
 #[tokio::test]
 async fn an_accounts_own_map_outranks_the_configuration() {
-    // ADR 0035: `[mailboxes]` is one table for every account; the account's
-    // own map, in the store, is what the user said about *this* server.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection).await;
@@ -801,9 +713,6 @@ async fn an_accounts_map_says_nothing_about_another_account() {
 
 #[tokio::test]
 async fn a_map_changed_between_passes_takes_effect_on_the_next() {
-    // Nothing is frozen at startup: the engine's part is the configuration
-    // tier only, and the account's map is read every pass, so a choice made
-    // in settings needs no restart to be honoured by discovery.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection).await;
@@ -846,9 +755,6 @@ async fn a_map_changed_between_passes_takes_effect_on_the_next() {
     );
 }
 
-// ── Every account has every reserved role (spec 003, US3) ───────────────────
-
-/// A server with nothing but an inbox: five reserved roles resolve to nothing.
 async fn a_bare_server() -> MockBackend {
     let backend = MockBackend::builder()
         .mailbox(MockMailbox::new("INBOX"))
@@ -857,7 +763,6 @@ async fn a_bare_server() -> MockBackend {
     backend
 }
 
-/// Which reserved roles the account has a selectable folder for.
 async fn roles_with_a_folder(connection: &Connection, account: &Account) -> Vec<MailboxRole> {
     let mailboxes = MailboxRepository::new(connection);
     let mut found = Vec::new();
@@ -891,8 +796,6 @@ async fn a_server_with_only_an_inbox_gets_a_folder_for_every_reserved_role() {
         "an account whose server lists only INBOX still has to have somewhere \
          to archive, send, draft, delete and junk to"
     );
-    // One create per missing role, and the Inbox is not among them: RFC 3501
-    // names that folder and every server has it (FR-029).
     let mut created = backend.created();
     created.sort();
     assert_eq!(created, vec!["Archive", "Drafts", "Junk", "Sent", "Trash"]);
@@ -900,8 +803,6 @@ async fn a_server_with_only_an_inbox_gets_a_folder_for_every_reserved_role() {
 
 #[tokio::test]
 async fn a_second_pass_creates_nothing() {
-    // SC-007. The expensive version of this bug is silent: a create per role
-    // per pass, against the user's real server, forever.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection).await;
@@ -951,8 +852,6 @@ async fn a_server_that_already_has_everything_is_never_asked_to_create() {
 
 #[tokio::test]
 async fn the_inbox_is_never_created_even_when_the_server_does_not_list_one() {
-    // FR-029. A server with no INBOX is broken in a way this does not paper
-    // over, and creating one would be Postio disagreeing with RFC 3501.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection).await;
@@ -974,8 +873,6 @@ async fn the_inbox_is_never_created_even_when_the_server_does_not_list_one() {
 
 #[tokio::test]
 async fn a_server_that_refuses_leaves_the_role_unmapped_and_says_why() {
-    // FR-031. A refusal is a thing the user can act on -- it is usually a
-    // permission -- so the server's own words are kept for the settings pane.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection).await;
@@ -1022,8 +919,6 @@ async fn a_server_that_refuses_leaves_the_role_unmapped_and_says_why() {
 
 #[tokio::test]
 async fn a_refusal_is_not_retried_on_the_next_pass() {
-    // The expensive version of this bug is silent: a CREATE per role per pass,
-    // against the user's real server, forever.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection).await;
@@ -1049,14 +944,11 @@ async fn a_refusal_is_not_retried_on_the_next_pass() {
 
 #[tokio::test]
 async fn a_refusal_for_one_role_does_not_stop_the_others() {
-    // A single awkward folder must not cost the account every other role.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection).await;
     let backend = a_bare_server().await;
 
-    // Junk alone is already known to be refused -- the state the pass after a
-    // refusal starts in.
     MailboxRoleRepository::new(&connection)
         .refuse(account.id, MailboxRole::Junk, "Permission denied")
         .await
@@ -1066,9 +958,6 @@ async fn a_refusal_for_one_role_does_not_stop_the_others() {
         .await
         .expect("discover");
 
-    // Exact, not `contains`: the four that were not refused must *all* resolve
-    // and Junk must *not*, which a containment check would let slide either
-    // way round.
     assert_eq!(
         roles_with_a_folder(&connection, &account).await,
         vec![
@@ -1091,14 +980,11 @@ async fn a_refusal_for_one_role_does_not_stop_the_others() {
 
 #[tokio::test]
 async fn a_mailbox_that_already_exists_is_not_an_error() {
-    // Two clients may race, and servers spell "already exists" differently.
-    // What the caller wants is the folder to exist, not to have made it.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let account = an_account(&connection).await;
     let backend = a_bare_server().await;
 
-    // The server gains the folder between the listing and the create.
     backend
         .create_mailbox("Archive")
         .await
@@ -1124,15 +1010,8 @@ async fn a_mailbox_that_already_exists_is_not_an_error() {
 
 #[tokio::test]
 async fn a_created_folder_is_named_after_its_role_whatever_the_provider() {
-    // FR-030, and Principle VII: providers are data, not code. Postio is not
-    // built for any one provider and the code must not say otherwise, so the
-    // name of a folder it creates cannot depend on which server answered.
-    //
-    // Not "two presets, two names": the preset table holds hosts, ports and
-    // security, and carries no folder names at all. Presets that name folders
-    // are #959's durable answer and `spec.md` puts them out of scope. What is
-    // checkable now is that two entirely different servers get identical
-    // names, which is what a provider-specific branch would break.
+    // FR-030: two entirely different servers must get identical folder names, since providers are
+    // data and a provider-specific branch would break that.
     let names_for = |host: &'static str| async move {
         let database = test_support::memory().await;
         let connection = database.connect().await.expect("checkout");

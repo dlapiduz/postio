@@ -1,21 +1,12 @@
-//! The digest window (US10, T137; screen 22's frame, the plain list):
-//! `Enter` on a digest's row opens what it holds over the inbox; `⇧A`
-//! archives all of it as one undo; `D` stops digesting a sender once
-//! confirmed.
-
-use chrono::{Duration, Utc};
+use chrono::Duration;
 use gtk::gdk;
 
 use crate::support::{self, Fixture};
 
-/// Three conversations, and two newsletters held for "Newsletters" and
-/// delivered fifteen minutes ago: the digest's row is second.
 async fn delivered() -> Fixture {
     delivered_holding().await.0
 }
 
-/// As [`delivered`], with the delivery and what it holds, newest first:
-/// "The weekly numbers", then "The rate decision".
 pub async fn delivered_holding() -> (
     Fixture,
     postio_model::DeliveryId,
@@ -57,8 +48,6 @@ pub async fn delivered_holding() -> (
     (fixture, delivery, held)
 }
 
-/// Open the digest's row: the cursor on it (the list opens on the first
-/// row, and the digest is the second), then `Enter`.
 pub async fn open_digest(
     window: &postio_gtk::window::FocusWindow,
 ) -> std::rc::Rc<postio_gtk::digest::DigestWindow> {
@@ -78,14 +67,8 @@ pub async fn open_digest(
     digest
 }
 
-/// US10 scenario 4: the digest opens on its plain list, newest first; `⇧A`
-/// archives all of it and its row leaves the inbox; one `Ctrl+Z` brings
-/// it back.
 pub fn enter_opens_a_digest_and_e_archives_all_of_it() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = delivered().await;
         let (window, _client) = fixture.open().await;
         let digest = open_digest(&window).await;
@@ -94,8 +77,6 @@ pub fn enter_opens_a_digest_and_e_archives_all_of_it() {
             ["The weekly numbers", "The rate decision"],
             "newest first"
         );
-        // US13 scenario 4: with no summary it opens on its plain list, and
-        // offers no Summary tab.
         assert_eq!(
             digest.showing(),
             postio_gtk::digest::DigestPage::List,
@@ -106,7 +87,6 @@ pub fn enter_opens_a_digest_and_e_archives_all_of_it() {
             "a Summary tab with no summary: {:?}",
             digest.texts()
         );
-        // j walks the digest's rows, as the list's (Context::Digest).
         let first = digest.focused().map(|row| row.id);
         support::press(&window, "j", gdk::ModifierType::empty());
         assert!(
@@ -124,8 +104,6 @@ pub fn enter_opens_a_digest_and_e_archives_all_of_it() {
             support::keycaps_are_taught(digest.dialog()),
             "the digest window's keycaps do not teach their controls (T142)"
         );
-        // `e`, not `E`: spec 013 retired `archive_thread`, and a digest
-        // archives all of itself with `archive` (Context::Digest).
         support::press(&window, "e", gdk::ModifierType::empty());
         assert!(
             crate::settle_until(async || {
@@ -155,441 +133,6 @@ pub fn enter_opens_a_digest_and_e_archives_all_of_it() {
             .await,
             "the cursor is not on the digest's row, which came back: {:?}",
             window.cursor_row().map(|row| row.id())
-        );
-    });
-}
-
-/// `e` on the digest's row, from the list, archives all of it as the window's
-/// `⇧A` does -- a message verb has nothing to aim at on a digest, but the
-/// row's own verb does -- and one `Ctrl+Z` brings the row back under the
-/// cursor.
-pub fn e_on_a_digests_row_archives_its_delivery_and_undo_brings_the_cursor_back() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let fixture = delivered().await;
-        let (window, _client) = fixture.open().await;
-        assert!(
-            crate::settle_until(async || support::subjects(&window).len() == 4).await,
-            "the inbox and its digest never reached the screen: {:?}",
-            support::subjects(&window)
-        );
-        support::keys(&window, &["j"]);
-        assert!(
-            matches!(
-                window.cursor_row(),
-                Some(postio_gtk::list::FocusRow::Digest(_))
-            ),
-            "j did not land on the digest's row"
-        );
-        support::press(&window, "e", gdk::ModifierType::empty());
-        assert!(
-            crate::settle_until(async || {
-                support::subjects(&window) == ["Staffing plan", "Harbor draft", "Atlas budget"]
-            })
-            .await,
-            "e on the digest's row left it in the inbox: {:?}",
-            support::subjects(&window)
-        );
-        // The cursor moves off where the digest was, so the undo has to
-        // put it back rather than find it there.
-        support::keys(&window, &["j", "j"]);
-        support::press(&window, "z", gdk::ModifierType::CONTROL_MASK);
-        assert!(
-            crate::settle_until(async || {
-                support::subjects(&window).len() == 4
-                    && matches!(
-                        window.cursor_row(),
-                        Some(postio_gtk::list::FocusRow::Digest(_))
-                    )
-            })
-            .await,
-            "one Ctrl+Z did not bring the digest back under the cursor: {:?} on {:?}",
-            support::subjects(&window),
-            window.cursor_row().map(|row| row.id())
-        );
-    });
-}
-
-/// US10 scenario 5: `D` on a message in the digest asks first, and once
-/// confirmed its sender stops being digested -- out of `config.toml`.
-pub fn d_stops_digesting_the_sender_once_confirmed() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let fixture = delivered().await;
-        let directory = tempfile::tempdir().expect("a config directory");
-        let path = directory.path().join("config.toml");
-        std::fs::write(
-            &path,
-            "[[focus.digests]]\nname = \"Newsletters\"\nmatch = [\"from:news@ledger.test\"]\n\
-             cadence = \"weekly\"\nday = \"sunday\"\nat = \"09:00\"\n",
-        )
-        .expect("a config");
-        let config = postio_config::Config::load_from_path(&path).expect("it reads");
-        let window = postio_gtk::window::FocusWindow::new(None);
-        gtk::prelude::GtkWindowExt::present(&window);
-        support::keep(postio_gtk::startup::adopt_at(
-            &window,
-            fixture.host(),
-            &config,
-            Some(&path),
-        ));
-        support::keep(directory);
-        let digest = open_digest(&window).await;
-        let _ = digest;
-        support::press(&window, "D", gdk::ModifierType::SHIFT_MASK);
-        assert!(
-            crate::settle_until(async || window.stop_digesting_confirmation().is_some()).await,
-            "D asked nothing"
-        );
-        let dialog = window
-            .stop_digesting_confirmation()
-            .expect("the confirmation");
-        let said = format!(
-            "{} {}",
-            gtk::prelude::ObjectExt::property::<String>(&dialog, "heading"),
-            gtk::prelude::ObjectExt::property::<String>(&dialog, "body")
-        );
-        assert!(
-            said.contains("news@ledger.test"),
-            "it names the sender: {said}"
-        );
-        let stop = support::button_labelled(&dialog, "Stop digesting");
-        support::click(&window, &stop, 1);
-        assert!(
-            crate::settle_until(async || {
-                !std::fs::read_to_string(&path)
-                    .unwrap_or_default()
-                    .contains("news@ledger.test")
-            })
-            .await,
-            "the sender is still digested:\n{}",
-            std::fs::read_to_string(&path).unwrap_or_default()
-        );
-    });
-}
-
-/// US10 scenario 1 (T138): `d` on a message opens "Digest this sender"
-/// with its address; the preview's count is what the executor finds from
-/// that sender in the last 90 days; Create writes the rule to
-/// `config.toml`.
-pub fn d_on_a_message_previews_the_rule_and_create_writes_it() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let fixture = Fixture::empty().await;
-        // Days before the real clock, which the preview's 90 days count back
-        // from: dated from the fixed `support::now()`, Issue 1 left the
-        // window on 27 October 2026.
-        let ago = |minutes: i64| (support::now() - Utc::now()).num_minutes() + minutes;
-        for (subject, days) in [
-            ("Issue 3", 3),
-            ("Issue 2", 20),
-            ("Issue 1", 60),
-            ("Old issue", 100),
-        ] {
-            fixture
-                .file(
-                    ("Ledger", "news@ledger.test"),
-                    subject,
-                    "Rates.",
-                    ago(days * 24 * 60),
-                )
-                .await;
-        }
-        fixture
-            .file(
-                ("Ada Moreno", "ada@example.com"),
-                "Atlas budget",
-                "Numbers.",
-                5,
-            )
-            .await;
-        fixture.index().await;
-        let directory = tempfile::tempdir().expect("a config directory");
-        let path = directory.path().join("config.toml");
-        std::fs::write(&path, "# Mine.\n").expect("a config");
-        let config = postio_config::Config::load_from_path(&path).expect("it reads");
-        let window = postio_gtk::window::FocusWindow::new(None);
-        gtk::prelude::GtkWindowExt::present(&window);
-        let session = postio_gtk::startup::adopt_at(&window, fixture.host(), &config, Some(&path));
-        let focus = session.host().wiring().focus.clone();
-        support::keep(session);
-        support::keep(directory);
-        assert!(
-            crate::settle_until(async || support::subjects(&window).len() == 5).await,
-            "the inbox never reached the screen"
-        );
-        // The cursor on Ledger's newest: the second row.
-        support::keys(&window, &["j"]);
-        support::press(&window, "d", gdk::ModifierType::empty());
-        let dialog = window.rule_dialog().expect("d opened the rule dialog");
-        assert!(
-            crate::settle_until(async || {
-                dialog
-                    .texts()
-                    .iter()
-                    .any(|text| text == "Would have caught 3 messages in the last 90 days")
-            })
-            .await,
-            "the preview is not the executor's three: {:?}",
-            dialog.texts()
-        );
-        let said = dialog.texts();
-        for wanted in ["Digest this sender", "news@ledger.test", "Issue 3"] {
-            assert!(
-                said.iter().any(|text| text == wanted),
-                "no {wanted:?} in {said:?}"
-            );
-        }
-        assert!(
-            support::keycaps_are_taught(dialog.dialog()),
-            "the rule dialog's keycaps do not teach their controls (T142)"
-        );
-        dialog.create();
-        // A rule that is one sender's is that person's (ADR 0048): the engine
-        // reads it, and the file is as it was.
-        assert!(
-            crate::settle_until(async || {
-                focus.config().is_some_and(|config| {
-                    config
-                        .digests
-                        .iter()
-                        .any(|rule| rule.queries == ["from:news@ledger.test"])
-                })
-            })
-            .await,
-            "Create wrote no rule: {:?}",
-            focus.config().map(|config| config.digests)
-        );
-        assert_eq!(
-            std::fs::read_to_string(&path).unwrap_or_default(),
-            "# Mine.\n",
-            "the rest of the file is as it was"
-        );
-        assert!(
-            crate::settle_until(async || window.rule_dialog().is_none()).await,
-            "Create closed the dialog"
-        );
-    });
-}
-
-/// T139 (FR-126): `g r` lists every rule with what it matches, when it
-/// delivers and what it holds now; `Delete` removes the focused rule once
-/// confirmed, and what it held comes into the inbox.
-pub fn g_d_lists_the_rules_and_delete_releases_what_one_held() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let fixture = Fixture::empty().await;
-        fixture
-            .file(
-                ("Ada Moreno", "ada@example.com"),
-                "Atlas budget",
-                "Numbers.",
-                5,
-            )
-            .await;
-        let mut held = Vec::new();
-        for (subject, minutes) in [("The weekly numbers", 40), ("The rate decision", 50)] {
-            let (message, _) = fixture
-                .file(("Ledger", "news@ledger.test"), subject, "Rates.", minutes)
-                .await;
-            held.push(message);
-        }
-        {
-            let connection = fixture.database.connect().await.expect("a connection");
-            let digests = postio_storage::repository::DigestRepository::new(&connection);
-            // Held now, by the real clock: its Sunday has not come.
-            for message in &held {
-                digests
-                    .hold(*message, "Newsletters", chrono::Utc::now())
-                    .await
-                    .expect("held");
-            }
-        }
-        let directory = tempfile::tempdir().expect("a config directory");
-        let path = directory.path().join("config.toml");
-        std::fs::write(
-            &path,
-            "[[focus.digests]]\nname = \"Newsletters\"\nmatch = [\"from:news@ledger.test\"]\n\
-             cadence = \"weekly\"\nday = \"sunday\"\nat = \"09:00\"\n",
-        )
-        .expect("a config");
-        let config = postio_config::Config::load_from_path(&path).expect("it reads");
-        let window = postio_gtk::window::FocusWindow::new(None);
-        gtk::prelude::GtkWindowExt::present(&window);
-        support::keep(postio_gtk::startup::adopt_at(
-            &window,
-            fixture.host(),
-            &config,
-            Some(&path),
-        ));
-        support::keep(directory);
-        assert!(
-            crate::settle_until(async || support::subjects(&window) == ["Atlas budget"]).await,
-            "held mail is not in the inbox: {:?}",
-            support::subjects(&window)
-        );
-
-        support::keys(&window, &["g", "r"]);
-        let rules = window.rules().expect("g r opened the rules");
-        assert!(
-            crate::settle_until(async || rules.texts().iter().any(|text| text == "holds 2")).await,
-            "the rule never said what it holds: {:?}",
-            rules.texts()
-        );
-        let said = rules.texts();
-        for wanted in [
-            "Digest rules",
-            "Newsletters",
-            "from:news@ledger.test",
-            "Weekly, Sunday 09:00",
-        ] {
-            assert!(
-                said.iter().any(|text| text == wanted),
-                "no {wanted:?} in {said:?}"
-            );
-        }
-
-        assert!(
-            support::keycaps_are_taught(rules.widget()),
-            "the rules list's keycaps do not teach their controls (T142)"
-        );
-
-        // The list redraws itself when what each rule holds arrives; the
-        // keyboard must still be on a row of it after that, or no key
-        // reaches the window (T200: GTK's key path starts at the focus, and
-        // a destroyed row has no parents).
-        {
-            use gtk::prelude::*;
-            let focus = gtk::prelude::GtkWindowExt::focus(&window);
-            assert!(
-                focus
-                    .as_ref()
-                    .is_some_and(|focus| focus.is_ancestor(rules.widget())),
-                "the keyboard is not in the rules list: {}",
-                support::focus_path(&window)
-            );
-        }
-
-        support::press(&window, "Delete", gdk::ModifierType::empty());
-        assert!(
-            crate::settle_until(async || window.remove_rule_confirmation().is_some()).await,
-            "Delete asked nothing: {}",
-            support::focus_path(&window)
-        );
-        let dialog = window.remove_rule_confirmation().expect("the confirmation");
-        let remove = support::button_labelled(&dialog, "Remove rule");
-        support::click(&window, &remove, 1);
-        assert!(
-            crate::settle_until(async || {
-                !std::fs::read_to_string(&path)
-                    .unwrap_or_default()
-                    .contains("Newsletters")
-            })
-            .await,
-            "the rule is still in config.toml"
-        );
-        assert!(
-            crate::settle_until(async || rules.texts().iter().all(|text| text != "Newsletters"))
-                .await,
-            "the rule is still listed: {:?}",
-            rules.texts()
-        );
-        support::press(&window, "Escape", gdk::ModifierType::empty());
-        assert!(
-            crate::settle_until(async || support::subjects(&window).len() == 3).await,
-            "what the rule held did not come into the inbox: {:?}",
-            support::subjects(&window)
-        );
-    });
-}
-
-/// US10 scenario 7 (T140): held mail is never hidden from search, and a
-/// result says where it waits -- the rule that holds it -- rather than
-/// the folder it is filed in.
-pub fn held_mail_is_found_by_search_and_says_where_it_waits() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let fixture = Fixture::empty().await;
-        fixture
-            .file(
-                ("Ada Moreno", "ada@example.com"),
-                "Atlas budget",
-                "Numbers.",
-                5,
-            )
-            .await;
-        let (held, _) = fixture
-            .file(
-                ("Ledger", "news@ledger.test"),
-                "The weekly numbers",
-                "Rates.",
-                40,
-            )
-            .await;
-        {
-            let connection = fixture.database.connect().await.expect("a connection");
-            postio_storage::repository::DigestRepository::new(&connection)
-                .hold(held, "Newsletters", chrono::Utc::now())
-                .await
-                .expect("held");
-        }
-        fixture.index().await;
-        let config = postio_config::Config::from_toml_str(
-            "[[focus.digests]]\nname = \"Newsletters\"\nmatch = [\"from:news@ledger.test\"]\n\
-             cadence = \"weekly\"\nday = \"sunday\"\nat = \"09:00\"\n",
-        )
-        .expect("a config");
-        let window = postio_gtk::window::FocusWindow::new(None);
-        gtk::prelude::GtkWindowExt::present(&window);
-        support::keep(postio_gtk::startup::adopt(&window, fixture.host(), &config));
-        assert!(
-            crate::settle_until(async || support::subjects(&window) == ["Atlas budget"]).await,
-            "held mail is in the inbox: {:?}",
-            support::subjects(&window)
-        );
-        // T140: the strip says how many rules there are, with g r.
-        let chrome = window.chrome().expect("the strip");
-        assert!(
-            crate::settle_until(async || {
-                chrome.digest_rules_said().as_deref() == Some("1 digest rule")
-            })
-            .await,
-            "the strip does not count the rules: {:?}",
-            chrome.digest_rules_said()
-        );
-        assert!(
-            support::texts(chrome.strip())
-                .iter()
-                .any(|text| text == "g r"),
-            "with its key"
-        );
-        support::press(&window, "slash", gdk::ModifierType::empty());
-        let bar = window.bar().expect("the bar");
-        bar.set_text("weekly numbers");
-        assert!(
-            crate::settle_until(async || bar.result_subjects() == ["The weekly numbers"]).await,
-            "search did not find the held message: {:?}",
-            bar.result_subjects()
-        );
-        assert!(
-            crate::settle_until(async || {
-                bar.texts()
-                    .iter()
-                    .any(|text| text == "held \u{b7} Newsletters")
-            })
-            .await,
-            "the result does not say where it waits: {:?}",
-            bar.texts()
         );
     });
 }

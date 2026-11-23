@@ -1,11 +1,3 @@
-//! Focus's colours are libadwaita's, through Focus's own roles, and follow
-//! the system's light and dark at once (T040; research R11, FR-090).
-//!
-//! What is read is the colour GTK resolved for a widget on screen: the row's
-//! ink (`--postio-ink`) and the strip's counts (`--postio-dim`). A role Focus
-//! did not define resolves to nothing, and the widget falls back to the ink
-//! it inherits -- which is what the first assertion tells apart.
-
 use gtk::prelude::*;
 
 use crate::support::{self, only};
@@ -16,9 +8,6 @@ fn luminance(colour: &gtk::gdk::RGBA) -> f32 {
 
 pub fn the_roles_resolve_and_follow_the_system_into_dark() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let manager = adw::StyleManager::default();
         manager.set_color_scheme(adw::ColorScheme::ForceLight);
         let (_fixture, window) = support::three_in_the_inbox().await;
@@ -58,24 +47,13 @@ pub fn the_roles_resolve_and_follow_the_system_into_dark() {
     });
 }
 
-/// US1 scenario 6: the rows, which draw themselves rather than wear CSS,
-/// follow the switch at once too -- their ink, and a marker's accent, the
-/// system's accent as libadwaita gives it for the scheme (FR-090, FR-091).
 pub fn the_rows_repaint_in_dark_at_once_and_the_marker_keeps_the_accent() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let manager = adw::StyleManager::default();
         manager.set_color_scheme(adw::ColorScheme::ForceLight);
         let fixture = support::Fixture::empty().await;
         let (message, _) = fixture
-            .file(
-                ("Ada Moreno", "ada@example.com"),
-                "Budget",
-                "Can you approve it?",
-                5,
-            )
+            .file_from_ada("Budget", "Can you approve it?", 5)
             .await;
         fixture.ask(message, "Can you approve it?").await;
         let (window, _client) = fixture.open().await;

@@ -1,10 +1,3 @@
-//! Whose footer is up (#2218): the footer speaks for the surface that has
-//! the keyboard. A window on a message that walks no thread says that
-//! message's verbs, a draft on its way the verbs that settle it, and the
-//! composer, Settings, the capture sheet, the command bar and a row's
-//! picker, whose keys are on their own controls, draw none.
-//! When the surface goes, the footer of what was under it comes back.
-
 use crate::search_support::footer_of as footer;
 use chrono::{TimeZone, Utc};
 use postio_config::paths::Platform;
@@ -15,8 +8,6 @@ use postio_model::{DraftState, EmailAddress, MessageId, ThreadId};
 use postio_ui::focus_list::FocusRow;
 use postio_ui::scope::FooterView;
 
-/// Conversations of one message each, with the send state each is in:
-/// `None` for received mail. Row `n` is message `100 + n`, "Subject n".
 struct List {
     states: Vec<Option<DraftState>>,
 }
@@ -104,13 +95,10 @@ fn labels(footer: &FooterView) -> Vec<&str> {
         .collect()
 }
 
-/// The list landed with the cursor on its first row: the row's footer.
 fn landed(focus: &mut FocusController, rows: &List) -> FooterView {
     footer(&focus.landed(rows, true)).expect("the row's footer")
 }
 
-/// A message that is a conversation of its own, opened from the inbox,
-/// teaches its own verbs, not the list's j/k, Return and Right (#2218).
 #[test]
 fn a_lone_message_from_the_inbox_says_its_own_verbs() {
     let rows = List::received(3);
@@ -124,14 +112,11 @@ fn a_lone_message_from_the_inbox_says_its_own_verbs() {
         let window = footer(&effects).expect("the window's footer");
         assert_eq!(window.title, "Subject 0");
         assert_eq!(labels(&window), ["reply", "forward", "archive"]);
-        // Escape closes it: the row's footer is back.
         let effects = run(&mut focus, CommandId::Back, &rows);
         assert_eq!(footer(&effects), Some(row), "the row's footer came back");
     }
 }
 
-/// A queued message opened from the Outbox offers what settles it, as its
-/// action row does, never reply, forward or archive (#2218).
 #[test]
 fn a_draft_on_its_way_says_the_verbs_that_settle_it() {
     for (state, want) in [
@@ -153,9 +138,6 @@ fn a_draft_on_its_way_says_the_verbs_that_settle_it() {
     }
 }
 
-/// The composer draws no footer: its verbs show their keys on its own
-/// controls, and r, f and e type letters there. Closed, the row's footer
-/// comes back (#2218).
 #[test]
 fn the_composer_draws_no_footer_and_gives_the_rows_back() {
     let rows = List::received(3);
@@ -168,8 +150,6 @@ fn the_composer_draws_no_footer_and_gives_the_rows_back() {
     assert_eq!(footer(&effects), Some(row), "the row's footer came back");
 }
 
-/// A reply from the window stacks the composer over it on Linux; when the
-/// composer goes, the window's footer is back, not the row's (#2218).
 #[test]
 fn the_composer_over_a_window_gives_the_windows_footer_back() {
     let rows = List::received(3);
@@ -188,8 +168,6 @@ fn the_composer_over_a_window_gives_the_windows_footer_back() {
     );
 }
 
-/// Settings has its own navigation and no mail verbs: no footer behind it,
-/// and the row's back when it closes (#2218).
 #[test]
 fn settings_draws_no_footer() {
     let rows = List::received(3);
@@ -208,8 +186,6 @@ fn settings_draws_no_footer() {
     assert_eq!(footer(&effects), Some(row), "the row's footer came back");
 }
 
-/// The capture sheet takes the keyboard into its field: no footer behind
-/// it, and the row's back when it closes (#2218).
 #[test]
 fn the_capture_sheet_draws_no_footer() {
     let rows = List::received(3);
@@ -221,9 +197,6 @@ fn the_capture_sheet_draws_no_footer() {
     assert_eq!(footer(&effects), Some(row), "the row's footer came back");
 }
 
-/// The command bar teaches its own keys in its own foot, and the keyboard
-/// is in its field: no footer behind it, and the row's back when it closes
-/// (#2218).
 #[test]
 fn the_command_bar_draws_no_footer() {
     let rows = List::received(3);

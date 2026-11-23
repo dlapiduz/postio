@@ -1,6 +1,3 @@
-//! The sender-authenticity line a reading carries (#1928): the account's
-//! provider decides which `Authentication-Results` is believed.
-
 use chrono::Utc;
 use postio_model::{Account, EmailAddress, Message};
 use postio_session::reading::sender_warning;

@@ -1,16 +1,13 @@
 # Architecture decision records
 
-One file per decision, numbered in the order they were made. Each one
-states the decision as it stands now. When a decision changes, its ADR is
-rewritten in place to say the new truth, and the commit that rewrites it
-carries the story of what changed and why: history lives in git, not in
-the file, so a reader loads only what is true. The table says where each
-decision stands.
+One file per decision, numbered in the order made, in the compact format below. The table says where each stands. History lives in git: when a decision changes, rewrite its ADR in place.
+
+Format, at most about 250 words: `# ADR NNNN — title`, then `Status` (Accepted, Superseded by ADR XXXX, or Amended date) with the latest decision date, `Decision` (1-3 sentences), `## Rules` (what other work must obey), `## Why` (reasons, rejected alternatives in a clause each) and `## Revisit when`. A superseded ADR is a three-line tombstone. Number the next one in sequence and never renumber.
 
 | ADR | Decision | Where it stands |
 |---|---|---|
 | [0001](0001-imap-library.md) | IMAP library: `io-imap` | Built (`postio-account`) |
-| [0002](0002-extensible-command-vocabulary.md) | An extensible command vocabulary | Built; no extension registers yet |
+| [0002](0002-extensible-command-vocabulary.md) | An extensible command vocabulary | Amended 2026-11-22: extension layer removed; the registry is the vocabulary |
 | [0003](0003-rich-text-compose.md) | Rich-text (HTML) compose | Built |
 | [0004](0004-composer-document-model.md) | The composer's document, and where it lives | Built (`postio-body`) |
 | [0005](0005-multiple-accounts.md) | Multiple accounts and the unified inbox | Built |
@@ -29,9 +26,9 @@ decision stands.
 | [0019](0019-macos-frontend.md) | A native macOS frontend over `postio-session` | Built; rebuilt as Focus by `specs/009-focus-macos` |
 | [0020](0020-where-message-bodies-live.md) | Message bodies live in the store; the blob store keeps attachments | Built; per-row zstd, no dictionary (see 0038) |
 | [0021](0021-exactly-once-send.md) | Sending is at-most-once | Built |
-| [0022](0022-extensions-contribute-rows-not-pixels.md) | Extensions contribute table rows, not pixels | Decided for the part that is forced; nothing registers yet |
+| [0022](0022-extensions-contribute-rows-not-pixels.md) | Extensions contribute table rows, not pixels | Policy only; no extension layer exists |
 | [0023](0023-reader-fonts-are-served-not-inlined.md) | The reader's fonts are served over a scheme, not inlined | Built |
-| [0024](0024-layout-intent-and-constraint.md) | Layout intent is stored; the viewport's constraint is applied | Built in the classic app, removed with it; the desktop app follows the rule (`[focus] reading`) |
+| [0024](0024-layout-intent-and-constraint.md) | Layout intent is stored; the viewport's constraint is applied | Accepted; Focus and the terminal app follow the rule |
 | [0025](0025-arbitrary-headers-are-indexed-rows.md) | Arbitrary headers are stored on the row and indexed as rows | Built |
 | [0026](0026-a-saga-carries-its-own-coordinates.md) | A saga's remove phase carries its own coordinates | Built |
 | [0027](0027-the-header-index-is-budgeted-per-message.md) | The header index is budgeted per message | Built |
@@ -57,13 +54,3 @@ decision stands.
 | [0047](0047-one-feature-set-for-the-workspace.md) | One feature set for the workspace: `postio-workspace-hack`, and a boundary is what a crate can call | Built |
 | [0048](0048-per-contact-settings-are-the-one-home-of-sender-keyed-settings.md) | Per-contact settings are the one home of sender-keyed settings | Built for pins, markers, one-sender digests and the HTML treatment |
 | [0049](0049-each-layer-asserts-its-own-question.md) | Each test layer asserts its own question: branches once, frontends assert composition | Accepted; enforced per surface by spec 012 |
-
-## Writing one
-
-Copy the shape of a recent one: a status line on line 3, the context, the
-questions the decision answers, the alternatives rejected and why, the
-consequences, and what would falsify it. Number it next in sequence. When
-a decision changes, rewrite its ADR to state the new decision and keep the
-alternatives section to what stops the old answer being argued again; the
-commit body says what changed. Do not leave `> **Amended …**` blockquotes or
-"superseded by" trails behind.

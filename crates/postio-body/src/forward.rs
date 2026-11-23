@@ -1,32 +1,9 @@
-//! Forwarding a whole thread (spec 013 US7, FR-023, research R12).
-//!
-//! Three forms of "forward", and this is the two that are not the single
-//! message `postio_model::reply::forward` already builds:
-//!
-//! * [`forward_thread`]: every member oldest first in one readable message,
-//!   each under a "From · date" [`header`], with its own words and the
-//!   history it quoted, and the attachments of every member **once**.
-//! * [`forward_as_attachments`]: each member's raw source as a
-//!   `message/rfc822` part, one `.eml` per member.
-//!
-//! # Folded as the reader folds
-//!
-//! A member's quoted history is not cut or rewritten here. It stays in the
-//! markup as a `<blockquote>` (or as `>` lines in the plain half), which are
-//! exactly the stretches [`crate::quote::html_stretches`] and
-//! [`crate::quote::text_stretches`] find, so the composer and the recipient's
-//! reader fold the same spans the reader folds today. Each member goes through
-//! [`crate::quote_of`], the one gate a reply's quote goes through, so a
-//! forwarded thread carries no script and no remote image either.
-//!
-//! # Deduplicated by content hash
-//!
-//! The same file is attached to a message and again to the reply that
-//! quotes it. An attachment's [`BlobId`](postio_model::ids::BlobId) is its
-//! content hash (the blob store is content addressed), so two attachments
-//! with the same one are one file and go once. A part whose bytes were never
-//! downloaded has no hash; it is matched by name, type and size instead, which
-//! can only ever keep a duplicate, never drop a different file.
+//! Forwarding a whole thread: `forward_thread` (one readable message, attachments once) and
+//! `forward_as_attachments` (one `.eml` per member).
+//! Each member goes through `quote_of` and keeps its quoted history as `<blockquote>` or `>` lines,
+//! so composer and recipient fold the same spans and no script or remote image is carried.
+//! Attachments dedupe by `BlobId` (a content hash); an undownloaded part matches by name, type and
+//! size, which can only keep a duplicate.
 
 use std::collections::{HashMap, HashSet};
 
@@ -36,40 +13,27 @@ use postio_model::{Attachment, MessageBody};
 use crate::document::{Block, Document, Inline};
 use crate::replying::{Quoted, quote_of};
 
-/// One member of a thread, ready to be forwarded.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Member {
-    /// The line it is headed by: [`header`].
     pub header: String,
-    /// Its body as stored.
     pub body: MessageBody,
-    /// Its attachments.
     pub attachments: Vec<Attachment>,
 }
 
-/// A forwarded thread: what the draft starts from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OutgoingBody {
-    /// The subject: [`thread_subject`].
     pub subject: String,
-    /// Every member's words.
     pub body: MessageBody,
-    /// Every member's attachments, each file once, ready to belong to a draft.
     pub attachments: Vec<Attachment>,
 }
 
-/// What opens forwarded content, in every form and in both halves: the
-/// conventional line `postio_model::reply::forward_header` starts with. A
-/// whole thread's says "messages". It is how the person's own words, above
-/// it, are told from the forwarded content, below it.
+/// Opens forwarded content in both halves, matching `forward_header`; it separates the person's own
+/// words above from the forwarded content below.
 pub const MARKER: &str = "---------- Forwarded message";
 
-/// The line that opens a forwarded thread.
 pub const THREAD_MARKER: &str = "---------- Forwarded messages ----------";
 
-/// The person's own words in a forward in progress: what sits above
-/// [`MARKER`], in both halves, or the whole body when there is no marker
-/// (the "as attachments" form carries none).
+/// What sits above `MARKER` in both halves, or the whole body when there is no marker.
 pub fn typed_above(body: &MessageBody) -> MessageBody {
     MessageBody {
         text: body.text.as_deref().map(|text| {
@@ -82,7 +46,6 @@ pub fn typed_above(body: &MessageBody) -> MessageBody {
         }),
         html: body.html.as_deref().map(|html| {
             let end = html.find(MARKER).map_or(html.len(), |at| {
-                // Back to the block that holds the marker line.
                 html[..at]
                     .rfind("<p")
                     .into_iter()
@@ -95,8 +58,6 @@ pub fn typed_above(body: &MessageBody) -> MessageBody {
     }
 }
 
-/// `typed` above `content`, where `content` begins with [`MARKER`] (or is
-/// empty). With nothing typed, a blank line is left above for the caret.
 pub fn with_typed(typed: &MessageBody, content: &MessageBody) -> MessageBody {
     let words = typed.text.as_deref().unwrap_or_default();
     let text = content.text.as_deref().map(|content| {
@@ -121,36 +82,26 @@ pub fn with_typed(typed: &MessageBody, content: &MessageBody) -> MessageBody {
     MessageBody { text, html }
 }
 
-/// One forwarded message, as the collapsed row that stands for it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ForwardedRow {
-    /// Its place in the thread, from 1.
     pub number: usize,
-    /// "Who · 2026-09-21 09:12": [`header`].
     pub header: String,
-    /// Its first line of words; empty when it has none.
     pub first: String,
 }
 
 impl ForwardedRow {
-    /// What the row says: "2 · Ben · 2026-09-21 09:12".
     pub fn words(&self) -> String {
         format!("{} \u{b7} {}", self.number, self.header)
     }
 }
 
-/// The block a forwarded thread begins at in `document`: the
-/// [`THREAD_MARKER`] line. Everything from it on is the forwarded content,
-/// and everything before it is the person's own words.
+/// The block index of the `THREAD_MARKER` line; everything from it on is forwarded content.
 pub fn thread_start(document: &Document) -> Option<usize> {
     document.blocks.iter().position(|block| {
         matches!(block, Block::Paragraph(_)) && block_text(block).trim() == THREAD_MARKER
     })
 }
 
-/// The forwarded messages in `blocks` (what [`thread_start`] cut from the
-/// marker on), one row each: a member is a bold [`header`] line and what
-/// follows it.
 pub fn thread_rows(blocks: &[Block]) -> Vec<ForwardedRow> {
     let mut rows: Vec<ForwardedRow> = Vec::new();
     for block in blocks.iter().skip(1) {
@@ -172,9 +123,7 @@ pub fn thread_rows(blocks: &[Block]) -> Vec<ForwardedRow> {
     rows
 }
 
-/// A member's header paragraph: "Who · 2026-09-21 09:12", bold in the html
-/// half and plain in the text half, which is what a plain-text composer
-/// loads.
+/// Bold in the html half and plain in the text half, which a plain-text composer loads.
 fn member_header(block: &Block) -> Option<String> {
     if !matches!(block, Block::Paragraph(_)) {
         return None;
@@ -198,15 +147,11 @@ fn block_text(block: &Block) -> String {
     .to_text()
 }
 
-/// The line a member is headed by: who, then when (`date` already spelled).
 pub fn header(from: &str, date: &str) -> String {
     format!("{from} · {date}")
 }
 
-/// `"Fwd: <subject> (N messages)"`, with no second "Fwd:".
-///
-/// A subject that already ends in a count (a thread forwarded again, or the
-/// same call made twice) has it replaced rather than repeated.
+/// A subject already ending in a count has it replaced, not repeated.
 pub fn thread_subject(subject: &str, messages: usize) -> String {
     let base = strip_count(subject.trim());
     let count = if messages == 1 {
@@ -217,7 +162,6 @@ pub fn thread_subject(subject: &str, messages: usize) -> String {
     format!("{} {count}", postio_model::subject::forward_subject(base))
 }
 
-/// `subject` without a trailing " (N messages)".
 fn strip_count(subject: &str) -> &str {
     let Some(open) = subject.rfind(" (") else {
         return subject;
@@ -234,7 +178,6 @@ fn strip_count(subject: &str) -> &str {
     }
 }
 
-/// The whole thread as one body: see the module doc.
 pub fn forward_thread(members: &[Member], subject: &str) -> OutgoingBody {
     let mut blocks = vec![Block::Paragraph(vec![Inline::Text(
         THREAD_MARKER.to_owned(),
@@ -266,10 +209,8 @@ pub fn forward_thread(members: &[Member], subject: &str) -> OutgoingBody {
     }
 }
 
-/// One member through the reply quote's gate, and its plain words.
-///
-/// A plain-text member's `>` lines are made `<blockquote>`s first, so its
-/// history is a quote in the html half as well as in the text half.
+/// A plain-text member's `>` lines become `<blockquote>`s first, so its history is a quote in the
+/// html half too.
 fn carried(member: &Member, n: usize) -> (Quoted, String) {
     let text = member.body.text.clone().unwrap_or_default();
     let html = member
@@ -289,7 +230,6 @@ fn carried(member: &Member, n: usize) -> (Quoted, String) {
     (quoted, words)
 }
 
-/// Every member's attachments, each file once, as a draft's own.
 fn distinct_attachments(members: &[Member]) -> Vec<Attachment> {
     let mut seen_hashes = HashSet::new();
     let mut seen_unfetched = HashSet::new();
@@ -313,15 +253,10 @@ fn distinct_attachments(members: &[Member]) -> Vec<Attachment> {
     out
 }
 
-/// Each raw source as a `message/rfc822` attachment named `.eml`, in order.
-///
-/// The attachments hold no bytes (`blob_id` is `None`): the caller stores
-/// `raw[n]` and sets the `n`th one's `blob_id`, because the blob store is not
-/// below this crate. Each is named as a person would pick it out of a pile:
-/// "2 · Lena Park · Harbor API draft v3.eml", its place in the thread, who
-/// wrote it and its subject without the "Re:" and "Fwd:" every reply carries.
-/// A sender or subject that is absent or encoded is left out, and a message
-/// with neither is "message N".
+/// The attachments hold no bytes (`blob_id` is `None`): the caller stores `raw[n]` and sets it,
+/// since the blob store is below this crate.
+/// Named "2 · Lena Park · subject.eml"; an absent or encoded sender or subject is left out, and a
+/// message with neither is "message N".
 pub fn forward_as_attachments(raw: &[Vec<u8>]) -> Vec<Attachment> {
     let mut used: HashMap<String, u32> = HashMap::new();
     raw.iter()
@@ -329,7 +264,6 @@ pub fn forward_as_attachments(raw: &[Vec<u8>]) -> Vec<Attachment> {
         .map(|(n, bytes)| {
             let who = header_of(bytes, "from").and_then(|from| sender_name(&from));
             let subject = header_of(bytes, "subject")
-                // An encoded word is not worth a half-decoded file name.
                 .filter(|subject| !subject.contains("=?"))
                 .map(|subject| bare_subject(&subject).to_owned())
                 .filter(|subject| !subject.is_empty());
@@ -355,7 +289,6 @@ pub fn forward_as_attachments(raw: &[Vec<u8>]) -> Vec<Attachment> {
         .collect()
 }
 
-/// `subject` without the reply and forward prefixes in front of it.
 fn bare_subject(subject: &str) -> &str {
     let mut rest = subject.trim();
     loop {
@@ -370,9 +303,7 @@ fn bare_subject(subject: &str) -> &str {
     }
 }
 
-/// The name in a `From:` value ("Lena Park <lena@example.com>"), else the
-/// part of the address before the "@". `None` for an encoded name, which is
-/// not worth a half-decoded file name.
+/// `None` for an encoded name.
 fn sender_name(from: &str) -> Option<String> {
     let from = from.trim();
     let name = match from.split_once('<') {
@@ -391,7 +322,6 @@ fn sender_name(from: &str) -> Option<String> {
     (!name.is_empty()).then(|| name.to_owned())
 }
 
-/// The header `wanted` of a raw message, unfolded; `None` when absent or empty.
 fn header_of(raw: &[u8], wanted: &str) -> Option<String> {
     let head_end = raw
         .windows(4)
@@ -422,7 +352,6 @@ fn header_of(raw: &[u8], wanted: &str) -> Option<String> {
     None
 }
 
-/// `name` as a file's stem: no path separators or controls, bounded.
 fn safe_name(name: &str) -> String {
     let cleaned: String = name
         .chars()
@@ -456,9 +385,6 @@ mod tests {
         attachment
     }
 
-    /// Six members, oldest first. Member 2 has quoted history in HTML,
-    /// member 3 in plain `>` lines. Members 2 and 5 attach the same bytes
-    /// under different names; member 4 attaches another file.
     fn six() -> Vec<Member> {
         (1..=6u32)
             .map(|n| {
@@ -512,7 +438,6 @@ mod tests {
             format!("2 \u{b7} Sender 2 \u{b7} {}", at(2))
         );
         assert_eq!(rows[0].first, "words 1");
-        // The text half, which a plain-text composer loads, reads the same.
         let plain = Document::from_text(body.body.text.as_deref().expect("a text half"));
         let rows = thread_rows(&plain.blocks[thread_start(&plain).expect("a marker")..]);
         assert_eq!(rows.len(), 6);
@@ -764,7 +689,6 @@ mod tests {
             "{text}"
         );
         assert!(!text.contains("the old words"));
-        // And again: the second swap finds the same typed words.
         assert_eq!(
             typed_above(&MessageBody {
                 text: Some(text),

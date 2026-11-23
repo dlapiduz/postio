@@ -1,19 +1,3 @@
-//! The engine against a real socket.
-//!
-//! Every other test in this crate drives [`MockBackend`], which is how the
-//! whole engine was developed and why it can be developed at all. But a mock
-//! cannot lie the way a server does: it never renumbers a mailbox mid-session,
-//! never tears a connection in the middle of a body, never emits a sequence
-//! number no decoder can read, and never goes quiet holding a connection open.
-//!
-//! So these run `postio_account::imap::ImapBackend` — real `io-imap`, real
-//! session, real bytes — against `postio_account::test_server::TestServer` on an
-//! ephemeral loopback port, with the same [`Quirk`] and [`Fault`] injection
-//! that suite uses. Nothing here touches the network.
-//!
-//! The seam is still [`MailBackend`]: no protocol type appears below, and
-//! everything asserted is asserted through the engine's own vocabulary.
-
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -43,16 +27,12 @@ const ARCHIVE: &str = "Archive";
 const VALIDITY: u32 = 4_242;
 const BASELINE: u64 = 900;
 
-/// The messages both the server and the assertions are built from.
 const SEEDED: [&str; 3] = ["plain-text-simple", "attachment-pdf", "html-newsletter"];
 
 fn at(hour: u32) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 8, 23, hour, 0, 0).unwrap()
 }
 
-/// A server shaped like the account this project targets: extensions hidden
-/// until after login, no special-use attributes, three messages from the
-/// corpus.
 async fn server() -> TestServer {
     TestServer::builder()
         .mailbox(
@@ -110,10 +90,6 @@ async fn known_uids(connection: &Connection, mailbox: &Mailbox, generation: u32)
         .collect()
 }
 
-// ---------------------------------------------------------------------------
-// The happy path, over bytes
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn the_engine_syncs_a_mailbox_over_a_real_socket() {
     let server = server().await;
@@ -132,8 +108,6 @@ async fn the_engine_syncs_a_mailbox_over_a_real_socket() {
         vec![1, 2, 3]
     );
 
-    // The corpus reached the database through ENVELOPE and BODYSTRUCTURE on
-    // the wire, not through a mock handing back what it was given.
     let stored = MessageRepository::new(&connection)
         .by_uid(
             inbox.id,
@@ -166,7 +140,6 @@ async fn an_incremental_resync_sees_a_flag_change_and_an_arrival() {
     let (_account, inbox, _archive) = local(&connection).await;
     bootstrap(&connection, &backend, &inbox).await;
 
-    // Another client reads one message, and new mail lands.
     server.set_flags(INBOX, Uid::new(2), FlagSet::from_iter([Flag::Seen]));
     let arrival = server.deliver(INBOX, TestMessage::corpus("list-thread-01-root"));
 
@@ -208,16 +181,8 @@ async fn an_incremental_resync_sees_a_flag_change_and_an_arrival() {
     assert!(seen.flags.is_seen());
 }
 
-// ---------------------------------------------------------------------------
-// The lies a mock cannot tell
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn a_uidvalidity_bump_rebuilds_rather_than_reporting_wrong_mail() {
-    // The worst thing this codebase can do. The backend refuses to serve a
-    // generation nobody confirmed — it reports the change once and adopts the
-    // new one — and the engine has to hear that as "throw the local copy away
-    // and re-enumerate", not as an error that fails the pass.
     let server = server().await;
     let backend = backend_for(&server).await;
     let database = test_support::memory().await;
@@ -256,12 +221,6 @@ async fn a_uidvalidity_bump_rebuilds_rather_than_reporting_wrong_mail() {
 
 #[tokio::test]
 async fn a_malformed_sequence_number_rebuilds_rather_than_losing_the_delta() {
-    // At least one mainstream provider has shipped `* -1 FETCH (…)` under
-    // QRESYNC. io-imap skips a line it cannot decode and completes the command
-    // `Ok`, so the pull looks whole while a message's flags never arrived —
-    // which is why postio-account counts the skips and refuses the result. The
-    // engine's answer has to be a full pass: the same incremental pull would
-    // lose the same line again.
     let server = server().await;
     let backend = backend_for(&server).await;
     let database = test_support::memory().await;
@@ -284,8 +243,6 @@ async fn a_malformed_sequence_number_rebuilds_rather_than_losing_the_delta() {
         other => panic!("expected a rebuild, got {other:?}"),
     }
 
-    // And the change the incremental pull could not be trusted with is in
-    // the database anyway, because the full pass does not use CHANGEDSINCE.
     let seen = MessageRepository::new(&connection)
         .by_uid(
             inbox.id,
@@ -298,11 +255,6 @@ async fn a_malformed_sequence_number_rebuilds_rather_than_losing_the_delta() {
     assert!(seen.flags.is_seen());
 }
 
-/// postio-66j: a rebuild (`Coverage::Everything`) re-reads every message the
-/// mailbox already holds, on purpose — that is what makes it trustworthy
-/// after a pull the incremental path could not verify. Every one of those
-/// re-reads must not look like a new sighting of its correspondent, or every
-/// rebuild would inflate `times_seen` for mail nobody just sent.
 #[tokio::test]
 async fn a_rebuild_that_re_reads_known_messages_does_not_double_count_their_correspondents() {
     let server = server().await;
@@ -371,8 +323,6 @@ async fn a_torn_fetch_fails_the_pass_and_the_next_one_succeeds() {
         "a dropped socket has to be retryable: {error}"
     );
 
-    // The fault fired once; the pool replaces the dead connection rather than
-    // handing it out again, so the retry is an ordinary sync.
     let report = sync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
         .await
         .expect("the retry");
@@ -414,10 +364,6 @@ async fn a_stalled_server_fails_the_pass_instead_of_wedging_the_engine() {
         .expect("the retry");
     assert_eq!(report.inserted, 3);
 }
-
-// ---------------------------------------------------------------------------
-// The queue, against a server that answers
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn a_queued_flag_change_and_move_reach_a_real_server() {
@@ -464,12 +410,6 @@ async fn a_queued_flag_change_and_move_reach_a_real_server() {
 
 #[tokio::test]
 async fn a_local_move_still_reaches_the_server() {
-    // The production order (#289): the queue row and the local move happen in
-    // one transaction -- enqueue first, then the move, which nulls the row's
-    // server identity as correct local-first bookkeeping. The drainer used to
-    // resolve the UID from the *nulled* row, classify the move as "never
-    // uploaded, so the server has nothing to change", and mark it done:
-    // archived locally, never synced.
     let server = server().await;
     let backend = backend_for(&server).await;
     let database = test_support::memory().await;
@@ -511,8 +451,6 @@ async fn a_local_move_still_reaches_the_server() {
 
 #[tokio::test]
 async fn a_local_delete_still_reaches_the_server() {
-    // Delete nulls the row's server identity the same way Move does (#289),
-    // so it loses its server position across the same gap.
     let server = server().await;
     let backend = backend_for(&server).await;
     let database = test_support::memory().await;
@@ -553,9 +491,6 @@ async fn a_local_delete_still_reaches_the_server() {
 
 #[tokio::test]
 async fn a_purge_removes_exactly_that_message_from_the_server() {
-    // Auto-empty (#1932): the queued Purge marks the one message \\Deleted and
-    // expunges it alone, so another message the server already holds in the
-    // mailbox is neither touched nor lost.
     let server = server().await;
     let backend = backend_for(&server).await;
     let database = test_support::memory().await;
@@ -589,9 +524,6 @@ async fn a_purge_removes_exactly_that_message_from_the_server() {
 
 #[tokio::test]
 async fn a_bulk_move_over_a_predicate_still_reaches_the_server() {
-    // The bulk path: enqueue_set materializes one row per message before
-    // move_set nulls their identities, all in one transaction (#289). The
-    // snapshot each queue row carries is what the drainer has to prefer.
     let server = server().await;
     let backend = backend_for(&server).await;
     let database = test_support::memory().await;
@@ -634,9 +566,6 @@ async fn a_bulk_move_over_a_predicate_still_reaches_the_server() {
 
 #[tokio::test]
 async fn a_drained_move_does_not_resurrect_on_resync() {
-    // The user-visible half of #289: with the move never landing, the next
-    // resync of the source folder finds the server copy still there and
-    // re-adds it -- the archived message comes back as a duplicate.
     let server = server().await;
     let backend = backend_for(&server).await;
     let database = test_support::memory().await;
@@ -674,18 +603,8 @@ async fn a_drained_move_does_not_resurrect_on_resync() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Bodies, streamed
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn a_backfilled_body_arrives_byte_for_byte() {
-    // A real socket, a real `BODYSTRUCTURE`, and a real sectioned FETCH: the
-    // text axis of ADR 0017 end to end. `attachment-pdf` is the shape the
-    // whole decision is about — a few lines of words carrying a payload — and
-    // what is asserted is that the words arrive intact through io-imap's own
-    // parser while the payload stays on the server. A mock hands back what it
-    // was given, so only a socket can prove the section numbers were right.
     let server = server().await;
     let backend = backend_for(&server).await;
     let local = on_disk().await;
@@ -718,7 +637,6 @@ async fn a_backfilled_body_arrives_byte_for_byte() {
     let messages = MessageRepository::new(&local.connection);
     let stored = messages.get(id).await.expect("get").expect("row");
 
-    // The words came through the wire and the parser intact.
     let body = messages.body(id).await.expect("body").expect("the row");
     let text = body.text.expect("the message's own text");
     let fetched = text;
@@ -730,7 +648,6 @@ async fn a_backfilled_body_arrives_byte_for_byte() {
         "the text section decoded to what the corpus says the body is"
     );
 
-    // And the PDF did not.
     assert!(
         stored.raw_blob_id.is_none(),
         "no whole-message fetch happened, so there is no raw blob to keep"
@@ -753,9 +670,6 @@ async fn a_backfilled_body_arrives_byte_for_byte() {
 
 #[tokio::test]
 async fn a_body_torn_off_the_socket_stores_nothing() {
-    // The failure a mock cannot stage: the server announces an octet count
-    // and then hangs up short of it. Whatever reached the sink has to be
-    // discarded, and the message has to still be marked as needing its body.
     let server = server().await;
     let backend = backend_for(&server).await;
     let local = on_disk().await;
@@ -801,15 +715,8 @@ async fn a_body_torn_off_the_socket_stores_nothing() {
     assert!(stored.raw_blob_id.is_none());
 }
 
-// ---------------------------------------------------------------------------
-// Watching, over a connection that really idles
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn a_delivery_during_an_idle_wakes_the_watcher_and_the_pull_finds_it() {
-    // The whole point of the watcher, end to end for the first time: a real
-    // IDLE held on a real connection, a message delivered while it is
-    // outstanding, and the resync that the wake-up is supposed to trigger.
     let server = server().await;
     let backend = backend_for(&server).await;
     let database = test_support::memory().await;
@@ -829,7 +736,6 @@ async fn a_delivery_during_an_idle_wakes_the_watcher_and_the_pull_finds_it() {
     watcher.watch(inbox.id, INBOX, Attention::Push);
     watcher.watch(archive.id, ARCHIVE, Attention::Poll);
 
-    // The first push step verifies rather than idling blind.
     let Watch::Poll { .. } = watcher.next_push(at(9)) else {
         panic!("the first push step is a verifying STATUS");
     };
@@ -875,10 +781,6 @@ async fn a_delivery_during_an_idle_wakes_the_watcher_and_the_pull_finds_it() {
 
 #[tokio::test]
 async fn the_poll_floor_notices_what_no_wake_up_reported() {
-    // The guarantee the watcher is shaped around: however badly push is
-    // behaving — and a real server pushes nothing to a connection that was
-    // not idling when the change happened — new mail surfaces within one
-    // poll interval.
     let server = server().await;
     let backend = backend_for(&server).await;
     let database = test_support::memory().await;
@@ -886,9 +788,6 @@ async fn the_poll_floor_notices_what_no_wake_up_reported() {
     let (_account, inbox, _archive) = local(&connection).await;
     bootstrap(&connection, &backend, &inbox).await;
 
-    // IDLE is available and on; this mailbox simply is not the one the
-    // dedicated connection is holding, which is the ordinary case for every
-    // folder but one.
     let mut watcher = Watcher::new(
         WatchPolicy {
             idle: true,
@@ -900,18 +799,14 @@ async fn the_poll_floor_notices_what_no_wake_up_reported() {
     );
     watcher.watch(inbox.id, INBOX, Attention::Poll);
 
-    // A first look, to learn what the mailbox looks like when nothing has
-    // happened.
     let Watch::Poll { path, .. } = watcher.next_poll(at(9)) else {
         panic!("a polled mailbox is checked");
     };
     let before = backend.status(&path).await.expect("status");
     watcher.observed(inbox.id, &before, at(9));
 
-    // Mail lands with nobody watching for it.
     server.deliver(INBOX, TestMessage::corpus("list-thread-01-root"));
 
-    // One poll interval later, the floor does its job.
     let Watch::Poll { path, .. } = watcher.next_poll(at(9) + chrono::TimeDelta::seconds(300))
     else {
         panic!("the interval elapsed, so the mailbox is due");
@@ -926,12 +821,6 @@ async fn the_poll_floor_notices_what_no_wake_up_reported() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/// A file-backed database with a blob store beside it, because a blob store
-/// is a directory and an in-memory database has no directory to sit next to.
 struct OnDisk {
     #[allow(dead_code)]
     database: TempStore,
@@ -974,7 +863,6 @@ fn body_request(mailbox: &Mailbox, message: MessageId, uid: Uid) -> BodyRequest 
     }
 }
 
-/// Whether the engine's error is one the caller is expected to retry.
 fn is_transient(error: &postio_sync::SyncError) -> bool {
     match error {
         postio_sync::SyncError::Backend(error) => error.is_transient(),
@@ -982,7 +870,6 @@ fn is_transient(error: &postio_sync::SyncError) -> bool {
     }
 }
 
-/// The local row for a message the sync just stored.
 async fn message_at(connection: &Connection, mailbox: &Mailbox, uid: Uid) -> MessageId {
     MessageRepository::new(connection)
         .by_uid(mailbox.id, postio_model::Generation::new(VALIDITY), uid)

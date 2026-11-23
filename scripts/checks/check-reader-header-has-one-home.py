@@ -33,18 +33,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 OWNER = "crates/postio-ui/src/reader/header.rs"
-# The crates whose `src/` draws a header: the desktop app, and the crate
-# holding the reader it draws (ADR 0043; specs/007-postio-focus R1).
 CRATES = ("postio-widgets", "postio-gtk")
 
-# The toolkit-free *rules* #1285 names. Each is matched as a definition, not a
-# use, so calling through to postio-ui is exactly what this check wants to see.
-#
-# `MessageHeader` is deliberately absent. Both crates define one and that is
-# correct: `postio_ui`'s carries rendered strings, `postio_gtk`'s is the widget
-# that draws them. A name in common is not a rule in common, and a check that
-# confused the two would push a frontend into renaming its widget to satisfy
-# a rule about content.
+# The toolkit-free rules #1285 names, matched as definitions so calling through to postio-ui is
+# fine.
+# `MessageHeader` is absent: both crates define one, postio_ui's carries strings and postio_gtk's is
+# the widget.
 SHARED = {
     "address_line": r"\bfn\s+address_line\b",
     "address_list": r"\bfn\s+address_list\b",
@@ -55,7 +49,6 @@ SHARED = {
 
 
 def main(argv: list[str]) -> int:
-    # `--root DIR` is for the self-test: a fixture repository.
     root = Path(argv[2]) if len(argv) == 3 and argv[1] == "--root" else ROOT
     owner = root / OWNER
     if not owner.exists():

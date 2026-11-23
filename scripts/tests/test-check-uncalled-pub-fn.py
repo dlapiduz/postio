@@ -119,9 +119,6 @@ def case(name: str, *, should_fail: bool, expect_text: str = "", **repo: str) ->
 def main() -> int:
     print("check-uncalled-pub-fn:")
 
-    # ── the bug this exists for ──────────────────────────────────────────
-    #
-    # #327 exactly: written, documented, tested, called by nothing.
     case(
         "a pub fn with only a test caller is flagged",
         lib="pub fn index_body(id: u32) -> u32 { id }\n",
@@ -130,7 +127,6 @@ def main() -> int:
         expect_text="index_body",
     )
 
-    # ── the three things that must not count as calls ────────────────────
     case(
         "a doc comment naming it is not a caller",
         lib="pub fn collect_garbage() {}\n",
@@ -164,14 +160,6 @@ def main() -> int:
         expect_text="sweep",
     )
 
-    # ── a char literal is not a string, and reading it as one loses the
-    #    rest of the file ────────────────────────────────────────────────
-    #
-    # `'"'` holds one double quote. Scanned as the start of a string literal
-    # it inverts the quote parity of everything after it, so real code is
-    # blanked as "string" and string contents are read as code. The caller
-    # below then disappears and a wired-up function is reported as dead --
-    # silently, in whichever file happened to contain the char literal.
     case(
         "a char literal holding a quote does not swallow the caller after it",
         lib="pub fn index_body() {}\n",
@@ -192,7 +180,6 @@ def main() -> int:
         should_fail=False,
     )
 
-    # ── and the thing that does ──────────────────────────────────────────
     case(
         "one production caller is enough",
         lib="pub fn index_body() {}\n",
@@ -214,15 +201,12 @@ def main() -> int:
         expect_text="alone",
     )
 
-    # ── what is deliberately not scanned ─────────────────────────────────
     case(
         "a frontend crate's test accessors are not scanned",
         lib="pub fn banner_visible() -> bool { true }\n",
         crate="postio-gtk",
         should_fail=False,
     )
-    # The composer moves into the shared crate with its `test_*` hooks, which
-    # a test on a real display calls (ADR 0043; specs/007-postio-focus R1).
     case(
         "the shared desktop crate's test accessors are not scanned",
         lib="pub fn test_autosave_now() {}\n",
@@ -258,7 +242,6 @@ def main() -> int:
         should_fail=False,
     )
 
-    # ── #882: a feature-gated test helper is exempt without #[doc(hidden)] ─
     case(
         "a #[cfg(feature = \"test-support\")] item with only a test caller is exempt",
         lib='#[cfg(feature = "test-support")]\npub fn stopping_after() {}\n',
@@ -286,12 +269,8 @@ def main() -> int:
         expect_text="banner_widget",
     )
     case(
-        # The real shape #882 was found in: the exempting attribute sits
-        # right beside a doc comment that quotes it as prose, on the
-        # function it actually belongs to. Blanking strings is what stops a
-        # comment from creating a *caller* (the case above); this is the
-        # companion property that a real attribute is still read correctly
-        # with prose right next to it.
+        # A real attribute beside a doc comment that quotes it as prose (#882) is still read
+        # correctly.
         "a doc comment quoting the attribute does not stop the real one working",
         lib="/// Behind the `test-support` feature. `#[cfg(feature = \"test-support\")]`\n"
         "/// is what marks it as test scaffolding.\n"
@@ -301,7 +280,6 @@ def main() -> int:
         should_fail=False,
     )
 
-    # ── the baseline, in both directions ─────────────────────────────────
     case(
         "a baselined name is accepted",
         lib="pub fn known_debt() {}\n",

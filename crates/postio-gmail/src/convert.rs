@@ -1,5 +1,3 @@
-//! Gmail objects into the seam's types, and back.
-
 use chrono::{DateTime, Utc};
 use io_gmail::v1::rest::labels::GmailLabel;
 use io_gmail::v1::rest::labels::GmailLabelType;
@@ -7,19 +5,14 @@ use io_gmail::v1::rest::messages::{GmailMessage, GmailMessageHeader};
 use postio_account::backend::{Envelope, FetchedMessage, FlagChange, MailboxSummary};
 use postio_model::{EmailAddress, Flag, FlagSet, RemoteId, RfcMessageId, Uid, UidValidity};
 
-/// The synthetic generation every Gmail message reports: ids never
-/// renumber, so there is exactly one, for ever.
+/// Ids never renumber, so there is exactly one.
 pub(crate) const GENERATION: u32 = 0;
 
-/// The path this adapter gives the archive — the messages no system
-/// label claims (ADR 0018 Q4). It is not a Gmail label: moving here
-/// *removes* labels, and listing it is a search.
+/// Not a Gmail label: moving here removes labels, and listing it is a search (ADR 0018 Q4).
 pub(crate) const ARCHIVE_PATH: &str = "Archive";
 
-/// The search that *is* the archive.
 pub(crate) const ARCHIVE_QUERY: &str = "-in:inbox -in:sent -in:draft -in:trash -in:spam";
 
-/// The system labels this adapter surfaces as role mailboxes.
 const SYSTEM: &[(&str, &str, &str)] = &[
     ("INBOX", "Inbox", ""),
     ("SENT", "Sent", "\\Sent"),
@@ -28,8 +21,6 @@ const SYSTEM: &[(&str, &str, &str)] = &[
     ("SPAM", "Junk", "\\Junk"),
 ];
 
-/// The mailboxes a label listing describes: the five system roles, the
-/// synthetic archive, and every user label as a plain folder.
 pub(crate) fn mailboxes(labels: &[GmailLabel]) -> Vec<MailboxSummary> {
     let mut summaries = Vec::new();
     for (id, path, attribute) in SYSTEM {
@@ -59,8 +50,7 @@ pub(crate) fn mailboxes(labels: &[GmailLabel]) -> Vec<MailboxSummary> {
     summaries
 }
 
-/// The label id a mailbox path names, or `None` for the archive (which
-/// is the *absence* of labels) — an unknown path is the caller's error.
+/// `None` for the archive, which is the absence of labels.
 pub(crate) fn label_id(path: &str, labels: &[GmailLabel]) -> Option<String> {
     for (id, known, _) in SYSTEM {
         if *known == path {
@@ -73,7 +63,6 @@ pub(crate) fn label_id(path: &str, labels: &[GmailLabel]) -> Option<String> {
         .map(|label| label.id.clone())
 }
 
-/// A fetched message bound to its synthetic enumeration position.
 pub(crate) fn fetched(message: &GmailMessage, position: u32) -> Option<FetchedMessage> {
     if message.id.is_empty() {
         return None;
@@ -101,17 +90,11 @@ pub(crate) fn fetched(message: &GmailMessage, position: u32) -> Option<FetchedMe
             .unwrap_or_else(Utc::now),
         size: message.size_estimate.unwrap_or_default(),
         envelope: Some(envelope(headers)),
-        // Whole-message fetches only in this slice; see the crate docs.
         structure: None,
-        // The metadata format carries every header, so what the three
-        // promoted fields say is known from the request every sync already
-        // makes, and costs nothing more to read (spec 007, research R8).
         promoted: Some(promoted(headers)),
     })
 }
 
-/// What `List-Unsubscribe`, `Precedence` and `Auto-Submitted` say, by the
-/// one reading of them every backend shares.
 fn promoted(headers: &[GmailMessageHeader]) -> postio_model::promoted::PromotedHeaders {
     let mut all = postio_model::Headers::new();
     for header in headers {
@@ -154,9 +137,7 @@ fn envelope(headers: &[GmailMessageHeader]) -> Envelope {
     }
 }
 
-/// A light parse of an address header: display names survive the common
-/// `Name <addr>` shape, and anything else is kept as a bare address. The
-/// full RFC 5322 parse happens when the body is fetched and stored.
+/// A light parse: anything but `Name <addr>` is kept as a bare address.
 fn addresses(header: Option<String>) -> Vec<EmailAddress> {
     let Some(header) = header else {
         return Vec::new();
@@ -182,7 +163,7 @@ fn addresses(header: Option<String>) -> Vec<EmailAddress> {
         .collect()
 }
 
-/// Labels into the seam's flags. `\Seen` is the absence of `UNREAD`.
+/// `\Seen` is the absence of `UNREAD`.
 pub(crate) fn flags(label_ids: &[String]) -> FlagSet {
     let mut flags = FlagSet::new();
     if !label_ids.iter().any(|id| id == "UNREAD") {
@@ -205,19 +186,13 @@ pub(crate) fn flags(label_ids: &[String]) -> FlagSet {
     flags
 }
 
-/// A flag change as the label adds and removes `messages.modify` wants.
-///
-/// Only the managed pairs travel — `\Seen`/`UNREAD` (inverted) and
-/// `\Flagged`/`STARRED`. `\Deleted` never reaches here: the backend maps
-/// it to the trash before building a modify. Anything else Gmail either
-/// manages itself (`DRAFT`) or has no label for, and is dropped rather
-/// than guessed.
+/// Only `\Seen`/`UNREAD` (inverted) and `\Flagged`/`STARRED` travel; `\Deleted`
+/// never reaches here, and other flags are dropped rather than guessed.
 pub(crate) fn label_changes(change: &FlagChange) -> (Vec<String>, Vec<String>) {
     let mut adds = Vec::new();
     let mut removes = Vec::new();
     let mut apply = |flag: &Flag, setting: bool| match flag {
         Flag::Seen => {
-            // Inverted: seen means *not* UNREAD.
             if setting {
                 removes.push("UNREAD".to_owned());
             } else {

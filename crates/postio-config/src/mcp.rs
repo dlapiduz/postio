@@ -1,16 +1,6 @@
-//! `[mcp]` — what an AI agent may read through `postio-mcp` (ADR 0010 Q6).
-//!
-//! Off by default and opt-in per account and per folder: an account with no
-//! table here is invisible to every tool, `list_accounts` included, and an
-//! account whose table names no folder shares nothing. The server reads this
-//! section again on every tool call, so taking an account out takes effect
-//! on the next call rather than the next restart.
-//!
-//! ```toml
-//! [mcp.accounts."ada@example.com"]
-//! mailboxes = ["INBOX", "Receipts"]   # folder paths; "*" shares every one
-//! actions = ["archive", "move", "label"]   # optional; none by default
-//! ```
+//! `[mcp]`: off by default, opt-in per account and per folder (ADR 0010 Q6). An account with no
+//! table is invisible to every tool; one whose table names no folder shares nothing. The server
+//! rereads this on every tool call, so revoking takes effect on the next call.
 
 use std::collections::BTreeMap;
 
@@ -18,40 +8,27 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Extras, Result};
 
-/// The `[mcp]` section.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct McpConfig {
-    /// The accounts an agent may read, keyed by the account's address.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub accounts: BTreeMap<String, McpAccount>,
-    /// Keys this version of Postio does not know, preserved verbatim.
     #[serde(flatten)]
     pub extra: Extras,
 }
 
-/// One shared account: `[mcp.accounts."<address>"]`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct McpAccount {
-    /// The folders an agent may read, by their path on the server; `"*"`
-    /// shares every folder. Empty shares nothing.
     #[serde(default)]
     pub mailboxes: Vec<String>,
-    /// What an agent may do to the shared mail besides read it and write
-    /// drafts: any of `"archive"`, `"move"` and `"label"`. Empty -- the
-    /// default -- allows none of them.
+    /// Empty -- the default -- allows none of them.
     #[serde(default)]
     pub actions: Vec<String>,
-    /// Keys this version of Postio does not know, preserved verbatim.
     #[serde(flatten)]
     pub extra: Extras,
 }
 
-/// `text` with the sharing of `address` taken out: its
-/// `[mcp.accounts."<address>"]` table and nothing else, so every comment and
-/// every other key stays where the person put it. An address that is not
-/// shared leaves the text as it was. A table left empty by the removal goes
-/// with it (ADR 0010 Q6: revoking takes effect on the next call, because the
-/// server reads this section again on every call).
+/// A table left empty by the removal goes with it (ADR 0010 Q6: revoking takes effect on the next
+/// call).
 pub fn revoke_mcp_account(text: &str, address: &str) -> Result<String> {
     let mut doc = crate::splice::parse(text)?;
     if let Some(accounts) = doc
@@ -64,8 +41,6 @@ pub fn revoke_mcp_account(text: &str, address: &str) -> Result<String> {
     Ok(tidy(doc).to_string())
 }
 
-/// `text` with every account's sharing taken out: the agent-access kill
-/// switch. Keys under `[mcp]` this version does not know are kept.
 pub fn revoke_all_mcp(text: &str) -> Result<String> {
     let mut doc = crate::splice::parse(text)?;
     if let Some(mcp) = doc.get_mut("mcp").and_then(|mcp| mcp.as_table_like_mut()) {
@@ -74,9 +49,6 @@ pub fn revoke_all_mcp(text: &str) -> Result<String> {
     Ok(tidy(doc).to_string())
 }
 
-/// Drop `[mcp.accounts]` and `[mcp]` when a removal left them empty, so a
-/// file that shared one account and now shares none reads as it did before
-/// anything was shared.
 fn tidy(mut doc: toml_edit::DocumentMut) -> toml_edit::DocumentMut {
     let accounts_empty = doc
         .get("mcp")
@@ -144,8 +116,6 @@ mod tests {
         let text = toml::to_string(&Config::default()).expect("serialises");
         assert!(!text.contains("accounts"), "{text}");
     }
-
-    // -- Revoking (#1832) ----------------------------------------------------
 
     use super::{revoke_all_mcp, revoke_mcp_account};
 

@@ -1,26 +1,3 @@
-//! The two things the composer asks about before doing them (spec 002,
-//! FR-057 and FR-061).
-//!
-//! `postio_model::mention` decides whether the words are there and is unit
-//! tested where it lives. What needs a display is the join: that `send`
-//! actually asks, which shows up here as the send handler *not* being called
-//! and the composer staying open. A check that computes the right answer and
-//! lets the draft through anyway is the characteristic bug in this
-//! repository, and it is invisible to the model's own tests.
-//!
-//! What is **not** asserted is the dialog's buttons. Driving an
-//! `adw::AlertDialog` headlessly is not something this suite can do -- the
-//! discard dialog has never been display-tested either -- so the response
-//! handler is covered by inspection and the observable half is covered here.
-//! Stated rather than left as a gap somebody has to rediscover.
-//!
-//! One test function for both, and deliberately: each needs a real composer
-//! and a real composer is a `WebView`, which is a resource the GTK suites are
-//! already short of (#957). Two assertions about the same question do not
-//! need two processes.
-//!
-//! One test function: GTK is single-threaded and initialised once.
-
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -41,10 +18,6 @@ fn draft_saying(text: &str) -> Draft {
 }
 
 pub fn the_composer_asks_before_the_two_things_it_cannot_take_back() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let display = gdk::Display::default().expect("a display");
     fonts::install().expect("the embedded fonts should install");
     style::install(&display);
@@ -60,7 +33,6 @@ pub fn the_composer_asks_before_the_two_things_it_cannot_take_back() {
         move |draft| sent.borrow_mut().push(draft.clone())
     });
 
-    // ── Says it, carries nothing: does not reach the handler ─────────────
     composer.open(draft_saying("Please find attached the tide gate report."));
     settle();
     composer.send();
@@ -77,7 +49,6 @@ pub fn the_composer_asks_before_the_two_things_it_cannot_take_back() {
          file the person was just asked about"
     );
 
-    // ── Says it and carries it: sends, with nothing to ask ───────────────
     let mut carrying = draft_saying("Please find attached the tide gate report.");
     let mut part = Attachment::new(MessageId::UNASSIGNED, "application/pdf", 2_048);
     part.filename = Some("report.pdf".to_owned());
@@ -97,7 +68,6 @@ pub fn the_composer_asks_before_the_two_things_it_cannot_take_back() {
         composer.status()
     );
 
-    // ── Says nothing of the kind: sends ──────────────────────────────────
     composer.close();
     settle();
     composer.open(draft_saying(
@@ -114,13 +84,8 @@ pub fn the_composer_asks_before_the_two_things_it_cannot_take_back() {
         composer.status()
     );
 
-    // ── FR-061: discarding asks, unless there is nothing to lose ─────────
-    //
-    // The one composer action with no way back -- a queued send can still be
-    // cancelled from Drafts, and everything else is a keystroke away from
-    // being retyped. As with the dialog above, what is asserted is the
-    // observable half: the draft is still there afterwards, because the
-    // answer has not been given yet.
+    // Discarding is the one composer action with no way back. Only the observable half is asserted:
+    // the draft is still there.
     composer.close();
     settle();
     composer.open(draft_saying("Half a sentence nobody wants to lose."));
@@ -139,10 +104,8 @@ pub fn the_composer_asks_before_the_two_things_it_cannot_take_back() {
         "the draft was cleared while the question was still on screen"
     );
 
-    // An empty draft is dropped rather than defended. Asking "discard this?"
-    // about nothing is a dialog that can only ever be answered one way, and
-    // teaching someone to dismiss it unread is how the dialog above stops
-    // working too.
+    // An empty draft is dropped rather than defended: a discard prompt about nothing teaches people
+    // to dismiss it unread.
     composer.close();
     settle();
     let mut blank = Draft::new(AccountId::new(1));

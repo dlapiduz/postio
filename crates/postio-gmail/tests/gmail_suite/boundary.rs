@@ -1,6 +1,3 @@
-//! The protocol crates never see each other — same shape and reason as
-//! `postio-jmap/tests/boundary.rs`.
-
 use std::path::PathBuf;
 
 fn manifest() -> String {

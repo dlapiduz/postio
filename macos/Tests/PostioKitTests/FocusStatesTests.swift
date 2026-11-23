@@ -3,11 +3,6 @@ import Testing
 
 @testable import PostioKit
 
-/// What the app says about its own state (specs/009-focus-macos T099,
-/// screens 16 to 19): the banner under the header strip, the toolbar's sync
-/// label and the page an empty list shows. The controller words all three
-/// (`postio_ui::focus_state`) and says each only when it changes; the Mac
-/// holds what was last said and draws it.
 @MainActor
 @Suite struct FocusStatesTests {
     static let offline = BannerFfi(
@@ -37,8 +32,6 @@ import Testing
             EmptyShortcutFfi(key: "g a", words: "archive", command: "go_to_archive"),
             EmptyShortcutFfi(key: "c", words: "compose", command: "compose"),
         ])
-
-    // MARK: what the controller said, held
 
     @Test func aBannerIsHeldUntilTheControllerTakesItAway() {
         let states = FocusStates()
@@ -72,15 +65,12 @@ import Testing
         #expect(states.banner == Self.offline)
     }
 
-    // MARK: the banner strip
-
     @Test func theBannerSaysTheControllersWordsWithItsButtonsKeycap() {
         let words = BannerStripWords(Self.offline)
         #expect(words.heading == "You're offline")
         #expect(words.sentence == Self.offline.sentence)
         #expect(words.button?.label == "Retry now")
         #expect(words.button?.command == "refresh")
-        // Spelled as every other cap is: a named key is its glyph or name.
         #expect(words.button?.cap == KeyCapSpelling.cap("F5"))
         #expect(words.tone == .plain)
         #expect(words.progress == nil)
@@ -108,8 +98,6 @@ import Testing
         #expect(BannerStripWords(banner).progress == 1, "never past the end")
     }
 
-    // MARK: the empty page
-
     @Test func theEmptyPageDrawsItsShortcutsAsKeycaps() {
         let words = EmptyInboxWords(Self.empty)
         #expect(words.heading == "Inbox is empty")
@@ -134,8 +122,6 @@ import Testing
         #expect(EmptyInboxWords(page).shortcuts.first?.cap == "⌘N")
     }
 
-    // MARK: the toolbar's label
-
     @Test func theLabelsSymbolFollowsItsMark() {
         #expect(SyncLabel(text: "Synced 16:09", mark: .synced).symbol == "checkmark.circle")
         #expect(SyncLabel(text: "Syncing 1 of 2", mark: .syncing).symbol == "arrow.triangle.2.circlepath")
@@ -150,9 +136,6 @@ import Testing
     }
 }
 
-/// The footer under the list (spec 013 T040, FR-014): the scope's title,
-/// its keycap and label pairs and the right-hand note, as the controller
-/// worded them after the cursor moved.
 @MainActor
 @Suite struct ScopeFooterTests {
     static let child = FooterViewFfi(

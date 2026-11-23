@@ -1,10 +1,5 @@
-//! What the frontend hears, and the rules for adding to it.
-
-/// Why a connection stopped in a way retrying will not fix.
-///
-/// Crosses because the remedies are different and only one of them is the
-/// user's: a rejected credential needs them to re-enter it, and a broken
-/// network path recovers on its own.
+/// Crosses because only one remedy is the user's: a rejected credential needs re-entering, a broken
+/// network recovers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum FailureReasonFfi {
     /// The server refused the credential. **Never retried on a timer** —
@@ -13,33 +8,18 @@ pub enum FailureReasonFfi {
     /// The network path is broken in a way backoff has given up on. Recovers
     /// on its own; nothing for the user to fix in Postio.
     Network,
-    /// The server accepted the connection and is refusing the work.
     Server,
-    /// Something else the supervisor could not classify.
     Other,
 }
 
-/// What an account's connection is doing.
-///
-/// Four states rather than a boolean, and the distinction earns its keep:
-/// **offline** means working from the local store, **connecting** means wait,
-/// and **failing** means stop waiting and go and fix something. Rendering
-/// `Failing` as "offline" tells the user to check their network when the
-/// answer is their password, and they will wait for a reconnect that is never
-/// coming.
+/// Four states, not a boolean: rendering `Failing` as "offline" sends the user to their network
+/// when the answer is their password.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum ConnectionStateFfi {
-    /// Working from the local database only.
     Offline,
-    /// Establishing a connection, or waiting out a backoff that will retry.
     Connecting,
-    /// Connected, with an idle or streaming session.
     Online,
-    /// Stopped on something retrying will not fix, and waiting for a person.
-    Failing {
-        /// What kind of person-shaped problem it is.
-        reason: FailureReasonFfi,
-    },
+    Failing { reason: FailureReasonFfi },
 }
 
 impl From<postio_core::ConnectionState> for ConnectionStateFfi {
@@ -61,188 +41,96 @@ impl From<postio_core::ConnectionState> for ConnectionStateFfi {
     }
 }
 
-/// One thing that happened, on its way to a repaint.
-///
-/// # Adding a variant
-///
-/// This is the boundary's **optional** tier, and the rules exist because a
-/// frontend on the other side of an FFI cannot be recompiled in step with this
-/// enum (ADR 0019 Q2):
-///
-/// 1. **Append.** New variants go at the end. A frontend built against an
-///    older boundary matches on discriminants it already knows.
-/// 2. **Every variant is ignorable.** A frontend that handles none of these
-///    must still be correct, only stale. Nothing here may be the sole carrier
-///    of a state change the frontend is *required* to act on — that belongs in
-///    the required floor, where a missing implementation is a compile error.
-/// 3. **Fields are ids and counts, never content.** The same rule the logs
-///    live under: a subject line crossing here would end up in a crash report.
-/// 4. **Never remove a variant to "clean up".** Removing one renumbers every
-///    variant after it, and the frontend that has not been rebuilt will
-///    misread all of them. Deprecate in the doc comment instead.
-///
-/// The contract is here rather than in a document because this is the file
-/// somebody has open when they are adding a variant.
+/// The optional tier (ADR 0019 Q2): append variants at the end and never remove or reorder, since
+/// frontends are not rebuilt in step. Every variant must be ignorable; fields are ids and counts,
+/// never content.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum UiEvent {
-    /// An account's mailbox tree changed: renamed, created, subscribed.
     MailboxesChanged {
-        /// The account whose mailboxes changed.
         account: i64,
     },
-    /// A mailbox's message list changed enough that the pane must reload.
     MessageListChanged {
-        /// The account the mailbox belongs to.
         account: i64,
-        /// The affected mailbox.
         mailbox: i64,
     },
-    /// These messages changed in place — flags, labels, read state.
     MessagesChanged {
-        /// The account the messages belong to.
         account: i64,
-        /// The affected messages.
         messages: Vec<i64>,
     },
-    /// These messages left a mailbox: archived, deleted or moved away.
     MessagesRemoved {
-        /// The account the mailbox belongs to.
         account: i64,
-        /// The mailbox they left.
         mailbox: i64,
-        /// The messages that left it.
         messages: Vec<i64>,
     },
-    /// New mail arrived — the trigger for a notification.
     NewMail {
-        /// The account it arrived at.
         account: i64,
-        /// The mailbox it landed in.
         mailbox: i64,
-        /// The newly delivered messages.
         messages: Vec<i64>,
     },
-    /// Messages joined a thread (spec 013): an open thread window or an
-    /// expansion reads its `ThreadView` again, and `members_added` drives the
-    /// new-reply banner. Once per thread per pass.
+    /// An open thread window or expansion re-reads its `ThreadView`; `members_added` drives the
+    /// new-reply banner.
+    /// Once per thread per pass.
     ThreadChanged {
-        /// The account the thread belongs to.
         account: i64,
-        /// The thread.
         thread: i64,
-        /// The messages that joined it.
         members_added: Vec<i64>,
     },
-    /// The conversation asked for has been read and can now be drawn.
-    ///
-    /// Boundary-local: the reading pane's read is this frontend's, and the
-    /// engine has no event for it. Carries the thread so a pane that has moved on can drop a
-    /// read that arrived late rather than drawing the wrong conversation
-    /// under someone's cursor.
+    /// Boundary-local, no engine event. Carries the thread so a pane that has moved on drops a late
+    /// read.
     ConversationReady {
-        /// The conversation that was read.
         thread: i64,
     },
-    /// An account's connection changed.
     ConnectionChanged {
-        /// The account.
         account: i64,
-        /// What it is doing now.
         state: ConnectionStateFfi,
     },
-    /// How far a re-index has got.
-    ///
-    /// Boundary-local: re-indexing is something a person
-    /// asked this window for, not something the engine does on its own. A
-    /// pass over five thousand messages takes long enough that a button with
-    /// no progress is indistinguishable from a button that does nothing
-    /// (#1284).
+    /// Boundary-local: a person asked this window for the re-index, and a button without progress
+    /// looks dead (#1284).
     ReindexProgress {
-        /// The account being re-indexed.
         account: i64,
-        /// Messages indexed so far.
         done: u32,
-        /// Messages to index in total.
         total: u32,
     },
-    /// How far a synchronisation has got.
-    ///
-    /// The only thing a first run has to show that something is happening: a
-    /// backfill of a large mailbox is otherwise minutes of an empty list.
+    /// The only thing a first run has to show: a large backfill is otherwise minutes of an empty
+    /// list.
     SyncProgress {
-        /// The account being synchronised.
         account: i64,
-        /// Units completed.
         done: u32,
-        /// Units expected.
         total: u32,
     },
-    /// The outcome of something the user asked for.
-    ///
-    /// Four core events with one shape: each is a sentence, already phrased
-    /// for a person by the layer that knows what happened, and the frontend's
-    /// job is to show it rather than to compose it. They crossed as
-    /// [`UiEvent::Other`] until #1577, which meant that on macOS **nothing an
-    /// action reported ever reached anybody**: a send that failed, a verb
-    /// refused because nothing was selected, an archive that could be taken
-    /// back — all of it arrived, was named, and was dropped.
-    ///
-    /// The rejected command's id does not cross. A frontend that branched on
-    /// it would be re-deciding what the core already decided, and the whole
-    /// point of the sentence is that the decision was made once.
+    /// The outcome of something the user asked for, as a sentence already phrased by the core.
+    /// The rejected command's id does not cross: a frontend that branched on it would re-decide
+    /// what the core decided.
     Notice {
-        /// Which of the four it is, for how it should be drawn.
         kind: NoticeKindFfi,
-        /// What to say, phrased for the user by the core.
         message: String,
-        /// Whether the undo stack can take it back — draw an Undo affordance.
-        ///
-        /// Only ever true for [`NoticeKindFfi::Completed`]. A refusal changed
-        /// nothing and a failure did not finish, so there is nothing to
-        /// return to.
+        /// Draw an Undo affordance. Only true for `Completed`: a refusal or failure changed
+        /// nothing.
         undoable: bool,
     },
-    /// Something happened that this boundary does not model yet.
-    ///
-    /// Deliberately not a silent drop. The core's event vocabulary is larger
-    /// than the macOS frontend's, and will stay larger while the frontend is
-    /// being built — so an unmodelled event arrives as a name the far side can
-    /// log. A frontend that is *behind* is a normal state; a frontend that was
-    /// never told is a bug, and this is the difference.
+    /// Not a silent drop: an event this boundary does not model arrives as a name the far side can
+    /// log.
     Other {
-        /// The core variant's name, for a log line on the far side.
         kind: String,
     },
-    /// `[keys]` changed while the app ran: every key, menu item and keycap
-    /// may mean something else now (specs/009-focus-macos FR-031).
+    /// `[keys]` changed while the app ran: every key, menu item and keycap may mean something else.
     KeymapChanged,
-    /// The rows Focus surfaces in the inbox -- digests, reminders -- changed,
-    /// so the list re-reads them (spec 007's `SurfacedChanged`).
+    /// The surfaced rows (digests, reminders) changed, so the list re-reads them.
     SurfacedChanged,
-    /// Focus's list changed over, was re-read, or changed length: redraw it
-    /// whole, `total` rows long (specs/009-focus-macos T027).
+    /// Redraw the list whole, `total` rows long.
     FocusListChanged {
-        /// How many rows the list draws now.
         total: u32,
     },
-    /// A page of Focus's list landed: redraw its rows.
     FocusPageReady {
-        /// Which page.
         page: u32,
     },
-    /// The cursor is on `position`: draw its ring there and bring it into
-    /// view (specs/009-focus-macos T046).
+    /// Draw the ring on `position` and bring it into view.
     FocusCursor {
-        /// The row.
         position: u32,
-        /// Whether the list scrolls back to its very top.
         to_top: bool,
     },
-    /// The selection changed: redraw the rows' boxes and the bar's words.
     FocusSelection {
-        /// The selected messages, when the selection names them.
         selected: Vec<i64>,
-        /// Whether everything the view shows is selected (a predicate).
         everything: bool,
         /// "3 selected", or nothing with nothing selected.
         summary: Option<String>,
@@ -253,36 +141,25 @@ pub enum UiEvent {
         /// "Has action · 7".
         text: Option<String>,
     },
-    /// Scroll the list back to its very top.
     FocusListToTop,
-    /// A thread opened in place: draw `children` after the row at `anchor`
-    /// (a row position), replacing any it had. No animation under Reduce
-    /// Motion (spec 013).
+    /// Draw `children` after the row at `anchor`, replacing any it had; no animation under Reduce
+    /// Motion.
     FocusSplice {
-        /// The expanded row's position among the rows.
         anchor: u32,
         /// One per message, oldest first, then the unsent reply.
         children: Vec<crate::ChildRowFfi>,
     },
-    /// Draw the footer under the list (spec 013 FR-014): the scope in
-    /// words, the keys that matter there, and a sentence on what acts on
-    /// what. Sent after every cursor move, in the list and in Filtered.
+    /// Draw the footer: the scope in words, the keys that matter, and what acts on what. Sent after
+    /// every cursor move.
     FocusFooter {
-        /// What to draw.
         view: crate::FooterViewFfi,
     },
-    /// The thread at `anchor` folded: remove its children.
     FocusUnsplice {
-        /// The collapsed row's position among the rows.
         anchor: u32,
     },
-    /// Say something in the toast: the host's words.
     FocusToast {
-        /// What to say.
         text: String,
-        /// How to draw it.
         kind: ToastKindFfi,
-        /// Whether Undo can take it back.
         undoable: bool,
         /// How long it stays, when not the usual (an answer's window).
         seconds: Option<u32>,
@@ -290,329 +167,228 @@ pub enum UiEvent {
     /// Show `message` in the message window: opening it, or in place of the
     /// one it shows. `index` of `total` is its row's place in the list.
     FocusOpenMessage {
-        /// The message.
         message: i64,
-        /// Its row's place.
         index: u32,
-        /// How many rows the list draws.
         total: u32,
     },
     /// A digest's row opens its window. `delivery` is the digest delivery,
     /// as `FocusRowFfi.id` carries it.
     FocusOpenDigest {
-        /// The delivery.
         delivery: i64,
     },
-    /// Show the known-sender popover, hung from the sender's name that was
-    /// clicked or the cursor row's, or draw it again, whole (specs/011-focus-
-    /// contacts S6). The controller has put it on the stack as
-    /// `ContactPopover`; it closes on `FocusCloseSurface { kind:
-    /// ContactPopover }`, and any other way it closes is
+    /// Show the known-sender popover, or draw it again whole. The controller has put it on the
+    /// stack as `ContactPopover`; it closes on `FocusCloseSurface`, and any other way is
     /// `focus_surface_closed(ContactPopover)`.
     FocusContactPopover {
-        /// Everything it draws.
         view: crate::focus_contacts::ContactPopoverViewFfi,
     },
-    /// Draw the Contacts view's frame, whole, in the list's place. The
-    /// controller has put it on the stack as `Contacts`; it closes on
-    /// `FocusCloseSurface { kind: Contacts }`. Read rows with
-    /// `focus_contacts_row` and the card with `focus_contacts_card`.
+    /// Draw the Contacts frame whole in the list's place; read rows with `focus_contacts_row` and
+    /// the card with `focus_contacts_card`. Closes on `FocusCloseSurface { kind: Contacts }`.
     FocusContacts {
-        /// The strip, the footer, the length.
         view: crate::focus_contacts::ContactsViewFfi,
     },
     /// Contacts rows landed: draw `count` rows from `first`, or the whole
     /// list when `count` is 0 (it started over).
     FocusContactsRows {
-        /// The first row.
         first: u32,
-        /// How many; 0 for all.
         count: u32,
     },
-    /// The Contacts cursor is on this row.
     FocusContactsCursor {
-        /// The row.
         index: Option<u32>,
     },
     /// The card beside the Contacts list: draw it whole, or empty while it
     /// is read.
     FocusContactsCard {
-        /// The card.
         card: Option<crate::focus_contacts::ContactCardViewFfi>,
     },
-    /// The merge sheet: draw it over the Contacts view, or put it away.
     FocusContactMerge {
         /// The sheet, or `None` when it is gone.
         view: Option<crate::focus_contact_merge::MergeSheetViewFfi>,
     },
-    /// The Edit contact form: draw it over the card, or put it away.
     FocusContactEdit {
         /// The form, or `None` when it is gone.
         view: Option<crate::focus_contact_edit::ContactEditViewFfi>,
     },
-    /// Settings > Contacts' Suggestions section, read or changed.
     FocusContactsSettings {
-        /// The section.
         view: crate::focus_contacts_settings::SuggestionsViewFfi,
     },
-    /// Put the keyboard in the Contacts filter field.
     FocusContactsFocusFilter,
     /// Open a composer to this address, as a `mailto:` link would, and say
     /// `focus_surface_opened(Composer)` once it shows.
     FocusWriteTo {
-        /// Who to write to.
         address: String,
     },
-    /// Close this surface, then say `focus_surface_closed`.
     FocusCloseSurface {
-        /// Which.
         kind: crate::focus_list::SurfaceKindFfi,
     },
-    /// The open message does this.
     FocusReader {
-        /// What.
         verb: crate::focus_list::ReaderVerbFfi,
     },
     /// The message window's thread bar, when it opens and on every step.
     /// No chips means a thread of one: draw no bar.
     FocusThreadBar {
-        /// The bar.
         view: crate::focus_thread_bar::ThreadBarFfi,
     },
     /// The line above the subject, "Message 4 of 6 · ] newer · [ older";
     /// empty for none.
     FocusKicker {
-        /// What it says.
         text: String,
     },
-    /// The quiet banner on a message that is not the latest, or none.
     FocusOlderBanner {
-        /// The banner.
         banner: Option<crate::focus_thread_bar::ThreadBannerFfi>,
     },
     /// A reply arrived while the window is on another message, which stays
     /// on screen: the accent-tinted banner with "Read it", or none.
     FocusNewReply {
-        /// The banner.
         banner: Option<crate::focus_thread_bar::ThreadBannerFfi>,
     },
     /// Open Thread ▾'s menu (a 340-point popover from the button). The controller has put it on
     /// the stack; say `focus_surface_closed(ThreadMenu)` if it closes itself.
     FocusThreadMenu {
-        /// The menu.
         view: crate::focus_thread_bar::ThreadMenuFfi,
     },
     /// Open the thread outline (a 440-point popover), or redraw it whole. The
     /// controller has put it on the stack; say `focus_surface_closed(Outline)`
     /// if it closes itself.
     FocusOutline {
-        /// The outline.
         view: crate::focus_thread_bar::OutlineFfi,
     },
-    /// Put the keyboard in the outline's filter field.
     FocusOutlineFocusFilter,
-    /// The sender block's Reply to row, or none.
     FocusReplyTo {
         /// "Ana Ruiz, Mon 21 Sep (message 1)".
         text: Option<String>,
     },
-    /// Nothing is over the list: the keyboard goes back to it, on the
-    /// cursor's row.
     FocusKeyboardHome,
-    /// Show the command bar, opened `mode`'s way, its field holding `text`
-    /// with `select` selected (the chip being edited), or the caret at the
-    /// end. Said again while the bar is up, it is only new words for the
-    /// field. Say `focus_surface_opened(Bar)` once it shows; the controller
-    /// has already put it on the stack, so that changes nothing.
+    /// Show the command bar, opened `mode`'s way, its field holding `text` with `select` selected,
+    /// or the caret at the end. Said again while up, it is only new words. Say
+    /// `focus_surface_opened(Bar)` once it shows.
     FocusOpenBar {
-        /// How it was opened.
         mode: crate::focus_bar::BarModeFfi,
-        /// The field's words.
         text: String,
-        /// What of them is selected.
         select: Option<crate::focus_bar::BarSelectFfi>,
     },
-    /// Redraw the bar's lines, whole.
     FocusBarLines {
-        /// Everything the bar draws under its field.
         view: crate::focus_bar::BarViewFfi,
     },
-    /// The list shows this place now: what the header strip's Inbox ▾
-    /// button names.
     FocusPlace {
-        /// "Inbox", "Receipts", "Snoozed".
         name: String,
     },
-    /// Show the folders popover, anchored to Inbox ▾, listing
-    /// `focus_places`.
     FocusOpenPlaces,
     /// The places were read again: the popover asks `focus_places` anew.
     FocusPlacesChanged,
-    /// Show Filtered, the view of what Focus filed away.
     FocusShowFiltered,
     /// Run this registry command as the Mac's own -- a line of the bar the
     /// controller does not answer, such as Compose or Settings -- the way a
     /// menu item would run it.
     FocusRun {
-        /// The registry command.
         command: String,
     },
-    /// Show this picker, hung from its anchor, in a transient popover
-    /// (specs/009-focus-macos T089). Say `focus_surface_opened(Picker)` once
-    /// it shows; the controller has already put it on the stack, so that
-    /// changes nothing. It closes on `FocusCloseSurface { kind: Picker }`,
-    /// and any other way it closes is `focus_surface_closed(Picker)`.
+    /// Show this picker in a transient popover hung from its anchor. Say
+    /// `focus_surface_opened(Picker)` once shown; it closes on `FocusCloseSurface { kind: Picker
+    /// }`, and any other way is `focus_surface_closed(Picker)`.
     FocusOpenPicker {
-        /// Everything it draws.
         view: crate::focus_pickers::PickerViewFfi,
     },
     /// Redraw the picker up, whole: its rows read, a label toggled, the
     /// field's text and hint changed. Its row tokens replace the last.
     FocusPickerRows {
-        /// Everything it draws.
         view: crate::focus_pickers::PickerViewFfi,
     },
-    /// Put the keyboard in the picker's date field (`Tab`).
     FocusPickerField,
-    /// The banner under the header strip, full width, or none
-    /// (specs/009-focus-macos T096). Said only when it changes.
+    /// The banner under the header strip, or none. Said only when it changes.
     FocusBanner {
-        /// What it says, or `None` to take it away.
         banner: Option<crate::focus_states::BannerFfi>,
     },
     /// What the toolbar's sync label says now. Said only when it changes.
     FocusSyncLabel {
         /// "Synced 09:30", "Syncing 1,200 of 8,400", "Offline".
         text: String,
-        /// The mark beside it.
         mark: crate::focus_states::SyncMarkFfi,
     },
-    /// The page an empty list shows in its place, or the list again with
-    /// `None`. The list is what is drawn until this says otherwise.
+    /// The page an empty list shows in its place, or the list again with `None`.
     FocusEmpty {
-        /// What the page says.
         page: Option<crate::focus_states::EmptyPageFfi>,
     },
-    /// How far filling in an account's message bodies has come
-    /// (specs/009-focus-macos T099). It crossed as `Other` before.
+    /// How far filling in an account's message bodies has come.
     BackfillProgress {
-        /// The account.
         account: i64,
-        /// Messages the queue has finished with.
         done: u32,
-        /// Messages that have entered the queue.
         total: u32,
     },
-    /// Show the key map (`?`), as a sheet over the main window
-    /// (specs/009-focus-macos T103). The controller has put it on the stack;
-    /// it closes on `FocusCloseSurface { kind: KeyMap }`, which takes it off
-    /// the stack too (say nothing back), and any other way it closes is
-    /// `focus_surface_closed(KeyMap)`. On `KeymapChanged` while
-    /// it is up, draw `focus_key_map()` again.
+    /// Show the key map (`?`) as a sheet. It closes on `FocusCloseSurface { kind: KeyMap }` (say
+    /// nothing back);
+    /// any other way is `focus_surface_closed(KeyMap)`. On `KeymapChanged` while up, draw
+    /// `focus_key_map()` again.
     FocusOpenKeyMap {
-        /// What it draws.
         sheet: crate::focus_keymap::KeyMapSheetFfi,
     },
-    /// Draw Filtered, whole, in the list's place (specs/009-focus-macos
-    /// T109, screen 21). It follows `FocusShowFiltered`, and again whenever
-    /// its tabs, rows or focus change. It closes on
-    /// `FocusCloseSurface { kind: Filtered }`.
+    /// Draw Filtered whole in the list's place, after `FocusShowFiltered` and whenever its tabs,
+    /// rows or focus change. Closes on `FocusCloseSurface { kind: Filtered }`.
     FocusFiltered {
-        /// What it draws.
         view: crate::focus_surfaces::FilteredViewFfi,
     },
-    /// A thread opened under Filtered's row at `anchor` (an index into its
-    /// rows): draw `children` after it, replacing any it had. The keyboard's
-    /// `FocusFilteredFocus` counts them (spec 013 FR-009).
+    /// A thread opened under Filtered's row at `anchor` (an index into its rows): draw `children`
+    /// after it, replacing any it had.
     FocusFilteredSplice {
-        /// The expanded row.
         anchor: u32,
-        /// One per message, oldest first, then the unsent reply.
         children: Vec<crate::ChildRowFfi>,
     },
-    /// The thread at `anchor` folded: remove its children.
     FocusFilteredUnsplice {
-        /// The collapsed row.
         anchor: u32,
     },
     /// Filtered's keyboard moved to the row at `index` (`j`/`k`, a click):
     /// a display position, an open thread's children counted.
     FocusFilteredFocus {
-        /// The row, an index into the view's `rows`.
         index: Option<u32>,
     },
     /// Filtered's selection changed: check the boxes of `selected` (and no
     /// others), and draw the bar, or take it down with `None`.
     FocusFilteredSelection {
-        /// The selected messages.
         selected: Vec<i64>,
-        /// The bar over Filtered while anything is selected.
         bar: Option<crate::focus_surfaces::FilteredBarFfi>,
     },
-    /// Draw the digest's window, whole (screens 22 and 23). It follows
-    /// `FocusOpenDigest`, and again for every change: the reads landing,
-    /// a reference stepped to, the page switched, an email opened in place.
-    /// It closes on `FocusCloseSurface { kind: Digest }`.
+    /// Draw the digest's window whole, after `FocusOpenDigest` and on every change. Closes on
+    /// `FocusCloseSurface { kind: Digest }`.
     FocusDigest {
-        /// What it draws.
         view: crate::focus_surfaces::DigestViewFfi,
     },
     /// Ask before doing it: an alert with Cancel and one button. On yes,
     /// say `focus_confirmed(confirm.token)`; on no, nothing.
     FocusConfirm {
-        /// What it asks.
         confirm: crate::focus_surfaces::ConfirmFfi,
     },
-    /// Show the digest-this-sender sheet (screen 24). The controller has
-    /// put it on the stack as a `Dialog`; it closes on
-    /// `FocusCloseSurface { kind: Dialog }`, which takes it off the stack
-    /// too (say nothing back), and any other way it closes is
-    /// `focus_surface_closed(Dialog)`.
+    /// Show the digest-this-sender sheet. Closes on `FocusCloseSurface { kind: Dialog }` (say
+    /// nothing back); any other way is `focus_surface_closed(Dialog)`.
     FocusOpenRule {
-        /// What it draws.
         view: crate::focus_surfaces::RuleViewFfi,
     },
-    /// Redraw the rule sheet, whole.
     FocusRule {
-        /// What it draws.
         view: crate::focus_surfaces::RuleViewFfi,
     },
-    /// Show the capture window (screen 25), replacing the secondary window
-    /// open (M4). The controller has put it on the stack; it closes on
-    /// `FocusCloseSurface { kind: Capture }`.
+    /// Show the capture window, replacing the secondary window open. Closes on `FocusCloseSurface {
+    /// kind: Capture }`.
     FocusOpenCapture {
-        /// What it draws.
         view: crate::focus_surfaces::CaptureViewFfi,
     },
-    /// Redraw the capture window, whole.
     FocusCapture {
-        /// What it draws.
         view: crate::focus_surfaces::CaptureViewFfi,
     },
-    /// Open the composer -- or, while it is open, put this in it in place
-    /// of what it held, which the controller has had saved first -- on a
-    /// draft of `kind` answering `message`: `newDraft()`, `replyDraft`,
-    /// `forwardDraft`, or `draftForMessage` for `Draft`. The controller has
-    /// put the composer on its stack; say `focus_surface_closed(Composer)`
-    /// only for a close the toolkit made (its close button), and
-    /// `focus_composer_edited()` on every edit.
+    /// Open the composer, or while open replace its content (the controller saved it first), on a
+    /// draft of `kind` answering `message`: `newDraft()`, `replyDraft`, `forwardDraft`, or
+    /// `draftForMessage` for `Draft`. Say `focus_surface_closed(Composer)` only for a close the
+    /// toolkit made, and `focus_composer_edited()` on every edit.
     FocusComposer {
-        /// What is being written.
         kind: crate::focus_compose::ComposerKindFfi,
         /// The message it answers, or the draft's own message.
         message: Option<i64>,
     },
-    /// Draw the *What to forward* chooser above To, or redraw it with the
-    /// card now chosen ringed (spec 013 FR-023). While it holds the
-    /// keyboard, `1` `2` `3` resolve in `UiContext::ForwardChooser`.
+    /// Draw the *What to forward* chooser above To, or redraw it with the chosen card ringed. While
+    /// it holds the keyboard, `1` `2` `3` resolve in `UiContext::ForwardChooser`.
     FocusForwardChooser {
-        /// The three cards and the chosen one.
         view: crate::focus_compose::ChooserFfi,
     },
-    /// Draw the older-reply bar under the composer's title, redraw it, or
-    /// (`None`) take it away (FR-022).
+    /// Draw the older-reply bar under the composer's title, or (`None`) take it away.
     FocusOlderReply {
-        /// What the bar says; `None` removes it.
         view: Option<crate::focus_compose::OlderReplyFfi>,
     },
     /// Show these messages, newer than the one answered, read-only in the
@@ -624,21 +400,18 @@ pub enum UiEvent {
     /// The forwarded or quoted messages as collapsed rows (`false`) or
     /// expanded (`true`).
     FocusQuotedExpanded {
-        /// Whether they are expanded.
         expanded: bool,
     },
     /// The engine is about to change the composer's draft: answer with
     /// `focus_composer_draft(edit, draft)`, the draft as it is now with
     /// what was typed.
     FocusComposerDraftWanted {
-        /// What will change.
         edit: crate::focus_compose::DraftEditFfi,
     },
     /// Put this draft in the composer in place of its own, keeping the
     /// caret where it can be kept. Its `from` and `path` are empty: the
     /// composer keeps its own.
     FocusComposerDraft {
-        /// The draft as the engine changed it.
         draft: crate::DraftFfi,
     },
     /// Save what the composer holds -- open, or just closed -- now, and say
@@ -650,176 +423,121 @@ pub enum UiEvent {
     /// A toast with one way to put right what it says is missing: a button
     /// labelled `label` that runs `command` ("Add account").
     FocusOffer {
-        /// What is missing.
         text: String,
-        /// The button's words.
         label: String,
-        /// The registry command the button runs.
         command: String,
     },
-    /// Draw the search dropdown, whole, in place of the bar's lines
-    /// (specs/010-focus-search step 2). A `FocusBarLines` after it puts the
-    /// lines back: `>`, `in:` and `@` are still spec 009's.
+    /// Draw the search dropdown whole in place of the bar's lines; a `FocusBarLines` after it puts
+    /// them back.
     FocusDropdown {
-        /// What it draws.
         view: crate::focus_search::DropdownViewFfi,
     },
-    /// The query's chips and words in the field, and the filter bar's
-    /// buttons (spec 010 step 3): after any edit.
+    /// The query's chips and words in the field, and the filter bar's buttons, after any edit.
     FocusQuery {
-        /// What they draw.
         view: crate::focus_search::QueryViewFfi,
     },
     /// The main window shows a search's results: this frame, whole --
     /// entering them, and after every query, tab or sort change. Read the
     /// rows with `focus_search_row`.
     FocusResults {
-        /// The frame.
         view: crate::focus_search::ResultsViewFfi,
     },
     /// Results rows `first..first + count` changed: read them again.
     FocusResultsPage {
-        /// The first row.
         first: u64,
-        /// How many.
         count: u64,
     },
-    /// The focus ring is on this result: draw it there and scroll it into
-    /// view.
     FocusResultsCursor {
-        /// The row.
         position: u64,
     },
-    /// A result opened in place (spec 013 US6): draw its matching messages
-    /// and the lines between them after the row at `anchor`, or none to
-    /// take them away. Results after it keep their positions.
+    /// A result opened in place: draw its matching messages and the lines between them after the
+    /// row at `anchor`, or none to take them away. Results after it keep their positions.
     FocusResultSplice {
-        /// The children, or none.
         splice: Option<crate::ResultSpliceFfi>,
     },
     /// The focus ring is on this child of the opened result, or back on
     /// the result's own row.
     FocusResultChildFocus {
-        /// An index into the splice's children.
         child: Option<u32>,
     },
     /// The message window was opened from a search: its banner, or none.
     FocusMatchBanner {
-        /// The banner.
         banner: Option<crate::MatchBannerFfi>,
     },
     /// Back to the inbox: Esc's last rung, or ⌘[. The list's own cursor and
     /// selection follow.
     FocusLeaveResults,
-    /// Hang this filter popover from its button, or redraw the one open,
-    /// whole; `None` closes it (spec 010 step 4, FR-027).
+    /// Hang this filter popover from its button, or redraw the one open, whole; `None` closes it.
     FocusPopover {
-        /// What it draws.
         view: Option<crate::focus_search::PopoverViewFfi>,
     },
-    /// Draw Quick Look over the results, whole, in place of the one
-    /// showing; `None` closes it (spec 010 step 5, FR-028).
+    /// Draw Quick Look over the results, whole, in place of the one showing; `None` closes it.
     FocusQuickLook {
-        /// What it draws.
         view: Option<crate::focus_search::QuickLookViewFfi>,
     },
-    /// Hang the Save popover from the toolbar's Save search button (⌘S,
-    /// spec 010 §3.9, FR-029); `None` takes it down. Save ↩ is
-    /// `focus_search_save`.
+    /// Hang the Save popover from the toolbar's Save search button (⌘S); `None` takes it down. Save
+    /// is `focus_search_save`.
     FocusSavePopover {
-        /// What it draws.
         view: Option<crate::focus_search::SaveViewFfi>,
     },
-    /// The results found nothing: draw this page in the rows' place,
-    /// whole; `None` takes it away (spec 010 step 7, FR-030). A way out
-    /// is run by invoking `pick_relaxation_<n>`.
+    /// The results found nothing: draw this page in the rows' place; `None` takes it away. A way
+    /// out is run by invoking `pick_relaxation_<n>`.
     FocusRelaxations {
-        /// What it draws.
         view: Option<crate::focus_search::NoResultsViewFfi>,
     },
-    /// Hand the system this copy of a file: Quick Look on it, or a save
-    /// panel to put it somewhere (spec 010 step 9, FR-031, FR-053); `None`
-    /// closes the Quick Look panel. Say `focus_search_file_done` when the
-    /// person closes the panel, or the save is done or cancelled.
+    /// Hand the system this copy of a file: Quick Look on it, or a save panel to put it somewhere;
+    /// `None` closes the
+    /// Quick Look panel. Say `focus_search_file_done` when the person closes the panel, or the save
+    /// is done or cancelled.
     FocusFileCopy {
-        /// The copy.
         copy: Option<crate::focus_search::FileCopyFfi>,
     },
-    /// A message's words are now on this machine (#1788): if it is the one
-    /// a window shows, read its document again, in place. It crossed as
-    /// `Other` before.
+    /// A message's body is now on this machine (#1788): if a window shows it, read its document
+    /// again in place.
     BodyLoaded {
-        /// The account.
         account: i64,
-        /// The message whose body landed.
         message: i64,
     },
-    /// The server would not give up a message's body (#1918): if it is the
-    /// one a window shows, read its document again so the plate stops
+    /// The server would not give up the body (#1918): read the document again so the plate stops
     /// saying it is downloading.
     BodyFailed {
-        /// The account.
         account: i64,
-        /// The message whose body will not come.
         message: i64,
     },
-    /// An account's link is back and a window drew this message as not
-    /// downloaded, offline (#1986): read it again, and the read asks for
-    /// the body.
+    /// An account's link is back and a window drew this message as not downloaded (#1986): read it
+    /// again, which asks for the body.
     BodyReachable {
-        /// The account.
         account: i64,
-        /// The message to read again.
         message: i64,
     },
-    /// `[sync] notify` or `[sync] badge` changed while the app ran: read
-    /// `notices` again, and repaint the app icon's count.
-    ///
-    /// Boundary-local, raised by the session's config watcher.
+    /// `[sync] notify` or `[sync] badge` changed while the app ran: read `notices` again and
+    /// repaint the badge.
+    /// Boundary-local.
     NoticesChanged,
 }
 
-/// How a Focus toast is drawn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum ToastKindFfi {
-    /// A verb ran.
     Completed,
-    /// An undo was applied.
     Undone,
-    /// A command could not run: a quiet hint.
     Notice,
 }
 
-/// What an outcome was.
-///
-/// The four are drawn differently and mean different things: a completion may
-/// offer to be taken back, a refusal is a quiet hint rather than an alarm,
-/// and a failure is the one that has to be hard to miss. The classic app drew
-/// each with its own toast, which is the shape this is named after.
+/// A refusal is a quiet hint, not an alarm; a completion may offer Undo; a failure must be hard to
+/// miss.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum NoticeKindFfi {
-    /// A verb ran. *Archived 12 messages.*
     Completed,
-    /// An undo was applied. *Archived 12 messages, undone.*
     Undone,
-    /// A verb could not run — nothing selected, nothing to undo, offline.
-    ///
-    /// **Not an error.** The answer is a quiet hint, not a dialog: the user
-    /// asked for something that does not apply, which is an ordinary thing to
-    /// do with a keyboard.
+    /// A verb could not run (nothing selected, nothing to undo, offline): a quiet hint, not a
+    /// dialog.
     Refused,
-    /// Something failed and the user should know.
     Failed,
 }
 
 impl From<FailureReasonFfi> for postio_core::FailureReason {
-    /// Back the other way, for the wording.
-    ///
-    /// `Other` becomes `Config` rather than gaining a variant of its own:
-    /// the core's four are exhaustive, the boundary's fifth exists only
-    /// because `_ =>` above is a forward-compatibility hatch, and "check this
-    /// account's settings" is the right thing to say about a failure this
-    /// build cannot name.
+    /// Back the other way, for the wording. `Other` becomes `Config`: "check this account's
+    /// settings" suits a failure this build cannot name.
     fn from(reason: FailureReasonFfi) -> Self {
         match reason {
             FailureReasonFfi::Auth => Self::Auth,
@@ -885,10 +603,7 @@ impl From<postio_core::Event> for UiEvent {
                 done,
                 total,
             },
-            // The four outcomes. Their payload is already a sentence written
-            // for a person, so rule 3 does not apply to it the way it applies
-            // to an id or a subject line: this *is* what the user is meant to
-            // read.
+            // Already a sentence for a person, so rule 3 (no content) does not apply.
             Event::ActionCompleted {
                 description,
                 undoable,
@@ -912,9 +627,7 @@ impl From<postio_core::Event> for UiEvent {
                 message,
                 undoable: false,
             },
-            // Rule 2 in practice: everything the boundary has not modelled yet
-            // still arrives, named. `{:?}` would carry the payload, and rule 3
-            // forbids that, so only the variant name crosses.
+            // Only the variant name crosses: `{:?}` would carry the payload (rule 3).
             Event::SurfacedChanged => UiEvent::SurfacedChanged,
             Event::BackfillProgress {
                 account,
@@ -949,11 +662,8 @@ impl From<postio_core::Event> for UiEvent {
     }
 }
 
-/// The variant's name, without its payload.
-///
-/// `format!("{event:?}")` would be shorter and would put subject lines and
-/// addresses into a string that ends up in a far-side log. This takes the
-/// debug rendering only as far as the first delimiter, which is the name.
+/// The variant's name, without its payload: `format!("{event:?}")` would put subjects and addresses
+/// in a far-side log.
 fn variant_name(event: &postio_core::Event) -> String {
     let rendered = format!("{event:?}");
     rendered
@@ -984,12 +694,6 @@ mod tests {
         );
     }
 
-    /// The four events that are the *outcome* of something the user did.
-    ///
-    /// They all fell to `Other`, so on macOS nothing an action reported ever
-    /// reached anybody: a send that failed, a verb refused because nothing
-    /// was selected, an archive that could be taken back. GTK answers each
-    /// with a toast, and `u` and the toast's own button reach the same undo.
     #[test]
     fn an_outcome_crosses_with_its_sentence() {
         assert_eq!(
@@ -1037,10 +741,6 @@ mod tests {
         );
     }
 
-    /// An outcome's sentence is the core's, phrased for a person, and it is
-    /// the *only* thing that crosses — the rejected command's id does not,
-    /// because a frontend that branched on it would be re-deciding what the
-    /// core already decided.
     #[test]
     fn a_refusal_carries_why_and_not_which() {
         let crossed = UiEvent::from(postio_core::Event::CommandRejected {
@@ -1062,8 +762,6 @@ mod tests {
 
     #[test]
     fn a_landed_body_crosses_with_its_message() {
-        // #1788: the Mac's message window draws a body that lands while it
-        // is open, so it must know which one landed.
         assert_eq!(
             UiEvent::from(postio_core::Event::BodyLoaded {
                 account: 3.into(),
@@ -1095,9 +793,7 @@ mod tests {
 
     #[test]
     fn an_unmodelled_variant_keeps_its_name_and_loses_its_payload() {
-        // Rule 3: the name crosses so the far side can log it; the payload
-        // does not, because a subject line in a crash report is exactly the
-        // thing the logging rules exist to prevent.
+        // Rule 3: the name crosses so the far side can log it, the payload does not.
         let event = postio_core::Event::ComposerClosed { draft: 2.into() };
         let crossed = UiEvent::from(event);
         match crossed {

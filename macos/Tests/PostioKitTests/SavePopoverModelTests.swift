@@ -4,9 +4,6 @@ import Testing
 
 @testable import PostioKit
 
-/// The Save popover's model (specs/010-focus-search T100; design §3.9,
-/// screen 12). The controller says what it offers; the Mac keeps what the
-/// field and the switches hold while they change, and Save sends all four.
 @MainActor
 struct SavePopoverModelTests {
     final class Engine: SavePopoverEngine {

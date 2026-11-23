@@ -1,9 +1,3 @@
-//! The sync plan (specs/011-focus-contacts S12), over fake snapshots in both
-//! directions. Nothing here touches an address book: the plan is a pure
-//! function of what Postio has, what the other side has, and what was synced
-//! last, and it never says "delete" and never overwrites a field both sides
-//! changed. Every name and address is invented on a reserved domain.
-
 use postio_contact_sync::{
     Change, ExternalRecord, Fields, Link, LocalRecord, Mode, Plan, Scope, Side, plan,
 };
@@ -65,7 +59,6 @@ fn a_shared_address_matches_and_makes_a_link_never_a_contact() {
         (1, "x1")
     );
     assert!(plan.creates.is_empty(), "a match is not a create");
-    // They differ only in an address the other lacks: a set merges, no conflict.
     assert!(plan.conflicts.is_empty(), "{plan:?}");
 }
 
@@ -91,7 +84,6 @@ fn a_name_and_phone_match_when_no_address_is_shared_on_the_trailing_nine_digits(
     );
     let p = run(&[l], &[e], &[], Mode::TwoWay);
     assert_eq!(p.matches.len(), 1, "{p:?}");
-    // The same phone with another name is somebody else.
     let other = local(
         2,
         fields("Ben", "Adeyemi", &["ben@example.org"], &["+1 555 010 0199"]),
@@ -227,7 +219,6 @@ fn a_change_on_their_side_is_a_pull_into_postio_and_read_only_pulls_only() {
     assert_eq!(p.updates[0].side, Side::Local);
     assert_eq!(p.updates[0].field, "organization");
 
-    // And the other way round, read only plans nothing for their side.
     let base = link.base.clone();
     let mut mine = base.clone();
     mine.title = "Lead".to_owned();

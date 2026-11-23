@@ -25,8 +25,6 @@ import tempfile
 import time
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -89,10 +87,6 @@ def main() -> int:
         git_dir = Path(git("rev-parse", "--absolute-git-dir", cwd=repo))
         log = git_dir / "postio-land.log"
 
-        # Below the floor, nothing starts. The floor is set past any disk
-        # this could run on, so the refusal is the only thing that can
-        # happen -- before the branch check, which is what a sandbox branch
-        # would otherwise hit first.
         starved = patience.run(
             ["bash", "scripts/issue-land.sh", "--gates-only"],
             cwd=repo, capture_output=True, text=True, timeout=30,
@@ -105,8 +99,6 @@ def main() -> int:
         case("and names the reaper", "worktree-reap.sh" in starved.stderr, starved.stderr)
         case("not the branch", "not an issue branch" not in starved.stderr, starved.stderr)
 
-        # Above the floor, the ordinary refusal for this sandbox branch --
-        # so the floor is a floor, not a wall.
         fed = patience.run(
             ["bash", "scripts/issue-land.sh", "--gates-only"],
             cwd=repo, capture_output=True, text=True, timeout=30,
@@ -116,7 +108,6 @@ def main() -> int:
              "not an issue branch" in fed.stderr and "Refusing to land with" not in fed.stderr,
              f"{fed.stdout}\n{fed.stderr}")
 
-        # A run that met the failure: --status names the disk.
         for name, text in (("a compile error on a full disk", COMPILE_ERROR),
                            ("a SIGBUS on a full disk", SIGBUS)):
             log.write_text(text, encoding="utf-8")
@@ -132,8 +123,6 @@ def main() -> int:
              result.returncode == 0 and "disk" not in result.stdout,
              f"exit {result.returncode}\n{result.stdout}")
 
-        # The detached child writes the same conclusion at the end of its own
-        # log, where whoever tails the log will see it without --status.
         log.unlink()
         detached = patience.run(
             ["bash", "scripts/issue-land.sh", "--detach", "--gates-only"],

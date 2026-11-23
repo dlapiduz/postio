@@ -1,34 +1,8 @@
-//! Signing in with a browser, without a toolkit (#1276).
-//!
-//! The whole flow — resolve the provider's endpoints, send the user to their
-//! own browser, wait on a loopback port, exchange the code, **prove the token
-//! actually opens the account's IMAP session**, then write the secret and the
-//! row in the order that cannot strand either — was written in
-//! the classic app's onboarding, which was the GTK composition root. A second
-//! frontend cannot link it, and a *consent* path is the last thing that
-//! should exist twice: two implementations means two answers to what Postio
-//! asked permission for, and the wrong answer is invisible.
-//!
-//! So it lives here, beside [`crate::provision`], which is the same shape for
-//! a password. Every frontend signs in through it: the desktop host, the
-//! terminal client (through the host), and the Mac app (#1283 retired the
-//! desktop's own copy).
-//!
-//! # The order everything happens in
-//!
-//! 1. **Endpoints**, from the preset row or discovered from its issuer.
-//! 2. **Consent**, in the user's browser. Postio never draws a sign-in form:
-//!    a password typed into a mail client is a password that client could
-//!    keep (ADR 0006 Q3).
-//! 3. **Verification**, before anything persists. The token opens a real
-//!    session against the account's own server — the same test the password
-//!    path runs — so a consent screen that granted the wrong scopes fails in
-//!    front of the user rather than at the first background sync.
-//! 4. **The secret, then the row**, rolling the secret back if the row write
-//!    fails. `postio-67` is what the other order cost: a keyring write that
-//!    failed after the row committed left an account that could not sync,
-//!    could not authenticate, and could not be repaired from inside the
-//!    application.
+//! Signing in with a browser, without a toolkit (#1276): endpoints, consent in the user's browser,
+//! a proof that the token opens the account's IMAP session, then the secret and the row, secret
+//! first and rolled back if the row fails (`postio-67`).
+//! A consent path is the last thing that should exist twice, so every frontend signs in through
+//! here. Postio never draws a sign-in form (ADR 0006 Q3).
 
 use std::sync::Arc;
 
@@ -43,29 +17,21 @@ use postio_model::{EmailAddress, Identity};
 use postio_storage::Store;
 use postio_storage::repository::AccountRepository;
 
-/// The user's own OAuth client (ADR 0006 Q1).
-///
-/// Postio ships no client id and no secret. A registered application's
-/// credentials in an open-source mail client are credentials every user of it
-/// shares, and a provider that notices revokes them for everybody at once.
+/// The user's own OAuth client (ADR 0006 Q1). Postio ships no client id or secret: shared
+/// credentials in an open-source client get revoked for everybody at once.
 #[derive(Clone, Debug)]
 pub struct OAuthClient {
-    /// The client id the user registered.
     pub client_id: String,
-    /// A client secret, when the provider's token endpoint insists on one
-    /// even for a public PKCE client. Rare, and stored in the keyring.
+    /// A client secret, when the token endpoint insists on one even for a public PKCE client;
+    /// stored in the keyring.
     pub client_secret: Option<String>,
 }
 
-/// Why a sign-in did not finish.
-///
-/// Cancelled is not a failure and must not be reported as one: it is what
-/// closing the browser tab looks like from here.
+/// Why a sign-in did not finish. Cancelled is not a failure: it is what closing the browser tab
+/// looks like.
 #[derive(Debug)]
 pub enum SignInError {
-    /// The user cancelled, or closed the tab.
     Cancelled,
-    /// Something went wrong, in words for the person who was signing in.
     Failed(String),
 }
 
@@ -80,16 +46,11 @@ impl std::fmt::Display for SignInError {
 
 impl std::error::Error for SignInError {}
 
-/// What a completed sign-in produced.
 pub struct SignedIn {
-    /// Where consent was asked and where the token came from, resolved.
     pub endpoints: Endpoints,
-    /// The tokens themselves. Not logged, not returned to a frontend.
     pub tokens: TokenResponse,
 }
 
-/// Resolve the provider's endpoints: given directly, or discovered from the
-/// issuer (RFC 8414).
 pub async fn endpoints_for(
     authorize: Option<&str>,
     token: Option<&str>,
@@ -118,11 +79,8 @@ pub async fn endpoints_for(
         .map_err(|error| translate(error, "Could not discover the provider's sign-in endpoints"))
 }
 
-/// Run the flow and prove the result works, without writing anything.
-///
-/// `bound` is told the loopback port as soon as it is listening, so a
-/// frontend can say where the answer will come back — which is most of what
-/// there is to say while somebody is away in their browser.
+/// Run the flow and prove the result works, without writing anything. `bound` is told the loopback
+/// port as soon as it is listening.
 pub async fn sign_in(
     settings: &AccountSettings,
     client: &OAuthClient,
@@ -155,15 +113,12 @@ pub async fn sign_in(
     })
 }
 
-/// The connection the proof opens: the account's own IMAP server, with the
-/// token presented as `XOAUTH2`. Presented any other way it is sent as a
-/// password, which no provider this path exists for accepts.
+/// The connection the proof opens: the account's own IMAP server, with the token presented as
+/// `XOAUTH2`.
 pub fn verification_settings(settings: &AccountSettings) -> ConnectionSettings {
     let mut connection = ConnectionSettings::new(
         settings.imap.host.clone(),
         settings.imap.port,
-        // Carried rather than upgraded: the settings a user is shown are the
-        // settings in use, which is `provision`'s rule about the same join.
         match settings.imap.encryption {
             postio_account::discovery::Encryption::Tls => TransportSecurity::Tls,
             postio_account::discovery::Encryption::StartTls => TransportSecurity::StartTls,
@@ -175,7 +130,6 @@ pub fn verification_settings(settings: &AccountSettings) -> ConnectionSettings {
     connection
 }
 
-/// The proof, before anything persists.
 async fn verify(settings: &AccountSettings, tokens: &TokenResponse) -> Result<(), SignInError> {
     let connection = verification_settings(settings);
     let connector = RustlsConnector::new().map_err(|error| {
@@ -186,18 +140,12 @@ async fn verify(settings: &AccountSettings, tokens: &TokenResponse) -> Result<()
     ImapSession::open(&connection, &tokens.access_token, &connector)
         .await
         .map(|_| ())
-        // The sentences a person can act on (wrong port, no TLS, not an IMAP
-        // server), the same ones the password path shows.
         .map_err(|error| SignInError::Failed(crate::onboarding::explain(&error)))
 }
 
-/// Write the account and its refresh token — the secret first, then the row.
-///
-/// Answers the same [`crate::provision::Provisioned`] a password sign-in
-/// does, so a caller that has both routes has one answer to interpret.
-///
-/// `name` is what the person typed to be called; empty means unset, and the
-/// provider's name (or the address) stands in.
+/// Write the account and its refresh token, the secret first, then the row. Answers the same
+/// `Provisioned` as a password sign-in; an empty `name` means the provider's name or the address
+/// stands in.
 #[allow(clippy::too_many_arguments)]
 pub async fn provision_oauth(
     database: &Store,
@@ -212,19 +160,9 @@ pub async fn provision_oauth(
     let address = settings.email.clone();
     let key = AccountKey::new(address.clone());
 
-    // Already here: adding the same account twice is inert **about the row**.
-    // Somebody who signs in again after a stumble has one account, not two.
-    //
-    // It was never inert about the *credential*, and returning here before
-    // the keyring was seeded is the bug that hid behind that sentence: an
-    // expired or revoked grant is repaired by signing in again, which is
-    // exactly the case that lands here. The person approved a fresh grant in
-    // a browser, the new refresh token was dropped on the floor, and the
-    // caller -- which reads `Ok(_)` as "no complaint" -- closed the sheet
-    // reporting success over an account that still could not sign in.
-    //
-    // So the row write is what is skipped, further down; the seeding below
-    // happens either way.
+    // An existing account makes the row write inert, but the credential must still be seeded: an
+    // expired or revoked grant is repaired by signing in again, and returning early dropped the new
+    // refresh token while reporting success.
     let existing = {
         let connection = database
             .connect()
@@ -244,7 +182,6 @@ pub async fn provision_oauth(
         signed_in.endpoints.token.clone(),
         client.client_id.clone(),
         client.client_secret.clone(),
-        // So the mint records the grant's deadline, not just its rotations.
         refresh_token_lifetime_days
             .map(|days| std::time::Duration::from_secs(u64::from(days) * 86_400)),
     );
@@ -263,13 +200,9 @@ pub async fn provision_oauth(
             })?;
     }
 
-    // The account is already there and now has a working credential again.
-    // Answering `AlreadyProvisioned` rather than `Created` is the truth
-    // about the row, and the caller uses it to decide whether to start an
-    // engine for a new account. The row is *repaired*, not left: the person
-    // may have moved servers, disabled it, or come over from a password, and
-    // it must name the grant just approved. Its identities stay as they are,
-    // because every saved draft points at one.
+    // The row is repaired, not left: the person may have moved servers or come over from a
+    // password, and it must name the grant just approved. `AlreadyProvisioned` tells the caller not
+    // to start another engine. Identities stay, since drafts point at them.
     let oauth = postio_model::account::OAuthConfig {
         client_id: client.client_id.clone(),
         token_url: signed_in.endpoints.token.to_string(),
@@ -304,7 +237,6 @@ pub async fn provision_oauth(
     let mut account = crate::provision::account_from(settings);
     let name = name.trim();
     if !name.is_empty() {
-        // The From header and the sidebar, ahead of the provider's name.
         let email = EmailAddress::new(Some(name.to_owned()), address.clone());
         account.display_name = name.to_owned();
         account.address = email.clone();
@@ -312,16 +244,12 @@ pub async fn provision_oauth(
         identity.is_default = true;
         account.identities = vec![identity];
     }
-    // A browser sign-in is an IMAP account today; the Gmail REST backend is
-    // #546, gated on its preset row flipping after #195.
+    // A browser sign-in is an IMAP account today; the Gmail REST backend is #546.
     account.auth = AuthMethod::XOAuth2;
     account.oauth = Some(oauth);
     match repository.create(&mut account).await {
         Ok(id) => Ok(crate::provision::Provisioned::Created(id)),
         Err(error) => {
-            // Rolled back the way `provision` rolls back a password: nothing
-            // reads a credential no account row names, but leaving one is
-            // untidy.
             let _ = secrets
                 .delete(&AccountKey::new(format!("{}#oauth-refresh", key.account())))
                 .await;
@@ -330,14 +258,12 @@ pub async fn provision_oauth(
     }
 }
 
-/// Put the signed-in servers on `account`, leaving its identities alone.
 fn apply_servers(account: &mut postio_model::account::Account, settings: &AccountSettings) {
     let fresh = crate::provision::account_from(settings);
     account.incoming = fresh.incoming;
     account.outgoing = fresh.outgoing;
 }
 
-/// A cancelled flow is not a failure, and must not be reported as one.
 fn translate(error: OAuthError, context: &str) -> SignInError {
     if matches!(error, OAuthError::Cancelled) {
         SignInError::Cancelled

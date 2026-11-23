@@ -1,12 +1,3 @@
-//! Spec 013's grouping rules, over the `ThreadingRules` corpus: the subject
-//! fallback joins one thread inside a 7-day window and never merges, list mail
-//! never groups by subject, and references still thread across folders and
-//! across the account's own replies.
-//!
-//! The rule itself is unit-tested in `postio-model`; this is the other half,
-//! that the index answering it gives the same answers from the database, and
-//! at the same cost however many threads share a subject.
-
 use chrono::{DateTime, TimeDelta, TimeZone, Utc};
 use postio_model::test_corpus::{self, Category};
 use postio_model::{AccountId, MailboxId, Message, ThreadId};
@@ -15,8 +6,6 @@ use postio_storage::repository::{MessageRepository, ThreadingRepository};
 use postio_storage::test_support;
 use postio_storage::test_support::counting::{counted_async, install};
 
-/// Files the named fixtures in order, each in the folder it is paired with,
-/// at the time its `Date:` header names. Returns each one's thread.
 async fn file_all(
     connection: &Connection,
     account: AccountId,
@@ -66,8 +55,6 @@ async fn two_hello_replies_a_month_apart_are_two_threads() {
 
 #[tokio::test]
 async fn two_hello_replies_a_month_apart_are_two_threads_arriving_newest_first() {
-    // An initial sync files newest first: the November message is stored
-    // before the October one, which must not join it.
     let threads = in_inbox(&["thread-hello-30d-2", "thread-hello-30d-1"]).await;
     assert_ne!(threads[0], threads[1]);
 }
@@ -145,15 +132,6 @@ async fn a_reply_filed_in_another_folder_joins_its_parent() {
     assert_ne!(threads[0], threads[2]);
 }
 
-// ---------------------------------------------------------------------------
-// What the subject path costs (constitution V)
-// ---------------------------------------------------------------------------
-
-/// Statements and rows to thread a "Re: Dock" reply with no references, when
-/// `others` threads already share its subject, all of them inside its window.
-///
-/// The others are un-decorated "Dock" messages, which never use the subject
-/// fallback and so each start a thread of their own.
 async fn cost_of_subject_path(others: i64) -> (usize, usize, ThreadId, ThreadId) {
     let store = test_support::memory().await;
     let connection = store.connect().await.expect("a connection");
@@ -193,7 +171,6 @@ async fn cost_of_subject_path(others: i64) -> (usize, usize, ThreadId, ThreadId)
     (counts.statements, counts.rows, newest, joined)
 }
 
-/// A message with no references, written but not yet threaded.
 async fn written(
     messages: &MessageRepository<'_>,
     account: AccountId,
@@ -231,12 +208,8 @@ async fn the_subject_path_costs_the_same_however_many_threads_share_the_subject(
     );
 }
 
-/// What threading a reply by subject cost before spec 013 bounded the lookup:
-/// one statement for the subject, and the same writes as any join.
 const BEFORE_STATEMENTS: usize = 4;
 
-/// The subject lookup `LoadedIndex::load` makes, written out because the
-/// point is the SQL the planner sees.
 const SUBJECT_LOOKUP: &str = "SELECT id FROM threads \
      WHERE account_id = ?1 AND subject = ?2 AND last_at >= ?3 AND first_at <= ?4 AND id IS NOT ?5 \
      ORDER BY last_at DESC LIMIT 1";

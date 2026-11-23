@@ -33,18 +33,9 @@ import re
 import sys
 from pathlib import Path
 
-# --------------------------------------------------------------------------
-# A very small YAML reader.
-#
-# PyYAML is not installed on this box or on the CI runner's default image,
-# and adding a dependency to make one script work is a poor trade against
-# ~120 lines that read the subset GitHub workflow triggers actually use:
-# nested mappings, scalar and flow-sequence values, block sequences of
-# scalars, and -- the part that matters -- anchors and aliases, because the
-# real ci.yml defines its prose ignore list once as `&prose` and reuses it
-# for `pull_request` as `*prose`. A reader that skipped the alias would see
-# an unfiltered trigger and claim every prose PR runs CI.
-# --------------------------------------------------------------------------
+# A very small YAML reader: PyYAML is not on the CI image. It must handle anchors and aliases,
+# because ci.yml defines its prose ignore list once as `&prose`; skipping the alias would claim
+# every prose PR runs CI.
 
 
 class YamlError(Exception):
@@ -195,20 +186,11 @@ class _Reader:
 
 def load_workflow(path: Path) -> dict[str, object]:
     reader = _Reader(path.read_text(encoding="utf-8"))
-    # YAML 1.1 reads a bare `on` as the boolean true; accept both spellings.
     return reader.document({"name", "on", "true", "True"})
 
 
-# --------------------------------------------------------------------------
-# GitHub filter patterns.
-#
-# Not shell globs and not gitignore: `*` and `?` stop at a slash, `**`
-# crosses them, patterns match the whole path, and a leading `!` reverses an
-# earlier match in list order. `'*.md'` in the real ci.yml means top-level
-# prose only, which is exactly why `docs/keybindings.md` -- generated from
-# the command registry, with a test that fails when it drifts -- still runs
-# CI when someone hand-edits it.
-# --------------------------------------------------------------------------
+# GitHub filter patterns, not shell globs or gitignore: `*` and `?` stop at a slash, `**` crosses,
+# patterns match the whole path, and a leading `!` reverses an earlier match.
 
 
 def _pattern_to_regex(pattern: str) -> re.Pattern[str]:
@@ -218,8 +200,6 @@ def _pattern_to_regex(pattern: str) -> re.Pattern[str]:
         ch = pattern[i]
         if ch == "*":
             if pattern.startswith("**", i):
-                # `**/` is zero-or-more leading directories, so `**/x.js`
-                # matches a top-level x.js as well as a nested one.
                 if pattern.startswith("**/", i):
                     out.append("(?:.*/)?")
                     i += 3
@@ -247,10 +227,6 @@ def path_matches(path: str, patterns: list[str]) -> bool:
             matched = True
     return matched
 
-
-# --------------------------------------------------------------------------
-# The predicate.
-# --------------------------------------------------------------------------
 
 
 def _as_list(value: object) -> list[str] | None:

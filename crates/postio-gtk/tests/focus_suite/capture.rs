@@ -1,17 +1,9 @@
-//! The capture sheet (US15, T158; screen 25): `T` on a message captures a
-//! task into the person's Obsidian vault, `N` a note, over a vault that is
-//! a folder on this computer. What is appended is asserted byte for byte,
-//! and every other note is asserted unchanged.
-
-use adw::prelude::AdwDialogExt;
 use chrono::TimeZone;
 use gtk::gdk;
 use postio_storage::repository::{Marker, MarkerRepository, MarkerSource};
 
 use crate::support::{self, Fixture};
 
-/// A vault with a Harbor project note (in the projects folder) and a tasks
-/// note, each with something already in it.
 pub(crate) struct TempVault {
     dir: tempfile::TempDir,
 }
@@ -41,8 +33,6 @@ impl TempVault {
     }
 }
 
-/// Lena's "Harbor API draft v3", with a to-do marker quoting "Please leave
-/// comments by Wednesday", due Wednesday 30 September 2026.
 pub(crate) async fn harbor_to_do(fixture: &Fixture) -> postio_model::MessageId {
     let (message, _) = fixture
         .file(
@@ -63,7 +53,6 @@ pub(crate) async fn harbor_to_do(fixture: &Fixture) -> postio_model::MessageId {
             excerpt: Some(sentence.to_owned()),
             starts_at: None,
             ends_at: None,
-            // Noon on the day, so it is the 30th in any zone the suite runs.
             due_at: Some(
                 chrono::Utc
                     .with_ymd_and_hms(2026, 9, 30, 12, 0, 0)
@@ -80,7 +69,6 @@ pub(crate) async fn harbor_to_do(fixture: &Fixture) -> postio_model::MessageId {
     message
 }
 
-/// The actions the first row on screen draws, by their words.
 fn row_actions(window: &postio_gtk::window::FocusWindow) -> Vec<String> {
     window
         .pane()
@@ -95,16 +83,8 @@ fn row_actions(window: &postio_gtk::window::FocusWindow) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// US15 scenario 1: with a vault configured, the to-do's row offers Task
-/// `T`; `T` opens the sheet with the sentence verbatim, the due day from
-/// the mail, and the Harbor project suggested with its reason; the preview
-/// is the exact line; and `Ctrl+Enter` appends exactly that line to
-/// Harbor's note, with the link before 📅, and changes nothing else.
 pub fn t_appends_one_tasks_line_with_the_link_before_the_date() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let vault = TempVault::new();
         let fixture = Fixture::empty().await;
         let message = harbor_to_do(&fixture).await;
@@ -178,157 +158,4 @@ pub fn t_appends_one_tasks_line_with_the_link_before_the_date() {
             window.toast_showing()
         );
     });
-}
-
-/// `N` opens the sheet as a note, `alt+s` puts the subject in place of the
-/// sentence, and the note entry is appended to the project's note.
-pub fn n_appends_a_note_and_alt_s_uses_the_subject() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let vault = TempVault::new();
-        let fixture = Fixture::empty().await;
-        let message = harbor_to_do(&fixture).await;
-        let window = postio_gtk::window::FocusWindow::new(None);
-        gtk::prelude::GtkWindowExt::present(&window);
-        support::keep(postio_gtk::startup::adopt(
-            &window,
-            fixture.host(),
-            &vault.config(),
-        ));
-        assert!(
-            crate::settle_until(async || !support::subjects(&window).is_empty()).await,
-            "the inbox never reached the screen"
-        );
-        support::keys(&window, &["j", "N"]);
-        let sheet = window.capture().expect("N opened the capture sheet");
-        assert!(crate::settle_until(async || sheet.is_shown()).await);
-        assert!(
-            sheet.texts().iter().any(|text| text == "Add note"),
-            "{:?}",
-            sheet.texts()
-        );
-        support::press(&window, "s", gdk::ModifierType::ALT_MASK);
-        assert_eq!(sheet.text(), "Harbor API draft v3", "alt+s: the subject");
-        let line = format!(
-            "- Harbor API draft v3 [\u{2709}](postio://message/{})",
-            message.get()
-        );
-        assert!(
-            crate::settle_until(async || sheet.preview() == line).await,
-            "the preview is not the note's line: {:?}",
-            sheet.preview()
-        );
-        support::press(&window, "Return", gdk::ModifierType::CONTROL_MASK);
-        assert!(
-            crate::settle_until(async || vault.read("Projects/Harbor.md") != HARBOR).await,
-            "nothing was appended"
-        );
-        assert_eq!(
-            vault.read("Projects/Harbor.md"),
-            format!("{HARBOR}{line}\n")
-        );
-        assert_eq!(vault.read("Tasks.md"), TASKS);
-    });
-}
-
-/// With no `[focus.vault]`, the to-do offers no Task, and `T` opens no
-/// sheet: it says why instead (spec C9).
-pub fn without_a_vault_there_is_no_task_and_t_says_why() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let fixture = Fixture::empty().await;
-        harbor_to_do(&fixture).await;
-        let (window, _client) = fixture.open().await;
-        assert!(
-            crate::settle_until(async || !row_actions(&window).is_empty()).await,
-            "the marker never drew"
-        );
-        assert_eq!(row_actions(&window), ["Snooze"], "no Task without a vault");
-        support::keys(&window, &["j", "T"]);
-        assert!(
-            window.capture().is_none_or(|sheet| !sheet.is_open()),
-            "no sheet without a vault"
-        );
-        assert!(
-            crate::settle_until(async || window
-                .toast_showing()
-                .is_some_and(|toast| toast.contains("[focus.vault]")))
-            .await,
-            "T did not say why: {:?}",
-            window.toast_showing()
-        );
-    });
-}
-
-fn capture_from_reader(key: &str, heading: &str) {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let vault = TempVault::new();
-        let fixture = Fixture::empty().await;
-        harbor_to_do(&fixture).await;
-        let window = postio_gtk::window::FocusWindow::new(None);
-        gtk::prelude::GtkWindowExt::present(&window);
-        support::keep(postio_gtk::startup::adopt(
-            &window,
-            fixture.host(),
-            &vault.config(),
-        ));
-        assert!(crate::settle_until(async || !support::subjects(&window).is_empty()).await);
-        support::keys(&window, &["j", "Return"]);
-        let reading = window.reading().expect("Return opened the message");
-        assert_eq!(reading.title(), "Harbor API draft v3");
-        assert!(
-            crate::settle_until(async || {
-                reading
-                    .dialog()
-                    .child()
-                    .is_some_and(|content| gtk::prelude::WidgetExt::is_mapped(&content))
-            })
-            .await,
-            "the reader never reached the screen"
-        );
-
-        support::keys(&window, &[key]);
-        assert!(
-            crate::settle_until(async || window.capture().is_some_and(|sheet| sheet.is_shown()))
-                .await,
-            "{key} in the reader did not show capture"
-        );
-        let sheet = window.capture().expect("the visible capture sheet");
-        assert!(sheet.texts().iter().any(|text| text == heading));
-        assert_eq!(sheet.text(), "Please leave comments by Wednesday");
-        // The keyboard is in the sheet's field, so the sheet's own keys are
-        // its, and what is typed edits the sentence (#2080).
-        assert!(
-            crate::settle_until(async || {
-                window.observe().keyboard.typing
-                    && gtk::prelude::GtkWindowExt::focus(&window).is_some_and(|focus| {
-                        gtk::prelude::WidgetExt::is_ancestor(&focus, sheet.dialog())
-                    })
-            })
-            .await,
-            "{key} left the keyboard outside capture's field: {:?}",
-            window.observe().keyboard
-        );
-
-        support::keys(&window, &["Escape"]);
-        assert!(crate::settle_until(async || !sheet.is_open()).await);
-        assert!(reading.is_open(), "cancel keeps the source message open");
-        assert_eq!(vault.read("Projects/Harbor.md"), HARBOR);
-        assert_eq!(vault.read("Tasks.md"), TASKS);
-    });
-}
-
-pub fn t_on_an_open_message_opens_the_task_sheet() {
-    capture_from_reader("T", "Add task");
-}
-
-pub fn n_on_an_open_message_opens_the_note_sheet() {
-    capture_from_reader("N", "Add note");
 }

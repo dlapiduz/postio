@@ -37,13 +37,9 @@ import prereq  # noqa: E402
 
 def case_the_decision_covers_every_combination() -> bool:
     expected = {
-        # Present: nothing to decide, wherever we are.
         (True, True): prereq.FINE,
         (False, True): prereq.FINE,
-        # Absent on a contributor's box: skip, but say it out loud.
         (False, False): prereq.SKIP_AND_SAY,
-        # Absent under CI: the runner is wrong. A skip here is
-        # indistinguishable from a pass, which is the whole point.
         (True, False): prereq.FAIL,
     }
     for (is_ci, present), want in expected.items():
@@ -165,9 +161,6 @@ def case_the_per_case_form_still_fails_under_ci() -> bool:
     if result.returncode == 0:
         print("  FAIL: a missing prerequisite passed under CI", file=sys.stderr)
         return False
-    # The message, not just the exit status: any bug in this module also
-    # exits non-zero, and a test that cannot tell those apart passes for
-    # the wrong reason -- which is this file's own subject.
     if "cargo-deny" not in result.stderr or "FAIL" not in result.stderr:
         print(f"  FAIL: it did not fail *about* the prerequisite: {result.stderr!r}",
               file=sys.stderr)
@@ -191,7 +184,6 @@ def case_a_test_for_another_platform_declares_itself_rather_than_skipping() -> b
         env_ci="true",
     )
     if sys.platform.startswith("linux"):
-        # On Linux the guard has to get out of the way entirely.
         if result.returncode != 0 or "should never get here" not in result.stdout:
             print(f"  FAIL: it stood down on its own platform:\n{result.stderr}",
                   file=sys.stderr)

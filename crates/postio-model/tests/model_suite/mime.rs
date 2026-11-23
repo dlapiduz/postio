@@ -1,10 +1,3 @@
-//! MIME parsing into the domain model, against the `.eml` corpus.
-//!
-//! Written before the parser existed. The bead's acceptance criteria are
-//! "parses every fixture without panic", "charset and transfer-encoding edge
-//! cases covered, including non-UTF-8" and "inline vs. attachment
-//! classification tested against real newsletters"; each has tests here.
-
 use chrono::{DateTime, TimeZone, Utc};
 
 use postio_model::mime::{self, ParsedMessage};
@@ -19,10 +12,6 @@ fn addresses(list: &[postio_model::EmailAddress]) -> Vec<String> {
     list.iter().map(|address| address.address.clone()).collect()
 }
 
-// ---------------------------------------------------------------------------
-// Acceptance: every fixture parses without a panic
-// ---------------------------------------------------------------------------
-
 #[test]
 fn every_fixture_in_the_corpus_parses_without_panicking() {
     for fixture in test_corpus::all() {
@@ -34,9 +23,6 @@ fn every_fixture_in_the_corpus_parses_without_panicking() {
             "{}: size is the raw byte count",
             fixture.name()
         );
-        // Nothing else is universal: a fixture may legitimately have no
-        // subject, no date, no body and no sender. What must hold is that we
-        // got here at all.
     }
 }
 
@@ -76,10 +62,6 @@ fn an_empty_input_parses_to_an_empty_message() {
     assert!(parsed.headers.is_empty());
     assert!(parsed.body.is_empty());
 }
-
-// ---------------------------------------------------------------------------
-// The baseline: headers, addresses, body, preview
-// ---------------------------------------------------------------------------
 
 #[test]
 fn the_simplest_message_maps_onto_the_model() {
@@ -183,10 +165,6 @@ fn an_address_header_with_no_addr_spec_contributes_nothing() {
     );
     assert!(parsed.to.is_empty());
 }
-
-// ---------------------------------------------------------------------------
-// Acceptance: charsets and transfer encodings, including non-UTF-8
-// ---------------------------------------------------------------------------
 
 #[test]
 fn iso_8859_1_bodies_and_encoded_words_are_decoded() {
@@ -320,14 +298,6 @@ fn broken_encoded_words_degrade_instead_of_panicking() {
     assert!(parsed.headers.len() > 3, "and the header block survives");
 }
 
-// ---------------------------------------------------------------------------
-// Acceptance: `decode_header_text` — an envelope field decoded outside a
-// full message parse (postio-321). The IMAP ENVELOPE arrives as isolated
-// header values, subject and display names among them, well before any body
-// is parsed; RFC 2047 encoded words in those values need the same decoding
-// `parse` already gives a body's headers.
-// ---------------------------------------------------------------------------
-
 #[test]
 fn a_utf_8_encoded_word_decodes_outside_a_full_message() {
     assert_eq!(
@@ -361,10 +331,6 @@ fn an_empty_field_decodes_to_an_empty_string() {
 
 #[test]
 fn a_truncated_encoded_word_degrades_to_something_readable() {
-    // No closing `?=`: `mail_parser` cannot decode it and leaves the raw
-    // characters as literal text rather than losing the field or panicking
-    // — the same degradation `broken_encoded_words_degrade_instead_of_panicking`
-    // checks for a full message.
     let text = mime::decode_header_text(b"=?UTF-8?B?Q2Fmw6k Shopping");
     assert!(!text.is_empty(), "got: {text:?}");
     assert!(text.contains("Shopping"), "got: {text:?}");
@@ -372,9 +338,6 @@ fn a_truncated_encoded_word_degrades_to_something_readable() {
 
 #[test]
 fn decode_header_text_agrees_with_a_full_parse_of_the_same_subject() {
-    // The row shows a subject from the ENVELOPE, well before the body (and
-    // its Subject header) is ever fully parsed. The two must not disagree
-    // once the body does arrive and the row is rebuilt from it.
     let encoded = "=?UTF-8?B?Q2Fmw6k=?= budget update";
     let from_envelope = mime::decode_header_text(encoded.as_bytes());
 
@@ -388,17 +351,6 @@ fn decode_header_text_agrees_with_a_full_parse_of_the_same_subject() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Acceptance: a decoded header reaches a reader as one line (#1770). An
-// encoded word encodes octets, `=0D=0A` is two of them, and a subject that
-// kept them drew a forged `Bcc:` line under itself in the reader. Every
-// frontend sets the subject and the names in a label, so the model folds
-// them once, here, rather than each frontend remembering to.
-// ---------------------------------------------------------------------------
-
-/// What would draw as more than one line, or not as text at all: C0 and C1
-/// controls (CR, LF, TAB, ESC, NUL, BEL, NEL…) and Unicode's own line and
-/// paragraph separators.
 fn breaks_the_line(c: char) -> bool {
     c.is_control() || c == '\u{2028}' || c == '\u{2029}'
 }
@@ -464,9 +416,6 @@ fn every_fixture_s_subject_and_names_are_one_line() {
 
 #[test]
 fn an_envelope_subject_folds_the_same_way_a_full_parse_does() {
-    // The list row and the reader's first paint read the IMAP ENVELOPE's
-    // subject, decoded by `decode_header_text`, long before the body is
-    // parsed. Folding only in `parse` would leave the forged line there.
     let encoded = "=?utf-8?Q?Invoice_attached=0D=0ABcc:_mallory=40sender=2Einvalid?=";
     assert_eq!(
         mime::decode_header_text(encoded.as_bytes()),
@@ -478,10 +427,6 @@ fn an_envelope_subject_folds_the_same_way_a_full_parse_does() {
         "a [1mb c d e f"
     );
 }
-
-// ---------------------------------------------------------------------------
-// Acceptance: inline vs. attachment classification
-// ---------------------------------------------------------------------------
 
 #[test]
 fn multipart_alternative_keeps_both_forms_and_drops_the_preamble() {
@@ -504,10 +449,6 @@ fn multipart_alternative_keeps_both_forms_and_drops_the_preamble() {
         "an alternative pair is not an attachment"
     );
 }
-
-// ---------------------------------------------------------------------------
-// Acceptance: a text/plain part's own format=flowed is recorded (#456)
-// ---------------------------------------------------------------------------
 
 #[test]
 fn a_format_flowed_text_part_is_recorded_as_such() {
@@ -638,10 +579,6 @@ fn rfc2231_and_encoded_word_filenames_are_decoded() {
 
 #[test]
 fn a_body_part_disposed_inline_is_still_the_body() {
-    // `inline-disposed-body` marks both alternatives `Content-Disposition:
-    // inline`, which plenty of senders do: the disposition says how to present
-    // a part, not whether it is the message. Reading it as an attachment is
-    // what left #751's pane with a body that had no links and no images in it.
     let parsed = parse("inline-disposed-body");
 
     let html = parsed
@@ -787,10 +724,6 @@ fn a_pgp_signed_message_keeps_the_signature_part_byte_exact() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Malformed input: recover, never panic
-// ---------------------------------------------------------------------------
-
 #[test]
 fn a_header_block_that_is_wrong_in_a_dozen_ways_still_yields_headers() {
     let parsed = parse("malformed-headers");
@@ -897,10 +830,6 @@ fn the_reference_chain_is_what_threading_will_walk() {
     assert!(parsed.in_reply_to.is_some());
 }
 
-// ---------------------------------------------------------------------------
-// Acceptance: `List-Id` is detected without manual configuration (#9)
-// ---------------------------------------------------------------------------
-
 #[test]
 fn a_list_id_header_is_reduced_to_its_bracketed_identifier() {
     let parsed = parse("list-thread-01-root");
@@ -942,10 +871,6 @@ fn list_id_from_text_keeps_the_bracketed_part_and_trims_the_rest() {
     assert_eq!(mime::list_id_from_text(""), None);
 }
 
-/// RFC 2919 §3: the grammar is `[phrase] "<" list-id ">"`, and a phrase may be
-/// a quoted string holding anything, `<` included. The IMAP path hands over a
-/// `HEADER.FIELDS` block, so a message with two `List-Id` fields (forbidden
-/// by the same section, and sent anyway) arrives as one value.
 #[test]
 fn list_id_from_text_reads_the_first_bracket_outside_a_quoted_phrase() {
     assert_eq!(
@@ -959,10 +884,6 @@ fn list_id_from_text_reads_the_first_bracket_outside_a_quoted_phrase() {
         "two fields must not run together into one identifier"
     );
 }
-
-// ---------------------------------------------------------------------------
-// Acceptance: a requested read receipt is detected without sending one (#970)
-// ---------------------------------------------------------------------------
 
 #[test]
 fn disposition_notification_to_is_detected_as_a_read_receipt_request() {
@@ -997,10 +918,6 @@ fn a_message_that_never_asked_for_a_receipt_says_so() {
     let parsed = parse("plain-text-simple");
     assert!(!parsed.read_receipt_requested);
 }
-
-// ---------------------------------------------------------------------------
-// Mapping onto `Message`
-// ---------------------------------------------------------------------------
 
 fn received_at() -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 3, 1, 12, 0, 0).unwrap()
@@ -1074,10 +991,6 @@ fn a_header_only_parse_maps_to_a_header_only_message() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Category sweeps: what the corpus says a fixture is for, the parser must do
-// ---------------------------------------------------------------------------
-
 #[test]
 fn every_attachment_fixture_yields_at_least_one_part() {
     for fixture in test_corpus::by_category(Category::Attachment) {
@@ -1134,22 +1047,6 @@ fn no_fixture_decodes_to_replacement_characters_in_its_subject() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// #277: infallible means infallible
-// ---------------------------------------------------------------------------
-
-/// A malformed multipart that made `mail-parser` 0.11.8 panic
-/// (`Invalid part ID, could not find multipart`, `parsers/message.rs:485`),
-/// straight out of `mime::parse`.
-///
-/// Found by the `parse_message` fuzz target added in #147 and shrunk with
-/// `cargo fuzz tmin`, so it is mutated corpus rather than anyone's mail: a
-/// `multipart/` whose subtype is NUL-padded, a header block broken by a bare
-/// CR, and nested `message/rfc822` parts announcing boundaries that never
-/// open. Kept inline rather than added to the `.eml` corpus because it is a
-/// regression input, not a message with behaviour worth describing — the
-/// corpus is walked by tests that assert things about what parsed, and this
-/// one exists precisely because nothing does.
 const UNPARSEABLE_MULTIPART: &[u8] = &[
     82, 101, 116, 117, 114, 110, 45, 80, 97, 111, 110, 58, 32, 49, 46, 48, 13, 10, 67, 111, 110,
     116, 101, 110, 116, 45, 84, 121, 112, 101, 58, 32, 109, 117, 108, 116, 105, 112, 97, 114, 116,
@@ -1164,11 +1061,6 @@ const UNPARSEABLE_MULTIPART: &[u8] = &[
     10, 13, 10, 45, 45, 61, 95, 114, 101, 112, 111, 114, 116, 95, 101, 51, 97, 49, 45, 45, 13, 10,
 ];
 
-/// The promise the module doc has always made — "never returns an error and
-/// never panics" — held against an input that broke it. The containment is
-/// `catch_unwind` in `parse_inner`, because the panic is three crates down in
-/// a dependency and there is no shape of input validation here that could
-/// have predicted it.
 #[test]
 fn a_malformed_multipart_does_not_panic_out_of_parse() {
     let parsed = mime::parse(UNPARSEABLE_MULTIPART);
@@ -1182,15 +1074,6 @@ fn a_malformed_multipart_does_not_panic_out_of_parse() {
     assert_eq!(headers_only.size, UNPARSEABLE_MULTIPART.len() as u64);
 }
 
-/// The reproducer parses under `mail-parser` 1.0, which fixed the assertion
-/// #277 found, so `try_parse` says `Ok` in every build. The `Err` path is
-/// covered where the seam is, by `containment` in `src/mime.rs`, with a
-/// closure that panics: no input in this repository makes the dependency
-/// unwind any more.
-///
-/// What *is* pinned here is that the fix recovers something rather than
-/// returning a thin message the reader would label "no text or HTML part":
-/// the nested `message/rfc822` parts are still offered.
 #[test]
 fn the_reproducer_parses_and_recovers_its_parts() {
     let parsed = mime::try_parse(UNPARSEABLE_MULTIPART).expect("1.0 no longer unwinds here");
@@ -1199,23 +1082,12 @@ fn the_reproducer_parses_and_recovers_its_parts() {
         "the nested messages were dropped: {parsed:?}"
     );
 
-    // The header block of the same bytes parses fine, and that is worth
-    // pinning rather than glossing: `parse_headers` never walks the multipart
-    // tree, so it never reaches the state that panics. The initial sync —
-    // which fetches headers newest-first — was therefore never at risk. Only
-    // the body backfill was, which is why the crash showed up as sync dying
-    // some time after a message arrived rather than as it arrived.
     assert!(
         mime::try_parse_headers(UNPARSEABLE_MULTIPART).is_ok(),
         "headers-only parsing does not reach the multipart walk"
     );
 }
 
-/// #287: what a release build makes of the reproducer has to say so. The
-/// parser found no delimiter at the start of a line to open the multipart
-/// and opened it on one found mid-line instead, so the parts it returns are
-/// a guess. With no text or HTML part among them, a message that reads as
-/// clean is the reader's "This message has no body", which is untrue.
 #[test]
 fn the_reproducer_is_reported_as_damaged() {
     assert!(
@@ -1224,10 +1096,6 @@ fn the_reproducer_is_reported_as_damaged() {
     );
 }
 
-/// The ordinary way to meet the parser's mid-line fallback: delivery cut off
-/// before the close delimiter, in a body that quotes the boundary. The part
-/// ends at the quote and the rest of the text is gone; that cannot be
-/// recovered, but it can be said rather than shown as the whole message.
 #[test]
 fn a_part_cut_at_a_delimiter_found_mid_line_is_reported() {
     let raw = b"From: ada@example.com\r\nMIME-Version: 1.0\r\n\
@@ -1241,9 +1109,6 @@ Content-Type: multipart/mixed; boundary=\"SEP\"\r\n\r\n\
     );
 }
 
-/// A multipart that merely lacks its close delimiter loses nothing: its last
-/// part runs to the end of the input. Saying "could not be decoded" about it
-/// would cry wolf on mail that reads in full.
 #[test]
 fn a_multipart_without_its_close_delimiter_is_not_reported() {
     let raw = b"From: ada@example.com\r\nMIME-Version: 1.0\r\n\
@@ -1254,9 +1119,6 @@ Content-Type: multipart/mixed; boundary=\"SEP\"\r\n\r\n\
     assert!(!parsed.encoding_problems);
 }
 
-/// The other direction, and the one that would rot silently: every fixture in
-/// the corpus still parses. A containment that started reporting ordinary
-/// mail as unparseable would turn a crash into a blank pane for everyone.
 #[test]
 fn every_corpus_fixture_still_parses() {
     for fixture in test_corpus::all() {
@@ -1268,10 +1130,6 @@ fn every_corpus_fixture_still_parses() {
     }
 }
 
-/// Builds a message whose multiparts nest `depth` deep.
-///
-/// Legal MIME throughout — every boundary opens and closes — just absurd. A
-/// sender controls this shape completely, which is the whole point.
 fn nested_multipart(depth: usize) -> Vec<u8> {
     let mut out = String::from("Subject: Nested\r\nMIME-Version: 1.0\r\n");
     for level in 0..depth {
@@ -1286,16 +1144,6 @@ fn nested_multipart(depth: usize) -> Vec<u8> {
     out.into_bytes()
 }
 
-/// #277's serious half. `catch_unwind` contains a panic; it cannot contain a
-/// stack overflow, which is a `SIGSEGV` and takes the process with it however
-/// carefully the caller is written. `part_paths` walked the MIME tree by
-/// recursing once per level, so a message that nests deeply enough crashed
-/// ingest — and unlike the `debug_assert!` this module also contains, that was
-/// true of a release build too.
-///
-/// The walk is iterative now, so there is no depth to tune and no arbitrary
-/// limit to be wrong about. This depth is far past anything a real message has
-/// and comfortably past what the recursive version survived.
 #[test]
 fn a_deeply_nested_multipart_does_not_overflow_the_stack() {
     let raw = nested_multipart(20_000);
@@ -1303,9 +1151,6 @@ fn a_deeply_nested_multipart_does_not_overflow_the_stack() {
     assert_eq!(parsed.size, raw.len() as u64);
 }
 
-/// The same walk still numbers parts the way IMAP does, which is the thing it
-/// exists for — an iterative rewrite that got the paths wrong would break
-/// every lazy attachment fetch.
 #[test]
 fn the_iterative_walk_numbers_parts_the_way_imap_does() {
     let parsed = parse("attachment-pdf");
@@ -1327,16 +1172,8 @@ fn the_iterative_walk_numbers_parts_the_way_imap_does() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// One part on its own (ADR 0017's payload axis, #377)
-// ---------------------------------------------------------------------------
-
 #[test]
 fn a_fetched_section_decodes_from_the_headers_that_explain_it() {
-    // `BODY[2]` hands back the part's *encoded* bytes and none of its
-    // headers. `BODYSTRUCTURE` reported the encoding at header-sync time and
-    // it is kept on the row, so prepending it rebuilds an entity that can be
-    // decoded -- without a second round trip for `[2.MIME]`.
     let entity = b"Content-Type: application/pdf\r\n\
                    Content-Transfer-Encoding: base64\r\n\
                    \r\n\
@@ -1358,17 +1195,9 @@ fn a_section_with_no_transfer_encoding_is_its_own_bytes() {
 
 #[test]
 fn bytes_that_are_not_an_entity_at_all_decode_to_nothing() {
-    // The same contract `parse` keeps: hostile input yields an answer, not a
-    // panic and not a fragment stored as if it were a file.
     assert_eq!(postio_model::mime::decode_entity(b""), None);
 }
 
-// ---------------------------------------------------------------------------
-// mail-parser 1.0: what its reading changed, pinned (the commit body lists why
-// each is the more correct output)
-// ---------------------------------------------------------------------------
-
-/// A `multipart/mixed` whose second part is `part` (headers, blank line, body).
 fn mixed_with(part: &str) -> Vec<u8> {
     format!(
         "From: ada@example.com\r\nMIME-Version: 1.0\r\n\
@@ -1378,10 +1207,6 @@ Content-Type: multipart/mixed; boundary=\"m\"\r\n\r\n\
     .into_bytes()
 }
 
-/// An attachment is the sender's file, byte for byte. 0.11 converted a text
-/// attachment out of its declared charset into UTF-8, so the blob a person
-/// saved was not the file that was sent; the bytes are content-addressed, and
-/// two copies of a Latin-1 file must hash alike.
 #[test]
 fn a_text_attachment_keeps_the_senders_bytes_whatever_its_charset() {
     let parsed = mime::parse(&mixed_with(
@@ -1393,8 +1218,6 @@ Content-Transfer-Encoding: quoted-printable\r\n\r\ncaf=E9",
     assert_eq!(parsed.parts[0].content, b"caf\xe9");
 }
 
-/// The lazy payload path (`BODYSTRUCTURE` headers plus `BODY[n]`) must agree
-/// with the full parse above, or one file would have two blob ids.
 #[test]
 fn decode_entity_agrees_with_the_full_parse_on_a_text_payload() {
     let decoded = mime::decode_entity(
@@ -1404,8 +1227,6 @@ Content-Transfer-Encoding: quoted-printable\r\n\r\ncaf=E9",
     assert_eq!(decoded.as_deref(), Some(&b"caf\xe9"[..]));
 }
 
-/// A payload is a leaf. A whole multipart handed to `decode_entity` is not a
-/// file, and 1.0 would otherwise return its raw body.
 #[test]
 fn decode_entity_refuses_a_multipart() {
     assert_eq!(
@@ -1414,9 +1235,6 @@ fn decode_entity_refuses_a_multipart() {
     );
 }
 
-/// RFC 2231 §4.1: a character split across two continuation sections decodes
-/// as one character (0.11 gave U+FFFD twice), and an apostrophe in the value
-/// after the charset prefix stays in it (0.11 cut the value at it).
 #[test]
 fn rfc2231_sections_are_joined_before_they_are_converted() {
     let pairs = |list: &[(&str, &str)]| -> Vec<(String, String)> {
@@ -1439,9 +1257,6 @@ fn rfc2231_sections_are_joined_before_they_are_converted() {
     );
 }
 
-/// RFC 2047 §6.2: adjacent encoded words of one charset join before the
-/// conversion, so a character split across two words survives (0.11 gave two
-/// replacement characters).
 #[test]
 fn an_encoded_character_split_across_two_words_decodes() {
     assert_eq!(
@@ -1450,8 +1265,6 @@ fn an_encoded_character_split_across_two_words_decodes() {
     );
 }
 
-/// Base64 whose last quantum is unpadded still decodes to the end; 0.11 dropped
-/// the final byte(s), so `hello world` arrived as `hello wor`.
 #[test]
 fn an_unpadded_base64_body_decodes_to_its_end() {
     let parsed = mime::parse(
@@ -1461,9 +1274,6 @@ Content-Transfer-Encoding: base64\r\n\r\naGVsbG8gd29ybGQ\r\n",
     assert_eq!(parsed.body.text.as_deref(), Some("hello world"));
 }
 
-/// A truncated base64 attachment is offered as the bytes that did arrive.
-/// 0.11 turned the part into "text" and stored the base64 characters
-/// themselves as the file.
 #[test]
 fn a_damaged_base64_attachment_is_decoded_not_stored_as_its_own_text() {
     let parsed = mime::parse(&mixed_with(
@@ -1475,11 +1285,6 @@ Content-Disposition: attachment\r\nContent-Transfer-Encoding: base64\r\n\r\nAA!!
     assert!(parsed.encoding_problems, "and the damage is still flagged");
 }
 
-/// A `text/html` alternative that carries a name is still the message's HTML
-/// body. RFC 8621 `parseStructure` (#67), which mail-parser 1.0 follows, files
-/// it as an attachment and lets the plain text stand in; the maintainer chose
-/// to show the HTML the sender wrote, as 0.11 did, and not to offer it a
-/// second time as a file.
 #[test]
 fn a_named_html_alternative_is_the_html_body() {
     let parsed = mime::parse(
@@ -1492,8 +1297,6 @@ fn a_named_html_alternative_is_the_html_body() {
     assert!(parsed.parts.is_empty(), "{:?}", parsed.parts);
 }
 
-/// The sender's own word still wins: an HTML alternative marked
-/// `Content-Disposition: attachment` is a file, not the body.
 #[test]
 fn an_html_alternative_disposed_as_an_attachment_stays_a_file() {
     let parsed = mime::parse(
@@ -1507,8 +1310,6 @@ fn an_html_alternative_disposed_as_an_attachment_stays_a_file() {
     assert_eq!(parsed.parts[0].attachment.mime_type, "text/html");
 }
 
-/// #70: in a `multipart/related`, a part after the first is inline even with
-/// neither a `Content-ID` nor a disposition; 0.11 called it an attachment.
 #[test]
 fn a_related_part_without_a_disposition_is_inline() {
     let parsed = mime::parse(
@@ -1520,9 +1321,6 @@ fn a_related_part_without_a_disposition_is_inline() {
     assert_eq!(parsed.parts[0].attachment.disposition, Disposition::Inline);
 }
 
-/// The inverse: a photo attached to a `multipart/mixed` with no disposition is
-/// an attachment. 0.11 called it inline because the RFC 8621 list happened to
-/// show it in the body.
 #[test]
 fn a_mixed_image_without_a_disposition_is_an_attachment() {
     let parsed = mime::parse(&mixed_with(
@@ -1535,10 +1333,6 @@ fn a_mixed_image_without_a_disposition_is_an_attachment() {
     );
 }
 
-/// Header names are kept as the sender spelled them (0.11 normalised
-/// `List-Id` to `List-ID` and `Cc` to `Cc`); a name with a space in it is not
-/// the `From` it resembles, so a forged `Fr om:` cannot win over the real one
-/// (the same reading DKIM and DMARC verifiers take).
 #[test]
 fn header_names_keep_their_spelling_and_a_spaced_name_is_not_from() {
     let parsed = mime::parse(
@@ -1549,8 +1343,6 @@ fn header_names_keep_their_spelling_and_a_spaced_name_is_not_from() {
     assert_eq!(parsed.list_id.as_deref(), Some("l.example.com"));
 }
 
-/// A header block with no body at all is a message with an empty text part, not
-/// one with a decode failure: 0.11 flagged `encoding_problems` and gave no body.
 #[test]
 fn a_message_that_is_only_headers_has_an_empty_body_and_no_caveat() {
     let parsed = mime::parse(b"From: ada@example.com\r\nSubject: nothing\r\n");
@@ -1558,7 +1350,6 @@ fn a_message_that_is_only_headers_has_an_empty_body_and_no_caveat() {
     assert!(!parsed.encoding_problems);
 }
 
-/// A `+5` zone is +05:00 (0.11 read it as +02:00).
 #[test]
 fn a_one_digit_zone_offset_is_read_as_hours() {
     let parsed =

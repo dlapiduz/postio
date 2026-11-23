@@ -135,10 +135,28 @@ command from inside a text field.
 | `ctrl+b` | Bold | Composer |  | `bold` |
 | `ctrl+i` or `alt+i` | Italic | Composer |  | `italic` |
 | `ctrl+alt+1` or `alt+1` | Heading 1 | Composer |  | `heading_1` |
+| `ctrl+alt+2` or `alt+2` | Heading 2 | Composer |  | `heading_2` |
+| `ctrl+alt+3` or `alt+3` | Heading 3 | Composer |  | `heading_3` |
+| `ctrl+alt+4` or `alt+4` | Heading 4 | Composer |  | `heading_4` |
+| `ctrl+alt+5` or `alt+5` | Heading 5 | Composer |  | `heading_5` |
+| `ctrl+alt+6` or `alt+6` | Heading 6 | Composer |  | `heading_6` |
+| `ctrl+alt+0` or `alt+0` | Normal text | Composer |  | `normal_text` |
 | `ctrl+shift+8` or `alt+8` | Bulleted list | Composer |  | `bullet_list` |
 | `ctrl+shift+7` or `alt+7` | Numbered list | Composer |  | `numbered_list` |
 | `ctrl+shift+k` or `alt+k` | Insert link… | Composer |  | `insert_link` |
 | `ctrl+shift+9` or `alt+9` | Quote block | Composer |  | `quote_block` |
+| `ctrl+shift+s` or `alt+asciitilde` | Strikethrough | Composer |  | `strikethrough` |
+| `ctrl+e` or `alt+grave` | Inline code | Composer |  | `inline_code` |
+| `ctrl+alt+c` or `alt+C` | Code block | Composer |  | `code_block` |
+| `ctrl+shift+6` or `alt+t` | Task list | Composer |  | `task_list` |
+| `ctrl+alt+x` or `alt+X` | Done or not done | Composer |  | `toggle_task` |
+| `ctrl+bracketright` or `alt+greater` | Indent | Composer |  | `indent` |
+| `ctrl+bracketleft` or `alt+less` | Outdent | Composer |  | `outdent` |
+| `ctrl+alt+minus` or `alt+minus` | Divider | Composer |  | `divider` |
+| `ctrl+shift+t` or `alt+bar` | Table | Composer |  | `table` |
+| `ctrl+backslash` or `alt+backslash` | Clear formatting | Composer |  | `clear_formatting` |
+| `ctrl+alt+s` | Edit as Markdown or rich text | Composer (not the terminal) |  | `toggle_markdown_source` |
+| `ctrl+alt+i` or `alt+I` | Download and attach image | Composer |  | `attach_remote_image` |
 | `z` or `ctrl+z` | Undo | List, thread, reader, account list, digest, Filtered view, search results |  | `undo` |
 | `ctrl+k` | Command palette | Everywhere |  | `command_palette` |
 | `?` | Keyboard shortcuts | List, thread, reader |  | `cheat_sheet` |

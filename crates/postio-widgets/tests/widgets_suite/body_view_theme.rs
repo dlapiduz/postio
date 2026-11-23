@@ -1,18 +1,11 @@
-//! The reading surface follows the app's theme (spec 006 FR-011): one
-//! re-render per change, the reading position kept.
-
+use gtk::glib;
 use gtk::prelude::*;
-use gtk::{gdk, glib};
 use postio_render::Presentation;
 use postio_widgets::body_view::BodyView;
 
 use crate::body_view::{content, until};
 
 pub fn a_theme_change_re_renders_once_and_keeps_the_place() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let style = adw::StyleManager::default();
     style.set_color_scheme(adw::ColorScheme::ForceLight);
     let view = BodyView::new(crate::support_reader::reader_deadline());
@@ -23,7 +16,6 @@ pub fn a_theme_change_re_renders_once_and_keeps_the_place() {
         .child(&scroller)
         .build();
     window.present();
-    // Tall enough to scroll, so there is a place to keep.
     view.set_content(content("html-very-tall"));
     assert!(until(|| view.document().is_some()), "no snapshot arrived");
     let light = view.document().expect("a snapshot");

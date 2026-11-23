@@ -1,16 +1,3 @@
-//! Extraction over files built here, from invented text (spec 010 T120).
-//!
-//! Every fixture is generated in memory rather than committed: an OOXML
-//! package is a zip of a few XML parts, a PDF is text with an offset table,
-//! and the hostile set is the honest set bent — encrypted, cut short,
-//! inflated, nested, made to point at itself. Nothing here is real mail
-//! and no name in it is a person's.
-//!
-//! The promises: each format's units carry the location a person would
-//! name ("Sheet ‘Summary’, row 14", "Page 2"), and each hostile file ends
-//! in its recorded outcome within `Limits::max_time`, with no panic
-//! reaching the caller.
-
 use std::io::{Cursor, Write as _};
 use std::time::{Duration, Instant};
 
@@ -21,17 +8,12 @@ const XLSX: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.
 const DOCX: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 const PPTX: &str = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
 
-// ---------------------------------------------------------------------------
-// The generator.
-// ---------------------------------------------------------------------------
-
 fn escape(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
 }
 
-/// A zip of `entries`, deflated, as an office program writes one.
 fn zip(entries: &[(&str, Vec<u8>)]) -> Vec<u8> {
     let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
     let options = zip::write::SimpleFileOptions::default()
@@ -58,10 +40,8 @@ fn relationships(items: &[(&str, &str, &str)]) -> Vec<u8> {
     text.into_bytes()
 }
 
-/// A workbook of named sheets, each a list of rows of cells. Text cells
-/// are shared strings, numbers are numbers, as a spreadsheet program
-/// writes them; sheet files are numbered in reverse so the walker has to
-/// follow the workbook's relationships rather than guess from names.
+/// Sheet files are numbered in reverse so the walker has to follow the
+/// workbook's relationships rather than guess from names.
 fn xlsx(sheets: &[(&str, Vec<Vec<String>>)]) -> Vec<u8> {
     let main = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
     let mut strings: Vec<String> = Vec::new();
@@ -142,7 +122,6 @@ fn xlsx(sheets: &[(&str, Vec<Vec<String>>)]) -> Vec<u8> {
     zip(&all)
 }
 
-/// A document from its raw `w:body` XML.
 fn docx_body(body: &str) -> Vec<u8> {
     zip(&[
         (
@@ -164,9 +143,7 @@ fn paragraph(text: &str) -> String {
     format!("<w:p><w:r><w:t>{}</w:t></w:r></w:p>", escape(text))
 }
 
-/// A presentation, one slide per entry, each slide's text in two runs
-/// of one shape. Slide files are numbered in reverse of the deck's
-/// order, so the walker has to follow `p:sldIdLst`.
+/// Slide files are numbered in reverse so the walker has to follow `p:sldIdLst`.
 fn pptx(slides: &[&str]) -> Vec<u8> {
     let mut ids = String::new();
     let mut links = Vec::new();
@@ -221,8 +198,6 @@ fn pptx(slides: &[&str]) -> Vec<u8> {
     zip(&all)
 }
 
-/// A PDF of numbered objects, each written as given, with the offset
-/// table and trailer a reader needs. `objects[0]` is object 1.
 fn pdf_objects(objects: &[String]) -> Vec<u8> {
     let mut out = b"%PDF-1.4\n".to_vec();
     let mut offsets = Vec::new();
@@ -254,7 +229,6 @@ fn stream(content: &str) -> String {
     )
 }
 
-/// A PDF with one page per entry, in Helvetica.
 fn pdf(pages: &[&str]) -> Vec<u8> {
     let count = pages.len();
     let mut objects = vec![
@@ -287,7 +261,6 @@ fn three_pages() -> Vec<u8> {
     ])
 }
 
-/// The three pages, encrypted with a user password nobody will give.
 fn encrypted_pdf() -> Vec<u8> {
     use pdf_extract::{Document, EncryptionState, EncryptionVersion, Permissions};
     let mut document = Document::load_mem(&three_pages()).expect("the plain PDF loads");
@@ -305,8 +278,7 @@ fn encrypted_pdf() -> Vec<u8> {
     out
 }
 
-/// A page whose one form XObject draws itself: a reader with no guard
-/// recurses until the stack runs out, which no `catch_unwind` can catch.
+/// A reader with no guard recurses until the stack runs out, which `catch_unwind` cannot catch.
 fn self_drawing_pdf() -> Vec<u8> {
     pdf_objects(&[
         "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
@@ -323,7 +295,6 @@ fn self_drawing_pdf() -> Vec<u8> {
     ])
 }
 
-/// A page whose parent is itself, with no MediaBox to stop the climb.
 fn own_parent_pdf() -> Vec<u8> {
     pdf_objects(&[
         "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
@@ -380,10 +351,6 @@ fn workbook() -> Vec<u8> {
         ),
     ])
 }
-
-// ---------------------------------------------------------------------------
-// The honest formats.
-// ---------------------------------------------------------------------------
 
 fn run(bytes: &[u8], mime: &str, name: &str) -> Extracted {
     extract(bytes, mime, Some(name), &Limits::default())
@@ -493,7 +460,6 @@ fn utf16_text_is_read_a_line_at_a_time_by_its_byte_order_mark() {
 
 #[test]
 fn text_in_a_declared_charset_is_decoded_by_it() {
-    // "café" in Latin-1: one byte for the é.
     let extracted = run(
         b"the caf\xe9 keeps its own line\n",
         "text/plain; charset=iso-8859-1",
@@ -532,12 +498,6 @@ fn a_file_over_the_input_limit_is_not_opened() {
     assert_eq!(extracted.outcome, Outcome::Skipped(Skip::TooLarge));
 }
 
-// ---------------------------------------------------------------------------
-// The hostile set: each ends in its outcome, inside the time limit.
-// ---------------------------------------------------------------------------
-
-/// Extract under the default limits and assert it ended in `expected`
-/// within `max_time` (plus a scheduling grace on a loaded machine).
 fn hostile(bytes: &[u8], mime: &str, name: &str, expected: Outcome) -> Extracted {
     let limits = Limits::default();
     let started = Instant::now();
@@ -592,7 +552,6 @@ fn a_page_that_is_its_own_ancestor_fails_rather_than_overflowing_the_stack() {
 
 #[test]
 fn a_zip_bomb_stops_at_its_ratio() {
-    // 200 MB of one byte deflates to a few hundred kilobytes.
     let mut document = format!(
         "{XML}<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>"
     )
@@ -664,11 +623,6 @@ fn a_zip_that_is_not_a_zip_fails() {
         Outcome::Failed,
     );
 }
-
-// ---------------------------------------------------------------------------
-// Across a process boundary (spec 010 D28, T151): the helper's frame
-// carries exactly what an in-process extraction produces.
-// ---------------------------------------------------------------------------
 
 #[test]
 fn every_fixture_is_answered_through_the_frame_as_it_is_in_process() {

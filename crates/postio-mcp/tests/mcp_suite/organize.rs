@@ -1,7 +1,3 @@
-//! Archive, move and label: the writes the maintainer added to ADR 0010 on
-//! 2026-10-14. Each goes through the command path the apps use, and each
-//! is off until `actions` in `[mcp]` turns it on.
-
 use postio_model::Operation;
 use serde_json::json;
 
@@ -24,7 +20,6 @@ fn archiving_moves_the_message_into_the_archive_and_queues_the_move() {
         "the server learns of it the way it learns of a keystroke: {:?}",
         world.queued()
     );
-    // Where each came from, so the agent can put it back.
     assert_eq!(
         result.mail()["messages"][0],
         json!({"message": world.budget.get(), "from": world.inbox.get()})
@@ -165,8 +160,6 @@ fn a_folder_nobody_shared_is_not_there_to_move_into() {
     );
     assert!(moved.is_error() && nowhere.is_error());
     assert_eq!(moved.notice(), nowhere.notice());
-    // The archive is a folder too: archiving into one nobody shared is
-    // refused.
     let archived = world.call(
         "archive_messages",
         json!({"messages": [world.budget.get()]}),

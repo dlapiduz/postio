@@ -1,8 +1,3 @@
-//! The platform-neutral half of what was the GDK bridge (#568, ADR 0019 Q4).
-//!
-//! `from_platform_key` is asserted against the same table the GDK path uses,
-//! with no toolkit and no display.
-
 use postio_config::paths::Platform;
 use postio_ui::keymap::{Chord, Key, KeyContext, Keymap, Modifiers, Resolver};
 
@@ -12,8 +7,6 @@ fn chord(text: &str) -> Chord {
 
 #[test]
 fn a_platform_key_becomes_the_chord_the_binding_was_written_as() {
-    // The same table `from_key_event` is asserted against on the GTK side:
-    // (character it would type, key name when it types nothing, modifiers).
     for (character, name, modifiers, expected) in [
         (Some('a'), Some("a"), Modifiers::NONE, "a"),
         (Some('A'), Some("A"), Modifiers::SHIFT, "A"),
@@ -36,8 +29,7 @@ fn a_platform_key_becomes_the_chord_the_binding_was_written_as() {
 
 #[test]
 fn a_control_character_falls_back_to_the_key_name() {
-    // GDK reports Return as the control character `\r` *and* the name
-    // "Return"; the character must not win.
+    // GDK reports Return as `\r` and the name "Return"; the character must not win.
     assert_eq!(
         Chord::from_platform_key(Some('\r'), Some("Return"), Modifiers::NONE),
         Some(chord("Return"))
@@ -46,7 +38,6 @@ fn a_control_character_falls_back_to_the_key_name() {
 
 #[test]
 fn a_key_this_build_has_no_name_for_is_no_chord() {
-    // A dead key: no character, no recognizable name.
     assert_eq!(
         Chord::from_platform_key(None, Some("dead_acute"), Modifiers::NONE),
         None
@@ -56,17 +47,8 @@ fn a_key_this_build_has_no_name_for_is_no_chord() {
 
 #[test]
 fn the_primary_modifier_parses_the_way_this_platform_spells_it() {
-    // `mod` is the primary accelerator and `postio_config::keys::expand_mod`
-    // resolves it when the keymap is built: `ctrl` on freedesktop, **`cmd`**
-    // on Apple (#669). `postio_config::keys::MODIFIERS` accepts both spellings
-    // and `chord_problem` validates them, so `cmd+k` passes every check
-    // upstream of here.
-    //
-    // It has to parse *here* too. This resolver is the only thing that decides
-    // whether a chord matches, and a modifier it does not know makes the whole
-    // binding unparseable -- which on Apple is every `mod+…` default at once,
-    // reported as a keymap problem rather than as a key that does nothing, a
-    // long way from where anyone would look.
+    // `mod` must parse here: a modifier this resolver does not know makes every `mod+…` default
+    // unparseable on Apple.
     for spelling in ["cmd+k", "command+k"] {
         assert_eq!(
             spelling.parse::<Chord>(),
@@ -78,12 +60,8 @@ fn the_primary_modifier_parses_the_way_this_platform_spells_it() {
 
 #[test]
 fn every_default_binding_resolves_on_both_platforms() {
-    // The class the test above is one member of, and the reason it is not
-    // enough on its own: the defaults live in the registry, `expand_mod` is
-    // applied to them per platform, and nothing else asserts that the two
-    // agree. A default spelled with a token this resolver cannot read is a
-    // command with no key on that platform, and the Linux gate cannot see it
-    // -- which is exactly the shape ADR 0019 Q7 says to guard against.
+    // Defaults live in the registry and `expand_mod` is applied per platform; nothing else asserts
+    // a default's token is one this resolver can read (ADR 0019 Q7).
     for platform in [Platform::Freedesktop, Platform::Apple] {
         let keymap = postio_core::Keymap::resolve_on(&Default::default(), platform);
         let (_, problems) = Resolver::from_commands(&keymap);
@@ -94,10 +72,6 @@ fn every_default_binding_resolves_on_both_platforms() {
     }
 }
 
-/// Focus's three new surfaces each take their own keys and fall back to
-/// Global alone (specs/007-postio-focus T027): a picker is not the list, so
-/// `x` -- which toggles a row's selection there -- does nothing in it, and
-/// `Escape` still leaves, as it does everywhere.
 #[test]
 fn a_picker_digest_and_filtered_view_fall_back_to_global_only() {
     use postio_core::{Context, Keymap as Commands};
@@ -132,11 +106,7 @@ fn a_picker_digest_and_filtered_view_fall_back_to_global_only() {
     );
 }
 
-/// `!` is Focus's has-action toggle (specs/007-postio-focus T028). A
-/// punctuation key has two spellings -- the character a binding is written
-/// as, and the keysym name a key table, a `[keys]` override or a menu
-/// accelerator uses -- and both have to be one chord, or a menu draws no key
-/// for the command and an override spelled by name is refused.
+/// A punctuation key has two spellings (the character and the keysym name); both must be one chord.
 #[test]
 fn an_exclamation_mark_parses_by_either_name_and_resolves() {
     use postio_ui::keymap::Outcome;
@@ -156,8 +126,6 @@ fn an_exclamation_mark_parses_by_either_name_and_resolves() {
         None,
         "the settings validator refuses a spelling the resolver accepts"
     );
-    // Shift is how `!` is typed; with a character and without one, the
-    // press is the chord the binding was written as.
     for character in [Some('!'), None] {
         assert_eq!(
             Chord::from_platform_key(character, Some("exclam"), Modifiers::SHIFT),
@@ -180,13 +148,8 @@ fn an_exclamation_mark_parses_by_either_name_and_resolves() {
     );
 }
 
-/// A key the one keymap keeps for another app is bound to nothing here
-/// (specs/007-postio-focus research R4). `alt+e` edits a draft in the
-/// terminal's editor, and only the terminal's composer has one: in Focus,
-/// desktop or Mac, it has to do nothing at all -- not reach a command the app
-/// never offers, which the dispatcher would refuse as "not wired up" -- and a
-/// command every app has still answers its key in each. `y` is Focus's, and
-/// the terminal is Focus drawn in character cells (C29).
+/// A key the one keymap keeps for another app is bound to nothing here: `alt+e` is the terminal
+/// composer's editor key.
 #[test]
 fn a_key_another_app_keeps_is_bound_to_nothing_here() {
     use postio_core::{Context, Frontend, Keymap as Commands};
@@ -194,8 +157,6 @@ fn a_key_another_app_keeps_is_bound_to_nothing_here() {
 
     let now = std::time::Instant::now();
     let press = |frontend: Frontend, context: Context, key: &str| {
-        // Resolved for Linux, whichever host runs this: the keys pressed
-        // below are Linux's spellings.
         let commands = Commands::resolve_on(&Default::default(), Platform::Freedesktop);
         let (mut resolver, problems) = Resolver::from_commands_for(&commands, frontend);
         assert!(problems.is_empty(), "{frontend:?}: {problems:?}");
@@ -212,9 +173,6 @@ fn a_key_another_app_keeps_is_bound_to_nothing_here() {
         Outcome::Command("edit_externally".to_owned()),
         "the terminal lost its editor key"
     );
-    // `alt+e` was the terminal's editor key until `reply_to_latest` took it
-    // (specs/013-focus-threads R10): Focus answers it, and the terminal,
-    // which does not offer that command, leaves it free.
     assert_eq!(
         press(Frontend::Focus, Context::Composer, "alt+e"),
         Outcome::Command("reply_to_latest".to_owned())

@@ -1,62 +1,29 @@
-//! Relaxations: the ways out of a search that found nothing.
-//!
-//! Screen 13 answers zero results with a short list of looser searches, each
-//! with how many conversations it would find: "Remove ‘before March’ (12)",
-//! "Anyone, not just Ada Moreno (4)", "Look for ‘budget v4’ anywhere, not
-//! just the subject (3)". [`relax`] proposes them; the executor counts them
-//! and `postio-ui` words them, so neither the count nor the sentence is here.
-//!
-//! Each relaxation differs from the query by **exactly one token**, so its
-//! sentence can say what changed and nothing else changes behind the
-//! person's back. The rest of the query keeps its raw text.
+//! Relaxations: ways out of a search that found nothing. Each differs from the query by exactly one
+//! token, so its sentence can say what changed. The executor counts them and `postio-ui` words
+//! them.
 
 use crate::ParsedQuery;
 use crate::query::{Clause, Field, Filter, Token, TokenKind, spell};
 
-/// The most relaxations offered: the screen has room for a short list, and
-/// a longer one is a sign the query should be cleared instead (D24).
 pub const MAX_RELAXATIONS: usize = 8;
 
-/// What a relaxation does to one token.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Loosen {
-    /// Take the token out: "Remove ‘before March’", "Anyone, not just Ada".
-    Drop {
-        /// The token's index in the query's tokens.
-        token: usize,
-    },
-    /// `subject:v` becomes the words `v`, looked for anywhere.
-    Anywhere {
-        /// The token's index in the query's tokens.
-        token: usize,
-    },
-    /// `label:v` becomes `in:v`: what was named as a label may be a folder.
-    FolderNotLabel {
-        /// The token's index in the query's tokens.
-        token: usize,
-    },
+    Drop { token: usize },
+    Anywhere { token: usize },
+    FolderNotLabel { token: usize },
 }
 
-/// One looser search: what changed, and the query it gives.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Relaxation {
-    /// What was loosened.
     pub loosen: Loosen,
-    /// The query with that one change.
     pub query: String,
 }
 
-/// The looser searches `query` offers, in token order, at most
-/// [`MAX_RELAXATIONS`].
-///
-/// Every complete filter can be dropped, a set as one term (D26: dropping
-/// one of its values narrows, so it is no way out). A positive `subject:`
-/// can also be looked for anywhere, and a positive `label:` (or a set of
-/// them) can also be a folder; an
-/// exclusion is never turned into something else, because `-subject:x` as
-/// `-x` would exclude more, not less. A free word is dropped only when
-/// there are two or more -- with one, it is the search itself. Half-typed
-/// operators constrain nothing, so dropping one would loosen nothing.
+/// Every complete filter can be dropped (a set as one term: dropping a value narrows). A positive
+/// `subject:` can be looked for anywhere and a positive `label:` can also be a folder; an exclusion
+/// is never turned into something else, since `-subject:x` as `-x` would exclude more. A free word
+/// is dropped only when there are two or more.
 pub fn relax(query: &ParsedQuery) -> Vec<Relaxation> {
     let tokens = query.tokens();
     let words = query.text_terms().count();
@@ -83,7 +50,6 @@ pub fn relax(query: &ParsedQuery) -> Vec<Relaxation> {
                 loosen: Loosen::Anywhere { token: index },
                 query: rebuilt(tokens, index, Some(words_for(value))),
             }),
-            // A set of labels is a set of folders just as well (D26).
             filter if filter.field() == Field::Label => {
                 let folders = Filter::any_of(
                     filter
@@ -116,7 +82,6 @@ pub fn relax(query: &ParsedQuery) -> Vec<Relaxation> {
     out
 }
 
-/// The tokens' raw text with the one at `index` replaced, or dropped.
 fn rebuilt(tokens: &[Token], index: usize, with: Option<String>) -> String {
     crate::edit::join(tokens.iter().enumerate().filter_map(|(i, token)| {
         if i == index {
@@ -127,8 +92,6 @@ fn rebuilt(tokens: &[Token], index: usize, with: Option<String>) -> String {
     }))
 }
 
-/// `value` as free text: a phrase in quotes when it is more than a word, or
-/// when bare it would read as an operator or an exclusion.
 fn words_for(value: &str) -> String {
     if value.chars().any(|c| c.is_whitespace() || c == ':') || value.starts_with('-') {
         format!("\"{value}\"")
@@ -224,8 +187,6 @@ mod tests {
 
     #[test]
     fn a_set_is_dropped_as_one_term_and_never_a_member_at_a_time() {
-        // D26: a member dropped from `from:{ada tomas}` narrows the search,
-        // so it is no way out of one that found nothing.
         assert_eq!(
             relaxed("from:{ada tomas} has:attach budget"),
             vec![
@@ -262,7 +223,6 @@ mod tests {
 
     #[test]
     fn exclusions_are_dropped_but_never_turned_into_something_wider() {
-        // `-subject:x` as `-x` excludes more, not less.
         let found = relaxed("-subject:budget -label:atlas q3");
         assert_eq!(
             found.iter().map(|r| r.loosen).collect::<Vec<_>>(),

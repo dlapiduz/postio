@@ -56,9 +56,8 @@ def folder_roles(source: str) -> set[str]:
             "check-view-roles-are-not-storable: no `kind()` in mailbox.rs.\n"
             "If it was renamed, update this check — do not delete it."
         )
-    # Comments inside the arms mention other items by path (`Self::from_special_use`
-    # explains why Flagged is a folder), and a naive `Self::(\w+)` sweep would
-    # read those as variants. Strip comment lines first.
+    # Comments in the arms mention other items by path; strip comment lines so `Self::(\w+)` does
+    # not read them as variants.
     body = "\n".join(
         line for line in kind.group(1).splitlines() if not line.lstrip().startswith("//")
     )

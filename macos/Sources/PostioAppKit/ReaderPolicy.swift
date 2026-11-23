@@ -3,30 +3,18 @@ import PostioFFI
 import WebKit
 import PostioKit
 
-/// What the reader is allowed to navigate to, which is almost nothing.
-///
-/// The document is loaded once with `loadHTMLString`; after that the only
-/// legitimate requests are the two custom schemes. Everything else is a
-/// sender's markup trying to go somewhere, and the answer is no.
+/// After `loadHTMLString` the only legitimate requests are the two custom schemes; anything else is
+/// a sender's markup trying to go somewhere.
 @MainActor
 public final class ReaderNavigationPolicy: NSObject, WKNavigationDelegate, WKUIDelegate {
-    /// Called with a URL the user activated, so the caller can open it.
-    ///
-    /// A closure rather than opening it here, so the one place in this
-    /// application that hands a URL to the system is a single call site the
-    /// privacy check can see.
+    /// A closure so the one place that hands a URL to the system is a single call site the privacy
+    /// check can see.
     private let openExternally: (URL) -> Void
 
-    /// Called when a document has finished loading, so a caller that has to
-    /// size the view to its content knows there is content to measure.
-    ///
-    /// The conversation pane stacks bodies and each one is exactly as tall as
-    /// what it holds — a scroll view inside a scroll view is the shape every
-    /// mail client that gets this wrong has.
+    /// A conversation stacks bodies each as tall as its content: a scroll view inside a scroll view
+    /// is the shape every mail client that gets this wrong has.
     public var didFinish: ((WKWebView) -> Void)?
 
-    /// Called with a verb a conversation document offers for one of its
-    /// messages -- Reply, Forward, Continue editing, Show images (#1595).
     public var onVerb: ((ThreadVerbFfi) -> Void)?
 
     public init(openExternally: @escaping (URL) -> Void) {
@@ -37,22 +25,16 @@ public final class ReaderNavigationPolicy: NSObject, WKNavigationDelegate, WKUID
         didFinish?(webView)
     }
 
-    /// The async form, deliberately.
-    ///
-    /// The completion-handler overload "nearly matches" under Swift 6 — the
-    /// handler is `@MainActor @Sendable` and a plain `@escaping` closure is a
-    /// different type. The compiler says so as a *warning*, and the
-    /// consequence is not cosmetic: a delegate method that nearly matches is
-    /// never called, so the reader would have had no navigation policy at all
-    /// while looking entirely correct.
+    /// Async form deliberately: under Swift 6 the completion-handler overload only "nearly matches"
+    /// (a warning), and a nearly-matching delegate method is never called, leaving no navigation
+    /// policy.
     public func webView(
         _ webView: WKWebView,
         decidePolicyFor navigationAction: WKNavigationAction,
         preferences: WKWebpagePreferences
     ) async -> (WKNavigationActionPolicy, WKWebpagePreferences) {
-        // Again, per navigation. The configuration's default covers loads that
-        // never reach this delegate; this covers the ones that do, and one
-        // place where it could be forgotten is one too many.
+        // Again per navigation: the configuration's default covers loads that never reach this
+        // delegate.
         preferences.allowsContentJavaScript = false
 
         switch Self.decide(
@@ -72,7 +54,6 @@ public final class ReaderNavigationPolicy: NSObject, WKNavigationDelegate, WKUID
         }
     }
 
-    /// A sender's markup asking for a new window gets none.
     public func webView(
         _ webView: WKWebView,
         createWebViewWith configuration: WKWebViewConfiguration,
@@ -82,32 +63,22 @@ public final class ReaderNavigationPolicy: NSObject, WKNavigationDelegate, WKUID
         nil
     }
 
-    /// What to do with a navigation, decided without touching AppKit.
-    ///
-    /// Separated so the policy is testable: this is the rule that keeps a
-    /// message from loading a remote page inside the reading pane, and it
-    /// would otherwise only be checkable by rendering hostile mail.
+    /// Decided without touching AppKit, so the rule that keeps a message from loading a remote page
+    /// is testable.
     public enum Decision: Equatable {
-        /// The reader's own document, or one of its two schemes.
         case allow
-        /// One of the conversation document's own verbs, for its message.
         case verb(ThreadVerbFfi)
-        /// A link the user activated: hand it to the browser, do not navigate.
         case openExternally(URL)
-        /// Anything else.
         case refuse
     }
 
-    /// Takes the navigation's *inputs* rather than the `WKNavigationAction`
-    /// itself, because that type has no public initialiser — a rule that could
-    /// only be checked by rendering hostile mail would not be checked at all.
+    /// Takes the navigation's inputs rather than `WKNavigationAction`, which has no public
+    /// initialiser.
     public static func decide(navigationType: WKNavigationType, url: URL?) -> Decision {
         guard let url else { return .refuse }
 
-        // The page's own verbs first, before a click can be read as a link
-        // for the browser: a Reply is a link the user activates too. The
-        // parse is the boundary's (`thread_verb`), matched on the scheme a
-        // sender's markup can never carry.
+        // The page's own verbs first, before a click can be read as a link for the browser; matched
+        // on a scheme a sender's markup can never carry.
         if let verb = threadVerb(url: url.absoluteString) {
             return .verb(verb)
         }
@@ -125,14 +96,10 @@ public final class ReaderNavigationPolicy: NSObject, WKNavigationDelegate, WKUID
 
         switch url.scheme {
         case ReaderConfiguration.cidScheme:
-            // Inline parts, answered from the local blob store.
             return .allow
         case ReaderConfiguration.baseScheme:
-            // The document's own base. The handler refuses it anyway; allowing
-            // the navigation only means the refusal comes from one place.
             return .allow
         case "about":
-            // `about:blank`, which is what `loadHTMLString` navigates to.
             return .allow
         default:
             return .refuse

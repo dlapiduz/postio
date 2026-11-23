@@ -1,45 +1,3 @@
-//! An archive keystroke does not queue behind a backfill. #425.
-//!
-//! # What went wrong
-//!
-//! `ARCHITECTURE.md` §1 promises that a mutation is a local write, an
-//! enqueue, an event and a repaint, and that the UI never awaits the network.
-//! The dispatch side of that held. What did not was the *write*: during a
-//! first sync, archiving a message took **1.8 seconds** to reach SQLite.
-//!
-//! Neither of the two mechanisms first suspected was the one. The connection
-//! pool was almost idle throughout — `Pool::get` returned in two microseconds
-//! and never had fewer than one connection spare — so it was not exhaustion.
-//! Nor was it one long transaction: a background batch held the write lock
-//! for 90–200 ms, nowhere near 1.8 s.
-//!
-//! It was **starvation**. SQLite takes one writer at a time and settles a
-//! collision with `busy_timeout`, which is a retry loop rather than a queue:
-//! the loser sleeps, backing off up to a hundred milliseconds, and then races
-//! everyone else again. Two sync lanes commit batches back to back with no
-//! gap between one `COMMIT` and the next `BEGIN IMMEDIATE`, so the keystroke
-//! woke, lost, slept longer, and lost again — for a second and a half.
-//!
-//! The measurement that settles it is that shortening the background
-//! transactions does *not* help: cut to an eighth of their size, the same
-//! write still took half a second, because the number of races to lose went up
-//! as fast as each one got shorter. A queue with a priority in it is the only
-//! thing that fixes this, and that is `postio_storage::WriteGate`.
-//!
-//! # Why the assertion counts messages rather than milliseconds
-//!
-//! The bug is a duration, but a wall-clock assertion is the one thing that
-//! cannot be trusted on a machine running four builds at once (CLAUDE.md, and
-//! #122/#125 where exactly that flaked). So this measures the wait in the
-//! only unit that is invariant to machine speed: **how much backfill got
-//! written while the keystroke waited.**
-//!
-//! That is the quantity the fix actually bounds. Starved, the archive waits
-//! out batch after batch and thousands of messages land ahead of it. Gated, it
-//! waits for the write units already in progress — one per sync lane — and
-//! nothing more, however fast or slow the box is. A slow machine makes both
-//! sides slow together and the ratio holds.
-
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -55,26 +13,11 @@ use postio_storage::repository::{
 use postio_storage::test_support::TempStore;
 use postio_storage::{BlobStore, Store, test_support};
 
-/// Enough round-trip cost that the backfill is still going when the keystroke
-/// lands, without making the test slow.
 const LATENCY: Duration = Duration::from_millis(40);
 
-/// The folder whose backfill is meant to be in the way. Big enough that it
-/// cannot finish before the keystroke does.
 const BULK: &str = "Lists";
 const BULK_MESSAGES: u32 = 3_000;
 
-/// The most backfill that may land while one archive waits.
-///
-/// The fix bounds this at the background write units already in progress —
-/// one per sync lane. `initial::WRITE_UNIT` is 25 and `sync_lanes` is at most
-/// `MAX_SYNC_LANES` of 3, so 75 is the structural ceiling; measured here it is
-/// consistently 25, exactly one unit.
-///
-/// A hundred leaves room for the ceiling plus a lane that began a unit in the
-/// instant before the keystroke registered, and is still fifteen times below
-/// what starvation produced — the better part of two thousand — so it fails
-/// long before the old behaviour comes back.
 const MOST_BACKFILL_A_KEYSTROKE_MAY_WAIT_FOR: u32 = 100;
 
 fn message(n: u32) -> Vec<u8> {
@@ -101,12 +44,6 @@ fn folder(path: &str, attributes: &[&str], messages: u32) -> MockMailbox {
     mailbox
 }
 
-/// An account with nothing synced yet, and an engine pointed at `backend`.
-///
-/// File-backed, and that is load-bearing here for the reason `sync_wave.rs`
-/// records: an in-memory database uses SQLite's shared cache, whose
-/// table-level locking is a different model from the WAL one Postio runs on
-/// and the one this file is about.
 async fn engine_over(backend: Arc<MockBackend>) -> (TempStore, Engine, tempfile::TempDir) {
     let database = test_support::temp().await;
     let account = {
@@ -143,7 +80,6 @@ async fn engine_over(backend: Arc<MockBackend>) -> (TempStore, Engine, tempfile:
     (database, engine, directory)
 }
 
-/// The mailbox the store knows at `path`, once discovery has found it.
 async fn mailbox_at(database: &Store, path: &str) -> Option<postio_model::Mailbox> {
     let connection = database.connect().await.ok()?;
     let account = AccountRepository::new(&connection)
@@ -160,7 +96,6 @@ async fn mailbox_at(database: &Store, path: &str) -> Option<postio_model::Mailbo
         .find(|mailbox| mailbox.path == path)
 }
 
-/// How many messages the store holds under `path`.
 async fn stored(database: &Store, path: &str) -> u32 {
     let Some(mailbox) = mailbox_at(database, path).await else {
         return 0;
@@ -178,11 +113,6 @@ async fn stored(database: &Store, path: &str) -> u32 {
         .unwrap_or(0)
 }
 
-/// Waits for `condition`, or gives up and says what was true when it did.
-///
-/// A liveness bound and nothing else — deliberately enormous, for the reason
-/// `sync_wave.rs` sets out: a deadline small enough to be a performance budget
-/// is a flake waiting for a loaded machine.
 async fn until<F, Fut>(what: &str, condition: F)
 where
     F: Fn() -> Fut,
@@ -210,9 +140,6 @@ async fn an_archive_keystroke_does_not_wait_for_the_backfill() {
 
     let (database, engine, _directory) = engine_over(backend.clone()).await;
 
-    // The keystroke needs somewhere to act: a message in INBOX, and an
-    // Archive folder to file it into. Both come from the sync, which is also
-    // what puts the bulk folder's backfill in the way.
     until("INBOX and Archive to arrive", async || {
         stored(&database, "INBOX").await > 0 && mailbox_at(&database, "Archive").await.is_some()
     })
@@ -235,14 +162,11 @@ async fn an_archive_keystroke_does_not_wait_for_the_backfill() {
             .expect("a message in the inbox")
     };
 
-    // Mid-backfill, and demonstrably so: the bulk folder has begun arriving
-    // and is nowhere near done.
     until("the bulk backfill to be under way", async || {
         stored(&database, BULK).await > 200
     })
     .await;
 
-    // ── the keystroke ───────────────────────────────────────────────────
     let state = SharedState::default();
     let (quiet, _quiet_events): (_, EventStream) = event_channel();
     state.update(&quiet, |app: &mut AppState| app.open_mailbox(inbox.id));
@@ -266,7 +190,6 @@ async fn an_archive_keystroke_does_not_wait_for_the_backfill() {
     let took = started.elapsed();
     let backfill_after = stored(&database, BULK).await;
 
-    // The write really happened, so none of the below is about a no-op.
     let landed = {
         let connection = database.connect().await.expect("a connection");
         MessageRepository::new(&connection)
@@ -278,8 +201,6 @@ async fn an_archive_keystroke_does_not_wait_for_the_backfill() {
     };
     assert_eq!(landed, archive.id, "the archive did not actually file it");
 
-    // Non-vacuity: if the backfill had finished there was nothing to wait
-    // behind, and a pass would mean nothing.
     assert!(
         backfill_after < BULK_MESSAGES,
         "the bulk backfill finished before the keystroke was measured, so this \

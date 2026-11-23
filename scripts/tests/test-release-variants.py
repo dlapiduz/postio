@@ -21,8 +21,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -133,8 +131,6 @@ def main() -> int:
         r = run(root, "check")
         case("a buildable set of rows passes the check", r.returncode == 0, r.stdout + r.stderr)
 
-        # The matrix is what `strategy.matrix` reads through fromJSON: the
-        # rows of one kind, each with its asset name resolved.
         r = run(root, "matrix", "flatpak", "--version", "0.5.0")
         try:
             rows = json.loads(r.stdout)
@@ -161,8 +157,6 @@ def main() -> int:
             r.returncode == 0 and [x["asset"] for x in json.loads(r.stdout or "[]")] == ["postio-0.5.0-macos-arm64.zip"],
             r.stdout + r.stderr,
         )
-        # A kind with no rows is an empty list, which the workflow tests for
-        # before it starts a matrix -- GitHub refuses an empty one.
         r = run(root, "matrix", "nothing-like-this", "--version", "0.5.0")
         case(
             "a kind with no rows is an empty JSON list, not an error",
@@ -170,8 +164,6 @@ def main() -> int:
             f"exit {r.returncode}: {r.stdout!r}",
         )
 
-        # Every asset, and each one's SBOM: what `publish` refuses to
-        # publish without.
         r = run(root, "assets", "--version", "0.5.0")
         assets = r.stdout.split()
         case(
@@ -185,7 +177,6 @@ def main() -> int:
             f"got {assets!r}",
         )
 
-    # ── what the check refuses ────────────────────────────────────────
     refusals = [
         (
             "a flatpak whose manifest does not exist",
@@ -246,9 +237,6 @@ def main() -> int:
             case(f"refuses {label}", r.returncode != 0, f"passed:\n{out}")
             case(f"...and names {named!r}", named in out, out)
 
-    # The real file: the terminal tarball carries the extraction helper
-    # (#1824), built under a profile that unwinds so one bad page fails the
-    # page, not the file.
     real = json.loads((HERE.parent / ".github" / "release-variants.json").read_text(encoding="utf-8"))
     tui = [r for r in real["variants"] if r.get("kind") == "tarball" and r.get("id") == "postio-tui"]
     helpers = [a for r in tui for a in r.get("also", [])]

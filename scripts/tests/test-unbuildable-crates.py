@@ -30,8 +30,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -39,9 +37,6 @@ import patience  # noqa: E402  -- enabled by the sys.path line above
 SCRIPT = Path(__file__).resolve().parent.parent / "unbuildable-crates.sh"
 FAILURES: list[str] = []
 
-# A workspace shaped like Postio's, reduced to what matters: two roots, one
-# crate that reaches them only through a dev-dependency, and two that do not
-# reach them at all.
 WORKSPACE = {
     "packages": [
         {"name": "postio-widgets", "dependencies": [{"name": "postio-ui"}]},
@@ -99,12 +94,8 @@ def case(name: str, got: list[str], want: list[str]) -> None:
 
 
 def main() -> int:
-    # Every library present: nothing is unbuildable, and the answer is empty
-    # rather than an error. This is the Linux case and the common one.
     case("a host with every library excludes nothing", run([]), [])
 
-    # WebKit alone is enough. gtk4 and libadwaita have arm64 bottles and
-    # webkitgtk does not, so this is the actual shape of a Mac.
     case(
         "a host missing webkitgtk cannot build the frontend",
         run(["webkitgtk-6.0"]),
@@ -116,10 +107,6 @@ def main() -> int:
         ["postio-bench", "postio-gtk", "postio-widgets"],
     )
 
-    # The case a hand-written list gets wrong. `postio-bench` reaches the
-    # frontend only through a dev-dependency; excluding the two obvious
-    # crates and not this one drags the whole GTK stack back into a
-    # `--workspace` build through it.
     got = run(["webkitgtk-6.0"])
     case(
         "a dev-dependency on the frontend makes a crate unbuildable too",
@@ -127,10 +114,6 @@ def main() -> int:
         ["postio-bench"],
     )
 
-    # ...and the crates the frontend depends *on* stay buildable. The edge
-    # only points one way: postio-ui is what postio-widgets needs, not the
-    # reverse, and a set that swallowed it would stop a Mac testing almost
-    # anything.
     case(
         "a crate the frontend depends on is still buildable",
         [name for name in got if name in {"postio-ui", "postio-core"}],

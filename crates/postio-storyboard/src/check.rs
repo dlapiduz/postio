@@ -1,58 +1,35 @@
-//! Evaluating a step's checks against what the app said it saw.
-//!
-//! An app's runner serialises its `Observation` after every step and hands
-//! the whole history here, so the rule for what `same_as`, `changed` or
-//! `absent` means lives in one place and two runners cannot read a
-//! storyboard differently (`contracts/runner.md`).
-//!
-//! Three outcomes, not two. A check on a field the app declares it does not
-//! observe -- `back_depth` on both GTK apps, which have no back stack -- is
-//! **not applicable**: it is never a pass, because nothing was checked, and
-//! never a failure, because nothing is wrong (data-model § Checks).
+//! Evaluating a step's checks against what the app said it saw, in one place so two runners cannot
+//! read a storyboard differently. A check on a field the app declares it does not observe is not
+//! applicable: never a pass, because nothing was checked, and never a failure, because nothing is
+//! wrong.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::format::{Check, Checks, Leaf, StepRef};
 
-/// What one check came to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Outcome {
-    /// The observation agrees.
     Pass,
-    /// It does not.
     Fail,
-    /// The app does not observe this field, so nothing was checked.
     NotApplicable,
 }
 
-/// One check's result, worded for whoever reads the run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CheckResult {
-    /// The dotted path into the observation, such as `cursor.index`.
     pub path: String,
-    /// What was expected, in words: `= 1`, `same as step "down" (= 1)`.
     pub expected: String,
-    /// What the observation held; `None` when the field was absent.
     pub observed: Option<Value>,
-    /// What it came to.
     pub outcome: Outcome,
 }
 
-/// Everything a step's checks are evaluated against.
 pub struct History<'a> {
-    /// Serialised observations: `[0]` is the starting state, `[i]` the state
-    /// after step `i` (1-based, as storyboards number steps).
     pub observations: &'a [Value],
-    /// Turns a `same_as` reference into a 1-based step number.
     pub step_number: &'a dyn Fn(&StepRef) -> Option<usize>,
-    /// Paths the app declares it does not observe. A check at or under one
-    /// of these is not applicable.
     pub unobserved: &'a [&'a str],
 }
 
-/// Evaluates `checks` for step `step` (1-based; 0 is the starting state).
 pub fn evaluate(checks: &Checks, step: usize, history: &History<'_>) -> Vec<CheckResult> {
     let mut results = Vec::new();
     walk(checks, "", step, history, &mut results);
@@ -123,8 +100,6 @@ fn leaf_result(leaf: &Leaf, path: String, step: usize, history: &History<'_>) ->
 /// The field at a dotted path. Missing and `null` are the same thing: an
 /// `Option` the app serialised as `None`.
 fn field(observation: &Value, path: &str) -> Option<Value> {
-    // `app` holds namespaced names that are dotted themselves
-    // ("terminal.pane"): the rest of the path is one key there.
     if let Some(name) = path.strip_prefix("app.") {
         let value = observation.get("app")?.get(name)?;
         return (!value.is_null()).then(|| value.clone());
@@ -136,8 +111,6 @@ fn field(observation: &Value, path: &str) -> Option<Value> {
     (!node.is_null()).then(|| node.clone())
 }
 
-/// The field as it was at the referenced step: `None` when the reference
-/// names no step, `Some(None)` when the step had no value there.
 fn same_as(reference: &StepRef, path: &str, history: &History<'_>) -> Option<Option<Value>> {
     let number = (history.step_number)(reference)?;
     let observation = history.observations.get(number)?;
@@ -194,8 +167,6 @@ mod tests {
     use std::collections::BTreeMap;
 
     fn checks(pairs: &[(&str, Leaf)]) -> Checks {
-        // Builds the nested tree a dotted TOML key would, so the evaluator is
-        // tested on the shape the format really produces.
         let mut root = Checks(BTreeMap::new());
         for (path, leaf) in pairs {
             let mut node = &mut root;
@@ -382,8 +353,6 @@ mod tests {
 
     #[test]
     fn an_app_field_is_found_by_its_whole_dotted_name() {
-        // `app` is a map whose keys are themselves dotted ("terminal.pane"),
-        // so the path after `app.` is one key, not more nesting.
         let observations = vec![json!({ "app": { "terminal.pane": "reader" } })];
         let results = evaluate(
             &checks(&[("app.terminal.pane", Leaf::Literal(json!("reader")))]),

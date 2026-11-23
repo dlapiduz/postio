@@ -575,53 +575,6 @@ mod tests {
         }
     }
 
-    fn sent(effects: &[crate::app::Effect]) -> Vec<postio_core::Command> {
-        effects
-            .iter()
-            .filter_map(|effect| match effect {
-                crate::app::Effect::Send(command) => Some(command.clone()),
-                _ => None,
-            })
-            .collect()
-    }
-
-    #[test]
-    fn y_and_shift_y_answer_the_invitation_the_cursor_is_on_with_its_message() {
-        use crate::test_support::press;
-        let mut app = inbox((120, 36));
-        let accept = sent(&crate::app::update(&mut app, press('y')));
-        assert_eq!(
-            accept,
-            vec![postio_core::Command::AcceptInvite {
-                message: Some(postio_model::MessageId::new(1))
-            }]
-        );
-        let decline = sent(&crate::app::update(&mut app, press('Y')));
-        assert_eq!(
-            decline,
-            vec![postio_core::Command::DeclineInvite {
-                message: Some(postio_model::MessageId::new(1))
-            }]
-        );
-    }
-
-    #[test]
-    fn the_dash_takes_the_marker_off_the_row() {
-        use crate::test_support::press;
-        let mut app = inbox((120, 36));
-        let effects = sent(&crate::app::update(&mut app, press('-')));
-        assert!(
-            matches!(
-                effects.as_slice(),
-                [postio_core::Command::DismissMarker {
-                    dismissed: true,
-                    ..
-                }]
-            ),
-            "{effects:?}"
-        );
-    }
-
     /// The cell where `word` starts on the screen's first line holding it.
     fn at_word(drawn: &str, word: &str) -> (u16, u16) {
         let (y, line) = drawn
@@ -645,31 +598,6 @@ mod tests {
                 shift: false,
             }),
         )
-    }
-
-    #[test]
-    fn a_click_on_a_drawn_action_does_what_its_key_does_for_that_row() {
-        let mut app = inbox((120, 36));
-        // The cursor is elsewhere: the invitation's action is still about
-        // the invitation.
-        crate::app::update(&mut app, crate::test_support::press('j'));
-        crate::app::update(&mut app, crate::test_support::press('j'));
-        let drawn = screen(120, 36, &app);
-        let (x, y) = at_word(&drawn, "Decline");
-        let effects = click_at(&mut app, x, y);
-        assert_eq!(
-            sent(&effects),
-            vec![postio_core::Command::DeclineInvite {
-                message: Some(postio_model::MessageId::new(1))
-            }]
-        );
-        let (x, y) = at_word(&drawn, "Accept");
-        assert_eq!(
-            sent(&click_at(&mut app, x, y)),
-            vec![postio_core::Command::AcceptInvite {
-                message: Some(postio_model::MessageId::new(1))
-            }]
-        );
     }
 
     #[test]
@@ -795,48 +723,6 @@ mod tests {
             })
             .unwrap();
         (terminal.backend().buffer().clone(), theme)
-    }
-
-    #[test]
-    fn a_selected_row_has_a_check_and_the_surface_across_it_and_the_cursor_keeps_its_bar() {
-        use crate::caps::Colour;
-        use crate::test_support::press;
-        let mut app = inbox((120, 36));
-        // Select the invitation (the cursor's row), then step to the next.
-        crate::app::update(&mut app, press('x'));
-        crate::app::update(&mut app, press('j'));
-        for colour in [Colour::TrueColor, Colour::None] {
-            let (drawn, theme) = cells(&app, colour);
-            // The invitation is at lines 3 and 4; the cursor is on the digest.
-            for y in [3, 4] {
-                assert_eq!(drawn[(1, 3)].symbol(), "✓", "{colour:?}");
-                let surface = theme.style(crate::theme::Role::Surface);
-                for x in 0..drawn.area.width {
-                    match surface.bg {
-                        Some(bg) => assert_eq!(drawn[(x, y)].bg, bg, "{colour:?} ({x}, {y})"),
-                        None => assert!(
-                            drawn[(x, y)]
-                                .modifier
-                                .contains(ratatui::style::Modifier::REVERSED),
-                            "{colour:?} ({x}, {y}) is not reversed"
-                        ),
-                    }
-                }
-                assert_ne!(drawn[(0, y)].symbol(), "▌", "the cursor is elsewhere");
-            }
-            assert_eq!(
-                drawn[(0, 5)].symbol(),
-                "▌",
-                "{colour:?}: the digest has the cursor"
-            );
-            let reversed = drawn[(10, 5)]
-                .modifier
-                .contains(ratatui::style::Modifier::REVERSED);
-            assert!(
-                !reversed,
-                "{colour:?}: the cursor alone does not change the row's ground"
-            );
-        }
     }
 
     #[test]

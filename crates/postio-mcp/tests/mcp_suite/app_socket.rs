@@ -1,11 +1,3 @@
-//! An agent's calls are answered by the Postio app that has the store open
-//! (ADR 0041, amended 2026-10-14).
-//!
-//! The app is this test binary run again with [`APP`] set: a host over a
-//! demo store, a window connected to it, and the agent socket. The parent
-//! is `postio-mcp`: a [`Server`] whose own backend refuses to open
-//! anything, so every answer it gets came from the app.
-
 use std::cell::Cell;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -19,20 +11,16 @@ use postio_mcp::socket::{self, Asked};
 use postio_mcp::{Audit, Backend, Lease, Server};
 use serde_json::{Value, json};
 
-/// Set in the child that plays the app: the socket to listen on.
 const APP: &str = "POSTIO_MCP_TEST_APP_SOCKET";
-/// The child's `config.toml` and access log.
 const APP_CONFIG: &str = "POSTIO_MCP_TEST_APP_CONFIG";
 const APP_AUDIT: &str = "POSTIO_MCP_TEST_APP_AUDIT";
 
 const NAME: &str = "an_open_app_answers_the_agent_and_its_window_sees_the_change";
 
-/// What the app shares: every folder, and archiving.
 const SHARED: &str =
     "[mcp.accounts.\"test@example.com\"]\nmailboxes = [\"*\"]\nactions = [\"archive\"]\n";
 
-/// `postio-mcp`'s own way to the store, which must never be taken while an
-/// app answers.
+/// Must never be taken while an app answers.
 struct Never(Rc<Cell<u32>>);
 
 impl Backend for Never {
@@ -42,7 +30,6 @@ impl Backend for Never {
     }
 }
 
-/// A host over the demo store, as an app has one.
 fn demo_host() -> (postio_host::Host, tempfile::TempDir) {
     let (database, _) = postio_core::blocking::now(postio_demo::seeded(postio_demo::Seed::Small));
     let blobs_dir = tempfile::tempdir().expect("a directory");
@@ -62,7 +49,6 @@ fn demo_host() -> (postio_host::Host, tempfile::TempDir) {
 
 fn the_app(socket: &Path) {
     let (host, _blobs) = demo_host();
-    // The window the person is looking at.
     let window = host.connect(ClientKind::Ffi);
     let heard = window.events();
     let listener = socket::listen(
@@ -177,7 +163,6 @@ fn an_open_app_answers_the_agent_and_its_window_sees_the_change() {
             .is_some_and(|notice| notice.contains("window can undo it")),
         "{archived}"
     );
-    // The window the person is looking at was told, as for its own key.
     assert!(
         said.any(|line| line.is_ok_and(|line| line.starts_with("window: Archived 1 message"))),
         "the app's window never heard of the archive"
@@ -189,8 +174,6 @@ fn an_open_app_answers_the_agent_and_its_window_sees_the_change() {
     let log = std::fs::read_to_string(&audit).expect("the app's access log");
     assert!(log.contains("\"tool\":\"archive_messages\""), "{log}");
 
-    // The app quits: its socket goes with it, and the next call is
-    // postio-mcp's own to answer.
     drop(app.stdin.take());
     assert!(app.wait().expect("the app ends").success());
     assert!(!socket.exists(), "the socket outlived the app");
@@ -221,7 +204,6 @@ fn private_folder(root: &Path) -> PathBuf {
 fn a_socket_left_by_an_app_that_crashed_is_nobody_and_is_replaced() {
     let directory = tempfile::tempdir().expect("a directory");
     let socket = private_folder(directory.path()).join("mcp.sock");
-    // Bound and abandoned, as a crash leaves it.
     drop(std::os::unix::net::UnixListener::bind(&socket).expect("bound"));
     assert!(socket.exists());
     assert!(matches!(socket::ask(&socket, "{}"), Asked::NoApp));

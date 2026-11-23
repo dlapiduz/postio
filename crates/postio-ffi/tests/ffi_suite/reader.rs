@@ -1,12 +1,3 @@
-//! The reader document, and the inline parts it may reference.
-//!
-//! ADR 0019 Q6 names this the highest risk in the whole port: two readers,
-//! two content security policies, two link policies, and the drift is
-//! invisible until somebody's mail phones home. The answer is that there is
-//! one implementation — so these tests assert against `postio_ui`'s own
-//! functions rather than against strings typed out here, because a copy of the
-//! CSP in a test would drift in exactly the same way as a copy in the code.
-
 use chrono::Utc;
 use postio_body::RemoteImages;
 use postio_ffi::{RemoteImagesFfi, Session, SessionOptions};
@@ -15,12 +6,10 @@ use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
 use postio_ui::reader::document as shared;
 
-/// A session over a store holding one message whose HTML body is `html`.
 async fn with_body(html: &str) -> (std::sync::Arc<Session>, i64) {
     with_body_sent_by(html, None).await
 }
 
-/// [`with_body`], from `sender` when there is one.
 async fn with_body_sent_by(html: &str, sender: Option<&str>) -> (std::sync::Arc<Session>, i64) {
     let database = test_support::memory().await;
     let scratch = tempfile::tempdir().expect("a scratch directory");
@@ -64,10 +53,7 @@ async fn with_body_sent_by(html: &str, sender: Option<&str>) -> (std::sync::Arc<
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_document_carries_the_shared_content_security_policy() {
-    // Byte-for-byte against `postio_ui`'s own answer. "contains a CSP" would
-    // pass against a wrong one, which is the failure mode that matters: a
-    // policy that is present and permissive looks exactly like a policy that
-    // works.
+    // Byte-for-byte: "contains a CSP" passes against a policy that is present but permissive.
     let (session, id) = with_body("<p>hello</p>").await;
 
     let blocked = session
@@ -94,21 +80,14 @@ async fn the_document_carries_the_shared_content_security_policy() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_document_is_the_one_the_gtk_reader_would_render() {
-    // Not "looks similar": identical. Both frontends compose through the same
-    // `postio_ui` functions, so a change to any of them moves both readers at
-    // once or fails here.
     let (session, id) = with_body("<p>hello</p>").await;
     let body = postio_model::MessageBody {
         text: None,
         html: Some("<p>hello</p>".to_string()),
     };
-    // `<p>hello</p>` is not bulk, so both sides draw the original — which is
-    // the point of asserting against `body_html` rather than a literal: the
-    // FFI document is the shared one, whichever way it was drawn.
     let drawn = shared::body_html(&body, RemoteImages::Blocked, shared::Rendering::Original);
-    // Through `sheet_for` rather than naming the sheet: the paper is part of
-    // "the document the GTK reader would render", so a test that pinned it to
-    // `Theme` would stop noticing if the two frontends ever chose differently.
+    // Through `sheet_for`: pinning the paper to `Theme` would stop noticing if the two frontends
+    // chose differently.
     let expected = shared::document_for(
         &drawn.html,
         &drawn.styles,
@@ -127,10 +106,8 @@ async fn the_document_is_the_one_the_gtk_reader_would_render() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_senders_markup_is_bounded_and_carries_no_script() {
-    // `.postio-body` is a security affordance rather than styling (#323): a
-    // visible edge between what Postio wrote and what arrived in the message,
-    // so markup imitating application chrome has a harder time. A frontend
-    // that forgot it would look fine and be wrong.
+    // `.postio-body` is a security affordance (#323): a visible edge between what Postio wrote and
+    // the message, so markup imitating chrome has a harder time.
     let (session, id) = with_body("<p>hi</p><script>alert(1)</script>").await;
     let document = session
         .reader_document(id, RemoteImagesFfi::Blocked, false)
@@ -149,8 +126,8 @@ async fn the_senders_markup_is_bounded_and_carries_no_script() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_message_with_no_body_gets_a_state_plate_not_a_blank_page() {
-    // #70 Cause A: four different "no body" situations all rendering as an
-    // empty column. The boundary must carry the reason, not an empty string.
+    // Four different "no body" situations rendered as an empty column; the boundary must carry the
+    // reason.
     let database = test_support::memory().await;
     let scratch = tempfile::tempdir().expect("a scratch directory");
     let blobs =
@@ -183,10 +160,6 @@ async fn a_message_with_no_body_gets_a_state_plate_not_a_blank_page() {
     session.shutdown();
 }
 
-/// Two messages, each with one inline part, in one store.
-///
-/// Two rather than one, because the property worth asserting is not "a part
-/// resolves" but "a part resolves *only* for the message that declared it".
 async fn two_messages_with_inline_parts() -> (std::sync::Arc<Session>, i64, i64) {
     let database = test_support::memory().await;
     let scratch = tempfile::tempdir().expect("a scratch directory");
@@ -240,10 +213,8 @@ async fn an_inline_part_resolves_for_the_message_that_declared_it() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_content_id_from_another_message_does_not_resolve() {
-    // The security property, asserted rather than described. A `Content-ID` is
-    // meaningful only inside the message that declares it; resolving one
-    // globally would let a sender's markup address another sender's parts, so
-    // a crafted `cid:` referencing a colleague's attachment would render it.
+    // A `Content-ID` is meaningful only inside its message; resolving globally would let a crafted
+    // `cid:` render a colleague's attachment.
     let (session, first, second) = two_messages_with_inline_parts().await;
     assert!(
         session
@@ -252,7 +223,6 @@ async fn a_content_id_from_another_message_does_not_resolve() {
             .is_none(),
         "one message resolved another message's part"
     );
-    // ...and the other way round, so the test cannot pass by resolving nothing.
     assert!(
         session
             .resolve_cid(second, "second@example.com".to_string())
@@ -265,9 +235,8 @@ async fn a_content_id_from_another_message_does_not_resolve() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_content_id_nothing_declared_does_not_resolve() {
-    // A miss is `None` rather than a stall: the corpus fixture `inline-image-cid`
-    // is a `cid:` with no matching part, and the reader must show a broken
-    // image instead of waiting for bytes that are never coming.
+    // A miss is `None`, not a stall: a `cid:` with no matching part shows a broken image instead of
+    // waiting.
     let (session, first, _second) = two_messages_with_inline_parts().await;
     assert!(
         session
@@ -278,11 +247,8 @@ async fn a_content_id_nothing_declared_does_not_resolve() {
     session.shutdown();
 }
 
-/// A session over a store holding one message addressed to `to` and `cc`.
-///
-/// Recipients are read per open message rather than carried on every list
-/// row: a mailbox is never loaded into memory (`PRODUCT.md` §18), and `To`
-/// and `Cc` are questions asked about the message in front of you.
+/// Recipients are read per open message, not carried on every row: a mailbox is never loaded into
+/// memory.
 async fn with_recipients(
     to: &[(Option<&str>, &str)],
     cc: &[(Option<&str>, &str)],
@@ -313,10 +279,6 @@ async fn with_recipients(
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_open_message_can_say_who_it_was_addressed_to() {
-    // #1259: macOS drew who a message was *from* and never who it was *to*.
-    // GTK's reader has drawn both since #319, from four functions it kept
-    // private — so the second frontend's choice was to write them again or
-    // to share them. This asserts it shares them.
     let (session, id) = with_recipients(
         &[(None, "bob@example.com")],
         &[(Some("Grace Hopper"), "grace@example.com")],
@@ -350,8 +312,6 @@ async fn an_open_message_can_say_who_it_was_addressed_to() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_message_addressed_to_nobody_offers_no_recipient_lines_at_all() {
-    // Not blank lines: a header spends no space on a question this message
-    // does not answer, which is what makes the one-recipient case one line.
     let (session, id) = with_recipients(&[], &[]).await;
     let drawn = session.recipients(id).await.expect("a message");
     assert_eq!(drawn.to, None);
@@ -369,10 +329,6 @@ async fn a_message_that_is_not_in_the_store_has_no_recipients_rather_than_empty_
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_reading_pane_offers_the_same_four_verbs_the_keyboard_does() {
-    // Reply, reply all and forward were reachable with the pointer; archive
-    // was keyboard-only, which is the gap #1221 closed for the list. Which
-    // four and in what order is the shared list's call, so the two frontends
-    // cannot offer different bars.
     let (session, _) = with_recipients(&[], &[]).await;
 
     let offered = session.reader_actions();
@@ -395,26 +351,15 @@ async fn the_reading_pane_offers_the_same_four_verbs_the_keyboard_does() {
     session.shutdown();
 }
 
-// --- the grants, as the Privacy pane reads them (#1156) ---------------------
-
-/// A session with nothing in it, for the grant tests.
-///
-/// `in_memory` gives each session an allow-list file of its own under the
-/// temp directory — checked rather than assumed, because a shared path once
-/// made one test's grant true for the next, and because the equivalent
-/// mistake with the keyring reached the developer's real login keychain.
-///
-/// Synchronous, unlike the helpers above, and that is the shape of the thing
-/// rather than an oversight: a grant lives in a file beside the store, not in
-/// the store, so nothing here ever touches a connection.
+/// `in_memory` gives each session an allow-list file of its own, checked rather than assumed: a
+/// shared path once made one test's grant true for the next.
 fn a_session() -> std::sync::Arc<Session> {
     Session::open(SessionOptions::in_memory()).expect("an in-memory session")
 }
 
 #[test]
 fn a_grant_can_be_seen_and_taken_back() {
-    // "Blocked until allowed per sender" is only a promise if *allowed* is
-    // reviewable: a permission nobody can see is one nobody can withdraw.
+    // "Blocked until allowed per sender" is a promise only if the allowed grants are reviewable.
     let session = a_session();
     assert!(
         session.remote_image_grants().is_empty(),
@@ -449,8 +394,8 @@ fn a_grant_can_be_seen_and_taken_back() {
 
 #[test]
 fn revoking_a_domain_does_not_need_to_be_told_it_is_one() {
-    // One entry point for both kinds. A caller that had to guess which list
-    // held a subject would leave a grant in place while reporting it gone.
+    // One entry point for both kinds, or a caller guessing the list would leave a grant in place
+    // while reporting it gone.
     let session = a_session();
     session.allow_domain("example.org".to_owned());
 
@@ -459,19 +404,13 @@ fn revoking_a_domain_does_not_need_to_be_told_it_is_one() {
     assert!(session.remote_image_grants().is_empty());
 }
 
-/// A newsletter, as the shared treatment tests have it: its own background
-/// and a fixed-width table, so the rule puts it on paper.
 const NEWSLETTER: &str = "<html><head><style>body { color: #222 }</style></head>\
     <body bgcolor=\"#f6f1e7\"><table width=\"640\"><tr><td><p>Issue 48</p></td></tr></table></body></html>";
 
-/// [`with_body`], from `sender`.
 async fn with_body_from(html: &str, sender: &str) -> (std::sync::Arc<Session>, i64) {
     with_body_sent_by(html, Some(sender)).await
 }
 
-/// Focus's reader on the Mac draws the same treated document as GTK's
-/// (T062): classified, named on the render-mode line, switched by `O`,
-/// remembered for a sender, and sized by the Mac's geometry (M1).
 #[tokio::test(flavor = "multi_thread")]
 async fn a_newsletter_opens_on_paper_and_can_be_switched_and_remembered() {
     use postio_ffi::TreatmentFfi;
@@ -489,8 +428,6 @@ async fn a_newsletter_opens_on_paper_and_can_be_switched_and_remembered() {
         "the rule's own choice offers nothing to keep"
     );
     assert_eq!(document.sender_choice, None);
-    // A 1440-wide main window: the message window is 880 wide, and paper's
-    // column is 800 of it.
     assert_eq!(document.window_width, 880);
     assert_eq!(document.column_width, 800);
     assert!(document.paper_floor > 0.0 && document.paper_floor < 1.0);
@@ -517,9 +454,6 @@ async fn a_newsletter_opens_on_paper_and_can_be_switched_and_remembered() {
     assert_eq!(remembered.treatment_shown, TreatmentFfi::AppColours);
     assert_eq!(remembered.sender_choice, Some(TreatmentFfi::AppColours));
 
-    // A 1024-wide main window: the window narrows (655, the formula
-    // rounded; the pack draws 656) and Label, Move and Delete fold into
-    // More; the column is the window less 80.
     let narrow = session.focus_reader_document(id, RemoteImagesFfi::Blocked, None, 1024);
     assert_eq!(narrow.window_width, 655);
     assert_eq!(narrow.column_width, 575);
@@ -527,8 +461,6 @@ async fn a_newsletter_opens_on_paper_and_can_be_switched_and_remembered() {
     session.shutdown();
 }
 
-/// A colour the sender set on purpose is kept only where it reads, in the
-/// document itself: the Mac's web view runs no guard of its own (T061).
 #[tokio::test(flavor = "multi_thread")]
 async fn a_kept_colour_is_guarded_in_the_document() {
     let (session, id) = with_body_from(
@@ -553,9 +485,7 @@ async fn a_kept_colour_is_guarded_in_the_document() {
     session.shutdown();
 }
 
-/// `v` asks for the message's source by name. With nothing on this machine
-/// and no server to ask, it says why rather than answering with nothing
-/// (a zero-byte "source" reads as an empty message).
+/// A zero-byte "source" reads as an empty message, so it says why instead.
 #[tokio::test(flavor = "multi_thread")]
 async fn raw_source_says_why_when_there_is_none() {
     let (session, id) = with_body("<p>hello</p>").await;
@@ -567,10 +497,8 @@ async fn raw_source_says_why_when_there_is_none() {
     session.shutdown();
 }
 
-/// The document names Postio's faces over `postio-font:` (ADR 0023), and a
-/// web view's content process cannot see the app's fonts: the Mac serves
-/// them from these bytes, and nothing else under that scheme (C25, Barlow
-/// for a body in app colours).
+/// A web view's content process cannot see the app's fonts: the Mac serves `postio-font:` from
+/// these bytes and nothing else (ADR 0023).
 #[test]
 fn the_reader_s_faces_are_served_by_name_and_nothing_else_is() {
     let session = a_session();
@@ -588,11 +516,6 @@ fn the_reader_s_faces_are_served_by_name_and_nothing_else_is() {
     session.shutdown();
 }
 
-/// The Mac's message window flows the body in its column, as GTK's open
-/// message does (T207): correspondence loses the reader's frame and its
-/// ground so its lines share the column's edges, and the palette is the
-/// platform's own semantic colours, so it follows light, dark and the
-/// accent. A page of its own (paper) keeps its sheet's inset.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_mac_flows_the_body_in_its_column() {
     let (session, id) = with_body_from("<p>Hi all,</p>", "ada@example.com").await;

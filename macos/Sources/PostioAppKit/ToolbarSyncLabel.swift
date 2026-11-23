@@ -1,17 +1,12 @@
 import PostioKit
 import SwiftUI
 
-/// The sync label: a symbol and the controller's words ("Synced 16:09",
-/// "Syncing 12,408 of 18,204", "Offline", "Sync failed"), as
-/// `FocusSyncLabel` last said them.
 public struct ToolbarSyncLabel: View {
     let label: SyncLabel
 
-    /// Before the symbol: from macOS 26 the toolbar puts the label and the
-    /// search field on one glass capsule, and the label starts it, so its
-    /// symbol sat on the capsule's rounded end.
+    /// From macOS 26 the toolbar puts the label and search field on one glass capsule that the
+    /// label starts, so its symbol sat on the rounded end.
     public static let leading: CGFloat = 10
-    /// After the words, before the field.
     public static let trailing: CGFloat = 4
 
     public init(label: SyncLabel) { self.label = label }
@@ -23,7 +18,6 @@ public struct ToolbarSyncLabel: View {
             .fixedSize()
     }
 
-    /// The symbol and the words, as wide as they are.
     struct Words: View {
         let label: SyncLabel
 

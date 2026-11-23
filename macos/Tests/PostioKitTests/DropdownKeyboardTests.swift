@@ -4,17 +4,6 @@ import Testing
 
 @testable import PostioKit
 
-/// The search dropdown's keys on the Mac (specs/010-focus-search T052;
-/// design §2 "Keys in the dropdown").
-///
-/// The controller decides what the dropdown shows and what a row runs
-/// (`crates/postio-focus`, the dropdown section of `tests/controller_suite/bar.rs`). The
-/// one thing the Mac decides is where the arrows rest (009 FR-004): ↓/↑
-/// walk the rows that run, skipping headers and the cheat sheet; a new
-/// view keeps the highlight on the same row while it is still drawn, else
-/// takes the view's default; a run that moved it (`select`) wins. Every
-/// key is handed down: ↩ runs the highlighted row's token, ⌘↩ is Show
-/// all, Tab is the bar's, ⌥⌫ on a recent forgets it, Esc is Back.
 @MainActor
 struct DropdownKeyboardTests {
     final class Engine: CommandBarEngine {
@@ -54,7 +43,6 @@ struct DropdownKeyboardTests {
         DropdownSectionFfi(title: title, note: nil, noteKey: nil, rows: rows, pills: [])
     }
 
-    /// Screen 01: three recents, the saved pills, the cheat sheet.
     static func empty(recents: [UInt64] = [11, 12, 13], highlight: UInt64? = 11, select: UInt64? = nil)
         -> UiEvent
     {
@@ -74,7 +62,6 @@ struct DropdownKeyboardTests {
                 highlight: highlight, select: select, footerHints: [], footerCount: nil))
     }
 
-    /// Screen 03: four hits and Show all, focused by default.
     static func words(highlight: UInt64? = 49, select: UInt64? = nil) -> UiEvent {
         .focusDropdown(
             view: DropdownViewFfi(
@@ -88,7 +75,6 @@ struct DropdownKeyboardTests {
                 footerCount: "48 matches · 38 ms"))
     }
 
-    /// Screen 04: two people, a label, then the latest from the first.
     static func people() -> UiEvent {
         .focusDropdown(
             view: DropdownViewFfi(
@@ -103,7 +89,6 @@ struct DropdownKeyboardTests {
                 footerCount: "Contacts and everyone you have mail with"))
     }
 
-    /// Screen 02: the ghost after "at", the word focused.
     static func prefix() -> UiEvent {
         .focusDropdown(
             view: DropdownViewFfi(
@@ -119,9 +104,6 @@ struct DropdownKeyboardTests {
         return (model, engine)
     }
 
-    /// Screens 02 and 04: "Tab completes" in the field beside the ghost;
-    /// "↩ adds" on whichever person the arrows rest on, and on no other;
-    /// the operator typed, for the field to draw tertiary.
     @Test func theFieldTeachesTabAndTheHighlightedPersonSaysReturnAdds() {
         let (model, _) = Self.model()
         let adds = KeyHintFfi(key: "Return", label: "adds")
@@ -214,13 +196,10 @@ struct DropdownKeyboardTests {
         model.apply(Self.empty())
         model.move(by: 2)
         #expect(model.dropdown.highlighted == 13)
-        // The recents read again, the same three: the arrows stay.
         model.apply(Self.empty())
         #expect(model.dropdown.highlighted == 13)
-        // The highlighted one forgotten: the view's default.
         model.apply(Self.empty(recents: [11, 12], highlight: 11))
         #expect(model.dropdown.highlighted == 11)
-        // A run moved it: taken, whatever was highlighted.
         model.apply(Self.words())
         #expect(model.dropdown.highlighted == 49)
         model.apply(Self.words(select: 41))

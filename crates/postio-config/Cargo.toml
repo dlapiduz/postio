@@ -9,7 +9,6 @@ publish.workspace = true
 repository.workspace = true
 
 [dependencies]
-# A digest rule's day and time (spec 007 T132): types only, no clock.
 chrono = { workspace = true }
 notify = "8.2.2"
 postio-model.workspace = true
@@ -17,26 +16,20 @@ serde = { workspace = true }
 thiserror = { workspace = true }
 toml = { workspace = true }
 toml_edit = "0.25"
-# `[focus.model]`'s endpoint, read as a URL to tell this computer from
-# another (spec 007 FR-168). Parsing only: nothing here connects.
+# Parsing only: nothing here connects.
 url = { workspace = true }
 postio-workspace-hack.workspace = true
 
 [lints.rust]
-# Not the workspace floor: see EXCEPTIONS in scripts/checks/check-lint-floor.py.
-# `tests/validation_cost.rs` installs a counting global allocator, and
-# implementing `GlobalAlloc` is `unsafe impl` by definition. A test target
-# cannot opt out of `forbid`, which is why this is a crate-level `deny` rather
-# than a local allow. No library code here uses `unsafe`.
+# `tests/validation_cost.rs` installs a counting global allocator, which is `unsafe impl`; a test
+# target cannot opt out of `forbid`.
+# No library code here uses `unsafe` (check-lint-floor.py EXCEPTIONS).
 unsafe_code = "deny"
-missing_docs = "warn"
-# A crate that keeps its own `[lints.rust]` inherits none of the workspace
-# lints, so the clippy floor's most load-bearing rule is restated here:
-# `let _ = some_async_call()` drops the future unpolled, which is how a sent
-# draft went on existing. See the workspace `[lints.clippy]`.
+missing_docs = "allow"
+# A crate with its own `[lints.rust]` inherits no workspace lints, so the clippy floor's
+# `let_underscore_future` rule is restated.
 [lints.clippy]
 let_underscore_future = "deny"
 
-# Restated from the workspace `[lints.cargo]`, for the same reason.
 [lints.cargo]
 unused_dependencies = "allow"

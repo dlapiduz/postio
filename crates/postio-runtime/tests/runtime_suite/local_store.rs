@@ -1,15 +1,8 @@
-//! Reading the local store through the runtime's own boundary.
-//!
-//! Everything here goes through [`Store`], which is what a frontend can reach:
-//! no `rusqlite` types cross it, and no call blocks the thread that made it.
-//! Nothing here touches the network.
-
 use postio_model::MailboxRole;
 use postio_runtime::store::{ListScope, LocalStore, MailStore, PageRequest};
 use postio_storage::seed::seed_small;
 use postio_storage::test_support;
 
-/// The seeded database, and a store over it.
 async fn seeded() -> (postio_storage::Store, postio_storage::seed::SeedReport) {
     let database = test_support::memory().await;
     let report = seed_small(&database, 7).await;
@@ -91,8 +84,8 @@ async fn rows_come_newest_first_and_paging_walks_them_without_repeating() {
 
 #[tokio::test]
 async fn every_row_knows_how_long_its_thread_is() {
-    // The badge on the canvas' row is a count of the thread, and a source
-    // that left it at one would silently remove the badge from every row.
+    // The badge is the thread's count; a source leaving it at one would silently remove it from
+    // every row.
     let (database, report) = seeded().await;
     let store = LocalStore::new(&database);
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
@@ -158,10 +151,8 @@ async fn the_account_reads_its_folders_with_their_counts() {
 
 #[tokio::test]
 async fn several_reads_at_once_do_not_wedge_a_single_threaded_runtime() {
-    // `#[tokio::test]` runs on a current-thread runtime: exactly one worker.
-    // A read that ran *on* that worker rather than on a blocking thread would
-    // hold it for the length of the query, and this is the shape that shows
-    // it — several in flight, all expected back.
+    // A current-thread runtime has one worker: a read running on it would hold it for the whole
+    // query.
     let (database, report) = seeded().await;
     let store = LocalStore::new(&database);
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
@@ -183,23 +174,16 @@ async fn several_reads_at_once_do_not_wedge_a_single_threaded_runtime() {
 
 #[tokio::test]
 async fn seeking_to_a_page_finds_the_same_rows_as_walking_to_it() {
-    // The store remembers where each page it has read began, so the next one
-    // can seek rather than walk (postio-om2). That is only worth having if it
-    // is the *same* page: a cursor that lands one row off would show the user
-    // a duplicate or skip a message, and neither is visible until somebody
-    // counts.
     let database = test_support::memory().await;
     let report = seed_small(&database, 3).await;
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
 
-    // A fresh store has no marks: every read walks.
     let walked = LocalStore::new(&database);
     let mut cold = Vec::new();
     for offset in (0..12).step_by(3) {
         cold.push(page_ids(&walked, inbox, offset, 3).await);
     }
 
-    // A store that has read them in order has a mark for each boundary.
     let sought = LocalStore::new(&database);
     let mut warm = Vec::new();
     for offset in (0..12).step_by(3) {
@@ -207,7 +191,6 @@ async fn seeking_to_a_page_finds_the_same_rows_as_walking_to_it() {
     }
 
     assert_eq!(cold, warm, "seeking and walking disagree about the rows");
-    // And the pages really are distinct, or this proves nothing.
     let flat: Vec<_> = warm.iter().flatten().collect();
     let unique: std::collections::BTreeSet<_> = flat.iter().collect();
     assert_eq!(flat.len(), unique.len(), "a page repeated a row: {warm:?}");
@@ -215,26 +198,17 @@ async fn seeking_to_a_page_finds_the_same_rows_as_walking_to_it() {
 
 #[tokio::test]
 async fn a_list_that_changed_length_throws_the_remembered_boundaries_away() {
-    // Every row shifts when mail arrives or leaves, so a remembered boundary
-    // points at the wrong one. The row count is checked on every read — it is
-    // a column lookup, not a count — and a change drops the marks.
-    //
-    // What this does *not* catch is a reorder that leaves the length alone:
-    // one message arriving and another being deleted between two reads. The
-    // cost there is one page off by a row, which is exactly what a plain
-    // `OFFSET` does in the same situation and what `page_at`'s own
-    // documentation warns about. It is not a regression, and pretending to
-    // fix it would mean a cache that has to be told about every write.
+    // A remembered boundary points at the wrong row when mail arrives or leaves; a changed count
+    // drops the marks.
+    // A same-length reorder is not caught, exactly as with plain `OFFSET`.
     let database = test_support::memory().await;
     let report = seed_small(&database, 5).await;
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
     let store = LocalStore::new(&database);
 
-    // Read two pages, so there is a boundary to be wrong about.
     page_ids(&store, inbox, 0, 3).await;
     page_ids(&store, inbox, 3, 3).await;
 
-    // The newest message goes away, and everything below it moves up one.
     {
         let connection = database.connect().await.expect("a connection");
         connection
@@ -262,22 +236,16 @@ async fn a_list_that_changed_length_throws_the_remembered_boundaries_away() {
 
 #[tokio::test]
 async fn a_cached_count_of_zero_is_checked_rather_than_believed() {
-    // `postio-qhz.7`. The total this read carries is the list model's
-    // `n_items`, and a `GtkListView` over a model of length zero asks for no
-    // pages — so a cached count that is wrong low does not draw a wrong
-    // number, it draws an empty mailbox. On a live account that meant 81,716
-    // messages and nothing on screen in any folder.
-    //
-    // The column has an owner now. This is about what happens if it ever
-    // stops: the read has to degrade to slow, not to invisible.
+    // The total is the list model's `n_items`, and a `GtkListView` over length zero asks for no
+    // pages, so a count wrong low draws an empty mailbox; the read must degrade to slow, not
+    // invisible.
     let database = test_support::memory().await;
     let report = seed_small(&database, 5).await;
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
 
     {
         let connection = database.connect().await.expect("a connection");
-        // Behind the triggers' back, which is exactly the drift being guarded
-        // against: the rows are all still there.
+        // Behind the triggers' back: the drift being guarded against.
         connection
             .execute(
                 "UPDATE mailboxes SET total_count = 0 WHERE id = ?1",
@@ -304,7 +272,6 @@ async fn a_cached_count_of_zero_is_checked_rather_than_believed() {
     );
 }
 
-/// The ids on one page.
 async fn page_ids(
     store: &LocalStore,
     mailbox: postio_model::ids::MailboxId,
@@ -331,8 +298,6 @@ async fn a_ranked_set_of_ids_reads_back_in_that_order() {
     let store = LocalStore::new(&database);
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
 
-    // Take real ids from a real read, so the ranking is over mail the store
-    // actually holds rather than over numbers.
     let page = store
         .message_page(PageRequest {
             scope: ListScope::Mailbox(inbox),
@@ -347,8 +312,6 @@ async fn a_ranked_set_of_ids_reads_back_in_that_order() {
         page.rows.len()
     );
 
-    // Date order is what `message_page` just returned. A ranking is not
-    // that, which is the whole reason this read exists.
     let ranked: Vec<_> = [3usize, 0, 2, 1]
         .iter()
         .map(|at| page.rows[*at].id)
@@ -365,8 +328,6 @@ async fn a_ranked_set_of_ids_reads_back_in_that_order() {
         "the ranking was lost somewhere between the id list and the rows"
     );
 
-    // Summaries, not stubs: these are what the list draws, and the thread
-    // count is the badge. `message_page` fills it, so this must too.
     assert!(
         rows.iter().all(|row| row.thread_count >= 1),
         "a hit came back with no thread count, so its badge would vanish"
@@ -376,7 +337,6 @@ async fn a_ranked_set_of_ids_reads_back_in_that_order() {
         "the row is not the message that was asked for"
     );
 
-    // Nothing asked for, nothing read.
     assert!(
         store
             .message_rows(Vec::new())
@@ -389,9 +349,6 @@ async fn a_ranked_set_of_ids_reads_back_in_that_order() {
 
 #[tokio::test]
 async fn a_thread_reads_across_every_folder_it_touches() {
-    // The acceptance criterion of #44, through the runtime's own boundary
-    // rather than against a fake: a conversation half of which has been
-    // archived is still one conversation, and the drill-in reads it as one.
     use postio_model::ids::ThreadId;
     use postio_storage::repository::MessageRepository;
 
@@ -449,8 +406,6 @@ async fn a_thread_reads_across_every_folder_it_touches() {
         "every message of the thread, and only those"
     );
 
-    // And a mailbox-scoped read of the same thread cannot see it whole --
-    // which is what the drill-in used to be limited to.
     let in_the_inbox = store
         .message_page(PageRequest {
             scope: ListScope::Mailbox(inbox),

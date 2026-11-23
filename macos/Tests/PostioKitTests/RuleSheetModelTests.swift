@@ -4,13 +4,6 @@ import Testing
 
 @testable import PostioKit
 
-/// The digest-this-sender sheet, as the controller's intents leave it
-/// (specs/009-focus-macos T115, screen 24).
-///
-/// The controller keeps the draft rule -- who it matches, its schedule,
-/// the preview it read -- and writes it. The Mac draws every
-/// `FocusOpenRule`/`FocusRule` whole and hands back each change of a
-/// control, the two links, Create, and Cancel as the controller's Back.
 @MainActor
 struct RuleSheetModelTests {
     final class Engine: RuleEngine {

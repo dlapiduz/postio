@@ -9,22 +9,13 @@ publish.workspace = true
 repository.workspace = true
 
 [dependencies]
-# Due dates, and when a call was made for the egress log.
 chrono = { workspace = true, features = ["std"] }
-# HTTP/1.1 framing for the runtime's chat completions, over a stream this
-# crate opens itself to a loopback port or a local socket (research R16,
-# "Pimalaya first"). `client` only: its TLS features are off, so nothing
-# here can speak to another machine's https, and there is no
-# pimalaya-stream underneath.
+# HTTP/1.1 framing over a loopback port or local socket (R16). `client` only, TLS off, so nothing
+# can speak to another machine.
 io-http = { version = "0.8", default-features = false, features = ["client"] }
-# The seam this crate answers: the needs-action question's fixed schema.
 postio-classify.workspace = true
-# `ModelEndpoint`: `[focus.model]`'s address, which can only name this
-# computer, and the section's switches.
 postio-config.workspace = true
-# Message types and the egress log's vocabulary.
 postio-model.workspace = true
-# The request and response bodies.
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
@@ -35,6 +26,5 @@ postio-workspace-hack.workspace = true
 workspace = true
 
 [features]
-# The fake runtime (`postio_ai::fake`), for other crates' tests: the default
-# suite opens no connection, loopback included.
+# The fake runtime for other crates' tests; the default suite opens no connection.
 test-support = []

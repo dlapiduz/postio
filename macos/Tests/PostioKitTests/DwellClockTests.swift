@@ -3,23 +3,8 @@ import Testing
 
 @testable import PostioKit
 
-/// Resting marks; sweeping does not (#71, #1159).
-///
-/// Time is injected rather than waited for, so these assert the wiring and
-/// run in microseconds. The *rule* — what to do about a cursor on nothing,
-/// and how long to wait — is `postio_ui::dwell`'s and is asserted there; what
-/// these hold is that this clock asks it and honours the answer. The rule is the one that matters: unread state is
-/// only a signal while it means "you have not looked at this", and a client
-/// that marks on arrival destroys it the first time somebody scrolls a
-/// mailbox end to end.
 @MainActor
 @Suite struct DwellClockTests {
-    /// A scheduler a test drives by hand.
-    ///
-    /// `@MainActor` like the clock it feeds: the whole thing lives on one
-    /// actor, so there is no concurrency here to be unsafe about — the only
-    /// reason time is injected at all is to assert the rule without waiting
-    /// a real second per case.
     @MainActor
     final class Fake {
         private var pending: [(id: Int, work: () -> Void)] = []
@@ -33,7 +18,6 @@ import Testing
             return Handle(fake: self, id: id)
         }
 
-        /// Let every armed clock that was not cancelled fire.
         func advance() {
             let due = pending
             pending = []
@@ -46,10 +30,6 @@ import Testing
             cancelled += before - pending.count
         }
 
-        /// `@MainActor` for the same reason the fake is: the clock cancels
-        /// from the actor it lives on, and the protocol's `cancel` is not
-        /// isolated because the production handle wraps a `DispatchWorkItem`
-        /// that is safe anywhere.
         struct Handle: DwellClock.Cancellable {
             let fake: Fake
             let id: Int
@@ -75,9 +55,8 @@ import Testing
     }
 
     @Test func sweepingThroughAMailboxMarksNothing() {
-        // The rule. Holding `j` re-arms on every row and rests on none, so a
-        // sweep of fifty messages must mark zero of them — anything else
-        // destroys unread state as a signal, which is the one thing it is for.
+        // Holding `j` re-arms on every row and rests on none, so a sweep of fifty messages must
+        // mark zero: unread state is a signal.
         let fake = Fake()
         var marked: [Int64] = []
         let dwell = clock(fake) { marked.append($0) }
@@ -85,8 +64,6 @@ import Testing
         for row in Int64(1)...50 {
             dwell.cursorMoved(to: row)
         }
-        // Only the last one is still armed; the other forty-nine were
-        // cancelled as the cursor left them.
         fake.advance()
 
         #expect(marked == [50], "a sweep marked \(marked.count) messages")
@@ -104,8 +81,6 @@ import Testing
     }
 
     @Test func stoppingCancelsAClockInFlight() {
-        // The window losing focus, or an overlay taking over: the message is
-        // no longer in front of anybody, so the clock must not fire.
         let fake = Fake()
         var marked: [Int64] = []
         let dwell = clock(fake) { marked.append($0) }
@@ -118,9 +93,7 @@ import Testing
     }
 
     @Test func theMessageMarkedIsTheOneTheClockStartedOn() {
-        // The cursor may move between the timer firing and the mark running.
-        // What was read is what the clock was armed for, not wherever the
-        // cursor happens to be now.
+        // What was read is what the clock was armed for, not wherever the cursor is now.
         let fake = Fake()
         var marked: [Int64] = []
         let dwell = clock(fake) { marked.append($0) }

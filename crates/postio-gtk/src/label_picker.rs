@@ -1,10 +1,6 @@
-//! The label picker (screen 13; US5 scenario 5): `l` lists the account's
-//! labels, each with its colour, and either "✓ applied" or how many
-//! conversations carry it. Typing filters; `Space` puts a label on or takes
-//! it off and keeps the picker open; a name nobody has is offered as
-//! "Create label"; `Enter` closes, making and applying that label first
-//! when it is the row chosen. Every change is one `add_label`, so `Ctrl+Z`
-//! takes each back.
+//! The label picker: `l` lists the account's labels; `Space` puts a label on or off and keeps the
+//! picker open; a name nobody has is offered as "Create label". Every change is one `add_label`, so
+//! `Ctrl+Z` takes each back.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -20,23 +16,15 @@ use postio_widgets::widgets::pickers::{Field, Mark, Picked, Picker, Row};
 
 use postio_ui::pickers::LabelRow as Entry;
 
-/// What the label picker opens on.
 #[derive(Debug, Clone)]
 pub struct LabelAim {
-    /// The account whose labels are offered while `message`'s cannot be
-    /// read.
     pub account: AccountId,
-    /// The message whose account's labels are offered (T170).
     pub message: Option<postio_model::MessageId>,
-    /// The conversations whose labels are shown as applied.
     pub threads: Vec<ThreadId>,
 }
 
-/// What sends a label change: the command, aimed at what the picker opened
-/// on.
 type Sender = Rc<dyn Fn(Command)>;
 
-/// The picker. See the module.
 pub struct LabelPicker {
     picker: Rc<Picker>,
     client: Client,
@@ -50,7 +38,6 @@ pub struct LabelPicker {
 }
 
 impl LabelPicker {
-    /// A closed picker, reading through `client`, its keys from `keymap`.
     pub fn new(client: Client, keymap: &Keymap) -> Rc<Self> {
         let picker = Picker::new(
             keymap,
@@ -87,19 +74,15 @@ impl LabelPicker {
         this
     }
 
-    /// The frame, for keys and tests.
     pub fn picker(&self) -> &Rc<Picker> {
         &self.picker
     }
 
-    /// Read every key from `keymap`.
     pub fn set_keymap(&self, keymap: &Keymap) {
         self.picker.set_keymap(keymap);
         self.picker.set_footnote(&pickers::label_footnote(keymap));
     }
 
-    /// Open from `parent` at `rect`, naming `target`, over what `aim`
-    /// says; `send` sends each change.
     pub fn open(
         &self,
         parent: &impl gtk::prelude::IsA<gtk::Widget>,
@@ -121,7 +104,6 @@ impl LabelPicker {
         self.read(account, message, threads);
     }
 
-    /// Read the labels, their counts, and which the conversations carry.
     fn read(
         &self,
         account: AccountId,
@@ -131,8 +113,7 @@ impl LabelPicker {
         let client = self.client.clone();
         let weak = self.me.borrow().clone();
         glib::spawn_future_local(async move {
-            // The row's own account: a label is an account's, and a message
-            // can carry only its account's (T170).
+            // A label is an account's, and a message can carry only its account's.
             let account = match message {
                 Some(message) => {
                     // POSTIO-GLIB-SAFE: a client call is a oneshot receive.
@@ -160,7 +141,6 @@ impl LabelPicker {
             let Some(this) = weak.upgrade() else {
                 return;
             };
-            // Applied: on every conversation the picker acts on.
             let applied = pickers::applied_labels(carried, &threads);
             this.labels.replace(labels);
             this.counts.replace(counts.into_iter().collect());
@@ -169,8 +149,6 @@ impl LabelPicker {
         });
     }
 
-    /// List the labels the filter keeps, "Create label" first when the
-    /// filter names none of them.
     fn show(&self) {
         let filter = self.picker.entry().text().to_string();
         let labels = self.labels.borrow();
@@ -216,8 +194,6 @@ impl LabelPicker {
         }
     }
 
-    /// Put the `index`th row's label on, or take it off; make it first
-    /// when it is "Create label". Closes afterwards when `then_close`.
     fn toggle(&self, index: usize, then_close: bool) {
         let Some(entry) = self.shown.borrow().get(index).cloned() else {
             return;

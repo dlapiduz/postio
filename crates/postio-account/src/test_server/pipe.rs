@@ -1,14 +1,6 @@
-//! An in-memory way to reach the server: no socket, so no real I/O.
-//!
-//! Over loopback, tokio's paused clock misfires, because bytes arrive from
-//! the OS while the runtime believes it is idle and jumps ahead. A pipe has
-//! no such source: every wake-up is a task the runtime can see, so virtual
-//! time advances exactly when everything is waiting on a deadline. That is
-//! what lets a stall test assert "gave up after exactly the deadline" and
-//! finish in milliseconds.
-//!
-//! The pipe's capacity is also a dial. A small one fills after a few
-//! kilobytes, which is how a client is made to block in a write.
+//! Over loopback tokio's paused clock misfires, because OS bytes arrive while the runtime believes
+//! it is idle. A pipe has no such source, so virtual time advances exactly when everything waits on
+//! a deadline. Its capacity is a dial: a small one makes a client block in a write.
 
 use std::sync::Arc;
 
@@ -20,10 +12,6 @@ use super::Shared;
 use super::session::Session;
 use super::wire::Conn;
 
-/// Connects a client to a [`TestServer`](super::TestServer) through memory.
-///
-/// Every connection gets a fresh pipe and a fresh server-side session, so the
-/// server counts them the way it counts sockets.
 #[derive(Debug)]
 pub struct InMemoryConnector {
     shared: Arc<Shared>,

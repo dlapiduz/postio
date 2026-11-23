@@ -1,52 +1,9 @@
-//! Mailbox selection, cached per connection — and the UID generation that
-//! cache is only ever allowed to hold briefly.
-//!
-//! # Why there is a cache
-//!
-//! A pooled connection is reused across many small fetches — a
-//! ten-thousand-message backfill calls into the same session chunk after
-//! chunk, per `UidSet::chunks` — and reselecting the same mailbox before
-//! every one of them would double the round trips for no reason. So the
-//! session remembers what it last selected, and in what mode, and only
-//! issues `SELECT` again when the mailbox changes or a caller needs
-//! `CONDSTORE` and the cached selection does not have it.
-//!
-//! `CONDSTORE`, once selected on a mailbox, stays active for the life of that
-//! selection (RFC 7162 §3.1.4), which is what makes the "reuse if it already
-//! has condstore" half of the cache check correct.
-//!
-//! # Why the cache cannot be trusted indefinitely
-//!
-//! `UIDVALIDITY` is the generation number of a mailbox's UID space, and a
-//! server that restores from backup renumbers it. Every UID Postio holds then
-//! means a different message, or none. Caching the generation alongside the
-//! selection is what makes that renumber *invisible*: the connection is
-//! parked, handed out again, and keeps answering with the generation it
-//! learned before the world changed. UIDs from the new generation are then
-//! read as though they were the old ones — flags land on the wrong messages,
-//! bodies attach to the wrong rows, a delete hits mail the user never chose —
-//! and nothing errors, because every layer above believes the generation it
-//! was told.
-//!
-//! Three things together make that unreachable, at a cost of nothing in the
-//! backfill case:
-//!
-//! 1. **A cached selection expires.** Past
-//!    [`PoolConfig::selection_max_age`](super::PoolConfig::selection_max_age)
-//!    the next use re-`SELECT`s. Chunks of one backfill follow each other in
-//!    milliseconds and so still share a single `SELECT`; anything slower pays
-//!    one extra round trip per mailbox per interval.
-//! 2. **A contradiction is reported, never absorbed.** When a `SELECT`
-//!    returns a generation different from the one this session last told a
-//!    caller about, the operation fails with
-//!    [`BackendError::UidValidityChanged`] — which
-//!    [`requires_full_resync`](BackendError::requires_full_resync) — rather
-//!    than quietly returning data from the new generation.
-//! 3. **One connection's discovery invalidates every other's cache.**
-//!    [`Generations`] is shared by every session in a pool and carries an
-//!    epoch that steps on each change, so a cached selection made before the
-//!    discovery stops being a cache hit immediately rather than at the end of
-//!    its interval.
+//! A pooled session caches its selected mailbox so a backfill's chunks share one `SELECT`;
+//! `CONDSTORE` stays active for the life of a selection (RFC 7162 §3.1.4).
+//! The cached UID generation must not be trusted for long: an unnoticed renumber would land flags,
+//! bodies and deletes on the wrong messages. So a selection expires
+//! (`PoolConfig::selection_max_age`), a contradicting `SELECT` fails with `UidValidityChanged`, and
+//! `Generations` is shared by the pool with an epoch that steps on each change.
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -68,35 +25,23 @@ use super::mailboxes::mailbox_argument;
 use super::{ConnectionPool, ImapSession, Priority};
 use crate::backend::BackendResult;
 
-/// What is currently selected on a session, and how.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct SelectedMailbox {
     path: String,
     condstore: bool,
-    /// Whether it was opened with `EXAMINE`. A read-only selection can serve
-    /// no write, so it is never a cache hit for anything else.
+    /// `EXAMINE`: a read-only selection can serve no write, so it is never a cache hit for anything
+    /// else.
     read_only: bool,
     uid_validity: UidValidity,
-    /// The generation epoch this selection was confirmed against. A newer one
-    /// means somebody else has since seen this mailbox renumbered.
     epoch: u64,
-    /// When the server last confirmed it.
     confirmed_at: Instant,
-    /// What `EXISTS` said when the server last confirmed it.
-    ///
-    /// Kept so a command can sanity-check its own answer against the count
-    /// the same connection was given. Goes stale the moment mail arrives,
-    /// and only in the safe direction: a stale count is lower than the truth,
-    /// so a check against it under-fires rather than over-fires.
+    /// Goes stale only in the safe direction: a stale count is lower than the truth, so a check
+    /// against it under-fires.
     exists: u32,
 }
 
-/// The UID generation every session in a pool has observed, per mailbox.
-///
-/// Shared rather than per-connection on purpose: a renumber discovered by one
-/// connection has to stop every other connection from acting on what it
-/// cached before, and a fresh connection opened after the event still has to
-/// be able to contradict what the pool believed.
+/// Shared, not per-connection: a renumber found by one connection must stop every other acting on
+/// what it cached, and a fresh connection can still contradict what the pool believed.
 #[derive(Debug, Default)]
 pub(super) struct Generations {
     seen: Mutex<BTreeMap<String, Generation>>,
@@ -108,44 +53,31 @@ struct Generation {
     epoch: u64,
 }
 
-/// What a fresh `SELECT` means for the caller that asked for it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Verdict {
-    /// The generation is the one everybody already believed.
     Unchanged,
-    /// It is not, and whoever was told `known` has to be told so.
     Changed { known: UidValidity },
 }
 
 impl Generations {
-    /// An empty log.
     pub(super) fn new() -> Self {
         Self::default()
     }
 
-    /// What the pool believes for `path`, recording nothing.
-    ///
-    /// `observe` is the committing form. This one exists because a disputed
-    /// generation has to be *checked* before it is written down -- see
-    /// `select_now`.
+    /// Does not record: a disputed generation must be checked before it is written down
+    /// (`select_now`).
     fn known(&self, path: &str) -> Option<UidValidity> {
         self.lock()
             .get(path)
             .map(|generation| generation.uid_validity)
     }
 
-    /// The current epoch for `path`, if anything has ever been observed.
     fn epoch(&self, path: &str) -> Option<u64> {
         self.lock().get(path).map(|generation| generation.epoch)
     }
 
-    /// Records an observation and says what it means.
-    ///
-    /// `promised` is what the asking session last reported to a caller for
-    /// this mailbox. It takes precedence over the shared log because it is
-    /// the promise that would be broken: a second session that also believed
-    /// the old generation must be told even though the first one has already
-    /// updated the log.
+    /// `promised` is what this session last reported to a caller; it outranks the shared log,
+    /// because that is the promise that would be broken.
     fn observe(
         &self,
         path: &str,
@@ -181,11 +113,6 @@ impl Generations {
 }
 
 impl ImapSession {
-    /// Puts this session under a pool's selection policy.
-    ///
-    /// Called when the pool opens a connection, so every session in one pool
-    /// shares one view of each mailbox's generation. A session opened outside
-    /// a pool keeps its own.
     pub(super) fn set_selection_policy(
         &mut self,
         generations: Arc<Generations>,
@@ -195,26 +122,11 @@ impl ImapSession {
         self.selection_max_age = max_age;
     }
 
-    /// Selects `path` unless it is already selected in a mode that covers
-    /// what the caller needs, and returns its `UIDVALIDITY`.
-    ///
-    /// `want_condstore` asks for `SELECT (CONDSTORE)`, which RFC 7162 §3.3.1
-    /// requires before a `FETCH … (CHANGEDSINCE n)` on this mailbox. Asking
-    /// for it against a server that never advertised `CONDSTORE` is
-    /// [`BackendError::Unsupported`], not a silent fallback.
-    ///
-    /// # Errors
-    ///
-    /// [`BackendError::UidValidityChanged`] when the mailbox has been
-    /// renumbered since this session last reported a generation for it. The
-    /// new generation is adopted before the error is returned, so the caller
-    /// that rebuilds and retries succeeds rather than looping — see the
-    /// [module docs](self).
-    /// What `EXISTS` said for the mailbox currently selected on this
-    /// connection, if it is `path`.
-    ///
-    /// For a command that wants to check its own answer against the count the
-    /// same connection was handed — see `fetch::existing_uids`.
+    /// `want_condstore` needs `SELECT (CONDSTORE)` (RFC 7162 §3.3.1); `Unsupported` without the
+    /// capability.
+    /// A renumber since this session last reported fails with `UidValidityChanged`; the new
+    /// generation is adopted first, so a retry succeeds.
+    /// `selected_exists` is the `EXISTS` count for `path` if it is the selected mailbox.
     pub(super) fn selected_exists(&self, path: &str) -> Option<u32> {
         self.selected
             .as_ref()
@@ -243,11 +155,6 @@ impl ImapSession {
         Ok(data.uid_validity)
     }
 
-    /// Issues the `SELECT` or `EXAMINE` and nothing else.
-    ///
-    /// Split out of [`select_now`](Self::select_now) because a disputed
-    /// generation is asked for twice, and the second ask must be the same
-    /// command with the same options as the first.
     async fn issue_select(
         &mut self,
         path: &str,
@@ -274,12 +181,8 @@ impl ImapSession {
         Ok((output.data, skipped))
     }
 
-    /// Issues `SELECT` or `EXAMINE` and checks what comes back against the
-    /// generation everybody believed.
-    ///
-    /// The one place a `UIDVALIDITY` reaches the rest of the crate, so the
-    /// check cannot be walked around by taking a different route to the
-    /// server.
+    /// The one place a `UIDVALIDITY` reaches the rest of the crate, so the check cannot be walked
+    /// around.
     pub(super) async fn select_now(
         &mut self,
         path: &str,
@@ -293,11 +196,8 @@ impl ImapSession {
         let read_only = mode == SelectMode::ReadOnly;
 
         let (mut data, mut skipped) = self.issue_select(path, mode, want_condstore).await?;
-        // An omitted `UIDVALIDITY` gets the same second chance a disputed one
-        // does, and for the same reason: the server that contradicted itself
-        // in #1538 also, in the same minute, sent three `SELECT`s without the
-        // line RFC 3501 6.3.1 requires. Giving up on the first omission loses
-        // the folder for that pass.
+        // An omitted `UIDVALIDITY` gets the same second chance as a disputed one: a server
+        // contradicting itself under load also sent `SELECT`s without it (#1538).
         let mut uid_validity = match uid_validity_of(&data, path) {
             Ok(uid_validity) => uid_validity,
             Err(refusal) => {
@@ -307,25 +207,10 @@ impl ImapSession {
                 skipped += retried_skips;
                 match uid_validity_of(&data, path) {
                     Ok(uid_validity) => uid_validity,
-                    // **Twice missing, and now the two cases part.**
-                    //
-                    // A server that simply does not send `UIDVALIDITY` is
-                    // unusable for UID work and saying so permanently is
-                    // right — retrying it for ever burns a laptop's radio
-                    // against an answer that will not change.
-                    //
-                    // A line `io-imap` *dropped* is not the server saying
-                    // anything. It completes the command `Ok` having
-                    // discarded what it could not decode, so a required code
-                    // is simply absent, and the connection that lost one will
-                    // lose the next. That is transient: the pool discards it
-                    // and a fresh connection tries again, instead of a person
-                    // who marked a message read being told "Flags not changed
-                    // -- the server sent a response Postio could not read".
-                    //
-                    // The response's own count of what did not decode
-                    // (`undecoded`) is what tells the two apart; without it
-                    // both got the permanent answer.
+                    // Twice missing: a server that never sends `UIDVALIDITY` is permanently
+                    // unusable for UID work, but a line `io-imap` dropped is transient: the pool
+                    // discards the connection and a fresh one retries. The response's `undecoded`
+                    // count tells them apart.
                     Err(_) if skipped > 0 => {
                         return Err(BackendError::Disconnected {
                             context: format!("SELECT {path}"),
@@ -348,26 +233,13 @@ impl ImapSession {
             .filter(|selected| selected.path == path)
             .map(|selected| selected.uid_validity);
 
-        // A renumber has to be said twice before it is believed (#1538).
-        //
-        // `UidValidityChanged` is the most expensive sentence a server can say
-        // to a mail client: every cached UID for the folder becomes
-        // meaningless, so the mailbox is emptied and refetched whole. A live
-        // account produced a burst of them across a whole folder list, in the
-        // same minute that three other `SELECT`s came back carrying no
-        // `UIDVALIDITY` at all -- a server contradicting itself under load,
-        // not fifteen folders renumbering at once. Believing the first answer
-        // cost a full resync of every one of them.
-        //
-        // So a disputed generation is asked again, and the second answer is
-        // the one that counts. One extra round trip, only ever on the path
-        // that was about to throw a mailbox away.
+        // A renumber must be said twice before it is believed (#1538): `UidValidityChanged` empties
+        // and refetches the mailbox, and a live account produced a burst of them while other
+        // `SELECT`s came back with no `UIDVALIDITY`. One extra round trip, only on the path about
+        // to throw a mailbox away.
         let known = promised.or_else(|| self.generations.known(path));
         if known.is_some_and(|known| known != uid_validity) {
             let disputed = uid_validity;
-            // The skip count is not carried past here: this re-read either
-            // produced a `UIDVALIDITY` or propagated, so there is no absent
-            // code left for it to explain.
             let (rechecked, _) = self.issue_select(path, mode, want_condstore).await?;
             data = rechecked;
             uid_validity = uid_validity_of(&data, path)?;
@@ -425,10 +297,6 @@ impl ImapSession {
     }
 }
 
-/// The `UIDVALIDITY` a `SELECT` carried, or the refusal that it carried none.
-///
-/// A mailbox without one cannot be addressed by UID at all, so this is a
-/// protocol error rather than a missing optional.
 fn uid_validity_of(data: &ImapMailboxSelectData, path: &str) -> BackendResult<UidValidity> {
     data.uid_validity
         .map(|value| UidValidity::new(value.get()))
@@ -437,7 +305,6 @@ fn uid_validity_of(data: &ImapMailboxSelectData, path: &str) -> BackendResult<Ui
         })
 }
 
-/// What a `SELECT` or `EXAMINE` reported.
 #[derive(Clone, Debug)]
 pub(super) struct SelectedState {
     pub(super) uid_validity: UidValidity,
@@ -449,12 +316,8 @@ pub(super) struct SelectedState {
     pub(super) can_create_keywords: bool,
 }
 
-/// Opens `path` and reports its state.
-///
-/// `UNSEEN` is not carried across: `SELECT` reports the *sequence number of
-/// the first unseen message* (RFC 3501 §7.1), not a count, and a number that
-/// looks like a count but is not is worse than none. [`status`] reports the
-/// real count.
+/// `UNSEEN` is not carried across: `SELECT` reports the sequence number of the first unseen message
+/// (RFC 3501 §7.1), not a count; `status` reports the real count.
 #[tracing::instrument(skip_all, fields(mailbox = %path, mode = ?mode))]
 pub async fn select(
     pool: &ConnectionPool,
@@ -482,7 +345,6 @@ pub async fn select(
     })
     .await
     .inspect(|status| {
-        // Counts and generation numbers, which is what a resync argues about.
         tracing::debug!(
             exists = status.exists,
             generation = status.generation.get(),
@@ -494,16 +356,8 @@ pub async fn select(
     .inspect_err(|error| tracing::warn!(%error, "cannot select that folder"))
 }
 
-/// Reports a mailbox's state without opening it.
-///
-/// The cheap per-mailbox change check for every folder that is not the one
-/// being watched — one round trip, no selection, and it does not disturb
-/// whatever the connection already had open.
-///
-/// Deliberately outside the generation guard in [`ImapSession::select_now`]:
-/// `STATUS` hands back no UID for anything to act on, and reporting the
-/// mailbox's current `UIDVALIDITY` is more use to a caller comparing it
-/// against its own records than an error would be.
+/// Outside the generation guard in `select_now`: `STATUS` hands back no UID to act on, so reporting
+/// the current `UIDVALIDITY` serves a caller comparing it to its records better than an error.
 pub async fn status(
     pool: &ConnectionPool,
     path: &str,
@@ -535,9 +389,7 @@ pub async fn status(
             exists: 0,
             unseen: None,
             highest_mod_seq: None,
-            // STATUS says nothing about what a mailbox will accept; only a
-            // selection does, and claiming otherwise would have a caller
-            // believe a keyword will stick when it may not.
+            // STATUS says nothing about what a mailbox will accept.
             permanent_flags: FlagSet::new(),
             can_create_keywords: false,
             read_only: true,
@@ -610,9 +462,7 @@ mod tests {
 
     #[test]
     fn a_second_session_that_believed_the_old_generation_is_told_as_well() {
-        // The first session has already updated the log, so the log alone
-        // would say "nothing changed" — and the second session's caller,
-        // which was handed the old generation, would never hear about it.
+        // The first session already updated the log, so the log alone would say nothing changed.
         let generations = Generations::new();
         generations.observe("INBOX", None, generation(1));
         generations.observe("INBOX", Some(generation(1)), generation(2));
@@ -630,8 +480,6 @@ mod tests {
 
     #[test]
     fn a_fresh_session_is_still_told_what_the_pool_knew() {
-        // Opened after the renumber, so it promised nothing itself. The pool
-        // is what remembers, and the caller still has to rebuild.
         let generations = Generations::new();
         generations.observe("INBOX", None, generation(1));
 

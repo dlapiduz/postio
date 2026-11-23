@@ -5,18 +5,8 @@ import WebKit
 @testable import PostioAppKit
 @testable import PostioKit
 
-/// The message window's body view (specs/009-focus-macos T069): what it
-/// asks of a document whose own script is off.
-///
-/// **Postio's own script still runs.** `allowsContentJavaScript = false` is
-/// about the sender's markup; `evaluateJavaScript` and
-/// `callAsyncJavaScript` in the client's own content world run regardless,
-/// which is what the body's height, the paper's fit and the action
-/// sentence's highlight are measured and drawn with. These prove that on
-/// the configuration the window uses, rather than assume it.
 @MainActor
 struct MessageBodyTests {
-    /// A hardened Focus web view with `html` loaded, once it has finished.
     private func loaded(_ html: String) async throws -> (WKWebView, ReaderNavigationPolicy) {
         let configuration = try await ReaderConfiguration.focus(
             cidHandler: ClosedSchemeHandler(),
@@ -61,8 +51,6 @@ struct MessageBodyTests {
     }
 
     @Test func waitingForThePaintEndsWithThePagesScriptOff() async throws {
-        // The body stays out of sight until this returns, so it must return:
-        // in a window, after two frames; out of one, after its bound.
         let (view, policy) = try await loaded("<html><body><p>hello</p></body></html>")
         defer { withExtendedLifetime(policy) {} }
         let window = NSWindow(
@@ -85,10 +73,8 @@ struct MessageBodyTests {
     }
 
     @Test func aLayoutWiderThanItsBoxIsMeasuredWhole() async throws {
-        // The reader's body box scrolls sideways on its own (`overflow-x:
-        // auto`), so the page's own width is the column's whatever the
-        // sender laid out: the fit has to read what the box holds, or a 640
-        // newsletter in a 576 column is cut rather than drawn at 0.9.
+        // The body box scrolls sideways on its own, so the fit must read what the box holds, or a
+        // 640 newsletter in a 576 column is cut rather than drawn at 0.9.
         let (view, policy) = try await loaded(
             "<html><body style='margin:0'><div class='postio-body' style='overflow-x:auto'>"
                 + "<table width='640'><tr><td>Issue 48</td></tr></table></div></body></html>")
@@ -98,10 +84,8 @@ struct MessageBodyTests {
     }
 
     @Test func theScrollMarkersAreNotTheBodysHeight() async throws {
-        // The shared document lays scroll anchors down the page for the
-        // classic reader's paging, absolutely placed at multiples of the
-        // viewport's height. Measured as the page's scrollHeight they made
-        // a one-line body thousands of points tall, which drew nothing.
+        // Absolutely placed scroll anchors made scrollHeight thousands of points for a one-line
+        // body, which drew nothing.
         let (view, policy) = try await loaded(
             "<html><body style='margin:0'><div class='postio-body'><p style='margin:0;height:40px'>"
                 + "One line.</p></div>"
@@ -112,10 +96,8 @@ struct MessageBodyTests {
     }
 
     @Test func openingAFoldIsToldToTheBodySoItCanGrow() async throws {
-        // The body's web view is sized to its document, measured at load and
-        // at a resize. A `<details>` opens inside the page with the script
-        // off, so without a word of it the frame kept the closed height and
-        // the quote opened into a clip: the caret turned and nothing drew.
+        // A `<details>` opens inside the page with script off; without a size report the frame kept
+        // the closed height and the quote opened into a clip.
         final class Told { var count = 0 }
         let told = Told()
         let watcher = FoldWatcher { told.count += 1 }
@@ -140,7 +122,6 @@ struct MessageBodyTests {
         for _ in 0..<150 where !done.yes { try await Task.sleep(for: .milliseconds(20)) }
         try #require(done.yes)
         let closed = try #require(try await MessageBodyMeasure.contentHeight(of: view))
-        // What a click on the summary does.
         _ = try await view.evaluateJavaScript(
             "document.querySelector('details').open = true", in: nil, contentWorld: .defaultClient)
         for _ in 0..<150 where told.count == 0 { try await Task.sleep(for: .milliseconds(20)) }
@@ -150,7 +131,6 @@ struct MessageBodyTests {
     }
 
     @Test func aWideNewsletterIsZoomedToItsColumnAndNoFurtherThanTheFloor() {
-        // SPEC section 3 at 1024: a 640 layout in a 576 column is 0.9.
         #expect(PaperFit.zoom(column: 576, measured: 640, floor: 0.85) == 0.9)
         #expect(PaperFit.zoom(column: 500, measured: 800, floor: 0.85) == 0.85, "the floor")
         #expect(PaperFit.zoom(column: 640, measured: 600, floor: 0.85) == 1, "never enlarged")

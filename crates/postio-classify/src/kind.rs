@@ -1,11 +1,5 @@
-//! What sort of correspondent a sender is (specs/011-focus-contacts, plan
-//! section 5): a pure function over counted evidence and a table of rules.
-//!
-//! [`detect`] reads [`KindSignals`], the counts a sender's newest messages
-//! gave, and [`KindRules`], the data in `data/kinds.toml`. It touches no
-//! store and no network, and cannot send. A user's own choice of kind is
-//! never decided here: storage keeps it beside the detector's and the
-//! detector's answer never replaces it.
+//! A pure function over counted evidence and a table of rules (`data/kinds.toml`). A user's own
+//! choice of kind is stored beside the detector's and never replaced by it.
 
 use std::fmt;
 use std::sync::LazyLock;
@@ -13,16 +7,14 @@ use std::sync::LazyLock;
 use postio_model::{ContactKind, KindSignals};
 use serde::Deserialize;
 
-/// Which detector decided a kind. Raise it when a rule changes enough that
-/// every detected kind should be decided again; storage records it per
-/// contact (`kind_version`).
+/// Raise it when a rule change should decide every detected kind again; storage records it per
+/// contact.
 pub const KIND_VERSION: u32 = 1;
 
 static SHIPPED: LazyLock<KindRules> = LazyLock::new(|| {
     KindRules::parse(include_str!("../data/kinds.toml")).expect("data/kinds.toml loads")
 });
 
-/// The tables detection decides by, as `data/kinds.toml` ships them.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct KindRules {
@@ -34,7 +26,6 @@ pub struct KindRules {
     habit_percent: u32,
 }
 
-/// Why a table does not load.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KindRulesError(String);
 
@@ -47,13 +38,10 @@ impl fmt::Display for KindRulesError {
 impl std::error::Error for KindRulesError {}
 
 impl KindRules {
-    /// The rules Postio ships.
     pub fn shipped() -> &'static KindRules {
         &SHIPPED
     }
 
-    /// Rules from TOML, refusing an unknown key and any table that would
-    /// make everyone a person.
     pub fn parse(text: &str) -> Result<KindRules, KindRulesError> {
         let rules: KindRules = toml::from_str(text).map_err(|e| KindRulesError(e.to_string()))?;
         if rules.habit_percent == 0 || rules.habit_percent > 100 {
@@ -68,17 +56,14 @@ impl KindRules {
     }
 }
 
-/// A decided kind, and how sure the evidence makes it (0.0 to 1.0).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Detected {
-    /// What the sender looks like.
     pub kind: ContactKind,
-    /// A clear case is near 1; "no evidence, so a person" is low.
     pub confidence: f32,
 }
 
-/// Decides a kind. First match wins, and the user having written to the
-/// sender floors them at a person unless they are a list or a newsletter.
+/// First match wins; the user having written to the sender floors them at a person unless a list or
+/// newsletter.
 pub fn detect(signals: &KindSignals, rules: &KindRules) -> Detected {
     let counted = signals.messages.max(1);
     let habit = |with: u32| signals.messages > 0 && with * 100 >= counted * rules.habit_percent;
@@ -107,15 +92,12 @@ pub fn detect(signals: &KindSignals, rules: &KindRules) -> Detected {
     let newsletter_evidence = unsubscribe || habit(signals.with_bulk) || bulk_name;
     let listed = habit(signals.with_list_id) || habit(signals.with_list_precedence);
 
-    // 1. A list, unless the same mail is plainly a newsletter.
     if listed && !(unsubscribe && newsletter_evidence) {
         return Detected {
             kind: ContactKind::List,
             confidence: share(signals.with_list_id.max(signals.with_list_precedence)),
         };
     }
-    // 2. A newsletter: an unsubscribe offered with bulk evidence beside it,
-    //    or a list that also offers one.
     if unsubscribe && (newsletter_evidence || listed) {
         return Detected {
             kind: ContactKind::Newsletter,
@@ -129,7 +111,6 @@ pub fn detect(signals: &KindSignals, rules: &KindRules) -> Detected {
             confidence: 0.9,
         };
     }
-    // 3. A robot: it says so, or its mail says so most of the time.
     let robot_address = rules
         .robot_local
         .iter()
@@ -148,7 +129,6 @@ pub fn detect(signals: &KindSignals, rules: &KindRules) -> Detected {
             },
         };
     }
-    // 4. An organisation's role mailbox, where the user knows its people.
     let role = rules
         .role_local
         .iter()
@@ -160,14 +140,12 @@ pub fn detect(signals: &KindSignals, rules: &KindRules) -> Detected {
             confidence: 0.75,
         };
     }
-    // 5. Otherwise a person, which is also what no evidence at all means.
     Detected {
         kind: ContactKind::Person,
         confidence: if signals.messages == 0 { 0.3 } else { 0.6 },
     }
 }
 
-/// A local part's words: split at `.`, `-`, `_` and `+`.
 fn words(local: &str) -> Vec<&str> {
     local
         .split(['.', '-', '_', '+'])
@@ -175,8 +153,6 @@ fn words(local: &str) -> Vec<&str> {
         .collect()
 }
 
-/// Whether `pattern`'s words (`no-reply` is `no`, `reply`) appear in order
-/// and together among `words`.
 fn matches_words(words: &[&str], pattern: &str) -> bool {
     let wanted: Vec<&str> = pattern.split('-').collect();
     !wanted.is_empty()

@@ -5,10 +5,6 @@ import Testing
 @testable import PostioAppKit
 @testable import PostioKit
 
-/// Quick Look's panel (specs/010-focus-search T091; design §3.7, screen
-/// 10): a floating panel over the results, 780 by 470, radius 14, with a
-/// shadow and nothing dimmed. One panel: a new view keeps it and changes
-/// only what it holds. Nothing is put on screen -- `present` is replaced.
 @MainActor
 struct QuickLookPanelTests {
     final class Engine: QuickLookEngine {
@@ -41,8 +37,6 @@ struct QuickLookPanelTests {
         let first = try #require(panel.panel)
         #expect(presented == 1)
         #expect(first.frame.size == NSSize(width: 780, height: 470))
-        // Centred across the window, 160 under its top (screen 10: 330, 160
-        // in a 1440 by 900 window).
         #expect(first.frame.origin == NSPoint(x: 100 + 330, y: 100 + 900 - 160 - 470))
         #expect(first.hasShadow)
         #expect(!first.isOpaque, "its corners are the window's own: radius 14")

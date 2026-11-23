@@ -1,9 +1,3 @@
-//! The review queue and the merge sheet, from the controller's side
-//! (specs/011-focus-contacts S10, handoff screen 07): `g w` reads the queue
-//! and opens the sheet, `x` marks and `m` merges the marked, Return merges,
-//! `n` says they are two people, Escape is Later, and the arrows choose whose
-//! name is kept.
-
 use crate::search_support::{asks, shown};
 use chrono::{TimeZone, Utc};
 use postio_config::paths::Platform;
@@ -99,7 +93,6 @@ fn card(id: i64, name: &str) -> ContactCardRead {
     }
 }
 
-/// `g c`, the overview answered, page 0 read: the view as a person sees it.
 fn open(focus: &mut FocusController) -> Vec<Effect> {
     let effects = run(focus, CommandId::OpenContacts);
     let [(ticket, Request::ContactsOverview)] = asks(&effects)[..] else {
@@ -183,7 +176,6 @@ fn posted(effects: &[Effect]) -> Vec<Command> {
         .collect()
 }
 
-/// `g w`, answered with the queue.
 fn review(focus: &mut FocusController) -> Vec<Effect> {
     open(focus);
     let effects = run(focus, CommandId::ContactsSuggestions);
@@ -424,8 +416,6 @@ fn split_takes_an_address_off_a_merged_person_and_a_lone_address_stays() {
     assert_eq!(id.get(), 9);
 }
 
-/// An import lands with the view up: the counts are read again, and then
-/// where the first new person is. Returns that question.
 fn imported(
     focus: &mut FocusController,
     made: Vec<ContactId>,
@@ -476,7 +466,6 @@ fn after_an_import_the_cursor_goes_to_the_first_new_person_and_the_review_looks_
     );
     assert_eq!(focus.contacts_cursor(), Some(2));
 
-    // The review looks at what the import found, once.
     let effects = run(&mut focus, CommandId::ContactsSuggestions);
     let first = asks(&effects)
         .into_iter()
@@ -521,10 +510,6 @@ fn an_import_with_contacts_closed_remembers_where_to_go_and_what_to_review() {
     );
 }
 
-/// Bringing people in from the Mac's Contacts says the people changed (the
-/// engine's `ContactsChanged`) and then which of them are new. With the view
-/// up they are on screen: the rows are read again and the cursor goes to the
-/// first one, even when it is not on the tab being shown.
 #[test]
 fn people_brought_in_from_contacts_are_shown_with_the_view_up() {
     let mut focus = mac();
@@ -548,7 +533,6 @@ fn people_brought_in_from_contacts_are_shown_with_the_view_up() {
     );
     assert_eq!(person, ContactId::new(7));
 
-    // On another tab the person is not in the list; the list is still current.
     let effects = focus.handle_on(
         Input::Reply(ticket, Reply::ContactPosition { person, at: None }),
         &NoRows,
@@ -561,11 +545,8 @@ fn people_brought_in_from_contacts_are_shown_with_the_view_up() {
     );
 }
 
-/// An import changes the people and says who is new; the engine's
-/// `ContactsChanged` re-reads the counts. However those answers arrive, the
-/// cursor ends on the first new person: a position answered before the new
-/// counts must not be undone by the restart they cause (#2027, where the
-/// GTK suite saw the cursor stay on the first row).
+/// However those answers arrive, the cursor ends on the first new person: a position answered
+/// before the new counts must not be undone by the restart they cause (#2027).
 #[test]
 fn the_cursor_reaches_the_imported_person_when_the_new_counts_come_last() {
     let mut focus = mac();

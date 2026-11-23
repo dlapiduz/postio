@@ -1,11 +1,5 @@
-//! Per-mailbox synchronization state: read and written as one unit.
-//!
-//! The table is the sync engine's own; nothing above it reads these columns.
-//! [`MailboxRepository`](super::MailboxRepository) joins the server counters
-//! onto a [`Mailbox`](postio_model::Mailbox) for display, but the sync engine
-//! goes through here, because only this repository writes
-//! `last_full_sync_at` — the column that says the local mailbox actually holds
-//! the messages the counters claim.
+//! Per-mailbox sync state, read and written as one unit. Only this repository writes
+//! `last_full_sync_at`, the column saying the local mailbox holds the messages the counters claim.
 
 use chrono::{DateTime, Utc};
 use postio_model::{
@@ -19,42 +13,10 @@ use crate::sql::{self, RowExt as _, bind};
 use crate::store::Connection;
 use turso::Row;
 
-/// Reads and writes [`SyncState`] rows.
-///
-/// # Atomicity
-///
-/// Every method here takes a borrowed [`Connection`], and the engine's
-/// `Transaction` derefs to one — so the sync engine builds this repository
-/// *inside* the transaction that writes the messages, and the state and the
-/// messages it describes commit or roll back together:
-///
-/// ```no_run
-/// # use postio_model::{Generation, MailboxStatus, MailboxId};
-/// # use postio_storage::repository::SyncStateRepository;
-/// # async fn demo() -> Result<(), postio_storage::Error> {
-/// # use postio_storage::key::{Purpose, StoreKey};
-/// # let key = StoreKey::generate().derive(Purpose::Database);
-/// # let database = postio_storage::Store::open("postio.db", &key).await?;
-/// # let connection = database.connect().await?;
-/// # let mailbox = MailboxId::new(1);
-/// # let status = MailboxStatus::new(Generation::new(1));
-/// postio_storage::transaction(&connection, |transaction| async move {
-///     // ... write the fetched messages ...
-///     let state = SyncStateRepository::new(&transaction);
-///     state.observe(mailbox, &status, chrono::Utc::now()).await?;
-///     state
-///         .complete_full_sync(mailbox, chrono::Utc::now())
-///         .await?;
-///     Ok::<_, postio_storage::Error>(())
-/// })
-/// .await?;
-/// # Ok(())
-/// # }
-/// ```
-///
-/// Getting that ordering wrong is the one bug this table exists to prevent: a
-/// `HIGHESTMODSEQ` committed ahead of the messages it covers tells the next
-/// incremental resync to skip exactly the messages that were lost.
+/// Built inside the transaction that writes the messages, so the state and the messages it
+/// describes commit or roll back together. Getting that ordering wrong is the one bug this table
+/// exists to prevent: a `HIGHESTMODSEQ` committed ahead of its messages tells the next incremental
+/// resync to skip exactly the messages that were lost.
 #[derive(Debug)]
 pub struct SyncStateRepository<'a> {
     connection: &'a Connection,
@@ -65,16 +27,12 @@ mailbox_id, account_id, uid_validity, uid_next, highest_mod_seq, last_full_sync_
 passes_since_flag_sweep";
 
 impl<'a> SyncStateRepository<'a> {
-    /// Borrows a connection.
     pub fn new(connection: &'a Connection) -> Self {
         Self { connection }
     }
 
-    /// One mailbox's state, or `None` when there is no such mailbox.
-    ///
-    /// A mailbox always has a row — [`MailboxRepository::create`] writes one,
-    /// `NULL`-filled, so "never synced" is a readable state rather than an
-    /// absence — so `None` here means the mailbox itself is gone.
+    /// A mailbox always has a row ([`MailboxRepository::create`] writes it `NULL`-filled, so "never
+    /// synced" is readable), so `None` means the mailbox is gone.
     ///
     /// [`MailboxRepository::create`]: super::MailboxRepository::create
     pub async fn get(&self, mailbox_id: MailboxId) -> Result<Option<SyncState>> {
@@ -87,7 +45,6 @@ impl<'a> SyncStateRepository<'a> {
         .await
     }
 
-    /// One mailbox's state, failing when the mailbox is not there.
     pub async fn require(&self, mailbox_id: MailboxId) -> Result<SyncState> {
         self.get(mailbox_id).await?.ok_or(Error::NotFound {
             entity: "mailbox",
@@ -95,7 +52,6 @@ impl<'a> SyncStateRepository<'a> {
         })
     }
 
-    /// Every mailbox's state in an account, in mailbox-id order.
     pub async fn list_for_account(&self, account_id: AccountId) -> Result<Vec<SyncState>> {
         sql::all(
             self.connection,
@@ -106,10 +62,7 @@ impl<'a> SyncStateRepository<'a> {
         .await
     }
 
-    /// Writes a whole state back, creating the row if it is somehow missing.
-    ///
-    /// Every column at once, deliberately: a partial update is how the counters
-    /// drift apart from each other.
+    /// Every column at once: a partial update is how the counters drift apart.
     pub async fn save(&self, state: &SyncState) -> Result<()> {
         let mailbox_id = require_persisted(state.mailbox_id.get(), "mailbox")?;
         let account_id = require_persisted(state.account_id.get(), "account")?;
@@ -143,10 +96,8 @@ impl<'a> SyncStateRepository<'a> {
         Ok(())
     }
 
-    /// Records what the server reported, returning the state as it now stands.
-    ///
-    /// A `UIDVALIDITY` change drops the counters that belonged to the old UID
-    /// space, including the completed-sync marker — see [`SyncState::observe`].
+    /// A `UIDVALIDITY` change drops the counters of the old UID space, including the completed-sync
+    /// marker (see [`SyncState::observe`]).
     pub async fn observe(
         &self,
         mailbox_id: MailboxId,
@@ -157,10 +108,8 @@ impl<'a> SyncStateRepository<'a> {
             .await
     }
 
-    /// Marks a full synchronization of this mailbox as complete.
-    ///
-    /// Call it *after* the messages are written and in the same transaction:
-    /// this is the flag that says the local mailbox is whole.
+    /// Call after the messages are written, in the same transaction: this flag says the local
+    /// mailbox is whole.
     pub async fn complete_full_sync(
         &self,
         mailbox_id: MailboxId,
@@ -170,22 +119,15 @@ impl<'a> SyncStateRepository<'a> {
             .await
     }
 
-    /// Records that an incremental pass finished, and whether it read every
-    /// flag in the mailbox.
-    ///
-    /// Called after the pass's flags were reconciled and after
-    /// [`observe`](Self::observe) took the server's `HIGHESTMODSEQ`.
+    /// Called after the pass's flags were reconciled and [`observe`](Self::observe) took the
+    /// server's `HIGHESTMODSEQ`.
     pub async fn record_flag_pass(&self, mailbox_id: MailboxId, swept: bool) -> Result<SyncState> {
         self.mutate(mailbox_id, |state| state.record_flag_pass(swept))
             .await
     }
 
-    /// Returns this mailbox back to never-synced.
-    ///
-    /// For the caller that has just discarded the mailbox's messages — after a
-    /// `UIDVALIDITY` reset, or when the user asks for a rebuild. It does not
-    /// delete anything itself: dropping the state and dropping the rows it
-    /// describes belong in one transaction, and the caller owns that.
+    /// Deletes nothing itself: dropping the state and the rows it describes belong in one
+    /// transaction the caller owns.
     pub async fn reset(&self, mailbox_id: MailboxId) -> Result<SyncState> {
         let account_id = self.require(mailbox_id).await?.account_id;
         let state = SyncState::never_synced(mailbox_id, account_id);
@@ -193,10 +135,7 @@ impl<'a> SyncStateRepository<'a> {
         Ok(state)
     }
 
-    /// What the sync engine should do about this mailbox.
-    ///
-    /// A thin read plus [`SyncState::plan`]; the decision itself is pure and
-    /// lives in the model.
+    /// The decision is pure and lives in the model ([`SyncState::plan`]).
     pub async fn plan(&self, mailbox_id: MailboxId, status: &MailboxStatus) -> Result<ResyncPlan> {
         Ok(self.require(mailbox_id).await?.plan(status))
     }
@@ -206,10 +145,8 @@ impl<'a> SyncStateRepository<'a> {
         mailbox_id: MailboxId,
         change: impl FnOnce(&mut SyncState),
     ) -> Result<SyncState> {
-        // Read-modify-write, because the transitions are model logic and there
-        // is no sensible way to spell "drop the MODSEQ if UIDVALIDITY moved" in
-        // one UPDATE. The enclosing transaction — the caller's, or the implicit
-        // one around a bare statement — is what makes it atomic.
+        // Read-modify-write: the transitions are model logic with no single-UPDATE spelling. The
+        // enclosing transaction makes it atomic.
         sql::in_scope(self.connection, |transaction| async move {
             let repository = SyncStateRepository::new(&transaction);
             let mut state = repository.require(mailbox_id).await?;

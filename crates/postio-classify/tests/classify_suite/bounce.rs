@@ -1,8 +1,3 @@
-//! Reading a delivery failure (specs/011-focus-contacts S10): a
-//! `multipart/report; report-type=delivery-status` message with a 5.x.x
-//! status names the address that failed; nothing else does. Invented mail on
-//! reserved domains.
-
 use postio_classify::bounce::{Bounce, detect};
 
 const DSN: &str = "Reporting-MTA: dns; mx4.example.net\r\nArrival-Date: Fri, 6 Mar 2026 07:20:00 +0000\r\n\r\nFinal-Recipient: rfc822; a.moreno@example.net\r\nAction: failed\r\nStatus: 5.1.1\r\nDiagnostic-Code: smtp; 550 5.1.1 User unknown\r\n";

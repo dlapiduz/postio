@@ -20,8 +20,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 FAILURES: list[str] = []
-# Built, not written: a literal address on an unreserved domain in this file
-# would trip the very check it exercises when the repository is scanned.
 REAL_ADDRESS = "grace" + "@" + "realdomain" + ".net"
 
 FORMATTED = "fn main() {}\n"

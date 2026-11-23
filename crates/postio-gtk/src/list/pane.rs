@@ -1,6 +1,3 @@
-//! The list as it sits in the window: a `GtkListView` over the feed's
-//! model, in a scroller, with Focus's rows.
-
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -14,7 +11,6 @@ use super::row::{
     ActionHandler, ChevronHandler, Pick, PickHandler, RowWidget, SharedKeymap, SharedMe,
 };
 
-/// The list pane: what scrolls, what draws, and where its rows come from.
 #[derive(Clone)]
 pub struct ListPane {
     scrolled: gtk::ScrolledWindow,
@@ -22,26 +18,17 @@ pub struct ListPane {
     cursor: gtk::SingleSelection,
     feed: Feed,
     keymap: SharedKeymap,
-    /// Whether the list is held at its top, first heading showing.
     pinned: Rc<Cell<bool>>,
-    /// What a press on a row's drawn action runs, once the window says.
     on_action: Rc<std::cell::RefCell<Option<ActionHandler>>>,
-    /// What a Ctrl- or Shift-click on a row runs, once the window says.
     on_pick: Rc<std::cell::RefCell<Option<PickHandler>>>,
-    /// Whether a to-do's row offers Task: once a vault is configured.
     capture: Rc<Cell<bool>>,
-    /// What a click on a thread row's chevron runs, once the window says.
     on_chevron: Rc<std::cell::RefCell<Option<ChevronHandler>>>,
-    /// Who "you" is, for the participants a thread row names.
     me: SharedMe,
 }
 
-/// The selection a list's rows draw their boxes from.
 pub type SharedSelection = postio_ui::selection::SelectionState;
 
 impl ListPane {
-    /// A pane drawing `feed`'s list, its rows' keycaps read from `keymap`
-    /// and their selection boxes from `picked`.
     pub fn new(feed: Feed, keymap: postio_core::Keymap, picked: SharedSelection) -> Self {
         let keymap: SharedKeymap = std::rc::Rc::new(std::cell::RefCell::new(keymap));
         let on_action: Rc<std::cell::RefCell<Option<ActionHandler>>> = Rc::default();
@@ -89,7 +76,6 @@ impl ListPane {
                     }
                 }));
                 item.set_child(Some(&row));
-                // A child shows its keys while the cursor is on it.
                 item.connect_selected_notify(|item| {
                     if let Some(widget) = item.child().and_downcast::<RowWidget>() {
                         widget.set_cursor_here(item.is_selected());
@@ -118,18 +104,15 @@ impl ListPane {
             }
         });
 
-        // The cursor, not the selection: GTK's name, Postio's meaning
-        // (`postio_ui::selection`). What `e` would archive is kept apart.
+        // The cursor, not the selection: GTK's name, Postio's meaning. What `e` would archive is
+        // kept apart.
         let cursor = keep_the_cursor(feed.shown());
-        // A place opening builds the rows anew, and the row with the
-        // keyboard goes with the old ones: the keyboard stays in the list
-        // until the cursor's row takes it, however many turns the rows
-        // take to land (#2150).
+        // A place opening builds the rows anew and the row with the keyboard goes with the old
+        // ones: the keyboard stays in the list until the cursor's row takes it (#2150).
         let view = crate::rebuild::keeping_keyboard(&cursor, || {
             gtk::ListView::new(Some(cursor.clone()), Some(factory))
         });
         view.set_header_factory(Some(&day_headings(feed.list())));
-        // A page landing may move where a day starts.
         feed.list().connect_local("filled", false, {
             let list = feed.list().downgrade();
             move |_| {
@@ -163,16 +146,12 @@ impl ListPane {
         }
     }
 
-    /// Whether a to-do's row offers Task `T` beside Snooze: once a vault is
-    /// configured (spec C9).
     pub fn set_capture(&self, capture: bool) {
         if self.capture.replace(capture) != capture {
             self.redraw_rows();
         }
     }
 
-    /// Run `handler` when a row's drawn action is pressed, with the row's
-    /// item and the action's command.
     pub fn connect_row_action(
         &self,
         handler: impl Fn(&super::FocusRow, postio_core::CommandId) + 'static,
@@ -180,37 +159,27 @@ impl ListPane {
         self.on_action.replace(Some(Rc::new(handler)));
     }
 
-    /// Run `handler` when a thread row's chevron is clicked, with the row
-    /// and whether its thread is open.
     pub fn connect_row_chevron(&self, handler: impl Fn(&super::FocusRow, bool) + 'static) {
         self.on_chevron.replace(Some(Rc::new(handler)));
     }
 
-    /// Who "you" is: the addresses a thread row's participants say as "you".
     pub fn set_identities(&self, me: Vec<postio_model::EmailAddress>) {
         if self.me.replace(me.clone()) != me {
             self.redraw_rows();
         }
     }
 
-    /// Who "you" is, as [`set_identities`](Self::set_identities) last said.
     pub fn identities(&self) -> Vec<postio_model::EmailAddress> {
         self.me.borrow().clone()
     }
 
-    /// Run `handler` when a Ctrl- or Shift-click picks a row (T198).
     pub fn connect_row_pick(&self, handler: impl Fn(&super::FocusRow, Pick) + 'static) {
         self.on_pick.replace(Some(Rc::new(handler)));
     }
 
-    /// Offer `offer`'s content when a row is dragged out of the list (T245):
-    /// it is asked, with the row's place in the list, only once the pointer
-    /// has moved far enough to be a drag, and answers what a receiver is to
-    /// be offered, or `None` for a drag with nothing to give. A drag starting
-    /// between rows -- a day's heading -- is none.
-    ///
-    /// Copy, not move: Focus has no folder to drop a row on, and what leaves
-    /// is a file, so the row stays where it is.
+    /// Asked only once the pointer has moved far enough to be a drag; `None` for a drag with
+    /// nothing to give or one starting between rows.
+    /// Copy, not move: what leaves is a file, so the row stays where it is.
     pub fn connect_row_drag(
         &self,
         offer: impl Fn(u32) -> Option<gtk::gdk::ContentProvider> + 'static,
@@ -226,9 +195,7 @@ impl ListPane {
         self.view.add_controller(drag);
     }
 
-    /// Run `handler` on a secondary click on a row (T199): the row's place
-    /// in the list, and where the click was, in the list view's
-    /// coordinates. A click between rows -- a day's heading -- runs nothing.
+    /// A click between rows (a day's heading) runs nothing.
     pub fn connect_row_menu(&self, handler: impl Fn(u32, gtk::gdk::Rectangle) + 'static) {
         let click = gtk::GestureClick::new();
         click.set_button(gtk::gdk::BUTTON_SECONDARY);
@@ -246,16 +213,13 @@ impl ListPane {
         self.view.add_controller(click);
     }
 
-    /// Scroll to the very top, first heading showing, and hold it there
-    /// while the rows settle: the cursor has gone to the first row, and
-    /// GTK would bring that row into view without its heading.
+    /// Held there while the rows settle: the cursor has gone to the first row, and GTK would bring
+    /// that row into view without its heading.
     pub fn to_top(&self) {
         self.pinned.set(true);
         self.scrolled.vadjustment().set_value(0.0);
     }
 
-    /// Redraw every row on screen: what they draw from beside their own
-    /// data -- the selection, the keymap -- has changed.
     pub fn redraw_rows(&self) {
         let mut child = self.view.first_child();
         while let Some(widget) = child {
@@ -266,25 +230,21 @@ impl ListPane {
         }
     }
 
-    /// Read every row's keycaps from `keymap` from now on.
     pub fn set_keymap(&self, keymap: postio_core::Keymap) {
         self.keymap.replace(keymap);
         self.redraw_rows();
     }
 
-    /// The pane's outermost widget, to place in a layout.
     pub fn widget(&self) -> &gtk::ScrolledWindow {
         &self.scrolled
     }
 
-    /// The list view.
     pub fn view(&self) -> &gtk::ListView {
         &self.view
     }
 
-    /// Give the keyboard to the list, on the row the cursor is on: a list
-    /// view asked to take focus lands on its first row, which would leave
-    /// the keyboard's outline and the cursor's ring on different rows.
+    /// A list view asked to take focus lands on its first row, which would leave the keyboard's
+    /// outline and the cursor's ring on different rows.
     pub fn focus_cursor(&self) {
         self.view.grab_focus();
         let at = self.cursor.selected();
@@ -293,18 +253,14 @@ impl ListPane {
         }
     }
 
-    /// The cursor: where the keyboard is.
     pub fn cursor(&self) -> &gtk::SingleSelection {
         &self.cursor
     }
 
-    /// The feed the rows come from.
     pub fn feed(&self) -> &Feed {
         &self.feed
     }
 
-    /// The row widgets a person can see, top to bottom: bound, mapped, and
-    /// inside the scroller's viewport.
     pub fn rows_on_screen(&self) -> Vec<RowWidget> {
         let height = self.scrolled.height() as f32;
         let mut rows: Vec<(f32, RowWidget)> = Vec::new();
@@ -332,8 +288,6 @@ impl ListPane {
     }
 }
 
-/// The day headings: "Today · Saturday 26 September" over a day's rows, a
-/// section header each (32 px), named from the section's first row.
 fn day_headings(list: &super::model::FocusList) -> gtk::SignalListItemFactory {
     let list = list.downgrade();
     let factory = gtk::SignalListItemFactory::new();
@@ -372,22 +326,11 @@ impl std::fmt::Debug for ListPane {
     }
 }
 
-/// Hold the list at its top, its first day heading on screen, until the
-/// person scrolls away from it.
-///
-/// GTK anchors a list on its first row and lays that row's section header
-/// out above it, off screen: when the rows arrive, and again every time
-/// they change height as their pages land, the view is put back one
-/// heading's height down (measured: 33 px, the heading's 32 and its rule),
-/// and the first thing the list says -- what day it is -- is hidden. So
-/// while the list is pinned, a move that only hides the first heading is
-/// taken back.
-///
-/// The list is pinned when it opens, when its rows are replaced wholesale
-/// (the has-action filter), whenever it is back at 0, and when the cursor
-/// goes to the first row. It is unpinned by the person's own scrolling,
-/// and by any move past the heading -- the cursor restored twenty rows
-/// down is a real scroll, and is left alone.
+/// GTK anchors a list on its first row and lays that row's section header out above it, off screen:
+/// when rows arrive or change height the view is put back one heading down (33 px), hiding the day.
+/// While pinned, a move that only hides the first heading is taken back. Pinned on open, on
+/// wholesale row replacement, at 0 and when the cursor goes to the first row; unpinned by the
+/// person's scrolling or any move past the heading.
 fn hold_the_top(
     list: &super::model::FocusList,
     view: &gtk::ListView,
@@ -440,18 +383,10 @@ fn hold_the_top(
     pinned
 }
 
-/// The cursor over `list`, which keeps its place when its row goes.
-///
-/// Without autoselect -- the window puts the cursor on a list's first row
-/// itself, once the rows land -- a
-/// `GtkSingleSelection` whose row is removed selects nothing, so after an
-/// archive the next `e` acted on nothing (#1746). The row that slides into
-/// the removed one's place takes the cursor instead,
-/// by `postio_ui::selection::cursor_after_change`.
-///
-/// A signal's handlers run in the order they were connected, so the one
-/// connected to `list` before the selection exists sees the cursor as it was
-/// before the change, and the selection's own `items-changed` after it.
+/// Without autoselect, a `GtkSingleSelection` whose row is removed selects nothing, so after an
+/// archive the next `e` acted on nothing (#1746): the row that slides into its place takes the
+/// cursor, by `cursor_after_change`. Handlers run in connection order, so the one connected to
+/// `list` before the selection exists sees the cursor as it was before the change.
 fn keep_the_cursor(list: &super::spliced::SplicedList) -> gtk::SingleSelection {
     let weak: Rc<glib::WeakRef<gtk::SingleSelection>> = Rc::default();
     let before = Rc::new(Cell::new(gtk::INVALID_LIST_POSITION));
@@ -486,8 +421,7 @@ fn keep_the_cursor(list: &super::spliced::SplicedList) -> gtk::SingleSelection {
     cursor
 }
 
-/// How tall the list's first day heading asks to be. Measured, not read
-/// from its allocation: GTK scrolls while it lays the list out, before the
+/// Measured, not read from its allocation: GTK scrolls while it lays the list out, before the
 /// heading has one.
 fn first_heading_height(view: &gtk::ListView) -> Option<f64> {
     let mut child = view.first_child();
@@ -501,7 +435,6 @@ fn first_heading_height(view: &gtk::ListView) -> Option<f64> {
     None
 }
 
-/// The place in `list` of the row drawn at `x`, `y` in `view`'s coordinates:
 /// `None` over a day's heading or the empty space between.
 fn row_position_at(
     view: &gtk::ListView,

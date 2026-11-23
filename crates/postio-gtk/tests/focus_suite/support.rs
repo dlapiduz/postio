@@ -1,7 +1,3 @@
-//! What the cases share: a store with mail in it, a host over it as Focus's
-//! startup would have opened one, and somewhere to keep that host until the
-//! case is over.
-
 use std::any::Any;
 use std::cell::RefCell;
 
@@ -15,22 +11,17 @@ thread_local! {
     static KEPT: RefCell<Vec<Box<dyn Any>>> = RefCell::new(Vec::new());
 }
 
-/// Hold `value` until the case is over, and drop it then, outside every
-/// runtime: a host owns a runtime of its own, which may not be dropped from
-/// inside another's `block_on`, which is where a case's body runs.
+/// Dropped outside every runtime: a host owns a runtime of its own, which may not be dropped from
+/// inside another's `block_on`.
 pub fn keep<T: 'static>(value: T) {
     KEPT.with(|kept| kept.borrow_mut().push(Box::new(value)));
 }
 
-/// Drop what the last case kept. The harness calls this between cases.
 pub fn drop_kept() {
     let kept = KEPT.with(|kept| std::mem::take(&mut *kept.borrow_mut()));
     drop(kept);
 }
 
-/// Whether there is a display to draw on. Says so when there is not, and a
-/// case that needs one returns: the runner puts the suite on a headless
-/// compositor, and a machine without one skips rather than fails.
 pub fn display() -> bool {
     if adw::init().is_err() || gtk::gdk::Display::default().is_none() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
@@ -39,19 +30,13 @@ pub fn display() -> bool {
     true
 }
 
-/// A throwaway store, and the directory its blobs live in.
 pub struct Fixture {
-    /// The store.
     pub database: Store,
-    /// The one account.
     pub account: Account,
-    /// Its inbox.
     pub inbox: MailboxId,
     blobs: tempfile::TempDir,
 }
 
-/// A fixed moment the fixtures' mail is dated from: Saturday 26 September
-/// 2026, 16:09 local time as the screens draw it, in UTC.
 pub fn now() -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 9, 26, 14, 9, 0)
         .single()
@@ -59,21 +44,18 @@ pub fn now() -> DateTime<Utc> {
 }
 
 impl Fixture {
-    /// One account with an inbox, an archive and a trash, and no mail.
     pub async fn empty() -> Fixture {
         let database = test_support::memory().await;
         let connection = database.connect().await.expect("a connection");
-        // The search index is part of opening a store
-        // (`postio_session::ensure_search_index`); without it every search
-        // a case reaches -- a rule's preview -- fails.
+        // The search index is part of opening a store; without it every search a case reaches
+        // fails.
         postio_index::index::ensure_schema(&connection)
             .await
             .expect("the search index");
         let (account, inbox) = test_support::account_with_inbox(&connection).await;
         test_support::mailbox(&connection, &account, "Archive").await;
         test_support::mailbox(&connection, &account, "Trash").await;
-        // A store that has synced before: its inbox says so, the way a
-        // finished first pass leaves it (T220), so an empty one is empty.
+        // A store that has synced before, so an empty inbox reads as empty.
         let mailboxes = postio_storage::repository::MailboxRepository::new(&connection);
         let mut synced = mailboxes
             .get(inbox)
@@ -94,9 +76,16 @@ impl Fixture {
         }
     }
 
-    /// File one message into the inbox, threaded as sync would thread it:
-    /// from `from` (a name and an address), with `subject` and `preview`,
-    /// `minutes` before [`now`]. Answers the message and its conversation.
+    pub async fn file_from_ada(
+        &self,
+        subject: &str,
+        preview: &str,
+        minutes: i64,
+    ) -> (MessageId, ThreadId) {
+        self.file(("Ada Moreno", "ada@example.com"), subject, preview, minutes)
+            .await
+    }
+
     pub async fn file(
         &self,
         from: (&str, &str),
@@ -130,11 +119,6 @@ impl Fixture {
         (message.id, thread)
     }
 
-    /// A host over this store, started as Focus's startup starts one once
-    /// the store is open: in this process, with its own runtime.
-    /// A host over the fixture's store, and the sink its events go out
-    /// through: the seam a case says what sync did with, as the engine
-    /// would, with no server behind it.
     pub fn host_telling(&self) -> (Host, postio_core::bridge::EventSink) {
         let blobs = BlobStore::open(self.blobs.path().to_path_buf(), &test_support::blob_keys())
             .expect("a blob store");
@@ -151,8 +135,6 @@ impl Fixture {
         (host, sink)
     }
 
-    /// The fixture's blob store, as the host opens it: what a case files a
-    /// raw source into, and reads back.
     pub fn blob_store(&self) -> BlobStore {
         BlobStore::open(self.blobs.path().to_path_buf(), &test_support::blob_keys())
             .expect("a blob store")
@@ -165,15 +147,12 @@ impl Fixture {
     }
 }
 
-/// A store with no account at all: the shape a brand-new installation is in
-/// (T171's "first run"), where `Fixture::empty` always seeds one.
 pub struct NoAccount {
     pub database: Store,
     blobs: tempfile::TempDir,
 }
 
 impl NoAccount {
-    /// An empty store, no account, nothing synced.
     pub async fn new() -> NoAccount {
         NoAccount {
             database: test_support::memory().await,
@@ -181,12 +160,8 @@ impl NoAccount {
         }
     }
 
-    /// A host over this store, as Focus's startup would open one, proving
-    /// any account added against `backend` rather than a real network or
-    /// keyring (T171): the seam `postio-host`'s own onboarding tests use
-    /// (`Wiring::with_mail`), with the secrets store it also has to
-    /// override -- `Wiring::new`'s default reaches the platform keyring,
-    /// which no test in the default suite may touch.
+    /// Overrides the secrets store as well as the backend: `Wiring::new`'s default reaches the
+    /// platform keyring, which no default-suite test may touch.
     pub fn host_signing_in_to(&self, backend: postio_account::backend::MockBackend) -> Host {
         let blobs = BlobStore::open(self.blobs.path().to_path_buf(), &test_support::blob_keys())
             .expect("a blob store");
@@ -206,7 +181,6 @@ impl NoAccount {
     }
 }
 
-/// Every widget under `root`, in tree order.
 pub fn descendants(root: &impl gtk::prelude::IsA<gtk::Widget>) -> Vec<gtk::Widget> {
     use gtk::prelude::*;
     let mut found = Vec::new();
@@ -224,8 +198,6 @@ pub fn descendants(root: &impl gtk::prelude::IsA<gtk::Widget>) -> Vec<gtk::Widge
     found
 }
 
-/// Every widget under `root`, `root` included, that wears `class`, in tree
-/// order.
 pub fn with_class(root: &impl gtk::prelude::IsA<gtk::Widget>, class: &str) -> Vec<gtk::Widget> {
     use gtk::prelude::*;
     let mut found = Vec::new();
@@ -245,10 +217,6 @@ pub fn with_class(root: &impl gtk::prelude::IsA<gtk::Widget>, class: &str) -> Ve
     found
 }
 
-/// Whether every visible keycap under `root` has taught its control the
-/// key as `KeyShortcuts` (`a11y::teach_shortcuts`, T142) -- and there was
-/// at least one keycap to teach, so a surface with none does not pass by
-/// vacuously finding nothing.
 pub fn keycaps_are_taught(root: &impl gtk::prelude::IsA<gtk::Widget>) -> bool {
     use gtk::prelude::*;
     let mut found_a_cap = false;
@@ -274,8 +242,6 @@ pub fn keycaps_are_taught(root: &impl gtk::prelude::IsA<gtk::Widget>) -> bool {
     found_a_cap
 }
 
-/// The one widget under `root` wearing `class`; fails the case if there is
-/// not exactly one.
 pub fn only(root: &impl gtk::prelude::IsA<gtk::Widget>, class: &str) -> gtk::Widget {
     let mut found = with_class(root, class);
     assert_eq!(
@@ -287,8 +253,6 @@ pub fn only(root: &impl gtk::prelude::IsA<gtk::Widget>, class: &str) -> gtk::Wid
     found.remove(0)
 }
 
-/// What a person reads in `widget`: the text of every label under it that
-/// is on screen, in tree order.
 pub fn texts(widget: &impl gtk::prelude::IsA<gtk::Widget>) -> Vec<String> {
     use gtk::prelude::*;
     let mut said = Vec::new();
@@ -314,18 +278,11 @@ pub fn texts(widget: &impl gtk::prelude::IsA<gtk::Widget>) -> Vec<String> {
     said
 }
 
-/// A fixture with three conversations in its inbox, and a Focus window
-/// adopted over it, showing them: the shape most cases start from.
 pub async fn three_in_the_inbox() -> (Fixture, postio_gtk::window::FocusWindow) {
     use gtk::prelude::*;
     let fixture = Fixture::empty().await;
     fixture
-        .file(
-            ("Ada Moreno", "ada@example.com"),
-            "Atlas budget",
-            "The numbers are attached.",
-            30,
-        )
+        .file_from_ada("Atlas budget", "The numbers are attached.", 30)
         .await;
     fixture
         .file(
@@ -356,9 +313,6 @@ pub async fn three_in_the_inbox() -> (Fixture, postio_gtk::window::FocusWindow) 
 }
 
 impl Fixture {
-    /// A store seeded with `messages` synthetic messages, threaded into
-    /// conversations of mixed lengths and spread over the folders as a real
-    /// account's are: the large fixture the paging benches read.
     pub async fn large(messages: usize) -> Fixture {
         let database = test_support::memory().await;
         let report = postio_storage::seed::seed_large(&database, 7, messages).await;
@@ -374,15 +328,10 @@ impl Fixture {
         }
     }
 
-    /// A Focus window adopted over this store, and the client it reads
-    /// through, once the first rows are on screen.
     pub async fn open(&self) -> (postio_gtk::window::FocusWindow, postio_client::Client) {
         self.open_sized(None).await
     }
 
-    /// As [`open`](Self::open), the window asking to be `size` big when it
-    /// is first shown -- the only time GTK lets a window ask. The
-    /// compositor may still maximise it: its monitor is 1280x800.
     pub async fn open_sized(
         &self,
         size: Option<(i32, i32)>,
@@ -406,7 +355,6 @@ impl Fixture {
 }
 
 impl Fixture {
-    /// Put labels named `names` on `message`, making each, in that order.
     pub async fn label(&self, message: MessageId, names: &[&str]) {
         let connection = self.database.connect().await.expect("a connection");
         let labels = postio_storage::repository::LabelRepository::new(&connection);
@@ -419,7 +367,6 @@ impl Fixture {
 }
 
 impl Fixture {
-    /// Index everything filed so far, as sync indexes what it files.
     pub async fn index(&self) {
         let connection = self.database.connect().await.expect("a connection");
         postio_index::index::ensure_schema(&connection)
@@ -427,8 +374,6 @@ impl Fixture {
             .expect("indexed");
     }
 
-    /// Record `name <address>` as a correspondent of the fixture's account,
-    /// as sync does for every address it sees.
     pub async fn correspondent(&self, name: &str, address: &str) {
         let connection = self.database.connect().await.expect("a connection");
         postio_storage::repository::ContactRepository::new(&connection)
@@ -437,9 +382,6 @@ impl Fixture {
             .expect("a correspondent");
     }
 
-    /// A message from `from` about `subject`, filed into the archive
-    /// `minutes` before the fixture's now and filtered there for `reason`
-    /// ("notification", as the store spells it), as Focus's filing does.
     pub async fn filtered(
         &self,
         from: (&str, &str),
@@ -479,71 +421,6 @@ impl Fixture {
         id
     }
 
-    /// A conversation of `count` messages about `subject` in the archive,
-    /// only the newest of them filtered (for `reason`), so Filtered lists it
-    /// as one row that stands for a thread. Answers its messages, oldest
-    /// first.
-    pub async fn filtered_thread(
-        &self,
-        subject: &str,
-        count: usize,
-        reason: &str,
-        minutes: i64,
-    ) -> Vec<MessageId> {
-        let connection = self.database.connect().await.expect("a connection");
-        let archive: i64 = postio_storage::sql::scalar(
-            &connection,
-            "SELECT id FROM mailboxes WHERE account_id = ?1 AND name = 'Archive'",
-            [self.account.id.get()],
-        )
-        .await
-        .expect("the archive");
-        let mut previous: Option<postio_model::RfcMessageId> = None;
-        let mut ids = Vec::new();
-        for n in 1..=count {
-            let at = now() - Duration::minutes(minutes + 60 * (count - n) as i64);
-            let mut message = Message::new(self.account.id, MailboxId::new(archive), at);
-            message.from = vec![EmailAddress::new(Some("Forge"), "noreply@forge.test")];
-            message.subject = Some(if n == 1 {
-                subject.to_owned()
-            } else {
-                format!("Re: {subject}")
-            });
-            message.preview = Some(format!("Message {n}"));
-            let id =
-                postio_model::RfcMessageId::new(format!("<filtered.{subject}.{n}@example.test>"));
-            message.rfc_message_id = Some(id.clone());
-            if let Some(parent) = previous.replace(id) {
-                message.in_reply_to = Some(parent.clone());
-                message.references = vec![parent];
-            }
-            MessageRepository::new(&connection)
-                .create(&mut message)
-                .await
-                .expect("a message");
-            ThreadingRepository::new(&connection, self.account.id)
-                .thread(&message)
-                .await
-                .expect("threaded");
-            if n == count {
-                postio_storage::repository::FilterDecisionRepository::new(&connection)
-                    .record(&postio_storage::repository::FilterDecision {
-                        message: message.id,
-                        reason: postio_storage::repository::FilterReason::from_name(reason)
-                            .expect("a reason the store has"),
-                        source: Some("Forge".to_owned()),
-                        layer: postio_storage::repository::FilterLayer::Header,
-                        decided_at: at,
-                    })
-                    .await
-                    .expect("a decision");
-            }
-            ids.push(message.id);
-        }
-        ids
-    }
-
-    /// A second account, enabled, with an inbox of its own.
     pub async fn second_account(&self) -> (Account, MailboxId) {
         let connection = self.database.connect().await.expect("a connection");
         let mut account = Account::new(
@@ -562,8 +439,6 @@ impl Fixture {
         (account, inbox)
     }
 
-    /// File a message from Lena about `subject` into `account`'s
-    /// `mailbox`, `minutes` before the fixture's now, threaded.
     pub async fn file_as(
         &self,
         account: postio_model::AccountId,
@@ -592,7 +467,6 @@ impl Fixture {
         id
     }
 
-    /// A folder named `name` in the fixture's account.
     pub async fn folder(&self, name: &str) -> MailboxId {
         let connection = self.database.connect().await.expect("a connection");
         test_support::mailbox(&connection, &self.account, name)
@@ -600,8 +474,6 @@ impl Fixture {
             .id
     }
 
-    /// File a message from Ada about `subject` into `mailbox`, `minutes`
-    /// before the fixture's now.
     pub async fn file_in(&self, mailbox: MailboxId, subject: &str, minutes: i64) -> MessageId {
         let connection = self.database.connect().await.expect("a connection");
         let mut message =
@@ -625,9 +497,6 @@ impl Fixture {
         message.id
     }
 
-    /// File a message from `from` about `subject`, `minutes` before the
-    /// fixture's now, whose `List-Id` is `list_id` (US14 scenario 1): what
-    /// a `list:` rule matches.
     pub async fn file_from_list(
         &self,
         from: (&str, &str),
@@ -660,7 +529,6 @@ impl Fixture {
         message.id
     }
 
-    /// Store `html` as `message`'s body, fetched in full.
     pub async fn write_html_body(&self, message: MessageId, html: &str) {
         let connection = self.database.connect().await.expect("a connection");
         MessageRepository::new(&connection)
@@ -679,7 +547,6 @@ impl Fixture {
             .expect("a body");
     }
 
-    /// A message from Ada with one attached file, `name`, in the inbox.
     pub async fn file_with_attachment(&self, subject: &str, name: &str) -> MessageId {
         let connection = self.database.connect().await.expect("a connection");
         let mut message = Message::new(self.account.id, self.inbox, now() - Duration::minutes(5));
@@ -692,7 +559,6 @@ impl Fixture {
         let mut attachment =
             postio_model::Attachment::new(MessageId::UNASSIGNED, "application/pdf", 48_000);
         attachment.filename = Some(name.to_owned());
-        // A part the reader draws is one it can address.
         attachment.part_id = Some("2".to_owned());
         message.attachments.push(attachment);
         MessageRepository::new(&connection)
@@ -706,9 +572,6 @@ impl Fixture {
         message.id
     }
 
-    /// A message from Ada with one attached file, `report.pdf`, whose bytes
-    /// are [`ATTACHED`]: its raw source is kept, so the host can write the
-    /// part out as a save does, with no server behind it.
     pub async fn file_with_kept_attachment(&self, subject: &str) -> MessageId {
         let message = self.file_with_attachment(subject, "report.pdf").await;
         self.write_body(message, "See attached.").await;
@@ -724,7 +587,6 @@ impl Fixture {
         message
     }
 
-    /// Keep `raw` as `message`'s raw source, as a fetched message is kept.
     pub async fn write_raw(&self, message: MessageId, raw: &[u8]) {
         let blobs = BlobStore::open(self.blobs.path().to_path_buf(), &test_support::blob_keys())
             .expect("a blob store");
@@ -740,10 +602,6 @@ impl Fixture {
         repository.update(&mut row).await.expect("the row names it");
     }
 
-    /// A conversation of `count` messages about `subject`, each a reply to
-    /// the one before, the newest `minutes` ago and each earlier one an hour
-    /// before it; the body of the nth (from 1, oldest first) is "Message n".
-    /// Answers the messages, oldest first.
     pub async fn thread_of(&self, subject: &str, count: usize, minutes: i64) -> Vec<MessageId> {
         let connection = self.database.connect().await.expect("a connection");
         static THREADS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -783,109 +641,6 @@ impl Fixture {
         ids
     }
 
-    /// A conversation of two about `subject`: Ada's message, then the
-    /// account's own reply to it, newest `minutes` ago. Answers both.
-    pub async fn thread_with_you(&self, subject: &str, minutes: i64) -> Vec<MessageId> {
-        let connection = self.database.connect().await.expect("a connection");
-        let first = postio_model::RfcMessageId::new(format!("<with-you.{subject}.1@example.test>"));
-        let mut ids = Vec::new();
-        for (n, from) in [
-            EmailAddress::new(Some("Ada Moreno"), "ada@example.com"),
-            self.account.address.clone(),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            let at = now() - Duration::minutes(minutes + 60 * (1 - n as i64));
-            let mut message = Message::new(self.account.id, self.inbox, at);
-            message.from = vec![from];
-            message.subject = Some(if n == 0 {
-                subject.to_owned()
-            } else {
-                format!("Re: {subject}")
-            });
-            message.preview = Some(format!("Message {}", n + 1));
-            if n == 0 {
-                message.rfc_message_id = Some(first.clone());
-            } else {
-                message.rfc_message_id = Some(postio_model::RfcMessageId::new(format!(
-                    "<with-you.{subject}.2@example.test>"
-                )));
-                message.in_reply_to = Some(first.clone());
-                message.references = vec![first.clone()];
-            }
-            MessageRepository::new(&connection)
-                .create(&mut message)
-                .await
-                .expect("a message");
-            ThreadingRepository::new(&connection, self.account.id)
-                .thread(&message)
-                .await
-                .expect("threaded");
-            ids.push(message.id);
-        }
-        ids
-    }
-
-    /// A reply to `parent`, filed into the same thread as a sync pass would:
-    /// its id and its thread's.
-    pub async fn reply_to(&self, parent: MessageId, text: &str) -> (MessageId, ThreadId) {
-        let connection = self.database.connect().await.expect("a connection");
-        let parent = MessageRepository::new(&connection)
-            .get(parent)
-            .await
-            .expect("a read")
-            .expect("the parent");
-        let rfc = parent.rfc_message_id.clone().expect("a Message-ID");
-        let mut message = Message::new(self.account.id, self.inbox, now());
-        message.from = vec![EmailAddress::new(Some("Ana Ruiz"), "ana@example.com")];
-        message.subject = Some(format!(
-            "Re: {}",
-            parent.subject.clone().unwrap_or_default()
-        ));
-        message.preview = Some(text.to_owned());
-        message.rfc_message_id = Some(postio_model::RfcMessageId::new(format!(
-            "<reply.{}@example.test>",
-            parent.id.get()
-        )));
-        message.in_reply_to = Some(rfc.clone());
-        message.references = vec![rfc];
-        MessageRepository::new(&connection)
-            .create(&mut message)
-            .await
-            .expect("a message");
-        let threaded = ThreadingRepository::new(&connection, self.account.id)
-            .thread(&message)
-            .await
-            .expect("threaded");
-        (message.id, threaded.thread_id)
-    }
-
-    /// An unsent reply in `member`'s thread, saying `words`: what a thread
-    /// shows as its last child. Answers the draft.
-    pub async fn thread_draft(&self, member: MessageId, words: &str) -> postio_model::DraftId {
-        let connection = self.database.connect().await.expect("a connection");
-        let thread = MessageRepository::new(&connection)
-            .get(member)
-            .await
-            .expect("a read")
-            .expect("the member")
-            .thread_id
-            .expect("threaded");
-        let mut draft = postio_model::Draft::new(self.account.id);
-        draft.thread_id = Some(thread);
-        draft.subject = "Re: Harbor plan".to_owned();
-        draft.body = postio_model::MessageBody {
-            text: Some(words.to_owned()),
-            html: None,
-        };
-        postio_storage::repository::DraftRepository::new(&connection)
-            .save(&mut draft)
-            .await
-            .expect("a draft")
-    }
-
-    /// Mark the first `count` messages of `thread` read.
     pub async fn read_first(&self, thread: &[MessageId], count: usize) {
         let connection = self.database.connect().await.expect("a connection");
         let mut seen = postio_model::FlagSet::new();
@@ -902,9 +657,6 @@ impl Fixture {
         }
     }
 
-    /// Mark every message of `thread` but the newest read, so the thread
-    /// opens on its newest: a thread opens at its first unread message
-    /// (spec 013 FR-013), and `thread_of` leaves every message unread.
     pub async fn read_all_but_last(&self, thread: &[MessageId]) {
         let connection = self.database.connect().await.expect("a connection");
         let mut seen = postio_model::FlagSet::new();
@@ -921,7 +673,6 @@ impl Fixture {
         }
     }
 
-    /// Store `text` as `message`'s body, fetched in full.
     pub async fn write_body(&self, message: MessageId, text: &str) {
         let connection = self.database.connect().await.expect("a connection");
         MessageRepository::new(&connection)
@@ -940,7 +691,6 @@ impl Fixture {
             .expect("a body");
     }
 
-    /// Record that the server refused `message`'s body, as the backfill does.
     pub async fn refuse_body(&self, message: MessageId) {
         let connection = self.database.connect().await.expect("a connection");
         MessageRepository::new(&connection)
@@ -949,8 +699,6 @@ impl Fixture {
             .expect("a mark");
     }
 
-    /// [`Fixture::write_body`], and the body in the search index too, as the
-    /// running app's body indexer would put it: what a search can find in it.
     pub async fn write_searchable_body(&self, message: MessageId, text: &str) {
         self.write_body(message, text).await;
         let connection = self.database.connect().await.expect("a connection");
@@ -964,8 +712,6 @@ impl Fixture {
 }
 
 impl Fixture {
-    /// Mark `message` with a question quoting `sentence`, as the built-in
-    /// detector would have.
     pub async fn ask(&self, message: MessageId, sentence: &str) {
         use postio_storage::repository::{Marker, MarkerRepository, MarkerSource};
         let connection = self.database.connect().await.expect("a connection");
@@ -989,17 +735,10 @@ impl Fixture {
     }
 }
 
-/// Press `name` (a GDK key name: "x", "J", "exclam", "Escape") with
-/// `state`'s modifiers, as GTK would deliver it: [`deliver_with`], not a call
-/// to the window's handler (T200).
 pub fn press(window: &postio_gtk::window::FocusWindow, name: &str, state: gtk::gdk::ModifierType) {
     deliver_with(window, name, state);
 }
 
-/// `/`, `words` typed a letter at a time, and the dropdown's hit for
-/// `subject` opened as a person opens it (spec 010 US1): the arrows up to it
-/// from Show all, where the highlight starts, then Return. The bar, which
-/// opening the hit puts away.
 pub async fn open_hit(
     window: &postio_gtk::window::FocusWindow,
     words: &str,
@@ -1039,7 +778,6 @@ pub async fn open_hit(
     bar
 }
 
-/// Press each of `keys`, unmodified but for shift on a capital.
 pub fn keys(window: &postio_gtk::window::FocusWindow, keys: &[&str]) {
     for name in keys {
         let shifted = name.chars().count() == 1 && name.chars().all(char::is_uppercase);
@@ -1052,7 +790,6 @@ pub fn keys(window: &postio_gtk::window::FocusWindow, keys: &[&str]) {
     }
 }
 
-/// The subjects of the rows on screen, top to bottom.
 pub fn subjects(window: &postio_gtk::window::FocusWindow) -> Vec<String> {
     window
         .pane()
@@ -1080,8 +817,6 @@ pub fn subjects(window: &postio_gtk::window::FocusWindow) -> Vec<String> {
 }
 
 impl Fixture {
-    /// Five conversations in the inbox, "First" the newest, "Fifth" the
-    /// oldest. Answers their messages, in that order.
     pub async fn file_five(&self) -> Vec<MessageId> {
         let mut filed = Vec::new();
         for (subject, minutes) in [
@@ -1092,25 +827,18 @@ impl Fixture {
             ("Fifth", 50),
         ] {
             let (message, _) = self
-                .file(
-                    ("Ada Moreno", "ada@example.com"),
-                    subject,
-                    "A line of text.",
-                    minutes,
-                )
+                .file_from_ada(subject, "A line of text.", minutes)
                 .await;
             filed.push(message);
         }
         filed
     }
 
-    /// [`Self::file_five`], and a window open over them.
     pub async fn five(&self) -> (postio_gtk::window::FocusWindow, postio_client::Client) {
         self.file_five().await;
         self.open_five().await
     }
 
-    /// A window open over five conversations already filed.
     pub async fn open_five(&self) -> (postio_gtk::window::FocusWindow, postio_client::Client) {
         let (window, client) = self.open().await;
         assert!(
@@ -1123,8 +851,6 @@ impl Fixture {
 }
 
 impl Fixture {
-    /// A message from `from`, to `to` and copied to `cc` (each a name and an
-    /// address), dated `date`, with a plain body. Answers its id.
     pub async fn file_addressed(
         &self,
         from: (&str, &str),
@@ -1165,7 +891,6 @@ impl Fixture {
         message.id
     }
 
-    /// Put a label named `name`, drawn in `colour` (`#rrggbb`), on `message`.
     pub async fn label_in(&self, message: MessageId, name: &str, colour: &str) {
         let connection = self.database.connect().await.expect("a connection");
         let labels = postio_storage::repository::LabelRepository::new(&connection);
@@ -1176,18 +901,11 @@ impl Fixture {
     }
 }
 
-/// Press `name` (a GDK key name) as GTK delivers a key press: to the widget
-/// the window's keyboard is on (the window itself when nothing has it),
-/// through each key controller from the window down to it in the capture
-/// phase, then the target's own, then back up in the bubble phase, until
-/// one claims it. Answers whether one did.
-///
-/// [`press`] calls the window's handler directly, which is not what a key
-/// press does: it cannot see the keyboard sitting somewhere a controller
-/// takes the key first, or the handler never being reached -- which is
-/// what happened under every dialog (T195). This can. What it cannot run is a widget class's own key bindings (a
-/// scroller's, a window's focus moves): GTK offers no way to run them but a
-/// real event.
+/// Press `name` as GTK delivers a key: to the widget the keyboard is on, through each key
+/// controller from the window down in the capture phase, then the target's own, then back up in the
+/// bubble phase, until one claims it. [`press`] calls the window's handler directly, which cannot
+/// see a controller taking the key first. A widget class's own key bindings cannot run: GTK offers
+/// no way but a real event.
 pub fn deliver(window: &postio_gtk::window::FocusWindow, name: &str) -> bool {
     let state = if name.chars().count() == 1 && name.chars().all(char::is_uppercase) {
         gtk::gdk::ModifierType::SHIFT_MASK
@@ -1197,7 +915,6 @@ pub fn deliver(window: &postio_gtk::window::FocusWindow, name: &str) -> bool {
     deliver_with(window, name, state)
 }
 
-/// [`deliver`] with the modifiers held, for `Ctrl+Return` and the like.
 pub fn deliver_with(
     window: &postio_gtk::window::FocusWindow,
     name: &str,
@@ -1208,21 +925,17 @@ pub fn deliver_with(
     let keyval = gtk::glib::translate::IntoGlib::into_glib(key);
     let target: gtk::Widget =
         gtk::prelude::GtkWindowExt::focus(window).unwrap_or_else(|| window.clone().upcast());
-    // GTK's key path starts at the focus and climbs its parents. A focus
-    // that has left the window (its row was destroyed in a redraw) has none,
-    // so no key would reach the window: a person's keyboard is dead until a
-    // click. Say so, rather than let the key quietly find nothing (T200).
+    // GTK's key path climbs from the focus through its parents. A focus that left the window (its
+    // row was destroyed in a redraw) has none, so a person's keyboard is dead until a click: say so
+    // rather than let the key find nothing.
     assert!(
         target.root().is_some(),
         "{name}: the keyboard is on a {} that has left the window",
         target.type_().name()
     );
-    // GTK runs a key through the widgets from the focus up to the innermost
-    // dialog presented over the window, and no further: a controller on the
-    // window, or anywhere between it and the dialog, never sees a key the
-    // dialog's keyboard is given. Measured with real key presses injected
-    // into the headless compositor (mutter's RemoteDesktop), GTK 4.22 and
-    // libadwaita 1.9 (T195).
+    // GTK runs a key through the widgets from the focus up to the innermost dialog presented over
+    // the window, and no further (measured with real key presses in the headless compositor, GTK
+    // 4.22, libadwaita 1.9).
     let mut chain = vec![target.clone()];
     while !chain
         .last()
@@ -1231,10 +944,8 @@ pub fn deliver_with(
     {
         chain.push(parent);
     }
-    // A widget's own shortcuts (a `ShortcutController` of local scope, as
-    // the reader's Ctrl+C is) answer in their phase as its key controllers
-    // do: a key whose trigger is this keyval and these modifiers runs the
-    // shortcut's action on the widget.
+    // A widget's own `ShortcutController` of local scope answers in its phase: a key whose trigger
+    // matches runs the action on the widget.
     let shortcut = |widget: &gtk::Widget, shortcuts: &gtk::ShortcutController| -> bool {
         (0..shortcuts.n_items()).any(|at| {
             let Some(shortcut) = shortcuts.item(at).and_downcast::<gtk::Shortcut>() else {
@@ -1285,8 +996,6 @@ pub fn deliver_with(
     claimed
 }
 
-/// The button under `root` that says `label`: the one a person clicks,
-/// once it is on screen (a dialog's buttons are not, until it has opened).
 pub fn button_labelled(root: &impl gtk::prelude::IsA<gtk::Widget>, label: &str) -> gtk::Widget {
     use gtk::prelude::*;
     let deadline =
@@ -1309,10 +1018,8 @@ pub fn button_labelled(root: &impl gtk::prelude::IsA<gtk::Widget>, label: &str) 
     }
 }
 
-/// Click the list row under `root` that says `text`, as a person does: the
-/// row on screen when they click. A list that is still redrawing replaces its
-/// rows, so a row found a moment ago may be gone; this finds one afresh until
-/// a click at its middle reaches it.
+/// A list still redrawing replaces its rows, so a row found a moment ago may be gone: this finds
+/// one afresh until a click at its middle reaches it.
 pub fn click_row_saying(
     window: &postio_gtk::window::FocusWindow,
     root: &impl gtk::prelude::IsA<gtk::Widget>,
@@ -1331,8 +1038,7 @@ pub fn click_row_saying(
         if let Some(row) = row {
             let native = native_of(&row, window);
             wait_to_be_still(&native, &row);
-            // Mapped is not laid out: a row built a moment ago has no size
-            // until the next frame, and nothing can be clicked at no size.
+            // Mapped is not laid out: a row built a moment ago has no size until the next frame.
             let point = row
                 .compute_bounds(&native)
                 .filter(|bounds| bounds.width() > 0.0 && bounds.height() > 0.0)
@@ -1363,8 +1069,6 @@ pub fn click_row_saying(
     }
 }
 
-/// [`click_at`] at (`x`, `y`) in `widget`'s own space, once a click there
-/// reaches `widget` (see [`wait_to_be_pickable`]).
 pub fn click_in(
     window: &postio_gtk::window::FocusWindow,
     widget: &impl gtk::prelude::IsA<gtk::Widget>,
@@ -1378,8 +1082,6 @@ pub fn click_in(
     click_on(&native, x, y, n_press);
 }
 
-/// Click the middle of `widget` as a person would, `n_press` times (2 is a
-/// double-click): see [`click_at`].
 pub fn click(
     window: &postio_gtk::window::FocusWindow,
     widget: &impl gtk::prelude::IsA<gtk::Widget>,
@@ -1387,9 +1089,7 @@ pub fn click(
 ) {
     use gtk::prelude::*;
     let widget = widget.as_ref();
-    // Its middle is only known once it is laid out: a widget a moment old
-    // has no size yet, and a click at its corner can miss it -- the click a
-    // person never makes, since they aim at what they see.
+    // A widget a moment old has no size yet, and a click at its corner can miss it.
     let deadline =
         std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
     while !(widget.is_mapped() && widget.width() > 0 && widget.height() > 0)
@@ -1404,9 +1104,6 @@ pub fn click(
     click_on(&native, x, y, n_press);
 }
 
-/// Right-click the middle of `widget` as a person would: once it is laid
-/// out, still, and the place a press there reaches, the secondary button
-/// pressed and released along GTK's path, as [`click`] does the primary.
 pub fn secondary_click(
     window: &postio_gtk::window::FocusWindow,
     widget: &impl gtk::prelude::IsA<gtk::Widget>,
@@ -1427,7 +1124,6 @@ pub fn secondary_click(
     press_on(&native, x, y, 1, gtk::gdk::BUTTON_SECONDARY);
 }
 
-/// The surface `widget` is drawn on: the window, or a popover's own.
 fn native_of(widget: &gtk::Widget, window: &postio_gtk::window::FocusWindow) -> gtk::Widget {
     use gtk::prelude::*;
     widget
@@ -1436,21 +1132,14 @@ fn native_of(widget: &gtk::Widget, window: &postio_gtk::window::FocusWindow) -> 
         .unwrap_or_else(|| window.clone().upcast())
 }
 
-/// How near its own size a widget has to be drawn to count as drawn at it.
-/// libadwaita opens a floating dialog on a spring that overshoots, about
-/// 1.7% past its size, and comes back over some ten frames, the last of them
-/// within a fifth of a pixel of it. Half a pixel took that tail for the end,
-/// and a block measured then was 61.015 tall where it is 61 (#2216). At
-/// rest the spring is exactly at its size.
+/// The spring libadwaita opens a dialog on overshoots and settles exactly at
+/// size; half a pixel took its tail for rest (#2216).
 const DRAWN_AT_SIZE: f32 = 0.01;
 
-/// Whether `widget` is drawn at its own size now: no transform above it
-/// scales it.
-///
-/// What a wait that saw no frames still has to check. A stalled frame clock
-/// on a loaded runner draws no frames either, and it stalls an opening
-/// dialog's scale with it: taking "no frames" alone as "nothing moving"
-/// clicked Settings at 0.81 of its size (#1817).
+/// Waits for `widget` to stop moving on `native`: libadwaita opens a dialog by scaling it from 0.8
+/// to 1, so a press and a release a frame later land at two places (#1817). Whether `widget` is
+/// drawn at its own size now: a stalled frame clock draws no frames and stalls an opening dialog's
+/// scale too, so "no frames" alone clicked Settings at 0.81 of its size (#1817).
 fn drawn_at_own_size(native: &gtk::Widget, widget: &gtk::Widget) -> bool {
     use gtk::prelude::*;
     match (widget.compute_bounds(native), widget.compute_bounds(widget)) {
@@ -1462,9 +1151,6 @@ fn drawn_at_own_size(native: &gtk::Widget, widget: &gtk::Widget) -> bool {
     }
 }
 
-/// Wait for `dialog` to have finished opening: its content drawn still, at
-/// its own size. A case that measures the blocks in it before then measures
-/// them scaled by the opening's spring.
 pub fn wait_for_dialog_opened(
     window: &postio_gtk::window::FocusWindow,
     dialog: &impl gtk::prelude::IsA<adw::Dialog>,
@@ -1484,23 +1170,10 @@ pub fn wait_for_dialog_opened(
     );
 }
 
-/// Wait for `widget` to stop moving on `native`, the surface a click lands
-/// on: a person clicks what has stopped where they see it. libadwaita opens
-/// a dialog by scaling it from 0.8 to its size in its allocation (a bottom
-/// sheet slides instead), so until it has opened a button in it is smaller
-/// and somewhere else every frame. A press then and a release a frame later
-/// are at two places, and the release misses: every Settings flake on CI
-/// (#1817). Measured in `native`'s coordinates, frame by frame -- within the
-/// dialog, as [`settle_still`] measures, nothing moves while the whole
-/// dialog grows -- and until `widget` is drawn at its own size, which no
-/// frame of a dialog's opening is.
 fn wait_to_be_still(native: &gtk::Widget, widget: &gtk::Widget) {
     use gtk::prelude::*;
-    // Where it was drawn on each frame, if anywhere.
     type Frames = Vec<Option<gtk::graphene::Rect>>;
     let frames: std::rc::Rc<std::cell::RefCell<Frames>> = std::rc::Rc::default();
-    // A tick callback keeps the frame clock running, so frames come while
-    // this waits even when nothing else asks for one.
     let tick = widget.add_tick_callback({
         let frames = std::rc::Rc::clone(&frames);
         let native = native.clone();
@@ -1514,9 +1187,8 @@ fn wait_to_be_still(native: &gtk::Widget, widget: &gtk::Widget) {
         let [.., Some(before), Some(last)] = frames.as_slice() else {
             return false;
         };
-        // Its own size: its box in its own space, which no transform above
-        // it scales (its `width()` is the content box, without border or
-        // padding, so it is not the thing to compare).
+        // Its own size: its box in its own space, which no transform scales (`width()` is the
+        // content box, so not the thing to compare).
         let Some(own) = widget.compute_bounds(widget) else {
             return false;
         };
@@ -1526,14 +1198,13 @@ fn wait_to_be_still(native: &gtk::Widget, widget: &gtk::Widget) {
     };
     let started = std::time::Instant::now();
     let deadline = started + postio_test_support::scaled(std::time::Duration::from_secs(10));
-    // A frame comes every few milliseconds on a surface that is drawn; none
-    // in this long is one that is not, and there is no motion to wait out.
+    // A frame comes every few milliseconds on a drawn surface; none in this long means it is not
+    // drawn, so there is no motion to wait out.
     let first_frames = started + postio_test_support::scaled(std::time::Duration::from_secs(1));
     loop {
         crate::settle();
-        // A widget that has left the screen draws no frames -- a list that
-        // redraws replaces its rows -- and is not one to wait on: the caller
-        // finds what is there now, or its pick says what is.
+        // A widget that left the screen draws no frames (a redrawn list replaces its rows) and is
+        // not one to wait on.
         if at_rest(widget)
             || !widget.is_mapped()
             || (frames.borrow().len() < 2
@@ -1543,8 +1214,6 @@ fn wait_to_be_still(native: &gtk::Widget, widget: &gtk::Widget) {
             break;
         }
         if std::time::Instant::now() > deadline {
-            // No frames at all is a surface the compositor is not drawing,
-            // not motion: the pick that follows still has to reach it.
             assert!(
                 frames.borrow().len() < 2,
                 "the {} never came to rest on screen: {:?}",
@@ -1558,11 +1227,8 @@ fn wait_to_be_still(native: &gtk::Widget, widget: &gtk::Widget) {
     tick.remove();
 }
 
-/// The window coordinates of (`x`, `y`) in `widget`, once that is a place a
-/// click reaches `widget`: what a person waits for. A dialog slides in, and
-/// until it has stopped the point is over the scrim, not the button; a
-/// person clicks when the button is where they see it. Panics, naming what
-/// covers it, when it never is: a button under something is a bug.
+/// A dialog slides in, and until it stops the point is over the scrim, not the button. Panics
+/// naming what covers it when it never is: a button under something is a bug.
 fn wait_to_be_pickable(window: &gtk::Widget, widget: &gtk::Widget, x: f32, y: f32) -> (f64, f64) {
     use gtk::prelude::*;
     let deadline =
@@ -1602,46 +1268,27 @@ fn wait_to_be_pickable(window: &gtk::Widget, widget: &gtk::Widget, x: f32, y: f3
     }
 }
 
-/// Press and release the primary button at (`x`, `y`) in the window,
-/// `n_press` times over, as GTK delivers a click: to whatever is *picked*
-/// there (so a widget covered by a dialog's scrim is not the one that gets
-/// it, and one that is not mapped, clipped away or insensitive cannot be
-/// clicked), through each `GestureClick` from the window down to it in the
-/// capture phase, then the picked widget's own, then back up in the bubble
-/// phase; and no further than the innermost dialog or popover surface on the
-/// way (a popover is a surface of its own; stopping at a dialog is the
-/// conservative reading of what [`deliver`] measured for keys, not something
-/// measured for the pointer: a click on the scrim is outside the dialog and
-/// reaches the window either way).
-///
-/// GTK offers no way to build a button event in-process (`GdkEvent`s are
-/// made by a backend), so this drives the gestures' `pressed` and `released`
-/// signals itself, in the order and along the path GTK would, with the
-/// press count of the click it is. What it cannot see is a gesture claiming
-/// the sequence (no sequence exists to claim), so it approximates that:
-/// a `GtkButton` claims what reaches it, and nothing above one is run.
+/// GTK offers no way to build a button event in-process, so this drives the gestures' `pressed` and
+/// `released` signals in GTK's order and along its path, to whatever is picked there (a widget
+/// under a dialog's scrim, unmapped, clipped or insensitive cannot be clicked), no further than the
+/// innermost dialog or popover surface. A `GtkButton` claims what reaches it, and nothing above one
+/// is run.
 pub fn click_at(window: &postio_gtk::window::FocusWindow, x: f64, y: f64, n_press: i32) {
     use gtk::prelude::*;
     click_on(window.upcast_ref::<gtk::Widget>(), x, y, n_press);
 }
 
-/// [`click_at`] on a surface `native` (a window, or a popover's own), in its
-/// coordinates.
 fn click_on(window: &gtk::Widget, x: f64, y: f64, n_press: i32) {
     press_on(window, x, y, n_press, gtk::gdk::BUTTON_PRIMARY);
 }
 
-/// [`click_on`] with `button`: the gestures for it, or for every button,
-/// see the press.
 fn press_on(window: &gtk::Widget, x: f64, y: f64, n_press: i32, button: u32) {
     use gtk::prelude::*;
     let picked = window
         .pick(x, y, gtk::PickFlags::DEFAULT)
         .unwrap_or_else(|| window.clone().upcast());
-    // A popover is a surface of its own: an event on it goes up to the
-    // popover and no further. A dialog is not -- it is a widget in the
-    // window, and the window's capture gestures see a press on it first, as
-    // GTK runs them (the add-account form's close button, T171).
+    // A popover is a surface of its own: an event on it goes up to the popover and no further.
+    // A dialog is not, so the window's capture gestures see a press on it first.
     let mut chain = vec![picked.clone()];
     while !chain
         .last()
@@ -1656,12 +1303,10 @@ fn press_on(window: &gtk::Widget, x: f64, y: f64, n_press: i32, button: u32) {
         (0..controllers.n_items())
             .filter_map(|at| controllers.item(at).and_downcast::<gtk::GestureClick>())
             .filter(|gesture| gesture.propagation_phase() == phase)
-            // A gesture for another button (a row's context menu on the
-            // secondary, for a primary click) never sees it.
+            // A gesture for another button never sees it.
             .filter(|gesture| gesture.button() == 0 || gesture.button() == button)
             .collect()
     };
-    // The path, in the order GTK runs it: widget and gesture.
     let mut path: Vec<(gtk::Widget, gtk::GestureClick)> = Vec::new();
     for widget in chain.iter().rev() {
         path.extend(
@@ -1707,8 +1352,6 @@ fn press_on(window: &gtk::Widget, x: f64, y: f64, n_press: i32, button: u32) {
     }
 }
 
-/// Where the window's keyboard is, as the widget types and CSS classes
-/// from the window down: for a failure to name.
 pub fn focus_path(window: &postio_gtk::window::FocusWindow) -> String {
     use gtk::prelude::*;
     let mut chain = Vec::new();
@@ -1729,15 +1372,11 @@ pub fn focus_path(window: &postio_gtk::window::FocusWindow) -> String {
     }
 }
 
-/// The bytes of the part [`Fixture::file_with_kept_attachment`] attaches:
-/// not text, so a save that went through a string would show.
 pub const ATTACHED: &[u8] = b"%PDF-1.4\n\x00\xff\x10 the plan\r\n";
 const ATTACHED_BASE64: &str = "JVBERi0xLjQKAP8QIHRoZSBwbGFuDQo=";
 
-/// Wait for `widget` to stop moving within `root`: a settings detail page
-/// slides in when its row is clicked, carrying its buttons with it, and a
-/// press and a release that land at two places are no click -- on a slow
-/// runner the case pressed "Add signature" mid-slide and nothing opened.
+/// A settings detail page slides in when its row is clicked, carrying its buttons, and a press and
+/// a release at two places are no click: on a slow runner "Add signature" was pressed mid-slide.
 pub fn settle_still(
     widget: &impl gtk::prelude::IsA<gtk::Widget>,
     root: &impl gtk::prelude::IsA<gtk::Widget>,
@@ -1757,4 +1396,11 @@ pub fn settle_still(
         }
         last = now;
     }
+}
+
+pub async fn rows_shown(window: &postio_gtk::window::FocusWindow, count: usize) {
+    assert!(
+        crate::settle_until(async || subjects(window).len() == count).await,
+        "the inbox never reached {count} rows"
+    );
 }

@@ -1,36 +1,18 @@
 import PostioFFI
 import SwiftUI
 
-/// One-click unsubscribe, which `PRODUCT.md` lists among the privacy
-/// features and which had no surface here at all (#1585).
-///
-/// **Only on deliberate activation.** That is the rule the whole feature is
-/// built around, and it is why nothing happens when the banner *appears*:
-/// reading the offer is a point read that writes nothing, and the single call
-/// that records anything is behind this button. The boundary refuses to
-/// record an activation for a message that offers nothing, so a frontend
-/// cannot unsubscribe anybody from a message the reader never offered it on.
-///
-/// The sentence and the verb are both the boundary's — `offer.summary` and
-/// `offer.action` — so the two frontends say the same thing about what is
-/// being left.
-///
-/// Per message, like the blocked-images notice beside it: a conversation can
-/// hold eight messages from four lists, and one banner above them all could
-/// not say whose.
+/// Only on deliberate activation: nothing happens when the banner appears, since reading the offer
+/// writes nothing and the one call that records is behind the button. The boundary refuses to
+/// record for a message that offers nothing. Per message: a conversation can hold messages from
+/// several lists.
 public struct UnsubscribeBanner: View {
     private let offer: UnsubscribeOfferFfi
-    /// Where this message's offer has got to. Held by the engine, not here:
-    /// `X` and the palette press the same thing this button does (#1706),
-    /// and a command cannot reach a view's `@State`.
+    /// Held by the engine, not here: `X` and the palette press the same thing (#1706), and a
+    /// command cannot reach `@State`.
     private let state: Unsubscribing.State
-    /// Run the `unsubscribe` command for this message -- the one deliberate
-    /// act, and the same path the key takes.
+    /// The `unsubscribe` command, the same path the key takes.
     private let leave: () -> Void
-    /// The answer to the offer to clear what the list sent: `true` deletes,
-    /// `false` archives, `nil` dismisses it and keeps it all.
     private let clear: (Bool?) -> Void
-    /// The key of `clear_list_mail`, drawn on the offer's button (#1953).
     private let clearCap: String?
 
     public init(
@@ -45,18 +27,16 @@ public struct UnsubscribeBanner: View {
     }
 
     public var body: some View {
-        // Gone once recorded: the banner disappearing *is* the success, and
-        // a green tick under a row that has gone is a claim about nothing.
+        // Gone once recorded: the banner disappearing is the success.
         if state != .left {
             VStack(alignment: .leading, spacing: PostioTokens.space1) {
                 HStack(spacing: PostioTokens.space3) {
                     Image(systemName: "envelope.open")
                         .foregroundStyle(.secondary)
                     if case .clearing(let sweep) = state {
-                        // Left, and mail is still here: the offer replaces
-                        // the button, with the one action the setting names.
-                        // Nothing moves until it is pressed, it is one undo,
-                        // and dismissing keeps everything (#1952).
+                        // Left with mail still here: the offer replaces the button. Nothing moves
+                        // until it is pressed, it is one undo, and dismissing keeps everything
+                        // (#1952).
                         Text(sweep.summary)
                             .lineLimit(1)
                             .truncationMode(.middle)

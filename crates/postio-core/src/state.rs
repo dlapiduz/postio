@@ -1,25 +1,8 @@
-//! What the user is looking at: one coherent, authoritative answer.
+//! The account, mailbox, selection and view live here and nowhere else; widgets repaint from the
+//! events these mutations return.
 //!
-//! The account, the mailbox, the selection and the view live here and
-//! nowhere else. Widgets render from these accessors and repaint from the
-//! events these mutations return; a widget that kept its own copy would be
-//! one refresh away from disagreeing with the database.
-//!
-//! # Every change is an event
-//!
-//! Mutators return the [`Event`]s the change produced, and they return them by
-//! *diffing* the state rather than by remembering to emit — so a change that
-//! emits nothing is impossible, and a no-op that emits something is too. That
-//! is what makes "the UI repaints only from events" a rule the frontend can
-//! rely on rather than a habit.
-//!
-//! # The back stack is why `t` and `Esc` round-trip
-//!
-//! Canvas 3a asks that drilling into a thread with `t` and coming back with
-//! `Esc` restore the *exact* prior position. Each drill-in pushes the view and
-//! the selection it left; [`AppState::back`] pops them. Because the position is
-//! here and not in the list widget, it survives the widget being rebuilt,
-//! rewindowed or scrolled somewhere else entirely.
+//! Mutators return events by diffing the state, so a change that emits nothing is impossible. The
+//! back stack restores the exact prior position on `Esc`.
 
 use std::sync::{Arc, Mutex};
 
@@ -29,44 +12,24 @@ use serde::{Deserialize, Serialize};
 use crate::bridge::EventSink;
 use crate::{Context, Event, MessageTarget};
 
-/// Which surface the reading pane is showing.
-///
-/// Not a widget and not a window: compose takes over the reading pane rather
-/// than opening a window of its own, so it is a mode of the same pane.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ViewMode {
-    /// The message list.
     #[default]
     List,
-    /// One conversation, stacked in the reading pane.
-    ///
-    /// Was `Thread`, when a thread meant a column that replaced the list
-    /// (#1003). The list is never anything but the list now; what changes is
-    /// what the reading pane holds — one message, or all of a
-    /// conversation's.
+    /// Was `Thread` before the conversation moved into the reading pane (#1003).
     Conversation {
-        /// The conversation on screen.
         thread: ThreadId,
     },
-    /// One message in the reading pane.
     Reader {
-        /// The message on screen.
         message: MessageId,
     },
-    /// The composer, which has taken the reading pane over.
     Composer {
-        /// The draft being edited.
         draft: DraftId,
     },
 }
 
 impl ViewMode {
-    /// The keyboard context this view owns.
-    ///
-    /// This is what the palette, the `?` cheat sheet and the focused-row key
-    /// hints filter on, so the mapping has to live next to the view rather
-    /// than being re-derived by each surface.
     pub fn context(&self) -> Context {
         match self {
             ViewMode::List => Context::List,
@@ -77,27 +40,15 @@ impl ViewMode {
     }
 }
 
-/// What an action will hit.
-///
-/// Deliberately not a `Vec<MessageId>`. docs/PRODUCT.md §18 says a mailbox is never
-/// loaded into memory, and "select all" in a 100,000-message folder would
-/// defeat that with one keystroke if selecting meant naming every row. So the
-/// whole-mailbox case is a *predicate* — everything the list is showing, minus
-/// whatever has been taken back out — and the storage layer resolves it in one
-/// statement when an action finally lands. Bulk archive of 50,000 messages is
-/// then one `UPDATE` and one queued operation, not 50,000 of each.
-///
-/// The predicate is relative to the mailbox and query in view. It does not
-/// survive a change of either: [`AppState::open_mailbox`] clears it, because
-/// "everything" means something different the moment the list does.
+/// A predicate, not a `Vec<MessageId>`: a mailbox is never loaded into memory (docs/PRODUCT.md
+/// §18), so the store resolves "select all" in one statement. `open_mailbox` clears it because
+/// "everything" changes with the list.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Selection {
     /// These messages specifically. Empty means nothing is selected.
     These(Vec<MessageId>),
-    /// Everything the list is showing, except these.
     Everything {
-        /// Rows taken back out of the selection since it was made.
         except: Vec<MessageId>,
     },
 }
@@ -109,26 +60,16 @@ impl Default for Selection {
 }
 
 impl Selection {
-    /// Whether an action would hit nothing.
-    ///
-    /// [`Selection::Everything`] is never empty by this measure, even in an
-    /// empty mailbox: whether it covers any rows is a question for the store,
-    /// and answering it here would mean counting the thing the predicate
-    /// exists to avoid counting.
+    /// `Everything` is never empty by this measure: whether it covers rows is the store's question.
     pub fn is_empty(&self) -> bool {
         matches!(self, Selection::These(messages) if messages.is_empty())
     }
 
-    /// Whether this is the whole-mailbox predicate.
     pub fn is_everything(&self) -> bool {
         matches!(self, Selection::Everything { .. })
     }
 
-    /// The messages, when they can be named.
-    ///
-    /// `None` for [`Selection::Everything`] — which is the point. A caller
-    /// that needs the rows behind a predicate has to ask the store for them,
-    /// which is the only place that can answer without loading a mailbox.
+    /// `None` for `Everything`: ask the store, which can answer without loading a mailbox.
     pub fn ids(&self) -> Option<&[MessageId]> {
         match self {
             Selection::These(messages) => Some(messages),
@@ -136,7 +77,6 @@ impl Selection {
         }
     }
 
-    /// Whether `message` is in the selection.
     pub fn contains(&self, message: MessageId) -> bool {
         match self {
             Selection::These(messages) => messages.contains(&message),
@@ -144,7 +84,6 @@ impl Selection {
         }
     }
 
-    /// Add `message` if it is out, take it out if it is in.
     pub fn toggle(&mut self, message: MessageId) {
         match self {
             Selection::These(messages) => match messages.iter().position(|id| *id == message) {
@@ -153,9 +92,8 @@ impl Selection {
                 }
                 None => messages.push(message),
             },
-            // Inside the predicate, toggling edits the exceptions rather than
-            // giving the predicate up: taking one row out of forty thousand
-            // must not turn into naming the other 39,999.
+            // Toggling inside the predicate edits the exceptions rather than naming every other
+            // row.
             Selection::Everything { except } => match except.iter().position(|id| *id == message) {
                 Some(index) => {
                     except.remove(index);
@@ -165,7 +103,6 @@ impl Selection {
         }
     }
 
-    /// Add `message`, leaving it alone if it is already in.
     pub fn insert(&mut self, message: MessageId) {
         if !self.contains(message) {
             self.toggle(message);
@@ -173,103 +110,48 @@ impl Selection {
     }
 }
 
-/// What a [`MessageTarget`] came out as, once app state had its say.
-///
-/// The predicate stays a predicate: a handler that receives
-/// [`Resolved::Everything`] hands it to the store to turn into affected rows
-/// in one statement, rather than being given a hundred thousand ids that
-/// something had to enumerate first. That is the whole reason this is not
-/// simply `Vec<MessageId>`.
+/// A handler hands `Everything` to the store to turn into rows in one statement, not enumerated
+/// ids.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Resolved {
-    /// These messages, named.
     Messages(Vec<MessageId>),
-    /// Every message the list is showing, less the ones taken back out.
     Everything {
-        /// What the list is a view of — a folder, or a smart folder.
         scope: ViewScope,
-        /// Rows the user removed from the selection.
         except: Vec<MessageId>,
     },
-    /// Every message in each of these threads — a unified group (#184).
     Threads(Vec<ThreadId>),
-    /// Every message in a thread.
     Thread(ThreadId),
-    /// Every message a run of queue rows named, and where they are now.
-    ///
-    /// The other half of the predicate story: [`Resolved::Everything`] is how a
-    /// whole-mailbox action reaches the store, and this is how *undoing* one
-    /// gets back. Both stay queries the whole way down.
+    /// How undoing a whole-mailbox action gets back: a query the whole way down.
     Batch {
-        /// The queue rows the bulk action wrote.
         range: OperationRange,
-        /// The account those messages belong to.
         account: AccountId,
-        /// The mailbox those messages are in now, when they are all in one.
         from: Option<MailboxId>,
     },
 }
 
-/// What the message list is a view of.
+/// Until #52 only a folder could be "everything"; `mailbox` answers `None` for a smart folder
+/// because nothing can be filed there.
 ///
-/// A real folder and a smart folder are both things "everything" can be
-/// relative to, and until #52 only the first could be: app state held an
-/// `Option<MailboxId>`, so `Ctrl+A` in Flagged resolved to nothing and every
-/// bulk verb rejected with "Nothing selected".
-///
-/// The asymmetry that made that happen is still here and is still right —
-/// [`ViewScope::mailbox`] answers `None` for a smart folder, because a smart
-/// folder is not somewhere a message can be *put*. What changed is that the
-/// scope itself survives, so a predicate can be about it.
-///
-/// # Why the aggregate carries a list and the others do not
-///
-/// `Unified` is the one variant whose identity is not a single id, because
-/// the aggregate list can be showing fewer accounts than are configured: an
-/// account Postio cannot currently reach is still *drawn* — its synced mail
-/// is real mail, and ADR 0005 Q10 is emphatic that hiding it would be the
-/// worse lie — but a whole-view selection made while it was away is not
-/// about it. So the accounts the view could actually show are part of what
-/// the scope **is**, fixed at the moment the gesture was made rather than
-/// looked up when the verb runs (#811).
-///
-/// That is what makes two aggregates over different account sets different
-/// views, which is the property that stops an account reconnecting between
-/// the `Ctrl+A` and the `a` from silently joining a selection the user was
-/// never shown. It also costs this type its `Copy`, which is the price of
-/// the guarantee.
+/// `Unified` carries the accounts it could show, fixed when the gesture is made, so an account
+/// reconnecting between `Ctrl+A` and the verb cannot join a selection the user was never shown
+/// (#811, ADR 0005 Q10). That costs the type its `Copy`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ViewScope {
-    /// One folder, as the server has it.
     Mailbox(MailboxId),
-    /// Everything flagged in an account, wherever it is filed.
     Flagged(AccountId),
-    /// Every account the aggregate view could show when it was asked.
     Unified {
-        /// Those accounts, in the sidebar's order. Never empty: a view with
-        /// nothing in it is not something a selection can be relative to.
+        /// Sidebar order; never empty.
         accounts: Vec<AccountId>,
     },
-    /// Postio Focus's inbox over the accounts it could show when it was
-    /// asked (spec 007, T167).
-    ///
-    /// Its own scope rather than [`ViewScope::Unified`], because it is not
-    /// the unified inbox: mail held for a digest is not in it, and each row
-    /// is a conversation folded across the person's accounts. A whole-view
-    /// selection here is about exactly what Focus lists, and a row taken
-    /// back out of it takes out every copy the row stands for.
+    /// Its own scope, not `Unified`: mail held for a digest is not in it, and each row folds a
+    /// conversation across accounts, so taking a row out takes out every copy.
     Focus {
-        /// Those accounts, in the sidebar's order. Never empty, for
-        /// [`ViewScope::Unified`]'s reason.
         accounts: Vec<AccountId>,
     },
 }
 
 impl ViewScope {
-    /// The folder this scope names, when it names one.
-    ///
-    /// `None` for a smart folder, and load-bearing: a destination has to be a
-    /// real mailbox, and a view assembled by a predicate is not one.
+    /// `None` for a smart folder: a destination has to be a real mailbox.
     pub fn mailbox(&self) -> Option<MailboxId> {
         match self {
             ViewScope::Mailbox(mailbox) => Some(*mailbox),
@@ -277,12 +159,7 @@ impl ViewScope {
         }
     }
 
-    /// The account this scope is within.
-    ///
-    /// `None` for a mailbox, whose account is the store's to answer — a
-    /// `MailboxId` does not carry one — and `None` for the aggregate, which
-    /// is within several and whose callers all want *the* one.
-    /// [`ViewScope::accounts`] is the question the aggregate can answer.
+    /// `None` for a mailbox (the store knows its account) and for the aggregate; see `accounts`.
     pub fn account(&self) -> Option<AccountId> {
         match self {
             ViewScope::Mailbox(_) | ViewScope::Unified { .. } | ViewScope::Focus { .. } => None,
@@ -290,10 +167,8 @@ impl ViewScope {
         }
     }
 
-    /// Every account a whole-view selection here is about.
-    ///
-    /// One for a smart folder, none for a folder — whose account the store
-    /// answers from the folder — and the recorded list for the aggregate.
+    /// One for a smart folder, none for a folder (the store answers from it), the recorded list for
+    /// the aggregate.
     pub fn accounts(&self) -> &[AccountId] {
         match self {
             ViewScope::Mailbox(_) => &[],
@@ -303,26 +178,14 @@ impl ViewScope {
     }
 }
 
-/// What a refresh of a view should sync.
-///
-/// The rule lives beside [`ViewScope`] rather than in the handler so every
-/// frontend that asks the same question gets the same answer, and so it is
-/// red in a second when it is wrong.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RefreshTarget {
-    /// The one folder the view is.
     Folder(MailboxId),
-    /// The inbox of each of these accounts: the view draws from all of them.
     Inboxes(Vec<AccountId>),
 }
 
 impl ViewScope {
-    /// Which mailboxes a refresh from this view brings in line with the
-    /// server.
-    ///
-    /// A folder is itself. Every aggregate (Focus, unified, flagged) shows
-    /// mail from several folders but is *fed* by its accounts' inboxes, so
-    /// that is what refreshing it syncs.
+    /// A folder is itself; an aggregate is fed by its accounts' inboxes.
     pub fn refresh_target(&self) -> RefreshTarget {
         match self {
             ViewScope::Mailbox(mailbox) => RefreshTarget::Folder(*mailbox),
@@ -333,7 +196,6 @@ impl ViewScope {
     }
 }
 
-/// One step of the back stack: where the user was, and where they were in it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Frame {
     view: ViewMode,
@@ -341,27 +203,12 @@ struct Frame {
     focus: Option<MessageId>,
 }
 
-/// How many accounts a view is about: one, or all of them.
-///
-/// The type itself lives in [`postio_model::AccountScope`] and is re-exported
-/// here under the name #182 gave it. It moved down to `postio-model` in #186,
-/// when search needed the same value and `postio-index` could not depend on
-/// this crate: `AppState.scope` and `SearchRequest.account` are meant to be
-/// the same answer to the same question, and two enums that must agree about
-/// what "unified" means is exactly how they stop being.
-///
-/// Commands that need somewhere to put a message are unavailable in
-/// [`Scope::Unified`] — see [`Requirement`](crate::registry::Requirement).
+/// Moved down to `postio-model` (#186) so `postio-index` can share it: `AppState.scope` and
+/// `SearchRequest.account` must agree about "unified". Move is unavailable in `Scope::Unified`.
 pub use postio_model::AccountScope as Scope;
 
-/// The part of [`AppState`] a command is aimed with.
-///
-/// A verb resolves [`MessageTarget::Selection`] against the scope, the view,
-/// the selection and the focus, and nothing else in `AppState`. When the
-/// store's owner is another process (ADR 0041), each frontend's command has
-/// to carry its own copy of those four, because each frontend has its own
-/// selection and the host has none. This is that copy, and it is
-/// serialisable. The back stack stays behind: nothing aims with it.
+/// What a verb aims with: scope, view, selection and focus. A frontend carries its own copy to a
+/// host in another process (ADR 0041); the back stack stays behind.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StateSnapshot {
     scope: Scope,
@@ -371,11 +218,8 @@ pub struct StateSnapshot {
     view: ViewMode,
 }
 
-/// The application's view of itself.
-///
-/// Mutated only from command handlers — the bus is the single writer, which is
-/// what lets every mutation be a total order without a lock held across an
-/// `.await`.
+/// Mutated only from command handlers: the bus is the single writer, so mutations are totally
+/// ordered without a lock across `.await`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AppState {
     scope: Scope,
@@ -387,21 +231,13 @@ pub struct AppState {
 }
 
 impl AppState {
-    /// How deep the drill-in stack goes before the oldest step is forgotten.
-    ///
-    /// Deep enough that no real navigation reaches it, bounded so a session
-    /// that hops between search, threads and messages for an hour does not
-    /// grow without limit.
+    /// Bounded so a long session does not grow without limit.
     pub const MAX_BACK_DEPTH: usize = 32;
 
-    /// An empty state: the message list, nothing selected.
     pub fn new() -> Self {
         AppState::default()
     }
 
-    // -- Carrying it to another process ----------------------------------
-
-    /// What a command from this state is aimed with.
     pub fn snapshot(&self) -> StateSnapshot {
         StateSnapshot {
             scope: self.scope,
@@ -412,9 +248,7 @@ impl AppState {
         }
     }
 
-    /// Take on another state's aim, as the host does before running that
-    /// frontend's command. Silent: the host's copy is read by the verb and by
-    /// nothing that repaints.
+    /// Silent: the host's copy is read by the verb and by nothing that repaints.
     pub fn adopt(&mut self, snapshot: StateSnapshot) {
         let StateSnapshot {
             scope,
@@ -430,70 +264,36 @@ impl AppState {
         self.view = view;
     }
 
-    // -- What the user is looking at -------------------------------------
-
-    /// What the mail on screen belongs to.
-    ///
-    /// Replaces the old `account()`, deliberately rather than wrapping it:
-    /// a consumer that wants "the one account" has to say
-    /// `scope().account()` and, in saying it, decide what it means when
-    /// there is not one (#182).
+    /// Replaces `account()`, so a consumer must decide what it means when there is not one (#182).
     pub fn scope(&self) -> Scope {
         self.scope
     }
 
-    /// The mailbox the list is showing, if it is showing a real one.
-    ///
-    /// `None` in a smart folder — which is the answer every caller wants,
-    /// because they all go on to use it as somewhere a message could be put.
-    /// [`AppState::viewing`] is the one that says what the list is scoped to
-    /// whether or not that is a folder.
+    /// `None` in a smart folder; `viewing` says what the list is scoped to either way.
     pub fn mailbox(&self) -> Option<MailboxId> {
         self.viewing.as_ref().and_then(ViewScope::mailbox)
     }
 
-    /// What the list is a view of, folder or smart folder.
     pub fn viewing(&self) -> Option<&ViewScope> {
         self.viewing.as_ref()
     }
 
-    /// What an action would hit.
     pub fn selection(&self) -> &Selection {
         &self.selected
     }
 
-    /// The focused row — the one carrying the key hints, and the position a
-    /// round trip through a thread has to restore.
     pub fn focus(&self) -> Option<MessageId> {
         self.focus
     }
 
-    /// What a command aimed at `target` would actually act on.
+    /// An empty selection falls back to the focused row: reading mail marks nothing, so click then
+    /// `a` must archive the message being read.
     ///
-    /// # Why an empty selection is not "nothing"
-    ///
-    /// [`MessageTarget::Selection`] is the registry's default for every
-    /// message action, because a keystroke says only which verb it meant. But
-    /// the selection is *deliberate* — it is what the user marked with `x`,
-    /// Ctrl-click or `Ctrl+A` — and reading mail one message at a time never
-    /// marks anything. Pressing `a` there has to archive the message being
-    /// read, which is the row the cursor is on.
-    ///
-    /// So an empty selection falls back to the focus. Without that fallback
-    /// the daily case — click a message, press `a` — would archive nothing at
-    /// all, silently, which is the single most likely way this whole design
-    /// fails. The frontends depend on it: the classic app's list deliberately
-    /// clears the selection on a plain click for exactly this reason.
-    ///
-    /// Returns `None` when there is genuinely nothing to act on — no
-    /// selection, no focused row — which a handler reports as
-    /// `CommandError::rejected` rather than doing nothing quietly.
+    /// `None` when there is nothing to act on, which a handler reports as `CommandError::rejected`.
     pub fn resolve(&self, target: &MessageTarget) -> Option<Resolved> {
         match target {
             MessageTarget::Thread(thread) => Some(Resolved::Thread(*thread)),
             MessageTarget::Threads(threads) => Some(Resolved::Threads(threads.clone())),
-            // Taken at its word for the same reason a named list of messages
-            // is: undo built this, and it names exactly what it moved.
             MessageTarget::Batch {
                 range,
                 account,
@@ -506,9 +306,7 @@ impl AppState {
             MessageTarget::Messages(messages) if messages.is_empty() => None,
             MessageTarget::Messages(messages) => Some(Resolved::Messages(messages.clone())),
             MessageTarget::Selection => match &self.selected {
-                // The scope, not the mailbox. A smart folder has no mailbox
-                // and asking it for one is what made `Ctrl+A` in Flagged
-                // resolve to nothing (#52).
+                // The scope, not the mailbox: a smart folder has no mailbox (#52).
                 Selection::Everything { except } => Some(Resolved::Everything {
                     scope: self.viewing.clone()?,
                     except: except.clone(),
@@ -516,23 +314,19 @@ impl AppState {
                 Selection::These(messages) if !messages.is_empty() => {
                     Some(Resolved::Messages(messages.clone()))
                 }
-                // Nothing marked: the row being read is what "this" means.
                 Selection::These(_) => self.focus.map(|focus| Resolved::Messages(vec![focus])),
             },
         }
     }
 
-    /// The current view.
     pub fn view(&self) -> &ViewMode {
         &self.view
     }
 
-    /// The keyboard context, derived from the view.
     pub fn context(&self) -> Context {
         self.view.context()
     }
 
-    /// The draft the composer is editing, if it is open.
     pub fn composing(&self) -> Option<DraftId> {
         match &self.view {
             ViewMode::Composer { draft } => Some(*draft),
@@ -540,28 +334,20 @@ impl AppState {
         }
     }
 
-    /// How many steps `Esc` can still unwind.
     pub fn back_depth(&self) -> usize {
         self.back.len()
     }
 
-    // -- Mutations -------------------------------------------------------
-
-    /// Open a mailbox in the list, dropping a selection from the old one.
     pub fn open_mailbox(&mut self, mailbox: MailboxId) -> Vec<Event> {
         self.open_view(ViewScope::Mailbox(mailbox))
     }
 
-    /// Open the account's Flagged view, dropping a selection from the old one.
     pub fn open_flagged(&mut self, account: AccountId) -> Vec<Event> {
         self.open_view(ViewScope::Flagged(account))
     }
 
-    /// Point the list at `scope`, dropping a selection from wherever it was.
-    ///
-    /// A selection is relative to the list in view and does not survive a
-    /// change of it — the list does the same, and a predicate carried across
-    /// would name rows the user can no longer see.
+    /// A selection is relative to the list in view; a predicate carried across would name rows the
+    /// user cannot see.
     pub fn open_view(&mut self, scope: ViewScope) -> Vec<Event> {
         self.commit(|state| {
             if state.viewing.as_ref() == Some(&scope) {
@@ -572,7 +358,6 @@ impl AppState {
         })
     }
 
-    /// Replace the selection and the focused row.
     pub fn select(&mut self, messages: Vec<MessageId>, focus: Option<MessageId>) -> Vec<Event> {
         self.commit(|state| {
             state.selected = Selection::These(messages);
@@ -580,19 +365,12 @@ impl AppState {
         })
     }
 
-    /// Add `message` to the selection, or take it out again.
-    ///
-    /// The `x` key. Leaves the focus alone: toggling is about what an action
-    /// hits, not about where the keyboard is.
+    /// Leaves the focus alone: toggling is about what an action hits, not where the keyboard is.
     pub fn toggle_selection(&mut self, message: MessageId) -> Vec<Event> {
         self.commit(|state| state.selected.toggle(message))
     }
 
-    /// Extend the selection onto `message` and move the focus with it.
-    ///
-    /// `Shift+J` and `Shift+K`. Which row is next is the frontend's to know —
-    /// it is the one holding the list order — so this takes the row rather
-    /// than a direction.
+    /// The frontend holds the list order, so this takes the row rather than a direction.
     pub fn extend_selection_to(&mut self, message: MessageId) -> Vec<Event> {
         self.commit(|state| {
             state.selected.insert(message);
@@ -600,49 +378,37 @@ impl AppState {
         })
     }
 
-    /// Select everything the list is showing, without naming any of it.
     pub fn select_all(&mut self) -> Vec<Event> {
         self.commit(|state| state.selected = Selection::Everything { except: Vec::new() })
     }
 
-    /// Move the focused row without changing the selection.
-    ///
-    /// `j` and `k` move the focus; the selection follows only when the user
-    /// asks for it.
     pub fn focus_on(&mut self, message: Option<MessageId>) -> Vec<Event> {
         self.commit(|state| state.focus = message)
     }
 
-    /// Drop the selection.
     pub fn clear_selection(&mut self) -> Vec<Event> {
         self.commit(AppState::clear_position)
     }
 
-    /// Drill into a thread, remembering where we came from.
     pub fn open_conversation(&mut self, thread: ThreadId) -> Vec<Event> {
         self.commit(|state| state.push(ViewMode::Conversation { thread }))
     }
 
-    /// Open a message in the reading pane, remembering where we came from.
     pub fn open_message(&mut self, message: MessageId) -> Vec<Event> {
         self.commit(|state| {
             state.push(ViewMode::Reader { message });
-            // What the reader is showing *is* the selection: an archive from
-            // the reading pane must not land on the row behind it.
+            // The reader's message is the selection: an archive from the reading pane must not land
+            // on the row behind it.
             state.selected = Selection::These(vec![message]);
             state.focus = Some(message);
         })
     }
 
-    /// Open the composer over the reading pane.
     pub fn open_composer(&mut self, draft: DraftId) -> Vec<Event> {
         self.commit(|state| state.push(ViewMode::Composer { draft }))
     }
 
-    /// Go back one step, restoring the exact position that step left.
-    ///
-    /// Returns no events at the top of the stack: there is nowhere further
-    /// out, and the bus turns that into a quiet rejection rather than a beep.
+    /// Returns no events at the top of the stack; the bus turns that into a quiet rejection.
     pub fn back(&mut self) -> Vec<Event> {
         self.commit(|state| {
             if let Some(frame) = state.back.pop() {
@@ -652,8 +418,6 @@ impl AppState {
             }
         })
     }
-
-    // -- Internals -------------------------------------------------------
 
     fn clear_position(&mut self) {
         self.selected = Selection::default();
@@ -667,18 +431,13 @@ impl AppState {
             focus: self.focus,
         });
         if self.back.len() > Self::MAX_BACK_DEPTH {
-            // Forget a step from the middle. The newest must survive — `Esc`
-            // always undoes the drill-in just made — and so must the oldest,
-            // which is where the session started: however deep the user has
-            // wandered, enough `Esc`s have to get them back out to the list.
+            // Forget a middle step: `Esc` must still undo the newest drill-in and reach the oldest,
+            // the session's start.
             self.back.remove(1);
         }
     }
 
-    /// Apply a mutation and derive the events it caused.
-    ///
-    /// Diffing rather than emitting by hand is what makes "a change always
-    /// emits an event" true by construction instead of by review.
+    /// Diffing makes "a change always emits an event" true by construction.
     fn commit(&mut self, mutate: impl FnOnce(&mut AppState)) -> Vec<Event> {
         let before = self.clone();
         mutate(self);
@@ -690,19 +449,14 @@ impl AppState {
 
         if self.viewing != next.viewing
             && let Some(mailbox) = next.mailbox()
-            // A mailbox is only ever selected within an account, so the id
-            // here is the mailbox's owner. The let-chain keeps the diff total:
-            // a unified view holds no mailbox, so this emits nothing rather than
-            // inventing an account for a folder that spans none.
+            // A unified view holds no mailbox, so this emits nothing rather than invent an account.
             && let Some(account) = next.scope.account()
         {
             events.push(Event::MessageListChanged { account, mailbox });
         }
 
         if self.view != next.view {
-            // The composer owns the reading pane while it is open, so the
-            // frontend needs the hand-over as its own event, not as a view
-            // change it has to interpret.
+            // The hand-over is its own event so the frontend need not interpret a view change.
             if let Some(draft) = self.composing()
                 && next.composing() != Some(draft)
             {
@@ -735,36 +489,25 @@ impl AppState {
     }
 }
 
-/// The state as the command bus holds it: one owner, many handlers.
-///
-/// Handlers clone this into their closures and mutate through
-/// [`update`](SharedState::update), which emits whatever the change produced.
-/// The lock is never held across an `.await` — mutations are synchronous — so
-/// it cannot deadlock the bus.
+/// Handlers clone this into closures. The lock is never held across an `.await`, so it cannot
+/// deadlock the bus.
 #[derive(Debug, Clone, Default)]
 pub struct SharedState(Arc<Mutex<AppState>>);
 
 impl SharedState {
-    /// Share a state.
     pub fn new(state: AppState) -> Self {
         SharedState(Arc::new(Mutex::new(state)))
     }
 
-    /// Read something out of the state.
     pub fn read<R>(&self, with: impl FnOnce(&AppState) -> R) -> R {
         with(&self.lock())
     }
 
-    /// A copy to hand to something that must not hold the lock.
     pub fn snapshot(&self) -> AppState {
         self.lock().clone()
     }
 
-    /// Mutate the state and emit the events the change produced.
-    ///
-    /// Returns how many events were emitted; zero means nothing changed,
-    /// which is usually a [`CommandError::rejected`](crate::CommandError)
-    /// rather than a failure.
+    /// Returns how many events were emitted; zero means nothing changed.
     pub fn update(
         &self,
         events: &EventSink,
@@ -819,9 +562,8 @@ mod tests {
 
     #[test]
     fn an_empty_selection_means_the_row_the_cursor_is_on() {
-        // The daily case, and the one that would fail silently: click a
-        // message, press `a`. Nothing was marked, so "the selection" has to
-        // mean the message being read or the archive hits nothing at all.
+        // Click a message, press `a`: nothing was marked, so the focus must serve or the archive
+        // hits nothing.
         let mut state = AppState::new();
         state.focus_on(Some(MessageId::new(9)));
 
@@ -849,8 +591,6 @@ mod tests {
 
     #[test]
     fn select_all_stays_a_predicate_all_the_way_to_the_handler() {
-        // Resolving must not be the moment a hundred thousand ids appear:
-        // the store turns this into affected rows in one statement.
         let mut state = AppState::new();
         state.open_mailbox(MailboxId::new(4));
         state.select_all();
@@ -867,8 +607,6 @@ mod tests {
 
     #[test]
     fn a_snapshot_carries_a_selection_to_another_process_intact() {
-        // The host runs a frontend's `a` against the frontend's selection,
-        // not its own: the snapshot is what crosses, as JSON (ADR 0041).
         let mut frontend = AppState::new();
         frontend.open_mailbox(MailboxId::new(4));
         frontend.select_all();
@@ -889,8 +627,6 @@ mod tests {
 
     #[test]
     fn nothing_selected_and_nothing_focused_resolves_to_nothing() {
-        // Which a handler reports as a rejection — a quiet hint — rather
-        // than doing nothing and looking like a bug.
         assert_eq!(AppState::new().resolve(&MessageTarget::Selection), None);
         assert_eq!(
             AppState::new().resolve(&MessageTarget::Messages(Vec::new())),
@@ -900,8 +636,6 @@ mod tests {
 
     #[test]
     fn a_named_target_is_taken_at_its_word() {
-        // A hover action or a drop names its own rows, and app state must not
-        // second-guess it: the user pointed at that message.
         let mut state = AppState::new();
         state.select(vec![MessageId::new(1)], Some(MessageId::new(1)));
 
@@ -917,11 +651,6 @@ mod tests {
 
     #[test]
     fn select_all_in_a_smart_folder_is_about_the_smart_folder() {
-        // #52: `Feed::mailbox()` answers `None` in Flagged on purpose -- a
-        // smart folder must not claim to be a mailbox -- and app state used
-        // to hold nothing but a mailbox, so the predicate had nowhere to
-        // live. `Ctrl+A` resolved to `None` and every bulk verb rejected
-        // with "Nothing selected": honest, and not what was asked.
         let mut state = AppState::new();
         state.open_flagged(AccountId::new(3));
         state.select_all();
@@ -938,10 +667,6 @@ mod tests {
 
     #[test]
     fn a_smart_folder_still_refuses_to_call_itself_a_mailbox() {
-        // The asymmetry #52 had to preserve while fixing the rest of it: a
-        // scope that can be selected over is still not somewhere a message
-        // can be filed, and every caller reading `mailbox()` is asking the
-        // second question.
         let mut state = AppState::new();
         state.open_flagged(AccountId::new(3));
 
@@ -954,8 +679,6 @@ mod tests {
 
     #[test]
     fn leaving_a_smart_folder_drops_its_selection() {
-        // A predicate is relative to the list in view. Carried into a folder
-        // it would name rows that are no longer on screen.
         let mut state = AppState::new();
         state.open_flagged(AccountId::new(3));
         state.select_all();
@@ -970,11 +693,6 @@ mod tests {
 
     #[test]
     fn select_all_in_the_unified_view_resolves_to_the_accounts_it_could_show() {
-        // #811. The unified scope leaves no `ViewScope` behind, so `Ctrl+A`
-        // in the aggregate resolved to nothing and every bulk verb rejected
-        // with "Nothing selected" -- a refusal the user did not earn. The
-        // frontend mirrors the view it was actually showing, and the accounts
-        // it could show travel with it.
         let mut state = AppState::new();
         state.open_view(ViewScope::Unified {
             accounts: vec![AccountId::new(1), AccountId::new(2)],
@@ -994,9 +712,6 @@ mod tests {
 
     #[test]
     fn a_unified_scope_names_neither_a_folder_nor_one_account() {
-        // Both accessors are read as "somewhere a message could be put" and
-        // "the one account this is within". An aggregate is neither, and
-        // answering either would be a guess a caller would act on.
         let scope = ViewScope::Unified {
             accounts: vec![AccountId::new(1), AccountId::new(2)],
         };
@@ -1007,10 +722,6 @@ mod tests {
 
     #[test]
     fn the_accounts_a_unified_selection_was_scoped_to_are_part_of_the_view() {
-        // Two aggregates over different account sets are different views, so
-        // one does not inherit the other's selection. That is what stops an
-        // account reconnecting mid-gesture from joining a selection the user
-        // was never shown.
         let mut state = AppState::new();
         state.open_view(ViewScope::Unified {
             accounts: vec![AccountId::new(1)],
@@ -1030,9 +741,6 @@ mod tests {
 
     #[test]
     fn a_predicate_with_no_mailbox_open_resolves_to_nothing() {
-        // "Everything" is relative to the list in view. Without one there is
-        // no query to hand the store, and inventing one would be a guess
-        // about which mailbox the user meant.
         let mut state = AppState::new();
         state.select_all();
 

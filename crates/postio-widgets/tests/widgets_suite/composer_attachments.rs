@@ -1,30 +1,3 @@
-//! Attachments: added via the file chooser or drag-and-drop, both of which
-//! converge on the same `add_file`; shown with name and size; removed before
-//! send cleans the draft up.
-//!
-//! Its own file: GTK is single-threaded and initialised once, so one
-//! `#[test]` per integration binary. See `gtk_composer.rs`.
-//!
-//! `GtkFileDialog` and GTK's own drag machinery cannot be driven headlessly,
-//! so what is tested here is what both converge on:
-//! `Composer::test_attach_path` calls exactly what a chosen or dropped
-//! `gio::File` reaches.
-//!
-//! That leaves the drop *targets* themselves, and those turn out to be
-//! checkable even though a drag is not: a widget's controllers can be
-//! enumerated, so whether one is installed, on which widget, accepting which
-//! type, is a question with an answer. It is also the question that goes wrong
-//! in practice -- a handler is rarely deleted, and a controller is easily lost
-//! when a widget tree is reorganised. The handler's own body stays out of
-//! reach: `DropTarget`'s `drop` signal will not accept a boxed `GValue`
-//! through `emit_by_name`, which was tried.
-//!
-//! `connect_attach`'s handler answers through a callback rather than a
-//! return value specifically so a real handler can hand a large file's bytes
-//! to a background task and call back once they land in the blob store
-//! (`postio-c16.6`) — the deferred-handler case below proves the composer
-//! never assumes that callback runs before `add_file` returns.
-
 use crate::support_compose::Window;
 use crate::support_compose::composer;
 use crate::support_compose::settle;
@@ -37,10 +10,6 @@ pub fn attaching_shows_the_row_and_removing_cleans_it_up() {
     let state_dir_guard = tempfile::tempdir().expect("a state directory");
     let state_dir = state_dir_guard.path();
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let display = gdk::Display::default().unwrap();
     fonts::install().expect("the embedded fonts should install");
     style::install(&display);
@@ -57,7 +26,6 @@ pub fn attaching_shows_the_row_and_removing_cleans_it_up() {
     let file_path = state_dir.join("report.pdf");
     std::fs::write(&file_path, b"not a real pdf").unwrap();
 
-    // ── Nothing connected: the file goes nowhere, and says so ─────────────
     composer.test_attach_path(&file_path);
     settle();
     assert_eq!(composer.test_attachment_count(), 0);
@@ -68,7 +36,6 @@ pub fn attaching_shows_the_row_and_removing_cleans_it_up() {
         composer.status()
     );
 
-    // ── Connected, and answering synchronously: attaching shows the row ───
     composer.connect_attach(|path, then| {
         let mut attachment = Attachment::new(MessageId::UNASSIGNED, "application/pdf", 2_048);
         attachment.filename = path
@@ -85,12 +52,8 @@ pub fn attaching_shows_the_row_and_removing_cleans_it_up() {
     assert_eq!(draft.attachments[0].filename.as_deref(), Some("report.pdf"));
     assert_eq!(draft.attachments[0].size, 2_048);
 
-    // ── The drop targets exist, where a file can be dropped on them ──────
-    //
-    // Two, deliberately. One on the composer, so a file dropped anywhere on
-    // it attaches; one on the body, which is the difference between attaching
-    // a picture and putting it *in* the message -- that handler inlines an
-    // image and attaches anything else.
+    // Two targets: one on the composer so a file dropped anywhere attaches, one on the body, which
+    // inlines an image and attaches anything else.
     let targets = composer.test_drop_targets();
     assert!(
         targets.iter().any(|(place, _)| *place == "composer"),
@@ -110,10 +73,8 @@ pub fn attaching_shows_the_row_and_removing_cleans_it_up() {
         );
     }
 
-    // ── A handler that answers later — the point of the callback shape ───
-    // Stands in for a real handler spawning a slow blob-store write and
-    // calling back once it finishes: nothing here blocks on `then` ever
-    // being called, and the row still appears once it is.
+    // Stands in for a handler doing a slow blob-store write and calling back later; nothing blocks
+    // on `then`.
     composer.connect_attach(|_, then| {
         glib::idle_add_local_once(move || {
             then(Some(Attachment::new(
@@ -131,7 +92,6 @@ pub fn attaching_shows_the_row_and_removing_cleans_it_up() {
         "the row appears once the deferred handler calls back"
     );
 
-    // ── Removing before send cleans up ────────────────────────────────────
     composer.test_remove_attachment(0);
     settle();
     assert_eq!(

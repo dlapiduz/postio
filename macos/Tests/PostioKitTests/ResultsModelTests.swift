@@ -4,15 +4,6 @@ import Testing
 
 @testable import PostioKit
 
-/// The results table's model (specs/010-focus-search T071; design §3.4,
-/// screens 06 and 07).
-///
-/// The controller decides what the results are, in which groups, and
-/// where the focus ring is (`crates/postio-focus/src/results.rs`); the
-/// frame arrives as `FocusResults`, the rows are read by position, and a
-/// page that landed is `FocusResultsPage`. What the Mac works out is only
-/// the table's own shape: a header row before each group's rows, each
-/// row's height from its group, and which rows to read again.
 @MainActor
 struct ResultsModelTests {
     final class Engine: ResultsEngine {
@@ -55,8 +46,6 @@ struct ResultsModelTests {
             accessible: "\(title) · \(rows)")
     }
 
-    /// Screen 06's shape: three Top hits, then September's nine and
-    /// August's fourteen.
     static func results(cursor: UInt64? = 0) -> UiEvent {
         .focusResults(
             view: ResultsViewFfi(
@@ -79,7 +68,6 @@ struct ResultsModelTests {
             subject: "in ‘Notes’", focused: false, accessible: "notes.pdf")
     }
 
-    /// Step 9: the Files tab's frame, three cards.
     static func files(cursor: UInt64? = 0) -> UiEvent {
         .focusResults(
             view: ResultsViewFfi(
@@ -98,7 +86,6 @@ struct ResultsModelTests {
             accessible: "Ada Moreno, ada@example.com, 3 messages, last 26 Sep")
     }
 
-    /// Step 10: the People tab's frame, two people.
     static func people(cursor: UInt64? = 0) -> UiEvent {
         .focusResults(
             view: ResultsViewFfi(
@@ -130,7 +117,6 @@ struct ResultsModelTests {
         model.open(person: 0)
         #expect(engine.pointed == [1, 0])
         #expect(engine.invoked == [ResultsCommand.open], "↩ runs from: them")
-        // Back on Threads, the table draws again.
         model.apply(Self.results())
         #expect(!model.isPeople)
         #expect(model.personCount == 0)
@@ -144,7 +130,6 @@ struct ResultsModelTests {
         #expect(model.sortable)
         #expect(model.apply(Self.files()) == .redraw)
         #expect(model.isFiles)
-        // Screen 11's "Sort Newest": the cards' one order, not a choice.
         #expect(model.order == .newest)
         #expect(!model.sortable)
         #expect(model.filesHeader?.title == "Files whose name or contents match")
@@ -154,7 +139,6 @@ struct ResultsModelTests {
         #expect(model.card(at: 1)?.attachment == 71)
         #expect(engine.fileReads == [1], "read once, then remembered")
         #expect(model.card(at: 3) == nil)
-        // A new frame reads the cards again.
         model.apply(Self.files(cursor: 1))
         _ = model.card(at: 1)
         #expect(engine.fileReads == [1, 1])
@@ -197,8 +181,6 @@ struct ResultsModelTests {
         for position in 0..<10 { _ = model.row(at: UInt64(position)) }
         engine.reads = []
 
-        // Positions 2, 3 and 4 sit at table rows 3, 5 and 6 (September's
-        // header is row 4).
         #expect(model.apply(.focusResultsPage(first: 2, count: 3)) == .rows(IndexSet([3, 5, 6])))
         for position in 0..<10 { _ = model.row(at: UInt64(position)) }
 
@@ -255,10 +237,6 @@ struct ResultsModelTests {
         #expect(model.count == 0)
     }
 
-    // MARK: an opened result's lines (spec 013 US6, screen 06)
-
-    /// Harbor's three matches and the gap between two of them, under the
-    /// first Top hit.
     static func splice(focused: UInt32? = nil) -> UiEvent {
         .focusResultSplice(
             splice: ResultSpliceFfi(
@@ -292,7 +270,6 @@ struct ResultsModelTests {
         model.apply(Self.results())
         let before = model.count
 
-        // The header is table row 0, the first Top hit row 1.
         #expect(model.apply(Self.splice()) == .spliced(removed: nil, inserted: 2..<6))
         #expect(model.count == before + 4)
         #expect(model.item(at: 1) == .row(0))

@@ -1,16 +1,6 @@
 #!/usr/bin/env bash
-# File an issue, after checking whether it has already been filed.
-#
-# The claim side of this workflow is scripted and the file side was not,
-# which is plausibly the whole reason one bug ended up with three issue
-# numbers in two days (#332, #392, #406). Two sessions independently filed a
-# duplicate straight off a fresh reproduction -- the state where searching
-# first feels redundant, because you are not wondering whether the bug exists,
-# you just watched it happen.
-#
-# So this searches first and *stops* when it finds something, rather than
-# asking a question nobody is at the keyboard to answer. The friction is one
-# extra command, and only in the case where there is prior art to read.
+# File an issue, after checking whether it has already been filed. Searching first and stopping when
+# something is found prevents duplicates filed straight off a fresh reproduction (#332, #392, #406).
 #
 # Usage:
 #   scripts/issue-file.sh --title "..." --body-file notes.md [--label ready,p2]
@@ -51,13 +41,9 @@ if [ -z "$TITLE" ]; then
     exit 1
 fi
 
-# The words worth searching on: long enough to be distinctive, and not the
-# ones every title in a mail client's tracker contains. Three of them, because
-# GitHub's issue search ANDs its terms -- six would match nothing and report a
-# clean sheet, which is the one failure this must not have.
-#
-# `postio` and `issue` are dropped for the same reason a search engine drops
-# "the": in this repository they carry no information at all.
+# The words worth searching on: distinctive, three at most, because GitHub's issue search ANDs its
+# terms and six would match nothing.
+# `postio` and `issue` are dropped: in this repository they carry no information.
 read_terms() {
     printf '%s\n' "$2" \
         | tr '[:upper:]' '[:lower:]' \
@@ -69,26 +55,16 @@ read_terms() {
         | sed 's/ *$//'
 }
 
-# `--state all` on purpose. The duplicate that started this was filed against
-# an issue that was already *closed*, which is the common case: a bug that was
-# fixed once and came back does not announce itself as familiar, and a search
-# that only looked at open issues would have found nothing both times.
+# `--state all` on purpose: a bug that was fixed once and came back matches a closed issue.
 search() {
     gh issue list --search "$1" --state all --limit 10 \
         --json number,state,title \
         --jq '.[] | "  #\(.number) \(.state)\t\(.title)"' 2>/dev/null || true
 }
 
-# Three terms, then two, then one. GitHub ANDs its search terms, so three is
-# precise and misses a prior issue that said the same thing in different
-# words -- which is not hypothetical: #332 called this bug "issue-land's merge
-# verification can false-negative" and #392 called it "reports MERGE DID NOT
-# LAND", and three terms from either finds neither of the other.
-#
-# Widening only when the narrower search found *nothing* costs one extra call
-# in the case where there was nothing to find, and buys recall exactly when
-# recall is the thing that failed. It is still a heuristic: this makes prior
-# art likely to surface, never certain.
+# Three terms, then two, then one: three is precise but misses a prior issue worded differently
+# (#332 vs #392). Widening only when the narrower search found nothing costs one extra call. A
+# heuristic: prior art becomes likely to surface, never certain.
 FOUND=""
 TERMS=""
 for width in 3 2 1; do
@@ -99,9 +75,8 @@ for width in 3 2 1; do
     [ -n "$FOUND" ] && break
 done
 if [ -z "$TERMS" ]; then
-    # A title with nothing distinctive in it. Searching on nothing would
-    # return everything or nothing, and either answer is a lie, so this says
-    # so rather than pretending it checked.
+    # A title with nothing distinctive: searching on nothing returns everything or nothing, so say
+    # so.
     echo "note: no distinctive words in the title; searched for nothing." >&2
 fi
 
@@ -135,7 +110,6 @@ EOF_DUPLICATE
     exit 2
 fi
 
-# Nothing similar, or the caller has read what there was and said so.
 ARGS=(--title "$TITLE")
 if [ -n "$BODY_FILE" ]; then
     ARGS+=(--body-file "$BODY_FILE")

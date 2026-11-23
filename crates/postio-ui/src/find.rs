@@ -1,21 +1,14 @@
-//! Find in the message on screen (spec 006 FR-018) over the lines a frontend
-//! has drawn: every match of a query, ignoring case, and what the field says
-//! of them. Toolkit-free, so a terminal and a window count the same.
+//! Find in the message on screen over the lines a frontend drew; toolkit-free so a terminal and a
+//! window count the same.
 
-/// One match: the line it is on and its characters `from..to` there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Match {
-    /// Which line, from 0.
     pub line: usize,
-    /// The first character of the match on that line.
     pub from: usize,
-    /// One past the last.
     pub to: usize,
 }
 
-/// Every match of `query` in `lines`, top to bottom and left to right, with
-/// case ignored. A match lies within one line; matches do not overlap. An
-/// empty query matches nothing.
+/// Case-insensitive, within one line, non-overlapping; an empty query matches nothing.
 pub fn matches<S: AsRef<str>>(lines: &[S], query: &str) -> Vec<Match> {
     let wanted = folded(query);
     if wanted.is_empty() {
@@ -41,16 +34,13 @@ pub fn matches<S: AsRef<str>>(lines: &[S], query: &str) -> Vec<Match> {
     found
 }
 
-/// `text` one character at a time, lowercased, so a character index of the
-/// result is a character index of `text`.
+/// Lowercased per character so an index in the result is an index in `text`.
 fn folded(text: &str) -> Vec<char> {
     text.chars()
         .map(|c| c.to_lowercase().next().unwrap_or(c))
         .collect()
 }
 
-/// The match to show when the query changes or find opens: the first at or
-/// after line `from_line`, else the first of all.
 pub fn first_from(found: &[Match], from_line: usize) -> Option<usize> {
     found
         .iter()
@@ -58,7 +48,6 @@ pub fn first_from(found: &[Match], from_line: usize) -> Option<usize> {
         .or(if found.is_empty() { None } else { Some(0) })
 }
 
-/// The match after `current`, or before it, wrapping at either end.
 pub fn step(current: Option<usize>, total: usize, forward: bool) -> Option<usize> {
     if total == 0 {
         return None;
@@ -71,8 +60,6 @@ pub fn step(current: Option<usize>, total: usize, forward: bool) -> Option<usize
     })
 }
 
-/// What the find field says of the matches: "2 of 5", "No matches", and
-/// nothing while nothing is typed.
 pub fn count_label(query: &str, current: Option<usize>, total: usize) -> String {
     if query.is_empty() {
         String::new()

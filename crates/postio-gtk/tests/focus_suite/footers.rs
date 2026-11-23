@@ -1,18 +1,8 @@
-//! The footer a person sees under each surface (#2218): the window on a
-//! message alone names it and offers its reply, forward and archive; a send
-//! waiting in the Outbox offers what settles it; the composer, Settings and
-//! the capture sheet have none drawn behind them. Read off the footer bars
-//! on screen, not off what the controller said. Which owner says what is
-//! the controller's (`postio-focus`'s `controller_suite/footers.rs`); these
-//! drive each path once.
-
 use gtk::prelude::*;
 use postio_model::DraftState;
 
 use crate::support::{self, Fixture};
 
-/// The footer bars drawn now, each as its title and the words beside its
-/// keycaps: the list's, Filtered's or the results'.
 fn drawn(window: &postio_gtk::window::FocusWindow) -> Vec<(String, Vec<String>)> {
     support::with_class(window, "focus-scope-footer")
         .into_iter()
@@ -43,7 +33,6 @@ fn drawn(window: &postio_gtk::window::FocusWindow) -> Vec<(String, Vec<String>)>
         .collect()
 }
 
-/// The one footer drawn, once it says `labels`.
 async fn shows(window: &postio_gtk::window::FocusWindow, labels: &[&str]) -> String {
     assert!(
         crate::settle_until(async || {
@@ -57,7 +46,6 @@ async fn shows(window: &postio_gtk::window::FocusWindow, labels: &[&str]) -> Str
     drawn(window).remove(0).0
 }
 
-/// No footer drawn under what is open.
 async fn shows_none(window: &postio_gtk::window::FocusWindow) {
     assert!(
         crate::settle_until(async || drawn(window).is_empty()).await,
@@ -68,7 +56,6 @@ async fn shows_none(window: &postio_gtk::window::FocusWindow) {
 
 const ROW: &[&str] = &["move", "open", "reply", "forward", "archive"];
 
-/// Two messages, each a conversation of its own, with Focus open on them.
 async fn two_alone() -> (Fixture, postio_gtk::window::FocusWindow) {
     let fixture = Fixture::empty().await;
     fixture
@@ -89,8 +76,6 @@ async fn two_alone() -> (Fixture, postio_gtk::window::FocusWindow) {
     (fixture, window)
 }
 
-/// A message alone, opened from the inbox, teaches its own verbs rather
-/// than the list's j/k and Return; Escape gives the row's back.
 pub fn a_message_alone_has_its_own_footer() {
     crate::gtk_case(async {
         if !support::display() {
@@ -111,8 +96,6 @@ pub fn a_message_alone_has_its_own_footer() {
     });
 }
 
-/// A send waiting in the Outbox offers what settles it, as its action row
-/// does: cancel send and edit, never reply, forward or archive.
 pub fn a_waiting_send_offers_what_settles_it() {
     crate::gtk_case(async {
         if !support::display() {
@@ -128,9 +111,6 @@ pub fn a_waiting_send_offers_what_settles_it() {
     });
 }
 
-/// The composer has no footer drawn behind it: its verbs show their keys
-/// on its own controls, and r, f and e type there. Over a message it closes
-/// back to the message's footer.
 pub fn the_composer_has_no_footer() {
     crate::gtk_case(async {
         if !support::display() {
@@ -151,7 +131,6 @@ pub fn the_composer_has_no_footer() {
         );
         let _ = shows(&window, ROW).await;
 
-        // A reply from the open message stacks the composer over it.
         support::deliver(&window, "Return");
         let _ = shows(&window, &["reply", "forward", "archive"]).await;
         support::deliver(&window, "r");
@@ -169,7 +148,6 @@ pub fn the_composer_has_no_footer() {
     });
 }
 
-/// Settings has its own navigation and no mail verbs: no footer behind it.
 pub fn settings_has_no_footer() {
     crate::gtk_case(async {
         if !support::display() {
@@ -188,9 +166,6 @@ pub fn settings_has_no_footer() {
     });
 }
 
-/// The capture sheet over the open message has no footer behind it: the
-/// keyboard is in its field, where r, f and e type. Escape gives the
-/// message's footer back.
 pub fn the_capture_sheet_has_no_footer() {
     crate::gtk_case(async {
         if !support::display() {

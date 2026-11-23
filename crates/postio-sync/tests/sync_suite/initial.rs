@@ -1,9 +1,3 @@
-//! Initial sync: newest UID first, resumable, threading as it goes.
-//!
-//! No network and no server: `MockBackend` is the in-memory mail store the
-//! whole sync engine is developed against (see
-//! `crates/postio-account/src/backend/mod.rs`).
-
 use postio_account::backend::{MailBackend, MockBackend, MockMailbox, MockMessage};
 use postio_account::cancel::CancelToken;
 use postio_model::{AccountId, Mailbox, MailboxId, Uid};
@@ -15,8 +9,6 @@ use std::collections::BTreeSet;
 
 const INBOX: &str = "INBOX";
 
-/// A server with `count` messages in `INBOX`, oldest seeded first so UIDs run
-/// `1..=count` in seeding order.
 async fn server_with_messages(count: u32) -> MockBackend {
     let mut mailbox = MockMailbox::new(INBOX);
     for n in 1..=count {
@@ -33,31 +25,12 @@ async fn server_with_messages(count: u32) -> MockBackend {
     backend
 }
 
-/// An account with an empty local `INBOX` — nothing synced yet.
 async fn local(connection: &Connection) -> (AccountId, Mailbox) {
     let account = test_support::account(connection).await;
     let inbox = test_support::mailbox(connection, &account, INBOX).await;
     (account.id, inbox)
 }
 
-/// The UIDs a reader would see in `mailbox_id`, right now, from a sync
-/// context.
-///
-/// The progress callback is `FnMut(Progress)` and is called from inside the
-/// sync pass, which is what makes this awkward: the assertion these tests want
-/// is about *committed state at each checkpoint*, and reading it means
-/// awaiting from a place that cannot await.
-///
-/// `block_in_place` is the answer, and the two conditions that make it sound
-/// are both met here. The runtime must be `multi_thread`, so the worker this
-/// blocks is handed back to the pool — every test using this says so in its
-/// attribute. And the probe must use a **connection of its own**, never the
-/// one the pass is holding: an in-flight statement owns its connection
-/// exclusively, and re-entering it here is a deadlock rather than a read.
-///
-/// Asserting on what a reader sees rather than on what `Progress` reports is
-/// the point. `Progress` is what the layer was handed; this is what the
-/// mailbox looks like.
 fn uids_at_checkpoint(
     probe: &Connection,
     mailbox_id: MailboxId,
@@ -105,9 +78,6 @@ async fn the_newest_batch_lands_before_the_oldest_one() {
     .await
     .expect("initial sync");
 
-    // Batch size 2 over UIDs 1..=5, walked newest first: {5,4}, then {5,4,3,2},
-    // then everything. The mailbox's whole state at the first checkpoint is
-    // exactly the two newest messages — nothing older has been touched yet.
     assert_eq!(
         batches[0],
         BTreeSet::from([4, 5]),
@@ -134,8 +104,6 @@ async fn interrupting_and_restarting_does_not_refetch_completed_ranges() {
         |_progress: Progress| {
             batches_seen += 1;
             if batches_seen == 1 {
-                // Simulate the process dying right after the first batch
-                // commits: the *next* cancellation check stops the pass.
                 cancel.cancel();
             }
         },
@@ -171,8 +139,6 @@ async fn interrupting_and_restarting_does_not_refetch_completed_ranges() {
     .await
     .expect("resumed sync");
 
-    // Only the three UIDs missing after the first pass were fetched — proof
-    // the resumed pass never asked the server for 4 or 5 again.
     assert_eq!(resumed.inserted, 3);
     assert_eq!(resumed.updated, 0);
     assert_eq!(
@@ -193,16 +159,12 @@ async fn a_reply_arriving_before_its_parent_still_finds_its_thread() {
     let backend = MockBackend::builder()
         .mailbox(
             MockMailbox::new(INBOX)
-                // UID 1: the parent, seeded (and therefore fetched) last.
                 .message(MockMessage::new(
                     b"From: Ada Lovelace <ada@example.com>\r\n\
                       Subject: Analytical engine\r\n\
                       Message-ID: <parent@example.com>\r\n\r\nNotes.\r\n"
                         .to_vec(),
                 ))
-                // UID 2: the reply, higher UID, fetched first in newest-first
-                // order — before the parent it answers has even been asked
-                // for.
                 .message(MockMessage::new(
                     b"From: Ada Lovelace <ada@example.com>\r\n\
                       Subject: Re: Analytical engine\r\n\
@@ -243,11 +205,6 @@ async fn a_reply_arriving_before_its_parent_still_finds_its_thread() {
     );
 }
 
-/// postio-66j: `ContactRepository::record_message` existed, was tested, and
-/// had no caller, so @ and recipient completion always listed nobody no
-/// matter how much mail the account held. This is the seam that broke —
-/// before the fix this assertion fails with an empty contact list, because
-/// nothing in `sync_mailbox`'s call chain ever wrote the `contacts` table.
 #[tokio::test]
 async fn a_full_sync_records_every_correspondent_as_a_contact() {
     let backend = server_with_messages(3).await;
@@ -275,18 +232,6 @@ async fn a_full_sync_records_every_correspondent_as_a_contact() {
     );
 }
 
-/// `postio-qhz.9`: what a progress report is a fraction *of*.
-///
-/// The denominator used to be `UIDNEXT - 1`, which is the UID range the pass
-/// enumerates and not the number of messages in the folder. Every message ever
-/// expunged is still counted in it, so a long-lived INBOX reported
-/// `done=61 total=63022` for ninety-two messages and the status line read
-/// `syncing 0% · imap` for the whole pass. The bead this came from asked for
-/// the opposite: the user should be able to tell four hundred from forty
-/// thousand.
-///
-/// A mailbox seeded from UID 1 cannot catch this — the ceiling and the count
-/// are the same number — which is why `MockMailbox::starting_uid` exists.
 #[tokio::test]
 async fn progress_is_a_fraction_of_the_mail_not_of_the_uid_space() {
     let mut mailbox = MockMailbox::new(INBOX).starting_uid(1_000);
@@ -337,14 +282,6 @@ async fn progress_is_a_fraction_of_the_mail_not_of_the_uid_space() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_next_batch_is_asked_for_before_this_one_is_committed() {
-    // #77: within one mailbox the pass used to be strictly request/response —
-    // ask, wait, commit, ask again — so the connection sat idle for the whole
-    // local write. The next FETCH now goes out *before* the write, which puts
-    // the server to work on batch n+1 while SQLite is still taking batch n.
-    //
-    // Asserted on the mock's causal fetch log rather than a stopwatch (#125):
-    // "how many fetches had the server served by the time this batch was
-    // committed?" A sequential pass can only ever answer "this one".
     let backend = server_with_messages(6).await;
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
@@ -362,9 +299,6 @@ async fn the_next_batch_is_asked_for_before_this_one_is_committed() {
     .await
     .expect("initial sync");
 
-    // Six messages in batches of two: three batches. When the first is
-    // committed the second has already been asked for; when the second is
-    // committed so has the third; the third has nothing to run ahead of.
     assert_eq!(
         served_at_commit,
         vec![2, 3, 3],
@@ -374,10 +308,6 @@ async fn the_next_batch_is_asked_for_before_this_one_is_committed() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn running_ahead_never_reorders_or_loses_a_batch() {
-    // The pipelining must not disturb what #32's constraints pin: newest
-    // first, every message exactly once, and a resumable pass. Latency here
-    // is what makes the read-ahead genuinely outstanding during the write
-    // rather than answered inside the priming poll.
     let backend = server_with_messages(7).await;
     backend.set_latency(std::time::Duration::from_millis(5));
     let database = test_support::memory().await;
@@ -409,8 +339,6 @@ async fn running_ahead_never_reorders_or_loses_a_batch() {
         (1..=7).collect::<BTreeSet<u32>>(),
         "every UID exactly once"
     );
-    // One outstanding fetch at a time: a pass holds one pooled connection and
-    // read-ahead must not want a second.
     assert_eq!(
         backend.peak_in_flight(),
         1,
@@ -418,22 +346,6 @@ async fn running_ahead_never_reorders_or_loses_a_batch() {
     );
 }
 
-/// A folder whose UID space is mostly gaps must not be walked chunk by chunk.
-///
-/// `enumerate` builds its work list from `1..=UIDNEXT-1` minus what is known,
-/// so a chunk whose UIDs were all expunged still costs a full round trip —
-/// and returns nothing, so it does not even leave a log line. The cost scales
-/// with `UIDNEXT` rather than with how many messages the folder holds.
-///
-/// That is not hypothetical. #78 measured a real first sync spending 160.8 s
-/// of its 347 s — 46% — in two stretches that committed no batch at all, and
-/// this is the only thing a pass does silently. `Progress::target`'s own doc
-/// note records the same sparseness from the other side: an inbox of
-/// ninety-two messages reporting `61 / 63022`.
-///
-/// One message left at UID 50,000, everything below it expunged years ago,
-/// is the ordinary state of a long-lived folder. Asserted on the number of
-/// fetches the server actually served, not on a stopwatch.
 #[tokio::test]
 async fn a_sparse_uid_space_costs_one_fetch_not_one_per_two_hundred_uids() {
     let mailbox = MockMailbox::new(INBOX)
@@ -463,7 +375,6 @@ async fn a_sparse_uid_space_costs_one_fetch_not_one_per_two_hundred_uids() {
          asking the server which UIDs exist"
     );
 
-    // Still correct, not merely cheap: the one message that exists is stored.
     let stored = known_uids(&connection, inbox.id, postio_model::Generation::new(1)).await;
     assert_eq!(
         stored.iter().copied().collect::<Vec<u32>>(),
@@ -472,16 +383,6 @@ async fn a_sparse_uid_space_costs_one_fetch_not_one_per_two_hundred_uids() {
     );
 }
 
-/// A server that will not list its UIDs still syncs, by the old path.
-///
-/// `existing_uids` is an optimisation, and a first sync that could not happen
-/// because an optimisation failed would be a worse bug than the slowness it
-/// removes. So a refusal is a downgrade, not an error: the pass falls back to
-/// walking the UID space exactly as it did before #727.
-///
-/// The refusal is narrower than a `Fault` on purpose — a fault fails every
-/// call, and the case worth pinning is the awkward one where only the UID
-/// listing is refused and every fetch works perfectly.
 #[tokio::test]
 async fn a_server_that_refuses_to_list_uids_still_syncs() {
     let backend = server_with_messages(5).await;
@@ -504,29 +405,9 @@ async fn a_server_that_refuses_to_list_uids_still_syncs() {
     );
 }
 
-/// A UID listing shorter than `EXISTS` is not believed.
-///
-/// The failure this pins cost a real mailbox its mail. `existing_uids` is a
-/// `UID SEARCH ALL`, and a server that answers it with fewer UIDs than the
-/// `SELECT` just reported has under-reported — but the pass had no reason to
-/// doubt it, enumerated the handful it was told about, completed, and stamped
-/// `last_full_sync_at`. From then on every pass planned `Incremental` against
-/// a mailbox that was never enumerated, so the backlog was not merely slow to
-/// arrive, it was unreachable: an INBOX holding thousands held one message and
-/// stayed that way across restarts.
-///
-/// `EXISTS` is the cross-check and it costs nothing — the same `SELECT` that
-/// opened the mailbox already reported it. A listing short of it is discarded
-/// in favour of walking the UID space, which is the path a refusal already
-/// takes and is correct by construction.
-///
-/// A listing *longer* than `EXISTS` is fine and deliberately not rejected:
-/// mail may arrive between the `SELECT` and the `SEARCH`, and that direction
-/// costs nothing.
 #[tokio::test]
 async fn a_uid_listing_short_of_exists_is_not_believed() {
     let backend = server_with_messages(5).await;
-    // SELECT still reports EXISTS = 5; only the listing is short.
     backend.truncate_uid_listing(1);
 
     let database = test_support::memory().await;
@@ -551,12 +432,6 @@ async fn a_uid_listing_short_of_exists_is_not_believed() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_reply_with_no_references_joins_its_conversation_by_the_end_of_a_first_sync() {
-    // A first sync files the newest mail first, so a reply arrives before
-    // the message it answers. One that names its parent is claimed and
-    // waits for it; one with no In-Reply-To and no References -- some
-    // clients send them -- can only be threaded by its subject, and when it
-    // is filed there is no "Budget" yet to join. It started a conversation
-    // of one and nothing ever looked at it again.
     let mailbox = MockMailbox::new(INBOX)
         .message(MockMessage::new(
             b"From: Ada Lovelace <ada@example.com>\r\n\
@@ -578,7 +453,6 @@ async fn a_reply_with_no_references_joins_its_conversation_by_the_end_of_a_first
     let connection = database.connect().await.expect("a connection");
     let (_account, inbox) = local(&connection).await;
 
-    // One message a batch, newest first: the reply is filed alone.
     sync_mailbox_with_batch_size(
         &connection,
         &backend,

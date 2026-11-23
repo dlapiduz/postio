@@ -1,7 +1,3 @@
-//! Sending a `Draft` through the operation queue, end to end: SMTP over a
-//! scripted transcript, no network and no server, mirroring how the rest of
-//! this crate is developed against `MockBackend`.
-
 use chrono::{DateTime, TimeZone, Utc};
 use postio_account::backend::{MailBackend, MockBackend, MockMailbox};
 use postio_account::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
@@ -24,7 +20,6 @@ fn at(hour: u32) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 3, 1, hour, 0, 0).unwrap()
 }
 
-/// A blob store in a scratch directory that removes itself on drop.
 struct TempBlobs {
     store: BlobStore,
     directory: std::path::PathBuf,
@@ -56,7 +51,6 @@ fn uuid_ish() -> String {
     )
 }
 
-/// An account with one identity and a Sent mailbox, ready to send from.
 async fn account_with_sent(connection: &Connection) -> (Account, MailboxId) {
     let mut account = Account::new(
         "Test",
@@ -82,7 +76,6 @@ async fn account_with_sent(connection: &Connection) -> (Account, MailboxId) {
     (account, sent.id)
 }
 
-/// A draft ready to send, addressed to `to`.
 fn a_draft(account: &Account, to: &str) -> Draft {
     let mut draft = Draft::new(account.id);
     draft.to = vec![EmailAddress::new(None::<String>, to)];
@@ -92,10 +85,6 @@ fn a_draft(account: &Account, to: &str) -> Draft {
     draft
 }
 
-/// The password world behind the [`TokenSource`] seam, which is what a
-/// password account's composition root builds.
-///
-/// [`TokenSource`]: postio_account::auth::TokenSource
 async fn a_password_source(account: &Account) -> postio_account::auth::StoredPasswordSource {
     let secrets = std::sync::Arc::new(MemorySecretStore::new());
     let key = AccountKey::new(&account.address.address);
@@ -106,18 +95,10 @@ async fn a_password_source(account: &Account) -> postio_account::auth::StoredPas
     postio_account::auth::StoredPasswordSource::new(secrets)
 }
 
-/// A transcript that accepts everything: `EHLO`, `AUTH PLAIN`, the mail
-/// transaction, and `QUIT`.
 fn accepting_script() -> SmtpScript {
     script_replying_to_rcpt("250 ok")
 }
 
-/// A transcript identical to [`accepting_script`], except `RCPT TO` gets
-/// `reply` instead of an accept.
-///
-/// [`SmtpScript::on`]'s rules match in the order they were added, so this
-/// builds the `RCPT TO` rule in rather than appending an override after
-/// [`accepting_script`]'s own accept, which would never be reached.
 fn script_replying_to_rcpt(reply: &str) -> SmtpScript {
     SmtpScript::new("220 mail.example.com ESMTP ready")
         .on("EHLO", "250-mail.example.com\r\n250 AUTH PLAIN")
@@ -216,8 +197,6 @@ async fn sending_a_draft_delivers_it_and_files_a_sent_copy() {
             .any(|line| line.contains("grace@example.net"))
     );
 
-    // #543: a row born from an append carries the backend-neutral identity
-    // the adapter spelled for it, agreeing with the wire pair on the row.
     let repository = postio_storage::repository::MessageRepository::new(&connection);
     let status = backend.status("Sent").await.expect("status again");
     let filed = repository
@@ -235,10 +214,6 @@ async fn sending_a_draft_delivers_it_and_files_a_sent_copy() {
         "the filed copy's identity must be the adapter's spelling"
     );
 
-    // And it is *one* row. Since #942 the copy is written into Sent before
-    // the connection opens and the append only adds the server's coordinates
-    // to it, so a second row here would mean the confirmation created one
-    // instead of finding the one already there.
     let page = repository
         .page(&postio_storage::repository::ListQuery {
             scope: postio_storage::repository::ListScope::Mailbox(sent_mailbox),
@@ -259,11 +234,6 @@ async fn sending_a_draft_delivers_it_and_files_a_sent_copy() {
 
 #[tokio::test]
 async fn an_xoauth2_account_sends_with_xoauth2_not_a_password_login() {
-    // #533: the account's stored mechanism was dropped on the way into the
-    // SMTP settings, so every send spoke AUTH PLAIN however the account
-    // was stored. The script here answers *only* XOAUTH2 — a send that
-    // still says PLAIN has nothing to match and fails, which is exactly
-    // the regression this guards.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (mut account, _sent) = account_with_sent(&connection).await;
@@ -374,11 +344,6 @@ async fn a_permanent_rejection_fails_without_filing_anything() {
     assert_eq!(report.applied, 0);
     assert_eq!(report.failed.len(), 1);
     assert_eq!(report.failed[0].op_type, "send");
-    // And it says what the *server* said (#674). Once the indeterminate case
-    // has its own outcome, everything left in `failed` is on the safe side
-    // of the boundary -- so the copy may say the message did not go, and it
-    // owes the user the reason rather than "something went wrong". A code
-    // and a sentence they can act on, or take to their provider.
     let reason = &report.failed[0].reason;
     assert!(
         reason.contains("550") && reason.contains("no such user"),
@@ -394,16 +359,6 @@ async fn a_permanent_rejection_fails_without_filing_anything() {
         .await
         .expect("get")
         .expect("a message never delivered keeps its draft");
-    // **And it stops claiming to be on its way.** The operation is `failed`
-    // and nothing will retry it, so a draft left `Queued` sits in the Outbox
-    // for ever under a row that says it is being sent -- and once
-    // `prune_settled` removes the settled operation, even the evidence of
-    // why is gone. That is the state a real store was found in, 25 hours
-    // after the send: `queued`, no operation, nothing coming.
-    //
-    // `Failed` is where it belongs: out of the Outbox, in Drafts marked
-    // "Not sent", and counted in the number that says something needs a
-    // person (spec 003 FR-024).
     assert_eq!(
         kept.state,
         postio_model::DraftState::Failed,
@@ -536,9 +491,6 @@ async fn bcc_recipients_reach_the_envelope_but_never_the_wire_content() {
 
 #[tokio::test]
 async fn sending_a_draft_takes_its_copy_out_of_the_drafts_mailbox() {
-    // A sent message still showing as an unfinished draft on the user's phone
-    // is the same bug as never having uploaded it: the two folders disagree
-    // about what happened.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, _sent_mailbox) = account_with_sent(&connection).await;
@@ -570,8 +522,6 @@ async fn sending_a_draft_takes_its_copy_out_of_the_drafts_mailbox() {
     let connector = ScriptedConnector::new(accepting_script());
     let blobs = TempBlobs::new();
 
-    // Both rows in one pass: the draft is uploaded, then sent, in the order
-    // the user did them.
     let report = drain_one(
         &connection,
         &backend,
@@ -593,14 +543,6 @@ async fn sending_a_draft_takes_its_copy_out_of_the_drafts_mailbox() {
     assert_eq!(backend.status("Sent").await.expect("status").exists, 1);
 }
 
-// ---------------------------------------------------------------------------
-// The account's TokenSource, shared with IMAP — ADR 0006 Q5, #194
-// ---------------------------------------------------------------------------
-
-/// Hands out `first` until invalidated, then `second`, counting both.
-///
-/// The same shape `postio-account`'s pool tests use, because it is the same
-/// discipline being asserted on the other side of the account.
 #[derive(Debug)]
 struct RotatingSource {
     first: String,
@@ -639,11 +581,6 @@ impl postio_account::auth::TokenSource for RotatingSource {
     }
 }
 
-/// Every `AUTH PLAIN` argument the transcript saw, decoded.
-///
-/// SASL PLAIN is `\0user\0secret` in base64, so this is what the server was
-/// actually told — the only place "which credential was presented" can
-/// honestly be read.
 fn presented_credentials(connector: &ScriptedConnector) -> Vec<String> {
     use base64::Engine;
     connector
@@ -661,8 +598,6 @@ fn presented_credentials(connector: &ScriptedConnector) -> Vec<String> {
         .collect()
 }
 
-/// Queues one send and drains it, so the tests below differ only in the
-/// credential and the transcript.
 async fn send_with(
     tokens: &dyn postio_account::auth::TokenSource,
     connector: &ScriptedConnector,
@@ -707,10 +642,6 @@ async fn send_with(
 
 #[tokio::test]
 async fn a_send_presents_what_the_accounts_token_source_hands_out() {
-    // The other half of "one `TokenSource` per account". Sending used to read
-    // the keyring directly, under the account's own key -- which for an OAuth
-    // account holds no password at all, so the send presented nothing usable
-    // however healthy the IMAP side was.
     let tokens = RotatingSource::new("the-access-token", "unused");
     let connector = ScriptedConnector::new(accepting_script());
 
@@ -726,14 +657,6 @@ async fn a_send_presents_what_the_accounts_token_source_hands_out() {
 
 #[tokio::test]
 async fn a_rejected_send_credential_is_invalidated_once_and_retried_once() {
-    // The same discipline the IMAP pool keeps, at the other place a
-    // credential meets a server: an access token that expired between the
-    // last IMAP command and this send is the ordinary case, not the edge.
-    //
-    // The transcript refuses every `AUTH`, so what is asserted is the shape
-    // of the attempt rather than its luck -- two credentials presented, the
-    // second one different from the first, and then a stop. A source that
-    // kept being asked would show a third.
     let tokens = RotatingSource::new("stale-token", "fresh-token");
     let script = SmtpScript::new("220 mail.example.com ESMTP ready")
         .on("EHLO", "250-mail.example.com\r\n250 AUTH PLAIN")
@@ -759,12 +682,6 @@ async fn a_rejected_send_credential_is_invalidated_once_and_retried_once() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// The commit point (ADR 0021, decision 2)
-// ---------------------------------------------------------------------------
-
-/// Queues a `Send` for `draft_id` without going through `queue_send`, so a
-/// test can put the draft in whatever state it wants to drain from.
 async fn enqueue_send(
     connection: &Connection,
     account: postio_model::AccountId,
@@ -781,17 +698,6 @@ async fn enqueue_send(
         .expect("enqueue");
 }
 
-/// The crash case, from the side that decides it.
-///
-/// Before ADR 0021 the durable fact that stopped a resend was the *deletion
-/// of the draft row*, which is the second-to-last thing `file_sent_copy`
-/// does — behind `QUIT`, a whole `APPEND` of the message to the Sent
-/// mailbox, a blob write and three more writes. A process that died anywhere
-/// in that window came back to a draft that still existed and a `Send` still
-/// pending, and submitted the message a second time.
-///
-/// Now the draft is committed `Sent` the instant SMTP accepts, before any of
-/// that, so the drain that comes after the crash has something to read.
 #[tokio::test]
 async fn a_draft_already_accepted_is_never_submitted_again() {
     let database = test_support::memory().await;
@@ -802,9 +708,6 @@ async fn a_draft_already_accepted_is_never_submitted_again() {
     let mut draft = a_draft(&account, "grace@example.net");
     let draft_id = drafts.save(&mut draft).await.expect("save draft");
     enqueue_send(&connection, account.id, draft_id).await;
-    // Exactly the state a crash between SMTP accepting and the `APPEND`
-    // leaves behind: the mark is committed, the filing never finished, and
-    // the row and its queued operation are both still here.
     drafts
         .set_state(draft_id, postio_model::DraftState::Sent)
         .await
@@ -815,9 +718,6 @@ async fn a_draft_already_accepted_is_never_submitted_again() {
         .build();
     backend.connect().await.expect("connect");
     let tokens = a_password_source(&account).await;
-    // Would deliver, if anything asked it to. That is the point: the
-    // assertion below is about what did *not* happen, so the transport has
-    // to be one that would have succeeded.
     let connector = ScriptedConnector::new(accepting_script());
     let blobs = TempBlobs::new();
 
@@ -853,18 +753,6 @@ async fn a_draft_already_accepted_is_never_submitted_again() {
     );
 }
 
-/// The other half of the same window: a process that died with the SMTP
-/// transaction open.
-///
-/// Nothing can know whether the payload reached the server, so this must not
-/// resend — every ambiguity in this path resolves toward asking rather than
-/// duplicating. It settles loudly instead, and the wording deliberately does
-/// not claim the message failed to go.
-///
-/// The outcome is `uncertain` rather than `failed` (#674): "failed" means
-/// *did not happen*, and the runtime turns that straight into an error the
-/// user reads. What has not changed, and must not, is that no second
-/// submission happens.
 #[tokio::test]
 async fn a_send_interrupted_mid_submission_is_not_retried_behind_the_users_back() {
     let database = test_support::memory().await;
@@ -934,8 +822,6 @@ async fn a_send_interrupted_mid_submission_is_not_retried_behind_the_users_back(
     );
 }
 
-/// The reservation is what makes a retry recognisable downstream, so it has
-/// to reach the bytes that are actually submitted.
 #[tokio::test]
 async fn the_submitted_message_carries_the_reserved_id() {
     let database = test_support::memory().await;
@@ -980,15 +866,6 @@ async fn the_submitted_message_carries_the_reserved_id() {
     );
 }
 
-/// The headline guarantee, end to end: a send that is deferred and then goes
-/// through submits **one** message, not two that happen to say the same
-/// thing.
-///
-/// Before ADR 0021 this was the ordinary case rather than an edge one. A
-/// `Send` is resolved — and therefore rebuilt — on every drain attempt, and
-/// every build minted a fresh `Message-ID`, so the second attempt was a
-/// distinct message no receiver could recognise as a duplicate of the first.
-/// A 4xx from a rate-limited server is enough to reach it.
 #[tokio::test]
 async fn a_deferred_send_goes_out_under_the_id_the_first_attempt_reserved() {
     let database = test_support::memory().await;
@@ -1011,7 +888,6 @@ async fn a_deferred_send_goes_out_under_the_id_the_first_attempt_reserved() {
     let tokens = a_password_source(&account).await;
     let blobs = TempBlobs::new();
 
-    // Attempt one: the server asks to try later.
     let refused = ScriptedConnector::new(script_replying_to_rcpt("450 slow down"));
     let report = drain_one(
         &connection,
@@ -1044,7 +920,6 @@ async fn a_deferred_send_goes_out_under_the_id_the_first_attempt_reserved() {
          would quietly end the message's life",
     );
 
-    // Attempt two, once the backoff has elapsed: it goes.
     let accepted = ScriptedConnector::new(accepting_script());
     let report = Drainer::new(&backend)
         .with_smtp(SmtpContext {
@@ -1065,15 +940,6 @@ async fn a_deferred_send_goes_out_under_the_id_the_first_attempt_reserved() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// The payload boundary reaches the drainer — ADR 0021, #673
-// ---------------------------------------------------------------------------
-
-/// Queues one draft and drains it over `connector`, handing back the report,
-/// the draft id and the connection so a test can ask what became of both.
-///
-/// The two tests below differ in exactly one thing — where the connection
-/// dies — so everything else is shared, and the difference is legible.
 async fn drain_a_send_over(
     connection: &Connection,
     connector: &ScriptedConnector,
@@ -1119,11 +985,6 @@ async fn drain_a_send_over(
 
 #[tokio::test]
 async fn a_send_interrupted_once_the_payload_was_on_the_wire_is_not_retried() {
-    // ADR 0021's whole point, driven for the first time through a transport
-    // rather than asserted on a hand-built error: the payload went out, the
-    // server never answered, and the drainer must not try again. "Try again"
-    // and "you already sent it" are indistinguishable from here, and a second
-    // copy in somebody else's inbox cannot be recalled.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
 
@@ -1164,9 +1025,6 @@ async fn a_send_interrupted_once_the_payload_was_on_the_wire_is_not_retried() {
 
 #[tokio::test]
 async fn a_send_interrupted_before_the_payload_is_queued_again() {
-    // The other half, and why narrowing the predicate matters: nothing of the
-    // message reached the server, so this is an ordinary connection hiccup.
-    // Refusing to retry it would strand a queued message that was never sent.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
 
@@ -1193,15 +1051,6 @@ async fn a_send_interrupted_before_the_payload_is_queued_again() {
     );
 }
 
-/// A sync that brings the message down is the confirmation, and it costs the
-/// user nothing.
-///
-/// ADR 0021 Decision 3's second half (#674): the draft reserved a
-/// `Message-ID` before the first attempt (#461), so a message arriving with
-/// that id in this account is proof the submission went through — whatever
-/// the dropped connection left the client believing. Many submission servers
-/// file the sender's copy themselves, so for a good share of users this
-/// resolves silently within one sync.
 #[tokio::test]
 async fn an_unconfirmed_send_resolves_when_its_message_turns_up() {
     let database = test_support::memory().await;
@@ -1221,7 +1070,6 @@ async fn an_unconfirmed_send_resolves_when_its_message_turns_up() {
         .await
         .expect("the state an interrupted submission leaves");
 
-    // The copy the server filed, arriving in an ordinary sync.
     let mut message = postio_model::Message::new(account.id, sent, at(10));
     message.rfc_message_id = Some(reserved.clone());
     let message_id = MessageRepository::new(&connection)
@@ -1259,12 +1107,6 @@ async fn an_unconfirmed_send_resolves_when_its_message_turns_up() {
     );
 }
 
-/// The same lookup must not resolve on somebody else's message.
-///
-/// The reservation is the whole evidence here: matching on anything softer —
-/// subject, recipients, a nearby timestamp — is how the wrong message gets
-/// called the sent one, and the user is then told a message arrived that
-/// never did.
 #[tokio::test]
 async fn an_unconfirmed_send_is_not_resolved_by_a_different_message() {
     let database = test_support::memory().await;
@@ -1283,7 +1125,6 @@ async fn an_unconfirmed_send_is_not_resolved_by_a_different_message() {
         .await
         .expect("the state an interrupted submission leaves");
 
-    // Same folder, same account, same everything but the id.
     let mut other = postio_model::Message::new(account.id, sent, at(10));
     other.rfc_message_id = Some(postio_model::RfcMessageId::new(
         "<someone-else@example.com>",
@@ -1316,17 +1157,6 @@ async fn an_unconfirmed_send_is_not_resolved_by_a_different_message() {
 
 #[tokio::test]
 async fn a_send_that_never_reaches_the_server_is_already_in_sent() {
-    // #942, reported as mail going "into the ether": the Sent row used to be
-    // written at the *end* of the job, after SMTP delivery and the IMAP
-    // APPEND had both come back, so between pressing send and delivery
-    // completing there was nothing in Sent to look at.
-    //
-    // The connection here dies at `EHLO`, before a single mail command, so
-    // nothing was delivered and nothing was appended. A row in Sent
-    // afterwards can only have been written ahead of the conversation, which
-    // is the local-first order `CLAUDE.md` requires of every other mutating
-    // verb. It is also the retryable side of ADR 0021's boundary, so the send
-    // is still in flight and the row is the honest thing to show.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, sent_mailbox) = account_with_sent(&connection).await;
@@ -1389,7 +1219,6 @@ async fn a_send_that_never_reaches_the_server_is_already_in_sent() {
          'into the ether' this fixes"
     );
 
-    // And it is the message, not a placeholder.
     let page = MessageRepository::new(&connection)
         .page(&postio_storage::repository::ListQuery {
             scope: postio_storage::repository::ListScope::Mailbox(sent_mailbox),
@@ -1408,8 +1237,6 @@ async fn a_send_that_never_reaches_the_server_is_already_in_sent() {
         page[0].subject
     );
 
-    // The draft is still there too: the send has not finished, so it is still
-    // the thing that would be retried.
     assert!(
         DraftRepository::new(&connection)
             .get(draft_id)
@@ -1422,11 +1249,6 @@ async fn a_send_that_never_reaches_the_server_is_already_in_sent() {
 
 #[tokio::test]
 async fn the_sent_copy_lands_in_the_folder_the_server_actually_has() {
-    // #943. The account's Sent folder was renamed on the server: discovery
-    // retired the old `Sent` row (unselectable, role kept) and added `Sent
-    // Items` with the same role. The copy has to be filed where the server
-    // can take it. Today it is appended to `Sent`, the server refuses, the
-    // refusal is dropped on the floor, and a local row pretends otherwise.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, stale_sent) = account_with_sent(&connection).await;
@@ -1509,22 +1331,11 @@ async fn the_sent_copy_lands_in_the_folder_the_server_actually_has() {
 
 #[tokio::test]
 async fn a_reply_joins_its_conversation_locally_before_the_server_is_told() {
-    // FR-027, which is the local-first promise in the one place it is easiest
-    // to get almost right: `file_sent_locally` runs before the socket opens,
-    // so the message is visible for the whole time it is on its way. Filing
-    // it is not enough — a reply filed *outside* its conversation reads as a
-    // brand-new thread, so the person watching the conversation they just
-    // answered sees nothing happen.
-    //
-    // Nothing here reaches the network for the assertion that matters: the
-    // thread is read straight after the drain, and what it is being compared
-    // against is the parent that was in the store before any of this began.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, sent) = account_with_sent(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    // The message being answered, already in the store and already threaded.
     let mut parent = postio_model::Message::new(account.id, sent, at(8));
     parent.subject = Some("Analytical engine".to_owned());
     parent.rfc_message_id = Some(postio_model::RfcMessageId::new("parent@example.invalid"));
@@ -1588,9 +1399,6 @@ async fn a_reply_joins_its_conversation_locally_before_the_server_is_told() {
     let reply = filed
         .first()
         .unwrap_or_else(|| panic!("the reply was never filed locally: {filed:?}"));
-    // ── The half that works: it is filed, and before the network ────────
-    // Reached by paging the Sent mailbox, so being here *is* being filed in
-    // it -- before the network, which is the promise.
     let full = messages.get(reply.id).await.expect("get").expect("there");
     assert_eq!(
         full.mailbox_id, sent,
@@ -1603,7 +1411,6 @@ async fn a_reply_joins_its_conversation_locally_before_the_server_is_told() {
          downstream could thread it even in principle"
     );
 
-    // ── And the half that is the whole point (#1488) ────────────────────
     assert_eq!(
         full.thread_id,
         Some(conversation),
@@ -1612,8 +1419,6 @@ async fn a_reply_joins_its_conversation_locally_before_the_server_is_told() {
          nothing arrive"
     );
 
-    // And the drain says so, for the engine to announce once it is done
-    // (spec 013 T016): the thread, and the reply that joined it.
     assert_eq!(
         report.thread_arrivals.into_threads().collect::<Vec<_>>(),
         vec![(conversation, vec![reply.id])],
@@ -1621,25 +1426,11 @@ async fn a_reply_joins_its_conversation_locally_before_the_server_is_told() {
     );
 }
 
-/// A drain pass heals a send that has nothing left to carry it.
-///
-/// The repository knows how (`DraftRepository::fail_orphaned_sends`) and the
-/// drainer calls it, but those are two facts and this is the one that matters:
-/// a real store held a draft `queued` with no operation for 25 hours, and what
-/// has to be true is that *running the client* gets it out of that state.
-///
-/// Driven through `Drainer::drain` rather than the repository, because the
-/// wiring is the part that was missing — and because the call sits above the
-/// empty-batch early return, which is the arrangement a unit test of either
-/// piece cannot see.
 #[tokio::test]
 async fn a_drain_pass_heals_a_send_with_no_operation_behind_it() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, _) = account_with_sent(&connection).await;
-    // A Drafts folder, because #166's mirror row is only written when there is
-    // one -- and the mirror is what the Outbox and the Drafts list read, so a
-    // fixture without it would assert the healing on the half nothing draws.
     test_support::mailbox(&connection, &account, "Drafts").await;
     let drafts = DraftRepository::new(&connection);
 
@@ -1650,9 +1441,6 @@ async fn a_drain_pass_heals_a_send_with_no_operation_behind_it() {
         .await
         .expect("queue the send");
 
-    // What the drainer's failure path used to leave behind, once
-    // `prune_settled` has removed the settled row: the state says it is on its
-    // way and there is nothing to carry it.
     let queued = OperationQueueRepository::new(&connection)
         .pending(account.id, at(10))
         .await
@@ -1680,8 +1468,6 @@ async fn a_drain_pass_heals_a_send_with_no_operation_behind_it() {
         .build();
     backend.connect().await.expect("connect");
     let tokens = a_password_source(&account).await;
-    // A transport that would succeed, so nothing below can be attributed to
-    // the send failing: there is no send left to attempt.
     let connector = ScriptedConnector::new(accepting_script());
     let blobs = TempBlobs::new();
 
@@ -1713,9 +1499,6 @@ async fn a_drain_pass_heals_a_send_with_no_operation_behind_it() {
          the state it cannot get out of by itself"
     );
 
-    // And the mirror row #166 keeps in Drafts, which is what the Outbox and
-    // the Drafts list actually read. A heal that stopped at the `drafts` table
-    // would leave the row on screen saying it is sending.
     let mirror: Option<String> = postio_storage::sql::one(
         &connection,
         "SELECT m.send_state FROM messages m
@@ -1736,17 +1519,9 @@ async fn a_drain_pass_heals_a_send_with_no_operation_behind_it() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// A forward whose attachment was never downloaded (#1686)
-// ---------------------------------------------------------------------------
-
-/// The forwarded file, decoded, and the encoded form the server holds.
 const STATEMENT: &[u8] = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n";
 const STATEMENT_BASE64: &str = "JVBERi0xLjQKJeLjz9MK\r\n";
 
-/// A message in INBOX whose text is section 1 and whose PDF is section 2,
-/// with both seeded on the server — so a `BODY[2]` for the payload succeeds
-/// and nothing else about the part is local until somebody asks.
 fn a_statement() -> postio_account::backend::MockMessage {
     use postio_account::backend::{BodyStructure, MockMessage, PartNode};
     let structure = BodyStructure::from_parts(
@@ -1780,8 +1555,6 @@ fn a_statement() -> postio_account::backend::MockMessage {
     .with_part("2", STATEMENT_BASE64.as_bytes())
 }
 
-/// Header-syncs INBOX so the statement has a local row with its attachment's
-/// metadata and none of its bytes, and returns that row.
 async fn the_statement_synced(
     connection: &postio_storage::Checkout,
     account: &Account,
@@ -1828,8 +1601,6 @@ async fn the_statement_synced(
     source
 }
 
-/// The message the client handed to SMTP: what followed `DATA`, up to the
-/// terminating dot.
 fn submitted(connector: &ScriptedConnector) -> Vec<u8> {
     let written = connector.log().written;
     let text = String::from_utf8_lossy(&written).into_owned();
@@ -1841,7 +1612,6 @@ fn submitted(connector: &ScriptedConnector) -> Vec<u8> {
     text.as_bytes()[start..end].to_vec()
 }
 
-/// A forward of `source` addressed to one recipient, saved and queued.
 async fn queue_a_forward(
     connection: &Connection,
     account: &Account,
@@ -1910,7 +1680,6 @@ async fn forwarding_an_attachment_that_was_never_downloaded_sends_its_bytes() {
         "the forward was sent, so its draft is gone"
     );
 
-    // What reached the recipient's server, not what some layer was told.
     let parsed = postio_model::mime::parse(&submitted(&connector));
     let carried = parsed
         .parts
@@ -1931,8 +1700,6 @@ async fn forwarding_an_attachment_that_was_never_downloaded_sends_its_bytes() {
         "and it carries the file's bytes, fetched from the original"
     );
 
-    // Fetched once, for both: the original's row has its bytes now too, so
-    // opening it later is not a second download.
     let original = MessageRepository::new(&connection)
         .get(source.id)
         .await
@@ -2010,9 +1777,6 @@ async fn a_forward_whose_original_is_gone_names_the_file_it_could_not_carry() {
     );
 }
 
-// ── Who the person wrote to (spec 007, T075) ────────────────────────────────
-
-/// How many messages the person has sent to `address`.
 async fn sent_to(connection: &Connection, address: &str) -> Option<u32> {
     postio_storage::repository::CorrespondentRepository::new(connection)
         .get(&EmailAddress::new(None::<String>, address))
@@ -2021,7 +1785,6 @@ async fn sent_to(connection: &Connection, address: &str) -> Option<u32> {
         .map(|correspondent| correspondent.sent_count)
 }
 
-/// Queues `draft` to be sent, and drains the queue over `script`.
 async fn send_one(
     connection: &Connection,
     account: &Account,
@@ -2085,7 +1848,6 @@ async fn sending_to_three_addresses_adds_one_to_each_correspondent() {
     );
 }
 
-/// Whether the person with `address` is saved as a contact.
 async fn saved(connection: &Connection, address: &str) -> bool {
     postio_storage::repository::ContactRepository::new(connection)
         .by_address(address)
@@ -2178,16 +1940,8 @@ async fn a_send_the_server_refused_wrote_to_nobody() {
     );
 }
 
-// ── Labels chosen before sending (spec 007 US3 scenario 4, T077) ────────────
-
 #[tokio::test]
 async fn labels_chosen_before_sending_are_carried_by_the_conversation() {
-    // "Given labels chosen before sending, When the message is sent, Then
-    // its conversation carries them." A reply carries its conversation's
-    // label forward and adds one: the sent copy has both, the message it
-    // answers gains the new one as the label verb would give it -- locally,
-    // and queued for the server as its keyword -- and the copy the server
-    // files in Sent carries both keywords from its append.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, sent) = account_with_sent(&connection).await;
@@ -2201,7 +1955,6 @@ async fn labels_chosen_before_sending_are_carried_by_the_conversation() {
     labels.create(&mut harbour).await.expect("a label");
     labels.create(&mut travel).await.expect("a label");
 
-    // The message being answered: in the inbox, threaded, labelled Harbour.
     let mut parent = postio_model::Message::new(account.id, inbox, at(8));
     parent.subject = Some("Harbour plan".to_owned());
     parent.rfc_message_id = Some(postio_model::RfcMessageId::new("plan@example.invalid"));
@@ -2263,7 +2016,6 @@ async fn labels_chosen_before_sending_are_carried_by_the_conversation() {
     .await;
     assert_eq!(report.applied, 1, "{report:?}");
 
-    // The conversation carries both.
     let thread = postio_storage::repository::ThreadRepository::new(&connection)
         .get(conversation)
         .await
@@ -2271,7 +2023,6 @@ async fn labels_chosen_before_sending_are_carried_by_the_conversation() {
         .expect("the conversation");
     assert_eq!(thread.labels, vec![harbour.id, travel.id]);
 
-    // The sent copy carries both, as labels and as keywords.
     let copy = messages
         .page(&postio_storage::repository::ListQuery {
             scope: postio_storage::repository::ListScope::Mailbox(sent),
@@ -2295,7 +2046,6 @@ async fn labels_chosen_before_sending_are_carried_by_the_conversation() {
         );
     }
 
-    // The message it answers gains Travel, as `add_label` would give it.
     let parent = messages.get(parent_id).await.expect("get").expect("there");
     assert_eq!(parent.labels, vec![harbour.id, travel.id]);
     assert!(
@@ -2319,7 +2069,6 @@ async fn labels_chosen_before_sending_are_carried_by_the_conversation() {
         "the server is told, as for any label: {queued:?}"
     );
 
-    // And the server's own copy in Sent carries both keywords.
     let on_server = backend
         .fetch_headers(
             "Sent",
@@ -2341,14 +2090,8 @@ async fn labels_chosen_before_sending_are_carried_by_the_conversation() {
     }
 }
 
-// ── Remind if no reply, set in the composer (spec 007 US3 scenario 5, T096) ─
-
 #[tokio::test]
 async fn a_draft_s_remind_if_no_reply_becomes_a_reminder_on_its_conversation() {
-    // "Given 'Remind if no reply · Tue 29 Sep' set in the composer, When
-    // the message is sent" -- the conversation the sent copy is filed into
-    // has a reminder due then, waiting on a reply to that copy, and it is
-    // set locally as the copy is filed, before anything else can answer.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, sent) = account_with_sent(&connection).await;

@@ -1,14 +1,3 @@
-//! A keyboard way to move through a message longer than one screen (#438):
-//! the reader pages itself a screen at a time, from the top, and a new
-//! message starts at its top.
-//!
-//! What is asserted is the reader's scroll offset, the thing a person would
-//! call "did it scroll". The classic window's key routing (Page_Down,
-//! space, shift+space reaching `Window::handle_key`, the context staying on
-//! the list) is not here: it is the window's, not the reader's.
-//!
-//! Skips without a display. Nothing here touches the network.
-
 use std::rc::Rc;
 
 use gtk::gdk;
@@ -25,7 +14,6 @@ fn body() -> MessageBody {
     }
 }
 
-/// A reader in a presented window, on a scratch allow list.
 fn reader_in_a_window() -> Option<(gtk::Window, Reader, tempfile::TempDir)> {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
@@ -46,12 +34,10 @@ fn reader_in_a_window() -> Option<(gtk::Window, Reader, tempfile::TempDir)> {
     Some((window, reader, dir))
 }
 
-/// How far down the reader is scrolled.
 fn scrolled(reader: &Reader) -> f64 {
     reader.scrolled_for_test()
 }
 
-/// Wait until the open message is drawn tall enough to page through.
 fn wait_drawn(reader: &Reader) {
     settle_until("the message to be drawn tall enough to page", || {
         let view = reader.view().clone();
@@ -61,7 +47,6 @@ fn wait_drawn(reader: &Reader) {
     });
 }
 
-/// Page down (or up) and wait for the offset to satisfy `moved`, returning it.
 fn page(reader: &Reader, down: bool, moved: impl Fn(f64) -> bool) -> f64 {
     if down {
         reader.page_down();
@@ -92,7 +77,6 @@ pub fn page_down_and_page_up_move_a_screen_at_a_time() {
         "Page_Up came back to {back}, not {one}"
     );
 
-    // Page_Up cannot go past the top.
     page(&reader, false, |y| y == 0.0);
     page(&reader, false, |y| y == 0.0);
     assert_eq!(
@@ -112,7 +96,6 @@ pub fn a_new_message_resets_the_scroll_position() {
     let one = page(&reader, true, |y| y > 0.0);
     page(&reader, true, |y| y > one);
 
-    // A second message starts at its top, not wherever the last one was.
     let generation = reader.view().document().map(|d| d.generation);
     reader.render(&body(), Some("grace@example.com"));
     settle_until("the second message to be drawn", || {

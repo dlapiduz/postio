@@ -1,13 +1,3 @@
-//! The reader's `--r-*` palette (`data/reader-tokens.css`, in this crate's
-//! own data directory since #799) is a build artefact of the same `Tokens`
-//! pipeline `tests/tokens.rs` checks — see `postio_ui::tokens::generate_reader`.
-//! These tests are what stops it drifting. The rest check `data/reader.css`
-//! itself — the hand-authored consumer stylesheet — which holds only
-//! structure, referencing the generated `--r-*` palette rather than restating
-//! a colour by hand (#296).
-//!
-//! No display to guard: this crate has no toolkit dependency at all.
-
 use std::path::PathBuf;
 
 use postio_ui::tokens::{self, Tokens};
@@ -16,7 +6,6 @@ fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-/// The same discovery `build.rs` does, so the two cannot disagree.
 fn design_system() -> Option<PathBuf> {
     let ds = manifest_dir()
         .parent()?
@@ -62,10 +51,6 @@ fn generated() -> String {
         .expect("data/reader-tokens.css is missing; run `cargo build -p postio-widgets`")
 }
 
-/// The checked-in sheet must be exactly what the generator produces from the
-/// design system as it stands. CI runs this, so a hand edit to
-/// `reader-tokens.css` — or a retuned design system nobody rebuilt — fails
-/// the build.
 #[test]
 fn generated_reader_tokens_are_reproducible() {
     let (path, parsed) = source_tokens();
@@ -77,8 +62,6 @@ fn generated_reader_tokens_are_reproducible() {
     );
 }
 
-/// The whole point of the build step: retune the source and the reader
-/// follows, the same as the GTK chrome already does.
 #[test]
 fn retuning_the_design_system_changes_the_generated_reader_css() {
     let (path, mut parsed) = source_tokens();
@@ -100,10 +83,6 @@ fn reader_css() -> String {
         .expect("data/reader.css is missing")
 }
 
-/// The dark scheme is a real `@media` query — WebKit, unlike an
-/// application-priority GTK provider, honours it — so the reader can use the
-/// same mechanism the web platform gives it instead of GTK's style-class
-/// workaround (see `postio_ui::tokens`'s module docs for why GTK needs one).
 #[test]
 fn the_dark_scheme_is_a_prefers_color_scheme_media_query() {
     let css = generated();
@@ -116,10 +95,6 @@ fn the_dark_scheme_is_a_prefers_color_scheme_media_query() {
     assert!(dark.contains("--r-accent:"));
 }
 
-/// #296's acceptance criterion: `reader.css` keeps only structure. Every
-/// colour it used to restate by hand now lives in the generated file above,
-/// referenced through `var(--r-*)`. Comments may still cite an issue number
-/// (`#296`), so look at the rules only, the way `tests/tokens.rs` does.
 #[test]
 fn reader_css_has_no_colour_literal_tokens_rs_also_computes() {
     let css = strip_comments(&reader_css());
@@ -133,10 +108,6 @@ fn reader_css_has_no_colour_literal_tokens_rs_also_computes() {
     );
 }
 
-/// Every `var(--r-*)` `reader.css` uses must be defined in the generated
-/// palette. A typo in a role name would otherwise silently drop a
-/// declaration at runtime — the same check `tests/tokens.rs` runs for the
-/// GTK sheet.
 #[test]
 fn every_r_variable_reader_css_uses_is_defined() {
     let palette = generated();
@@ -161,9 +132,6 @@ fn every_r_variable_reader_css_uses_is_defined() {
     }
 }
 
-/// #323's acceptance: the message body renders inside a bounded surface,
-/// with an edge that gains weight under `prefers-contrast: more` rather than
-/// disappearing — the same "hairlines carry meaning" rule tokens.css follows.
 #[test]
 fn the_body_has_a_bounded_container_with_a_high_contrast_edge() {
     let css = reader_css();
@@ -177,8 +145,6 @@ fn the_body_has_a_bounded_container_with_a_high_contrast_edge() {
     assert!(css.contains("var(--r-hairline-strong)"));
 }
 
-/// Drop `/* … */` so a check can look at the rules rather than the
-/// commentary — comments legitimately cite an issue number like `#296`.
 fn strip_comments(css: &str) -> String {
     let mut out = String::with_capacity(css.len());
     let mut rest = css;
@@ -193,9 +159,6 @@ fn strip_comments(css: &str) -> String {
     out
 }
 
-/// The dark reader is designed, not derived (spec 006 FR-016, #1588): the
-/// generated dark block carries the design system's named reader roles,
-/// and its ground is no longer the chrome's `neutral-900`.
 #[test]
 fn the_dark_reader_roles_are_the_designed_ones() {
     let generated = generated();

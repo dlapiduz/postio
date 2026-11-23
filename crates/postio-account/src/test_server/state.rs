@@ -1,10 +1,5 @@
-//! What the server knows: mailboxes, messages, and the sequence numbers that
-//! make them addressable.
-//!
-//! One `ServerState` is shared by every connection behind a mutex, because
-//! that is what a mail server is: two clients selecting the same mailbox see
-//! each other's changes. Nothing here awaits, so the lock is only ever held
-//! for the length of a command.
+//! One `ServerState` is shared by every connection behind a mutex, so two clients selecting a
+//! mailbox see each other's changes. Nothing awaits under the lock.
 
 use std::collections::BTreeSet;
 use std::time::Duration;
@@ -14,7 +9,6 @@ use postio_model::{Flag, FlagSet, ModSeq, UidValidity};
 
 use super::{Fault, Quirk};
 
-/// A message as the server holds it.
 #[derive(Clone, Debug)]
 pub(super) struct Message {
     pub(super) uid: u32,
@@ -24,7 +18,6 @@ pub(super) struct Message {
     pub(super) mod_seq: u64,
 }
 
-/// A mailbox and its UID space.
 #[derive(Clone, Debug)]
 pub(super) struct Mailbox {
     pub(super) path: String,
@@ -35,24 +28,17 @@ pub(super) struct Mailbox {
     pub(super) uid_next: u32,
     pub(super) highest_mod_seq: u64,
     pub(super) messages: Vec<Message>,
-    /// What was removed, and at which modification sequence, so that a
-    /// `SELECT (QRESYNC …)` can report `VANISHED (EARLIER)` for a client that
-    /// was away when it happened.
     pub(super) vanished: Vec<(u32, u64)>,
 }
 
 impl Mailbox {
-    /// Advances the modification sequence and returns the new value.
-    ///
-    /// RFC 7162 §3.1.2.1: every change gets a value strictly greater than the
-    /// mailbox's previous HIGHESTMODSEQ, so `CHANGEDSINCE` — which is
-    /// strictly greater-than — can see it.
+    /// RFC 7162 §3.1.2.1: every change gets a value strictly above the previous HIGHESTMODSEQ, so
+    /// `CHANGEDSINCE` can see it.
     pub(super) fn bump(&mut self) -> u64 {
         self.highest_mod_seq += 1;
         self.highest_mod_seq
     }
 
-    /// Adds a message arriving now, stamping it with a fresh sequence.
     pub(super) fn push(&mut self, raw: Vec<u8>, flags: FlagSet, at: DateTime<Utc>) -> u32 {
         let uid = self.uid_next;
         self.uid_next += 1;
@@ -67,7 +53,6 @@ impl Mailbox {
         uid
     }
 
-    /// Removes a message, remembering it for QRESYNC.
     pub(super) fn remove(&mut self, uid: u32) -> bool {
         let Some(index) = self.messages.iter().position(|message| message.uid == uid) else {
             return false;
@@ -78,11 +63,7 @@ impl Mailbox {
         true
     }
 
-    /// Renumbers the UID space, as a server restored from backup does.
-    ///
-    /// Everything a client believed about this mailbox is now wrong, which is
-    /// the whole point of the generation counter: UIDs restart at 1 and the
-    /// vanished list is meaningless across the boundary.
+    /// UIDs restart at 1 and the vanished list is meaningless across the boundary.
     pub(super) fn renumber(&mut self, uid_validity: u32) {
         self.uid_validity = uid_validity;
         self.uid_next = 1;
@@ -121,28 +102,19 @@ impl Mailbox {
     }
 }
 
-/// Everything the server is, shared by every connection.
 #[derive(Debug)]
 pub(super) struct ServerState {
     pub(super) account: String,
     pub(super) password: String,
-    /// The bearer token OAUTHBEARER and XOAUTH2 accept (#193). Kept apart
-    /// from `password` on purpose: a test that presented either credential to
-    /// either mechanism and passed would be proving nothing.
+    /// Kept apart from `password` so presenting either credential to either mechanism cannot pass
+    /// (#193).
     pub(super) access_token: String,
-    /// What the greeting advertises. Short by default: the provider Postio
-    /// targets hides every extension until you have logged in.
     pub(super) banner: Vec<String>,
-    /// What `CAPABILITY` reports once authenticated.
     pub(super) capabilities: Vec<String>,
     pub(super) mailboxes: Vec<Mailbox>,
     pub(super) quirks: BTreeSet<Quirk>,
-    /// Armed faults, each fired once by the first command that matches it.
     pub(super) faults: Vec<Fault>,
-    /// Every command line the server has been sent, tags included.
     pub(super) log: Vec<String>,
-    /// How long one `IDLE` may run before the server hangs up on it, as a
-    /// real server does to a client that never re-arms.
     pub(super) idle_limit: Option<Duration>,
 }
 
@@ -166,10 +138,7 @@ impl ServerState {
         self.quirks.contains(&quirk)
     }
 
-    /// The generation a flapping `SELECT` should claim, spending the quirk.
-    ///
-    /// Removed as it fires, so the *next* `SELECT` tells the truth -- which is
-    /// the whole shape being modelled: one wrong answer, not a renumber.
+    /// Removed as it fires, so the next `SELECT` tells the truth: one wrong answer, not a renumber.
     pub(super) fn take_uid_validity_flap(&mut self) -> Option<u32> {
         let found = self.quirks.iter().find_map(|quirk| match quirk {
             Quirk::UidValidityFlapsOnce { generation } => Some(*generation),
@@ -180,7 +149,6 @@ impl ServerState {
         Some(found)
     }
 
-    /// Whether the next `SELECT` should omit `UIDVALIDITY`, spending the quirk.
     pub(super) fn take_uid_validity_omission(&mut self) -> bool {
         self.quirks.contains(&Quirk::UidValidityAlwaysOmitted)
             || self.quirks.remove(&Quirk::UidValidityOmittedOnce)
@@ -192,7 +160,6 @@ impl ServerState {
             .any(|name| name.eq_ignore_ascii_case(capability))
     }
 
-    /// Takes the first armed fault that matches `command`, if any.
     pub(super) fn take_fault(&mut self, command: &str) -> Option<Fault> {
         let index = self
             .faults
@@ -202,22 +169,18 @@ impl ServerState {
     }
 }
 
-/// Parses one wire flag, e.g. `\Seen` or `$label`.
 pub(super) fn flag(raw: &str) -> Flag {
     Flag::parse(raw)
 }
 
-/// Renders a flag set the way a server writes one.
 pub(super) fn flag_list(flags: &FlagSet) -> String {
     flags.iter().map(Flag::as_str).collect::<Vec<_>>().join(" ")
 }
 
-/// The `INTERNALDATE` spelling: `"07-Feb-1994 21:52:25 +0000"`.
 pub(super) fn internal_date(at: DateTime<Utc>) -> String {
     at.format("%d-%b-%Y %H:%M:%S %z").to_string()
 }
 
-/// Seeds a mailbox's starting state.
 pub(super) fn seed(
     path: String,
     delimiter: char,
@@ -239,8 +202,6 @@ pub(super) fn seed(
         vanished: Vec::new(),
     };
 
-    // A mailbox at rest: every message already carries the mailbox's starting
-    // modification sequence, and nothing has happened since.
     for (raw, flags, at) in messages {
         let uid = mailbox.uid_next;
         mailbox.uid_next += 1;
@@ -256,7 +217,6 @@ pub(super) fn seed(
     mailbox
 }
 
-/// The `Date` header, for an `INTERNALDATE` nobody set explicitly.
 fn date_header(raw: &[u8]) -> Option<DateTime<Utc>> {
     let text = String::from_utf8_lossy(&raw[..raw.len().min(8 * 1024)]);
     for line in text.split("\r\n") {
@@ -272,7 +232,6 @@ fn date_header(raw: &[u8]) -> Option<DateTime<Utc>> {
     None
 }
 
-/// The UID a sequence-set token names, resolving `*` against `highest`.
 pub(super) fn resolve(token: &str, highest: u32) -> Option<u32> {
     if token == "*" {
         return Some(highest);
@@ -280,7 +239,6 @@ pub(super) fn resolve(token: &str, highest: u32) -> Option<u32> {
     token.parse().ok()
 }
 
-/// Whether `value` falls inside an RFC 3501 sequence set such as `1:3,7,9:*`.
 pub(super) fn in_sequence_set(set: &str, value: u32, highest: u32) -> bool {
     set.split(',').any(|range| match range.split_once(':') {
         None => resolve(range, highest) == Some(value),
@@ -301,7 +259,6 @@ pub(super) fn in_sequence_set(set: &str, value: u32, highest: u32) -> bool {
     })
 }
 
-/// Coalesces UIDs into the `1:3,7` spelling a `VANISHED` response uses.
 pub(super) fn sequence_set_of(uids: &BTreeSet<u32>) -> String {
     let mut ranges: Vec<String> = Vec::new();
     let mut iter = uids.iter().copied();

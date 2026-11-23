@@ -1,16 +1,9 @@
-//! The harness itself: a case in `CASES` is listed, and a listed case runs.
-
 use std::process::Command;
 
-/// Set on the copy of this binary the case below starts, so that a harness
-/// that runs more than it was asked for fails here rather than starting
-/// copies of itself without end.
 const CHILD: &str = "POSTIO_FOCUS_SUITE_CHILD";
 
-/// A case with nothing in it, which the harness must still list and run.
 pub fn an_empty_case() {}
 
-/// Asks this binary, as a runner does, for its list and for one case by name.
 pub fn an_empty_case_is_listed_and_runs() {
     assert!(
         std::env::var_os(CHILD).is_none(),
@@ -43,18 +36,12 @@ pub fn an_empty_case_is_listed_and_runs() {
     );
 }
 
-/// The main loop is turned inside one poll of the case's future, so every
-/// future it dispatches that awaits a tokio resource spends the same budget
-/// (128 operations a poll). A case that never yields to its runtime ran it
-/// out after a few dozen opens, and from then on each such future was woken
-/// again the moment it returned `Pending`: `settle` never went idle, at 100%
-/// CPU. Three hundred reads, none awaited from the case, are well past it.
+/// The main loop is turned inside one poll of the case's future, so each tokio-awaiting future
+/// spends the same 128-operation budget.
+/// Once spent, each is woken again at once and `settle` never goes idle.
 pub fn settle_outlasts_the_runtimes_budget() {
     use std::{cell::Cell, rc::Rc};
     crate::gtk_case(async {
-        if !crate::support::display() {
-            return;
-        }
         let landed = Rc::new(Cell::new(0_usize));
         for _ in 0..300 {
             let (answer, answered) = tokio::sync::oneshot::channel::<()>();
@@ -67,7 +54,6 @@ pub fn settle_outlasts_the_runtimes_budget() {
                 let _ = answer.send(());
             });
         }
-        // No `.await` here: the poll is never given back.
         let until = std::time::Instant::now()
             + postio_test_support::scaled(std::time::Duration::from_secs(10));
         while landed.get() < 300 && std::time::Instant::now() < until {

@@ -50,23 +50,11 @@ sys.path.insert(0, str(HERE / "lib"))
 import fixture_toolchain  # noqa: E402  -- enabled by the sys.path line above
 ISSUE_LAND = HERE / "issue-land.sh"
 TEST_HEADLESS = HERE / "test-headless.sh"
-# Sandboxes go under `target/`, which git ignores: inside the worktree because
-# the shared-tree guard only lifts its refusals for worktree paths, and not in
-# its root because a killed run leaves the sandbox behind and `git add -A` in a
-# worktree will commit it. `scripts/checks/check-test-sandboxes.py` says what
-# that cost (#1225).
 SANDBOXES = REPO_ROOT / "target" / "tmp"
 SANDBOXES.mkdir(parents=True, exist_ok=True)
 
-# Not installed anywhere, ever -- that is the point. rustup refuses an
-# override naming a toolchain it has never fetched rather than fetching one
-# on the spot, so this is a reliable trigger rather than a guess about what
-# happens to be absent on this machine.
 BOGUS_TOOLCHAIN = "1.0.0-does-not-exist"
 
-# The six invariant checks `issue-land.sh` runs unconditionally. Stubbed here
-# because this test is about the toolchain, not about them -- they are
-# exercised by their own self-tests.
 STUB_CHECKS = [
     "check-crate-boundaries.py",
     "check-no-personal-data.py",
@@ -160,7 +148,6 @@ def test_issue_land_clears_the_override() -> None:
         git("push", "-q", "origin", "main", cwd=root)
         git("checkout", "-q", "-b", "issue-1-toolchain-test", cwd=root)
 
-        # ── the case this issue is about ─────────────────────────────────
         result = case(
             "issue-land.sh: a bogus RUSTUP_TOOLCHAIN does not reach the gates",
             root,
@@ -180,7 +167,6 @@ def test_issue_land_clears_the_override() -> None:
                 "meaning some gate still saw the override"
             )
 
-        # ── the baseline: nothing exported, nothing to clear or report ────
         result = case(
             "issue-land.sh: an unset RUSTUP_TOOLCHAIN changes nothing",
             root,
@@ -200,9 +186,6 @@ def test_headless_sh_clears_the_override() -> None:
     with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
         runtime_dir = Path(directory)
         display = "postio-headless-test"
-        # `running()` in test-headless.sh only checks for a socket at this
-        # path -- a real one, bound but never accepted from, satisfies it
-        # without needing mutter installed, which CI does not have.
         server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         server.bind(str(runtime_dir / display))
         server.listen(1)

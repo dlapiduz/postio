@@ -5,14 +5,8 @@ use postio_model::{ThreadId, ThreadView};
 use postio_storage::Store;
 use postio_storage::repository::{LabelRepository, ThreadRepository};
 
-/// Thread `id`, or `None` when it is gone.
-///
-/// Five statements however long the thread is: its subject (a rowid seek),
-/// its members with their lines (`ThreadRepository::members`), its unsent
-/// reply, and its labels. The labels come from
-/// `LabelRepository::for_threads`, the read Focus's list pages already use
-/// for a page of threads, asked here for one. The mute is a
-/// fifth, a join through the thread's claims that reads only the mutes.
+/// Five statements however long the thread is; the mute is a join through the thread's claims that
+/// reads only the mutes.
 pub async fn view(database: &Store, id: ThreadId) -> Result<Option<ThreadView>, StoreError> {
     let connection = database.read().await.map_err(StoreError::from)?;
     let threads = ThreadRepository::new(&connection);
@@ -45,7 +39,6 @@ pub async fn view(database: &Store, id: ThreadId) -> Result<Option<ThreadView>, 
     }))
 }
 
-/// Which of `threads` are muted, with the replies since: one statement.
 pub async fn muted_of(
     database: &Store,
     threads: &[ThreadId],

@@ -1,10 +1,5 @@
-//! The Edit and New contact form, in words (specs/011-focus-contacts S8,
-//! handoff screen 06): what each part says, which segment is on, what the
-//! Show as choices preview, and the hints under the form.
-//!
-//! The form's content and its rules are `postio_model::ContactForm`'s; its
-//! state (what is changed, whether Esc is armed) is `postio-focus`'s. This
-//! turns both into what a frontend draws, with no toolkit in it.
+//! The Edit and New contact form in words, with no toolkit. Content and rules are
+//! `postio_model::ContactForm`'s; its state is `postio-focus`'s.
 
 use postio_core::{CommandId, Keymap};
 use postio_model::{ContactForm, ContactKind, ShowAs};
@@ -12,86 +7,57 @@ use postio_model::{ContactForm, ContactKind, ShowAs};
 use crate::contact_popover::{Avatar, avatar};
 use crate::hints::{Hint, fixed, hint};
 
-/// One choice of a segmented control.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Segment {
-    /// Its words.
     pub label: String,
-    /// Whether it is the chosen one.
     pub on: bool,
 }
 
-/// One address row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AddressRowView {
-    /// What is typed.
     pub text: String,
-    /// The type menu's current words; empty when none is chosen.
     pub label: String,
-    /// Whether the filled circle is here.
     pub primary: bool,
-    /// Whether a bounce named it: its type reads "Old \u{b7} bounced".
     pub bounced: bool,
 }
 
-/// One thing the mail says that the person might keep.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SeenRow {
-    /// "+1 555 0119".
     pub what: String,
-    /// "phone number in her signature since August".
     pub from: String,
-    /// "Add phone", "Add website", or "Remove" for one already kept.
     pub action: String,
-    /// "Ignore", for one only offered.
     pub secondary: Option<String>,
 }
 
-/// A button with its key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditButton {
-    /// "Save".
     pub label: String,
-    /// `mod+s`, if bound.
     pub key: Option<String>,
 }
 
-/// Which field has the keyboard.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FormField {
-    /// First name, where an edit opens and a new person starts.
     #[default]
     Given,
-    /// An address row's text, by index.
     Address(usize),
-    /// The group name being typed.
     Group,
 }
 
-/// One line of the "+ Add to group" picker.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GroupOption {
-    /// What the line says: a group's name, or `New group <name>`.
     pub label: String,
-    /// The name it adds.
     pub name: String,
-    /// Whether it makes the group.
     pub is_new: bool,
 }
 
-/// The picker under "+ Add to group": what is typed, and the groups it
-/// matches.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GroupPicker {
-    /// What is typed.
     pub query: String,
-    /// The matching groups, then `New group <query>`.
     pub options: Vec<GroupOption>,
 }
 
-/// The groups `query` offers: those that exist, are not already on the form
-/// and contain what is typed, in the order given; and `New group <query>`
-/// last unless a group already has exactly that name.
+/// Existing groups not already on the form that contain `query`, then `New group <query>` unless
+/// that name exists.
 pub fn group_options(known: &[String], chosen: &[String], query: &str) -> Vec<GroupOption> {
     let query = query.trim();
     let wanted = query.to_lowercase();
@@ -119,91 +85,51 @@ pub fn group_options(known: &[String], chosen: &[String], query: &str) -> Vec<Gr
     options
 }
 
-/// What the form draws.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditView {
-    /// "Editing Ada Moreno", or "New contact".
     pub title: String,
-    /// "saved in Postio".
     pub note: String,
-    /// Cancel and its key.
     pub cancel: EditButton,
-    /// Save and its key.
     pub save: EditButton,
-    /// The avatar beside "Photo".
     pub avatar: Avatar,
-    /// "Initials until you add one. ..."
     pub photo_note: String,
-    /// The five kinds.
     pub kinds: Vec<Segment>,
-    /// "Detected from their mail. ..." or "Set by you. ..."
     pub kind_note: String,
-    /// First name.
     pub given: String,
-    /// Last name.
     pub family: String,
-    /// The three styles, each as it would read.
     pub show_as: Vec<Segment>,
-    /// "What the inbox shows for their mail, whatever name their mail client sends."
     pub show_note: String,
-    /// Job title.
     pub work_title: String,
-    /// Company.
     pub work_company: String,
-    /// The address rows.
     pub addresses: Vec<AddressRowView>,
-    /// "+ Add address".
     pub add_address: String,
-    /// "The filled circle is where replies and new mail go. ..."
     pub address_note: String,
-    /// What the mail says: details found in headers and signatures.
     pub seen: Vec<SeenRow>,
-    /// The group chips.
     pub groups: Vec<String>,
-    /// "+ Add to group".
     pub add_group: String,
-    /// The picker, while one is open.
     pub group_picker: Option<GroupPicker>,
-    /// "Groups work as recipients ..."
     pub group_note: String,
-    /// Why Save would be refused, said once the person asks it.
     pub problem: Option<String>,
-    /// "Esc again to discard your changes", while Esc is armed.
     pub armed: Option<String>,
-    /// The hints under the form.
     pub hints: Vec<Hint>,
-    /// Who has the keyboard.
     pub focus: FormField,
 }
 
-/// What the form needs beside the form itself.
 #[derive(Debug, Clone, Copy)]
 pub struct EditContext<'a> {
-    /// The form as the person has it now.
     pub form: &'a ContactForm,
-    /// Whether this is a person being made.
     pub is_new: bool,
-    /// Whether the kind is the detector's word rather than the user's.
     pub kind_detected: bool,
-    /// The stable id of the avatar's fill; any for a new person.
     pub id: i64,
-    /// Whether Esc is armed.
     pub armed: bool,
-    /// Whether the person asked for Save and the form said no.
     pub show_problem: bool,
-    /// Who has the keyboard.
     pub focus: FormField,
-    /// Every group that exists.
     pub known_groups: &'a [String],
-    /// What the mail says that can be kept, and what is kept.
     pub seen: &'a [postio_model::SeenItem],
-    /// What is typed in the group picker, while it is open.
     pub group_query: Option<&'a str>,
-    /// The account this contact syncs with, once a sync has linked it.
     pub synced_with: Option<&'a str>,
 }
 
-/// The kind's words in the segmented control.
 pub fn kind_title(kind: ContactKind) -> &'static str {
     match kind {
         ContactKind::Person => "Person",
@@ -237,8 +163,6 @@ fn seen_row(item: &postio_model::SeenItem) -> SeenRow {
     }
 }
 
-/// The key that backs out of the form, as this keyboard spells its cap:
-/// `Esc` on a Mac, the keymap's own spelling elsewhere.
 fn escape_key(keymap: &Keymap) -> String {
     if keymap.platform() == Some(postio_config::paths::Platform::Apple) {
         "Esc".to_owned()
@@ -249,7 +173,6 @@ fn escape_key(keymap: &Keymap) -> String {
     }
 }
 
-/// The form in words.
 pub fn view(ctx: &EditContext<'_>, keymap: &Keymap) -> EditView {
     let form = ctx.form;
     let name = form.full_name();
@@ -356,7 +279,6 @@ pub fn view(ctx: &EditContext<'_>, keymap: &Keymap) -> EditView {
             } else {
                 form.given.trim()
             };
-            // A name that ends in a full stop ("A.") ends the sentence too.
             format!(
                 "The filled circle is where replies and new mail go. Mail from any of them counts as {who}{}",
                 if who.ends_with('.') { "" } else { "." }
@@ -634,8 +556,6 @@ mod tests {
                 .address_note
                 .ends_with("counts as A.")
         );
-        // Where the key is spelled out on its cap, the sentence spells it
-        // the same way.
         let linux = Keymap::resolve_on(
             &postio_config::KeyBindings::default(),
             postio_config::paths::Platform::Freedesktop,

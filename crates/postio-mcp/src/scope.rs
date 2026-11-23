@@ -1,49 +1,32 @@
-//! What the person has shared: `[mcp]`, as the tools ask it.
-//!
-//! Read again for every call ([`Scope::load`]), so taking an account or a
-//! folder out of `config.toml` takes effect on the next call (ADR 0010 Q6).
-//! Everything not named is invisible, and anything that cannot be read --
-//! a missing file, one that does not parse -- shares nothing.
+//! What the person has shared: `[mcp]`, read again for every call so a
+//! removal takes effect at once; anything unreadable shares nothing.
 
 use std::path::Path;
 
 use postio_config::McpConfig;
 
-/// Every folder of an account, as `[mcp]` spells it.
 pub const EVERY_FOLDER: &str = "*";
 
-/// The accounts and folders an agent may read.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Scope {
     accounts: Vec<(String, Folders, Actions)>,
 }
 
-/// What an agent may do to a shared account's mail besides read it and
-/// write drafts (ADR 0010, as amended 2026-10-14). None until `actions`
-/// names them.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Actions {
-    /// File messages into the account's archive.
     pub archive: bool,
-    /// Move messages into another shared folder.
     pub move_: bool,
-    /// Put a label on a message or take one off.
     pub label: bool,
 }
 
-/// One of [`Actions`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
-    /// `"archive"`.
     Archive,
-    /// `"move"`.
     Move,
-    /// `"label"`.
     Label,
 }
 
 impl Action {
-    /// How `[mcp]` spells it.
     pub fn name(self) -> &'static str {
         match self {
             Action::Archive => "archive",
@@ -69,7 +52,6 @@ impl Actions {
         actions
     }
 
-    /// Whether `action` is allowed.
     pub fn allows(self, action: Action) -> bool {
         match action {
             Action::Archive => self.archive,
@@ -79,20 +61,14 @@ impl Actions {
     }
 }
 
-/// Which of an account's folders are shared.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Folders {
-    /// All of them.
     Every,
-    /// Only these paths.
     Only(Vec<String>),
 }
 
 impl Folders {
-    /// Whether the folder at `path` is shared.
-    ///
-    /// Paths are compared as written, except `INBOX`, which IMAP names
-    /// case-insensitively (RFC 3501 §5.1).
+    /// Paths are compared as written, except `INBOX`, which IMAP names case-insensitively.
     pub fn allows(&self, path: &str) -> bool {
         match self {
             Folders::Every => true,
@@ -105,7 +81,6 @@ impl Folders {
 }
 
 impl Scope {
-    /// Nothing shared.
     pub fn none() -> Scope {
         Scope::default()
     }
@@ -141,8 +116,6 @@ impl Scope {
         Scope { accounts }
     }
 
-    /// What the file at `path` shares now; nothing when there is no file or
-    /// it does not parse.
     pub fn load(path: Option<&Path>) -> Scope {
         let Some(path) = path else {
             return Scope::none();
@@ -158,7 +131,6 @@ impl Scope {
         }
     }
 
-    /// Whether nothing is shared at all.
     pub fn is_empty(&self) -> bool {
         self.accounts.is_empty()
     }
@@ -173,8 +145,6 @@ impl Scope {
             .map(|(_, folders, _)| folders)
     }
 
-    /// What the agent may do in the account at `address`: nothing when the
-    /// account is not shared.
     pub fn actions(&self, address: &str) -> Actions {
         let address = address.trim().to_ascii_lowercase();
         self.accounts
@@ -184,7 +154,6 @@ impl Scope {
             .unwrap_or_default()
     }
 
-    /// Whether any shared account allows `action`.
     pub fn anywhere(&self, action: Action) -> bool {
         self.accounts
             .iter()

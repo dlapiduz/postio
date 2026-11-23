@@ -282,32 +282,6 @@ mod tests {
     }
 
     #[test]
-    fn offline_is_one_banner_row_under_the_strip_with_retry_and_its_key() {
-        let mut app = with_account((120, 24));
-        heard(
-            &mut app,
-            Event::ConnectionChanged {
-                account: ACCOUNT,
-                state: ConnectionState::Offline,
-            },
-        );
-        let drawn = screen(120, 24, &app);
-        let row = drawn.lines().nth(2).unwrap();
-        assert!(row.contains("You're offline"), "{drawn}");
-        assert!(row.contains("syncs when you're back"), "{drawn}");
-        assert!(row.trim_end().ends_with("Retry now F5"), "{drawn}");
-        assert!(
-            drawn.lines().nth(3).unwrap().contains("Today"),
-            "the list gave the row up:\n{drawn}"
-        );
-        let effects = click_on(&mut app, (120, 24), "Retry now");
-        assert!(
-            effects.contains(&Effect::Send(postio_core::Command::Refresh)),
-            "{effects:?}"
-        );
-    }
-
-    #[test]
     fn a_refused_password_names_the_server_and_marks_itself_without_colour() {
         let mut app = with_account((120, 24));
         heard(

@@ -5,13 +5,9 @@ import Testing
 @testable import PostioAppKit
 @testable import PostioKit
 
-/// Which editor a draft goes to (#1288): the half that asks this Mac what it
-/// has, which needs `NSWorkspace` and so lives with `ComposeHandoff`'s AppKit
-/// extension. The model half stays in `ComposeModelTests`.
 @MainActor
 @Suite struct ComposeHandoffTests {
     @Test func aTerminalEditorIsNotOpenedAndSaysWhy() {
-        // `vi` ships with macOS and has no window of its own.
         #expect(ComposeHandoff.found("vi") == .terminalProgram)
 
         let target = settingsHandoffTarget(configured: "vi", found: .terminalProgram)
@@ -23,9 +19,8 @@ import Testing
     }
 
     @Test func anEditorThatIsNotThereSaysThatRatherThanBlamingTheTerminal() {
-        // The distinction GTK's adoption forced (#1297): a name that is not
-        // an application is a terminal program on macOS *usually* — and a
-        // typo the rest of the time. Nothing on this Mac is called this.
+        // A name that is not an application is usually a terminal program, otherwise a typo
+        // (#1297).
         let typo = "postio-no-such-editor-1297"
         #expect(ComposeHandoff.found(typo) == .nothing)
 
@@ -42,10 +37,6 @@ import Testing
     }
 
     @Test func anApplicationEveryMacHasIsFound() {
-        // The other half, and the reason the case above means anything: a
-        // lookup that never finds anything would make every editor look like
-        // a terminal program. TextEdit ships with macOS, by name and by
-        // bundle identifier both.
         #expect(ComposeHandoff.isApplication("TextEdit"))
         #expect(ComposeHandoff.isApplication("com.apple.TextEdit"))
         #expect(ComposeHandoff.isApplication("  TextEdit  "), "what somebody typed is trimmed")

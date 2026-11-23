@@ -3,11 +3,6 @@ import Testing
 
 @testable import PostioKit
 
-/// The key map (`?`, screen 20; specs/009-focus-macos T106): the
-/// controller opens it as `FocusOpenKeyMap`, carrying the sheet
-/// `postio_ui::keymap_sheet` groups for this platform, and closes it with
-/// `FocusCloseSurface(.keyMap)`. The Mac lays the groups out in the columns
-/// the sheet names and spells every key as the menus do.
 @MainActor
 @Suite struct KeyMapSheetTests {
     static let sheet = KeyMapSheetFfi(
@@ -41,8 +36,6 @@ import Testing
         mouseFooter: "The mouse works everywhere: every key has a visible button.",
         moreBelow: "More below")
 
-    // MARK: the words, laid out
-
     @Test func theGroupsStandInTheColumnsTheSheetNames() {
         let words = KeyMapSheetWords(Self.sheet)
         #expect(words.columns.map { $0.map(\.title) } == [
@@ -68,8 +61,6 @@ import Testing
         #expect(words.closeWord == "close")
     }
 
-    /// Every command is in the key map, more than fit at 1440 x 900, so
-    /// the panel says there is more below until the last row is in view.
     @Test func thePanelSaysThereIsMoreBelowUntilTheEnd() {
         #expect(KeyMapPanel.moreBelow(contentBottom: 1400, viewport: 600))
         #expect(KeyMapPanel.moreBelow(contentBottom: 601.5, viewport: 600))
@@ -78,8 +69,6 @@ import Testing
     }
 
     @Test func theFooterNamesTheConfigFileAndItsTable() {
-        // C3: `[keys]` in `config.toml`, not a `keys.toml`, whatever the
-        // pack's footer says.
         let words = KeyMapSheetWords(Self.sheet)
         #expect(words.rebind.contains("~/Library/Application Support/Postio/config.toml"))
         #expect(words.rebind.contains("[keys]"))
@@ -89,8 +78,6 @@ import Testing
         #expect(words.title == "Keys")
         #expect(words.subtitle == Self.sheet.subtitle)
     }
-
-    // MARK: open and closed, as the controller says
 
     @Test func theControllerOpensItAndClosesIt() {
         let model = KeyMapModel()

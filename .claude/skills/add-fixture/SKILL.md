@@ -1,73 +1,45 @@
 ---
 name: add-fixture
-description: Add a .eml message fixture to the Postio test corpus correctly — the file, the loader table, its categories, and the README row — so the three tests that enforce all four stay green. Use whenever a bug or feature needs new test mail.
+description: Add a .eml fixture to the Postio test corpus correctly (file, loader table, categories, README row) so the three tests that enforce all four stay green. Use whenever a bug or feature needs new test mail.
 ---
 
 # Add a corpus fixture
 
-The corpus at `crates/postio-model/tests/corpus/` is how every crate tests
-against realistic mail without touching the network. Three separate tests
-enforce that a fixture is registered in all the right places, so adding the
-file alone will turn the suite red.
-
-Read `crates/postio-model/tests/corpus/README.md` first — it documents every
-existing fixture and what it exercises. Extend the corpus rather than
-duplicating a fixture that already covers your case.
+`crates/postio-model/tests/corpus/` lets every crate test against realistic mail without the network. Three tests enforce registration, so a bare file turns the suite red. Read `crates/postio-model/tests/corpus/README.md` first and extend an existing fixture rather than duplicate one.
 
 ## 1. Write the `.eml`
 
-Save it as `crates/postio-model/tests/corpus/<descriptive-name>.eml`, named for
-what it *exercises*, not what it contains — `broken-references`, not
-`email-7`.
+Save as `crates/postio-model/tests/corpus/<descriptive-name>.eml`, named for what it *exercises* (`broken-references`, not `email-7`).
 
-**Invent everything.** Every address must use a reserved domain
-(`example.com`, `.test`, `.invalid`). Never a real person's name or address,
-least of all the maintainer's — `scripts/checks/check-no-personal-data.py` runs in CI
-and a corpus test scans specifically for this.
-
-Use real message bytes: CRLF line endings, genuine headers, correct MIME
-boundaries. A fixture that is not actually well-formed mail teaches the parser
-the wrong lesson.
+- **Invent everything.** Reserved domains only (`example.com`, `.test`, `.invalid`); never a real person's name or address, least of all the maintainer's. `scripts/checks/check-no-personal-data.py` runs in CI and a corpus test scans for this.
+- Use real message bytes: CRLF line endings, genuine headers, correct MIME boundaries.
 
 ## 2. Register it in the loader
 
-Add an entry to the fixture table in `crates/postio-model/src/test_corpus.rs`:
-the name, a one-line description of what it exercises, and its categories.
-
-Pick from the existing `Category` values where one fits. Add a new category
-only when nothing existing describes the case, and then document it in the
-README's category table too.
+Add an entry to the fixture table in `crates/postio-model/src/test_corpus.rs`: name, a one-line description, categories. Use an existing `Category` where one fits; add one only when none does, and document it in the README's category table.
 
 ## 3. Document it in the README
 
-Add a row to the fixture table in
-`crates/postio-model/tests/corpus/README.md` saying what the fixture exercises
-and why it exists. A fixture nobody can explain gets deleted by someone later.
+Add a row to the fixture table in `crates/postio-model/tests/corpus/README.md`: what it exercises and why.
 
-## 4. Verify all four landed
+## 4. Verify
 
 ```bash
 cargo test -p postio-model
 python3 scripts/checks/check-no-personal-data.py
 ```
 
-The tests that will catch a partial job:
-
-- `loader_reaches_every_file_on_disk_and_nothing_else` — file present but not
-  registered, or registered but missing
-- `every_fixture_reads_back_exactly_as_stored` — embedded bytes match disk
-- `the_readme_documents_every_fixture` — README row missing
-- `every_address_in_the_corpus_is_an_invented_reserved_domain` — real-looking
-  address slipped in
+The tests that catch a partial job:
+- `loader_reaches_every_file_on_disk_and_nothing_else`: file present but not registered, or the reverse
+- `every_fixture_reads_back_exactly_as_stored`: embedded bytes match disk
+- `the_readme_documents_every_fixture`: README row missing
+- `every_address_in_the_corpus_is_an_invented_reserved_domain`: a real-looking address
 
 ## 5. Use it
-
-Downstream crates reach the corpus through the `test-corpus` feature:
 
 ```toml
 [dev-dependencies]
 postio-model = { workspace = true, features = ["test-corpus"] }
 ```
 
-The loader hands back **raw bytes**, not parsed messages — deliberately, so
-parser tests cannot become circular.
+The loader returns **raw bytes**, not parsed messages, so parser tests cannot become circular.

@@ -1,8 +1,3 @@
-//! A vCard import applied to the store (specs/005-contacts User Story 6,
-//! FR-053, R9): a card whose address the mail already knows is that person,
-//! a card spanning several people joins them and says so, the user's own
-//! name for someone beats the card's, and the card itself is kept.
-
 use chrono::{TimeZone, Utc};
 
 use postio_model::card::{Member, ParsedCard, ParsedGroup, ParsedPerson};
@@ -99,9 +94,6 @@ async fn a_card_for_an_address_the_mail_knows_is_that_person() {
 
 #[tokio::test]
 async fn a_card_spanning_two_people_offers_the_merge_and_changes_nobody() {
-    // Specs/011-focus-contacts S11: an import never merges people behind the
-    // user's back. A card that lists two people's addresses is the evidence
-    // the review shows; the people stay as they are until they say so.
     let (_db, connection, account, inbox) = setup().await;
     from(&connection, &account, inbox, "ada@work.example", 2).await;
     from(&connection, &account, inbox, "ada@home.example", 1).await;

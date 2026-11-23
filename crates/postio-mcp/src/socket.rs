@@ -1,28 +1,7 @@
-//! The agent socket: a running Postio app answers an agent's tool calls
-//! (ADR 0041, amended 2026-10-14).
-//!
-//! One app holds the store at a time. Before this, an agent's call made
-//! while the desktop app was open could only be told so. Now the app that
-//! holds the store listens on a Unix domain socket beside it, and
-//! `postio-mcp` hands each `tools/call` line to that app instead of opening
-//! the store itself. The app answers with the same [`Server`] `postio-mcp`
-//! runs, over its own host, so the person's `[mcp]` is read where the store
-//! is and the access log is written there. The agent's client stands
-//! beside the app's window ([`Connector::connect_agent`]): the window
-//! repaints, hears the undo offer, and `u` takes the change back.
-//!
-//! What crosses is MCP's JSON-RPC, one line each way, which is already a
-//! wire format. The client protocol between a frontend and the host stays
-//! in-process, as ADR 0041 decided.
-//!
-//! # Who can connect
-//!
-//! Nothing on the network: a Unix domain socket has no port. It lives in a
-//! folder only this user can open (`0700`), and the socket file itself is
-//! `0600`. Both ends check the other's user id from the kernel (peer
-//! credentials) and refuse anyone else. `postio-mcp` also refuses a socket,
-//! or a folder around it, that another user owns or that others can reach,
-//! rather than hand its calls to whatever is listening there.
+//! The agent socket: a running Postio app answers an agent's tool calls on a Unix
+//! domain socket beside the store, so `postio-mcp` need not open it (ADR 0041).
+//! Only this user can connect: the folder is `0700`, the socket `0600`, both ends
+//! check peer credentials, and `postio-mcp` refuses a socket or folder another user owns.
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -38,14 +17,12 @@ use crate::audit::Audit;
 use crate::backend::Held;
 use crate::server::Server;
 
-/// How long `postio-mcp` waits for the app to answer one call.
 const ANSWER_WITHIN: Duration = Duration::from_secs(120);
 
-/// The longest line either end reads: far more than any call or answer.
 const LINE_LIMIT: u64 = 64 * 1024 * 1024;
 
-/// Where the app holding the store at `store` listens: `agents/mcp.sock`
-/// beside it, so a second profile (`POSTIO_STORE`) has a socket of its own.
+/// `agents/mcp.sock` beside the store, so a second profile (`POSTIO_STORE`) has a socket of its
+/// own.
 pub fn path_for(store: &Path) -> PathBuf {
     store
         .parent()
@@ -54,18 +31,14 @@ pub fn path_for(store: &Path) -> PathBuf {
         .join("mcp.sock")
 }
 
-/// Where this installation's app listens.
 pub fn installed_path() -> PathBuf {
     path_for(&postio_session::paths::store_path())
 }
 
-/// This process's effective user id.
 fn me() -> u32 {
     rustix::process::geteuid().as_raw()
 }
 
-/// Whether a file owned by `owner` with `mode` is private to `user`: theirs,
-/// and nobody else may read, write or enter it.
 pub fn private_to(user: u32, owner: u32, mode: u32) -> bool {
     owner == user && mode & 0o077 == 0
 }
@@ -74,7 +47,6 @@ fn refused(what: String) -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::PermissionDenied, what)
 }
 
-/// The kernel's word on who is at the other end of `stream`.
 fn peer_of(stream: &UnixStream) -> std::io::Result<u32> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_io()
@@ -89,7 +61,6 @@ fn peer_of(stream: &UnixStream) -> std::io::Result<u32> {
     Ok(peer?.uid())
 }
 
-/// The folder at `directory`, made private to this user, or refused.
 fn private_folder(directory: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(directory)?;
     let meta = std::fs::symlink_metadata(directory)?;
@@ -102,8 +73,6 @@ fn private_folder(directory: &Path) -> std::io::Result<()> {
     std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o700))
 }
 
-/// A socket that nothing answers on any more: left behind by an app that
-/// stopped without removing it.
 fn is_stale(path: &Path) -> bool {
     match UnixStream::connect(path) {
         Ok(_) => false,
@@ -114,8 +83,6 @@ fn is_stale(path: &Path) -> bool {
     }
 }
 
-/// The app's end: answers agents on the socket until dropped, which stops
-/// it and removes the socket.
 pub struct Listener {
     path: PathBuf,
     stopping: Arc<AtomicBool>,
@@ -131,7 +98,6 @@ impl std::fmt::Debug for Listener {
 }
 
 impl Listener {
-    /// Where it listens.
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -149,12 +115,8 @@ impl Drop for Listener {
     }
 }
 
-/// Answer agents at `path` with `connector`'s host, sharing what `config`
-/// says and logging to `audit`.
-///
-/// A socket left at `path` by an app that crashed is replaced; one that
-/// something still answers on is not, and this fails, since one app holds
-/// the store and it is already serving.
+/// A socket left by a crashed app is replaced; one something still answers on is
+/// not, and this fails: one app holds the store.
 pub fn listen(
     path: PathBuf,
     connector: Connector,
@@ -213,7 +175,6 @@ pub fn listen(
     })
 }
 
-/// [`listen`] at this installation's path, logging to its access log.
 pub fn listen_installed(
     connector: Connector,
     config: Option<PathBuf>,
@@ -221,7 +182,6 @@ pub fn listen_installed(
     listen(installed_path(), connector, config, Audit::installed())
 }
 
-/// One agent connection: each line a call, each answered with a line.
 fn answer(stream: UnixStream, connector: Connector, config: Option<PathBuf>, audit: Audit) {
     let Ok(writing) = stream.try_clone() else {
         return;
@@ -240,23 +200,17 @@ fn answer(stream: UnixStream, connector: Connector, config: Option<PathBuf>, aud
     }
 }
 
-/// What asking the app came to.
 #[derive(Debug)]
 pub enum Asked {
-    /// No app is listening: answer the call here.
     NoApp,
-    /// The app answered with this line.
     Answered(String),
-    /// Something is listening that this will not trust, or the app stopped
-    /// answering: the sentence why.
+    /// Something listening that is not trusted, or the app stopped answering: the sentence why.
     Refused(String),
 }
 
-/// Hand `line` to the app listening at `path`, if one is.
 pub fn ask(path: &Path, line: &str) -> Asked {
     let stream = match UnixStream::connect(path) {
         Ok(stream) => stream,
-        // No socket, or one left by an app that stopped: nobody is there.
         Err(error)
             if matches!(
                 error.kind(),

@@ -25,8 +25,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -36,34 +34,9 @@ SCRIPT = HERE / "sccache-restart.sh"
 
 FAILURES: list[str] = []
 
-# How long the stubbed script gets before the deadline is treated as a hang.
-#
-# It guards nothing this file asserts. The script's own waiting is already
-# neutralised by the fixture (`POSTIO_SCCACHE_WINDOW=0`), so every case here is
-# a few shell invocations against stubs and finishes in milliseconds -- the
-# deadline is only here so a genuine hang fails rather than blocking the job
-# for ever.
-#
-# It failed once anyway (#1243, run 34043679568): the Crate boundaries job runs
-# 81 self-tests four at a time on a shared runner, and 30 seconds of wall clock
-# is generous on an idle box and not obviously generous on that one. Nothing on
-# the branch touched sccache.
-# second reading differs from the first.
-# The counter advances *before* anything is printed, and that ordering is the
-# whole of a flake this test had.
-#
-# `executed()` in the script under test reads the stub through
-# `awk '/Compile requests executed/ { print $NF; exit }'`. That `exit` closes
-# the pipe after the first line, so the stub's second `printf` takes SIGPIPE
-# and dies -- and when the increment came last, it died before reaching it.
-# Whether it got there was scheduling, so the counter sometimes did not move
-# between the script's two readings, and a daemon that was answering was
-# reported WEDGED. Reproduced 2 runs in 12 under load on a workstation, once
-# on CI, and never on an idle box (#1243, #1254).
-#
-# Writing first cannot lose that race, and the *printed* value is unchanged --
-# still the count as of this call, which is what "the counter moved since the
-# last reading" means.
+# The stub advances its counter before printing: `executed()` reads it through `awk '... exit'`,
+# which closes the pipe after the first line, so a later increment
+# lost the race to SIGPIPE and a live daemon read as WEDGED (#1243, #1254).
 SCCACHE_STUB = """#!/usr/bin/env bash
 if [ "${1:-}" = "--show-stats" ]; then
     count="$(cat "$COUNTER_FILE")"
@@ -77,7 +50,6 @@ fi
 exit 0
 """
 
-# `ps -eo etimes,args`, answering with whatever the case set up.
 PS_STUB = """#!/usr/bin/env bash
 cat "$PS_FILE"
 """
@@ -100,8 +72,6 @@ def run(base: Path, *, waiting: int, moves: bool, args: list[str]) -> subprocess
     counter = base / "counter"
     counter.write_text("5351")
     process_list = base / "ps"
-    # `etimes pid args`. The pid column is what `--reap` needs; counting
-    # never read it, and the awk in `stalled` keys off `$1` either way.
     lines = ["      1       1 /sbin/init"]
     for index in range(waiting):
         lines.append(f"   {900 + index}    {2000 + index} sccache /usr/bin/rustc --crate-name c{index}")
@@ -113,21 +83,12 @@ def run(base: Path, *, waiting: int, moves: bool, args: list[str]) -> subprocess
     environment["PS_FILE"] = str(process_list)
     environment["COUNTER_MOVES"] = "1" if moves else "0"
     environment["MAX_SIZE"] = "30 GiB"
-    # So a case that reaches the two-reading path does not actually wait.
     environment["POSTIO_SCCACHE_WINDOW"] = "0"
     environment["POSTIO_SCCACHE_STALLED_AFTER"] = "300"
-    # `kill` is a shell builtin, so a PATH stub cannot shadow it; the script
-    # takes the command from here precisely so this can record instead of
-    # killing. Truncated per case so each reads only its own kills.
     killed = base / "killed"
     killed.write_text("")
     environment["KILLED_FILE"] = str(killed)
     environment["POSTIO_SCCACHE_KILL"] = str(stub_dir / "kill-recorder")
-    # No explicit deadline: `patience.DEFAULT_TIMEOUT` is already long, and
-    # this file's guards nothing it asserts -- the script's own waiting is
-    # switched off by `POSTIO_SCCACHE_WINDOW=0` above, so every case here is a
-    # few shell invocations against stubs. It only has to outlast a hiccup on a
-    # runner building 81 sandboxes four at a time, which is what #1243 was.
     return patience.run(
         ["bash", str(SCRIPT), *args],
         env=environment,
@@ -197,14 +158,6 @@ def run_the_cases() -> int:
             f"nothing; got exit {healthy.returncode}: {healthy.stdout}",
         )
 
-        # --- #1184's remaining gap: the restart leaves the casualties ---
-        #
-        # `--stop-server` replaces the daemon and does nothing for the clients
-        # already parked on the one it replaced. They are waiting for a reply
-        # from a process that no longer exists, so they wait for ever, and
-        # their cargo holds `target/`'s lock and `~/.cargo/.package-cache`
-        # meanwhile -- which is how one abandoned 29-hour build serialised
-        # every other session on the box (2026-09-11).
         reaped = run(base, waiting=3, moves=False, args=["--reap"])
         killed = (base / "killed").read_text().split()
         case(

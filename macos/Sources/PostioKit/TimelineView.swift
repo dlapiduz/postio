@@ -1,18 +1,8 @@
 import PostioFFI
 import SwiftUI
 
-/// The results' timeline (specs/010-focus-search T072; design §3.3,
-/// screens 06 and 07): 66 tall -- the count line and its sub-line on the
-/// left, a bar per month for the last twelve in the middle (36 tall at
-/// most, 10.5 pt labels), and the hint on the right.
-///
-/// The heights are the controller's (`MonthBarFfi`), a share of the
-/// tallest; a selected month -- inside the query's dates -- has the soft
-/// band behind it and a bold label, and while any is selected the others
-/// fade to the separator colour. A drag across the bars (step 4) is
-/// reported once, on release, as the bars it covered (`TimelineDrag`);
-/// the months that makes are the controller's. While a range is selected
-/// the hint says so and names ⌥←/⌥→.
+/// Heights are the controller's (`MonthBarFfi`). A drag across the bars is reported once, on
+/// release, as the bars it covered (`TimelineDrag`); the months are the controller's.
 public struct TimelineView: View {
     let countLine: String
     let subLine: String
@@ -35,15 +25,12 @@ public struct TimelineView: View {
 
     public static let height: CGFloat = 66
 
-    /// The hint as the two lines screen 06 draws, broken at its first
-    /// middle dot: "Matches by month" over "drag across months to narrow".
-    /// Left to wrap at the column's width it broke wherever the width ran
-    /// out, and at 1440 that left "to narrow" alone on the second line.
+    /// Left to wrap at the column's width the hint broke wherever it ran out, leaving "to narrow"
+    /// alone on the second line at 1440.
     static func hintLines(_ hint: String) -> String {
         guard let dot = hint.range(of: " \u{b7} ") else { return hint }
         return hint[..<dot.lowerBound] + "\n" + hint[dot.upperBound...]
     }
-    /// The tallest bar.
     public static let barHeight: CGFloat = 36
 
     public var body: some View {
@@ -72,8 +59,6 @@ public struct TimelineView: View {
         .overlay(alignment: .bottom) { Rectangle().fill(.separator).frame(height: 1) }
     }
 
-    /// The hint, and ⌥←/⌥→ "steps a month" after it while a range is
-    /// selected (screen 09).
     private var hintText: Text {
         let hint = Self.hintLines(hint)
         guard let step else { return Text(hint) }
@@ -83,8 +68,6 @@ public struct TimelineView: View {
     }
 }
 
-/// Bars for months with their labels under them: the timeline's (36 tall)
-/// and the Date popover's (90). A drag across them is `drag`'s to report.
 public struct MonthChart: View {
     let months: [MonthBarFfi]
     let barHeight: CGFloat
@@ -98,8 +81,7 @@ public struct MonthChart: View {
         self.drag = drag
     }
 
-    /// What VoiceOver says for a bar: "Jul, 9", or "Jul, 9+" when the
-    /// count is a floor (D30) -- the controller's words, not the number.
+    /// "Jul, 9+" when the count is a floor: the controller's words, not the number.
     static func spoken(_ month: MonthBarFfi) -> String {
         "\(month.label), \(month.count)"
     }
@@ -148,8 +130,8 @@ public struct MonthChart: View {
                 ForEach(Array(months.enumerated()), id: \.offset) { at, month in
                     Text(month.label)
                         .font(.system(size: labelSize, weight: selected(at, month) ? .bold : .regular))
-                        // Twelve three-letter months in the Date popover's
-                        // 270 points: tightened rather than cut to "M…".
+                        // Twelve three-letter months in 270 points: tightened rather than cut to
+                        // "M…".
                         .allowsTightening(true)
                         .minimumScaleFactor(0.75)
                         .foregroundStyle(
@@ -168,15 +150,11 @@ public struct MonthChart: View {
     }
 }
 
-/// A drag across a month chart's bars (specs/010-focus-search T083,
-/// §3.3): reported once, when the pointer lets go, as the first and last
-/// bar it covered in either direction -- a click is one bar -- so a drag
-/// is one search, not one per bar it crosses. While it moves, `band` is the
-/// bars it covers, for the chart to draw.
+/// Reported once, on release, as the first and last bar covered in either direction (a click is one
+/// bar), so a drag is one search, not one per bar. While it moves, `band` is what the chart draws.
 @MainActor
 @Observable
 public final class TimelineDrag {
-    /// The bars it covers while the pointer is down.
     public private(set) var band: ClosedRange<Int>?
     @ObservationIgnored public let bars: Int
     @ObservationIgnored private let report: (UInt32, UInt32) -> Void
@@ -186,8 +164,6 @@ public final class TimelineDrag {
         self.report = report
     }
 
-    /// The bar under `x`, across a chart `width` wide; past either end,
-    /// the end bar.
     public func bar(at x: Double, width: Double) -> Int {
         guard width > 0 else { return 0 }
         let at = Int((x / width * Double(bars)).rounded(.down))
@@ -199,12 +175,10 @@ public final class TimelineDrag {
         return min(a, b)...max(a, b)
     }
 
-    /// The pointer moved, the drag having begun at `start`.
     public func changed(start: Double, at x: Double, width: Double) {
         band = covered(start: start, at: x, width: width)
     }
 
-    /// The pointer let go at `x`: the bars covered are reported.
     public func ended(start: Double, at x: Double, width: Double) {
         let range = covered(start: start, at: x, width: width)
         band = nil

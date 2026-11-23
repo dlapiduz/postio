@@ -1,30 +1,7 @@
-//! One operation per key at a time, and one result for everybody waiting.
-//!
-//! # Why this exists
-//!
-//! ADR 0006 Q5. With an engine per account, an OAuth provider's access tokens
-//! expire *together* — the pool's three sessions, the SMTP path and whatever
-//! the user just clicked all discover it within the same second. Refreshing
-//! per caller turns one expiry into N refreshes against the token endpoint,
-//! and on a provider that rotates its refresh token on every use, N-1 of them
-//! present a token the server has already burned. The stampede is the normal
-//! case here, not the edge.
-//!
-//! # Why the result is shared rather than the work merely serialised
-//!
-//! A mutex around the refresh would be simpler and would be wrong. Each
-//! waiter would take it in turn, find the cache still empty because the
-//! refresh *failed*, and try again — so a revoked grant would produce exactly
-//! the storm this is meant to prevent, aimed at an endpoint that is already
-//! saying no. Failures are shared for the same reason successes are.
-//!
-//! # Cancellation
-//!
-//! A leader whose future is dropped mid-flight — the caller went away —
-//! leaves the registry through a guard, so the *next* caller leads rather
-//! than joining a flight nobody is flying. Waiters already parked on it see
-//! the channel close and fall back to doing the work themselves, which is the
-//! honest answer: the alternative is reporting a failure nobody observed.
+//! ADR 0006 Q5: an OAuth provider's tokens expire together, so refreshing per caller would stampede
+//! the endpoint and burn rotating refresh tokens. The result is shared, failures included: a mutex
+//! would let each waiter retry a revoked grant. A dropped leader leaves the registry through a
+//! guard, and parked waiters fall back to doing the work themselves.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -33,7 +10,6 @@ use std::sync::Mutex;
 
 use tokio::sync::watch;
 
-/// A registry of in-flight operations, one per key.
 #[derive(Debug)]
 pub(crate) struct SingleFlight<K, T> {
     inflight: Mutex<HashMap<K, watch::Receiver<Option<T>>>>,
@@ -47,16 +23,11 @@ impl<K, T> Default for SingleFlight<K, T> {
     }
 }
 
-/// Which side of a flight this caller is on.
 enum Role<T> {
-    /// Nobody was running it, so this caller does — and publishes.
     Lead(watch::Sender<Option<T>>),
-    /// Somebody already is. Wait for what they get.
     Follow(watch::Receiver<Option<T>>),
 }
 
-/// Leaves the registry however the leader's future ends, cancellation
-/// included.
 struct Flight<'a, K: Clone + Eq + Hash, T> {
     registry: &'a Mutex<HashMap<K, watch::Receiver<Option<T>>>>,
     key: K,
@@ -72,12 +43,7 @@ impl<K: Clone + Eq + Hash, T> Drop for Flight<'_, K, T> {
 }
 
 impl<K: Clone + Eq + Hash, T: Clone> SingleFlight<K, T> {
-    /// Runs `work` for `key`, or waits for the run already under way and
-    /// answers with its result.
-    ///
-    /// Every caller gets the same value, whether that value is a success or a
-    /// failure. Two calls that do not overlap both do the work: this
-    /// coalesces concurrency, and is not a cache.
+    /// Coalesces concurrency; it is not a cache: calls that do not overlap both do the work.
     pub(crate) async fn run<F>(&self, key: &K, work: F) -> T
     where
         F: Future<Output = T>,
@@ -145,16 +111,12 @@ mod tests {
         "ada@example.com".to_owned()
     }
 
-    /// Work that counts how many times it actually ran and yields in the
-    /// middle, so callers started together really do overlap.
     async fn counted(runs: Arc<AtomicUsize>, answer: &str) -> String {
         runs.fetch_add(1, Ordering::SeqCst);
         tokio::time::sleep(Duration::from_millis(20)).await;
         answer.to_owned()
     }
 
-    /// `n` callers asking for `key` at once, through tasks so they are really
-    /// concurrent rather than merely interleaved by one `join`.
     async fn all_at_once(
         flight: &Arc<Registry>,
         runs: &Arc<AtomicUsize>,
@@ -179,8 +141,6 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn callers_that_overlap_share_one_run() {
-        // The stampede ADR 0006 Q5 describes: a pool's sessions and the SMTP
-        // path all discover the same expiry within the same second.
         let flight = Arc::new(Registry::default());
         let runs = Arc::new(AtomicUsize::new(0));
 
@@ -196,10 +156,6 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn a_failure_is_shared_rather_than_retried_by_every_waiter() {
-        // The case a plain mutex gets wrong. Serialising the work would let
-        // each waiter take its turn, find that the refresh had failed, and
-        // try again -- pointing exactly the storm this prevents at an
-        // endpoint that is already saying no.
         let flight = Arc::new(SingleFlight::<String, Result<String, String>>::default());
         let runs = Arc::new(AtomicUsize::new(0));
 
@@ -228,8 +184,6 @@ mod tests {
 
     #[tokio::test]
     async fn two_calls_that_do_not_overlap_both_do_the_work() {
-        // This coalesces concurrency; it is not a cache, and a type that
-        // quietly became one would hand out a token long after it expired.
         let flight = Registry::default();
         let runs = Arc::new(AtomicUsize::new(0));
 
@@ -258,19 +212,11 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn a_leader_that_goes_away_leaves_the_next_flight_free_to_form() {
-        // A cancelled caller -- the user closed the window mid-refresh. The
-        // registry entry has to go with it. A caller that merely falls back
-        // to doing the work when it finds a dead flight looks fine on its
-        // own and is not: two of them would each do the work, and the
-        // account would have lost single-flight for the life of the process.
-        // So the assertion is that a *new flight forms*, not that an answer
-        // comes back.
+        // A cancelled caller must take its registry entry with it; assert that a new flight forms,
+        // not just that an answer returns, since a fallback would hide the lost single-flight.
         let flight = Arc::new(Registry::default());
         let runs = Arc::new(AtomicUsize::new(0));
 
-        // The work sleeps for 20ms, so 5ms is long enough to claim the flight
-        // and far too short to finish it. Dropping the timed-out future is
-        // what a cancelled caller does.
         let abandoned = tokio::time::timeout(
             Duration::from_millis(5),
             flight.run(&account(), counted(Arc::clone(&runs), "never")),

@@ -30,8 +30,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -41,7 +39,6 @@ RUNNER = HERE / "run-self-tests.sh"
 
 FAILURES: list[str] = []
 
-# The shape that used to vanish: passes a case, prints `ok`, then fails.
 PRINTS_OK_THEN_FAILS = """#!/usr/bin/env python3
 import sys
 print("ok    the first case behaved")
@@ -93,7 +90,6 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as raw:
         base = Path(raw)
 
-        # -- Everything passes ------------------------------------------------
         good = base / "good"
         good.mkdir()
         write(good, "test-a.py", PASSES)
@@ -110,10 +106,6 @@ def main() -> int:
             f"the count is missing: {result.stdout!r}",
         )
 
-        # -- Where the time went --------------------------------------------
-        # The job this runs in takes 10-13 minutes when scripts change, and
-        # nothing said which tests that was. Each test's wall time is kept,
-        # and the slowest are named, slowest first, with their seconds.
         timed = base / "timed"
         timed.mkdir()
         write(timed, "test-quick.py", PASSES)
@@ -133,11 +125,6 @@ def main() -> int:
             f"order wrong: {out!r}",
         )
 
-        # -- Skipping one by name ----------------------------------------------
-        # test-ffi-bindgen.py builds most of the workspace and runs in the
-        # macOS job instead; the self-test jobs skip it by name. A skip has to
-        # say so -- a test that silently stopped running is the failure this
-        # runner exists to refuse.
         skipping = base / "skipping"
         skipping.mkdir()
         write(skipping, "test-kept.py", PASSES)
@@ -152,7 +139,6 @@ def main() -> int:
         case("the run says which it skipped", "skipped" in out and "test-heavy.py" in out, out)
         case("the rest still run", "running 1 self-test" in out, out)
 
-        # -- The bug: ok, then failure ----------------------------------------
         mixed = base / "mixed"
         mixed.mkdir()
         write(mixed, "test-passes.py", PASSES)
@@ -182,7 +168,6 @@ def main() -> int:
             f"a passing test's log was printed too:\n{combined}",
         )
 
-        # -- The shape that did work before, which must keep working ----------
         crashing = base / "crashing"
         crashing.mkdir()
         write(crashing, "test-crashes.py", CRASHES_IMMEDIATELY)
@@ -194,18 +179,8 @@ def main() -> int:
             f"exit {result.returncode}:\n{combined}",
         )
 
-        # -- A runner that starts nothing must not report success -----------
-        #
-        # The regression #1151 found: `xargs -a` is a GNU extension, BSD
-        # rejects it, and with its stderr discarded no child ever ran. The
-        # old success test was "nothing recorded a failure", which is true
-        # both when every test passed and when none of them started -- the
-        # two answers a suite must never confuse. So this asserts the
-        # positive fact instead: a log per test, or it did not run.
-        #
-        # `PATH` is emptied of a working `xargs` by pointing at a stub that
-        # refuses, which is what BSD did on every Mac for the life of this
-        # script.
+        # A runner that starts nothing must not report success (#1151): `xargs -a` is GNU, and a
+        # stub xargs that refuses reproduces what BSD did on every Mac.
         stub = base / "stub-bin"
         stub.mkdir()
         (stub / "xargs").write_text(
@@ -244,13 +219,6 @@ def main() -> int:
             f"it did not say what it managed:\n{combined}",
         )
 
-        # -- Declared not-applicable is neither a pass nor a failure --------
-        #
-        # #1151's second acceptance line: a self-test that cannot be
-        # meaningful on this platform has to *say so*, and a silent skip is
-        # what it must not be. Exit 77 is the declaration; the run counts it
-        # and names it, so a Linux-only test is visible in the macOS log
-        # rather than indistinguishable from one that ran and passed.
         elsewhere = base / "elsewhere"
         elsewhere.mkdir()
         write(elsewhere, "test-a.py", PASSES)

@@ -1,5 +1,3 @@
-//! Every call is logged by id, never by content (ADR 0010 Q6).
-
 use serde_json::json;
 
 use crate::harness::{INBOX_ONLY, World};

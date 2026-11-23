@@ -1,59 +1,17 @@
-//! Cross-mailbox sync order: which folder gets synced first, and that INBOX
-//! gets synced before the rest begin.
-//!
-//! # Why this exists
-//!
-//! [`initial`](crate::initial) already orders *within* one mailbox — newest
-//! `UID` first — so the first screenful of a huge folder is visible fast.
-//! Nothing ordered *across* mailboxes: the queue the engine drained was built
-//! from whatever `LIST` happened to return, and a 37,699-message Archive could
-//! start syncing while INBOX had not been touched at all (`postio-0d9.6`). This
-//! module is the missing half: it ranks [`MailboxRole`] by how soon a person is
-//! likely to look at it, so the sync queue is built in that order rather than
-//! letting it emerge from discovery.
-//!
-//! Deliberately not [`MailboxRole`]'s derived `Ord` — that ordering exists so
-//! roles are a well-formed key elsewhere (storage round-trips, `BTreeMap`s) and
-//! it runs `Inbox, Archive, Sent, ...`. Archive right after Inbox is wrong for
-//! *this* purpose: it is exactly the huge folder nobody is waiting on.
+//! Cross-mailbox sync order: ranks `MailboxRole` by how soon a person looks at it, so the queue is
+//! not whatever `LIST` returned (`postio-0d9.6`).
+//! Deliberately not `MailboxRole`'s derived `Ord`, which puts Archive right after Inbox.
 
-//! # INBOX is not merely first, it is alone (#1709)
-//!
-//! Ranking decides which mailbox *starts* first. It does not make INBOX
-//! *finish* first: the engine runs several lanes at once over several
-//! connections, all sharing one store writer and one pipe, so an INBOX that
-//! merely starts first still has its header batches interleaved with Sent's
-//! and Archive's, and bodies were claimed for whichever folder had rows.
-//! Postio Focus's whole screen is the inbox, so that is not good enough. The
-//! rule the engine's wave (`postio_runtime::engine`) follows, keyed on
-//! [`MailboxRole::Inbox`] and never on a folder name:
-//!
-//! 1. **INBOX's header pass runs alone.** While one is queued or running no
-//!    other mailbox is admitted to a lane, and no body of any folder is
-//!    claimed in the background.
-//! 2. **Then INBOX's newest page of bodies** -- the backfill's `seed_batch`,
-//!    newest first -- is fetched before any other mailbox is admitted. One
-//!    page, not the mailbox: a top-up past it would hold every other folder
-//!    for as long as INBOX is large. If the page is not actually progressing
-//!    (backfill paused, metered, interrupted) the hold is dropped instead of
-//!    starving everything.
-//! 3. **Only then the rest**, in [`sync_priority`] order, beside INBOX's
-//!    remaining bodies, which still outrank theirs.
-//!
-//! It applies wherever the queue is refilled, not only to a first sync: a
-//! reconnect after a long offline gap, an IDLE wake and a requeued
-//! interrupted pass all put INBOX back in front of the folders already
-//! waiting. Nothing here awaits the network on the UI's behalf, and a body the
-//! person asked for, or a queued write, is never held by it.
+//! INBOX syncs alone (#1709), keyed on `MailboxRole::Inbox`, never a folder name: its header pass
+//! runs with no other mailbox admitted and no background body claimed;
+//! then its newest page of bodies (`seed_batch`) before any other mailbox, dropped if not
+//! progressing; then the rest in `sync_priority` order.
+//! Applies wherever the queue is refilled. A requested body or queued write is never held.
 
 use postio_model::MailboxRole;
 
-/// Where a role sits in the sync queue. Lower syncs first.
-///
-/// INBOX is unconditionally first. Then the folders a person reads next —
-/// Flagged (their own follow-up list), Drafts (work in progress) and Sent
-/// (what they just wrote) — sync before anything spends time on Archive, Junk
-/// or Trash. Regular user folders are unranked among themselves and sync last.
+/// Where a role sits in the sync queue; lower syncs first. INBOX first, then Flagged, Drafts and
+/// Sent, then Archive, Junk and Trash; user folders last.
 pub fn sync_priority(role: MailboxRole) -> u8 {
     match role {
         MailboxRole::Inbox => 0,
@@ -64,12 +22,8 @@ pub fn sync_priority(role: MailboxRole) -> u8 {
         MailboxRole::Junk => 5,
         MailboxRole::Trash => 6,
         MailboxRole::Regular => 7,
-        // `RoleKind::View` -- never a real mailbox's role. No `SPECIAL-USE`
-        // attribute names either of them, discovery can never assign one, and
-        // `MailboxRepository` refuses to store one, so this arm cannot run.
-        // Ranked with `Regular` rather than matched some other way, so an
-        // exhaustive match stays exhaustive without inventing meaning this
-        // queue does not need.
+        // View roles are never a real mailbox's role (discovery cannot assign one and storage
+        // refuses it), so this arm cannot run.
         MailboxRole::Snoozed | MailboxRole::Outbox => 7,
     }
 }
@@ -123,9 +77,6 @@ mod tests {
 
     #[test]
     fn large_archive_never_outranks_a_folder_someone_reads() {
-        // The bug this module exists to fix: a 37,699-message Archive queued
-        // ahead of INBOX. Every role a person actually reads must rank below
-        // Archive.
         for reads_first in [
             MailboxRole::Inbox,
             MailboxRole::Flagged,

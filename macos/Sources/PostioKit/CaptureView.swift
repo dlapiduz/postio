@@ -1,22 +1,9 @@
 import PostioFFI
 import SwiftUI
 
-/// The capture window (specs/009-focus-macos T116, screen 25): Cancel,
-/// Task/Note and the default button along the top; where it came from;
-/// the text verbatim with ⌥S for the subject; the due day with its quick
-/// picks; the suggested project with its reason, ⌘P for the list; the
-/// exact line it will append; and the footnote.
-///
-/// The words are the controller's (`FocusOpenCapture`/`FocusCapture`),
-/// except "Cancel", "Task", "Note", "Due", "Change", the hint under the
-/// text and the filter's placeholder, which GTK's sheet keeps as literals
-/// too (`crates/postio-gtk/src/capture.rs`) and which are the same words
-/// here. Every change goes back through `CaptureModel`.
 public struct CaptureView: View {
     let model: CaptureModel
-    /// How tall the content is, unscrolled, each time that changes: the
-    /// window is sized to it (screen 25 draws no grey below the footnote),
-    /// and grows when the project list opens.
+    /// The window is sized to it and grows when the project list opens.
     let onContentHeight: ((CGFloat) -> Void)?
 
     @FocusState private var focus: Field?
@@ -28,7 +15,6 @@ public struct CaptureView: View {
         self.onContentHeight = onContentHeight
     }
 
-    /// The window's width, as screen 25 draws it.
     public static let width: CGFloat = 660
 
     public var body: some View {
@@ -262,8 +248,6 @@ public struct CaptureView: View {
     }
 }
 
-/// The heights of the parts of capture's window that are measured, added
-/// up: the bar along the top and everything the scroll view holds.
 private struct ContentHeight: PreferenceKey {
     static let defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
@@ -272,7 +256,6 @@ private struct ContentHeight: PreferenceKey {
 }
 
 extension View {
-    /// Report this view's height into `ContentHeight`.
     fileprivate func measuredHeight() -> some View {
         background(
             GeometryReader { proxy in

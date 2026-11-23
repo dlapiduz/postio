@@ -1,44 +1,9 @@
-//! Where the application's own account of itself goes.
-//!
-//! Libraries emit; the binary decides where it lands. Every crate below this
-//! one calls `tracing`'s macros and knows nothing about subscribers, formats
-//! or destinations — which is what lets a test capture the same records this
-//! module sends to a terminal.
-//!
-//! # This runs before almost everything
-//!
-//! [`init`] is the first thing `main` does, ahead of `adw::init` and well
-//! ahead of the window. Startup is exactly when a trace is worth having: an
-//! account that will not open, a store that will not migrate and a keyring
-//! that will not answer all happen before there is any UI to report them in.
-//!
-//! # Two ways to set the level, and which wins
-//!
-//! `POSTIO_LOG` is for a run you are starting. `[logging]` in `config.toml` is
-//! for a process that is *already running* and already misbehaving, which is
-//! when a log matters most — the file is watched, so raising the level reaches
-//! a live Postio without restarting it and without losing the state you were
-//! trying to observe.
-//!
-//! `POSTIO_LOG` wins, and keeps winning: an operator who set the environment
-//! for this run meant it, and a config reload must not quietly take it back.
-//!
-//! # The `log` bridge
-//!
-//! `io-imap` emits through the `log` crate, so its records reach the same
-//! filter and sinks as Postio's own only through [`LogTracer`]. None of them
-//! is load bearing: what a response failed to decode comes back in the
-//! command's own output, and `postio-account` reads it there.
-//!
-//! # What must never appear here
-//!
-//! No level unlocks message content. Not bodies, not subjects, not recipient
-//! addresses, not passwords, not file contents — at `trace`, in a debug build,
-//! ever. Log ids, counts, mailbox names, durations and outcomes. Where an
-//! address would genuinely make a line useful, log the domain or an opaque
-//! account id and never the local part. `postio-runtime`'s `logging_privacy`
-//! test enforces this against the real `.eml` corpus rather than trusting the
-//! rule to be remembered.
+//! Where the application's own account of itself goes. `init` runs first in `main`, before the
+//! window, so startup failures are logged.
+//! `POSTIO_LOG` pins the level for a run and always wins; `[logging]` in the watched `config.toml`
+//! changes a live process.
+//! No level unlocks message content: log ids, counts, mailbox names, durations and outcomes, never
+//! an address's local part (`postio-runtime`'s `logging_privacy` test enforces it).
 
 use std::path::Path;
 
@@ -50,40 +15,16 @@ use tracing_subscriber::Layer;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{EnvFilter, Registry, fmt, reload};
 
-/// The environment variable that pins the level for one run.
 pub const LEVEL_ENV: &str = "POSTIO_LOG";
 
-/// The live level, and whether anything is allowed to change it.
 pub struct Logging {
     reload: reload::Handle<EnvFilter, Registry>,
-    /// Set when `POSTIO_LOG` chose the level, which makes it final.
     pinned: bool,
 }
 
-/// Send panics through `tracing` as well as to stderr.
-///
-/// Everything else Postio says goes through `tracing`, which means stderr
-/// *and* journald when the socket is there. A panic did not: the default hook
-/// writes to stderr and nothing else, and a windowed application's stderr
-/// generally goes nowhere anybody will look afterwards.
-///
-/// That gap is most of what #1541 cost. A panic raised inside a GTK signal
-/// handler cannot unwind out of the `extern "C"` trampoline, so it is
-/// converted to `panic_cannot_unwind` and the process aborts — and an abort
-/// with no message attached is indistinguishable, from outside, from memory
-/// corruption. The one live crash this project has recorded was read as a
-/// heap bug near the store writer for six days on exactly that evidence,
-/// while the panic's own message and location, which would have named it in
-/// one line, had already been thrown away.
-///
-/// Chained rather than replacing: the previous hook still runs, so stderr
-/// keeps the standard message and `RUST_BACKTRACE` keeps working. Nothing
-/// here is newly exposed — the default hook already printed the payload; the
-/// difference is only that it now lands somewhere durable.
-///
-/// Idempotent, because chaining a hook onto itself once per caller would
-/// leave a process logging the same panic as many times as it had started
-/// logging.
+/// Send panics through `tracing` as well as to stderr, chained after the previous hook. A panic in
+/// a GTK signal handler aborts via `panic_cannot_unwind`, and without its message it looked like
+/// heap corruption for six days (#1541). Idempotent.
 pub fn report_panics() {
     static INSTALLED: std::sync::Once = std::sync::Once::new();
     INSTALLED.call_once(|| {
@@ -93,8 +34,6 @@ pub fn report_panics() {
                 || "an unknown location".to_owned(),
                 |location| location.to_string(),
             );
-            // A non-string payload is possible (`panic_any`) and says nothing
-            // useful, but the location still does, so it is still reported.
             let said = info
                 .payload_as_str()
                 .unwrap_or("a panic payload that is not a string");
@@ -104,28 +43,20 @@ pub fn report_panics() {
     });
 }
 
-/// Where the log goes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Destination {
-    /// stderr and journald: a windowed app, whose stderr is a log.
     StderrAndJournal,
-    /// journald alone: the terminal app, whose stderr is the screen it
-    /// draws on. Where there is no journal -- a machine without systemd, a
-    /// sandbox -- the log goes nowhere rather than onto the screen.
+    /// journald alone: the terminal app, whose stderr is its screen. With no journal the log goes
+    /// nowhere.
     Journal,
 }
 
-/// Start logging to stderr and journald, and return the handle that can turn
-/// it up later.
-///
-/// Best effort: a subscriber that will not install costs the log and nothing
-/// else. An application that refused to start because it could not open a log
-/// would be a worse answer than one running quietly.
+/// Start logging to stderr and journald, and return the handle that can turn it up later. Best
+/// effort: a subscriber that will not install costs the log, not the start.
 pub fn init(config: &LoggingConfig) -> Logging {
     init_to(config, Destination::StderrAndJournal)
 }
 
-/// [`init`], to `destination`.
 pub fn init_to(config: &LoggingConfig, destination: Destination) -> Logging {
     let pinned = std::env::var(LEVEL_ENV)
         .ok()
@@ -136,19 +67,14 @@ pub fn init_to(config: &LoggingConfig, destination: Destination) -> Logging {
 
     let stderr = stderr_layer(config, destination);
 
-    // journald when the socket is there. Under Flatpak it usually is not, and
-    // a sandbox with no journal is not a failure — stderr is still going to
-    // the portal's log.
+    // journald when the socket is there; under Flatpak it usually is not, which is not a failure.
     let journald = tracing_journald::layer().ok();
 
-    // `log::set_logger` succeeds once per process; a second call (a test
-    // binary initialising twice) is not a fault worth reporting.
     let _ = LogTracer::init();
     let installed = Registry::default().with(filter).with(stderr).with(journald);
     let _ = tracing::subscriber::set_global_default(installed);
 
-    // After the subscriber, so a panic between the two is not reported into a
-    // void. See [`report_panics`] for what a panic with nowhere to go cost.
+    // After the subscriber, so a panic between the two is not reported into a void.
     report_panics();
 
     Logging {
@@ -157,11 +83,8 @@ pub fn init_to(config: &LoggingConfig, destination: Destination) -> Logging {
     }
 }
 
-/// The stderr half of the log, when `destination` has one.
-///
-/// stderr, not stdout: this is diagnostics, and stdout belongs to whatever
-/// the process is actually for. `with_ansi` follows the terminal, so a
-/// redirected log is plain text rather than escape codes.
+/// The stderr half of the log, when `destination` has one. Not stdout, which belongs to the
+/// process's purpose; ANSI follows the terminal.
 fn stderr_layer<S>(
     config: &LoggingConfig,
     destination: Destination,
@@ -184,28 +107,21 @@ where
 }
 
 impl Logging {
-    /// Apply a new `[logging]` section to the running process.
-    ///
-    /// Ignored when `POSTIO_LOG` pinned the level: see the module docs.
+    /// Apply a new `[logging]` section to the running process; ignored when `POSTIO_LOG` pinned the
+    /// level.
     pub fn apply(&self, config: &LoggingConfig) {
         if self.pinned {
             return;
         }
         let directive = config.directive();
         if self.reload.reload(parse(&directive, config)).is_err() {
-            // The subscriber is gone, which only happens during teardown.
             return;
         }
         tracing::info!(level = %directive, "logging level changed");
     }
 
-    /// Keep applying `[logging]` as `config.toml` changes.
-    ///
-    /// Its own watcher rather than a share of the window's: logging is running
-    /// long before there is a window, and a filter reload touches no widget,
-    /// so it can be applied on the watcher's own thread with no hop to the
-    /// main context. The returned watcher stops when it is dropped, so the
-    /// caller has to keep it.
+    /// Keep applying `[logging]` as `config.toml` changes, on its own watcher since logging runs
+    /// before any window. The caller keeps the returned watcher.
     pub fn watch(self, path: &Path) -> Option<ConfigWatcher> {
         ConfigWatcher::new(path, move |checked: Checked| {
             if let Some(config) = &checked.config {
@@ -217,12 +133,8 @@ impl Logging {
     }
 }
 
-/// Read `[logging]` off disk before anything has parsed the file properly.
-///
-/// The full parse happens later and reports its own problems; this only needs
-/// a level, and it needs it before there is anywhere to report a problem to. A
-/// file that will not parse yields the default, which is the same answer a
-/// first run gets.
+/// Read `[logging]` off disk before anything has parsed the file properly; a file that will not
+/// parse yields the default.
 pub fn config_at(path: &Path) -> LoggingConfig {
     Config::load_from_path(path)
         .ok()
@@ -230,11 +142,8 @@ pub fn config_at(path: &Path) -> LoggingConfig {
         .unwrap_or_default()
 }
 
-/// Every crate whose account of itself is *about Postio*.
-///
-/// `io_imap` is in the list because it is the protocol library Postio's own
-/// IMAP crate drives, and because one of its `debug!` records is load bearing
-/// — see the module docs.
+/// Every crate whose account of itself is about Postio. `io_imap` is in it because its `debug!`
+/// records are load bearing.
 const OURS: &[&str] = &[
     "postio",
     "postio_ai",
@@ -277,87 +186,32 @@ const OURS: &[&str] = &[
 ];
 
 /// What everything else is held to when a bare level was asked for.
-///
-/// A third party still gets to say something went wrong; it does not get to
-/// narrate.
 const OTHERS: &str = "warn";
 
-/// Third parties whose `warn` is not a warning, and what to hold them to.
+/// Third parties whose `warn` is not a warning, and what to hold them to. Each logs constantly
+/// about something nobody can act on: `imap_codec` repairs iCloud responses (88% of a sync's `info`
+/// output), `html5ever` logs on mis-nested tables, `tantivy` logs "save metas" per commit (99.5% of
+/// a first sync's log).
 ///
-/// [`OTHERS`] lets any dependency say something went wrong, which is right
-/// until one of them says it constantly about something nobody can act on.
-///
-/// `imap_codec` repairs responses that omit a `text` field and logs each
-/// repair at `warn`. That is correct behaviour and iCloud triggers it on
-/// essentially every `SELECT` and `FETCH`: measured against a live account,
-/// an INBOX resync of 92 messages produced 486 lines at `info`, and 429 of
-/// them — 88% — were that one warning. A level that fires constantly, that
-/// the user cannot act on, and that means nothing is wrong is a level
-/// everyone learns to skip, which is the level real problems arrive at.
-///
-/// This is a *directive*, not a change in `postio-account`, so
-/// `POSTIO_LOG=imap_codec=trace` still reaches it: [`scope`] puts these
-/// defaults in front of whatever was asked for and the later directive wins,
-/// and asking for a target by name is the one unambiguous way to say you want
-/// it.
-///
-/// `io_imap` is deliberately **not** here even though it is the noisier
-/// crate. It is in [`OURS`]: quieting it would take away the output
-/// somebody debugging a resync needs.
-/// `html5ever` is the second. It logs *"foster parenting not implemented"* at
-/// `warn` every time it repairs a mis-nested table, which is most real HTML
-/// mail: a live run produced hundreds of lines inside two seconds and buried
-/// the three that mattered. Nothing is wrong, nobody can act on it, and the
-/// reader is not even parsing for the user's benefit at that point -- it is
-/// building a search excerpt. `off` rather than `error`, because unlike
-/// `imap_codec` there is no level of it worth keeping by default.
-/// `tantivy` is the third, and the loudest measured so far. Its segment
-/// updater logs *"save metas"* at `info` on every commit, and the body
-/// indexer commits per batch: a live first sync produced **26,340 of 26,444
-/// lines** — 99.5% of the file — and the twenty that described what the sync
-/// was actually doing were unreadable among them.
-///
-/// `warn`, not `off`: a search index that cannot write its metadata is
-/// something to hear about. It is only the routine success that has to stop.
-///
-/// [`OTHERS`] would already have held it to `warn`, and did until a directive
-/// naming targets was used: `POSTIO_LOG=info,postio_sync=debug` sets a *global*
-/// `info` floor that every unnamed crate then rises to. Putting it here means
-/// asking Postio for more detail cannot silently turn a dependency's bookkeeping
-/// back on.
+/// A directive, so `POSTIO_LOG=imap_codec=trace` still reaches it: `scope` puts these in front and
+/// the later directive wins, which also keeps `info,postio_sync=debug` from re-admitting them.
+/// `io_imap` is not here: it is in `OURS`, and debugging a resync needs it.
 const QUIET: &[(&str, &str)] = &[
     ("imap_codec", "error"),
     ("html5ever", "off"),
     ("tantivy", "warn"),
 ];
 
-/// Turn a bare level into a directive that turns *Postio* up, not the world.
+/// Turn a bare level into a directive that turns Postio up, not the world: `debug` literally would
+/// include rustls listing 146 CA certificates.
 ///
-/// `POSTIO_LOG=debug` has to mean "tell me what Postio is doing". Applied
-/// literally it means "tell me what every crate in the binary is doing", which
-/// on this dependency graph is rustls enumerating 146 CA certificates before
-/// the first line about mail — the same drowning that made
-/// `G_MESSAGES_DEBUG=all` useless for diagnosing a sync.
-///
-/// A directive naming targets gets exactly what it named: someone who wrote
-/// `rustls=trace` wants rustls, and second-guessing that would take away the
-/// only way to ask. It is not passed through *untouched*, though -- the
-/// [`QUIET`] defaults go in front of it, where the last directive for a target
-/// wins, so naming one target no longer re-admits every warning the others
-/// were quieted for.
+/// A directive naming targets gets what it named, with the `QUIET` defaults in front, where the
+/// last directive for a target wins.
 fn scope(directive: &str) -> String {
     let bare = directive.trim();
     if bare.contains('=') || bare.contains(',') {
-        // Named targets are still honoured -- they are simply appended after
-        // the [`QUIET`] defaults rather than replacing them, so the last
-        // directive for a target wins and `html5ever=trace` still reaches
-        // `html5ever`.
-        //
-        // Passing these through untouched was the older behaviour and it had
-        // the failure mode exactly backwards: `POSTIO_LOG=postio_account=debug`
-        // is what someone types when they are reading a log *closely*, and it
-        // was the one spelling that re-admitted every drowning warning a
-        // dependency had been quieted for.
+        // Named targets are appended after the `QUIET` defaults so the last directive wins and
+        // `html5ever=trace` still reaches `html5ever`.
         let mut scoped = String::new();
         for (target, level) in QUIET {
             scoped.push_str(target);
@@ -368,8 +222,7 @@ fn scope(directive: &str) -> String {
         scoped.push_str(bare);
         return scoped;
     }
-    // `off` means off. Scoping it would raise everything else to `warn`,
-    // which is louder than what was asked for.
+    // `off` means off; scoping it would raise everything else to `warn`.
     if bare.eq_ignore_ascii_case("off") {
         return bare.to_owned();
     }
@@ -389,11 +242,8 @@ fn scope(directive: &str) -> String {
     scoped
 }
 
-/// A filter, or the default if the directive will not parse.
-///
-/// A typo in `filter` must not silence the application: it falls back to the
-/// section's level and says what it ignored, which is the opposite of what a
-/// logging system quietly failing would do.
+/// A filter, or the default if the directive will not parse: a typo in `filter` must not silence
+/// the application.
 fn parse(directive: &str, config: &LoggingConfig) -> EnvFilter {
     match EnvFilter::try_new(scope(directive)) {
         Ok(filter) => filter,
@@ -408,8 +258,6 @@ mod tests {
 
     #[test]
     fn a_terminal_app_logs_to_the_journal_and_never_onto_its_screen() {
-        // The terminal frontend draws on the terminal stderr is attached to:
-        // a record written there lands in the middle of its screen.
         let config = LoggingConfig::default();
         assert!(stderr_layer::<Registry>(&config, Destination::Journal).is_none());
         assert!(
@@ -420,9 +268,6 @@ mod tests {
 
     #[test]
     fn a_bare_level_turns_postio_up_and_leaves_the_world_alone() {
-        // `POSTIO_LOG=debug` has to mean "tell me what Postio is doing".
-        // Applied literally it means rustls enumerating 146 CA certificates
-        // before the first line about mail.
         let scoped = scope("debug");
 
         assert!(scoped.starts_with("warn,"), "{scoped}");
@@ -434,15 +279,6 @@ mod tests {
         );
     }
 
-    /// A global level asked for by name must not re-admit a flood.
-    ///
-    /// `POSTIO_LOG=info,postio_sync=debug` is what somebody types to read a
-    /// sync closely, and it is the spelling that hurts: a bare `info` inside a
-    /// comma list is EnvFilter's *global* default, so every unnamed dependency
-    /// rises to it. `tantivy` then logs "save metas" per index commit, and the
-    /// body indexer commits per batch — a live first sync put 26,340 such
-    /// lines into a 26,444-line file, burying the twenty that said what the
-    /// sync did.
     #[test]
     fn asking_for_more_postio_detail_does_not_re_admit_a_dependency_flood() {
         let scoped = scope("info,postio_sync=debug");
@@ -465,19 +301,10 @@ mod tests {
 
     #[test]
     fn a_dependency_that_warns_constantly_is_quiet_even_when_a_target_was_named() {
-        // `html5ever` logs "foster parenting not implemented" at `warn` for
-        // every mis-nested table it repairs, which is most real HTML mail. A
-        // live run produced hundreds of them in a two-second window and buried
-        // the three lines that mattered -- the same drowning `imap_codec` was
-        // quieted for.
         assert!(
             scope("info").contains("html5ever=off"),
             "a bare level must still quiet the dependency"
         );
-        // And the case that actually bit: asking for one of *our* targets by
-        // name used to pass the directive through untouched, which dropped
-        // every QUIET default on the floor at exactly the moment someone was
-        // reading the log closely.
         let named = scope("postio_account=debug");
         assert!(
             named.contains("html5ever=off"),
@@ -489,7 +316,6 @@ mod tests {
         );
     }
 
-    /// Asking for a quieted target by name still reaches it.
     #[test]
     fn a_quieted_target_can_still_be_asked_for_by_name() {
         let asked = scope("html5ever=trace");
@@ -502,14 +328,11 @@ mod tests {
 
     #[test]
     fn every_crate_in_the_workspace_is_in_the_scoped_list() {
-        // `OURS` is hand-maintained, and the failure mode of forgetting an
-        // entry is silence: the new crate is held at `warn` and nobody finds
-        // out until they are trying to diagnose something in it. So the list
-        // is checked against the directory that defines it.
+        // `OURS` is hand-maintained and forgetting an entry is silent, so it is checked against the
+        // crates directory.
         let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .expect("the crate directory has a parent");
-        // The workspace-hack has no code, so it has nothing to log (ADR 0047).
         const SILENT: &[&str] = &["postio_workspace_hack"];
         let mut missing = Vec::new();
         for entry in std::fs::read_dir(crates).expect("the crates directory") {
@@ -528,7 +351,6 @@ mod tests {
         );
     }
 
-    /// The last directive naming a target is the one that applies.
     fn effective<'a>(scoped: &'a str, target: &str) -> Option<&'a str> {
         scoped.split(',').rfind(|directive| {
             directive
@@ -539,15 +361,6 @@ mod tests {
 
     #[test]
     fn a_directive_naming_targets_gets_exactly_what_it_asked_for() {
-        // Someone who wrote `rustls=trace` wants rustls, and second-guessing
-        // that would take away the only way to ask.
-        //
-        // This used to be spelled as "passed through untouched", asserting the
-        // string came back byte for byte. That was a stronger promise than the
-        // sentence above needs, and it had a cost: it also handed back every
-        // drowning `warn` the [`QUIET`] defaults exist to suppress, at exactly
-        // the moment someone was reading a log closely enough to name a
-        // target. The defaults go in front now and the ask still wins.
         let scoped = scope("rustls=trace,postio_sync=debug");
         assert_eq!(effective(&scoped, "rustls"), Some("rustls=trace"));
         assert_eq!(effective(&scoped, "postio_sync"), Some("postio_sync=debug"));
@@ -563,9 +376,6 @@ mod tests {
 
     #[test]
     fn a_malformed_filter_falls_back_to_the_level_rather_than_going_silent() {
-        // A typo in `filter` is the one failure a logging system must not
-        // answer with silence: the person editing it is editing it *because*
-        // they need output.
         let config = LoggingConfig {
             level: LogLevel::Debug,
             filter: "not a filter=@!".to_string(),
@@ -590,8 +400,6 @@ mod tests {
 
         let filter = parse(&config.directive(), &config);
 
-        // The QUIET defaults ride in front of it; what was written is what
-        // applies to the target it names.
         let rendered = filter.to_string();
         assert!(
             rendered.contains("postio_sync=debug"),
@@ -601,9 +409,6 @@ mod tests {
 
     #[test]
     fn the_codec_repair_warning_is_held_below_warn() {
-        // `postio-b9t.4`: 88% of a live sync's output at `info` was
-        // imap_codec repairing responses iCloud sends without a `text`
-        // field. Correct behaviour, constant, and nothing the user can do.
         let scoped = scope("info");
 
         assert!(scoped.contains("imap_codec=error"), "{scoped}");
@@ -615,8 +420,6 @@ mod tests {
 
     #[test]
     fn asking_for_the_codec_by_name_still_reaches_it() {
-        // The fix is a directive rather than a change in postio-account
-        // precisely so this keeps working for whoever is debugging the codec.
         let asked = scope("imap_codec=trace");
         assert_eq!(effective(&asked, "imap_codec"), Some("imap_codec=trace"));
 
@@ -627,15 +430,8 @@ mod tests {
 
     #[test]
     fn nothing_quiets_the_target_the_skip_counter_reads() {
-        // `postio-account`'s skip counter turns a dropped untagged response
-        // into `ResyncIntegrityLost` — an integrity check, not a log line.
-        //
-        // A tracing directive could not actually silence it: the counter is a
-        // `log::Log` wrapper that counts *before* delegating, its `enabled`
-        // ignores the inner logger for `io_imap` at debug, and tracing only
-        // ever sees what the bridge forwards afterwards. But `io_imap`'s
-        // output is also what somebody reads when a resync goes wrong, so it
-        // stays at whatever level was asked for.
+        // `io_imap` stays at the level asked for: its output is what someone reads when a resync
+        // goes wrong.
         assert!(
             QUIET.iter().all(|(target, _)| *target != "io_imap"),
             "io_imap must keep the level it was asked for"
@@ -645,8 +441,6 @@ mod tests {
 
     #[test]
     fn a_real_warning_still_gets_through_and_the_repair_does_not() {
-        // The acceptance criterion is about what actually reaches the log,
-        // not about the shape of the directive, so this asserts on output.
         let captured = Captured::default();
         let subscriber = tracing_subscriber::fmt()
             .with_env_filter(EnvFilter::new(scope("info")))
@@ -676,14 +470,8 @@ mod tests {
 
     #[test]
     fn a_panic_is_reported_where_the_rest_of_the_diagnostics_go() {
-        // #1541. A panic inside a GTK signal handler cannot unwind out of the
-        // `extern "C"` trampoline, so it becomes `panic_cannot_unwind` and the
-        // process aborts. The only recorded live crash this project has is
-        // exactly that, and it cost six days as a suspected heap corruption
-        // because the one thing that would have named it — the panic message —
-        // went to a windowed application's stderr and was gone. Everything
-        // else the app says goes through `tracing`, and so reaches journald;
-        // the panic was the one diagnostic that did not.
+        // #1541: a panic inside a GTK signal handler aborts, and its message went to a windowed
+        // app's stderr and was lost.
         let captured = Captured::default();
         let subscriber = tracing_subscriber::fmt()
             .with_env_filter(EnvFilter::new("error"))
@@ -692,8 +480,6 @@ mod tests {
 
         tracing::subscriber::with_default(subscriber, || {
             report_panics();
-            // Caught, so this test does not take the binary down with it. The
-            // hook runs either way — that is what is being asserted.
             let outcome = std::panic::catch_unwind(|| panic!("the onboarding button gave way"));
             assert!(outcome.is_err(), "the panic still propagates to the caller");
         });
@@ -709,8 +495,6 @@ mod tests {
         );
     }
 
-    /// Somewhere for a test subscriber to write, so an assertion can be about
-    /// what came out rather than about the filter that was built.
     use postio_test_support::logs::Captured;
 
     #[test]

@@ -88,10 +88,28 @@ toggle_preview	ctrl+shift+p | alt+p
 bold	ctrl+b
 italic	ctrl+i | alt+i
 heading_1	ctrl+alt+1 | alt+1
+heading_2	ctrl+alt+2 | alt+2
+heading_3	ctrl+alt+3 | alt+3
+heading_4	ctrl+alt+4 | alt+4
+heading_5	ctrl+alt+5 | alt+5
+heading_6	ctrl+alt+6 | alt+6
+normal_text	ctrl+alt+0 | alt+0
 bullet_list	ctrl+shift+8 | alt+8
 numbered_list	ctrl+shift+7 | alt+7
 insert_link	ctrl+shift+k | alt+k
 quote_block	ctrl+shift+9 | alt+9
+strikethrough	ctrl+shift+s | alt+asciitilde
+inline_code	ctrl+e | alt+grave
+code_block	ctrl+alt+c | alt+C
+task_list	ctrl+shift+6 | alt+t
+toggle_task	ctrl+alt+x | alt+X
+indent	ctrl+bracketright | alt+greater
+outdent	ctrl+bracketleft | alt+less
+divider	ctrl+alt+minus | alt+minus
+table	ctrl+shift+t | alt+bar
+clear_formatting	ctrl+backslash | alt+backslash
+toggle_markdown_source	ctrl+alt+s
+attach_remote_image	ctrl+alt+i | alt+I
 undo	z | ctrl+z
 command_palette	ctrl+k
 cheat_sheet	?

@@ -1,9 +1,3 @@
-//! The [`MailBackend`] seam and the mock every crate above it tests against.
-//!
-//! Nothing here touches a socket. That is the point: this is the surface
-//! `postio-sync` is written against, so the whole sync engine can be developed
-//! and tested with no server at all.
-
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -19,12 +13,6 @@ use postio_model::{
     RfcMessageId, Uid, UidValidity,
 };
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/// A capability list of the shape a mainstream provider advertises *after*
-/// login, unknown extension included.
 const EXTENSION_RICH: [&str; 8] = [
     "IMAP4rev1",
     "CONDSTORE",
@@ -37,17 +25,13 @@ const EXTENSION_RICH: [&str; 8] = [
 ];
 
 fn uids(values: impl IntoIterator<Item = u32>) -> Vec<postio_model::RemoteId> {
-    // `server()` pins INBOX's generation to 4242, so these are the ids its
-    // adapter minted.
     values.into_iter().map(rid).collect()
 }
 
-/// The identity `server()`'s INBOX generation gives `uid`.
 fn rid(uid: u32) -> postio_model::RemoteId {
     postio_model::RemoteId::new(format!("4242:{uid}"))
 }
 
-/// A backend shaped like the account this project targets.
 fn server() -> MockBackend {
     MockBackend::builder()
         .capabilities(EXTENSION_RICH)
@@ -69,10 +53,6 @@ async fn connected() -> MockBackend {
     backend.connect().await.expect("connect");
     backend
 }
-
-// ---------------------------------------------------------------------------
-// UidSet
-// ---------------------------------------------------------------------------
 
 #[test]
 fn a_uid_set_coalesces_and_orders_what_it_is_given() {
@@ -141,17 +121,11 @@ fn chunking_splits_ranges_rather_than_only_commas() {
 
 #[test]
 fn an_open_ended_uid_set_cannot_be_chunked() {
-    // `10:*` has no known size, so there is nothing to split it on. One
-    // chunk, unchanged, is the only honest answer.
     let chunks = UidSet::from_uid_onwards(Uid::new(10)).chunks(4);
 
     assert_eq!(chunks.len(), 1);
     assert_eq!(chunks[0].to_sequence_set(), "10:*");
 }
-
-// ---------------------------------------------------------------------------
-// Capabilities
-// ---------------------------------------------------------------------------
 
 #[test]
 fn capability_names_are_matched_case_insensitively() {
@@ -188,10 +162,6 @@ fn incremental_sync_needs_both_condstore_and_qresync() {
     assert!(!Capabilities::from_names(["IMAP4rev1", "QRESYNC"]).supports_incremental_sync());
 }
 
-// ---------------------------------------------------------------------------
-// Errors
-// ---------------------------------------------------------------------------
-
 #[test]
 fn a_transient_failure_is_distinguishable_from_a_permanent_one() {
     let dropped = BackendError::Disconnected {
@@ -222,13 +192,8 @@ fn a_uidvalidity_change_demands_a_full_resync() {
     assert!(!BackendError::Cancelled.requires_full_resync());
 }
 
-// ---------------------------------------------------------------------------
-// The seam itself
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn the_backend_is_usable_behind_a_trait_object() {
-    // postio-sync holds one of these and knows nothing about IMAP.
     let backend: Arc<dyn MailBackend> = Arc::new(server());
 
     let capabilities = backend.connect().await.unwrap();
@@ -237,20 +202,8 @@ async fn the_backend_is_usable_behind_a_trait_object() {
     assert!(capabilities.contains(Capability::Idle));
 }
 
-/// The seam's sources, baked into this binary at compile time.
-///
-/// `include_str!` rather than a runtime `read_dir` (#225): a filesystem walk
-/// at test time raced this machine's normal condition of several sessions
-/// building at once — and worse, a binary served stale out of a shared
-/// target directory carried a `CARGO_MANIFEST_DIR` baked in a worktree that
-/// no longer existed, so the path was gone *for that binary, permanently*
-/// (#178). Baked contents cannot race and cannot dangle: the text checked is
-/// by construction the text this binary was compiled from.
-///
-/// A new module cannot dodge the list silently:
-/// [`no_io_imap_type_reaches_the_seam`] cross-checks it against `mod.rs`'s
-/// own `mod` declarations, which a new file must appear in to be compiled at
-/// all.
+/// Baked in with `include_str!`: a runtime `read_dir` raced parallel builds, and a stale binary's
+/// `CARGO_MANIFEST_DIR` could name a deleted worktree (#225, #178).
 const BACKEND_SOURCES: &[(&str, &str)] = &[
     (
         "capability.rs",
@@ -267,12 +220,9 @@ const BACKEND_SOURCES: &[(&str, &str)] = &[
 
 #[test]
 fn no_io_imap_type_reaches_the_seam() {
-    // ADR 0001 rule 7. io-imap is pre-1.0 and reshuffles its public API every
-    // fortnight; the whole point of this module is that the churn stops here.
+    // ADR 0001 rule 7: io-imap's API churns, so its types stop at this module.
     for (name, source) in BACKEND_SOURCES {
         for (number, line) in source.lines().enumerate() {
-            // Prose may name the crate; code may not. This module's own
-            // documentation explains the rule, and would otherwise trip it.
             if line.trim_start().starts_with("//") {
                 continue;
             }
@@ -285,10 +235,7 @@ fn no_io_imap_type_reaches_the_seam() {
         }
     }
 
-    // Completeness, without touching the filesystem: every module mod.rs
-    // declares must be in the baked list, so a file added to the seam cannot
-    // silently escape the scan. (One it stops declaring stops compiling, and
-    // a listed file that is deleted fails the include_str! at build time.)
+    // Every module mod.rs declares must be in the baked list, or a new file escapes the scan.
     let (_, mod_rs) = BACKEND_SOURCES
         .iter()
         .find(|(name, _)| *name == "mod.rs")
@@ -309,10 +256,6 @@ fn no_io_imap_type_reaches_the_seam() {
         );
     }
 }
-
-// ---------------------------------------------------------------------------
-// Mock: connection and capabilities
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn capabilities_are_only_available_once_connected() {
@@ -336,9 +279,8 @@ async fn capabilities_are_only_available_once_connected() {
 
 #[tokio::test]
 async fn an_empty_post_auth_capability_list_is_an_error_not_a_downgrade() {
-    // ADR 0001 rule 2. io-imap will hand back an empty vec without erroring if
-    // the auth coroutine is driven with `ensure_capabilities: false`; every
-    // gate downstream would then silently fall back to full resync forever.
+    // io-imap returns an empty vec without erroring when auth runs with `ensure_capabilities:
+    // false` (ADR 0001 rule 2).
     let backend = MockBackend::builder()
         .capabilities(Vec::<String>::new())
         .mailbox(MockMailbox::new("INBOX"))
@@ -349,10 +291,6 @@ async fn an_empty_post_auth_capability_list_is_an_error_not_a_downgrade() {
     assert!(matches!(error, BackendError::EmptyCapabilities { .. }));
     assert!(error.to_string().contains("capabilit"));
 }
-
-// ---------------------------------------------------------------------------
-// Mock: mailboxes
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn listing_mailboxes_reports_paths_delimiters_and_roles() {
@@ -430,10 +368,6 @@ async fn an_unknown_mailbox_is_reported_by_name() {
     assert!(matches!(error, BackendError::NoSuchMailbox { .. }));
     assert!(error.to_string().contains("Nowhere"));
 }
-
-// ---------------------------------------------------------------------------
-// Mock: fetching
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn fetching_headers_returns_only_the_uids_that_were_asked_for() {
@@ -581,10 +515,6 @@ fn a_body_part_renders_the_section_imap_expects() {
     assert_eq!(BodyPart::Text.section_spec(), "TEXT");
     assert_eq!(BodyPart::section("2.1").section_spec(), "2.1");
 }
-
-// ---------------------------------------------------------------------------
-// Mock: mutations
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn storing_flags_adds_removes_and_replaces() {
@@ -739,9 +669,8 @@ async fn an_appended_message_is_visible_to_a_changedsince_fetch() {
         .await
         .unwrap();
 
-    // RFC 7162 §3.1.2.1: an appended message's MODSEQ must *exceed* the
-    // HIGHESTMODSEQ that preceded it, or the strictly-greater-than filter of
-    // CHANGEDSINCE never reports the arrival.
+    // RFC 7162 §3.1.2.1: an appended MODSEQ must exceed the prior HIGHESTMODSEQ, or CHANGEDSINCE
+    // never reports it.
     let changed = backend
         .fetch_headers("Archive", &UidSet::all(), Some(floor), &cancel)
         .await
@@ -801,8 +730,6 @@ async fn a_copied_message_is_visible_to_a_changedsince_fetch() {
         .await
         .unwrap();
 
-    // Each arrival carries its own modification sequence, as a server that
-    // assigns them one at a time would.
     assert_eq!(changed.len(), 2);
     assert!(changed[0].mod_seq < changed[1].mod_seq);
     assert!(changed[0].mod_seq > Some(floor));
@@ -821,10 +748,6 @@ async fn append_reports_no_uid_when_the_server_lacks_uidplus() {
     assert!(backend.append("INBOX", &message).await.unwrap().is_none());
 }
 
-// ---------------------------------------------------------------------------
-// Mock: IDLE
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn idle_returns_the_events_the_server_pushed() {
     let backend = connected().await;
@@ -837,7 +760,6 @@ async fn idle_returns_the_events_the_server_pushed() {
             .await
     });
 
-    // Something lands in the mailbox while the watcher is parked.
     tokio::time::sleep(Duration::from_millis(10)).await;
     backend
         .append(
@@ -871,10 +793,6 @@ async fn idle_returns_empty_when_cancelled_rather_than_erroring() {
     assert!(events.is_empty());
 }
 
-// ---------------------------------------------------------------------------
-// Mock: injected failure
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn the_mock_can_simulate_a_dropped_connection() {
     let backend = connected().await;
@@ -889,7 +807,6 @@ async fn the_mock_can_simulate_a_dropped_connection() {
     assert!(matches!(error, BackendError::Disconnected { .. }));
     assert!(error.is_transient());
 
-    // A dropped connection really is dropped: the next call says so too.
     assert!(matches!(
         backend.status("INBOX").await,
         Err(BackendError::NotConnected { .. })
@@ -928,8 +845,6 @@ async fn the_mock_can_simulate_a_uidvalidity_change() {
 
     assert_ne!(before.generation, after.generation);
 
-    // A fetch that still believes the old generation is refused, rather than
-    // being answered with UIDs that mean something else now.
     let error = backend
         .fetch_headers("INBOX", &UidSet::all(), None, &cancel)
         .await
@@ -937,8 +852,6 @@ async fn the_mock_can_simulate_a_uidvalidity_change() {
     assert!(matches!(error, BackendError::UidValidityChanged { .. }));
     assert!(error.requires_full_resync());
 
-    // Once the caller has resynced and accepted the new generation, the
-    // mailbox is usable again.
     backend.acknowledge_uid_validity("INBOX");
     assert!(
         backend
@@ -963,7 +876,6 @@ async fn a_fault_can_be_scheduled_so_retry_paths_are_testable() {
     assert!(backend.status("INBOX").await.is_ok());
 }
 
-/// Turns the scheduler until `backend` has `count` fetches parked.
 async fn parked(backend: &MockBackend, count: usize) {
     while backend.parked() != count {
         tokio::task::yield_now().await;
@@ -972,8 +884,8 @@ async fn parked(backend: &MockBackend, count: usize) {
 
 #[tokio::test]
 async fn a_held_mailbox_admits_its_quota_then_parks_its_fetches_until_released() {
-    // A test that needs a pass to be mid-flight holds it there, rather than
-    // sizing a mailbox and a latency so it probably still is (#2105).
+    // Hold the pass mid-flight rather than sizing a mailbox and latency so it probably still is
+    // (#2105).
     let backend = Arc::new(connected().await);
     let cancel = CancelToken::new();
     backend.hold(Held::Headers, "INBOX", 1);
@@ -998,7 +910,6 @@ async fn a_held_mailbox_admits_its_quota_then_parks_its_fetches_until_released()
         ["INBOX"],
         "a parked fetch has not been served"
     );
-    // Only what was held waits: another mailbox, and INBOX's bodies.
     backend
         .fetch_headers("Archive", &UidSet::all(), None, &cancel)
         .await
@@ -1019,8 +930,7 @@ async fn a_held_mailbox_admits_its_quota_then_parks_its_fetches_until_released()
 
 #[tokio::test]
 async fn a_parked_fetch_hears_its_cancel() {
-    // An engine that cancels a lane waits for its fetch to come back, so a
-    // hold that ignored the token would turn the cancel into a hang.
+    // The engine waits for a cancelled lane's fetch, so a hold that ignored the token would hang.
     let backend = Arc::new(connected().await);
     backend.hold(Held::Bodies, "INBOX", 0);
     let cancel = CancelToken::new();
@@ -1048,9 +958,8 @@ async fn a_parked_fetch_hears_its_cancel() {
 
 #[tokio::test]
 async fn a_body_fault_fails_the_body_and_leaves_the_rest_of_the_server_answering() {
-    // A fault on every call reaches the engine's own calls too -- the wave,
-    // the watch, the liveness check -- so which call takes the link down is
-    // the engine's timing, not the test's (#1943). This one is the body's.
+    // A fault on every call also hits the engine's own calls, so only the body fetch is faulted
+    // here (#1943).
     let backend = connected().await;
     let cancel = CancelToken::new();
     backend.fail_body_fetches(Fault::Timeout);
@@ -1113,10 +1022,6 @@ async fn the_mock_counts_the_calls_it_served() {
 
     assert_eq!(backend.calls(), 3); // connect, then two statuses
 }
-
-// ---------------------------------------------------------------------------
-// Translation into the domain model
-// ---------------------------------------------------------------------------
 
 #[test]
 fn a_fetched_message_becomes_a_domain_message() {
@@ -1258,11 +1163,9 @@ fn a_body_structure_becomes_attachment_metadata_without_any_bytes() {
 
 #[test]
 fn a_fetched_message_carries_the_sections_holding_its_own_text() {
-    // ADR 0017's text axis fetches `BODY.PEEK[<section>]`, so the section
-    // numbers have to survive the header sync -- `into_message` is the only
-    // place that sees a `BODYSTRUCTURE` and a `Message` at the same time.
-    // The attachment here is what makes the assertion mean something: its
-    // section must not be mistaken for a body part.
+    // ADR 0017's text axis fetches `BODY.PEEK[<section>]`, so `into_message` must keep the section
+    // numbers;
+    // the attachment checks its section is not mistaken for a body part.
     let structure = postio_account::backend::BodyStructure::from_parts(
         "multipart/mixed",
         [
@@ -1289,7 +1192,6 @@ fn a_fetched_message_carries_the_sections_holding_its_own_text() {
 
     assert_eq!(message.text_part_id.as_deref(), Some("1.1"));
     assert_eq!(message.html_part_id.as_deref(), Some("1.2"));
-    // And the payload stays where it was: metadata only, no bytes.
     assert_eq!(message.attachments.len(), 1);
     assert_eq!(message.attachments[0].part_id.as_deref(), Some("2"));
 }
@@ -1318,10 +1220,8 @@ fn a_fetched_message_with_no_body_structure_names_no_text_sections() {
 
 #[test]
 fn a_part_rebuilds_the_mime_headers_that_explain_its_bytes() {
-    // `BODY[1.1]` returns encoded bytes and no headers. Without the charset
-    // and the transfer encoding that explain them, base64 is not text -- and
-    // fetching `[1.1.MIME]` to find out costs a second round trip per part
-    // per message. `BODYSTRUCTURE` already said both at header-sync time.
+    // `BODY[1.1]` returns encoded bytes without headers, so the charset and encoding from
+    // `BODYSTRUCTURE` are kept to avoid a `[1.1.MIME]` round trip per part.
     let part = PartNode::new("1.1", "text/plain", 512)
         .with_charset("iso-8859-1")
         .with_encoding("quoted-printable");
@@ -1337,10 +1237,8 @@ fn a_part_rebuilds_the_mime_headers_that_explain_its_bytes() {
 
 #[test]
 fn a_part_that_declared_no_charset_or_encoding_rebuilds_only_its_type() {
-    // Absent is not the same as defaulted. RFC 2045 says a missing
-    // `Content-Transfer-Encoding` is `7bit` and a missing charset is
-    // `us-ascii`, and `mime::parse` applies exactly those rules -- so writing
-    // a guess here would only risk contradicting the parser later.
+    // Absent is not defaulted: `mime::parse` applies the RFC 2045 defaults, and a guess here could
+    // contradict it.
     let part = PartNode::new("1", "text/html", 2048);
 
     assert_eq!(part.mime_headers(), "Content-Type: text/html\r\n");
@@ -1348,10 +1246,7 @@ fn a_part_that_declared_no_charset_or_encoding_rebuilds_only_its_type() {
 
 #[tokio::test]
 async fn a_seeded_part_is_what_a_sectioned_fetch_returns() {
-    // The text axis fetches `BODY[1.1]`, so the mock has to be able to answer
-    // one. It has no MIME parser and should not grow one -- every parser test
-    // would then be testing the parser against itself -- so the bytes of a
-    // section are seeded, the same way the envelope and the structure are.
+    // The mock has no MIME parser, so section bytes are seeded like the envelope.
     let backend = MockBackend::builder()
         .mailbox(
             MockMailbox::new("INBOX").message(
@@ -1379,9 +1274,7 @@ async fn a_seeded_part_is_what_a_sectioned_fetch_returns() {
 
 #[tokio::test]
 async fn a_sectioned_fetch_for_a_part_nobody_seeded_is_rejected_not_empty() {
-    // Silence would be indistinguishable from a message whose part is
-    // genuinely empty, and a test asserting "no body" would then pass for the
-    // wrong reason.
+    // Silence would look like a genuinely empty part.
     let backend = MockBackend::builder()
         .mailbox(
             MockMailbox::new("INBOX")
@@ -1406,11 +1299,8 @@ async fn a_sectioned_fetch_for_a_part_nobody_seeded_is_rejected_not_empty() {
 
 #[test]
 fn an_attachment_carries_what_will_explain_its_payload_later() {
-    // The payload axis (#377) fetches `BODY[2]` on demand, which returns the
-    // part's encoded bytes and none of its headers -- exactly the problem
-    // `text_part_headers` already solves for the text axis. `BODYSTRUCTURE`
-    // reported the type and the encoding here, at header-sync time, and this
-    // is the only moment both it and the `Attachment` are in hand.
+    // The payload axis (#377) fetches `BODY[2]` without headers, so type and encoding are kept from
+    // `BODYSTRUCTURE`.
     let part = PartNode::new("2", "application/pdf", 90_000)
         .with_encoding("base64")
         .with_filename("notes.pdf");
@@ -1427,9 +1317,6 @@ fn an_attachment_carries_what_will_explain_its_payload_later() {
 
 #[test]
 fn a_fetched_message_carries_the_backend_neutral_identity() {
-    // #543, ADR 0018 Q2: the row identity the engine addresses from now on
-    // is `remote_id`; the generation-and-uid pair is how this adapter, and
-    // only this adapter, spells one.
     let fetched = FetchedMessage {
         content_identity: None,
         remote_id: postio_model::RemoteId::new("4242:12"),
@@ -1456,9 +1343,7 @@ fn a_fetched_message_carries_the_backend_neutral_identity() {
 
 #[tokio::test]
 async fn a_remote_id_from_a_dead_generation_is_refused_not_reinterpreted() {
-    // #543: a stale identity gets the same answer a renumber discovered at
-    // SELECT gets -- resync -- never a uid quietly reused against the new
-    // generation, which would address somebody else's message.
+    // #543: a stale identity gets a resync, never a uid reused against the new generation.
     let backend = MockBackend::builder()
         .mailbox(
             MockMailbox::new("INBOX")
@@ -1507,17 +1392,8 @@ async fn a_foreign_remote_id_is_a_caller_bug_not_a_resync() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Inline parts — #751
-// ---------------------------------------------------------------------------
-
-/// A `multipart/related` message whose HTML references its own attached
-/// image, as bytes and as the `BODYSTRUCTURE` a server would report for it.
-///
-/// The two have to be written out separately because that is the real
-/// asymmetry: `mime::parse` reads the entity, the header sync reads a
-/// `BODYSTRUCTURE`, and #751 is what happened when the two disagreed about
-/// what a `Content-ID` looks like.
+/// A `multipart/related` message and its `BODYSTRUCTURE`, written separately because
+/// `mime::parse` and the header sync disagreed about a `Content-ID` (#751).
 fn related_message() -> (Vec<u8>, postio_account::backend::BodyStructure) {
     let raw = b"From: Ada Lovelace <ada@example.com>\r\n\
          Subject: One inline shot\r\n\
@@ -1557,10 +1433,8 @@ fn related_message() -> (Vec<u8>, postio_account::backend::BodyStructure) {
 
 #[test]
 fn the_imap_path_and_the_parser_agree_on_a_content_id() {
-    // #751 cause 2. `resolve_cid` compares the stored id against the `cid:`
-    // URL with `==`, and the sanitizer strips brackets when it builds that
-    // URL -- so `<logo@example.com>` never matches, and every IMAP-synced
-    // inline image 404s no matter how many bytes are local.
+    // #751: `resolve_cid` compares with `==` and the sanitizer strips brackets, so a stored
+    // `<logo@example.com>` never matches.
     let (raw, structure) = related_message();
 
     let parsed = postio_model::mime::parse(&raw);
@@ -1590,11 +1464,8 @@ fn the_imap_path_and_the_parser_agree_on_a_content_id() {
 
 #[test]
 fn a_text_html_part_disposed_inline_is_still_the_body() {
-    // #751 cause 3. Plenty of senders write `Content-Disposition: inline` on
-    // the part that *is* the message. Demoting it to an attachment leaves
-    // `html_part_id` unset, so the text axis fetches only the plain-text
-    // alternative and the pane renders a body with no images and no links --
-    // or, when both alternatives are inline-disposed, no body at all.
+    // #751: an inline-disposed part that is the message must not be demoted, or `html_part_id`
+    // stays unset.
     let structure = postio_account::backend::BodyStructure::from_parts(
         "multipart/alternative",
         [
@@ -1614,11 +1485,6 @@ fn a_text_html_part_disposed_inline_is_still_the_body() {
 
 #[test]
 fn the_two_ingest_paths_agree_about_an_inline_disposed_body() {
-    // The same message twice: `inline-disposed-body.eml` as the parser reads
-    // it, and the `BODYSTRUCTURE` a server would report for those exact bytes.
-    // The parser has always found the HTML; the header sync demoted it to an
-    // attachment and left `html_part_id` unset, so the text axis fetched only
-    // the plain-text alternative (#751).
     let raw = postio_model::test_corpus::load("inline-disposed-body");
     let parsed = postio_model::mime::parse(raw.bytes());
     assert!(
@@ -1651,10 +1517,7 @@ fn the_two_ingest_paths_agree_about_an_inline_disposed_body() {
 
 #[test]
 fn an_inline_part_the_html_references_is_not_the_body() {
-    // The other side of the rule above: a part carrying a `Content-ID` is
-    // referenced *from* the body, so it is never the body itself, however it
-    // is disposed. Without this the relaxation would swallow a `text/html`
-    // part a sender embedded by `cid:`.
+    // A part with a `Content-ID` is referenced from the body, so it is never the body.
     let structure = postio_account::backend::BodyStructure::from_parts(
         "multipart/related",
         [
@@ -1668,10 +1531,6 @@ fn an_inline_part_the_html_references_is_not_the_body() {
     assert_eq!(structure.html_part(), None);
     assert_eq!(structure.attachments().count(), 1);
 }
-
-// ---------------------------------------------------------------------------
-// The promoted headers (spec 007, research R8)
-// ---------------------------------------------------------------------------
 
 #[test]
 fn what_a_fetch_knew_of_the_promoted_headers_reaches_the_domain_message() {

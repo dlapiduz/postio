@@ -1,9 +1,3 @@
-//! Finding records that look like one person without being told which
-//! (specs/011-focus-contacts S10): the body stage notes what a sender's mail
-//! said (a signature, a phone, a `Resent-From`), and the review finds pairs
-//! by it, and by one address stopping as another begins in the same threads.
-//! A pair with only one kind of evidence is a candidate with that evidence.
-
 use postio_model::{ContactId, EvidenceKind};
 use postio_storage::repository::ContactRepository;
 
@@ -115,7 +109,6 @@ async fn the_same_phone_alone_makes_a_candidate_and_says_which() {
 async fn a_resent_from_names_the_other_record_and_alone_makes_a_candidate() {
     let (_db, connection, _old, new) = two_senders().await;
     let contacts = ContactRepository::new(&connection);
-    // The mail from ada@example.org carried `Resent-From: a.moreno@example.net`.
     contacts
         .record_evidence(
             new,

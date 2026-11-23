@@ -1,18 +1,6 @@
-//! Reaching the authorization server: RFC 8414 metadata, and the token POST.
-//!
-//! ADR 0006 Q3: "the token exchange rides the same HTTP transport discovery
-//! already uses" — [`crate::discovery::transport`]'s TCP/TLS connect
-//! helpers, cancellable the same way an autoconfig fetch is. `io-http`'s
-//! [`HttpClientStd`] drives the actual request/response cycle once a stream
-//! is open; it is already in the dependency graph underneath
-//! `io-pim-discovery`; nothing new arrives for it.
-//!
-//! The grant bodies and token responses are `io-oauth`'s RFC 6749 types
-//! (#537): the form encodings, the success/error schemas and their secrecy
-//! handling are maintained upstream, in the same I/O-free style as every
-//! other Pimalaya wire crate here. What stays this module's: the transport
-//! pump above (io-oauth's optional client wrapper consumes the HTTP status,
-//! and the shim below needs it), and the mapping into [`OAuthError`].
+//! The token exchange rides discovery's cancellable TCP/TLS connect helpers (ADR 0006 Q3). Grant
+//! bodies and token responses are `io-oauth`'s RFC 6749 types (#537); this module keeps the
+//! transport pump and the mapping into `OAuthError`.
 
 use std::io::{Read, Write};
 use std::time::Duration;
@@ -32,30 +20,16 @@ use crate::cancel::CancelToken;
 use crate::discovery::transport::{self, PimalayaTransport};
 use crate::secret::Password;
 
-/// How long a request to an authorization server may run. Generous relative
-/// to [`crate::discovery::transport::DISCOVERY_IO_TIMEOUT`] because a token
-/// endpoint does real work (validating a code, minting a signed token)
-/// rather than serving a static document, but still a bound: this is a
-/// user-initiated foreground wait, not a background job that can simply
-/// keep retrying.
+/// Generous relative to discovery's: a token endpoint does real work, but this is still a bound on
+/// a user-initiated foreground wait.
 pub const REQUEST_IO_TIMEOUT: Duration = Duration::from_secs(15);
 
-// ---------------------------------------------------------------------------
-// Endpoint resolution (RFC 8414)
-// ---------------------------------------------------------------------------
-
-/// The two endpoints an authorization flow needs.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Endpoints {
-    /// Where consent is asked.
     pub authorize: Url,
-    /// Where a code (or a refresh token) is exchanged.
     pub token: Url,
 }
 
-/// Resolves `issuer`'s authorization and token endpoints via RFC 8414
-/// metadata, falling back to the OpenID Connect Discovery compatibility
-/// document (RFC 8414 §5) when the server only publishes that one.
 pub async fn resolve_endpoints(
     issuer: &Url,
     cancel: &CancelToken,
@@ -99,29 +73,17 @@ async fn fetch_metadata(
         .map_err(|err| OAuthError::Parse(err.to_string()))
 }
 
-// ---------------------------------------------------------------------------
-// Token exchange
-// ---------------------------------------------------------------------------
-
-/// What one successful token response carries.
-///
-/// `access_token` and `refresh_token` are [`Password`]s — zeroizing,
-/// redacted in `Debug` — the same protection every other credential in this
-/// crate gets. ADR 0006 Q3: the refresh token goes to the keyring, the
-/// access token stays in memory and is never written to disk; this type is
-/// what a caller stores and caches, not this module's business.
+/// `access_token` and `refresh_token` are zeroizing `Password`s; the refresh token goes to the
+/// keyring and the access token stays in memory (ADR 0006 Q3).
 #[derive(Debug)]
 pub struct TokenResponse {
     pub access_token: Password,
     pub refresh_token: Option<Password>,
-    /// How long `access_token` is valid for, from the moment this response
-    /// was received.
     pub expires_in: Option<Duration>,
     pub token_type: String,
     pub scope: Option<String>,
 }
 
-/// Parameters for an authorization-code grant (RFC 6749 §4.1.3).
 pub struct CodeExchange<'a> {
     pub client_id: &'a str,
     pub client_secret: Option<&'a str>,
@@ -130,15 +92,13 @@ pub struct CodeExchange<'a> {
     pub redirect_uri: &'a str,
 }
 
-/// Exchanges an authorization code for tokens.
 pub async fn exchange_code(
     token_url: &Url,
     params: CodeExchange<'_>,
     cancel: &CancelToken,
 ) -> Result<TokenResponse, OAuthError> {
-    // io-oauth's own RFC 6749 §4.1.3 body. Built to bytes before the
-    // `.await` below: the params' serializer is not `Send`, and every
-    // `TokenSource` impl is required to be `Send + Sync`.
+    // Built to bytes before the `.await`: the params' serializer is not `Send`, and every
+    // `TokenSource` impl must be.
     let form_body = {
         use std::str::FromStr;
         let verifier =
@@ -164,21 +124,17 @@ pub async fn exchange_code(
     token_request(token_url, form_body, cancel).await
 }
 
-/// Parameters for a refresh-token grant (RFC 6749 §6).
 pub struct RefreshExchange<'a> {
     pub client_id: &'a str,
     pub client_secret: Option<&'a str>,
     pub refresh_token: &'a str,
 }
 
-/// Exchanges a refresh token for a fresh access token.
 pub async fn refresh_token(
     token_url: &Url,
     params: RefreshExchange<'_>,
     cancel: &CancelToken,
 ) -> Result<TokenResponse, OAuthError> {
-    // io-oauth's RFC 6749 §6 body, same `String`-before-await rule as the
-    // code exchange.
     let form_body = {
         let mut body =
             Oauth20AccessTokenRefreshParams::new(params.client_id, params.refresh_token.to_owned());
@@ -216,27 +172,17 @@ async fn token_request(
     parse_token_response(&body)
 }
 
-/// The error shape, read with the provider's own strings intact.
-///
-/// io-oauth's `Oauth20AccessTokenErrorParams` reads the same shape, but its
-/// error code is a closed enum with an `Unknown` catch-all — a
-/// provider-specific code would reach the user as "unknown" instead of the
-/// string the provider actually sent, and that string is often the only
-/// clue in a support thread. Five lines of fidelity are worth keeping.
+/// Read with the provider's own strings: io-oauth's error code is a closed enum, and a
+/// provider-specific code is often the only clue in a support thread.
 #[derive(serde::Deserialize)]
 struct RawTokenError {
     error: String,
     error_description: Option<String>,
 }
 
-/// Reads a token endpoint's body: the error shape first, then io-oauth's
-/// RFC 6749 §5.1 success schema.
-///
-/// The error shape is checked **regardless of the HTTP status**: §5.2
-/// allows statuses other than 400, and at least one provider in the wild
-/// answers `200 OK` with `{"error": …}`. io-oauth's optional client trusts
-/// the status to pick the schema, which is exactly why the pump above
-/// stays ours.
+/// The error shape is checked regardless of HTTP status: §5.2 allows others, and a provider answers
+/// `200 OK` with `{"error": ...}`. io-oauth's client picks the schema by status, which is why the
+/// pump stays ours.
 fn parse_token_response(body: &[u8]) -> Result<TokenResponse, OAuthError> {
     if let Ok(err) = serde_json::from_slice::<RawTokenError>(body) {
         let reason = err
@@ -249,11 +195,8 @@ fn parse_token_response(body: &[u8]) -> Result<TokenResponse, OAuthError> {
         });
     }
 
-    // Liberal in what is accepted, deliberately: RFC 6749 §5.1 marks
-    // `token_type` REQUIRED and io-oauth enforces that; refresh responses
-    // in the wild omit it, and the old parser defaulted it to `Bearer`
-    // for exactly that reason. The default is restored here rather than
-    // lost to the swap — a candidate upstream change, noted on #537.
+    // RFC 6749 §5.1 requires `token_type` and io-oauth enforces it, but refresh responses in the
+    // wild omit it; `Bearer` is defaulted here (#537).
     let normalized: Vec<u8>;
     let body = match serde_json::from_slice::<serde_json::Value>(body) {
         Ok(serde_json::Value::Object(mut map)) if !map.contains_key("token_type") => {
@@ -278,12 +221,6 @@ fn parse_token_response(body: &[u8]) -> Result<TokenResponse, OAuthError> {
     })
 }
 
-// ---------------------------------------------------------------------------
-// The HTTP request/response cycle
-// ---------------------------------------------------------------------------
-
-/// Opens a stream to `url`'s origin and sends `request` on it, returning the
-/// response body on a success status.
 async fn send(url: Url, request: HttpRequest, cancel: CancelToken) -> Result<Vec<u8>, OAuthError> {
     tokio::task::spawn_blocking(move || send_blocking(&url, request, cancel))
         .await
@@ -312,9 +249,7 @@ fn send_blocking(
     Ok(out.response.body)
 }
 
-/// Opens a cancellable, bounded stream to `url`'s origin — TLS for
-/// `https`, plain for `http` (only ever reached in tests, against a mock
-/// server on loopback).
+/// Plain `http` is reached only in tests, against a mock server on loopback.
 fn connect(url: &Url, cancel: &CancelToken) -> Result<Box<dyn ReadWriteSend>, OAuthError> {
     let host = url
         .host_str()
@@ -350,8 +285,6 @@ fn connect(url: &Url, cancel: &CancelToken) -> Result<Box<dyn ReadWriteSend>, OA
     }
 }
 
-/// Marker alias so [`connect`]'s return type reads as one thing rather than
-/// three bounds repeated at every call site.
 trait ReadWriteSend: Read + Write + Send {}
 impl<T: Read + Write + Send> ReadWriteSend for T {}
 
@@ -361,16 +294,10 @@ mod tests {
     use std::net::TcpListener;
     use std::thread;
 
-    /// A verifier RFC 7636 accepts: 43 to 128 unreserved characters.
     const TEST_VERIFIER: &str = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
 
     use super::*;
 
-    /// A one-shot mock authorization server: accepts one connection, reads
-    /// one HTTP/1.1 request, and answers with `body` and `status`. Runs on
-    /// a background thread so the async test can drive real, cancellable
-    /// I/O against it over plain loopback TCP — this crate's `oauth`
-    /// requests never touch a real network in the default suite.
     struct MockServer {
         url: Url,
         handle: Option<thread::JoinHandle<Vec<u8>>>,
@@ -428,8 +355,6 @@ mod tests {
             }
         }
 
-        /// Joins the server thread and returns the raw bytes it captured
-        /// (the request line, then the body it read).
         fn join(mut self) -> Vec<u8> {
             self.handle
                 .take()
@@ -548,9 +473,6 @@ mod tests {
 
     #[tokio::test]
     async fn a_200_with_an_error_body_is_still_reported_as_an_error() {
-        // RFC 6749 §5.2 allows other statuses, but a token endpoint that
-        // answers 200 with an `error` field has been seen in the wild —
-        // the error shape must win regardless of the HTTP status.
         let server = MockServer::start("200 OK", r#"{"error":"invalid_client"}"#);
         let url = server.url.clone();
         let cancel = CancelToken::new();
@@ -575,8 +497,6 @@ mod tests {
 
     #[tokio::test]
     async fn a_cancelled_exchange_never_completes() {
-        // Bind a server that never accepts, so the connect attempt is the
-        // thing cancellation has to interrupt.
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
         listener
             .set_nonblocking(true)
@@ -587,9 +507,6 @@ mod tests {
         let cancel = CancelToken::new();
         cancel.cancel();
 
-        // Cancelled before the request starts: `Cancellable::check` refuses
-        // the first read or write, so this must fail rather than hang or
-        // succeed against a server that was never driven.
         let err = exchange_code(
             &url,
             CodeExchange {
@@ -606,8 +523,6 @@ mod tests {
 
         assert!(matches!(err, OAuthError::Http(_)));
     }
-
-    // -- RFC 8414 endpoint resolution ---------------------------------------
 
     #[tokio::test]
     async fn resolve_endpoints_reads_authorization_and_token_urls_from_metadata() {
@@ -651,9 +566,6 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_endpoints_falls_back_to_the_openid_discovery_document() {
-        // A server publishing only the OpenID Connect Discovery document:
-        // the RFC 8414 well-known path 404s, the OIDC compatibility path
-        // (RFC 8414 §5) answers.
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
         let port = listener.local_addr().expect("addr").port();
 

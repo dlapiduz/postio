@@ -1,12 +1,3 @@
-//! People, built from the mail, and the completion they rank.
-//!
-//! specs/005-contacts: a contact is a person who owns addresses. These are
-//! the behaviours the one-row-per-address table had — one sighting per
-//! message, case-insensitive identity, recency before frequency, the address
-//! book above the mail — asked again of people, plus what the person model
-//! adds: written-to, the user's own addresses left out, and one person for
-//! two addresses.
-
 use chrono::{DateTime, TimeZone, Utc};
 
 use postio_model::{
@@ -24,7 +15,6 @@ fn address(name: Option<&str>, address: &str) -> EmailAddress {
     EmailAddress::new(name, address)
 }
 
-/// A store with one account and its inbox.
 async fn setup() -> (
     postio_storage::Store,
     postio_storage::Checkout,
@@ -37,7 +27,6 @@ async fn setup() -> (
     (database, connection, account, inbox)
 }
 
-/// Records a message from `from` on `day`, the way sync does.
 async fn received(
     connection: &Connection,
     account: &Account,
@@ -53,7 +42,6 @@ async fn received(
         .expect("record");
 }
 
-/// Records `times` messages from `email`, the last of them on `day`.
 async fn seen(
     connection: &Connection,
     account: &Account,
@@ -75,7 +63,6 @@ async fn seen(
     }
 }
 
-/// The preferred address of each person completion offers, in order.
 async fn completes(connection: &Connection, prefix: &str) -> Vec<String> {
     ContactRepository::new(connection)
         .complete(prefix, 10)
@@ -103,10 +90,6 @@ async fn set_state(connection: &Connection, id: ContactId, state: &str) {
     .await
     .expect("set state");
 }
-
-// ---------------------------------------------------------------------------
-// Recording
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn seeing_the_same_address_twice_is_one_person_seen_twice() {
@@ -187,8 +170,6 @@ async fn last_seen_never_moves_backwards_and_an_older_name_does_not_win() {
 
 #[tokio::test]
 async fn two_accounts_keep_separate_evidence_about_one_person() {
-    // People are shared across accounts; what each mailbox saw stays its own
-    // (specs/005-contacts, the address-book decision's Q5).
     let (_db, connection, work, inbox) = setup().await;
     let mut home = Account::new("Home", address(None, "me@home.example"));
     home.incoming.host = "imap.example.com".into();
@@ -236,7 +217,6 @@ async fn every_address_on_a_message_becomes_a_person_once() {
     message.from = vec![address(Some("Ada"), "ada@example.com")];
     message.to = vec![
         address(Some("Quinn"), "quinn@example.net"),
-        // The same person twice in one message must not count twice.
         address(None, "QUINN@example.net"),
     ];
     message.cc = vec![address(None, "list@example.org")];
@@ -297,7 +277,6 @@ async fn mail_the_user_sent_marks_every_recipient_written_to() {
         .await
         .expect("record sent");
 
-    // A newsletter the user only received.
     received(
         &connection,
         &account,
@@ -323,8 +302,6 @@ async fn mail_the_user_sent_marks_every_recipient_written_to() {
 
 #[tokio::test]
 async fn a_deleted_persons_address_keeps_counting_and_the_person_stays_deleted() {
-    // specs/005-contacts R4: deletion keeps the person, so the next message
-    // from them counts toward someone hidden instead of bringing them back.
     let (_db, connection, account, inbox) = setup().await;
     received(
         &connection,
@@ -353,12 +330,6 @@ async fn a_deleted_persons_address_keeps_counting_and_the_person_stays_deleted()
     assert!(completes(&connection, "robot").await.is_empty());
 }
 
-// ---------------------------------------------------------------------------
-// Completion: banded, then recency, then frequency
-// ---------------------------------------------------------------------------
-
-/// Frequency is the tie-break, not the lead: every person here was last seen
-/// on the same day, which is what makes this a test about frequency at all.
 #[tokio::test]
 async fn frequency_decides_between_people_seen_equally_recently() {
     let (_db, connection, account, inbox) = setup().await;
@@ -440,7 +411,6 @@ async fn a_tie_on_frequency_is_broken_by_recency() {
     );
 }
 
-/// #424: recency outranks frequency, so a robot cannot bury a person.
 #[tokio::test]
 async fn the_person_seen_most_recently_comes_before_the_one_seen_most_often() {
     let (_db, connection, account, inbox) = setup().await;
@@ -598,10 +568,6 @@ async fn a_deleted_person_is_offered_nowhere() {
         "nor in what the finder holds"
     );
 }
-
-// ---------------------------------------------------------------------------
-// Creating a person
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn a_person_can_be_made_for_an_address_no_mail_has_carried() {

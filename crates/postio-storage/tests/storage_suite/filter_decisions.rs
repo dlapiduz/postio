@@ -1,7 +1,3 @@
-//! Focus's filter decisions (spec 007, data-model.md "`filter_decisions`"):
-//! why a message was filed out of the inbox, from a fixed vocabulary the
-//! store itself refuses to widen (FR-113).
-
 use chrono::{DateTime, TimeZone, Utc};
 use postio_model::{Message, MessageId};
 use postio_storage::Connection;
@@ -51,8 +47,6 @@ async fn the_store_refuses_a_reason_or_a_layer_it_has_no_word_for() {
         .await
         .expect("cleared");
     };
-    // The six reasons and four layers it has are stored: without this the
-    // refusals below would pass against a store with no table at all.
     for reason in [
         "spam",
         "promotion",
@@ -124,8 +118,6 @@ async fn a_decision_is_recorded_once_per_message_and_a_restore_deletes_it() {
         decided_at: at(9),
     };
     decisions.record(&notification).await.expect("recorded");
-    // Deciding again is the latest word, not a second row: a message is
-    // filtered for one reason.
     let spam = FilterDecision {
         reason: FilterReason::Spam,
         source: None,
@@ -136,7 +128,6 @@ async fn a_decision_is_recorded_once_per_message_and_a_restore_deletes_it() {
     decisions.record(&spam).await.expect("recorded again");
     assert_eq!(decisions.get(message).await.expect("a read"), Some(spam));
 
-    // `R` deletes it; undo records it back, when it was decided included.
     assert!(decisions.delete(message).await.expect("restored"));
     assert_eq!(decisions.get(message).await.expect("a read"), None);
     assert!(
@@ -152,8 +143,6 @@ async fn a_decision_is_recorded_once_per_message_and_a_restore_deletes_it() {
 
 #[tokio::test]
 async fn filtered_today_counts_the_decisions_since_midnight_in_one_statement() {
-    // The empty inbox's "186 filtered today" (spec 007 screen 16): one
-    // counted read, sought through `decided_at`'s index, never a walk.
     use postio_storage::test_support::counting::{counted_async, scans};
 
     let database = test_support::memory().await;
@@ -191,10 +180,6 @@ async fn filtered_today_counts_the_decisions_since_midnight_in_one_statement() {
 
 #[tokio::test]
 async fn filtered_mail_is_listed_newest_first_by_reason_and_counted_once() {
-    // Screen 21, US9 scenarios 5 and 7: Filtered lists what is filtered and
-    // not restored, newest first; a tab lists one reason; mail filtered
-    // forty days ago is still there; and the tabs' counts are one
-    // statement. Each read seeks its index and walks no table.
     use postio_storage::test_support::counting::{counted_async, scans};
 
     let database = test_support::memory().await;
@@ -226,7 +211,6 @@ async fn filtered_mail_is_listed_newest_first_by_reason_and_counted_once() {
             .expect("recorded");
         made.push(id);
     }
-    // The social one was restored: it is no longer filtered.
     decisions
         .restore(made[5], Some(at(14)))
         .await
@@ -365,7 +349,6 @@ async fn a_filtered_message_deleted_leaves_filtered_and_its_count_until_it_comes
         (vec![made[0]], vec![made[0]], 1),
         "the deleted one is in neither list nor counted"
     );
-    // Undo puts it back where it was, and Filtered has it again.
     move_to(made[1], inbox).await;
     assert_eq!(
         shown().await,
@@ -373,10 +356,6 @@ async fn a_filtered_message_deleted_leaves_filtered_and_its_count_until_it_comes
     );
 }
 
-// --- Another machine's decision, carried on the message (#2076) ----------------
-
-/// A message filed in `folder` of a fresh account, received at 8, carrying
-/// `reason`'s keyword.
 async fn marked(connection: &Connection, folder: &str, reason: FilterReason) -> MessageId {
     let account = test_support::account(connection).await;
     let mailbox = test_support::mailbox(connection, &account, folder).await;
@@ -430,9 +409,6 @@ async fn a_marked_message_in_the_archive_is_filtered_as_of_its_arrival() {
 
 #[tokio::test]
 async fn a_marked_message_still_in_the_inbox_is_not_filtered_yet() {
-    // Another machine sets the keyword just before it moves the message:
-    // until the move lands, the message is in the inbox, and so is not
-    // filtered here.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let message = marked(&connection, "INBOX", FilterReason::Promotion).await;
@@ -445,8 +421,6 @@ async fn a_marked_message_still_in_the_inbox_is_not_filtered_yet() {
 
 #[tokio::test]
 async fn a_restore_made_here_outlasts_the_keyword_it_is_taking_off() {
-    // The person restored the message on this machine; the keyword's
-    // removal has not reached the server yet, so a sync still reports it.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let message = marked(&connection, "Archive", FilterReason::Social).await;

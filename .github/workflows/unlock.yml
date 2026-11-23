@@ -1,17 +1,9 @@
 name: Unlock
 
-# Green on main reopens the merges the red had locked.
-#
-# `ci.yml`'s `Nightly is green` fails on every pull request while the latest
-# full run on main is red, and a check does not re-ask by itself. So when a
-# run of `nightly.yml` on main ends green, this re-runs `Last nightly` -- and
-# with it the check that depends on it -- on every open pull request whose
-# latest CI run has the check red.
-#
-# A workflow of its own, not a job in `nightly.yml`: it needs `actions:
-# write`, and a job inside a workflow that `full-suite.yml` also calls may
-# not ask for more than that caller grants. `workflow_run` fires only for
-# runs on the default branch, which is the one the lock reads.
+# Green on main reopens the merges the red locked: when `nightly.yml` ends green on main, re-run
+# `Last nightly` on every open PR whose latest CI run has the check red.
+# A workflow of its own: it needs `actions: write`, which a job in a workflow `full-suite.yml` calls
+# may not ask for.
 on:
   workflow_run:
     workflows: [Nightly]

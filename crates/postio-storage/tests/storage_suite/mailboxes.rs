@@ -1,5 +1,3 @@
-//! Mailboxes: CRUD, special-use roles, sync state, and the sidebar's counts.
-
 use chrono::{TimeZone, Utc};
 use postio_storage::Connection;
 use postio_storage::sql::bind;
@@ -22,8 +20,6 @@ async fn seeded_account(connection: &Connection) -> AccountId {
         .expect("create an account")
 }
 
-/// Inserts a message straight into the table. The message repository is a
-/// separate bead; the counts have to be right before it exists.
 async fn insert_message(connection: &Connection, mailbox: MailboxId, flags: &str) {
     let seen = i64::from(flags.contains("\\Seen"));
     let flagged = i64::from(flags.contains("\\Flagged"));
@@ -36,10 +32,6 @@ async fn insert_message(connection: &Connection, mailbox: MailboxId, flags: &str
         .await
         .expect("insert a message");
 }
-
-// ---------------------------------------------------------------------------
-// Create and read
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn a_mailbox_round_trips_through_the_database() {
@@ -85,8 +77,6 @@ async fn synchronization_state_lives_in_its_own_table() {
     .expect("the sync_state row exists");
     assert_eq!(uid_validity, 7);
 
-    // The sync engine writes that table directly, in the same transaction as
-    // the message writes it describes; the repository must read what it wrote.
     connection
         .execute(
             "UPDATE sync_state SET uid_validity = 8, uid_next = 100 WHERE mailbox_id = ?1",
@@ -250,10 +240,6 @@ async fn mailboxes_list_in_hierarchy_order_with_their_children() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Update and delete
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn updating_a_mailbox_changes_its_row_and_its_sync_state() {
     let database = test_support::memory().await;
@@ -364,10 +350,6 @@ async fn deleting_a_mailbox_takes_its_messages_and_its_sync_state() {
     }
     assert!(!mailboxes.delete(id).await.expect("delete again"));
 }
-
-// ---------------------------------------------------------------------------
-// Acceptance: counts for the sidebar, correct after flag changes
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn recounting_fills_in_the_sidebars_numbers() {
@@ -520,8 +502,6 @@ async fn counts_can_be_written_directly_for_a_server_reported_status() {
     let mut mailbox = Mailbox::new(account_id, "INBOX", Some('/'));
     let id = mailboxes.create(&mut mailbox).await.expect("create");
 
-    // A STATUS response tells us about messages we have not fetched yet, so
-    // the counts have to be settable without any local rows behind them.
     let reported = MailboxCounts {
         total: 12_000,
         unread: 37,
@@ -569,16 +549,13 @@ async fn reading_a_mailbox_that_is_not_there_is_none() {
 
 #[tokio::test]
 async fn by_role_never_answers_with_a_folder_the_server_no_longer_has() {
-    // #943. Discovery retires a folder the server stopped listing by clearing
-    // `selectable` and nothing else, so a retired row keeps its role. The
-    // role lookup is what the send path files a copy through; answering with
-    // a retired row sends the copy to a folder that does not exist.
+    // #943: discovery retires a folder by clearing `selectable` only, so a retired row keeps its
+    // role; the send path must not file a copy to it.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let account_id = seeded_account(&connection).await;
     let mailboxes = MailboxRepository::new(&connection);
 
-    // Sorts first, so it is what `ORDER BY path LIMIT 1` would pick.
     let mut retired = Mailbox::new(account_id, "Sent", Some('/'));
     retired.role = MailboxRole::Sent;
     retired.selectable = false;
@@ -598,15 +575,8 @@ async fn by_role_never_answers_with_a_folder_the_server_no_longer_has() {
     );
 }
 
-// ── A view is not storable (spec 003, FR-041) ───────────────────────────────
-
-/// The three roles that are views over messages filed elsewhere, not folders.
-///
-/// Before spec 003 this was enforced by accident: `Snoozed` could not be
-/// stored only because `0001_initial_schema.sql`'s `CHECK` happened not to
-/// list it, and nothing said why. A `CHECK` violation is also the wrong error
-/// for the caller -- it says "constraint failed", not "that role names no
-/// folder" -- so the repository refuses first and names the role.
+/// Views over messages filed elsewhere, not folders. The repository refuses first and names the
+/// role: a `CHECK` violation says only "constraint failed".
 #[tokio::test]
 async fn a_view_role_cannot_be_stored_as_a_mailbox() {
     let database = test_support::memory().await;
@@ -614,9 +584,7 @@ async fn a_view_role_cannot_be_stored_as_a_mailbox() {
     let account = seeded_account(&connection).await;
     let mailboxes = MailboxRepository::new(&connection);
 
-    // Not `Flagged`: RFC 6154 defines `\Flagged`, so a server can really have
-    // that folder and `flagged` is in the schema's CHECK for that reason.
-    // `Snoozed` and `Outbox` have no attribute and no server can advertise one.
+    // Not `Flagged`: RFC 6154 defines `\Flagged`, so a server can really have that folder.
     for role in [MailboxRole::Snoozed, MailboxRole::Outbox] {
         let mut mailbox = Mailbox::new(account, "Somewhere", None);
         mailbox.role = role;
@@ -636,8 +604,6 @@ async fn a_view_role_cannot_be_stored_as_a_mailbox() {
 
 #[tokio::test]
 async fn a_view_role_cannot_be_stored_by_updating_a_folder_into_one() {
-    // The other way in. `create` refusing is worth nothing if `update` lets a
-    // real folder be re-roled into a view afterwards.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let account = seeded_account(&connection).await;
@@ -654,11 +620,8 @@ async fn a_view_role_cannot_be_stored_by_updating_a_folder_into_one() {
         Err(error) => error.to_string(),
         Ok(()) => panic!("a stored folder was re-roled into a view"),
     };
-    // Tightened deliberately: SQLite's own `CHECK` already refuses this, so
-    // asserting only `is_err()` would pass without the repository doing
-    // anything and would never have been seen red. What is being tested is
-    // that the *caller* is told which role was wrong, which a constraint
-    // violation does not say.
+    // Tightened: SQLite's `CHECK` already refuses this, so `is_err()` would pass with the
+    // repository doing nothing; the caller must be told which role was wrong.
     assert!(
         message.contains("outbox"),
         "the error has to name the role rather than report a constraint: {message}"
@@ -667,7 +630,6 @@ async fn a_view_role_cannot_be_stored_by_updating_a_folder_into_one() {
 
 #[tokio::test]
 async fn every_reserved_role_still_stores() {
-    // The other half of the rule: refusing views must not refuse folders.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let account = seeded_account(&connection).await;
@@ -683,14 +645,10 @@ async fn every_reserved_role_still_stores() {
     }
 }
 
-// -- when a folder last synced (#1281) ---------------------------------------
-
 #[tokio::test]
 async fn recording_a_sync_sets_the_time_and_leaves_the_counts_alone() {
-    // The counts are maintained by the schema's `messages_count_*` triggers.
-    // Writing the whole row back from a `Mailbox` read minutes ago would
-    // overwrite them with whatever was true then, which is why this is a
-    // narrow UPDATE.
+    // The counts are maintained by `messages_count_*` triggers; writing the whole row back from a
+    // stale `Mailbox` would overwrite them, hence a narrow UPDATE.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -704,9 +662,6 @@ async fn recording_a_sync_sets_the_time_and_leaves_the_counts_alone() {
                 unread: 37,
                 flagged: 2,
                 snoozed: 0,
-                // Not a message count: the sidebar's feed fills it in before
-                // a row is drawn, and a STATUS-shaped write has nothing to
-                // say about it.
                 attention: 0,
             },
         )

@@ -34,17 +34,9 @@ sys.path.insert(0, str(HERE / "lib"))
 
 import fixture_toolchain  # noqa: E402  -- enabled by the sys.path line above
 ISSUE_LAND = HERE / "issue-land.sh"
-# Sandboxes go under `target/`, which git ignores: inside the worktree because
-# the shared-tree guard only lifts its refusals for worktree paths, and not in
-# its root because a killed run leaves the sandbox behind and `git add -A` in a
-# worktree will commit it. `scripts/checks/check-test-sandboxes.py` says what
-# that cost (#1225).
 SANDBOXES = REPO_ROOT / "target" / "tmp"
 SANDBOXES.mkdir(parents=True, exist_ok=True)
 
-# The six invariant checks `issue-land.sh` runs unconditionally. Stubbed here
-# because this test is about the commit guard, not about them -- they are
-# exercised by their own self-tests.
 STUB_CHECKS = [
     "check-crate-boundaries.py",
     "check-no-personal-data.py",
@@ -71,15 +63,6 @@ def build_sandbox(root: Path) -> None:
     )
     (dummy / "lib.rs").write_text("pub fn x() {}\n", encoding="utf-8")
 
-    # A lockfile, so the sandbox looks like a real checkout.
-    #
-    # Without one, cargo writes it during the gates -- after issue-land.sh's
-    # `git add -A`, which runs before them -- so it lands untracked and the
-    # "clean tree" assertions below fail depending on when cargo got there.
-    # That is a property of the fixture, not of the guard under test: this
-    # repository commits its Cargo.lock, and a sandbox that does not is
-    # testing a situation that cannot arise. Found by running the self-tests
-    # in parallel, where the timing shifted enough to expose it.
     subprocess.run(
         ["cargo", "generate-lockfile"],
         cwd=root,
@@ -114,9 +97,6 @@ def land(root: Path, target: Path, *args: str) -> subprocess.CompletedProcess[st
     environment = dict(os.environ)
     environment.pop("RUSTUP_TOOLCHAIN", None)
     environment["CARGO_TARGET_DIR"] = str(target)
-    # No global identity: a CI runner has none, and the repo-local one set in
-    # `fresh_branch` is the thing under test -- this must not pass by
-    # accident on a machine that happens to have one of its own configured.
     environment["GIT_CONFIG_GLOBAL"] = "/dev/null"
     environment["GIT_CONFIG_SYSTEM"] = "/dev/null"
     return subprocess.run(
@@ -152,10 +132,6 @@ def main() -> int:
         return 0
 
 
-    # This test is about the sandbox in isolation from #112's fix; run it
-    # inside the current worktree for the same reason that test does --
-    # .claude/hooks/guard-shared-tree.py only lifts its `cargo fmt --all`
-    # refusal for paths under ~/src/postio-worktrees.
     with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
         base = Path(directory)
         target = base / "target"
@@ -174,9 +150,6 @@ def main() -> int:
             subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
             build_sandbox(root)
             git("init", "-q", "-b", "main", cwd=root)
-            # Local, not just the `-c` flags this helper passes on its own
-            # calls: issue-land.sh runs `git commit` directly, with no
-            # identity of its own, and a CI runner has no global one either.
             git("config", "user.email", "test@example.com", cwd=root)
             git("config", "user.name", "Test", cwd=root)
             git("add", "-A", cwd=root)
@@ -186,7 +159,6 @@ def main() -> int:
             git("checkout", "-q", "-b", "issue-1-x", cwd=root)
             return root
 
-        # ── a clean tree with a prior commit lands with no -m ─────────────
         root = fresh_branch("already-committed")
         (root / "dummy" / "src" / "extra.rs").write_text("// nothing\n", encoding="utf-8")
         git("add", "-A", cwd=root)
@@ -198,7 +170,6 @@ def main() -> int:
             expect_output="pushed issue-1-x",
         )
 
-        # ── a dirty tree with no -m still refuses, saying the tree is dirty ─
         root = fresh_branch("dirty-no-message")
         (root / "dummy" / "src" / "extra.rs").write_text("// nothing\n", encoding="utf-8")
         case(
@@ -208,7 +179,6 @@ def main() -> int:
             expect_output="Uncommitted changes",
         )
 
-        # ── a dirty tree with -m still commits and proceeds, as before ─────
         root = fresh_branch("dirty-with-message")
         (root / "dummy" / "src" / "extra.rs").write_text("// nothing\n", encoding="utf-8")
         result = land(root, target, "-m", "feat(dummy): add a file")
@@ -231,7 +201,6 @@ def main() -> int:
                 f"message to land as the commit subject, got {log!r}"
             )
 
-        # ── a clean tree with nothing to land at all refuses too ───────────
         root = fresh_branch("nothing-to-land")
         case(
             "a clean branch with no commits beyond main refuses",
@@ -240,20 +209,10 @@ def main() -> int:
             expect_output="Nothing to land",
         )
 
-        # ── rustfmt's own output is amended, not asked about ───────────────
-        #
-        # The session committed everything and then this script reformatted
-        # the tree underneath it. Demanding `-m` there asks for a message for
-        # changes the session did not make, about work it already committed --
-        # and it used to ask *after* the gates, so the ten minutes were spent
-        # before the question. The formatter's output belongs to the commit it
-        # reformats.
         root = fresh_branch("rustfmt-amends")
         (root / "dummy" / "src" / "extra.rs").write_text(
             "pub fn  y ( ) {}\n", encoding="utf-8"
         )
-        # Declared, or rustfmt never sees it: cargo fmt walks `mod` from the
-        # crate root and skips orphan files entirely.
         (root / "dummy" / "src" / "lib.rs").write_text(
             "pub mod extra;\npub fn x() {}\n", encoding="utf-8"
         )
@@ -307,15 +266,6 @@ def main() -> int:
                 f"the tree should be clean after the amend, still dirty:\n{dirty}"
             )
 
-        # ── but a clean branch with no commits of its own is not amendable ──
-        #
-        # There is nothing of this session's to amend into, and HEAD is main's
-        # own commit -- amending it would rewrite somebody else's history to
-        # carry a whitespace fix.
-        # The badly formatted file has to be *committed on main*, so the
-        # branch is clean, has nothing of its own, and rustfmt still finds
-        # something to rewrite -- the one state where the amend above would
-        # reach past this session's work into somebody else's commit.
         root = fresh_branch("rustfmt-nothing-to-amend")
         git("checkout", "-q", "main", cwd=root)
         (root / "dummy" / "src" / "untidy.rs").write_text(

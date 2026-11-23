@@ -4,13 +4,6 @@ import Testing
 
 @testable import PostioKit
 
-/// The settings window's model: what it shows, and what reaches the file.
-///
-/// Everything here is about the boundary's contract holding on this side of
-/// it. The Rust suite already proves the `patch_*` edits preserve the rest of
-/// the file; what these assert is that the window actually goes through it
-/// rather than around it, which is the mistake a frontend makes once and
-/// nobody notices until a config file comes back reordered.
 @MainActor
 @Suite struct SettingsStoreTests {
     private func tempPath(_ tag: String) -> String {
@@ -21,8 +14,8 @@ import Testing
     }
 
     @Test func aFirstRunOpensOnDefaultsAndHasNotWrittenAnything() {
-        // ADR 0029's Empty state. Creating the file just because the window
-        // opened would put a config on disk for someone who only looked.
+        // ADR 0029's Empty state: creating the file because the window opened would put a config on
+        // disk for someone who only looked.
         let path = tempPath("first-run")
         let store = SettingsStore(path: path)
 
@@ -48,7 +41,6 @@ import Testing
     }
 
     @Test func theUnsubscribeActionDefaultsToArchiveAndOneKeyChangesIt() throws {
-        // #1952: the notice after leaving a list offers one action.
         let path = tempPath("after-unsubscribe")
         try "# mine\n[ui]\ndensity = \"compact\"\n".write(
             toFile: path, atomically: true, encoding: .utf8)
@@ -75,9 +67,6 @@ import Testing
     }
 
     @Test func aFileThatWillNotParseLeavesThePaneWithNothingToShow() throws {
-        // The pane disables its controls rather than drawing plausible
-        // settings that are not the user's — saving those would erase the file
-        // they were trying to fix.
         let path = tempPath("broken")
         try "[ui]\ndensity = = \n".write(toFile: path, atomically: true, encoding: .utf8)
 
@@ -87,10 +76,6 @@ import Testing
     }
 
     @Test func theNavIsFocusSTenSectionsUnderTheSameTwoHeadings() {
-        // The nav is the shared model's, not a list this frontend keeps
-        // beside it -- GTK's Focus window shows these in this order (Agents is the Mac's alone until Linux adopts it, #1832),
-        // and two navs that drift are two different applications. Focus has
-        // Filtering and no Appearance (specs/009-focus-macos T131).
         let store = SettingsStore(path: tempPath("nav"))
         #expect(store.sections.map(\.label) == [
             "Accounts", "Contacts", "Filtering", "Saved searches", "Composing",
@@ -103,9 +88,6 @@ import Testing
     }
 
     @Test func thePaneNamesTheTableItWrites() {
-        // The footer reads `[focus] in config.toml · applied live`, and the
-        // table comes from the section rather than a string kept next to the
-        // view.
         let store = SettingsStore(path: tempPath("table"))
         store.selected = "focus"
         #expect(store.current?.table == "[focus]")
@@ -113,8 +95,6 @@ import Testing
     }
 
     @Test func theFilteringPaneSaysWhatTheFileSaysAndTodaySCount() throws {
-        // GTK's page, word for word: the switch, the sentence under it, and
-        // the count only once it is known.
         let path = tempPath("filtering")
         try "[focus]\nfiltering = true\n".write(toFile: path, atomically: true, encoding: .utf8)
         let store = SettingsStore(path: path)
@@ -145,9 +125,6 @@ import Testing
     }
 
     @Test func aBrokenFileTakesOverTheFooterFromTheTableName() throws {
-        // Canvas 3d: the footer is the only line there is, so when something
-        // is wrong it has to say that rather than keep announcing which table
-        // it would have written.
         let path = tempPath("footer-takeover")
         try "[ui]\ndensity = = \n".write(toFile: path, atomically: true, encoding: .utf8)
 
@@ -158,22 +135,13 @@ import Testing
     }
 
     @Test func anEditMadeInAnEditorWhileTheWindowIsOpenIsNotDestroyedByTheNextClick() throws {
-        // Found by using the running app, not by these tests: the window had
-        // been open since before the file existed, so its cached copy was two
-        // edits behind, and one click on a segmented control wrote that copy
-        // back over everything $EDITOR had added.
-        //
-        // `config.toml` is the store and a file people edit by hand. Anything
-        // that patches a *remembered* version of it is a second writer racing
-        // the first, and the loser is whichever one the user typed into.
+        // Found by using the app: the window was open from before the file existed, and one click
+        // wrote its stale copy over everything `$EDITOR` had added. `config.toml` is hand-edited,
+        // so patching a remembered copy is a second writer racing the first.
         let path = tempPath("external-edit")
         try "[focus]\nfiltering = true\n".write(toFile: path, atomically: true, encoding: .utf8)
         let store = SettingsStore(path: path)
 
-        // Somebody runs ⌘E and adds to the file while the window sits open.
-        // The comment sits above `[sync]`, outside the table the switch
-        // edits: everything outside the patched key is promised, and that is
-        // what this asserts.
         try("[focus]\nfiltering = true\nsome_future_key = 42\n\n# hand-written\n[sync]\nidle = true\n")
             .write(toFile: path, atomically: true, encoding: .utf8)
 
@@ -187,9 +155,6 @@ import Testing
     }
 
     @Test func aSaveIsReadBackSoTheFooterCannotGoStale() throws {
-        // The footer is the only thing telling the user their change took —
-        // canvas 3f put it where OK and Cancel would be — so it has to
-        // describe the file as it is now, not as it was when the window opened.
         let path = tempPath("restat")
         try "[focus]\nfiltering = true\n".write(toFile: path, atomically: true, encoding: .utf8)
 
@@ -201,9 +166,8 @@ import Testing
     }
 
     @Test func theAccountsPaneDoesNotClaimToWriteConfigToml() {
-        // It said `[accounts] in config.toml` about accounts that have lived
-        // in the encrypted store since #470 — a footer pointing somebody at a
-        // file that does not describe their account. Seen by opening the pane.
+        // The footer said `[accounts] in config.toml` about accounts that live in the encrypted
+        // store since #470.
         let store = SettingsStore(path: tempPath("accounts-footer"))
         store.selected = "accounts"
 
@@ -212,18 +176,11 @@ import Testing
     }
 }
 
-/// Every one of canvas 3f's panes is drawn (#1156).
-///
-/// The nav comes from `postio_ui::settings`, so a section the frontend has no
-/// pane for still appears in the sidebar and opens an empty apology. That was
-/// five of the eight for a long time; this is what stops it silently becoming
-/// five again when a section is added to the core.
 @MainActor
 @Suite struct EveryPaneIsDrawnTests {
     @Test func noSectionFallsThroughToTheUnbuiltPane() {
-        // The keys `SettingsPaneView` switches on, kept beside the switch
-        // rather than inferred: the point is to fail when the core grows a
-        // section and this frontend has not caught up.
+        // Kept beside the switch so this fails when the core grows a section the frontend has not
+        // caught up with.
         let drawn: Set<String> = ["accounts", "focus", "saved_searches", "compose", "keys", "sync", "privacy", "mcp", "contacts", ""]
 
         let sections = Set(settingsSections().map(\.key))

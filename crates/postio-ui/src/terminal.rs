@@ -1,24 +1,10 @@
-//! What a terminal frontend needs to know that a windowing toolkit does not.
-//!
-//! A terminal is a byte stream, and two things follow from that. Some chords
-//! a desktop delivers cannot arrive at all -- `ctrl+Return` is the same byte
-//! as `Return` in a terminal that does not speak the kitty keyboard protocol
-//! -- and text from a message can carry control sequences the terminal would
-//! obey. This module answers the first; the second is `SafeText`
-//! (`docs/archive/specs/005-tui-frontend` research R4, R5).
+//! What a terminal frontend needs that a windowing toolkit does not: which chords a legacy terminal
+//! can deliver, and `SafeText`.
 
 use crate::keymap::{Chord, Key, Modifiers};
 
-/// Whether a terminal *without* the kitty keyboard protocol can deliver
-/// `chord` as itself.
-///
-/// A legacy terminal sends `ctrl` plus a letter as one control byte, so
-/// `ctrl+i` is `Tab`, `ctrl+m` is `Return`, `ctrl+h` is `BackSpace` and `ctrl+j`
-/// a line feed; `ctrl+shift` plus a letter is the same byte as `ctrl` plus
-/// that letter; and `ctrl` or `shift` with `Return`, or `shift+space`, arrive
-/// without their modifier. `super` never reaches a terminal at all. Named keys
-/// with modifiers (`shift+Up`, `ctrl+Left`, `shift+Tab`, the function keys)
-/// have xterm encodings every modern terminal sends.
+/// A legacy terminal sends ctrl plus a letter as one control byte (`ctrl+i` is Tab, `ctrl+m`
+/// Return) and drops the modifier from `ctrl+Return` and `shift+space`; `super` never arrives.
 pub fn legacy_deliverable(chord: &Chord) -> bool {
     let modifiers = chord.modifiers;
     if modifiers.contains(Modifiers::SUPER) {
@@ -34,7 +20,6 @@ pub fn legacy_deliverable(chord: &Chord) -> bool {
         }
         Key::Char(_) => true,
         Key::Named(name) => match *name {
-            // A legacy terminal sends the keypad's keys as the main ones.
             name if name.starts_with("KP_") => false,
             "Return" => !ctrl && !shift,
             "Space" => !shift,
@@ -44,14 +29,8 @@ pub fn legacy_deliverable(chord: &Chord) -> bool {
     }
 }
 
-/// The binding to show for `command` in a terminal: its first binding the
-/// terminal can deliver.
-///
-/// With the kitty keyboard protocol (`enhanced`) every chord arrives, so it is
-/// the binding in force, `[keys]` override and all. Without it, it is the
-/// first binding every chord of which a legacy terminal can send -- the
-/// alternate that exists for exactly this -- so a palette row or cheat-sheet
-/// line never shows a key that would do nothing when pressed.
+/// With the kitty keyboard protocol (`enhanced`) every chord arrives; without it, the first binding
+/// a legacy terminal can send, so no hint shows a key that does nothing.
 pub fn deliverable_binding(
     keymap: &postio_core::Keymap,
     command: impl Into<postio_core::ActionId>,
@@ -71,38 +50,25 @@ pub fn deliverable_binding(
         .cloned()
 }
 
-/// Text from a message, made safe to put in front of a terminal.
-///
-/// Mail is attacker-controlled, and a terminal obeys what it is sent: an
-/// `ESC ] 0 ;` in a subject retitles the window, an `ESC [ 2 J` clears the
-/// screen, and a right-to-left override makes a filename read as something
-/// it is not. This is the terminal's `<script>` (research R5). The only way
-/// to build one is [`SafeText::new`], which replaces every C0 control except
-/// newline and tab, `DEL`, every C1 control, and the bidirectional overrides
-/// and isolates with a visible stand-in, so what was there is still seen but
-/// never obeyed. A frontend that takes message text any other way has left
-/// this boundary, which is why a terminal view accepts `SafeText` and not
-/// `&str`.
+/// Mail is attacker-controlled and a terminal obeys what it is sent (`ESC ] 0 ;` retitles the
+/// window, a right-to-left override disguises a filename).
+/// `SafeText::new` is the only constructor and replaces controls and bidi overrides with visible
+/// stand-ins.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SafeText(String);
 
 impl SafeText {
-    /// `text`, with everything a terminal would act on made visible instead.
     pub fn new(text: &str) -> SafeText {
         SafeText(text.chars().map(stand_in).collect())
     }
 
-    /// The safe text.
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
-/// What a terminal is shown in place of `c`.
-///
-/// A C0 control becomes its Unicode control picture (`ESC` is `␛`), so a
-/// hostile subject still reads as what it tried to do. `DEL` is `␡`. C1
-/// controls and bidirectional overrides have no pictures and become `�`.
+/// C0 controls become their control pictures, `DEL` is `␡`, C1 controls and bidi overrides become
+/// `�`.
 fn stand_in(c: char) -> char {
     match c {
         '\n' | '\t' => c,
@@ -137,7 +103,6 @@ mod safe_text {
 
     #[test]
     fn c1_controls_and_delete_are_replaced_too() {
-        // U+009B is a one-character CSI in terminals that honour 8-bit C1.
         let safe = SafeText::new("a\u{9b}2Jb\u{7f}c\u{85}d");
         for c in ['\u{9b}', '\u{7f}', '\u{85}'] {
             assert!(!safe.as_str().contains(c), "{c:?} survived: {safe:?}");
@@ -146,7 +111,6 @@ mod safe_text {
 
     #[test]
     fn bidirectional_overrides_cannot_disguise_a_name() {
-        // "invoice\u{202e}fdp.exe" displays as "invoiceexe.pdf".
         let safe = SafeText::new("invoice\u{202e}fdp.exe \u{2066}x\u{2069}");
         for c in [
             '\u{202a}', '\u{202b}', '\u{202c}', '\u{202d}', '\u{202e}', '\u{2066}', '\u{2067}',
@@ -224,14 +188,8 @@ mod registry {
     use crate::keymap::Binding;
     use postio_config::{keys::expand_mod, paths::Platform};
 
-    /// Every command must have at least one binding a legacy terminal can
-    /// deliver, or the terminal frontend could only reach it through the
-    /// palette -- which Principle II does not accept as reachable
-    /// (`docs/archive/specs/005-tui-frontend` SC-001, research R4).
     #[test]
     fn a_legacy_terminal_is_shown_the_alternate_it_can_send() {
-        // Freedesktop named rather than read off the host: on a Mac `mod` is
-        // `cmd`, and the chord this asserts would be a different string.
         let keymap = postio_core::Keymap::resolve_on(&Default::default(), Platform::Freedesktop);
         let mark_sent = postio_core::CommandId::MarkSent;
         assert_eq!(
@@ -255,10 +213,7 @@ mod registry {
             ..postio_core::Availability::open(postio_core::Scope::Unified)
         };
         let unreachable: Vec<String> = postio_core::registry::all()
-            // A command a terminal never offers owes it no key.
             .filter(|spec| spec.requires.met_by(terminal))
-            // Nor one the platform has no surface for yet (the Mac's
-            // search dropdown, spec 010 D25).
             .filter(|spec| postio_core::registry::offered_on(spec.id.into(), Platform::Freedesktop))
             .filter(|spec| {
                 !spec.bindings().any(|binding| {
@@ -278,8 +233,6 @@ mod registry {
     }
 }
 
-/// Safe text prints as the text it holds, with control characters shown
-/// rather than obeyed.
 #[cfg(test)]
 mod safe_text_display_tests {
     use super::SafeText;

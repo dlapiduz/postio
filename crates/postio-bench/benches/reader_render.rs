@@ -1,19 +1,5 @@
-//! The reading renderer, warm (spec 006 SC-005, T149).
-//!
-//! For each designed corpus fixture -- the mail whose layout its sender
-//! built, the case the renderer exists for -- this times a second request
-//! on a live `Renderer`, meaning the fonts and the thread are already up,
-//! and the rasterisation of the first tile the view would draw.
-//!
-//! **Reported, never gated** (Constitution V: timings report, counts
-//! gate). `bench.yml` compiles this nightly and times nothing; what holds
-//! SC-005 on every pull request is the counted cost -- `RenderCounts` in
-//! `postio-render`'s snapshot tests and `reader_spawns_no_web_process`'s
-//! one render and two style passes per navigation.
-
-#![allow(missing_docs)]
-// `criterion_group!` expands to a `pub fn`, and the workspace lint floor
-// reaches bench targets. A bench is not public API.
+//! The reading renderer, warm: a second request on a live `Renderer` per designed corpus fixture,
+//! and the first tile's rasterisation. Reported, never gated: counts gate, timings report.
 
 use std::hint::black_box;
 use std::sync::Arc;
@@ -26,10 +12,8 @@ use postio_render::tile::{TileSpec, rasterize_tile, tile_width};
 use postio_render::{RenderRequest, Renderer, Resources, Theme, Viewport};
 use postio_ui::reader::document::{self, Rendering};
 
-/// The height of a tile the view draws, in device pixels.
 const TILE_HEIGHT: u32 = 512;
 
-/// `fixture` composed the way the reader composes it, with its parts.
 fn request(fixture: &test_corpus::Fixture) -> Option<RenderRequest> {
     let parsed = postio_model::mime::parse(fixture.bytes());
     if parsed.body.is_empty() {
@@ -101,8 +85,6 @@ fn reader_render(c: &mut Criterion) {
         let Some(request) = request(fixture) else {
             continue;
         };
-        // The first request warms the thread and the fonts: not what is
-        // being measured.
         let warm = render(&request);
         group.bench_function(format!("warm/{}", fixture.name()), |b| {
             b.iter(|| black_box(render(&request)));

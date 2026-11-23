@@ -4831,6 +4831,7 @@ dependencies = [
  "htmd",
  "html5ever",
  "markup5ever_rcdom",
+ "postio-body",
  "postio-model",
  "postio-workspace-hack",
  "pulldown-cmark",
@@ -5280,6 +5281,7 @@ dependencies = [
  "tracing-journald",
  "tracing-log",
  "tracing-subscriber",
+ "url",
 ]
 
 [[package]]
@@ -5400,6 +5402,7 @@ dependencies = [
  "postio-client",
  "postio-config",
  "postio-core",
+ "postio-focus",
  "postio-host",
  "postio-mcp",
  "postio-model",
@@ -5587,6 +5590,7 @@ dependencies = [
  "tokio",
  "toml",
  "toml_datetime",
+ "toml_edit",
  "toml_parser",
  "toml_writer",
  "tracing",

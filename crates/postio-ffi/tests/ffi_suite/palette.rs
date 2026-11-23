@@ -1,14 +1,3 @@
-//! The palette and the cheat sheet, which are one list read two ways.
-//!
-//! #658 puts them in one issue on purpose: the palette filters the registry
-//! by what was typed and by which surface has focus, and the cheat sheet
-//! prints the same rows with their bindings. Built separately, two places
-//! would decide what "available here" means and they would disagree.
-//!
-//! What these guard is that Swift is handed a *ranking* rather than a list to
-//! rank. The matcher is `postio_ui::palette`'s, and two matchers mean the same
-//! query offers different things on each platform.
-
 use postio_ffi::{Session, SessionOptions, UiContext};
 
 fn session() -> std::sync::Arc<Session> {
@@ -30,10 +19,8 @@ fn an_empty_query_lists_what_the_surface_can_run() {
 #[test]
 fn a_command_the_focused_surface_cannot_run_is_not_offered() {
     let session = session();
-    // The rule that matters more than ranking: offering a command the surface
-    // will ignore is worse than omitting it, because the user presses Return,
-    // nothing happens, and that reads as a broken application rather than an
-    // unavailable command.
+    // Offering a command the surface will ignore is worse than omitting it: Return does nothing and
+    // reads as a broken application.
     let in_list = session.palette_entries("", UiContext::List);
     assert!(
         !in_list.iter().any(|entry| entry.id == "send"),
@@ -50,10 +37,7 @@ fn a_command_the_focused_surface_cannot_run_is_not_offered() {
 #[test]
 fn the_ranking_is_the_shared_matcher_s() {
     let session = session();
-    // `cp` finds "Command palette" ahead of anything that merely contains
-    // both letters, because a match at a word start is worth far more than
-    // one mid-word. That is `postio_ui::palette`'s scoring, and asserting it
-    // *here* is what stops Swift from quietly writing its own.
+    // The scoring is `postio_ui::palette`'s; asserting it here stops Swift quietly writing its own.
     let found = session.palette_entries("cp", UiContext::List);
     assert_eq!(
         found.first().map(|entry| entry.id.as_str()),
@@ -67,9 +51,6 @@ fn the_ranking_is_the_shared_matcher_s() {
 #[test]
 fn the_matched_characters_cross_as_offsets_rather_than_markup() {
     let session = session();
-    // #568 changed the matcher to return ranges rather than pre-escaped Pango
-    // precisely so a second frontend could highlight them its own way. Swift
-    // builds an `AttributedString` from the same numbers GTK turns into `<b>`.
     let found = session.palette_entries("arc", UiContext::List);
     let archive = found
         .iter()
@@ -101,8 +82,6 @@ fn a_query_matching_nothing_offers_nothing() {
 #[test]
 fn the_cheat_sheet_is_the_same_list_unfiltered() {
     let session = session();
-    // Same source, same context filter, no query. Two lists built separately
-    // is the thing #658 exists to prevent.
     let sheet = session.cheat_sheet(UiContext::List);
     let palette = session.palette_entries("", UiContext::List);
     assert_eq!(
@@ -118,9 +97,7 @@ fn the_cheat_sheet_is_the_same_list_unfiltered() {
 
 #[test]
 fn the_binding_shown_is_the_one_in_force() {
-    // Not the registry default. A cheat sheet that printed the default for a
-    // command somebody rebound would be teaching the wrong key, which is
-    // worse than teaching none.
+    // A cheat sheet that printed the default for a rebound command would teach the wrong key.
     let session = Session::open(
         SessionOptions::in_memory().with_config_for_test("[keys]\narchive = \"ctrl+shift+e\"\n"),
     )
@@ -138,9 +115,8 @@ fn the_binding_shown_is_the_one_in_force() {
 #[test]
 fn the_primary_modifier_reaches_the_sheet_as_this_platform_spells_it() {
     let session = session();
-    // `mod+k` in the registry, and what the sheet prints has to be the key
-    // somebody can actually press: the Mac's, on every host, because the
-    // boundary serves the Mac (`postio_ffi::PLATFORM`).
+    // The sheet prints the Mac's key on every host, because the boundary serves the Mac
+    // (`postio_ffi::PLATFORM`).
     let palette = session
         .cheat_sheet(UiContext::List)
         .into_iter()
@@ -152,14 +128,8 @@ fn the_primary_modifier_reaches_the_sheet_as_this_platform_spells_it() {
 
 #[test]
 fn the_menu_and_the_palette_agree_about_what_is_available() {
-    // #1158. The menu drew every registry command with a section, enabled,
-    // whatever the focused surface could run — so a build with no composer
-    // showed Send, Bold and the whole Format menu as live options. The
-    // palette was already hiding them. The two disagreed because only one of
-    // them was asking.
-    //
-    // Asserted as agreement rather than as a list, so it stays true as
-    // commands are added.
+    // The menu drew every registry command enabled whatever the surface could run (#1158); assert
+    // agreement with the palette, not a list.
     let session = session();
     for context in [UiContext::List, UiContext::Composer, UiContext::Reader] {
         let offered: Vec<String> = session
@@ -187,9 +157,7 @@ fn the_menu_and_the_palette_agree_about_what_is_available() {
 
 #[test]
 fn a_composer_command_is_unavailable_from_the_list() {
-    // The seventeen. `Send`, `Bold` and the rest are `Context::Composer`
-    // only, so a menu asking about the list gets `false` and draws them
-    // greyed rather than as live options against a build with no composer.
+    // `Send`, `Bold` and the rest are composer-only, so a list menu gets `false` and greys them.
     let session = session();
     for id in ["send", "bold", "attach_file", "save_draft", "quote_block"] {
         assert!(
@@ -206,8 +174,6 @@ fn a_composer_command_is_unavailable_from_the_list() {
 
 #[test]
 fn an_id_this_build_does_not_know_is_unavailable() {
-    // A menu built from a newer registry, or a typo. Neither should draw an
-    // enabled item.
     let session = session();
     assert!(!session.is_available("not_a_command", UiContext::List));
     session.shutdown();

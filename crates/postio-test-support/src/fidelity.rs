@@ -1,72 +1,36 @@
-//! Does a render look like its reference? (spec 006, SC-002)
-//!
-//! The rules are `docs/archive/specs/006-email-rendering/contracts/fidelity-metric.md`,
-//! and the constants below are that contract's. They are fixed before any
-//! engine is judged by them, and are not loosened to make a fixture pass.
-//!
-//! # What is compared, and what is not
-//!
-//! Two engines draw the same glyphs differently, and the question here is
-//! not whose antialiasing is nicer: it is whether the columns, blocks,
-//! backgrounds and images the sender built are where the sender put them.
-//! So both images are cut into [`CELL`]-pixel cells, each reduced to its mean
-//! colour in OKLab, and cells are compared — glyph shapes average out, a
-//! missing block does not.
-//!
-//! Two failure shapes a plain cell-by-cell comparison gets wrong, both found
-//! on synthetic images before any engine was compared:
-//!
-//! - **Drift.** One extra wrapped line moves everything below it by a line,
-//!   and every later cell then disagrees with the cell beside it although
-//!   nothing is missing. So rows are aligned first, as a text diff aligns
-//!   lines ([`align_rows`]): an inserted or dropped row costs itself, not
-//!   everything after it.
-//! - **A lost block.** A whole card can go missing while 98% of cells still
-//!   agree, so the percentage alone passes it. So a match also requires that
-//!   no [`BLOCK`]×[`BLOCK`] square of aligned cells is entirely wrong.
+//! Does a render look like its reference? The rules are the fidelity contract's (spec 006), fixed
+//! before any engine is judged and not loosened to make a fixture pass.
+//! Both images are cut into [`CELL`]-pixel cells reduced to mean OKLab colour, so glyph shapes
+//! average out and a missing block does not. Rows are aligned first ([`align_rows`]) so one extra
+//! wrapped line does not shift every later cell, and a match also requires that no
+//! [`BLOCK`]×[`BLOCK`] square of aligned cells is entirely wrong, so a lost card cannot pass on the
+//! percentage.
 
 use std::path::Path;
 
-/// Cell edge, in pixels.
 pub const CELL: usize = 16;
-/// Largest OKLab distance at which two cell means still count as the same.
 pub const MAX_DELTA_E: f64 = 0.08;
-/// Share of aligned cells that must agree for a fixture to match.
 pub const MIN_MATCHING: f64 = 0.92;
-/// Largest relative difference in height between reference and candidate.
 pub const MAX_HEIGHT_DRIFT: f64 = 0.08;
-/// Edge of the square of cells that may not be wholly wrong: 3 cells, 48 px.
 pub const BLOCK: usize = 3;
 
-/// An RGBA image, tightly packed.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Image {
-    /// Width in pixels.
     pub width: usize,
-    /// Height in pixels.
     pub height: usize,
-    /// `width * height` pixels, four bytes each.
     pub rgba: Vec<u8>,
 }
 
-/// What a comparison found.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Comparison {
-    /// Aligned cell pairs compared.
     pub cells: usize,
-    /// How many of them agreed within [`MAX_DELTA_E`].
     pub agreeing: usize,
-    /// Reference cells, as `(column, row)`, that disagreed with their aligned
-    /// candidate cell — or had none to align with.
     pub mismatched: Vec<(usize, usize)>,
-    /// Whether the heights are within [`MAX_HEIGHT_DRIFT`].
     pub height_ok: bool,
-    /// Whether some [`BLOCK`]-square of aligned cells disagreed entirely.
     pub lost_block: bool,
 }
 
 impl Comparison {
-    /// The contract's verdict: enough agreement, no lost block, similar height.
     pub fn matches(&self) -> bool {
         self.height_ok
             && !self.lost_block
@@ -76,7 +40,6 @@ impl Comparison {
 }
 
 impl Image {
-    /// Build from tightly packed RGBA.
     pub fn from_rgba(width: usize, height: usize, rgba: Vec<u8>) -> Image {
         assert_eq!(rgba.len(), width * height * 4, "tightly packed RGBA");
         Image {
@@ -86,7 +49,6 @@ impl Image {
         }
     }
 
-    /// Decode a PNG from disk into RGBA, whatever its colour type.
     pub fn load_png(path: &Path) -> Image {
         let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
         let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
@@ -115,7 +77,6 @@ impl Image {
         Image::from_rgba(width, height, rgba)
     }
 
-    /// Encode as an RGBA PNG on disk.
     pub fn save_png(&self, path: &Path) {
         let file =
             std::fs::File::create(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
@@ -130,7 +91,6 @@ impl Image {
         writer.write_image_data(&self.rgba).expect("PNG data");
     }
 
-    /// The pixel at `(x, y)` as OKLab, composited over white.
     fn oklab(&self, x: usize, y: usize) -> [f64; 3] {
         let at = (y * self.width + x) * 4;
         let alpha = f64::from(self.rgba[at + 3]) / 255.0;
@@ -153,7 +113,6 @@ impl Image {
         ]
     }
 
-    /// Each pixel row reduced to one mean OKLab colour per [`CELL`]-wide strip.
     fn row_signatures(&self, columns: usize) -> Vec<Vec<[f64; 3]>> {
         (0..self.height)
             .map(|y| {
@@ -187,20 +146,14 @@ fn row_cost(a: &[[f64; 3]], b: &[[f64; 3]]) -> f64 {
     a.iter().zip(b).map(|(x, y)| delta_e(*x, *y)).sum::<f64>() / a.len().max(1) as f64
 }
 
-/// Align pixel rows of a candidate to those of a reference, as a text diff
-/// aligns lines: a banded global alignment in which substituting one row for
-/// another costs their mean distance and skipping a row costs a mismatch.
-///
-/// Returns, for each reference row, the candidate row aligned with it, or
-/// `None` where the reference row has no counterpart (content the candidate
-/// lost). Candidate rows aligned with nothing (content the candidate added)
-/// do not appear: extra content is answered by the height rule.
+/// Banded global alignment as a text diff aligns lines. Returns for each reference row the
+/// candidate row aligned with it, or `None` where the candidate lost it; content the candidate
+/// added is answered by the height rule.
 pub fn align_rows(reference: &[Vec<[f64; 3]>], candidate: &[Vec<[f64; 3]>]) -> Vec<Option<usize>> {
     let (n, m) = (reference.len(), candidate.len());
     let band = 32.max(n.max(m) / 10) + n.abs_diff(m);
     let gap = MAX_DELTA_E;
     let inf = f64::INFINITY;
-    // cost[i][j]: best cost aligning reference[..i] with candidate[..j].
     let width = m + 1;
     let mut cost = vec![inf; (n + 1) * width];
     let mut step = vec![0u8; (n + 1) * width]; // 1 diagonal, 2 up (skip reference), 3 left (skip candidate)
@@ -257,7 +210,6 @@ pub fn align_rows(reference: &[Vec<[f64; 3]>], candidate: &[Vec<[f64; 3]>]) -> V
     aligned
 }
 
-/// Compare `candidate` with `reference` under the contract.
 pub fn compare(reference: &Image, candidate: &Image) -> Comparison {
     let columns = reference.width.div_ceil(CELL);
     let rows = reference.height.div_ceil(CELL);
@@ -312,7 +264,6 @@ pub fn compare(reference: &Image, candidate: &Image) -> Comparison {
     }
 }
 
-/// The reference with every mismatched cell outlined in magenta.
 pub fn diff_image(reference: &Image, comparison: &Comparison) -> Image {
     let mut out = reference.clone();
     for &(column, row) in &comparison.mismatched {
@@ -333,15 +284,10 @@ pub fn diff_image(reference: &Image, comparison: &Comparison) -> Image {
     out
 }
 
-/// The colour most of a rectangle is painted: the ground a text run sits
-/// on, with its glyphs outvoted (spec 006 SC-001, the evaluation's gate G1).
-///
-/// Glyphs cover a minority of their own box, and a flat ground is one exact
-/// colour while antialiasing spreads a glyph across many, so the most
-/// frequent *exact* colour inside the box is what is painted behind the
-/// text. Not quantized: dark text on a dark ground -- the very case this
-/// measures -- lands in one bucket at any useful coarseness. The rectangle
-/// is clipped to the image; `None` if nothing is left.
+/// Glyphs cover a minority of their box and a flat ground is one exact colour while antialiasing
+/// spreads a glyph across many, so the most frequent exact colour is what is painted behind the
+/// text. Not quantized: dark text on a dark ground lands in one bucket at any useful coarseness.
+/// Clipped to the image; `None` if nothing is left.
 pub fn ground_behind(
     image: &Image,
     x: usize,
@@ -394,8 +340,6 @@ mod tests {
         image.rgba[at..at + 4].try_into().unwrap()
     }
 
-    /// A 3x3 box blur, one pixel each way: the scale of the difference two
-    /// font rasterisers make, and nothing like a layout difference.
     fn blur(image: &Image) -> Image {
         let mut out = image.clone();
         for y in 0..image.height {
@@ -427,7 +371,6 @@ mod tests {
         out
     }
 
-    /// Insert `rows` rows of `rgba` at `at`, as an extra wrapped line would.
     fn insert_band(image: &Image, at: usize, rows: usize, rgba: [u8; 4]) -> Image {
         let row_bytes = image.width * 4;
         let mut out = Vec::with_capacity(image.rgba.len() + rows * row_bytes);
@@ -443,7 +386,6 @@ mod tests {
     fn the_ground_outvotes_the_glyphs_on_it() {
         let mut image = Image::from_rgba(40, 20, vec![0; 40 * 20 * 4]);
         fill(&mut image, 0, 0, 40, 20, [43, 43, 45, 255]);
-        // A "glyph": a quarter of the box in near-black, antialiased edges.
         fill(&mut image, 5, 5, 10, 10, [34, 34, 34, 255]);
         fill(&mut image, 15, 5, 2, 10, [38, 38, 40, 255]);
         assert_eq!(ground_behind(&image, 0, 0, 40, 20), Some([43, 43, 45]));
@@ -467,7 +409,6 @@ mod tests {
     fn a_lost_card_does_not_match_although_most_cells_agree() {
         let image = reference("html-designed-three-column");
         let mut lost = image.clone();
-        // The middle card ("Trail runner"), painted over with the page's white.
         fill(&mut lost, 313, 340, 175, 132, [255, 255, 255, 255]);
         let comparison = compare(&image, &lost);
         let share = comparison.agreeing as f64 / comparison.cells as f64;
@@ -489,7 +430,6 @@ mod tests {
     #[test]
     fn an_extra_wrapped_line_costs_itself_not_everything_below_it() {
         let image = reference("html-newsletter");
-        // Twenty rows of the page ground, a third of the way down.
         let ground = pixel(&image, 2, 2);
         let drifted = insert_band(&image, image.height / 3, 20, ground);
         let comparison = compare(&image, &drifted);
@@ -510,7 +450,6 @@ mod tests {
     fn the_diff_outlines_exactly_the_cells_that_changed() {
         let image = reference("html-transactional-receipt");
         let mut changed = image.clone();
-        // Exactly cells (10..13, 4..6): 48x32 px, aligned to the grid.
         fill(
             &mut changed,
             10 * CELL,
@@ -527,7 +466,6 @@ mod tests {
         found.sort_unstable();
         assert_eq!(found, expected);
         let diff = diff_image(&image, &comparison);
-        // A changed cell's corner is outlined; an unchanged cell's is not.
         assert_eq!(pixel(&diff, 10 * CELL, 4 * CELL), [255, 0, 255, 255]);
         assert_ne!(pixel(&diff, 2 * CELL, 2 * CELL), [255, 0, 255, 255]);
     }

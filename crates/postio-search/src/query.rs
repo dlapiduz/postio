@@ -1,114 +1,61 @@
-//! The structured result of parsing a search query.
-//!
-//! A [`ParsedQuery`] is a flat, ordered list of [`Token`]s. That shape is
-//! deliberate: the query executor wants the *filters* and the *free text*
-//! separated, while the search bar wants the *tokens in source order with their
-//! spans* so it can draw one chip per token. Both views come off the same list — see [`ParsedQuery::filters`]
-//! and [`ParsedQuery::tokens`].
-
 use chrono::NaiveDate;
 
-/// A byte range inside the original query string.
-///
-/// Always lands on `char` boundaries, so `&input[span.start..span.end]` is safe
-/// for the input the query was parsed from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Span {
-    /// Byte offset of the first character of the token.
     pub start: usize,
-    /// Byte offset one past the last character of the token.
     pub end: usize,
 }
 
 impl Span {
-    /// Builds a span.
     pub fn new(start: usize, end: usize) -> Self {
         Self { start, end }
     }
 
-    /// Length of the span in bytes.
     pub fn len(&self) -> usize {
         self.end.saturating_sub(self.start)
     }
 
-    /// Whether the span covers no text.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
-    /// Whether `offset` falls inside the span, counting both edges so a caret
-    /// resting against either end of a chip still selects it.
+    /// Counts both edges so a caret resting against either end of a chip still selects it.
     pub fn contains(&self, offset: usize) -> bool {
         offset >= self.start && offset <= self.end
     }
 }
 
-/// The operator keywords Postio understands.
-///
-/// The spellings come from the design canvas (artboard 2b) and are recorded in
-/// `docs/PRODUCT.md` §7: it is `has:attach` and `is:flagged`, with the older
-/// `has:attachment` and `is:starred` accepted as aliases.
+/// Spellings come from the design canvas (`docs/PRODUCT.md` §7): `has:attach` and `is:flagged`,
+/// with `has:attachment` and `is:starred` accepted as aliases.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Field {
-    /// `from:` — sender address or display name.
     From,
-    /// `to:` — recipient address or display name (To, Cc or Bcc).
     To,
-    /// `subject:` — subject line.
     Subject,
-    /// `has:` — a structural property: `has:attach`, or `has:action`.
     Has,
-    /// `is:` — a flag state, `is:unread`, `is:read`, `is:flagged`, or what a
-    /// message's promoted headers say, `is:bulk`, `is:automated`.
     Is,
-    /// `before:` — messages strictly older than a date.
     Before,
-    /// `after:` — messages on or after a date.
     After,
-    /// `in:` — mailbox name or role.
     In,
-    /// `filename:` — attachment filename.
     Filename,
-    /// `larger:` — message size floor.
     Larger,
-    /// `smaller:` — message size ceiling.
     Smaller,
-    /// `list:` — `List-Id` mailing list.
     List,
-    /// `account:` — which account's mail, by name or address.
-    ///
-    /// Orthogonal to the tri-tab's role scope rather than a fourth value of
-    /// it (#186): "this account's inbox" and "every account's inbox" are both
-    /// things to be able to ask for, so account and role compose.
+    /// Orthogonal to the role scope (#186): "this account's inbox" and "every account's inbox" are
+    /// both things to ask for.
     Account,
-    /// `with:` — from, to, cc or bcc is exactly one of these addresses
-    /// (specs/005-contacts R6): what picking a person writes.
     With,
-    /// `group:` — a named contact group, by name.
-    ///
-    /// A group answers *which people*, not which messages, so
-    /// unlike every other field here it cannot be expressed any other way
-    /// in this language — it composes with the rest rather than replacing
-    /// them, resolved by `postio-index` to the member address set.
+    /// A group answers which people, not which messages, so it composes with the rest;
+    /// `postio-index` resolves it to the member address set.
     Group,
-    /// `header:x-mailer=mutt` — an arbitrary RFC 5322 field, by name and
-    /// optionally by what its value contains.
-    ///
-    /// The general, late-answering operator for everything the envelope does
-    /// not carry (ADR 0025). A header that must be matchable *before* the
-    /// body arrives is promoted to an operator of its own instead — `list:`
-    /// is one that was.
+    /// The late-answering operator for everything the envelope does not carry (ADR 0025); a header
+    /// that must match before the body arrives is promoted to its own operator (`list:`).
     Header,
-    /// `label:` — a label the message carries, by name, case-insensitively.
-    ///
-    /// Spec 010 (S2): one operator of the shared language, so it means the
-    /// same thing in every interface. A name with spaces is quoted, as a
-    /// `subject:` phrase is: `label:"Q3 close"`.
+    /// A name with spaces is quoted, as a `subject:` phrase is.
     Label,
 }
 
 impl Field {
-    /// Every field, in the order the search bar's completion popup offers them.
     pub const ALL: &'static [Field] = &[
         Field::From,
         Field::To,
@@ -132,7 +79,6 @@ impl Field {
         Field::Header,
     ];
 
-    /// The canonical keyword, without the trailing colon.
     pub fn keyword(&self) -> &'static str {
         match self {
             Field::From => "from",
@@ -155,8 +101,6 @@ impl Field {
         }
     }
 
-    /// Resolves a keyword, case-insensitively. Unknown keywords are not
-    /// operators at all — the caller treats them as free text.
     pub fn parse(keyword: &str) -> Option<Field> {
         match keyword.to_ascii_lowercase().as_str() {
             "from" => Some(Field::From),
@@ -180,9 +124,6 @@ impl Field {
         }
     }
 
-    /// Whether the field takes a free-form value that is useful the moment the
-    /// first character is typed (`from:al` already narrows), as opposed to one
-    /// drawn from a fixed vocabulary (`is:`) or needing a full parse (`after:`).
     pub fn takes_free_text(&self) -> bool {
         matches!(
             self,
@@ -202,133 +143,67 @@ impl Field {
 }
 
 impl Field {
-    /// Whether the field takes a braced set of values, `from:{ada tomas}`
-    /// (spec 010, D26): every field whose value is a name. `header:` has a
-    /// grammar of its own inside its value, and a flag, a date or a size
+    /// Every field whose value is a name. `header:` has its own grammar, and a flag, date or size
     /// asked for "either" is better asked once.
     pub fn takes_set(&self) -> bool {
         self.takes_free_text() && *self != Field::Header
     }
 }
 
-/// A message flag state, for `is:`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum State {
-    /// `is:unread` — `\Seen` is absent.
     Unread,
-    /// `is:read` — `\Seen` is present.
     Read,
-    /// `is:flagged` — `\Flagged` is present. The canvas says "Flagged", never
-    /// "Starred", but `is:starred` is accepted on input.
     Flagged,
-    /// `is:bulk` — the message offers `List-Unsubscribe`, or says
-    /// `Precedence: bulk`, `list` or `junk` (spec 007, research R8).
     Bulk,
-    /// `is:automated` — the message says `Auto-Submitted` other than `no`.
     Automated,
 }
 
-/// One structured constraint, with its value already parsed.
-///
-/// Values stay as plain data — no `MailboxId`, no `Flag`, no SQL. Resolving
-/// `in:archive` against the account's folders and turning dates into timestamps
-/// is the executor's job.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Filter {
-    /// `from:alice`
     From(String),
-    /// `to:bob`
     To(String),
-    /// `subject:invoice`
     Subject(String),
-    /// `in:archive` — a mailbox name, path or role name.
     In(String),
-    /// `filename:contract.pdf`
     Filename(String),
-    /// `list:lkml`
     List(String),
-    /// `account:work` — an account by name or address, unresolved.
-    ///
-    /// Deliberately still text. Resolving it to an `AccountId` needs the
-    /// store, which this crate does not have and must not grow: a saved
-    /// search in `[saved_searches]` is the string the user typed, and it has to keep
-    /// meaning the same thing after an account is removed and re-added under
-    /// a new id.
+    /// Deliberately still text: resolving needs the store, and a saved search is the string the
+    /// user typed, which must keep meaning the same after an account is removed and re-added.
     Account(String),
-    /// `with:ada@work.example,ada@home.example` — any of these addresses, by
-    /// exact normalised address, in From, To, Cc or Bcc (specs/005-contacts
-    /// R6). Picking a person writes one with every address they own; the
-    /// language has no `or`, and this is the one place it needs "any of".
-    ///
-    /// Addresses, not a person: a search pinned from it names the addresses
-    /// as they were, and does not follow a later join (the maintainer's
-    /// choice, 2026-09-23).
+    /// Addresses, not a person: a search pinned from it names the addresses as they were and does
+    /// not follow a later join.
     With(Vec<String>),
-    /// `group:family` — a contact group by name, unresolved.
-    ///
-    /// Stays text for the same reason `Account` does: resolving it to
-    /// member addresses needs the store, which this crate does not have.
-    /// `postio-index` does the resolving.
+    /// Stays text for the same reason `Account` does; `postio-index` resolves it.
     Group(String),
-    /// `header:x-mailer` — presence — or `header:x-mailer=mutt`.
-    ///
-    /// `name` is already lowercased and `value` already normalized, both by
-    /// `postio_model::headers`, because the column this is matched against
-    /// holds exactly that form. Doing it here rather than at the executor is
-    /// what lets the in-memory matcher (#479) and the index agree without
-    /// each writing its own: a `Filter::Header` means the same comparison
-    /// wherever it is evaluated.
-    ///
-    /// `value: None` is `header:x-mailer` — "the message has such a field" —
-    /// and is deliberately not `Some("")`: presence and "contains the empty
-    /// string" happen to select the same rows today, and would stop doing so
-    /// the moment either side grew a notion of an empty value.
+    /// `name` is lowercased and `value` normalized by `postio_model::headers`, the form the column
+    /// holds, so the in-memory matcher and the index agree.
+    /// `value: None` is presence, deliberately not `Some("")`: they select the same rows today but
+    /// would stop when either side grew a notion of an empty value.
     Header {
-        /// The field name, lowercased. Matched exactly, never as a substring.
         name: String,
-        /// What the value must contain, or `None` to ask only for presence.
         value: Option<String>,
     },
-    /// `has:attach`
     HasAttachment,
-    /// `label:atlas` — a label by name, unresolved.
-    ///
-    /// Text for the reason `Account` is: a saved search is the string the
-    /// user typed, and a label's id changes when it is re-created.
-    /// `postio-index` resolves it against `labels.name`, case-insensitively.
+    /// Text for the reason `Account` is: a label's id changes when it is re-created.
     Label(String),
-    /// `has:action` — the message carries an open marker (an undismissed
-    /// `markers` row).
     HasAction,
-    /// `is:unread`, `is:read`, `is:flagged`, `is:bulk`, `is:automated`
     Is(State),
-    /// `after:2026-01-01` — on or after this date, inclusive.
     After(NaiveDate),
-    /// `before:2026-02-01` — strictly before this date.
     Before(NaiveDate),
-    /// `larger:1M` — size in bytes, inclusive.
     Larger(u64),
-    /// `smaller:1M` — size in bytes, inclusive.
     Smaller(u64),
-    /// `from:{ada tomas}` — either of several values of one field (spec
-    /// 010, D26): holds when any member does, and negated when none does.
+    /// Holds when any member does; negated, when none does.
     AnyOf(AnyOf),
 }
 
-/// Two or more filters of one field that takes a set ([`Field::takes_set`]),
-/// none of them a set itself: what `from:{ada tomas}` asks for.
-///
-/// Its members are private and [`AnyOf::new`] is the only way in, so every
-/// reader -- the executor, the conversation search, the matcher, the chips
-/// -- can rely on one field and no nesting without checking for it.
+/// Members are private and [`AnyOf::new`] is the only way in, so every reader can rely on one field
+/// and no nesting.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AnyOf {
     members: Vec<Filter>,
 }
 
 impl AnyOf {
-    /// A set of `members`, or `None` when they are fewer than two, of
-    /// different fields, of a field that takes no set, or a set among them.
     pub fn new(members: Vec<Filter>) -> Option<AnyOf> {
         let field = members.first()?.field();
         let fits = members.len() >= 2
@@ -339,19 +214,16 @@ impl AnyOf {
         fits.then_some(AnyOf { members })
     }
 
-    /// The values, as filters, in the order they were written.
     pub fn members(&self) -> &[Filter] {
         &self.members
     }
 
-    /// The one field every member is of.
     pub fn field(&self) -> Field {
         self.members[0].field()
     }
 }
 
 impl Filter {
-    /// The operator this filter came from, for chip labels and completion.
     pub fn field(&self) -> Field {
         match self {
             Filter::From(_) => Field::From,
@@ -376,9 +248,6 @@ impl Filter {
         }
     }
 
-    /// What the filter accepts any one of: a set's members, or the filter
-    /// itself. How a reader that lists values -- highlights, chips, a
-    /// button's label -- reads a set without matching on it.
     pub fn alternatives(&self) -> &[Filter] {
         match self {
             Filter::AnyOf(set) => set.members(),
@@ -386,8 +255,6 @@ impl Filter {
         }
     }
 
-    /// `members` as one filter: the member itself when there is one, a set
-    /// when there are more ([`AnyOf::new`]'s rules), `None` otherwise.
     pub fn any_of(mut members: Vec<Filter>) -> Option<Filter> {
         if members.len() == 1 {
             return members
@@ -398,70 +265,45 @@ impl Filter {
     }
 }
 
-/// A [`Filter`] plus whether it was negated with a leading `-`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Clause {
-    /// `-from:bob` excludes rather than includes.
     pub negated: bool,
-    /// The constraint itself.
     pub filter: Filter,
 }
 
-/// A recognized operator whose value is not usable yet.
-///
-/// This is what keeps as-you-type search from erroring: `is:` and `is:unr` and
-/// `after:2026-` are all perfectly ordinary intermediate states. A partial
-/// constrains nothing — the executor ignores it — but it carries enough for the
-/// search bar to draw a pending chip and offer completions.
+/// Keeps as-you-type search from erroring. A partial constrains nothing; it carries enough for a
+/// pending chip and completions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Partial {
-    /// Whether a leading `-` was typed.
     pub negated: bool,
-    /// The operator that was recognized.
     pub field: Field,
-    /// Whatever has been typed after the colon so far, possibly empty.
     pub value: String,
 }
 
-/// A free-text term, destined for the FTS5 `MATCH` expression.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TextTerm {
-    /// `-docker` excludes the term.
     pub negated: bool,
-    /// The term with any surrounding quotes removed. A quoted term keeps its
-    /// spaces and is matched as an FTS5 phrase.
     pub value: String,
-    /// Whether it was typed in quotes: this word, exactly. Every term is
-    /// matched exactly either way; what the quotes add is that the search
-    /// box never answers one that found nothing with a different word.
+    /// Every term is matched exactly either way; quotes add that the search box never answers one
+    /// that found nothing with a different word.
     pub quoted: bool,
 }
 
-/// What a [`Token`] turned out to be.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TokenKind {
-    /// A complete operator that constrains results.
     Filter(Clause),
-    /// A recognized operator that is still being typed.
     Partial(Partial),
-    /// Free text.
     Text(TextTerm),
 }
 
-/// One chip's worth of query: a slice of the input and what it means.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Token {
-    /// Where the token sits in the original query string.
     pub span: Span,
-    /// The exact source text, quotes, leading `-` and all. This is the chip's
-    /// label.
     pub raw: String,
-    /// The parsed meaning.
     pub kind: TokenKind,
 }
 
 impl Token {
-    /// The operator this token belongs to, or `None` for free text.
     pub fn field(&self) -> Option<Field> {
         match &self.kind {
             TokenKind::Filter(clause) => Some(clause.filter.field()),
@@ -470,7 +312,6 @@ impl Token {
         }
     }
 
-    /// Whether the token was negated with a leading `-`.
     pub fn negated(&self) -> bool {
         match &self.kind {
             TokenKind::Filter(clause) => clause.negated,
@@ -480,28 +321,17 @@ impl Token {
     }
 }
 
-/// A parsed query: everything the executor and the search bar need, and nothing
-/// that depends on the clock, the database or the network.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ParsedQuery {
     pub(crate) input: String,
     pub(crate) tokens: Vec<Token>,
-    /// Whether a near word counts too: see [`forgiving`](Self::forgiving).
     pub(crate) forgiving: bool,
-    /// Whether `from:` and `to:` know people: see
-    /// [`contact_aware`](Self::contact_aware).
     pub(crate) contact_aware: bool,
 }
 
 impl ParsedQuery {
-    /// This query, asked so that `from:` and `to:` know people
-    /// (specs/011-focus-contacts S4): a word that names a contact finds the
-    /// mail of every address they own, and `from:@Group` the mail of every
-    /// member, beside the words in the header. Off, they mean what they
-    /// always have.
-    ///
-    /// An option of the caller, never of the query text, as
-    /// [`forgiving`](Self::forgiving) is: a saved search, a rule and a
+    /// A word that names a contact finds the mail of every address they own, `from:@Group` every
+    /// member's. An option of the caller, never of the query text: a saved search, a rule and a
     /// frontend that has not adopted people mean what they say.
     #[must_use]
     pub fn contact_aware(mut self) -> Self {
@@ -509,47 +339,34 @@ impl ParsedQuery {
         self
     }
 
-    /// Whether `from:` and `to:` know people: [`contact_aware`](Self::contact_aware).
     pub fn is_contact_aware(&self) -> bool {
         self.contact_aware
     }
 
-    /// This query, asked the forgiving way: after the words it says, the
-    /// words near them -- a plural, an unfinished word, a misspelling --
-    /// ranked below every exact match (ADR 0037, as amended).
-    ///
-    /// For a person searching, never for a rule. A query *string* is always
-    /// exact, so a saved search, a virtual folder and a rule mean exactly
-    /// what they say however they are run; only the caller that is showing
-    /// results to somebody watching marks the query forgiving, and nothing
-    /// typed can.
+    /// For a person searching, never a rule: a query string is always exact, so a saved search,
+    /// folder or rule means what it says, and nothing typed can mark a query forgiving.
     #[must_use]
     pub fn forgiving(mut self) -> Self {
         self.forgiving = true;
         self
     }
 
-    /// Whether near words count: [`forgiving`](Self::forgiving).
     pub fn is_forgiving(&self) -> bool {
         self.forgiving
     }
 
-    /// The query string this was parsed from.
     pub fn input(&self) -> &str {
         &self.input
     }
 
-    /// Every token, in source order.
     pub fn tokens(&self) -> &[Token] {
         &self.tokens
     }
 
-    /// Whether the query constrains nothing at all.
     pub fn is_empty(&self) -> bool {
         self.tokens.is_empty()
     }
 
-    /// The structured constraints, in source order.
     pub fn filters(&self) -> impl Iterator<Item = &Clause> {
         self.tokens.iter().filter_map(|token| match &token.kind {
             TokenKind::Filter(clause) => Some(clause),
@@ -557,7 +374,6 @@ impl ParsedQuery {
         })
     }
 
-    /// Operators that are still being typed. They constrain nothing.
     pub fn partials(&self) -> impl Iterator<Item = &Partial> {
         self.tokens.iter().filter_map(|token| match &token.kind {
             TokenKind::Partial(partial) => Some(partial),
@@ -565,7 +381,6 @@ impl ParsedQuery {
         })
     }
 
-    /// The free-text terms, in source order.
     pub fn text_terms(&self) -> impl Iterator<Item = &TextTerm> {
         self.tokens.iter().filter_map(|token| match &token.kind {
             TokenKind::Text(term) => Some(term),
@@ -573,15 +388,9 @@ impl ParsedQuery {
         })
     }
 
-    /// The free-text terms worth matching: [`text_terms`](Self::text_terms)
-    /// without a single unquoted character.
-    ///
-    /// A single character is too little to search for. It is in most of a
-    /// mailbox -- every "Hannah's" says "s" -- so it narrows nothing, and the
-    /// bar asks for it on the first keystroke of every word: matching it
-    /// over a store of 80,000 messages ran for three minutes and held every
-    /// other search behind it. Quoted, it was asked for; a digit is a word;
-    /// a negation excludes and costs nothing to keep.
+    /// A single character is too little: it is in most of a mailbox, and matching it over 80,000
+    /// messages ran three minutes. Quoted, it was asked for; a digit is a word; a negation costs
+    /// nothing.
     pub fn searchable_terms(&self) -> impl Iterator<Item = &TextTerm> {
         self.text_terms().filter(|term| {
             term.quoted
@@ -591,21 +400,13 @@ impl ParsedQuery {
         })
     }
 
-    /// Whether there is anything to search by: a word worth matching or a
-    /// filter. A query of single letters alone is not yet a search.
     pub fn is_searchable(&self) -> bool {
         self.searchable_terms().next().is_some() || self.filters().next().is_some()
     }
 
-    /// The free-text portion as an FTS5 `MATCH` expression, or `None` when
-    /// there is nothing positive to match on.
-    ///
-    /// Every term is emitted as a quoted FTS5 string literal, so words a user
-    /// types — `AND`, `OR`, `NEAR`, `*`, `(` — are matched literally instead of
-    /// being read as query syntax. Negated terms become an FTS5 `NOT` group,
-    /// which needs something on its left; a query whose only free text is
-    /// negated therefore yields `None`, and the executor excludes those terms
-    /// itself using [`ParsedQuery::text_terms`].
+    /// Every term is a quoted FTS5 literal, so `AND`, `NEAR` and `*` match literally. A query whose
+    /// only free text is negated yields `None` (a `NOT` group needs a left side); the executor
+    /// excludes those terms itself.
     pub fn fts_match(&self) -> Option<String> {
         let mut positive = Vec::new();
         let mut negative = Vec::new();
@@ -629,18 +430,10 @@ impl ParsedQuery {
     }
 }
 
-/// The canonical text of a clause: the one form term edits write (D13).
-///
-/// A chip's ✕, a filter button and a relaxation all rewrite the query
-/// string, and each would otherwise write whatever spelling came to hand --
-/// `has:attach` here, `has:attachments` there. This is the one spelling:
-/// `has:attachment`, `is:unread`, `has:action`, ISO dates, sizes in the
-/// largest binary unit that divides them exactly, and a value quoted when it
-/// holds whitespace (`label:"Q3 close"`). The parser still reads every form
-/// it reads today; [`crate::parse`] of the result is `clause` again.
-///
-/// A value containing a `"` cannot be written in this language at all (a
-/// quote only ever groups), so no spelling of it round-trips.
+/// The one spelling term edits write (D13): `has:attachment`, `is:unread`, ISO dates, sizes in the
+/// largest binary unit that divides them, a value quoted when it holds whitespace. [`crate::parse`]
+/// of the result is `clause` again.
+/// A value containing a `"` cannot be written in this language.
 pub fn spell(clause: &Clause) -> String {
     let body = spell_filter(&clause.filter);
     if clause.negated {
@@ -650,8 +443,6 @@ pub fn spell(clause: &Clause) -> String {
     }
 }
 
-/// [`spell`] without the negation. A set is its field's keyword and its
-/// members' values in braces (D26).
 fn spell_filter(filter: &Filter) -> String {
     match filter {
         Filter::AnyOf(set) => {
@@ -670,7 +461,6 @@ fn spell_filter(filter: &Filter) -> String {
     }
 }
 
-/// One value's filter, spelled.
 fn spell_one(filter: &Filter) -> String {
     match filter {
         Filter::From(value)
@@ -710,8 +500,6 @@ fn spell_one(filter: &Filter) -> String {
     }
 }
 
-/// A value as typed: bare when it is one word, in quotes when it is not --
-/// or when a brace in it would read as a set's (D26).
 fn quoted(value: &str) -> String {
     if value.is_empty()
         || value
@@ -724,8 +512,6 @@ fn quoted(value: &str) -> String {
     }
 }
 
-/// `1048576` as `1M`: the largest binary unit that divides it exactly, so
-/// the spelling reads back to the same number of bytes.
 fn spell_size(bytes: u64) -> String {
     const UNITS: [(u64, &str); 3] = [(1 << 30, "G"), (1 << 20, "M"), (1 << 10, "K")];
     UNITS
@@ -735,12 +521,8 @@ fn spell_size(bytes: u64) -> String {
         .unwrap_or_else(|| bytes.to_string())
 }
 
-/// Wraps a term as an FTS5 string literal, doubling embedded quotes.
-///
-/// `pub` rather than private: `postio-index`'s executor needs it too, to
-/// build the exclusion `MATCH` it runs itself when
-/// [`ParsedQuery::fts_match`] returns `None` for a query that is all negated
-/// text (see that method's docs).
+/// `pub` because `postio-index`'s executor needs it for the exclusion `MATCH` when
+/// [`ParsedQuery::fts_match`] returns `None`.
 pub fn fts_literal(value: &str) -> String {
     let mut out = String::with_capacity(value.len() + 2);
     out.push('"');
@@ -760,9 +542,6 @@ mod tests {
 
     #[test]
     fn a_one_character_word_is_not_searched_for() {
-        // Typing "southwest" asks for "s" first; and "Hannah's" says "s".
-        // A single letter is in most of a mailbox and says nothing, and
-        // matching it ran for minutes over a large store.
         let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 8).unwrap();
         let fts = |text: &str| crate::parse(text, today).fts_match();
         assert_eq!(fts("s"), None, "nothing to match yet");
@@ -838,11 +617,6 @@ mod tests {
         assert!(!Field::After.takes_free_text());
     }
 
-    /// Every `Filter` variant names the `Field` it actually came from --
-    /// checked one at a time rather than trusting the `match`'s exhaustiveness
-    /// to mean the mapping is right. The compiler only proves every arm is
-    /// present, not that `Filter::List` does not answer `Field::From` by a
-    /// copy-paste from the arm above it.
     #[test]
     fn every_filter_names_its_own_field() {
         let cases = [
@@ -885,9 +659,6 @@ mod tests {
 
     #[test]
     fn negated_reads_the_matching_variant_not_a_fixed_one() {
-        // Each arm reads a different struct's own `negated` field; a token
-        // built from the *other* two kinds proves this is not one field
-        // three names all happen to resolve to.
         let filter_token = token(TokenKind::Filter(Clause {
             negated: true,
             filter: Filter::HasAttachment,

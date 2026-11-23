@@ -1,24 +1,3 @@
-//! The message window's thread bar at 500 members (spec 013 T086, plan.md
-//! step 4), against the 16 ms interaction budget.
-//!
-//! `postio_ui::thread_bar::chips` is a pure function the controller runs on
-//! every step of the window's walk and on every resize, over the whole
-//! thread. This times it over a thread of 500 messages at the widths a
-//! window has: eight chips (a narrow window, where the middle folds into
-//! "... N more"), and room for every one. A search matching a tenth of the
-//! thread is the worst case for the `matched` lookup.
-//!
-//! **Reported, never gated** (Constitution V): `bench.yml` compiles this and
-//! times nothing. Per plan.md's stop rule, a p95 over 16 ms stops step 4 and
-//! asks the maintainer, with the option of capping the read.
-//!
-//! ```sh
-//! cargo bench -p postio-bench --bench thread_bar
-//! ```
-
-#![allow(missing_docs)]
-// A bench is not public API.
-
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
@@ -27,13 +6,10 @@ use postio_model::thread_view::{Line, ThreadMember};
 use postio_model::{AccountId, EmailAddress, MessageId, Thread};
 use postio_ui::thread_bar::chips;
 
-/// Members of the thread: past anything the seed has.
 const MEMBERS: usize = 500;
 
-/// Calls timed per case.
 const SAMPLES: usize = 2_000;
 
-/// The thread, as the store holds it.
 fn thread() -> Thread {
     let first = Utc.with_ymd_and_hms(2026, 1, 5, 9, 0, 0).unwrap();
     Thread {
@@ -46,7 +22,6 @@ fn thread() -> Thread {
     }
 }
 
-/// What reading it gives: one member per message, a tenth unread.
 fn members(thread: &Thread) -> Vec<ThreadMember> {
     let names = ["Ben Adeyemi", "Ana Ruiz", "Lena Park", "Tomas Reyes"];
     thread
@@ -70,7 +45,6 @@ fn members(thread: &Thread) -> Vec<ThreadMember> {
         .collect()
 }
 
-/// p50 and p95 of `run` over [`SAMPLES`] calls.
 fn percentiles(mut run: impl FnMut()) -> (Duration, Duration) {
     for _ in 0..50 {
         run();

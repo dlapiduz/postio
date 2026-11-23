@@ -1,35 +1,7 @@
-//! An in-memory [`MailBackend`], with injectable faults and latency.
-//!
-//! This is not test-only scaffolding tucked behind `#[cfg(test)]`: it is the
-//! implementation `postio-sync` is *developed* against. The whole sync engine
-//! — operation queue, resync, backoff, conflict handling — can be written and
-//! tested before a socket is opened, and CLAUDE.md's rule that no test in the
-//! default suite touches the network is a consequence rather than a chore.
-//!
-//! ```
-//! # use postio_account::backend::{Fault, MailBackend, MockBackend, MockMailbox};
-//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let backend = MockBackend::builder()
-//!     .capabilities(["IMAP4rev1", "CONDSTORE", "QRESYNC", "IDLE", "UIDPLUS"])
-//!     .mailbox(MockMailbox::new("INBOX"))
-//!     .build();
-//!
-//! backend.connect().await?;
-//! backend.inject(Fault::Disconnect);
-//!
-//! assert!(backend.status("INBOX").await.unwrap_err().is_transient());
-//! # Ok(())
-//! # }
-//! ```
-//!
-//! # What it does not do
-//!
-//! The mock has no MIME parser. It reads a handful of headers to build an
-//! [`Envelope`] — enough for threading and list rendering — and takes a
-//! [`BodyStructure`] as given rather than deriving one. Parsing bytes into the
-//! model is `postio-model`'s job, and describing a MIME tree is the real
-//! backend's; duplicating either here would mean testing them against
-//! themselves.
+//! In-memory `MailBackend` that `postio-sync` is developed against, with injectable faults and
+//! latency, so no default-suite test touches the network.
+//! It has no MIME parser: envelopes come from a few headers and a `BodyStructure` is given, or
+//! parser tests would test themselves.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -52,46 +24,23 @@ use super::{
     MailboxEvent, MailboxFilter, MailboxStatus, MailboxSummary, SelectMode, UidMapping, UidSet,
 };
 
-/// How much of a body the mock hands to a sink at a time.
 const DEFAULT_CHUNK: usize = 64 * 1024;
 
-/// The host name the mock claims to be, so error messages read like real ones.
 const DEFAULT_HOST: &str = "mock.invalid";
 
-// ---------------------------------------------------------------------------
-// Faults
-// ---------------------------------------------------------------------------
-
-/// A failure to make the backend produce on demand.
-///
-/// Every one of these is a thing a real server does and a thing the sync
-/// engine has to survive. Scheduling them by call index
-/// ([`MockBackend::inject_after`]) is what makes a retry path testable: the
-/// failure lands on a known call and the recovery is observable.
+/// Scheduled by call index (`inject_after`) so a retry path lands on a known call.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Fault {
-    /// The connection dies mid-command. The session is closed, so the *next*
-    /// call fails with [`BackendError::NotConnected`] until something
-    /// reconnects.
+    /// The session closes, so the next call fails with `NotConnected` until something reconnects.
     Disconnect,
-    /// The server never answers.
     Timeout,
-    /// The credentials are refused. Retrying will not help.
     AuthFailed,
-    /// The server asks us to slow down.
     RateLimited(Option<Duration>),
-    /// The server understood the command and said no.
     Rejected(String),
-    /// The transport failed.
     Io(String),
 }
 
-// ---------------------------------------------------------------------------
-// Seed types
-// ---------------------------------------------------------------------------
-
-/// A message to seed a [`MockMailbox`] with.
 #[derive(Clone, Debug, Default)]
 pub struct MockMessage {
     raw: Vec<u8>,
@@ -102,7 +51,6 @@ pub struct MockMessage {
 }
 
 impl MockMessage {
-    /// A message from its raw RFC 5322 bytes.
     pub fn new(raw: impl Into<Vec<u8>>) -> Self {
         Self {
             raw: raw.into(),
@@ -110,34 +58,24 @@ impl MockMessage {
         }
     }
 
-    /// Sets the flags the message already carries.
     pub fn with_flags(mut self, flags: FlagSet) -> Self {
         self.flags = flags;
         self
     }
 
-    /// Seeds the bytes a `BODY[<section>]` fetch returns for one MIME part.
-    ///
-    /// The mock has no MIME parser and deliberately does not grow one: if it
-    /// did, every parser test would be testing the parser against itself (see
-    /// the [`sketch`] module's own warning). So a part's bytes are stated,
-    /// exactly as its envelope and its `BODYSTRUCTURE` are.
-    ///
-    /// `bytes` are what the wire carries -- still base64 or quoted-printable,
-    /// with no headers of their own -- because that is what a real server
-    /// hands back and what the code under test has to cope with.
+    /// Part bytes are stated, not parsed: the mock has no MIME parser, or parser tests would test
+    /// themselves.
+    /// `bytes` are what the wire carries: still encoded, no headers.
     pub fn with_part(mut self, section: impl Into<String>, bytes: impl Into<Vec<u8>>) -> Self {
         self.parts.insert(section.into(), bytes.into());
         self
     }
 
-    /// Sets `INTERNALDATE`; otherwise it is taken from the `Date` header.
     pub fn with_internal_date(mut self, internal_date: DateTime<Utc>) -> Self {
         self.internal_date = Some(internal_date);
         self
     }
 
-    /// Sets the MIME structure the server should report for this message.
     pub fn with_structure(mut self, structure: BodyStructure) -> Self {
         self.structure = Some(structure);
         self
@@ -162,7 +100,6 @@ impl From<&str> for MockMessage {
     }
 }
 
-/// A mailbox to seed a [`MockBackend`] with.
 #[derive(Clone, Debug)]
 pub struct MockMailbox {
     path: String,
@@ -176,7 +113,6 @@ pub struct MockMailbox {
 }
 
 impl MockMailbox {
-    /// An empty mailbox at `path`.
     pub fn new(path: impl Into<String>) -> Self {
         Self {
             path: path.into(),
@@ -190,28 +126,19 @@ impl MockMailbox {
         }
     }
 
-    /// Sets the UID the first message is given.
-    ///
-    /// Models a folder that has been in use for a while: everything below
-    /// `uid` was expunged years ago, so `UIDNEXT` is far larger than the
-    /// number of messages left. That gap is invisible in a mailbox seeded
-    /// from UID 1 — where the UID ceiling and the message count are the same
-    /// number — and it is exactly what `postio-qhz.9` was about.
+    /// Models a folder in long use: `UIDNEXT` far above the message count, invisible when seeded
+    /// from UID 1 (postio-qhz.9).
     pub fn starting_uid(mut self, uid: u32) -> Self {
         self.starting_uid = uid.max(1);
         self
     }
 
-    /// Sets the hierarchy delimiter the server reports.
     pub fn delimiter(mut self, delimiter: char) -> Self {
         self.delimiter = Some(delimiter);
         self
     }
 
-    /// Sets the `LIST` attributes, e.g. `\Sent` or `\Noselect`.
-    ///
-    /// This is how a test covers a server that *does* advertise `SPECIAL-USE`;
-    /// leaving them off is how it covers iCloud, which does not.
+    /// Leaving them off covers iCloud, which advertises no `SPECIAL-USE`.
     pub fn attributes<I, S>(mut self, attributes: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -221,35 +148,26 @@ impl MockMailbox {
         self
     }
 
-    /// Sets whether the account is subscribed to this mailbox.
     pub fn subscribed(mut self, subscribed: bool) -> Self {
         self.subscribed = subscribed;
         self
     }
 
-    /// Sets the mailbox's UID generation.
     pub fn uid_validity(mut self, uid_validity: UidValidity) -> Self {
         self.uid_validity = uid_validity;
         self
     }
 
-    /// Sets the modification sequence the mailbox starts at.
     pub fn highest_mod_seq(mut self, highest_mod_seq: ModSeq) -> Self {
         self.highest_mod_seq = highest_mod_seq;
         self
     }
 
-    /// Adds a message. UIDs are assigned in insertion order, from
-    /// [`starting_uid`](Self::starting_uid).
     pub fn message(mut self, message: impl Into<MockMessage>) -> Self {
         self.messages.push(message.into());
         self
     }
 
-    /// Adds messages from the `.eml` corpus, by fixture name.
-    ///
-    /// The corpus is the same one every other crate tests against, so a sync
-    /// test and a parser test are looking at the same bytes.
     #[cfg(feature = "test-corpus")]
     pub fn corpus<I, S>(mut self, names: I) -> Self
     where
@@ -265,10 +183,6 @@ impl MockMailbox {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Internal state
-// ---------------------------------------------------------------------------
-
 #[derive(Clone, Debug)]
 struct MessageState {
     uid: u32,
@@ -278,8 +192,6 @@ struct MessageState {
     mod_seq: u64,
     envelope: Envelope,
     structure: Option<BodyStructure>,
-    /// Bytes a `BODY[<section>]` fetch answers with, as seeded by
-    /// [`MockMessage::with_part`].
     parts: HashMap<String, Vec<u8>>,
 }
 
@@ -291,8 +203,6 @@ struct MailboxState {
     highest_mod_seq: u64,
     messages: Vec<MessageState>,
     pending: Vec<MailboxEvent>,
-    /// The generation the caller still believes in, once the UID space has
-    /// been renumbered underneath it.
     stale_since: Option<UidValidity>,
 }
 
@@ -338,13 +248,8 @@ impl MailboxState {
         uid
     }
 
-    /// Adds a message that is *arriving now*, rather than being seeded.
-    ///
-    /// RFC 7162 §3.1.2.1 requires a new message's MODSEQ to be strictly
-    /// greater than the mailbox's previous HIGHESTMODSEQ, so the counter moves
-    /// before the message is stamped with it. Push first and a
-    /// `FETCH (CHANGEDSINCE <the value observed a moment ago>)` — which is
-    /// strictly greater-than — would never report the arrival at all.
+    /// Bumps the counter before stamping: RFC 7162 §3.1.2.1 needs a new MODSEQ strictly above the
+    /// previous HIGHESTMODSEQ, or `CHANGEDSINCE` would never report the arrival.
     fn push_arriving(&mut self, message: MockMessage) -> u32 {
         self.bump_mod_seq();
         self.push(message)
@@ -402,90 +307,41 @@ struct State {
     connected: bool,
     capabilities: Capabilities,
     mailboxes: Vec<MailboxState>,
-    /// `(call index to fire on, fault)`, in schedule order.
     faults: Vec<(u64, Fault)>,
-    /// A fault every call fails with until cleared. See
-    /// [`MockBackend::fail_all`].
     persistent_fault: Option<Fault>,
-    /// A fault every body fetch fails with until cleared. See
-    /// [`MockBackend::fail_body_fetches`].
     body_fault: Option<Fault>,
     latency: Duration,
     calls: u64,
-    /// The reason `create_mailbox` refuses with, when it is set to refuse.
-    /// See [`MockBackend::refuse_creates`].
     refuse_creates: Option<String>,
-    /// The paths `select` refuses, each with its reason. See
-    /// [`MockBackend::refuse_select`].
     refuse_select: Vec<(String, String)>,
-    /// Every path `create_mailbox` was asked for, in order, including ones
-    /// that already existed. See [`MockBackend::created`].
     created: Vec<String>,
-    /// Calls currently waiting out [`State::latency`].
     in_flight: usize,
-    /// The largest [`State::in_flight`] ever reached.
     peak_in_flight: usize,
     chunk_size: usize,
-    /// Which mailbox each served `FETCH` (headers) call was for, tagged with
-    /// [`State::calls`] at the moment it was recorded so header and body
-    /// fetches can be merged into one chronological order — see
-    /// [`MockBackend::header_fetches`] and [`MockBackend::fetch_order`].
     header_fetches: Vec<(u64, String)>,
-    /// [`State::header_fetches`]'s counterpart for `FETCH BODY` (part/text)
-    /// calls. See [`MockBackend::body_fetches`].
     body_fetches: Vec<(u64, String)>,
-    /// Which mailbox each served `SEARCH` (UID listing) was for, oldest
-    /// first. A sync pass lists a mailbox's UIDs exactly once per start, so
-    /// this is how a test tells "the pass kept running" from "the pass was
-    /// cancelled and started again" (#1593). See [`MockBackend::uid_listings`].
+    /// A sync pass lists UIDs once per start, so this tells "kept running" from "cancelled and
+    /// restarted" (#1593).
     uid_listings: Vec<String>,
-    /// How many messages each served header fetch returned, oldest first. See
-    /// [`MockBackend::header_fetch_rows`].
     header_fetch_rows: Vec<usize>,
-    /// UIDs a header fetch silently leaves out. See
-    /// [`MockBackend::drop_from_header_fetches`].
     undecodable: Vec<u32>,
-    /// Which mailbox each served flags-only `FETCH` was for, oldest first.
-    /// See [`MockBackend::flag_fetches`].
     flag_fetches: Vec<String>,
-    /// What [`MailBackend::change_feed`] answers. See
-    /// [`MockBackendBuilder::unreliable_change_feed`].
     change_feed: ChangeFeed,
-    /// One entry per *batched* section fetch: the section asked for, and how
-    /// many messages were named in the one call. See
-    /// [`MockBackend::section_batches`].
     section_batches: Vec<(String, usize)>,
-    /// Whether `existing_uids` refuses. See
-    /// [`MockBackend::refuse_uid_listing`].
     refuse_uid_listing: bool,
-    /// How many UIDs `existing_uids` answers with, when the listing is short
-    /// of what the mailbox holds. See [`MockBackend::truncate_uid_listing`].
     truncate_uid_listing: Option<usize>,
-    /// Whether `COPY`/`MOVE` answer without a `COPYUID`, as a UIDPLUS
-    /// server may (RFC 4315 §3: UIDNOTSTICKY, or no `SELECT` right on the
-    /// destination). See [`MockBackend::omit_uid_mappings`].
     omit_uid_mappings: bool,
-    /// Whether `EXPUNGE` leaves `HIGHESTMODSEQ` alone. See
-    /// [`MockBackend::expunge_keeps_mod_seq`].
     expunge_keeps_mod_seq: bool,
-    /// The fetches [`MockBackend::hold`] parks, by kind and mailbox.
     holds: Vec<Hold>,
-    /// How many fetches are parked behind a hold right now. See
-    /// [`MockBackend::parked`].
     parked: usize,
 }
 
-/// Which fetches a [`MockBackend::hold`] parks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Held {
-    /// Header `FETCH`es: the calls a sync pass makes batch by batch.
     Headers,
-    /// Body and part `FETCH`es, batched or single.
     Bodies,
 }
 
-/// One [`MockBackend::hold`]: `admit` more of these fetches are let
-/// through, and every one after them waits for [`MockBackend::release`].
 #[derive(Debug)]
 struct Hold {
     kind: Held,
@@ -493,12 +349,9 @@ struct Hold {
     admit: usize,
 }
 
-/// One served fetch, in [`MockBackend::fetch_order`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FetchEvent {
-    /// A header `FETCH`, for the named mailbox.
     Header(String),
-    /// A body/part `FETCH`, for the named mailbox.
     Body(String),
 }
 
@@ -539,19 +392,11 @@ impl State {
     }
 }
 
-// ---------------------------------------------------------------------------
-// The backend
-// ---------------------------------------------------------------------------
-
-/// An in-memory [`MailBackend`].
-///
-/// Cloning shares one set of mailboxes and one fault schedule, so a clone
-/// handed to a spawned task is the same server.
+/// Cloning shares one set of mailboxes and one fault schedule.
 #[derive(Clone)]
 pub struct MockBackend {
     state: Arc<Mutex<State>>,
     notify: Arc<Notify>,
-    /// Wakes the fetches parked behind a [`hold`](MockBackend::hold).
     released: Arc<Notify>,
 }
 
@@ -573,9 +418,6 @@ impl Default for MockBackend {
     }
 }
 
-/// Counts one call as in flight for as long as it is alive.
-///
-/// See [`MockBackend::peak_in_flight`].
 struct InFlight(Arc<Mutex<State>>);
 
 impl InFlight {
@@ -597,8 +439,6 @@ impl Drop for InFlight {
     }
 }
 
-/// A fetch parked behind a hold, counted in [`State::parked`] for as long as
-/// it waits -- a cancelled or dropped wait included.
 struct Parked(Arc<Mutex<State>>);
 
 impl Drop for Parked {
@@ -610,193 +450,94 @@ impl Drop for Parked {
 }
 
 impl MockBackend {
-    /// A backend with an iCloud-shaped capability set and **no folders**.
-    ///
-    /// It used to invent an `INBOX`, and that one line is the fixture half of
-    /// a shipped bug: with a server that always had an inbox, no test ever
-    /// had to say where folders come from, and nothing noticed that the
-    /// application never asked for them. `MailBackend::list_mailboxes` was
-    /// implemented, tested, and had no production caller for the life of the
-    /// project — a live account synced 0 mailboxes and 0 messages and
-    /// reported success. See `postio-755` and `postio-bl2`.
-    ///
-    /// A test that needs folders now says so:
-    ///
-    /// ```
-    /// # use postio_account::backend::{MockBackend, MockMailbox};
-    /// let backend = MockBackend::builder()
-    ///     .mailbox(MockMailbox::new("INBOX"))
-    ///     .build();
-    /// # let _ = backend;
-    /// ```
-    ///
-    /// Which is the point: a fixture must not supply what the wiring is
-    /// supposed to produce.
+    /// An iCloud-shaped capability set and no folders: a fixture must not supply what the wiring
+    /// should produce (an invented `INBOX` hid that nothing ever listed folders, postio-755,
+    /// postio-bl2).
     pub fn new() -> Self {
         Self::builder().build()
     }
 
-    /// Starts describing a backend.
     pub fn builder() -> MockBackendBuilder {
         MockBackendBuilder::new()
     }
 
-    /// Makes the next call fail.
     pub fn inject(&self, fault: Fault) {
         self.inject_after(0, fault);
     }
 
-    /// Makes the call `after` calls from now fail.
-    ///
-    /// `inject_after(0, …)` is [`inject`](Self::inject); `inject_after(2, …)`
-    /// lets two calls succeed and fails the third, which is how a backoff loop
-    /// is tested without sleeping.
+    /// `inject_after(2, ..)` lets two calls succeed and fails the third, testing a backoff loop
+    /// without sleeping.
     pub fn inject_after(&self, after: u64, fault: Fault) {
         let mut state = self.state();
         let at = state.calls + after + 1;
         state.faults.push((at, fault));
     }
 
-    /// Makes **every** call fail with `fault` until [`clear_faults`] is
-    /// called.
-    ///
-    /// Use this — not a counted [`inject_after`] — whenever the test means
-    /// "the server refuses this, whoever asks". [`inject_after`] schedules by
-    /// absolute call number, and a spawned engine's own loops (the watcher's
-    /// polls, the supervisor's dials) also call this backend on their own
-    /// schedule: under load their calls interleave with the test's, the
-    /// fault lands on the wrong call, and the test flakes (#210). A
-    /// persistent fault is order-immune by construction. The positional form
-    /// remains for tests that genuinely mean a positional fault — a
-    /// connection dying mid-drain.
-    ///
-    /// [`clear_faults`]: Self::clear_faults
-    /// [`inject_after`]: Self::inject_after
+    /// Order-immune, unlike `inject_after`: a spawned engine's own loops also call this backend, so
+    /// a counted fault lands on the wrong call under load (#210).
     pub fn fail_all(&self, fault: Fault) {
         self.state().persistent_fault = Some(fault);
     }
 
-    /// Makes every **body** fetch fail with `fault` until [`clear_faults`]
-    /// is called, while every other call is answered.
-    ///
-    /// Narrower than [`fail_all`] for the reason [`fail_all`] is narrower
-    /// than [`inject_after`]: a spawned engine calls this backend on its own
-    /// schedule -- a wave's passes, the watch, the liveness check -- and a
-    /// fault on every call lands on whichever of them comes first. A test
-    /// asking what a failed body does wants the body to be what failed
-    /// (#1943).
-    ///
-    /// [`clear_faults`]: Self::clear_faults
-    /// [`fail_all`]: Self::fail_all
-    /// [`inject_after`]: Self::inject_after
+    /// Narrower than `fail_all`: a spawned engine's other calls would hit the fault first (#1943).
     pub fn fail_body_fetches(&self, fault: Fault) {
         self.state().body_fault = Some(fault);
     }
 
-    /// Makes [`MailBackend::existing_uids`] refuse, as a server without a
-    /// usable `SEARCH` would.
-    ///
-    /// Narrower than a [`Fault`] on purpose: a fault fails *every* call, and
-    /// the case worth testing here is the awkward one where the UID listing
-    /// is refused and everything else works perfectly. A sync must still
-    /// complete then, by walking the UID space as it did before #727.
+    /// Narrower than a `Fault`: the case under test is a refused UID listing with everything else
+    /// working; a sync then walks the UID space (#727).
     pub fn refuse_uid_listing(&self) {
         self.state().refuse_uid_listing = true;
     }
 
-    /// Makes [`MailBackend::existing_uids`] answer with only the newest
-    /// `keep` UIDs, while `SELECT` goes on reporting the true `EXISTS`.
-    ///
-    /// Not a fault and not a refusal: the call *succeeds* and under-reports,
-    /// which is the shape that costs a mailbox its mail. A pass that believes
-    /// a short listing enumerates the few it was told about, completes, and
-    /// stamps `last_full_sync_at` — after which every later pass is
-    /// incremental against a mailbox that was never enumerated, and the
-    /// backlog is unreachable. Observed against a real server, where an INBOX
-    /// holding thousands listed one UID and `EXISTS` said otherwise.
+    /// The call succeeds and under-reports, which costs a mailbox its mail: a pass believing a
+    /// short listing stamps `last_full_sync_at`, and every later pass is incremental against a
+    /// never-enumerated mailbox.
     pub fn truncate_uid_listing(&self, keep: usize) {
         self.state().truncate_uid_listing = Some(keep);
     }
 
-    /// Makes header fetches leave `uid` out of their answer without saying so,
-    /// while the message stays in the mailbox, in `SEARCH` and in `EXISTS`.
-    ///
-    /// What io-imap does with an untagged `FETCH` line it cannot decode (a
-    /// partless-multipart `BODYSTRUCTURE`, 8-bit `ENVELOPE` bytes): drops it
-    /// and completes the command `Ok`. A caller that reads absence from a
-    /// fetch as "expunged" deletes a message that is still there.
+    /// What io-imap does with an undecodable untagged `FETCH`: drops it and completes `Ok`. A
+    /// caller reading absence as "expunged" would delete a live message.
     pub fn drop_from_header_fetches(&self, uid: u32) {
         self.state().undecodable.push(uid);
     }
 
-    /// How many messages each served header fetch returned, oldest first.
-    ///
-    /// The size of the download, which the call count cannot show: one fetch
-    /// of the whole folder and one of a single message are one call each.
+    /// The download size, which the call count cannot show.
     pub fn header_fetch_rows(&self) -> Vec<usize> {
         self.state().header_fetch_rows.clone()
     }
 
-    /// Makes `COPY` and `MOVE` succeed without reporting the new UIDs, while
-    /// the server goes on advertising UIDPLUS.
-    ///
-    /// RFC 4315 §3 says a UIDPLUS server SHOULD return `COPYUID`, and names
-    /// two cases where it will not: a `UIDNOTSTICKY` destination, and a
-    /// destination the client may append to but not select. The message
-    /// moved either way; what the client does not learn is where it landed.
-    /// Reading that silence as "the message was gone" is #903.
+    /// RFC 4315 §3 lets a UIDPLUS server omit `COPYUID` (`UIDNOTSTICKY`, or an append-only
+    /// destination). Reading that as "message gone" is #903.
     pub fn omit_uid_mappings(&self) {
         self.state().omit_uid_mappings = true;
     }
 
-    /// Makes an `EXPUNGE` leave the mailbox's `HIGHESTMODSEQ` where it was, as
-    /// a server with `CONDSTORE` but not `QRESYNC` may.
-    ///
-    /// RFC 7162 §3.2 makes the increment on expunge a `MUST` for a server
-    /// that supports QRESYNC and says nothing of the kind for one that
-    /// supports only CONDSTORE (§3.2.1 even describes a client seeing the
-    /// value rise "only due to messages having been expunged", which a
-    /// CONDSTORE-only server is not obliged to do).
+    /// RFC 7162 §3.2 requires the increment on expunge only of QRESYNC servers, not CONDSTORE-only
+    /// ones.
     pub fn expunge_keeps_mod_seq(&self) {
         self.state().expunge_keeps_mod_seq = true;
     }
 
-    /// Makes [`MailBackend::create_mailbox`] refuse with `reason`, as a server
-    /// that will not let this account make folders would.
-    ///
-    /// Narrower than a [`Fault`] for the same reason as
-    /// [`refuse_uid_listing`](Self::refuse_uid_listing): a fault fails *every*
-    /// call, and the case worth testing is the one where creation is refused
-    /// and listing, selecting and fetching all work perfectly. Discovery has
-    /// to finish that pass, leave the role unmapped, and not ask again.
+    /// Narrower than a `Fault`: the case under test is refused creation with everything else
+    /// working; discovery must finish, leave the role unmapped and not ask again.
     pub fn refuse_creates(&self, reason: impl Into<String>) {
         self.state().refuse_creates = Some(reason.into());
     }
 
-    /// Makes `SELECT` of `path` refuse with `reason`, as a server that lists
-    /// a folder and will not open it does, until [`allow_select`] is called.
-    ///
-    /// Narrower than a [`Fault`] for the same reason as
-    /// [`refuse_creates`](Self::refuse_creates): the case worth testing is
-    /// one folder failing its pass while the link, and every other folder,
-    /// stays healthy (#1731).
-    ///
-    /// [`allow_select`]: Self::allow_select
+    /// Narrower than a `Fault`: one folder fails its pass while the link and other folders stay
+    /// healthy (#1731).
     pub fn refuse_select(&self, path: impl Into<String>, reason: impl Into<String>) {
         self.state()
             .refuse_select
             .push((path.into(), reason.into()));
     }
 
-    /// Lets `SELECT` of `path` through again: the server fixed it.
     pub fn allow_select(&self, path: &str) {
         self.state().refuse_select.retain(|(each, _)| each != path);
     }
 
-    /// Clears [`fail_all`](Self::fail_all)'s and
-    /// [`fail_body_fetches`](Self::fail_body_fetches)' faults and any
-    /// scheduled ones —
-    /// "the user fixed it", whatever it was.
     pub fn clear_faults(&self) {
         let mut state = self.state();
         state.persistent_fault = None;
@@ -804,23 +545,12 @@ impl MockBackend {
         state.faults.clear();
     }
 
-    /// Delays every call by `latency`.
     pub fn set_latency(&self, latency: Duration) {
         self.state().latency = latency;
     }
 
-    /// Lets the next `admit` of `mailbox`'s `kind` of fetch through, and
-    /// parks every one after them until [`release`](Self::release).
-    ///
-    /// For a test whose question needs a pass to be *still running* when
-    /// something happens: a parked fetch is a pass that is demonstrably
-    /// mid-flight, on any machine at any load, where a large mailbox behind
-    /// a latency is only probably one -- and costs the machine a mailbox's
-    /// worth of work to be so (#2105, #2166). A parked fetch is not served
-    /// and not logged until it is let go; its cancel token still ends it, as
-    /// a cancelled command on the wire ends, so an engine cancelling a lane
-    /// is not made to hang by the hold.
-    ///
+    /// A parked fetch makes a pass demonstrably mid-flight at any machine load (#2105, #2166). Its
+    /// cancel token still ends it, so a cancelled lane does not hang.
     /// A second hold on the same kind and mailbox replaces the first.
     pub fn hold(&self, kind: Held, mailbox: &str, admit: usize) {
         let mut state = self.state();
@@ -834,25 +564,20 @@ impl MockBackend {
         });
     }
 
-    /// Lifts every [`hold`](Self::hold), and lets the parked fetches go.
     pub fn release(&self) {
         self.state().holds.clear();
         self.released.notify_waiters();
     }
 
-    /// How many fetches are parked behind a [`hold`](Self::hold) right now.
-    ///
-    /// What a test waits for before it acts: the pass it means to interrupt
-    /// is then inside a call that cannot finish on its own.
+    /// What a test waits for before interrupting: the pass is inside a call that cannot finish on
+    /// its own.
     pub fn parked(&self) -> usize {
         self.state().parked
     }
 
-    /// Waits while `mailbox`'s `kind` of fetch is held, or until `cancel`.
     async fn gate(&self, kind: Held, mailbox: &str, cancel: &CancelToken) -> BackendResult<()> {
         loop {
-            // Enabled before the check, so a release between the check and
-            // the wait still wakes it.
+            // Enabled before the check, so a release between check and wait still wakes it.
             let released = self.released.notified();
             tokio::pin!(released);
             released.as_mut().enable();
@@ -876,38 +601,22 @@ impl MockBackend {
                 () = released => {}
                 () = cancel.cancelled() => return Err(BackendError::Cancelled),
             }
-            // Released: counted out, and looked at again -- a new hold may
-            // have been set since.
+            // Looked at again: a new hold may have been set since.
             drop(parked);
         }
     }
 
-    /// How many calls the backend has served.
     pub fn calls(&self) -> u64 {
         self.state().calls
     }
 
-    /// Every path `create_mailbox` was asked for, oldest first.
-    ///
-    /// Includes paths that already existed — the call is idempotent, and a
-    /// test asserting "created once" has to be able to see a second attempt
-    /// that a silently-successful implementation would hide.
+    /// Includes paths that already existed, so a test can see a second attempt.
     pub fn created(&self) -> Vec<String> {
         self.state().created.clone()
     }
 
-    /// Which mailbox each served header `FETCH` was for, oldest first.
-    ///
-    /// This is the mock's answer to scheduling questions, the same way
-    /// [`peak_in_flight`](Self::peak_in_flight) is its answer to concurrency
-    /// ones: **order in this log is causal and survives any machine load**,
-    /// where "was X still incomplete when Y finished" is a wall-clock overlap
-    /// that goes vacuous exactly when the box is slow (#125). A test that
-    /// means "INBOX was not queued behind the archive" asserts on positions
-    /// here, not on a stopwatch.
-    ///
-    /// Only *served* fetches are recorded: a call that a fault failed or that
-    /// never got past connect does not appear.
+    /// Order in this log is causal and survives any machine load; assert on positions, not a
+    /// stopwatch (#125). Only served fetches appear.
     pub fn header_fetches(&self) -> Vec<String> {
         self.state()
             .header_fetches
@@ -916,35 +625,19 @@ impl MockBackend {
             .collect()
     }
 
-    /// Which mailbox each served UID listing (`SEARCH`) was for, oldest
-    /// first.
-    ///
-    /// A sync pass lists its mailbox once when it starts and never again, so
-    /// the count for one mailbox is the number of times a pass over it was
-    /// *started* -- which is what distinguishes a wave that kept its lanes
-    /// running from one that cancelled them and began again (#1593). Causal,
-    /// like [`Self::header_fetches`]: not a stopwatch.
+    /// The count for one mailbox is how many passes over it started: tells a wave that kept its
+    /// lanes from one that restarted them (#1593).
     pub fn uid_listings(&self) -> Vec<String> {
         self.state().uid_listings.clone()
     }
 
-    /// Which mailbox each served flags-only `FETCH` was for, oldest first.
-    ///
-    /// Not among [`header_fetches`](Self::header_fetches): a flag sweep
-    /// carries no message data, and the tests that count header fetches are
-    /// counting round trips that return mail.
+    /// Not among `header_fetches`: a flag sweep carries no message data.
     pub fn flag_fetches(&self) -> Vec<String> {
         self.state().flag_fetches.clone()
     }
 
-    /// Changes a message's flags **without telling anyone**: the mailbox's
-    /// `HIGHESTMODSEQ` and the message's own `MODSEQ` stay where they were
-    /// and no event is queued.
-    ///
-    /// What iCloud, Yahoo and Exchange do when another device sets a flag:
-    /// the server's state moved and its change feed did not. A
-    /// `CHANGEDSINCE` pull cannot see it by construction, and neither can a
-    /// watcher, so the only way to learn of it is to read the flags.
+    /// Mimics iCloud, Yahoo and Exchange when another device sets a flag: neither `CHANGEDSINCE`
+    /// nor a watcher can see it.
     pub fn set_flags_silently(&self, mailbox: &str, uid: Uid, flags: FlagSet) {
         let mut state = self.state();
         let index = self
@@ -958,9 +651,7 @@ impl MockBackend {
         message.flags = flags;
     }
 
-    /// Which mailbox each served body/part `FETCH` was for, oldest first —
-    /// [`Self::header_fetches`]'s counterpart for the backfill lane, used
-    /// the same way: order here is causal (#631), not a stopwatch.
+    /// Causal order, like `header_fetches` (#631).
     pub fn body_fetches(&self) -> Vec<String> {
         self.state()
             .body_fetches
@@ -969,26 +660,14 @@ impl MockBackend {
             .collect()
     }
 
-    /// Every batched section `FETCH`, as `(section, messages named)`.
-    ///
-    /// What says whether the backfill is asking for a *set* or walking a list
-    /// (#1551): a batch of twenty messages sharing section `1` should appear
-    /// here once with twenty, not twenty times with one.
+    /// A batch of twenty messages sharing a section should appear once with twenty, not twenty
+    /// times with one (#1551).
     pub fn section_batches(&self) -> Vec<(String, usize)> {
         self.state().section_batches.clone()
     }
 
-    /// Every served header and body/part `FETCH`, merged into the one
-    /// chronological order the server actually saw them in.
-    ///
-    /// [`Self::header_fetches`] and [`Self::body_fetches`] are each causal
-    /// *within* their own kind, but two separate logs cannot say whether a
-    /// given header fetch happened before or after a given body fetch — and
-    /// that is exactly the question #631's "bodies must not queue behind an
-    /// unrelated folder's headers" asks. Both logs are tagged with
-    /// [`State::calls`] as it stood at the moment each was recorded, which
-    /// is monotonic across every kind of call the mock serves, so merging by
-    /// that tag reconstructs one true order.
+    /// Merged by `State::calls`, which is monotonic across every call kind, so "bodies must not
+    /// queue behind another folder's headers" is checkable (#631).
     pub fn fetch_order(&self) -> Vec<FetchEvent> {
         let state = self.state();
         let mut merged: Vec<(u64, FetchEvent)> = state
@@ -1006,29 +685,15 @@ impl MockBackend {
         merged.into_iter().map(|(_, event)| event).collect()
     }
 
-    /// The most calls that were on the wire at once.
-    ///
-    /// "On the wire" is precisely the stretch a call spends waiting out
-    /// [`set_latency`](Self::set_latency), which is the only part of a mock
-    /// call that yields — so this is zero-information without a latency set,
-    /// and with one it is exactly what a caller that overlaps its requests
-    /// looks like from the server's side. A sequential caller never gets
-    /// above one however fast it goes, which is what makes this the assertion
-    /// for concurrency rather than a stopwatch.
-    ///
-    /// A call whose future is dropped mid-flight (a cancelled sync) is
-    /// counted out again, so cancellation cannot inflate the peak.
+    /// Zero without a latency set: "on the wire" is the stretch a call spends in `set_latency`, the
+    /// only part that yields. Cancelled calls are counted out.
     pub fn peak_in_flight(&self) -> usize {
         self.state().peak_in_flight
     }
 
-    /// Renumbers a mailbox's UID space, as a server does after a restore.
-    ///
-    /// Every data operation on that mailbox then fails with
-    /// [`BackendError::UidValidityChanged`] until
-    /// [`acknowledge_uid_validity`](Self::acknowledge_uid_validity) is called.
-    /// A real server only says it once, when you `SELECT`; the mock keeps
-    /// saying it so that a test cannot pass by having missed it.
+    /// Every data operation on the mailbox then fails with `UidValidityChanged` until acknowledged;
+    /// a real server says it once at `SELECT`, the mock keeps saying it so a test cannot pass by
+    /// missing it.
     pub fn change_uid_validity(&self, mailbox: &str, uid_validity: UidValidity) {
         let mut state = self.state();
         let Ok(index) = state.index_of(mailbox) else {
@@ -1039,7 +704,6 @@ impl MockBackend {
         mailbox.uid_validity = uid_validity;
     }
 
-    /// Accepts a renumbered UID space, as a client does once it has resynced.
     pub fn acknowledge_uid_validity(&self, mailbox: &str) {
         let mut state = self.state();
         if let Ok(index) = state.index_of(mailbox) {
@@ -1047,7 +711,6 @@ impl MockBackend {
         }
     }
 
-    /// Pushes an event to whatever is idling on `mailbox`.
     pub fn push_event(&self, mailbox: &str, event: MailboxEvent) {
         {
             let mut state = self.state();
@@ -1059,9 +722,7 @@ impl MockBackend {
         self.notify.notify_waiters();
     }
 
-    /// Delivers `message` to `mailbox` as new mail, announced to whatever is
-    /// idling there -- [`append`](MailBackend::append) with the structure and
-    /// part bytes an `APPEND` cannot carry.
+    /// Like `append`, with the structure and part bytes an `APPEND` cannot carry.
     pub fn deliver(&self, mailbox: &str, message: MockMessage) {
         {
             let mut state = self.state();
@@ -1080,7 +741,6 @@ impl MockBackend {
         self.state.lock().expect("mock backend mutex")
     }
 
-    /// Serves one part to a sink; the work of a `FETCH` once its wait is paid.
     async fn serve_part(
         &self,
         mailbox: &str,
@@ -1127,8 +787,6 @@ impl MockBackend {
         })
     }
 
-    /// Counts the call, waits out the configured latency, and fires any fault
-    /// scheduled for it.
     async fn enter(&self, context: &str) -> BackendResult<()> {
         let (latency, fault) = {
             let mut state = self.state();
@@ -1142,11 +800,8 @@ impl MockBackend {
             (state.latency, fault)
         };
 
-        // Dropped at the end of this scope *or* when the caller's future is
-        // cancelled mid-sleep, which is a case the sync engine really does
-        // produce: a guard rather than a decrement after the await, so a
-        // cancelled call cannot leave the in-flight count permanently high
-        // and every later peak reading wrong.
+        // A guard, not a decrement after the await: a future cancelled mid-sleep must not leave the
+        // in-flight count high.
         let _in_flight = InFlight::enter(&self.state);
 
         if !latency.is_zero() {
@@ -1192,7 +847,6 @@ impl MockBackend {
         }
     }
 
-    /// Resolves a mailbox, checking the session and the UID generation first.
     fn locate(&self, state: &State, path: &str, context: &str) -> BackendResult<usize> {
         state.require_connected(context)?;
         let index = state.index_of(path)?;
@@ -1200,23 +854,14 @@ impl MockBackend {
         Ok(index)
     }
 
-    /// Queues an event for the next [`idle`](MailBackend::idle).
-    ///
-    /// Every change made through this backend is announced, the caller's own
-    /// included — see [`MailBackend::idle`] for why that is deliberately
-    /// unlike a real server, and which direction the difference errs in. Use
-    /// [`push_event`](Self::push_event) to stage a change that nothing here
-    /// made.
+    /// Every change made through this backend is announced, the caller's own included; see
+    /// `MailBackend::idle` for why that differs from a real server. Use `push_event` for a change
+    /// nothing here made.
     fn announce(&self, state: &mut State, index: usize, event: MailboxEvent) {
         state.mailboxes[index].pending.push(event);
     }
 }
 
-// ---------------------------------------------------------------------------
-// Builder
-// ---------------------------------------------------------------------------
-
-/// Describes a [`MockBackend`] before it exists.
 #[derive(Clone, Debug)]
 pub struct MockBackendBuilder {
     host: String,
@@ -1227,7 +872,6 @@ pub struct MockBackendBuilder {
 }
 
 impl MockBackendBuilder {
-    /// A builder with iCloud's documented post-auth capability set.
     pub fn new() -> Self {
         Self {
             host: DEFAULT_HOST.to_owned(),
@@ -1246,24 +890,17 @@ impl MockBackendBuilder {
         }
     }
 
-    /// Makes the backend report [`ChangeFeed::Unreliable`], as a backend
-    /// over a provider whose preset row says `condstore_reliable = false`
-    /// does.
     pub fn unreliable_change_feed(mut self) -> Self {
         self.change_feed = ChangeFeed::Unreliable;
         self
     }
 
-    /// Sets the host name the backend claims, for error messages.
     pub fn host(mut self, host: impl Into<String>) -> Self {
         self.host = host.into();
         self
     }
 
-    /// Sets the capabilities the server advertises after authentication.
-    ///
-    /// An empty list is legal to *build*, so that a test can prove
-    /// [`connect`](MailBackend::connect) refuses it.
+    /// An empty list is legal to build, so a test can prove `connect` refuses it.
     pub fn capabilities<I, S>(mut self, names: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -1273,19 +910,16 @@ impl MockBackendBuilder {
         self
     }
 
-    /// Adds a mailbox.
     pub fn mailbox(mut self, mailbox: MockMailbox) -> Self {
         self.mailboxes.push(mailbox);
         self
     }
 
-    /// Sets how much of a body reaches the sink at a time.
     pub fn chunk_size(mut self, chunk_size: usize) -> Self {
         self.chunk_size = chunk_size.max(1);
         self
     }
 
-    /// Builds the backend.
     pub fn build(self) -> MockBackend {
         MockBackend {
             state: Arc::new(Mutex::new(State {
@@ -1331,10 +965,6 @@ impl Default for MockBackendBuilder {
     }
 }
 
-// ---------------------------------------------------------------------------
-// MailBackend
-// ---------------------------------------------------------------------------
-
 #[async_trait]
 impl MailBackend for MockBackend {
     fn describe(&self) -> &'static str {
@@ -1379,9 +1009,8 @@ impl MailBackend for MockBackend {
             .filter(|summary| !filter.subscribed_only || summary.subscribed)
             .filter(|summary| matches_pattern(&filter.pattern, &summary.path))
             .collect();
-        // What the IMAP edge does to a listing, the mock does too: a test
-        // that hands discovery two folders wearing one role is testing a
-        // state no real backend produces.
+        // The IMAP edge settles roles on a listing, so the mock does too: no real backend yields
+        // two folders with one role.
         super::resolve_roles(&mut listed);
         Ok(listed)
     }
@@ -1397,8 +1026,7 @@ impl MailBackend for MockBackend {
                 reason,
             });
         }
-        // Already there is success, not failure: the caller wants the folder
-        // to exist, not to have been the one that made it.
+        // Already there is success: the caller wants the folder to exist.
         if state.index_of(path).is_ok() {
             return Ok(());
         }
@@ -1441,9 +1069,8 @@ impl MailBackend for MockBackend {
             .await
     }
 
-    /// As a server answers a filing fetch: what each message's own header
-    /// block says of the three promoted fields, read by the parser a stored
-    /// block goes through, as the IMAP adapter reads the block it is sent.
+    /// Reads the promoted fields with the same parser the IMAP adapter uses on the block it is
+    /// sent.
     async fn fetch_headers_for_filing(
         &self,
         mailbox: &str,
@@ -1455,7 +1082,6 @@ impl MailBackend for MockBackend {
             .await
     }
 
-    /// Every message's flags, as `UID FETCH 1:* (UID FLAGS)` answers.
     async fn fetch_flags(
         &self,
         mailbox: &str,
@@ -1489,17 +1115,14 @@ impl MailBackend for MockBackend {
         part: &BodyPart,
         cancel: &CancelToken,
     ) -> BackendResult<Vec<(RemoteId, Vec<u8>)>> {
-        // Recorded before anything can fail, because the question this answers
-        // is "did the caller ask for a set", and it asked whatever came back.
+        // Recorded before anything can fail: the question is whether the caller asked for a set.
         if let BodyPart::Section(section) = part {
             self.state()
                 .section_batches
                 .push((section.clone(), ids.len()));
         }
-        // One command, one wait, as on the wire: a `UID FETCH` of a set is a
-        // single round trip however many messages it names, and a mock that
-        // charged latency per message would make a batch look no cheaper than
-        // a walk. Faults and latency are paid once, up front.
+        // One command, one wait, as on the wire: charging latency per message would make a batch
+        // look no cheaper than a walk.
         self.enter("FETCH BODY").await?;
         self.gate(Held::Bodies, mailbox, cancel).await?;
         let mut answered = Vec::with_capacity(ids.len());
@@ -1655,7 +1278,6 @@ impl MailBackend for MockBackend {
         let state = self.state();
         let index = self.locate(&state, mailbox, "SEARCH")?;
         let folder = &state.mailboxes[index];
-        // Newest match wins, as the trait says: any copy proves arrival.
         Ok(folder
             .messages
             .iter()
@@ -1670,12 +1292,7 @@ impl MailBackend for MockBackend {
             .map(|message| identity::remote_id(folder.uid_validity, Uid::new(message.uid))))
     }
 
-    /// The mock can always say which UIDs it holds — it *is* the mailbox.
-    ///
-    /// Counted as a call like any other, so a test can see that it was made,
-    /// but deliberately not recorded as a *header fetch*: it carries no
-    /// message data, and the tests that count header fetches are counting
-    /// round trips that return mail.
+    /// Counted as a call but not recorded as a header fetch: it carries no message data.
     async fn existing_uids(
         &self,
         mailbox: &str,
@@ -1699,9 +1316,7 @@ impl MailBackend for MockBackend {
             .iter()
             .map(|message| Uid::new(message.uid))
             .collect();
-        // The newest are kept, because that is what a listing cut short
-        // plausibly holds and it keeps the truncation from looking like an
-        // empty mailbox.
+        // The newest are kept, so the truncation does not look like an empty mailbox.
         if let Some(keep) = state.truncate_uid_listing {
             uids.sort_unstable_by_key(|uid| std::cmp::Reverse(uid.get()));
             uids.truncate(keep);
@@ -1789,7 +1404,6 @@ impl MailBackend for MockBackend {
 }
 
 impl MockBackend {
-    /// The shared body of `MOVE` and `COPY`.
     fn transfer(
         &self,
         from: &str,
@@ -1819,9 +1433,8 @@ impl MockBackend {
                 flags: message.flags.clone(),
                 internal_date: Some(message.internal_date),
                 structure: message.structure.clone(),
-                // A moved message is the same message: it keeps whatever
-                // sections were seeded for it, or a text fetch after a move
-                // would fail where the same fetch before it succeeded.
+                // A moved message keeps its seeded sections, or a text fetch after a move would
+                // fail.
                 parts: message.parts.clone(),
             });
             mapping.push(UidMapping {
@@ -1857,11 +1470,6 @@ impl MockBackend {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/// Matches an IMAP list pattern: `*` crosses hierarchy levels, `%` does not.
 fn matches_pattern(pattern: &str, path: &str) -> bool {
     if pattern == "*" {
         return true;
@@ -1872,7 +1480,6 @@ fn matches_pattern(pattern: &str, path: &str) -> bool {
     }
 }
 
-/// The bytes of one section of a raw message.
 fn section(message: &MessageState, part: &BodyPart) -> BackendResult<Vec<u8>> {
     let raw = &message.raw;
     let split = sketch::body_offset(raw);
@@ -1880,9 +1487,8 @@ fn section(message: &MessageState, part: &BodyPart) -> BackendResult<Vec<u8>> {
         BodyPart::Whole => Ok(raw.to_vec()),
         BodyPart::Headers => Ok(raw[..split.headers_end].to_vec()),
         BodyPart::Text => Ok(raw[split.body_start..].to_vec()),
-        // Rejected rather than empty when nothing was seeded. An empty answer
-        // is indistinguishable from a part that is genuinely empty, and a test
-        // asserting "no body" would then pass for the wrong reason.
+        // Rejected rather than empty: an empty answer is indistinguishable from a genuinely empty
+        // part, so a "no body" test would pass for the wrong reason.
         BodyPart::Section(section) => {
             message
                 .parts
@@ -1898,8 +1504,6 @@ fn section(message: &MessageState, part: &BodyPart) -> BackendResult<Vec<u8>> {
 }
 
 impl MockBackend {
-    /// `fetch_headers` and `fetch_headers_for_filing`, which differ only in
-    /// whether the promoted headers were asked for.
     async fn fetched(
         &self,
         mailbox: &str,
@@ -1956,17 +1560,8 @@ impl MockBackend {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Header sketch
-// ---------------------------------------------------------------------------
-
-/// Just enough header reading to give the mock a plausible [`Envelope`].
-///
-/// **Not a MIME parser and not a substitute for one.** It does not decode
-/// RFC 2047 encoded words, does not handle group addresses, and gives up on
-/// anything exotic rather than guessing. Real parsing belongs to the code that
-/// consumes the corpus for real; if this module tried to be that parser, every
-/// parser test would be testing it against itself.
+/// Not a MIME parser: no RFC 2047 decoding or group addresses. Parsing belongs to the code under
+/// test, or parser tests would test themselves.
 mod sketch {
     use super::*;
 
@@ -1975,7 +1570,6 @@ mod sketch {
         pub body_start: usize,
     }
 
-    /// Where the header block ends and the body begins.
     pub(super) fn body_offset(raw: &[u8]) -> Split {
         if let Some(at) = find(raw, b"\r\n\r\n") {
             return Split {
@@ -2001,7 +1595,6 @@ mod sketch {
             .position(|window| window == needle)
     }
 
-    /// Reads the headers Postio threads and lists on.
     pub(super) fn envelope(raw: &[u8]) -> Envelope {
         let split = body_offset(raw);
         let headers = unfold(&String::from_utf8_lossy(&raw[..split.headers_end]));
@@ -2032,7 +1625,6 @@ mod sketch {
         }
     }
 
-    /// Splits a header block into `(name, value)`, joining folded lines.
     fn unfold(block: &str) -> Vec<(String, String)> {
         let mut headers: Vec<(String, String)> = Vec::new();
         for line in block.split('\n') {
@@ -2054,8 +1646,6 @@ mod sketch {
         headers
     }
 
-    /// Splits an address list on commas that are not inside quotes or angle
-    /// brackets, then reads `Display Name <local@domain>` or a bare addr-spec.
     fn addresses(value: &str) -> Vec<EmailAddress> {
         let mut out = Vec::new();
         let mut current = String::new();
@@ -2105,7 +1695,6 @@ mod sketch {
         }
     }
 
-    /// Every `<…>` in a `Message-ID`, `In-Reply-To` or `References` value.
     fn message_ids(value: &str) -> Vec<RfcMessageId> {
         let mut out = Vec::new();
         let mut rest = value;

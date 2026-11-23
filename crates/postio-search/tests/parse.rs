@@ -1,14 +1,7 @@
-//! Acceptance tests for the query-operator parser (bead postio-djq).
-//!
-//! These exercise the parser only through its public API, and they are the
-//! contract the search bar and the query executor code against.
-
 use chrono::NaiveDate;
 use postio_search::parse;
 use postio_search::query::{Field, Filter, ParsedQuery, State, TokenKind};
 
-/// Fixed reference date so every relative-date expectation is deterministic.
-/// 2026-08-22 is a Saturday.
 fn today() -> NaiveDate {
     NaiveDate::from_ymd_opt(2026, 8, 22).unwrap()
 }
@@ -28,10 +21,6 @@ fn text(input: &str) -> Vec<String> {
 fn date(y: i32, m: u32, d: u32) -> NaiveDate {
     NaiveDate::from_ymd_opt(y, m, d).unwrap()
 }
-
-// ---------------------------------------------------------------------------
-// Every operator from the design canvas
-// ---------------------------------------------------------------------------
 
 #[test]
 fn from_operator() {
@@ -78,8 +67,6 @@ fn is_unread_and_is_flagged() {
 
 #[test]
 fn is_bulk_and_is_automated_are_states_of_their_own() {
-    // Spec 007, research R8: the promoted headers' operators. Anything else
-    // after `is:` stays a half-typed query, never an error.
     assert_eq!(filters("is:bulk"), vec![Filter::Is(State::Bulk)]);
     assert_eq!(filters("is:BULK"), vec![Filter::Is(State::Bulk)]);
     assert_eq!(filters("is:automated"), vec![Filter::Is(State::Automated)]);
@@ -88,9 +75,6 @@ fn is_bulk_and_is_automated_are_states_of_their_own() {
 
 #[test]
 fn is_starred_is_accepted_as_a_synonym_for_flagged() {
-    // An earlier brief said `is:starred`; the canvas renamed it to Flagged, and
-    // docs/PRODUCT.md §7 keeps the old spelling so muscle memory from other
-    // clients still works.
     assert_eq!(filters("is:starred"), vec![Filter::Is(State::Flagged)]);
 }
 
@@ -126,9 +110,6 @@ fn list_operator() {
 
 #[test]
 fn account_operator() {
-    // The value stays text here. This crate never resolves it to an id — that
-    // needs the store, and keeping the parse pure is what lets a saved search
-    // survive in `[saved_searches]` as the string the user typed (ADR 0005 Q5, #186).
     assert_eq!(
         filters("account:work"),
         vec![Filter::Account("work".into())]
@@ -137,8 +118,6 @@ fn account_operator() {
         filters(r#"account:"Work Mail""#),
         vec![Filter::Account("Work Mail".into())]
     );
-    // An address is a perfectly good way to name an account, and the one a
-    // person is most likely to remember.
     assert_eq!(
         filters("account:ada@example.com"),
         vec![Filter::Account("ada@example.com".into())]
@@ -147,8 +126,6 @@ fn account_operator() {
 
 #[test]
 fn account_composes_with_other_operators_and_with_negation() {
-    // The whole point of the orthogonal shape #186 chose: "this account, and
-    // unread" is one query rather than two mutually exclusive scopes.
     assert_eq!(
         filters("account:work is:unread"),
         vec![Filter::Account("work".into()), Filter::Is(State::Unread),]
@@ -162,9 +139,6 @@ fn account_composes_with_other_operators_and_with_negation() {
 
 #[test]
 fn group_operator() {
-    // Like account:, this stays text: postio-search never resolves a group
-    // name to its members -- that needs the store, and postio-index is
-    // where `group:family` becomes an address set (specs/005-contacts FR-042).
     assert_eq!(
         filters("group:family"),
         vec![Filter::Group("family".into())]
@@ -190,9 +164,6 @@ fn group_composes_with_other_operators_and_with_negation() {
 
 #[test]
 fn with_operator_lists_the_addresses_a_person_owns() {
-    // specs/005-contacts R6: "from, to, cc or bcc is any of these" -- what
-    // picking a person in the finder writes, since the language has no `or`.
-    // The addresses are the value, written out, never a person resolved later.
     assert_eq!(
         filters("with:ada@work.example,ada@home.example"),
         vec![Filter::With(vec![
@@ -208,7 +179,6 @@ fn with_operator_lists_the_addresses_a_person_owns() {
 
 #[test]
 fn a_half_typed_with_is_never_an_error() {
-    // Every intermediate state of typing it is ordinary (Constitution III).
     let parsed = q("with:");
     assert!(
         matches!(
@@ -253,10 +223,8 @@ fn with_composes_and_negates_like_any_other_filter() {
 
 #[test]
 fn header_operator_asks_whether_a_field_is_present() {
-    // ADR 0025 Q6: `header:x-mailer` is "the message has a field with that
-    // name", which is a different question from "its value contains
-    // something" and has to stay distinguishable from it all the way to the
-    // executor -- hence `value: None` rather than an empty string.
+    // `header:x-mailer` (presence) must stay distinguishable from "value contains" all the way to
+    // the executor: `value: None`, not an empty string (ADR 0025 Q6).
     assert_eq!(
         filters("header:x-mailer"),
         vec![Filter::Header {
@@ -279,17 +247,12 @@ fn header_operator_binds_a_value_to_the_name_it_was_typed_with() {
 
 #[test]
 fn a_header_name_is_stored_in_the_one_case_the_index_holds() {
-    // RFC 5322 names are case-insensitive and `message_headers.name` holds
-    // one spelling, so the query side has to arrive at the same one --
-    // through `postio_model::headers::normalize_name`, not through a second
-    // `to_lowercase` of this crate's own (ADR 0025 Q3).
     assert_eq!(
         filters("header:X-Mailer=Mutt"),
         vec![Filter::Header {
             name: "x-mailer".into(),
-            // The *value* keeps the case it was typed in: the match is
-            // case-insensitive at the executor, and a chip that lower-cased
-            // what somebody typed would be lying about their query.
+            // The value keeps the case it was typed in: a chip that lower-cased it would lie about
+            // the query.
             value: Some("Mutt".into())
         }]
     );
@@ -297,10 +260,6 @@ fn a_header_name_is_stored_in_the_one_case_the_index_holds() {
 
 #[test]
 fn a_header_value_is_normalized_the_same_way_the_stored_one_is() {
-    // The index holds `normalize_value`'s output. A query that skipped it
-    // would ask for a string the column can never contain -- two spaces
-    // where the stored value has one, an encoded word where the stored
-    // value has the word. Both sides run the one function (ADR 0025 Q3).
     assert_eq!(
         filters("header:x-mailer=\"mutt   1.5.24\""),
         vec![Filter::Header {
@@ -312,9 +271,6 @@ fn a_header_value_is_normalized_the_same_way_the_stored_one_is() {
 
 #[test]
 fn a_header_value_is_split_at_the_first_equals_not_the_last() {
-    // `authentication-results=spf=pass` is the motivating case in ADR 0025
-    // Q6: everything after the first `=` belongs to the value, because a
-    // structured header value routinely contains its own.
     assert_eq!(
         filters("header:authentication-results=spf=pass"),
         vec![Filter::Header {
@@ -337,9 +293,6 @@ fn a_header_value_may_contain_spaces_when_it_is_quoted() {
 
 #[test]
 fn a_half_typed_header_value_means_presence_never_an_error() {
-    // ADR 0025 Q6's table, and `PRODUCT.md` §7's rule that results update on
-    // every keystroke: the instant after `=` is typed is an ordinary state,
-    // and asking for presence is the most useful thing it can mean.
     assert_eq!(
         filters("header:x-mailer="),
         vec![Filter::Header {
@@ -411,10 +364,6 @@ fn operator_names_are_case_insensitive_but_values_are_not() {
     assert_eq!(filters("Is:Unread"), vec![Filter::Is(State::Unread)]);
 }
 
-// ---------------------------------------------------------------------------
-// Composition with free text
-// ---------------------------------------------------------------------------
-
 #[test]
 fn operators_compose_with_each_other_and_with_free_text() {
     let parsed = q("from:alice after:2026-01-01 has:attachment kubernetes");
@@ -484,10 +433,6 @@ fn extra_whitespace_is_irrelevant() {
     assert_eq!(parsed.text_terms().count(), 1);
 }
 
-// ---------------------------------------------------------------------------
-// Quoted phrases
-// ---------------------------------------------------------------------------
-
 #[test]
 fn quoted_operator_value() {
     assert_eq!(
@@ -506,8 +451,6 @@ fn quoted_free_text_is_one_term() {
 
 #[test]
 fn a_quoted_word_says_it_was_quoted() {
-    // Quotes are how a person says "this word, exactly" -- the search box
-    // rewrites a bare word that found nothing, and never a quoted one.
     let quoted: Vec<(String, bool)> = q(r#""hanah" hannah"#)
         .text_terms()
         .map(|term| (term.value.clone(), term.quoted))
@@ -520,7 +463,6 @@ fn a_quoted_word_says_it_was_quoted() {
 
 #[test]
 fn an_unterminated_quote_is_still_a_value() {
-    // Half-typed phrase: the user is mid-keystroke, this must not error.
     assert_eq!(
         filters(r#"subject:"quarterly rep"#),
         vec![Filter::Subject("quarterly rep".into())]
@@ -546,10 +488,6 @@ fn quoted_value_may_contain_a_colon() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Negation
-// ---------------------------------------------------------------------------
-
 #[test]
 fn negated_operator() {
     let parsed = q("-from:bob");
@@ -571,8 +509,6 @@ fn negated_free_text() {
 #[test]
 fn not_prefix_is_also_negation() {
     let parsed = q("NOT:from:bob");
-    // `NOT:` is not an operator; only a leading `-` negates. Ensure we do not
-    // silently swallow it as a filter.
     assert!(parsed.filters().next().is_none());
 }
 
@@ -596,10 +532,6 @@ fn negated_partial_is_still_partial() {
     assert!(partial.negated);
     assert_eq!(partial.field, Field::Is);
 }
-
-// ---------------------------------------------------------------------------
-// Half-typed input — the critical requirement
-// ---------------------------------------------------------------------------
 
 #[test]
 fn empty_input_is_an_empty_query() {
@@ -643,7 +575,6 @@ fn operator_with_no_value_yet_is_a_partial() {
 
 #[test]
 fn half_typed_text_value_filters_immediately() {
-    // `from:al` is a usable filter as-you-type: it is a prefix match downstream.
     assert_eq!(filters("from:al"), vec![Filter::From("al".into())]);
     assert_eq!(
         filters("subject:quar"),
@@ -658,8 +589,6 @@ fn half_typed_enumerated_value_is_a_partial_not_an_error() {
         assert_eq!(parsed.filters().count(), 0, "{input}");
         assert_eq!(parsed.partials().count(), 1, "{input}");
     }
-    // `has:att` is a prefix of `attach`, but it is not yet one of the accepted
-    // spellings, so it stays partial rather than guessing.
     let parsed = q("is:unr");
     assert_eq!(parsed.partials().next().unwrap().value, "unr");
 }
@@ -690,7 +619,6 @@ fn half_typed_size_is_a_partial_not_an_error() {
 
 #[test]
 fn an_unknown_operator_is_free_text() {
-    // `foo:` is not ours; treat it as something the user typed, not an error.
     assert_eq!(text("foo:bar"), vec!["foo:bar".to_string()]);
     assert_eq!(
         text("https://example.com"),
@@ -712,7 +640,6 @@ fn every_prefix_of_a_complex_query_parses_cleanly() {
         }
         let prefix = &full[..end];
         let parsed = parse(prefix, today());
-        // Every token must point at a valid, in-order, in-bounds slice.
         let mut cursor = 0usize;
         for token in parsed.tokens() {
             assert!(
@@ -734,7 +661,6 @@ fn every_prefix_of_a_complex_query_parses_cleanly() {
             );
             cursor = token.span.end;
         }
-        // And the match expression must always be buildable.
         let _ = parsed.fts_match();
     }
 }
@@ -759,10 +685,6 @@ fn growing_a_query_one_character_at_a_time_never_panics() {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Dates: ISO, loose and relative
-// ---------------------------------------------------------------------------
 
 #[test]
 fn iso_dates() {
@@ -799,7 +721,6 @@ fn loose_month_name_dates() {
 
 #[test]
 fn a_bare_month_name_is_the_first_of_that_month() {
-    // Most recent occurrence that is not in the future, relative to `today`.
     assert_eq!(filters("after:aug"), vec![Filter::After(date(2026, 8, 1))]);
     assert_eq!(filters("after:dec"), vec![Filter::After(date(2025, 12, 1))]);
 }
@@ -842,7 +763,6 @@ fn relative_dates() {
 
 #[test]
 fn relative_dates_clamp_at_month_ends() {
-    // 2026-03-31 minus one month has no 31st in February.
     let parsed = parse(r#"after:"last month""#, date(2026, 3, 31));
     assert_eq!(
         parsed
@@ -852,10 +772,6 @@ fn relative_dates_clamp_at_month_ends() {
         vec![Filter::After(date(2026, 2, 28))]
     );
 }
-
-// ---------------------------------------------------------------------------
-// FTS5 MATCH expression
-// ---------------------------------------------------------------------------
 
 #[test]
 fn match_expression_only_carries_free_text() {
@@ -880,7 +796,6 @@ fn match_expression_quotes_phrases() {
 #[test]
 fn match_expression_escapes_embedded_quotes() {
     let parsed = q(r#""say ""#);
-    // Whatever survives tokenization must still be a legal FTS5 string literal.
     let expr = parsed.fts_match().unwrap();
     assert!(expr.starts_with('"') && expr.ends_with('"'), "{expr}");
 }
@@ -904,17 +819,12 @@ fn match_expression_is_none_when_only_negated_text_is_present() {
 
 #[test]
 fn match_expression_strips_fts_syntax_from_user_text() {
-    // Bare `AND`/`OR`/`*`/`(` typed by a user must not become FTS5 operators.
     let parsed = q("kubernetes AND (docker OR podman)*");
     let expr = parsed.fts_match().unwrap();
     for term in expr.split(" AND ") {
         assert!(term.starts_with('"') && term.ends_with('"'), "{expr}");
     }
 }
-
-// ---------------------------------------------------------------------------
-// Token spans and the chip UI
-// ---------------------------------------------------------------------------
 
 #[test]
 fn tokens_carry_their_source_span_in_order() {
@@ -962,10 +872,6 @@ fn field_keywords_round_trip() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Purity
-// ---------------------------------------------------------------------------
-
 #[test]
 fn parsing_is_deterministic_for_a_given_reference_date() {
     let input = "from:alice after:yesterday has:attach kubernetes";
@@ -986,11 +892,6 @@ fn the_reference_date_is_the_only_source_of_now() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Totality: no input, however malformed, may error or panic
-// ---------------------------------------------------------------------------
-
-/// A tiny deterministic PRNG so the fuzz below is reproducible in CI.
 struct Lcg(u64);
 
 impl Lcg {
@@ -1005,7 +906,6 @@ impl Lcg {
 
 #[test]
 fn fuzzing_the_parser_with_query_shaped_noise_never_errors() {
-    // The alphabet is everything the grammar cares about plus a little Unicode.
     let alphabet: Vec<&str> = vec![
         "from:",
         "to:",
@@ -1066,7 +966,6 @@ fn fuzzing_the_parser_with_query_shaped_noise_never_errors() {
             );
             cursor = token.span.end;
         }
-        // Filters, partials and text partition the tokens exactly.
         assert_eq!(
             parsed.filters().count() + parsed.partials().count() + parsed.text_terms().count(),
             parsed.tokens().len(),
@@ -1075,10 +974,6 @@ fn fuzzing_the_parser_with_query_shaped_noise_never_errors() {
         let _ = parsed.fts_match();
     }
 }
-
-// ---------------------------------------------------------------------------
-// `label:` and `has:action` (spec 010, US3)
-// ---------------------------------------------------------------------------
 
 #[test]
 fn label_operator() {
@@ -1153,10 +1048,6 @@ fn label_and_has_action_compose_with_the_rest() {
         ]
     );
 }
-
-// ---------------------------------------------------------------------------
-// Either of several values (spec 010, D26)
-// ---------------------------------------------------------------------------
 
 fn set(members: Vec<Filter>) -> Filter {
     Filter::any_of(members).expect("a set of one field")

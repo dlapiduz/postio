@@ -1,11 +1,6 @@
-//! New mail: whether an arrival is worth a notification, and what it says.
-//!
-//! Whether this folder's arrivals notify at all (`[sync]`), whether the
-//! person is already looking at them, and the words --
-//! `postio_ui::notify::decide`, unchanged, over the rows the store holds.
-//! The app that has the store open asks: the desktop app's window
-//! (its `Notifier`) and the terminal ([`crate::Host::notification`]).
-//! Each only delivers what this answers.
+//! New mail: whether an arrival is worth a notification, and what it says
+//! (`postio_ui::notify::decide` over the rows the store holds).
+//! Frontends only deliver what this answers.
 
 use postio_config::SyncConfig;
 use postio_model::listing::{MailStore, MessageSummary};
@@ -14,12 +9,7 @@ use postio_storage::Store;
 use postio_storage::repository::{AccountRepository, MailboxRepository};
 use postio_ui::notify::{self, Attention, Decision, Notification, Wording};
 
-/// Whether `messages` arriving in `mailbox` is worth a notification, and
-/// what it says: `[sync]`'s folder gate, then [`notify::decide`] over the
-/// rows, worded with the newest arrival's sender and subject.
-///
-/// The one decision every frontend's notification comes from. A store that
-/// cannot be read is no notification, never an error.
+/// A store that cannot be read is no notification, never an error.
 pub async fn decide_arrival(
     database: &Store,
     store: &dyn MailStore,
@@ -43,8 +33,7 @@ pub async fn decide_arrival(
     }
 }
 
-/// What a store this read cannot reach yields: `None`, never a reason to
-/// fail the sync pass that called this.
+/// `None` for a store this read cannot reach; never a reason to fail the sync pass.
 async fn mailbox_info(database: &Store, mailbox: MailboxId) -> Option<(MailboxRole, AccountId)> {
     let connection = database
         .read()
@@ -59,9 +48,8 @@ async fn mailbox_info(database: &Store, mailbox: MailboxId) -> Option<(MailboxRo
         .map(|mailbox| (mailbox.role, mailbox.account_id))
 }
 
-/// The name to put on a notification for `account`, or `None` when only one
-/// account is enabled — naming the only account there is would be noise, not
-/// information (ADR 0005 Q13).
+/// `None` when only one account is enabled: naming the only account there is would be noise (ADR
+/// 0005 Q13).
 pub async fn account_label(database: &Store, account: AccountId) -> Option<String> {
     let connection = database
         .read()
@@ -85,13 +73,8 @@ pub async fn account_label(database: &Store, account: AccountId) -> Option<Strin
         .map(|account| account.display_name)
 }
 
-/// What [`postio_ui::notify`] says about `rows` having landed in `mailbox`,
-/// worded with the newest arrival's sender and subject ([`Wording::Newest`]).
-///
-/// The newest is whichever `received_at` is latest. A position in `rows`
-/// says nothing about arrival order — `rows` is whatever
-/// `store.message_rows` returned for the ids `Event::NewMail` carried, and
-/// nothing along that path promises newest-last (or first).
+/// The newest is whichever `received_at` is latest: row position says nothing, since
+/// `store.message_rows` promises no order.
 pub fn decision(
     mailbox: MailboxId,
     rows: &[MessageSummary],
@@ -148,9 +131,6 @@ pub(crate) mod tests {
         }
     }
 
-    /// `row`, arrived at `when` — a burst's "newest" is a fact about
-    /// `received_at`, not about a row's position in the slice, so a test
-    /// that wants to prove that has to control it.
     fn at(row: MessageSummary, when: chrono::DateTime<chrono::Utc>) -> MessageSummary {
         MessageSummary {
             received_at: when,
@@ -165,8 +145,6 @@ pub(crate) mod tests {
         }
     }
 
-    /// What the host answers about the world's message arriving in its
-    /// inbox, with the person's attention where `attention` says.
     fn told(world: &World, attention: Attention) -> Option<Notification> {
         world.rt.block_on(world.host().notification(
             world.inbox(),
@@ -191,7 +169,6 @@ pub(crate) mod tests {
             active: true,
         };
         assert_eq!(told(&world, looking), None);
-        // Behind another application, the same folder is not being watched.
         let behind = Attention {
             active: false,
             ..looking
@@ -219,8 +196,6 @@ pub(crate) mod tests {
 
     #[test]
     fn a_burst_is_named_after_its_newest_arrival_by_received_at() {
-        // Deliberately out of arrival order: the newest is the middle one,
-        // so a fix that just reads rows[0] or rows.last() cannot pass this.
         let base = chrono::Utc::now();
         let notification = delivered(decision(
             MailboxId::new(7),

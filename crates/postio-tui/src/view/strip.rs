@@ -201,7 +201,7 @@ mod tests {
             })
             .collect();
         show_focus(&mut app, rows);
-        update(&mut app, Input::FocusCounts(drawing_counts()));
+        app.counts_for_tests(drawing_counts());
         app
     }
 
@@ -234,19 +234,16 @@ mod tests {
         let mut app = app((120, 30));
         seed_places(&mut app, crate::test_support::places());
         show_focus(&mut app, Vec::new());
-        update(&mut app, Input::FocusCounts(drawing_counts()));
+        app.counts_for_tests(drawing_counts());
         let strip = strip_of(&app, (120, 30));
         assert!(!strip.contains("filtered"), "{strip}");
         assert!(!strip.contains("digest rule"), "{strip}");
         // Filtering on, but nothing filed today.
         let mut quiet = counted((120, 30));
-        update(
-            &mut quiet,
-            Input::FocusCounts(postio_client::protocol::FocusCounts {
-                filtered_today: 0,
-                ..drawing_counts()
-            }),
-        );
+        quiet.counts_for_tests(postio_client::protocol::FocusCounts {
+            filtered_today: 0,
+            ..drawing_counts()
+        });
         let strip = strip_of(&quiet, (120, 30));
         assert!(!strip.contains("filtered"), "{strip}");
         assert!(strip.contains("4 digest rules g r"), "{strip}");
@@ -298,9 +295,10 @@ mod tests {
         assert!(!app.selection().selection().is_empty());
         let effects = update(&mut app, press('!'));
         assert!(
-            effects.contains(&crate::app::Effect::Open(postio_model::ListScope::Focus(
-                FocusScope::HasAction
-            ))),
+            crate::test_support::opens(
+                &effects,
+                postio_model::ListScope::Focus(FocusScope::HasAction)
+            ),
             "{effects:?}"
         );
         assert!(app.selection().selection().is_empty(), "the selection goes");
@@ -335,9 +333,7 @@ mod tests {
         // Back again.
         let effects = update(&mut app, press('!'));
         assert!(
-            effects.contains(&crate::app::Effect::Open(postio_model::ListScope::Focus(
-                FocusScope::Inbox
-            ))),
+            crate::test_support::opens(&effects, postio_model::ListScope::Focus(FocusScope::Inbox)),
             "{effects:?}"
         );
     }

@@ -1,22 +1,5 @@
-//! The sync engine never names a protocol crate.
-//!
-//! # Why this is a manifest test and not a dependency-graph one
-//!
-//! `scripts/checks/check-crate-boundaries.py` reads `cargo metadata`'s resolved graph,
-//! which is the right tool for `postio-core` and the GTK crates — neither may
-//! reach GTK or SQLite by any route, transitive ones included. It cannot
-//! express *this* invariant, because cargo unifies features across a workspace:
-//! `postio-account` is itself a workspace member and builds with its default
-//! `imap` feature on, so `io-imap` appears in the resolved graph whatever this
-//! crate asks for, and a graph check would fail on a crate that is entirely
-//! correct.
-//!
-//! What actually holds the line is this crate's *manifest*. `io-imap` is not a
-//! dependency of `postio-sync`, so `use io_imap::…` does not compile — the
-//! compiler is the enforcement. This test guards the manifest itself, which is
-//! the one thing a well-meaning edit could quietly change.
-//!
-//! See ADR 0001 and the feature comment in `crates/postio-account/Cargo.toml`.
+//! The crate's manifest must not depend on `io-imap` (ADR 0001): the compiler enforces it, a graph
+//! check cannot (cargo unifies features), so this guards the manifest.
 
 use std::path::PathBuf;
 
@@ -55,8 +38,6 @@ fn the_backend_seam_is_taken_without_its_protocol_features() {
 
 #[test]
 fn the_mock_backend_is_reachable_without_the_protocol_feature() {
-    // The point of the arrangement above: the whole engine is testable with no
-    // server and no network. If this stops compiling, the seam has moved.
     let backend = postio_account::backend::MockBackend::new();
 
     assert_eq!(

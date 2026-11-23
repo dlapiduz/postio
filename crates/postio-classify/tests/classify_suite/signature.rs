@@ -1,8 +1,3 @@
-//! Reading a signature (specs/011-focus-contacts S9, handoff screen 05): the
-//! title, company, phone and website a person signs with, taken from the
-//! tail of invented mail, never from the sentences above it. Every address
-//! and domain is reserved.
-
 use postio_classify::signature::parse;
 
 fn lines(text: &str) -> String {
@@ -119,7 +114,6 @@ Finance lead, Northwind Partners
         Some("ada moreno|finance lead|northwind partners")
     );
 
-    // A first name alone, or a line that is not a name, is no name.
     assert_eq!(
         parse("Best,\nAda\nFinance lead, Northwind Partners\n").name,
         None

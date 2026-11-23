@@ -1,5 +1,3 @@
-//! JSON-RPC 2.0 over stdio, as MCP frames it: one message per line.
-
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 
@@ -15,24 +13,19 @@ use crate::tools::{self, Tool};
 /// for one of them gets it; any other is offered the newest.
 pub const PROTOCOL_VERSIONS: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
 
-/// JSON-RPC's own error codes.
 const PARSE_ERROR: i64 = -32700;
 const INVALID_REQUEST: i64 = -32600;
 const METHOD_NOT_FOUND: i64 = -32601;
 const INVALID_PARAMS: i64 = -32602;
 
-/// The server: a backend to lease the store from, the `config.toml` whose
-/// `[mcp]` says what is shared, and the access log.
 pub struct Server<B: Backend> {
     backend: B,
     config: Option<PathBuf>,
     audit: Audit,
-    /// The agent socket a running Postio app answers on, asked first.
     app: Option<PathBuf>,
 }
 
 impl<B: Backend> Server<B> {
-    /// A server over `backend`, sharing what `config` says.
     pub fn new(backend: B, config: Option<PathBuf>, audit: Audit) -> Self {
         Server {
             backend,
@@ -42,9 +35,7 @@ impl<B: Backend> Server<B> {
         }
     }
 
-    /// The same server, handing each tool call to the Postio app listening
-    /// at `socket` when one is (ADR 0041, amended 2026-10-14), and
-    /// answering it here only when none is.
+    /// Calls go to the Postio app listening at `socket` when one is, else are answered here.
     pub fn answered_by_app(mut self, socket: PathBuf) -> Self {
         self.app = Some(socket);
         self
@@ -59,13 +50,9 @@ impl<B: Backend> Server<B> {
         let id = message.get("id").cloned();
         let method = message.get("method").and_then(Value::as_str);
         let (Some(method), true) = (method, message.get("jsonrpc") == Some(&json!("2.0"))) else {
-            // A response to something this server never asks, or not
-            // JSON-RPC at all.
             return id
                 .map(|id| error(id, INVALID_REQUEST, "Not a JSON-RPC 2.0 request.").to_string());
         };
-        // A notification -- `notifications/initialized`, a cancellation --
-        // asks for nothing back, and none needs doing.
         let id = id?;
         let params = message.get("params").cloned().unwrap_or(json!({}));
         let answer = match method {
@@ -91,7 +78,6 @@ impl<B: Backend> Server<B> {
         )
     }
 
-    /// `tools/call`: the tool, over what `[mcp]` shares as of now.
     fn call(&mut self, params: &Value) -> Result<Value, (i64, &'static str)> {
         let tool = params
             .get("name")
@@ -103,8 +89,6 @@ impl<B: Backend> Server<B> {
             Some(arguments @ Value::Object(_)) => arguments.clone(),
             Some(_) => return Err((INVALID_PARAMS, "A tool's arguments are an object.")),
         };
-        // Read again for every call: a person who takes an account out of
-        // `[mcp]` has taken it out from the next call on (ADR 0010 Q6).
         let scope = Scope::load(self.config.as_deref());
         let answer = tools::call(tool, &arguments, &mut self.backend, &scope);
         self.audit
@@ -113,8 +97,6 @@ impl<B: Backend> Server<B> {
     }
 }
 
-/// `initialize`'s answer: the version, what this server offers, and the
-/// instructions an agent reads before it calls anything.
 fn initialize(params: &Value) -> Value {
     let asked = params.get("protocolVersion").and_then(Value::as_str);
     let version = PROTOCOL_VERSIONS
@@ -133,7 +115,6 @@ fn error(id: Value, code: i64, message: &str) -> Value {
     json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}})
 }
 
-/// Answer every line of `input` on `output` until `input` ends.
 pub fn serve<B: Backend>(
     input: impl BufRead,
     mut output: impl Write,

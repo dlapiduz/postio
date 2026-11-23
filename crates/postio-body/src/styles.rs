@@ -1,39 +1,19 @@
-//! A sender's `<style>` block, rewritten so it reaches only their own message.
-//!
-//! Inline `style` attributes (#1325) needed no scoping: a declaration applies
-//! to the element it sits on, which is already inside the container drawn
-//! around that message. A `<style>` block has *selectors*, and a selector
-//! matches whatever is in the document — which under ADR 0032 is every other
-//! sender's message and Postio's own chrome. Admitting one unscoped would let
-//! message A restyle message B.
-//!
-//! So every rule is rewritten to sit under
-//! [`crate::sanitize::message_selector`], and the declarations inside it go
-//! through the same [`crate::sanitize::REFUSED`] table an inline attribute
-//! does. Two rules, one table.
-//!
-//! **Rewriting, not CSS `@scope`.** Not because `@scope` is unavailable — it
-//! was never measured — but because rewriting is one implementation in a
-//! toolkit-free crate that both frontends inherit, provable in milliseconds
-//! with no display. `@scope` would have to be verified separately against
-//! WebKitGTK and WKWebView, and could not be tested without a display on
-//! either.
+//! A sender's `<style>` block rewritten to reach only their own message: selectors match the whole
+//! document (every other message and Postio's chrome, under ADR 0032), so every rule sits under
+//! `message_selector` and its declarations go through the `REFUSED` table.
+//! Rewriting, not CSS `@scope`: one toolkit-free implementation both frontends inherit and test
+//! without a display, where `@scope` would need verifying on WebKitGTK and WKWebView.
 
 use cssparser::{Delimiter, ParseError, Parser, Token, serialize_identifier};
 
 use crate::sanitize::{REFUSED_AT_RULES, Refused, RemoteImages, Tally, contain_declarations};
 
-/// A sender's stylesheet after scoping.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Scoped {
-    /// The rewritten CSS, ready to be emitted in Postio's own `<style>`.
     pub css: String,
-    /// Remote references dropped, counted with the message's blocked images.
     pub remote_blocked: u32,
 }
 
-/// Rewrite `css` so nothing in it can match outside `prefix`, with every
-/// `#id` renamed under `id_prefix` ([`crate::sanitize::sender_id_prefix`]).
 pub fn scope(css: &str, prefix: &str, id_prefix: &str, remote: RemoteImages) -> Scoped {
     let tally = Tally::default();
     let css = scope_into(css, prefix, id_prefix, remote, &tally);
@@ -57,15 +37,11 @@ pub(crate) fn scope_into(
     out
 }
 
-/// Where a sender's rules are confined: the message's container, and the
-/// prefix its ids were rewritten under.
 struct Scope<'a> {
     prefix: &'a str,
     id_prefix: &'a str,
 }
 
-/// Every rule at one nesting level: the top of the sheet, or the inside of a
-/// `@media`.
 fn write_rules(
     parser: &mut Parser<'_>,
     prefix: &Scope<'_>,
@@ -82,8 +58,6 @@ fn write_rules(
         let at = match parser.next() {
             Ok(Token::AtKeyword(name)) => Some(name.as_ref().to_ascii_lowercase()),
             Ok(_) => None,
-            // Exhausted, or a stray `}` closing a block we are not in. Either
-            // way there is no next rule; stopping is what a browser does too.
             Err(_) => return,
         };
         match at {
@@ -98,13 +72,9 @@ fn write_rules(
     }
 }
 
-/// One `selector { declarations }`.
-///
-/// `prefix` is `None` inside `@keyframes`, where the prelude is a percentage
-/// rather than a selector and has nothing to reach with.
-///
-/// Returns whether the sheet can continue: a rule with no block at all is the
-/// end of the input, and looping on it would not terminate.
+/// `prefix` is `None` inside `@keyframes`, where the prelude is a percentage. Returns whether the
+/// sheet can continue: a rule with no block is the end of input and looping on it would not
+/// terminate.
 fn write_qualified_rule(
     parser: &mut Parser<'_>,
     prefix: Option<&Scope<'_>>,
@@ -116,8 +86,7 @@ fn write_qualified_rule(
     let _ = parser.parse_until_before(Delimiter::CurlyBracketBlock, consume_all);
     let prelude = parser.slice_from(start).trim().to_owned();
     if !matches!(parser.next(), Ok(Token::CurlyBracketBlock)) {
-        // Unterminated. The prelude is dropped rather than guessed at: a
-        // selector with no declarations styles nothing anyway.
+        // Unterminated: the prelude is dropped, as a selector with no declarations styles nothing.
         return false;
     }
     let body = parser
@@ -158,11 +127,8 @@ fn write_at_rule(
     let prelude = parser.slice_from(start).trim().to_owned();
     let has_block = matches!(parser.next(), Ok(Token::CurlyBracketBlock));
 
-    // A refused at-rule is still *consumed* — its block included — so the
-    // rules written after it are read as rules rather than as its contents.
-    // Anything not named here is refused by omission, which is the safe
-    // direction: a CSS feature Postio has never heard of is not one it can
-    // reason about the reach of.
+    // A refused at-rule is still consumed, block included, so later rules are read as rules.
+    // Anything unnamed is refused by omission, the safe direction.
     let kept = match name {
         "media" | "supports" | "container" | "layer" => Nested::Rules,
         "keyframes" | "-webkit-keyframes" => Nested::Keyframes,
@@ -178,7 +144,6 @@ fn write_at_rule(
         return;
     }
     if !has_block {
-        // `@media screen;` is not a thing. Nothing to keep.
         return;
     }
 
@@ -214,21 +179,13 @@ fn write_at_rule(
 
 #[derive(PartialEq, Eq, Clone, Copy)]
 enum Nested {
-    /// Ordinary rules, each scoped as if it were at the top of the sheet.
     Rules,
-    /// Keyframe selectors: `from`, `to`, `50%`. Not element selectors, so
-    /// prefixing them would destroy them and scoping them buys nothing.
     Keyframes,
     Refused,
 }
 
-/// Rewrite a selector list so every member sits under `prefix`.
-///
-/// Split on **top-level** commas only. `:is(h1, h2)` is one selector, and
-/// cutting it at its comma emits `<prefix> :is(h1` — well-formed enough to
-/// parse as nothing at all, so the rule would vanish with no sign of it.
-/// `parse_until_before` knows where the function ends; a `split(',')` does
-/// not.
+/// Split on top-level commas only: cutting `:is(h1, h2)` at its comma emits a selector that parses
+/// as nothing, and the rule vanishes silently.
 fn scope_selectors(prelude: &str, prefix: &str) -> String {
     let mut parser = Parser::new(prelude);
     let mut parts: Vec<String> = Vec::new();
@@ -247,14 +204,9 @@ fn scope_selectors(prelude: &str, prefix: &str) -> String {
     parts.join(", ")
 }
 
-/// The document a sender means is their own message.
-///
-/// `body { font-family: … }` is how a great deal of real mail sets its type,
-/// and it means "this email", because when it was written the email *was* the
-/// document. Prefixing it into `<prefix> body` would be literal and useless:
-/// a well-formed selector matching nothing, which reads to the reader as
-/// Postio dropping the sender's styling rather than containing it. So the
-/// document heads resolve to the message's own container instead.
+/// `body { font-family: … }` means "this email" in real mail; prefixing it into `<prefix> body`
+/// would match nothing, which reads as Postio dropping the styling. Document heads resolve to the
+/// message's container.
 fn scope_one_selector(selector: &str, prefix: &str) -> String {
     let mut rest = selector;
     let mut anchored = false;
@@ -269,10 +221,7 @@ fn scope_one_selector(selector: &str, prefix: &str) -> String {
     }
 }
 
-/// `selector` with a leading `html`, `body` or `:root` removed, if it has one.
-///
-/// Only at a token boundary, so `bodycopy` and `body-text` are ordinary
-/// selectors and keep their meaning.
+/// Only at a token boundary, so `bodycopy` and `body-text` keep their meaning.
 fn strip_document_head(selector: &str) -> Option<&str> {
     for head in ["html", "body", ":root"] {
         let Some(rest) = selector
@@ -293,13 +242,8 @@ fn strip_document_head(selector: &str) -> Option<&str> {
     None
 }
 
-/// Every `#id` in a selector list renamed under `id_prefix`, the same way
-/// `crate::sanitize` renames the ids in the markup, so a sender's `#header`
-/// rule still finds their own `id="header"` -- and only theirs.
-///
-/// Token by token, so an id inside `:is(#a, #b)` is found and a `#` inside an
-/// attribute string (`[title="#1"]`) is not. Every other token is copied from
-/// the source unchanged.
+/// Token by token, so an id inside `:is(#a, #b)` is found and a `#` inside an attribute string
+/// (`[title="#1"]`) is not.
 fn rename_ids(selectors: &str, id_prefix: &str) -> String {
     let mut parser = Parser::new(selectors);
     let mut out = String::new();
@@ -337,15 +281,12 @@ fn rename_ids_in(parser: &mut Parser<'_>, id_prefix: &str, out: &mut String) {
     }
 }
 
-/// Read a delimited parser to its end and answer with the source text of it.
 fn slice_of_block<'i>(parser: &mut Parser<'i>) -> Result<String, ParseError<()>> {
     let start = parser.position();
     while parser.next().is_ok() {}
     Ok(parser.slice_from(start).to_owned())
 }
 
-/// Read a delimited parser to its end, for the source text `slice_from` will
-/// then be asked for.
 fn consume_all<'i>(parser: &mut Parser<'i>) -> Result<(), ParseError<()>> {
     while parser.next().is_ok() {}
     Ok(())
@@ -388,9 +329,6 @@ mod tests {
 
     #[test]
     fn a_comma_inside_a_functional_selector_is_not_a_list_boundary() {
-        // `:is(h1, h2)` is one selector. Splitting the prelude on every comma
-        // would cut it in half and emit `<prefix> :is(h1` -- which parses as
-        // nothing and silently loses the rule.
         let css = scoped(":is(h1, h2) span { color: red }");
         assert_eq!(
             css.matches(PREFIX).count(),
@@ -402,9 +340,6 @@ mod tests {
 
     #[test]
     fn styling_the_document_styles_the_message() {
-        // Senders write `body { ... }` meaning "my email". Prefixing it into
-        // `<prefix> body` would match nothing at all, which reads to the user
-        // as Postio failing to render what they were sent.
         for selector in ["body", "html", ":root"] {
             let css = scoped(&format!("{selector} {{ background: #fff }}"));
             assert!(
@@ -416,9 +351,6 @@ mod tests {
 
     #[test]
     fn an_import_loads_nothing_and_the_rest_of_the_sheet_survives() {
-        // `@import` fetches when the stylesheet parses, carrying the referer
-        // and the reader's IP. It needs no `<img>`, so neither the declaration
-        // table nor `img-src` touches it.
         let css = scoped("@import url(https://tracker.example/x.css);\np { color: red }");
         assert!(!css.contains("@import"), "{css:?}");
         assert!(!css.contains("tracker.example"), "{css:?}");
@@ -440,8 +372,6 @@ mod tests {
 
     #[test]
     fn keyframes_survive_intact() {
-        // A keyframe's "selectors" are percentages, not element selectors:
-        // there is nothing to scope, and prefixing them would destroy them.
         let css = scoped("@keyframes fade { from { opacity: 0 } to { opacity: 1 } }");
         assert!(css.contains("@keyframes fade"), "{css:?}");
         assert!(css.contains("opacity: 0"), "{css:?}");
@@ -493,11 +423,6 @@ mod tests {
 
     #[test]
     fn postio_s_own_chrome_cannot_be_named() {
-        // The message head, the blocked-images notice and the per-message
-        // actions all sit outside `.postio-body`. A sender naming them gets a
-        // selector that is well-formed and matches nothing, which is the
-        // point: a message must not be able to hide the notice that says its
-        // images were blocked.
         let css = scoped(".postio-blocked { display: none }");
         assert!(
             css.contains(&format!("{PREFIX} .postio-blocked")),
@@ -529,9 +454,6 @@ mod tests {
 
     #[test]
     fn every_refused_at_rule_is_actually_refused() {
-        // The table is the specification of the refusal, so it has to be the
-        // thing that fails when the two disagree -- otherwise it is a comment
-        // that happens to compile.
         assert!(!crate::sanitize::REFUSED_AT_RULES.is_empty());
         for (name, _reason) in crate::sanitize::REFUSED_AT_RULES {
             let with_block = scoped(&format!("@{name} x {{ p {{ color: red }} }}"));

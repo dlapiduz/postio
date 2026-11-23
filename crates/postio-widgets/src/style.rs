@@ -1,39 +1,22 @@
-//! The shared widgets' stylesheet, `data/widgets.css`, and how an app loads
-//! it.
-//!
-//! Every value in it is a `--postio-*` role, and the app defines the roles
-//! (specs/007-postio-focus research R11): Focus from libadwaita's own
-//! colours. The metrics -- spacing, radii, sizes -- are not the app's to
-//! define: `build.rs` generates them from `postio_ui::tokens` into
-//! `metrics.css`, which the sheet imports.
-//!
-//! # One sheet with the app's own, not a second provider
-//!
-//! GTK compares specificity only inside one `GtkCssProvider`: across two
-//! providers at one priority, the one added later wins every property it
-//! sets, whatever its selectors. So an app that dresses a surface's controls
-//! over these rules must layer them in the *same* provider, which is what
-//! `@import url("resource:///dev/postio/Widgets/widgets.css");` at the top of
-//! its own sheet does -- GTK parses an imported sheet into the importing
-//! provider, at the point of the import. [`register`] makes the URL resolve,
-//! and must run before that sheet is parsed. [`install`] is for an app with
-//! no sheet of its own to layer.
+//! The shared stylesheet `data/widgets.css`: every value is a `--postio-*` role the app defines;
+//! metrics come from `postio_ui::tokens` via `build.rs`.
+//! GTK compares specificity only within one provider, so an app layering over these rules must
+//! `@import url("resource:///dev/postio/Widgets/widgets.css");` in its own sheet, after `register`
+//! runs.
+//! `install` is for an app with no sheet of its own.
 
 use std::sync::OnceLock;
 
 use gtk::{gdk, gio, glib};
 
-/// Where the shared stylesheet lives in the bundle, as a resource path.
 pub const WIDGETS_CSS: &str = "/dev/postio/Widgets/widgets.css";
 
-/// The bundled app icon, laid out as `GtkIconTheme` expects a resource path:
-/// `scalable/apps/<name>.svg` beneath this directory.
+/// Icons live at `scalable/apps/<name>.svg` beneath this resource path.
 const ICONS: &str = "/dev/postio/Widgets/icons";
 
 const BUNDLE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/postio-widgets.gresource"));
 
-/// Register the bundle with GIO. Safe to call more than once; never touches
-/// the filesystem or the network.
+/// Safe to call more than once; touches neither the filesystem nor the network.
 pub fn register() {
     static REGISTERED: OnceLock<()> = OnceLock::new();
     REGISTERED.get_or_init(|| {
@@ -44,8 +27,6 @@ pub fn register() {
     });
 }
 
-/// Make the bundled app icon resolvable by name on `display`. Idempotent: a
-/// path already on the theme is not added again.
 pub fn install_icons(display: &gdk::Display) {
     register();
     let theme = gtk::IconTheme::for_display(display);
@@ -58,18 +39,12 @@ pub fn install_icons(display: &gdk::Display) {
     }
 }
 
-/// Load the shared stylesheet for `display` as a provider of its own, at
-/// application priority, and return it.
-///
-/// For an app with no sheet of its own to layer over these rules; one that
-/// has one imports this sheet into it instead (see the module docs).
+/// For an app with no sheet of its own; otherwise import this sheet into it (see module docs).
 pub fn install(display: &gdk::Display) -> gtk::CssProvider {
     register();
     let provider = gtk::CssProvider::new();
     provider.connect_parsing_error(|_, section, error| {
-        // A parse error means the sheet used something GTK's CSS subset does
-        // not have, and a rule was dropped: loud, because the controls would
-        // be subtly wrong.
+        // A parse error means a rule was dropped; loud because the controls would be subtly wrong.
         glib::g_critical!("postio", "widgets.css: {}: {error}", section.to_str());
     });
     provider.load_from_resource(WIDGETS_CSS);
@@ -83,13 +58,9 @@ pub fn install(display: &gdk::Display) -> gtk::CssProvider {
 
 #[cfg(test)]
 mod tests {
-    //! Text guards over this sheet. Each check is
-    //! shown failing on a sheet that breaks it, so a pass means something.
 
     const SHEET: &str = include_str!("../data/widgets.css");
 
-    /// Every transition over the motion budget (CLAUDE.md: <= 100ms or
-    /// absent), as `line: duration`.
     fn over_budget(css: &str) -> Vec<String> {
         let mut out = Vec::new();
         for (number, line) in css.lines().enumerate() {
@@ -115,7 +86,6 @@ mod tests {
         out
     }
 
-    /// Every type role whose size is typed in rather than named.
     fn retyped_roles(css: &str) -> Vec<&'static str> {
         postio_ui::tokens::TYPE_ROLES
             .iter()

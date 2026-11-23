@@ -1,16 +1,8 @@
-//! The render thread (research R6). Each reader owns one; it owns every
-//! Blitz document, and only the immutable snapshot leaves it.
-//!
-//! - A request carries a generation; a result for a generation that has
-//!   been superseded or abandoned is never delivered -- its receiver just
-//!   disconnects.
-//! - A render runs inside `catch_unwind`. After a panic the document is
-//!   dropped, never reused, and the plain-text fallback is delivered.
-//! - There is no way to interrupt a layout. `abandon` detaches the
-//!   thread running it: the next request goes to a fresh thread, and the
-//!   old one finishes, delivers nothing, and exits. A newer request does
-//!   the same to a render it supersedes, and a superseded render stops at
-//!   the next pass it would have started.
+//! The render thread: each reader owns one and every Blitz document on it; only the
+//! immutable snapshot leaves. A result for a superseded or abandoned generation is never
+//! delivered, and a panic drops the document and delivers the plain-text fallback.
+//! A layout cannot be interrupted: `abandon` detaches the thread and the next request goes to a
+//! fresh one.
 
 use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -21,15 +13,13 @@ use std::time::Duration;
 use crate::fonts::FontSet;
 use crate::{FallbackReason, RenderRequest, RenderedDocument};
 
-/// The production render bound (spec FR-023). Callers take their deadline
-/// as a parameter and default to this; tests inject a scaled or tiny one.
+/// Callers take their deadline as a parameter and default to this.
 pub const DEFAULT_RENDER_DEADLINE: Duration = Duration::from_millis(400);
 
 /// The render thread's stack. Deep markup is flattened by the input caps;
 /// this is the margin under them, because an overflow cannot be caught.
 const STACK: usize = 64 * 1024 * 1024;
 
-/// What names a render thread, so the panic hook knows its own.
 const THREAD_NAME: &str = "postio-render";
 
 struct Job {
@@ -37,19 +27,14 @@ struct Job {
     reply: Sender<RenderedDocument>,
 }
 
-/// One render thread, and what it is working on.
 struct Worker {
     jobs: Sender<Job>,
-    /// The generation inside a render right now; 0 when idle.
     running: Arc<AtomicU64>,
 }
 
-/// Generations as the reader sees them, shared with every thread it has had.
 #[derive(Default)]
 struct Generations {
-    /// The newest generation asked for: anything older is stale.
     latest: AtomicU64,
-    /// The newest generation given up on.
     abandoned: AtomicU64,
 }
 
@@ -60,9 +45,6 @@ impl Generations {
     }
 }
 
-/// One per reader. Owns a render thread (64 MiB stack) and every Blitz
-/// document on it. Dropping it detaches the thread, which exits when its
-/// queue is empty.
 pub struct Renderer {
     fonts: FontSet,
     generations: Arc<Generations>,
@@ -70,7 +52,6 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    /// A renderer drawing with `fonts`.
     pub fn new(fonts: &FontSet) -> Renderer {
         install_panic_hook();
         let generations = Arc::new(Generations::default());
@@ -81,9 +62,7 @@ impl Renderer {
         }
     }
 
-    /// Ask for a render. Non-blocking: the result arrives on the receiver,
-    /// or the receiver disconnects if the request is superseded or
-    /// abandoned first. The caller runs the deadline.
+    /// Non-blocking: the receiver disconnects if the request is superseded or abandoned first.
     pub fn request(&self, request: RenderRequest) -> Receiver<RenderedDocument> {
         self.generations
             .latest
@@ -92,26 +71,19 @@ impl Renderer {
         let (reply, result) = mpsc::channel();
         let job = Job { request, reply };
         let mut worker = self.worker.lock().expect("the worker is never poisoned");
-        // A render still running for an older generation is one nobody will
-        // see: queueing behind it would spend this request's deadline on it
-        // (T218). The thread is left to notice it is stale and stop, and a
-        // fresh one takes this request at once.
+        // A render still running for an older generation is one nobody will see: queueing behind it
+        // would spend this request's deadline.
         let running = worker.running.load(Ordering::Acquire);
         if running != 0 && running < generation {
             *worker = spawn(self.fonts.clone(), self.generations.clone());
         }
         if let Err(mpsc::SendError(job)) = worker.jobs.send(job) {
-            // The thread is gone (it cannot be: panics are caught). A new
-            // one takes the job rather than losing it.
             *worker = spawn(self.fonts.clone(), self.generations.clone());
             let _ = worker.jobs.send(job);
         }
         result
     }
 
-    /// Give up on `generation`: its result is never delivered, and if it is
-    /// still running, the thread running it is left to finish on its own
-    /// while the next request goes to a fresh one.
     pub fn abandon(&self, generation: u64) {
         self.generations
             .abandoned
@@ -122,10 +94,6 @@ impl Renderer {
         }
     }
 
-    /// The plain-text fallback for `request`, drawn synchronously: its
-    /// composed [`Fallback`](crate::Fallback) when it carries one, else
-    /// its plain text by the renderer's own minimal path. Drawn as
-    /// `request`'s generation.
     pub fn fallback(&self, request: &RenderRequest, reason: FallbackReason) -> RenderedDocument {
         fallback(&self.fonts, request, reason)
     }
@@ -157,11 +125,8 @@ fn spawn(fonts: FontSet, generations: Arc<Generations>) -> Worker {
                     crate::render::render_unless(&request, &fonts, &stale)
                 }));
                 busy.store(0, Ordering::Release);
-                // After a panic the document went with the unwind; it is
-                // never reused.
                 let document = match rendered {
                     Ok(Some(document)) => document,
-                    // Superseded part way: nothing to deliver.
                     Ok(None) => continue,
                     Err(_) => fallback(&fonts, &request, FallbackReason::Panicked),
                 };
@@ -174,10 +139,6 @@ fn spawn(fonts: FontSet, generations: Arc<Generations>) -> Worker {
     Worker { jobs, running }
 }
 
-/// Draw `request`'s plain text in place of its document: the reader's own
-/// composition of it when the request carries one, so the fallback takes
-/// the column, face and rhythm of any plain-text body (T218); the
-/// renderer's minimal page otherwise.
 fn fallback(fonts: &FontSet, request: &RenderRequest, reason: FallbackReason) -> RenderedDocument {
     let escape = |text: &str| {
         text.replace('&', "&amp;")
@@ -213,9 +174,7 @@ fn fallback(fonts: &FontSet, request: &RenderRequest, reason: FallbackReason) ->
         plain_text: String::new(),
         fallback: None,
         over_cap: None,
-        // Nothing the message names is drawn, so nothing is looked up: the
-        // faces are the font set's own. And never the message's table,
-        // which is what failed or is still in use by the render given up on.
+        // Never the message's table: it is what failed or is in use by the render given up on.
         resources: Arc::new(crate::Resources::new()),
         darkened: Vec::new(),
         toggled_folds: Vec::new(),
@@ -227,13 +186,9 @@ fn fallback(fonts: &FontSet, request: &RenderRequest, reason: FallbackReason) ->
     document
 }
 
-/// The class of the quiet line a fallback document says why in: the
-/// reader's stylesheet draws it as its other notices are drawn.
 pub const NOTICE_CLASS: &str = "postio-fallback-notice";
 
-/// `document` with `notice` as the first thing in its `<body>`, above the
-/// body's own container. The `<body>` after the head: the head's sheets
-/// and comments can spell the word too.
+/// The `<body>` after the head: the head's sheets and comments can spell the word too.
 fn with_notice(document: &str, notice: &str) -> String {
     let head = document.find("</head>").unwrap_or(0);
     let at = document[head..]

@@ -1,24 +1,9 @@
-//! Reclaiming disk: the sweeps that had no production caller (#416).
-//!
-//! `collect_garbage` and `purge_temporary` were written, tested and
-//! documented, and nothing in a running Postio ever called either. So a
-//! deleted message's bytes stayed on disk for ever, and a mailbox whose
-//! `UIDVALIDITY` reset orphaned every blob in it with no way to get the
-//! space back.
-//!
-//! What is in the blob store is the raw `.eml` and the attachment payloads;
-//! since ADR 0020 the body text is a column on the row and goes when the row
-//! goes, without a sweep. So these drive the raw source, which is the blob
-//! every synced message has.
-
 use std::time::Duration;
 
 use postio_storage::BlobStore;
 use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
 
-/// A store, a blob directory beside it, and one message holding one blob —
-/// its raw RFC 5322 source.
 async fn store_with_a_message() -> (test_support::TempStore, BlobStore, postio_model::MessageId) {
     let database = test_support::temp().await;
     let blobs = BlobStore::open(
@@ -42,7 +27,6 @@ async fn store_with_a_message() -> (test_support::TempStore, BlobStore, postio_m
     (database, blobs, id)
 }
 
-/// Every regular file under the store's root, excluding its temp directory.
 fn blob_files(store: &BlobStore) -> Vec<std::path::PathBuf> {
     fn walk(directory: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
         let Ok(entries) = std::fs::read_dir(directory) else {
@@ -74,10 +58,6 @@ fn blob_files(store: &BlobStore) -> Vec<std::path::PathBuf> {
 
 #[tokio::test]
 async fn a_deleted_message_s_raw_source_is_reclaimed_by_a_later_sweep() {
-    // The headline. `MessageRepository::delete` removes the row and never
-    // touches blobs -- deliberately, because the schema delegates that to this
-    // sweep. Nothing called the sweep, so deleting mail freed nothing, for
-    // ever.
     let (database, blobs, id) = store_with_a_message().await;
     let connection = database.connect().await.expect("checkout");
     assert_eq!(blob_files(&blobs).len(), 1);
@@ -103,9 +83,6 @@ async fn a_deleted_message_s_raw_source_is_reclaimed_by_a_later_sweep() {
 
 #[tokio::test]
 async fn a_blob_still_referenced_is_never_swept() {
-    // The other half, and the one that matters more: a sweep that took a live
-    // blob would lose mail that is not refetchable if the server no longer has
-    // it. `referenced_blobs` is what stands between this and that.
     let (database, blobs, _id) = store_with_a_message().await;
 
     let report = postio_session::reclaim_orphaned_blobs(&database, &blobs, Duration::ZERO)
@@ -118,10 +95,6 @@ async fn a_blob_still_referenced_is_never_swept() {
 
 #[tokio::test]
 async fn a_blob_younger_than_the_grace_period_is_left_alone() {
-    // `min_age` is load-bearing rather than decoration. A blob written but not
-    // yet committed to a row is indistinguishable from an orphan, so a sweep
-    // with no grace period would delete the body of a message that was
-    // mid-fetch. The default is an hour; production must not pass `ZERO`.
     let database = test_support::temp().await;
     let blobs = BlobStore::open(
         database.directory().join("blobs"),
@@ -143,9 +116,6 @@ async fn a_blob_younger_than_the_grace_period_is_left_alone() {
 
 #[tokio::test]
 async fn debris_from_a_torn_off_fetch_is_purged() {
-    // A cancelled fetch's writer removes its own temp file, so this is for the
-    // case no destructor ran at all: a power cut or a kill -9 mid-fetch leaves
-    // a `.part` file nothing will ever finish.
     let database = test_support::temp().await;
     let blobs = BlobStore::open(
         database.directory().join("blobs"),
@@ -171,16 +141,6 @@ async fn debris_from_a_torn_off_fetch_is_purged() {
     let _ = database;
 }
 
-// ---------------------------------------------------------------------------
-// The ceiling: `[storage] max_bytes`, and the third sweep (#862)
-// ---------------------------------------------------------------------------
-
-/// A store, a blob directory beside it, and `count` messages — oldest first,
-/// one second apart — each holding a raw-source blob of `size` distinct bytes.
-///
-/// Distinct bytes because the store is content-addressed: two messages filled
-/// with the same byte would share one blob, and a test about *which* blob
-/// eviction takes would be testing nothing.
 async fn store_with_messages(
     count: usize,
     size: usize,
@@ -220,13 +180,9 @@ async fn store_with_messages(
 
 #[tokio::test]
 async fn a_store_over_its_ceiling_loses_its_least_wanted_blobs() {
-    // The sentence #862 is about: `evict_to_fit` had no production caller, so
-    // a `max_bytes` in somebody's config.toml did nothing at all. Oldest mail
-    // first -- the mirror of a backfill that fetches newest first.
     let (database, blobs, written) = store_with_messages(3, 40_000).await;
     assert_eq!(blob_files(&blobs).len(), 3);
 
-    // Room for the newest blob and nothing else.
     let budget = blobs.len_of(&written[2]).expect("len") + 16;
     let report = postio_session::enforce_storage_ceiling(&database, &blobs, Some(budget))
         .await
@@ -243,8 +199,6 @@ async fn a_store_over_its_ceiling_loses_its_least_wanted_blobs() {
 
 #[tokio::test]
 async fn a_store_under_its_ceiling_loses_nothing() {
-    // The other half, and the one a user notices: a ceiling they set high
-    // enough must never cost them a refetch.
     let (database, blobs, written) = store_with_messages(3, 4_000).await;
 
     let report =
@@ -261,11 +215,6 @@ async fn a_store_under_its_ceiling_loses_nothing() {
 
 #[tokio::test]
 async fn no_ceiling_means_the_pass_does_not_run_at_all() {
-    // Unset is the default and the documented answer -- `[storage]`'s module
-    // docs say a number here is a promise about somebody else's disk, and
-    // Postio does not know how big theirs is. So no ceiling must not be read
-    // as a ceiling of zero, which is the reading that would delete a whole
-    // store on first start.
     let (database, blobs, written) = store_with_messages(3, 40_000).await;
 
     let report = postio_session::enforce_storage_ceiling(&database, &blobs, None)
@@ -279,11 +228,6 @@ async fn no_ceiling_means_the_pass_does_not_run_at_all() {
 
 #[tokio::test]
 async fn settled_operations_past_their_retention_are_pruned_and_the_rest_kept() {
-    // `OperationQueueRepository::prune_settled` was written and tested and
-    // nothing ever called it, so the queue grew without bound -- the shape
-    // of #416. Housekeeping runs it now, and this is the contract: a done
-    // row older than the retention goes; a done row inside it stays, so a
-    // late undo still finds it; a pending row stays whatever its age.
     use chrono::Duration;
     use postio_model::{Message, Operation, OperationTarget};
     use postio_storage::repository::{MessageRepository, OperationQueueRepository};

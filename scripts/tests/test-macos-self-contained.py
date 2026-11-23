@@ -28,8 +28,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial and the platform rule (#1249). `scripts/lib`, not beside
-# this file, because CI runs every `scripts/tests/*.py` it finds.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -38,7 +36,6 @@ import prereq  # noqa: E402
 SCRIPTS = Path(__file__).resolve().parent.parent
 SCRIPT = SCRIPTS / "macos-self-contained.sh"
 REPO_ROOT = SCRIPTS.parent
-# Under target/, which git ignores; see scripts/checks/check-test-sandboxes.py.
 SANDBOXES = REPO_ROOT / "target" / "tmp"
 
 FAILURES: list[str] = []
@@ -97,7 +94,6 @@ def main() -> int:
         return 1
     SANDBOXES.mkdir(parents=True, exist_ok=True)
 
-    # ── the shape that shipped broken ─────────────────────────────────
     with tempfile.TemporaryDirectory(dir=SANDBOXES) as d:
         app, library = toy_app(Path(d))
         executable = app / "Contents" / "MacOS" / "Toy"
@@ -114,7 +110,6 @@ def main() -> int:
         ident = sh("otool", "-D", str(bundled)).stdout
         case("the copy's own install name is @rpath-relative", "@rpath/libtoy.dylib" in ident, ident)
 
-        # The script rewrites; signing is the bundler's job, in this order.
         sh("codesign", "--force", "--sign", "-", str(bundled))
         sh("codesign", "--force", "--sign", "-", str(app))
         library.unlink()
@@ -128,14 +123,12 @@ def main() -> int:
         again = run(app)
         case("running it twice changes nothing and still passes", again.returncode == 0, again.stdout + again.stderr)
 
-    # ── nothing to bundle ─────────────────────────────────────────────
     with tempfile.TemporaryDirectory(dir=SANDBOXES) as d:
         app, _ = toy_app(Path(d), link_library=False)
         r = run(app)
         case("an app that loads only system libraries passes untouched", r.returncode == 0, r.stdout + r.stderr)
         case("...and gains no Frameworks directory", not (app / "Contents" / "Frameworks").exists(), "")
 
-    # ── a reference it cannot satisfy ─────────────────────────────────
     with tempfile.TemporaryDirectory(dir=SANDBOXES) as d:
         app, library = toy_app(Path(d))
         library.unlink()

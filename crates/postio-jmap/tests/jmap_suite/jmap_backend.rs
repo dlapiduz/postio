@@ -1,11 +1,3 @@
-//! The adapter against a scripted JMAP server on loopback (#544).
-//!
-//! The server is a thread answering canned JSON per method name — the
-//! `SmtpScript` shape: each test states exactly what the server will say,
-//! and the assertions read both what came back through the seam and what
-//! the adapter actually sent. Nothing here touches the network beyond
-//! 127.0.0.1.
-
 use std::collections::{HashMap, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
@@ -19,13 +11,9 @@ use postio_account::cancel::CancelToken;
 use postio_jmap::JmapBackend;
 use postio_model::{Flag, FlagSet, MailboxRole, RemoteId, Uid};
 
-// --- the scripted server ------------------------------------------------
-
 #[derive(Default)]
 struct Script {
-    /// Canned `methodResponses` bodies, popped per method name.
     api: HashMap<String, VecDeque<String>>,
-    /// Bytes the download endpoint serves.
     blob: Vec<u8>,
 }
 
@@ -182,7 +170,6 @@ fn session_json(port: u16) -> String {
     )
 }
 
-/// The first method name in a JMAP request body.
 fn method_of(body: &str) -> Option<String> {
     let calls = body.split("\"methodCalls\"").nth(1)?;
     let start = calls.find("[[\"")? + 3;
@@ -200,8 +187,6 @@ const MAILBOXES: &str = r#"["Mailbox/get", {"state": "s1", "list": [
     {"id": "mb-projects", "name": "Projects"},
     {"id": "mb-postio", "name": "Postio", "parentId": "mb-projects"}
   ], "notFound": []}, "c0"]"#;
-
-// --- the tests ----------------------------------------------------------
 
 #[tokio::test]
 async fn the_session_capabilities_reach_the_seam_and_the_bearer_reaches_the_wire() {

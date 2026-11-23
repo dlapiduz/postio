@@ -1,20 +1,8 @@
-//! Drafts: the composer's durable buffer.
-//!
-//! # Why the body is stored inline
-//!
-//! Everywhere else in Postio the bytes of a message live in the blob store and
-//! SQLite holds the key. A draft is the exception, and the schema says so: it
-//! is the composer's live buffer, autosaved on every keystroke, and a
-//! content-addressed store would accumulate one immutable blob per keystroke.
-//! It moves to the blob store when it becomes a sent message.
-//!
-//! # Autosave
-//!
-//! [`DraftRepository::save`] is the only write the composer needs: it inserts
-//! the first time and updates every time after, so the caller does not have to
-//! know which. Calling it fifty times in a row leaves one row, the recipients
-//! it was last given, and the attachment ids the user's attachments already
-//! had.
+//! Drafts: the composer's durable buffer, autosaved on every keystroke. The body is inline because
+//! a content-addressed store would accumulate a blob per keystroke; it moves to the blob store when
+//! sent.
+//! [`DraftRepository::save`] inserts the first time and updates after, so callers need not know
+//! which.
 
 use chrono::{DateTime, Utc};
 use postio_model::{
@@ -24,33 +12,20 @@ use postio_model::{
     UidValidity,
 };
 
-/// Where an appended draft landed, as [`DraftRepository::set_server_copy`]
-/// records it: the backend-neutral identity the engine addresses (#543),
-/// plus the wire pair the uid-range pull machinery still enumerates by
-/// (ADR 0018 Q3 keeps that IMAP-shaped until the native delta seam).
+/// The wire pair is what the uid-range pull still enumerates by (ADR 0018 Q3).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerCopyLocation {
-    /// The backend's own identity for the copy.
     pub remote_id: RemoteId,
-    /// The wire uid it landed at.
     pub uid: Uid,
-    /// The generation `uid` was observed under.
     pub uid_validity: UidValidity,
 }
 
 use super::{OperationQueueRepository, QueuedOperation};
 
-/// What [`DraftRepository::cancel_send`] found when it was asked to take a
-/// draft's send back off the queue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CancelSendOutcome {
-    /// The queued `Send` was removed and the draft is `Editing` again.
     Cancelled,
-    /// There was nothing queued to cancel: the draft is not [`DraftState::Queued`],
-    /// or it no longer exists.
     NotQueued,
-    /// The send is no longer safely cancellable — the drainer has already
-    /// started it, or it settled between the caller's read and this call.
     AlreadyInFlight,
 }
 use super::{from_millis, require_persisted, to_millis, unknown_enum};
@@ -60,7 +35,6 @@ use crate::sql::{self, RowExt as _, bind};
 use crate::store::Connection;
 use turso::Row;
 
-/// Reads and writes [`Draft`] rows.
 #[derive(Debug)]
 pub struct DraftRepository<'a> {
     connection: &'a Connection,
@@ -73,27 +47,16 @@ rfc_message_id, forwarded_message_id, body_markdown, label_ids, calendar_reply,
 remind_at";
 
 impl<'a> DraftRepository<'a> {
-    /// Borrows a connection.
     pub fn new(connection: &'a Connection) -> Self {
         Self { connection }
     }
 
-    /// Writes a draft, inserting it the first time and updating it thereafter.
+    /// Idempotent: the draft's id and its attachments' ids do not change between saves.
     ///
-    /// This is what autosave calls. It is idempotent: the draft's id, and the
-    /// ids of the attachments already on it, do not change from one save to the
-    /// next, so nothing the composer is holding goes stale.
-    ///
-    /// # The server identifiers are not the composer's to write
-    ///
-    /// `uid`, `uid_validity`, `mod_seq` and `remote_id` are only ever cleared
-    /// by [`set_server_copy`](Self::set_server_copy), never by a save that
-    /// simply does not know them. The composer holds a [`Draft`] for as long as
-    /// the window is open and autosaves the same value repeatedly; the drainer
-    /// writes where the server copy landed *while it is holding it*. Without
-    /// this, every autosave after an upload would wipe the id of the copy on
-    /// the server, and the next upload would add a second one instead of
-    /// replacing the first.
+    /// `uid`, `uid_validity`, `mod_seq` and `remote_id` are cleared only by
+    /// [`set_server_copy`](Self::set_server_copy), never by a save that does not know them: the
+    /// composer autosaves a stale value while the drainer records where the server copy landed, and
+    /// a wipe would make the next upload add a second copy.
     pub async fn save(&self, draft: &mut Draft) -> Result<DraftId> {
         sql::in_scope(self.connection, |transaction| async move {
             if draft.id.is_assigned() {
@@ -210,18 +173,11 @@ impl<'a> DraftRepository<'a> {
         .await
     }
 
-    /// Records that one of `draft`'s attachments now has its bytes in the
-    /// blob store, and nothing else about the draft.
+    /// A narrow write, not [`save`](Self::save): the drainer fetching a forward's attachment bytes
+    /// (#1686) does not hold the composer's draft, and rewriting the row from a stale copy would
+    /// overwrite its saves.
     ///
-    /// For a forward's carried attachment whose bytes were fetched from the
-    /// original after the forward was made (#1686). A narrow write rather
-    /// than [`save`](Self::save), because the drainer that fetches them is
-    /// not holding the draft the composer is: rewriting the whole row from a
-    /// copy read before the network round trip would put back whatever the
-    /// composer had saved over it in the meantime.
-    ///
-    /// `false` when `attachment` is not one of `draft`'s — it was removed from
-    /// the draft, or the draft is gone.
+    /// `false` when `attachment` is not one of `draft`'s.
     pub async fn set_attachment_blob(
         &self,
         draft: DraftId,
@@ -237,18 +193,11 @@ impl<'a> DraftRepository<'a> {
         Ok(changed > 0)
     }
 
-    /// Saves a draft and queues its server copy to be brought up to date.
+    /// [`save`](Self::save) plus the enqueue in one write: a local write without its queue row
+    /// never reaches the server, and the reverse tells it about something the user never saw.
     ///
-    /// This is [`save`](Self::save) plus the enqueue, in one write, which is
-    /// the local-first rule stated in [`OperationQueueRepository`]: a local
-    /// write without its queue row never reaches the server, and a queue row
-    /// without its local write tells the server about something the user never
-    /// saw happen.
-    ///
-    /// Returns `None` — having still saved the draft — when the account has no
-    /// Drafts mailbox yet, which is the ordinary state of an account that has
-    /// not finished its first sync. The draft is durable here regardless, and
-    /// the next save after the folder turns up files it.
+    /// Returns `None`, having still saved, when the account has no Drafts mailbox yet; the next
+    /// save after it appears files it.
     pub async fn save_and_sync(
         &self,
         draft: &mut Draft,
@@ -280,34 +229,17 @@ impl<'a> DraftRepository<'a> {
         .await
     }
 
-    /// Hands a draft to the operation queue to be sent, in one write.
+    /// Local-first: the draft goes to [`DraftState::Queued`] and the [`Operation::Send`] row is
+    /// written now, so the composer closes without waiting on SMTP.
     ///
-    /// The sibling of [`save_and_sync`](Self::save_and_sync) for the other
-    /// verb, and local-first in the same way: the draft goes to
-    /// [`DraftState::Queued`] and the [`Operation::Send`] row is written now,
-    /// so the composer can close the moment the user presses the key and the
-    /// UI never waits on SMTP. `postio-sync::send` picks the row up whenever
-    /// there is a connection.
+    /// Saves rather than marks: autosave is debounced, so a quickly sent draft may have no
+    /// [`DraftId`], and the operation names the draft by id (a send carries no bytes).
     ///
-    /// # Why the draft is saved rather than merely marked
+    /// The local row stays: `postio-sync::send` treats a `Send` whose draft is gone as obsolete, so
+    /// deleting it would drop the message. The drainer deletes it after acceptance and filing in
+    /// Sent.
     ///
-    /// Autosave is debounced, so a message typed and sent inside the quiet
-    /// period has never been written and has no [`DraftId`] — and the queued
-    /// operation names the draft by id, because a send carries no bytes for
-    /// the same reason [`Operation::SaveDraft`] does not: they are built when
-    /// it drains, from whatever the row says then. So this saves first and
-    /// enqueues against the id that save assigned.
-    ///
-    /// # Why the local row stays
-    ///
-    /// Every other terminal verb on a draft deletes it. This one must not:
-    /// `postio-sync::send` resolves a `Send` whose draft is gone as *obsolete*
-    /// and drops it, so deleting the row here would throw the message away
-    /// instead of sending it. The row is deleted by the drainer, after the
-    /// submission server has accepted it and the Sent copy is filed.
-    ///
-    /// Unlike `save_and_sync` this always returns a queue row: a send names no
-    /// mailbox, so there is no folder that might not exist yet to stop it.
+    /// Always returns a queue row: a send names no mailbox.
     pub async fn queue_send(
         &self,
         draft: &mut Draft,
@@ -332,15 +264,8 @@ impl<'a> DraftRepository<'a> {
         .await
     }
 
-    /// [`queue_send`](Self::queue_send), except the drainer must not touch
-    /// the row before `send_at` — a scheduled send.
-    ///
-    /// The draft goes to `Queued` immediately, same as an immediate send:
-    /// the composer has let go of it either way, and there is nothing left
-    /// to edit while a send — due now or due later — is sitting in the
-    /// queue. What differs is only when [`OperationQueueRepository::pending`]
-    /// starts offering the row to the drainer, which is stored on the row
-    /// itself and so survives a restart with no timer to lose.
+    /// As [`queue_send`](Self::queue_send), but [`OperationQueueRepository::pending`] withholds the
+    /// row until `send_at`, stored on the row so it survives a restart.
     pub async fn queue_send_at(
         &self,
         draft: &mut Draft,
@@ -362,9 +287,8 @@ impl<'a> DraftRepository<'a> {
                 )
                 .await?;
 
-            // The chosen time, on the row the list draws. Only here: a
-            // `next_attempt_at` set by backoff is the retry clock, not a plan
-            // anybody made, and showing it as one would be a lie about intent.
+            // The chosen time only: a backoff `next_attempt_at` is the retry clock, and showing it
+            // would misstate intent.
             sql::execute(
                 &scope,
                 "UPDATE messages SET send_at = ?2
@@ -378,31 +302,18 @@ impl<'a> DraftRepository<'a> {
         .await
     }
 
-    /// Mark every send that has nothing left to carry it as `Failed`.
+    /// Heals a `Queued` draft whose operation gave up (marked `failed`, then pruned): it would sit
+    /// in the Outbox for ever.
     ///
-    /// A draft is `Queued` because `queue_send` wrote the state and the
-    /// `Send` operation in one transaction, so the two cannot come apart at
-    /// the moment of queueing. They come apart afterwards: an operation that
-    /// gives up is marked `failed`, and `prune_settled` removes settled rows
-    /// in time. A draft left `Queued` behind that is in the Outbox for ever,
-    /// under a row that says it is on its way, with nothing coming.
+    /// `Queued` only, and that is the safety argument: the drainer commits `Sending` before SMTP
+    /// (ADR 0021), so a `Queued` draft was never submitted. A `Sending` draft with no operation is
+    /// uncertain and belongs to `postio_sync::send::resolve`; touching it could report failed a
+    /// message that is in somebody's inbox.
     ///
-    /// **`Queued` only, and that is the safety argument.** The drainer commits
-    /// `Sending` before it hands anything to SMTP (ADR 0021), so a draft still
-    /// at `Queued` was never submitted and "it did not go" is a fact rather
-    /// than a guess. A `Sending` draft with no operation is the *uncertain*
-    /// case -- nobody can say whether the server took it -- and
-    /// `postio_sync::send::resolve` promotes that one to `Unconfirmed`. This
-    /// must never touch it, or it would tell a user a message failed that may
-    /// be in somebody's inbox.
-    ///
-    /// Returns how many were healed. Idempotent, because it runs on every
-    /// drain pass.
+    /// Returns how many were healed. Idempotent, because it runs on every drain pass.
     pub async fn fail_orphaned_sends(&self, account: AccountId) -> Result<usize> {
-        // Read first, and write only when there is something to write. This
-        // runs on every drain pass, and the answer is almost always zero: an
-        // `UPDATE` issued regardless would take the writer each time to
-        // decide it had nothing to do.
+        // Read first: this runs every drain pass and the answer is almost always zero, and an
+        // `UPDATE` would take the writer each time to find nothing.
         let orphans = sql::scalar(
             self.connection,
             "SELECT count(*) FROM drafts
@@ -437,10 +348,8 @@ impl<'a> DraftRepository<'a> {
                 [account.get()],
             )
             .await?;
-            // The mirror row #166 keeps in Drafts carries the same state, and
-            // the lists read *it* rather than the draft -- so a heal that
-            // stopped at the `drafts` table would leave the Outbox still
-            // drawing the row.
+            // The mirror row in Drafts (#166) carries the same state and the lists read it, so the
+            // heal must update it too.
             sql::execute(
                 &transaction,
                 "UPDATE messages
@@ -458,28 +367,14 @@ impl<'a> DraftRepository<'a> {
         .await
     }
 
-    /// Cancels a draft's pending send and hands it back for editing (#433).
+    /// Cancels a pending send and hands the draft back for editing (#433). [`Operation::Send`] has
+    /// no [`Operation::inverse`]; instead [`OperationQueueRepository::delete`] takes a
+    /// not-yet-draining row off the queue, and local-first means it is still in SQLite until the
+    /// drainer marks it.
     ///
-    /// A queued draft's row stayed in the Drafts folder the whole time it sat
-    /// in the queue, and opening it from there reopened the composer on live
-    /// state that could be edited — while the drainer might build the
-    /// outgoing bytes from that same row at any moment. Whether an edit made
-    /// it into the message the server received depended on nothing but
-    /// timing.
-    ///
-    /// This is what makes it safe to open again: [`Operation::Send`] has no
-    /// [`Operation::inverse`] — there is nothing to *replay* against a
-    /// server that has not seen it — but [`OperationQueueRepository::delete`]
-    /// documents the real answer for a row that has not drained yet, taking
-    /// it off the queue outright. That is exactly this call, and it costs
-    /// nothing because nothing has left the machine: `Composer::send`'s
-    /// local-first write means the operation is still sitting in SQLite,
-    /// never in flight to SMTP, right up until the drainer marks it so.
-    ///
-    /// Returns [`CancelSendOutcome::AlreadyInFlight`] rather than touching
-    /// anything once the drainer has: at that point a submission may already
-    /// be on the wire, and reopening the draft as editable would risk a
-    /// second, different message going out behind it.
+    /// Returns [`CancelSendOutcome::AlreadyInFlight`] without touching anything once the drainer
+    /// has: a submission may be on the wire, and an editable draft would risk a second, different
+    /// message.
     pub async fn cancel_send(&self, id: DraftId, at: DateTime<Utc>) -> Result<CancelSendOutcome> {
         sql::in_scope(self.connection, |scope| async move {
             let drafts = DraftRepository::new(&scope);
@@ -487,12 +382,9 @@ impl<'a> DraftRepository<'a> {
             let Some(mut draft) = drafts.get(id).await? else {
                 return Ok(CancelSendOutcome::NotQueued);
             };
-            // `Sending` and `Sent` are not "nothing to cancel" — they are "too
-            // late", and the two are opposite facts. `postio-sync::send` commits
-            // `Sending` immediately before it opens the SMTP transaction (ADR
-            // 0021), so a draft in either state may already have reached the
-            // recipient's server, and answering `NotQueued` here would let a
-            // caller report a message recalled while it was on the wire.
+            // `Sending` and `Sent` are "too late", not "nothing to cancel": the drainer commits
+            // `Sending` just before SMTP (ADR 0021), and `NotQueued` would let a caller report a
+            // message recalled while on the wire.
             if matches!(draft.state, DraftState::Sending | DraftState::Sent) {
                 return Ok(CancelSendOutcome::AlreadyInFlight);
             }
@@ -503,9 +395,7 @@ impl<'a> DraftRepository<'a> {
             let queue = OperationQueueRepository::new(&scope);
             let target = OperationTarget::Draft(id);
             let Some(pending) = queue.pending_for(target).await? else {
-                // The row says `Queued` but the operation is already gone --
-                // settled between the caller's read and this one. Too late to
-                // pretend otherwise.
+                // Settled between the caller's read and this one: too late.
                 return Ok(CancelSendOutcome::AlreadyInFlight);
             };
             if pending.state != postio_model::OperationState::Pending {
@@ -522,23 +412,17 @@ impl<'a> DraftRepository<'a> {
         .await
     }
 
-    /// Deletes a draft and queues the removal of its server copy.
+    /// The local row goes now (local-first), so the queued [`Operation::DiscardDraft`] carries the
+    /// `UID` and generation rather than naming the draft.
     ///
-    /// The local row goes now: discarding a draft is local-first like every
-    /// other mutation, and the composer must not wait for a server to agree.
-    /// That is why the queued [`Operation::DiscardDraft`] carries the `UID` and
-    /// its generation rather than naming the draft — by the time it drains
-    /// there is no row left to read them from.
-    ///
-    /// Returns `None` when nothing needed queueing: the draft was already gone,
-    /// it never reached the server, or the account has no Drafts mailbox.
+    /// Returns `None` when nothing needed queueing: already gone, never uploaded, or no Drafts
+    /// mailbox.
     pub async fn discard(&self, id: DraftId, at: DateTime<Utc>) -> Result<Option<QueuedOperation>> {
         sql::in_scope(self.connection, |scope| async move {
             let drafts = DraftRepository::new(&scope);
 
             let Some(draft) = drafts.get(id).await? else {
-                // A retried discard, or one racing a send that already cleared the
-                // row. Both are the expected case rather than a failure.
+                // A retried discard, or one racing a send that cleared the row: expected.
                 return Ok(None);
             };
 
@@ -564,8 +448,6 @@ impl<'a> DraftRepository<'a> {
                         None => None,
                     }
                 }
-                // Never uploaded, so there is nothing on the server to remove and
-                // no round trip worth spending to say so.
                 None => None,
             };
 
@@ -575,7 +457,6 @@ impl<'a> DraftRepository<'a> {
         .await
     }
 
-    /// One draft, with its recipients and attachments.
     pub async fn get(&self, id: DraftId) -> Result<Option<Draft>> {
         let mut statement = sql::statement(
             self.connection,
@@ -591,11 +472,8 @@ impl<'a> DraftRepository<'a> {
         Ok(Some(draft))
     }
 
-    /// Who each of `messages` is to, for the ones that are drafts: the `To`
-    /// recipients in order, read for all of them in one statement.
-    ///
-    /// What a Drafts or Outbox row names, since its sender is the person
-    /// themselves. A message that is no draft has no entry.
+    /// The `To` recipients in order, for all of them in one statement: what a Drafts or Outbox row
+    /// names. A message that is no draft has no entry.
     pub async fn recipients_of(
         &self,
         messages: &[MessageId],
@@ -630,22 +508,13 @@ impl<'a> DraftRepository<'a> {
         Ok(found)
     }
 
-    /// The draft a message row in the Drafts folder is listing, if it is
-    /// listing one.
-    ///
-    /// The reverse of the link [`save`](Self::save) writes. The message list
-    /// hands activation a `MessageId`, and a draft's row has to lead back to
-    /// the buffer the composer edits — opening the reader on it instead is the
-    /// dead end #166 is about.
-    ///
-    /// `None` for a draft written by another client: it has a row in the
-    /// folder and no local buffer behind it.
+    /// The reverse of the link [`save`](Self::save) writes: a Drafts row has to lead back to the
+    /// composer's buffer, not the reader (#166). `None` for a draft written by another client.
     pub async fn by_message(&self, message: MessageId) -> Result<Option<Draft>> {
         let mut drafts = self.query("WHERE message_id = ?1", [message.get()]).await?;
         Ok(drafts.pop())
     }
 
-    /// An account's drafts, most recently edited first.
     pub async fn list_for_account(&self, account_id: AccountId) -> Result<Vec<Draft>> {
         self.query(
             "WHERE account_id = ?1 ORDER BY updated_at DESC, id DESC",
@@ -654,10 +523,7 @@ impl<'a> DraftRepository<'a> {
         .await
     }
 
-    /// Every draft in one life-cycle state, oldest first.
-    ///
-    /// Oldest first because this is how the sender drains its queue, and a
-    /// queue that serves the newest first is a stack.
+    /// Oldest first: the sender drains in that order.
     pub async fn by_state(&self, state: DraftState) -> Result<Vec<Draft>> {
         let mut drafts: Vec<Draft> = sql::all(
             self.connection,
@@ -672,15 +538,9 @@ impl<'a> DraftRepository<'a> {
         Ok(drafts)
     }
 
-    /// Records where the draft's server copy landed, or that it has none.
-    ///
-    /// See [`ServerCopyLocation`] for what "where" means since #543.
-    ///
-    /// Narrower than [`save`](Self::save) on purpose: this runs when a queued
-    /// [`Operation::SaveDraft`] drains, which is minutes after the text it
-    /// uploaded was typed and quite possibly while the user is still typing.
-    /// Writing the whole row back from what the drainer read would undo
-    /// whatever they have added since.
+    /// Narrower than [`save`](Self::save): it runs when a queued [`Operation::SaveDraft`] drains,
+    /// possibly while the user is still typing, and writing the whole row back would undo what they
+    /// added. See [`ServerCopyLocation`].
     pub async fn set_server_copy(
         &self,
         id: DraftId,
@@ -704,19 +564,10 @@ impl<'a> DraftRepository<'a> {
             });
         }
         sql::in_scope(self.connection, |scope| async move {
-            // The stray row goes first, and it has to: it is a row for this very
-            // copy, and `messages` is unique on (mailbox, UIDVALIDITY, UID), so
-            // attaching the UID below while it still exists is a constraint
-            // violation rather than a duplicate.
-            //
-            // It is a duplicate a sync pass made before this ran, and
-            // `upsert_batch`'s skip cannot reach it — that only declines to create
-            // one, and every later pass would find this row and keep it current
-            // for ever. See #51.
-            //
-            // Scoped to the account's Drafts mailbox because identities are
-            // per-mailbox for IMAP: the message that happens to hold the same
-            // number in the inbox is mail.
+            // The stray row goes first: `messages` is unique on (mailbox, UIDVALIDITY, UID), so
+            // attaching the UID while it exists violates the constraint. It is a duplicate a sync
+            // pass made before this ran (#51), which `upsert_batch`'s skip cannot reach.
+            // Scoped to the account's Drafts mailbox: identities are per-mailbox for IMAP.
             sql::execute(
                 &scope,
                 "DELETE FROM messages
@@ -731,10 +582,7 @@ impl<'a> DraftRepository<'a> {
                 ],
             )
             .await?;
-            // The row the folder is already showing becomes the row that names the
-            // server copy. It is the same message: this draft, listed since the
-            // moment it was first saved (#166), now with somewhere on the server
-            // to point at.
+            // The row the folder already shows becomes the row that names the server copy (#166).
             sql::execute(
                 &scope,
                 "UPDATE messages
@@ -754,13 +602,9 @@ impl<'a> DraftRepository<'a> {
         .await
     }
 
-    /// Moves a draft through its life cycle.
-    ///
-    /// Returning it to `Editing` gives the reserved `Message-ID` back, the
-    /// same way [`save`](Self::save) does — the invariant is that no row can
-    /// be both editable and still named by a message a previous attempt may
-    /// have delivered, and it holds on every write path or it is not an
-    /// invariant. See [`reservation_for`] for why.
+    /// Returning it to `Editing` gives the reserved `Message-ID` back, as [`save`](Self::save)
+    /// does, so no row is both editable and named by a message a previous attempt may have
+    /// delivered. See [`reservation_for`].
     pub async fn set_state(&self, id: DraftId, state: DraftState) -> Result<()> {
         sql::in_scope(self.connection, |transaction| async move {
             let changed = sql::execute(
@@ -779,10 +623,8 @@ impl<'a> DraftRepository<'a> {
                     id: id.get(),
                 });
             }
-            // In the same transaction, so the row the list draws cannot be seen
-            // disagreeing with the draft it stands for. This is the path the
-            // drainer takes -- Queued, Sending, Failed, Unconfirmed -- and it is
-            // what moves a message between the Outbox and Drafts.
+            // Same transaction, so the list row never disagrees with its draft; this moves a
+            // message between the Outbox and Drafts.
             sql::execute(
                 &transaction,
                 "UPDATE messages
@@ -801,15 +643,9 @@ impl<'a> DraftRepository<'a> {
         .await
     }
 
-    /// Point a draft at the `messages` row it turned out to be.
-    ///
-    /// What resolves an `Unconfirmed` send (#674): the copy arrived in a
-    /// sync, so the draft is the same mail as that row and every surface
-    /// that opens one should reach the other. Separate from
-    /// [`set_state`](Self::set_state) because the two facts are learnt in
-    /// the same breath but are not the same fact — a draft can be `Sent`
-    /// with no synced copy yet, and the link is what makes "show me it"
-    /// work once there is one.
+    /// Resolves an `Unconfirmed` send (#674): the copy arrived in a sync, so the draft and that row
+    /// are one mail. Separate from [`set_state`](Self::set_state): a draft can be `Sent` with no
+    /// synced copy yet.
     pub async fn set_synced_message(&self, id: DraftId, message: MessageId) -> Result<()> {
         let changed = sql::execute(
             self.connection,
@@ -826,12 +662,8 @@ impl<'a> DraftRepository<'a> {
         Ok(())
     }
 
-    /// Deletes a draft and everything on it, returning whether there was one.
-    ///
-    /// Its row in the Drafts folder goes with it. This is the single exit both
-    /// discard and send go through — `postio-sync::send` finishes here — so it
-    /// is the one place that has to remember, and a draft that has been sent
-    /// must not go on being listed as unsent.
+    /// Its row in the Drafts folder goes with it: this is the single exit for discard and send, so
+    /// a sent draft is not listed as unsent.
     pub async fn delete(&self, id: DraftId) -> Result<bool> {
         sql::in_scope(self.connection, |scope| async move {
             sql::execute(
@@ -919,45 +751,21 @@ impl<'a> DraftRepository<'a> {
     }
 }
 
-/// The server copy of a draft, when it has one.
-///
-/// Both halves or neither: a `UID` is only an identity together with the
-/// generation it was observed under, and both arrive together from the append
-/// that created the copy. Half of the pair means the row predates that append
-/// or was written by hand, and acting on it would be guessing.
+/// A `UID` is an identity only with the generation it was observed under; half of the pair means a
+/// hand-written or pre-append row, and acting on it would be guessing.
 fn server_copy(draft: &Draft) -> Option<RemoteId> {
     draft.server.remote_id.clone()
 }
 
-/// Keeps the draft's row in the Drafts folder in step with the draft.
+/// Written in the draft's transaction because the list is a query over `messages`: a draft with no
+/// row is absent from the folder and the badge (#166), and waiting for a sync copy would list it
+/// only after a network exchange, which local-first forbids.
 ///
-/// # Why the list row is written here and not brought back by sync
+/// `\Draft` and `\Seen`; `received_at` is the draft's `updated_at`; no `uid` until
+/// [`DraftRepository::set_server_copy`] attaches one.
 ///
-/// The message list is a windowed query over `messages`, so a draft that is
-/// only a `drafts` row cannot appear in the folder the sidebar sends people to
-/// — and the badge, which reads the mailbox's cached count of message rows,
-/// says 0 while the composer holds a draft. #166.
-///
-/// The other way round — keeping the copy a sync pass brings back, which #51
-/// skips, and routing its activation to the composer — is cheaper and wrong: a
-/// draft has no server copy until an append has round-tripped, so the folder
-/// would list your draft only *after* a network exchange. docs/PRODUCT.md §18
-/// and the local-first rule both forbid exactly that. This row is written in
-/// the same transaction as the draft, offline and always.
-///
-/// # What the row says
-///
-/// `\Draft` and `\Seen`: the list already draws a draft mark and says "Draft"
-/// in the accessible label off `MessageListRow::draft`, and unread is a thing
-/// mail that arrived is. `received_at` is the draft's `updated_at`, so the
-/// folder orders by when it was last touched, which is the only ordering a
-/// draft has. There is no `uid` until [`DraftRepository::set_server_copy`]
-/// attaches one to *this* row.
-///
-/// Does nothing when the account has no Drafts mailbox yet — the ordinary
-/// state of an account that has not finished its first sync. The draft is
-/// durable regardless; it simply has nowhere to be listed, and the next save
-/// after the folder turns up files it.
+/// Does nothing when the account has no Drafts mailbox yet; the next save after it appears files
+/// it.
 async fn list_row(connection: &Connection, draft: &Draft) -> Result<()> {
     let Some(mailbox) = super::MailboxRepository::new(connection)
         .by_role(draft.account_id, MailboxRole::Drafts)
@@ -988,8 +796,7 @@ async fn list_row(connection: &Connection, draft: &Draft) -> Result<()> {
 
     let messages = super::MessageRepository::new(connection);
     let id = match existing {
-        // `update` rewrites the children, which is what makes a recipient
-        // removed in the composer disappear from the row.
+        // `update` rewrites the children, so a recipient removed in the composer disappears.
         Some(id) => {
             message.id = MessageId::new(id);
             messages.update(&mut message).await?;
@@ -1006,19 +813,14 @@ async fn list_row(connection: &Connection, draft: &Draft) -> Result<()> {
             id
         }
     };
-    // The send state, denormalised onto the row the list draws (spec 003).
-    // `Message` has no field for it: it is a fact about a draft, and every
-    // other message has none, so it is written here rather than travelling
-    // through a type that would carry `None` for the whole mailbox.
+    // Written here, not on `Message`: send state is a fact about a draft, and every other message
+    // would carry `None`.
     set_send_state(connection, id, draft.state).await?;
     Ok(())
 }
 
-/// Write a draft's state onto the `messages` row standing for it.
-///
-/// The only writer of `messages.send_state`, and it runs in whatever
-/// transaction its caller opened — which is how the column cannot be seen
-/// disagreeing with `drafts.state`.
+/// The only writer of `messages.send_state`; it runs in its caller's transaction, so the column
+/// never disagrees with `drafts.state`.
 async fn set_send_state(
     connection: &Connection,
     message: MessageId,
@@ -1033,12 +835,7 @@ async fn set_send_state(
     Ok(())
 }
 
-/// Who the draft will be from: the identity it picked, or the account's own
-/// address when it has not picked one.
-///
-/// Read rather than carried on [`Draft`], which holds an `identity_id` and not
-/// an address. One indexed point read per save, which is the same order as the
-/// recipient rewrite beside it.
+/// One indexed point read per save.
 async fn sender(connection: &Connection, draft: &Draft) -> Result<Option<EmailAddress>> {
     let found: Option<(Option<String>, String)> = match draft.identity_id {
         Some(identity) => {
@@ -1067,18 +864,12 @@ async fn sender(connection: &Connection, draft: &Draft) -> Result<Option<EmailAd
     Ok(found.map(|(name, address)| EmailAddress::new(name, address)))
 }
 
-/// Mints the `Message-ID` this send attempt series will go out under, unless
-/// one is already reserved (ADR 0021).
+/// Called inside `queue_send`'s transaction before the save, so the reservation and the
+/// `Operation::Send` row land together or not at all: a send whose id was lost would be a retry
+/// nothing downstream recognises (ADR 0021).
 ///
-/// Called from inside `queue_send`'s transaction, before the save that stores
-/// it, so the reservation and the `Operation::Send` row are written together
-/// or not at all — a queued send whose id was lost on the way would be a
-/// retry nothing downstream could recognise as one, which is the whole
-/// failure this exists to prevent.
-///
-/// Idempotent: a draft that already carries a reservation keeps it. Re-queuing
-/// is the same attempt series, and only a return to `Editing` gives the
-/// reservation back — see [`reservation_for`].
+/// Idempotent: re-queuing is the same attempt series, and only a return to `Editing` gives the
+/// reservation back ([`reservation_for`]).
 async fn reserve_message_id(connection: &Connection, draft: &mut Draft) -> Result<()> {
     if draft.rfc_message_id.is_some() {
         return Ok(());
@@ -1089,10 +880,8 @@ async fn reserve_message_id(connection: &Connection, draft: &mut Draft) -> Resul
     Ok(())
 }
 
-/// The snippet the list draws under the subject.
-///
-/// The same shape `postio-model`'s MIME reader produces for a received
-/// message, so a draft's row and a message's row read alike.
+/// Same shape as `postio-model`'s MIME reader gives a received message, so draft and message rows
+/// read alike.
 fn preview(text: Option<&str>) -> Option<String> {
     let flattened = text?.split_whitespace().collect::<Vec<_>>().join(" ");
     if flattened.is_empty() {
@@ -1101,11 +890,7 @@ fn preview(text: Option<&str>) -> Option<String> {
     Some(flattened.chars().take(200).collect())
 }
 
-/// Rewrites a draft's recipient rows.
-///
-/// Deleting and reinserting is right here in a way it would not be for a
-/// message: a recipient row carries no identity of its own that anything else
-/// points at, and the composer's list is small and changes on every keystroke.
+/// Delete and reinsert: a recipient row has no identity anything points at.
 async fn write_recipients(connection: &Connection, draft: &Draft) -> Result<()> {
     sql::execute(
         connection,
@@ -1133,12 +918,8 @@ async fn write_recipients(connection: &Connection, draft: &Draft) -> Result<()> 
     Ok(())
 }
 
-/// Inserts the attachments that are new and removes the ones that are gone.
-///
-/// Unlike recipients, an attachment row is *referenced*: the composer holds its
-/// id, and the bytes it points at are in the blob store. Rewriting them on
-/// every keystroke would hand the composer a new id for a file the user has not
-/// touched.
+/// Unlike recipients, an attachment row is referenced (the composer holds its id), so rewriting per
+/// keystroke would change the id of an untouched file.
 async fn write_attachments(connection: &Connection, draft: &mut Draft) -> Result<()> {
     let keep: Vec<i64> = draft
         .attachments
@@ -1210,7 +991,6 @@ async fn write_attachments(connection: &Connection, draft: &mut Draft) -> Result
     Ok(())
 }
 
-/// `draft.labels` as the `label_ids` column spells them.
 fn label_ids(draft: &Draft) -> String {
     draft
         .labels
@@ -1222,8 +1002,7 @@ fn label_ids(draft: &Draft) -> String {
 
 fn read_draft(row: &Row) -> Result<Draft> {
     let kind: String = row.col(3)?;
-    // 10, not 9: `rich` sits after `body_html` in `DRAFT_COLUMNS` (#1271),
-    // and every column after it moved along one.
+    // `rich` sits after `body_html` in `DRAFT_COLUMNS` (#1271), so later columns shift by one.
     let state: String = row.col(10)?;
 
     Ok(Draft {
@@ -1271,15 +1050,8 @@ fn read_draft(row: &Row) -> Result<Draft> {
     })
 }
 
-/// The `rfc_message_id` column's value for `draft`, **derived from its state
-/// rather than trusted from the struct**.
-///
-/// ADR 0021 says the reservation is given back when a draft becomes editable
-/// again, and a caller that sets `state` without also clearing the id would
-/// otherwise write a row that contradicts itself — one that says "editable"
-/// and still names the message a previous attempt may already have delivered.
-/// Deriving it here means that row cannot be written by any path, rather than
-/// by every path remembering.
+/// Derived from state, not trusted from the struct (ADR 0021): a row saying "editable" while naming
+/// a message a previous attempt may have delivered cannot be written by any path.
 fn reservation_for(draft: &Draft) -> Option<String> {
     if draft.state == DraftState::Editing {
         return None;

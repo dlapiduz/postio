@@ -1,55 +1,31 @@
-//! The open-message dialog's geometry, with no toolkit in it (the message
-//! dialog redesign, T205-T208 in `specs/007-postio-focus/tasks.md`).
-//!
-//! Every size here comes from the window or from the body's treatment and
-//! from nothing else, so moving through the list with `j`/`k` never resizes
-//! the dialog or moves its column: the only inputs are the window's size and
-//! [`Treatment`], and neither changes on a step unless the body's treatment
-//! does.
-//!
-//! And which verbs its action row offers a message on its way or stopped
-//! ([`send_verbs`], T239), since that is a rule too and not a widget's.
+//! The open-message dialog's geometry, with no toolkit. Sizes come only from the window and the
+//! body's `Treatment`, so `j`/`k` never resizes the dialog or moves its column.
+//! Also which verbs its action row offers a message on its way or stopped (`send_verbs`).
 
 use postio_body::treatment::Treatment;
 use postio_config::paths::Platform;
 use postio_core::CommandId;
 
-/// The narrowest the dialog gets.
 pub const DIALOG_MIN: i32 = 640;
-/// The widest the dialog gets.
 pub const DIALOG_MAX: i32 = 820;
-/// The least of the list left showing on each side.
 pub const SIDE_MIN: f64 = 96.0;
-/// The share of the window's width left showing on each side.
 pub const SIDE_SHARE: f64 = 0.18;
-/// How much of the window's height the dialog leaves: 40px above and below.
 pub const HEIGHT_INSET: i32 = 80;
-/// Below this width the action row folds Label, Move and Delete into More.
 pub const MORE_BELOW: i32 = 760;
 
-/// What the dialog keeps either side of the message: where its header's
-/// buttons, its action row's verbs and its thread bar's title start, so the
-/// message shares their left edge (the maintainer, 2026-11-16: the message
-/// reads the dialog's whole width).
+/// What the dialog keeps either side of the message, so it shares the left edge of the
+/// header buttons, action row verbs and thread bar title.
 pub const GUTTER: i32 = 20;
 
-/// Between a control's words and its keycap.
 pub const KEYCAP_GAP: i32 = 6;
-/// Between a step's chevron and its keycap (T219): a glyph rather than a
-/// word, and the pair has to stay small in the header.
+/// A glyph rather than a word, so the pair stays small in the header.
 pub const STEP_KEYCAP_GAP: i32 = 4;
-/// Between label pills, and between a pill's dot and its name.
 pub const LABEL_GAP: i32 = 6;
-/// A label pill's colour dot, across.
 pub const LABEL_DOT: i32 = 8;
-/// Between the pieces of the thread marker's line.
 pub const THREAD_GAP: i32 = 8;
 
-/// The sender block's column of field names (From, To, Cc).
 pub const SENDER_LABEL_COLUMN: i32 = 44;
-/// Between the sender block's columns.
 pub const SENDER_COLUMN_GAP: i32 = 12;
-/// Between the sender block's rows.
 pub const SENDER_ROW_GAP: i32 = 2;
 
 /// The dialog's width in a window `window` pixels wide:
@@ -58,40 +34,25 @@ pub fn dialog_width(window: i32) -> i32 {
     Geometry::LINUX.dialog_width(window)
 }
 
-/// The dialog's height in a window `window` pixels tall: 40px off each end.
 pub fn dialog_height(window: i32) -> i32 {
     (window - HEIGHT_INSET).max(0)
 }
 
-/// Whether a dialog `dialog` pixels wide folds Label, Move and Delete into
-/// More (`.`).
 pub fn folds_into_more(dialog: i32) -> bool {
     Geometry::LINUX.folds_into_more(dialog)
 }
 
-/// The content column's width in a dialog `dialog` pixels wide, for a body
-/// shown as `treatment`: the dialog less a [`GUTTER`] each side, in the
-/// app's colours and on paper alike. Everything inside the message --
-/// thread marker, subject, labels, sender block, action card, body and
-/// attachments -- shares it.
+/// The dialog less a `GUTTER` each side, in app colours and on paper alike; everything in the
+/// message shares it.
 pub fn column_width(dialog: i32, treatment: Treatment) -> i32 {
     Geometry::LINUX.column_width(dialog, treatment)
 }
 
-/// The digest window's size on Linux (contracts/focus-surface.md): fixed,
-/// whatever the window.
 pub const DIGEST_LINUX: (i32, i32) = (980, 820);
 
-/// How big the open message and the digest are, and how wide their column,
-/// on one platform.
-///
-/// The free functions above are Linux's numbers and stay its API;
-/// [`Geometry::for_platform`] gives the same answers for
-/// [`Platform::Freedesktop`] and the Mac pack's for [`Platform::Apple`]
-/// (specs/009-focus-macos M1). The Mac's message window is narrower, and its
-/// column wider, because its window is a window of its own beside a list
-/// that stays undimmed, and its digest is the message window's size so that
-/// opening a reference inside it never resizes it.
+/// The free functions above are Linux's numbers. The Mac's message window is narrower and
+/// its column wider, being a window beside an undimmed list; its digest is the message
+/// window's size so opening a reference never resizes it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Geometry {
     dialog_min: i32,
@@ -105,7 +66,6 @@ pub struct Geometry {
 }
 
 impl Geometry {
-    /// Linux's: the dialog over a dimmed list (spec 007 FR-039).
     pub const LINUX: Geometry = Geometry {
         dialog_min: DIALOG_MIN,
         dialog_max: DIALOG_MAX,
@@ -117,11 +77,8 @@ impl Geometry {
         digest: Some(DIGEST_LINUX),
     };
 
-    /// The Mac's: a window of its own (spec 009 M1, the Mac pack's
-    /// `message-window/SPEC.md` §1 and §3, widened). The pack's 720 window
-    /// and 560 column read narrow on a Mac, and its column stopped at 560
-    /// whatever the person widened the window to; the column is the
-    /// window less 80, up to a measure no screen makes unreadable.
+    /// The Mac's: a window of its own; the column is the window less 80, up to a measure no screen
+    /// makes unreadable.
     pub const MAC: Geometry = Geometry {
         dialog_min: 640,
         dialog_max: 880,
@@ -133,7 +90,6 @@ impl Geometry {
         digest: None,
     };
 
-    /// The geometry `platform`'s Focus app draws with.
     pub const fn for_platform(platform: Platform) -> Geometry {
         match platform {
             Platform::Freedesktop => Geometry::LINUX,
@@ -141,25 +97,20 @@ impl Geometry {
         }
     }
 
-    /// The message's width beside a main window `window` wide:
-    /// `clamp(min, W - 2 * max(96, 0.18 * W), max)`, rounded to the pixel.
     pub fn dialog_width(&self, window: i32) -> i32 {
         let window = f64::from(window);
         let side = SIDE_MIN.max(SIDE_SHARE * window);
         ((window - 2.0 * side).round() as i32).clamp(self.dialog_min, self.dialog_max)
     }
 
-    /// The message's height beside a main window `window` tall.
     pub fn dialog_height(&self, window: i32) -> i32 {
         dialog_height(window)
     }
 
-    /// Whether a message `dialog` wide folds Label, Move and Delete into More.
     pub fn folds_into_more(&self, dialog: i32) -> bool {
         dialog < self.more_below
     }
 
-    /// The content column in a message `dialog` wide, for `treatment`.
     pub fn column_width(&self, dialog: i32, treatment: Treatment) -> i32 {
         match treatment {
             Treatment::AppColours => self.app_column.min(dialog - self.app_inset),
@@ -168,44 +119,29 @@ impl Geometry {
         .max(0)
     }
 
-    /// The digest's width and height beside a main window `width` by
-    /// `height`: fixed on Linux, the message window's on the Mac.
     pub fn digest_size(&self, width: i32, height: i32) -> (i32, i32) {
         self.digest
             .unwrap_or_else(|| (self.dialog_width(width), self.dialog_height(height)))
     }
 }
 
-/// The narrowest the list gets beside a reading pane (T232): canvas 1b's
-/// list width.
 pub const LIST_MIN: i32 = 404;
-/// The narrowest reading pane: a column of about 70 characters at the
-/// reading size, and its gutters.
 pub const PANE_MIN: i32 = 576;
-/// The widest reading pane: the dialog at its widest, so a message reads at
-/// the same measure beside the list as over it.
 pub const PANE_MAX: i32 = DIALOG_MAX;
 
-/// Where an open message is drawn: over the list, or beside it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Placement {
-    /// The message dialog, over the list (T205).
     #[default]
     Dialog,
-    /// A pane beside the list (T232).
     Pane,
 }
 
-/// The reading pane's width in a window `window` pixels wide:
-/// `min(820, W - 404)`, or `None` when that would be under 576 -- a window
-/// narrower than [`LIST_MIN`] and [`PANE_MIN`] together has no room for one.
+/// `None` when that would be under 576: a narrower window has no room for a pane.
 pub fn pane_width(window: i32) -> Option<i32> {
     let pane = (window - LIST_MIN).min(PANE_MAX);
     (pane >= PANE_MIN).then_some(pane)
 }
 
-/// Where a message opens in a window `window` pixels wide, when the person
-/// chose `chosen`: a pane only where one fits, the dialog otherwise.
 pub fn placement(chosen: Placement, window: i32) -> Placement {
     match chosen {
         Placement::Pane if pane_width(window).is_some() => Placement::Pane,
@@ -213,29 +149,16 @@ pub fn placement(chosen: Placement, window: i32) -> Placement {
     }
 }
 
-/// Whether `Return` on a row in `state` opens it as the open message, rather
-/// than in the composer (T239; screens.md, "Sending states").
-///
-/// Only a draft still being written opens to be written. One on its way, or
-/// one that stopped, opens to be read: Focus has no preview, so `Return` is
-/// the only way to look, and opening it in the composer would change it --
-/// editing a waiting send takes it off the queue, and editing an
-/// unconfirmed one clears what lets Postio find it in Sent (ADR 0021).
+/// Only a draft still being written opens to be written. One on its way or stopped opens
+/// to be read: editing a waiting send takes it off the queue, and editing an unconfirmed
+/// one clears what lets Postio find it in Sent (ADR 0021).
 pub fn opens_to_read(state: Option<postio_model::DraftState>) -> bool {
     state != Some(postio_model::DraftState::Editing)
 }
 
-/// The open message's verbs for a draft whose send is in `state`, in the
-/// order its action row draws them, or `None` for mail that is not on its
-/// way anywhere -- received mail, and a send the server took -- which keeps
-/// the received toolbar.
-///
-/// `OpenMessage` is Edit: for a draft, opening is writing. `Sending` offers
-/// nothing: cancelling is refused once the submission has started, and
-/// retrying would risk a second copy (ADR 0021), so offering either would be
-/// offering a refusal. Mark as sent is drawn for an unconfirmed send rather
-/// than left to the palette, and Edit, since Focus's open message has no
-/// composer behind it.
+/// `None` for mail not on its way anywhere (received, or a send the server took), which
+/// keeps the received toolbar. `Sending` offers nothing: cancelling is refused once
+/// submission starts and retrying risks a second copy (ADR 0021).
 pub fn send_verbs(state: Option<postio_model::DraftState>) -> Option<&'static [CommandId]> {
     use CommandId::{CancelSend, MarkSent, OpenMessage, RetrySend};
     use postio_model::DraftState;
@@ -249,11 +172,8 @@ pub fn send_verbs(state: Option<postio_model::DraftState>) -> Option<&'static [C
     })
 }
 
-/// Whether the received row (`OPEN_TOOLBAR`) offers `command` for a message
-/// that is, or is not, a draft written in another client (#1212). Such a
-/// draft has no correspondent to answer, and Postio cannot edit it, so Reply,
-/// Reply all and Forward are not offered; Archive, Delete and the rest of
-/// the row are.
+/// A draft written in another client has no correspondent to answer and cannot be edited
+/// here, so Reply, Reply all and Forward are not offered (#1212).
 pub fn received_offers(command: CommandId, foreign_draft: bool) -> bool {
     !(foreign_draft
         && matches!(
@@ -262,52 +182,29 @@ pub fn received_offers(command: CommandId, foreign_draft: bool) -> bool {
         ))
 }
 
-/// The vertical rhythm, in pixels (an 8px grid around a 24px body line).
-/// A block that is absent takes the gap above it with it; the next gap
-/// stays as listed.
+/// The vertical rhythm in pixels (8px grid around a 24px body line). An absent block takes the gap
+/// above it with it.
 pub mod rhythm {
-    /// The action row to the first block: the content's top padding.
     pub const TOP: i32 = 28;
-    /// The thread marker to the subject.
     pub const MARKER_TO_SUBJECT: i32 = 12;
-    /// The subject to the labels.
     pub const SUBJECT_TO_LABELS: i32 = 10;
-    /// The labels to the sender block.
     pub const LABELS_TO_SENDER: i32 = 16;
-    /// Inside the sender block, above and below its rows.
     pub const SENDER_PADDING: i32 = 12;
-    /// One row of the sender block.
     pub const SENDER_ROW: i32 = 22;
-    /// The sender block to the action card.
     pub const SENDER_TO_CARD: i32 = 12;
-    /// The action card (or the sender block, with no card) to the reader's
-    /// notice: the notice is one more block about the message, spaced as
-    /// the card is under the sender block.
     pub const CARD_TO_NOTICE: i32 = 12;
-    /// The last block above the body -- the notice, the action card, or the
-    /// sender block -- to the body, or to its render-mode line.
     pub const CARD_TO_BODY: i32 = 24;
-    /// The render-mode line to the body.
     pub const MODE_LINE_TO_BODY: i32 = 12;
-    /// The body to the attachments' hairline.
     pub const BODY_TO_ATTACHMENTS: i32 = 24;
-    /// The attachments' hairline to the chips.
     pub const ATTACHMENTS_RULE_TO_CHIPS: i32 = 16;
-    /// Between two attachment chips.
     pub const CHIP_GAP: i32 = 8;
-    /// Under the last block.
     pub const BOTTOM: i32 = 32;
 }
 
-/// One button of a Focus action row: the command it runs, the words on it,
-/// and the slug a surface builds its CSS class or accessible id from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Verb {
-    /// The command it runs, whose key its cap shows.
     pub command: CommandId,
-    /// The words on it.
     pub label: &'static str,
-    /// What names it: `reply-all`.
     pub slug: &'static str,
 }
 
@@ -319,8 +216,6 @@ const fn verb(command: CommandId, label: &'static str, slug: &'static str) -> Ve
     }
 }
 
-/// The open message's toolbar, in the order screen 04 draws it. Task and
-/// Note join in milestone 3 (spec C9).
 pub const OPEN_TOOLBAR: &[Verb] = &[
     verb(CommandId::Reply, "Reply", "reply"),
     verb(CommandId::ReplyAll, "Reply all", "reply-all"),
@@ -334,9 +229,6 @@ pub const OPEN_TOOLBAR: &[Verb] = &[
     verb(CommandId::MoreActions, "More", "more"),
 ];
 
-/// The action row of a message on its way or stopped (T239), in the order
-/// it draws them: which of these show is [`send_verbs`]'s answer for the
-/// message's state. Edit is `OpenMessage`: for a draft, opening is writing.
 pub const SEND_TOOLBAR: &[Verb] = &[
     verb(CommandId::CancelSend, "Cancel send", "cancel-send"),
     verb(CommandId::RetrySend, "Retry send", "retry-send"),
@@ -344,11 +236,8 @@ pub const SEND_TOOLBAR: &[Verb] = &[
     verb(CommandId::OpenMessage, "Edit", "edit"),
 ];
 
-/// What a narrow dialog folds into More (T206), in the action row's order.
 pub const FOLDED: [CommandId; 3] = [CommandId::AddLabel, CommandId::Move, CommandId::Delete];
 
-/// The bulk bar's verbs while anything is selected, in the order screen 01
-/// draws them. Task joins them once Obsidian exists (milestone 3, spec C9).
 pub const BULK: &[Verb] = &[
     verb(CommandId::Archive, "Archive", "archive"),
     verb(CommandId::Snooze, "Snooze", "snooze"),
@@ -359,10 +248,8 @@ pub const BULK: &[Verb] = &[
     verb(CommandId::Delete, "Delete", "delete"),
 ];
 
-/// The bulk bar's verbs over checked search results (spec 010 §3.5): the
-/// inbox's, in its order, so a selection looks the same wherever it is
-/// made (#2082) -- less "Digest these…", which is about senders, not a
-/// search's conversations.
+/// The inbox's bulk verbs less "Digest these…", which is about senders, so a selection looks the
+/// same wherever made (#2082).
 pub const RESULTS_BULK: &[Verb] = &[
     verb(CommandId::Archive, "Archive", "archive"),
     verb(CommandId::Snooze, "Snooze", "snooze"),
@@ -372,10 +259,6 @@ pub const RESULTS_BULK: &[Verb] = &[
     verb(CommandId::Delete, "Delete", "delete"),
 ];
 
-/// The open message's position line: "Message 3 of 60", then, for a
-/// conversation of `messages`, where the dialog is in it -- "thread of 6"
-/// at the latest, "2 of 6 in the thread" stepped back -- and, for a draft
-/// on its way or stopped, which.
 pub fn position_line(
     index: usize,
     total: usize,
@@ -389,8 +272,6 @@ pub fn position_line(
     )
 }
 
-/// [`position_line`] for a message opened from search: "Result 2 of 8", then
-/// where it is in its own conversation.
 pub fn result_line(
     index: usize,
     total: usize,
@@ -401,10 +282,8 @@ pub fn result_line(
     line("Result", index, total, messages, thread_at, latest, None)
 }
 
-/// `line` with the account the message is in, when more than one account is
-/// enabled: two copies of one conversation in two accounts read alike
-/// otherwise, and an Archive or a Reply from here would act in an account
-/// nobody can see.
+/// With more than one account enabled, names the account: an Archive or Reply would otherwise act
+/// in an account nobody can see.
 pub fn with_account(line: &str, account: Option<&str>) -> String {
     match account {
         Some(account) => format!("{line} \u{b7} {account}"),
@@ -438,34 +317,21 @@ fn line(
     said
 }
 
-/// The thread chip's sentence, "Latest of 6 in this thread", for a
-/// conversation of more than one message.
 pub fn thread_chip(messages: u32) -> Option<String> {
     (messages > 1).then(|| format!("Latest of {messages} in this thread"))
 }
 
-/// What follows the key on the thread chip, for stepping to a newer one.
-pub const LATER_MESSAGE: &str = "later message";
-
-/// What follows the key on the thread chip.
 pub const EARLIER_MESSAGE: &str = "earlier message";
 
-/// The button after the label pills, beside `l`'s key.
 pub const ADD_LABEL: &str = "+ Label";
 
-/// The marker card's last button, beside `-`'s key: the marker was wrong,
-/// or is done with (T118).
 pub const DISMISS: &str = "Dismiss";
 
-/// The sender block's field names, in its 44px label column.
 pub const FIELD_FROM: &str = "From";
-/// See [`FIELD_FROM`].
 pub const FIELD_TO: &str = "To";
-/// See [`FIELD_FROM`].
 pub const FIELD_CC: &str = "Cc";
 
-/// Where stepping `by` messages from `at` lands in a conversation of `len`
-/// messages: `None` past either end, or before the conversation is read.
+/// `None` past either end, or before the conversation is read.
 pub fn step_thread(at: usize, len: usize, by: isize) -> Option<usize> {
     at.checked_add_signed(by).filter(|next| *next < len)
 }
@@ -476,12 +342,10 @@ mod tests {
 
     #[test]
     fn the_dialog_is_as_wide_as_the_window_allows_and_no_wider() {
-        // 1024 - 2 * 184.32 = 655.36, rounded; 1280 - 2 * 230.4 = 819.2.
         assert_eq!(dialog_width(1024), 655);
         assert_eq!(dialog_width(1280), 819);
         assert_eq!(dialog_width(1440), 820);
         assert_eq!(dialog_width(1920), 820);
-        // Narrow windows keep the floor, and the list's share runs out first.
         assert_eq!(dialog_width(800), 640);
         assert_eq!(dialog_width(500), 640);
     }
@@ -507,9 +371,6 @@ mod tests {
         assert!(folds_into_more(759));
     }
 
-    /// The message reads the dialog's whole width, less the gutter its
-    /// header, action row and thread bar start their words at, so every
-    /// band of the dialog shares one left edge.
     #[test]
     fn a_column_is_the_dialog_less_its_gutters() {
         for treatment in [Treatment::AppColours, Treatment::Paper] {
@@ -526,7 +387,6 @@ mod tests {
         assert_eq!(pane_width(1280), Some(820));
         assert_eq!(pane_width(1440), Some(820));
         assert_eq!(pane_width(1920), Some(820));
-        // The list takes the rest, never less than its floor.
         for window in [980, 1024, 1180, 1280, 1440, 1920] {
             let pane = pane_width(window).expect("room for a pane");
             assert!(
@@ -577,11 +437,8 @@ mod tests {
     #[test]
     fn a_draft_on_its_way_or_stopped_opens_to_be_read_and_one_being_written_does_not() {
         use postio_model::DraftState;
-        // Received mail, and a send the server took, read as mail.
         assert!(opens_to_read(None));
         assert!(opens_to_read(Some(DraftState::Sent)));
-        // Looking at these must not change them: editing a waiting send
-        // takes it off the queue (ADR 0021).
         for state in [
             DraftState::Queued,
             DraftState::Sending,
@@ -606,8 +463,6 @@ mod tests {
             send_verbs(Some(DraftState::Queued)),
             Some(&[CancelSend, OpenMessage][..])
         );
-        // Cancelling is refused once the submission starts, and retrying
-        // would risk a second copy: nothing is offered rather than a refusal.
         assert_eq!(send_verbs(Some(DraftState::Sending)), Some(&[][..]));
         assert_eq!(
             send_verbs(Some(DraftState::Failed)),
@@ -709,11 +564,6 @@ mod tests {
         }
     }
 
-    // The Mac's numbers (specs/009-focus-macos M1), beside Linux's, from the
-    // same `Geometry`: both platforms asserted from either host, because a
-    // gate that runs one platform cannot see the other's answer
-    // (docs/notes/2026-09-05-the-gate-that-runs-cannot-see-the-platform-that-does-not.md).
-
     #[test]
     fn linux_geometry_is_the_free_functions() {
         let linux = Geometry::for_platform(Platform::Freedesktop);
@@ -734,9 +584,6 @@ mod tests {
     #[test]
     fn the_mac_window_is_at_most_880() {
         let mac = Geometry::for_platform(Platform::Apple);
-        // The pack draws 1024 as 656: its formula, 655.36, rounded up. We
-        // round to the nearest pixel, as Linux does; the 1px is listed in the
-        // phase-3 comparison.
         assert_eq!(mac.dialog_width(1024), 655);
         assert_eq!(mac.dialog_width(1280), 819);
         assert_eq!(mac.dialog_width(1440), 880);
@@ -745,8 +592,6 @@ mod tests {
         assert_eq!(mac.dialog_height(900), 820);
     }
 
-    /// A column is the window's width less 80, so a window the person
-    /// widens reads wider, up to a measure no screen makes unreadable.
     #[test]
     fn the_mac_columns_are_the_window_less_80() {
         let mac = Geometry::for_platform(Platform::Apple);

@@ -1,11 +1,3 @@
-//! The segmented control (#1179): a closed set with every answer on screen.
-//!
-//! The three behaviours a pane depends on — that exactly one segment is
-//! active, that redrawing from the file does not write back to it, and that
-//! one press reports one change — none of which a `gtk::DropDown` needed
-//! because a dropdown was never a group. Skips without a display. Nothing
-//! here touches the network.
-
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -13,7 +5,6 @@ use gtk::gdk;
 use gtk::prelude::*;
 use postio_widgets::widgets::SegmentedControl;
 
-/// A realized control, or `None` with no display.
 fn control() -> Option<(gtk::Window, Rc<SegmentedControl>)> {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");

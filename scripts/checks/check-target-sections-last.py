@@ -49,7 +49,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-# The tables a platform section must not precede.
 PLAIN_TABLES = ("[dependencies]", "[build-dependencies]", "[dev-dependencies]")
 
 

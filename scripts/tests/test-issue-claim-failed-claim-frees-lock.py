@@ -34,8 +34,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -48,7 +46,6 @@ FAILURES: list[str] = []
 
 ISSUE_NUMBER = 50
 ISSUE_TITLE = "a claim whose worktree cannot be cut"
-# `slug()` in issue-claim.sh: lowercase, non-alphanumerics to `-`, 40 chars.
 BRANCH = "issue-50-a-claim-whose-worktree-cannot-be-cut"
 
 FIXTURE_ISSUES = [
@@ -138,13 +135,6 @@ def main() -> int:
         claims = base / "claims"
         lock = claims / f"issue-{ISSUE_NUMBER}"
 
-        # -- The trap, proved by a failure the script does not anticipate ----
-        #
-        # A read-only worktrees directory: `git worktree add` cannot create
-        # anything under it, so the claim dies *after* taking its lock and
-        # before earning it. The point is that the release does not depend on
-        # the script having foreseen this particular failure -- it is the one
-        # class of bug that produced #1255.
         worktrees = base / "worktrees"
         worktrees.mkdir(parents=True, exist_ok=True)
         worktrees.chmod(0o500)
@@ -184,10 +174,6 @@ def main() -> int:
         base = Path(raw)
         repo, stub_dir = world(base)
 
-        # -- A stale local branch is not a permanent wall --------------------
-        #
-        # What reusing a worktree for another issue leaves behind. Nothing on
-        # it is missing from main, so it is not a claim on anything.
         git("branch", BRANCH, "main", cwd=repo)
         landed = run_claim(repo, stub_dir, base)
         case(
@@ -200,7 +186,6 @@ def main() -> int:
         base = Path(raw)
         repo, stub_dir = world(base)
 
-        # -- But one holding work is refused, not deleted --------------------
         git("checkout", "-q", "-b", BRANCH, cwd=repo)
         (repo / "somebody-was-here.txt").write_text("unlanded\n", encoding="utf-8")
         git("add", "-A", cwd=repo)

@@ -1,10 +1,3 @@
-//! `StatusTracker` driven by a real sync pass, end to end.
-//!
-//! Unlike the throttling and state-transition tests in `src/status.rs`
-//! (which drive the tracker with hand-built [`Progress`] values on a
-//! deterministic clock), this proves the tracker sees the same events a real
-//! caller wiring it around [`sync_mailbox`] would.
-
 use postio_account::backend::{MailBackend, MockBackend, MockMailbox, MockMessage};
 use postio_account::cancel::CancelToken;
 use postio_storage::test_support;

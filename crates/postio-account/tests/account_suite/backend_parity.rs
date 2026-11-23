@@ -1,19 +1,3 @@
-//! One test body, two implementations.
-//!
-//! `postio-sync` is written against [`MailBackend`] and developed against
-//! [`MockBackend`], so every guarantee the sync engine relies on is really a
-//! guarantee about the mock. That is only safe while the mock and a real
-//! server agree, and nothing was checking that they did.
-//!
-//! So [`conforms`] is written once, in terms of the trait alone, and run
-//! twice: against the in-memory mock, and against [`ImapBackend`] talking
-//! real IMAP over a loopback socket to the in-process server. A divergence
-//! shows up here as a failing assertion rather than as wrong mail on
-//! somebody's machine.
-//!
-//! Where the two *cannot* agree, the assertion says so out loud rather than
-//! being quietly dropped — see the notes in the body.
-
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -27,17 +11,14 @@ use postio_account::secret::{AccountKey, MemorySecretStore, Password, SecretStor
 use postio_account::test_server::{TestMailbox, TestServer};
 use postio_model::{Flag, FlagSet, ModSeq, Uid, UidValidity};
 
-/// The mailbox both servers start from.
 const SEEDED: [&str; 3] = ["plain-text-simple", "attachment-pdf", "html-newsletter"];
 
 const GENERATION: u32 = 4_242;
 const BASELINE: u64 = 900;
 
-/// Everything a mail server must do, in the vocabulary of the trait.
 async fn conforms(backend: &dyn MailBackend) {
     let cancel = CancelToken::new();
 
-    // --- opening -----------------------------------------------------
     let capabilities = backend.connect().await.expect("connect");
     assert!(capabilities.supports_incremental_sync());
     assert!(capabilities.contains(Capability::UidPlus));
@@ -47,7 +28,6 @@ async fn conforms(backend: &dyn MailBackend) {
         "a liveness check answers from session state, without a round trip"
     );
 
-    // --- folders -----------------------------------------------------
     let mailboxes = backend
         .list_mailboxes(&MailboxFilter::all())
         .await
@@ -58,7 +38,6 @@ async fn conforms(backend: &dyn MailBackend) {
         .collect();
     assert_eq!(paths, ["INBOX", "Archive"], "{}", backend.describe());
 
-    // --- mailbox state ------------------------------------------------
     let inbox = backend
         .select("INBOX", SelectMode::ReadWrite)
         .await
@@ -69,7 +48,6 @@ async fn conforms(backend: &dyn MailBackend) {
     assert_eq!(inbox.highest_mod_seq, Some(ModSeq::new(BASELINE)));
     assert!(!inbox.read_only);
 
-    // --- headers ------------------------------------------------------
     let headers = backend
         .fetch_headers("INBOX", &UidSet::all(), None, &cancel)
         .await
@@ -92,7 +70,6 @@ async fn conforms(backend: &dyn MailBackend) {
     );
     assert_eq!(envelope.from[0].address, "ada.norwood@example.com");
 
-    // --- bodies -------------------------------------------------------
     let mut sink = VecSink::new();
     let fetched = backend
         .fetch_body("INBOX", &rid(1), &mut sink, &cancel)
@@ -104,7 +81,6 @@ async fn conforms(backend: &dyn MailBackend) {
     assert_eq!(sink.as_slice(), raw.as_slice());
     assert_eq!(fetched.bytes_written, raw.len() as u64);
 
-    // --- flags --------------------------------------------------------
     let updates = backend
         .store_flags(
             "INBOX",
@@ -119,7 +95,6 @@ async fn conforms(backend: &dyn MailBackend) {
     let stamped = updates[0].mod_seq.expect("a CONDSTORE server stamps it");
     assert!(stamped > ModSeq::new(BASELINE));
 
-    // --- incremental --------------------------------------------------
     let changed = backend
         .fetch_headers(
             "INBOX",
@@ -132,7 +107,6 @@ async fn conforms(backend: &dyn MailBackend) {
     let changed: Vec<u32> = changed.iter().map(|message| message.uid.get()).collect();
     assert_eq!(changed, [1], "only what moved since the baseline");
 
-    // --- moving -------------------------------------------------------
     let mapping = backend
         .move_messages("INBOX", &ids([2]), "Archive")
         .await
@@ -142,7 +116,6 @@ async fn conforms(backend: &dyn MailBackend) {
     assert_eq!(backend.status("INBOX").await.expect("status").exists, 2);
     assert_eq!(backend.status("Archive").await.expect("status").exists, 1);
 
-    // --- appending ----------------------------------------------------
     let draft = AppendMessage::new(b"Subject: a draft\r\n\r\nnot sent yet\r\n".to_vec())
         .with_flags(FlagSet::from_iter([Flag::Draft]));
     let landed = backend
@@ -156,12 +129,9 @@ async fn conforms(backend: &dyn MailBackend) {
     );
     assert_eq!(backend.status("Archive").await.expect("status").exists, 2);
 
-    // --- expunging ----------------------------------------------------
-    //
-    // The *returned* UIDs are not compared: a real server reports removals as
-    // sequence numbers, so `ImapBackend` can only ever return an empty list
-    // where the mock knows exactly what it dropped. What both must agree on
-    // is what is left, which is what a caller resyncs against anyway.
+    // The returned UIDs are not compared: a real server reports sequence numbers, so `ImapBackend`
+    // returns an empty list.
+    // Both must agree on what is left.
     backend
         .store_flags(
             "INBOX",
@@ -173,16 +143,9 @@ async fn conforms(backend: &dyn MailBackend) {
     backend.expunge("INBOX", None).await.expect("expunge");
     assert_eq!(backend.status("INBOX").await.expect("status").exists, 1);
 
-    // --- watching -----------------------------------------------------
-    //
-    // The one difference the two are allowed to keep, decided in
-    // postio-wy2.11 and written down on `MailBackend::idle`: the mock queues
-    // every change made through it, this test's own included, while a real
-    // server reports only what the connection did not do. The mock errs
-    // towards more resyncs, which is the safe direction. So whatever is
-    // outstanding is drained first, and what both must agree on is the part
-    // that matters — with nothing new arriving, a watch ends empty rather
-    // than erroring or hanging.
+    // The mock queues every change made through it, a real server only what the connection did not
+    // do (see `MailBackend::idle`).
+    // So drain first; with nothing new, a watch must end empty.
     let _backlog = backend
         .idle("INBOX", Duration::from_millis(100), &cancel)
         .await
@@ -207,7 +170,6 @@ fn ids(values: impl IntoIterator<Item = u32>) -> Vec<postio_model::RemoteId> {
     values.into_iter().map(rid).collect()
 }
 
-/// The identity the pinned generation gives `uid`.
 fn rid(uid: u32) -> postio_model::RemoteId {
     postio_model::RemoteId::new(format!("{GENERATION}:{uid}"))
 }
@@ -305,9 +267,8 @@ async fn a_background_view_shares_the_pool_with_its_interactive_one() {
 
 #[tokio::test]
 async fn an_imap_backend_offers_a_background_view_through_the_trait() {
-    // The sync engine holds a `dyn MailBackend` and can only reach the
-    // background view through the trait. Without it the archive's backfill
-    // and a click on an attachment queued for the same connections as equals.
+    // The engine holds a `dyn MailBackend`, so the background view must be reachable through the
+    // trait.
     let server = TestServer::builder()
         .mailbox(TestMailbox::new("INBOX").corpus(["plain-text-simple"]))
         .start()

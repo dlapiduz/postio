@@ -1,49 +1,33 @@
-//! A minimal cancellation token.
-//!
-//! Deliberately small and dependency-free: pulling in `tokio-util` for one
-//! type is not worth it. The semantics match `CancellationToken`: cloning
-//! shares one cancelled flag, cancelling is idempotent, and awaiting an
-//! already-cancelled token returns immediately.
-//!
-//! It lives at the crate root rather than inside [`discovery`](crate::discovery)
-//! because everything that reaches a server needs it: the autoconfig probe, a
-//! long `IDLE`, and a multi-megabyte body fetch the user navigated away from.
+//! Same semantics as `CancellationToken` without pulling in `tokio-util`; at the crate root because
+//! every server-facing path needs it.
 
 use std::future;
 use std::sync::Arc;
 
 use tokio::sync::watch;
 
-/// A shared "stop what you are doing" flag.
 #[derive(Clone, Debug)]
 pub struct CancelToken {
     tx: Arc<watch::Sender<bool>>,
 }
 
 impl CancelToken {
-    /// A fresh, uncancelled token.
     pub fn new() -> Self {
         Self {
             tx: Arc::new(watch::channel(false).0),
         }
     }
 
-    /// Cancels every clone of this token. Idempotent.
-    ///
-    /// `send_replace` rather than `send`: `send` discards the value when no
-    /// receiver is currently subscribed, which is exactly the case for a
-    /// token cancelled before anything awaits it.
+    /// `send_replace`, not `send`: `send` discards the value with no subscriber, as when cancelled
+    /// before anything awaits.
     pub fn cancel(&self) {
         self.tx.send_replace(true);
     }
 
-    /// Whether cancellation has been requested.
     pub fn is_cancelled(&self) -> bool {
         *self.tx.borrow()
     }
 
-    /// Resolves as soon as cancellation is requested — immediately if it
-    /// already has been, and never otherwise.
     pub async fn cancelled(&self) {
         let mut rx = self.tx.subscribe();
         loop {

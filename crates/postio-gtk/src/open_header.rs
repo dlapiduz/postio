@@ -1,12 +1,7 @@
-//! The open message's sender block (screen 04; T184, restyled by T209 to
-//! the handoff's: no box, a hairline above and below): small dim From, To
-//! and Cc labels in a 44px column, the sender's name in bold with their
-//! address dim and in mono, and the date on the right -- "Today, 15:22"
-//! for today's mail, in full beyond it.
-//!
-//! Drawn from the row's envelope, so it is up as soon as the row is read.
-//! The shared reader's own header, with its Cc
-//! disclosure, is not shown in Focus.
+//! The open message's sender block: small dim From, To and Cc labels, the sender's bold name with
+//! the address dim in mono, and the date.
+//! Drawn from the row's envelope, so it is up as soon as the row is read; the shared reader's own
+//! header is not shown in Focus.
 
 use adw::prelude::*;
 use chrono::{DateTime, Local, Utc};
@@ -15,7 +10,6 @@ use postio_ui::focus_dialog;
 use postio_ui::reader::header::RECIPIENTS_SHOWN;
 use postio_widgets::widgets::space::S1;
 
-/// The card, and the pieces that change with the message.
 pub struct HeaderCard {
     root: gtk::Grid,
     from: gtk::Box,
@@ -24,17 +18,12 @@ pub struct HeaderCard {
     to: adw::WrapBox,
     cc_label: gtk::Label,
     cc: adw::WrapBox,
-    /// The quiet sender warning (#1928), under the recipients; hidden for
-    /// ordinary mail.
     warning_row: gtk::Box,
     warning: gtk::Label,
-    /// "Reply to": the message this one answers, when it is not the one
-    /// before it (spec 013 US3).
     reply_label: gtk::Label,
     reply: gtk::Label,
 }
 
-/// A field's name: small and dim, in a column of its own.
 fn field(text: &str) -> gtk::Label {
     let label = gtk::Label::new(Some(text));
     label.add_css_class("focus-open-field");
@@ -51,8 +40,8 @@ fn line() -> gtk::Box {
     line
 }
 
-/// Recipients keep their readable addresses, wrapping at the column's
-/// edge rather than adding their minimum widths across the whole dialog.
+/// Recipients keep their readable addresses, wrapping at the column's edge rather than adding their
+/// minimum widths across the dialog.
 fn recipient_line() -> adw::WrapBox {
     adw::WrapBox::builder()
         .child_spacing(S1)
@@ -63,18 +52,14 @@ fn recipient_line() -> adw::WrapBox {
         .build()
 }
 
-/// How many characters an address may have and still be laid out whole.
 const LONGEST_WHOLE_ADDRESS: usize = 40;
 
-/// `address` as the card draws one: bare, in mono.
 fn address_label(address: &str) -> gtk::Label {
     let label = gtk::Label::new(Some(address));
     label.add_css_class("focus-open-address");
-    // The domain is the part a person checks to trust a sender, so an
-    // address is laid out whole before anything else gives: its least width
-    // is its full width, the name and then the date give first. Only an
-    // address too long for any line shortens, from the front, so that its
-    // domain stays.
+    // The domain is what a person checks to trust a sender, so an address is laid out whole before
+    // anything else gives;
+    // only one too long for any line shortens, from the front, so the domain stays.
     if address.chars().count() > LONGEST_WHOLE_ADDRESS {
         label.set_ellipsize(pango::EllipsizeMode::Start);
         label.set_width_chars(LONGEST_WHOLE_ADDRESS as i32);
@@ -83,7 +68,6 @@ fn address_label(address: &str) -> gtk::Label {
 }
 
 impl HeaderCard {
-    /// An empty card.
     pub fn new() -> Self {
         let root = gtk::Grid::new();
         root.add_css_class("focus-open-header-card");
@@ -149,13 +133,10 @@ impl HeaderCard {
         card
     }
 
-    /// The card, to place in the column.
     pub fn widget(&self) -> gtk::Widget {
         self.root.clone().upcast()
     }
 
-    /// Draw the envelope: who it is from, who it went to and who was
-    /// copied, and when, as of now.
     pub fn set(
         &self,
         from: &[EmailAddress],
@@ -182,8 +163,6 @@ impl HeaderCard {
                     name.add_css_class("focus-open-sender-name");
                     name.set_ellipsize(pango::EllipsizeMode::End);
                     self.from.append(&name);
-                    // Bare, as the handoff draws it (T209): the mono face
-                    // already sets it apart from the name.
                     self.from.append(&address_label(&sender.address));
                 }
                 None => {
@@ -199,28 +178,24 @@ impl HeaderCard {
         recipients(&self.cc_label, &self.cc, cc);
     }
 
-    /// Says that the sender may not be who they claim, or hides the line
-    /// (#1928). The sentence is `postio_ui::reader::authenticity`'s.
+    /// The sentence is `postio_ui::reader::authenticity`'s (#1928).
     pub fn set_warning(&self, line: Option<&str>) {
         self.warning.set_text(line.unwrap_or(""));
         self.warning_row.set_visible(line.is_some());
     }
 
-    /// The Reply to row, or none.
     pub fn set_reply_to(&self, text: Option<&str>) {
         self.reply.set_text(text.unwrap_or(""));
         self.reply.set_visible(text.is_some());
         self.reply_label.set_visible(text.is_some());
     }
 
-    /// The Reply to row, while it is drawn.
     pub fn reply_to(&self) -> Option<String> {
         self.reply
             .is_visible()
             .then(|| self.reply.text().to_string())
     }
 
-    /// Nothing drawn: no message yet.
     pub fn clear(&self) {
         self.set_warning(None);
         clear(&self.from);
@@ -242,7 +217,6 @@ fn clear(line: &gtk::Box) {
     }
 }
 
-/// The display name, when there is one.
 fn name_of(address: &EmailAddress) -> Option<&str> {
     address
         .name
@@ -251,9 +225,7 @@ fn name_of(address: &EmailAddress) -> Option<&str> {
         .filter(|name| !name.is_empty())
 }
 
-/// A field of recipients: the first few by name (an address alone when
-/// there is no name), how many more, and the full list in the tooltip. A
-/// field nobody is in is not drawn, so a message with no Cc has no Cc line.
+/// A field nobody is in is not drawn, so a message with no Cc has no Cc line.
 fn recipients(label: &gtk::Label, line: &adw::WrapBox, addresses: &[EmailAddress]) {
     while let Some(child) = line.first_child() {
         line.remove(&child);
@@ -268,7 +240,6 @@ fn recipients(label: &gtk::Label, line: &adw::WrapBox, addresses: &[EmailAddress
     for (at, address) in addresses.iter().take(shown).enumerate() {
         match name_of(address) {
             Some(name) => {
-                // Commas between, so a line of names reads as a list.
                 let comma = if at + 1 < shown || addresses.len() > shown {
                     ","
                 } else {

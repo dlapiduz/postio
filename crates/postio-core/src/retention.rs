@@ -1,29 +1,21 @@
 //! How long Junk and Trash keep mail before it is emptied (#1932).
 //!
-//! The rule is a function, not a setting read in three places: which folder
-//! kinds are ever emptied, and from when an age counts. The store finds
-//! candidates older than the cutoff this gives it. The one promise that holds
-//! whatever the number is -- a Flagged message is never purged -- is the
-//! query's (`ExpiryRepository::expired_in`), held there by its own test.
+//! A Flagged message is never purged, a promise held by `ExpiryRepository::expired_in`.
 
 use chrono::{DateTime, Duration, Utc};
 use postio_model::MailboxRole;
 
-/// The auto-empty setting: days to keep mail in each folder kind, `0` for
-/// never. Off by default -- deleting mail is not something to do unasked.
+/// Days to keep mail per folder kind, `0` for never. Off by default: deleting mail is not something
+/// to do unasked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct AutoEmpty {
-    /// Keep Junk this many days; `0` leaves it alone.
     pub junk_days: u32,
-    /// Keep Trash this many days; `0` leaves it alone.
     pub trash_days: u32,
 }
 
 impl AutoEmpty {
-    /// The folder kinds that can be emptied, in the order a pass visits them.
     pub const ROLES: [MailboxRole; 2] = [MailboxRole::Junk, MailboxRole::Trash];
 
-    /// Whether any folder is set to be emptied.
     pub fn is_on(self) -> bool {
         self.junk_days > 0 || self.trash_days > 0
     }
@@ -39,7 +31,6 @@ impl AutoEmpty {
         (days > 0).then_some(days)
     }
 
-    /// Mail received before this instant is due, for a folder of `role`.
     pub fn cutoff(self, role: MailboxRole, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
         let days = self.days_for(role)?;
         Some(now - Duration::days(i64::from(days)))

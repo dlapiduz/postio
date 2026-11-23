@@ -1,6 +1,5 @@
-//! The accessible text of the reading surface (spec 006 FR-020): the
-//! snapshot's text index, the same reading order copy and find use, so the
-//! screen reader, the clipboard and find cannot disagree (research R7).
+//! The accessible text of the reading surface: the text index's reading order, shared with copy and
+//! find.
 
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
@@ -8,7 +7,6 @@ use gtk::{AccessibleTextGranularity, AccessibleTextRange, glib};
 
 use super::{BodyView, imp};
 
-/// `[start, end)` in characters, clamped to `len`.
 fn span(start: u32, end: u32, len: usize) -> std::ops::Range<usize> {
     let start = (start as usize).min(len);
     let end = (end as usize).min(len).max(start);
@@ -34,8 +32,6 @@ impl gtk::subclass::accessible_text::AccessibleTextImpl for imp::BodyView {
             AccessibleTextGranularity::Character => at..(at + 1).min(len),
             AccessibleTextGranularity::Word => text.word_at(at),
             AccessibleTextGranularity::Line => text.line_at(at),
-            // Sentences and paragraphs: the text index's own lines of
-            // reading order, which end at every block.
             _ => {
                 let chars: Vec<char> = text.text.chars().collect();
                 let mut start = at;
@@ -84,7 +80,6 @@ impl gtk::subclass::accessible_text::AccessibleTextImpl for imp::BodyView {
 }
 
 impl BodyView {
-    /// The accessible text between two character offsets.
     #[doc(hidden)]
     pub fn accessible_contents(&self, start: u32, end: u32) -> Option<String> {
         let document = self.document()?;
@@ -92,20 +87,16 @@ impl BodyView {
         Some(document.text.slice(span(start, end, len)).to_owned())
     }
 
-    /// The accessible selection, as ranges of the text.
     #[doc(hidden)]
     pub fn accessible_selection(&self) -> Vec<std::ops::Range<usize>> {
         self.selection().into_iter().collect()
     }
 
-    /// The accessible caret: the selection's end, or the start.
     #[doc(hidden)]
     pub fn accessible_caret(&self) -> u32 {
         self.selection().map_or(0, |range| range.end as u32)
     }
 
-    /// Where a range of the text is drawn, in the view's coordinates: the
-    /// union of its clusters, less the scroll.
     #[doc(hidden)]
     pub fn accessible_extents(&self, start: u32, end: u32) -> Option<gtk::graphene::Rect> {
         let document = self.document()?;
@@ -124,7 +115,6 @@ impl BodyView {
         ))
     }
 
-    /// Tell assistive technology the whole text changed: a new snapshot.
     pub(super) fn announce_contents(&self, old_len: usize) {
         let len = self
             .document()
@@ -138,7 +128,6 @@ impl BodyView {
         self.announce_selection();
     }
 
-    /// Tell assistive technology the caret or selection moved.
     pub(super) fn announce_selection(&self) {
         self.update_caret_position();
         self.update_selection_bound();

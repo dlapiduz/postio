@@ -1,7 +1,3 @@
-//! The Contacts view across the boundary (specs/011-focus-contacts S7):
-//! `g c` draws a frame and the rows the table asks for, the card follows the
-//! cursor, a tab and the filter narrow the list, and Escape unwinds.
-
 use postio_ffi::{ContactTabFfi, Session, SessionOptions, SurfaceKindFfi, UiEvent};
 use postio_model::EmailAddress;
 use postio_storage::repository::ContactRepository;
@@ -160,9 +156,6 @@ async fn g_c_draws_the_frame_rows_in_letters_and_the_card_of_the_cursor() {
     session.shutdown();
 }
 
-/// Specs/011-focus-contacts S8, across the boundary: Cmd-E draws the form on
-/// the person under the cursor, a change is reported, Esc arms, Cmd-S saves
-/// as one command, and the card says what was saved.
 #[tokio::test(flavor = "multi_thread")]
 async fn cmd_e_edits_the_person_and_cmd_s_saves_what_was_typed() {
     use postio_ffi::EditChangeFfi;
@@ -173,7 +166,6 @@ async fn cmd_e_edits_the_person_and_cmd_s_saves_what_was_typed() {
     tokio::task::spawn_blocking(move || s.invoke("open_contacts"))
         .await
         .expect("g c");
-    // The table asks for its rows, which is what reads the first card.
     row_when_ready(&session, 0).await;
     assert!(
         heard(&session, 20, |event| matches!(
@@ -235,7 +227,6 @@ async fn cmd_e_edits_the_person_and_cmd_s_saves_what_was_typed() {
         .await,
         "Save puts the form away"
     );
-    // The save is a command on the engine's own task: it lands shortly.
     let mut title = None;
     for _ in 0..100 {
         let connection = database.connect().await.expect("a connection");

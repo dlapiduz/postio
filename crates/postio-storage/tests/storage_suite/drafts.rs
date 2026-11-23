@@ -1,8 +1,3 @@
-//! Drafts: CRUD and the autosave-friendly upsert.
-//!
-//! The bead's acceptance criterion is "draft upsert is idempotent under rapid
-//! autosave".
-
 use chrono::{DateTime, TimeZone, Utc};
 use postio_storage::Connection;
 
@@ -33,10 +28,6 @@ fn a_draft(account: postio_model::AccountId) -> Draft {
     draft.updated_at = at(0);
     draft
 }
-
-// ---------------------------------------------------------------------------
-// Create and read
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn a_draft_round_trips_with_its_recipients_and_attachments() {
@@ -74,9 +65,6 @@ async fn a_draft_round_trips_with_its_recipients_and_attachments() {
 
 #[tokio::test]
 async fn the_markdown_a_draft_was_written_in_survives_saving_and_can_be_dropped() {
-    // docs/archive/specs/005-tui-frontend data-model: the terminal reopens what was typed,
-    // and a save from a frontend that does not write Markdown clears it, so
-    // the terminal then reopens from the HTML rather than stale Markdown.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let account = test_support::account(&connection).await;
@@ -138,10 +126,6 @@ async fn reading_a_draft_that_is_not_there_is_none() {
     assert!(!drafts.delete(DraftId::new(404)).await.expect("delete"));
 }
 
-// ---------------------------------------------------------------------------
-// Acceptance: autosave is idempotent
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn saving_the_same_draft_repeatedly_writes_one_row() {
     let database = test_support::memory().await;
@@ -152,7 +136,6 @@ async fn saving_the_same_draft_repeatedly_writes_one_row() {
     let mut draft = a_draft(account.id);
     let id = drafts.save(&mut draft).await.expect("first save");
 
-    // The composer autosaves on every keystroke.
     for keystroke in 1..=50 {
         draft.subject = format!("Tide gate interlock{}", "!".repeat(keystroke));
         draft.updated_at = at(keystroke as i64);
@@ -218,10 +201,6 @@ async fn removing_a_recipient_removes_the_row() {
     assert!(stored.cc.is_empty());
     assert_eq!(stored.to.len(), 1);
 }
-
-// ---------------------------------------------------------------------------
-// The send queue and the composer's other reads
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn drafts_list_most_recently_edited_first() {
@@ -363,8 +342,6 @@ async fn a_draft_survives_the_message_it_replies_to_being_expunged() {
 
 #[tokio::test]
 async fn a_forward_keeps_the_message_it_was_made_from_until_that_is_expunged() {
-    // #1686: a forward's carried attachment may have no bytes yet, and the
-    // original is where they are fetched from at send time.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -498,16 +475,6 @@ async fn enumerations_are_stored_with_the_spelling_the_model_documents() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Queueing the server copy
-// ---------------------------------------------------------------------------
-//
-// A draft is durable on this machine the moment `save` returns, and reaches
-// the account's Drafts mailbox later, through the same queue every other
-// mutation goes through. These are the enqueue half; `postio-sync`'s
-// `tests/drafts.rs` is the drain half.
-
-/// An account with the Drafts mailbox a draft is filed into.
 async fn account_with_drafts(
     connection: &Connection,
 ) -> (postio_model::Account, postio_model::MailboxId) {
@@ -550,9 +517,6 @@ async fn saving_a_draft_queues_it_for_the_server_in_the_same_write() {
 
 #[tokio::test]
 async fn a_draft_with_nowhere_to_go_is_still_saved_locally() {
-    // No Drafts mailbox: the account has not been synced far enough to know
-    // one exists. Local-first means the draft is kept anyway, and the next
-    // save after the folder turns up is what files it.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let account = test_support::account(&connection).await;
@@ -726,9 +690,8 @@ async fn scheduling_a_send_marks_it_queued_but_holds_it_until_the_chosen_time() 
 
 #[tokio::test]
 async fn queueing_a_send_writes_the_draft_that_was_never_saved() {
-    // Ctrl+Enter can beat the debounced autosave: a draft typed and sent
-    // inside the quiet period has no row and no id yet. The enqueue names the
-    // draft by id, so there is no send to queue until there is one.
+    // Ctrl+Enter can beat the debounced autosave: a draft sent inside the quiet period has no row
+    // yet.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, _) = account_with_drafts(&connection).await;
@@ -749,10 +712,8 @@ async fn queueing_a_send_writes_the_draft_that_was_never_saved() {
 
 #[tokio::test]
 async fn a_queued_send_does_not_need_a_drafts_mailbox() {
-    // Unlike `save_and_sync`, which has nowhere to file the draft until the
-    // first sync finds the folder, a send names no mailbox at all: SMTP is a
-    // different conversation from IMAP, and the Sent copy is resolved when the
-    // operation drains rather than now.
+    // A send names no mailbox: SMTP is a different conversation from IMAP, and the Sent copy is
+    // resolved when the operation drains.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let account = test_support::account(&connection).await;
@@ -770,12 +731,8 @@ async fn a_queued_send_does_not_need_a_drafts_mailbox() {
 
 #[tokio::test]
 async fn cancelling_a_queued_send_takes_the_operation_off_the_queue_and_reopens_the_draft() {
-    // #433: a queued draft could still be opened and edited from the Drafts
-    // folder, and the edits landed or did not depending purely on timing
-    // against the drainer. `OperationQueueRepository::delete`'s own doc
-    // already names the fix -- "an operation that has not drained yet can
-    // simply be taken off the queue" -- this is that, wired to the draft
-    // that owns it.
+    // #433: edits to a queued draft landed or not depending on timing against the drainer, so the
+    // operation is taken off the queue.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, _) = account_with_drafts(&connection).await;
@@ -843,10 +800,8 @@ async fn cancelling_the_send_of_a_draft_that_is_not_queued_does_nothing() {
 
 #[tokio::test]
 async fn cancelling_a_send_that_is_already_in_flight_is_too_late() {
-    // The drainer marks the operation in_flight the moment it starts talking
-    // to the submission server. From then on the row leaving the queue
-    // cannot take back a message that may already be on the wire, so this
-    // must refuse rather than pretend the send never happened.
+    // Once the drainer marks the operation in_flight a message may be on the wire, so removing it
+    // must refuse.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, _) = account_with_drafts(&connection).await;
@@ -887,22 +842,9 @@ async fn cancelling_a_send_that_is_already_in_flight_is_too_late() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// The draft row and the message row are the same message
-// ---------------------------------------------------------------------------
-//
-// A draft is appended to the account's Drafts mailbox, and the next sync pass
-// over that folder fetches it straight back. Without this, the same unfinished
-// message exists twice locally — once as the composer's `drafts` row and once
-// as an ordinary `messages` row — and the second one is a read-only snapshot
-// of a buffer that is still being typed into. See #51.
-//
-// The composer owns a draft this client wrote. Another client's draft has no
-// local draft row and is the reason the folder is worth syncing at all, so it
-// stays an ordinary message.
+// A draft appended to Drafts is fetched straight back by sync; unmatched, the message would exist
+// twice locally (#51). Another client's draft has no local row and stays an ordinary message.
 
-/// A message as sync would have built it: in `mailbox`, carrying the server
-/// identity the fetch reported.
 fn fetched(
     account: postio_model::AccountId,
     mailbox: postio_model::MailboxId,
@@ -917,7 +859,6 @@ fn fetched(
     message
 }
 
-/// A draft whose server copy is `uid` under `validity`.
 async fn uploaded(
     connection: &Connection,
     account: postio_model::AccountId,
@@ -978,8 +919,6 @@ async fn a_draft_this_client_uploaded_does_not_come_back_as_a_message() {
 
 #[tokio::test]
 async fn a_draft_written_by_another_client_is_an_ordinary_message() {
-    // The reason the folder syncs at all. This one has no local draft row, so
-    // there is nothing for it to be a second copy of.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, drafts) = account_with_drafts(&connection).await;
@@ -1007,9 +946,7 @@ async fn a_draft_written_by_another_client_is_an_ordinary_message() {
 
 #[tokio::test]
 async fn a_uid_that_matches_a_draft_in_a_different_folder_is_an_ordinary_message() {
-    // UIDs are per-mailbox, so message 7 in INBOX has nothing to do with the
-    // draft that is message 7 in Drafts. Matching on the number alone would
-    // hide a piece of the user's mail.
+    // UIDs are per-mailbox: matching on the number alone would hide a piece of the user's mail.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, _drafts) = account_with_drafts(&connection).await;
@@ -1029,10 +966,8 @@ async fn a_uid_that_matches_a_draft_in_a_different_folder_is_an_ordinary_message
 
 #[tokio::test]
 async fn a_draft_whose_append_was_never_located_hides_nothing() {
-    // No `UIDPLUS`, so `save` recorded that it does not know where the copy
-    // landed and flagged the folder for a resync instead. There is nothing to
-    // match on, and guessing which message in Drafts is ours is exactly what
-    // `postio-sync`'s draft module refuses to do.
+    // No `UIDPLUS`: the copy's location is unknown, and guessing which Drafts message is ours is
+    // what `postio-sync` refuses to do.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, drafts) = account_with_drafts(&connection).await;
@@ -1059,8 +994,6 @@ async fn a_draft_whose_append_was_never_located_hides_nothing() {
 
 #[tokio::test]
 async fn a_draft_recorded_under_an_older_generation_hides_nothing() {
-    // A renumbered mailbox makes the old UID name some other message, which
-    // is the same reason `discard` carries its `UIDVALIDITY`.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, drafts) = account_with_drafts(&connection).await;
@@ -1082,11 +1015,8 @@ async fn a_draft_recorded_under_an_older_generation_hides_nothing() {
 
 #[tokio::test]
 async fn a_message_row_that_beat_the_draft_to_its_uid_is_taken_back_out() {
-    // The race the skip alone does not close: a sync pass fetched the
-    // appended copy before `set_server_copy` had recorded where it landed, so
-    // the row was already there when the draft learned its own UID. Every
-    // later pass would then find the row and update it, and the duplicate
-    // would be permanent. Claiming the copy is therefore also what removes it.
+    // A sync pass can fetch the appended copy before `set_server_copy` records it; claiming the
+    // copy also removes that duplicate.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, drafts) = account_with_drafts(&connection).await;
@@ -1123,22 +1053,9 @@ async fn a_message_row_that_beat_the_draft_to_its_uid_is_taken_back_out() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// A draft's place in the Drafts folder
-// ---------------------------------------------------------------------------
-//
-// #51 stopped the synced copy of a draft becoming a second message row, which
-// left the Drafts folder listing other clients' drafts and nothing else — and
-// the sidebar badge, which reads the mailbox's cached count of message rows,
-// saying 0 while the composer held a draft. #166.
-//
-// A draft's list presence is therefore a `messages` row this repository writes,
-// not one sync brings back. That is the only source that is right immediately:
-// a draft has no server copy until an append has round-tripped, and a folder
-// that only listed your draft after a network exchange is exactly what
-// docs/PRODUCT.md §18's local-first rule forbids.
+// A draft's list presence is a `messages` row this repository writes (#166), the only source that
+// is right immediately: a draft listed only after a network round trip breaks local-first.
 
-/// What the message list would show for `mailbox`, subject first.
 async fn folder(connection: &Connection, mailbox: postio_model::MailboxId) -> Vec<String> {
     let query = postio_storage::repository::ListQuery {
         scope: postio_storage::repository::ListScope::Mailbox(mailbox),
@@ -1154,7 +1071,6 @@ async fn folder(connection: &Connection, mailbox: postio_model::MailboxId) -> Ve
         .collect()
 }
 
-/// The count the sidebar draws under "Drafts".
 async fn badge(connection: &Connection, mailbox: postio_model::MailboxId) -> u32 {
     postio_storage::repository::MailboxRepository::new(connection)
         .counts(mailbox)
@@ -1186,8 +1102,6 @@ async fn saving_a_draft_puts_it_in_the_drafts_folder_at_once() {
 
 #[tokio::test]
 async fn a_drafts_list_row_can_be_told_who_it_is_to() {
-    // The row's sender is the person themselves; the list names the
-    // recipients instead, read for a whole page in one statement.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, drafts_mailbox) = account_with_drafts(&connection).await;
@@ -1216,8 +1130,6 @@ async fn a_drafts_list_row_can_be_told_who_it_is_to() {
 
 #[tokio::test]
 async fn the_row_a_draft_owns_is_marked_as_a_draft_and_as_read() {
-    // The list already draws a draft mark and says "Draft" in the accessible
-    // label off `MessageListRow::draft`; unread is for mail that arrived.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, drafts_mailbox) = account_with_drafts(&connection).await;
@@ -1244,8 +1156,6 @@ async fn the_row_a_draft_owns_is_marked_as_a_draft_and_as_read() {
 
 #[tokio::test]
 async fn autosave_keeps_one_row_and_keeps_it_current() {
-    // The autosave rule this repository already holds for the draft row, held
-    // for its list row too: a keystroke is not a new draft.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, drafts_mailbox) = account_with_drafts(&connection).await;
@@ -1281,8 +1191,6 @@ async fn discarding_a_draft_takes_its_row_out_of_the_folder() {
 
 #[tokio::test]
 async fn sending_a_draft_takes_its_row_out_of_the_folder() {
-    // `postio-sync::send` finishes by deleting the draft, which is the single
-    // exit both it and discard go through.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, drafts_mailbox) = account_with_drafts(&connection).await;
@@ -1298,8 +1206,6 @@ async fn sending_a_draft_takes_its_row_out_of_the_folder() {
 
 #[tokio::test]
 async fn an_account_with_no_drafts_folder_yet_still_saves_the_draft() {
-    // The ordinary state of an account that has not finished its first sync.
-    // The draft is durable regardless; it simply has nowhere to be listed.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let account = test_support::account(&connection).await;
@@ -1315,9 +1221,6 @@ async fn an_account_with_no_drafts_folder_yet_still_saves_the_draft() {
 
 #[tokio::test]
 async fn the_row_a_draft_owns_is_the_one_its_server_copy_attaches_to() {
-    // The two halves have to meet. The append lands, `set_server_copy` records
-    // where — and the row the folder is already showing becomes the row that
-    // names that copy, rather than a second one appearing beside it.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, drafts_mailbox) = account_with_drafts(&connection).await;
@@ -1339,7 +1242,6 @@ async fn the_row_a_draft_owns_is_the_one_its_server_copy_attaches_to() {
 
     assert_eq!(folder(&connection, drafts_mailbox).await.len(), 1);
 
-    // And the sync pass that fetches the copy back still adds nothing: #51.
     let mut batch = vec![fetched(account.id, drafts_mailbox, 7, 1)];
     MessageRepository::new(&connection)
         .upsert_batch(&mut batch)
@@ -1356,17 +1258,12 @@ async fn the_row_a_draft_owns_is_the_one_its_server_copy_attaches_to() {
 
 #[tokio::test]
 async fn a_drafts_row_leads_back_to_the_draft_it_is_listing() {
-    // The link the other way. The message list hands back a `MessageId`, and
-    // activating a draft's row has to reach the buffer the composer edits —
-    // opening the reader on it instead is the dead end #166 is about.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, drafts_mailbox) = account_with_drafts(&connection).await;
     let drafts = DraftRepository::new(&connection);
-    // Mail in the folder first, so the draft's row does not land on the same
-    // number as the draft. Without this the assertion below holds for a
-    // `by_message` that looked up the draft by its own id, and the test could
-    // not tell the link from the coincidence.
+    // Mail first, so the draft's row does not land on the draft's own number and let a by-id lookup
+    // pass.
     let mut noise = vec![
         fetched(account.id, drafts_mailbox, 30, 1),
         fetched(account.id, drafts_mailbox, 31, 1),
@@ -1413,10 +1310,6 @@ async fn a_drafts_row_leads_back_to_the_draft_it_is_listing() {
 
 #[tokio::test]
 async fn a_message_that_is_not_a_drafts_row_leads_nowhere() {
-    // Another client's draft, which has no local buffer to open. What happens
-    // then is the frontend's decision; what is certain here is that there is
-    // nothing to find — including when its row number happens to be a draft's
-    // id, which is the coincidence a link keyed on the wrong column survives.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, drafts_mailbox) = account_with_drafts(&connection).await;
@@ -1440,8 +1333,6 @@ async fn a_message_that_is_not_a_drafts_row_leads_nowhere() {
             .expect("a read")
             .is_none()
     );
-    // And the one that *is* a draft's still leads to it, so the assertion
-    // above is about the link rather than about `by_message` finding nothing.
     let mine = DraftRepository::new(&connection)
         .get(draft.id)
         .await
@@ -1449,10 +1340,6 @@ async fn a_message_that_is_not_a_drafts_row_leads_nowhere() {
         .expect("the draft");
     assert_eq!(mine.id, draft.id);
 }
-
-// ---------------------------------------------------------------------------
-// The reserved Message-ID (ADR 0021)
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn queueing_a_send_reserves_the_message_id_it_will_go_out_under() {
@@ -1513,9 +1400,6 @@ async fn a_scheduled_send_reserves_one_the_same_way() {
     );
 }
 
-/// The point of the whole reservation: it has to outlive every write that
-/// happens between queueing and draining, because a drain rebuilds the
-/// message from the row.
 #[tokio::test]
 async fn the_reservation_survives_the_saves_that_happen_after_it() {
     let database = test_support::memory().await;
@@ -1531,8 +1415,6 @@ async fn the_reservation_survives_the_saves_that_happen_after_it() {
         .expect("queue the send");
     let reserved = draft.rfc_message_id.clone().expect("reserved");
 
-    // A save from whoever still holds the draft -- the drainer writing the
-    // server copy's uid, say -- must not lose it.
     let mut reloaded = drafts.get(draft.id).await.expect("get").expect("the draft");
     reloaded.updated_at = at(2);
     drafts.save(&mut reloaded).await.expect("save again");
@@ -1548,10 +1430,8 @@ async fn the_reservation_survives_the_saves_that_happen_after_it() {
     );
 }
 
-/// ADR 0021: the id belongs to one attempt series at one piece of text. A
-/// draft that is editable again is a different message, and reusing the id
-/// would make a receiver that deduplicates drop the *corrected* version in
-/// favour of the one that may already have arrived.
+/// The reserved id belongs to one attempt series at one text; reusing it for a corrected edit would
+/// make a deduplicating receiver drop the correction (ADR 0021).
 #[tokio::test]
 async fn cancelling_a_send_gives_the_reservation_back() {
     let database = test_support::memory().await;
@@ -1581,9 +1461,6 @@ async fn cancelling_a_send_gives_the_reservation_back() {
     );
 }
 
-/// A row that says `editing` and still carries a reservation cannot be
-/// written at all, whichever way the caller asks for it — the column is
-/// derived from the state rather than trusted from the struct.
 #[tokio::test]
 async fn an_editing_draft_cannot_be_saved_holding_a_reservation() {
     let database = test_support::memory().await;
@@ -1606,9 +1483,6 @@ async fn an_editing_draft_cannot_be_saved_holding_a_reservation() {
     );
 }
 
-/// `Sending` and "there was never anything queued" are opposite facts and
-/// must not share an answer: one means nothing happened, the other means a
-/// submission may already be on the wire.
 #[tokio::test]
 async fn cancelling_a_send_already_being_submitted_says_it_is_in_flight() {
     let database = test_support::memory().await;
@@ -1711,24 +1585,10 @@ async fn set_state_leaves_the_reservation_alone_for_every_other_state() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// What it costs (Constitution V, spec 002 T055)
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn saving_and_loading_a_draft_costs_a_fixed_number_of_statements() {
-    // Autosave runs on a debounce while somebody types, so this is a write
-    // path that repeats for the life of every draft -- and loading one is
-    // what stands between pressing Return on a Drafts row and seeing the
-    // composer. Both are budgeted as *counts* rather than timings, because a
-    // shared runner cannot defend 16 ms and these numbers are the same on any
-    // machine (`bench.yml` deliberately times nothing).
-    //
-    // What the numbers are guarding is shape, not speed: an N+1 over
-    // recipients or attachments does not show up as a slow test on a draft
-    // with two of each, it shows up here as a count that grew with the data.
-    // That is why the second half adds parts and asserts the cost did *not*
-    // move with them.
+    // Budgeted as counts, not timings: an N+1 over recipients or attachments shows as a count that
+    // grows with the data, so the second half adds parts and asserts the cost did not move.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, _) = account_with_drafts(&connection).await;
@@ -1750,24 +1610,18 @@ async fn saving_and_loading_a_draft_costs_a_fixed_number_of_statements() {
     })
     .await;
 
-    // Loading is pinned exactly, because 3 is a number with a meaning -- the
-    // draft row, its recipients, its attachments -- and any fourth statement
-    // is a question worth answering rather than drift to absorb.
     assert_eq!(
         loading.statements, 3,
         "loading a draft is the row, its recipients and its parts: {loading:?}"
     );
-    // Saving is a ceiling, not an equality. It writes several tables inside a
-    // transaction and the exact count moves for reasons that teach nobody
-    // anything; what must not happen is that it doubles unnoticed, because
-    // autosave runs this on a debounce for the life of every draft.
+    // Saving is a ceiling: the exact count moves for uninteresting reasons, but must not double
+    // unnoticed.
     assert!(
         saving.statements <= 32,
         "saving an almost-empty draft took {} statements: {saving:?}",
         saving.statements
     );
 
-    // ── And the cost does not grow with the draft's contents ─────────────
     let mut large = a_draft(account.id);
     large.to = (0..8)
         .map(|n| EmailAddress::new(None::<String>, format!("to{n}@example.net")))
@@ -1796,9 +1650,6 @@ async fn saving_and_loading_a_draft_costs_a_fixed_number_of_statements() {
     })
     .await;
 
-    // Writing more rows is more statements and that is honest work. Reading
-    // is where an N+1 hides, because one query per attachment looks exactly
-    // like one query for all of them until the draft has eight.
     assert_eq!(
         loading_large.statements, loading.statements,
         "loading a draft with sixteen recipients and eight attachments cost \
@@ -1806,10 +1657,8 @@ async fn saving_and_loading_a_draft_costs_a_fixed_number_of_statements() {
          per part rather than a query for all of them",
         loading_large.statements, loading.statements
     );
-    // Writing more rows is more statements and that is honest work; what is
-    // budgeted is the rate. Measured at about four per row -- a delete, an
-    // insert and the bookkeeping around them -- so six per row leaves room
-    // for an incidental change and none for a doubling.
+    // Budgets the rate: about four statements per row measured, so six leaves room for an
+    // incidental change and none for a doubling.
     let extra_rows = (16 - 1) + 8;
     assert!(
         saving_large.statements <= saving.statements + extra_rows * 6,
@@ -1820,23 +1669,12 @@ async fn saving_and_loading_a_draft_costs_a_fixed_number_of_statements() {
 
 #[tokio::test]
 async fn a_failed_send_leaves_the_draft_editable_and_the_reason_where_it_can_be_found() {
-    // FR-066, in the two thirds that are built. A send that fails must leave
-    // something a person can act on: the draft still theirs to edit, still in
-    // the Drafts folder, and the reason recorded rather than discarded with
-    // the attempt.
-    //
-    // The third part -- that the reason is *named* to the user -- is not
-    // asserted here because nothing shows it (#1487). It is computed, written
-    // to `last_error`, and carried all the way up the engine's drain report,
-    // and then no surface reads it.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, mailbox) = account_with_drafts(&connection).await;
     let drafts = DraftRepository::new(&connection);
     let queue = OperationQueueRepository::new(&connection);
 
-    // A reply to a real message, so the threading assertion below has
-    // something to lose rather than comparing two `None`s.
     let mut parent = Message::new(account.id, mailbox, at(0));
     parent.subject = Some("Tide gate interlock".to_owned());
     MessageRepository::new(&connection)
@@ -1862,7 +1700,6 @@ async fn a_failed_send_leaves_the_draft_editable_and_the_reason_where_it_can_be_
         .await
         .expect("the draft learns the send failed");
 
-    // ── Still editable ───────────────────────────────────────────────────
     let after = drafts
         .get(draft.id)
         .await
@@ -1884,12 +1721,8 @@ async fn a_failed_send_leaves_the_draft_editable_and_the_reason_where_it_can_be_
          than the send failing"
     );
 
-    // ── FR-028: and it still knows which conversation it belongs to ──────
-    //
-    // A retry rebuilds the outgoing bytes from this row, so this field is
-    // the whole of what makes the second attempt land where the first would
-    // have. Losing it would show up only as a reply that started its own
-    // thread, later, with nothing left to connect it back to the failure.
+    // A retry rebuilds the outgoing bytes from this row, so losing `in_reply_to` would start a new
+    // thread.
     assert_eq!(
         after.in_reply_to,
         Some(parent.id),
@@ -1897,7 +1730,6 @@ async fn a_failed_send_leaves_the_draft_editable_and_the_reason_where_it_can_be_
          own conversation"
     );
 
-    // ── And the reason is still somewhere ────────────────────────────────
     let row = queue
         .get(queued.id)
         .await
@@ -1910,16 +1742,8 @@ async fn a_failed_send_leaves_the_draft_editable_and_the_reason_where_it_can_be_
          person why"
     );
 
-    // ── And it is reachable from the draft, which is what a surface has ──
-    //
-    // #1487. A surface reopening a failed draft has a `DraftId` and nothing
-    // else; the reason lives on a queue row keyed by target. Without this
-    // there is no query from one to the other, which is why the reason was
-    // durable and still unreachable.
-    //
-    // Read rather than copied onto the draft: one source of truth, and a
-    // second copy is one that can disagree with the first about why a send
-    // failed.
+    // #1487: a surface reopening a failed draft has only a `DraftId`; the reason is read from the
+    // queue row, not copied onto the draft, where it could disagree.
     assert_eq!(
         queue
             .last_failure_for(OperationTarget::Draft(draft.id))
@@ -1930,8 +1754,6 @@ async fn a_failed_send_leaves_the_draft_editable_and_the_reason_where_it_can_be_
         "the draft cannot reach the reason its own send failed"
     );
 
-    // A draft whose send never failed has nothing to say, and must not
-    // inherit somebody else's reason.
     let mut untroubled = a_draft(account.id);
     drafts.save(&mut untroubled).await.expect("save");
     assert_eq!(
@@ -1943,9 +1765,6 @@ async fn a_failed_send_leaves_the_draft_editable_and_the_reason_where_it_can_be_
     );
 }
 
-// ── The mirror row carries the send state (spec 003, T049) ──────────────────
-
-/// What `messages.send_state` says for the row standing for `draft`.
 async fn mirrored_state(connection: &Connection, draft: DraftId) -> Option<String> {
     postio_storage::sql::one(
         connection,
@@ -1962,14 +1781,11 @@ async fn mirrored_state(connection: &Connection, draft: DraftId) -> Option<Strin
 
 #[tokio::test]
 async fn the_mirror_row_carries_the_drafts_state_after_every_verb() {
-    // The invariant the Outbox and Drafts predicates both rest on. They read
-    // `messages.send_state`; the truth is `drafts.state`; and a denormalised
-    // value that drifts from what it denormalises shows a message in the wrong
-    // folder, or in neither.
+    // `messages.send_state` is denormalised from `drafts.state`; drift shows a message in the wrong
+    // folder or in neither.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let account = test_support::account(&connection).await;
-    // `Mailbox::new` guesses the role from the path, so "Drafts" is one.
     test_support::mailbox(&connection, &account, "Drafts").await;
     let drafts = DraftRepository::new(&connection);
 
@@ -2007,8 +1823,6 @@ async fn the_mirror_row_carries_the_drafts_state_after_every_verb() {
 
 #[tokio::test]
 async fn an_ordinary_message_has_no_send_state_at_all() {
-    // The column is NULL for everything that is not a draft, which is what
-    // makes the partial index small and the Drafts exclusion cheap.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let account = test_support::account(&connection).await;
@@ -2032,14 +1846,8 @@ async fn an_ordinary_message_has_no_send_state_at_all() {
     assert_eq!(state, None, "mail that arrived is not a draft being sent");
 }
 
-// ── A draft is in exactly one of Drafts and the Outbox (FR-004) ─────────────
-
 #[tokio::test]
 async fn every_draft_state_puts_the_row_in_exactly_one_of_the_two_lists() {
-    // The invariant, stated as a property over all five states rather than as
-    // five separate tests: never both lists, never neither. "Neither" is the
-    // failure #1491 reports -- a message you have sent that is nowhere -- and
-    // "both" is the one a careless predicate produces.
     use postio_storage::repository::{ListQuery, ListScope};
 
     let database = test_support::memory().await;
@@ -2051,7 +1859,6 @@ async fn every_draft_state_puts_the_row_in_exactly_one_of_the_two_lists() {
 
     let mut draft = a_draft(account.id);
     drafts.save(&mut draft).await.expect("save");
-    // The mirror row #166 wrote, found the way the composer finds it.
     let mirror: MessageId = postio_storage::sql::one(
         &connection,
         "SELECT message_id FROM drafts WHERE id = ?1",
@@ -2098,7 +1905,6 @@ async fn every_draft_state_puts_the_row_in_exactly_one_of_the_two_lists() {
             usize::from(in_drafts) + usize::from(in_outbox)
         );
 
-        // And which one, because "exactly one" is satisfied by the wrong one.
         let expected_outbox = matches!(state, DraftState::Queued | DraftState::Sending);
         assert_eq!(
             in_outbox, expected_outbox,
@@ -2109,10 +1915,6 @@ async fn every_draft_state_puts_the_row_in_exactly_one_of_the_two_lists() {
 
 #[test]
 fn the_outbox_has_a_constructor_like_every_other_scope() {
-    // FR-016. The Outbox is reached the way every list is, and a caller that
-    // has to spell out `limit` and `after` to name it is a caller reaching
-    // past the type -- which is what the app suite was doing, and what a
-    // second one would copy.
     use postio_storage::repository::{ListQuery, ListScope};
 
     let account = postio_model::AccountId::new(7);
@@ -2129,8 +1931,6 @@ fn the_outbox_has_a_constructor_like_every_other_scope() {
 
 #[tokio::test]
 async fn a_scheduled_send_carries_its_due_time_and_an_immediate_one_does_not() {
-    // FR-007. `Queued` covers two things a person means -- "as soon as you
-    // can" and "on Thursday" -- and without the time they read identically.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let account = test_support::account(&connection).await;
@@ -2170,7 +1970,6 @@ async fn a_scheduled_send_carries_its_due_time_and_an_immediate_one_does_not() {
         "a scheduled send has to carry the time, or the row cannot say it"
     );
 
-    // And it stops being a plan the moment it is no longer merely waiting.
     drafts
         .set_state(later.id, DraftState::Sending)
         .await
@@ -2184,14 +1983,8 @@ async fn a_scheduled_send_carries_its_due_time_and_an_immediate_one_does_not() {
 
 #[tokio::test]
 async fn a_send_whose_operation_is_gone_stops_claiming_to_be_on_its_way() {
-    // The state a real store was found in: `queued`, no operation, 25 hours
-    // after the send. Nothing retries it, the Outbox lists it for ever, and
-    // once `prune_settled` has removed the settled operation there is not
-    // even a reason left to show.
-    //
-    // The cause is fixed where it happens -- a send that gives up now marks
-    // its draft -- but that does nothing for the drafts already in this
-    // state, and they cannot get out of it by themselves.
+    // A real store was found with a draft `queued`, no operation, 25 hours after the send: nothing
+    // retries it and the Outbox lists it for ever.
     use postio_storage::repository::OperationQueueRepository;
 
     let database = test_support::memory().await;
@@ -2200,7 +1993,6 @@ async fn a_send_whose_operation_is_gone_stops_claiming_to_be_on_its_way() {
     test_support::mailbox(&connection, &account, "Drafts").await;
     let drafts = DraftRepository::new(&connection);
 
-    // One orphan, one healthy send, one draft still being written.
     let orphan = {
         let mut draft = a_draft(account.id);
         drafts.save(&mut draft).await.expect("save");
@@ -2208,8 +2000,6 @@ async fn a_send_whose_operation_is_gone_stops_claiming_to_be_on_its_way() {
             .queue_send(&mut draft, Utc::now())
             .await
             .expect("queue");
-        // What the drainer's failure path used to leave behind, and what
-        // `prune_settled` then finishes.
         let queued = OperationQueueRepository::new(&connection)
             .pending(account.id, Utc::now())
             .await
@@ -2274,7 +2064,6 @@ async fn a_send_whose_operation_is_gone_stops_claiming_to_be_on_its_way() {
         "a draft being written is not a send at all"
     );
 
-    // And it is idempotent, because it runs on every drain pass.
     assert_eq!(
         drafts.fail_orphaned_sends(account.id).await.expect("again"),
         0,
@@ -2282,14 +2071,9 @@ async fn a_send_whose_operation_is_gone_stops_claiming_to_be_on_its_way() {
     );
 }
 
-/// The rows a mailbox can never hold, counted so the sync can stop asking.
-///
-/// `upsert_batch` refuses the server's copy of a draft this client wrote, so
-/// a draft that has been appended leaves the Drafts mailbox permanently one
-/// row short of the server's `EXISTS`. `sync::resync` re-enumerates a mailbox
-/// that is short, and without a count of what is deliberately absent it
-/// re-enumerated Drafts on every pass for ever -- 27 held against 28
-/// reported, the 28th being the draft, fetched and refused each time.
+/// `upsert_batch` refuses the server's copy of a draft this client wrote, so Drafts stays one row
+/// short of `EXISTS`; without a count of what is deliberately absent, sync re-enumerated it every
+/// pass.
 #[tokio::test]
 async fn an_appended_drafts_server_copy_is_counted_as_refused() {
     let database = test_support::memory().await;
@@ -2339,11 +2123,8 @@ async fn an_appended_drafts_server_copy_is_counted_as_refused() {
 
 #[tokio::test]
 async fn a_re_saved_draft_rises_to_the_top_of_drafts_again() {
-    // Drafts is ordered by the list's sort key, and a draft's row takes
-    // `received_at` from `updated_at` on every save. The key is set when a
-    // row is filed, so a save that moves `received_at` later has to move
-    // the key with it, or a draft being written sinks under ones nobody
-    // has touched since (spec 007, research R7).
+    // A save moves `received_at` later, so it must move the sort key too, or a draft being written
+    // sinks under ones nobody has touched.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, mailbox) = account_with_drafts(&connection).await;
@@ -2370,9 +2151,6 @@ async fn a_re_saved_draft_rises_to_the_top_of_drafts_again() {
 
 #[tokio::test]
 async fn a_draft_keeps_the_labels_chosen_for_it_until_it_is_sent() {
-    // Spec 007 US3 scenario 4: labels chosen in the composer are applied to
-    // the conversation when the message is sent, so the draft carries them
-    // until then -- across autosaves, and in either app.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let account = test_support::account(&connection).await;
@@ -2412,10 +2190,6 @@ async fn a_draft_keeps_the_labels_chosen_for_it_until_it_is_sent() {
 
 #[tokio::test]
 async fn a_draft_keeps_its_remind_if_no_reply_until_it_is_sent() {
-    // Spec 007 US3 scenario 5 (T096): "Remind if no reply" set in the
-    // composer becomes a reminder when the message is sent, so the draft
-    // carries its time until then -- across autosaves, and cleared when the
-    // person takes it off.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let account = test_support::account(&connection).await;

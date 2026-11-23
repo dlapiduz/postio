@@ -1,16 +1,9 @@
 import PostioFFI
 import SwiftUI
 
-// The message window's thread bar (spec 013 US3, T047; the Mac threads
-// handoff SPEC section 4, screens 02 and 03): 60pt tall under the action row
-// with a hairline below it, a 66pt label column, one 72x46 chip per message
-// and the Thread button on the right.
-//
-// The controller decides which chips fit and which is current
-// (`postio_ui::thread_bar`, `Intent::ThreadBar`); this draws what it is told.
-// The accent is for the current chip's ring and the unread dots, nothing else.
+// The controller decides which chips fit and which is current (`postio_ui::thread_bar`); this draws
+// what it is told. The accent is for the current chip's ring and the unread dots only.
 
-/// The bar's measures, in points.
 public enum ThreadBarMetrics {
     public static let height: CGFloat = 60
     public static let labelColumn: CGFloat = 66
@@ -18,15 +11,11 @@ public enum ThreadBarMetrics {
     public static let chipRadius: CGFloat = 8
     public static let chipGap: CGFloat = 4
     public static let avatar: CGFloat = 20
-    /// The padding either side of the bar's contents.
     public static let edge: CGFloat = 16
-    /// What the Thread button, and the gap before it, take of the width.
     public static let button: CGFloat = 88
     public static let buttonGap: CGFloat = 8
 
-    /// How many chips a window `width` wide has room for, after the label
-    /// column and the Thread button: what `Input::BarRoom` carries. Always at
-    /// least one, so a narrow window still draws the message on screen.
+    /// Always at least one, so a narrow window still draws the message on screen.
     public static func room(window width: CGFloat) -> UInt32 {
         let free = width - 2 * edge - labelColumn - buttonGap - button - buttonGap
         let each = chip.width + chipGap
@@ -34,17 +23,12 @@ public enum ThreadBarMetrics {
     }
 }
 
-/// The bar. Nothing draws for a thread of one message.
 public struct ThreadBarView: View {
     let bar: ThreadBarFfi
     let menu: () -> Void
     let show: (UInt32) -> Void
     let more: (UInt32) -> Void
 
-    /// `menu` opens Thread ▾'s menu: the command the key runs. `show` hears
-    /// a click on a message's chip (its index), `more` a click on "... N
-    /// more" (the first member it stands for); the controller decides what
-    /// each does.
     public init(
         bar: ThreadBarFfi,
         menu: @escaping () -> Void = {},
@@ -87,7 +71,6 @@ public struct ThreadBarView: View {
     }
 }
 
-/// One chip: an avatar over "Name · time".
 struct ThreadChipView: View {
     let chip: ThreadChipFfi
     var show: (UInt32) -> Void = { _ in }
@@ -155,7 +138,6 @@ struct ThreadChipView: View {
     }
 }
 
-/// "Thread ▾", on the right of the bar, outlined.
 struct ThreadMenuButton: View {
     let label: String
     let action: () -> Void
@@ -174,7 +156,6 @@ struct ThreadMenuButton: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
-        // Where it is, for the menu and the outline to hang from.
         .background(
             GeometryReader { proxy in
                 Color.clear.preference(
@@ -184,11 +165,8 @@ struct ThreadMenuButton: View {
     }
 }
 
-/// The quiet banner on an older message: its words, and "Latest }".
 struct ThreadBannerView: View {
     let banner: ThreadBannerFfi
-    /// A new reply is tinted with the accent (screen 08); the older-message
-    /// banner is quiet.
     var tinted = false
     let run: () -> Void
 
@@ -218,10 +196,7 @@ struct ThreadBannerView: View {
     }
 }
 
-/// The banner of a window opened from a search (spec 013 US6; screen 07):
-/// the search's words marked, where the message on screen is among the
-/// thread's matches, and the two ways on, each with its key. The marked
-/// words wear the find yellow, never the accent.
+/// The marked words wear the find yellow, never the accent.
 struct MatchBannerView: View {
     let banner: MatchBannerFfi
     let next: () -> Void
@@ -244,7 +219,6 @@ struct MatchBannerView: View {
         .accessibilityLabel(banner.text)
     }
 
-    /// The text with the quoted query marked and its quotes dropped.
     private var words: AttributedString {
         let text = banner.text
         guard text.hasPrefix("\u{2018}"), let close = text.firstIndex(of: "\u{2019}") else {

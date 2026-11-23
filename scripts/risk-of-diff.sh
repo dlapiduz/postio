@@ -1,41 +1,18 @@
 #!/usr/bin/env bash
-# How risky a diff is, from its paths alone: `high` or `normal`.
+# How risky a diff is, from its paths alone: `high` or `normal`. Line one is the answer; for `high`,
+# line two names the rule, so `issue-land.sh` can say why.
 #
 #     git diff --name-only origin/main...HEAD | scripts/risk-of-diff.sh
 #     high
 #     crates/postio-focus: the shared controller
 #
-# Line one is the answer. For `high`, line two names the rule that matched, so
-# `issue-land.sh` can say why it asked for the whole nightly on the pull
-# request (the `full-suite` label) without the author having asked.
-#
-# # Why these rules
-#
-# The sanity tier a pull request gets is fast on purpose, and the bugs here
-# live between layers that each pass their own tests. Four GTK-only failures
-# reached main in one session because nothing asked the integration suites
-# about a change whose blast radius was wider than its diff. What widens it:
-#
-#   seeded mail    `seed.rs` and the `.eml` corpus are what every suite reads
-#                  as "a mailbox"; a change moves every assertion at once
-#   postio-focus   the one controller every frontend drives
-#   migrations     the schema and its migrations: a wrong one corrupts a store
-#                  that suites open fresh and never see migrated
-#   postio-sync    the engine every account runs, with races no unit sees
-#   3+ crates      a change that wide crosses seams nobody tested together
-#
-#   build env      `rust-toolchain.toml`, `mise.toml`, `.cargo/config.toml`,
-#                  `flatpak/*.json`: the compiler, tools and runtime every
-#                  suite runs on. A Rust bump to 1.100 passed every local gate
-#                  and the sanity tier; only the full suite saw Cargo move
-#                  test binaries out of `deps/`. Unlike the rest, this one is
-#                  not left to the author: line three, `full-suite`, tells
-#                  `issue-land.sh` to ask for the whole nightly itself.
-#
-# Fails safe: an empty list is no evidence of a small diff, so it is `high`,
-# the same direction `ci-changes.sh` fails.
-#
-# `scripts/tests/test-risk-of-diff.py` is what tests it.
+# The bugs here live between layers that each pass, so a change's blast radius can exceed its diff:
+# seeded mail (`seed.rs`, the `.eml` corpus), postio-focus (the shared controller), migrations,
+# postio-sync, or 3+ crates. Build env (`rust-toolchain.toml`, `mise.toml`, `.cargo/config.toml`,
+# `flatpak/*.json`) is not left to the author: a Rust bump to 1.100 passed every local gate and only
+# the full suite saw Cargo move test binaries out of `deps/`, so line three, `full-suite`, makes
+# `issue-land.sh` ask for it. Fails safe: an empty list is `high`, the same direction
+# `ci-changes.sh` fails. Tested by `scripts/tests/test-risk-of-diff.py`.
 set -euo pipefail
 
 files=$(cat)
@@ -44,7 +21,6 @@ if [ -z "${files//[[:space:]]/}" ]; then
     exit 0
 fi
 
-# The build environment wins over every other rule, so it is read first.
 if env_file=$(printf '%s\n' "$files" | grep -m1 -E '^(rust-toolchain\.toml|mise\.toml|\.cargo/config\.toml|flatpak/[^/]+\.json)$'); then
     printf 'high\n%s: the build environment\nfull-suite\n' "$env_file"
     exit 0

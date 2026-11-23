@@ -5,17 +5,6 @@ import WebKit
 @testable import PostioAppKit
 @testable import PostioKit
 
-/// Rich composition on macOS (#1271).
-///
-/// The window had the switch and the format bar and could not carry a mark:
-/// the body was a `TextEditor`, so `rich` was a claim the composer could not
-/// keep and its footer said "plain" whatever the switch was set to.
-///
-/// What is asserted here is the model, not the web view. The editing surface
-/// itself needs a window server, which these suites deliberately do not
-/// require (`WindowServerRequiredTests` says why a skip that looks like a
-/// pass is worse than no test) — so the seam is: what the model hands the
-/// surface, what it takes back, and what it then claims about the message.
 @MainActor
 @Suite struct ComposeRichTests {
     private func draft(rich: Bool = false, html: String? = nil, body: String = "") -> DraftFfi {
@@ -38,8 +27,7 @@ import WebKit
     }
 
     @Test func aRichDraftOpensWithItsMarksRatherThanItsPlainText() {
-        // Reopening a rich draft as plain text would silently discard every
-        // mark the moment it was saved again.
+        // Reopening a rich draft as plain would discard every mark on the next save.
         let model = ComposeModel(id: 4, draft: draft(rich: true, html: "<p>Six is <strong>fine</strong>.</p>"))
         #expect(model.rich)
         #expect(model.bodyHtml == "<p>Six is <strong>fine</strong>.</p>")
@@ -53,8 +41,6 @@ import WebKit
     }
 
     @Test func theFooterFinallyTellsTheTruthAboutARichMessage() {
-        // `sendsRich` was hardcoded false, because there was no rich document
-        // to send. Now the switch is the answer, and the footer follows it.
         let rich = ComposeModel(id: 4, draft: draft(rich: true, html: "<p>a</p>"))
         #expect(rich.sendsRich)
         #expect(rich.footer.contains("html"))
@@ -65,9 +51,7 @@ import WebKit
     }
 
     @Test func turningTheSwitchOffKeepsTheMarksInCaseItGoesBackOn() {
-        // The switch is on the document, not on the window. Discarding the
-        // marks here would make a mis-click an unrecoverable loss with no
-        // warning.
+        // The switch is on the document, so discarding marks would make a mis-click unrecoverable.
         let model = ComposeModel(id: 4, draft: draft(rich: true, html: "<p>a<em>b</em></p>"))
         model.rich = false
         #expect(model.edited.bodyHtml == "<p>a<em>b</em></p>")
@@ -78,9 +62,7 @@ import WebKit
     }
 
     @Test func aDirtyRichBodyIsNoticedSoItGetsSaved() {
-        // `isDirty` drives the autosave. A model that compared only the plain
-        // text would let every mark be lost on close, which is the failure
-        // that costs somebody a message.
+        // A model comparing only plain text would let marks be lost on close.
         let model = ComposeModel(id: 4, draft: draft(rich: true, html: "<p>a</p>"))
         #expect(!model.isDirty)
         model.bodyHtml = "<p>a<strong>b</strong></p>"
@@ -88,8 +70,6 @@ import WebKit
     }
 
     @Test func theFormatBarIsLiveOnARichDraftAndInertOnAPlainOne() {
-        // The marks were drawn permanently disabled. What decides now is the
-        // switch, which is a thing a person can act on.
         let rich = ComposeModel(id: 4, draft: draft(rich: true, html: "<p>a</p>"))
         #expect(rich.marksApply)
 
@@ -98,11 +78,8 @@ import WebKit
     }
 
     @Test func pressingAMarkAsksTheSurfaceToApplyIt() {
-        // The gap #1271 reported: the buttons existed and reached nothing.
-        // A request rather than a direct call, because the surface is an
-        // NSViewRepresentable and the button is in SwiftUI -- what is
-        // asserted is that pressing one leaves something for the surface to
-        // pick up.
+        // A request, not a direct call: the surface is an `NSViewRepresentable` and the button is
+        // SwiftUI.
         let model = ComposeModel(id: 4, draft: draft(rich: true, html: "<p>a</p>"))
         #expect(model.markRequest == nil)
 
@@ -111,9 +88,7 @@ import WebKit
     }
 
     @Test func pressingTheSameMarkTwiceIsTwoRequestsNotOne() {
-        // Bold is a toggle: pressing it twice must reach the document twice.
-        // A request keyed only on the command would look unchanged the
-        // second time and the surface would never be told.
+        // A request keyed only on the command would look unchanged the second press.
         let model = ComposeModel(id: 4, draft: draft(rich: true, html: "<p>a</p>"))
         model.applyMark("bold")
         let first = model.markRequest
@@ -124,18 +99,12 @@ import WebKit
     }
 
     @Test func aMarkOnAPlainDraftIsNotEvenRequested() {
-        // The bar is disabled there, but the model is what the keyboard
-        // reaches too, and `b` over a plain document has nothing to apply to.
         let model = ComposeModel(id: 4, draft: draft(rich: false))
         model.applyMark("bold")
         #expect(model.markRequest == nil)
     }
 
     @Test func aPasteThatLostSomethingSaysSoOnTheWindow() {
-        // The acceptance line. The sentence is the engine's, so both
-        // composers say the same thing about the same paste; what is checked
-        // here is that the window actually surfaces it rather than dropping
-        // it on the floor.
         let model = ComposeModel(id: 4, draft: draft(rich: true, html: "<p>a</p>"))
         model.tookPaste(
             PastedFfi(html: "<p>hi</p>", text: "hi", dropped: "Pasted without 1 table."))
@@ -143,16 +112,15 @@ import WebKit
     }
 
     @Test func aPasteThatLostNothingSaysNothing() {
-        // Silence is the right answer. A composer that announced every paste
-        // would train people to ignore the one that mattered.
+        // Silence is right: a composer announcing every paste trains people to ignore the one that
+        // matters.
         let model = ComposeModel(id: 4, draft: draft(rich: true, html: "<p>a</p>"))
         model.tookPaste(PastedFfi(html: "<p>hi</p>", text: "hi", dropped: nil))
         #expect(model.status == nil)
     }
 
     @Test func linkIsTheOneMarkThatCarriesAnAddress() {
-        // It cannot be a plain toggle: `markScript` has no answer for
-        // `insert_link` on purpose, because a link needs somewhere to point.
+        // `markScript` has no answer for `insert_link` on purpose: a link needs somewhere to point.
         let model = ComposeModel(id: 4, draft: draft(rich: true, html: "<p>a</p>"))
         model.applyMark(ComposeFormat.link, href: "https://example.com")
 
@@ -167,9 +135,7 @@ import WebKit
     }
 
     @Test func aRefusedLinkIsSaidOutLoudRatherThanDisappearingLater() {
-        // Created, looks right, vanishes at the next parse is the failure
-        // this avoids: the subset is http, https and mailto, and anything
-        // else is refused where there is somebody to tell.
+        // The subset is http, https and mailto; anything else is refused where someone can be told.
         let model = ComposeModel(id: 4, draft: draft(rich: true, html: "<p>a</p>"))
         model.refuseLink("javascript:alert(1)")
         #expect(model.status?.contains("javascript:alert(1)") == true)
@@ -177,18 +143,12 @@ import WebKit
     }
 
     @Test func theLinkCommandNamedInTheBarIsOneTheRegistryHas() {
-        // A literal that no longer matches the registry is a button that
-        // silently does nothing -- which is what this whole issue is about.
         #expect(ComposeFormat.marks.contains { $0.command == ComposeFormat.link })
     }
 
-    // MARK: - The switch (#1293)
-
     @Test func switchingToPlainCarriesTheWordsIntoThePlainField() {
-        // The sequence a person performs: everything typed into the rich
-        // surface, so `body` was never touched -- and then Plain, where it is
-        // suddenly the only field that matters. Not setting `body` by hand is
-        // the whole point; setting it is what hid this.
+        // Everything is typed into the rich surface, so `body` is never touched; do not set it by
+        // hand, which hid this bug.
         let model = ComposeModel(id: 4, draft: draft(rich: true, html: "<p>The gate closes at six.</p>"))
         #expect(model.body.isEmpty)
 
@@ -196,23 +156,18 @@ import WebKit
 
         #expect(model.body == "The gate closes at six.")
         #expect(!model.rich)
-        // And the marks are still there, because the switch is on the
-        // document: turning it back on must cost nothing.
         #expect(model.bodyHtml == "<p>The gate closes at six.</p>")
     }
 
     @Test func switchingToPlainDoesNotOverwriteWordsAlreadyTypedThere() {
-        // Somebody who wrote plain, tried Rich, and came back has words in
-        // the plain field that are theirs.
         let model = ComposeModel(id: 4, draft: draft(rich: true, html: "<p>marks</p>", body: "typed"))
         model.switchedToPlain(text: "marks")
         #expect(model.body == "typed")
     }
 
     @Test func theEditorAnswersEverySchemeItsShellNames() {
-        // The shell loads at `postio-editor:///`. With no handler for that
-        // scheme WebKit never started the load: Rich was an empty box that
-        // could not be typed in, with nothing logged anywhere.
+        // With no handler for `postio-editor:///` WebKit never started the load: Rich was an empty
+        // box with nothing logged.
         let configuration = WKWebViewConfiguration()
         ComposeEditor.answerSchemes(
             in: configuration, cid: CidSchemeHandler { _, _ in nil })
@@ -223,10 +178,8 @@ import WebKit
     }
 
     @Test func switchingToRichCarriesThePlainWordsIntoTheDocument() {
-        // New drafts open plain, so this is the first thing Rich does for
-        // most people. The surface was seeded from a document of nothing:
-        // the words vanished from the window, and the first keystroke there
-        // made the empty document the record.
+        // New drafts open plain; the surface was seeded from an empty document and the words
+        // vanished.
         let model = ComposeModel(id: 4, draft: draft(body: "The gate closes at six."))
 
         model.switchedToRich(html: "<p>The gate closes at six.</p>")
@@ -236,7 +189,6 @@ import WebKit
     }
 
     @Test func goingBackToRichUntouchedKeepsTheMarks() {
-        // Plain and back with nothing typed costs nothing (#1271).
         let model = ComposeModel(id: 4, draft: draft(rich: true, html: "<p>a<em>b</em></p>"))
         model.switchedToPlain(text: "ab")
 
@@ -246,8 +198,6 @@ import WebKit
     }
 
     @Test func whatWasTypedInPlainIsWhatRichShowsNext() {
-        // The marks came back over the words written since, and the window
-        // showed (and saved) the message as it was before Plain.
         let model = ComposeModel(id: 4, draft: draft(rich: true, html: "<p>a<em>b</em></p>"))
         model.switchedToPlain(text: "ab")
         model.body = "ab, and more"
@@ -258,8 +208,6 @@ import WebKit
     }
 
     @Test func whatWasTypedInRichIsWhatPlainShowsNext() {
-        // The other direction: plain words kept over the document written
-        // since, so Plain showed what was there before Rich.
         let model = ComposeModel(id: 4, draft: draft(body: "typed"))
         model.switchedToRich(html: "<p>typed</p>")
         model.bodyHtml = "<p>typed, then more</p>"
@@ -270,8 +218,7 @@ import WebKit
     }
 
     @Test func theDocumentRichStartsFromIncludesAFoldedQuote() {
-        // A reply's quote is folded out of `body`; leaving it out of the
-        // document would drop it from a rich reply.
+        // A reply's quote is folded out of `body`; leaving it out of the document would drop it.
         let model = ComposeModel(
             id: 4, draft: draft(body: "Yes.\n\nOn Monday, Bo wrote:\n> Six?\n"))
         #expect(model.plainText == model.edited.body)

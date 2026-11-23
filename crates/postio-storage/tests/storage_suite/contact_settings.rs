@@ -1,6 +1,3 @@
-//! What the user decided about a correspondent, kept on the correspondent
-//! (specs/011-focus-contacts S3, ADR 0048).
-
 use postio_model::{
     ContactArrival, ContactId, ContactSettings, DigestSetting, EmailAddress, StoppedMarker,
 };
@@ -231,7 +228,6 @@ async fn a_merge_carries_the_absorbed_persons_decisions_and_an_unjoin_takes_them
         after.stopped(),
         [StoppedMarker::Question, StoppedMarker::Todo]
     );
-    // The engine reads her once, covering both addresses.
     let derived = settings.derived().await.unwrap();
     assert_eq!(derived.len(), 1);
     assert_eq!(derived[0].addresses.len(), 2);
@@ -269,7 +265,6 @@ async fn the_suggestion_switches_start_as_the_spec_says_and_each_survives_a_reop
             flipped,
             "{which:?}"
         );
-        // Setting it again is not a second row.
         switches.set(which, flipped).await.unwrap();
     }
     let all = switches.get().await.unwrap();

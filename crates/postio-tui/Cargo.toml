@@ -29,6 +29,7 @@ futures-util = { workspace = true }
 # The keyring the store key is read from: this process opens the store.
 postio-account.workspace = true
 postio-client.workspace = true
+postio-focus.workspace = true
 postio-config.workspace = true
 postio-core.workspace = true
 postio-body.workspace = true

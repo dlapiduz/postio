@@ -48,8 +48,6 @@ def unformatted(paths: list[str]) -> list[str]:
         if not path.endswith(".rs") or path.startswith(NOT_OURS):
             continue
         blob = subprocess.run(["git", "show", f":{path}"], capture_output=True, check=True).stdout
-        # From the file's own directory, so rustfmt finds the tree's config
-        # and rustup the tree's pinned toolchain.
         where = Path(path).parent
         while not where.is_dir():
             where = where.parent

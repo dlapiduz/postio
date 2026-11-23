@@ -1,77 +1,7 @@
-//! Render a Focus screen to a PNG, over a seeded demo store.
-//!
-//! ```sh
-//! cargo run -p postio-gtk --example shot -- /tmp/01.png 01
-//! cargo run -p postio-gtk --example shot -- /tmp/01-dark.png 01 dark
-//! cargo run -p postio-gtk --example shot -- /tmp/03.png 03 1600x1000
-//! ```
-//!
-//! The screens are the numbered references in the design folder
-//! (`specs/007-postio-focus/screens.md` records every comparison):
-//!
-//! | Screen | What it shows |
-//! |---|---|
-//! | `01` | The inbox in light: three rows selected, the cursor on a marked row, the bulk bar |
-//! | `02` | The same, in dark |
-//! | `03` | The has-action filter on |
-//! | `05` | A new message: a recipient chip, suggestions for "Grac", a subject and a body |
-//! | `06` | Reply to all on the Harbor thread: its recipients, its label and the folded quote |
-//! | `15` | The three archived, and the undo toast |
-//! | `16` | The empty inbox: a store with nothing in it, a digest rule, a morning's filtering |
-//! | `17`, `18`, `19` | Screen 01 under the first sync's, the offline and the sign-in error's banner |
-//! | `20` | The key map, over screen 01 |
-//! | `04` | The to-do about the API draft, opened over screen 01 |
-//! | `07`, `08`, `09` | The command bar over screen 01: plain English, `in:Rec`, and `arch` |
-//! | `10` | The folders popover over screen 01 |
-//! | `s01`, `s02`, `s03` | Spec 010's search dropdown over screen 01: empty, `ha` typed with its ghost, and `harbor` typed |
-//! | `s06` | Spec 010's results for `harbor`, in the inbox's place |
-//! | `s08`, `s09` | The same with From ▾ open, and with Date ▾ open |
-//! | `s10`, `s11` | The same with Quick Look open, and on the Files tab |
-//! | `s12` | The same on the People tab |
-//! | `26` | The row menu (T199), right-clicked on a row below screen 01's selection |
-//! | `27` | A newsletter that paints its own page, opened: on paper (handoff screens 03, 04) |
-//! | `28` | Office mail in black text, opened: in app colours (handoff screens 11, 13) |
-//! | `29` | The same office mail switched to the original with `O`: on paper (handoff screen 12) |
-//! | `30` | A long newsletter with no page of its own, opened: in app colours (T218) |
-//! | `31` | The same newsletter past its render deadline: the plain-text fallback (T218) |
-//! | `32` | A new message with an attachment and "Remind if no reply" chosen (T221's states) |
-//! | `33` | A store no migration reaches: the page offering a fresh store (T215, T216) |
-//! | `40` | Settings over screen 01: Accounts, the account's detail open (T234) |
-//! | `41` | Settings: Sync & storage, with each folder's "Back up locally" |
-//! | `42` | Settings: Keyboard, Focus's commands and their keys |
-//! | `43` | Settings: Privacy |
-//!
-//! `light` or `dark` overrides a screen's own scheme, and `WxH` its size
-//! (1440x900, the references', by default). A screen that is not built yet,
-//! or a window that never became drawable, writes no file, prints `NO IMAGE
-//! WAS WRITTEN`, and exits non-zero (#809): a file that exists is a picture
-//! that was taken.
-//!
-//! # The store
-//!
-//! The storage seed (`postio_storage::seed::seed_small`) gives the account,
-//! its folder tree and six weeks of corpus mail; today's rows are filed on top
-//! of it the way sync files mail, labelled, threaded, and with markers
-//! written to the markers table. The markers go straight to the table rather
-//! than through the host: nothing in the host writes one yet (the detector
-//! pass is milestone 1's no-op), and the rows read them the same way either
-//! way. Today is 16:09 local, the time the references were drawn at, so the
-//! times on the rows are theirs, and the inbox last synced then. The config
-//! has one digest rule, weekly at 16:00 on the demo day. Screens 17 to 19 are
-//! said through the host's event sink, as the engine says them: the store
-//! has no server behind it.
-//!
-//! Every name is invented and every address is on a reserved domain.
-//! Nothing touches the network: the store is in memory and sync never
-//! starts. The cargo runner sends a binary named `shot` to the private
-//! headless compositor (`scripts/headless-runner.sh`), whose monitor is
-//! 1280x800; mutter maximizes a window that nearly fills it, so the
-//! references' size wants a larger one of its own:
-//!
-//! ```sh
-//! POSTIO_TEST_DISPLAY=focus-shot POSTIO_TEST_GEOMETRY=1920x1200 \
-//!     cargo run -p postio-gtk --example shot -- /tmp/01.png 01
-//! ```
+//! Render a Focus screen to a PNG over a seeded demo store: `cargo run -p postio-gtk --example shot -- /tmp/01.png 01 [light|dark] [WxH]`.
+//! A screen not built, or a window never drawable, writes no file and exits non-zero (#809).
+//! The headless monitor is 1280x800 and mutter maximizes a window that nearly fills it: set
+//! `POSTIO_TEST_GEOMETRY` for the 1440x900 default.
 
 use std::time::{Duration, Instant};
 
@@ -83,7 +13,6 @@ use postio_gtk::window::FocusWindow;
 use postio_model::AccountId;
 use postio_widgets::list_model::WindowedModel;
 
-/// The screens this tool can render, and what each is.
 const SCREENS: &[(&str, &str)] = &[
     ("01", "the inbox, light, three selected"),
     ("02", "the inbox, dark, three selected"),
@@ -171,21 +100,15 @@ const SCREENS: &[(&str, &str)] = &[
     ("s12", "spec 010's results on the People tab"),
 ];
 
-/// The screens drawn with messages opening beside the list (T232).
 const PANE_SCREENS: &[&str] = &["34", "35", "36"];
 
-/// How long to wait for the store's rows to reach the screen.
 const PATIENCE: Duration = Duration::from_secs(20);
 
-/// The references' size.
 const SIZE: (i32, i32) = (1440, 900);
 
-/// The rows screen 01 selects, by position in [`TODAY`], and where its
-/// cursor rests: the references' choice.
 const PICKED: &[u32] = &[3, 5, 8];
 const CURSOR: u32 = 2;
 
-/// What the command line asked for.
 struct Request {
     path: String,
     screen: String,
@@ -221,8 +144,6 @@ fn parse(args: &[String]) -> Result<Request, String> {
     })
 }
 
-/// Render the screen `args` names. `Ok` says what was written; `Err` says
-/// why nothing was, and ends in `NO IMAGE WAS WRITTEN`.
 pub fn run(args: &[String]) -> Result<String, String> {
     let path = args.first().cloned().unwrap_or_default();
     render(args).map_err(|error| format!("{error}\nNO IMAGE WAS WRITTEN to {path}"))
@@ -242,9 +163,8 @@ fn render(args: &[String]) -> Result<String, String> {
         ));
     }
     adw::init().map_err(|error| format!("no display: {error}"))?;
-    // The picture is of where things settle, not of a transition caught
-    // part-way: libadwaita fades a focus ring and slides a toast in, and a
-    // capture taken the moment the state is reached would show neither.
+    // Capture where things settle: libadwaita fades focus rings and slides toasts in, which a
+    // capture would catch part-way.
     let settings = gtk::Settings::default().ok_or("no GTK settings")?;
     let animated = settings.is_gtk_enable_animations();
     settings.set_gtk_enable_animations(false);
@@ -255,8 +175,6 @@ fn render(args: &[String]) -> Result<String, String> {
         adw::ColorScheme::ForceLight
     });
 
-    // Screen 33 is before there is a store at all: the page a store no
-    // migration reaches leaves the window on (T215, T216).
     if request.screen == "33" {
         let window = FocusWindow::new(None);
         window.set_default_size(request.size.0, request.size.1);
@@ -287,7 +205,6 @@ fn render(args: &[String]) -> Result<String, String> {
     if matches!(request.screen.as_str(), "27" | "28" | "29" | "30" | "31") {
         demo::on_runtime(treatment_demo(&database, account, &request.screen));
     }
-    // Screen 25 captures into a vault: a throwaway one, with projects.
     let vault = (request.screen == "25")
         .then(demo_vault)
         .transpose()
@@ -308,8 +225,7 @@ fn render(args: &[String]) -> Result<String, String> {
         ),
         None => base,
     };
-    // Settings shows the file it writes: the demo's, in a scratch place.
-    // Under /tmp, whatever TMPDIR says: the foot strip prints the path.
+    // Under /tmp whatever TMPDIR says: the foot strip prints the path.
     let config_dir = tempfile::Builder::new()
         .prefix("postio-shot")
         .tempdir_in("/tmp")
@@ -339,7 +255,6 @@ fn render(args: &[String]) -> Result<String, String> {
     Ok(said)
 }
 
-/// Turn the main loop until `done`, or give up after [`PATIENCE`].
 fn settle_until(done: impl Fn() -> bool) -> bool {
     let context = glib::MainContext::default();
     let heartbeat =
@@ -358,8 +273,6 @@ fn settle_until(done: impl Fn() -> bool) -> bool {
     reached
 }
 
-/// Whether the strip's counts have been read: its counts label says
-/// something.
 fn counted(window: &FocusWindow) -> bool {
     let Some(chrome) = window.chrome() else {
         return false;
@@ -381,7 +294,6 @@ fn counted(window: &FocusWindow) -> bool {
     false
 }
 
-/// Every row on screen drawn with its content, and the strip's counts in.
 fn settled(window: &FocusWindow) -> bool {
     let Some(pane) = window.pane() else {
         return false;
@@ -390,7 +302,6 @@ fn settled(window: &FocusWindow) -> bool {
     counted(window) && !rows.is_empty() && rows.iter().all(|row| !row.drawn().texts.is_empty())
 }
 
-/// Put the window in the state `screen` shows.
 fn stage(
     window: &FocusWindow,
     screen: &str,
@@ -479,11 +390,8 @@ fn stage(
         }
         "04" => {
             pick_three();
-            // OPENED counts the conversations filed; the digest's row sits
-            // above them in the list.
             pane.cursor().set_selected(demo::OPENED as u32 + 1);
             window.act(CommandId::OpenMessage);
-            // A thread's row opens once the thread has been read (spec 013).
             settle_until(|| window.reading().is_some());
             let Some(reading) = window.reading() else {
                 return Err("Enter opened nothing".into());
@@ -504,7 +412,6 @@ fn stage(
             pick_three();
             pane.cursor().set_selected(demo::OPENED as u32 + 1);
             window.act(CommandId::OpenMessage);
-            // A thread's row opens once the thread has been read (spec 013).
             settle_until(|| window.reading().is_some());
             let Some(reading) = window.reading() else {
                 return Err("Enter opened nothing".into());
@@ -565,10 +472,7 @@ fn stage(
                 return Err("Enter opened nothing".into());
             };
             if screen == "31" {
-                // Opened again with every render held on its thread past
-                // the deadline: what shows is the fallback, as a layout
-                // that took too long leaves it. The dialog is built by the
-                // first open, and reused by the next.
+                // Reopened with every render held past the deadline, so the fallback shows.
                 settle_until(|| reading.reader().view().document().is_some());
                 reading.close();
                 settle_until(|| !reading.dialog().is_mapped());
@@ -637,7 +541,6 @@ fn stage(
             if !settle_until(&done) {
                 return Err(format!("the bar never answered {typed:?}"));
             }
-            // What arrives after the first answer: the search's rows.
             let started = Instant::now();
             settle_until(|| started.elapsed() > Duration::from_millis(400));
         }
@@ -720,7 +623,6 @@ fn stage(
                     return Err("no Top hits for harbor".into());
                 }
             }
-            // What arrives after the first answer: the passages and counts.
             let started = Instant::now();
             settle_until(|| started.elapsed() > Duration::from_millis(400));
         }
@@ -774,7 +676,6 @@ fn stage(
             }
         }
         "22" | "23" => {
-            // The digest row: this week's newsletters, with its summary.
             let Some(position) = (0..pane.cursor().n_items()).find(|position| {
                 pane.cursor()
                     .item(*position)
@@ -814,7 +715,6 @@ fn stage(
             }
         }
         "24" => {
-            // The Oak Hill row, whose sender the reference digests.
             let Some(position) = (0..pane.cursor().n_items()).find(|position| {
                 pane.cursor()
                     .item(*position)
@@ -831,8 +731,7 @@ fn stage(
             pane.cursor().set_selected(position);
             window.act(CommandId::DigestRule);
             if !settle_until(|| {
-                // Drawn, not only built: the sheet maps its content once
-                // it has opened.
+                // Drawn, not only built: the sheet maps its content once it has opened.
                 window.rule_dialog().is_some_and(|dialog| {
                     dialog
                         .dialog()
@@ -947,14 +846,13 @@ fn stage(
             };
             panel.show_section(section);
             if screen == "40" {
-                // The account's row, read by the presenter, then its form.
                 if !settle_until(|| panel.accounts_list().row_at_index(0).is_some()) {
                     return Err("the account's row never landed".into());
                 }
                 panel.open_account_detail(account);
             }
             if screen == "41" {
-                // The folders land a read after the pane: give them it.
+                // The folders land a read after the pane.
                 let shown = Instant::now();
                 settle_until(|| shown.elapsed() > Duration::from_millis(800));
             }
@@ -964,9 +862,8 @@ fn stage(
         "20" => {
             pick_three();
             window.act(CommandId::CheatSheet);
-            // The dialog is mapped before it is drawn: libadwaita's sheet
-            // opens at 80% and transparent, and maps its content when that
-            // settles. What is waited for is the key map's own content.
+            // libadwaita's sheet opens at 80% and transparent and maps its content when that
+            // settles: wait for the key map's content.
             if !settle_until(|| {
                 window
                     .key_map()
@@ -986,13 +883,11 @@ fn stage(
                 "Hi Ada, here are the Q4 headcount numbers. Two roles move to the \
                  platform team; everything else stays flat.",
             );
-            // Four characters: the one completion rule opens at four (C23).
             composer.test_set_to("Grac");
             if !settle_until(|| composer.test_recipient_popover_visible()) {
                 return Err("the recipient suggestions never opened".into());
             }
-            // The editing surface paints in its own process: give it the
-            // frames to draw what was typed.
+            // The editing surface paints in its own process: give it frames to draw.
             let typed = Instant::now();
             settle_until(|| typed.elapsed() > Duration::from_millis(500));
         }
@@ -1011,9 +906,8 @@ fn stage(
             }) {
                 return Err("the reply's labels and quote never showed".into());
             }
-            // The editing surface paints in its own process, and restyles
-            // to the dialog's palette once it is on screen: give it the
-            // frames to draw the quote.
+            // The editing surface paints in its own process and restyles once on screen: give it
+            // frames.
             let shown = Instant::now();
             settle_until(|| shown.elapsed() > Duration::from_millis(500));
         }
@@ -1024,7 +918,6 @@ fn stage(
             composer.test_set_to("Ada Moreno <ada@example.com>, ");
             composer.test_set_subject("Q4 headcount numbers");
             composer.test_set_body("Hi Ada, the numbers are attached. Two roles move.");
-            // A file of its own, kept for the life of the shot.
             let folder = tempfile::tempdir().map_err(|error| error.to_string())?;
             let sheet = folder.path().join("Q4-headcount.pdf");
             std::fs::write(&sheet, vec![b'x'; 182_000]).map_err(|error| error.to_string())?;
@@ -1043,7 +936,6 @@ fn stage(
             pane.cursor().set_selected(demo::HARBOR);
             window.act(CommandId::CaptureTask);
             let sheet = window.capture().ok_or("t opened no capture sheet")?;
-            // The project list open, as the reference draws it.
             if !settle_until(|| {
                 sheet.is_shown()
                     && sheet
@@ -1059,12 +951,10 @@ fn stage(
         }
         _ => unreachable!("checked against SCREENS"),
     }
-    // Once more, so what the last change queued is drawn.
     settle_until(|| settled(window));
     Ok(())
 }
 
-/// The composer, once its dialog has opened over the window and drawn.
 fn composing(window: &FocusWindow) -> Result<postio_widgets::composer::Composer, String> {
     if !settle_until(|| {
         window
@@ -1077,7 +967,6 @@ fn composing(window: &FocusWindow) -> Result<postio_widgets::composer::Composer,
     window.composer().ok_or_else(|| "no composer".into())
 }
 
-/// Whether a widget under `root` wearing `class` is on screen.
 fn shown_with_class(root: &impl IsA<gtk::Widget>, class: &str) -> bool {
     let mut stack = vec![root.clone().upcast::<gtk::Widget>()];
     while let Some(widget) = stack.pop() {
@@ -1093,7 +982,6 @@ fn shown_with_class(root: &impl IsA<gtk::Widget>, class: &str) -> bool {
     false
 }
 
-/// Whether the empty inbox is what the window shows.
 fn empty_shown(window: &FocusWindow) -> bool {
     let mut stack = vec![window.clone().upcast::<gtk::Widget>()];
     while let Some(widget) = stack.pop() {
@@ -1109,19 +997,11 @@ fn empty_shown(window: &FocusWindow) -> bool {
     false
 }
 
-/// Set once the shot is running in a configuration of its own.
 const HERMETIC: &str = "POSTIO_FOCUS_SHOT_HERMETIC";
 
-/// Run this binary again with an empty configuration directory, and exit as
-/// it does -- unless this is that run.
-///
-/// GTK reads the person's own `gtk-4.0/gtk.css`, and a desktop can put its
-/// whole palette there above any application's: COSMIC writes its dark
-/// colours as `@define-color`s whatever the scheme, which renders a light
-/// screen dark and its header strip unreadable. A picture compared with a
-/// reference has to be Focus's alone. The focus suite does the same, for the
-/// same reason; setting the variable here would need `unsafe`, which the
-/// workspace forbids, so a child is given it.
+/// GTK reads the person's `gtk-4.0/gtk.css`, and a desktop can put its whole palette there (COSMIC
+/// writes dark `@define-color`s whatever the scheme). A child gets an empty config dir; setting the
+/// variable here would need `unsafe`, which the workspace forbids.
 fn hermetic(args: &[String]) -> Option<glib::ExitCode> {
     if std::env::var_os(HERMETIC).is_some() {
         return None;

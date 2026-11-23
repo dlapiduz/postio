@@ -42,15 +42,12 @@ def case(name: str, condition: bool, detail: str) -> None:
 
 source = SCRIPT.read_text()
 
-# `$LAND_LOG.1`, not the literal filename: the script composes the path from
-# the worktree's git dir, so the suffix is the only part written down.
 case(
     "the previous log is named",
     '"$LAND_LOG.1"' in source,
     "issue-land.sh never names a `.1` log, so nothing is kept",
 )
 
-# The rotation has to happen where the log is emptied, and before it.
 truncate = source.find(': > "$LAND_LOG"')
 rotate = source.find('"$LAND_LOG.1"')
 case(
@@ -65,15 +62,12 @@ case(
     "or it moves an already-emptied file",
 )
 
-# Only one deep: a second-previous log would grow without bound in a
-# worktree that lands many times.
 case(
     "only one previous log is kept",
     ".log.2" not in source,
     "a second level of rotation would accumulate in every worktree",
 )
 
-# --status has to say the previous one is there, or nobody will look.
 status_block = source[source.find('*" --status "*') : source.find('*" --detach "*')]
 case(
     "--status points at the kept log",
@@ -82,8 +76,6 @@ case(
     "somewhere nobody is told about",
 )
 
-# The rotation must not fail the landing when there is nothing to rotate --
-# the first detach in a worktree has no previous log.
 rotation_line = ""
 for line in source.splitlines():
     if '"$LAND_LOG.1"' in line and "mv" in line:

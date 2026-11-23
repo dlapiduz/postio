@@ -1,13 +1,6 @@
-//! A thread expanded in place (spec 013 US1, research R7).
-//!
-//! The list is paged and the frontend holds its rows, so the children of an
-//! expanded thread are only a [`Splice`] over them: `children` display
-//! positions that follow the anchor row. The controller reads the frontend's
-//! rows through [`Through`], which makes the children part of the list, so
-//! the cursor, `j`/`k`, `G` and the selection walk them with no code of
-//! their own. **Everything the controller says about positions is a display
-//! position**, children counted; the rows the frontend hands in are row
-//! positions, and an [`Intent::Splice`] names its anchor by row.
+//! A thread expanded in place. The children are only a splice over the frontend's paged rows;
+//! `Through` makes them part of the list so the cursor, `j`/`k`, `G` and the selection walk them.
+//! Everything the controller says about positions is a display position, children counted.
 
 use chrono::Local;
 use postio_core::{CommandId, Event};
@@ -21,44 +14,30 @@ use crate::cursor::{RowFacts, Rows};
 use crate::feed::Step;
 use crate::{Effect, FocusController, Input, Intent, Reply, Request};
 
-/// The one expanded thread of a list (at most one per list surface).
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Expansion {
     pub(crate) thread: ThreadId,
-    /// The expanded row's message: how the row is found again.
     pub(crate) anchor: MessageId,
-    /// What the last read of the thread said.
     pub(crate) view: ThreadView,
-    /// The child the cursor was on when the thread last changed.
     pub(crate) focused: Option<MessageId>,
-    /// Where the anchor row was when the children were last drawn.
     pub(crate) at: u32,
-    /// Reads of the thread asked for after a change and not yet answered.
     pub(crate) reads: u8,
-    /// The question "which thread is the anchor in now?", asked after a
-    /// change to some other thread (a late parent merges two).
     pub(crate) probe: Probe,
 }
 
-/// Whether the anchor's thread is being asked after a thread changed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum Probe {
     #[default]
     Idle,
-    /// Asked, and not answered.
     Flying,
-    /// Asked, and another thread changed since: ask again once answered.
     Again,
 }
 
 impl Expansion {
-    /// How many children follow the anchor: the members and the draft.
     pub(crate) fn children(&self) -> u32 {
         count(&self.view)
     }
 
-    /// Whether something that may move or replace the anchor row is still
-    /// being read: a landing that misses the row waits for it.
     pub(crate) fn settling(&self) -> bool {
         self.reads > 0 || self.probe != Probe::Idle
     }
@@ -70,8 +49,6 @@ impl Expansion {
         }
     }
 
-    /// `rows` with this expansion's children among them, when its anchor
-    /// is among them.
     pub(crate) fn through<'a>(&self, rows: &'a dyn Rows, by_thread: bool) -> Option<Through<'a>> {
         let at = rows.position_of(self.anchor)?;
         Some(Through {
@@ -88,9 +65,6 @@ fn count(view: &ThreadView) -> u32 {
     (view.members.len() + usize::from(view.draft.is_some())) as u32
 }
 
-/// Where the row of a thread is among the pages in hand: the anchor's own
-/// position, else the newest of `view`'s members that has a row. That
-/// member is the row's new anchor.
 fn locate(rows: &dyn Rows, anchor: MessageId, view: &ThreadView) -> Option<(u32, MessageId)> {
     if let Some(at) = rows.position_of(anchor) {
         return Some((at, anchor));
@@ -101,20 +75,13 @@ fn locate(rows: &dyn Rows, anchor: MessageId, view: &ThreadView) -> Option<(u32,
         .find_map(|member| Some((rows.position_of(member.id)?, member.id)))
 }
 
-/// Whether the row position `at` is a position the pages in hand do not
-/// cover: an empty list, or a page not landed, as opposed to a landed one
-/// that holds another row or a list that is shorter now.
 fn page_absent(rows: &dyn Rows, at: u32) -> bool {
     rows.facts(at).is_none() && (rows.is_empty() || at < rows.len())
 }
 
-/// A read in flight that something waits on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Pending {
-    /// `Right` on a row: splice its children when the thread is read.
     Expand { thread: ThreadId, anchor: MessageId },
-    /// `Return` on a row: open the message `open_at` names when the thread
-    /// is read.
     Open { thread: ThreadId, row: MessageId },
 }
 
@@ -126,9 +93,6 @@ impl Pending {
     }
 }
 
-/// What the footer says about the row or child at display `position` of
-/// `raw`, the frontend's rows (spec 013 US2): the thread's subject and size
-/// on a row, the message's place and sender on a child.
 pub(crate) fn footer_at(
     expansion: Option<&Expansion>,
     position: u32,
@@ -175,7 +139,6 @@ pub(crate) fn footer_at(
             let view = &expansion?.view;
             let subject = view.subject.as_deref().unwrap_or(NO_SUBJECT);
             let Some(member) = view.members.get(index as usize) else {
-                // The unsent reply: it has no message to act on.
                 let mut footer = FooterView {
                     title: format!("Draft \u{b7} you \u{b7} {subject}"),
                     ..FooterView::default()
@@ -207,7 +170,6 @@ pub(crate) fn footer_at(
     }
 }
 
-/// Who wrote `member`, as the footer says it: "You" for the person's own.
 pub(crate) fn sender_of(member: &postio_model::ThreadMember) -> &str {
     match (&member.from, member.own) {
         (_, true) => "You",
@@ -216,17 +178,13 @@ pub(crate) fn sender_of(member: &postio_model::ThreadMember) -> &str {
     }
 }
 
-/// What a thread without a subject is called in the footer.
 pub(crate) const NO_SUBJECT: &str = "(no subject)";
 
-/// The frontend's rows with an expanded thread's children among them.
 pub(crate) struct Through<'a> {
     inner: &'a dyn Rows,
     splice: Splice,
     thread: ThreadId,
     members: Vec<MessageId>,
-    /// Whether a child's facts name its thread, so a thread verb aims the
-    /// whole conversation (spec 013 D2, through `postio_ui::scope::target`).
     by_thread: bool,
 }
 
@@ -294,20 +252,15 @@ impl Rows for Through<'_> {
 }
 
 impl FocusController {
-    /// `rows` with the expansion's children among them, or `rows` as they
-    /// are when nothing is expanded (or its anchor is not in a landed page).
     pub(crate) fn through<'a>(&self, rows: &'a dyn Rows) -> Option<Through<'a>> {
         self.expansion.as_ref()?.through(rows, true)
     }
 
-    /// The expansion's splice over `rows`, when its anchor is among them.
     fn splice_over(&self, rows: &dyn Rows) -> Option<Splice> {
         let expansion = self.expansion.as_ref()?;
         Some(expansion.splice(rows.position_of(expansion.anchor)?))
     }
 
-    /// The footer for the cursor's last move in `effects`, if it moved:
-    /// the list's `Cursor` over its rows, Filtered's focus over its own.
     pub(crate) fn footer_after(&self, effects: &[Effect], raw: &dyn Rows) -> Option<FooterView> {
         let keymap = self.keymap();
         effects.iter().rev().find_map(|effect| match effect {
@@ -321,8 +274,6 @@ impl FocusController {
         })
     }
 
-    /// The cursor's row position, and whether it is on a child, over the
-    /// raw `rows`.
     fn cursor_row(&self, rows: &dyn Rows) -> Option<(u32, Option<u32>)> {
         let position = self.cursor.position()?;
         Some(match thread_list::slot(self.splice_over(rows), position) {
@@ -331,8 +282,6 @@ impl FocusController {
         })
     }
 
-    /// The cursor's `(index, total)` among the messages, children counted
-    /// as their row.
     pub(crate) fn place_of(&self, position: u32, rows: &dyn Rows) -> (u32, u32) {
         let Some(expansion) = &self.expansion else {
             return self.feed.message_place(position, rows.len());
@@ -348,7 +297,6 @@ impl FocusController {
             .message_place(row, rows.len().saturating_sub(splice.children))
     }
 
-    /// The cursor moved to `position`, which is drawn.
     fn put_cursor(&mut self, position: u32) -> Step {
         self.cursor.moved_to(Some(position));
         Step::Show(Intent::Cursor {
@@ -357,7 +305,6 @@ impl FocusController {
         })
     }
 
-    /// The children of `view`, as the live keymap and clock say them.
     pub(crate) fn child_views(&self, view: &ThreadView) -> Vec<ChildRowView> {
         let now = self.pickers.clock.unwrap_or_else(Local::now);
         let keymap = self.keymap();
@@ -367,8 +314,6 @@ impl FocusController {
             .collect()
     }
 
-    /// Whether the row at `position` holds more than one message, as far as
-    /// the frontend can say.
     fn is_thread(rows: &dyn Rows, position: u32) -> Option<bool> {
         let row = rows.row(position)?;
         Some(
@@ -377,8 +322,6 @@ impl FocusController {
         )
     }
 
-    /// The inputs an expansion owns, or `None` when it has no say. `raw` is
-    /// the frontend's rows, `rows` those with the children among them.
     pub(crate) fn thread_input(
         &mut self,
         input: &Input,
@@ -410,7 +353,6 @@ impl FocusController {
                 Some(self.thread_replied(*ticket, *thread, view, raw, rows))
             }
             Input::Event(Event::ThreadChanged { thread, .. }) => {
-                // The event still goes on to the rest of the controller.
                 let expansion = self.expansion.as_mut()?;
                 if expansion.thread == *thread {
                     expansion.reads = expansion.reads.saturating_add(1);
@@ -429,7 +371,6 @@ impl FocusController {
         }
     }
 
-    /// The answer to a [`Request::ReadThread`].
     pub(crate) fn thread_replied(
         &mut self,
         ticket: crate::Ticket,
@@ -447,16 +388,13 @@ impl FocusController {
                 tracing::warn!(%error, "Focus could not read a thread");
                 self.pending = None;
                 if let Some(expansion) = self.expansion.as_mut() {
-                    // Nothing more is coming that a landing should wait for.
                     expansion.reads = 0;
                     expansion.probe = Probe::Idle;
                 }
                 return self.walk_unread(thread);
             }
         };
-        // An expanded search result may be waiting for it too.
         let mut steps = self.result_thread_read(thread, view.as_ref());
-        // A window waiting for this thread begins its walk with it.
         steps.extend(match &view {
             Some(view) => self.walk_read(thread, view),
             None => self.walk_gone(thread),
@@ -465,9 +403,6 @@ impl FocusController {
         steps
     }
 
-    /// `Right`: read the thread the cursor's row stands for, and splice its
-    /// children when it comes. A child, a digest, a row of one message, or
-    /// a thread already open does nothing.
     pub(crate) fn expand(&mut self, raw: &dyn Rows) -> Vec<Step> {
         let Some((row, None)) = self.cursor_row(raw) else {
             return Vec::new();
@@ -496,8 +431,6 @@ impl FocusController {
         vec![Step::Ask(Request::ReadThread(thread))]
     }
 
-    /// `Left`: fold the open thread, from its row or from a child, and put
-    /// the cursor on its row.
     pub(crate) fn collapse(&mut self, raw: &dyn Rows) -> Vec<Step> {
         let Some(expansion) = &self.expansion else {
             return Vec::new();
@@ -516,7 +449,6 @@ impl FocusController {
         steps
     }
 
-    /// The thread arrived: splice it, open it, or redraw it.
     fn thread_read(
         &mut self,
         thread: ThreadId,
@@ -531,8 +463,6 @@ impl FocusController {
             {
                 self.pending = None;
             }
-            // The expanded thread is gone from the store: it may have been
-            // merged into another, which the anchor knows.
             if self
                 .expansion
                 .as_ref()
@@ -558,7 +488,6 @@ impl FocusController {
                 let Some(position) = rows.position_of(row) else {
                     return Vec::new();
                 };
-                // Only if the person is still on the row they pressed it on.
                 if self.cursor.position() != Some(position) {
                     return Vec::new();
                 }
@@ -569,8 +498,6 @@ impl FocusController {
         }
     }
 
-    /// Splice `view`'s children under the row of `anchor`, folding the
-    /// thread open before it.
     fn expanded(
         &mut self,
         thread: ThreadId,
@@ -584,7 +511,6 @@ impl FocusController {
         if view.members.len() < 2 {
             return Vec::new();
         }
-        // The row the cursor is on, whether or not it is under a child.
         let kept = self.cursor_row(raw).map(|(row, _)| row);
         let mut steps = Vec::new();
         if let Some(old) = self.expansion.take() {
@@ -613,9 +539,7 @@ impl FocusController {
         steps
     }
 
-    /// The expanded thread changed and was read again: redraw its children
-    /// and keep the cursor on the same message. The row it hangs from may
-    /// have become another message's (a reply is the thread's newest, a
+    /// The row it hangs from may have become another message's (a reply is the thread's newest, a
     /// merge makes a new thread), and is found again among the new members.
     fn reread(&mut self, thread: ThreadId, view: ThreadView, raw: &dyn Rows) -> Vec<Step> {
         let Some(expansion) = self.expansion.as_mut().filter(|x| x.thread == thread) else {
@@ -623,10 +547,7 @@ impl FocusController {
         };
         expansion.reads = expansion.reads.saturating_sub(1);
         let Some((at, anchor)) = locate(raw, expansion.anchor, &view) else {
-            // No row of the thread is among the pages in hand.
             if page_absent(raw, expansion.at) {
-                // Its page is not there to say: keep the thread as read and
-                // draw it when the row lands.
                 expansion.view = view;
                 return Vec::new();
             }
@@ -634,7 +555,6 @@ impl FocusController {
         };
         let old_at = expansion.at;
         let position = self.cursor.position();
-        // Where the cursor was among the old children, by what it named.
         let slot = position.map(|position| expansion.splice(old_at).slot(position));
         let old_members = expansion.view.members.len();
         let focused = match slot {
@@ -674,8 +594,6 @@ impl FocusController {
             Some(Slot::Child { .. }) => Some(match found {
                 Some(index) => child(index as u32),
                 None if on_draft && next.view.draft.is_some() => child(members),
-                // A message that left: the child that took its place (the
-                // next newer, else the last), or the row with none.
                 None => match slot {
                     Some(Slot::Child { index, .. }) if members > 0 => child(index.min(members - 1)),
                     _ => at,
@@ -697,8 +615,6 @@ impl FocusController {
         steps
     }
 
-    /// The expanded row left the list for good: fold the children and leave
-    /// the cursor on what slid into its place.
     fn fold_gone(&mut self, raw: &dyn Rows) -> Vec<Step> {
         let Some(expansion) = &self.expansion else {
             return Vec::new();
@@ -729,7 +645,6 @@ impl FocusController {
         steps
     }
 
-    /// Ask which thread the anchor is in now, one question at a time.
     fn probe_anchor(&mut self) -> Vec<Step> {
         let Some(expansion) = self.expansion.as_mut() else {
             return Vec::new();
@@ -746,10 +661,6 @@ impl FocusController {
         }
     }
 
-    /// The store says which thread the anchor is in: the same one, and a
-    /// landing that waited for the answer is judged now; another, and the
-    /// expansion goes with the message into it. `None` when the answer is
-    /// not to the expansion's question.
     fn anchor_probed(
         &mut self,
         message: MessageId,
@@ -777,19 +688,14 @@ impl FocusController {
         Some(steps)
     }
 
-    /// The list landed: if the expanded row left it, fold the children and
-    /// leave the cursor on what slid into its place; if it moved, draw the
-    /// children where it went. A row that is not in the pages in hand is
-    /// not a row that left (a refresh lets go of its pages for a moment),
-    /// and one that a change in flight may yet explain is waited for.
+    /// A row that is not in the pages in hand is not a row that left (a refresh lets go of its
+    /// pages for a moment), and one that a change in flight may yet explain is waited for.
     pub(crate) fn expansion_followed(&mut self, raw: &dyn Rows) -> Vec<Step> {
         let Some(expansion) = &self.expansion else {
             return Vec::new();
         };
         let found = match raw.position_of(expansion.anchor) {
             Some(at) => Some((at, expansion.anchor)),
-            // The thread's newest message may have changed: its row is
-            // whichever of its members has one.
             None => locate(raw, expansion.anchor, &expansion.view),
         };
         let Some((at, anchor)) = found else {
@@ -821,9 +727,6 @@ impl FocusController {
                 Slot::Child { index, .. } => Slot::Child { row: at, index },
                 slot => slot,
             };
-            // A row that was not the anchor's keeps its place among
-            // the rows; the anchor moved, so the rows around it may
-            // have too, and the frontend's landing says which.
             let display = new.display(slot);
             if display != position {
                 steps.push(self.put_cursor(display));
@@ -836,8 +739,6 @@ impl FocusController {
         steps
     }
 
-    /// `Return` on the unsent reply among the children: it is written, not
-    /// read. `None` when the cursor is on anything else.
     fn open_draft_child(&mut self, raw: &dyn Rows) -> Option<Vec<Step>> {
         let expansion = self.expansion.as_ref()?;
         let (_, Some(index)) = self.cursor_row(raw)? else {
@@ -850,9 +751,6 @@ impl FocusController {
         Some(self.write(crate::ComposerKind::ThreadDraft { draft }, None))
     }
 
-    /// `Return` on a row of a thread: open the message `open_at` names, the
-    /// thread read first when it is not loaded. `None` when the cursor is
-    /// not on such a row, and the row opens as it always did.
     fn open_thread_row(&mut self, raw: &dyn Rows, rows: &dyn Rows) -> Option<Vec<Step>> {
         let (row, None) = self.cursor_row(raw)? else {
             return None;
@@ -879,8 +777,6 @@ impl FocusController {
         }
     }
 
-    /// Open `target`, a message of the thread the row at `position` stands
-    /// for.
     pub(crate) fn open_target(
         &mut self,
         position: u32,
@@ -897,7 +793,6 @@ impl FocusController {
             .open(&row, index, total, self.policy.caps.stacking)
     }
 
-    /// Whether the open message is the one `row`'s thread opened at.
     pub(crate) fn opened_for(&self, row: MessageId, reading: Option<MessageId>) -> bool {
         reading.is_some() && self.opened_from == reading.map(|reading| (row, reading))
     }

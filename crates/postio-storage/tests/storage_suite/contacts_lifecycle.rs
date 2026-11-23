@@ -1,9 +1,3 @@
-//! A person the user makes, edits, deletes and restores
-//! (specs/005-contacts User Story 3, FR-020..FR-025, SC-005).
-//!
-//! Every step is what the next one undoes: `edit` hands back the fields it
-//! replaced, `delete` the state it left, and putting those back is exact.
-
 use chrono::{DateTime, TimeZone, Utc};
 
 use postio_model::{
@@ -150,7 +144,6 @@ async fn an_edit_promotes_in_place_and_mail_never_renames_it() {
         "a header never renames a person the user named (FR-021)"
     );
 
-    // What the edit replaced puts it back exactly.
     contacts.put_fields(ada.id, &prior).await.expect("put back");
     let back = contacts.get(ada.id).await.expect("get").expect("ada");
     assert_eq!(back.source, ContactSource::Mail);
@@ -192,7 +185,6 @@ async fn a_deleted_person_is_nowhere_but_the_deleted_view_and_stays_deleted() {
         1
     );
 
-    // More mail from it counts on it, and it stays deleted (SC-005).
     from(
         &connection,
         &account,
@@ -207,7 +199,6 @@ async fn a_deleted_person_is_nowhere_but_the_deleted_view_and_stays_deleted() {
     assert_eq!(still.times_seen, 2);
     assert!(completes(&connection, "rob").await.is_empty());
 
-    // Restored whole, with what arrived meanwhile.
     contacts.restore(robot.id, was).await.expect("restore");
     let back = contacts.get(robot.id).await.expect("get").expect("robot");
     assert_eq!(back.state, ContactState::Live);

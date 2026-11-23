@@ -1,78 +1,42 @@
 import PostioFFI
 import SwiftUI
 
-// The message window's content column (specs/009-focus-macos T068; the Mac
-// pack's message-window SPEC sections 3-5): the thread chip, the subject,
-// the labels, the sender block, the action card, the render-mode line, the
-// body and the attachments, all in one centred column as wide as the engine
-// says for the treatment shown (M1, `columnWidth`).
-
-/// The vertical rhythm (SPEC section 4: an 8pt grid around a 24pt body
-/// line), in one place. The numbers are `postio_ui::focus_dialog::rhythm`'s,
-/// which GTK's dialog spaces itself by. A block that is absent takes the
-/// gap above it with it; the next gap stays as listed.
+/// Numbers match `postio_ui::focus_dialog::rhythm`, which GTK's dialog spaces by. An absent block
+/// takes the gap above it with it.
 public enum MessageRhythm {
-    /// The action row to the first block: the content's top padding.
     public static let top: CGFloat = 28
-    /// The older-message banner to the kicker.
     public static let bannerToKicker: CGFloat = 16
-    /// The kicker to the subject.
     public static let kickerToSubject: CGFloat = 6
-    /// Whatever stands above the subject to it.
     public static let markerToSubject: CGFloat = 12
-    /// The subject to the labels.
     public static let subjectToLabels: CGFloat = 10
-    /// The labels to the sender block.
     public static let labelsToSender: CGFloat = 16
-    /// Inside the sender block, above and below its rows.
     public static let senderPadding: CGFloat = 12
-    /// One row of the sender block.
     public static let senderRow: CGFloat = 22
-    /// The sender block's label column.
     public static let senderLabelColumn: CGFloat = 44
-    /// The same, in a block that has a Reply to row.
     public static let senderLabelColumnReplying: CGFloat = 64
-    /// The sender block to the action card.
     public static let senderToCard: CGFloat = 12
-    /// The last block above the body to the notice (the unsubscribe
-    /// banner), which then takes `cardToBody` below it.
     public static let cardToNotice: CGFloat = 12
-    /// The last block above the body to the render-mode line or the body.
     public static let cardToBody: CGFloat = 24
-    /// The render-mode line to the body.
     public static let modeLineToBody: CGFloat = 12
-    /// The body to the attachments' hairline.
     public static let bodyToAttachments: CGFloat = 24
-    /// The attachments' hairline to the chips.
     public static let attachmentsRuleToChips: CGFloat = 16
-    /// Between two attachment chips.
     public static let chipGap: CGFloat = 8
-    /// Under the last block.
     public static let bottom: CGFloat = 32
-    /// The column for a body in app colours, until the engine has said
-    /// (the smallest window's, `640 - 80`).
+    /// Column for a body in app colours until the engine reports one (`640 - 80`).
     public static let column: CGFloat = 560
 
-    /// The subject: SF Pro bold 26/32, the largest text in the window.
     public static let subjectSize: CGFloat = 26
     public static let subjectLine: CGFloat = 32
-    /// A label pill: 24pt, with an 8pt dot.
     public static let pillHeight: CGFloat = 24
     public static let pillDot: CGFloat = 8
-    /// The action card: radius 8, at least 48 tall, padded 8/8/8/12.
     public static let cardRadius: CGFloat = 8
     public static let cardMinHeight: CGFloat = 48
-    /// An attachment chip: 40 tall, radius 8.
     public static let chipHeight: CGFloat = 40
     public static let chipRadius: CGFloat = 8
 }
 
-/// The message window's column at the window's own width (M1): the
-/// person may resize the window, and the column is then the geometry's for
-/// the width it has, not the one it opened at.
+/// Recomputed at the window's current width, not the width it opened at.
 public enum MessageColumn {
-    /// The column, and whether More folds, in a window `window` wide
-    /// showing `document`; the document's own until the window has a width.
     public static func at(window: CGFloat, document: FocusReaderDocumentFfi) -> FocusMessageColumnFfi {
         guard window > 0 else {
             return FocusMessageColumnFfi(
@@ -82,50 +46,35 @@ public enum MessageColumn {
     }
 }
 
-/// The header block's words: the engine's, with keys spelled.
 public struct MessageHeaderWords: Equatable {
-    /// A button with its key.
     public struct Key: Equatable {
         public let command: String
         public let label: String
         public let cap: String?
     }
 
-    /// What the controller's walk says around the subject: the kicker, the
-    /// older-message banner and the Reply to row.
     public struct Thread: Equatable, Sendable {
         public var kicker: String
         public var banner: ThreadBannerFfi?
         public var replyTo: String?
-        /// A reply arrived while reading: the accent-tinted banner.
         public var newReply: ThreadBannerFfi?
-        /// The window was opened from a search: its match banner.
         public var matchBanner: MatchBannerFfi?
 
         public static let none = Thread(kicker: "", banner: nil, replyTo: nil)
     }
 
-    /// A label pill.
     public struct Pill: Equatable {
         public let name: String
         public let colour: LabelColour?
     }
 
-    /// The action card (SPEC section 5): the only filled element.
     public struct Card: Equatable {
-        /// "To-do", "Question", "Invite".
         public let chip: String
-        /// "Wed 30 Sep", in mono.
         public let date: String?
-        /// The sentence, quoted, as the card draws it.
         public let quoted: String?
-        /// The sentence itself, as the body highlights it.
         public let sentence: String?
-        /// What stands where the actions would: "Accepted", "Past".
         public let status: String?
-        /// The actions that answer it.
         public let actions: [Key]
-        /// Dismiss `-`.
         public let dismiss: Key
     }
 
@@ -161,8 +110,6 @@ public struct MessageHeaderWords: Equatable {
     }
 }
 
-/// The render-mode line's words (SPEC section 7): the treatment, why, the
-/// switch with its key, and "Always for this sender" while it is offered.
 public struct RenderModeLine: Equatable {
     public static let switchCommand = "switch_treatment"
 
@@ -182,12 +129,9 @@ public struct RenderModeLine: Equatable {
 }
 
 extension LabelColour {
-    /// The label's own colour: data, not a design literal (SPEC: "Label
-    /// dots are the only other hues").
     var swatch: Color { Color(.sRGB, red: red, green: green, blue: blue) }
 }
 
-/// The content column, scrolling under the window's fixed chrome.
 public struct MessageContentView<BodyView: View>: View {
     let words: MessageHeaderWords
     let document: FocusReaderDocumentFfi?
@@ -200,8 +144,6 @@ public struct MessageContentView<BodyView: View>: View {
     let openAttachment: (Int64) -> Void
     let bodyView: (FocusReaderDocumentFfi, MessageHeaderWords.Card?) -> BodyView
 
-    /// `unsubscribe` is where this message's banner has got to, and `leave`
-    /// is its button: the `unsubscribe` command, which `M` runs too.
     public init(
         words: MessageHeaderWords,
         document: FocusReaderDocumentFfi?,
@@ -226,7 +168,6 @@ public struct MessageContentView<BodyView: View>: View {
         bodyView = body
     }
 
-    /// The column in a window `width` wide.
     private func column(_ width: CGFloat) -> CGFloat {
         document.map { CGFloat(MessageColumn.at(window: width, document: $0).columnWidth) }
             ?? MessageRhythm.column
@@ -236,9 +177,7 @@ public struct MessageContentView<BodyView: View>: View {
         GeometryReader { proxy in
             scroll(column: column(proxy.size.width))
         }
-        // A reply that arrives while reading lies over the foot of the
-        // message, not above it: nothing that moves or resizes the text
-        // being read may happen when one comes (spec 013 US4, FR-018).
+        // Overlays the foot so nothing moves or resizes the text being read.
         .overlay(alignment: .bottom) {
             if let banner = MessageBlock.foot(words: words) {
                 ThreadBannerView(banner: banner, tinted: true) { run(Self.latest) }
@@ -252,9 +191,6 @@ public struct MessageContentView<BodyView: View>: View {
         let blocks = MessageBlock.blocks(words: words, document: document, unsubscribe: unsubscribe)
         return ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 0) {
-                // Exactly the blocks `MessageBlock.blocks` lists, each on the
-                // rhythm's gap from the one above: what is tested is what is
-                // drawn.
                 ForEach(Array(blocks.enumerated()), id: \.element.id) { index, block in
                     draw(block)
                         .padding(
@@ -269,7 +205,6 @@ public struct MessageContentView<BodyView: View>: View {
         }
     }
 
-    /// The command `Latest }` runs: the controller's walk, as the key does.
     private static var latest: String { "latest_in_thread" }
 
     @ViewBuilder
@@ -297,7 +232,6 @@ public struct MessageContentView<BodyView: View>: View {
             MessageSenderBlock(
                 fields: words.fields, date: words.date, replyTo: words.thread.replyTo)
         case let .senderWarning(warning):
-            // A sentence, not a badge: only when the host doubts the sender.
             Label(warning, systemImage: "exclamationmark.triangle")
                 .font(.system(size: 12.5))
                 .foregroundStyle(.orange)
@@ -324,40 +258,22 @@ public struct MessageContentView<BodyView: View>: View {
     }
 }
 
-/// One block of the message window's content column, top to bottom.
-///
-/// The column draws `blocks` and nothing else, so the list is a statement
-/// about what is on screen: a notice the boundary carries but the column
-/// leaves out is a test failure here rather than a gap nobody sees (#1585,
-/// where the unsubscribe banner had no call site at all).
+/// The column draws `blocks` and nothing else, so a notice the boundary carries but the column
+/// omits fails a test (#1585).
 public enum MessageBlock: Equatable, Identifiable {
-    /// The quiet banner on a message that is not the latest.
     case olderBanner(ThreadBannerFfi)
-    /// Where the message is among the search's matches in its thread.
     case matchBanner(MatchBannerFfi)
-    /// "Message 4 of 6 · ] newer · [ older".
     case kicker(String)
-    /// The subject, the largest text in the window.
     case subject(String)
-    /// The label pills, then "+ Label".
     case labels
-    /// From, To and Cc, and the date.
     case sender
-    /// Why the sender may not be who they say, under their header; absent
-    /// for nearly all mail (#1928).
     case senderWarning(String)
-    /// The action card.
     case card(MessageHeaderWords.Card)
-    /// The unsubscribe banner over list mail, and where it has got to. Gone
-    /// once the list is left: its absence is the confirmation.
+    /// Gone once the list is left: its absence is the confirmation.
     case unsubscribe(UnsubscribeOfferFfi, Unsubscribing.State)
-    /// The render-mode line over an HTML body.
     case renderMode(RenderModeWordsFfi)
-    /// The body, once it is read.
     case body
-    /// What a body that lost a part in decoding says, under it.
     case caveat(String)
-    /// The attachment chips.
     case attachments
 
     public var id: String {
@@ -378,16 +294,10 @@ public enum MessageBlock: Equatable, Identifiable {
         }
     }
 
-    /// The accent-tinted banner a reply that arrived while reading puts
-    /// over the foot of the column: who replied, and "Read it }". It is no
-    /// block of the column, which the text being read keeps whole.
     public static func foot(words: MessageHeaderWords) -> ThreadBannerFfi? {
         words.thread.newReply
     }
 
-    /// The column for a message whose header reads `words`, whose body is
-    /// `document` (`nil` while it is being read), and whose banner is at
-    /// `unsubscribe`.
     public static func blocks(
         words: MessageHeaderWords,
         document: FocusReaderDocumentFfi?,
@@ -412,7 +322,6 @@ public enum MessageBlock: Equatable, Identifiable {
         return blocks
     }
 
-    /// The rhythm's gap above `block` when `previous` is drawn above it.
     public static func gap(above block: MessageBlock, after previous: MessageBlock?) -> CGFloat {
         switch block {
         case .olderBanner: previous == nil ? 0 : MessageRhythm.bannerToKicker
@@ -438,7 +347,6 @@ public enum MessageBlock: Equatable, Identifiable {
     }
 }
 
-/// The label pills, then "+ Label `l`".
 struct MessageLabelsLine: View {
     let labels: [MessageHeaderWords.Pill]
     let add: MessageHeaderWords.Key
@@ -471,18 +379,13 @@ struct MessageLabelsLine: View {
     }
 }
 
-/// The sender block: not a box, a hairline above and below; a 44pt label
-/// column, the value (the name semibold, the address in mono), and the date
-/// on the right in mono.
 struct MessageSenderBlock: View {
     let fields: [FocusFieldFfi]
     let date: String
-    /// "Ana Ruiz, Mon 21 Sep (message 1)": the message this one answers,
-    /// when it is not the one just before it.
+    /// E.g. "Ana Ruiz, Mon 21 Sep (message 1)"; nil when it answers the message just before.
     var replyTo: String?
 
-    /// "Reply to" does not fit the usual 44pt column, and the rows keep to
-    /// one column, so the column widens for the block that has it.
+    /// "Reply to" does not fit the usual column, so the block that has it widens it.
     private var labelColumn: CGFloat {
         replyTo == nil ? MessageRhythm.senderLabelColumn : MessageRhythm.senderLabelColumnReplying
     }
@@ -529,8 +432,6 @@ struct MessageSenderBlock: View {
         .accessibilityElement(children: .combine)
     }
 
-    /// A field's people. The sender's name is semibold beside the address
-    /// in mono; a recipient is their name, or the address alone in mono.
     private func people(_ field: FocusFieldFfi, first: Bool) -> some View {
         var line = Text("")
         for (index, person) in field.people.enumerated() {
@@ -558,15 +459,11 @@ struct MessageSenderBlock: View {
     }
 }
 
-/// The action card: the accent at 8% in light and 12% in dark (C26),
-/// radius 8; an outlined kind tag, the date in mono, the sentence quoted in
-/// italics, then its actions and Dismiss.
 struct MessageActionCard: View {
     let card: MessageHeaderWords.Card
     let run: (String) -> Void
     @Environment(\.colorScheme) private var scheme
 
-    /// C26: the accent's share of the card's fill.
     static func fill(_ scheme: ColorScheme) -> Double { scheme == .dark ? 0.12 : 0.08 }
 
     var body: some View {
@@ -592,9 +489,8 @@ struct MessageActionCard: View {
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    // First claim on the card's width: without it the
-                    // stack split the room evenly and the sentence wrapped
-                    // into a third of the card beside empty space.
+                    // First claim on the card's width, or the stack splits evenly and the sentence
+                    // wraps beside empty space.
                     .layoutPriority(1)
             } else {
                 Spacer(minLength: 0)
@@ -630,8 +526,6 @@ struct MessageActionCard: View {
     }
 }
 
-/// The quiet line above an HTML body (12.5pt, tertiary): the treatment,
-/// why, "Always for this sender" while offered, and the switch with `O`.
 struct MessageRenderModeLine: View {
     let line: RenderModeLine
     let run: (String) -> Void
@@ -663,10 +557,8 @@ struct MessageRenderModeLine: View {
     }
 }
 
-/// The attachments: a hairline, then the chips, 8 apart, wrapping.
 struct MessageAttachments: View {
     let attachments: [FocusAttachmentFfi]
-    /// A click on a chip: open that part.
     var open: (Int64) -> Void = { _ in }
 
     var body: some View {
@@ -704,7 +596,6 @@ struct MessageAttachments: View {
     }
 }
 
-/// Lays its children out in rows, wrapping at the proposed width.
 struct MessageFlow: Layout {
     let spacing: CGFloat
 
