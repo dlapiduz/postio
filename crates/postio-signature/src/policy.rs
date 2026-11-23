@@ -63,7 +63,31 @@ pub struct Policy;
 impl Policy {
     /// `mathematics` is whether the signature checks against the key's material.
     pub fn judge(&self, facts: &Facts, mathematics: bool) -> (Status, Option<Reason>) {
-        let _ = (facts, mathematics);
+        if facts.revoked {
+            return (Status::Revoked, None);
+        }
+        if matches!(facts.hash, Hash::Md5 | Hash::Sha1 | Hash::Ripemd160) {
+            return (Status::CantCheck, Some(Reason::WeakHash(facts.hash)));
+        }
+        let weak_key = match facts.key {
+            KeyStrength::Rsa { bits } | KeyStrength::Dsa { bits } => bits < 2048,
+            KeyStrength::EdDsa | KeyStrength::Ecdsa => false,
+            KeyStrength::Other => true,
+        };
+        if weak_key {
+            return (Status::CantCheck, Some(Reason::WeakKey));
+        }
+        if let Some(signed) = facts.signed_at {
+            if signed < facts.key_created {
+                return (Status::Bad, Some(Reason::NotYetValid));
+            }
+            if facts.key_expires.is_some_and(|expires| signed > expires) {
+                return (Status::Bad, Some(Reason::Expired));
+            }
+        }
+        if !mathematics {
+            return (Status::Bad, Some(Reason::Tampered));
+        }
         (Status::Good, None)
     }
 }

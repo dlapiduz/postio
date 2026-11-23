@@ -139,7 +139,7 @@ throwaway code is not merged.
 - [x] T027 [P] [US3] Write failing cases in `crates/postio-signature/src/scope.rs` for `signed_scope` over T002's fixtures: whole, part (the list footer), inline, encrypted, and none
 - [x] T028 [US3] Implement `signed_scope` and the exact-bytes slice of `contracts/verdict.md` in `crates/postio-signature/src/scope.rs`
 - [x] T029 [P] [US3] Write failing cases in `crates/postio-signature/src/policy.rs`, one per row of `contracts/verdict.md`'s policy table
-- [ ] T030 [US3] Implement `verify` and `Policy` in `crates/postio-signature/src/verify.rs` and `crates/postio-signature/src/policy.rs`
+- [x] T030 [US3] Implement `verify` and `Policy` in `crates/postio-signature/src/verify.rs` and `crates/postio-signature/src/policy.rs`
 - [ ] T031 [US3] Write the sweeps SC-003 and SC-004 as `crates/postio-signature/tests/signature_suite/sweeps.rs`: every fixture, against every key subset
 - [ ] T032 [P] [US3] Write failing cases, then implement `autocrypt`, in `crates/postio-signature/src/autocrypt.rs`: `addr` equals From, `keydata` parsed, and a mismatched `addr` refused
 - [ ] T033 [US3] Write failing schema cases in `crates/postio-storage/tests/storage_suite/`, then add `public_keys`, `public_key_sources`, `public_key_addresses`, `contact_accepted_keys` and `signature_verdicts` to `crates/postio-storage/src/schema.rs` (`data-model.md`), with repository functions in a new `crates/postio-storage/src/repository/keys.rs`

@@ -3,6 +3,8 @@
 #![forbid(unsafe_code)]
 pub mod policy;
 pub mod scope;
+pub mod verify;
 
 pub use policy::{Facts, Hash, KeyStrength, Policy, Reason, Status};
 pub use scope::{Format, SignedScope, signed_scope};
+pub use verify::{KeySet, Verdict, verify};
