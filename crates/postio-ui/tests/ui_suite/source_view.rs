@@ -414,3 +414,14 @@ fn the_raw_tab_folds_a_large_part_and_loses_no_byte() {
         )]
     );
 }
+
+#[test]
+fn save_offers_the_subject_as_a_file_name() {
+    assert_eq!(source::eml_name("Budget"), "Budget.eml");
+    assert_eq!(
+        source::eml_name("Re: Q3/Q4 numbers?"),
+        "Re Q3 Q4 numbers.eml"
+    );
+    assert_eq!(source::eml_name("../../etc"), "etc.eml");
+    assert_eq!(source::eml_name("  "), "message.eml");
+}

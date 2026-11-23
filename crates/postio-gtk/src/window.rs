@@ -4893,6 +4893,11 @@ impl FocusWindow {
                 dialog.set_initial_name(Some(&suggested));
                 dialog.save(Some(self), None::<&gio::Cancellable>, done);
             }
+            crate::chooser::SavePick::Message { suggested } => {
+                dialog.set_title("Save message");
+                dialog.set_initial_name(Some(&suggested));
+                dialog.save(Some(self), None::<&gio::Cancellable>, done);
+            }
         }
     }
 
@@ -5130,6 +5135,45 @@ impl FocusWindow {
         });
     }
 
+    fn save_source(&self) {
+        let (Some(message), Some(client)) = (self.source_of(), self.imp().client.borrow().clone())
+        else {
+            return;
+        };
+        let subject = self
+            .source()
+            .map(|dialog| dialog.subject())
+            .unwrap_or_default();
+        let window = self.downgrade();
+        self.pick_place(
+            crate::chooser::SavePick::Message {
+                suggested: postio_ui::source::eml_name(&subject),
+            },
+            move |to| {
+                glib::spawn_future_local(async move {
+                    // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host answers on
+                    // its own runtime (ADR 0041).
+                    let saved = client.export_messages(vec![(message, to)]).await;
+                    let Some(window) = window.upgrade() else {
+                        return;
+                    };
+                    let said = match saved {
+                        Ok(paths) => postio_ui::reader::parts::saved(
+                            &paths
+                                .first()
+                                .and_then(|path| path.file_name())
+                                .map(|name| name.to_string_lossy().into_owned())
+                                .unwrap_or_default(),
+                        ),
+                        Err(error) => error.to_string(),
+                    };
+                    window.imp().toast.show_notice(&said);
+                    window.follow_toast();
+                });
+            },
+        );
+    }
+
     fn source_verb(&self, verb: postio_focus::SourceVerb) {
         use postio_focus::SourceVerb;
         let Some(dialog) = self.source() else {
@@ -5143,7 +5187,7 @@ impl FocusWindow {
                     self.clipboard().set_text(&String::from_utf8_lossy(&bytes));
                 }
             }
-            SourceVerb::Save => {}
+            SourceVerb::Save => self.save_source(),
             SourceVerb::Unfold => {
                 dialog.unfold();
             }

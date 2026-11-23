@@ -102,3 +102,45 @@ pub fn v_in_the_open_message_stacks_the_source_and_escape_takes_one_rung() {
         );
     });
 }
+
+pub fn save_as_eml_writes_the_bytes_the_store_holds() {
+    crate::gtk_case(async {
+        let fixture = Fixture::empty().await;
+        let (message, _) = fixture.file_from_ada("Budget", "The numbers.", 5).await;
+        fixture
+            .write_body(message, "The numbers are attached.")
+            .await;
+        fixture.write_raw(message, RAW).await;
+        let (window, client) = fixture.open().await;
+        support::rows_shown(&window, 1).await;
+        let out = tempfile::tempdir().expect("a directory");
+        let to = out.path().join("budget.eml");
+        let asked = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        window.set_file_picker({
+            let (asked, to) = (std::rc::Rc::clone(&asked), to.clone());
+            move |pick, answer| {
+                asked.borrow_mut().push(pick);
+                answer(Some(to.clone()));
+            }
+        });
+        support::keys(&window, &["j", "V"]);
+        assert!(crate::settle_until(async || on(&window, Tab::Verification)).await);
+        support::press(&window, "s", gdk::ModifierType::CONTROL_MASK);
+        assert!(
+            crate::settle_until(async || to.exists()).await,
+            "mod+s on the Source surface saved nothing"
+        );
+        assert_eq!(
+            *asked.borrow(),
+            [postio_gtk::chooser::SavePick::Message {
+                suggested: "Budget.eml".to_owned()
+            }]
+        );
+        let stored = client.raw_source(message).await.expect("the raw source");
+        assert_eq!(
+            std::fs::read(&to).expect("the saved file"),
+            stored,
+            "the saved file is the stored bytes"
+        );
+    });
+}

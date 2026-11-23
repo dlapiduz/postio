@@ -715,6 +715,10 @@ const CASES: &[(&str, fn())] = &[
         view_source::v_in_the_open_message_stacks_the_source_and_escape_takes_one_rung as fn(),
     ),
     (
+        "view_source::save_as_eml_writes_the_bytes_the_store_holds",
+        view_source::save_as_eml_writes_the_bytes_the_store_holds as fn(),
+    ),
+    (
         "open_message::a_message_opens_at_its_top_every_time",
         open_message::a_message_opens_at_its_top_every_time as fn(),
     ),

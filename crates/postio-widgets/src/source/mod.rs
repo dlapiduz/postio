@@ -196,6 +196,15 @@ impl SourceDialog {
         &self.inner.dialog
     }
 
+    /// The subject the surface is titled with.
+    pub fn subject(&self) -> String {
+        let view = self.inner.view.borrow();
+        view.title
+            .strip_prefix("Source · ")
+            .unwrap_or(&view.title)
+            .to_owned()
+    }
+
     pub fn tab(&self) -> Tab {
         self.inner.tab.get()
     }

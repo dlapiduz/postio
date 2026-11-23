@@ -151,6 +151,31 @@ pub enum RawSegment {
     },
 }
 
+/// The file name Save offers: the subject with what a file system refuses taken out.
+pub fn eml_name(subject: &str) -> String {
+    let kept: String = subject
+        .chars()
+        .map(|c| {
+            if c.is_control() || "/\\:*?\"<>|".contains(c) {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect();
+    let kept = kept
+        .split_whitespace()
+        .filter(|word| !word.chars().all(|c| c == '.'))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let kept: String = kept.chars().take(80).collect();
+    if kept.is_empty() {
+        "message.eml".to_owned()
+    } else {
+        format!("{kept}.eml")
+    }
+}
+
 pub const FIXED_LINE: &str = "These checks are about the sending domain and the message's integrity. They don't tell you the person is who you think.";
 pub const NOT_CHECKED_HERE: &str = "DKIM, SPF and DMARC were not checked on this computer. Your provider checked them when the mail arrived.";
 
