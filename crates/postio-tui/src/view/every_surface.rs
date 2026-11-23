@@ -363,16 +363,17 @@ fn cases() -> Vec<Case> {
                 ctl("Receipts this month alt+3", "<A-3>"),
                 ctl("ctrl+s saves", "<C-s>"),
                 ctl("Esc", "<Esc>"),
-                ctl("↵ run", "<Enter>"),
-                ctl("> commands only", "<C-k>"),
-                ctl("from:ada", "<Tab>").nth(2),
-                ctl("tide", "<Tab><Tab>").nth(2),
             ],
             ..case("command bar", "bar", (120, 36))
         },
         Case {
             marks: vec![Has("▌"), Has("g r")],
-            controls: vec![ctl("Waiting on reply alt+1", "<A-1>")],
+            controls: vec![
+                ctl("Waiting on reply alt+1", "<A-1>"),
+                ctl("↵ run", "<Enter>"),
+                ctl("> commands only", "<C-k>"),
+                ctl("ctrl+s saves", "<C-s>"),
+            ],
             wheel: Some("Archive"),
             ..case("command bar commands", "bar-commands", (120, 36))
         },
@@ -758,7 +759,6 @@ fn kind(target: Target) -> String {
         Target::RowAction(_, id) => format!("RowAction {id}"),
         Target::Surface(part, _) => format!("Surface {part:?}"),
         Target::BarSaved(_) => "BarSaved".into(),
-        Target::BarChip(_) => "BarChip".into(),
         other => format!("{other:?}"),
     }
 }

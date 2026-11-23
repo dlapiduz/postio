@@ -396,6 +396,77 @@ pub fn places_arrive(
     }
 }
 
+/// The host answers the results' reads with `subjects` as the conversations
+/// found, newest first, each from Ada.
+pub fn results_arrive(app: &mut App, opened: &[Effect], subjects: &[&str]) {
+    use postio_focus::{Reply, Request};
+    use postio_search::results::{
+        ConversationHit, ConversationKey, ConversationResults, Match, Source,
+    };
+    let found = ConversationResults {
+        hits: subjects
+            .iter()
+            .zip(1_i64..)
+            .map(|(subject, n)| ConversationHit {
+                key: ConversationKey::Thread(postio_model::ThreadId::new(2000 + n)),
+                best: MessageId::new(1000 + n),
+                best_number: 1,
+                mailbox_id: MailboxId::new(1),
+                subject: Some((*subject).to_owned()),
+                from: Some(EmailAddress::new(Some("Ada Moreno"), "ada@example.com")),
+                newest_match: Utc.with_ymd_and_hms(2026, 9, 20, 9, 0, 0).unwrap(),
+                messages: 1,
+                unread: false,
+                has_attachments: false,
+                labels: Vec::new(),
+                score: 1.0,
+                reasons: Vec::new(),
+                matched_messages: 1,
+                matches: vec![Match {
+                    source: Source::Body,
+                    passage: None,
+                    when: None,
+                }],
+            })
+            .collect(),
+        total: subjects.len() as u64,
+        capped: false,
+        messages_searched: 100,
+        corpus_complete: true,
+        contents_complete: true,
+        facets: Default::default(),
+        files: 0,
+        people: 0,
+        names: Default::default(),
+        elapsed: std::time::Duration::from_millis(3),
+    };
+    for (ticket, request) in asked(opened) {
+        let reply = match request {
+            Request::ResultsPage {
+                order,
+                offset,
+                stamp,
+                ..
+            } => Reply::ResultsPage {
+                stamp,
+                order,
+                offset,
+                answer: Ok(Box::new(found.clone())),
+            },
+            Request::Facets { stamp, .. } => Reply::Facets {
+                stamp,
+                answer: Ok(Box::new(found.clone())),
+            },
+            Request::ResultsPassages { stamp, .. } => Reply::ResultsPassages {
+                stamp,
+                answer: Ok(Vec::new()),
+            },
+            _ => continue,
+        };
+        update(app, Input::FocusReply(ticket, reply));
+    }
+}
+
 /// The host says `scope` has `total` rows.
 pub fn open_scope(app: &mut App, scope: ListScope, total: u32) {
     app.open_for_tests(scope, total);

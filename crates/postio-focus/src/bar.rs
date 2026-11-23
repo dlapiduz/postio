@@ -772,7 +772,14 @@ impl FocusController {
     }
 
     fn leave_for(&mut self, name: &str) -> Vec<Step> {
-        let mut steps = self.cursor.leave(self.feed.total());
+        let mut steps = Vec::new();
+        // A place opened from the results is not the results' place.
+        if self.results.is_some() {
+            steps.extend(self.close_quick_look());
+            self.results = None;
+            steps.push(Step::Show(Intent::LeaveResults));
+        }
+        steps.extend(self.cursor.leave(self.feed.total()));
         steps.push(Step::Show(Intent::SingleHeading(None)));
         steps.push(Step::Show(Intent::Place {
             name: name.to_owned(),

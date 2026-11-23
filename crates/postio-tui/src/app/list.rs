@@ -117,6 +117,7 @@ impl App {
             other => self
                 .show_picker_intent(&other)
                 .or_else(|| self.show_places_intent(&other))
+                .or_else(|| self.show_bar_intent(&other))
                 .unwrap_or_default(),
         }
     }

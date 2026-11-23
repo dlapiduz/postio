@@ -28,8 +28,12 @@ pub enum Target {
     BarRow(usize),
     /// One of the bar's saved searches.
     BarSaved(usize),
-    /// One of the bar's chips.
-    BarChip(usize),
+    /// A search result, by its place in the results.
+    ResultRow(u64),
+    /// One of the results' tabs.
+    ResultTab(usize),
+    /// A chip of the results' query, by the controller's token.
+    ResultChip(u32),
     /// The footer's `↵ run`: the chosen line, as `Enter` runs it.
     BarRun,
     /// The footer's `> commands only`: the same as its key.

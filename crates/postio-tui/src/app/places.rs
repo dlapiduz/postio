@@ -26,8 +26,6 @@ impl App {
                 self.relist_places();
                 Some(vec![Effect::Redraw])
             }
-            // A label or a saved search is a search.
-            Intent::OpenBar { text, .. } => Some(self.open_bar(text)),
             _ => None,
         }
     }

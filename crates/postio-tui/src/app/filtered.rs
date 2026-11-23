@@ -713,20 +713,6 @@ mod tests {
     }
 
     #[test]
-    fn a_message_found_by_the_bar_acts_on_itself_too() {
-        let (mut app, _) = crate::test_support::sample::state("bar", 120, 36);
-        // The cursor is on the first row, message 1; the hit is message 3.
-        assert_eq!(app.cursor(), 0);
-        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        assert_eq!(app.focus(), Focus::Reader);
-        update(&mut app, press('e'));
-        assert_eq!(
-            resolved(&app),
-            Some(postio_core::Resolved::Messages(vec![MessageId::new(3)]))
-        );
-    }
-
-    #[test]
     fn a_click_on_a_tab_reads_it_and_on_a_row_moves_the_keyboard() {
         use crate::surface::Part;
         use crate::test_support::{click, hits_of};

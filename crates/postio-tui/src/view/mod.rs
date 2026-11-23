@@ -17,6 +17,7 @@ pub mod open;
 pub mod palette;
 pub mod pane;
 pub mod picker;
+pub mod results;
 pub mod rule_dialog;
 pub mod rules;
 pub mod settings;
@@ -51,8 +52,15 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
         if let Some(open) = app.palette() {
             palette::draw(frame, area, &open, theme);
         }
-        if let Some((bar, ctx)) = app.bar() {
-            bar::draw(frame, area, bar, &ctx, now, theme, &mut hits);
+        if let Some(bar) = app.bar() {
+            bar::draw(
+                frame,
+                area,
+                bar,
+                &|command| app.hint(command),
+                theme,
+                &mut hits,
+            );
         }
     } else if let Some(run) = app.first_run() {
         first_run::draw(frame, area, run, theme);
@@ -88,6 +96,9 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
             }
             _ if app.rules().is_some() => {
                 rules::body(frame, body, app, theme, now, &mut hits);
+            }
+            _ if app.results().is_some() && app.pane().is_none() => {
+                results::body(frame, body, app, theme, &mut hits);
             }
             // A detached draft has the whole body to itself.
             Front::Composer if app.composer().is_some() && tab => {
@@ -141,8 +152,15 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
         rule_dialog::draw(frame, body, app, theme, now, &mut hits);
         capture::draw(frame, body, app, theme, &mut hits);
         // Over everything: a click there lands on nothing underneath.
-        if let Some((bar, ctx)) = app.bar() {
-            bar::draw(frame, area, bar, &ctx, now, theme, &mut hits);
+        if let Some(bar) = app.bar() {
+            bar::draw(
+                frame,
+                area,
+                bar,
+                &|command| app.hint(command),
+                theme,
+                &mut hits,
+            );
         }
         if let Some(open) = app.picker() {
             let beside = app
