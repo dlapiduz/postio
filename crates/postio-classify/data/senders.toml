@@ -19,7 +19,9 @@
 #   domain   labels of the domain's subdomains: "notifications" matches
 #            notifications.example.com, never a domain of two labels
 #   reason   spam | promotion | notification | receipt | shipping | social
-#            (FR-113's vocabulary)
+#            (FR-113's vocabulary). Left out: a machine wrote it, so it is
+#            never asked for a person's question or to-do, but the table
+#            does not file it either -- its headers still may (T225)
 #   source   optional: the name a filtered row shows after its reason
 #
 # An entry needs at least one pattern. The first entry that matches wins.
@@ -63,3 +65,17 @@ reason = "promotion"
 # support, info, hello, billing, invoices, shipping (a shop's own desk),
 # newsletters (the list headers say so), and mailer-daemon and postmaster
 # (a bounce means a message did not arrive).
+
+# Machines that write for a company and carry no list header: a bank's
+# statement, a utility's bill, a clinic's reminder (T225). Often the one
+# thing in the inbox to act on, so the table files none of it; it is only
+# never read as a person asking. Last, so a pattern above that files wins.
+[[sender]]
+name = "machine"
+local = ["automated"]
+
+# Subdomains that only a bulk sending service is given. Not "mail": people
+# have addresses on mail hosts.
+[[sender]]
+name = "bulk-subdomain"
+domain = ["email", "e", "em", "news", "newsletter", "newsletters", "mailer", "mailing", "bulk", "campaigns"]

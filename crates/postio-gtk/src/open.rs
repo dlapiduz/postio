@@ -679,6 +679,7 @@ impl OpenMessage {
         self.follow(parent);
         if !self.in_pane() {
             self.dialog.present(Some(parent));
+            self.focus_message();
         }
         self.open.set(true);
         self.tell_changed();

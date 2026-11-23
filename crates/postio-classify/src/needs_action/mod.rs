@@ -5,6 +5,9 @@ mod deadline;
 mod lexicon;
 mod sentences;
 
+#[cfg(test)]
+pub(crate) use lexicon::IMPERATIVES;
+
 use std::ops::Range;
 
 use chrono::{DateTime, Local, TimeZone, Utc};
@@ -14,9 +17,9 @@ use crate::input::{BodyMessage, OwnText};
 use crate::outcome::{MarkedBy, MarkerCandidate, MarkerKind};
 use crate::rules::Rules;
 
-/// `messages.automation`'s bits: `Precedence` bulk, list, junk; `Auto-Submitted` auto-generated,
-/// auto-replied.
-const BULK_OR_AUTOMATED: u8 = 1 | 2 | 4 | 8 | 16;
+const BULK_OR_AUTOMATED: u8 = postio_model::promoted::PRECEDENCE
+    | postio_model::promoted::AUTO_SUBMITTED
+    | postio_model::promoted::BULK_SENDER;
 
 /// Only mail sent directly to the user: their address in `To`, not from them; never mail they are
 /// only copied on, list or bulk, automated senders, junk, Sent or Drafts. A header not yet known is
@@ -145,11 +148,21 @@ fn find<Tz: TimeZone>(own: &str, reader: &Reader, sent: &DateTime<Tz>) -> Option
         .map_or(Addressee::Reader, |first| salutation(&first.text, reader));
     let mut questions = Vec::new();
     let mut todos = Vec::new();
+    let mut conditional = false;
     for clause in &clauses {
         let text = straightened(&clause.text);
         let lower = text.to_lowercase();
         let body = without_openers(&text, reader);
-        if excluded(&lower, &body)
+        if lexicon::FOOTERS.iter().any(|marker| lower.contains(marker)) {
+            break;
+        }
+        // "...; otherwise, please renew" goes with the condition before it.
+        let follows_a_condition = conditional && starts_with_words(lower.trim_start(), "otherwise");
+        conditional = conditional_instruction(&body);
+        if follows_a_condition
+            || conditional
+            || pointer(&lower)
+            || excluded(&lower, &body)
             || addressee(clause, &text, reader, salutation) == Addressee::SomeoneElse
         {
             continue;
@@ -216,6 +229,27 @@ fn excluded(lower: &str, body: &str) -> bool {
         || lexicon::ASSISTANT
             .iter()
             .any(|word| contains_word(lower, word))
+}
+
+fn conditional_instruction(body: &str) -> bool {
+    let body = body.replace("you'd", "you would");
+    starts_with_words(&body, "if you")
+        && !lexicon::CONDITIONAL_REQUESTS
+            .iter()
+            .any(|request| starts_with_words(&body, request))
+}
+
+fn pointer(lower: &str) -> bool {
+    lexicon::POINTER_PHRASES
+        .iter()
+        .any(|phrase| lower.contains(phrase))
+        || (lexicon::POINTER_VERBS
+            .iter()
+            .any(|verb| contains_word(lower, verb))
+            && lexicon::POINTER_PLACES
+                .iter()
+                .any(|place| contains_word(lower, place)))
+        || (contains_word(lower, "visit") && contains_word(lower, "page"))
 }
 
 fn small_talk(lower: &str, body: &str) -> bool {
@@ -880,7 +914,7 @@ mod tests {
             automation: 0,
         }));
         assert!(!considered_with(&offered, |_| {}, &identities()));
-        for bit in [1, 2, 4, 8, 16] {
+        for bit in [1, 2, 4, 8, 16, 32] {
             let automated = saying(Some(PromotedHeaders {
                 unsubscribe_offered: false,
                 automation: bit,
@@ -916,6 +950,37 @@ mod tests {
 
         assert!(!considered_by(&automated));
         assert!(considered_by(&direct()), "and a person is still read");
+    }
+
+    #[test]
+    fn transactional_mail_with_no_list_header_is_not() {
+        let identities = identities();
+        let shipped = |message: &Message| {
+            considered(
+                &BodyMessage {
+                    filed: filed(message),
+                    identities: &identities,
+                },
+                &Table(crate::senders::Senders::shipped().clone()),
+            )
+        };
+        let sent_in_bulk = saying(Some(PromotedHeaders {
+            unsubscribe_offered: false,
+            automation: postio_model::promoted::BULK_SENDER,
+        }));
+        assert!(!shipped(&sent_in_bulk), "a bulk sending service's header");
+        for address in [
+            "statements@email.bank.example",
+            "hello@news.utility.example",
+            "automated@utility.example",
+        ] {
+            let mut machine = direct();
+            machine.from = vec![EmailAddress::new(Some("Bank"), address)];
+            assert!(!shipped(&machine), "{address}");
+        }
+        let mut person = direct();
+        person.from = vec![EmailAddress::new(Some("Tove"), "tove@mail.example.org")];
+        assert!(shipped(&person), "a person on a mail host is still read");
     }
 
     #[test]

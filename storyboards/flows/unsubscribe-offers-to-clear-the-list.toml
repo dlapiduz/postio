@@ -49,8 +49,8 @@ expect = "Esc is the reader's own: it closes the message back to the list. Nothi
 id      = "again"
 command = "open_message"
 settle  = { until = { view = "reader" } }
-check   = { view = "reader", keyboard.region = "reader" }
-expect  = "The same message opens again."
+check   = { view = "reader", keyboard.region = "reader", app.focus.keyboard.in_message = true }
+expect  = "The same message opens again, with the keyboard in it as on its first open (#2225)."
 
 [[step]]
 id      = "ignore"

@@ -19,8 +19,8 @@ expect  = "Drafts lists its seven and the strip counts seven, not the inbox's nu
 
 [[step]]
 wait    = { until = { cursor.index = 0 } }
-check   = { cursor.subject = "Notes for Thursday", keyboard.region = "list" }
-expect  = "Drafts lists the left-over draft, Notes for Thursday, under the cursor."
+check   = { cursor.subject = "Notes for Thursday", keyboard.region = "list", app.focus.footer.labels = "move | edit" }
+expect  = "Drafts lists the left-over draft, Notes for Thursday, under the cursor. Its footer offers move and edit, what acts on a draft, and never reply, forward or archive (#2227)."
 
 [[step]]
 command = "open_message"
