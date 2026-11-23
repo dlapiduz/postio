@@ -17,3 +17,4 @@ mod oauth;
 mod oauth_signin;
 mod reclaim;
 mod search_index;
+mod source_view;

@@ -116,7 +116,7 @@ throwaway code is not merged.
   - Headers: the boundary under the trusted header;
   - Raw: folds over 64 KiB, with a part label and size.
 - [x] T015 [US2] Implement the headers rows, the hops and `RawView` in `crates/postio-ui/src/source.rs`
-- [ ] T016 [US1] Write failing cases in `crates/postio-host/tests/host_suite/source_view.rs`:
+- [x] T016 [US1] Write failing cases in `crates/postio-host/tests/host_suite/source_view.rs`:
   - `Req::SourceView` with local bytes: a counted, bounded number of statements;
   - absent bytes: `Fetching` at once, then `SourceReady`;
   - offline: `Offline`.
