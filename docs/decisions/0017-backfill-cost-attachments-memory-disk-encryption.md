@@ -1,6 +1,6 @@
 # ADR 0017 — What "download everything" costs, and the four axes that pay for it
 
-- **Status:** Accepted (2026-08-26); amended 2026-10-14 (new mail's attachments fetch on arrival). Page compression, contentless FTS and the SQLCipher premises are gone with the engine ([ADR 0038](0038-the-store-is-turso-not-sqlcipher.md)); bodies live in rows ([ADR 0020](0020-where-message-bodies-live.md)).
+- **Status:** Accepted (2026-08-26); amended 2026-10-14 (new mail's attachments fetch on arrival) and 2026-11-22 (spec 016). Page compression, contentless FTS and SQLCipher went with the engine ([ADR 0038](0038-the-store-is-turso-not-sqlcipher.md)); bodies live in rows ([ADR 0020](0020-where-message-bodies-live.md)).
 - **Decision:** backfill splits into a text axis and a payload axis. The text axis is [ADR 0016](0016-full-mailbox-backfill-by-default.md)'s "every message's body": headers and every `text/*` part, to completion, by default. The payload axis (attachment bytes) is governed separately and defaults to on demand.
 
 ## Rules

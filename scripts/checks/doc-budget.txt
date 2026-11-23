@@ -21,8 +21,8 @@
 CLAUDE.md 951
 docs/ARCHITECTURE.md 1157
 docs/PERFORMANCE.md 840
-docs/PRODUCT.md 4194
-docs/config.md 2650
+docs/PRODUCT.md 4192
+docs/config.md 2646
 docs/decisions/0001-imap-library.md 304
 docs/decisions/0002-extensible-command-vocabulary.md 331
 docs/decisions/0003-rich-text-compose.md 373
@@ -73,11 +73,12 @@ docs/decisions/0048-per-contact-settings-are-the-one-home-of-sender-keyed-settin
 docs/decisions/0049-each-layer-asserts-its-own-question.md 386
 docs/decisions/README.md 934
 docs/field-report.md 1717
-docs/gotchas.md 103
+docs/gotchas.md 102
 docs/gotchas/build.md 589
 docs/gotchas/gtk.md 304
 docs/gotchas/macos.md 339
 docs/gotchas/safety.md 247
+docs/gotchas/signatures.md 218
 docs/gotchas/store.md 785
 docs/gotchas/sync.md 341
 docs/gotchas/tests.md 771
