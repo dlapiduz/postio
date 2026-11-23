@@ -20,7 +20,7 @@ pub struct Row {
     pub name: String,
     pub local: Vec<Vec<String>>,
     pub domain: Vec<String>,
-    pub reason: String,
+    pub reason: Option<String>,
     pub source: Option<String>,
 }
 
@@ -57,7 +57,7 @@ struct Entry {
     local: Vec<String>,
     #[serde(default)]
     domain: Vec<String>,
-    reason: String,
+    reason: Option<String>,
     source: Option<String>,
 }
 
@@ -97,12 +97,16 @@ fn row(entry: Entry) -> Result<Row, String> {
     if entry.local.is_empty() && entry.domain.is_empty() {
         return Err("it has no local or domain pattern".to_owned());
     }
-    if !REASONS.contains(&entry.reason.as_str()) {
+    if let Some(reason) = &entry.reason
+        && !REASONS.contains(&reason.as_str())
+    {
         return Err(format!(
-            "reason {:?} is not one of {}",
-            entry.reason,
+            "reason {reason:?} is not one of {}",
             REASONS.join(", ")
         ));
+    }
+    if entry.reason.is_none() && entry.source.is_some() {
+        return Err("a source names why mail is filed, and it has no reason".to_owned());
     }
     if entry
         .source

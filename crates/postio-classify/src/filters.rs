@@ -22,13 +22,14 @@ pub(crate) fn reason(filed: &FiledMessage<'_>, rules: &dyn Rules) -> Option<Reas
     if filed.has_calendar() {
         return None;
     }
-    if let Some(sender) = message
+    if let Some((sender, kind)) = message
         .from
         .iter()
-        .find_map(|from| rules.senders().find(from))
+        .filter_map(|from| rules.senders().find(from))
+        .find_map(|sender| Some((sender, sender.reason()?)))
     {
         return Some(Reason {
-            kind: sender.reason(),
+            kind,
             source: sender.source().cloned().or_else(|| source_of(filed)),
             layer: Layer::Senders,
         });
@@ -59,4 +60,56 @@ fn source_of(filed: &FiledMessage<'_>) -> Option<SourceName> {
         .map(str::to_owned)
         .or_else(|| from.domain().map(str::to_ascii_lowercase))
         .map(SourceName)
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::Utc;
+    use postio_model::promoted::{PRECEDENCE_BULK, PromotedHeaders};
+    use postio_model::{AccountId, EmailAddress, MailboxId, MailboxRole, Message};
+
+    use super::*;
+    use crate::senders::Senders;
+
+    struct Shipped;
+
+    impl Rules for Shipped {
+        fn senders(&self) -> &Senders {
+            Senders::shipped()
+        }
+    }
+
+    fn statement(automation: u8) -> Message {
+        let mut message = Message::new(AccountId::new(1), MailboxId::new(1), Utc::now());
+        message.from = vec![EmailAddress::new(
+            Some("Bank"),
+            "statements@email.bank.example",
+        )];
+        message.promoted = Some(PromotedHeaders {
+            unsubscribe_offered: false,
+            automation,
+        });
+        message
+    }
+
+    fn filed(message: &Message) -> Option<Reason> {
+        reason(
+            &FiledMessage {
+                message,
+                thread: None,
+                role: MailboxRole::Inbox,
+            },
+            &Shipped,
+        )
+    }
+
+    #[test]
+    fn a_machine_the_table_gives_no_reason_is_left_to_the_headers() {
+        assert_eq!(filed(&statement(0)), None, "a statement stays in the inbox");
+        assert_eq!(
+            filed(&statement(PRECEDENCE_BULK)).map(|reason| (reason.kind, reason.layer)),
+            Some((ReasonKind::Promotion, Layer::Header)),
+            "and its headers still decide"
+        );
+    }
 }

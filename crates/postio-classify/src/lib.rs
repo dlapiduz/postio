@@ -21,6 +21,7 @@ mod pipeline;
 mod rules;
 mod senders;
 pub mod signature;
+pub mod tally;
 
 pub use digests::Digests;
 pub use facts::Facts;
@@ -33,3 +34,4 @@ pub use outcome::{
 pub use pipeline::{ModelLayer, NeedsAction, Unavailable, at_body, at_body_with, at_filing};
 pub use rules::Rules;
 pub use senders::{Sender, Senders, SendersError};
+pub use tally::Tally;

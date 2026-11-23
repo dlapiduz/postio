@@ -5256,6 +5256,7 @@ dependencies = [
  "postio-account",
  "postio-body",
  "postio-calendar",
+ "postio-classify",
  "postio-config",
  "postio-core",
  "postio-demo",
