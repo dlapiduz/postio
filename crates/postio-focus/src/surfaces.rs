@@ -189,6 +189,12 @@ impl Surfaces {
             .flatten()
     }
 
+    pub(crate) fn shown(&self) -> Option<MessageId> {
+        self.has(SurfaceKind::Message)
+            .then_some(self.reading)
+            .flatten()
+    }
+
     pub(crate) fn answers(&self, id: CommandId) -> Option<bool> {
         let top = self.top()?;
         match top {

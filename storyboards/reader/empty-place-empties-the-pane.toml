@@ -32,7 +32,7 @@ expect  = "A message is open in the pane beside the list."
 [[step]]
 command = "go_to_snoozed"
 settle  = { until = { rows.count = 0 }, watch_ms = 500 }
-check   = { scope = "Snoozed", view = "list", reading.id = { absent = true }, app.focus.empty.heading = "Nothing snoozed", app.focus.footer.title = "", app.focus.keyboard.on_control = false }
+check   = { scope = "Snoozed", view = "list", reading.id = { absent = true }, app.focus.empty.heading = "Nothing snoozed", app.focus.footer.title = { absent = true }, app.focus.keyboard.on_control = false }
 expect  = "Snoozed is empty and says so across the window. The message that was open is gone with the place it was in: no pane beside the empty page, and no Reply or Archive on a message that is not here."
 
 [[step]]
