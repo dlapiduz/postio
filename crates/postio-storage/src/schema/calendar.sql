@@ -64,7 +64,9 @@ CREATE TABLE event_changes (
     base_object BLOB,
     base_etag   TEXT,
     state       TEXT    NOT NULL CHECK (state IN ('queued', 'sent', 'conflict', 'failed')),
-    created_at  INTEGER NOT NULL
+    created_at  INTEGER NOT NULL,
+    -- Where the server keeps it: a delete must name it after the event row is gone.
+    href        TEXT
 );
 
 CREATE INDEX idx_event_changes_state ON event_changes (state, id);

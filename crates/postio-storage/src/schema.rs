@@ -702,8 +702,13 @@ CREATE INDEX idx_markers_dismissed ON markers (dismissed_at, message_id);
     },
     Migration {
         from: stamp(0x5474_ba4d),
-        to: FINGERPRINT,
+        to: stamp(0x48b5_66eb),
         statements: include_str!("schema/migrate-calendar.sql"),
+    },
+    Migration {
+        from: stamp(0x48b5_66eb),
+        to: FINGERPRINT,
+        statements: "ALTER TABLE event_changes ADD COLUMN href TEXT;",
     },
 ];
 

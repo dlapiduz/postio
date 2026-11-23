@@ -122,6 +122,7 @@ async fn record(
             calendar,
             kind,
             base.map(|held| (held.object.as_slice(), held.etag.as_deref())),
+            base.and_then(|held| held.href.as_deref()),
             now,
         )
         .await

@@ -37,7 +37,8 @@ mod unsubscribe;
 
 pub use accounts::{AccountRepository, IdentityRepository, SignatureRepository};
 pub use calendar::{
-    CalendarRepository, ChangeKind, EventChange, HeldEvent, StoredEvent, StoredOccurrence,
+    CalendarRepository, ChangeKind, ChangeState, EventChange, HeldEvent, RemoteCalendar,
+    StoredEvent, StoredOccurrence,
 };
 pub use contact_groups::ContactGroupRepository;
 pub use contact_settings::{ContactSettingsRepository, DerivedSettings};

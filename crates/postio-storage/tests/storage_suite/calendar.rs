@@ -130,6 +130,7 @@ async fn a_change_keeps_what_it_replaced_after_its_event_is_gone() {
             local,
             ChangeKind::Delete,
             Some((&held.object, None)),
+            Some("dentist.ics"),
             at,
         )
         .await
@@ -140,5 +141,6 @@ async fn a_change_keeps_what_it_replaced_after_its_event_is_gone() {
     assert_eq!(read.event, None, "the event is gone, the change is not");
     assert_eq!((read.calendar, read.kind), (local, ChangeKind::Delete));
     assert_eq!(read.base.as_deref(), Some(held.object.as_slice()));
+    assert_eq!(read.href.as_deref(), Some("dentist.ics"));
     assert_eq!(calendars.held(event).await.expect("read"), None);
 }
