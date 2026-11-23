@@ -995,6 +995,10 @@ const CASES: &[(&str, fn())] = &[
         corrections::three_dismissals_write_a_stop_marker_to_focus_s_config as fn(),
     ),
     (
+        "invitations::an_invitation_overlapping_a_local_event_says_what_it_clashes_with",
+        invitations::an_invitation_overlapping_a_local_event_says_what_it_clashes_with as fn(),
+    ),
+    (
         "invitations::a_click_on_the_row_s_decline_declines",
         invitations::a_click_on_the_row_s_decline_declines as fn(),
     ),

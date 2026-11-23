@@ -190,3 +190,64 @@ pub fn the_open_invitation_s_card_answers_with_its_keys() {
         assert!(reading.is_open(), "answering leaves the message open");
     });
 }
+
+pub fn an_invitation_overlapping_a_local_event_says_what_it_clashes_with() {
+    crate::gtk_case(async {
+        let invitation = open_invitation();
+        let fixture = Fixture::empty().await;
+        fixture.invited().await;
+        let ahead = (Utc::now() + Duration::days(30)).date_naive();
+        let start = ahead.and_hms_opt(4, 0, 0).expect("a time").and_utc();
+        {
+            use postio_storage::repository::{CalendarRepository, StoredEvent, StoredOccurrence};
+            let connection = fixture.database.connect().await.expect("a connection");
+            let calendars = CalendarRepository::new(&connection);
+            let local = calendars.local().await.expect("local").id;
+            let event = calendars
+                .put_event(&StoredEvent {
+                    calendar: local,
+                    uid: "standup@example.com".to_owned(),
+                    href: None,
+                    etag: None,
+                    object: Vec::new(),
+                    title: "Standup".to_owned(),
+                    location: String::new(),
+                    starts_at: start,
+                    recurs: false,
+                    status: postio_model::calendar::EventStatus::Confirmed,
+                    my_partstat: None,
+                    source_message: None,
+                })
+                .await
+                .expect("an event");
+            calendars
+                .set_occurrences(
+                    event,
+                    &[StoredOccurrence {
+                        start,
+                        end: start + Duration::hours(1),
+                        all_day: false,
+                        floating: false,
+                        recurrence_id: None,
+                    }],
+                )
+                .await
+                .expect("its occurrence");
+        }
+        let (host, _sink) = fixture.host_telling();
+        let blobs = host.wiring().blobs.clone();
+        fixture.file_raw(&blobs, &invitation, 10).await;
+        let window = FocusWindow::new(None);
+        window.present();
+        let session = postio_gtk::startup::adopt(&window, host, &postio_config::Config::default());
+        support::keep(session);
+
+        assert!(
+            crate::settle_until(async || said(&window, "Portfolio review")
+                .contains(&"Clashes with Standup".to_owned()))
+            .await,
+            "the row names the clash: {:?}",
+            said(&window, "Portfolio review")
+        );
+    });
+}

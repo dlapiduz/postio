@@ -999,6 +999,20 @@ impl RowWidget {
             ) + 10.0;
             drawn.texts.push(date.clone());
         }
+        if let Some(note) = &line.note
+            && right - x >= LEAST_FIRST_LINE
+        {
+            let layout = self.layout(note, false, 0.95);
+            x += self.put(
+                snapshot,
+                &layout,
+                x,
+                self.second_line(),
+                (right - x).max(0.0),
+                &palette.ink,
+            ) + 10.0;
+            drawn.texts.push(note.clone());
+        }
         if let Some(quote) = &line.quote
             && right - x >= LEAST_FIRST_LINE
         {
