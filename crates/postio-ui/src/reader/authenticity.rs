@@ -359,4 +359,206 @@ mod tests {
             assert_eq!(impersonation(&named(name, address)), None, "{name}");
         }
     }
+
+    fn from(address: &str) -> Vec<EmailAddress> {
+        vec![EmailAddress::new(None::<String>, address)]
+    }
+
+    fn report(values: &[(&str, &str)], sender: &str) -> Verification {
+        let mut headers = Headers::new();
+        for (name, value) in values {
+            headers.push(*name, *value);
+        }
+        verification(&headers, &from(sender), &["mx.example.net"])
+    }
+
+    const TWO_DKIM: &str = "mx.example.net; dkim=pass header.d=example.com header.s=s2026 header.b=b3du; \
+        dkim=pass header.d=esp.example header.s=esp1; spf=pass smtp.mailfrom=bounce-7731@bounce.esp.example; \
+        dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=example.com";
+
+    #[test]
+    fn each_method_names_its_domain_selector_and_policy() {
+        let seen = report(
+            &[("Authentication-Results", TWO_DKIM)],
+            "billing@example.com",
+        );
+        let provider = seen.provider.expect("the provider's header");
+        assert_eq!(provider.authserv_id, "mx.example.net");
+        assert!(provider.trusted);
+        let rows: Vec<(Method, &str, Option<&str>, Option<&str>, Option<&str>)> = provider
+            .results
+            .iter()
+            .map(|r| {
+                (
+                    r.method.clone(),
+                    r.result.as_str(),
+                    r.domain.as_deref(),
+                    r.selector.as_deref(),
+                    r.policy.as_deref(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                (
+                    Method::Dkim,
+                    "pass",
+                    Some("example.com"),
+                    Some("s2026"),
+                    None
+                ),
+                (
+                    Method::Dkim,
+                    "pass",
+                    Some("esp.example"),
+                    Some("esp1"),
+                    None
+                ),
+                (Method::Spf, "pass", Some("bounce.esp.example"), None, None),
+                (
+                    Method::Dmarc,
+                    "pass",
+                    Some("example.com"),
+                    None,
+                    Some("reject")
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn alignment_is_relaxed_to_the_organisational_domain() {
+        let value = "mx.example.net; dkim=pass header.d=mail.example.com; dkim=pass header.d=esp.example; \
+            spf=pass smtp.helo=out.example.com; dkim=neutral";
+        let seen = report(&[("Authentication-Results", value)], "ada@news.example.com");
+        let aligned: Vec<Alignment> = seen
+            .provider
+            .expect("trusted")
+            .results
+            .iter()
+            .map(|r| r.aligned)
+            .collect();
+        assert_eq!(
+            aligned,
+            [
+                Alignment::Aligned,
+                Alignment::NotAligned,
+                Alignment::Aligned,
+                Alignment::Unknown
+            ]
+        );
+    }
+
+    #[test]
+    fn arc_sets_are_named_by_instance_and_never_believed() {
+        let seen = report(
+            &[
+                (
+                    "Authentication-Results",
+                    "mx.example.net; arc=pass (i=2) header.oldest-pass=1",
+                ),
+                (
+                    "ARC-Seal",
+                    "i=2; a=rsa-sha256; cv=pass; d=relay.example.org; s=a; b=eA==",
+                ),
+                (
+                    "ARC-Authentication-Results",
+                    "i=2; mx.relay.example.org; dmarc=pass header.from=example.com",
+                ),
+                (
+                    "ARC-Seal",
+                    "i=1; a=rsa-sha256; t=1; cv=none; d=lists.example.org; s=arc; b=eA==",
+                ),
+                (
+                    "ARC-Authentication-Results",
+                    "i=1; mx.lists.example.org; dkim=pass header.d=example.com",
+                ),
+            ],
+            "ada@example.com",
+        );
+        assert_eq!(
+            seen.arc,
+            [
+                ArcSet {
+                    instance: 1,
+                    sealer: "lists.example.org".into(),
+                    cv: Some("none".into())
+                },
+                ArcSet {
+                    instance: 2,
+                    sealer: "relay.example.org".into(),
+                    cv: Some("pass".into())
+                },
+            ]
+        );
+        let doubted: Vec<(&str, Option<u32>)> = seen
+            .not_believed
+            .iter()
+            .map(|r| (r.authserv_id.as_str(), r.arc_instance))
+            .collect();
+        assert_eq!(
+            doubted,
+            [
+                ("mx.relay.example.org", Some(2)),
+                ("mx.lists.example.org", Some(1))
+            ]
+        );
+        let arc = &seen.provider.expect("trusted").results[0];
+        assert_eq!(
+            (arc.method.clone(), arc.result.as_str()),
+            (Method::Arc, "pass")
+        );
+    }
+
+    #[test]
+    fn the_trusted_header_is_the_topmost_of_the_providers_and_the_rest_are_not_believed() {
+        let fail = "mx.example.net; dmarc=fail header.from=example.org";
+        let forged = "mx.example.net; dmarc=pass header.from=example.org";
+        let other = "relay.example.com; dmarc=pass header.from=example.org";
+        let seen = report(
+            &[
+                ("Authentication-Results", other),
+                ("Authentication-Results", fail),
+                ("Authentication-Results", forged),
+            ],
+            "ada@example.org",
+        );
+        let provider = seen.provider.expect("trusted");
+        assert_eq!(
+            (provider.position, provider.results[0].result.as_str()),
+            (1, "fail")
+        );
+        assert_eq!(seen.provider_headers, 2, "the provider stamped twice");
+        let doubted: Vec<(usize, bool)> = seen
+            .not_believed
+            .iter()
+            .map(|r| (r.position, r.trusted))
+            .collect();
+        assert_eq!(doubted, [(0, false), (2, false)]);
+        assert_eq!(
+            verdict(
+                &headers(&[other, fail, forged]),
+                &from("ada@example.org"),
+                &["mx.example.net"]
+            ),
+            Verdict::Failed,
+            "the verdict reads the same header the report trusts"
+        );
+    }
+
+    #[test]
+    fn no_provider_header_trusts_nothing_and_doubts_everything() {
+        let seen = report(
+            &[("Authentication-Results", TWO_DKIM)],
+            "billing@example.com",
+        );
+        assert!(seen.provider.is_some());
+        let mut headers = Headers::new();
+        headers.push("Authentication-Results", TWO_DKIM);
+        let none: [&str; 0] = [];
+        let seen = verification(&headers, &from("billing@example.com"), &none);
+        assert!(seen.provider.is_none());
+        assert_eq!(seen.not_believed.len(), 1);
+    }
 }
