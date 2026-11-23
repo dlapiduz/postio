@@ -1,6 +1,7 @@
 //! Calendar objects and the invitations mail carries: read, expanded and answered. A pure leaf;
 //! no library type crosses its edge.
 
+mod edit;
 mod event;
 mod expand;
 mod ics;
@@ -10,6 +11,7 @@ mod reply;
 #[cfg(test)]
 mod test_support;
 
+pub use edit::{Edited, Edits, NewEvent, Scope, new_object, patch, remove, request};
 pub use event::{Alarm, AlarmAction, Event, Status, Trigger, parse_object};
 pub use expand::{Occurrence, expand};
 pub use invitation::{Answer, Attendee, EventTime, Invitation, Method, PartStat, Zone, supersedes};

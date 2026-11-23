@@ -102,3 +102,40 @@ pub(crate) fn raw_value(prop: &IcalProp<'_>) -> String {
         _ => String::new(),
     }
 }
+
+fn civil(at: chrono::NaiveDateTime) -> ical::recur::IcalRecurDateTime {
+    use chrono::{Datelike, Timelike};
+    ical::recur::IcalRecurDateTime {
+        year: at.year(),
+        month: at.month() as u8,
+        day: at.day() as u8,
+        hour: at.hour() as u8,
+        minute: at.minute() as u8,
+        second: at.second() as u8,
+    }
+}
+
+pub(crate) fn zone_local(
+    tzid: &str,
+    at: chrono::DateTime<chrono::Utc>,
+) -> Option<chrono::NaiveDateTime> {
+    use chrono::Datelike;
+    let zone = ical::tzdb::zone(tzid, at.year() + 1)?;
+    let local = zone.local(at.timestamp());
+    chrono::NaiveDate::from_ymd_opt(local.year, u32::from(local.month), u32::from(local.day))?
+        .and_hms_opt(
+            u32::from(local.hour),
+            u32::from(local.minute),
+            u32::from(local.second),
+        )
+}
+
+pub(crate) fn zone_instant(
+    tzid: &str,
+    at: chrono::NaiveDateTime,
+) -> Option<chrono::DateTime<chrono::Utc>> {
+    use chrono::Datelike;
+    let zone = ical::tzdb::zone(tzid, at.year() + 1)?;
+    let wanted = civil(at);
+    chrono::DateTime::from_timestamp(zone.resolve(wanted).instant(wanted)?, 0)
+}
