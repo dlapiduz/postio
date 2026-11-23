@@ -1429,6 +1429,18 @@ const CASES: &[(&str, fn())] = &[
         "footers::the_capture_sheet_has_no_footer",
         footers::the_capture_sheet_has_no_footer as fn(),
     ),
+    (
+        "footers::a_draft_row_offers_to_be_finished",
+        footers::a_draft_row_offers_to_be_finished as fn(),
+    ),
+    (
+        "footers::the_places_popover_has_no_footer",
+        footers::the_places_popover_has_no_footer as fn(),
+    ),
+    (
+        "footers::a_removal_in_the_window_has_the_next_messages_footer",
+        footers::a_removal_in_the_window_has_the_next_messages_footer as fn(),
+    ),
 ];
 
 use gtk::glib;

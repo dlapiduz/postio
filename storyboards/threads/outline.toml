@@ -29,14 +29,14 @@ expect  = "Harbor opens on message 5 of 6."
 [[step]]
 id      = "outline"
 command = "thread_outline"
-check   = { app.focus.outline.open = true, app.focus.outline.rows = 6, app.focus.outline.cursor = 4 }
-expect  = "A 440-wide popover lists six messages, message 5 ringed, a filter field and a chip with a count for each person, and a footer: arrows move, Return shows it, u first unread."
+check   = { app.focus.outline.open = true, app.focus.outline.rows = 6, app.focus.outline.cursor = 4, app.focus.outline.hint = "↑↓ move · ↩ show it · u first unread", app.focus.footer.title = { absent = true } }
+expect  = "A 440-wide popover lists six messages, message 5 ringed, a filter field and a chip with a count for each person, and a hint line: arrows move, Return shows it, u first unread. The window's footer under it is not drawn: its r, f and e do nothing here (#2227)."
 
 [[step]]
 id      = "filter"
 key     = "/"
-check   = { app.focus.outline.filtering = true }
-expect  = "The keyboard is in the filter field."
+check   = { app.focus.outline.filtering = true, app.focus.outline.hint = "↑↓ move · ↩ show it" }
+expect  = "The keyboard is in the filter field. The hint line no longer offers u, which types a letter here (#2227)."
 
 [[step]]
 type    = "ben"

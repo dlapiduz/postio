@@ -32,5 +32,5 @@ expect  = "The message is open, its action row showing Delete with the cap `#`, 
 
 [[step]]
 command = "delete"
-check   = { view = "reader", rows.count = 60, notice.undo = true, reading.id = { changed = true }, keyboard.reachable = true }
-expect  = "Delete acts: the conversation is gone from the list, the toast offers Undo, and the dialog goes on to the message that took its place (T190)."
+check   = { view = "reader", rows.count = 60, notice.undo = true, reading.id = { changed = true }, keyboard.reachable = true, app.focus.footer.labels = "reply to this | forward this | archive thread" }
+expect  = "Delete acts: the conversation is gone from the list, the toast offers Undo, and the dialog goes on to the message that took its place (T190). The footer is that message's window footer, not the list's row footer with move and open (#2227)."

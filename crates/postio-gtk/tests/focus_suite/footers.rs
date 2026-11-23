@@ -107,6 +107,94 @@ pub fn a_waiting_send_offers_what_settles_it() {
         let _reading = crate::sending_states::reading(&window).await;
         let title = shows(&window, &["cancel send", "edit"]).await;
         assert_eq!(title, crate::sending_states::SUBJECT);
+        support::deliver(&window, "Escape");
+        let title = shows(&window, &["move", "open", "cancel send"]).await;
+        assert_eq!(
+            title,
+            crate::sending_states::SUBJECT,
+            "the row's own footer"
+        );
+    });
+}
+
+pub fn a_draft_row_offers_to_be_finished() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (_fixture, window, _draft) =
+            crate::sending_states::with_a_draft(DraftState::Editing).await;
+        crate::sending_states::go_to(&window, "Drafts").await;
+        assert!(
+            crate::settle_until(
+                async || support::subjects(&window) == [crate::sending_states::SUBJECT]
+            )
+            .await,
+            "the draft is not listed: {:?}",
+            support::subjects(&window)
+        );
+        support::deliver(&window, "j");
+        let title = shows(&window, &["move", "edit"]).await;
+        assert_eq!(title, crate::sending_states::SUBJECT);
+    });
+}
+
+pub fn the_places_popover_has_no_footer() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (_fixture, window) = two_alone().await;
+        let row = shows(&window, ROW).await;
+        support::keys(&window, &["g", "l"]);
+        let places = window.places().expect("g l opened the places popover");
+        assert!(
+            crate::settle_until(async || places.is_open()).await,
+            "the places popover never opened"
+        );
+        shows_none(&window).await;
+        support::deliver(&window, "Escape");
+        assert!(
+            crate::settle_until(async || !places.is_open()).await,
+            "Escape left the places popover open"
+        );
+        assert_eq!(shows(&window, ROW).await, row, "the row's footer is back");
+    });
+}
+
+pub fn a_removal_in_the_window_has_the_next_messages_footer() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (_fixture, window) = two_alone().await;
+        let _ = shows(&window, ROW).await;
+        support::deliver(&window, "Return");
+        assert!(
+            crate::settle_until(async || window.reading().is_some_and(|reading| reading.is_open()))
+                .await,
+            "Return opened no message"
+        );
+        let first = shows(&window, &["reply", "forward", "archive"]).await;
+        support::deliver(&window, "e");
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 1).await,
+            "e archived nothing"
+        );
+        assert!(
+            crate::settle_until(async || drawn(&window)
+                .first()
+                .is_some_and(|(title, _)| *title != first))
+            .await,
+            "the footer still names the message archived: {:?}",
+            drawn(&window)
+        );
+        let next = shows(&window, &["reply", "forward", "archive"]).await;
+        assert_eq!(
+            [next],
+            support::subjects(&window).as_slice(),
+            "the window's footer names the message it stepped on to"
+        );
     });
 }
 

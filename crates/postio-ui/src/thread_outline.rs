@@ -92,6 +92,7 @@ pub fn outline(
     filter: &str,
     person: Option<&str>,
     cursor: usize,
+    filtering: bool,
     keymap: &Keymap,
 ) -> OutlineView {
     let rows = filter_rows(all, filter, person);
@@ -101,7 +102,9 @@ pub fn outline(
         people: people(all),
         filter: filter.to_owned(),
         person: person.map(str::to_owned),
-        first_unread_key: hints::key(keymap, CommandId::OutlineFirstUnread),
+        first_unread_key: (!filtering)
+            .then(|| hints::key(keymap, CommandId::OutlineFirstUnread))
+            .flatten(),
     }
 }
 
@@ -313,11 +316,13 @@ mod tests {
 
     #[test]
     fn the_view_keeps_every_chip_while_the_rows_narrow() {
-        let view = outline(&rows(), "plan", None, 0, Keymap::defaults());
+        let view = outline(&rows(), "plan", None, 0, false, Keymap::defaults());
         assert_eq!(view.rows.len(), 1);
         assert_eq!(view.people.len(), 2, "chips count the whole thread");
         assert_eq!(view.filter, "plan");
         assert_eq!(view.first_unread_key.as_deref(), Some("u"));
+        let typing = outline(&rows(), "plan", None, 0, true, Keymap::defaults());
+        assert_eq!(typing.first_unread_key, None, "u types in the field");
     }
 
     #[test]

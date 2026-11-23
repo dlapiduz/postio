@@ -18,6 +18,7 @@ pub enum OutlineInput {
     Move(i32),
     Show(Option<usize>),
     FocusFilter,
+    Filtering(bool),
 }
 
 #[derive(Debug)]
@@ -27,6 +28,7 @@ struct Outline {
     filter: String,
     person: Option<String>,
     cursor: usize,
+    filtering: bool,
     from_row: Option<u32>,
 }
 
@@ -255,6 +257,7 @@ impl FocusController {
             filter: String::new(),
             person: None,
             cursor: current,
+            filtering: false,
             from_row,
         };
         self.thread_ui.outline = Some(outline);
@@ -274,6 +277,7 @@ impl FocusController {
             &outline.filter,
             outline.person.as_deref(),
             outline.cursor,
+            outline.filtering,
             self.keymap(),
         );
         vec![Step::Show(Intent::Outline(Box::new(view)))]
@@ -316,7 +320,18 @@ impl FocusController {
             return Vec::new();
         };
         match input {
-            OutlineInput::FocusFilter => return vec![Step::Show(Intent::OutlineFocusFilter)],
+            OutlineInput::FocusFilter => {
+                outline.filtering = true;
+                let mut steps = vec![Step::Show(Intent::OutlineFocusFilter)];
+                steps.extend(self.draw_outline());
+                return steps;
+            }
+            OutlineInput::Filtering(filtering) => {
+                if outline.filtering == filtering {
+                    return Vec::new();
+                }
+                outline.filtering = filtering;
+            }
             OutlineInput::Typed(text) => {
                 outline.filter = text;
                 outline.cursor = 0;

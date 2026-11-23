@@ -12,7 +12,7 @@ use postio_model::{EmailAddress, MessageId, ThreadId};
 use postio_ui::focus_list::{FocusRow, lone};
 use postio_ui::thread_outline::{OutlineView, ThreadMenuView};
 
-struct List {
+pub(crate) struct List {
     muted: Vec<Option<u32>>,
 }
 
@@ -111,7 +111,7 @@ fn read_asked(effects: &[Effect]) -> Option<(Ticket, ThreadId)> {
         })
 }
 
-fn window() -> (FocusController, List) {
+pub(crate) fn window() -> (FocusController, List) {
     let rows = list();
     let mut focus = focus();
     let _ = focus.open(postio_model::ListScope::Focus(
@@ -303,6 +303,36 @@ fn slash_puts_the_keyboard_in_the_filter() {
             .iter()
             .any(|intent| matches!(intent, Intent::OutlineFocusFilter)),
         "the Search key does the same"
+    );
+}
+
+#[test]
+fn the_outline_offers_u_only_while_the_filter_does_not_have_the_keyboard() {
+    let (mut focus, rows) = window();
+    let effects = run(&mut focus, CommandId::ThreadOutline, &rows);
+    assert_eq!(
+        outline_of(&effects).unwrap().first_unread_key.as_deref(),
+        Some("u")
+    );
+    let effects = focus.handle_on(Input::Outline(OutlineInput::FocusFilter), &rows);
+    assert_eq!(
+        outline_of(&effects).expect("redrawn").first_unread_key,
+        None,
+        "u types a letter in the filter"
+    );
+    let effects = focus.handle_on(Input::Outline(OutlineInput::Filtering(false)), &rows);
+    assert_eq!(
+        outline_of(&effects)
+            .expect("redrawn")
+            .first_unread_key
+            .as_deref(),
+        Some("u"),
+        "the keyboard left the filter"
+    );
+    let effects = focus.handle_on(Input::Outline(OutlineInput::Filtering(true)), &rows);
+    assert_eq!(
+        outline_of(&effects).expect("redrawn").first_unread_key,
+        None
     );
 }
 
