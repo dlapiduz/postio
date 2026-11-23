@@ -19,6 +19,7 @@ mod open;
 mod picker;
 mod places;
 mod rules;
+mod sheet;
 mod surface;
 
 pub use find::Find;
@@ -1311,34 +1312,6 @@ impl App {
         (crate::sheet::height(&columns).saturating_sub(page), page)
     }
 
-    pub(crate) fn open_keys(&mut self) -> Vec<Effect> {
-        let from = match (&self.sheet, self.focus) {
-            (Some(open), _) => open.from(),
-            (None, focus) => focus,
-        };
-        self.sheet = Some(crate::sheet::Sheet::open(from));
-        self.focus = Focus::Keys;
-        vec![Effect::Redraw]
-    }
-
-    fn keys_key(&mut self, key: &KeyEvent) -> Vec<Effect> {
-        let (max, page) = self.sheet_limits();
-        let Some(sheet) = self.sheet.as_mut() else {
-            return Vec::new();
-        };
-        match sheet.key(key, &mut self.keys, page, max) {
-            crate::sheet::Step::Stay => vec![Effect::Redraw],
-            crate::sheet::Step::Close => self.close_keys(),
-        }
-    }
-
-    fn close_keys(&mut self) -> Vec<Effect> {
-        if let Some(sheet) = self.sheet.take() {
-            self.focus = sheet.from();
-        }
-        vec![Effect::Redraw]
-    }
-
     pub fn palette(&self) -> Option<PaletteView> {
         let state = self.palette.as_ref()?;
         let query = state.input.value().to_owned();
@@ -2071,7 +2044,11 @@ impl App {
                 ));
             }
             "cheat_sheet" if self.sheet.is_some() => return self.close_keys(),
-            "cheat_sheet" => return self.open_keys(),
+            "cheat_sheet" => {
+                return self.tell(postio_focus::Input::Command(
+                    postio_core::CommandId::CheatSheet,
+                ));
+            }
             "settings" => {
                 self.settings = Some(crate::settings::Settings::default());
                 self.focus = Focus::Settings;
