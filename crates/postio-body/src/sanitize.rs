@@ -270,6 +270,24 @@ impl Tally {
         }
     }
 
+    /// Only what `part_uri` writes under this scope, case and all: a part the sender could have
+    /// named with `cid:`.
+    pub(crate) fn is_own_part(&self, value: &str) -> bool {
+        let Some(rest) = value
+            .strip_prefix(CID_SCHEME)
+            .and_then(|rest| rest.strip_prefix(':'))
+        else {
+            return false;
+        };
+        let id = match &self.scope {
+            Some(scope) => rest
+                .strip_prefix(scope.as_str())
+                .and_then(|rest| rest.strip_prefix('/')),
+            None => Some(rest),
+        };
+        id.is_some_and(|id| !id.is_empty() && !id.contains('/'))
+    }
+
     pub(crate) fn block(&self) {
         self.blocked.fetch_add(1, Ordering::Relaxed);
         self.refuse(Refused::Resource(REMOTE_IMAGE));
@@ -864,7 +882,11 @@ fn rewrite_attribute<'u>(
         return Some(Cow::Borrowed(value));
     }
     // Postio's own scheme written by the sender names the reader's internals (under ADR 0032,
-    // another message's parts): dropped, not rewritten.
+    // another message's parts): dropped, not rewritten. This message's own part is kept, so
+    // sanitized output sanitizes to itself.
+    if tally.is_own_part(value) {
+        return Some(Cow::Borrowed(value));
+    }
     if names_foreign_parts(value) {
         tally.refuse(Refused::Resource(FOREIGN_PARTS));
         return None;
@@ -911,11 +933,11 @@ pub(crate) fn contain_declarations(value: &str, remote: RemoteImages, tally: &Ta
             tally.block();
             continue;
         }
+        if names_other_parts(declared, tally) {
+            tally.refuse(Refused::Resource(FOREIGN_PARTS));
+            continue;
+        }
         if let Some(url) = css_url(declared) {
-            if names_foreign_parts(&url) {
-                tally.refuse(Refused::Resource(FOREIGN_PARTS));
-                continue;
-            }
             if is_remote(&url) && remote == RemoteImages::Blocked {
                 tally.block();
                 continue;
@@ -943,11 +965,32 @@ fn names_remote(value: &str) -> bool {
     {
         return true;
     }
-    fn walk(parser: &mut cssparser::Parser<'_>) -> bool {
+    names_url(value, &is_remote)
+}
+
+/// Every reference, not the first `url(` alone: `url(cid:a), url(postio-cid:9/b)` or an escaped
+/// `postio\2d cid:` would otherwise name another message's part.
+fn names_other_parts(value: &str, tally: &Tally) -> bool {
+    let lower = value.to_ascii_lowercase();
+    let spelled = lower.match_indices(CID_SCHEME).any(|(at, _)| {
+        let reference = value[at..]
+            .split(|c: char| c.is_whitespace() || "()'\",".contains(c))
+            .next()
+            .unwrap_or_default();
+        !tally.is_own_part(reference)
+    });
+    spelled
+        || names_url(value, &|url| {
+            names_foreign_parts(url) && !tally.is_own_part(url)
+        })
+}
+
+fn names_url(value: &str, names: &dyn Fn(&str) -> bool) -> bool {
+    fn walk(parser: &mut cssparser::Parser<'_>, names: &dyn Fn(&str) -> bool) -> bool {
         use cssparser::Token;
         while let Ok(token) = parser.next_including_whitespace_and_comments().cloned() {
             match token {
-                Token::QuotedString(text) | Token::UnquotedUrl(text) if is_remote(&text) => {
+                Token::QuotedString(text) | Token::UnquotedUrl(text) if names(&text) => {
                     return true;
                 }
                 Token::Function(_)
@@ -956,7 +999,7 @@ fn names_remote(value: &str) -> bool {
                 | Token::CurlyBracketBlock => {
                     let inner = parser
                         .parse_nested_block(|nested| {
-                            Ok::<_, cssparser::ParseError<()>>(walk(nested))
+                            Ok::<_, cssparser::ParseError<()>>(walk(nested, names))
                         })
                         .unwrap_or(false);
                     if inner {
@@ -968,7 +1011,7 @@ fn names_remote(value: &str) -> bool {
         }
         false
     }
-    walk(&mut cssparser::Parser::new(value))
+    walk(&mut cssparser::Parser::new(value), names)
 }
 
 /// `url(data:image/png;base64,...)` carries its own semicolon, so a naive `split(';')` would cut an
@@ -1813,6 +1856,55 @@ mod conversation_scope_tests {
             scoped.html.contains("postio-cid:42/9%2Fsecret"),
             "the rewritten reference should be scoped to this message: {}",
             scoped.html
+        );
+    }
+
+    #[test]
+    fn a_second_pass_keeps_the_parts_the_first_named() {
+        let html =
+            r#"<img src="cid:logo@example.com" alt=""><p style="background:url(cid:bg)">t</p>"#;
+        for scope in [None, Some("42")] {
+            let once = sanitize_body_in(html, RemoteImages::Blocked, scope);
+            assert!(once.html.contains("postio-cid:"), "{}", once.html);
+            let twice = sanitize_body_in(&once.html, RemoteImages::Blocked, scope);
+            assert_eq!(twice.html, once.html, "scope {scope:?}");
+            assert!(twice.refusals.is_empty(), "{:?}", twice.refusals);
+        }
+    }
+
+    #[test]
+    fn a_style_cannot_name_another_message_past_its_first_url() {
+        for html in [
+            r#"<p style="background-image: url(cid:a), url(postio-cid:9/secret)">t</p>"#,
+            r#"<p style="background-image: url(postio\2d cid:9/secret)">t</p>"#,
+            r#"<p style="background-image: image-set('postio-cid:9/secret' 1x)">t</p>"#,
+        ] {
+            let clean = sanitize_body_in(html, RemoteImages::Blocked, Some("42"));
+            assert!(
+                !clean.html.contains("9/secret"),
+                "{html} kept: {}",
+                clean.html
+            );
+        }
+    }
+
+    #[test]
+    fn a_second_pass_still_refuses_another_scopes_parts() {
+        let html =
+            r#"<img src="postio-cid:9/secret"><p style="background:url(postio-cid:9/bg)">t</p>"#;
+        let clean = sanitize_body_in(html, RemoteImages::Blocked, Some("42"));
+        assert!(!clean.html.contains("postio-cid:9"), "{}", clean.html);
+        let unscoped = sanitize_body_in(html, RemoteImages::Blocked, None);
+        assert!(!unscoped.html.contains("postio-cid:9"), "{}", unscoped.html);
+        let other = sanitize_body_in(
+            r#"<img src="postio-cid:logo">"#,
+            RemoteImages::Blocked,
+            Some("42"),
+        );
+        assert!(
+            !other.html.contains("postio-cid:logo"),
+            "an unscoped part is no part of message 42: {}",
+            other.html
         );
     }
 
