@@ -16,9 +16,9 @@ use postio_widgets::widgets::space::{S1, S2, S3, S4};
 
 use super::card::{self, CardHooks};
 use super::form::{self, Form, FormHooks, Slot};
-use super::list::{self, ContactsList};
 use super::merge::{self, MergeHooks};
 use crate::list::Feed;
+use crate::position_list::{self as list, PositionList};
 
 const ROW_HEIGHT: i32 = 52;
 
@@ -37,7 +37,7 @@ pub struct ContactsView {
     filter_key: gtk::Box,
     new_button: gtk::Button,
     review: gtk::Box,
-    model: ContactsList,
+    model: PositionList,
     selection: gtk::SingleSelection,
     list: gtk::ListView,
     card_host: gtk::Stack,
@@ -109,7 +109,7 @@ impl ContactsView {
         review.add_css_class("focus-contacts-review");
         review.set_visible(false);
 
-        let model = ContactsList::default();
+        let model = PositionList::default();
         let selection = gtk::SingleSelection::new(Some(model.clone()));
         selection.set_autoselect(false);
         selection.set_can_unselect(true);

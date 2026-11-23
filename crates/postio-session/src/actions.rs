@@ -28,7 +28,9 @@ use postio_storage::repository::{
 };
 use postio_storage::{Checkout, Store, WritePermit, WritePriority};
 
+mod calendar;
 mod focus;
+pub use focus::invitation_of;
 
 fn now() -> chrono::DateTime<Utc> {
     postio_ui::clock::now().with_timezone(&Utc)
@@ -76,6 +78,11 @@ pub const WIRED: &[CommandId] = &[
     CommandId::ContactGroupRemove,
     CommandId::MuteThread,
     CommandId::SplitThread,
+    CommandId::MoveEvent,
+    CommandId::DuplicateEvent,
+    CommandId::TentativeInvite,
+    CommandId::SaveEvent,
+    CommandId::SaveAndSendEvent,
 ];
 
 /// How long `Command::Snooze` hides a message when it names no time.
@@ -241,6 +248,14 @@ impl Actions {
         events: &EventSink,
         recording: Recording,
     ) -> Result<(), CommandError> {
+        if let Some(changed) = self.calendar_verb(command).await? {
+            events.emit(Event::CalendarChanged);
+            if recording.records().await {
+                let entry = UndoEntry::bulk(changed.kind, 1, changed.inverse);
+                self.record_undo(entry, changed.lasts, events).await;
+            }
+            return Ok(());
+        }
         let applied: Vec<Applied> = match command {
             Command::Archive { target } => {
                 self.relocate(
@@ -290,6 +305,12 @@ impl Actions {
             Command::AcceptInvite { message } => {
                 vec![
                     self.answer(*message, postio_calendar::Answer::Accept)
+                        .await?,
+                ]
+            }
+            Command::TentativeInvite { message } => {
+                vec![
+                    self.answer(*message, postio_calendar::Answer::Tentative)
                         .await?,
                 ]
             }
@@ -1521,7 +1542,16 @@ impl Actions {
             Some(rows) if !entry.is_bulk() => entry.acting_on(rows),
             _ => entry,
         };
-        let entry = match applied.lasts {
+        self.record_undo(entry, applied.lasts, events).await;
+    }
+
+    async fn record_undo(
+        &self,
+        entry: UndoEntry,
+        lasts: Option<std::time::Duration>,
+        events: &EventSink,
+    ) {
+        let entry = match lasts {
             Some(window) => entry.lasting(window),
             None => entry,
         };
@@ -1531,6 +1561,62 @@ impl Actions {
             description,
             undoable: true,
         });
+    }
+
+    async fn calendar_verb(
+        &self,
+        command: &Command,
+    ) -> Result<Option<calendar::Changed>, CommandError> {
+        let save = |event, calendar, fields, scope, send| calendar::Save {
+            event,
+            calendar,
+            fields,
+            scope,
+            send,
+        };
+        Ok(Some(match command {
+            Command::SaveEvent {
+                event,
+                calendar,
+                fields,
+                scope,
+            } => {
+                self.save_event(save(
+                    event.as_ref(),
+                    *calendar,
+                    fields.as_ref(),
+                    *scope,
+                    false,
+                ))
+                .await?
+            }
+            Command::SaveAndSendEvent {
+                event,
+                calendar,
+                fields,
+                scope,
+            } => {
+                self.save_event(save(
+                    event.as_ref(),
+                    *calendar,
+                    fields.as_ref(),
+                    *scope,
+                    true,
+                ))
+                .await?
+            }
+            Command::DeleteEvent { event, scope } => self.delete_event(event, *scope).await?,
+            Command::MoveEventTo {
+                event,
+                start,
+                scope,
+            } => self.move_event(event, *start, *scope).await?,
+            Command::MoveEvent => return Err(CommandError::rejected("Pick when to move it to")),
+            Command::DuplicateEventOf { event } => self.duplicate_event(*event).await?,
+            Command::DuplicateEvent => return Err(CommandError::rejected("Pick an event first")),
+            Command::RevertEventChange { change } => self.revert_event_change(*change).await?,
+            _ => return Ok(None),
+        }))
     }
 
     async fn rows(

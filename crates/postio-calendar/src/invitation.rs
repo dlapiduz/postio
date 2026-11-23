@@ -5,11 +5,8 @@ use postio_model::EmailAddress;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Invitation {
-    /// `UID`: the event's identity; an update and a cancellation carry the same one.
     pub uid: String,
-    /// `SEQUENCE`, `0` when absent.
     pub sequence: u32,
-    /// `DTSTAMP`: orders two versions with the same `sequence`.
     pub stamp: Option<DateTime<Utc>>,
     pub method: Method,
     /// A `CANCEL`, or `STATUS:CANCELLED` on the event itself, which some servers send inside a
@@ -73,6 +70,7 @@ pub struct Attendee {
 pub enum Answer {
     Accept,
     Decline,
+    Tentative,
 }
 
 /// Only `At` is an instant on its own; a floating 10:00 must not be shown as 10:00 UTC.

@@ -244,7 +244,11 @@ const GO_SURFACES: &[Context] = &[
     Context::Reader,
     Context::Search,
     Context::Sidebar,
+    Context::Calendar,
+    Context::CalendarWindow,
 ];
+
+const CALENDAR: &[Context] = &[Context::Calendar, Context::CalendarWindow];
 
 const CONTACTS: &[Context] = &[Context::Contacts];
 
@@ -272,7 +276,9 @@ static SPECS: &[CommandSpec] = &[
             .with(Context::Digest)
             .with(Context::Results)
             .with(Context::Contacts)
-            .with(Context::Outline),
+            .with(Context::Outline)
+            .with(Context::Calendar)
+            .with(Context::CalendarWindow),
         ..BASE
     },
     CommandSpec {
@@ -285,7 +291,9 @@ static SPECS: &[CommandSpec] = &[
             .with(Context::Digest)
             .with(Context::Results)
             .with(Context::Contacts)
-            .with(Context::Outline),
+            .with(Context::Outline)
+            .with(Context::Calendar)
+            .with(Context::CalendarWindow),
         ..BASE
     },
     CommandSpec {
@@ -294,14 +302,20 @@ static SPECS: &[CommandSpec] = &[
         // A binding string spells a sequence with a space between chords; `gg` would read as a key
         // named "gg".
         default_binding: "g g",
-        contexts: ctx(LIST_SURFACES).with(Context::Results),
+        contexts: ctx(LIST_SURFACES)
+            .with(Context::Results)
+            .with(Context::Calendar)
+            .with(Context::CalendarWindow),
         ..BASE
     },
     CommandSpec {
         id: CommandId::LastMessage,
         title: "Last message",
         default_binding: "G",
-        contexts: ctx(LIST_SURFACES).with(Context::Results),
+        contexts: ctx(LIST_SURFACES)
+            .with(Context::Results)
+            .with(Context::Calendar)
+            .with(Context::CalendarWindow),
         ..BASE
     },
     CommandSpec {
@@ -315,7 +329,9 @@ static SPECS: &[CommandSpec] = &[
             .with(Context::Filtered)
             .with(Context::Digest)
             .with(Context::Results)
-            .with(Context::Outline),
+            .with(Context::Outline)
+            .with(Context::Calendar)
+            .with(Context::CalendarWindow),
         ..BASE
     },
     CommandSpec {
@@ -563,7 +579,9 @@ static SPECS: &[CommandSpec] = &[
         // there.
         contexts: ctx(MESSAGE_SURFACES)
             .with(Context::Results)
-            .with(Context::Filtered),
+            .with(Context::Filtered)
+            .with(Context::Calendar)
+            .with(Context::CalendarWindow),
         destructive: true,
         recovery: Recovery::Undo,
         ..BASE
@@ -639,7 +657,9 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::AcceptInvite,
         title: "Accept invitation",
         default_binding: "y",
-        contexts: ctx(MESSAGE_SURFACES),
+        contexts: ctx(MESSAGE_SURFACES)
+            .with(Context::Calendar)
+            .with(Context::CalendarWindow),
         // Undone inside a short window, like a send, not from the undo stack (research R9).
         recovery: Recovery::Window,
         requires: FOCUS_MAIL,
@@ -649,7 +669,9 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::DeclineInvite,
         title: "Decline invitation",
         default_binding: "Y",
-        contexts: ctx(MESSAGE_SURFACES),
+        contexts: ctx(MESSAGE_SURFACES)
+            .with(Context::Calendar)
+            .with(Context::CalendarWindow),
         recovery: Recovery::Window,
         requires: FOCUS_MAIL,
         ..BASE
@@ -1309,7 +1331,9 @@ static SPECS: &[CommandSpec] = &[
             .with(Context::Filtered)
             .with(Context::Contacts)
             .with(Context::ContactPopover)
-            .with(Context::Results),
+            .with(Context::Results)
+            .with(Context::Calendar)
+            .with(Context::CalendarWindow),
         ..BASE
     },
     CommandSpec {
@@ -1360,7 +1384,6 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::Quit,
         title: "Quit Postio",
         default_binding: "mod+q",
-        alternate_bindings: &["mod+w"],
         contexts: ContextSet::ANY,
         requires: CHROME,
         ..BASE
@@ -2276,6 +2299,146 @@ static SPECS: &[CommandSpec] = &[
         requires: FOCUS_GRAPHICAL_MAIL,
         ..BASE
     },
+    CommandSpec {
+        id: CommandId::GoToCalendar,
+        title: "Calendar",
+        default_binding: "g e",
+        contexts: ctx(GO_SURFACES),
+        requires: FOCUS_MAIL,
+        ..BASE
+    },
+    CommandSpec {
+        id: CommandId::CalendarAgenda,
+        title: "Agenda",
+        default_binding: "1",
+        contexts: ctx(CALENDAR),
+        requires: FOCUS_MAIL,
+        ..BASE
+    },
+    CommandSpec {
+        id: CommandId::CalendarPrevious,
+        title: "Earlier",
+        default_binding: "[",
+        contexts: ctx(CALENDAR),
+        requires: FOCUS_MAIL,
+        ..BASE
+    },
+    CommandSpec {
+        id: CommandId::CalendarNext,
+        title: "Later",
+        default_binding: "]",
+        contexts: ctx(CALENDAR),
+        requires: FOCUS_MAIL,
+        ..BASE
+    },
+    CommandSpec {
+        id: CommandId::CalendarToday,
+        title: "Today",
+        default_binding: "t",
+        contexts: ctx(CALENDAR),
+        requires: FOCUS_MAIL,
+        ..BASE
+    },
+    CommandSpec {
+        id: CommandId::PopOut,
+        title: "Open in its own window",
+        default_binding: "mod+shift+o",
+        contexts: Context::Calendar.as_set(),
+        requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
+    },
+    CommandSpec {
+        id: CommandId::PopIn,
+        title: "Back into the main window",
+        default_binding: "mod+shift+o",
+        contexts: Context::CalendarWindow.as_set(),
+        requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
+    },
+    CommandSpec {
+        id: CommandId::CloseWindow,
+        title: "Close window",
+        default_binding: "mod+w",
+        contexts: ContextSet::ANY,
+        requires: needs(&[Requirement::Graphical]),
+        ..BASE
+    },
+    CommandSpec {
+        id: CommandId::NewEvent,
+        title: "New event",
+        default_binding: "c",
+        contexts: ctx(CALENDAR),
+        recovery: Recovery::Undo,
+        requires: FOCUS_MAIL,
+        ..BASE
+    },
+    CommandSpec {
+        id: CommandId::EditEvent,
+        title: "Edit event",
+        default_binding: "mod+e",
+        contexts: ctx(CALENDAR),
+        recovery: Recovery::Undo,
+        requires: FOCUS_MAIL,
+        ..BASE
+    },
+    CommandSpec {
+        id: CommandId::MoveEvent,
+        title: "Move to…",
+        default_binding: "v",
+        contexts: ctx(CALENDAR),
+        recovery: Recovery::Undo,
+        requires: FOCUS_MAIL,
+        ..BASE
+    },
+    CommandSpec {
+        id: CommandId::DuplicateEvent,
+        title: "Duplicate",
+        // Not `mod+d`, which discards a draft in the composer.
+        default_binding: "mod+shift+d",
+        alternate_bindings: &["alt+D"],
+        contexts: ctx(CALENDAR),
+        recovery: Recovery::Undo,
+        requires: FOCUS_MAIL,
+        ..BASE
+    },
+    CommandSpec {
+        id: CommandId::TentativeInvite,
+        title: "Accept tentatively",
+        default_binding: "alt+y",
+        contexts: ctx(MESSAGE_SURFACES)
+            .with(Context::Calendar)
+            .with(Context::CalendarWindow),
+        recovery: Recovery::Window,
+        requires: FOCUS_MAIL,
+        ..BASE
+    },
+    CommandSpec {
+        id: CommandId::SaveEvent,
+        title: "Save",
+        default_binding: "mod+s",
+        contexts: ctx(CALENDAR),
+        recovery: Recovery::Undo,
+        requires: FOCUS_MAIL,
+        ..BASE
+    },
+    CommandSpec {
+        id: CommandId::SaveAndSendEvent,
+        title: "Save and send",
+        default_binding: "mod+Return",
+        alternate_bindings: &["alt+Return"],
+        contexts: ctx(CALENDAR),
+        recovery: Recovery::Window,
+        requires: FOCUS_MAIL,
+        ..BASE
+    },
+    CommandSpec {
+        id: CommandId::EmailAttendees,
+        title: "Email attendees",
+        default_binding: "alt+e",
+        contexts: ctx(CALENDAR),
+        requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
+    },
 ];
 
 pub fn all() -> impl Iterator<Item = &'static CommandSpec> {
@@ -2284,6 +2447,18 @@ pub fn all() -> impl Iterator<Item = &'static CommandSpec> {
 
 pub fn for_context(context: Context) -> impl Iterator<Item = &'static CommandSpec> {
     SPECS.iter().filter(move |spec| spec.available_in(context))
+}
+
+pub fn title_in(id: CommandId, context: Context) -> &'static str {
+    let calendar = matches!(context, Context::Calendar | Context::CalendarWindow);
+    match id {
+        CommandId::OpenMessage if calendar => "Open event",
+        CommandId::Delete if calendar => "Delete event",
+        CommandId::AcceptInvite if calendar => "Accept",
+        CommandId::DeclineInvite if calendar => "Decline",
+        CommandId::Search if calendar => "Search events",
+        _ => get(id).title,
+    }
 }
 
 /// The spec for one command. Total: every [`CommandId`] has exactly one row.
@@ -2413,43 +2588,57 @@ pub fn offered_on(action: ActionId, platform: Platform) -> bool {
             // the contrast floor (#1705).
             | (ActionId::Builtin(C::DarkenMessage), Platform::Apple)
             | (ActionId::Builtin(C::ContactsSync), Platform::Freedesktop)
+            // AppKit's own Close takes ⌘W, and the Mac has no Calendar until its PostioKit side.
+            | (
+                ActionId::Builtin(
+                    C::CloseWindow
+                        | C::GoToCalendar
+                        | C::CalendarAgenda
+                        | C::CalendarPrevious
+                        | C::CalendarNext
+                        | C::CalendarToday
+                        | C::PopOut
+                        | C::PopIn
+                        | C::NewEvent
+                        | C::EditEvent
+                        | C::MoveEvent
+                        | C::DuplicateEvent
+                        | C::TentativeInvite
+                        | C::SaveEvent
+                        | C::SaveAndSendEvent
+                        | C::EmailAttendees
+                ),
+                Platform::Apple
+            )
     )
 }
 
-/// `quit`'s `mod+w` is the desktop's: on the Mac the key monitor sees ⌘W before any menu, so
-/// resolving
-/// it to `quit` ended the app. `alt+BackSpace` is the Mac's `forget_recent` alone: the terminal
-/// reads it
-/// as back to words, so Linux uses `alt+Delete` (#1825).
+/// `alt+BackSpace` is the Mac's `forget_recent` alone: the terminal reads it as back to words, so
+/// Linux uses `alt+Delete` (#1825).
 pub fn binding_offered_on(action: ActionId, binding: &str, platform: Platform) -> bool {
     !matches!(
         (action, binding, platform),
-        (ActionId::Builtin(CommandId::Quit), "mod+w", Platform::Apple)
-            | (
-                ActionId::Builtin(CommandId::BackToWords),
-                "alt+BackSpace",
-                Platform::Apple
-            )
-            | (
-                ActionId::Builtin(CommandId::ForgetRecent),
-                "alt+BackSpace",
-                Platform::Freedesktop
-            )
-            | (
-                ActionId::Builtin(CommandId::ForgetRecent),
-                "alt+Delete",
-                Platform::Apple
-            )
-            | (
-                ActionId::Builtin(CommandId::DeleteThisMessage),
-                "alt+BackSpace",
-                Platform::Freedesktop
-            )
-            | (
-                ActionId::Builtin(CommandId::DeleteThisMessage),
-                "alt+Delete",
-                Platform::Apple
-            )
+        (
+            ActionId::Builtin(CommandId::BackToWords),
+            "alt+BackSpace",
+            Platform::Apple
+        ) | (
+            ActionId::Builtin(CommandId::ForgetRecent),
+            "alt+BackSpace",
+            Platform::Freedesktop
+        ) | (
+            ActionId::Builtin(CommandId::ForgetRecent),
+            "alt+Delete",
+            Platform::Apple
+        ) | (
+            ActionId::Builtin(CommandId::DeleteThisMessage),
+            "alt+BackSpace",
+            Platform::Freedesktop
+        ) | (
+            ActionId::Builtin(CommandId::DeleteThisMessage),
+            "alt+Delete",
+            Platform::Apple
+        )
     )
 }
 
@@ -2473,10 +2662,26 @@ mod tests {
     use crate::Scope;
     use postio_config::paths::Platform;
 
-    const NOT_ON_THE_MAC: [CommandId; 3] = [
+    const NOT_ON_THE_MAC: [CommandId; 19] = [
         CommandId::DarkenMessage,
         CommandId::DetachComposer,
         CommandId::NextScope,
+        CommandId::GoToCalendar,
+        CommandId::CalendarAgenda,
+        CommandId::CalendarPrevious,
+        CommandId::CalendarNext,
+        CommandId::CalendarToday,
+        CommandId::PopOut,
+        CommandId::PopIn,
+        CommandId::CloseWindow,
+        CommandId::NewEvent,
+        CommandId::EditEvent,
+        CommandId::MoveEvent,
+        CommandId::DuplicateEvent,
+        CommandId::TentativeInvite,
+        CommandId::SaveEvent,
+        CommandId::SaveAndSendEvent,
+        CommandId::EmailAttendees,
     ];
 
     const NOT_ON_LINUX: [CommandId; 1] = [CommandId::ContactsSync];

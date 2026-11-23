@@ -344,6 +344,13 @@ fn second_line<'a>(
     if let Some(date) = &line.date {
         push(&mut spans, format!("  {date}"), accent);
     }
+    if let Some(note) = &line.note {
+        push(
+            &mut spans,
+            format!("  {}", SafeText::new(note).as_str()),
+            theme.style(Role::Text),
+        );
+    }
     if let Some(quote) = &line.quote {
         let quote = SafeText::new(quote);
         push(
@@ -395,6 +402,8 @@ mod tests {
             excerpt: None,
             answer: None,
             cancelled: false,
+            clash: None,
+            moved_from: None,
             notice: false,
         }
     }
@@ -572,6 +581,8 @@ mod tests {
             excerpt: Some("A payment of $142.18 is due.".into()),
             answer: None,
             cancelled: false,
+            clash: None,
+            moved_from: None,
             notice: true,
         });
         show_focus(&mut app, vec![FocusRow::conversation(bill)]);
@@ -600,6 +611,8 @@ mod tests {
             excerpt: Some("Can you approve?".into()),
             answer: None,
             cancelled: false,
+            clash: None,
+            moved_from: None,
             notice: false,
         });
         show_focus(&mut app, vec![FocusRow::conversation(ada)]);
@@ -640,6 +653,28 @@ mod tests {
             assert!(line.trim_end().ends_with(word), "{word}:\n{drawn}");
             assert!(!drawn.contains("Accept y"), "{drawn}");
         }
+    }
+
+    #[test]
+    fn an_invitation_that_clashes_says_with_what_beside_its_time() {
+        let mut app = app((120, 36));
+        seed_places(&mut app, places());
+        let mut marker = invite();
+        marker.clash = Some("Standup".to_owned());
+        show_focus(
+            &mut app,
+            vec![FocusRow::conversation(marked(
+                unread(conversation(1, "Grace", "Review", "", local(23, 11, 2))),
+                marker,
+            ))],
+        );
+        let drawn = screen(120, 36, &app);
+        let line = drawn.lines().nth(4).unwrap();
+        assert!(line.contains("Clashes with Standup"), "{drawn}");
+        assert!(
+            line.contains("Accept y"),
+            "the answers are still offered:\n{drawn}"
+        );
     }
 
     #[test]
@@ -690,6 +725,8 @@ mod tests {
             excerpt: Some("Can you\u{1b}[2J?".into()),
             answer: None,
             cancelled: false,
+            clash: None,
+            moved_from: None,
             notice: false,
         });
         show_focus(&mut app, vec![FocusRow::conversation(summary)]);

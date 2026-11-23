@@ -13,6 +13,7 @@ use postio_model::{AccountId, ListScope, MailboxId, MailboxRole, MessageId, Thre
 use postio_ui::focus_list::FocusRow;
 
 mod bar;
+mod calendar;
 mod capture;
 mod compose;
 mod confirm;
@@ -33,6 +34,7 @@ mod perform;
 mod pickers;
 mod results;
 mod states;
+mod surface_host;
 mod surfaces;
 mod thread_expand;
 mod thread_menu;
@@ -40,6 +42,7 @@ mod verbs;
 mod walk;
 
 pub use bar::{BarLine, BarLineKind, BarMode, BarView, PlacesRead};
+pub use calendar::{AGENDA_PAGE, CalendarView, Placement};
 pub use capture::{CaptureProject, CaptureView};
 pub use compose::{AUTOSAVE, ComposerKind};
 pub use confirm::Confirm;
@@ -72,6 +75,7 @@ pub use results::{
     ResultsView, SaveView, TermEdit, file_copies,
 };
 pub use states::{AccountsRead, BannerButton, BannerView};
+pub use surface_host::Window;
 pub use surfaces::{Host, ReaderVerb, Route, SurfaceKind};
 pub use thread_menu::OutlineInput;
 pub use verbs::{Aimed, Everything, ToastKind};
@@ -234,6 +238,9 @@ pub enum Input {
     ContactsTab(postio_model::ContactTab),
     ContactsFilterTyped(String),
     ContactsPoint(u32),
+    CalendarPoint(usize),
+    WindowFocused(Window),
+    CalendarFilterTyped(String),
     ContactSplit(String),
     ContactMergeKeep(u32),
     ContactEditChange(contact_edit::EditChange),
@@ -458,6 +465,10 @@ pub enum Intent {
     OutlineFocusFilter,
     WriteTo(String),
     Contacts(Box<contacts::ContactsView>),
+    Calendar(Box<calendar::CalendarView>),
+    CalendarWindow(bool),
+    PresentWindow(Window),
+    CalendarFocusFilter,
     ContactsRows {
         first: u32,
         count: u32,
@@ -664,6 +675,21 @@ pub enum Request {
         stamp: u64,
     },
     ContactsOverview,
+    AgendaPage {
+        anchor: postio_model::calendar::AgendaAnchor,
+        limit: u32,
+        stamp: u64,
+        placement: Placement,
+    },
+    EventDetail {
+        cursor: postio_model::calendar::AgendaCursor,
+        stamp: u64,
+    },
+    EventSearch {
+        text: String,
+        limit: u32,
+        stamp: u64,
+    },
     ContactsPage {
         tab: postio_model::ContactTab,
         after: Option<(String, postio_model::ContactId)>,
@@ -873,6 +899,19 @@ pub enum Reply {
         answer: Result<(), String>,
     },
     ContactsOverview(Result<postio_model::ContactsOverview, String>),
+    AgendaPage {
+        stamp: u64,
+        placement: Placement,
+        answer: Result<Vec<postio_model::calendar::AgendaEntry>, String>,
+    },
+    EventDetail {
+        stamp: u64,
+        answer: Result<Option<Box<postio_model::calendar::EventDetail>>, String>,
+    },
+    EventSearch {
+        stamp: u64,
+        answer: Result<(Vec<postio_model::calendar::AgendaEntry>, Vec<String>), String>,
+    },
     ContactsPage {
         stamp: u64,
         page: u32,
@@ -940,6 +979,8 @@ pub struct FocusController {
     capture: Option<capture::Capture>,
     contact_popover: Option<contact_popover::ContactPopover>,
     contacts: Option<contacts::Contacts>,
+    calendar: Option<calendar::Calendar>,
+    focused: Window,
     contacts_settings: Option<contacts_settings::Settings>,
     import_found: Vec<postio_model::ContactId>,
     import_cursor: Option<postio_model::ContactId>,
@@ -985,6 +1026,8 @@ impl FocusController {
             capture: None,
             contact_popover: None,
             contacts: None,
+            calendar: None,
+            focused: Window::Main,
             contacts_settings: None,
             import_found: Vec::new(),
             import_cursor: None,
@@ -1084,6 +1127,24 @@ impl FocusController {
         }
         match input {
             Input::Command(CommandId::Quit) => vec![Effect::Show(Intent::Quit)],
+            Input::Command(CommandId::CloseWindow) => {
+                let steps = self.close_window(rows);
+                self.effects(steps)
+            }
+            Input::Command(id) if self.focused == Window::Calendar && self.calendar_popped() => {
+                let steps = self.calendar_window_command(id, rows);
+                self.effects(steps)
+            }
+            Input::Command(CommandId::GoToCalendar) if self.calendar_popped() => {
+                self.focused = Window::Calendar;
+                vec![Effect::Show(Intent::PresentWindow(Window::Calendar))]
+            }
+            Input::Command(CommandId::PopOut)
+                if self.surfaces.top() == Some(SurfaceKind::Calendar) =>
+            {
+                let steps = self.pop_out();
+                self.effects(steps)
+            }
             Input::Command(id @ (CommandId::HistoryBack | CommandId::HistoryForward))
                 if self.surfaces.top().is_none() =>
             {
@@ -1200,6 +1261,9 @@ impl FocusController {
                 | Reply::Captured { .. }
                 | Reply::ContactGlance { .. }
                 | Reply::ContactsOverview(_)
+                | Reply::AgendaPage { .. }
+                | Reply::EventDetail { .. }
+                | Reply::EventSearch { .. }
                 | Reply::ContactsPage { .. }
                 | Reply::ContactsFiltered { .. }
                 | Reply::ContactCard { .. }
@@ -1439,6 +1503,18 @@ impl FocusController {
                 let steps = self.contacts_filter_typed(text);
                 self.effects(steps)
             }
+            Input::CalendarFilterTyped(text) => {
+                let steps = self.calendar_filter_typed(text);
+                self.effects(steps)
+            }
+            Input::WindowFocused(window) => {
+                self.focused = window;
+                Vec::new()
+            }
+            Input::CalendarPoint(row) => {
+                let steps = self.calendar_point(row);
+                self.effects(steps)
+            }
             Input::ContactsPoint(index) => {
                 let steps = self.contacts_point(index);
                 self.effects(steps)
@@ -1600,7 +1676,14 @@ impl FocusController {
         self.surfaces.route(id)
     }
 
+    pub fn focused_window(&self) -> Window {
+        self.focused
+    }
+
     pub fn key_context(&self) -> postio_ui::keymap::KeyContext {
+        if self.focused == Window::Calendar && self.calendar_popped() {
+            return postio_ui::keymap::KeyContext::CalendarWindow;
+        }
         if self.surfaces.top().is_none() && self.results.is_some() {
             return postio_ui::keymap::KeyContext::Results;
         }
@@ -1674,6 +1757,7 @@ impl FocusController {
                 return self.thread_list_command(id, rows);
             }
             CommandId::ContactPopover => return self.open_contact_popover(None, rows),
+            CommandId::GoToCalendar => return self.open_calendar(),
             CommandId::OpenContacts => {
                 let mut steps = self.open_contacts();
                 steps.extend(self.contacts_go_to_import());
@@ -1798,6 +1882,9 @@ impl FocusController {
             Some(SurfaceKind::Contacts) if self.contacts.is_some() => {
                 return self.contacts_command(id, rows);
             }
+            Some(SurfaceKind::Calendar) if self.calendar.is_some() => {
+                return self.calendar_command(id, rows);
+            }
             Some(SurfaceKind::ThreadMenu | SurfaceKind::Outline) => {
                 return self.thread_surface_command(id, rows);
             }
@@ -1904,6 +1991,9 @@ impl FocusController {
     }
 
     pub fn answers(&self, id: CommandId) -> bool {
+        if self.focused == Window::Calendar && self.calendar_popped() {
+            return true;
+        }
         if self.surfaces.top() == Some(SurfaceKind::Bar) && bar::bar_key(id) {
             return true;
         }
@@ -1936,6 +2026,7 @@ impl FocusController {
             Some(SurfaceKind::Capture) => Self::capture_answers(id),
             Some(SurfaceKind::ContactPopover) => Self::contact_popover_answers(id),
             Some(SurfaceKind::Contacts) => Self::contacts_answers(id),
+            Some(SurfaceKind::Calendar) => Self::calendar_answers(id),
             Some(SurfaceKind::ThreadMenu | SurfaceKind::Outline) => {
                 Self::thread_surface_answers(id)
             }
@@ -1960,6 +2051,7 @@ impl FocusController {
                 | CommandId::ToggleHasAction
                 | CommandId::Back
                 | CommandId::AcceptInvite
+                | CommandId::TentativeInvite
                 | CommandId::DeclineInvite
                 | CommandId::DismissMarker
                 | CommandId::OpenMessage
@@ -1977,6 +2069,7 @@ impl FocusController {
                 | CommandId::MoveThisMessage
                 | CommandId::DeleteThisMessage
                 | CommandId::OpenContacts
+                | CommandId::GoToCalendar
                 | CommandId::ContactsSuggestions
         ) || bar::goes(id)
             || compose::compose_key(id)
@@ -2152,6 +2245,9 @@ impl FocusController {
         if !self.surfaces.has(SurfaceKind::Contacts) {
             self.contacts = None;
         }
+        if !self.surfaces.has(SurfaceKind::Calendar) && !self.calendar_popped() {
+            self.calendar = None;
+        }
         self.forget_thread_surfaces();
     }
 
@@ -2175,6 +2271,9 @@ impl FocusController {
             | Reply::ContactPosition { .. }
             | Reply::ContactMergeOf(_)
             | Reply::ContactSeen(_)) => self.contacts_reply(reply),
+            reply @ (Reply::AgendaPage { .. }
+            | Reply::EventDetail { .. }
+            | Reply::EventSearch { .. }) => self.calendar_reply(reply),
             Reply::ContactSuggestions(answer) => self.contacts_suggestions_read(answer),
             Reply::FoundMessage { message, row } => self.link_found(message, row, rows),
             Reply::ThreadOf { message, thread } => self.walk_followed(message, thread),

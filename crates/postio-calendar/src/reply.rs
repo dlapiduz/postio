@@ -51,6 +51,7 @@ pub(crate) fn reply_at(
     let partstat = match answer {
         Answer::Accept => ICalendarParticipationStatus::Accepted,
         Answer::Decline => ICalendarParticipationStatus::Declined,
+        Answer::Tentative => ICalendarParticipationStatus::Tentative,
     };
     event.entries.push(person(
         ICalendarProperty::Attendee,
@@ -172,6 +173,18 @@ mod tests {
         assert_eq!(
             line(&text, "ATTENDEE"),
             vec![r#"ATTENDEE;PARTSTAT=DECLINED;CN="Ada Norwood":mailto:ada.norwood@example.com"#],
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_tentative_answer_writes_a_reply_with_the_attendee_tentative() {
+        let invite = invitation("invite-windows-zone");
+        let text = unfolded(&reply_at(&invite, &ada(), Answer::Tentative, noon()));
+
+        assert_eq!(
+            line(&text, "ATTENDEE"),
+            vec![r#"ATTENDEE;PARTSTAT=TENTATIVE;CN="Ada Norwood":mailto:ada.norwood@example.com"#],
             "{text}"
         );
     }

@@ -93,6 +93,8 @@ impl FocusRow {
                 excerpt: None,
                 answer: None,
                 cancelled: false,
+                clash: None,
+                moved_from: None,
                 notice: false,
             }),
             copies: Vec::new(),
@@ -300,6 +302,8 @@ mod tests {
             excerpt: Some("Can you?".into()),
             answer: None,
             cancelled: false,
+            clash: None,
+            moved_from: None,
             notice: false,
         });
         assert!(FocusRow::conversation(marked).two_lines());

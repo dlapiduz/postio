@@ -1171,6 +1171,8 @@ mod tests {
             excerpt: Some(QUOTE.into()),
             answer: None,
             cancelled: false,
+            clash: None,
+            moved_from: None,
             notice: false,
         });
         let mut rows = vec![FocusRow::Conversation(Conversation {

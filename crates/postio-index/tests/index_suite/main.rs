@@ -12,6 +12,7 @@ mod content_membership;
 mod conversations;
 mod digest_matcher;
 mod driven_join_plan;
+mod event_search;
 mod exact_copies;
 mod executor;
 mod facets_one_pass;

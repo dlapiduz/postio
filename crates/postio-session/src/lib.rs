@@ -11,6 +11,7 @@ pub mod attaching;
 mod attachment_text;
 pub mod auto_empty;
 pub mod blocking;
+pub mod calendar;
 pub mod checkup;
 pub mod diag;
 pub mod egress;

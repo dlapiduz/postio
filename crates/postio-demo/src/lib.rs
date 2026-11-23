@@ -629,6 +629,73 @@ pub async fn compose_demo(database: &Store, account: AccountId) {
         .expect("its body");
 }
 
+const EVENTS: [(&str, i64, i64, i64, &str); 6] = [
+    ("Standup", 0, 9 * 60 + 30, 15, "Room 2"),
+    ("Design review", 0, 14 * 60, 60, "Room 4.12"),
+    ("Dentist", 0, 17 * 60, 30, "Harbour Street clinic"),
+    ("Standup", 1, 9 * 60 + 30, 15, "Room 2"),
+    ("Lunch with Ines", 1, 12 * 60 + 30, 60, "Corner café"),
+    ("Quarterly planning", 2, 10 * 60, 120, "Room 4.12"),
+];
+
+async fn calendar_demo(connection: &postio_storage::Connection, today: DateTime<Utc>) {
+    use postio_storage::repository::{CalendarRepository, StoredEvent, StoredOccurrence};
+    let calendars = CalendarRepository::new(connection);
+    let local = calendars.local().await.expect("On this computer").id;
+    let midnight = today.with_timezone(&Local).date_naive();
+    for (n, (title, day, minute, length, place)) in EVENTS.into_iter().enumerate() {
+        let start = Local
+            .from_local_datetime(
+                &(midnight + chrono::Duration::days(day)).and_time(chrono::NaiveTime::MIN),
+            )
+            .earliest()
+            .map(|at| at.to_utc())
+            .unwrap_or(today)
+            + chrono::Duration::minutes(minute);
+        let end = start + chrono::Duration::minutes(length);
+        let stamp = |at: DateTime<Utc>| at.format("%Y%m%dT%H%M%SZ").to_string();
+        let uid = format!("demo-event-{n}@example.test");
+        let object = format!(
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Postio demo//EN\r\nBEGIN:VEVENT\r\n\
+             UID:{uid}\r\nDTSTAMP:{}\r\nDTSTART:{}\r\nDTEND:{}\r\nSUMMARY:{title}\r\n\
+             LOCATION:{place}\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
+            stamp(start),
+            stamp(start),
+            stamp(end)
+        );
+        let event = calendars
+            .put_event(&StoredEvent {
+                calendar: local,
+                uid,
+                href: None,
+                etag: None,
+                object: object.into_bytes(),
+                title: title.to_owned(),
+                location: place.to_owned(),
+                starts_at: start,
+                recurs: false,
+                status: postio_model::calendar::EventStatus::Confirmed,
+                my_partstat: None,
+                source_message: None,
+            })
+            .await
+            .expect("a demo event");
+        calendars
+            .set_occurrences(
+                event,
+                &[StoredOccurrence {
+                    start,
+                    end,
+                    all_day: false,
+                    floating: false,
+                    recurrence_id: None,
+                }],
+            )
+            .await
+            .expect("its occurrence");
+    }
+}
+
 pub fn today() -> DateTime<Utc> {
     postio_model::clock::now()
         .date_naive()
@@ -927,6 +994,7 @@ pub async fn demo() -> (Store, AccountId) {
     let today = today();
     let connection = database.connect().await.expect("a connection");
     synced(&connection, inbox, today).await;
+    calendar_demo(&connection, today).await;
     let mut labels: HashMap<&str, postio_model::LabelId> = HashMap::new();
     for (index, row) in TODAY.iter().enumerate() {
         let at = today - chrono::Duration::minutes(row.minutes);

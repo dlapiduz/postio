@@ -115,8 +115,8 @@ pub struct Draft {
     /// Applied to its conversation when sent; a reply starts with its conversation's own.
     #[serde(default)]
     pub labels: Vec<LabelId>,
-    /// A `METHOD:REPLY` object as `postio-calendar` writes it, which `outgoing::build` places as
-    /// the `text/calendar` alternative. `None` for everything a person writes.
+    /// An iTIP object as `postio-calendar` writes it, a reply or an invitation, which
+    /// `outgoing::build` places as the `text/calendar` alternative.
     #[serde(default)]
     pub calendar_reply: Option<String>,
     /// When set, sending sets a reminder on the conversation, due then; if nobody else has written

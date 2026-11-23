@@ -232,6 +232,8 @@ mod tests {
             excerpt: Some("Please send the Atlas figures by Friday".into()),
             answer: None,
             cancelled: false,
+            clash: None,
+            moved_from: None,
             notice: false,
         };
         show_focus(
@@ -501,6 +503,8 @@ mod tests {
             excerpt: Some("Pay \u{1b}[2J\u{7}now".into()),
             answer: None,
             cancelled: false,
+            clash: None,
+            moved_from: None,
             notice: false,
         };
         show_focus(

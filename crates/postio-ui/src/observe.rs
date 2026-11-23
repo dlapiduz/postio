@@ -28,6 +28,7 @@ pub enum View {
     Locked,
     Digest,
     Filtered,
+    Calendar,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,6 +48,7 @@ pub enum Region {
     Dialog,
     Menu,
     Banner,
+    Calendar,
     None,
     Other,
 }

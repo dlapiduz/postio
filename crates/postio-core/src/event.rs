@@ -88,6 +88,7 @@ pub enum Event {
     /// Names no account: Focus's inbox is every account's at once, and a digest can hold mail from
     /// several.
     SurfacedChanged,
+    CalendarChanged,
 
     /// Subscribers refetch what is on screen; when `names_changed`, message rows and an open
     /// conversation too, since a name the user set is what those rows draw.

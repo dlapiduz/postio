@@ -1,6 +1,8 @@
 # A gap without a why predates this check; a new one needs `# why`.
 postio-ffi Input::Accounts
 postio-ffi Input::ArchiveDigest
+postio-ffi Input::CalendarFilterTyped # the Mac's Agenda is PostioKit work (specs/017 T016), built on a Mac
+postio-ffi Input::CalendarPoint # the Mac's Agenda is PostioKit work (specs/017 T016), built on a Mac
 postio-ffi Input::Clock
 postio-ffi Input::EditRule
 postio-ffi Input::Follow
@@ -8,8 +10,13 @@ postio-ffi Input::PlacesShown
 postio-ffi Input::Post
 postio-ffi Input::Shown
 postio-ffi Input::Verb
+postio-ffi Input::WindowFocused # the Mac's Calendar window is PostioKit work (specs/017 T024), built on a Mac
+postio-ffi Intent::Calendar # the Mac's Agenda is PostioKit work (specs/017 T016), built on a Mac
+postio-ffi Intent::CalendarFocusFilter # the Mac's Agenda is PostioKit work (specs/017 T016), built on a Mac
+postio-ffi Intent::CalendarWindow # the Mac's Calendar window is PostioKit work (specs/017 T024), built on a Mac
 postio-ffi Intent::Counts
 postio-ffi Intent::DraftReminder
+postio-ffi Intent::PresentWindow # the Mac's Calendar window is PostioKit work (specs/017 T024), built on a Mac
 postio-ffi Intent::Quit
 postio-gtk Input::CaptureDue
 postio-gtk Input::CaptureFilter
@@ -88,7 +95,9 @@ postio-tui Input::ThreadBarMoreClicked
 postio-tui Input::ThreadMenuPick
 postio-tui Input::Timer
 postio-tui Input::Verb
+postio-tui Input::WindowFocused # the terminal has one screen, so Calendar never pops out of it (spec 017 D12)
 postio-tui Intent::Banner
+postio-tui Intent::CalendarWindow # the terminal has one screen, so Calendar never pops out of it (spec 017 D12)
 postio-tui Intent::ContactEdit
 postio-tui Intent::ContactMerge
 postio-tui Intent::ContactPopover
@@ -105,6 +114,7 @@ postio-tui Intent::ListToTop
 postio-tui Intent::Outline
 postio-tui Intent::OutlineFocusFilter
 postio-tui Intent::Place
+postio-tui Intent::PresentWindow # the terminal has one screen, so Calendar never pops out of it (spec 017 D12)
 postio-tui Intent::Quit
 postio-tui Intent::Run
 postio-tui Intent::SingleHeading

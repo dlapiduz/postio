@@ -167,7 +167,7 @@ pub(crate) async fn resolve(
         .calendar_reply
         .as_deref()
         .map(|ics| outgoing::CalendarPart {
-            method: outgoing::CalendarMethod::Reply,
+            method: outgoing::CalendarMethod::of(ics.as_bytes()),
             ics: ics.as_bytes(),
         });
     let built = outgoing::build(

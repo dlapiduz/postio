@@ -9,6 +9,7 @@ use postio_ui::keymap::{KeyContext, Outcome};
 use postio_ui::list::ListWindow;
 
 mod bar;
+mod calendar;
 mod capture;
 mod compose;
 mod confirm;
@@ -469,6 +470,7 @@ pub enum Focus {
     Rules,
     RuleDialog,
     Capture,
+    Calendar,
 }
 
 impl std::fmt::Debug for App {
@@ -1552,6 +1554,7 @@ impl App {
             Focus::Rules => KeyContext::Filtered,
             Focus::RuleDialog => KeyContext::Picker,
             Focus::Capture => KeyContext::Capture,
+            Focus::Calendar => KeyContext::Calendar,
         }
     }
 
@@ -2023,18 +2026,16 @@ impl App {
                 );
                 return self.say(&sentence);
             }
-            "accept_invite" | "decline_invite" => {
+            "accept_invite" | "decline_invite" | "tentative_invite" => {
                 let message = self
                     .reading
                     .as_ref()
                     .map(|reading| reading.shown.id)
                     .or_else(|| self.cursor_message());
                 if let Some(message) = message {
-                    let command = if id == "accept_invite" {
-                        postio_core::CommandId::AcceptInvite
-                    } else {
-                        postio_core::CommandId::DeclineInvite
-                    };
+                    let command = id
+                        .parse::<postio_core::CommandId>()
+                        .unwrap_or(postio_core::CommandId::DeclineInvite);
                     return self.answer(message, command);
                 }
             }
@@ -2048,6 +2049,11 @@ impl App {
                     self.first_run = Some(crate::first_run::FirstRun::repair(account));
                     self.focus = Focus::FirstRun;
                 }
+            }
+            "go_to_calendar" => {
+                return self.tell(postio_focus::Input::Command(
+                    postio_core::CommandId::GoToCalendar,
+                ));
             }
             "go_to_filtered" => {
                 return self.tell(postio_focus::Input::Command(
@@ -2196,12 +2202,10 @@ impl App {
     ) -> Vec<Effect> {
         let message = Some(message);
         self.answering = true;
-        vec![Effect::Send(match id {
-            postio_core::CommandId::DeclineInvite => {
-                postio_core::Command::DeclineInvite { message }
-            }
-            _ => postio_core::Command::AcceptInvite { message },
-        })]
+        postio_core::command::answer_invite(id, message)
+            .map(Effect::Send)
+            .into_iter()
+            .collect()
     }
 
     /// A move with no folder and a label with no label are half a request: `None` means "ask".
@@ -2604,6 +2608,7 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
         Input::Key(key) if app.focus == Focus::Palette => app.palette_key(&key),
         Input::Key(key) if app.focus == Focus::Filtered => app.filtered_key(&key),
         Input::Key(key) if app.focus == Focus::Digest => app.digest_key(&key),
+        Input::Key(key) if app.focus == Focus::Calendar => app.calendar_key(&key),
         Input::Key(key) if app.focus == Focus::Rules => app.rules_key(&key),
         Input::Key(key) if app.focus == Focus::RuleDialog => app.rule_key(&key),
         Input::Key(key) if app.focus == Focus::Capture => app.capture_key(&key),

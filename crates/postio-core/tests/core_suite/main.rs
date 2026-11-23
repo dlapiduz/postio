@@ -2,6 +2,7 @@
 
 mod bridge;
 mod bridge_runtime_handle;
+mod calendar_keys;
 mod command_registry;
 mod config;
 mod dispatch;

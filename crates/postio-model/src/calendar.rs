@@ -1,0 +1,144 @@
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+
+use crate::ids::{AccountId, CalendarId, EventId};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Calendar {
+    pub id: CalendarId,
+    pub account: Option<AccountId>,
+    pub href: Option<String>,
+    pub name: String,
+    pub colour: Option<String>,
+    pub writable: bool,
+    pub shown: bool,
+    pub schedules: bool,
+    pub default_alarm_minutes: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewCalendar {
+    pub account: Option<AccountId>,
+    pub href: Option<String>,
+    pub name: String,
+    pub colour: Option<String>,
+    pub writable: bool,
+    pub schedules: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct AgendaCursor {
+    pub start: DateTime<Utc>,
+    pub event: EventId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AgendaAnchor {
+    From(DateTime<Utc>),
+    After(AgendaCursor),
+    Before(AgendaCursor),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum EventStatus {
+    Confirmed,
+    Tentative,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgendaEntry {
+    pub event: EventId,
+    pub calendar: CalendarId,
+    pub calendar_name: String,
+    pub colour: Option<String>,
+    pub title: String,
+    pub location: String,
+    pub start: DateTime<Utc>,
+    pub end: DateTime<Utc>,
+    pub all_day: bool,
+    pub floating: bool,
+    pub recurrence_id: Option<String>,
+    pub status: EventStatus,
+    pub my_partstat: Option<String>,
+    pub queued: bool,
+}
+
+impl AgendaEntry {
+    pub fn cursor(&self) -> AgendaCursor {
+        AgendaCursor {
+            start: self.start,
+            event: self.event,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Participation {
+    NeedsAction,
+    Accepted,
+    Declined,
+    Tentative,
+    Delegated,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Frequency {
+    Daily,
+    Weekly,
+    Monthly,
+    Yearly,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Repeat {
+    pub frequency: Frequency,
+    pub interval: u32,
+    pub weekdays: Vec<chrono::Weekday>,
+    pub until: Option<chrono::NaiveDate>,
+    pub count: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EventDetail {
+    pub entry: AgendaEntry,
+    pub notes: String,
+    pub organiser: Option<crate::EmailAddress>,
+    pub attendees: Vec<(crate::EmailAddress, Participation)>,
+    pub zone: Option<String>,
+    pub repeat: Option<Repeat>,
+    pub minutes_before: Vec<i64>,
+    pub writable: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct CalendarWindowState {
+    pub popped: bool,
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct EventTarget {
+    pub occurrence: AgendaCursor,
+    pub recurrence_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum EditScope {
+    This,
+    ThisAndFollowing,
+    All,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct EventFields {
+    pub title: String,
+    pub start: DateTime<Utc>,
+    pub end: DateTime<Utc>,
+    pub all_day: bool,
+    pub location: String,
+    pub notes: String,
+    pub attendees: Vec<crate::EmailAddress>,
+    pub minutes_before: Option<i64>,
+}

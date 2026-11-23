@@ -57,7 +57,6 @@ crates/postio-classify/src/digests.rs 1
 crates/postio-classify/src/facts.rs 1
 crates/postio-classify/src/guards.rs 1
 crates/postio-classify/src/lib.rs 1
-crates/postio-classify/src/pipeline.rs 2
 crates/postio-classify/src/rules.rs 1
 crates/postio-classify/tests/classify_suite/kind_corpus.rs 1
 crates/postio-classify/tests/classify_suite/main.rs 2
@@ -79,7 +78,7 @@ crates/postio-core/src/config.rs 1
 crates/postio-core/src/context.rs 1
 crates/postio-core/src/event.rs 1
 crates/postio-core/src/menu.rs 1
-crates/postio-core/src/registry.rs 5
+crates/postio-core/src/registry.rs 4
 crates/postio-core/src/state.rs 3
 crates/postio-core/src/undo.rs 1
 crates/postio-core/tests/core_suite/main.rs 1
@@ -126,7 +125,6 @@ crates/postio-gtk/examples/shot.rs 1
 crates/postio-gtk/examples/storyboard.rs 1
 crates/postio-gtk/src/bar.rs 2
 crates/postio-gtk/src/compose/seams.rs 1
-crates/postio-gtk/src/contacts/list.rs 1
 crates/postio-gtk/src/demo.rs 2
 crates/postio-gtk/src/demo/storyboard.rs 1
 crates/postio-gtk/src/digest.rs 1
@@ -352,7 +350,6 @@ crates/postio-storage/src/repository/filter_decisions.rs 1
 crates/postio-storage/src/repository/labels.rs 1
 crates/postio-storage/src/repository/mailbox_roles.rs 1
 crates/postio-storage/src/repository/mailboxes.rs 3
-crates/postio-storage/src/repository/markers.rs 1
 crates/postio-storage/src/repository/messages.rs 31
 crates/postio-storage/src/repository/mod.rs 2
 crates/postio-storage/src/repository/operations.rs 9

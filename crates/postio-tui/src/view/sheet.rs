@@ -230,16 +230,16 @@ mod tests {
         let before = screen(60, 17, &app);
         assert!(before.contains("Move and select"), "{before}");
         assert!(!before.contains("Digests and filtering"), "{before}");
-        for _ in 0..80 {
+        for _ in 0..120 {
             update(&mut app, key(KeyCode::Down, KeyModifiers::NONE));
         }
         let after = screen(60, 17, &app);
         assert!(!after.contains("Move and select"), "{after}");
         assert!(
-            after.contains("Digests and filtering") || after.contains("In search"),
-            "{after}"
+            after.contains("Obsidian"),
+            "the last group is reached:\n{after}"
         );
-        for _ in 0..80 {
+        for _ in 0..120 {
             update(&mut app, wheel(Target::Overlay, false));
         }
         assert!(screen(60, 17, &app).contains("Move and select"));

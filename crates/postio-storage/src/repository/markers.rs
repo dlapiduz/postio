@@ -1,9 +1,6 @@
-//! Focus's markers: what a conversation's row calls out (an invitation, a question, a to-do), at
-//! most one per message. A page reads them in one batched statement, so drawing a row reads no
-//! body.
-//! A dismissal is for good: [`MarkerRepository::insert`] leaves an existing marker alone and
-//! [`MarkerRepository::replace`] keeps the dismissal; only [`MarkerRepository::dismiss`] with
-//! `None` (undo) lifts it.
+//! Focus's markers: what a conversation's row calls out, at most one per message, read with a
+//! page in one batched statement. A dismissal is for good: insert and replace keep it, and only
+//! `dismiss` with `None` (undo) lifts it.
 
 use chrono::{DateTime, Utc};
 use postio_model::ids::MessageId;
@@ -12,7 +9,7 @@ use postio_model::listing::{InviteAnswer, MarkerKind};
 use super::{from_millis, to_millis, unknown_enum};
 
 use crate::error::{Error, Result};
-use crate::sql::{self, RowExt as _};
+use crate::sql::{self, RowExt as _, bind};
 use crate::store::Connection;
 use turso::Row;
 
@@ -80,6 +77,16 @@ impl<'a> MarkerRepository<'a> {
         )
         .await?;
         Ok(written > 0)
+    }
+
+    pub async fn set_moved(&self, message: MessageId, from: Option<DateTime<Utc>>) -> Result<bool> {
+        let set = sql::execute(
+            self.connection,
+            "UPDATE markers SET moved_from = ?2 WHERE message_id = ?1",
+            bind![message.get(), from.map(to_millis)],
+        )
+        .await?;
+        Ok(set > 0)
     }
 
     /// For an invitation update: a later `SEQUENCE` moves or cancels the event. Whether it is newer
@@ -154,13 +161,14 @@ impl<'a> MarkerRepository<'a> {
         "SELECT message_id FROM markers WHERE answer_until <= ?1 ORDER BY answer_until LIMIT 256"
     }
 
-    /// `accepting` becomes `accepted` and `declining` `declined`. Answers whether one was waiting.
+    /// A waiting answer becomes final. Answers whether one was waiting.
     pub async fn settle_answer(&self, message: MessageId) -> Result<bool> {
         let settled = sql::execute(
             self.connection,
             "UPDATE markers
                 SET answer = CASE answer WHEN 'accepting' THEN 'accepted'
                                          WHEN 'declining' THEN 'declined'
+                                         WHEN 'tentative_pending' THEN 'tentative'
                                          ELSE answer END,
                     answer_until = NULL
               WHERE message_id = ?1 AND answer_until IS NOT NULL",
@@ -355,6 +363,8 @@ fn answer_name(answer: InviteAnswer) -> &'static str {
         InviteAnswer::Accepted => "accepted",
         InviteAnswer::Declining => "declining",
         InviteAnswer::Declined => "declined",
+        InviteAnswer::TentativePending => "tentative_pending",
+        InviteAnswer::Tentative => "tentative",
     }
 }
 
@@ -364,6 +374,8 @@ pub(crate) fn answer_of(name: &str) -> Result<InviteAnswer> {
         "accepted" => InviteAnswer::Accepted,
         "declining" => InviteAnswer::Declining,
         "declined" => InviteAnswer::Declined,
+        "tentative_pending" => InviteAnswer::TentativePending,
+        "tentative" => InviteAnswer::Tentative,
         other => return Err(unknown_enum("markers.answer", other)),
     })
 }

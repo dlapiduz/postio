@@ -184,6 +184,7 @@ impl App {
                 | C::Back
                 | C::AcceptInvite
                 | C::DeclineInvite
+                | C::TentativeInvite
                 | C::DismissMarker
                 | C::Move
                 | C::AddLabel

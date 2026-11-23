@@ -9,6 +9,7 @@ publish.workspace = true
 repository.workspace = true
 
 [dependencies]
+serde_json = { workspace = true }
 # Queue rows are stamped with when the user performed the action, so the
 # drainer replays them in the order they happened.
 chrono = { workspace = true, features = ["std"] }

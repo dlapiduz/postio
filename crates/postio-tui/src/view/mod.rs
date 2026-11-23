@@ -3,6 +3,7 @@
 pub mod bar;
 pub mod bottom;
 pub mod boxed;
+pub mod calendar;
 pub mod capture;
 pub mod composer;
 pub mod confirm;
@@ -67,7 +68,9 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
         topbar::draw(frame, window.top, app, theme, &mut hits);
         let tab = app.composer_detached() && app.focus() == Focus::Composer;
         if !tab {
-            if app.filtered().is_some() {
+            if let Some(view) = app.calendar() {
+                calendar::strip(frame, window.strip, view, app.calendar_typing(), theme);
+            } else if app.filtered().is_some() {
                 filtered::strip(frame, window.strip, app, theme, &mut hits);
             } else if app.rules().is_some() {
                 rules::strip(frame, window.strip, app, theme, &mut hits);
@@ -86,6 +89,9 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
             state::banner(frame, row, &banner, app, theme, &mut hits);
         }
         match app.front() {
+            _ if let Some(view) = app.calendar() => {
+                calendar::body(frame, body, view, theme, &mut hits);
+            }
             _ if app.filtered().is_some() => {
                 filtered::body(frame, body, app, theme, &mut hits);
             }

@@ -57,5 +57,5 @@ impl FocusController {
 }
 
 pub(crate) fn key_map_takes(id: CommandId) -> bool {
-    id != CommandId::Quit
+    !matches!(id, CommandId::Quit | CommandId::CloseWindow)
 }

@@ -6,8 +6,8 @@
 use postio_core::{ActionId, Availability, Context, Keymap, registry};
 
 /// The cap is on what is built. Set well above `Context::List`'s reachable count, which has
-/// outgrown 32, 48 and 64: an empty query must list everything reachable.
-pub const MAX_ROWS: usize = 96;
+/// outgrown 32, 48, 64 and 96: an empty query must list everything reachable.
+pub const MAX_ROWS: usize = 128;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Match {

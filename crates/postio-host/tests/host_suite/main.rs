@@ -11,6 +11,7 @@
 
 mod auto_empty;
 mod backend_choice;
+mod calendar_agenda;
 mod e2e;
 mod measurement;
 mod oauth;

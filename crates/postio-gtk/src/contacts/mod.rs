@@ -5,7 +5,6 @@
 mod avatar;
 mod card;
 mod form;
-mod list;
 mod merge;
 pub mod popover;
 mod view;

@@ -4,6 +4,7 @@
 //! turning it on put SQLite in the view layer's graph.
 
 pub mod error;
+pub mod events;
 pub mod executor;
 pub mod index;
 

@@ -1,0 +1,52 @@
+# Calendar is a mode of the main window (spec 017 D1, US1). `g e` opens Agenda
+# on today with the cursor on the next event that has not ended; `j` walks
+# the occurrences, `Return` opens one, and two Escapes climb back to the inbox
+# row the walk started from, with nothing scrolled.
+#
+# Keys rather than commands, so it loads, and is red, before the commands exist.
+apps   = ["focus"]
+source = { kind = "spec", ref = "specs/017-calendar US1" }
+seed   = "small"
+
+[[step]]
+id      = "inbox"
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+key     = "j"
+check   = { cursor.index = 1 }
+
+[[step]]
+key     = "g"
+
+[[step]]
+id      = "open"
+key     = "e"
+check   = { view = "calendar", keyboard.region = "calendar", app.focus.calendar.view = "agenda" }
+expect  = "Agenda fills the main window: today's heading at the top, and the cursor ringing the next event that has not ended, not one already over."
+
+[[step]]
+id      = "walk"
+key     = "j"
+check   = { app.focus.calendar.cursor = { changed = true } }
+expect  = "The ring moves to the next occurrence. A day heading is passed over, never ringed."
+
+[[step]]
+key     = "j"
+check   = { app.focus.calendar.cursor = { changed = true } }
+
+[[step]]
+id      = "event"
+key     = "Return"
+check   = { keyboard.region = "dialog", app.focus.calendar.open = true }
+expect  = "The event opens in the one dialog: title, time in the reader's zone, where, who, notes, the calendar's name, and the verbs with their keycaps."
+
+[[step]]
+key     = "Escape"
+check   = { view = "calendar", app.focus.calendar.open = false }
+expect  = "The dialog closes on the same occurrence, still ringed."
+
+[[step]]
+key     = "Escape"
+check   = { view = "list", keyboard.region = "list", cursor.index = 1 }
+expect  = "The inbox is back on the row the walk started from, at the same scroll."

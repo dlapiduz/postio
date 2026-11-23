@@ -95,6 +95,9 @@ pub struct MarkerSummary {
     #[serde(default)]
     pub cancelled: bool,
     #[serde(default)]
+    pub clash: Option<String>,
+    #[serde(default)]
+    pub moved_from: Option<DateTime<Utc>>,
     pub notice: bool,
 }
 
@@ -122,6 +125,8 @@ pub enum InviteAnswer {
     Accepted,
     Declining,
     Declined,
+    TentativePending,
+    Tentative,
 }
 
 /// Read with `surfaced()` on `Event::SurfacedChanged` and spliced in at `position`.
@@ -359,6 +364,8 @@ mod tests {
             excerpt: None,
             answer: Some(InviteAnswer::Accepting),
             cancelled: false,
+            clash: None,
+            moved_from: None,
             notice: false,
         };
         let written = serde_json::to_string(&row(Some(marker.clone()))).expect("serialises");

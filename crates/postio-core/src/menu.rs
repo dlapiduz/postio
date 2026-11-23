@@ -76,7 +76,20 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         C::SavedSearch1 | C::SavedSearch2 | C::SavedSearch3 | C::SavedSearch4 => Some(M::Go),
         C::NextScope => Some(M::Go),
         // Its own commands act on a focused row, and a global menu cannot say which person.
-        C::OpenContacts => Some(M::Go),
+        C::OpenContacts | C::GoToCalendar => Some(M::Go),
+        C::CalendarAgenda
+        | C::CalendarPrevious
+        | C::CalendarNext
+        | C::CalendarToday
+        | C::NewEvent
+        | C::EditEvent
+        | C::MoveEvent
+        | C::DuplicateEvent
+        | C::TentativeInvite
+        | C::SaveEvent
+        | C::SaveAndSendEvent
+        | C::EmailAttendees => None,
+        C::PopOut | C::PopIn | C::CloseWindow => Some(M::App),
         C::NextInConversation | C::PrevInConversation => Some(M::Go),
         C::FirstInConversation | C::LatestInConversation | C::FirstUnreadInConversation => {
             Some(M::Go)

@@ -26,6 +26,7 @@ impl App {
             | Part::CaptureCancel => self.capture_click(part, index),
             Part::ThreadChip => self.chip_clicked(index),
             Part::ForwardCard => self.forward_card_clicked(index),
+            Part::CalendarRow => self.tell(Told::CalendarPoint(index)),
         }
     }
 
@@ -34,6 +35,10 @@ impl App {
         intent: Intent,
     ) -> Result<Vec<Effect>, Box<Intent>> {
         let intent = match self.show_filtered_intent(intent) {
+            Err(intent) => *intent,
+            done => return done,
+        };
+        let intent = match self.show_calendar_intent(intent) {
             Err(intent) => *intent,
             done => return done,
         };

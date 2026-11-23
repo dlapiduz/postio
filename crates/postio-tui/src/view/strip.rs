@@ -288,6 +288,8 @@ mod tests {
             excerpt: Some("Can you?".into()),
             answer: None,
             cancelled: false,
+            clash: None,
+            moved_from: None,
             notice: false,
         };
         let rows = (2..=3)
@@ -330,6 +332,8 @@ mod tests {
                 excerpt: None,
                 answer: None,
                 cancelled: false,
+                clash: None,
+                moved_from: None,
                 notice: false,
             },
         ));

@@ -10,6 +10,8 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use chrono::{DateTime, Utc};
+use postio_model::calendar::{EditScope, EventFields, EventTarget};
+use postio_model::ids::{CalendarId, EventChangeId, EventId};
 use postio_model::{
     AccountId, AddressId, ContactGroup, ContactGroupId, ContactId, ContactState, DraftId,
     EmailAddress, JoinReceipt, LabelId, MailboxId, MailboxRole, MessageId, OperationRange,
@@ -19,6 +21,15 @@ use postio_model::{
 /// About ten seconds, the toast's own life; here so every frontend's toast says the window the
 /// engine keeps.
 pub const RSVP_WINDOW: std::time::Duration = std::time::Duration::from_secs(10);
+
+pub fn answer_invite(id: CommandId, message: Option<MessageId>) -> Option<Command> {
+    match id {
+        CommandId::AcceptInvite => Some(Command::AcceptInvite { message }),
+        CommandId::DeclineInvite => Some(Command::DeclineInvite { message }),
+        CommandId::TentativeInvite => Some(Command::TentativeInvite { message }),
+        _ => None,
+    }
+}
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Declares every command once. Entries after the `;` are invocations of a verb another id already
@@ -509,6 +520,35 @@ commands! {
     ForwardWhat3 => "forward_what_3",
     ShowNewer => "show_newer",
     ExpandQuoted => "expand_quoted",
+    GoToCalendar => "go_to_calendar",
+    CalendarAgenda => "calendar_agenda",
+    CalendarPrevious => "calendar_previous",
+    CalendarNext => "calendar_next",
+    CalendarToday => "calendar_today",
+    PopOut => "pop_out",
+    PopIn => "pop_in",
+    CloseWindow => "close_window",
+    NewEvent => "new_event",
+    EditEvent => "edit_event",
+    MoveEvent => "move_event",
+    DuplicateEvent => "duplicate_event",
+    TentativeInvite {
+        message: Option<MessageId> = None,
+    } => "tentative_invite",
+    /// Never sends: inviting is `SaveAndSendEvent`, so a save cannot reach anyone by accident.
+    SaveEvent {
+        event: Option<EventTarget> = None,
+        calendar: Option<CalendarId> = None,
+        fields: Option<EventFields> = None,
+        scope: Option<EditScope> = None,
+    } => "save_event",
+    SaveAndSendEvent {
+        event: Option<EventTarget> = None,
+        calendar: Option<CalendarId> = None,
+        fields: Option<EventFields> = None,
+        scope: Option<EditScope> = None,
+    } => "save_and_send_event",
+    EmailAttendees => "email_attendees",
     ;
     /// The same verb as `ToggleRead` (same handler, one registry entry), differing only in not
     /// being recorded on the undo stack.
@@ -528,6 +568,21 @@ commands! {
     UnsweepInbox {
         target: MessageTarget,
     } => SweepInbox,
+    DeleteEvent {
+        event: EventTarget,
+        scope: Option<EditScope>,
+    } => Delete,
+    MoveEventTo {
+        event: EventTarget,
+        start: DateTime<Utc>,
+        scope: Option<EditScope>,
+    } => MoveEvent,
+    DuplicateEventOf {
+        event: EventId,
+    } => DuplicateEvent,
+    RevertEventChange {
+        change: EventChangeId,
+    } => SaveEvent,
 }
 
 impl fmt::Display for CommandId {

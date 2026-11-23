@@ -25,7 +25,7 @@ postio-runtime 858
 postio-search 276
 postio-session 1123
 postio-smtp 205
-postio-storage 2498
+postio-storage 2496
 postio-storyboard 97
 postio-sync 994
 postio-test-support 106

@@ -126,6 +126,7 @@ mod tests {
             || rule.starts_with(".focus-list > row:selected ")
             || rule.starts_with(".focus-filtered-list > row:selected ")
             || rule.starts_with(".focus-contacts-list > row:selected ")
+            || rule.starts_with(".focus-calendar-list > row:selected ")
             || rule.starts_with(".focus-results-row.focus-results-cursor ")
             || rule.starts_with(".focus-results-child.focus-results-cursor ")
             || rule == ".focus-results-gutter.focus-results-dot { color }"
