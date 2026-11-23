@@ -1,6 +1,5 @@
-//! The pickers, drawn (terminal.md, "Pickers"): snooze, remind, label and
-//! move, in a framed box 48 wide anchored under the focused row's subject
-//! column, or above the row when it does not fit below.
+//! The pickers: snooze, remind, label and move, in a box 48 wide under the focused row, or above
+//! it.
 
 use ratatui::Frame;
 use ratatui::layout::{Position, Rect};
@@ -17,23 +16,15 @@ use postio_core::CommandId;
 use postio_focus::PickerField;
 use postio_ui::label_colour::{Rgb, label_colour};
 
-/// The box's width.
 const WIDTH: u16 = 48;
-/// The most rows the list shows before it scrolls.
 const ROWS: usize = 10;
 
-/// What the picker is anchored to, and what it may use.
 pub struct Place {
-    /// The whole screen the picker may be drawn in, less the bottom line.
     pub area: Rect,
-    /// Where the focused row was drawn, when it is in view.
     pub row: Option<Rect>,
-    /// Where the subject column starts.
     pub subject_x: u16,
 }
 
-/// Where a box `width` x `height` goes: under the row at the subject
-/// column, above it when it does not fit below.
 pub fn anchored(place: &Place, width: u16, height: u16) -> Rect {
     let area = place.area;
     let width = width.min(area.width);
@@ -50,7 +41,6 @@ pub fn anchored(place: &Place, width: u16, height: u16) -> Rect {
     Rect::new(x, y, width, height.min(area.height))
 }
 
-/// Draw `picker`.
 pub fn draw(
     frame: &mut Frame,
     place: &Place,
@@ -90,7 +80,6 @@ pub fn draw(
     let dim = theme.style(Role::Dim);
     let text = theme.style(Role::Text);
     let accent = theme.style(Role::Accent);
-    // The title and what it acts on, in the top border.
     let title = format!(" {} ", view.title);
     let title_width = u16::try_from(title.width()).unwrap_or(0);
     frame.render_widget(
@@ -128,7 +117,6 @@ pub fn draw(
         ));
         y += 1;
     }
-    // The rows, scrolled to keep the chosen one in view.
     let chosen = picker.chosen();
     let mut lines: Vec<(Option<&str>, Option<usize>)> = Vec::new();
     for (index, row) in rows.iter().enumerate() {
@@ -216,7 +204,6 @@ pub fn draw(
         }
         frame.render_widget(Text::from(spans), line);
         if !picker.in_field() {
-            // The line is a click for `Tab`: the keyboard goes into it.
             hits.add(line, Target::Command(CommandId::PickerTypeDate.as_str()));
         }
         let said = view.hint.clone().filter(|_| !typed.trim().is_empty());
@@ -317,7 +304,6 @@ mod tests {
             .iter()
             .position(|line| line.contains("Snooze until"))
             .unwrap_or_else(|| panic!("no snooze box:\n{drawn}"));
-        // The cursor's row is the first under the day heading: row 3.
         assert_eq!(top, 4, "under the focused row:\n{drawn}");
         let corner = lines[top].chars().position(|c| c == '╭').expect("a corner");
         assert_eq!(

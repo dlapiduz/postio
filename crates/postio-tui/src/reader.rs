@@ -60,7 +60,6 @@ pub enum LineTarget {
 }
 
 impl Rendered {
-    /// Line for line with `Rendered::lines`.
     pub fn targets(&self) -> Vec<LineTarget> {
         let of = |line: &Line<'static>| {
             let text = line.to_string();
@@ -100,7 +99,6 @@ impl Rendered {
 
 pub fn from_html(html: &str) -> Rendered {
     let (markdown, links) = links_in(&placeholders(&postio_body::markdown::from_html(html)));
-    // Every span `tui-markdown` makes is a slice of this.
     let safe = SafeText::new(&markdown);
 
     let mut blocks = Vec::new();
@@ -315,7 +313,6 @@ mod tests {
             drawn.contains("Sounds good.") && drawn.contains("Thanks"),
             "{drawn}"
         );
-        // The desktop documents' words (spec 007).
         assert!(drawn.contains("▸ 2 quoted lines"), "{drawn}");
         assert!(!drawn.contains("the old words"), "{drawn}");
     }

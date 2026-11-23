@@ -1,57 +1,34 @@
-//! The places a person can go: folders, views and saved searches.
-//!
-//! What they are, in what order, and what each is called is
-//! `postio_ui::places`'. What this holds is what the app reads of them: the
-//! accounts and folders, the view counts, the pinned saved searches and
-//! which of Focus's features are in use.
+//! The places a person can go: folders, views and saved searches. What the app reads of them is
+//! here; their order and names are `postio_ui::places`'.
 
 use postio_model::mailbox::Mailbox;
 use postio_model::{Account, AccountId, ListScope};
 use postio_ui::sidebar::{ViewCounts, display_name};
 use postio_ui::terminal::SafeText;
 
-/// Everything the places are built from.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Places {
-    /// Every account, in the settings' order.
     pub accounts: Vec<Account>,
-    /// Every account's folders.
     pub folders: Vec<Mailbox>,
-    /// Each account's view counts.
     pub counts: Vec<(AccountId, ViewCounts)>,
-    /// The saved searches pinned in `config.toml`.
     pub saved: Vec<Saved>,
-    /// Which of Focus's features `config.toml` has in use.
     pub features: Features,
 }
 
-/// Which of Focus's features are in use, for the strip's counts: a count
-/// shows only while its feature is (C10).
+/// A strip count shows only while its feature is in use.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Features {
-    /// Whether filtering is on, so "N filtered today" means something.
     pub filtering: bool,
-    /// How many digest rules there are.
     pub digest_rules: usize,
-    /// The digest rules, for when the next digest comes.
     pub digests: Rules,
-    /// For each digest rule that is a person's, the rule's name and the
-    /// person's: the rules list names whose it is.
     pub rule_owners: Vec<(String, String)>,
-    /// Where `[focus] reading` opens a message.
     pub reading: postio_config::Reading,
-    /// What the notice after `M` offers to do with the list's mail (#1952).
     pub after_unsubscribe: postio_config::AfterUnsubscribe,
-    /// Whether `[focus.vault]` is configured, so a to-do offers Task.
     pub capture: bool,
-    /// Whether `[focus.model]` has `like_this` on, so the rule dialog offers
-    /// "Digest mail like this".
     pub like_this: bool,
-    /// The `[focus]` section as the file has it, which the controller reads.
     pub section: Section,
 }
 
-/// `[focus]` as the file has it. Equal when they are written the same.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Section(pub Box<postio_config::FocusConfig>);
 
@@ -63,16 +40,13 @@ impl Section {
 
 impl Eq for Section {}
 
-/// The digest rules as the file has them. Equal when they are written the
-/// same: no rule holds a number that is not equal to itself.
+/// Equal when written the same: no rule holds a number unequal to itself.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Rules(pub Vec<postio_config::DigestRule>);
 
 impl Eq for Rules {}
 
 impl Features {
-    /// The person whose digest the rule called `name` is, if it is a
-    /// person's and not the file's.
     pub fn rule_owner(&self, name: &str) -> Option<&str> {
         self.rule_owners
             .iter()
@@ -80,7 +54,6 @@ impl Features {
             .map(|(_, owner)| owner.as_str())
     }
 
-    /// What the empty inbox is told of `[focus]`.
     pub fn focus(&self) -> postio_config::FocusConfig {
         let mut focus = (*self.section.0).clone();
         focus.filtering = self.filtering;
@@ -94,19 +67,14 @@ impl Features {
     }
 }
 
-/// A saved search from `config.toml`'s `[saved_searches]`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Saved {
     /// Its key in `[saved_searches]`, which a rename leaves alone.
     pub key: String,
-    /// What it is called.
     pub name: String,
-    /// The query it runs.
     pub query: String,
 }
 
-/// What the strip calls the place `scope` is: `Inbox`, a folder's display
-/// name, `Flagged`.
 pub fn name_of(places: &Places, scope: ListScope) -> SafeText {
     let name = match scope {
         ListScope::Mailbox(id) => places

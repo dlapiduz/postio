@@ -67,7 +67,6 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut 
     let mut y = inside.y;
     let rect = |y: u16| Rect::new(x, y, inner, 1);
 
-    // The pair: Task and Note, the chosen one reversed.
     let mut at = x;
     for (index, mode) in [Mode::Task, Mode::Note].into_iter().enumerate() {
         let command = if index == 0 {
@@ -103,7 +102,6 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut 
     );
     y += 2;
 
-    // The text.
     let focused = |field| sheet.field() == field && !view.projects_open;
     frame.render_widget(
         Line::styled(
@@ -120,7 +118,6 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut 
     let value = sheet.text().value();
     let cursor = sheet.text().visual_cursor();
     let room = usize::from(inner);
-    // The field scrolls to keep the caret in it.
     let skip = cursor.saturating_sub(room.saturating_sub(1));
     let shown: String = value.chars().skip(skip).collect();
     frame.render_widget(Line::styled(fit(&shown, room), text), rect(y));
@@ -148,7 +145,6 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut 
     }
     y += 2;
 
-    // The due day, for a task.
     if view.has_due {
         frame.render_widget(
             Line::from(vec![
@@ -189,7 +185,6 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut 
         y += 2;
     }
 
-    // The project, and why.
     frame.render_widget(
         Line::styled(
             fit(&view.project_title, usize::from(inner)),
@@ -281,7 +276,6 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut 
     }
     y += 1;
 
-    // The exact line.
     frame.render_widget(
         Line::styled(
             view.preview_title.clone(),

@@ -1,6 +1,4 @@
-//! The digest rules (terminal.md, "Digests"): Filtered's full view with a
-//! rule to a row -- its name, what it matches, when it delivers, when it
-//! next does, and what it holds now -- and the question over removing one.
+//! The digest rules: Filtered's full view with a rule to a row, and the question over removing one.
 
 use chrono::{DateTime, Local};
 use postio_core::CommandId;
@@ -171,7 +169,6 @@ fn row_line(
         .unwrap_or_default();
     let held = digest::holds(holds);
     let name_room = 20;
-    // What gives way as the terminal narrows: the next delivery, then when.
     let mut trail: Vec<String> = vec![when, next, held];
     let used = |trail: &[String]| trail.iter().map(|t| t.width() + 2).sum::<usize>();
     let mut at = 1;

@@ -1,5 +1,4 @@
-//! The list, driven by `postio_focus::FocusController`: its intents become
-//! this app's cursor, selection, rows and toast.
+//! The list, driven by `postio_focus::FocusController`.
 
 use postio_focus::{Effect as Said, Input as Told, Intent, SurfaceKind, ToastKind};
 
@@ -7,7 +6,6 @@ use super::{App, Effect, TOAST, Tone};
 use crate::focus::{Held, RowsView};
 
 impl App {
-    /// Tell the controller `input` over the rows held, and do what it says.
     pub(super) fn tell(&mut self, input: Told) -> Vec<Effect> {
         let said = self.ctl.handle_on(input, &RowsView(&self.list));
         let mut effects = self.carry_out(said);
@@ -15,7 +13,6 @@ impl App {
         effects
     }
 
-    /// Open `scope`: the controller reads it, and the rows arrive as intents.
     pub(super) fn open_scope(&mut self, scope: postio_model::ListScope) -> Vec<Effect> {
         let said = self.ctl.open(scope);
         self.scope = Some(scope);
@@ -171,7 +168,6 @@ impl App {
 }
 
 impl App {
-    /// Whether the controller, not this app, runs `command` on the list.
     pub(super) fn the_controllers(command: postio_core::CommandId) -> bool {
         use postio_core::CommandId as C;
         matches!(
@@ -196,7 +192,6 @@ impl App {
         ) || postio_ui::focus_target::dispatch(command).is_some()
     }
 
-    /// Ask for every page in view that is neither here nor on its way.
     pub(super) fn fetches(&mut self) -> Vec<Effect> {
         let end = (self.top + self.fit_from(self.top)).min(self.list.total());
         let mut wanted = Vec::new();
@@ -217,8 +212,6 @@ impl App {
 
 #[cfg(any(test, feature = "test-support"))]
 impl App {
-    /// Open `scope` over `total` rows the way the host's answer would,
-    /// with no page read yet.
     pub(crate) fn open_for_tests(&mut self, scope: postio_model::ListScope, total: u32) {
         let asked = self.ctl.open(scope);
         self.scope = Some(scope);
@@ -260,8 +253,6 @@ impl App {
         self.top = 0;
     }
 
-    /// The controller's clock, so what it words (today, yesterday) is what a
-    /// test's screen says.
     pub(crate) fn clock_for_tests(&mut self, at: chrono::DateTime<chrono::Local>) {
         let _ = self.tell(postio_focus::Input::Clock(Some(at)));
     }
@@ -278,7 +269,6 @@ impl App {
         self.folders.clone()
     }
 
-    /// Deliver every page of the list from `row_at`; how many pages.
     pub(crate) fn serve_for_tests(&mut self, row_at: impl Fn(u32) -> Held) -> usize {
         let (stamp, total) = (self.list.generation(), self.list.total());
         let size = postio_ui::list::PAGE_SIZE;

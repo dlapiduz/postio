@@ -1,6 +1,7 @@
 //! The terminal frontend's state, and `update`, which turns an `Input` into the `Effect`s it asks
-//! for and does no I/O, so every behaviour is driven by synthetic input. After every input `App`
-//! asks only for the pages of rows in view that are neither here nor on their way (Principle V).
+//! for and
+//! does no I/O. After every input only the pages of rows in view that are not here or on their way
+//! are asked for.
 
 use crossterm::event::KeyEvent;
 use postio_model::ListScope;
@@ -183,7 +184,6 @@ pub enum Effect {
     },
     SaveDraft {
         generation: u64,
-        /// The controller's composition, which hears how the save went.
         composition: Option<u64>,
         draft: Box<postio_model::Draft>,
     },
@@ -201,14 +201,12 @@ pub enum Effect {
         generation: u64,
         markdown: String,
     },
-    /// On the paste key, never otherwise.
     ReadClipboardImage,
     InlineImage {
         bytes: Vec<u8>,
         mime_type: String,
     },
     Attach(std::path::PathBuf),
-    /// Only on a Download and attach press.
     AttachRemoteImage {
         generation: u64,
         draft: postio_model::DraftId,
@@ -220,7 +218,6 @@ pub enum Effect {
     },
     Resume(postio_model::MessageId),
     ResumeDraft(postio_model::DraftId),
-    /// Their rows as the store has them: nothing is fetched.
     ReadNewer(Vec<postio_model::MessageId>),
     EditConfig(Option<postio_ui::settings::Section>),
     Account(postio_client::protocol::AccountOp),
@@ -287,7 +284,6 @@ pub struct App {
     notice_undo: Option<String>,
     notice_offer: Option<(String, postio_core::Command)>,
     notice_generation: u64,
-    /// An answer to an invitation was sent; its toast lasts as long as the reply waits.
     answering: bool,
     focus: Focus,
     places: crate::places::Places,
@@ -649,8 +645,7 @@ impl App {
         self.saved_at.map(postio_ui::compose::saved_at)
     }
 
-    /// The keymap is asked in text entry, so a plain letter is handed back rather than resolved
-    /// (FR-022a).
+    /// The keymap is asked in text entry, so a plain letter is handed back rather than resolved.
     fn composer_key(&mut self, key: &KeyEvent) -> Vec<Effect> {
         if self.writing.on_chooser {
             return self.forward_chooser_key(key);
@@ -958,7 +953,6 @@ impl App {
         }
     }
 
-    /// Off, a click does nothing, and the terminal's own selection works.
     pub fn with_mouse(mut self, mouse: bool) -> App {
         self.mouse = mouse;
         self
@@ -1418,7 +1412,6 @@ impl App {
             ));
         }
         let generation = composer.generation();
-        // The send is the write: the composer closes with nothing to save or discard.
         self.composer = None;
         self.writing = compose::Writing::default();
         self.asked_at = None;
@@ -1452,7 +1445,7 @@ impl App {
                 None => Vec::new(),
             },
             // A terminal's own paste carries text only, so this is the one place the clipboard is
-            // read (FR-026).
+            // read.
             "insert_image" => vec![Effect::ReadClipboardImage],
             "attach_file" => {
                 self.path_prompt = Some(tui_input::Input::default());
@@ -1511,7 +1504,6 @@ impl App {
                 }
                 self.edited()
             }
-            // One request a press, for the first image not downloading.
             "attach_remote_image" => {
                 let Some(composer) = self.composer.as_mut() else {
                     return Vec::new();
@@ -1862,7 +1854,6 @@ impl App {
         self.list.peek(self.cursor)
     }
 
-    /// Leaving saves what is being written on the way out.
     fn quit(&mut self) -> Vec<Effect> {
         let mut effects = if self.composer.is_some() {
             self.tell(postio_focus::Input::SurfaceClosed(
@@ -1935,7 +1926,6 @@ impl App {
                     return vec![Effect::ReplySource { kind, message }];
                 }
             }
-            // A digest opens in its own window.
             "open_message" if self.focus == Focus::List && self.cursor_is_digest() => {
                 return self.tell(postio_focus::Input::Command(
                     postio_core::CommandId::OpenMessage,
@@ -2016,8 +2006,7 @@ impl App {
             }
             "scroll_reader_down" => self.scroll_reader(1),
             "scroll_reader_up" => self.scroll_reader(-1),
-            // One toggle in a terminal: reader view is the readable form of bulk mail here
-            // (FR-031).
+            // One toggle in a terminal: reader view is the readable form of bulk mail here.
             "view_original" | "toggle_reader_view" => return self.view_original(),
             "toggle_fold" => {
                 let key = |command| {
@@ -2268,7 +2257,6 @@ impl App {
         }
     }
 
-    /// "Always" writes the allow list the desktop app reads too.
     fn allow_images(&mut self, always: bool) -> Vec<Effect> {
         let Some(member) = self.reading.as_mut().map(|reading| &mut reading.shown) else {
             return Vec::new();
@@ -2545,7 +2533,6 @@ impl App {
         vec![Effect::Redraw]
     }
 
-    /// What changed in the store goes through the same paging plan the desktop list follows.
     fn hear(&mut self, event: &postio_core::Event) -> Vec<Effect> {
         use postio_core::Event;
         let moved = self.trackers.apply(event, self.account);

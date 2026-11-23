@@ -1,5 +1,5 @@
-//! The picker box over the controller's `PickerView`: the field's caret,
-//! which row the keyboard is on, and where the keyboard goes back to.
+//! The picker box over the controller's `PickerView`: the caret, the row the keyboard is on and
+//! where it goes back to.
 
 use postio_focus::{PickerField, PickerKind, PickerRow, PickerView};
 use postio_ui::terminal::SafeText;
@@ -27,7 +27,6 @@ impl Picker {
         }
     }
 
-    /// The rows again, after what was typed or what arrived.
     pub fn show(&mut self, mut view: PickerView) {
         clean(&mut view);
         if view.typed != self.view.typed {

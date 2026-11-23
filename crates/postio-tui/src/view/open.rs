@@ -24,7 +24,6 @@ use crate::view::fit;
 use crate::view::hit::{Hits, Target};
 use crate::view::wrap::wrap;
 
-/// A piece of a row that is a click of its own, in columns from the column's left edge.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Segment {
     pub start: u16,
@@ -35,7 +34,6 @@ pub struct Segment {
 #[derive(Debug, Clone)]
 pub struct DocLine {
     pub line: Line<'static>,
-    /// What a click on the row stands for outside its segments.
     pub at: At,
     pub segments: Vec<Segment>,
 }
@@ -274,7 +272,6 @@ fn card(
         let (card, segments) = make(left, &answers);
         rows.push(card, At::Nothing, segments);
     } else {
-        // The words on the first row and what answers on the second; the words give way to fit.
         let mut first = left;
         if left_width > width {
             let words: String = first.iter().map(|span| span.content.as_ref()).collect();
@@ -287,8 +284,6 @@ fn card(
     }
 }
 
-/// The controller's thread bar, kicker and banners, as a terminal line can show them: a chip is
-/// its initials, the one on screen its label.
 fn thread_rows(rows: &mut Rows, thread: &Thread) {
     let theme = rows.theme;
     let (dim, text) = (theme.style(Role::Dim), theme.style(Role::Text));
@@ -519,7 +514,7 @@ pub fn document(app: &App, theme: &Theme, width: u16, now: DateTime<Local>) -> D
             Span::styled(said, text),
         ]));
     }
-    // One sentence in the warning role, only when the host doubts the sender (#1928).
+    // Only when the host doubts the sender.
     if let Some(warning) = &member.warning {
         let style = theme.style(Role::Warning);
         let said = Line::styled(warning.as_str().to_owned(), style);
@@ -565,7 +560,6 @@ pub fn document(app: &App, theme: &Theme, width: u16, now: DateTime<Local>) -> D
         Some(body) => {
             let mut lines = body.lines();
             let mut targets = body.targets();
-            // A closed fold at the very end stands under the attachments.
             if matches!(body.blocks.last(), Some(Block::Fold { folded: true, .. }))
                 && let (Some(line), Some(target)) = (lines.pop(), targets.pop())
             {
@@ -636,7 +630,6 @@ pub fn document(app: &App, theme: &Theme, width: u16, now: DateTime<Local>) -> D
     Document { lines: rows.lines }
 }
 
-/// Reversed, so it reads without colour; the current one bold and underlined too.
 pub(super) fn find_style(theme: &Theme, current: bool) -> Style {
     let style = theme.style(Role::Accent).add_modifier(Modifier::REVERSED);
     if current {
@@ -687,7 +680,6 @@ fn action_verbs(app: &App, folded: bool) -> Vec<focus_dialog::Verb> {
     }
 }
 
-/// Label, Move and Delete fold into More in a narrow frame, or a row that would not fit.
 pub fn folded(app: &App, width: u16, inside: u16) -> bool {
     if app
         .row_of_open()
@@ -729,7 +721,6 @@ pub fn over_list(
     }
 }
 
-/// Every row of `area` but the first and the last; answers the frame and what is inside it.
 pub fn framed(
     frame: &mut Frame,
     area: Rect,
@@ -1021,7 +1012,6 @@ fn draw_find(frame: &mut Frame, row: Rect, app: &App, theme: &Theme, hits: &mut 
         }
     }
     let inner = usize::from(row.width);
-    // Keys give way first when the row is narrow, the last first.
     let mut keep = hints.len();
     let used = |keep: usize| {
         hints[..keep]
@@ -1128,7 +1118,6 @@ fn draw_raw(
     }
 }
 
-/// Each line broken at `width`, so nothing runs past the frame.
 pub fn raw_lines(text: &SafeText, width: usize) -> Vec<String> {
     let mut rows = Vec::new();
     for line in text.as_str().lines() {
@@ -1163,7 +1152,6 @@ mod tests {
 
     const QUOTE: &str = "Please leave comments by Wednesday";
 
-    /// A conversation of six, the newest asking for comments, with a label, a marker and two files.
     fn inbox(size: (u16, u16)) -> App {
         let mut app = app(size);
         seed_places(&mut app, places());
@@ -1271,7 +1259,6 @@ mod tests {
             "the body is still here:\n{drawn}"
         );
 
-        // Narrow: it wraps rather than being cut off mid-sentence.
         let narrow = screen(60, 36, &opened_warning((60, 36), Some(said)));
         assert!(narrow.contains("example.org."), "the end of it:\n{narrow}");
     }
@@ -1400,7 +1387,6 @@ mod tests {
         assert_eq!(card, from + 4, "{drawn}");
         assert!(text[card].contains("Wed 30 Sep"), "{drawn}");
         assert!(text[card].contains(&format!("“{QUOTE}”")), "{drawn}");
-        // The words fill the first row, so what answers is on a second.
         assert!(
             text[card + 1].trim_end().ends_with("Snooze b  Dismiss -"),
             "{drawn}"
@@ -1458,7 +1444,6 @@ mod tests {
             theme.style(crate::theme::Role::Surface).bg.unwrap(),
             "{cell:?}"
         );
-        // Words around it are plain.
         let before = &buffer[(x.saturating_sub(2), u16::try_from(y).unwrap())];
         assert!(
             !before.modifier.contains(Modifier::UNDERLINED),
@@ -1471,7 +1456,6 @@ mod tests {
         use ratatui::style::Modifier;
         let app = opened((120, 36));
         let buffer = crate::test_support::buffer(120, 36, &app);
-        // The strip and a list row under the frame's margin.
         assert!(buffer[(2, 1)].modifier.contains(Modifier::DIM), "the strip");
         assert!(buffer[(2, 4)].modifier.contains(Modifier::DIM), "the rows");
         assert!(
@@ -1552,7 +1536,6 @@ mod tests {
             })),
             "{read:?}"
         );
-        // I is the person's own say: the clock is stopped.
         update(&mut app, press('I'));
         let read = update(
             &mut app,
@@ -1676,7 +1659,6 @@ mod tests {
             )),
             "{effects:?}"
         );
-        // Wide enough to have no folded verbs: nothing opens.
         let mut wide = opened((160, 36));
         update(&mut wide, press('.'));
         assert!(wide.menu().is_none());
@@ -1744,7 +1726,6 @@ mod tests {
             !screen(size.0, size.1, &app).contains("To-do"),
             "the card goes"
         );
-        // The kicker's key steps back.
         let (x, y) = find(&app, size, "[ older", 2);
         click_at(&mut app, size, x, y);
         assert_eq!(app.reading().unwrap().shown.id, MessageId::new(5));

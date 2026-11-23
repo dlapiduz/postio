@@ -1,6 +1,5 @@
-//! The digest window and the digest rule dialog. The digest opens on its summary when the person
-//! has brought a model and one is written, else on its plain list. A reference's email opens in
-//! the digest's own window and Esc returns to it; Linux's reading dialog stacks over the digest.
+//! The digest window and rule dialog. The digest opens on its summary when a model is brought and
+//! one is written, else on its list; a reference's email opens in the digest's own window.
 
 use chrono::{DateTime, Utc};
 use postio_client::protocol::{DigestPreview, DigestRuleDraft};
@@ -50,7 +49,6 @@ pub struct DigestLine {
     pub subject: String,
     pub preview: Option<String>,
     pub time: String,
-    /// The message as the store has it, for a frontend that opens it for itself.
     pub summary: MessageSummary,
 }
 
@@ -63,7 +61,6 @@ pub struct DigestTopic {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DigestStatement {
     pub index: u32,
-    /// Plain text, never markup.
     pub text: String,
     pub number: u32,
     pub message: MessageId,
@@ -231,7 +228,6 @@ impl FocusController {
             .iter()
             .find(|rule| rule.name.trim() == digest.rule.trim())
             .and_then(words::rule_when);
-        // A summary is read only when the person has brought a model.
         let summary = config
             .model_for(postio_config::model::ModelFeature::DigestSummary)
             .is_some();

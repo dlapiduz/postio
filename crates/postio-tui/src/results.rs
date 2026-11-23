@@ -1,6 +1,4 @@
-//! The search results, over the controller's `ResultsView`: what it last
-//! said, and how far the rows are scrolled. Rows themselves are read from
-//! the controller as they are drawn.
+//! The search results over the controller's `ResultsView`: what it last said and the scroll.
 
 use postio_focus::{NoResultsView, QueryView, ResultsView};
 
@@ -24,7 +22,6 @@ impl Results {
         }
     }
 
-    /// Keep the cursor's row within `room` rows from the top.
     pub fn reveal(&mut self, room: u64) {
         let room = room.max(1);
         if self.cursor < self.top {

@@ -76,7 +76,6 @@ impl Member {
         self.warning = warning.map(SafeText::new);
     }
 
-    /// The parts a person would call attachments: named, or not inline.
     pub fn attachments(&self) -> Vec<&postio_model::Attachment> {
         self.parts
             .iter()
@@ -92,7 +91,6 @@ impl Member {
         }
     }
 
-    /// Expand every fold, or fold them all again.
     pub fn toggle_folds(&mut self) {
         let Some(body) = self.body.as_mut() else {
             return;
@@ -135,7 +133,6 @@ impl Reading {
     }
 }
 
-/// What a line of the message stands for, for a click on it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum At {
     Nothing,

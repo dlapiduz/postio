@@ -1,5 +1,4 @@
-//! The rule dialog as drawn: the controller's view, and what only the
-//! keyboard knows: the control it is on and the two fields typed into.
+//! The rule dialog as drawn: the controller's view plus the control and two typed fields.
 
 use postio_focus::RuleView;
 use postio_model::listing::Cadence;

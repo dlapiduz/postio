@@ -1,5 +1,4 @@
-//! Capture (`T` and `N`): the controller's sheet, typed into with this
-//! terminal's text fields.
+//! Capture (`T` and `N`): the controller's sheet, typed into with this terminal's text fields.
 
 use crossterm::event::{Event as TerminalEvent, KeyCode, KeyEvent};
 use postio_core::CommandId;
@@ -47,8 +46,6 @@ impl App {
             return Vec::new();
         };
         let (typing, choosing) = (sheet.typing(), sheet.choosing());
-        // Escape gives up, as it does in any text field; over the chooser it
-        // only puts the chooser away.
         if key.code == KeyCode::Esc {
             return self.capture_back();
         }

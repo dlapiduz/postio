@@ -16,7 +16,6 @@ use crate::view::open as draw;
 pub struct Raw {
     pub message: MessageId,
     pub text: Option<SafeText>,
-    /// Where the message was scrolled to, for when this closes.
     pub back_to: usize,
 }
 
@@ -34,7 +33,6 @@ pub struct MenuItem {
     pub action: MenuAction,
 }
 
-/// Its links and attachments, or the verbs its action row folded away.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Menu {
     pub title: String,
@@ -42,7 +40,6 @@ pub struct Menu {
     pub at: usize,
 }
 
-/// What the controller says about the thread of the message on screen.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Thread {
     pub bar: Option<ThreadBarView>,
@@ -68,8 +65,7 @@ pub(super) struct Open {
     pub thread: Thread,
 }
 
-/// One frame of the interaction budget (`docs/PRODUCT.md` §18): a body read from the store lands
-/// within it, so the frame is painted once with it; a slow read is painted without it.
+/// A body read within one frame (16 ms) is painted once with it; a slow read is painted without it.
 pub(super) const SETTLE: std::time::Duration = std::time::Duration::from_millis(16);
 
 impl App {
@@ -121,7 +117,6 @@ impl App {
         &self.open.thread
     }
 
-    /// Its own row when it was opened for itself, else the list row it was opened from.
     pub fn row_of_open(&self) -> Option<&crate::row::Row> {
         let reading = self.reading.as_ref()?;
         match &reading.own {
@@ -190,8 +185,7 @@ impl App {
         self.features.capture
     }
 
-    /// Where its row is in the list; its place in the thread is the kicker's. Nothing for one
-    /// opened for itself, which is no place in the list.
+    /// Nothing for a message opened for itself.
     pub fn position_line(&self) -> String {
         let Some(reading) = self
             .reading
@@ -211,7 +205,6 @@ impl App {
         )
     }
 
-    /// Beside the list when `[focus] reading` says so and the terminal is wide enough.
     pub fn pane(&self) -> Option<u16> {
         // Filtered has the whole body: a message opened from it is in the frame, over it.
         if self.features.reading != postio_config::Reading::Pane || self.surfaces.filtered.is_some()
@@ -226,7 +219,6 @@ impl App {
         self.keys.keymap()
     }
 
-    /// Written to `config.toml` and said in the words the desktop uses.
     pub(super) fn toggle_reading_pane(&mut self) -> Vec<Effect> {
         use postio_config::Reading;
         let next = match self.features.reading {
@@ -243,7 +235,6 @@ impl App {
         effects
     }
 
-    /// The width it is laid out in, the width of what scrolls, and how many rows show at once.
     pub(super) fn open_geometry(&self) -> (u16, u16, u16) {
         let find = self.find_rows();
         if let Some(pane) = self.pane() {
@@ -259,7 +250,6 @@ impl App {
         )
     }
 
-    /// How many rows the column has, and how many it shows at once.
     pub(super) fn open_extent(&self) -> (usize, usize) {
         let (outer, inner, height) = self.open_geometry();
         let length = match &self.open.raw {
@@ -389,7 +379,6 @@ impl App {
         vec![Effect::Redraw]
     }
 
-    /// The controller does not hold a message opened for itself.
     pub(super) fn back_from_own(&mut self) -> Vec<Effect> {
         if self.open.menu.is_some() || self.open.raw.is_some() {
             return self.close_more();
@@ -516,7 +505,6 @@ impl App {
         }
     }
 
-    /// The delay and the rule are `postio_ui::dwell`'s.
     pub(super) fn arm_dwell(&mut self) -> Vec<Effect> {
         self.open.dwell += 1;
         let shown = self.reading.as_ref().map(|reading| reading.shown.id.get());
@@ -530,7 +518,6 @@ impl App {
         }
     }
 
-    /// The person set the read state themselves, or the message closed.
     pub(super) fn cancel_dwell(&mut self) {
         self.open.dwell += 1;
     }
@@ -677,7 +664,6 @@ impl App {
         }
     }
 
-    /// Nothing when the action row folds nothing.
     pub(super) fn more_actions(&mut self) -> Vec<Effect> {
         let (outer, inner, _) = self.open_geometry();
         if self.reading.is_none() || !draw::folded(self, outer, inner) {
@@ -720,7 +706,6 @@ impl App {
                 let at = menu.at;
                 return self.choose(at);
             }
-            // A row's own key, as its words show it, chooses that row.
             _ => {
                 let Outcome::Command(id) = self.keys.press(key, self.key_context(), false) else {
                     return Vec::new();

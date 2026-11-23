@@ -1,10 +1,5 @@
-//! Every surface terminal.md draws, under `NO_COLOR` and under the mouse.
-//!
-//! Each case is one state of `test_support::sample`, drawn with no colour at
-//! all. It must show the marks "Colour and marks" lists for what the state
-//! holds, every control it draws must take a click that does what the control's
-//! key does, the wheel must scroll what scrolls, and with `[tui] mouse = false`
-//! no pointer input does anything while the keys still do.
+//! Every surface under `NO_COLOR` and under the mouse: marks survive without colour, each
+//! control's click does what its key does, and `[tui] mouse = false` silences the pointer.
 
 use ratatui::buffer::Buffer;
 use ratatui::style::Modifier;
@@ -17,30 +12,18 @@ use crate::test_support::{
 };
 use crate::view::hit::Target;
 
-/// What a state's screen must show without colour.
 enum Mark {
-    /// This text is on the screen.
     Has(&'static str),
-    /// This text is on the screen, and every cell of its first occurrence
-    /// carries `Modifier`.
     Styled(&'static str, Modifier),
-    /// As `Styled`, for the `nth` occurrence of the text.
     StyledAt(&'static str, usize, Modifier),
-    /// This text is on the screen and no cell of its first occurrence carries
-    /// `Modifier`.
     Plain(&'static str, Modifier),
 }
 
-/// A control the screen draws: where it is, and the keys it stands for.
 #[derive(Clone)]
 struct Control {
-    /// Text on the screen, whose first cell is clicked.
     label: &'static str,
-    /// Which occurrence of the label, from the top left.
     nth: usize,
-    /// Keys that bring the app where the key means what the click means.
     prep: &'static str,
-    /// The control's key.
     keys: &'static str,
 }
 
@@ -65,21 +48,15 @@ impl Control {
     }
 }
 
-/// A state of the sample and what is true of it.
 struct Case {
     surface: &'static str,
     state: &'static str,
     size: (u16, u16),
-    /// Keys pressed after the state is reached.
     then: &'static str,
     marks: Vec<Mark>,
     controls: Vec<Control>,
-    /// Text over which the wheel scrolls something at this size.
     wheel: Option<&'static str>,
-    /// Whether the surface has the whole screen's keyboard and pointer, the
-    /// top bar and the bottom line too, rather than all but those.
     holds: bool,
-    /// Whether what is under the surface takes no click, as under a frame.
     modal: bool,
 }
 
@@ -100,7 +77,6 @@ const fn case(surface: &'static str, state: &'static str, size: (u16, u16)) -> C
 const BOLD: Modifier = Modifier::BOLD;
 const REVERSED: Modifier = Modifier::REVERSED;
 
-/// The top bar's and the strip's controls.
 fn chrome() -> Vec<Control> {
     vec![
         ctl("Compose c", "c"),
@@ -149,8 +125,6 @@ fn cases() -> Vec<Case> {
             ..case("fired reminder", "reminder", (120, 36))
         },
         Case {
-            // Ten lines of mail in a nine-line list, so there is a line to
-            // scroll.
             wheel: Some("Grace Oyelaran"),
             holds: false,
             ..case("inbox, scrolling", "reminder", (120, 12))
@@ -546,17 +520,12 @@ fn cases() -> Vec<Case> {
     ]
 }
 
-// -- Reading a screen ------------------------------------------------------
-
-/// The text of row `y` of `buffer`, one character per cell.
 fn row_text(buffer: &Buffer, y: u16) -> Vec<String> {
     (0..buffer.area.width)
         .map(|x| buffer[(x, y)].symbol().to_owned())
         .collect()
 }
 
-/// Where the `nth` occurrence of `text` starts, reading the screen from the
-/// top left: its column and row.
 fn find(buffer: &Buffer, text: &str, nth: usize) -> Option<(u16, u16)> {
     let wanted: Vec<String> = text.chars().map(String::from).collect();
     let mut seen = 0;
@@ -586,8 +555,6 @@ fn app_of(case: &Case) -> App {
     press_keys(&mut app, case.then);
     app
 }
-
-// -- The sweep -------------------------------------------------------------
 
 #[test]
 fn every_surface_keeps_its_marks_without_colour() {
@@ -632,7 +599,6 @@ fn every_surface_keeps_its_marks_without_colour() {
     );
 }
 
-/// What was sent, with the clock's readings taken out, and what a person sees.
 #[derive(PartialEq)]
 struct Outcome {
     sent: String,
@@ -645,7 +611,6 @@ impl std::fmt::Debug for Outcome {
     }
 }
 
-/// `text` with every instant (`2026-07-08T23:11:04.77Z`) replaced.
 fn without_instants(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut out = String::new();
@@ -668,7 +633,6 @@ fn without_instants(text: &str) -> String {
     out
 }
 
-/// What happens after `prep` and then `act`, in a fresh app.
 fn outcome(case: &Case, prep: &str, act: impl FnOnce(&mut App) -> Vec<Effect>) -> Outcome {
     let mut app = app_of(case);
     press_keys(&mut app, prep);
@@ -684,7 +648,6 @@ fn outcome(case: &Case, prep: &str, act: impl FnOnce(&mut App) -> Vec<Effect>) -
     }
 }
 
-/// What nothing happening looks like after `prep`.
 fn unchanged(case: &Case, prep: &str) -> Outcome {
     outcome(case, prep, |_| Vec::new())
 }
@@ -708,7 +671,6 @@ fn every_control_takes_a_click_that_does_what_its_key_does() {
                 continue;
             };
             let clicked = outcome(&case, control.prep, |app| click_at(app, case.size, at));
-            // A control with no key is its own: it must at least do something.
             if control.keys.is_empty() {
                 if clicked == unchanged(&case, control.prep) {
                     problems.push(format!(
@@ -747,7 +709,6 @@ fn every_control_takes_a_click_that_does_what_its_key_does() {
     assert!(problems.is_empty(), "{}", problems.join("\n"));
 }
 
-/// What a region is, apart from where in its list it is.
 fn kind(target: Target) -> String {
     match target {
         Target::RowAction(_, id) => format!("RowAction {id}"),
@@ -807,7 +768,6 @@ fn every_control_a_surface_draws_is_covered_by_a_case() {
     );
 }
 
-/// A region of a list, or of text to point into, rather than a control.
 fn is_row_like(target: Target) -> bool {
     use crate::surface::Part;
     matches!(
@@ -844,7 +804,6 @@ fn the_wheel_scrolls_what_scrolls() {
             continue;
         };
         let before = screen(case.size.0, case.size.1, &app);
-        // One way or the other: a view at its end scrolls only back.
         let mut heard = false;
         let mut moved = false;
         for down in [true, false] {
@@ -919,7 +878,6 @@ fn a_click_outside_a_frame_does_nothing() {
             continue;
         };
         for (area, target) in &regions[..frame] {
-            // A cell where this region is what a click would land on.
             let cell = (area.y..area.y + area.height)
                 .flat_map(|y| (area.x..area.x + area.width).map(move |x| (x, y)))
                 .find(|&(x, y)| hits.at(x, y).is_some_and(|hit| hit.target == *target));
@@ -939,8 +897,6 @@ fn a_click_outside_a_frame_does_nothing() {
     assert!(problems.is_empty(), "{}", problems.join("\n"));
 }
 
-/// `ctrl+q` quits from wherever the person is: the one key that has to work
-/// on every surface, text fields and frames included.
 #[test]
 fn ctrl_q_quits_from_every_surface() {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};

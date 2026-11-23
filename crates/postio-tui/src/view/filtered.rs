@@ -1,5 +1,4 @@
-//! Filtered: the strip, the tab line, the rows under their days and the
-//! footer. Every part is a click for the command its key runs.
+//! Filtered: the strip, the tab line, the rows under their days and the footer.
 
 use postio_core::CommandId;
 use postio_focus::FilteredLine;
@@ -247,7 +246,6 @@ fn footer(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut Hi
             "open" => Some(CommandId::OpenMessage),
             _ => None,
         };
-        // The key as this terminal sends it, when the hint is one command's.
         let key = command
             .and_then(|command| app.hint(command))
             .map(|key| cap(&key))

@@ -1,5 +1,4 @@
-//! The digest window: the controller's view of one delivery, its summary and
-//! its email, and the clicks that become inputs.
+//! The digest window: the controller's view of one delivery.
 
 use postio_core::CommandId;
 use postio_focus::{Host, Input as Told, Intent, SurfaceKind};
@@ -140,7 +139,6 @@ impl App {
                 }
                 self.tell(Told::Command(CommandId::ToggleDigestSummary))
             }
-            // A second click on what is focused opens it.
             Part::DigestRow if window.cursor() == Some(index) => {
                 self.tell(Told::Command(CommandId::OpenMessage))
             }
@@ -286,7 +284,6 @@ mod tests {
             drawn.contains("Rail Notes") && drawn.contains("Collections move to Thursday"),
             "{drawn}"
         );
-        // The list's cursor followed the reference to its message.
         assert_eq!(app.digest().unwrap().cursor(), Some(1));
         update(&mut app, press('j'));
         assert_eq!(app.digest().unwrap().cursor(), Some(2));

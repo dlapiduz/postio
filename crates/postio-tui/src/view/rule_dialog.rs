@@ -1,5 +1,4 @@
-//! The rule dialog: a frame 64 wide holding the form and its preview. The
-//! control the keyboard is on is reversed, so it shows without a colour.
+//! The rule dialog: a frame 64 wide holding the form and its preview.
 
 use postio_core::CommandId;
 use postio_ui::terminal::SafeText;
@@ -69,7 +68,6 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut 
     };
     let value_x = x + LABEL;
 
-    // From.
     label(frame, y, &view.from_label);
     if view.query.is_some() {
         let value = form.query().value();
@@ -132,7 +130,6 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut 
         }
     }
 
-    // Deliver: how often, on which day, at what time.
     y += 1;
     label(frame, y, &view.deliver_label);
     let schedule = form.schedule();
@@ -193,7 +190,6 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut 
     }
     y += 2;
 
-    // What it would have caught.
     if let Some(heading) = &view.preview_heading {
         frame.render_widget(
             Line::styled(

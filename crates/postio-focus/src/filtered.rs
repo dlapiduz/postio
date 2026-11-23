@@ -78,7 +78,6 @@ pub struct FilteredLine {
     pub heading: Option<String>,
     pub selected: bool,
     pub messages: u32,
-    /// The message as the store has it, for a frontend that opens it for itself.
     pub summary: postio_model::listing::MessageSummary,
 }
 
@@ -272,7 +271,6 @@ impl FocusController {
             filtered.tab = tab;
             filtered.more = false;
             filtered.stamp = stamp;
-            // Another place, as another folder is: what was selected is not shown any more.
             let _ = filtered.cursor.leave(0);
             filtered.cursor.moved_to(None);
             let reason = filtered.reason();
@@ -353,8 +351,6 @@ impl FocusController {
             | CommandId::SavedSearch3
             | CommandId::SavedSearch4
             | CommandId::GoToFolders => return None,
-            // Nobody can see the rows of a verb meant for the list behind; Filtered mail is
-            // archived already.
             _ => Vec::new(),
         };
         Some(steps)
@@ -427,8 +423,7 @@ impl FocusController {
         }
     }
 
-    /// One command, so one Undo takes them all back. The keyboard steps to the first row below
-    /// that stays.
+    /// One command, so one Undo takes them all back.
     fn restore_selected(&mut self) -> Vec<Step> {
         let Some(filtered) = self.filtered.as_mut() else {
             return Vec::new();

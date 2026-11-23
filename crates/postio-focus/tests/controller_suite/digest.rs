@@ -402,8 +402,6 @@ fn a_digest_takes_no_verb_meant_for_the_list_behind_it() {
     let _ = open(&mut focus, config(false));
     assert_eq!(focus.key_context(), KeyContext::Digest);
     let _ = focus.handle_on(Input::Point(1), &List);
-    // Not `Archive`: in a digest it archives the digest (`archive_thread`'s
-    // old job, and the next test's).
     for command in [CommandId::Delete, CommandId::ToggleRead] {
         let effects = run(&mut focus, command);
         assert!(asks(&effects).is_empty(), "{command:?}: {effects:?}");
@@ -503,8 +501,8 @@ fn d_in_a_digest_edits_its_rule() {
     assert_eq!(view.from.as_deref(), Some("from:news@ledger.example"));
 }
 
-/// The controller closes the rule sheet and the Mac says nothing back, so the dialog is off the
-/// stack at once and the list's keys are not swallowed.
+/// The controller closes the rule sheet and the Mac says nothing back, so the list's keys are not
+/// swallowed.
 #[test]
 fn back_on_the_rule_dialog_gives_the_keyboard_back() {
     let mut focus = mac();

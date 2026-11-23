@@ -1,5 +1,4 @@
-//! Filtered (`g f`): the controller's view of it, and the keys and clicks
-//! that become its inputs.
+//! Filtered (`g f`): the controller's view of it; keys and clicks become its inputs.
 
 use postio_core::CommandId;
 use postio_focus::{Host, Input as Told, Intent, SurfaceKind};
@@ -49,7 +48,6 @@ impl App {
                     shown.select(&selected, bar);
                 }
             }
-            // Filtered draws no conversation open inside it.
             Intent::FilteredSplice { .. } | Intent::FilteredUnsplice { .. } => {}
             Intent::CloseSurface(SurfaceKind::Filtered) => {
                 self.surfaces.filtered = None;
@@ -454,7 +452,6 @@ mod tests {
             .count();
         assert_eq!(pages, 1, "the first page only: the rest is out of view");
         assert_eq!(app.filtered().unwrap().view().rows.len(), 50);
-        // Walking to the end of what is read asks for the next fifty.
         let mut more = Vec::new();
         for _ in 0..49 {
             more.extend(update(&mut app, press('j')));
@@ -486,7 +483,6 @@ mod tests {
         assert_eq!(app.focus(), Focus::Filtered);
         let drawn = screen(120, 30, &app);
         assert!(line_with(&drawn, "Filtered 12").starts_with('▌'), "{drawn}");
-        // The controller took the message off its stack: keys are Filtered's again.
         update(&mut app, press('j'));
         let drawn = screen(120, 30, &app);
         assert!(line_with(&drawn, "Filtered 13").contains('▌'), "{drawn}");

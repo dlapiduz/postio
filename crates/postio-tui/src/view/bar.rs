@@ -1,9 +1,4 @@
-//! The command bar, drawn (terminal.md, "The command bar").
-//!
-//! A rounded box `min(100, W - 4)` wide, centred, under the top bar: the
-//! saved searches, the input, then the controller's lines or its search
-//! dropdown, and the footer. Whatever does not fit scrolls with the chosen
-//! line.
+//! The command bar: a rounded box `min(100, W - 4)` wide, centred under the top bar.
 
 use postio_core::CommandId;
 use postio_focus::{BarLineKind, DropdownRow, DropdownView, Run};
@@ -35,7 +30,6 @@ pub fn outer(area: Rect, height: u16) -> Rect {
     )
 }
 
-/// The top bar's field while the bar is open: the input, in the field.
 pub fn field(frame: &mut Frame, area: Rect, typed: &str, theme: &Theme) {
     frame.render_widget(
         Text::from(vec![
@@ -49,11 +43,8 @@ pub fn field(frame: &mut Frame, area: Rect, typed: &str, theme: &Theme) {
     );
 }
 
-/// One line of the box: what it says, and the stop it is when the arrows
-/// can rest on it.
 struct Drawn {
     spans: Vec<Span<'static>>,
-    /// Pills along the line: each one's stop, where it starts and how wide.
     pills: Vec<(usize, u16, u16)>,
     right: Option<(String, Style)>,
     stop: Option<usize>,
@@ -231,7 +222,6 @@ fn footer_of(bar: &Bar) -> String {
     }
 }
 
-/// Draw `bar` over `area`.
 pub fn draw(
     frame: &mut Frame,
     area: Rect,
@@ -448,7 +438,6 @@ mod tests {
         serve, type_text,
     };
 
-    /// A mail box of three saved searches, with the list open behind.
     fn with_saved(size: (u16, u16)) -> App {
         let mut app = app(size);
         let mut contents = places();
@@ -475,7 +464,6 @@ mod tests {
         opened(&mut app, |app| update(app, press('/')));
         let drawn = screen(120, 36, &app);
         let lines: Vec<&str> = drawn.lines().collect();
-        // min(100, W - 4) wide, centred: columns 10 to 109, from the second row.
         let cell = |line: &str, at: usize| line.chars().nth(at);
         assert_eq!(cell(lines[1], 10), Some('╭'), "{drawn}");
         assert_eq!(cell(lines[1], 109), Some('╮'), "{drawn}");

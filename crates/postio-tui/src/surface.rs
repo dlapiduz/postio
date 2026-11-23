@@ -1,5 +1,4 @@
-//! What a click on one of Focus's surfaces lands on: a part of the surface
-//! and its index, recorded by each surface as it draws.
+//! What a click on one of Focus's surfaces lands on, recorded by each surface as it draws.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Part {

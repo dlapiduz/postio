@@ -1,5 +1,3 @@
-//! The composer, in the reading pane.
-
 use ratatui::Frame;
 use ratatui::layout::{Position, Rect};
 use ratatui::style::Modifier;
@@ -182,8 +180,6 @@ pub fn screen(
     }
 }
 
-/// The controller's forward chooser, older-reply bar and the newer messages it shows, over the
-/// fields; answers the row after them.
 fn thread_rows(
     frame: &mut Frame,
     area: Rect,
@@ -293,7 +289,6 @@ fn thread_rows(
     (rows.y + rows.height).min(end)
 }
 
-/// With `focused`, the terminal's cursor goes where the next letter will land.
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
     frame: &mut Frame,
@@ -389,7 +384,6 @@ pub fn draw(
             theme.style(Role::Dim),
         ));
     }
-    // The remote images the body names, not yet attached (spec 014 US8).
     let key = postio_ui::terminal::deliverable_binding(
         postio_core::Keymap::defaults(),
         postio_core::CommandId::AttachRemoteImage,
@@ -499,7 +493,6 @@ const ATTACHMENTS: usize = 4;
 
 const SUGGESTIONS: usize = 5;
 
-/// Answers the row after them.
 fn draw_suggestions(
     frame: &mut Frame,
     area: Rect,
@@ -529,7 +522,6 @@ fn draw_suggestions(
     y
 }
 
-/// Over the bottom of the composer: the four times, each with the number that picks it.
 pub fn draw_schedule(
     frame: &mut Frame,
     area: Rect,
@@ -555,8 +547,6 @@ pub fn draw_schedule(
         theme.style(Role::Accent).add_modifier(Modifier::BOLD),
     )];
     for (index, (label, when)) in times.iter().enumerate() {
-        // The day only when it is not today: "18:00" this evening, "Tue
-        // 08:00" otherwise.
         let at = if when.date_naive() == now.date_naive() {
             when.format("%H:%M").to_string()
         } else {
@@ -576,7 +566,6 @@ pub fn draw_schedule(
     }
 }
 
-/// Over the last row of the composer, with the terminal's cursor at its end (FR-027).
 pub fn draw_path_prompt(frame: &mut Frame, area: Rect, typed: &str, theme: &Theme) {
     let area = Rect::new(
         area.x + 2,
@@ -683,7 +672,6 @@ mod tests {
             verbs.find("Send ").unwrap() < verbs.find("Send later").unwrap(),
             "{drawn}"
         );
-        // The fields and the body are inside, under the hairline.
         let tee: Vec<char> = lines[5].chars().collect();
         assert_eq!((tee[14], tee[105]), ('├', '┤'), "{drawn}");
         assert!(
@@ -705,7 +693,6 @@ mod tests {
     #[test]
     fn the_subtitle_counts_the_words_and_says_when_the_draft_was_saved() {
         let mut app = composing((120, 36), DraftKind::Reply);
-        // Into the body, then two words.
         update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
         update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
         update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
@@ -770,12 +757,10 @@ mod tests {
             "{drawn}"
         );
         assert!(!lines[1].contains("Inbox"), "the strip gave way:\n{drawn}");
-        // Escape brings it back to the frame, the draft still being written.
         update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
         assert!(!app.composer_detached());
         assert_eq!(app.front(), Front::Composer);
         assert!(screen(120, 36, &app).contains('╭'));
-        // And the same key detaches again, and again brings it back.
         assert_eq!(
             app.hint(postio_core::CommandId::DetachComposer).as_deref(),
             Some("alt+o")
@@ -844,7 +829,6 @@ mod tests {
             }),
         );
         assert!(app.path_prompt().is_some(), "Attach asks for a path");
-        // Close: the draft goes where an Escape takes it.
         update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
         let (y, line) = lines_of(&screen(120, 36, &app))
             .into_iter()

@@ -1,6 +1,4 @@
-//! The command bar and the search results, driven by the controller: its
-//! intents become the box and the results, and keys and clicks go back as
-//! inputs.
+//! The command bar and the search results, driven by the controller.
 
 use crossterm::event::{KeyCode, KeyEvent};
 use postio_core::CommandId;
@@ -139,7 +137,6 @@ impl App {
         self.ctl.result_person(position)
     }
 
-    /// Rows of the results that fit under their header.
     fn result_room(&self) -> u64 {
         let list = self.window().list;
         u64::from(list.height.saturating_sub(crate::view::results::HEADER + 1)).max(1)
@@ -152,7 +149,6 @@ impl App {
         }
     }
 
-    /// Ask for the rows in view that the controller has not read yet.
     pub(super) fn results_fetches(&mut self) -> Vec<Effect> {
         let Some(results) = self.results.as_ref() else {
             return vec![Effect::Redraw];
@@ -170,8 +166,6 @@ impl App {
         effects
     }
 
-    /// Whether the controller, not this app, runs `command` while the results
-    /// are up.
     pub(super) fn in_results_command(&self, command: CommandId) -> bool {
         self.results.is_some()
             && self.focus == Focus::List
@@ -198,7 +192,6 @@ impl App {
                 };
             }
             KeyCode::Enter if key.modifiers.is_empty() => {
-                // With nothing to run, return searches for what is typed.
                 return match bar.selected() {
                     Some(token) => self.tell(Told::BarRun(token)),
                     None => self.tell(Told::Command(CommandId::ShowAllResults)),

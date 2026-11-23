@@ -151,13 +151,11 @@ pub enum Input {
         text: String,
     },
     BarRun(u64),
-    /// Nothing comes back when there is no chip to step into.
     BarTab,
     SearchHighlighted(u64),
     SearchForget(u64),
     SearchExclude(u64),
     SearchEdit(TermEdit),
-    /// A toggle button's kind opens nothing.
     SearchPopover(postio_ui::search_view::FilterKind),
     PopoverToggle {
         token: u64,
@@ -172,7 +170,6 @@ pub enum Input {
     ResultsTab(postio_search::results::ResultsTab),
     ResultsOrder(postio_search::results::ConversationOrder),
     ResultsPoint(u64),
-    /// The copy it was handed can go too.
     FileCopyDone,
     OpenPlace(u64),
     /// While it is up, changing mail has its places read again so the counts follow (#2153).
@@ -212,7 +209,6 @@ pub enum Input {
     DigestReference(u32),
     /// A no is nothing: the question is forgotten when the next is asked.
     Confirmed(u64),
-    /// Opens the dialog on a rule of `config.toml`, by its name, from where the window lists them.
     EditRule {
         name: String,
     },
@@ -340,7 +336,6 @@ pub enum Intent {
         kind: ToastKind,
     },
     ReplaceSource {
-        /// How many rows the new place draws.
         total: u32,
     },
     PagePending {
@@ -369,7 +364,6 @@ pub enum Intent {
         total: u32,
         host: Host,
     },
-    /// The row is named by its delivery, negated, as `RowFacts::id` names it.
     OpenDigest {
         row: MessageId,
     },
@@ -473,14 +467,11 @@ pub enum Intent {
     ContactEdit(Option<Box<postio_ui::contact_edit::EditView>>),
     ContactsSettings(Box<postio_ui::contacts_settings::SuggestionsView>),
     ContactsFocusFilter,
-    /// Keys `1` `2` `3` are `Context::ForwardChooser`'s while it holds the keyboard.
     ForwardChooser(Box<postio_ui::compose::ChooserView>),
     OlderReply(Option<Box<postio_ui::compose::OlderReplyView>>),
     NewerMessages(Option<Vec<MessageId>>),
     QuotedExpanded(bool),
-    /// Answer with `Input::ComposerDraft`.
     ComposerDraftWanted(DraftEdit),
-    /// What was typed above the quote is in it already.
     ComposerDraft(Box<postio_model::Draft>),
 }
 
@@ -636,7 +627,6 @@ pub enum Request {
         stamp: u64,
     },
     SweepPreview,
-    /// What a digest's delivery holds, and -- with `summary` -- its summary.
     DigestRead {
         delivery: postio_model::DeliveryId,
         summary: bool,
@@ -719,12 +709,10 @@ pub enum Request {
 }
 
 impl Request {
-    /// `None` for any request but the passages ones.
     pub fn first_line(&self) -> Option<postio_search::passage::FirstLine> {
         match self {
-            // Neither the dropdown's hits (screen 03) nor the results' rows
-            // (design §3.4) show a preview: a match after the first line,
-            // or the first line's own when it holds the only one.
+            // Neither the dropdown's hits nor the results' rows show a preview: a match after the
+            // first line, or the first line's own when it holds the only one.
             Request::Passages { .. } | Request::ResultsPassages { .. } => {
                 Some(postio_search::passage::FirstLine::Avoided)
             }
@@ -795,7 +783,6 @@ pub enum Reply {
     },
     AttachmentCopy {
         stamp: u64,
-        /// What the copy was for.
         purpose: FilePurpose,
         answer: Result<Option<std::path::PathBuf>, String>,
     },
@@ -827,7 +814,6 @@ pub enum Reply {
         answer: Result<Box<postio_search::results::ConversationResults>, String>,
     },
     ThreadRead {
-        /// The thread asked for.
         thread: ThreadId,
         view: Result<Option<ThreadView>, String>,
     },
@@ -896,7 +882,6 @@ pub enum Reply {
         answer: Result<Vec<postio_model::ContactListRow>, String>,
     },
     ContactPosition {
-        /// Who was asked about.
         person: postio_model::ContactId,
         at: Option<u32>,
     },
@@ -906,29 +891,24 @@ pub enum Reply {
     ContactSeen(Vec<postio_model::SeenItem>),
     ContactSuggestions(Result<postio_model::ContactSuggestions, String>),
     ContactCard {
-        /// The stamp it was asked under.
         stamp: u64,
         answer: Result<Option<Box<postio_model::ContactCardRead>>, String>,
     },
-    /// The answer to [`Request::ContactGlance`]: the person, or `None` for an
-    /// address the store never saw.
+    /// The person, or `None` for an address the store never saw.
     ContactGlance {
         stamp: u64,
         glance: Result<Option<Box<postio_model::ContactGlance>>, String>,
     },
     FoundMessage {
-        /// The message asked about.
         message: MessageId,
         row: Option<postio_model::listing::MessageSummary>,
     },
     ThreadOf {
-        /// The message asked about.
         message: MessageId,
         thread: Option<ThreadId>,
     },
     DraftBehind {
         message: MessageId,
-        /// The send verb that asked.
         command: CommandId,
         draft: Option<postio_model::DraftId>,
     },
@@ -1032,8 +1012,6 @@ impl FocusController {
     }
 
     pub fn handle_on(&mut self, input: Input, rows: &dyn Rows) -> Vec<Effect> {
-        // A message a hit opened, closed however it was: the bar comes back
-        // on its words.
         let reading = self.surfaces.has(SurfaceKind::Message);
         let raw = rows;
         let through = self.through(raw);
@@ -1555,8 +1533,6 @@ impl FocusController {
         }
     }
 
-    /// Open the remind picker for the draft being written; its choice comes back as
-    /// `Intent::DraftReminder`.
     pub fn open_draft_reminder(&mut self, target: &str) -> Vec<Effect> {
         let steps = self.picker_for_draft(target.to_owned());
         self.effects(steps)
@@ -1711,8 +1687,6 @@ impl FocusController {
             }
             _ => {}
         }
-        // A message open that is on no cursor row (a search hit, a digest's email) is what a verb
-        // is about.
         if let Some(shown) = self.shown_apart(rows) {
             if pickers::opens_picker(id) {
                 return self.picker_on_message(id, shown, rows).unwrap_or_default();
@@ -1765,8 +1739,6 @@ impl FocusController {
         }
     }
 
-    /// The whole-thread aim, which is what the thread verbs reach; a message verb on a row is aimed
-    /// by its own command.
     pub fn aim(&self, rows: &dyn Rows) -> Aimed {
         self.aim_for(rows, CommandId::Archive)
     }
@@ -1801,8 +1773,6 @@ impl FocusController {
     }
 
     fn surface_command(&mut self, id: CommandId, rows: &dyn Rows) -> Option<Vec<feed::Step>> {
-        // Back on the bar takes it off the stack here rather than waiting for the frontend's
-        // `SurfaceClosed`.
         if self.surfaces.top() == Some(SurfaceKind::Bar) && id == CommandId::Back {
             return Some(self.dismiss_bar(false));
         }
@@ -1812,8 +1782,6 @@ impl FocusController {
         if let Some(steps) = self.compose_verb(id, rows) {
             return Some(steps);
         }
-        // The controller's own surfaces; one a frontend opened itself, with
-        // nothing held for it here, closes by the general rule below.
         match self.surfaces.top() {
             Some(SurfaceKind::Filtered) if self.filtered.is_some() => {
                 return self.filtered_command(id, rows);
@@ -1899,8 +1867,6 @@ impl FocusController {
                     .and_then(|at| rows.facts(at))
                     .or_else(|| self.hit_facts(reading))?;
                 let mut steps = self.verbs.command_on(id, &row)?;
-                // The message goes away, and the one that takes its place shows once the list lets
-                // it go.
                 if self.leaves_the_list(id)
                     && let Some(at) = position
                 {
@@ -1948,8 +1914,7 @@ impl FocusController {
             if self.results.is_some() && results::results_key(id) {
                 return true;
             }
-            // ⌘⌫ clears the filters while nothing matches (D24), and is
-            // nobody's otherwise.
+            // ⌘⌫ clears the filters while nothing matches, and is nobody's otherwise.
             if id == CommandId::BackToWords
                 && self
                     .results
@@ -2039,7 +2004,6 @@ impl FocusController {
         self.cursor.has_action()
     }
 
-    /// The controller notes where it is, so the next `j` walks on from there, and draws nothing.
     pub fn cursor_is(&mut self, position: Option<u32>) {
         self.cursor.moved_to(position);
     }
@@ -2163,7 +2127,6 @@ impl FocusController {
         Effect::Ask(self.ticket(), Request::FocusCounts)
     }
 
-    /// Called when what they were for is gone: a place left or a list replaced.
     pub fn invalidate(&mut self) {
         self.generation += 1;
         self.pending = None;
@@ -2298,7 +2261,6 @@ impl FocusController {
     }
 }
 
-/// The sender and subject a picker's target names, as a list row says them.
 pub(crate) fn said_of(message: &postio_model::listing::MessageSummary) -> (String, String) {
     (
         message

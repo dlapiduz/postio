@@ -1,7 +1,6 @@
 //! The results view: the main window as a search's results, a mode of it and not a surface over
-//! it. It holds the query as the field has it, edited only through `postio_search::edit`, and a
-//! window over the conversations it matches: Top hits, then every conversation newest first by
-//! the month of its newest match. A page of fifty is read when wanted, its passages after.
+//! it. The query is edited only through `postio_search::edit`; rows are a window over the matching
+//! conversations, Top hits first, then newest month first; pages of fifty are read when wanted.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
@@ -92,11 +91,9 @@ pub struct FileCard {
     pub message: MessageId,
     pub kind: String,
     pub preview: postio_ui::search_view::FilePreview,
-    /// `None` when the file matched by its name alone.
     pub marked: Option<u32>,
     pub name: Vec<Run>,
     pub meta: String,
-    /// Empty when only its name matched.
     pub line: Vec<Run>,
     pub subject: String,
     pub focused: bool,
@@ -176,7 +173,6 @@ pub struct ResultRow {
     pub passage: Vec<Run>,
     pub folder: String,
     pub date: String,
-    /// When the newest match arrived.
     pub at: chrono::DateTime<chrono::Utc>,
     pub checked: bool,
     pub accessible: String,
@@ -203,7 +199,6 @@ pub struct FilterButton {
     pub label: String,
     pub applied: bool,
     pub open: bool,
-    /// `None` for the toggles, which a click flips.
     pub key: Option<String>,
 }
 
@@ -223,7 +218,6 @@ pub struct QueryView {
     pub chips: Vec<Chip>,
     pub words: String,
     pub hint: String,
-    /// `None` when the hint names its own key.
     pub hint_key: Option<String>,
     pub ringed: bool,
     pub buttons: Vec<FilterButton>,
@@ -250,7 +244,6 @@ pub struct NoResultsView {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PopoverRow {
-    /// Its place among the rows the popover opened with, whatever its own filter hides.
     pub token: u64,
     pub title: String,
     pub detail: Option<String>,
@@ -273,7 +266,6 @@ pub struct PopoverView {
     pub hints: Vec<Hint>,
     pub presets: Vec<DatePresetView>,
     pub words: String,
-    /// `None` when they are no date.
     pub parsed: Option<String>,
     pub words_hint: String,
     pub months: Vec<MonthBar>,
@@ -387,7 +379,6 @@ pub enum TermEdit {
     ClearFilters,
 }
 
-/// `None` when it is no operator the query language has.
 pub(crate) fn clause_of(
     field: &str,
     value: &str,
@@ -458,7 +449,6 @@ struct Span {
     top_hits: bool,
 }
 
-/// Its rows and counts hold still while its checks narrow the results.
 #[derive(Debug, Clone)]
 struct Base {
     facets: SearchFacets,
@@ -468,7 +458,6 @@ struct Base {
 #[derive(Debug)]
 pub(crate) struct Popover {
     kind: FilterKind,
-    /// The query to restore on Esc.
     before: String,
     base: Option<Base>,
     /// Set when the query holds the popover's own field and the results' facets would list only
@@ -489,7 +478,6 @@ struct Offer {
 
 #[derive(Debug, Default)]
 pub(crate) struct NoResults {
-    /// `None` while they are counted.
     found: Option<Vec<(Relaxation, Counted)>>,
     focus: usize,
 }
@@ -508,7 +496,6 @@ pub(crate) struct Results {
     top: Option<Vec<ConversationHit>>,
     pages: BTreeMap<u32, Vec<ConversationHit>>,
     asked: BTreeSet<u32>,
-    /// Restored rows wait for the frame.
     pub(crate) cursor: Option<u64>,
     pub(crate) checked: Vec<(MessageId, Option<ThreadId>)>,
     /// ⇧X: every conversation the query matches is checked but `checked` (a predicate, never the
@@ -779,7 +766,6 @@ impl Results {
         }))
     }
 
-    /// The frame drawn stays on screen until the new one lands.
     pub(crate) fn again(&mut self, stamp: u64) -> Vec<Step> {
         self.stamp = stamp;
         self.frame = None;
@@ -973,7 +959,6 @@ impl Results {
             if month.conversations == 0 {
                 continue;
             }
-            // A capped total is a floor: no group runs past it.
             let rows = month.conversations.min(frame.total.saturating_sub(counted));
             if rows == 0 {
                 break;
@@ -1715,7 +1700,6 @@ impl Results {
         let name_of = |address: &str| self.name_of(address);
         let what =
             words::filter_button_label(popover.kind, &filters, &name_of, with.now.date_naive());
-        // The value alone ("Ada Moreno"): the line is 210 points wide.
         let what = what
             .split_once(": ")
             .map_or(what.as_str(), |(_, value)| value);
@@ -1748,10 +1732,8 @@ impl Results {
             })
         };
         match popover.kind {
-            // You are in every message you sent: not someone to narrow
-            // to (screen 08), as the People tab leaves you out, unless the
-            // query already asks for you and there is a check to take off.
-            // To keeps you, since mail to you is a real narrowing.
+            // You are in every message you sent, so From leaves you out as the People tab does,
+            // unless the query already asks for you; To keeps you, since mail to you narrows.
             FilterKind::From => base
                 .facets
                 .senders
@@ -2220,7 +2202,6 @@ impl Results {
         };
         let found = match answer {
             Ok(found) if !found.is_empty() => found,
-            // Nothing read: the row's own matches stay, which are true.
             Ok(_) => return false,
             Err(error) => {
                 tracing::debug!(%error, "a conversation's matches could not be read");
@@ -2365,7 +2346,6 @@ impl Results {
 
     pub(crate) fn snapshot(&self) -> crate::history::Snapshot {
         crate::history::Snapshot {
-            // A popover's preview is not kept: what it opened on is.
             query: self
                 .popover
                 .as_ref()
@@ -2421,8 +2401,6 @@ pub struct SaveView {
     pub pin: bool,
     pub pin_label: String,
     pub pin_note: String,
-    /// The key it will run on (`alt+3`), the next free; `None` past the
-    /// fourth.
     pub pin_key: Option<String>,
     pub notify: bool,
     pub notify_label: String,
@@ -2666,9 +2644,6 @@ impl FocusController {
         let parsed = self.bar.lower(&typed);
         let query = spelled(&parsed);
         let order = Results::default_order(&parsed);
-        // Kept among the recent searches now when the dropdown has counted
-        // it, so leaving before the results land still keeps it; else once
-        // they land.
         let remembered = self.bar.remember();
         let mut steps = self.dismiss_bar(true);
         steps.extend(self.open_results(Snapshot {
@@ -2847,7 +2822,6 @@ impl FocusController {
             CommandId::ToggleHasAction => {
                 self.results_edit(postio_search::edit::Edit::Toggle(Filter::HasAction))
             }
-            // Nothing is written until the Save popover's Save.
             CommandId::SaveSearch => self
                 .save_view()
                 .map(|view| vec![Step::Show(Intent::SavePopover(Some(Box::new(view))))])
@@ -2905,7 +2879,6 @@ impl FocusController {
         }
         let stamp = self.stamp();
         match self.results.as_mut() {
-            // The first page is still out: one more read once it lands.
             Some(results) if results.frame.is_none() && results.asked.contains(&0) => {
                 results.stale = true;
                 Vec::new()
@@ -3013,7 +2986,6 @@ impl FocusController {
         steps
     }
 
-    /// What was checked has been acted on, so it goes.
     fn results_verb(&mut self, id: CommandId) -> Vec<Step> {
         let Some(postio_ui::focus_target::Dispatch::OnMail(command)) =
             postio_ui::focus_target::dispatch(id)
@@ -3619,7 +3591,6 @@ impl FocusController {
                 self.draw_popover().into_iter().collect()
             }
             Input::PopoverDone { apply } => self.popover_done(apply),
-            // The system's panel is gone already: only the copy goes.
             Input::FileCopyDone => match self
                 .results
                 .as_mut()
@@ -3659,9 +3630,8 @@ impl FocusController {
                     steps.extend(self.draw_results());
                     steps.extend(self.draw_popover());
                 }
-                // Nothing found: the page now, its ways out when they are
-                // counted -- slowly, on a lane of their own, never in the
-                // way of the next keystroke.
+                // Nothing found: the page now, its ways out when counted, on a lane of their own so
+                // they never hold up the next keystroke.
                 if let Some(request) = ways_out {
                     steps.extend(self.draw_no_results());
                     steps.push(Step::Ask(request));
@@ -3677,9 +3647,8 @@ impl FocusController {
                     }));
                 }
                 steps.extend(landed.passages.map(Step::Ask));
-                // The top result's matches ride with its page (spec 013
-                // R11): asked beside the passages, so the default
-                // expansion costs no trip of its own.
+                // The top result's matches ride with its page, asked beside the passages, so the
+                // default expansion costs no trip of its own.
                 steps.extend(self.default_expansion());
                 let stamp = self.stamp();
                 if let Some(results) = self.results.as_mut()
@@ -3796,7 +3765,6 @@ fn without_field(parsed: &ParsedQuery, field: postio_search::query::Field) -> St
         .join(" ")
 }
 
-/// `None` when they name no date.
 fn date_terms(
     words: &str,
     today: NaiveDate,
@@ -3845,9 +3813,6 @@ fn dates_of(parsed: &ParsedQuery) -> (Option<NaiveDate>, Option<NaiveDate>) {
     (after, before)
 }
 
-/// Which of a card's preview lines is the matching one: a sheet's row or a
-/// text's line where it falls among the six drawn, a page's or a slide's
-/// middle.
 fn marked_line(location: &Location) -> u32 {
     const DRAWN: u32 = 6;
     match location {
@@ -3896,7 +3861,6 @@ impl Results {
         ))
     }
 
-    /// `None` when this answer is not the expansion's.
     fn expansion_matches(
         &mut self,
         stamp: u64,

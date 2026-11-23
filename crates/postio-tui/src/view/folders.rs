@@ -1,7 +1,5 @@
-//! The folders popover, drawn (terminal.md, "Folders and labels"): a box 44
-//! wide under the strip's left end holding the filter and the places in
-//! their sections, each mailbox with its `g` key, each label with its
-//! coloured dot, and the counts dimmed at the right.
+//! The folders popover: a box 44 wide under the strip's left end, the filter and the places in
+//! sections.
 
 use ratatui::Frame;
 use ratatui::layout::{Position, Rect};
@@ -18,22 +16,18 @@ use postio_core::CommandId;
 use postio_ui::label_colour::{Rgb, label_colour};
 use postio_ui::places::{Entry, Mark, Section};
 
-/// The box's width.
 const WIDTH: u16 = 44;
 
-/// The box under the strip's left end.
 pub fn outer(area: Rect, lines: u16) -> Rect {
     let width = WIDTH.min(area.width.saturating_sub(2));
     Rect::new(
         area.x + 1,
         area.y + 2,
         width,
-        // Borders, the filter and its rule, then the lines.
         (4 + lines).min(area.height.saturating_sub(3)),
     )
 }
 
-/// Draw the popover over `area`.
 pub fn draw(
     frame: &mut Frame,
     area: Rect,
@@ -69,7 +63,6 @@ pub fn draw(
     let dim = theme.style(Role::Dim);
     let text = theme.style(Role::Text);
     let accent = theme.style(Role::Accent);
-    // The filter.
     let typed = folders.filter();
     let mut spans = vec![Span::styled("⌕ ", accent)];
     if typed.is_empty() {
@@ -101,7 +94,6 @@ pub fn draw(
     }
     let chosen = folders.chosen();
     let shown = usize::from(inner.height.saturating_sub(2));
-    // Keep the chosen row in view.
     let chosen_line = lines
         .iter()
         .position(|(_, at)| *at == Some(chosen))

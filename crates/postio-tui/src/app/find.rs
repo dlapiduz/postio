@@ -1,5 +1,6 @@
-//! Find in the open message. Matches are never stored but found again in the lines the message
-//! draws (spec 006 FR-018), so they follow a fold opened, a resize and a step through the thread.
+//! Find in the open message. Matches are found again in the lines the message draws, so they follow
+//! a
+//! fold, a resize and a step through the thread.
 
 use crossterm::event::{Event as TerminalEvent, KeyCode, KeyEvent, KeyModifiers};
 use postio_ui::find::{Match, count_label, first_from, matches, step};
@@ -20,12 +21,10 @@ impl Find {
         self.input.value()
     }
 
-    /// From 0.
     pub fn current(&self) -> Option<usize> {
         self.current
     }
 
-    /// In characters.
     pub fn caret(&self) -> usize {
         self.input.visual_cursor()
     }
@@ -44,7 +43,6 @@ impl App {
         u16::from(self.open.find.is_some())
     }
 
-    /// The message's column, or its source while that is shown.
     fn find_text(&self) -> Vec<String> {
         let (outer, inner, _) = self.open_geometry();
         match &self.open.raw {
@@ -104,7 +102,6 @@ impl App {
         vec![Effect::Redraw]
     }
 
-    /// The first match from where the person is reading.
     fn restart_find(&mut self) {
         let found = self.find_matches();
         let from = self.reader_top;
@@ -264,7 +261,6 @@ mod tests {
             .collect()
     }
 
-    /// The last row inside the frame.
     fn field(app: &App, size: (u16, u16)) -> String {
         rows(app, size)[usize::from(size.1) - 3].clone()
     }
@@ -317,8 +313,6 @@ mod tests {
             "{}",
             field(&app, FRAME)
         );
-        // Without colour a match is reversed, the one the field is on besides
-        // underlined; the body's own words are not marked.
         let reversed = marked(&app, FRAME, "Harbor", Modifier::REVERSED);
         assert_eq!(
             reversed.len(),
@@ -348,7 +342,6 @@ mod tests {
             1,
             "the current match moved"
         );
-        // ctrl+g and F3 go on; shift+F3 and shift+Enter go back.
         update(&mut app, ctrl('g'));
         assert!(field(&app, FRAME).contains("3 of 3"));
         assert!(screen(FRAME.0, FRAME.1, &app).contains("and HARBOR dues"));

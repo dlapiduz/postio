@@ -1,6 +1,4 @@
-//! The digest rules list's state (`g r`, terminal.md, "Digests"): every rule
-//! in `config.toml`, what each holds now, the one the keyboard is on, and
-//! the question over removing one.
+//! The digest rules list's state: each rule, the one the keyboard is on, and the remove question.
 
 use postio_config::DigestRule;
 

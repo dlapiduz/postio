@@ -1,5 +1,4 @@
-//! What the digest rules list asks of the host, which the controller has no
-//! surface for, and what it answers.
+//! What the digest rules list asks of the host, and its answer.
 
 use postio_client::Client;
 

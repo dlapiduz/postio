@@ -168,7 +168,6 @@ impl App {
                     return Err(Box::new(Intent::CloseSurface(SurfaceKind::Dialog)));
                 };
                 self.focus = form.from();
-                // A rule saved changes what `config.toml` says.
                 return Ok(vec![Effect::RefreshPlaces, Effect::Redraw]);
             }
             other => return Err(Box::new(other)),
@@ -181,7 +180,6 @@ impl App {
             return Vec::new();
         };
         let typing = form.typing();
-        // The walk and the choices are not text, whichever field is on.
         match key.code {
             KeyCode::Tab => {
                 form.walk(1);
@@ -201,7 +199,6 @@ impl App {
             }
             _ => {}
         }
-        // A text field's own Return writes the rule and its Escape gives it up.
         if typing {
             match key.code {
                 KeyCode::Enter => return self.rule_confirm(),

@@ -1,6 +1,4 @@
-//! The capture sheet as drawn: the controller's view, and what only the
-//! keyboard knows: the control it is on, the text being typed and the
-//! project chooser's row.
+//! The capture sheet as drawn: the controller's view plus what only the keyboard knows.
 
 use postio_focus::CaptureView;
 use postio_ui::terminal::SafeText;

@@ -1,5 +1,4 @@
-//! Filtered as drawn: the controller's view and the scroll this terminal
-//! keeps over it.
+//! Filtered as drawn: the controller's view and this terminal's scroll.
 
 use postio_focus::{FilteredBar, FilteredView};
 use postio_model::MessageId;
@@ -17,8 +16,6 @@ pub struct Filtered {
 }
 
 impl Filtered {
-    // What is drawn from the moment Filtered opens until the first reading
-    // arrives.
     pub fn opening() -> Filtered {
         use postio_ui::filtered as words;
         Filtered {

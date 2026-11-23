@@ -1,5 +1,4 @@
-//! The pickers, driven by the controller: its intents become the box, and
-//! keys and clicks go back as inputs.
+//! The pickers, driven by the controller.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use postio_core::CommandId;
@@ -11,7 +10,6 @@ use tui_input::backend::crossterm::EventHandler;
 use super::{App, Effect, Focus};
 use crate::pickers::Picker;
 
-/// Rows the wheel moves the keyboard by.
 const WHEEL: usize = 3;
 
 impl App {
@@ -91,7 +89,6 @@ impl App {
                 if !picker.in_field() {
                     return vec![Effect::Redraw];
                 }
-                // Enter in a field confirms what is typed.
                 if key.code == KeyCode::Enter {
                     return self.picker_command(CommandId::PickerConfirm);
                 }

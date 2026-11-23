@@ -1,6 +1,3 @@
-//! The controller's question over the window: its words, and Cancel and the
-//! act as buttons.
-
 use postio_core::CommandId;
 use postio_ui::terminal::SafeText;
 use ratatui::Frame;

@@ -1,5 +1,4 @@
-//! The go-to-folder box, driven by the controller: it lists the places and
-//! goes to the one chosen.
+//! The go-to-folder box, driven by the controller.
 
 use crossterm::event::KeyEvent;
 use postio_focus::{Input as Told, Intent};

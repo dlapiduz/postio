@@ -1,15 +1,6 @@
-//! The message list: day headings and Focus's rows.
-//!
-//! Only the rows in view are drawn, from the window's resident pages; a row
-//! whose page is still on its way is blank, and asking for it is `App`'s
-//! business, not the drawing's (Principle V: never a whole mailbox).
-//!
-//! A row is one line, or two when it carries a marker (terminal.md,
-//! "Rows"): the cursor's `▌`, a mark, the sender, the subject with its
-//! label pills and first line, and the trailing column. Rows have no rule
-//! between them. Every state has a mark that is not a colour: `▌` the
-//! cursor, `✓` selected, `●` unread, `≡` a digest, `↺` a reminder, `⎘` an
-//! attachment.
+//! The message list: day headings and Focus's rows. Only the rows in view are drawn, from the
+//! resident pages; a row whose page is on its way is blank, and `App` asks for it (never a whole
+//! mailbox).
 
 use chrono::{DateTime, Local, NaiveDate};
 use postio_core::CommandId;
@@ -25,51 +16,35 @@ use crate::view::fit;
 use crate::view::hit::{Hits, Target};
 use postio_ui::terminal::SafeText;
 
-/// What stands over a row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Heading {
-    /// The day its mail arrived on.
     Day(NaiveDate),
-    /// One heading for the whole list while a filter is on.
     Text(String),
 }
 
-/// One visible row of the list.
 pub struct Visible<'a> {
-    /// The row, or `None` while its page is on its way.
     pub row: Option<&'a Row>,
-    /// Whether the cursor is here.
     pub cursor: bool,
-    /// Whether the row is selected.
     pub selected: bool,
-    /// The heading that starts here, on a line of its own above the row.
     pub heading: Option<Heading>,
 }
 
-/// Where the sender starts: the cursor, the mark and a space.
 const SENDER_X: u16 = 3;
-/// From this width the sender's column is [`SENDER_WIDE`].
 const WIDE: u16 = 100;
 const SENDER_WIDE: u16 = 20;
 const SENDER_NARROW: u16 = 16;
-/// The sender's column beside the reading pane.
 const SENDER_BESIDE: u16 = 12;
-/// The room the right edge keeps.
 const MARGIN: usize = 0;
 
-/// Where the subject starts in a list `width` cells wide, `beside` the
-/// reading pane or not: after the cursor, the mark and the sender's column.
 pub fn subject_x(width: u16, beside: bool) -> u16 {
     SENDER_X + sender_width(width, beside) + 1
 }
 
-/// How many lines `row` takes: one, or two with a marker. A row not here yet
-/// is one.
+/// A row whose page is not here yet is one line.
 pub fn lines_of(row: Option<&Row>) -> u16 {
     1 + u16::from(row.is_some_and(Row::two_lines))
 }
 
-/// The sender's column in a list `width` cells wide.
 fn sender_width(width: u16, beside: bool) -> u16 {
     if beside {
         SENDER_BESIDE
@@ -80,9 +55,8 @@ fn sender_width(width: u16, beside: bool) -> u16 {
     }
 }
 
-/// Draw `rows` into `area`, beside the reading pane or not. `first` is the list position of the first row,
-/// for what a click on each means; `hint` is the key this terminal sends for
-/// a command, for the answers a marked row offers.
+/// `first` is the list position of the first row; `hint` gives the key this terminal sends for a
+/// command.
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
     frame: &mut Frame,
@@ -164,7 +138,6 @@ pub fn draw(
         if height == 2
             && let Some(row) = visible.row
         {
-            // Each drawn answer is its key, for this row.
             let mut x = area.x
                 + u16::try_from(
                     usize::from(area.width)
@@ -184,8 +157,6 @@ pub fn draw(
     }
 }
 
-/// The mark in front of the sender: what the row is, or whether it is
-/// unread.
 fn mark<'a>(row: &Row, visible: &Visible, theme: &Theme) -> Span<'a> {
     if visible.selected {
         return Span::styled("✓", selection_mark(theme));
@@ -205,7 +176,6 @@ fn mark<'a>(row: &Row, visible: &Visible, theme: &Theme) -> Span<'a> {
     }
 }
 
-/// The trailing column: a draft's state, `⎘`, the count and the time.
 fn trailing(row: &Row, now: DateTime<Local>) -> String {
     let mut parts: Vec<String> = Vec::new();
     if let Some(state) = row.send_state {
@@ -225,8 +195,6 @@ fn trailing(row: &Row, now: DateTime<Local>) -> String {
     }
 }
 
-/// A row's first line: the sender, then the subject, its pills and its
-/// first line, then what trails.
 fn first_line<'a>(
     row: &Row,
     visible: &Visible,
@@ -298,8 +266,7 @@ fn first_line<'a>(
     Line::from(spans)
 }
 
-/// What a marked row's second line offers to answer it, each as the words
-/// and the key the keymap gives: nothing once the marker has a status.
+/// Nothing once the marker has a status.
 fn answers(
     row: &Row,
     now: DateTime<Local>,
@@ -320,8 +287,6 @@ fn answers(
         .collect()
 }
 
-/// The room a row's answers take on the right, with their gaps; what its
-/// status takes when it has one.
 fn answers_width(
     row: &Row,
     now: DateTime<Local>,
@@ -333,8 +298,6 @@ fn answers_width(
         + 2 * answers.len().saturating_sub(1)
 }
 
-/// A marked row's second line, under the subject: the chip, the date and the
-/// quoted sentence, and on the right what answers it.
 #[allow(clippy::too_many_arguments)]
 fn second_line<'a>(
     row: &Row,
@@ -351,8 +314,6 @@ fn second_line<'a>(
     };
     let line = postio_ui::focus_row::marker_line(marker, now.with_timezone(&chrono::Utc), &Local)
         .capturing(capture);
-    // Under the subject, or under the sender once the sender's column has
-    // narrowed.
     let start = if !beside && u16::try_from(width).unwrap_or(u16::MAX) >= WIDE {
         usize::from(SENDER_X + SENDER_WIDE)
     } else {
@@ -397,8 +358,7 @@ fn second_line<'a>(
     Line::from(spans)
 }
 
-/// A selection's mark: the selection's colour as the mark's own, rather than
-/// a block behind it; without colour, the role's reversal.
+/// The selection's colour on the mark itself; reversed without colour.
 fn selection_mark(theme: &Theme) -> Style {
     let selection = theme.style(Role::Selection);
     match selection.bg {
@@ -453,9 +413,6 @@ mod tests {
         })
     }
 
-    /// A small inbox: an unread invitation with a pill, a digest, a busy
-    /// conversation with two pills and an attachment, a plain read one, and
-    /// one from yesterday.
     fn inbox(size: (u16, u16)) -> App {
         let mut app = app(size);
         seed_places(&mut app, places());
@@ -516,7 +473,6 @@ mod tests {
             lines[2].contains("Today · Wednesday 23 September"),
             "the day heading starts the list:\n{drawn}"
         );
-        // The invitation: a line, and under it the marker's line.
         assert!(lines[3].contains("Grace Oyelaran"), "{drawn}");
         assert!(
             lines[3].contains("Invitation: Harbor design review"),
@@ -532,19 +488,15 @@ mod tests {
             lines[4].contains("Accept y  Decline Y"),
             "the answers, with the keys the keymap gives:\n{drawn}"
         );
-        // The digest is one line: its title, subject, line, count and time.
         assert!(lines[5].contains("≡ Weekly · digest"), "{drawn}");
         assert!(lines[5].contains("Newsletters · 14 messages"), "{drawn}");
         assert!(lines[5].contains("Summary of 14 messages"), "{drawn}");
         assert!(lines[5].trim_end().ends_with("14  10:00"), "{drawn}");
-        // A plain row is one line; its pills and its count and clip come
-        // before the time.
         assert!(lines[6].contains("● Ada Moreno"), "unread:\n{drawn}");
         assert!(lines[6].contains("●Atlas ●Budget"), "{drawn}");
         assert!(lines[6].contains("⎘ 3  09:51"), "{drawn}");
         assert!(lines[7].contains("Tomás Reyes"), "no second line:\n{drawn}");
         assert!(!lines[7].contains('●'), "read, so no unread mark:\n{drawn}");
-        // The next day is under its own heading.
         assert!(
             lines[8].contains("Yesterday · Tuesday 22 September"),
             "{drawn}"
@@ -575,7 +527,6 @@ mod tests {
         }
     }
 
-    /// The cell where `word` starts on the screen's first line holding it.
     fn at_word(drawn: &str, word: &str) -> (u16, u16) {
         let (y, line) = drawn
             .lines()

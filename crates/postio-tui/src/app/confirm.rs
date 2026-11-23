@@ -1,5 +1,4 @@
-//! The controller's questions (sweep the inbox, stop digesting a sender):
-//! Return says yes, Escape and anything clicked outside say no.
+//! The controller's questions: Return says yes, Escape and a click outside say no.
 
 use crossterm::event::KeyEvent;
 use postio_focus::{Confirm, Input as Told, Intent};

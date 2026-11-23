@@ -1,13 +1,6 @@
-//! Colours, as roles, resolved for this terminal.
-//!
-//! The terminal's own palette for everything -- so Postio looks at home in
-//! whatever theme the user chose -- and, on a true-colour terminal, Postio's
-//! accent for accents and the focus, read from the generated design
-//! tokens and never retyped (clarified 2026-09-23, FR-054); the raised
-//! `Surface` is a shade of that same accent. Under `NO_COLOR`
-//! there is no colour at all and every state keeps a mark that is not a
-//! colour (`contracts/tui-surface.md` §Colour roles). Any role can be
-//! overridden in `[tui.colors]`.
+//! Colours as roles, resolved for this terminal: its own palette, plus Postio's accent on true
+//! colour (from the generated design tokens). Under `NO_COLOR` every state keeps a mark that is not
+//! a colour. Any role can be overridden in `[tui.colors]`.
 
 use std::collections::BTreeMap;
 use std::str::FromStr;
@@ -16,42 +9,25 @@ use ratatui::style::{Color, Modifier, Style};
 
 use crate::caps::{Background, Colour};
 
-/// What a piece of the screen is, for colouring.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Role {
-    /// Ordinary text.
     Text,
-    /// Secondary text: dates, counts, previews.
     Dim,
-    /// Postio's own emphasis.
     Accent,
-    /// The selected rows.
     Selection,
-    /// Where the keyboard is.
     Focus,
-    /// An unread row.
     Unread,
-    /// A flagged row's mark.
     Flagged,
-    /// A link in a message.
     Link,
-    /// Quoted text.
     Quote,
-    /// Code in a message.
     Code,
-    /// Something failed.
     Error,
-    /// Something needs attention.
     Warning,
-    /// Something worked.
     Success,
-    /// A raised background: the row under the cursor, the open folder, the
-    /// search field. A tint of the accent where the terminal can draw one.
     Surface,
 }
 
 impl Role {
-    /// Every role, for enumeration and validation.
     pub const ALL: [Role; 14] = [
         Role::Text,
         Role::Dim,
@@ -69,7 +45,6 @@ impl Role {
         Role::Surface,
     ];
 
-    /// The role's name in `[tui.colors]`.
     pub fn name(self) -> &'static str {
         match self {
             Role::Text => "text",
@@ -90,7 +65,6 @@ impl Role {
     }
 }
 
-/// Every role's style for one terminal.
 #[derive(Debug, Clone)]
 pub struct Theme {
     styles: BTreeMap<Role, Style>,
@@ -98,8 +72,6 @@ pub struct Theme {
 }
 
 impl Theme {
-    /// The theme for a terminal of `colour` depth on `background`, with
-    /// `overrides` from `[tui.colors]` applied, and what could not be.
     pub fn new(
         colour: Colour,
         background: Background,
@@ -165,22 +137,15 @@ impl Theme {
         }
     }
 
-    /// A theme with no colour: for measuring what a screen would take.
     pub fn plain() -> Theme {
         Theme::new(Colour::None, Background::Unknown, &BTreeMap::new()).0
     }
 
-    /// The style a role is drawn in.
     pub fn style(&self, role: Role) -> Style {
         self.styles.get(&role).copied().unwrap_or_default()
     }
 }
 
-/// A role's style before any override.
-///
-/// Without colour, attributes carry the meaning. With the sixteen or 256
-/// colours, the terminal's own palette. With true colour, the same, except
-/// that the selected row and the focus take Postio's accent.
 fn base(role: Role, colour: Colour, background: Background) -> Style {
     let plain = Style::default();
     if colour == Colour::None {
@@ -199,9 +164,8 @@ fn base(role: Role, colour: Colour, background: Background) -> Style {
     let rgb = if on_light { light } else { dark };
     let accent = (colour == Colour::TrueColor).then_some(Color::Rgb(rgb.0, rgb.1, rgb.2));
     let surface = match colour {
-        // The accent, mostly given way to the ground it sits on: a quarter
-        // of it over black on a dark terminal, an eighth over white on a
-        // light one -- the desktop's selected card, in a terminal.
+        // The accent mostly given way to the ground: a quarter over black on dark, an eighth over
+        // white on light.
         Colour::TrueColor if on_light => {
             let mix = |c: u8| (u16::from(c) + 7 * 255).div_ceil(8) as u8;
             Color::Rgb(mix(rgb.0), mix(rgb.1), mix(rgb.2))
@@ -210,7 +174,6 @@ fn base(role: Role, colour: Colour, background: Background) -> Style {
             let mix = |c: u8| (u16::from(c) / 4) as u8;
             Color::Rgb(mix(rgb.0), mix(rgb.1), mix(rgb.2))
         }
-        // The grey ramp's near-ground steps.
         Colour::Ansi256 if on_light => Color::Indexed(254),
         Colour::Ansi256 => Color::Indexed(236),
         _ if on_light => Color::Gray,
@@ -237,8 +200,7 @@ fn base(role: Role, colour: Colour, background: Background) -> Style {
     }
 }
 
-/// A colour as `[tui.colors]` spells it: a name (`red`, `lightblue`), a
-/// palette index (`12`), or `#rrggbb`.
+/// A name (`red`), a palette index (`12`) or `#rrggbb`.
 fn parse_colour(text: &str) -> Option<Color> {
     Color::from_str(text).ok()
 }
@@ -318,9 +280,6 @@ mod tests {
                 "{depth:?}: {bg:?}"
             );
         }
-        // On true colour, a shade of the accent: its channels keep the
-        // accent's order, far darker on a dark terminal and far lighter on
-        // a light one.
         let (light, dark) = postio_ui::tokens::accent_rgb();
         for (background, accent) in [(Background::Dark, dark), (Background::Light, light)] {
             let (theme, _) = Theme::new(Colour::TrueColor, background, &Default::default());

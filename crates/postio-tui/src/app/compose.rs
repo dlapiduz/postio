@@ -9,7 +9,6 @@ use postio_ui::keymap::{KeyContext, Outcome};
 
 use super::{App, Effect, Focus};
 
-/// What the controller says about the composition's thread, which can come before its draft.
 #[derive(Debug, Default)]
 pub(crate) struct Writing {
     pub chooser: Option<ChooserView>,
@@ -21,7 +20,6 @@ pub(crate) struct Writing {
 }
 
 impl App {
-    /// The controller's clock saves the draft once the typing stops.
     pub(super) fn edited(&mut self) -> Vec<Effect> {
         let mut effects = self.tell(Told::ComposerEdited);
         effects.push(Effect::Redraw);
@@ -193,7 +191,6 @@ impl App {
                 }));
                 effects
             }
-            // Sent, so there is nothing left of it to keep.
             None => self.tell(Told::DraftSaved {
                 composition,
                 saved: Ok(false),

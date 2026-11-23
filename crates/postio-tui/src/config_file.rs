@@ -1,37 +1,26 @@
-//! What the terminal writes to `config.toml`, and reads back.
-//!
-//! The file is the settings, for both frontends (canvas 3f), and each of them
-//! watches it: whatever the terminal writes here the desktop picks up the way
-//! it picks up any edit (US7 scenario 3). So the terminal writes the way the
-//! desktop does -- through `postio_config`'s `patch_*`, which touch one table
-//! and leave the rest of the file, comments and all, as it was (#885).
+//! What the terminal writes to `config.toml` and reads back. Writes go through `postio_config`'s
+//! `patch_*`, which touch one table and leave the rest of the file as it was, so the desktop's
+//! watcher picks the change up like any edit (#885).
 
 use std::path::{Path, PathBuf};
 
 use crate::places::{Features, Saved};
 
-/// Where `config.toml` is.
 pub fn path() -> Option<PathBuf> {
     postio_config::paths::config_path().ok()
 }
 
-/// The file's text, empty when there is none yet.
 pub fn text(path: &Path) -> String {
     std::fs::read_to_string(path).unwrap_or_default()
 }
 
-/// What the terminal reads from `config.toml`: the pinned saved searches and
-/// which of Focus's features are in use.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Read {
-    /// The pinned saved searches, in the finder's order.
     pub saved: Vec<Saved>,
-    /// Which of Focus's features are in use.
     pub features: Features,
 }
 
 impl Read {
-    /// What `config` says.
     pub fn of(config: &postio_config::Config) -> Read {
         Read {
             saved: pinned(config),
@@ -54,9 +43,8 @@ impl Read {
 }
 
 impl Read {
-    /// This, with the digest rules as the engine reads them: the file's, and
-    /// the ones people have (ADR 0048), each named by whose it is. `None`
-    /// -- Focus mode is not on -- leaves the file's alone.
+    /// Adds the digest rules the engine reads: the file's and the ones people have (ADR 0048).
+    /// `None` (Focus mode off) leaves the file's alone.
     #[must_use]
     pub fn with_contacts(mut self, focus: Option<postio_config::FocusConfig>) -> Read {
         let Some(focus) = focus else {
@@ -78,8 +66,6 @@ impl Read {
     }
 }
 
-/// Write `[focus] reading` at `path` as `reading`, leaving the rest of the
-/// file as it was, as the desktop's `F8` does.
 pub fn set_reading(path: &Path, reading: postio_config::Reading) -> Result<(), String> {
     let original = text(path);
     let written = postio_config::focus_edit::set_reading(&original, reading)
@@ -91,8 +77,6 @@ pub fn set_reading(path: &Path, reading: postio_config::Reading) -> Result<(), S
     }
 }
 
-/// The pinned saved searches in `config`, in the finder's order -- the
-/// one a reorder on either app writes.
 pub fn pinned(config: &postio_config::Config) -> Vec<Saved> {
     config
         .ordered_filter_keys()
@@ -108,7 +92,6 @@ pub fn pinned(config: &postio_config::Config) -> Vec<Saved> {
         .collect()
 }
 
-/// What the file at `path` says now.
 pub fn read_at(path: &Path) -> Option<Read> {
     let text = std::fs::read_to_string(path).ok()?;
     Some(Read::of(&postio_config::Config::from_toml_str(&text).ok()?))
@@ -183,8 +166,6 @@ mod tests {
 
     #[test]
     fn what_the_terminal_writes_the_desktops_watcher_sees() {
-        // US7 scenario 3 / T088: the desktop reloads config.toml through
-        // this same watcher, so a change the terminal makes reaches it live.
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
         std::fs::write(&path, "# my own notes\n[ui]\ntheme = \"dark\"\n").unwrap();

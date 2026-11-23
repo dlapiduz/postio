@@ -58,7 +58,6 @@ impl Bar {
         self.field.value() != before
     }
 
-    /// Every line the arrows can stop on, in order.
     pub fn stops(&self) -> Vec<u64> {
         match &self.shown {
             Shown::Lines(view) => view

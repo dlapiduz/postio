@@ -1,16 +1,5 @@
-//! The terminal refuses to start over a store another Postio has open, and
-//! says to close it.
-//!
-//! One Postio at a time has the store -- the desktop app or the terminal --
-//! and whichever starts second is told so before it takes the terminal over
-//! (docs/archive/specs/005-tui-frontend). `postio_tui::run::open` is the whole of that:
-//! `run` prints what it answers and exits non-zero, before the alternate
-//! screen.
-//!
-//! Both Postios are this test binary run again, pointed at a scratch store:
-//! one with [`HOLD`] set, which keeps the store open, and one with [`TRY`],
-//! which tries to open it and says how that went. Two processes because the
-//! engine's lock on the store is a POSIX record lock, which a process never
+//! Two Postios are this test binary run again, one holding the store and one trying to open it:
+//! two processes because the engine's lock is a POSIX record lock, which a process never
 //! conflicts with itself on.
 
 use std::io::{BufRead, BufReader, Read, Write};
@@ -20,14 +9,11 @@ use std::sync::Arc;
 
 use postio_account::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
 
-/// Set in the child that holds the store open: the store key, in hex.
 const HOLD: &str = "POSTIO_TEST_HOLD_STORE_KEY";
-/// Set in the child that tries to open it: the store key, in hex.
 const TRY: &str = "POSTIO_TEST_TRY_STORE_KEY";
 
 const NAME: &str = "a_store_another_postio_has_open_is_refused_with_the_sentence_to_close_it";
 
-/// A keyring holding `hex` as the store key.
 fn keyring(hex: &str) -> Arc<dyn SecretStore> {
     let secrets = MemorySecretStore::default();
     postio_session::blocking::now(secrets.store(
@@ -38,7 +24,6 @@ fn keyring(hex: &str) -> Arc<dyn SecretStore> {
     Arc::new(secrets)
 }
 
-/// This test, run again over the store at `store` with `role` set to `hex`.
 fn again(store: &Path, role: &str, hex: &str) -> Command {
     let mut command = Command::new(std::env::current_exe().expect("this test"));
     command
@@ -52,8 +37,6 @@ fn again(store: &Path, role: &str, hex: &str) -> Command {
     command
 }
 
-/// What the terminal says, opening the store `store` with `hex`: the line
-/// `run` would print, or `opened`.
 fn try_to_open(store: &Path, hex: &str) -> String {
     let ran = again(store, TRY, hex).output().expect("the child runs");
     assert!(ran.status.success(), "{ran:?}");
@@ -69,7 +52,6 @@ fn a_store_another_postio_has_open_is_refused_with_the_sentence_to_close_it() {
         let host = postio_tui::run::open(None, keyring(&hex)).expect("the child opens it");
         println!("held");
         std::io::stdout().flush().unwrap();
-        // Held until the parent closes our stdin.
         let _ = std::io::stdin().read_to_end(&mut Vec::new());
         host.stop();
         return;

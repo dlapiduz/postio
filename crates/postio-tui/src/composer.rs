@@ -1,6 +1,5 @@
-//! One draft being written, in Markdown. Modeless (FR-022a): the keymap is asked in text entry,
-//! so a plain key is typed and `a` is a letter here, never Archive. What is sent is derived from
-//! the Markdown on every save.
+//! One draft being written, in Markdown. Modeless: a plain key is typed, so `a` is a letter here,
+//! never Archive. What is sent is derived from the Markdown on every save.
 
 use crossterm::event::{KeyCode, KeyEvent};
 use postio_body::{Block, Document, Inline, Presentation, markdown};
@@ -84,7 +83,6 @@ enum Remote {
 pub struct Composer {
     /// A save made before the last one's id came back still updates the same row.
     generation: u64,
-    /// What the fields do not hold comes from here: account, kind, what it answers, its id.
     draft: Draft,
     to: Input,
     cc: Input,
@@ -144,8 +142,8 @@ impl Composer {
             (None, None, Some(text)) => text.clone(),
             (None, None, None) => String::new(),
         };
-        // A reply's subject and addresses are copied from received mail, and all of it is drawn
-        // (FR-043): no control character is kept to be sent either.
+        // Received subject and addresses are drawn, so control characters are dropped before
+        // sending.
         let safe = |text: &str| SafeText::new(text).as_str().to_owned();
         let lines: Vec<String> = markdown.split('\n').map(safe).collect();
         let line = |addresses: &[postio_model::EmailAddress]| {
@@ -165,7 +163,6 @@ impl Composer {
             subject: Input::default().with_value(safe(&draft.subject)),
             body: {
                 let mut body = TextArea::new(lines);
-                // A message body is not a code editor.
                 body.set_cursor_line_style(ratatui::style::Style::default());
                 body
             },
@@ -185,8 +182,7 @@ impl Composer {
         }
     }
 
-    /// The identity the draft names, else the account's default; with several, a new message
-    /// starts on From.
+    /// With several identities, a new message starts on From.
     pub fn with_identities(mut self, identities: Vec<postio_model::Identity>) -> Self {
         self.identity = self
             .draft
@@ -352,7 +348,7 @@ impl Composer {
         }
     }
 
-    /// Tab and Shift+Tab move between fields; answers whether anything changed.
+    /// Answers whether anything changed.
     pub fn type_key(&mut self, key: KeyEvent) -> bool {
         match key.code {
             KeyCode::Tab => {
@@ -363,7 +359,6 @@ impl Composer {
                 self.field = self.step(-1);
                 return true;
             }
-            // Enter in a one-line field moves on, as in a form.
             KeyCode::Enter if self.field != Field::Body && key.modifiers.is_empty() => {
                 self.field = self.step(1);
                 return true;
@@ -407,7 +402,6 @@ impl Composer {
         self.edits
     }
 
-    /// What the external editor saved; everything else about the draft stays.
     pub fn replace_body(&mut self, markdown: &str) {
         let lines: Vec<String> = markdown
             .split('\n')
@@ -582,7 +576,6 @@ impl Composer {
         }
     }
 
-    /// Answers whether the key was one the suggestions take.
     pub fn completion_key(&mut self, key: KeyEvent) -> bool {
         if self.suggestions.is_empty() {
             return false;
@@ -640,7 +633,6 @@ impl Composer {
     }
 
     pub fn insert(&mut self, text: &str) {
-        // A paste is whatever the clipboard held: made safe as mail text is.
         let text = SafeText::new(&text.replace("\r\n", "\n"));
         let text = text.as_str();
         match self.field {
@@ -648,7 +640,6 @@ impl Composer {
                 self.body.insert_str(text);
             }
             field => {
-                // A pasted list of addresses arrives with newlines between them.
                 let flat = text.split(['\r', '\n']).filter(|part| !part.is_empty());
                 let flat = flat.collect::<Vec<_>>().join(", ");
                 if let Some(input) = self.line_mut(field) {
@@ -753,7 +744,6 @@ pub fn body_of(markdown: &str, quote: &[Block]) -> MessageBody {
     }
 }
 
-/// A reply's with `> ` before every line; a forward's as it is, since it is the message itself.
 fn quote_text(quote: &[Block]) -> String {
     let mut out = Vec::new();
     for block in quote {
@@ -893,7 +883,6 @@ pub(crate) mod tests {
 
     #[test]
     fn every_now_phase_formatting_command_writes_its_markdown() {
-        // The terminal runs the right `markdown_edit` for each command, over the whole line selected.
         for (format, before, after) in [
             (Format::Strikethrough, "gone", "~~gone~~"),
             (Format::InlineCode, "x", "`x`"),
@@ -915,7 +904,6 @@ pub(crate) mod tests {
             (Format::ClearFormatting, "**b** and *i*", "b and i"),
         ] {
             let mut composer = in_body(before);
-            // The last line, selected: what a person would mark.
             composer
                 .body
                 .move_cursor(ratatui_textarea::CursorMove::Bottom);
@@ -1017,7 +1005,6 @@ pub(crate) mod tests {
         );
         assert_eq!(draft.subject, "Tide gate");
         assert_eq!(draft.body_markdown.as_deref(), Some("Some **bold** words"));
-        // The plain alternative every composer sends: bold's stars are dropped.
         assert_eq!(draft.body.text.as_deref(), Some("Some bold words"));
         assert!(
             draft
@@ -1058,8 +1045,6 @@ pub(crate) mod tests {
 
     #[test]
     fn cc_and_bcc_go_away_only_while_empty() {
-        // `copy_fields`' asymmetric half: a hidden row still holding an
-        // address would still send to it, unseen.
         let mut composer = fresh();
         composer.toggle_copy_fields();
         assert!(composer.shows_extra_recipients());
@@ -1246,7 +1231,6 @@ pub(crate) mod tests {
         for _ in 0..45 {
             composer.type_key(key(KeyCode::Down, KeyModifiers::NONE));
         }
-        // Drawn ten lines tall with the cursor on line 45: lines 36 to 45.
         assert_eq!(composer.body_top(10), 36);
         composer.click_body(2, 3);
         assert_eq!(composer.body().cursor(), (38, 3));

@@ -1,10 +1,4 @@
-//! The bottom line: the bulk bar, and the words the toast says.
-//!
-//! While anything is selected the line is the bulk bar: how many, the verbs
-//! that act on them, each with the key the keymap gives it, and on the right
-//! the keys that change the selection. A toast, while there is one, takes
-//! the right end in place of those keys. Every verb is a click for the
-//! command its key runs.
+//! The bottom line: the bulk bar while anything is selected; a toast takes the right end.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -34,25 +28,19 @@ pub fn cap(key: &str) -> String {
         .join("+")
 }
 
-/// The toast as it is drawn: `✓ Archived 3 messages · Undo z`, or
-/// `✕` and the words of a failure, and where Undo is within it.
+/// `✓ Archived 3 messages · Undo z`, or `✕` and a failure's words.
 pub struct Toast {
-    /// The mark, the words and the undo offer.
     pub spans: Vec<Span<'static>>,
-    /// The columns, within the spans, that a click undoes from.
     pub undo: Option<std::ops::Range<usize>>,
-    /// The columns of the notice's one button, when it offers one (#1952).
     pub offer: Option<std::ops::Range<usize>>,
 }
 
 impl Toast {
-    /// How wide it is.
     pub fn width(&self) -> usize {
         self.spans.iter().map(|span| span.content.width()).sum()
     }
 }
 
-/// What the toast says, or `None` when there is none.
 pub fn toast(app: &App, theme: &Theme) -> Option<Toast> {
     let notice = app.notice()?;
     let mut spans = Vec::new();
@@ -92,7 +80,6 @@ pub fn toast(app: &App, theme: &Theme) -> Option<Toast> {
     Some(Toast { spans, undo, offer })
 }
 
-/// One thing on the bar: its spans and the command a click on it runs.
 struct Piece {
     spans: Vec<Span<'static>>,
     command: Option<&'static str>,
@@ -104,7 +91,6 @@ impl Piece {
     }
 }
 
-/// A verb: its words, then its key when the keymap gives one.
 fn verb(app: &App, theme: &Theme, command: CommandId, label: &str) -> Piece {
     let mut spans = vec![Span::styled(label.to_owned(), theme.style(Role::Text))];
     if let Some(key) = app.hint(command) {
@@ -119,8 +105,6 @@ fn verb(app: &App, theme: &Theme, command: CommandId, label: &str) -> Piece {
     }
 }
 
-/// The keys that change the selection, as the keymap gives them:
-/// `x toggle  J K extend  Esc clear`. Each key is a click for its command.
 fn selection_keys(app: &App, theme: &Theme) -> Vec<(Span<'static>, Option<&'static str>)> {
     let dim = theme.style(Role::Dim);
     let mut spans: Vec<(Span<'static>, Option<&'static str>)> = Vec::new();
@@ -172,8 +156,6 @@ fn selection_keys(app: &App, theme: &Theme) -> Vec<(Span<'static>, Option<&'stat
     spans
 }
 
-/// Draw the bulk bar into `area` and answer whether there was one to draw:
-/// only while something is selected.
 pub fn bulk_bar(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut Hits) -> bool {
     let Some(summary) = app.selection_summary() else {
         return false;
@@ -273,8 +255,6 @@ pub fn bulk_bar(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &
     true
 }
 
-/// What a toast's words can be clicked for: Undo is the command its key
-/// runs, and an offer's button is the one command the notice carries.
 pub fn toast_targets(
     hits: &mut Hits,
     x: u16,
@@ -298,7 +278,6 @@ pub fn toast_targets(
     }
 }
 
-/// The gap between two things on the bar.
 const GAP: usize = 2;
 
 #[cfg(test)]

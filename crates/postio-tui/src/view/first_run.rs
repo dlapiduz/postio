@@ -1,5 +1,3 @@
-//! The first run, drawn: the desktop's three steps, in a terminal (US7).
-
 use ratatui::Frame;
 use ratatui::layout::{Position, Rect};
 use ratatui::style::Modifier;
@@ -11,13 +9,10 @@ use crate::view::fit;
 use postio_ui::onboarding::{Status, SyncWindow};
 use postio_ui::terminal::SafeText;
 
-/// How wide the form is, at most.
 const WIDTH: u16 = 72;
 
-/// The label column.
 const LABEL: usize = 12;
 
-/// Draw `run` centred in `area`.
 pub fn draw(frame: &mut Frame, area: Rect, run: &FirstRun, theme: &Theme) {
     let width = WIDTH.min(area.width.saturating_sub(4));
     let x = area.x + (area.width.saturating_sub(width)) / 2;
@@ -138,8 +133,6 @@ pub fn draw(frame: &mut Frame, area: Rect, run: &FirstRun, theme: &Theme) {
         }
         if let Some(settings) = run.settings().filter(|_| !run.manual()) {
             lines.push(Line::default());
-            // Where the settings came from: a provider's own name, or how
-            // they were found.
             lines.push(Line::styled(
                 fit(&format!("Found by {}", settings.source), columns),
                 theme.style(Role::Dim),

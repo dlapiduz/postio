@@ -1,6 +1,5 @@
-//! The search results, drawn over the body: the query and its chips, the
-//! tabs, the counts, then the rows in their groups. Quick Look, the
-//! timeline and the filter popovers are not drawn here.
+//! The search results over the body; Quick Look, the timeline and the filter popovers are not drawn
+//! here.
 
 use postio_focus::{ResultRow, Run};
 use postio_search::results::ResultsTab;
@@ -15,7 +14,6 @@ use crate::theme::{Role, Theme};
 use crate::view::fit;
 use crate::view::hit::{Hits, Target};
 
-/// Lines above the rows: the query, the tabs and the counts.
 pub const HEADER: u16 = 3;
 
 fn plain(runs: &[Run]) -> String {
@@ -189,7 +187,6 @@ fn rows(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut Hits
     }
 }
 
-/// What a result says at the left and at the right, and whether it is checked.
 fn line_of(app: &App, position: u64) -> (String, String, bool) {
     let tab = app
         .results()

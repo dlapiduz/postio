@@ -325,11 +325,9 @@ pub fn over_list(
         theme.style(Role::Accent),
     );
     let width = usize::from(inside.width);
-    // An email takes the header's subtitle line and Archive all away.
     let email = !window.page().shows_header();
     let row = |y: u16| Rect::new(inside.x, inside.y + y, inside.width, 1);
 
-    // Row 1: Archive all (or the way back), the title, Esc ✕.
     let mut left: Vec<Span<'static>> = Vec::new();
     let (left_command, left_words) = if email {
         (CommandId::Back, format!("‹ {}", SafeText::new(&view.back)))
@@ -400,7 +398,6 @@ pub fn over_list(
         Target::Command(CommandId::Back.as_str()),
     );
 
-    // Row 2: the subtitle.
     let subtitle = SafeText::new(&view.subtitle).as_str().to_owned();
     let subtitle = fit(&subtitle, width.saturating_sub(2));
     let at = width.saturating_sub(subtitle.width()) / 2;
@@ -414,7 +411,6 @@ pub fn over_list(
         ),
     );
 
-    // Row 3: the tabs, and the rule's line on the right.
     if !email {
         let has_summary = view.tabs;
         let on = |page| {
@@ -475,7 +471,6 @@ pub fn over_list(
     }
     frame.render_widget(Line::styled("─".repeat(width), dim), row(3));
 
-    // The page.
     let body_height = inside.height.saturating_sub(5);
     let body = Rect::new(inside.x, inside.y + 4, inside.width, body_height);
     let column = crate::layout::column_width(outer.width).min(inside.width);
@@ -541,14 +536,12 @@ pub fn over_list(
         }
     }
 
-    // The last row: the window's keys, as many as fit.
     let keys = Rect::new(inside.x, inside.y + inside.height - 1, inside.width, 1);
     let all = hints(app, window);
     let widths: Vec<usize> = all
         .iter()
         .map(|hint| hint.key.width() + 1 + hint.words.width())
         .collect();
-    // A margin of one when the whole line leaves it, else none.
     let whole: usize = widths.iter().sum::<usize>() + GAP * widths.len().saturating_sub(1);
     let margin = u16::from(whole + 2 <= usize::from(keys.width));
     let mut x = keys.x + margin;

@@ -1,6 +1,5 @@
-//! The go-to-folder box over the controller's places: the filter, the row
-//! the keyboard is on and where it goes back to. What is listed, in what
-//! order and under which key is `FocusController::places`.
+//! The go-to-folder box over the controller's places: the filter, the row the keyboard is on and
+//! where it goes back to.
 
 use crossterm::event::{KeyCode, KeyEvent};
 use postio_core::CommandId;
@@ -15,11 +14,8 @@ use crate::input::Keys;
 pub enum Step {
     Stay,
     Close,
-    /// The filter changed: list again.
     Filter,
-    /// Go to the place the controller knows by this token.
     Go(u64),
-    /// A view of its own, or a direct `g` key: run the command.
     Run(CommandId),
 }
 
@@ -29,8 +25,6 @@ pub struct Folders {
     selected: usize,
     from: Focus,
     entries: Vec<(u64, Entry)>,
-    /// A `g` the keymap has taken as the start of a chord, waiting for the
-    /// key that finishes it.
     held: Option<KeyEvent>,
 }
 

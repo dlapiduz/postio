@@ -1,8 +1,5 @@
-//! The states of the terminal that `examples/shot.rs` draws and the surface
-//! tests drive: the inbox of terminal.md's drawing with one surface opened
-//! over it, reached the way a person reaches it.
-//!
-//! Every name and address is fictional and on a reserved domain.
+//! The states of the terminal that `examples/shot.rs` draws and the surface tests drive: the
+//! inbox with one surface opened over it, reached as a person reaches it.
 
 use chrono::{TimeZone, Utc};
 use crossterm::event::{KeyCode, KeyModifiers};
@@ -13,7 +10,6 @@ use crate::app::{App, Input, update};
 use crate::caps::Colour;
 use crate::test_support::press_keys;
 
-/// Every state [`state`] knows, in the order terminal.md draws them.
 pub const STATES: &[&str] = &[
     "list",
     "reminder",
@@ -46,8 +42,6 @@ pub const STATES: &[&str] = &[
     "capture",
 ];
 
-/// The app of terminal.md's drawing at `width` x `height`, in `state`, and the
-/// colour the picture of it is drawn in.
 pub fn state(state: &str, width: u16, height: u16) -> (App, Colour) {
     let state = match state {
         "reading" => "open",
@@ -81,7 +75,6 @@ pub fn state(state: &str, width: u16, height: u16) -> (App, Colour) {
                 crate::test_support::folder(6, "Projects", MailboxRole::Regular, 2),
                 crate::test_support::folder(7, "Reading group", MailboxRole::Regular, 0),
                 {
-                    // A folder nested under another, as a server reports it.
                     let mut year =
                         crate::test_support::folder(8, "Projects/2026", MailboxRole::Regular, 1);
                     year.name = "2026".into();
@@ -120,8 +113,6 @@ pub fn state(state: &str, width: u16, height: u16) -> (App, Colour) {
         },
     );
 
-    // The inbox of terminal.md's drawing: an unread invitation with a pill,
-    // a digest, a busy conversation, a read one and one from yesterday.
     let rows = {
         use postio_model::listing::{Cadence, MarkerKind, MarkerSummary, MarkerWhen};
         use postio_ui::focus_list::{Conversation, Digest, FocusRow};
@@ -207,8 +198,6 @@ pub fn state(state: &str, width: u16, height: u16) -> (App, Colour) {
         ]
     };
     let rows = if state == "reminder" {
-        // A reminder that has fired: the thread is back at the top, with
-        // nobody having replied.
         let fired =
             postio_ui::focus_list::FocusRow::surfaced(&postio_model::listing::Surfaced::Reminder {
                 reminder: postio_model::ids::ReminderId::new(1),
@@ -233,7 +222,6 @@ pub fn state(state: &str, width: u16, height: u16) -> (App, Colour) {
     crate::test_support::show_focus(&mut app, rows);
     app.counts_for_tests(crate::test_support::drawing_counts());
 
-    // The first message open, for `reading`; otherwise the list.
     if matches!(state, "open" | "open-narrow" | "find" | "pane") {
         crate::test_support::open_message(
         &mut app,
@@ -332,7 +320,6 @@ pub fn state(state: &str, width: u16, height: u16) -> (App, Colour) {
             );
         }
         "find" => {
-            // The find field, over a word the message has twice.
             press_keys(&mut app, "<C-f>gate");
         }
         "keys" => {
@@ -405,13 +392,11 @@ pub fn state(state: &str, width: u16, height: u16) -> (App, Colour) {
             );
         }
         "selected" => {
-            // Rows 2-4 marked, and the cursor back on row 3, inside them.
             for step in ['j', 'x', 'j', 'x', 'j', 'x', 'k'] {
                 key(&mut app, KeyCode::Char(step), KeyModifiers::NONE);
             }
         }
         "has-action" => {
-            // The toggle on: the list narrowed to the rows with a marker.
             key(&mut app, KeyCode::Char('!'), KeyModifiers::NONE);
             let marked: Vec<_> = (0..2)
                 .map(|_| ())

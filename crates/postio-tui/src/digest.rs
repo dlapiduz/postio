@@ -1,5 +1,4 @@
-//! The digest window as drawn: the controller's view and the scroll this
-//! terminal keeps over its page.
+//! The digest window as drawn: the controller's view and this terminal's scroll.
 
 use postio_focus::DigestView;
 use postio_ui::digest::Page;

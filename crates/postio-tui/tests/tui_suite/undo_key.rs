@@ -1,13 +1,5 @@
-//! `ctrl+z` undoes in the terminal (specs/007-postio-focus T030).
-//!
-//! Under the one keymap undo is `mod+z`, and a terminal delivers that as
-//! `ctrl+z`: raw mode hands it over as a key (`crates/postio-tui/src/term.rs`),
-//! and nothing here suspends the process -- spec 005 said something did, and
-//! nothing ever had. What is asserted is what a person sees: a message
-//! archived, `ctrl+z` read the way this terminal reads every key, and the
-//! message back in the inbox.
-//!
-//! Nothing here touches the network.
+//! `ctrl+z` undoes in the terminal: raw mode delivers undo's `mod+z` as a key, and nothing
+//! suspends the process.
 
 use chrono::Utc;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
@@ -21,7 +13,6 @@ use postio_storage::{Store, test_support};
 use postio_tui::input::Keys;
 use postio_ui::keymap::{KeyContext, Outcome};
 
-/// The folder `message` is in now.
 async fn folder_of(database: &Store, message: MessageId) -> MailboxId {
     let connection = database.connect().await.expect("a connection");
     MessageRepository::new(&connection)
@@ -65,8 +56,6 @@ async fn after_an_archive_ctrl_z_puts_the_message_back() {
          below can show an undo"
     );
 
-    // `ctrl+z` as crossterm reports it in raw mode, through the terminal's
-    // own keys -- the same path every key it reads takes.
     let (mut keys, problems) = Keys::new(&postio_core::Keymap::for_terminal(&Default::default()));
     assert!(problems.is_empty(), "{problems:?}");
     let pressed = keys.press(
