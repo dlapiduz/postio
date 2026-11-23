@@ -655,12 +655,17 @@ impl FocusWindow {
         self.imp().keymap.borrow().clone()
     }
 
-    /// Quit is all there is to do before there is an inbox; the rest are the page's own, its
+    /// Leaving is all there is to do before there is an inbox; the rest are the page's own, its
     /// button's Return among them.
     fn key_before_mail(&self, chord: &postio_ui::keymap::Chord) -> glib::Propagation {
         let (mut resolver, _) = crate::keys::resolver(&self.keymap());
         match resolver.press(chord, KeyContext::List, false, std::time::Instant::now()) {
-            Outcome::Command(id) if id.parse::<CommandId>() == Ok(CommandId::Quit) => {
+            Outcome::Command(id)
+                if matches!(
+                    id.parse::<CommandId>(),
+                    Ok(CommandId::Quit | CommandId::CloseWindow)
+                ) =>
+            {
                 self.act(CommandId::Quit);
                 glib::Propagation::Stop
             }
