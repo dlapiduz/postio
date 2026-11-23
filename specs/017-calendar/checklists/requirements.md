@@ -34,8 +34,7 @@
 - The spec names standards (CalDAV, iTIP, RFC 6764) and Postio's own rules
   (spec 007, ADR 0041) because they bound what a person sees. The crates and
   code are in `plan.md` only.
-- The maintainer answered Q1 to Q4 on 2026-11-22. They are recorded under
-  Clarifications as decisions. Q5 (`mod+w` in a second window) is open, and
-  has a default that does not block building.
+- The maintainer answered Q1 to Q4 on 2026-11-22 and Q5 on 2026-11-23. They
+  are recorded under Clarifications as decisions; none is open.
 - `tasks.md` and the Phase 1 artifacts are written. The grid views' tasks are
   held for the designer handoff.

@@ -239,8 +239,8 @@ was settled with `/ux-architect`. The rules allow a second window when it is
   closes the window, because a key that sometimes closes a window is a trap.
 - **Closing the Calendar window pops Calendar back in.** Its X, or `pop_in`,
   does this. Nothing is lost: the view, the date and the cursor come back as
-  Calendar's mode. `mod+q` still quits Postio, both windows. `mod+w` keeps its
-  registry meaning (see the open question).
+  Calendar's mode. `mod+q` quits Postio, both windows. `mod+w` closes the
+  focused window, as its X does (Q5).
 - **What is remembered** (ADR 0024: intent is stored, the viewport's
   constraint is applied): whether Calendar is popped out, and the window's
   size. Its **position is not**. Wayland gives position to the compositor,
@@ -269,18 +269,13 @@ was settled with `/ux-architect`. The rules allow a second window when it is
   → **C.** Agenda is built now, designed by an agent in the existing list
   language. Day, Week and Month wait for a designer handoff, and their tasks
   are held for it (D2).
-
-### Open question
-
-- **Q5. What does `mod+w` do in a second window?** Today it is `quit`,
-  everywhere. GNOME's convention is that `ctrl+w` closes the focused window.
-  - **A: keep it `quit`.** One verb, one meaning. A second window closes with
-    its X or `pop_in`. This is the spec's default.
-  - **B: `mod+w` closes the focused window**, which in the main window still
-    quits. That gives the key a second meaning in a second window, and
-    changes a key people already use.
-  - **C: move `quit` to `mod+q` alone**, and make `mod+w` "close this
-    window" everywhere. The composer's detached windows get it too.
+- **Q5. What does `mod+w` do in a second window?**
+  → **C.** `mod+w` closes the focused window and `mod+q` quits, everywhere.
+  `quit` loses its `mod+w` alternate and a new `close_window` takes the key:
+  in the Calendar window it pops Calendar in, in a detached composer it
+  closes that composer as its X does, and in the main window it does what
+  the main window's X does. On the Mac, `cmd+w` and `cmd+q` already mean
+  this.
 
 ## The surface
 

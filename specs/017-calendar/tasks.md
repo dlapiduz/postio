@@ -85,7 +85,8 @@ the plan's research section it settles. Spike code is not merged.
   - `contracts/calendar-mode.md`'s and `contracts/event-verbs.md`'s commands, not held, each with a key, a command-bar row and an accessible action;
   - no collision within a context;
   - `pop_out` and `pop_in` on one chord in different contexts.
-- [ ] T007 Add the contexts and commands to `crates/postio-core/src/context.rs`, `crates/postio-core/src/command.rs` and `crates/postio-core/src/registry.rs`. Regenerate `docs/keybindings.md` (`POSTIO_UPDATE_DOCS=1 cargo test -p postio-ui`) and `crates/postio-core/tests/golden/linux-bindings.txt`. Mark `pop_out` and `pop_in` not offered in the terminal (`registry::offered_on`)
+  - `quit` on `mod+q` alone and `close_window` on `mod+w` in every context (Q5).
+- [ ] T007 Add the contexts and commands to `crates/postio-core/src/context.rs`, `crates/postio-core/src/command.rs` and `crates/postio-core/src/registry.rs`. Regenerate `docs/keybindings.md` (`POSTIO_UPDATE_DOCS=1 cargo test -p postio-ui`) and `crates/postio-core/tests/golden/linux-bindings.txt`. Mark `pop_out` and `pop_in` not offered in the terminal (`registry::offered_on`). Drop `quit`'s `mod+w` alternate and add `close_window` on `mod+w`, with the Apple exception for `quit` on `mod+w` removed from `registry.rs` (Q5)
 - [ ] T008 Write failing schema cases in `crates/postio-storage/tests/storage_suite/`, then add `calendars`, `events`, `event_occurrences`, `event_changes`, `reminders`, `event_search` and the `caldav` value of `egress_log.subsystem` to `crates/postio-storage/src/schema.rs` (`data-model.md`). Add a new `crates/postio-storage/src/repository/calendar.rs`, and create "On this computer" at store creation.
 
 ## Phase 4: User Story 1, see what is coming up (P1) 🎯 first slice ⛔ S1
@@ -140,6 +141,7 @@ focused window.
   - each window has its own History;
   - `Esc` at a window's root is a no-op;
   - `pop_in` and closing return the mode.
+  - `close_window` pops Calendar in from its window, closes a detached composer, and in the main window does what its X does.
 
   Then implement a new `crates/postio-focus/src/surface_host.rs`.
 - [ ] T022 [US7] Write a failing case in `crates/postio-host/tests/host_suite/` for the `calendar.window` settings row (`{ popped, width, height }`, no position), then implement it

@@ -43,7 +43,8 @@ file pins what the tests assert.
 | Calendar popped out, the main window focused | `g e` | the Calendar window is presented and focused. The main window shows no Calendar mode |
 | the Calendar window | `g i` | the main window is presented and focused, on the inbox |
 | the Calendar window at its root | `Esc` | nothing |
-| the Calendar window | `mod+shift+o`, or its X | Calendar is the main window's mode again, with the same view, date and cursor |
+| the Calendar window | `mod+shift+o`, `mod+w`, or its X | Calendar is the main window's mode again, with the same view, date and cursor |
+| either window | `mod+q` | Postio quits, both windows |
 | popped out at quit | the next start | the main window is usable first, then the Calendar window opens at its stored size |
 | the terminal | — | `pop_out` is not offered (`registry::offered_on`) |
 
