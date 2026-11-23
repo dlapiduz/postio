@@ -26,7 +26,7 @@ pub mod tally;
 pub use digests::Digests;
 pub use facts::Facts;
 pub use input::{BodyMessage, EXCERPT_CHARS, FiledMessage, OwnText};
-pub use needs_action::considered;
+pub use needs_action::{Asked, asked, considered, noticed};
 pub use outcome::{
     InviteIdentity, InviteUid, Layer, MarkedBy, MarkerCandidate, MarkerKind, Outcome, Reason,
     ReasonKind, RuleName, SourceName, Span,

@@ -665,8 +665,6 @@ CREATE TABLE thread_splits (
 );
 "#,
     },
-    // A notice's to-do needs its own source, and a `CHECK` changes only by a rebuild; the rows,
-    // dismissals among them, are copied across.
     Migration {
         from: stamp(0x4b4a_60f9),
         to: FINGERPRINT,

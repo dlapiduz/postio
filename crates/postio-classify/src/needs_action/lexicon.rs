@@ -382,3 +382,27 @@ pub(super) const IDIOMS: &[(&[&str], Idiom)] = &[
 pub(super) const ABBREVIATIONS: &[&str] = &[
     "e.g", "i.e", "etc", "vs", "approx", "cf", "mr", "mrs", "ms", "dr",
 ];
+
+pub(super) const NOTICE_DAYS: &[&str] = &["by", "before", "no later than", "due", "due on", "on"];
+
+pub(super) const NOTICE_PAYMENT: &[&str] = &["due", "payment", "pay", "balance"];
+
+pub(super) const NOTICE_FORMS: &[&str] = &["complete your", "fill out your", "fill in your"];
+
+pub(super) const NOTICE_RENEWALS: &[&str] = &["update your", "renew your"];
+
+pub(super) const NOTICE_NO_ACTION: &[&str] = &[
+    "no action is needed",
+    "no action needed",
+    "no action is required",
+    "no action required",
+    "no further action",
+    "nothing you need to do",
+];
+
+pub(super) const NOTICE_SETTLED: &[&str] =
+    &["automatically", "autopay", "auto-pay", "paid", "received"];
+
+pub(super) const CURRENCY_SIGNS: &[char] = &['$', '€', '£', '¥'];
+
+pub(super) const CURRENCY_CODES: &[&str] = &["usd", "eur", "gbp", "cad", "aud", "chf"];
