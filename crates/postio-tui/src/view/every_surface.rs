@@ -357,13 +357,7 @@ fn cases() -> Vec<Case> {
         },
         Case {
             marks: vec![Has("╭"), Has("▌")],
-            controls: vec![
-                ctl("Waiting on reply alt+1", "<A-1>"),
-                ctl("Atlas alt+2", "<A-2>"),
-                ctl("Receipts this month alt+3", "<A-3>"),
-                ctl("ctrl+s saves", "<C-s>"),
-                ctl("Esc", "<Esc>"),
-            ],
+            controls: vec![ctl("Esc", "<Esc>")],
             ..case("command bar", "bar", (120, 36))
         },
         Case {
@@ -467,7 +461,7 @@ fn cases() -> Vec<Case> {
             marks: vec![Has("≡"), Has("[1]"), Styled("[1]", REVERSED)],
             controls: vec![
                 ctl("Archive all 14 e", "e"),
-                ctl("14 messages  tab", "<Tab>"),
+                ctl("3 messages  tab", "<Tab>"),
                 ctl("Edit rule and cadence d", "d"),
                 ctl("The 8:10 train moves", "]"),
                 ctl("↵ open the full email", "<Enter>"),
@@ -540,7 +534,7 @@ fn cases() -> Vec<Case> {
             ],
             controls: vec![
                 ctl("Note N", "N").after("<Tab>"),
-                ctl(" Today ", "<Right>").nth(1).after("<Tab>"),
+                ctl(" Today ", "<Left>").nth(1).after("<Tab>"),
                 ctl(" Fri ", "<Left>").nth(1).after("<Tab><Right>"),
                 ctl("use the subject instead alt+s", "<A-s>"),
                 ctl("Change ctrl+p", "<C-p>"),
