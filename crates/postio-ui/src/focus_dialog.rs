@@ -317,12 +317,6 @@ fn line(
     said
 }
 
-pub fn thread_chip(messages: u32) -> Option<String> {
-    (messages > 1).then(|| format!("Latest of {messages} in this thread"))
-}
-
-pub const EARLIER_MESSAGE: &str = "earlier message";
-
 pub const ADD_LABEL: &str = "+ Label";
 
 pub const DISMISS: &str = "Dismiss";
@@ -330,11 +324,6 @@ pub const DISMISS: &str = "Dismiss";
 pub const FIELD_FROM: &str = "From";
 pub const FIELD_TO: &str = "To";
 pub const FIELD_CC: &str = "Cc";
-
-/// `None` past either end, or before the conversation is read.
-pub fn step_thread(at: usize, len: usize, by: isize) -> Option<usize> {
-    at.checked_add_signed(by).filter(|next| *next < len)
-}
 
 #[cfg(test)]
 mod tests {
@@ -497,19 +486,6 @@ mod tests {
             position_line(0, 1, 1, 0, true, Some(postio_model::DraftState::Sent)),
             "Message 1 of 1"
         );
-    }
-
-    #[test]
-    fn a_thread_chip_is_for_threads_and_stepping_stops_at_the_ends() {
-        assert_eq!(thread_chip(1), None);
-        assert_eq!(
-            thread_chip(6).as_deref(),
-            Some("Latest of 6 in this thread")
-        );
-        assert_eq!(step_thread(2, 4, -1), Some(1));
-        assert_eq!(step_thread(0, 4, -1), None);
-        assert_eq!(step_thread(3, 4, 1), None);
-        assert_eq!(step_thread(0, 0, 1), None);
     }
 
     #[test]

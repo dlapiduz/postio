@@ -1,8 +1,6 @@
-//! The terminal frontend's state, and the one function that changes it.
-//! `update` takes an `Input` and returns the `Effect`s it asks for and does no I/O, so every
-//! behaviour is driven by synthetic input (research R11).
-//! The list is a window (Principle V): after every input, `App` asks only for pages of rows in view
-//! that are not here or on their way.
+//! The terminal frontend's state, and `update`, which turns an `Input` into the `Effect`s it asks
+//! for and does no I/O, so every behaviour is driven by synthetic input. After every input `App`
+//! asks only for the pages of rows in view that are neither here nor on their way (Principle V).
 
 use crossterm::event::KeyEvent;
 use postio_model::ListScope;
@@ -19,8 +17,9 @@ mod open;
 mod rules;
 mod surface;
 
+pub(crate) use compose::Writing;
 pub use find::Find;
-pub use open::{Menu, MenuAction, MenuItem, Raw};
+pub use open::{Menu, MenuAction, MenuItem, Raw, Thread};
 
 use crate::focus::Held;
 use crate::input::Keys;
@@ -69,15 +68,9 @@ pub enum Input {
     FocusReply(postio_focus::Ticket, postio_focus::Reply),
     FocusTimer(u64),
     Host(postio_core::Event),
-    /// A conversation asked for by [`Effect::ReadConversation`] arrived.
-    Conversation {
-        thread: postio_model::ThreadId,
-        members: Result<Vec<postio_model::listing::MessageSummary>, String>,
-    },
     Addressed {
         message: postio_model::MessageId,
-        to: Vec<postio_model::EmailAddress>,
-        cc: Vec<postio_model::EmailAddress>,
+        row: Box<postio_model::Message>,
         warning: Option<String>,
     },
     Body {
@@ -159,15 +152,12 @@ pub enum Input {
         kind: ReplyKind,
         found: Option<Box<(postio_model::Message, postio_model::Account)>>,
     },
-    Parts {
-        message: postio_model::MessageId,
-        parts: Result<Vec<postio_model::Attachment>, String>,
-    },
     PartWritten {
         written: Result<std::path::PathBuf, String>,
         open: bool,
     },
     Places(crate::places::Places),
+    Newer(Vec<postio_model::listing::MessageSummary>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -175,7 +165,6 @@ pub enum Effect {
     Redraw,
     Quit,
     Ask(crate::ask::Ask),
-    ReadConversation(postio_model::ThreadId),
     ReadBody(postio_model::MessageId),
     RefreshPlaces,
     Unsubscribe(postio_model::MessageId),
@@ -183,7 +172,6 @@ pub enum Effect {
         message: postio_model::MessageId,
         name: String,
     },
-    ReadParts(postio_model::MessageId),
     DesktopNotify {
         title: String,
         body: String,
@@ -267,6 +255,9 @@ pub enum Effect {
         prefix: String,
     },
     Resume(postio_model::MessageId),
+    ResumeDraft(postio_model::DraftId),
+    /// Their rows as the store has them: nothing is fetched.
+    ReadNewer(Vec<postio_model::MessageId>),
     EditConfig(Option<postio_ui::settings::Section>),
     Account(postio_client::protocol::AccountOp),
     BeginOAuth(Box<postio_ui::onboarding::Submission>),
@@ -356,6 +347,7 @@ pub struct App {
     previewing: bool,
     saved_at: Option<chrono::DateTime<chrono::Utc>>,
     closed_composer: Option<crate::composer::Composer>,
+    writing: compose::Writing,
     detached: bool,
     bar: Option<crate::bar::Bar>,
     places_box: Option<crate::folders::Folders>,
@@ -571,6 +563,7 @@ impl App {
             detached: false,
             saved_at: None,
             closed_composer: None,
+            writing: compose::Writing::default(),
             bar: None,
             places_box: None,
             picker: None,
@@ -689,6 +682,9 @@ impl App {
     /// The keymap is asked in text entry, so a plain letter is handed back rather than resolved
     /// (FR-022a).
     fn composer_key(&mut self, key: &KeyEvent) -> Vec<Effect> {
+        if self.writing.on_chooser {
+            return self.chooser_key(key);
+        }
         if self.scheduling.is_some() {
             return self.schedule_key(key);
         }
@@ -1206,8 +1202,8 @@ impl App {
         }
         match at {
             At::Nothing => vec![Effect::Redraw],
-            At::Fold { member, block } => {
-                reading.toggle_fold(member, block);
+            At::Fold(block) => {
+                reading.shown.toggle_fold(block);
                 vec![Effect::Redraw]
             }
             // Nothing leaves this machine on one click: the first shows the whole destination, and
@@ -1223,19 +1219,6 @@ impl App {
                     self.armed_link = Some(target);
                     effects
                 }
-            }
-            At::Part { member, part } => {
-                let Some(member) = reading.members.get(member) else {
-                    return Vec::new();
-                };
-                let Some(attachment) = member.attachments().get(part).map(|part| part.id) else {
-                    return Vec::new();
-                };
-                vec![Effect::SavePart {
-                    message: member.id,
-                    attachment,
-                    to: None,
-                }]
             }
         }
     }
@@ -1676,9 +1659,7 @@ impl App {
             Pick::When(at) if draft => match self.composer.as_mut() {
                 Some(composer) => {
                     composer.set_remind_at(Some(at.with_timezone(&chrono::Utc)));
-                    let mut effects = self.tell(postio_focus::Input::ComposerEdited);
-                    effects.push(Effect::Redraw);
-                    effects
+                    self.edited()
                 }
                 None => vec![Effect::Redraw],
             },
@@ -2103,6 +2084,7 @@ impl App {
         let generation = composer.generation();
         // The send is the write: the composer closes with nothing to save or discard.
         self.composer = None;
+        self.writing = compose::Writing::default();
         self.asked_at = None;
         self.focus = Focus::List;
         let mut effects = vec![
@@ -2162,7 +2144,7 @@ impl App {
                 self.tell(postio_focus::Input::Command(postio_core::CommandId::Back))
             }
             "forward_what_1" | "forward_what_2" | "forward_what_3" | "show_newer"
-            | "expand_quoted" => match id.parse() {
+            | "expand_quoted" | "reply_to_latest" => match id.parse() {
                 Ok(command) => self.tell(postio_focus::Input::Command(command)),
                 Err(_) => Vec::new(),
             },
@@ -2191,9 +2173,7 @@ impl App {
                 if !composer.format(format) {
                     return self.say("Formatting is for the message's body");
                 }
-                let mut effects = vec![Effect::Redraw];
-                effects.extend(self.tell(postio_focus::Input::ComposerEdited));
-                effects
+                self.edited()
             }
             // One request a press, for the first image not downloading.
             "attach_remote_image" => {
@@ -2546,8 +2526,6 @@ impl App {
         self.list.peek(self.cursor)
     }
 
-    /// Moving and marking are this frontend's own; everything else is aimed by `postio_core::aim`,
-    /// mirrored into `App::state`, and sent.
     /// Leaving saves what is being written on the way out.
     fn quit(&mut self) -> Vec<Effect> {
         let mut effects = if self.composer.is_some() {
@@ -2622,8 +2600,7 @@ impl App {
                 let message = self
                     .reading
                     .as_ref()
-                    .and_then(|reading| reading.members.get(reading.current))
-                    .map(|member| member.id)
+                    .map(|reading| reading.shown.id)
                     .or_else(|| self.cursor_message());
                 if let Some(message) = message {
                     return vec![Effect::ReplySource { kind, message }];
@@ -2685,10 +2662,10 @@ impl App {
                 return self.say(postio_ui::unsubscribe::NO_OFFER);
             }
             "unsubscribe" => {
-                let reading = self.reading.as_ref();
-                return reading
-                    .and_then(|reading| reading.members.get(reading.current))
-                    .map(|member| vec![Effect::Unsubscribe(member.id)])
+                return self
+                    .reading
+                    .as_ref()
+                    .map(|reading| vec![Effect::Unsubscribe(reading.shown.id)])
                     .unwrap_or_default();
             }
             "toggle_reading_pane" => return self.toggle_reading_pane(),
@@ -2721,8 +2698,7 @@ impl App {
                 let message = self
                     .reading
                     .as_ref()
-                    .and_then(|reading| reading.members.get(reading.current))
-                    .map(|member| member.id)
+                    .map(|reading| reading.shown.id)
                     .or_else(|| self.cursor_message());
                 if let Some(message) = message {
                     let command = if id == "accept_invite" {
@@ -2780,11 +2756,7 @@ impl App {
     }
 
     fn view_original(&mut self) -> Vec<Effect> {
-        let Some(member) = self
-            .reading
-            .as_mut()
-            .and_then(|reading| reading.members.get_mut(reading.current))
-        else {
+        let Some(member) = self.reading.as_mut().map(|reading| &mut reading.shown) else {
             return Vec::new();
         };
         let Some(body) = member.source.clone() else {
@@ -2967,16 +2939,13 @@ impl App {
 
     fn toggle_folds(&mut self) {
         if let Some(reading) = self.reading.as_mut() {
-            reading.toggle_folds();
+            reading.shown.toggle_folds();
         }
     }
 
     /// "Always" writes the allow list the desktop app reads too.
     fn allow_images(&mut self, always: bool) -> Vec<Effect> {
-        let Some(reading) = self.reading.as_mut() else {
-            return Vec::new();
-        };
-        let Some(member) = reading.members.get_mut(reading.current) else {
+        let Some(member) = self.reading.as_mut().map(|reading| &mut reading.shown) else {
             return Vec::new();
         };
         let nothing_held = member.held_back.remote_images + member.held_back.trackers == 0;
@@ -2991,85 +2960,10 @@ impl App {
             return vec![Effect::Redraw];
         };
         self.allowlist.allow(&address);
-        for member in &mut reading.members {
-            if member.address.as_deref() == Some(address.as_str()) {
-                member.images_allowed = true;
-            }
-        }
         vec![
             Effect::Redraw,
             Effect::SaveAllowlist(self.allowlist.clone()),
         ]
-    }
-
-    /// Nothing is read by the cursor passing over a row.
-    pub fn open_reading(&mut self, message: postio_model::MessageId) -> Vec<Effect> {
-        let shown = self.reading.as_ref().map(|reading| reading.row) == Some(message);
-        if shown {
-            return Vec::new();
-        }
-        let Some(row) = self.list.row_of(message) else {
-            return Vec::new();
-        };
-        if row.kind == crate::row::Kind::Digest {
-            return Vec::new();
-        }
-        match row.thread {
-            Some(thread) if row.is_thread && row.count > 1 => {
-                self.reading = Some(crate::conversation::Reading {
-                    row: message,
-                    members: Vec::new(),
-                    current: 0,
-                    own: None,
-                });
-                vec![Effect::ReadConversation(thread)]
-            }
-            _ => {
-                self.reading = Some(crate::conversation::Reading {
-                    row: message,
-                    members: vec![crate::conversation::Member::from_row(row)],
-                    current: 0,
-                    own: None,
-                });
-                self.reader_top = 0;
-                vec![Effect::Redraw, Effect::ReadBody(message)]
-            }
-        }
-    }
-
-    fn conversation(
-        &mut self,
-        thread: postio_model::ThreadId,
-        members: Result<Vec<postio_model::listing::MessageSummary>, String>,
-    ) -> Vec<Effect> {
-        let Some(reading) = self.reading.as_mut() else {
-            return Vec::new();
-        };
-        let wanted = self.list.row_of(reading.row).and_then(|row| row.thread) == Some(thread);
-        if !wanted || !reading.members.is_empty() {
-            return Vec::new();
-        }
-        let Ok(members) = members else {
-            return Vec::new();
-        };
-        reading.members = members
-            .iter()
-            .map(crate::conversation::Member::from_summary)
-            .collect();
-        let shown = self
-            .open
-            .shows
-            .take()
-            .and_then(|shown| reading.members.iter().position(|member| member.id == shown));
-        reading.current = shown.unwrap_or(reading.members.len().saturating_sub(1));
-        let mut effects = vec![Effect::Redraw];
-        if let Some(member) = reading.members.get_mut(reading.current) {
-            member.asked = true;
-            effects.push(Effect::ReadBody(member.id));
-        }
-        self.reader_top = 0;
-        effects.extend(self.arm_dwell());
-        effects
     }
 
     fn show(
@@ -3086,8 +2980,7 @@ impl App {
         let asked_original = self
             .reading
             .as_ref()
-            .and_then(|reading| reading.members.iter().find(|member| member.id == message))
-            .is_some_and(|member| member.original);
+            .is_some_and(|reading| reading.shown.id == message && reading.shown.original);
         let mut source = None;
         let mut reader_view = false;
         let rendered = match answer {
@@ -3116,28 +3009,23 @@ impl App {
             Ok(Body::Failed) => absent(Absent::Failed),
             Err(reason) => crate::reader::from_text(&reason),
         };
-        let Some(member) = self.reading.as_mut().and_then(|reading| {
-            reading
-                .members
-                .iter_mut()
-                .find(|member| member.id == message)
-        }) else {
+        let Some(member) = self
+            .reading
+            .as_mut()
+            .map(|reading| &mut reading.shown)
+            .filter(|member| member.id == message)
+        else {
             return Vec::new();
         };
         member.body = Some(rendered);
         member.source = source;
         member.reader_view = reader_view;
-        let ask_for_parts = member.has_attachments && member.parts.is_empty();
         member.held_back = held_back;
         member.images_allowed = member
             .address
             .as_deref()
             .is_some_and(|address| self.allowlist.is_allowed(address));
-        let mut effects = vec![Effect::Redraw];
-        if ask_for_parts {
-            effects.push(Effect::ReadParts(message));
-        }
-        effects
+        vec![Effect::Redraw]
     }
 
     fn fill_places(&mut self, contents: &crate::places::Places) -> Vec<Effect> {
@@ -3352,10 +3240,7 @@ impl App {
             | Event::BodyFailed { message, .. }
             | Event::BodyReachable { message, .. } => {
                 let drawn = self.reading.as_ref().is_some_and(|reading| {
-                    reading
-                        .members
-                        .iter()
-                        .any(|member| member.id == *message && member.body.is_some())
+                    reading.shown.id == *message && reading.shown.body.is_some()
                 });
                 return if drawn {
                     vec![Effect::ReadBody(*message)]
@@ -3421,17 +3306,6 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             effects.extend(app.rules_reread());
             effects
         }
-        Input::Parts { message, parts } => {
-            if let (Ok(parts), Some(reading)) = (parts, app.reading.as_mut())
-                && let Some(member) = reading
-                    .members
-                    .iter_mut()
-                    .find(|member| member.id == message)
-            {
-                member.parts = parts;
-            }
-            vec![Effect::Redraw]
-        }
         Input::PartWritten { written, open } => match written {
             Ok(path) if open => {
                 let mut effects = app.say(&format!("Opening {}", path.display()));
@@ -3494,9 +3368,7 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
         Input::Edited { generation, edited } => match (edited, app.composer.as_mut()) {
             (Ok(markdown), Some(composer)) if composer.generation() == generation => {
                 composer.replace_body(&markdown);
-                let mut effects = app.tell(postio_focus::Input::ComposerEdited);
-                effects.push(Effect::Redraw);
-                effects
+                app.edited()
             }
             (Ok(_), _) => app.say("The draft closed while it was in the editor"),
             (Err(reason), _) => app.say(&format!("The editor did not save: {reason}")),
@@ -3516,9 +3388,7 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
         } => match app.composer.as_mut() {
             Some(composer) if composer.generation() == generation => {
                 composer.settle_remote(&href, outcome);
-                let mut effects = app.tell(postio_focus::Input::ComposerEdited);
-                effects.push(Effect::Redraw);
-                effects
+                app.edited()
             }
             _ => Vec::new(),
         },
@@ -3532,9 +3402,7 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
                 if let Some(label) = label {
                     composer.insert(&label);
                 }
-                let mut effects = app.tell(postio_focus::Input::ComposerEdited);
-                effects.push(Effect::Redraw);
-                effects
+                app.edited()
             }
             (Some(_), None) => app.say("The draft closed before the image was stored"),
             (None, _) => app.say("The image could not be stored"),
@@ -3596,9 +3464,7 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
         Input::Attached { path, attached } => match (attached, app.composer.as_mut()) {
             (Some(attachment), Some(composer)) => {
                 composer.attach(attachment);
-                let mut effects = app.tell(postio_focus::Input::ComposerEdited);
-                effects.push(Effect::Redraw);
-                effects
+                app.edited()
             }
             (Some(_), None) => app.say("The draft closed before the file was attached"),
             (None, _) => app.say(&format!(
@@ -3687,50 +3553,21 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
         Input::ListMail { name, found, .. } => app.confirm_unsubscribed(&name, found.ok()),
         Input::Addressed {
             message,
-            to,
-            cc,
+            row,
             warning,
-        } => {
-            let member = app.reading.as_mut().and_then(|reading| {
-                reading
-                    .members
-                    .iter_mut()
-                    .find(|member| member.id == message)
-            });
-            match member {
-                Some(member) => {
-                    // A header is attacker-controlled like any other.
-                    let safe = |people: &[postio_model::EmailAddress]| -> Vec<_> {
-                        people
-                            .iter()
-                            .map(|address| postio_ui::terminal::SafeText::new(address.display()))
-                            .collect()
-                    };
-                    member.to = safe(&to);
-                    member.cc = safe(&cc);
-                    member.warning = warning.as_deref().map(postio_ui::terminal::SafeText::new);
-                    vec![Effect::Redraw]
-                }
-                None => Vec::new(),
-            }
-        }
+        } => app.addressed(message, &row, warning.as_deref()),
         Input::Body { message, answer } => {
-            let current = app
+            if app
                 .reading
                 .as_ref()
-                .is_some_and(|reading| reading.members.iter().any(|member| member.id == message));
-            if current {
+                .is_some_and(|reading| reading.shown.id == message)
+            {
                 app.release_paint();
             }
             app.show(message, answer)
         }
-        Input::Conversation { thread, members } => {
-            if members.is_err() {
-                app.release_paint();
-            }
-            app.conversation(thread, members)
-        }
         Input::Settled { generation } => app.settled(generation),
+        Input::Newer(read) => app.newer_read(read),
     };
     effects.extend(app.follow_cursor());
     effects.extend(app.fetches());

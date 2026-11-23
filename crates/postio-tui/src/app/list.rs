@@ -116,10 +116,20 @@ impl App {
             Intent::Toast { text, kind } => self.toast(&text, &kind),
             intent @ (Intent::OpenMessage { .. }
             | Intent::CloseSurface(SurfaceKind::Message)
-            | Intent::Reader(_)) => self.show_reader_intent(intent),
+            | Intent::Reader(_)
+            | Intent::ThreadBar(_)
+            | Intent::Kicker(_)
+            | Intent::OlderBanner(_)
+            | Intent::NewReply(_)
+            | Intent::ReplyTo(_)
+            | Intent::MatchBanner(_)) => self.show_reader_intent(intent),
             intent @ (Intent::Composer { .. }
             | Intent::CloseSurface(SurfaceKind::Composer)
             | Intent::SaveDraft { .. }
+            | Intent::ForwardChooser(_)
+            | Intent::OlderReply(_)
+            | Intent::NewerMessages(_)
+            | Intent::QuotedExpanded(_)
             | Intent::ComposerDraftWanted(_)
             | Intent::ComposerDraft(_)) => self.show_composer_intent(intent),
             _ => Vec::new(),

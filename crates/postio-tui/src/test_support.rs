@@ -388,16 +388,17 @@ pub fn serve_filtered(
 
 // -- Reading ---------------------------------------------------------------
 
-/// The message `message` open and read: the cursor rests on it, its
-/// recipients are known and its body has arrived.
+/// The cursor's row opened, `message` its only message, and its header and body as the host
+/// sends them.
 pub fn open_message(app: &mut App, message: MessageId, to: Vec<EmailAddress>, body: MessageBody) {
-    app.open_reading(message);
+    enter_thread(app, &[message.get()]);
+    let mut row = header(app, message);
+    row.to = to;
     update(
         app,
         Input::Addressed {
             message,
-            to,
-            cc: Vec::new(),
+            row,
             warning: None,
         },
     );
@@ -413,8 +414,21 @@ pub fn open_message(app: &mut App, message: MessageId, to: Vec<EmailAddress>, bo
     );
 }
 
-/// Enter on a conversation's row, and the controller's read of its thread answered with the
-/// messages `ids`, as the host would.
+/// The header the store has for `message`, from its list row when the list shows it.
+pub fn header(app: &App, message: MessageId) -> Box<postio_model::Message> {
+    let row = app.row(message);
+    let at = row.map_or_else(|| local(23, 9, 0), |row| row.when);
+    let mut header = postio_model::Message::new(AccountId::new(1), MailboxId::new(1), at);
+    header.id = message;
+    if let Some(row) = row {
+        let address = row.address.clone().unwrap_or_default();
+        header.from = vec![EmailAddress::new(Some(row.from.as_str()), address)];
+    }
+    Box::new(header)
+}
+
+/// Enter on the cursor's row, and the controller's read of its thread, if it asks for one,
+/// answered with the messages `ids`.
 pub fn enter_thread(app: &mut App, ids: &[i64]) -> Vec<Effect> {
     use postio_model::thread_view::{Line, ThreadMember, ThreadView};
     let asked = update(app, key(KeyCode::Enter, KeyModifiers::NONE));

@@ -27,6 +27,8 @@ impl App {
             | Part::CaptureProject
             | Part::CaptureText
             | Part::CaptureCancel => self.capture_click(part, index),
+            Part::ThreadChip => self.chip_clicked(index),
+            Part::ForwardCard => self.forward_card_clicked(index),
         }
     }
 

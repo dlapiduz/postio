@@ -47,6 +47,8 @@ pub enum Part {
     CaptureText,
     /// The capture sheet's Cancel.
     CaptureCancel,
+    ThreadChip,
+    ForwardCard,
 }
 
 /// What the surfaces hold between them.

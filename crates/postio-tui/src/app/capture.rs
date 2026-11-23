@@ -27,9 +27,7 @@ impl App {
     fn capture_source(&self) -> Option<Source> {
         let now = chrono::Local::now();
         let (message, row) = if self.focus == Focus::Reader {
-            let reading = self.reading.as_ref()?;
-            let member = reading.members.get(reading.current)?;
-            (member.id, self.row_of_open())
+            (self.reading.as_ref()?.shown.id, self.row_of_open())
         } else {
             let row = self.row_at(self.cursor)?;
             if row.kind == crate::row::Kind::Digest {

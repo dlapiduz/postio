@@ -257,10 +257,6 @@ pub fn state(state: &str, width: u16, height: u16) -> (App, Colour) {
             ),
         },
     );
-        update(
-            &mut app,
-            crate::test_support::key(KeyCode::Enter, KeyModifiers::NONE),
-        );
     }
 
     let key = |app: &mut App, code: KeyCode, modifiers: KeyModifiers| {

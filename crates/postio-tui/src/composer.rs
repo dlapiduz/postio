@@ -278,6 +278,10 @@ impl Composer {
         quote_text(&self.quote).lines().count()
     }
 
+    pub fn quote(&self) -> String {
+        quote_text(&self.quote)
+    }
+
     /// Which composition this is.
     pub fn generation(&self) -> u64 {
         self.generation

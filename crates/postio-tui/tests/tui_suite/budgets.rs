@@ -64,15 +64,7 @@ fn bodies(effects: &[Effect]) -> usize {
 fn content_reads(effects: &[Effect]) -> usize {
     effects
         .iter()
-        .filter(|effect| {
-            matches!(
-                effect,
-                Effect::ReadBody(_)
-                    | Effect::ReadConversation(_)
-                    | Effect::ReadParts(_)
-                    | Effect::ReadSource(_)
-            )
-        })
+        .filter(|effect| matches!(effect, Effect::ReadBody(_) | Effect::ReadSource(_)))
         .count()
 }
 
