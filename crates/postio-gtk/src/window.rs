@@ -2934,8 +2934,14 @@ impl FocusWindow {
         self.focus_list();
         let window = self.downgrade();
         let reopen = client.clone();
+        let (sender, receiver) = async_channel::bounded(1);
+        if let Some(runtime) = imp.runtime.borrow().clone() {
+            runtime.spawn(async move {
+                let _ = sender.send(reopen.calendar_window().await).await;
+            });
+        }
         glib::spawn_future_local(async move {
-            let Ok(state) = reopen.calendar_window().await else {
+            let Ok(Ok(state)) = receiver.recv().await else {
                 return;
             };
             let Some(window) = window.upgrade() else {
@@ -5404,7 +5410,10 @@ impl FocusWindow {
             width: u32::try_from(width).unwrap_or(900),
             height: u32::try_from(height).unwrap_or(700),
         };
-        glib::spawn_future_local(async move {
+        let Some(runtime) = self.imp().runtime.borrow().clone() else {
+            return;
+        };
+        runtime.spawn(async move {
             if client.set_calendar_window(state).await.is_err() {
                 tracing::warn!("the calendar window's state was not saved");
             }
