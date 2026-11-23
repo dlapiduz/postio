@@ -12,9 +12,9 @@
 # even by name:
 #
 #     cargo nextest run --profile nightly -E 'test(/^measurement::cache_pressure::/)'
-# Wrapper scripts are experimental (0.9.98+); only the per-test-coverage profile uses one, off the
-# merge path.
-experimental = ["wrapper-scripts"]
+# Wrapper and setup scripts are experimental (0.9.98+). Only the per-test-coverage profile wraps,
+# off the merge path; every profile runs the test-home setup script.
+experimental = ["setup-scripts", "wrapper-scripts"]
 
 [profile.default]
 # A hung test fails instead of stalling the run; the GTK suites carry their own deadlines
@@ -172,3 +172,12 @@ fail-fast = false
 [[profile.per-test-coverage.scripts]]
 filter = "all()"
 run-wrapper = "per-test-profile"
+
+# Each run gets its own XDG home under target/, so no test reads or writes the person's config,
+# store or downloads. `paths::tests::a_test_never_sees_the_real_config` fails without it.
+[scripts.setup.test-home]
+command = { command-line = "scripts/test-home.sh", relative-to = "workspace-root" }
+
+[[profile.default.scripts]]
+filter = "all()"
+setup = "test-home"
