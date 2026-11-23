@@ -168,6 +168,23 @@ bad. The corpus README's `pgp-signed.eml` row says exactly this.
   mail. Text is never evicted, as today. ADR 0017 is rewritten in place in
   the slice that builds this, because the rule outlives the feature.
 
+**S1 verdict (2026-11-22): go, with `mime-rs`.** A scratch crate took the
+signed part of each of T002's PGP fixtures by `mime-rs` 0.2.1's
+`MimeCst::sections` spans and by `mail-parser` 1.0's part offsets. Both gave
+bytes identical to the RFC 3156 slice found by hand, in every fixture: the
+plain, quoted-printable and list-footer (nested) cases included. `pgp` 0.21.1
+with default features off then verified them against `keys/`: good and
+quoted-printable `Good`; body, header and re-encoded tampering `Bad`; the
+no-key fixture had no issuer key; the inline signature verified through
+`CleartextSignedMessage`. `cargo tree -e normal` shows no `-sys` crate for
+either. **`mime-rs` is chosen**: it is Pimalaya's, `#![forbid(unsafe_code)]`,
+pulls only `memchr` and a quoted-printable codec under its `parser` feature,
+and documents its part span as exactly RFC 2046's (delimiters and the CRLF
+before the next one excluded). `mail-parser` has 113 `unsafe` sites, which a
+leaf parsing hostile bytes should not inherit. One finding for the policy
+layer: rPGP verifies the SHA-1 fixture as cryptographically valid, so the
+weak-hash refusal is Postio's own, checked before the signature is.
+
 ### R4. Authentication-Results, all of it
 
 The parser in `postio_ui::reader::authenticity` already reads methods,

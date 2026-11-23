@@ -70,7 +70,7 @@ Each spike ends with a one-paragraph verdict, "go" or "no-go", appended to
 `plan.md`'s research section that it settles (R2, R3, R6, R7). A spike's
 throwaway code is not merged.
 
-- [ ] T005 **S1, byte-faithful part offsets and rPGP (gates Phase 5 onward).**
+- [x] T005 **S1, byte-faithful part offsets and rPGP (gates Phase 5 onward).**
   - In a scratch crate outside the workspace, take each of T002's PGP fixtures. Extract the signed part as a byte range with Pimalaya's `mime-rs`, and again with `mail-parser`'s part offsets.
   - Verify each with `pgp` 0.21, against the generated keys.
   - **Go** when every good fixture is `Good`, every tampered one is `Bad`, and the extracted bytes are identical to the wire bytes (CRLF-normalised).
