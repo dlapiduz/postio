@@ -413,6 +413,52 @@ pub fn open_message(app: &mut App, message: MessageId, to: Vec<EmailAddress>, bo
     );
 }
 
+/// Enter on a conversation's row, and the controller's read of its thread answered with the
+/// messages `ids`, as the host would.
+pub fn enter_thread(app: &mut App, ids: &[i64]) -> Vec<Effect> {
+    use postio_model::thread_view::{Line, ThreadMember, ThreadView};
+    let asked = update(app, key(KeyCode::Enter, KeyModifiers::NONE));
+    let mut effects = Vec::new();
+    for effect in asked {
+        let Effect::Focus {
+            ticket,
+            request: postio_focus::Request::ReadThread(thread),
+        } = effect
+        else {
+            effects.push(effect);
+            continue;
+        };
+        let members = ids
+            .iter()
+            .map(|id| ThreadMember {
+                id: MessageId::new(*id),
+                from: Some(EmailAddress::new(Some("Lena Park"), "lena@example.com")),
+                own: false,
+                at: local(23, 11, 22),
+                seen: true,
+                has_attachments: false,
+                line: Line::Preview(String::new()),
+                answers: None,
+                marker: false,
+            })
+            .collect();
+        let view = ThreadView {
+            thread,
+            subject: None,
+            members,
+            draft: None,
+            muted: None,
+            labels: Vec::new(),
+        };
+        let reply = postio_focus::Reply::ThreadRead {
+            thread,
+            view: Ok(Some(view)),
+        };
+        effects.extend(update(app, Input::FocusReply(ticket, reply)));
+    }
+    effects
+}
+
 /// What the open message's column shows, as plain text.
 pub fn reader_text(app: &App) -> String {
     assert!(app.reading().is_some(), "a message is open");

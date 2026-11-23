@@ -390,12 +390,22 @@ async fn write_drafts(
 ) {
     while let Ok(job) = jobs.recv().await {
         match job {
-            Effect::SaveDraft { generation, draft } => {
+            Effect::SaveDraft {
+                generation,
+                composition,
+                draft,
+            } => {
                 let saved = client
                     .save_draft(generation, *draft)
                     .await
                     .map_err(|error| error.message().to_owned());
-                let _ = inputs.send(Input::DraftSaved { generation, saved }).await;
+                let _ = inputs
+                    .send(Input::DraftSaved {
+                        generation,
+                        composition,
+                        saved,
+                    })
+                    .await;
             }
             Effect::DiscardDraft { generation, known } => {
                 let _ = client.discard_draft(generation, known).await;
@@ -408,7 +418,7 @@ async fn write_drafts(
                 let queued = client
                     .queue_send(generation, *draft, at)
                     .await
-                    .map(|_| ())
+                    .map(|queued| queued.draft)
                     .map_err(|error| error.message().to_owned());
                 let _ = inputs.send(Input::Queued { at, queued }).await;
             }
@@ -1066,13 +1076,6 @@ fn perform(
                 tokio::spawn(async move {
                     tokio::time::sleep(after).await;
                     let _ = inputs.send(Input::NoticeDue { generation }).await;
-                });
-            }
-            Effect::Autosave { generation, edit } => {
-                let inputs = inputs.clone();
-                tokio::spawn(async move {
-                    tokio::time::sleep(crate::app::AUTOSAVE).await;
-                    let _ = inputs.send(Input::AutosaveDue { generation, edit }).await;
                 });
             }
             // One writer, in order: see `write_drafts`.

@@ -1147,8 +1147,8 @@ mod tests {
 
     use crate::app::{App, Effect, Input, Pointer, update};
     use crate::test_support::{
-        app, conversation, hits_of, key, label, local, places, press, screen, seed_places,
-        show_focus, unread,
+        app, conversation, enter_thread, hits_of, key, label, local, places, press, screen,
+        seed_places, show_focus, unread,
     };
     use crossterm::event::{KeyCode, KeyModifiers};
 
@@ -1214,7 +1214,7 @@ mod tests {
     /// [`opened`], its sender flagged by the host as `warning`.
     fn opened_warning(size: (u16, u16), warning: Option<&str>) -> App {
         let mut app = inbox(size);
-        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        enter_thread(&mut app, &[1, 2, 3, 4, 5, 6]);
         let members = (1..=6)
             .map(|id| {
                 conversation(
@@ -1488,7 +1488,7 @@ mod tests {
     #[test]
     fn only_the_body_shown_is_read_and_opening_reads_it_once() {
         let mut app = inbox((120, 36));
-        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        let effects = enter_thread(&mut app, &[1, 2, 3, 4, 5, 6]);
         assert!(
             effects.contains(&Effect::ReadConversation(ThreadId::new(60))),
             "{effects:?}"
@@ -1514,7 +1514,8 @@ mod tests {
         update(&mut app, press('k'));
         assert_eq!(app.cursor(), 0);
         let effects = update(&mut app, press('k'));
-        assert!(effects.is_empty(), "the first row stops it: {effects:?}");
+        assert_eq!(app.cursor(), 0, "the first row stops it");
+        assert!(!effects.iter().any(|e| matches!(e, Effect::ReadBody(_))));
     }
 
     #[test]
@@ -1534,8 +1535,7 @@ mod tests {
     #[test]
     fn the_message_counts_as_read_after_the_dwell_and_shift_i_stops_the_clock() {
         let mut app = inbox((120, 36));
-        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        let _ = effects;
+        enter_thread(&mut app, &[1, 2, 3, 4, 5, 6]);
         let members = (1..=6)
             .map(|id| conversation(id, "Lena Park", "s", "", local(23, 11, 22)).representative)
             .collect();
@@ -1639,7 +1639,7 @@ mod tests {
     #[test]
     fn shift_a_lists_the_links_and_attachments_and_choosing_one_opens_it() {
         let mut app = inbox((120, 36));
-        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        enter_thread(&mut app, &[6]);
         let nothing = update(&mut app, press('A'));
         assert!(app.menu().is_none(), "{nothing:?}");
         assert_eq!(app.notice(), Some(postio_ui::focus_target::NOTHING_TO_OPEN));
@@ -1693,9 +1693,16 @@ mod tests {
         update(&mut app, press('j'));
         let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         assert!(
-            effects
-                .iter()
-                .any(|e| matches!(e, Effect::Send(postio_core::Command::Delete { .. }))),
+            effects.iter().any(|e| matches!(
+                e,
+                Effect::Focus {
+                    request: postio_focus::Request::Send {
+                        command: postio_core::Command::Delete { .. },
+                        ..
+                    },
+                    ..
+                }
+            )),
             "{effects:?}"
         );
         // Wide enough to have no folded verbs: nothing opens.
@@ -1736,9 +1743,16 @@ mod tests {
         let (x, y) = find(&app, size, "Archive e", 2);
         let effects = click_at(&mut app, size, x, y);
         assert!(
-            effects
-                .iter()
-                .any(|e| matches!(e, Effect::Send(postio_core::Command::Archive { .. }))),
+            effects.iter().any(|e| matches!(
+                e,
+                Effect::Focus {
+                    request: postio_focus::Request::Send {
+                        command: postio_core::Command::Archive { .. },
+                        ..
+                    },
+                    ..
+                }
+            )),
             "{effects:?}"
         );
         // The card's Dismiss.
@@ -1747,10 +1761,13 @@ mod tests {
         assert!(
             effects.iter().any(|e| matches!(
                 e,
-                Effect::Send(postio_core::Command::DismissMarker {
-                    dismissed: true,
+                Effect::Focus {
+                    request: postio_focus::Request::Post(postio_core::Command::DismissMarker {
+                        dismissed: true,
+                        ..
+                    }),
                     ..
-                })
+                }
             )),
             "{effects:?}"
         );
@@ -1780,7 +1797,7 @@ mod tests {
         assert!(effects.is_empty(), "{effects:?}");
         assert_eq!(app.front(), crate::app::Front::Reader);
         let mut app = inbox(size);
-        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        enter_thread(&mut app, &[6]);
         update(
             &mut app,
             Input::Conversation {

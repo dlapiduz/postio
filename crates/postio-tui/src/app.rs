@@ -10,6 +10,7 @@ use postio_ui::keymap::{KeyContext, Outcome};
 use postio_ui::list::ListWindow;
 
 mod capture;
+mod compose;
 mod digest;
 mod filtered;
 mod find;
@@ -107,10 +108,6 @@ pub enum Input {
     NoticeDue {
         generation: u64,
     },
-    AutosaveDue {
-        generation: u64,
-        edit: u64,
-    },
     SignatureSaved(Result<(), String>),
     Privacy {
         log: postio_client::protocol::PrivacyLog,
@@ -118,6 +115,7 @@ pub enum Input {
     },
     DraftSaved {
         generation: u64,
+        composition: Option<u64>,
         saved: Result<postio_model::DraftId, String>,
     },
     Notified(postio_ui::notify::Notification),
@@ -149,7 +147,7 @@ pub enum Input {
     },
     Queued {
         at: Option<chrono::DateTime<chrono::Utc>>,
-        queued: Result<(), String>,
+        queued: Result<postio_model::DraftId, String>,
     },
     /// Taken back from the Outbox if queued; nothing when there is no local draft or its send has
     /// already started.
@@ -224,12 +222,10 @@ pub enum Effect {
         generation: u64,
         after: std::time::Duration,
     },
-    Autosave {
-        generation: u64,
-        edit: u64,
-    },
     SaveDraft {
         generation: u64,
+        /// The controller's composition, which hears how the save went.
+        composition: Option<u64>,
         draft: Box<postio_model::Draft>,
     },
     DiscardDraft {
@@ -310,8 +306,6 @@ pub enum Effect {
     },
 }
 
-pub const AUTOSAVE: std::time::Duration = std::time::Duration::from_millis(1500);
-
 pub const TOAST: std::time::Duration =
     std::time::Duration::from_secs(postio_ui::focus_target::TOAST_SECONDS as u64);
 
@@ -361,7 +355,7 @@ pub struct App {
     preview: postio_config::Preview,
     previewing: bool,
     saved_at: Option<chrono::DateTime<chrono::Utc>>,
-    composed_from: Focus,
+    closed_composer: Option<crate::composer::Composer>,
     detached: bool,
     bar: Option<crate::bar::Bar>,
     places_box: Option<crate::folders::Folders>,
@@ -576,7 +570,7 @@ impl App {
             previewing: false,
             detached: false,
             saved_at: None,
-            composed_from: Focus::List,
+            closed_composer: None,
             bar: None,
             places_box: None,
             picker: None,
@@ -673,72 +667,23 @@ impl App {
         self.composer = Some(
             crate::composer::Composer::new(self.compositions, draft).with_identities(identities),
         );
-        self.composed_from = if self.focus == Focus::Reader && self.reading.is_some() {
-            Focus::Reader
-        } else {
-            Focus::List
-        };
         self.saved_at = None;
         self.focus = Focus::Composer;
         self.detached = false;
         self.previewing = self.preview == postio_config::Preview::Split;
-        vec![Effect::Redraw]
-    }
-
-    fn close_composer(&mut self) -> Vec<Effect> {
         let mut effects = Vec::new();
-        if let Some(composer) = self.composer.take() {
-            let generation = composer.generation();
-            let draft = composer.draft();
-            match postio_model::draft::closing(&draft) {
-                postio_model::draft::Closing::Keep => effects.push(Effect::SaveDraft {
-                    generation,
-                    draft: Box::new(draft),
-                }),
-                postio_model::draft::Closing::Drop => effects.push(Effect::DiscardDraft {
-                    generation,
-                    known: draft.id.is_assigned().then_some(draft.id),
-                }),
-            }
+        // One the controller did not open is told of, so its keys and its save reach it.
+        if self.ctl.top_surface() != Some(postio_focus::SurfaceKind::Composer) {
+            effects.extend(self.tell(postio_focus::Input::SurfaceOpened(
+                postio_focus::SurfaceKind::Composer,
+            )));
         }
-        self.detached = false;
-        self.focus = self.after_composing();
         effects.push(Effect::Redraw);
         effects
     }
 
-    fn after_composing(&self) -> Focus {
-        if self.composed_from == Focus::Reader && self.reading.is_some() {
-            Focus::Reader
-        } else {
-            Focus::List
-        }
-    }
-
     pub fn saved_note(&self) -> Option<String> {
         self.saved_at.map(postio_ui::compose::saved_at)
-    }
-
-    fn autosave_due(&mut self, generation: u64, edit: u64) -> Vec<Effect> {
-        match &self.composer {
-            Some(composer) if composer.generation() == generation && composer.edits() == edit => {
-                vec![Effect::SaveDraft {
-                    generation,
-                    draft: Box::new(composer.draft()),
-                }]
-            }
-            _ => Vec::new(),
-        }
-    }
-
-    fn listing_drafts(&self) -> bool {
-        match self.scope {
-            Some(ListScope::Outbox(_)) => true,
-            Some(ListScope::Mailbox(mailbox)) => self.folders.iter().any(|folder| {
-                folder.id == mailbox && folder.role == postio_model::mailbox::MailboxRole::Drafts
-            }),
-            _ => false,
-        }
     }
 
     /// The keymap is asked in text entry, so a plain letter is handed back rather than resolved
@@ -753,12 +698,10 @@ impl App {
         if let Some(composer) = self.composer.as_mut() {
             let before = composer.edits();
             if composer.completion_key(*key) {
+                let edited = composer.edits() != before;
                 let mut effects = vec![Effect::Redraw];
-                if composer.edits() != before {
-                    effects.push(Effect::Autosave {
-                        generation: composer.generation(),
-                        edit: composer.edits(),
-                    });
+                if edited {
+                    effects.extend(self.tell(postio_focus::Input::ComposerEdited));
                 }
                 return effects;
             }
@@ -775,18 +718,15 @@ impl App {
                 if composer.type_key(*key) {
                     effects.push(Effect::Redraw);
                 }
-                if composer.edits() != before {
-                    // Each edit asks for a timer, and only the newest still matches.
-                    effects.push(Effect::Autosave {
-                        generation: composer.generation(),
-                        edit: composer.edits(),
-                    });
-                }
+                let edited = composer.edits() != before;
                 if let Some(prefix) = composer.wants_completion() {
                     effects.push(Effect::Recipients {
                         account: composer.draft().account_id,
                         prefix,
                     });
+                }
+                if edited {
+                    effects.extend(self.tell(postio_focus::Input::ComposerEdited));
                 }
                 effects
             }
@@ -843,10 +783,7 @@ impl App {
                 postio_ui::paste::PasteItem::Text(text) => {
                     if let Some(composer) = self.composer.as_mut() {
                         composer.insert(&text);
-                        effects.push(Effect::Autosave {
-                            generation: composer.generation(),
-                            edit: composer.edits(),
-                        });
+                        effects.extend(self.tell(postio_focus::Input::ComposerEdited));
                     }
                 }
             }
@@ -1739,13 +1676,9 @@ impl App {
             Pick::When(at) if draft => match self.composer.as_mut() {
                 Some(composer) => {
                     composer.set_remind_at(Some(at.with_timezone(&chrono::Utc)));
-                    vec![
-                        Effect::Autosave {
-                            generation: composer.generation(),
-                            edit: composer.edits(),
-                        },
-                        Effect::Redraw,
-                    ]
+                    let mut effects = self.tell(postio_focus::Input::ComposerEdited);
+                    effects.push(Effect::Redraw);
+                    effects
                 }
                 None => vec![Effect::Redraw],
             },
@@ -2171,15 +2104,19 @@ impl App {
         // The send is the write: the composer closes with nothing to save or discard.
         self.composer = None;
         self.asked_at = None;
-        self.focus = self.after_composing();
-        vec![
+        self.focus = Focus::List;
+        let mut effects = vec![
             Effect::QueueSend {
                 generation,
                 draft: Box::new(draft),
                 at,
             },
             Effect::Redraw,
-        ]
+        ];
+        effects.extend(self.tell(postio_focus::Input::SurfaceClosed(
+            postio_focus::SurfaceKind::Composer,
+        )));
+        effects
     }
 
     fn composer_command(&mut self, id: &str) -> Vec<Effect> {
@@ -2221,7 +2158,14 @@ impl App {
                     .unwrap_or_default();
                 self.open_remind_picker_for_draft(&subject)
             }
-            "back" | "discard_draft" => self.close_composer(),
+            "back" | "discard_draft" => {
+                self.tell(postio_focus::Input::Command(postio_core::CommandId::Back))
+            }
+            "forward_what_1" | "forward_what_2" | "forward_what_3" | "show_newer"
+            | "expand_quoted" => match id.parse() {
+                Ok(command) => self.tell(postio_focus::Input::Command(command)),
+                Err(_) => Vec::new(),
+            },
             "detach_composer" => {
                 self.detached = !self.detached;
                 vec![Effect::Redraw]
@@ -2232,6 +2176,7 @@ impl App {
                 .map(|composer| {
                     vec![Effect::SaveDraft {
                         generation: composer.generation(),
+                        composition: None,
                         draft: Box::new(composer.draft()),
                     }]
                 })
@@ -2246,13 +2191,9 @@ impl App {
                 if !composer.format(format) {
                     return self.say("Formatting is for the message's body");
                 }
-                vec![
-                    Effect::Redraw,
-                    Effect::Autosave {
-                        generation: composer.generation(),
-                        edit: composer.edits(),
-                    },
-                ]
+                let mut effects = vec![Effect::Redraw];
+                effects.extend(self.tell(postio_focus::Input::ComposerEdited));
+                effects
             }
             // One request a press, for the first image not downloading.
             "attach_remote_image" => {
@@ -2610,7 +2551,9 @@ impl App {
     /// Leaving saves what is being written on the way out.
     fn quit(&mut self) -> Vec<Effect> {
         let mut effects = if self.composer.is_some() {
-            self.close_composer()
+            self.tell(postio_focus::Input::SurfaceClosed(
+                postio_focus::SurfaceKind::Composer,
+            ))
         } else {
             Vec::new()
         };
@@ -2645,13 +2588,31 @@ impl App {
         {
             return self.tell(postio_focus::Input::Command(command));
         }
+        if self.focus == Focus::Reader
+            && self.own_aim().is_none()
+            && let Ok(command) = id.parse::<postio_core::CommandId>()
+            && Self::the_readers(command)
+        {
+            return self.tell_reader(command);
+        }
         match id {
             "find_in_message" => return self.open_find(),
             "find_next" => return self.find_step(true),
             "find_previous" => return self.find_step(false),
-            "next_message" if self.focus == Focus::Reader => return self.step_open(1),
-            "prev_message" if self.focus == Focus::Reader => return self.step_open(-1),
             "quit" => return self.quit(),
+            // A message opened from Filtered steps through that list, which the controller does
+            // not hold.
+            "next_message" | "prev_message" if self.focus == Focus::Reader => {
+                let by = if id == "next_message" { 1 } else { -1 };
+                return self.step_filtered_open(by);
+            }
+            "reply" | "reply_all" | "forward"
+                if matches!(self.focus, Focus::List) && self.own_aim().is_none() =>
+            {
+                if let Ok(command) = id.parse::<postio_core::CommandId>() {
+                    return self.tell(postio_focus::Input::Command(command));
+                }
+            }
             "reply" | "reply_all" | "forward" => {
                 let kind = match id {
                     "reply" => ReplyKind::Reply,
@@ -2668,10 +2629,14 @@ impl App {
                     return vec![Effect::ReplySource { kind, message }];
                 }
             }
-            // A draft being written is resumed; one on its way or stopped is read. A digest opens
-            // in its own window.
+            // A digest opens in its own window.
             "open_message" if self.focus == Focus::List && self.cursor_is_digest() => {
                 return self.open_digest();
+            }
+            "open_message" if self.focus == Focus::List => {
+                return self.tell(postio_focus::Input::Command(
+                    postio_core::CommandId::OpenMessage,
+                ));
             }
             "open_message" if self.focus == Focus::Reader && self.open_draft_offers_edit() => {
                 if let Some(message) = self.reading.as_ref().map(|reading| reading.row) {
@@ -2680,27 +2645,14 @@ impl App {
                     return effects;
                 }
             }
-            "open_message"
-                if self.listing_drafts()
-                    && self.row_at(self.cursor).is_none_or(|row| {
-                        !postio_ui::focus_dialog::opens_to_read(row.send_state)
-                    }) =>
-            {
-                if let Some(message) = self.cursor_message() {
-                    return vec![Effect::Resume(message)];
-                }
-            }
-            "open_message" => {
-                return self.open_at_cursor();
-            }
             "compose" if self.composer.is_some() => {
                 self.focus = Focus::Composer;
                 return vec![Effect::Redraw];
             }
             "compose" => {
-                if let Some(account) = self.account_here() {
-                    return self.compose(postio_model::Draft::new(account));
-                }
+                return self.tell(postio_focus::Input::Command(
+                    postio_core::CommandId::Compose,
+                ));
             }
             "go_to_folders" => return self.open_folders(),
             "search" => return self.open_bar(""),
@@ -2719,7 +2671,7 @@ impl App {
                 self.focus = Focus::FirstRun;
             }
             "toggle_result_order" | "save_search" | "back_to_words" => {}
-            "back" if self.focus == Focus::Reader => return self.back_from_message(),
+            "back" if self.focus == Focus::Reader => return self.back_from_own(),
             "picker_choose_1" | "picker_choose_2" | "picker_choose_3" | "picker_choose_4"
             | "picker_type_date" | "picker_toggle" | "picker_confirm" => {}
             "back" if self.focus != Focus::List => self.focus = Focus::List,
@@ -2739,15 +2691,10 @@ impl App {
                     .map(|member| vec![Effect::Unsubscribe(member.id)])
                     .unwrap_or_default();
             }
-            "next_in_thread" => return self.walk_conversation(1),
-            "prev_in_thread" => return self.walk_conversation(-1),
             "toggle_reading_pane" => return self.toggle_reading_pane(),
             "view_source" => return self.view_source(),
             "open_attachment_or_link" => return self.offer_choices(),
             "more_actions" => return self.more_actions(),
-            "dismiss_marker" if self.focus == Focus::Reader => {
-                return self.dismiss_open_marker();
-            }
             "toggle_read" => {
                 self.cancel_dwell();
                 return self.send("toggle_read");
@@ -2820,7 +2767,7 @@ impl App {
             "saved_search_2" => return self.pinned_search(1),
             "saved_search_3" => return self.pinned_search(2),
             "saved_search_4" => return self.pinned_search(3),
-            "prev_view" if self.focus == Focus::Reader => return self.back_from_message(),
+            "prev_view" if self.focus == Focus::Reader => return self.back_from_own(),
             "prev_view" => {
                 return self.tell(postio_focus::Input::Command(
                     postio_core::CommandId::HistoryBack,
@@ -3109,7 +3056,12 @@ impl App {
             .iter()
             .map(crate::conversation::Member::from_summary)
             .collect();
-        reading.current = reading.members.len().saturating_sub(1);
+        let shown = self
+            .open
+            .shows
+            .take()
+            .and_then(|shown| reading.members.iter().position(|member| member.id == shown));
+        reading.current = shown.unwrap_or(reading.members.len().saturating_sub(1));
         let mut effects = vec![Effect::Redraw];
         if let Some(member) = reading.members.get_mut(reading.current) {
             member.asked = true;
@@ -3503,7 +3455,6 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             generation,
             message,
         } => app.dwelt(generation, message),
-        Input::AutosaveDue { generation, edit } => app.autosave_due(generation, edit),
         Input::SignatureSaved(saved) => match saved {
             Ok(()) => vec![Effect::RefreshPlaces, Effect::Redraw],
             Err(reason) => app.say(&reason),
@@ -3512,28 +3463,40 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             app.privacy = Some(Privacy { log, connections });
             vec![Effect::Redraw]
         }
-        Input::DraftSaved { generation, saved } => match saved {
-            Ok(id) => {
-                if let Some(composer) = app.composer.as_mut()
-                    && composer.generation() == generation
-                {
-                    composer.adopt_id(id);
-                    app.saved_at = Some(chrono::Utc::now());
+        Input::DraftSaved {
+            generation,
+            composition,
+            saved,
+        } => {
+            let told = match &saved {
+                Ok(id) => {
+                    if let Some(composer) = app.composer.as_mut()
+                        && composer.generation() == generation
+                    {
+                        composer.adopt_id(*id);
+                        app.saved_at = Some(chrono::Utc::now());
+                    }
+                    Ok(true)
                 }
-                Vec::new()
+                Err(reason) => Err(reason.clone()),
+            };
+            match composition {
+                Some(composition) => app.tell(postio_focus::Input::DraftSaved {
+                    composition,
+                    saved: told,
+                }),
+                None => match saved {
+                    Ok(_) => Vec::new(),
+                    Err(reason) => app.say(&reason),
+                },
             }
-            Err(reason) => app.say(&reason),
-        },
+        }
         Input::Edited { generation, edited } => match (edited, app.composer.as_mut()) {
             (Ok(markdown), Some(composer)) if composer.generation() == generation => {
                 composer.replace_body(&markdown);
-                vec![
-                    Effect::Autosave {
-                        generation,
-                        edit: composer.edits(),
-                    },
-                    Effect::Redraw,
-                ]
+                let mut effects = app.tell(postio_focus::Input::ComposerEdited);
+                effects.push(Effect::Redraw);
+                effects
             }
             (Ok(_), _) => app.say("The draft closed while it was in the editor"),
             (Err(reason), _) => app.say(&format!("The editor did not save: {reason}")),
@@ -3553,13 +3516,9 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
         } => match app.composer.as_mut() {
             Some(composer) if composer.generation() == generation => {
                 composer.settle_remote(&href, outcome);
-                vec![
-                    Effect::Autosave {
-                        generation: composer.generation(),
-                        edit: composer.edits(),
-                    },
-                    Effect::Redraw,
-                ]
+                let mut effects = app.tell(postio_focus::Input::ComposerEdited);
+                effects.push(Effect::Redraw);
+                effects
             }
             _ => Vec::new(),
         },
@@ -3573,13 +3532,9 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
                 if let Some(label) = label {
                     composer.insert(&label);
                 }
-                vec![
-                    Effect::Autosave {
-                        generation: composer.generation(),
-                        edit: composer.edits(),
-                    },
-                    Effect::Redraw,
-                ]
+                let mut effects = app.tell(postio_focus::Input::ComposerEdited);
+                effects.push(Effect::Redraw);
+                effects
             }
             (Some(_), None) => app.say("The draft closed before the image was stored"),
             (None, _) => app.say("The image could not be stored"),
@@ -3641,13 +3596,9 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
         Input::Attached { path, attached } => match (attached, app.composer.as_mut()) {
             (Some(attachment), Some(composer)) => {
                 composer.attach(attachment);
-                vec![
-                    Effect::Autosave {
-                        generation: composer.generation(),
-                        edit: composer.edits(),
-                    },
-                    Effect::Redraw,
-                ]
+                let mut effects = app.tell(postio_focus::Input::ComposerEdited);
+                effects.push(Effect::Redraw);
+                effects
             }
             (Some(_), None) => app.say("The draft closed before the file was attached"),
             (None, _) => app.say(&format!(
@@ -3707,13 +3658,9 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             }
             vec![Effect::Redraw]
         }
-        Input::Queued { at, queued } => match (queued, at) {
-            (Ok(()), None) => app.say("Sending — it is in the Outbox until it leaves"),
-            (Ok(()), Some(at)) => app.say(&format!(
-                "Scheduled for {}",
-                at.with_timezone(&chrono::Local).format("%a %-d %b, %H:%M")
-            )),
-            (Err(reason), _) => app.say(&format!(
+        Input::Queued { at, queued } => match queued {
+            Ok(draft) => app.tell(postio_focus::Input::SendQueued { draft, at }),
+            Err(reason) => app.say(&format!(
                 "Not sent: {reason}. The draft is still in Drafts."
             )),
         },
@@ -3845,7 +3792,7 @@ mod tests {
     }
 
     #[test]
-    fn every_now_phase_formatting_command_edits_the_body_and_autosaves() {
+    fn every_now_phase_formatting_command_edits_the_body_and_starts_the_autosave_clock() {
         for id in [
             "strikethrough",
             "inline_code",
@@ -3872,7 +3819,7 @@ mod tests {
                 let after = app.composer.as_ref().expect("composing").markdown();
                 effects
                     .iter()
-                    .any(|effect| matches!(effect, Effect::Autosave { .. }))
+                    .any(|effect| matches!(effect, Effect::FocusTimer { .. }))
                     && after != before
             });
             assert!(changed, "`{id}` did not edit the body");

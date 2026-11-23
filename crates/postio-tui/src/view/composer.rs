@@ -656,6 +656,7 @@ mod tests {
             &mut app,
             Input::DraftSaved {
                 generation: 1,
+                composition: None,
                 saved: Ok(postio_model::DraftId::new(4)),
             },
         );
@@ -809,7 +810,7 @@ mod tests {
     }
 
     #[test]
-    fn replying_from_the_open_message_writes_in_the_frame_and_escape_goes_back_to_the_message() {
+    fn replying_from_the_open_message_writes_in_the_frame_and_escape_goes_back_to_the_list() {
         let mut app = inbox((120, 36));
         update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         update(
@@ -849,9 +850,8 @@ mod tests {
         update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
         assert_eq!(
             app.front(),
-            Front::Reader,
-            "back to the message it answered"
+            Front::List,
+            "the composer replaced the message"
         );
-        assert!(screen(120, 36, &app).contains("Hello"));
     }
 }

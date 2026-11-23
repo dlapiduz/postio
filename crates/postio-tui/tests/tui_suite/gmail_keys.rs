@@ -388,8 +388,14 @@ fn every_gmail_key_does_its_command_on_every_surface_that_offers_it() {
                     let (mut app, _) = sample::state(state, 120, 30);
                     if *id == "prev_message" {
                         // The cursor starts on the first row: step off it, so
-                        // that stepping back has somewhere to go.
-                        press_binding(&mut app, "j", 0);
+                        // that stepping back has somewhere to go. A message open
+                        // goes to the last row, for the next one is a digest.
+                        let off = if matches!(*state, "open" | "open-narrow" | "find" | "pane") {
+                            "G"
+                        } else {
+                            "j"
+                        };
+                        press_binding(&mut app, off, 0);
                     }
                     let before = screen(120, 30, &app);
                     let effects = press_binding(&mut app, binding, delivery);
@@ -418,7 +424,7 @@ fn in_thread() -> App {
     thread.is_thread = true;
     thread.count = 3;
     postio_tui::test_support::show_rows(&mut app, &[thread]);
-    let effects = app.open_reading(MessageId::new(1));
+    let effects = postio_tui::test_support::enter_thread(&mut app, &[11, 12, 13]);
     assert!(
         effects.contains(&Effect::ReadConversation(ThreadId::new(9))),
         "{effects:?}"
@@ -434,7 +440,6 @@ fn in_thread() -> App {
             ]),
         },
     );
-    update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
     assert_eq!(app.focus(), Focus::Reader);
     app
 }
