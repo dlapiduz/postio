@@ -675,3 +675,19 @@ fn undo_in_calendar_reaches_the_undo_stack() {
     let effects = run(&mut focus, CommandId::Undo);
     assert_eq!(posted(&effects), [postio_core::Command::Undo]);
 }
+
+#[test]
+fn undoing_a_delete_rings_the_event_it_brings_back() {
+    let (mut focus, _) = opened();
+    run(&mut focus, CommandId::Delete);
+    let heard = focus.handle_on(Input::Event(postio_core::Event::CalendarChanged), &NoRows);
+    let mut without = today();
+    without.remove(1);
+    let view = frame(&answer(&mut focus, &heard, without)).expect("redrawn");
+    assert_ne!(ringed(&view), "Review");
+
+    run(&mut focus, CommandId::Undo);
+    let heard = focus.handle_on(Input::Event(postio_core::Event::CalendarChanged), &NoRows);
+    let view = frame(&answer(&mut focus, &heard, today())).expect("redrawn");
+    assert_eq!(ringed(&view), "Review");
+}

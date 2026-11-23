@@ -1,0 +1,48 @@
+# A person moves an event with `v` to "next week" and later deletes it with
+# `#`; every step is instant and undoable (spec 017 US3).
+#
+# Keys rather than commands, so it loads, and is red, before the verbs exist.
+apps   = ["focus"]
+source = { kind = "spec", ref = "specs/017-calendar US3" }
+seed   = "small"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+key     = "g"
+
+[[step]]
+id      = "agenda"
+key     = "e"
+check   = { app.focus.calendar.cursor = "17:00 Dentist" }
+
+[[step]]
+id      = "ask"
+key     = "v"
+check   = { app.focus.calendar.editor = "Move to…", keyboard.typing = true }
+expect  = "A small Move to… card opens over the dimmed agenda with the keyboard in its one field, and its keys say Return moves and Escape cancels."
+
+[[step]]
+id      = "where"
+type    = "next week"
+check   = { app.focus.calendar.editor.when = "Tue 9 Jun, 17:00 – 17:30" }
+expect  = "Under the field the card says where that lands, Tuesday 9 June at 17:00, the event's own hour, before anything moves."
+
+[[step]]
+id      = "moved"
+key     = "Return"
+check   = { app.focus.calendar.editor = { absent = true }, app.focus.calendar.cursor = "17:00 Dentist" }
+expect  = "The card is gone and Dentist sits under Tuesday 9 June at 17:00, ringed; today no longer has it. A toast says Event moved, with Undo."
+
+[[step]]
+id      = "deleted"
+key     = "numbersign"
+check   = { app.focus.calendar.cursor = { changed = true } }
+expect  = "Dentist is gone at once, the ring on a neighbouring event, and a toast says Event deleted, with Undo."
+
+[[step]]
+id      = "undone"
+key     = "z"
+check   = { app.focus.calendar.cursor = "17:00 Dentist" }
+expect  = "Undo puts Dentist back under Tuesday 9 June, ringed."

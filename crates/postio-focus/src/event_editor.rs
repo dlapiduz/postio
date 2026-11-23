@@ -264,7 +264,10 @@ impl FocusController {
                         return Some(self.draw_calendar());
                     }
                 },
-                _ => Command::DeleteEvent { event, scope },
+                _ => {
+                    calendar.undo_follows = Some(event.occurrence.start);
+                    Command::DeleteEvent { event, scope }
+                }
             };
             calendar.editor = None;
             calendar.open = None;

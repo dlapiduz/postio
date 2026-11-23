@@ -55,6 +55,7 @@ pub(crate) struct Calendar {
     pub(crate) editor: Option<crate::event_editor::Editor>,
     edit_when_open: bool,
     pub(crate) follow: Option<DateTime<chrono::Utc>>,
+    pub(crate) undo_follows: Option<DateTime<chrono::Utc>>,
 }
 
 impl Calendar {
@@ -79,6 +80,7 @@ impl Calendar {
             editor: None,
             edit_when_open: false,
             follow: None,
+            undo_follows: None,
         }
     }
 
@@ -164,6 +166,9 @@ impl FocusController {
             return self.editor_command(id);
         }
         if id == CommandId::Undo {
+            if let Some(calendar) = self.calendar.as_mut() {
+                calendar.follow = calendar.undo_follows.take();
+            }
             return None;
         }
         let now = self.now();
@@ -183,6 +188,7 @@ impl FocusController {
             }
             (CommandId::Delete, Some(entry)) => {
                 calendar.open = None;
+                calendar.undo_follows = Some(entry.start);
                 let mut steps = self.verbs.post(postio_core::Command::DeleteEvent {
                     event: postio_model::calendar::EventTarget {
                         occurrence: entry.cursor(),
