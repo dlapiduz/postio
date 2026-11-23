@@ -8,23 +8,16 @@ use io_webdav::rfc4918::report::WebdavReport;
 use io_webdav::rfc4918::send::WebdavSendError;
 use io_webdav::rfc6578::sync_collection::{WebdavSyncCollectionError, WebdavSyncCollectionOptions};
 
-use crate::{CalendarBackend, Changes, DavCalendar, DavError, DavObject, DavResult, Listed};
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Connection {
-    pub host: String,
-    pub port: u16,
-    pub reached: bool,
-}
-
-pub type Report = Arc<dyn Fn(&Connection) + Send + Sync>;
+use crate::{
+    CalendarBackend, Changes, Connection, DavCalendar, DavError, DavObject, DavResult, Listed,
+};
 
 pub struct WebdavBackend {
     url: url::Url,
     user: String,
     secret: String,
     client: Arc<Mutex<Option<WebdavClientStd>>>,
-    report: Report,
+    opened: Arc<Mutex<Vec<Connection>>>,
 }
 
 impl std::fmt::Debug for WebdavBackend {
@@ -36,15 +29,14 @@ impl std::fmt::Debug for WebdavBackend {
 }
 
 impl WebdavBackend {
-    /// `report` hears of every connection this backend opens, reached or not.
-    pub fn new(url: &str, user: &str, secret: &str, report: Report) -> DavResult<Self> {
+    pub fn new(url: &str, user: &str, secret: &str) -> DavResult<Self> {
         let url = url::Url::parse(url).map_err(|error| DavError::Protocol(error.to_string()))?;
         Ok(WebdavBackend {
             url,
             user: user.to_owned(),
             secret: secret.to_owned(),
             client: Arc::new(Mutex::new(None)),
-            report,
+            opened: Arc::default(),
         })
     }
 
@@ -52,10 +44,10 @@ impl WebdavBackend {
         &self,
         work: impl FnOnce(&mut WebdavClientStd) -> Result<T, WebdavClientStdError> + Send + 'static,
     ) -> DavResult<T> {
-        let (client, url, report) = (
+        let (client, url, opened_log) = (
             Arc::clone(&self.client),
             self.url.clone(),
-            Arc::clone(&self.report),
+            Arc::clone(&self.opened),
         );
         let auth = WebdavAuth::Basic(io_http::rfc7617::basic::HttpAuthBasic::new(
             &self.user,
@@ -78,10 +70,12 @@ impl WebdavBackend {
                             opened.calendar_home_set()?;
                             Ok(opened)
                         });
-                report(&Connection {
-                    reached: opened.is_ok(),
-                    ..connection
-                });
+                if let Ok(mut log) = opened_log.lock() {
+                    log.push(Connection {
+                        reached: opened.is_ok(),
+                        ..connection
+                    });
+                }
                 *held = Some(opened.map_err(|error| match failure(error) {
                     DavError::Protocol(why) => DavError::Unreachable(why),
                     known => known,
@@ -272,6 +266,13 @@ impl CalendarBackend for WebdavBackend {
             })
         })
         .await
+    }
+
+    fn connections(&self) -> Vec<Connection> {
+        self.opened
+            .lock()
+            .map(|mut log| std::mem::take(&mut *log))
+            .unwrap_or_default()
     }
 
     async fn delete(&self, calendar: &str, href: &str, etag: Option<&str>) -> DavResult<()> {

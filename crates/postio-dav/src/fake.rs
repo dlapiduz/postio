@@ -4,7 +4,9 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
-use crate::{CalendarBackend, Changes, DavCalendar, DavError, DavObject, DavResult, Listed};
+use crate::{
+    CalendarBackend, Changes, Connection, DavCalendar, DavError, DavObject, DavResult, Listed,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Fault {
@@ -30,6 +32,8 @@ struct State {
     version: u64,
     faults: Vec<Fault>,
     requests: Vec<String>,
+    connected: bool,
+    opened: Vec<Connection>,
 }
 
 /// A server in memory: every call is logged, and a queued [`Fault`] answers the next one.
@@ -111,7 +115,17 @@ impl FakeCalendars {
     fn enter(&self, request: String) -> DavResult<std::sync::MutexGuard<'_, State>> {
         let mut state = self.state.lock().expect("the fake's lock");
         state.requests.push(request);
-        match state.faults.pop() {
+        let fault = state.faults.pop();
+        if !state.connected {
+            let reached = fault != Some(Fault::Unreachable);
+            state.connected = reached;
+            state.opened.push(Connection {
+                host: "caldav.example.com".to_owned(),
+                port: 443,
+                reached,
+            });
+        }
+        match fault {
             None => Ok(state),
             Some(Fault::Unreachable) => Err(DavError::Unreachable("the fake is down".to_owned())),
             Some(Fault::Forbidden) => Err(DavError::Forbidden),
@@ -130,6 +144,10 @@ fn listed(href: &str, held: &Held) -> Listed {
 
 #[async_trait]
 impl CalendarBackend for FakeCalendars {
+    fn connections(&self) -> Vec<Connection> {
+        std::mem::take(&mut self.state.lock().expect("the fake's lock").opened)
+    }
+
     async fn calendars(&self) -> DavResult<Vec<DavCalendar>> {
         Ok(self.enter("calendars".to_owned())?.calendars.clone())
     }

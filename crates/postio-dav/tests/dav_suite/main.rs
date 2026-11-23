@@ -3,7 +3,7 @@ use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 
 use chrono::{TimeZone, Utc};
-use postio_dav::{CalendarBackend, Connection, DavError, WebdavBackend};
+use postio_dav::{CalendarBackend, DavError, WebdavBackend};
 
 const EVENT: &str = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//t//EN\r\nBEGIN:VEVENT\r\n\
 UID:a@example.com\r\nDTSTAMP:20260101T000000Z\r\nDTSTART:20261201T100000Z\r\nSUMMARY:A\r\n\
@@ -155,25 +155,19 @@ fn server() -> Server {
     Server { port, log }
 }
 
-fn backend(server: &Server) -> (WebdavBackend, Arc<Mutex<Vec<Connection>>>) {
-    let connections = Arc::new(Mutex::new(Vec::new()));
-    let heard = Arc::clone(&connections);
-    let backend = WebdavBackend::new(
+fn backend(server: &Server) -> WebdavBackend {
+    WebdavBackend::new(
         &format!("http://127.0.0.1:{}/", server.port),
         "ada",
         "app-password",
-        Arc::new(move |connection: &Connection| {
-            heard.lock().expect("the log").push(connection.clone());
-        }),
     )
-    .expect("a backend");
-    (backend, connections)
+    .expect("a backend")
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn discovery_lists_the_event_calendars_and_reports_one_connection() {
     let server = server();
-    let (backend, connections) = backend(&server);
+    let backend = backend(&server);
 
     let calendars = backend.calendars().await.expect("calendars");
 
@@ -188,7 +182,7 @@ async fn discovery_lists_the_event_calendars_and_reports_one_connection() {
     );
     assert_eq!(calendars[0].colour.as_deref(), Some("#3584e4"));
     backend.listing("work", None).await.expect("listed");
-    let connections = connections.lock().expect("the log").clone();
+    let connections = backend.connections();
     assert_eq!(connections.len(), 1, "one connection serves both calls");
     assert_eq!(connections[0].host, "127.0.0.1");
     assert!(connections[0].reached);
@@ -206,7 +200,7 @@ async fn discovery_lists_the_event_calendars_and_reports_one_connection() {
 #[tokio::test(flavor = "current_thread")]
 async fn a_window_asks_the_server_for_its_range_and_fetch_brings_the_bytes() {
     let server = server();
-    let (backend, _) = backend(&server);
+    let backend = backend(&server);
     let from = Utc.with_ymd_and_hms(2026, 11, 23, 0, 0, 0).unwrap();
     let until = Utc.with_ymd_and_hms(2028, 11, 23, 0, 0, 0).unwrap();
 
@@ -233,7 +227,7 @@ async fn a_window_asks_the_server_for_its_range_and_fetch_brings_the_bytes() {
 #[tokio::test(flavor = "current_thread")]
 async fn changes_by_token_name_what_moved_and_what_went_and_an_expired_token_says_so() {
     let server = server();
-    let (backend, _) = backend(&server);
+    let backend = backend(&server);
 
     let first = backend.changes("work", None).await.expect("changes");
     assert_eq!(first.token.as_deref(), Some("tok-1"));
@@ -260,7 +254,7 @@ async fn changes_by_token_name_what_moved_and_what_went_and_an_expired_token_say
 #[tokio::test(flavor = "current_thread")]
 async fn a_put_is_conditional_and_its_refusals_say_what_sync_must_do() {
     let server = server();
-    let (backend, _) = backend(&server);
+    let backend = backend(&server);
 
     assert_eq!(
         backend
@@ -297,20 +291,16 @@ async fn an_unreachable_server_is_transient_and_reported() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("a port");
     let port = listener.local_addr().expect("an address").port();
     drop(listener);
-    let connections = Arc::new(Mutex::new(Vec::new()));
-    let heard = Arc::clone(&connections);
-    let backend = WebdavBackend::new(
-        &format!("http://127.0.0.1:{port}/"),
-        "ada",
-        "app-password",
-        Arc::new(move |connection: &Connection| {
-            heard.lock().expect("the log").push(connection.clone())
-        }),
-    )
-    .expect("a backend");
+    let backend = WebdavBackend::new(&format!("http://127.0.0.1:{port}/"), "ada", "app-password")
+        .expect("a backend");
 
     let error = backend.calendars().await.expect_err("nobody listens");
     assert!(error.is_transient(), "{error:?}");
-    assert_eq!(connections.lock().expect("the log").len(), 1);
-    assert!(!connections.lock().expect("the log")[0].reached);
+    let connections = backend.connections();
+    assert_eq!(connections.len(), 1);
+    assert!(!connections[0].reached);
+    assert!(
+        backend.connections().is_empty(),
+        "each connection is handed over once"
+    );
 }

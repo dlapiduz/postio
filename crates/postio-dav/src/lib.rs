@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
 pub use fake::{FakeCalendars, Fault};
-pub use webdav::{Connection, Report, WebdavBackend};
+pub use webdav::WebdavBackend;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DavCalendar {
@@ -19,6 +19,13 @@ pub struct DavCalendar {
     pub name: String,
     pub colour: Option<String>,
     pub writable: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Connection {
+    pub host: String,
+    pub port: u16,
+    pub reached: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,4 +102,7 @@ pub trait CalendarBackend: Send + Sync + fmt::Debug {
     ) -> DavResult<String>;
 
     async fn delete(&self, calendar: &str, href: &str, etag: Option<&str>) -> DavResult<()>;
+
+    /// Each connection opened since the last call, reached or not, once.
+    fn connections(&self) -> Vec<Connection>;
 }
