@@ -48,7 +48,7 @@ test that is green on arrival is a guard, and says so.
 
 ## Phase 1: Setup
 
-- [ ] T001 [P] Add calendar fixtures under `crates/postio-calendar/tests/fixtures/` (`.ics`, synthetic, `example.com`), each listed in a `README.md` there:
+- [x] T001 [P] Add calendar fixtures under `crates/postio-calendar/tests/fixtures/` (`.ics`, synthetic, `example.com`), each listed in a `README.md` there:
   - a weekly rule with an exception and EXDATEs across a DST change;
   - an all-day multi-day event;
   - a floating time;

@@ -1,0 +1,22 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Postio fixtures//Calendar//EN
+X-WR-CALNAME:Home
+BEGIN:VTODO
+UID:buy-paint@example.com
+DTSTAMP:20260901T120000Z
+SUMMARY:Buy paint
+X-APPLE-SORT-ORDER:42
+END:VTODO
+BEGIN:VEVENT
+UID:painting@example.com
+DTSTAMP:20260901T120000Z
+DTSTART:20261107T100000Z
+DTEND:20261107T120000Z
+SUMMARY:Paint the hallway
+X-EXAMPLE-COLOUR;X-EXAMPLE-SCHEME=rgb:12,34,56
+X-EXAMPLE-NOTE:Kept exactly\, with an escaped comma and a long tail that is fol
+ ded across a line boundary on purpose
+CATEGORIES:home,chores
+END:VEVENT
+END:VCALENDAR

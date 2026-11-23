@@ -1,0 +1,24 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Postio fixtures//Calendar//EN
+BEGIN:VEVENT
+UID:hostile@example.net
+DTSTAMP:20260901T120000Z
+DTSTART:20261118T160000Z
+DTEND:20261118T170000Z
+SUMMARY:Quarterly review https://tracker.example.net/s.gif
+DESCRIPTION:Join at https://meet.example.net/j/123 or see <img src="https:/
+ /tracker.example.net/pixel.gif"> and http://198.51.100.7/beacon
+LOCATION:https://maps.example.net/?q=somewhere
+URL:https://tracker.example.net/event
+ATTACH;VALUE=URI:https://files.example.net/agenda.pdf
+ATTACH;FMTTYPE=image/png;VALUE=URI:https://tracker.example.net/a.png
+CONFERENCE;VALUE=URI;FEATURE=VIDEO;LABEL=Join:https://meet.example.net/j/12
+ 3
+IMAGE;VALUE=URI;DISPLAY=BADGE:https://tracker.example.net/badge.png
+ORGANIZER;CN=Mallory;SENT-BY="mailto:x@example.net":mailto:mallory@example.
+ net
+ATTENDEE;CN=Ada Norwood;PARTSTAT=NEEDS-ACTION:mailto:ada.norwood@example.co
+ m
+END:VEVENT
+END:VCALENDAR
