@@ -710,6 +710,21 @@ pub fn summary_of(cites: &[(&str, &str, i64)]) -> postio_model::summary::DigestS
     }
 }
 
+/// The Source surface's view over `raw`, as the host would build it with the bytes here.
+pub fn source_view(raw: &[u8]) -> postio_ui::source::SourceView {
+    postio_ui::source::view(postio_ui::source::SourceInput {
+        subject: "Harbor",
+        from: &[],
+        headers: None,
+        raw: Some(raw.to_vec()),
+        raw_state: postio_ui::source::RawState::Here,
+        body: postio_ui::source::BodyState::Here,
+        provider: None,
+        sent_by_you: false,
+        account: "Work",
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -740,19 +755,4 @@ mod tests {
         );
         assert!(reader_text(&app).contains("Looking now."));
     }
-}
-
-/// The Source surface's view over `raw`, as the host would build it with the bytes here.
-pub fn source_view(raw: &[u8]) -> postio_ui::source::SourceView {
-    postio_ui::source::view(postio_ui::source::SourceInput {
-        subject: "Harbor",
-        from: &[],
-        headers: None,
-        raw: Some(raw.to_vec()),
-        raw_state: postio_ui::source::RawState::Here,
-        body: postio_ui::source::BodyState::Here,
-        provider: None,
-        sent_by_you: false,
-        account: "Work",
-    })
 }
