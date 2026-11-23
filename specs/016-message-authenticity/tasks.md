@@ -214,7 +214,7 @@ S/MIME is filed as its own spec.
 ## Phase 9: Polish and landing
 
 - [x] T055 [P] Fuzz targets for `verify`, `keyblocks_from_keybox` and `keyblocks_from_pubring_gpg` in `crates/postio-signature/fuzz/`, run in the nightly job beside the measurement tier, never on the merge path (in the repository's one `fuzz/` crate and its `fuzz.yml` job, which is never on the merge path)
-- [ ] T056 [P] Add a "signatures" section to `docs/gotchas/safety.md` for whatever canonicalisation or keybox trap the spikes and tasks found
+- [x] T056 [P] Add a "signatures" section to `docs/gotchas/safety.md` for whatever canonicalisation or keybox trap the spikes and tasks found
 - [ ] T057 Update `docs/ARCHITECTURE.md`'s diagram and §9 for `postio-signature`, and `docs/decisions/README.md`'s 0017 row
 - [ ] T058 Run `/ux-review` on T004's storyboard, then land with `scripts/issue-land.sh --detach --full-suite`
 
