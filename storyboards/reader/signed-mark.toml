@@ -1,0 +1,44 @@
+# A message signed by a key Postio holds says "Signed" beside the sender, and
+# nothing more; the mark opens Verification, where the person can accept the
+# key, and then it reads "Signed · accepted". Undo takes the acceptance back
+# (spec 016 US3, scenarios 1, 5 and 7).
+#
+# The `signed` seed files the corpus's good PGP/MIME message as the newest
+# inbox row, with its signer's key recorded from an Autocrypt header and the
+# verdict already checked. The mark is a word in the neutral chip style: no
+# lock, no tick, no accent.
+apps   = ["focus"]
+proof  = "open"
+seed   = "signed"
+source = { kind = "flow", ref = "specs/016-message-authenticity US3" }
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+command = "open_message"
+settle  = { until = { view = "reader" } }
+check   = { view = "reader", keyboard.region = "reader", app.focus.reading.mark = "Signed" }
+expect  = "The signed message opens. The header says Signed after the sender, as a quiet word with no icon, and there is no warning line."
+
+[[step]]
+command = "view_source"
+settle  = { until = { app.focus.source.tab = "verification" } }
+check   = { overlay.name = "source", app.focus.source.tab = "verification" }
+expect  = "The mark's command opens the Source surface on Verification. Its signature section says what Signed proves and where the key came from, and offers Accept this key for ada@example.com."
+
+[[step]]
+key     = "a"
+check   = { overlay.name = "source", app.focus.source.tab = "verification", notice.undo = true }
+expect  = "a accepts the key for ada@example.com. The section now says you accepted it, and a toast offers undo."
+
+[[step]]
+command = "back"
+check   = { view = "reader", keyboard.region = "reader", app.focus.reading.mark = "Signed · accepted" }
+expect  = "Back in the message, the mark reads Signed · accepted."
+
+[[step]]
+key     = "z"
+settle  = { until = { app.focus.reading.mark = "Signed" } }
+check   = { view = "reader", app.focus.reading.mark = "Signed" }
+expect  = "z undoes the acceptance. The mark is back to Signed."
