@@ -117,6 +117,10 @@ impl DigestWindow {
         self.rows.iter().position(|row| row.id == message)
     }
 
+    pub(crate) fn said(&self, index: usize) -> Option<(String, String)> {
+        self.rows.get(index).map(crate::said_of)
+    }
+
     pub(crate) fn len(&self) -> usize {
         self.rows.len()
     }

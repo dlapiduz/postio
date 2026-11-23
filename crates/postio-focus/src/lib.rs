@@ -2274,6 +2274,16 @@ impl FocusController {
         window.facts(window.index_of(reading)?)
     }
 
+    pub(crate) fn elsewhere_said(&self, reading: MessageId) -> Option<(String, String)> {
+        if let Some(filtered) = &self.filtered
+            && let Some(at) = filtered.index_of(reading)
+        {
+            return filtered.said(at);
+        }
+        let window = self.digest.as_ref()?;
+        window.said(window.index_of(reading)?)
+    }
+
     pub(crate) fn stamp(&mut self) -> u64 {
         self.stamps += 1;
         self.stamps
@@ -2286,6 +2296,18 @@ impl FocusController {
             generation: self.generation,
         }
     }
+}
+
+/// The sender and subject a picker's target names, as a list row says them.
+pub(crate) fn said_of(message: &postio_model::listing::MessageSummary) -> (String, String) {
+    (
+        message
+            .from
+            .as_ref()
+            .map(|from| from.display().to_owned())
+            .unwrap_or_default(),
+        message.subject.clone().unwrap_or_default(),
+    )
 }
 
 #[cfg(test)]

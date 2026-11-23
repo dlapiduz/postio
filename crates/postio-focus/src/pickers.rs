@@ -449,7 +449,9 @@ impl FocusController {
         if aims.is_empty() {
             return Some(Vec::new());
         }
-        let said = position.and_then(|position| rows.said(position));
+        let said = position
+            .and_then(|position| rows.said(position))
+            .or_else(|| self.elsewhere_said(reading));
         let aimed = Aimed {
             aims,
             everything: None,

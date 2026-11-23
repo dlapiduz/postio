@@ -124,6 +124,12 @@ impl Rows for FilteredRows<'_> {
             .map(|at| at as u32)
     }
 
+    fn said(&self, position: u32) -> Option<(String, String)> {
+        self.0
+            .get(position as usize)
+            .map(|row| crate::said_of(&row.message))
+    }
+
     fn row(&self, position: u32) -> Option<FocusRow> {
         let message = self.0.get(position as usize)?.message.clone();
         let count = message.thread_count;
@@ -189,6 +195,18 @@ impl Filtered {
     ) -> Option<postio_ui::scope::FooterView> {
         let raw = FilteredRows(&self.rows, true);
         crate::thread_expand::footer_at(self.expansion.as_ref(), index, &raw, keymap)
+    }
+
+    pub(crate) fn said(&self, index: usize) -> Option<(String, String)> {
+        let raw = FilteredRows(&self.rows, true);
+        match self
+            .expansion
+            .as_ref()
+            .and_then(|expansion| expansion.through(&raw, true))
+        {
+            Some(through) => through.said(index as u32),
+            None => raw.said(index as u32),
+        }
     }
 
     pub(crate) fn index_of(&self, message: MessageId) -> Option<usize> {
