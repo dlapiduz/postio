@@ -80,7 +80,7 @@ the plan's research section it settles. Spike code is not merged.
 
 ## Phase 3: Foundational (blocks every story)
 
-- [ ] T006 Write failing cases in `crates/postio-core/tests/core_suite/`:
+- [x] T006 Write failing cases in `crates/postio-core/tests/core_suite/`:
   - `Context::Calendar` and `Context::CalendarWindow`;
   - `contracts/calendar-mode.md`'s and `contracts/event-verbs.md`'s commands, not held, each with a key, a command-bar row and an accessible action;
   - no collision within a context;
