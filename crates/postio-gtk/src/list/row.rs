@@ -1030,7 +1030,6 @@ impl RowWidget {
         layout
     }
 
-    /// A digest's row: one line, bold, standing for everything it holds.
     fn draw_digest(&self, snapshot: &gtk::Snapshot, digest: &postio_ui::focus_list::Digest) {
         let palette = Palette::of(self);
         let width = self.width() as f32;

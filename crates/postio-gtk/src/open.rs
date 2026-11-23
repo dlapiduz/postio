@@ -1984,7 +1984,6 @@ fn remote_fetch(
 
 type Inline = Rc<RefCell<std::collections::HashMap<String, (Vec<u8>, String)>>>;
 
-/// Without the angle brackets a `Content-ID` header wears, in any case.
 fn cid_key(content_id: &str) -> String {
     content_id
         .trim()
