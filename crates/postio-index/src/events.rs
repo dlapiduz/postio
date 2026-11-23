@@ -122,7 +122,9 @@ pub async fn search_events<Z: TimeZone>(
                 let at = bind(name.to_lowercase().bind(), &mut params);
                 format!("{not}(instr(lower(c.name), {at}) > 0)")
             }
-            Filter::From(person) => people(&[person.clone()], not, &mut params, &mut bind),
+            Filter::From(person) => {
+                people(std::slice::from_ref(person), not, &mut params, &mut bind)
+            }
             Filter::With(addresses) => people(addresses, not, &mut params, &mut bind),
             other => {
                 let keyword = other.field().keyword().to_owned();

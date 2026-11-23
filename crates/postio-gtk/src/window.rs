@@ -5355,10 +5355,10 @@ impl FocusWindow {
             #[upgrade_or]
             glib::Propagation::Proceed,
             move |_, key, _, state| {
-                if agenda.filter().has_focus() || agenda.filter().focus_child().is_some() {
-                    if !matches!(key, gdk::Key::Escape) {
-                        return glib::Propagation::Proceed;
-                    }
+                if (agenda.filter().has_focus() || agenda.filter().focus_child().is_some())
+                    && !matches!(key, gdk::Key::Escape)
+                {
+                    return glib::Propagation::Proceed;
                 }
                 window.handle_key(key, state)
             }
