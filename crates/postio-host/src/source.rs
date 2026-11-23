@@ -55,6 +55,18 @@ pub async fn view(
             .chain(account.identities.iter().map(|identity| &identity.address))
             .any(|own| row.from.iter().any(|from| from.same_address(own)))
     });
+    let mut signature = signature;
+    if let (Some(signature), Some(raw)) = (signature.as_mut(), raw.as_deref())
+        && signature.format == "smime"
+    {
+        signature.certificate =
+            postio_signature::smime::unchecked_certificate(raw).map(|certificate| {
+                postio_ui::source::CertificateInput {
+                    email: certificate.email,
+                    chain_from_signer: certificate.chain,
+                }
+            });
+    }
     let fetch = raw.is_none() && absent == RawState::Fetching;
     let here = raw.is_some();
     let envelope = envelope(&row);
@@ -151,6 +163,7 @@ async fn signature(
         .filter(|(key, _)| Some(key) == verdict.fingerprint.as_ref())
         .map(|(_, at)| at);
     Ok(Some(postio_ui::source::SignatureInput {
+        format: verdict.format,
         status: verdict.status,
         reason: verdict.reason,
         scope: verdict.scope,
@@ -159,5 +172,6 @@ async fn signature(
         first_seen: signer.map(|key| key.first_seen),
         accepted_at: accepted,
         address: from.address.clone(),
+        certificate: None,
     }))
 }

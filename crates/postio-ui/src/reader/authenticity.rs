@@ -119,6 +119,7 @@ pub fn warning<T: AsRef<str>>(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Signature {
     pub status: String,
+    pub reason: Option<String>,
     pub scope: String,
     pub signer: Option<String>,
     pub accepted: Option<String>,
@@ -165,6 +166,11 @@ pub fn header<T: AsRef<str>>(
     if let Some(signature) = signature {
         let address = from.first().map_or("", |sender| sender.address.as_str());
         match (signature.status.as_str(), signature.scope.as_str()) {
+            ("bad", _) if signature.reason.as_deref() == Some("address_mismatch") => {
+                lines.push(format!(
+                    "Signed with a certificate for a different address than {address}."
+                ));
+            }
             ("bad", _) => {
                 lines.push("The signature on this message does not match its content.".to_owned());
             }
@@ -876,6 +882,7 @@ mod tests {
     fn signed(status: &str, scope: &str) -> Signature {
         Signature {
             status: status.to_owned(),
+            reason: None,
             scope: scope.to_owned(),
             signer: Some("AAAA".to_owned()),
             accepted: None,

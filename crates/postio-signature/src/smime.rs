@@ -61,6 +61,76 @@ pub fn anchors_in(bytes: &[u8]) -> Vec<Vec<u8>> {
     found
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignerCertificate {
+    pub email: Option<String>,
+    pub chain: Vec<String>,
+}
+
+pub fn unchecked_certificate(raw: &[u8]) -> Option<SignerCertificate> {
+    let (SignedScope::WholeMessage {
+        format: crate::scope::Format::Smime,
+        signature,
+        ..
+    }
+    | SignedScope::Part {
+        format: crate::scope::Format::Smime,
+        signature,
+        ..
+    }) = crate::scope::signed_scope(raw)?
+    else {
+        return None;
+    };
+    let (signed_data, signer) = signer_info(raw.get(signature)?)?;
+    let SignerIdentifier::IssuerAndSerialNumber(id) = &signer.sid else {
+        return None;
+    };
+    let certificates: Vec<Certificate> = signed_data
+        .certificates
+        .iter()
+        .flat_map(|set| set.0.iter())
+        .filter_map(|choice| match choice {
+            cms::cert::CertificateChoices::Certificate(certificate) => Some(certificate.clone()),
+            _ => None,
+        })
+        .collect();
+    let leaf = certificates.iter().find(|certificate| {
+        certificate.tbs_certificate.serial_number == id.serial_number
+            && certificate.tbs_certificate.issuer == id.issuer
+    })?;
+    let email = extension::<SubjectAltName>(leaf, ID_CE_SUBJECT_ALT_NAME).and_then(|names| {
+        names.0.into_iter().find_map(|name| match name {
+            GeneralName::Rfc822Name(address) => Some(address.to_string()),
+            _ => None,
+        })
+    });
+    let mut chain = vec![common_name(&leaf.tbs_certificate.subject)];
+    let mut at = leaf;
+    while chain.len() < 8 {
+        let issuer = &at.tbs_certificate.issuer;
+        if *issuer == at.tbs_certificate.subject {
+            break;
+        }
+        chain.push(common_name(issuer));
+        match certificates
+            .iter()
+            .find(|certificate| certificate.tbs_certificate.subject == *issuer)
+        {
+            Some(next) => at = next,
+            None => break,
+        }
+    }
+    Some(SignerCertificate { email, chain })
+}
+
+fn common_name(name: &x509_cert::name::Name) -> String {
+    let shown = name.to_string();
+    shown
+        .split(',')
+        .find_map(|part| part.trim().strip_prefix("CN="))
+        .map_or(shown.clone(), str::to_owned)
+}
+
 pub(crate) fn check(
     scope: &SignedScope,
     raw: &[u8],

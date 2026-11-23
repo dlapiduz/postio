@@ -550,6 +550,7 @@ fn signed_view(signature: source::SignatureInput) -> SourceView {
 
 fn good() -> source::SignatureInput {
     source::SignatureInput {
+        format: "pgp_mime".to_owned(),
         status: "good".to_owned(),
         reason: None,
         scope: "whole".to_owned(),
@@ -558,6 +559,7 @@ fn good() -> source::SignatureInput {
         first_seen: Some(1_772_528_400),
         accepted_at: None,
         address: "ada@example.com".to_owned(),
+        certificate: None,
     }
 }
 
@@ -687,6 +689,7 @@ fn a_key_from_the_gnupg_keyring_is_signed_until_accepted_whatever_gnupg_trusts()
         &[] as &[&str],
         Some(&postio_ui::reader::authenticity::Signature {
             status: "good".to_owned(),
+            reason: None,
             scope: "whole".to_owned(),
             signer: good().fingerprint,
             accepted: None,
@@ -796,5 +799,100 @@ fn a_contacts_card_names_each_key_its_sources_and_what_was_accepted() {
                 text: "From a key attached to a message · revoked".to_owned(),
             },
         ]
+    );
+}
+
+fn smime(status: &str, reason: Option<&str>) -> source::SignatureInput {
+    source::SignatureInput {
+        format: "smime".to_owned(),
+        status: status.to_owned(),
+        reason: reason.map(str::to_owned),
+        sources: Vec::new(),
+        first_seen: None,
+        certificate: Some(source::CertificateInput {
+            email: Some("ada@example.com".to_owned()),
+            chain_from_signer: vec![
+                "ada@example.com".to_owned(),
+                "Corpus Test Intermediate".to_owned(),
+                "Corpus Test Root".to_owned(),
+            ],
+        }),
+        ..good()
+    }
+}
+
+#[test]
+fn a_good_s_mime_signature_names_its_certificate_issuer_and_unchecked_revocation() {
+    let view = signed_view(smime("good", None));
+    let signature = section(&view, SIGNATURE);
+    assert_eq!(
+        signature.intro.as_deref(),
+        Some(
+            "Good signature. Certificate for ada@example.com, issued by Corpus Test Intermediate. Revocation not checked."
+        )
+    );
+    let lines = texts(signature);
+    assert!(
+        lines.contains(&"Chain: ada@example.com → Corpus Test Intermediate → Corpus Test Root"),
+        "{lines:?}"
+    );
+    assert!(
+        !lines.iter().any(|line| line.starts_with("Accept this key")),
+        "a certificate rests on its authority, not on an acceptance: {lines:?}"
+    );
+}
+
+#[test]
+fn an_s_mime_signature_that_cannot_be_trusted_says_why_and_shows_its_chain() {
+    for (reason, said) in [
+        (
+            "untrusted",
+            "Can't check: the certificate's issuer isn't trusted on this computer.",
+        ),
+        (
+            "not_for_email",
+            "Can't check: the certificate isn't one for signing mail.",
+        ),
+    ] {
+        let view = signed_view(smime("cant_check", Some(reason)));
+        let signature = section(&view, SIGNATURE);
+        assert_eq!(signature.intro.as_deref(), Some(said), "{reason}");
+        assert!(
+            texts(signature)
+                .contains(&"Chain: ada@example.com → Corpus Test Intermediate → Corpus Test Root"),
+            "{reason}"
+        );
+    }
+    let mut for_grace = smime("bad", Some("address_mismatch"));
+    if let Some(certificate) = for_grace.certificate.as_mut() {
+        certificate.email = Some("grace@example.net".to_owned());
+    }
+    assert_eq!(
+        section(&signed_view(for_grace), SIGNATURE).intro.as_deref(),
+        Some("Bad signature: the certificate is for grace@example.net, not ada@example.com.")
+    );
+}
+
+#[test]
+fn a_certificate_for_another_address_warns_in_the_header_and_draws_no_mark() {
+    let header = postio_ui::reader::authenticity::header(
+        &postio_model::Headers::default(),
+        &[postio_model::EmailAddress::new(
+            None::<String>,
+            "ada@example.com",
+        )],
+        &[] as &[&str],
+        Some(&postio_ui::reader::authenticity::Signature {
+            status: "bad".to_owned(),
+            reason: Some("address_mismatch".to_owned()),
+            scope: "whole".to_owned(),
+            signer: None,
+            accepted: None,
+        }),
+    );
+    assert_eq!(header.mark, None);
+    assert_eq!(
+        header.warning.as_deref(),
+        Some("Signed with a certificate for a different address than ada@example.com.")
     );
 }

@@ -17,6 +17,7 @@ header(headers, from, trusted_authserv_ids, verdict: Option<&Verdict>, accepted:
 | good | whole | yes | `Signed · accepted` | none |
 | good | whole | another key is accepted | none | "Signed with a different key than the one you accepted for ada@example.com." |
 | good | part, or inline that is not the whole body | any | none | none |
+| bad, S/MIME certificate for another address | whole | — | none | "Signed with a certificate for a different address than ada@example.com." |
 | bad | any | any | none | "The signature on this message does not match its content." |
 | revoked | any | any | none | "This message was signed with a key that has been revoked." |
 | cant_check | any | any | none | none |
@@ -26,6 +27,9 @@ header(headers, from, trusted_authserv_ids, verdict: Option<&Verdict>, accepted:
   one line, domain first, exactly as `warning()` joins them today. The mark
   is independent of the domain warning.
 - A message the person sent gets neither the mark nor any warning, as today.
+- S/MIME follows the same table. Its good rests on a trust anchor on this
+  machine, so the Verification tab offers no acceptance for it, and it says
+  "Revocation not checked" (D8).
 
 ## Drawing (every frontend)
 

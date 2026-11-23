@@ -103,3 +103,26 @@ fn a_certificate_bundle_yields_every_anchor_and_junk_yields_none() {
     );
     assert!(postio_signature::smime::anchors_in(b"not a certificate").is_empty());
 }
+
+#[test]
+fn the_certificate_and_its_chain_are_read_from_the_message_without_checking_it() {
+    let certificate = postio_signature::smime::unchecked_certificate(
+        test_corpus::load("smime-signed-good").bytes(),
+    )
+    .expect("an S/MIME signature");
+    assert_eq!(certificate.email.as_deref(), Some("ada@example.com"));
+    assert_eq!(
+        certificate.chain,
+        [
+            "ada@example.com",
+            "Corpus Test Intermediate",
+            "Corpus Test Root"
+        ]
+    );
+    assert_eq!(
+        postio_signature::smime::unchecked_certificate(
+            test_corpus::load("pgp-signed-good").bytes()
+        ),
+        None
+    );
+}

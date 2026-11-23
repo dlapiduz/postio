@@ -197,6 +197,7 @@ pub async fn authenticity(
     };
     let signature = verdict.map(|verdict| Signature {
         status: verdict.status,
+        reason: verdict.reason,
         scope: verdict.scope,
         signer: verdict.fingerprint,
         accepted,

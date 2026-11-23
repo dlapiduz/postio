@@ -66,6 +66,7 @@ pub struct SourceInput<'a> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SignatureInput {
+    pub format: String,
     pub status: String,
     pub reason: Option<String>,
     pub scope: String,
@@ -74,6 +75,13 @@ pub struct SignatureInput {
     pub first_seen: Option<i64>,
     pub accepted_at: Option<i64>,
     pub address: String,
+    pub certificate: Option<CertificateInput>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CertificateInput {
+    pub email: Option<String>,
+    pub chain_from_signer: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -635,7 +643,79 @@ fn doubted(report: &AuthReport) -> Line {
     }
 }
 
+fn smime_section(signature: &SignatureInput) -> Section {
+    let address = signature.address.as_str();
+    let certificate = signature.certificate.as_ref();
+    let named = certificate
+        .and_then(|certificate| certificate.email.as_deref())
+        .unwrap_or("no address");
+    let issuer = certificate
+        .and_then(|certificate| certificate.chain_from_signer.get(1))
+        .map_or("an unnamed issuer", String::as_str);
+    let intro = match (signature.status.as_str(), signature.reason.as_deref()) {
+        ("good", _) => format!(
+            "Good signature. Certificate for {named}, issued by {issuer}. Revocation not checked."
+        ),
+        ("bad", Some("address_mismatch")) => {
+            format!("Bad signature: the certificate is for {named}, not {address}.")
+        }
+        ("bad", Some("expired")) => {
+            "Bad signature: it was made after its certificate expired.".to_owned()
+        }
+        ("bad", Some("not_yet_valid")) => {
+            "Bad signature: it was made before its certificate was valid.".to_owned()
+        }
+        ("bad", _) => "Bad signature: the message changed after it was signed.".to_owned(),
+        ("not_here_yet", _) => "The signed message isn't fully on this computer yet; Postio will check the signature when it is.".to_owned(),
+        (_, Some("untrusted")) => {
+            "Can't check: the certificate's issuer isn't trusted on this computer.".to_owned()
+        }
+        (_, Some("not_for_email")) => {
+            "Can't check: the certificate isn't one for signing mail.".to_owned()
+        }
+        (_, Some("no_key")) => {
+            "Can't check: the signer's certificate isn't in the message.".to_owned()
+        }
+        (_, Some(reason)) if reason.starts_with("weak_hash:") => format!(
+            "Can't check: this signature uses {}, which is no longer safe.",
+            reason
+                .trim_start_matches("weak_hash:")
+                .to_ascii_uppercase()
+                .replace("SHA", "SHA-")
+        ),
+        (_, Some("weak_key")) => "Can't check: the key is too short to be safe.".to_owned(),
+        _ => "Can't check: the signature couldn't be read.".to_owned(),
+    };
+    let mut lines = Vec::new();
+    if signature.status == "good" {
+        lines.push(Line::text(
+            "Signed means this message hasn't changed since this certificate signed it.",
+        ));
+    }
+    if let Some(certificate) =
+        certificate.filter(|certificate| !certificate.chain_from_signer.is_empty())
+    {
+        lines.push(Line::text(format!(
+            "Chain: {}",
+            certificate.chain_from_signer.join(" → ")
+        )));
+    }
+    if signature.status != "good" {
+        lines.push(Line::text("Revocation not checked."));
+    }
+    Section {
+        title: "Signature".to_owned(),
+        intro: Some(intro),
+        mono: signature.fingerprint.as_deref().map(grouped),
+        lines,
+        ..Section::default()
+    }
+}
+
 fn signature_section(signature: &SignatureInput) -> Section {
+    if signature.format == "smime" {
+        return smime_section(signature);
+    }
     let address = signature.address.as_str();
     let source = key_sources(&signature.sources, address);
     let seen = signature
