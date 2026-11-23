@@ -198,7 +198,7 @@ throwaway code is not merged.
 
   Then implement `crates/postio-host/src/gnupg.rs` (read the whole file, retry a torn read once, count what was skipped).
 - [x] T048 [US5] Add `[signatures] gnupg_keyring` to `crates/postio-config/src/` with a `config_suite` case, the Settings → Privacy row and its counts to the settings model in `crates/postio-ui/src/`, and `reload_gnupg_keys` to the registry (built as the row's "Reload GnuPG keys" button: every registry command carries a key, and this one needs none)
-- [ ] T049 [US5] Add `--filesystem=~/.gnupg:ro` to `flatpak/dev.postio.Postio.json` and `flatpak/dev.postio.PostioTui.json`, each with a one-line manifest comment saying why
+- [x] T049 [US5] Add `--filesystem=~/.gnupg:ro` to `flatpak/dev.postio.Postio.json` and `flatpak/dev.postio.PostioTui.json`, each with a one-line manifest comment saying why (the why is a row in `flatpak/README.md`: the manifests are read as strict JSON)
 - [ ] T050 [US5] Verification tab: "From your GnuPG keyring". A key GnuPG fully trusts is still "Signed" until it is accepted, with a case in `crates/postio-ui/tests/ui_suite/source_view.rs`
 
 ## Phase 8: User Story 4, S/MIME (P3) ⛔ S2

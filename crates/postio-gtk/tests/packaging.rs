@@ -441,3 +441,20 @@ fn which(program: &str) -> Option<PathBuf> {
         .map(|dir| dir.join(program))
         .find(|candidate| candidate.is_file())
 }
+
+#[test]
+fn both_packages_may_read_the_gnupg_keyring_and_never_write_it() {
+    for manifest in [MANIFEST, "flatpak/dev.postio.PostioTui.json"] {
+        let text = read(manifest);
+        let grants: Vec<&str> = text
+            .lines()
+            .map(|line| line.trim().trim_end_matches(',').trim_matches('"'))
+            .filter(|arg| arg.contains(".gnupg"))
+            .collect();
+        assert_eq!(
+            grants,
+            ["--filesystem=~/.gnupg:ro"],
+            "{manifest}: public keys are read in place, never written"
+        );
+    }
+}
