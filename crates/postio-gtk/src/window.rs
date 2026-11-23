@@ -1830,7 +1830,7 @@ impl FocusWindow {
             | CommandId::Unsnooze
             | CommandId::Undo
             | CommandId::Refresh => self.cursor_command(id),
-            CommandId::Quit => self.close(),
+            CommandId::Quit | CommandId::CloseWindow => self.close(),
             CommandId::UpdateCredential => self.update_credential(),
             CommandId::CheatSheet => self.show_key_map(),
             CommandId::Settings => self.toggle_settings(),
@@ -3641,6 +3641,7 @@ impl FocusWindow {
             | CommandId::Undo
             | CommandId::CheatSheet
             | CommandId::Quit
+            | CommandId::CloseWindow
             | CommandId::Search
             | CommandId::CommandPalette => return false,
             _ => {}

@@ -1083,7 +1083,9 @@ impl FocusController {
             return self.effects(steps);
         }
         match input {
-            Input::Command(CommandId::Quit) => vec![Effect::Show(Intent::Quit)],
+            Input::Command(CommandId::Quit | CommandId::CloseWindow) => {
+                vec![Effect::Show(Intent::Quit)]
+            }
             Input::Command(id @ (CommandId::HistoryBack | CommandId::HistoryForward))
                 if self.surfaces.top().is_none() =>
             {

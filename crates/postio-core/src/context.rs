@@ -50,6 +50,8 @@ pub enum Context {
     Outline,
     /// Not the picker's context, which already gives each digit to `picker_choose_n`.
     ForwardChooser,
+    Calendar,
+    CalendarWindow,
 }
 
 impl Context {
@@ -76,6 +78,8 @@ impl Context {
         Context::ContactPopover,
         Context::Outline,
         Context::ForwardChooser,
+        Context::Calendar,
+        Context::CalendarWindow,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -99,6 +103,8 @@ impl Context {
             Context::ContactPopover => "contact_popover",
             Context::Outline => "outline",
             Context::ForwardChooser => "forward_chooser",
+            Context::Calendar => "calendar",
+            Context::CalendarWindow => "calendar_window",
         }
     }
 

@@ -509,6 +509,25 @@ commands! {
     ForwardWhat3 => "forward_what_3",
     ShowNewer => "show_newer",
     ExpandQuoted => "expand_quoted",
+    GoToCalendar => "go_to_calendar",
+    CalendarAgenda => "calendar_agenda",
+    CalendarPrevious => "calendar_previous",
+    CalendarNext => "calendar_next",
+    CalendarToday => "calendar_today",
+    PopOut => "pop_out",
+    PopIn => "pop_in",
+    CloseWindow => "close_window",
+    NewEvent => "new_event",
+    EditEvent => "edit_event",
+    MoveEvent => "move_event",
+    DuplicateEvent => "duplicate_event",
+    TentativeInvite {
+        message: Option<MessageId> = None,
+    } => "tentative_invite",
+    /// Never sends: inviting is `SaveAndSendEvent`, so a save cannot reach anyone by accident.
+    SaveEvent => "save_event",
+    SaveAndSendEvent => "save_and_send_event",
+    EmailAttendees => "email_attendees",
     ;
     /// The same verb as `ToggleRead` (same handler, one registry entry), differing only in not
     /// being recorded on the undo stack.

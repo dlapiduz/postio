@@ -14,6 +14,7 @@ const PALETTE_SURFACES: &[Context] = &[
     Context::Digest,
     Context::Filtered,
     Context::Capture,
+    Context::Calendar,
 ];
 
 const NOT_YET: &[(&str, &str)] = &[];

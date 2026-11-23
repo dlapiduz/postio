@@ -395,6 +395,8 @@ pub enum KeyContext {
     ContactPopover,
     Outline,
     ForwardChooser,
+    Calendar,
+    CalendarWindow,
 }
 
 impl KeyContext {
@@ -439,6 +441,8 @@ impl KeyContext {
             // chooser's. Neither falls through.
             Self::Outline => &[Self::Outline, Self::Global],
             Self::ForwardChooser => &[Self::ForwardChooser, Self::Composer, Self::Global],
+            Self::Calendar => &[Self::Calendar, Self::Global],
+            Self::CalendarWindow => &[Self::CalendarWindow, Self::Global],
         }
     }
 }
@@ -467,6 +471,8 @@ impl From<Context> for KeyContext {
             Context::ContactPopover => Self::ContactPopover,
             Context::Outline => Self::Outline,
             Context::ForwardChooser => Self::ForwardChooser,
+            Context::Calendar => Self::Calendar,
+            Context::CalendarWindow => Self::CalendarWindow,
         }
     }
 }
