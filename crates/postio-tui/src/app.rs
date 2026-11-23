@@ -169,7 +169,6 @@ pub enum Effect {
     Launch(std::path::PathBuf),
     SaveAllowlist(postio_ui::allowlist::RemoteImageAllowList),
     SetReading(postio_config::Reading),
-    /// The host writes the file and answers with `Input::SearchSaved`; the app never touches it.
     SaveSearch(postio_focus::SaveSearch),
     ReadSource(postio_model::MessageId),
     Settle {
