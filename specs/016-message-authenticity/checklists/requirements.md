@@ -35,7 +35,6 @@
   Postio's own rules (ADR 0017, 0042, 0048, #1928) because they are what
   the person sees and what the privacy promise is held to. The crates and
   code are in `plan.md` only.
-- The three questions only the maintainer can answer are written as Q1
-  to Q3 under Clarifications, each with options and the spec's default,
-  rather than as inline markers. Slice A depends on none of them.
-- Roadmap spec: `tasks.md` is deliberately absent until it is scheduled.
+- The maintainer answered Q1 to Q3 on 2026-11-22; they are recorded under
+  Clarifications as decisions, and no question blocks the build.
+- Scheduled 2026-11-22: `tasks.md` and the Phase 1 artifacts are written.
