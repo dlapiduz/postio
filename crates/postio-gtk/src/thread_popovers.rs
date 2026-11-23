@@ -198,11 +198,11 @@ impl OutlinePopover {
         filter.add_css_class("focus-outline-filter");
         filter.set_placeholder_text(Some("Filter this thread"));
         // A popover takes its child's natural width, and a row of chips side by side is as wide
-        // as all of them: the chips wrap within the outline's width instead (#2233).
+        // as all of them: the chips wrap at the body's inner width (its padding is S2) instead.
         let chips = adw::WrapBox::builder()
             .child_spacing(space::S2)
             .line_spacing(space::S2)
-            .natural_line_length(0)
+            .natural_line_length(OUTLINE_WIDTH - 2 * space::S2)
             .css_classes(["focus-outline-people"])
             .build();
         let rows = gtk::Box::new(gtk::Orientation::Vertical, 0);
