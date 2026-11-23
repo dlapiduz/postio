@@ -153,26 +153,178 @@ pub const FIXED_LINE: &str = "These checks are about the sending domain and the 
 pub const NOT_CHECKED_HERE: &str = "DKIM, SPF and DMARC were not checked on this computer. Your provider checked them when the mail arrived.";
 
 pub fn view(input: &SourceInput<'_>) -> SourceView {
-    let block = input.headers.map(str::to_owned).or_else(|| {
-        input
-            .raw
-            .and_then(headers::block_of)
-            .map(|block| block.text)
-    });
-    let parsed = block.as_deref().map(headers::parse_block);
+    // The raw bytes, when here, hold every header; the stored block may be cut at its limit.
+    let parsed = match input.raw {
+        Some(raw) => Some(postio_model::mime::parse_headers(raw).headers),
+        None => input.headers.map(headers::parse_block),
+    };
+    let trusted: &[&str] = input.provider.map_or(&[], |provider| provider.authserv_ids);
+    let report = parsed
+        .as_ref()
+        .map(|headers| authenticity::verification(headers, input.from, trusted));
     SourceView {
         title: format!("Source · {}", input.subject),
-        verification: verification(input, parsed.as_ref()),
+        verification: verification(input, report.as_ref()),
         headers: HeadersView {
+            rows: parsed
+                .as_ref()
+                .map(|headers| rows(headers, input.provider, report.as_ref()))
+                .unwrap_or_default(),
+            hops: parsed.as_ref().map(hops).unwrap_or_default(),
             note: (input.body == BodyState::Partial)
                 .then(|| "More headers arrive with the body.".to_owned()),
-            ..HeadersView::default()
         },
         raw: RawView {
-            segments: Vec::new(),
+            segments: input.raw.map(segments).unwrap_or_default(),
             state_line: raw_state_line(input),
         },
     }
+}
+
+pub const FOLD_OVER: usize = 64 * 1024;
+
+fn segments(raw: &[u8]) -> Vec<RawSegment> {
+    let mut out = Vec::new();
+    let mut at = 0;
+    for leaf in postio_model::mime::leaf_bodies(raw) {
+        if leaf.range.len() <= FOLD_OVER {
+            continue;
+        }
+        if at < leaf.range.start {
+            out.push(RawSegment::Text(
+                String::from_utf8_lossy(&raw[at..leaf.range.start]).into_owned(),
+            ));
+        }
+        let mut label = format!(
+            "{} · {}",
+            leaf.encoding,
+            crate::format::human_size(leaf.range.len() as u64)
+        );
+        if let Some(name) = &leaf.name {
+            label.push_str(&format!(" · {name}"));
+        }
+        at = leaf.range.end;
+        out.push(RawSegment::Fold {
+            label,
+            range: leaf.range,
+        });
+    }
+    if at < raw.len() {
+        out.push(RawSegment::Text(
+            String::from_utf8_lossy(&raw[at..]).into_owned(),
+        ));
+    }
+    out
+}
+
+fn rows(
+    headers: &Headers,
+    provider: Option<Provider<'_>>,
+    report: Option<&authenticity::Verification>,
+) -> Vec<HeaderRow> {
+    let trusted_at = report
+        .and_then(|report| report.provider.as_ref())
+        .map(|trusted| trusted.position);
+    let mut results_seen = 0;
+    let mut boundary_next = false;
+    headers
+        .iter()
+        .map(|header| {
+            let decoded = postio_model::mime::decode_header_text(header.value.as_bytes());
+            let collapsed = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+            let raw =
+                (collapsed(&decoded) != collapsed(&header.value)).then(|| header.value.clone());
+            let boundary_above = std::mem::take(&mut boundary_next).then(|| {
+                format!(
+                    "Above: written by {}. Below: came with the message.",
+                    provider.map_or("your provider", |provider| provider.name)
+                )
+            });
+            if header.name.eq_ignore_ascii_case("Authentication-Results") {
+                boundary_next = trusted_at == Some(results_seen);
+                results_seen += 1;
+            }
+            HeaderRow {
+                name: header.name.clone(),
+                value: decoded,
+                raw,
+                boundary_above,
+            }
+        })
+        .collect()
+}
+
+fn hops(headers: &Headers) -> Vec<Hop> {
+    let timed: Vec<(Hop, Option<i64>)> = headers.get_all("Received").into_iter().map(hop).collect();
+    let times: Vec<Option<i64>> = timed.iter().map(|(_, seconds)| *seconds).collect();
+    timed
+        .into_iter()
+        .enumerate()
+        .map(|(at, (hop, seconds))| Hop {
+            delay: match (seconds, times.get(at + 1).copied().flatten()) {
+                (Some(this), Some(before)) => Some(delay(this - before)),
+                _ => None,
+            },
+            ..hop
+        })
+        .collect()
+}
+
+fn hop(value: &str) -> (Hop, Option<i64>) {
+    let (route, date) = match value.rsplit_once(';') {
+        Some((route, date)) => (route, Some(without_comments(date).trim().to_owned())),
+        None => (value, None),
+    };
+    let route = without_comments(route);
+    let mut words = route.split_whitespace();
+    let (mut from, mut by) = (None, None);
+    while let Some(word) = words.next() {
+        match word.to_ascii_lowercase().as_str() {
+            "from" if from.is_none() => from = words.next().map(str::to_owned),
+            "by" if by.is_none() => by = words.next().map(str::to_owned),
+            _ => {}
+        }
+    }
+    let at = date.filter(|date| !date.is_empty());
+    let seconds = at
+        .as_deref()
+        .and_then(|date| chrono::DateTime::parse_from_rfc2822(date).ok())
+        .map(|time| time.timestamp());
+    (
+        Hop {
+            from,
+            by,
+            at,
+            delay: None,
+        },
+        seconds,
+    )
+}
+
+fn delay(seconds: i64) -> String {
+    let sign = if seconds < 0 { "−" } else { "" };
+    let seconds = seconds.unsigned_abs();
+    let text = match seconds {
+        0..60 => format!("{seconds} s"),
+        60..3600 => format!("{} min {} s", seconds / 60, seconds % 60),
+        3600..86400 => format!("{} h {} min", seconds / 3600, seconds % 3600 / 60),
+        _ => format!("{} days", seconds / 86400),
+    };
+    format!("{sign}{text}")
+}
+
+fn without_comments(value: &str) -> String {
+    let mut depth = 0usize;
+    let mut out = String::with_capacity(value.len());
+    for c in value.chars() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            _ if depth == 0 => out.push(c),
+            _ => {}
+        }
+    }
+    out
 }
 
 fn raw_state_line(input: &SourceInput<'_>) -> Option<String> {
@@ -189,7 +341,10 @@ fn raw_state_line(input: &SourceInput<'_>) -> Option<String> {
     }
 }
 
-fn verification(input: &SourceInput<'_>, headers: Option<&Headers>) -> VerificationView {
+fn verification(
+    input: &SourceInput<'_>,
+    report: Option<&authenticity::Verification>,
+) -> VerificationView {
     let limits = Section {
         title: "What this does not tell you".to_owned(),
         lines: vec![Line::text(FIXED_LINE)],
@@ -208,7 +363,7 @@ fn verification(input: &SourceInput<'_>, headers: Option<&Headers>) -> Verificat
         };
     }
     let mut sections = Vec::new();
-    let Some(headers) = headers.filter(|_| input.body == BodyState::Here) else {
+    let Some(report) = report.filter(|_| input.body == BodyState::Here) else {
         sections.push(Section {
             title: "What your provider checked".to_owned(),
             intro: Some(
@@ -220,9 +375,7 @@ fn verification(input: &SourceInput<'_>, headers: Option<&Headers>) -> Verificat
         sections.push(limits);
         return VerificationView { sections };
     };
-    let trusted: &[&str] = input.provider.map_or(&[], |provider| provider.authserv_ids);
-    let report = authenticity::verification(headers, input.from, trusted);
-    sections.push(provider_section(input, &report));
+    sections.push(provider_section(input, report));
     if !report.not_believed.is_empty() {
         sections.push(Section {
             title: "Headers Postio does not believe".to_owned(),
