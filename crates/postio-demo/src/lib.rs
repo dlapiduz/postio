@@ -25,10 +25,12 @@ pub enum Seed {
     Backfilling,
     Search,
     Threads,
+    /// The small demo with its fifth row refiled as a real message whose source is here.
+    Source,
 }
 
 impl Seed {
-    pub const ALL: [Seed; 12] = [
+    pub const ALL: [Seed; 13] = [
         Seed::Small,
         Seed::Empty,
         Seed::LongNewsletter,
@@ -41,6 +43,7 @@ impl Seed {
         Seed::Backfilling,
         Seed::Search,
         Seed::Threads,
+        Seed::Source,
     ];
 
     pub fn id(self) -> &'static str {
@@ -57,6 +60,7 @@ impl Seed {
             Seed::Backfilling => "backfilling",
             Seed::Search => "search",
             Seed::Threads => "threads",
+            Seed::Source => "source",
         }
     }
 
@@ -94,10 +98,12 @@ pub async fn seeded(seed: Seed) -> (Store, AccountId) {
         | Seed::TwoAccounts
         | Seed::Outbox
         | Seed::DraftLeftOver
-        | Seed::Backfilling => {
+        | Seed::Backfilling
+        | Seed::Source => {
             let (database, account) = demo().await;
             match seed {
                 Seed::LongNewsletter => treatment_demo(&database, account, "30").await,
+                Seed::Source => source_demo(&database, account).await,
                 Seed::BareRecipients => {
                     let connection = database.connect().await.expect("a connection");
                     let messages = MessageRepository::new(&connection);
@@ -829,6 +835,84 @@ pub fn opened_parts() -> Vec<Attachment> {
         part
     })
     .collect()
+}
+
+/// The corpus message the `source` seed refiles the fifth row as: a list's re-signed mail with a
+/// provider's results, an ARC set and two `Received` hops.
+/// Taken by path, not through `test_corpus`, whose feature must never reach a shipped build.
+const SOURCE: &[u8] = include_bytes!("../../postio-model/tests/corpus/auth-results-arc-list.eml");
+
+fn source_bytes() -> &'static [u8] {
+    SOURCE
+}
+
+/// Puts the `source` seed's raw message in `blobs`; blob ids are the content's, so the seed's row
+/// names it.
+///
+/// # Errors
+///
+/// The store's: a blob that could not be written.
+pub fn store_source_blobs(
+    blobs: &postio_storage::BlobStore,
+) -> postio_storage::Result<postio_model::BlobId> {
+    blobs.put(source_bytes())
+}
+
+/// The fifth row, refiled in place as a real message with its raw bytes and header block here, so
+/// the Source surface has something true to show and no other row moves.
+pub async fn source_demo(database: &Store, account: AccountId) {
+    let connection = database.connect().await.expect("a connection");
+    let messages = MessageRepository::new(&connection);
+    let newest = RfcMessageId::new(format!(
+        "<demo.{OPENED}.{}@example.test>",
+        TODAY[OPENED].messages - 1
+    ));
+    let Some(id) = messages
+        .ids_by_rfc_message_id(account, &newest)
+        .await
+        .expect("a lookup")
+        .first()
+        .copied()
+    else {
+        return;
+    };
+    let scratch = tempfile::tempdir().expect("scratch for the blob");
+    let blobs = postio_storage::BlobStore::open(
+        scratch.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
+    let blob = store_source_blobs(&blobs).expect("the source");
+    let parsed = postio_model::mime::parse(source_bytes());
+    if let Some(mut message) = messages.get(id).await.expect("a read") {
+        let fixture = parsed
+            .clone()
+            .into_message(account, message.mailbox_id, message.received_at);
+        message.from = fixture.from;
+        message.to = fixture.to;
+        message.subject = fixture.subject;
+        message.raw_blob_id = Some(blob);
+        messages.update(&mut message).await.expect("refiled");
+        messages
+            .set_body(
+                id,
+                &postio_storage::repository::StoredBody {
+                    text: Some(
+                        "The list rewrote the subject and added a footer, so Ada's own DKIM \
+                         signature broke on the way."
+                            .to_owned(),
+                    ),
+                    html: None,
+                    headers: postio_model::headers::block_of(source_bytes())
+                        .map(|block| block.text),
+                    headers_truncated: false,
+                    encoding_problems: false,
+                },
+                postio_model::BodyState::Full,
+            )
+            .await
+            .expect("its body");
+    }
 }
 
 pub async fn treatment_demo(database: &Store, account: AccountId, screen: &str) {

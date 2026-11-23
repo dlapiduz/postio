@@ -77,6 +77,7 @@ pub fn start(
     postio_demo::store_search_blobs(&blobs).map_err(|error| format!("no search files: {error}"))?;
     postio_demo::store_threads_blobs(&blobs)
         .map_err(|error| format!("no thread sources: {error}"))?;
+    postio_demo::store_source_blobs(&blobs).map_err(|error| format!("no source: {error}"))?;
     let store = database.clone();
     let files = blobs.clone();
     let sink = std::rc::Rc::new(std::cell::RefCell::new(None));

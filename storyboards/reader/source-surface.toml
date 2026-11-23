@@ -7,13 +7,14 @@
 # link and nothing is rendered.
 apps   = ["focus"]
 proof  = "open"
+# The fifth row is refiled as a list message whose raw bytes and header block are here.
+seed   = "source"
 source = { kind = "flow", ref = "specs/016-message-authenticity US1, US2" }
 
 [[step]]
 wait    = { until = { cursor.index = 0 } }
 
 [[step]]
-id      = "row"
 command = "next_message"
 check   = { keyboard.region = "list", cursor.index = 1 }
 
@@ -22,15 +23,23 @@ command = "next_message"
 check   = { keyboard.region = "list", cursor.index = 2 }
 
 [[step]]
+command = "next_message"
+check   = { keyboard.region = "list", cursor.index = 3 }
+
+[[step]]
+command = "next_message"
+check   = { keyboard.region = "list", cursor.index = 4 }
+
+[[step]]
 command = "view_source"
 settle  = { until = { app.focus.source.tab = "verification" } }
-check   = { overlay.kind = "dialog", overlay.mode = "source", keyboard.region = "dialog", app.focus.source.tab = "verification", cursor.index = 2 }
-expect  = "The Source surface opens over the list on its Verification tab: what the provider checked, in words. The list's cursor stays on its row."
+check   = { overlay.kind = "dialog", overlay.mode = "source", keyboard.region = "dialog", app.focus.source.tab = "verification", cursor.index = 4 }
+expect  = "The Source surface opens over the list on its Verification tab: what the provider checked, in words, or that no result from it can be trusted; the results the message carried listed as not believed; and what Postio checked here. The list's cursor stays on its row."
 
 [[step]]
 key     = "2"
 check   = { overlay.mode = "source", app.focus.source.tab = "headers" }
-expect  = "2 shows the Headers tab: one header per row, the name in mono, with the trust boundary under the provider's header."
+expect  = "2 shows the Headers tab: the Received hops newest first with their delays, then one header per row with its name in bold."
 
 [[step]]
 key     = "3"
@@ -44,7 +53,7 @@ expect  = "1 goes back to Verification."
 
 [[step]]
 command = "back"
-check   = { overlay.kind = "none", keyboard.region = "list", cursor.index = 2 }
+check   = { overlay.kind = "none", keyboard.region = "list", cursor.index = 4 }
 expect  = "Esc closes the surface. The keyboard is back on the row it came from; nothing scrolled."
 
 [[step]]
@@ -66,5 +75,5 @@ expect  = "Esc takes one rung: the surface closes and the message is still open.
 
 [[step]]
 command = "back"
-check   = { view = "list", keyboard.region = "list", cursor.index = 2 }
+check   = { view = "list", keyboard.region = "list", cursor.index = 4 }
 expect  = "A second Esc closes the message, back on the same row."

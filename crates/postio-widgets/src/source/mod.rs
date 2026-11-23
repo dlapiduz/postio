@@ -228,7 +228,18 @@ impl SourceDialog {
             }
         }
         inner.find.set_visible(false);
-        inner.page().grab_focus();
+        // Verification's labels are not a place to type or select into: the tab's own button
+        // holds the keyboard there, and a text page holds it on the other two.
+        match tab {
+            Tab::Verification => {
+                if let Some(button) = inner.tabs.first() {
+                    button.grab_focus();
+                }
+            }
+            Tab::Headers | Tab::Raw => {
+                inner.page().grab_focus();
+            }
+        }
     }
 
     /// Every stored byte, folded or not; empty when the bytes are not here yet.
