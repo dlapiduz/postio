@@ -3279,3 +3279,79 @@ async fn prefetch_does_not_download_a_shared_content_twice() {
     );
     assert_eq!(backend.calls(), before);
 }
+
+#[tokio::test]
+async fn a_signed_or_encrypted_message_is_fetched_whole_and_keeps_its_bytes() {
+    use postio_account::backend::{BodyStructure, PartNode};
+    let structures = [
+        (
+            "pgp-signed-good",
+            BodyStructure::from_parts(
+                "multipart/signed",
+                [
+                    PartNode::new("1", "text/plain", 200).with_charset("utf-8"),
+                    PartNode::new("2", "application/pgp-signature", 300),
+                ],
+            ),
+        ),
+        (
+            "pgp-encrypted",
+            BodyStructure::from_parts(
+                "multipart/encrypted",
+                [
+                    PartNode::new("1", "application/pgp-encrypted", 12),
+                    PartNode::new("2", "application/octet-stream", 600),
+                ],
+            ),
+        ),
+        (
+            "plain-text-simple",
+            BodyStructure::from_parts(
+                "text/plain",
+                [PartNode::new("1", "text/plain", 200).with_charset("utf-8")],
+            ),
+        ),
+    ];
+    let mut inbox = MockMailbox::new(INBOX).uid_validity(UidValidity::new(VALIDITY));
+    for (n, (fixture, structure)) in structures.into_iter().enumerate() {
+        inbox = inbox.message(
+            MockMessage::new(postio_model::test_corpus::load(fixture).bytes().to_vec())
+                .with_internal_date(at(n as i64 + 1))
+                .with_structure(structure)
+                .with_part("1", b"The words.\r\n".to_vec()),
+        );
+    }
+    let backend = MockBackend::builder().mailbox(inbox).build();
+    backend.connect().await.expect("connect");
+    let local = local().await;
+    let rows = headers(&local, &backend).await;
+    let mut kept = Vec::new();
+    for (id, uid) in rows {
+        fetch_body(
+            &local.connection,
+            &local.blobs,
+            &backend,
+            &request(&local.inbox, id, uid, 8_192),
+            BackfillPolicy::default().max_inline_bytes,
+            None,
+            &CancelToken::new(),
+        )
+        .await
+        .expect("fetch");
+        let stored = MessageRepository::new(&local.connection)
+            .get(id)
+            .await
+            .expect("get")
+            .expect("row");
+        kept.push((stored.content_type.clone(), stored.raw_blob_id.is_some()));
+    }
+    assert_eq!(
+        kept,
+        [
+            (Some("multipart/signed".to_owned()), true),
+            (Some("multipart/encrypted".to_owned()), true),
+            (Some("text/plain".to_owned()), false),
+        ],
+        "a signature is checked over the exact bytes, so they are kept; other mail keeps the text"
+    );
+}

@@ -1148,6 +1148,17 @@ fn pending_payloads(message: &postio_model::Message) -> Vec<String> {
 /// downloaded.
 /// `body_state` is written last: a crash earlier leaves orphan blobs (swept) and a message that is
 /// fetched again.
+fn needs_exact_bytes(content_type: &str) -> bool {
+    matches!(
+        content_type.to_ascii_lowercase().as_str(),
+        "multipart/signed"
+            | "multipart/encrypted"
+            | "application/pkcs7-mime"
+            | "application/x-pkcs7-mime"
+            | "application/pkcs7-signature"
+    )
+}
+
 /// Fetches text sections when the header sync recorded them, else the whole message.
 /// A refusal about the message marks it failed (#1918) and returns `Outcome::Failed`;
 /// a dropped link, timeout or cancel is returned as an error, unmarked.
@@ -1249,7 +1260,12 @@ async fn fetch_body_unmarked(
         }
         // `content_type` says a `BODYSTRUCTURE` was parsed; a message that is only an attachment
         // must still take this path.
-        Want::Text if message.content_type.is_some() => {
+        Want::Text
+            if message
+                .content_type
+                .as_deref()
+                .is_some_and(|kind| !needs_exact_bytes(kind)) =>
+        {
             return fetch_text_parts(
                 connection, blobs, backend, request, message, inline_cap, prefetched, cancel,
             )

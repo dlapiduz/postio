@@ -143,7 +143,7 @@ throwaway code is not merged.
 - [x] T031 [US3] Write the sweeps SC-003 and SC-004 as `crates/postio-signature/tests/signature_suite/sweeps.rs`: every fixture, against every key subset
 - [x] T032 [P] [US3] Write failing cases, then implement `autocrypt`, in `crates/postio-signature/src/autocrypt.rs`: `addr` equals From, `keydata` parsed, and a mismatched `addr` refused
 - [x] T033 [US3] Write failing schema cases in `crates/postio-storage/tests/storage_suite/`, then add `public_keys`, `public_key_sources`, `public_key_addresses`, `contact_accepted_keys` and `signature_verdicts` to `crates/postio-storage/src/schema.rs` (`data-model.md`), with repository functions in a new `crates/postio-storage/src/repository/keys.rs`
-- [ ] T034 [US3] Write failing cases in `crates/postio-sync/tests/sync_suite/backfill.rs`:
+- [x] T034 [US3] Write failing cases in `crates/postio-sync/tests/sync_suite/backfill.rs`:
   - a message whose `content_type` is signed or encrypted is fetched whole, and keeps `raw_blob_id`;
   - other mail is unchanged.
 
