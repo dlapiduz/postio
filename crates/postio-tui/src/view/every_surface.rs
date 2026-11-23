@@ -652,13 +652,30 @@ fn unchanged(case: &Case, prep: &str) -> Outcome {
     outcome(case, prep, |_| Vec::new())
 }
 
-/// POSTIO-MEASUREMENT: a sweep of every control on every surface, which
-/// grows with the registry (spec 014 added eighteen commands) and crossed
-/// the merge path's 10 s on CI; it runs on the nightly timer.
+// The whole sweep crossed the merge path's 10 s on CI; a quarter each keeps it there.
 #[test]
-fn every_control_takes_a_click_that_does_what_its_key_does() {
+fn every_control_takes_a_click_that_does_what_its_key_does_first_quarter() {
+    click_sweep(0);
+}
+
+#[test]
+fn every_control_takes_a_click_that_does_what_its_key_does_second_quarter() {
+    click_sweep(1);
+}
+
+#[test]
+fn every_control_takes_a_click_that_does_what_its_key_does_third_quarter() {
+    click_sweep(2);
+}
+
+#[test]
+fn every_control_takes_a_click_that_does_what_its_key_does_fourth_quarter() {
+    click_sweep(3);
+}
+
+fn click_sweep(quarter: usize) {
     let mut problems = Vec::new();
-    for case in cases() {
+    for case in cases().into_iter().skip(quarter).step_by(4) {
         for control in &case.controls {
             let mut app = app_of(&case);
             press_keys(&mut app, control.prep);
