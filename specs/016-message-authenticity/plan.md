@@ -321,6 +321,17 @@ depending on its version and configuration. `GNUPGHOME` is honoured, and
 *certified* in GnuPG with their own key, a certification visible in the
 keyblock itself without the trust database, may count as accepted.
 
+**S3 verdict (2026-11-22): go.** GnuPG 2.4.9 with `use-keyboxd` in a scratch
+`GNUPGHOME` wrote `public-keys.d/pubring.db` in rollback-journal mode
+(`journal_mode=delete`), with tables `pubkey(ubid, type, ephemeral, revoked,
+keyblob)`, `fingerprint`, `userid` and `issuer`. `pubkey.type` 1 is OpenPGP,
+and `keyblob` is the binary transferable key, which rPGP parses whole. The
+workspace's Turso, opened with `Builder::read_only(true)`, read both keys,
+with `keyboxd` stopped and again with it running; the directory's files,
+sizes and mtimes were the same before and after, and no `-wal` or `-journal`
+appeared. GnuPG's dotlock (`pubring.db.lock`) is never touched. The read is
+`SELECT type, keyblob FROM pubkey WHERE ephemeral = 0`.
+
 ### R8. The surface on three frontends
 
 - The view model lives in `postio-ui::source`: tabs, sections, rows, folds,

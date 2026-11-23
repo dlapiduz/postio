@@ -81,7 +81,7 @@ throwaway code is not merged.
   - Verify a CMS SignedData over a test message with `cms` 0.2 and `x509-cert`.
   - Validate the path with `rustls-webpki`, requiring `id-kp-emailProtection`.
   - **Go** when all five outcomes are right with no C in the graph. **No-go** files S/MIME as its own spec (spec D8), and Phase 8 is struck from this file in the same commit.
-- [ ] T007 [P] **S3, keyboxd's database (gates T046 only).**
+- [x] T007 [P] **S3, keyboxd's database (gates T046 only).**
   - Create a keyboxd store in a scratch `GNUPGHOME` with GnuPG 2.4 (`use-keyboxd`).
   - Read `public-keys.d/pubring.db` with the store's engine, read-only. Confirm the table and column that hold keyblocks, and that the open writes nothing (the file's and `-wal`'s mtime and size are unchanged).
   - Record the shape in plan R7. **No-go** leaves that format on the unreadable state.
