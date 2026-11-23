@@ -320,6 +320,13 @@ below except the two `auth-results-` ones, which are written by hand.
 | `pgp-key-attached.eml` | Key A attached as `application/pgp-keys`. |
 | `auth-results-arc-list.eml` | A list re-signed the mail: the provider's DKIM passes only for `lists.example.org`, the sender's own signature failed, and an ARC set by the list is intact. |
 | `auth-results-two-dkim.eml` | Two passing DKIM signatures, the sender's (aligned with `From`) and the sending service's (not). |
+| `smime-signed-good.eml` | S/MIME (`application/pkcs7-signature`) by ada@example.com's certificate, through an intermediate to `keys/smime/root.der`: good. |
+| `smime-signed-tampered.eml` | The good message with one word of the signed body changed: bad. |
+| `smime-signed-expired.eml` | Signed by a certificate valid only in 2020: bad, expired. |
+| `smime-signed-unknown-anchor.eml` | Chains to `keys/smime/stranger.der`, which no test trusts: can't check. |
+| `smime-signed-address-mismatch.eml` | The certificate names grace@example.net, the From is ada@example.com: the warning, never Signed. |
+
+`keys/smime/generate.sh` makes them and the two roots, with fixed dates, and discards every private key.
 
 ### Instructions aimed at an assistant
 

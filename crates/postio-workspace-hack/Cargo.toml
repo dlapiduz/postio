@@ -26,6 +26,7 @@ chacha20 = { version = "0.10", default-features = false, features = ["rng", "xch
 chrono = { version = "0.4", features = ["serde"] }
 cipher-9fbad63c4bcf4a8f = { package = "cipher", version = "0.4", default-features = false, features = ["block-padding"] }
 cipher-d8f496e17d97b5cb = { package = "cipher", version = "0.5", default-features = false, features = ["block-padding", "stream-wrapper", "zeroize"] }
+const-oid = { version = "0.9", default-features = false, features = ["db", "std"] }
 crc32fast = { version = "1" }
 crossbeam-epoch = { version = "0.9" }
 crossbeam-utils = { version = "0.8" }
@@ -87,6 +88,8 @@ rand_core-3b31131e45eafb45 = { package = "rand_core", version = "0.6", default-f
 regex = { version = "1" }
 regex-automata = { version = "0.4", default-features = false, features = ["dfa-build", "dfa-onepass", "hybrid", "meta", "nfa-backtrack", "perf-inline", "perf-literal", "std", "unicode"] }
 regex-syntax = { version = "0.8" }
+rustls-pki-types = { version = "1", features = ["std"] }
+rustls-webpki = { version = "0.103", default-features = false, features = ["ring", "std"] }
 secrecy = { version = "0.10", default-features = false, features = ["serde"] }
 serde = { version = "1", features = ["alloc", "derive"] }
 serde_core = { version = "1", default-features = false, features = ["alloc", "result", "std"] }
@@ -135,6 +138,7 @@ chacha20 = { version = "0.10", default-features = false, features = ["rng", "xch
 chrono = { version = "0.4", features = ["serde"] }
 cipher-9fbad63c4bcf4a8f = { package = "cipher", version = "0.4", default-features = false, features = ["block-padding"] }
 cipher-d8f496e17d97b5cb = { package = "cipher", version = "0.5", default-features = false, features = ["block-padding", "stream-wrapper", "zeroize"] }
+const-oid = { version = "0.9", default-features = false, features = ["db", "std"] }
 crc32fast = { version = "1" }
 crossbeam-epoch = { version = "0.9" }
 crossbeam-utils = { version = "0.8" }
@@ -199,6 +203,8 @@ rand_core-3b31131e45eafb45 = { package = "rand_core", version = "0.6", default-f
 regex = { version = "1" }
 regex-automata = { version = "0.4", default-features = false, features = ["dfa-build", "dfa-onepass", "hybrid", "meta", "nfa-backtrack", "perf-inline", "perf-literal", "std", "unicode"] }
 regex-syntax = { version = "0.8" }
+rustls-pki-types = { version = "1", features = ["std"] }
+rustls-webpki = { version = "0.103", default-features = false, features = ["ring", "std"] }
 secrecy = { version = "0.10", default-features = false, features = ["serde"] }
 serde = { version = "1", features = ["alloc", "derive"] }
 serde_core = { version = "1", default-features = false, features = ["alloc", "result", "std"] }

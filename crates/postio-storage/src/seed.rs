@@ -69,6 +69,11 @@ pub async fn seed_small_downloaded(database: &Store, seed: u64) -> SeedReport {
 /// Corpus fixtures the seed does not file. The seed deals a folder and time per fixture in file
 /// order, so one more re-deals every later mailbox and breaks the storyboards' counts.
 const UNSEEDED: &[&str] = &[
+    "smime-signed-address-mismatch",
+    "smime-signed-expired",
+    "smime-signed-good",
+    "smime-signed-tampered",
+    "smime-signed-unknown-anchor",
     "auth-results-arc-list",
     "auth-results-forged-lower",
     "auth-results-two-dkim",

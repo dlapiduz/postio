@@ -421,6 +421,16 @@ corpus! {
         "text/plain with format=flowed and delsp=yes, quoting its parent — reflowing and quote detection.",
     "plain-text-simple": [PlainText, Threading] =>
         "The smallest realistic message: 7bit us-ascii, a signature delimiter, nothing unusual.",
+    "smime-signed-address-mismatch": [Signature, PlainText] =>
+        "S/MIME signed by a certificate for grace@example.net, sent From ada@example.com.",
+    "smime-signed-expired": [Signature, PlainText] =>
+        "S/MIME signed by a certificate that expired in 2021, chaining to keys/smime/root.der.",
+    "smime-signed-good": [Signature, PlainText] =>
+        "S/MIME signed over SHA-256 by ada@example.com's certificate: good against keys/smime/root.der.",
+    "smime-signed-tampered": [Signature, PlainText] =>
+        "The good S/MIME message with one word of the signed body changed after signing.",
+    "smime-signed-unknown-anchor": [Signature, PlainText] =>
+        "S/MIME signed by a certificate that chains only to keys/smime/stranger.der, never an anchor.",
     "thread-archive-1-parent": [Threading, ThreadingRules, PlainText] =>
         "Archive pair, parent: belongs in the Inbox; its reply is filed in Archive.",
     "thread-archive-2-reply": [Threading, ThreadingRules, PlainText] =>
