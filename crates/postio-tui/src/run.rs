@@ -934,6 +934,10 @@ fn perform(
                     tracing::warn!(%error, "could not save the remote-image allow list: {error}");
                 }
             }
+            Effect::SaveSearch(save) => {
+                let saved = postio_focus::save_search(crate::config_file::path().as_deref(), &save);
+                let _ = inputs.try_send(Input::SearchSaved(saved));
+            }
             Effect::SetReading(reading) => {
                 if let Err(error) = crate::config_file::path()
                     .ok_or_else(|| "There is no config.toml here".to_owned())

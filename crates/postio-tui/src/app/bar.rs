@@ -93,11 +93,7 @@ impl App {
                     rolling: view.rolling,
                 }));
             }
-            Intent::SaveSearch(save) => {
-                let path = crate::config_file::path();
-                let saved = postio_focus::save_search(path.as_deref(), save);
-                return Some(self.tell(Told::SearchSaved(saved)));
-            }
+            Intent::SaveSearch(save) => return Some(vec![Effect::SaveSearch(save.clone())]),
             Intent::OpenMessage { message, .. } if self.results.is_some() => {
                 return Some(self.open_result(*message));
             }

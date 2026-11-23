@@ -49,6 +49,7 @@ pub enum Pointer {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Input {
     Resize(u16, u16),
+    SearchSaved(Result<postio_focus::SearchesSaved, String>),
     ClipboardImage(Result<Option<Vec<u8>>, String>),
     InlineStored(Option<postio_model::Attachment>),
     RemoteImage {
@@ -168,6 +169,8 @@ pub enum Effect {
     Launch(std::path::PathBuf),
     SaveAllowlist(postio_ui::allowlist::RemoteImageAllowList),
     SetReading(postio_config::Reading),
+    /// The host writes the file and answers with `Input::SearchSaved`; the app never touches it.
+    SaveSearch(postio_focus::SaveSearch),
     ReadSource(postio_model::MessageId),
     Settle {
         generation: u64,
@@ -2610,6 +2613,7 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             Outcome::Pending(_) | Outcome::Unhandled => Vec::new(),
         },
         Input::FocusReply(ticket, reply) => app.tell(postio_focus::Input::Reply(ticket, reply)),
+        Input::SearchSaved(saved) => app.tell(postio_focus::Input::SearchSaved(saved)),
         Input::FocusTimer(token) => app.tell(postio_focus::Input::Timer(token)),
         Input::Host(event) => app.hear(&event),
         Input::Answer(answer) => app.rules_answered(answer),

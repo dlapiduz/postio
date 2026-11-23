@@ -248,6 +248,21 @@ mod tests {
         sent, serve, type_text,
     };
 
+    #[test]
+    fn saving_a_search_asks_the_host_and_writes_no_file_itself() {
+        let (mut app, _) = crate::test_support::sample::state("bar-commands", 120, 36);
+        let effects = update(
+            &mut app,
+            crate::test_support::key(KeyCode::Char('s'), KeyModifiers::CONTROL),
+        );
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::SaveSearch(save) if save.query == ">ar")),
+            "{effects:?}"
+        );
+    }
+
     fn searched() -> (App, Vec<Effect>) {
         let mut app = app((120, 36));
         seed_places(&mut app, places());
