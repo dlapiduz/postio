@@ -622,6 +622,67 @@ pub fn new_object<Z: TimeZone>(event: &NewEvent, stamp: DateTime<Utc>, reader: &
     calendar.to_string().into_bytes()
 }
 
+fn bookkeeping(action: &ical::tree::merge::IcalMergeAction<'_>) -> bool {
+    use ical::tree::merge::IcalMergeAction as Action;
+    let path = match action {
+        Action::PropAdded { at, .. }
+        | Action::PropRemoved { at, .. }
+        | Action::ValueChanged { at, .. }
+        | Action::ValueItemAdded { at, .. }
+        | Action::ValueItemRemoved { at, .. }
+        | Action::ParamAdded { at, .. }
+        | Action::ParamRemoved { at, .. } => at,
+        _ => return false,
+    };
+    ["SEQUENCE", "DTSTAMP", "LAST-MODIFIED"]
+        .iter()
+        .any(|name| path.name.eq_ignore_ascii_case(name))
+}
+
+fn highest_sequence(ics: &[u8]) -> u32 {
+    String::from_utf8_lossy(ics)
+        .lines()
+        .filter_map(|line| line.strip_prefix("SEQUENCE:"))
+        .filter_map(|value| value.trim().parse().ok())
+        .max()
+        .unwrap_or(0)
+}
+
+pub fn merge(base: &[u8], ours: &[u8], theirs: &[u8]) -> Result<Option<Vec<u8>>, CalendarError> {
+    let (base_cst, ours_cst, theirs_cst) =
+        (parse_owned(base)?, parse_owned(ours)?, parse_owned(theirs)?);
+    let report = ical::tree::merge::IcalMerge {
+        base: &base_cst,
+        left: &ours_cst,
+        right: &theirs_cst,
+    }
+    .merge();
+    let collided = report
+        .conflicts
+        .iter()
+        .any(|conflict| match &conflict.left {
+            ical::tree::merge::IcalMergeReason::Divergent(left) => {
+                !(bookkeeping(left) && bookkeeping(&conflict.right))
+            }
+            ical::tree::merge::IcalMergeReason::Recurrence(_) => false,
+        });
+    if collided {
+        return Ok(None);
+    }
+    let mut merged = report.merged.into_static();
+    let next = highest_sequence(ours)
+        .max(highest_sequence(theirs))
+        .saturating_add(1);
+    for item in &mut merged.items {
+        if let IcalItem::Component(child) = item
+            && is_event(child)
+        {
+            set_or_add(child, "SEQUENCE", &next.to_string());
+        }
+    }
+    Ok(Some(merged.to_bytes()))
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::{FixedOffset, TimeDelta};
@@ -870,5 +931,59 @@ mod tests {
             crate::Trigger::SecondsBeforeStart(600)
         );
         assert_eq!(starts(&ics), ["11-26 15:00"]);
+    }
+
+    #[test]
+    fn edits_to_different_fields_merge_and_the_same_field_does_not() {
+        let reader = reader();
+        let ours = patch(
+            UNKNOWN,
+            &Edits {
+                title: Some("Paint the hall".to_owned()),
+                ..Edits::default()
+            },
+            &Scope::All,
+            &reader,
+        )
+        .expect("ours")
+        .object;
+        let theirs = patch(
+            UNKNOWN,
+            &Edits {
+                location: Some("Upstairs".to_owned()),
+                ..Edits::default()
+            },
+            &Scope::All,
+            &reader,
+        )
+        .expect("theirs")
+        .object;
+
+        let merged = merge(UNKNOWN, &ours, &theirs)
+            .expect("parsed")
+            .expect("no collision");
+        let event = &crate::parse_object(&merged).expect("parses")[0];
+        assert_eq!(
+            (event.title.as_str(), event.location.as_str()),
+            ("Paint the hall", "Upstairs")
+        );
+        assert!(
+            String::from_utf8_lossy(&merged).contains("X-APPLE-SORT-ORDER:42"),
+            "nothing else is lost"
+        );
+        assert!(highest_sequence(&merged) > highest_sequence(&ours));
+
+        let rival = patch(
+            UNKNOWN,
+            &Edits {
+                title: Some("Paint the stairs".to_owned()),
+                ..Edits::default()
+            },
+            &Scope::All,
+            &reader,
+        )
+        .expect("rival")
+        .object;
+        assert_eq!(merge(UNKNOWN, &ours, &rival).expect("parsed"), None);
     }
 }
