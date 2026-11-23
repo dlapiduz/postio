@@ -61,7 +61,7 @@ The invariants (see docs/ARCHITECTURE.md; CLAUDE.md, "What the code must do"):
     0043), and it reaches mail only through ``postio-client``.
   * ``postio-classify`` must not link anything that sends mail or reaches the
     network (``specs/007-postio-focus`` FR-132, ADR 0009), and
-    ``postio-calendar`` must stay a pure leaf.
+    ``postio-calendar`` and ``postio-signature`` must stay pure leaves.
   * ``postio-ai``, the client for the person's own model, must not link a
     send path, another HTTP client, the store engine, a toolkit, or an
     inference engine: it frames HTTP to this computer with ``io-http`` and
@@ -258,6 +258,27 @@ RULES: dict[str, dict[str, object]] = {
             "postio-calendar is a pure leaf (specs/007-postio-focus research "
             "R9): it parses an invitation and writes a reply, and needs no "
             "store, no toolkit, no runtime and no network to do either"
+        ),
+    },
+    "postio-signature": {
+        "banned": [
+            "turso",
+            "turso_core",
+            "rusqlite",
+            "libsqlite3-sys",
+            "gtk4",
+            "gtk4-sys",
+            "libadwaita",
+            "libadwaita-sys",
+            "tokio",
+            "async-std",
+            *NETWORK_CRATES,
+        ],
+        "edges": "product",
+        "why": (
+            "postio-signature is a pure leaf (specs/016-message-authenticity "
+            "plan, crate placement): it parses OpenPGP packets and MIME a "
+            "sender chose, and needs no store, toolkit, runtime or network"
         ),
     },
     "postio-ai": {

@@ -16,6 +16,7 @@ workspace = true
 
 ### BEGIN HAKARI SECTION
 [dependencies]
+aead = { version = "0.5", features = ["alloc", "bytes", "getrandom"] }
 arrayvec = { version = "0.7" }
 bitflags = { version = "2", default-features = false, features = ["std"] }
 block-buffer = { version = "0.12", default-features = false, features = ["zeroize"] }
@@ -31,13 +32,17 @@ crossbeam-utils = { version = "0.8" }
 crypto-common-6f8ce4dd05d13bba = { package = "crypto-common", version = "0.2", default-features = false, features = ["getrandom", "zeroize"] }
 crypto-common-c65f7effa3be6d31 = { package = "crypto-common", version = "0.1", default-features = false, features = ["getrandom", "std"] }
 cssparser = { version = "0.38", features = ["serde"] }
-derive_more = { version = "2", features = ["add", "add_assign", "deref", "deref_mut", "from", "is_variant"] }
+derive_more = { version = "2", features = ["add", "add_assign", "debug", "deref", "deref_mut", "display", "from", "is_variant"] }
+digest = { version = "0.10", features = ["mac", "oid", "std"] }
 either = { version = "1", features = ["use_std"] }
+encoding_rs = { version = "0.8" }
 fastrand = { version = "2" }
-flate2 = { version = "1" }
+flate2 = { version = "1", features = ["zlib-rs"] }
 foldhash = { version = "0.2", default-features = false, features = ["std"] }
 futures-core = { version = "0.3" }
+generic-array = { version = "0.14", default-features = false, features = ["more_lengths", "zeroize"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
+getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-features = false, features = ["std"] }
 getrandom-9fbad63c4bcf4a8f = { package = "getrandom", version = "0.4", default-features = false, features = ["std", "sys_rng", "wasm_js"] }
 hashbrown = { version = "0.17" }
 hybrid-array = { version = "0.4", default-features = false, features = ["zeroize"] }
@@ -50,17 +55,21 @@ inout-6f8ce4dd05d13bba = { package = "inout", version = "0.2", default-features 
 inout-c65f7effa3be6d31 = { package = "inout", version = "0.1", default-features = false, features = ["block-padding"] }
 io-http = { version = "0.8", default-features = false, features = ["rustls-ring"] }
 itertools = { version = "0.14" }
+lazy_static = { version = "1", default-features = false, features = ["spin_no_std"] }
 libc = { version = "0.2" }
 litemap = { version = "0.8", default-features = false, features = ["alloc"] }
 lock_api = { version = "0.4", features = ["arc_lock"] }
 log = { version = "0.4", default-features = false, features = ["std"] }
 mail-parser = { version = "0.11" }
+md-5 = { version = "0.10", features = ["oid"] }
 memchr = { version = "2" }
+mime-rs = { version = "0.2", default-features = false, features = ["base64", "encoding", "parser"] }
 minimal-lexical = { version = "0.2", default-features = false, features = ["std"] }
 nom = { version = "7", default-features = false, features = ["std"] }
 num-bigint = { version = "0.4" }
 num-integer = { version = "0.1", features = ["i128"] }
-num-traits = { version = "0.2", features = ["i128"] }
+num-iter = { version = "0.1", default-features = false, features = ["i128", "std"] }
+num-traits = { version = "0.2", features = ["i128", "libm"] }
 once_cell = { version = "1" }
 parking_lot = { version = "0.12", features = ["arc_lock", "send_guard"] }
 percent-encoding = { version = "2" }
@@ -73,7 +82,8 @@ pulldown-cmark = { version = "0.13" }
 quote = { version = "1" }
 rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
 rand-93f6ce9d446188ac = { package = "rand", version = "0.10" }
-rand_core = { version = "0.9", default-features = false, features = ["os_rng", "std"] }
+rand_core-274715c4dabd11b0 = { package = "rand_core", version = "0.9", default-features = false, features = ["os_rng", "std"] }
+rand_core-3b31131e45eafb45 = { package = "rand_core", version = "0.6", default-features = false, features = ["std"] }
 regex = { version = "1" }
 regex-automata = { version = "0.4", default-features = false, features = ["dfa-build", "dfa-onepass", "hybrid", "meta", "nfa-backtrack", "perf-inline", "perf-literal", "std", "unicode"] }
 regex-syntax = { version = "0.8" }
@@ -81,6 +91,7 @@ secrecy = { version = "0.10", default-features = false, features = ["serde"] }
 serde = { version = "1", features = ["alloc", "derive"] }
 serde_core = { version = "1", default-features = false, features = ["alloc", "result", "std"] }
 serde_json = { version = "1", features = ["alloc", "raw_value"] }
+sha2 = { version = "0.10", features = ["oid"] }
 simd-adler32 = { version = "0.3" }
 smallvec = { version = "1", default-features = false, features = ["const_new", "union", "write"] }
 stable_deref_trait = { version = "1" }
@@ -110,8 +121,10 @@ zerofrom = { version = "0.1", default-features = false, features = ["alloc", "de
 zeroize = { version = "1", features = ["derive"] }
 zerotrie = { version = "0.2", default-features = false, features = ["alloc", "yoke", "zerofrom"] }
 zerovec = { version = "0.11", default-features = false, features = ["alloc", "derive", "yoke"] }
+zlib-rs = { version = "0.6", default-features = false, features = ["std"] }
 
 [build-dependencies]
+aead = { version = "0.5", features = ["alloc", "bytes", "getrandom"] }
 arrayvec = { version = "0.7" }
 bitflags = { version = "2", default-features = false, features = ["std"] }
 block-buffer = { version = "0.12", default-features = false, features = ["zeroize"] }
@@ -128,14 +141,20 @@ crossbeam-utils = { version = "0.8" }
 crypto-common-6f8ce4dd05d13bba = { package = "crypto-common", version = "0.2", default-features = false, features = ["getrandom", "zeroize"] }
 crypto-common-c65f7effa3be6d31 = { package = "crypto-common", version = "0.1", default-features = false, features = ["getrandom", "std"] }
 cssparser = { version = "0.38", features = ["serde"] }
-derive_more = { version = "2", features = ["add", "add_assign", "deref", "deref_mut", "from", "is_variant"] }
-derive_more-impl = { version = "2", features = ["add", "add_assign", "deref", "deref_mut", "from", "is_variant"] }
+darling = { version = "0.20" }
+darling_core = { version = "0.20", default-features = false, features = ["suggestions"] }
+derive_more = { version = "2", features = ["add", "add_assign", "debug", "deref", "deref_mut", "display", "from", "is_variant"] }
+derive_more-impl = { version = "2", features = ["add", "add_assign", "debug", "deref", "deref_mut", "display", "from", "is_variant"] }
+digest = { version = "0.10", features = ["mac", "oid", "std"] }
 either = { version = "1", features = ["use_std"] }
+encoding_rs = { version = "0.8" }
 fastrand = { version = "2" }
-flate2 = { version = "1" }
+flate2 = { version = "1", features = ["zlib-rs"] }
 foldhash = { version = "0.2", default-features = false, features = ["std"] }
 futures-core = { version = "0.3" }
+generic-array = { version = "0.14", default-features = false, features = ["more_lengths", "zeroize"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
+getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-features = false, features = ["std"] }
 getrandom-9fbad63c4bcf4a8f = { package = "getrandom", version = "0.4", default-features = false, features = ["std", "sys_rng", "wasm_js"] }
 hashbrown = { version = "0.17" }
 hybrid-array = { version = "0.4", default-features = false, features = ["zeroize"] }
@@ -148,17 +167,21 @@ inout-6f8ce4dd05d13bba = { package = "inout", version = "0.2", default-features 
 inout-c65f7effa3be6d31 = { package = "inout", version = "0.1", default-features = false, features = ["block-padding"] }
 io-http = { version = "0.8", default-features = false, features = ["rustls-ring"] }
 itertools = { version = "0.14" }
+lazy_static = { version = "1", default-features = false, features = ["spin_no_std"] }
 libc = { version = "0.2" }
 litemap = { version = "0.8", default-features = false, features = ["alloc"] }
 lock_api = { version = "0.4", features = ["arc_lock"] }
 log = { version = "0.4", default-features = false, features = ["std"] }
 mail-parser = { version = "0.11" }
+md-5 = { version = "0.10", features = ["oid"] }
 memchr = { version = "2" }
+mime-rs = { version = "0.2", default-features = false, features = ["base64", "encoding", "parser"] }
 minimal-lexical = { version = "0.2", default-features = false, features = ["std"] }
 nom = { version = "7", default-features = false, features = ["std"] }
 num-bigint = { version = "0.4" }
 num-integer = { version = "0.1", features = ["i128"] }
-num-traits = { version = "0.2", features = ["i128"] }
+num-iter = { version = "0.1", default-features = false, features = ["i128", "std"] }
+num-traits = { version = "0.2", features = ["i128", "libm"] }
 once_cell = { version = "1" }
 parking_lot = { version = "0.12", features = ["arc_lock", "send_guard"] }
 percent-encoding = { version = "2" }
@@ -171,7 +194,8 @@ pulldown-cmark = { version = "0.13" }
 quote = { version = "1" }
 rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
 rand-93f6ce9d446188ac = { package = "rand", version = "0.10" }
-rand_core = { version = "0.9", default-features = false, features = ["os_rng", "std"] }
+rand_core-274715c4dabd11b0 = { package = "rand_core", version = "0.9", default-features = false, features = ["os_rng", "std"] }
+rand_core-3b31131e45eafb45 = { package = "rand_core", version = "0.6", default-features = false, features = ["std"] }
 regex = { version = "1" }
 regex-automata = { version = "0.4", default-features = false, features = ["dfa-build", "dfa-onepass", "hybrid", "meta", "nfa-backtrack", "perf-inline", "perf-literal", "std", "unicode"] }
 regex-syntax = { version = "0.8" }
@@ -179,6 +203,7 @@ secrecy = { version = "0.10", default-features = false, features = ["serde"] }
 serde = { version = "1", features = ["alloc", "derive"] }
 serde_core = { version = "1", default-features = false, features = ["alloc", "result", "std"] }
 serde_json = { version = "1", features = ["alloc", "raw_value"] }
+sha2 = { version = "0.10", features = ["oid"] }
 simd-adler32 = { version = "0.3" }
 smallvec = { version = "1", default-features = false, features = ["const_new", "union", "write"] }
 stable_deref_trait = { version = "1" }
@@ -209,6 +234,7 @@ zerofrom = { version = "0.1", default-features = false, features = ["alloc", "de
 zeroize = { version = "1", features = ["derive"] }
 zerotrie = { version = "0.2", default-features = false, features = ["alloc", "yoke", "zerofrom"] }
 zerovec = { version = "0.11", default-features = false, features = ["alloc", "derive", "yoke"] }
+zlib-rs = { version = "0.6", default-features = false, features = ["std"] }
 
 [target.x86_64-unknown-linux-gnu.dependencies]
 aho-corasick = { version = "1" }
@@ -217,6 +243,7 @@ mio = { version = "1", features = ["net", "os-ext"] }
 nom = { version = "7" }
 rustix = { version = "1", features = ["io_uring", "pipe", "process", "stdio", "system", "termios", "time"] }
 serde_spanned = { version = "1", default-features = false, features = ["serde", "std"] }
+simdutf8 = { version = "0.1", features = ["aarch64_neon", "public_imp"] }
 time = { version = "0.3", features = ["local-offset", "serde-well-known"] }
 toml = { version = "1" }
 
@@ -227,6 +254,7 @@ mio = { version = "1", features = ["net", "os-ext"] }
 nom = { version = "7" }
 rustix = { version = "1", features = ["io_uring", "pipe", "process", "stdio", "system", "termios", "time"] }
 serde_spanned = { version = "1", default-features = false, features = ["serde", "std"] }
+simdutf8 = { version = "0.1", features = ["aarch64_neon", "public_imp"] }
 time = { version = "0.3", features = ["local-offset", "serde-well-known"] }
 toml = { version = "1" }
 
@@ -237,6 +265,7 @@ mio = { version = "1", features = ["net", "os-ext"] }
 nom = { version = "7" }
 rustix = { version = "1", features = ["io_uring", "pipe", "process", "stdio", "system", "termios", "time"] }
 serde_spanned = { version = "1", default-features = false, features = ["serde", "std"] }
+simdutf8 = { version = "0.1", features = ["aarch64_neon", "public_imp"] }
 time = { version = "0.3", features = ["local-offset", "serde-well-known"] }
 toml = { version = "1" }
 
@@ -247,6 +276,7 @@ mio = { version = "1", features = ["net", "os-ext"] }
 nom = { version = "7" }
 rustix = { version = "1", features = ["io_uring", "pipe", "process", "stdio", "system", "termios", "time"] }
 serde_spanned = { version = "1", default-features = false, features = ["serde", "std"] }
+simdutf8 = { version = "0.1", features = ["aarch64_neon", "public_imp"] }
 time = { version = "0.3", features = ["local-offset", "serde-well-known"] }
 toml = { version = "1" }
 
@@ -260,6 +290,7 @@ nom = { version = "7" }
 objc2 = { version = "0.6", features = ["disable-encoding-assertions"] }
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["CFArray", "CFAttributedString", "CFCGTypes", "CFCalendar", "CFCharacterSet", "CFData", "CFDate", "CFDictionary", "CFError", "CFFileSecurity", "CFLocale", "CFMachPort", "CFMessagePort", "CFRunLoop", "CFSet", "CFStream", "CFString", "CFURL", "CFUUID", "objc2", "std"] }
 rustix = { version = "1", features = ["io_uring", "pipe", "process", "stdio", "system", "termios", "time"] }
+simdutf8 = { version = "0.1", features = ["aarch64_neon", "public_imp"] }
 time = { version = "0.3", features = ["local-offset", "serde-well-known"] }
 
 [target.aarch64-apple-darwin.build-dependencies]
@@ -272,6 +303,7 @@ nom = { version = "7" }
 objc2 = { version = "0.6", features = ["disable-encoding-assertions"] }
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["CFArray", "CFAttributedString", "CFCGTypes", "CFCalendar", "CFCharacterSet", "CFData", "CFDate", "CFDictionary", "CFError", "CFFileSecurity", "CFLocale", "CFMachPort", "CFMessagePort", "CFRunLoop", "CFSet", "CFStream", "CFString", "CFURL", "CFUUID", "objc2", "std"] }
 rustix = { version = "1", features = ["io_uring", "pipe", "process", "stdio", "system", "termios", "time"] }
+simdutf8 = { version = "0.1", features = ["aarch64_neon", "public_imp"] }
 time = { version = "0.3", features = ["local-offset", "serde-well-known"] }
 
 ### END HAKARI SECTION
