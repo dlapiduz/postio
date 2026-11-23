@@ -4,8 +4,8 @@
 
 **Created**: 2026-11-22
 
-**Status**: Roadmap draft. Not scheduled; no `tasks.md` until the maintainer
-schedules it and answers the questions under "Clarifications"
+**Status**: Draft. The maintainer answered Q1 to Q4 on 2026-11-22
+(Clarifications). Not yet scheduled; `tasks.md` is written so it can be
 
 **Input**: The maintainer, 2026-11-22: "I want to create roadmap specs/docs
 for: … A calendar view and management".
@@ -58,7 +58,7 @@ This spec gives Postio a calendar. It is built the way Postio builds mail:
   to the same place. Spec 010 D17 and spec 011 K2 made results and Contacts
   *modes of the main window* with History. Calendar follows them (D1).
 - **ADR 0041**: one app holds the store at a time. It bounds what reminders
-  can do (Q2).
+  can do (D8).
 - **ADR 0045 and ADR 0049**: behaviour in `postio-focus` and the rule crates;
   frontends draw intents and assert composition.
 - **Issue #2145** (chrono is unmaintained) bears on the iCalendar library
@@ -73,7 +73,9 @@ the maintainer can make are under "Clarifications".
 `g e` ("Go to calendar", mnemonic *events*) opens it. `g e` is free in the
 registry; `g c` is Contacts. It sits beside `g i` and `g c` among the
 destinations. History returns to where it was opened from, with the cursor
-and scroll kept (spec 010 D17). This is Q1's default, A.
+and scroll kept (spec 010 D17). The maintainer chose this on 2026-11-22
+(Q1 = A), "with some way of having two windows at once": that is D12's pop
+out.
 
 **D2. The views are Agenda, Day and Week, with Month later.**
 
@@ -85,8 +87,10 @@ and scroll kept (spec 010 D17). This is Q1's default, A.
   events in time order, and the cursor is an event, never an empty slot.
   Below 1024 px, Week falls back to Day.
 - **Month** (`4`) is a later slice. It is a planning glance with little
-  keyboard work in it, and it is the view that most needs a design handoff
-  (Q4).
+  keyboard work in it, and it is the view that most needs a design handoff.
+
+Agenda is built now, designed by an agent in the existing list language. Day,
+Week and Month wait for a designer handoff (Q4 = C).
 
 **D3. Moving through time is `[`, `]` and `t`.** `[` and `]` go to the
 previous and next period: a day in Day, a week in Week, a week of agenda in
@@ -167,10 +171,10 @@ be shown or hidden per calendar.
   a timer.
 - A calendar has a default reminder, set in Settings.
 - A notification offers "Open" and "Snooze 5 min", from the registry.
-- Whether a reminder fires when no Postio app is running is Q2. Until that is
-  answered, reminders fire while an app holds the store. On start, a missed
-  reminder from the last 12 hours shows once: "While Postio was closed:
-  Standup at 09:30."
+- Reminders fire **only while an app holds the store** (Q2 = A). Nothing
+  new runs in the background.
+- On start, a missed reminder from the last 12 hours shows once: "While
+  Postio was closed: Standup at 09:30."
 
 **D9. Calendar search is the one query language.** `/` in Calendar searches
 events, as `/` searches mail:
@@ -201,48 +205,82 @@ table. It holds:
 A provider with no row is reached by RFC 6764 discovery and the person's
 credentials, as a custom IMAP server is.
 
+**D12. Calendar can pop out into its own window, and back.** The maintainer
+asked for "some way of having two windows at once. maybe pop out" (Q1). It
+was settled with `/ux-architect`. The rules allow a second window when it is
+"a real non-modal window, opt-in only", and this is that.
+
+- **The verb is one, and general.** `pop_out` ("Open in its own window") is
+  offered on any surface that declares it can stand alone. Calendar is the
+  first. Contacts declares it when Linux adopts Contacts (spec 011 S13), and
+  the registry needs no new command then. The composer's `detach_composer` is
+  the same idea; folding it into `pop_out` is filed as follow-up work, not
+  done here.
+- **The key** is `mod+shift+o` in the Calendar context: the same chord
+  `detach_composer` uses in the composer, so the one gesture means "this
+  surface in its own window" wherever it is offered. In the popped-out
+  window, the same chord is `pop_in` ("Back into the main window"), so one
+  key toggles. It cannot collide with `toggle_reader_view`'s `ctrl+shift+o`,
+  which is offered only in list, thread and reader contexts.
+- **The keyboard is the focused window's.** Each window has its own context,
+  cursor and History. The command bar, `?` and Settings open in the window
+  that has focus. Nothing is typed into a window the person is not looking
+  at.
+- **Destinations go to the window that shows them.** With Calendar popped
+  out:
+  - `g e` from mail raises and focuses the Calendar window;
+  - `g i`, `g c` and the other mail destinations, pressed in the Calendar
+    window, raise and focus the main window at that destination;
+  - the main window offers no Calendar mode while it is popped out, so a
+    surface is never in two places.
+- **`Esc` and History stay per window.** In the Calendar window, `Esc` climbs
+  that window's History: the open event, then the editor, then a search, then
+  the view back to Agenda on today. At the root it does nothing. It never
+  closes the window, because a key that sometimes closes a window is a trap.
+- **Closing the Calendar window pops Calendar back in.** Its X, or `pop_in`,
+  does this. Nothing is lost: the view, the date and the cursor come back as
+  Calendar's mode. `mod+q` still quits Postio, both windows. `mod+w` keeps its
+  registry meaning (see the open question).
+- **What is remembered** (ADR 0024: intent is stored, the viewport's
+  constraint is applied): whether Calendar is popped out, and the window's
+  size. Its **position is not**. Wayland gives position to the compositor,
+  so remembering it would work on X11 and the Mac only, and differ by
+  platform. The Mac remembers its frame through the system, as Mac windows
+  do. A popped-out Calendar reopens popped out on the next start, after the
+  main window is usable, so the startup budget is the main window's.
+- **Where it is offered**: the GTK app and the Mac. Not the terminal, which
+  has one screen.
+- **Same process, same store.** No second app opens the store (ADR 0041). A
+  reminder's "Open" goes to whichever window shows Calendar.
+
 ## Clarifications
 
-### Open questions for the maintainer
+### Session 2026-11-22 (the maintainer)
 
 - **Q1. Where does Calendar live?**
-  - **A: a mode of the main window, `g e`**, as Contacts and search results
-    are. One window, History and `Esc`. This is the spec's default.
-  - **B: its own window** in the same process (`g e` raises it), so mail and
-    calendar can be side by side. The rules forbid this as a default ("a real
-    non-modal window, opt-in only"), so it would be an opt-in second window.
-  - **C: an agenda rail beside the inbox.** This needs a new pane, which
-    "one list, no sidebar" rules out unless the design changes.
+  → **A, a mode of the main window on `g e`, "with some way of having two
+  windows at once. maybe pop out".** Pop out is D12.
 - **Q2. Do reminders fire when no Postio app is running?**
-  - **A: only while an app holds the store**, with the "While Postio was
-    closed" catch-up on start. Nothing new runs in the background. This is
-    the spec's default for the first slices.
-  - **B: Postio starts at login in the background** (an autostart entry and
-    the Background portal), holds the store, and shows no window. Reminders
-    are reliable. Opening the terminal app then finds the store held (ADR
-    0041), so the other app asks for it to be closed.
-  - **C: a small reminder helper** that holds no store and wakes at the next
-    alarm. Like `postio-mcp`, it opens the store for one read only when no
-    app holds it, reads what is due, notifies, and closes. On the Mac, the
-    app can instead schedule local notifications ahead with the system. This
-    is reliable, without a resident app, at the cost of a second binary.
+  → **A.** Only while an app holds the store, with the "While Postio was
+  closed" catch-up on start (D8).
 - **Q3. Which providers are in the first sync slice?**
-  - **A: generic CalDAV, iCloud and Fastmail first; Google second.** The
-    first three are app-password CalDAV. Google's CalDAV needs an extra OAuth
-    scope (calendar), which the person's own client or broker must allow,
-    and has quirks to settle. This is the spec's recommendation.
-  - **B: all four at once.**
-  - **C: Google through its REST API** (Pimalaya's `io-gcal`) rather than
-    CalDAV, as Gmail has a REST backend beside IMAP. That is a second
-    calendar backend to keep.
+  → **A.** Generic CalDAV, iCloud and Fastmail first; Google second.
 - **Q4. Where does the visual design come from?**
-  - **A: wait for a designer handoff** (`Design/…`, as spec 011 had) before
-    any calendar UI.
-  - **B: an agent designs it** from spec 007's language with `/ux-architect`
-    and `/gtk-design`, and the maintainer reviews the renders.
-  - **C: Agenda now, grids later.** Agenda is a list in the existing list
-    language and needs no new design, so it is built on B. Day, Week and
-    Month wait for A. This is the spec's recommendation.
+  → **C.** Agenda is built now, designed by an agent in the existing list
+  language. Day, Week and Month wait for a designer handoff, and their tasks
+  are held for it (D2).
+
+### Open question
+
+- **Q5. What does `mod+w` do in a second window?** Today it is `quit`,
+  everywhere. GNOME's convention is that `ctrl+w` closes the focused window.
+  - **A: keep it `quit`.** One verb, one meaning. A second window closes with
+    its X or `pop_in`. This is the spec's default.
+  - **B: `mod+w` closes the focused window**, which in the main window still
+    quits. That gives the key a second meaning in a second window, and
+    changes a key people already use.
+  - **C: move `quit` to `mod+q` alone**, and make `mod+w` "close this
+    window" everywhere. The composer's detached windows get it too.
 
 ## The surface
 
@@ -262,7 +300,7 @@ credentials, as a custom IMAP server is.
 - The cursor and the selection follow constitution II, as in the inbox.
 - It opens on today, with the cursor on the next event that has not ended.
 
-### Day and Week (Q4)
+### Day and Week (held for the designer handoff)
 
 - A time grid with all-day events across the top, and "now" as a line.
 - An event's block shows its title and time.
@@ -432,7 +470,7 @@ Ten minutes before a meeting, a notification says "Standup · 09:30 · in 10
 min", with Open and Snooze.
 
 **Why this priority**: A calendar without reminders is half a calendar, but
-reminders depend on Q2's answer for anything beyond "while Postio runs".
+reminders fire only while Postio runs (Q2 = A).
 
 **Independent Test**: With a fake clock, assert each alarm's notification
 text and time. Assert that snooze moves it, that an `EMAIL` alarm does
@@ -456,7 +494,8 @@ nothing, and that a missed alarm shows once on start.
 A person presses `3` and sees the week as a grid, steps through its events
 with `j` and `k`, and goes to next week with `]`.
 
-**Why this priority**: It is valuable, and it needs design (Q4).
+**Why this priority**: It is valuable, and it waits on a designer handoff
+(Q4 = C).
 
 **Independent Test**: Seed a week. Press `3`, `j`, `k`, `]` and `t`, and
 assert the event under the cursor and the week shown after each. At 1024 px,
@@ -469,6 +508,44 @@ assert the Day fallback.
    order.
 2. **Given** the window at 1024 px, **When** the person presses `3`, **Then**
    Day shows, and the footer says Week needs a wider window.
+
+---
+
+### User Story 7 - Calendar beside mail, in two windows (Priority: P2)
+
+A person planning their week wants mail and the calendar side by side. In
+Calendar they press `mod+shift+o`. Calendar moves into its own window. They
+put it beside the main window, which is back on the inbox. `g e` from mail
+brings the Calendar window forward, and `g i` there brings mail forward.
+Closing the Calendar window puts Calendar back where it was.
+
+**Why this priority**: The maintainer asked for it with Q1. It needs Agenda
+(US1), and nothing else in this spec.
+
+**Independent Test**: In `focus_suite`, pop out, assert two windows and the
+Calendar window focused with its cursor where it was. Press `g i` there and
+assert the main window is focused on the inbox. Press `g e` and assert the
+Calendar window is raised. Close it, and assert Calendar is a mode again,
+with the date and cursor kept. Restart, and assert it reopens popped out with
+its size.
+
+**Acceptance Scenarios**:
+
+1. **Given** Calendar on Thursday with the cursor on an event, **When** the
+   person presses `mod+shift+o`, **Then** Calendar opens in its own window on
+   Thursday at that event, and the main window returns to where Calendar was
+   opened from.
+2. **Given** Calendar popped out, **When** the person presses `g e` in the main
+   window, **Then** the Calendar window is raised and focused, and the main
+   window shows no Calendar mode.
+3. **Given** the Calendar window at its root, **When** the person presses
+   `Esc`, **Then** nothing closes.
+4. **Given** the Calendar window, **When** the person presses `mod+shift+o` or
+   closes it, **Then** Calendar is the main window's mode again, with the date
+   and cursor it had.
+5. **Given** Calendar popped out at quit, **When** Postio starts, **Then** the
+   main window is usable first, and the Calendar window then opens at its
+   remembered size.
 
 ---
 
@@ -519,6 +596,15 @@ assert the Day fallback.
   including offline, failing and conflict.
 - **FR-006**: Every interface that offers Calendar (GTK, terminal, macOS)
   MUST draw it from one view model, with behaviour in `postio-focus`.
+- **FR-007**: `pop_out` (`mod+shift+o`) MUST move Calendar into its own
+  window in the same process, and `pop_in`, the same chord there, or closing
+  that window MUST bring it back as a mode. The view, the date and the cursor
+  MUST be kept both ways.
+- **FR-008**: With Calendar popped out, `g e` MUST raise and focus its window,
+  and mail destinations pressed there MUST raise and focus the main window.
+  Each window MUST keep its own History, and `Esc` MUST NOT close a window.
+- **FR-009**: Whether Calendar is popped out, and the window's size, MUST be
+  remembered. Its position MUST NOT be stored.
 
 **Events**
 
@@ -578,7 +664,8 @@ assert the Day fallback.
   commands.
 - **FR-042**: A reminder that fell due while no app held the store MUST be
   shown once on the next start, if it is less than 12 hours old.
-- **FR-043**: Reminders beyond FR-040 to FR-042 MUST follow Q2's answer.
+- **FR-043**: Postio MUST NOT add a background process, an autostart entry or
+  a helper for reminders (Q2 = A).
 
 **Privacy**
 

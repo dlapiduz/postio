@@ -34,7 +34,8 @@
 - The spec names standards (CalDAV, iTIP, RFC 6764) and Postio's own rules
   (spec 007, ADR 0041) because they bound what a person sees. The crates and
   code are in `plan.md` only.
-- The four questions only the maintainer can answer are written as Q1 to Q4
-  under Clarifications, each with options and the spec's default, rather
-  than as inline markers. Slice A needs only Q1's default and Q4 C.
-- Roadmap spec: `tasks.md` is deliberately absent until it is scheduled.
+- The maintainer answered Q1 to Q4 on 2026-11-22. They are recorded under
+  Clarifications as decisions. Q5 (`mod+w` in a second window) is open, and
+  has a default that does not block building.
+- `tasks.md` and the Phase 1 artifacts are written. The grid views' tasks are
+  held for the designer handoff.
