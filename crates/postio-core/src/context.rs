@@ -50,6 +50,8 @@ pub enum Context {
     Outline,
     /// Not the picker's context, which already gives each digit to `picker_choose_n`.
     ForwardChooser,
+    /// Its own context: digits pick its tabs, and a list letter must not act on the row behind it.
+    Source,
 }
 
 impl Context {
@@ -76,6 +78,7 @@ impl Context {
         Context::ContactPopover,
         Context::Outline,
         Context::ForwardChooser,
+        Context::Source,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -99,6 +102,7 @@ impl Context {
             Context::ContactPopover => "contact_popover",
             Context::Outline => "outline",
             Context::ForwardChooser => "forward_chooser",
+            Context::Source => "source",
         }
     }
 

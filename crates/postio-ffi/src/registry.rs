@@ -44,6 +44,7 @@ pub enum UiContext {
     ContactPopover,
     Outline,
     ForwardChooser,
+    Source,
 }
 
 impl From<postio_core::Context> for UiContext {
@@ -69,6 +70,7 @@ impl From<postio_core::Context> for UiContext {
             Context::ContactPopover => UiContext::ContactPopover,
             Context::Outline => UiContext::Outline,
             Context::ForwardChooser => UiContext::ForwardChooser,
+            Context::Source => UiContext::Source,
         }
     }
 }
@@ -99,6 +101,7 @@ impl From<UiContext> for postio_core::Context {
             UiContext::ContactPopover => Context::ContactPopover,
             UiContext::Outline => Context::Outline,
             UiContext::ForwardChooser => Context::ForwardChooser,
+            UiContext::Source => Context::Source,
         }
     }
 }

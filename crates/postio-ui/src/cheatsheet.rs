@@ -46,6 +46,7 @@ fn heading(context: Context) -> &'static str {
         Context::ContactPopover => "Contact popover",
         Context::Outline => "Thread outline",
         Context::ForwardChooser => "Forward",
+        Context::Source => "Source",
     }
 }
 

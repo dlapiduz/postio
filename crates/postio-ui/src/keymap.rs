@@ -395,6 +395,7 @@ pub enum KeyContext {
     ContactPopover,
     Outline,
     ForwardChooser,
+    Source,
 }
 
 impl KeyContext {
@@ -439,6 +440,8 @@ impl KeyContext {
             // chooser's. Neither falls through.
             Self::Outline => &[Self::Outline, Self::Global],
             Self::ForwardChooser => &[Self::ForwardChooser, Self::Composer, Self::Global],
+            // Not layered over the reader: the surface sits over a message and its keys are its own.
+            Self::Source => &[Self::Source, Self::Global],
         }
     }
 }
@@ -467,6 +470,7 @@ impl From<Context> for KeyContext {
             Context::ContactPopover => Self::ContactPopover,
             Context::Outline => Self::Outline,
             Context::ForwardChooser => Self::ForwardChooser,
+            Context::Source => Self::Source,
         }
     }
 }

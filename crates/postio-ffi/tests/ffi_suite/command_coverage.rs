@@ -9,6 +9,21 @@ const INTERCEPTED: &[CommandId] = postio_ffi::registry::INTERCEPTED;
 /// assertion.
 const KNOWN_ORPHANS: &[(CommandId, &str)] = &[
     (CommandId::ViewSource, "specs/009-focus-macos T070"),
+    (
+        CommandId::SourceTabVerification,
+        "specs/016-message-authenticity T024",
+    ),
+    (
+        CommandId::SourceTabHeaders,
+        "specs/016-message-authenticity T024",
+    ),
+    (
+        CommandId::SourceTabRaw,
+        "specs/016-message-authenticity T024",
+    ),
+    (CommandId::CopySource, "specs/016-message-authenticity T024"),
+    (CommandId::SaveSource, "specs/016-message-authenticity T024"),
+    (CommandId::UnfoldPart, "specs/016-message-authenticity T024"),
     (CommandId::SwitchTreatment, "specs/009-focus-macos T070"),
     (CommandId::MoreActions, "specs/009-focus-macos T067"),
     (

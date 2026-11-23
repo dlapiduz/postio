@@ -391,6 +391,13 @@ commands! {
     FilteredTab5 => "filtered_tab_5",
     FilteredTab6 => "filtered_tab_6",
     FilteredTab7 => "filtered_tab_7",
+    SourceTabVerification => "source_tab_verification",
+    SourceTabHeaders => "source_tab_headers",
+    SourceTabRaw => "source_tab_raw",
+    /// Every byte of the stored source, folded parts included.
+    CopySource => "copy_source",
+    SaveSource => "save_source",
+    UnfoldPart => "unfold_part",
     /// The deliberate command that applies filtering to mail filed before it was turned on; the
     /// frontend shows what would move first.
     SweepInbox => "sweep_inbox",

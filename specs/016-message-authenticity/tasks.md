@@ -92,7 +92,7 @@ throwaway code is not merged.
   - each has a key, a command-bar row and an accessible action;
   - none collides in `Context::Source`;
   - `view_source`'s title is "Source and verification".
-- [ ] T009 Add `Context::Source` and the commands to `crates/postio-core/src/context.rs`, `crates/postio-core/src/command.rs` and `crates/postio-core/src/registry.rs`. Regenerate `docs/keybindings.md` (`POSTIO_UPDATE_DOCS=1 cargo test -p postio-ui`) and `crates/postio-core/tests/golden/linux-bindings.txt`
+- [x] T009 Add `Context::Source` and the commands to `crates/postio-core/src/context.rs`, `crates/postio-core/src/command.rs` and `crates/postio-core/src/registry.rs`. Regenerate `docs/keybindings.md` (`POSTIO_UPDATE_DOCS=1 cargo test -p postio-ui`) and `crates/postio-core/tests/golden/linux-bindings.txt`
 - [ ] T010 Write failing unit cases in `crates/postio-ui/src/reader/authenticity.rs` for the report model in `data-model.md`:
   - every method's domain, selector and policy;
   - relaxed alignment;

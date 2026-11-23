@@ -243,6 +243,12 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         | C::FilteredTab5
         | C::FilteredTab6
         | C::FilteredTab7
+        | C::SourceTabVerification
+        | C::SourceTabHeaders
+        | C::SourceTabRaw
+        | C::CopySource
+        | C::SaveSource
+        | C::UnfoldPart
         | C::SweepInbox
         | C::CaptureTask
         | C::CaptureNote

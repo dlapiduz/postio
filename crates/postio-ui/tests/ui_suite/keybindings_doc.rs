@@ -44,6 +44,7 @@ fn where_available(contexts: ContextSet) -> String {
             Context::ContactPopover => "contact popover",
             Context::Outline => "thread outline",
             Context::ForwardChooser => "forward chooser",
+            Context::Source => "source",
         })
         .collect();
     let mut sentence = names.join(", ");

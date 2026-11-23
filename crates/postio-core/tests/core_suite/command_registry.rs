@@ -290,7 +290,7 @@ fn contexts_round_trip_through_strings() {
         assert_eq!(context.as_str().parse::<Context>().unwrap(), *context);
     }
     // A count, so adding a context is a deliberate act.
-    assert_eq!(Context::ALL.len(), 19);
+    assert_eq!(Context::ALL.len(), 20);
 }
 
 #[test]
@@ -678,7 +678,12 @@ fn the_reading_commands_are_registered_as_the_contract_says() {
         assert_eq!(spec.title, title, "{name}");
         assert_eq!(spec.default_binding, default, "{name}");
         assert_eq!(spec.alternate_bindings, alternates, "{name}");
-        assert_eq!(spec.contexts, reading, "{name}");
+        let contexts = if id == CommandId::FindInMessage {
+            reading.with(Context::Source)
+        } else {
+            reading
+        };
+        assert_eq!(spec.contexts, contexts, "{name}");
         assert!(!spec.destructive, "{name}");
         assert_eq!(Command::default_for(id).id(), id);
     }

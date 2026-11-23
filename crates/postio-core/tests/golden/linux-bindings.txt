@@ -166,6 +166,12 @@ filtered_tab_4	4
 filtered_tab_5	5
 filtered_tab_6	6
 filtered_tab_7	7
+source_tab_verification	1
+source_tab_headers	2
+source_tab_raw	3
+copy_source	ctrl+c
+save_source	ctrl+s
+unfold_part	Return
 sweep_inbox	F
 capture_task	T
 capture_note	N
