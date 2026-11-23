@@ -148,7 +148,7 @@ focused window.
 - [x] T023 [US7] GTK: the Calendar window on the window machinery ADR 0034's detached composers use, in `crates/postio-gtk/src/`. `present()` the target window with the key event's activation token. Add `crates/postio-gtk/tests/focus_suite/calendar_pop_out.rs`, one case per row of `contracts/calendar-mode.md` that pops out. T002's `pop-out` goes green. Note any compositor focus trap in `docs/gotchas/gtk.md`
 - [ ] T024 [P] [US7] Mac: an `NSWindow` with frame autosave in `macos/Sources/PostioKit/`, with `macos/Tests/PostioKitTests/` cases
 - [ ] T025 [US7] Run `/ux-review` on both storyboards, and fix or contest the verdicts
-- [ ] T026 [US7] File the follow-up that folds `detach_composer` into `pop_out`, with `scripts/issue-file.sh` (plan R9)
+- [x] T026 [US7] File the follow-up that folds `detach_composer` into `pop_out`, with `scripts/issue-file.sh` (plan R9)
 
 ## Phase 7: User Story 3, management (P1)
 
