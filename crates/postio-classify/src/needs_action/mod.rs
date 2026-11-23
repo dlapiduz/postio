@@ -5,6 +5,9 @@ mod deadline;
 mod lexicon;
 mod sentences;
 
+#[cfg(test)]
+pub(crate) use lexicon::IMPERATIVES;
+
 use std::ops::Range;
 
 use chrono::{DateTime, Local, TimeZone, Utc};
@@ -15,8 +18,10 @@ use crate::outcome::{MarkedBy, MarkerCandidate, MarkerKind};
 use crate::rules::Rules;
 
 /// `messages.automation`'s bits: `Precedence` bulk, list, junk; `Auto-Submitted` auto-generated,
-/// auto-replied.
-const BULK_OR_AUTOMATED: u8 = 1 | 2 | 4 | 8 | 16;
+/// auto-replied; a bulk sending service's own header.
+const BULK_OR_AUTOMATED: u8 = postio_model::promoted::PRECEDENCE
+    | postio_model::promoted::AUTO_SUBMITTED
+    | postio_model::promoted::BULK_SENDER;
 
 /// Only mail sent directly to the user: their address in `To`, not from them; never mail they are
 /// only copied on, list or bulk, automated senders, junk, Sent or Drafts. A header not yet known is
@@ -880,7 +885,7 @@ mod tests {
             automation: 0,
         }));
         assert!(!considered_with(&offered, |_| {}, &identities()));
-        for bit in [1, 2, 4, 8, 16] {
+        for bit in [1, 2, 4, 8, 16, 32] {
             let automated = saying(Some(PromotedHeaders {
                 unsubscribe_offered: false,
                 automation: bit,
@@ -916,6 +921,39 @@ mod tests {
 
         assert!(!considered_by(&automated));
         assert!(considered_by(&direct()), "and a person is still read");
+    }
+
+    #[test]
+    fn transactional_mail_with_no_list_header_is_not() {
+        // T225: a bank, a utility, a billing system. None says List-Id, List-Unsubscribe or
+        // Auto-Submitted, so before this each read as a person writing.
+        let identities = identities();
+        let shipped = |message: &Message| {
+            considered(
+                &BodyMessage {
+                    filed: filed(message),
+                    identities: &identities,
+                },
+                &Table(crate::senders::Senders::shipped().clone()),
+            )
+        };
+        let sent_in_bulk = saying(Some(PromotedHeaders {
+            unsubscribe_offered: false,
+            automation: postio_model::promoted::BULK_SENDER,
+        }));
+        assert!(!shipped(&sent_in_bulk), "a bulk sending service's header");
+        for address in [
+            "statements@email.bank.example",
+            "hello@news.utility.example",
+            "automated@utility.example",
+        ] {
+            let mut machine = direct();
+            machine.from = vec![EmailAddress::new(Some("Bank"), address)];
+            assert!(!shipped(&machine), "{address}");
+        }
+        let mut person = direct();
+        person.from = vec![EmailAddress::new(Some("Tove"), "tove@mail.example.org")];
+        assert!(shipped(&person), "a person on a mail host is still read");
     }
 
     #[test]

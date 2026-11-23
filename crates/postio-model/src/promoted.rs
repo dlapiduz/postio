@@ -19,7 +19,20 @@ pub const AUTO_REPLIED: u8 = 16;
 pub const PRECEDENCE: u8 = PRECEDENCE_BULK | PRECEDENCE_LIST | PRECEDENCE_JUNK;
 pub const AUTO_SUBMITTED: u8 = AUTO_GENERATED | AUTO_REPLIED;
 
-pub const FIELDS: [&str; 3] = ["List-Unsubscribe", "Precedence", "Auto-Submitted"];
+/// A header only a bulk sending service writes, on mail that may carry no list header at all: a
+/// bank's statement, a utility's bill (spec 007 T225).
+pub const BULK_SENDER: u8 = 32;
+
+/// Generic headers, not one provider's: a feedback loop's id and the senders' certification.
+pub const BULK_SENDER_FIELDS: [&str; 2] = ["Feedback-ID", "X-CSA-Complaints"];
+
+pub const FIELDS: [&str; 5] = [
+    "List-Unsubscribe",
+    "Precedence",
+    "Auto-Submitted",
+    BULK_SENDER_FIELDS[0],
+    BULK_SENDER_FIELDS[1],
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct PromotedHeaders {
@@ -52,10 +65,22 @@ impl PromotedHeaders {
                 _ => AUTO_GENERATED,
             }
         });
+        let bulk_sender = BULK_SENDER_FIELDS.iter().map(|name| {
+            if headers
+                .get_all(name)
+                .iter()
+                .any(|value| !value.trim().is_empty())
+            {
+                BULK_SENDER
+            } else {
+                0
+            }
+        });
         Self {
             unsubscribe_offered,
             automation: precedence
                 .chain(auto_submitted)
+                .chain(bulk_sender)
                 .fold(0, |bits, bit| bits | bit),
         }
     }
@@ -83,6 +108,16 @@ mod tests {
     }
 
     type Case<'a> = (&'a [(&'a str, &'a str)], bool, u8);
+
+    #[test]
+    fn every_field_read_is_fetched() {
+        for name in ["List-Unsubscribe", "Precedence", "Auto-Submitted"]
+            .into_iter()
+            .chain(BULK_SENDER_FIELDS)
+        {
+            assert!(FIELDS.contains(&name), "{name} is read but never fetched");
+        }
+    }
 
     #[test]
     fn each_field_sets_what_it_says_and_nothing_else() {
@@ -124,6 +159,18 @@ mod tests {
                 AUTO_REPLIED,
             ),
             (&[("Precedence", "first-class")], false, 0),
+            // A bulk sending service's own headers, on mail that carries no list header (T225).
+            (
+                &[("Feedback-ID", "4821:statements:bank.example:sender")],
+                false,
+                BULK_SENDER,
+            ),
+            (
+                &[("X-CSA-Complaints", "csa-complaints@example.net")],
+                false,
+                BULK_SENDER,
+            ),
+            (&[("Feedback-ID", "  ")], false, 0),
             (&[("List-Unsubscribe", "   ")], false, 0),
             (
                 &[

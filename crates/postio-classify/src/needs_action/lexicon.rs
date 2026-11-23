@@ -123,7 +123,7 @@ pub(super) const NEEDS: &[&str] = &[
     "we will need",
 ];
 
-pub(super) const IMPERATIVES: &[&str] = &[
+pub(crate) const IMPERATIVES: &[&str] = &[
     "send", "review", "sign", "approve", "confirm", "fill", "complete", "submit", "update", "book",
     "bring", "check", "read", "add", "call", "reply", "forward", "upload", "share", "schedule",
     "return", "register", "rsvp", "pay", "renew", "finish", "prepare", "draft", "email", "ping",
