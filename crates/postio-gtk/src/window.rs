@@ -888,6 +888,12 @@ impl FocusWindow {
             now.push(SurfaceKind::Composer);
         } else if let Some(dialog) = self.visible_dialog() {
             let name = dialog.widget_name();
+            if name == crate::source::DIALOG_NAME
+                && !self.reading_beside()
+                && self.reading().is_some_and(|reading| reading.is_open())
+            {
+                now.push(SurfaceKind::Message);
+            }
             now.push(if name == crate::open::DIALOG_NAME {
                 SurfaceKind::Message
             } else if name == crate::digest::DIALOG_NAME {
@@ -898,6 +904,8 @@ impl FocusWindow {
                 SurfaceKind::Settings
             } else if name == KEY_MAP {
                 SurfaceKind::KeyMap
+            } else if name == crate::source::DIALOG_NAME {
+                SurfaceKind::Source
             } else {
                 SurfaceKind::Dialog
             });
@@ -962,6 +970,14 @@ impl FocusWindow {
             }
             SurfaceKind::KeyMap | SurfaceKind::Dialog => {
                 if let Some(dialog) = self.visible_dialog() {
+                    dialog.close();
+                }
+            }
+            SurfaceKind::Source => {
+                if let Some(dialog) = self
+                    .visible_dialog()
+                    .filter(|dialog| dialog.widget_name() == crate::source::DIALOG_NAME)
+                {
                     dialog.close();
                 }
             }
@@ -1228,7 +1244,6 @@ impl FocusWindow {
             ReaderVerb::SwitchTreatment => {
                 reading.reader().switch_treatment();
             }
-            ReaderVerb::ViewSource => self.view_source(),
             ReaderVerb::ShowMore => reading.show_more(),
             _ => {}
         }
@@ -1848,7 +1863,7 @@ impl FocusWindow {
                 None => self.open_message(),
             },
             CommandId::NextScope => self.next_scope(),
-            CommandId::ViewSource => self.view_source(),
+            CommandId::ViewSource => self.run_in_controller(id),
             CommandId::OpenContacts
             | CommandId::ContactsSuggestions
             | CommandId::ContactPopover => {
@@ -2184,6 +2199,7 @@ impl FocusWindow {
             Intent::Empty(page) => self.show_empty(page.as_ref()),
             Intent::Toast { text, kind } => self.show_toast(text, kind),
             Intent::Reader(verb) => self.show_reader_verb(*verb),
+            Intent::OpenSource { message, .. } => self.view_source(*message),
             Intent::OpenMessage {
                 message,
                 index,
@@ -5029,13 +5045,8 @@ impl FocusWindow {
             .and_then(|dialog| crate::source::shown(&dialog))
     }
 
-    fn view_source(&self) {
-        let message = self
-            .reading()
-            .filter(|reading| reading.is_open())
-            .and_then(|reading| reading.shown())
-            .or_else(|| self.cursor_row().map(|row| row.id()));
-        let (Some(message), Some(client)) = (message, self.imp().client.borrow().clone()) else {
+    fn view_source(&self, message: MessageId) {
+        let Some(client) = self.imp().client.borrow().clone() else {
             return;
         };
         let window = self.downgrade();

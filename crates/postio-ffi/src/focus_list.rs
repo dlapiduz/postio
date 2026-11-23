@@ -135,7 +135,6 @@ impl ReaderVerbFfi {
             Verb::NextMatch => ReaderVerbFfi::NextMatch,
             Verb::PrevMatch => ReaderVerbFfi::PrevMatch,
             Verb::SwitchTreatment => ReaderVerbFfi::SwitchTreatment,
-            Verb::ViewSource => ReaderVerbFfi::ViewSource,
             Verb::ShowMore => ReaderVerbFfi::ShowMore,
             _ => return None,
         })
@@ -975,6 +974,14 @@ impl FocusDriver {
                     self.say(UiEvent::FocusReader { verb });
                 }
             }
+            // The Mac's message window draws the raw source on this verb; the surface's tabs and
+            // the list's V are its own to build (spec 016 T024).
+            Intent::OpenSource {
+                over: postio_focus::Over::Message,
+                ..
+            } => self.say(UiEvent::FocusReader {
+                verb: ReaderVerbFfi::ViewSource,
+            }),
             Intent::ThreadBar(view) => self.say(UiEvent::FocusThreadBar { view: view.into() }),
             Intent::Kicker(text) => self.say(UiEvent::FocusKicker { text }),
             Intent::OlderBanner(banner) => self.say(UiEvent::FocusOlderBanner {

@@ -31,6 +31,7 @@ mod keys;
 mod perform;
 mod pickers;
 mod results;
+mod source;
 mod states;
 mod surfaces;
 mod thread_expand;
@@ -70,6 +71,7 @@ pub use results::{
     QuickLookView, RelaxationView, ResultGroup, ResultRow, ResultSplice, ResultsTabView,
     ResultsView, SaveView, TermEdit, file_copies,
 };
+pub use source::{Over, SourceVerb};
 pub use states::{AccountsRead, BannerButton, BannerView};
 pub use surfaces::{Host, ReaderVerb, Route, SurfaceKind};
 pub use thread_menu::OutlineInput;
@@ -378,6 +380,13 @@ pub enum Intent {
     },
     CloseSurface(SurfaceKind),
     Reader(ReaderVerb),
+    /// Always on Verification: one key that always opens one surface on the same tab.
+    OpenSource {
+        message: MessageId,
+        tab: postio_ui::source::Tab,
+        over: Over,
+    },
+    Source(SourceVerb),
     /// Said on every message the window shows, with no chips for a thread of one.
     ThreadBar(postio_ui::thread_bar::ThreadBarView),
     Kicker(String),
@@ -951,6 +960,7 @@ pub struct FocusController {
     capture: Option<capture::Capture>,
     contact_popover: Option<contact_popover::ContactPopover>,
     contacts: Option<contacts::Contacts>,
+    source: Option<source::Source>,
     contacts_settings: Option<contacts_settings::Settings>,
     import_found: Vec<postio_model::ContactId>,
     import_cursor: Option<postio_model::ContactId>,
@@ -995,6 +1005,7 @@ impl FocusController {
             capture: None,
             contact_popover: None,
             contacts: None,
+            source: None,
             contacts_settings: None,
             import_found: Vec::new(),
             import_cursor: None,
@@ -1675,6 +1686,13 @@ impl FocusController {
                 return self.open_capture(postio_ui::capture::Mode::Note, rows);
             }
             CommandId::DigestRule => return self.new_rule(rows),
+            CommandId::ViewSource => {
+                return self
+                    .cursor
+                    .row(rows)
+                    .map(|row| self.open_source(row.id, Over::List))
+                    .unwrap_or_default();
+            }
             CommandId::MuteThread | CommandId::ThreadOutline => {
                 return self.thread_list_command(id, rows);
             }
@@ -1813,6 +1831,12 @@ impl FocusController {
             }
             Some(SurfaceKind::ThreadMenu | SurfaceKind::Outline) => {
                 return self.thread_surface_command(id, rows);
+            }
+            Some(SurfaceKind::Source) => return Some(self.source_command(id)),
+            Some(SurfaceKind::Message) if id == CommandId::ViewSource => {
+                if let Some(message) = self.surfaces.reading() {
+                    return Some(self.open_source(message, Over::Message));
+                }
             }
             _ => {}
         }
@@ -1955,6 +1979,7 @@ impl FocusController {
             Some(SurfaceKind::ThreadMenu | SurfaceKind::Outline) => {
                 Self::thread_surface_answers(id)
             }
+            Some(SurfaceKind::Source) => source::Source::owns(id),
             _ => false,
         };
         if own {
@@ -2151,6 +2176,37 @@ impl FocusController {
         self.bar.places_forgotten();
     }
 
+    fn open_source(&mut self, message: MessageId, over: Over) -> Vec<feed::Step> {
+        self.source = Some(source::Source::new());
+        let mut steps = self
+            .surfaces
+            .opened(SurfaceKind::Source, self.policy.caps.stacking);
+        steps.push(feed::Step::Show(Intent::OpenSource {
+            message,
+            tab: postio_ui::source::Tab::Verification,
+            over,
+        }));
+        steps
+    }
+
+    /// Taken off at once, as a dialog is: the frontend's echo of the close is then nothing.
+    fn source_command(&mut self, id: CommandId) -> Vec<feed::Step> {
+        if id == CommandId::Back {
+            self.surfaces.dismiss(SurfaceKind::Source);
+            self.source = None;
+            let mut steps = vec![feed::Step::Show(Intent::CloseSurface(SurfaceKind::Source))];
+            if self.surfaces.top().is_none() {
+                steps.push(feed::Step::Show(Intent::KeyboardHome));
+            }
+            return steps;
+        }
+        self.source
+            .as_mut()
+            .and_then(|source| source.verb(id))
+            .map(|verb| vec![feed::Step::Show(Intent::Source(verb))])
+            .unwrap_or_default()
+    }
+
     fn forget_closed(&mut self) {
         if !self.surfaces.has(SurfaceKind::Filtered) {
             self.filtered = None;
@@ -2169,6 +2225,9 @@ impl FocusController {
         }
         if !self.surfaces.has(SurfaceKind::Contacts) {
             self.contacts = None;
+        }
+        if !self.surfaces.has(SurfaceKind::Source) {
+            self.source = None;
         }
         self.forget_thread_surfaces();
     }
