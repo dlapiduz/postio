@@ -175,6 +175,10 @@ const CASES: &[(&str, fn())] = &[
         calendar::escape_leaves_the_editor_without_saving as fn(),
     ),
     (
+        "calendar::a_due_reminder_becomes_a_notification_that_says_what_and_when",
+        calendar::a_due_reminder_becomes_a_notification_that_says_what_and_when as fn(),
+    ),
+    (
         "calendar::v_moves_the_ringed_event_to_next_week",
         calendar::v_moves_the_ringed_event_to_next_week as fn(),
     ),

@@ -351,3 +351,44 @@ pub fn hash_deletes_the_ringed_event_and_undo_brings_it_back() {
         );
     });
 }
+
+pub fn a_due_reminder_becomes_a_notification_that_says_what_and_when() {
+    crate::gtk_case(async {
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(("Ada Moreno", "ada@example.test"), "Hello", "Hi.", 5)
+            .await;
+        let (host, sink) = fixture.host_telling();
+        let window = postio_gtk::window::FocusWindow::new(None);
+        gtk::prelude::GtkWindowExt::present(&window);
+        support::keep(postio_gtk::startup::adopt(
+            &window,
+            host,
+            &postio_config::Config::default(),
+        ));
+        support::rows_shown(&window, 1).await;
+        let told: std::rc::Rc<std::cell::RefCell<Vec<String>>> = std::rc::Rc::default();
+        window.set_reminder_sink({
+            let told = std::rc::Rc::clone(&told);
+            move |notice| told.borrow_mut().push(notice.body.clone())
+        });
+        let starts = postio_model::clock::now().to_utc() - Duration::hours(2);
+
+        assert!(sink.emit(postio_core::Event::ReminderDue {
+            event: postio_model::ids::EventId::new(7),
+            title: "Standup".to_owned(),
+            starts,
+            missed: true,
+        }));
+
+        assert!(
+            crate::settle_until(async || !told.borrow().is_empty()).await,
+            "no notification for a due reminder"
+        );
+        assert!(
+            told.borrow()[0].starts_with("While Postio was closed: Standup at "),
+            "{:?}",
+            told.borrow()
+        );
+    });
+}

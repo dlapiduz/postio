@@ -145,6 +145,7 @@ mod imp {
         pub labels: RefCell<Option<Rc<crate::label_picker::LabelPicker>>>,
         pub notifier: RefCell<Option<super::Notifier>>,
         pub notification_sink: RefCell<Option<super::NotificationSink>>,
+        pub reminder_sink: RefCell<Option<Rc<dyn Fn(&postio_ui::notify::ReminderNotice)>>>,
         pub config_path: RefCell<Option<std::path::PathBuf>>,
         pub timeline: RefCell<Option<postio_widgets::startup::Timeline>>,
         pub rules_view: RefCell<Option<Rc<crate::rules::RulesView>>>,
@@ -260,6 +261,7 @@ mod imp {
                 timeline: RefCell::default(),
                 notifier: RefCell::default(),
                 notification_sink: RefCell::default(),
+                reminder_sink: RefCell::default(),
                 capture: RefCell::default(),
                 surfaces: RefCell::default(),
                 told_shown: Cell::default(),
@@ -3245,6 +3247,19 @@ impl FocusWindow {
                     reading.body_landed(*message);
                 }
             }
+            Event::ReminderDue {
+                event,
+                title,
+                starts,
+                missed,
+            } => self.remind(&postio_ui::notify::reminder(
+                event.get(),
+                title,
+                *starts,
+                postio_ui::clock::now().to_utc(),
+                *missed,
+                &chrono::Local,
+            )),
             _ => {}
         }
         self.hear_sync(event);
@@ -3263,6 +3278,37 @@ impl FocusWindow {
 
     pub fn set_notification_sink(&self, sink: impl Fn(&postio_ui::notify::Notification) + 'static) {
         self.imp().notification_sink.replace(Some(Rc::new(sink)));
+    }
+
+    pub fn set_reminder_sink(&self, sink: impl Fn(&postio_ui::notify::ReminderNotice) + 'static) {
+        self.imp().reminder_sink.replace(Some(Rc::new(sink)));
+    }
+
+    fn remind(&self, notice: &postio_ui::notify::ReminderNotice) {
+        let sink = self.imp().reminder_sink.borrow().clone();
+        if let Some(sink) = sink {
+            sink(notice);
+            return;
+        }
+        let Some(application) = gtk::prelude::GtkWindowExt::application(self) else {
+            return;
+        };
+        if application.lookup_action("open-calendar").is_none() {
+            let open = gio::SimpleAction::new("open-calendar", None);
+            open.connect_activate(glib::clone!(
+                #[weak(rename_to = window)]
+                self,
+                move |_, _| {
+                    window.present();
+                    window.act(CommandId::GoToCalendar);
+                }
+            ));
+            application.add_action(&open);
+        }
+        let built = gio::Notification::new(&notice.title);
+        built.set_body(Some(&notice.body));
+        built.add_button("Open", "app.open-calendar");
+        application.send_notification(Some(&notice.identifier), &built);
     }
 
     pub fn set_notifier(&self, notifier: Notifier) {
