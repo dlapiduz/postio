@@ -4,10 +4,7 @@ use postio_model::calendar::{
     AgendaEntry, EventDetail, EventStatus, Frequency, Participation, Repeat,
 };
 use postio_model::ids::{CalendarId, EventId};
-use postio_ui::calendar::{
-    AgendaRow, CalendarStrip, Chip, agenda_rows, conflict_line, empty_line, event_view, keep_label,
-    no_account_line,
-};
+use postio_ui::calendar::{AgendaRow, CalendarStrip, Chip, agenda_rows, empty_line, event_view};
 
 fn at(day: u32, hour: u32, minute: u32) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 11, day, hour, minute, 0)
@@ -142,10 +139,6 @@ fn the_answer_shows_as_a_chip_and_a_queued_change_as_a_mark() {
 fn every_state_has_its_words() {
     assert_eq!(empty_line("this week"), "Nothing on this week.");
     assert_eq!(
-        no_account_line(),
-        "Add a calendar account in Settings to sync"
-    );
-    assert_eq!(
         CalendarStrip::Syncing {
             calendar: "Work".to_owned(),
             done: 340,
@@ -171,11 +164,6 @@ fn every_state_has_its_words() {
         "Work calendar: the server refused the password"
     );
     assert_eq!(CalendarStrip::Synced.text(), "");
-    assert_eq!(
-        conflict_line("caldav.example.com"),
-        "Changed on caldav.example.com too"
-    );
-    assert_eq!(keep_label(), "Keep this one");
 }
 
 #[test]

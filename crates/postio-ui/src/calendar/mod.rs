@@ -164,18 +164,6 @@ pub fn ignored_hint(keywords: &[String]) -> Option<String> {
     }
 }
 
-pub fn no_account_line() -> &'static str {
-    "Add a calendar account in Settings to sync"
-}
-
-pub fn conflict_line(server: &str) -> String {
-    format!("Changed on {server} too")
-}
-
-pub fn keep_label() -> &'static str {
-    "Keep this one"
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CalendarStrip {
     Synced,
