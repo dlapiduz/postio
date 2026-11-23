@@ -1,6 +1,5 @@
-//! The digest window and the digest rule dialog. The digest opens on its summary when the person
-//! has brought a model and one is written, else on its plain list. A reference's email opens in
-//! the digest's own window and Esc returns to it; Linux's reading dialog stacks over the digest.
+//! The digest window and rule dialog. The digest opens on its summary when a model is brought and
+//! one is written, else on its list; a reference's email opens in the digest's own window.
 
 use chrono::{DateTime, Utc};
 use postio_client::protocol::{DigestPreview, DigestRuleDraft};
@@ -50,6 +49,7 @@ pub struct DigestLine {
     pub subject: String,
     pub preview: Option<String>,
     pub time: String,
+    pub summary: MessageSummary,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,7 +61,6 @@ pub struct DigestTopic {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DigestStatement {
     pub index: u32,
-    /// Plain text, never markup.
     pub text: String,
     pub number: u32,
     pub message: MessageId,
@@ -113,6 +112,10 @@ impl DigestWindow {
 
     pub(crate) fn index_of(&self, message: MessageId) -> Option<usize> {
         self.rows.iter().position(|row| row.id == message)
+    }
+
+    pub(crate) fn said(&self, index: usize) -> Option<(String, String)> {
+        self.rows.get(index).map(crate::said_of)
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -225,7 +228,6 @@ impl FocusController {
             .iter()
             .find(|rule| rule.name.trim() == digest.rule.trim())
             .and_then(words::rule_when);
-        // A summary is read only when the person has brought a model.
         let summary = config
             .model_for(postio_config::model::ModelFeature::DigestSummary)
             .is_some();
@@ -628,6 +630,7 @@ impl FocusController {
                     subject: row.subject.clone().unwrap_or_default(),
                     preview: row.preview.clone(),
                     time: postio_ui::row::timestamp(row.received_at, now),
+                    summary: row.clone(),
                 })
                 .collect(),
             focused: window.focused.map(|at| at as u32),
@@ -699,7 +702,7 @@ impl FocusController {
         self.open_rule()
     }
 
-    fn edit_rule(&mut self, name: &str) -> Vec<Step> {
+    pub(crate) fn edit_rule(&mut self, name: &str) -> Vec<Step> {
         let rule = self
             .states
             .config

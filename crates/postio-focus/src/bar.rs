@@ -107,7 +107,6 @@ pub(crate) struct Bar {
     highlighted: Option<u64>,
     /// Searched as typed, not lowered, while the field still begins with it.
     literal: Option<String>,
-    /// An operator at its end is a chip made, not one being typed.
     settled: bool,
 }
 
@@ -344,7 +343,6 @@ impl Bar {
         if !self.is_open() || text == self.typed {
             return Vec::new();
         }
-        // ⌫ on an operator with no value takes the colon; the operator goes whole.
         if let (Some(mode), Some(drop)) = (self.mode, &self.drop)
             && drop.state == DropdownState::Operator
             && drop.value.is_empty()
@@ -511,7 +509,6 @@ impl Bar {
         (!self.places_asked).then(|| self.ask_places())
     }
 
-    /// The controller forgot its requests, so the read on its way will not land.
     pub(crate) fn places_forgotten(&mut self) {
         self.places_asked = false;
     }
@@ -772,7 +769,13 @@ impl FocusController {
     }
 
     fn leave_for(&mut self, name: &str) -> Vec<Step> {
-        let mut steps = self.cursor.leave(self.feed.total());
+        let mut steps = Vec::new();
+        if self.results.is_some() {
+            steps.extend(self.close_quick_look());
+            self.results = None;
+            steps.push(Step::Show(Intent::LeaveResults));
+        }
+        steps.extend(self.cursor.leave(self.feed.total()));
         steps.push(Step::Show(Intent::SingleHeading(None)));
         steps.push(Step::Show(Intent::Place {
             name: name.to_owned(),
@@ -933,7 +936,6 @@ impl FocusController {
         })
     }
 
-    /// Its place is the hits', even when the list has it too.
     pub fn among_hits(&self, message: MessageId) -> bool {
         self.bar.found.iter().any(|hit| hit.message == message)
     }
@@ -1043,8 +1045,6 @@ impl FocusController {
                             text: postio_ui::focus_target::search_saved(said),
                             kind: crate::ToastKind::Notice,
                         })];
-                        // A search that notifies starts seen: its badge counts what arrives after
-                        // it was saved.
                         if let (Some(key), true) =
                             (saved.key, saving.as_ref().is_some_and(|save| save.notify))
                         {
@@ -1123,7 +1123,6 @@ impl Bar {
         self.answer_words(parsed)
     }
 
-    /// Kept on screen until the next answer lands, rather than blinking empty.
     fn kept(&mut self, state: DropdownState) -> Option<Drop> {
         self.drop.take().filter(|drop| drop.state == state)
     }
@@ -1168,7 +1167,6 @@ impl Bar {
             Some(drop) => (drop.landed, drop.offers, drop.ghost),
             None => (None, Vec::new(), None),
         };
-        // A ghost is only drawn while the word still begins with what is typed.
         let ghost = ghost.and(offers.iter().find_map(|(_, offer)| match offer {
             Offer::Word(word) => postio_search::suggest::ghost(typed, &word.text),
             _ => None,
@@ -1642,7 +1640,6 @@ impl Bar {
             drop.latest_asked = None;
         }
         let mut steps = vec![self.draw(None)];
-        // The arrows rest where they were if that row is still drawn, else on the first person.
         let focused = self
             .highlighted
             .and_then(|token| self.person(token))
@@ -1789,7 +1786,6 @@ impl Bar {
                 return Vec::new();
             }
         };
-        // A query still listed keeps its token, so the arrows stay on it.
         let kept = std::mem::take(&mut self.recents);
         self.recents = recents
             .into_iter()
@@ -1805,7 +1801,6 @@ impl Bar {
         self.redraw_empty(None)
     }
 
-    /// Only searches that notify are recounted; the others keep their counts.
     pub(crate) fn heard(&self, event: &postio_core::Event) -> Vec<Step> {
         if !matches!(event, postio_core::Event::NewMail { .. }) || !self.is_open() {
             return Vec::new();
@@ -1822,7 +1817,6 @@ impl Bar {
 
     fn saved_counted(&mut self, answer: Result<Vec<SavedCount>, String>) -> Vec<Step> {
         match answer {
-            // Merged by key: a recount of notifying searches leaves the others' counts.
             Ok(counts) => {
                 for counted in counts {
                     match self
@@ -1857,7 +1851,6 @@ impl Bar {
             return Vec::new();
         };
         let (_, recent) = self.recents.remove(at);
-        // The arrows stay on the row that moved up, or the one above when it was last.
         let next = self
             .recents
             .get(at)
@@ -1940,7 +1933,6 @@ fn same_offer(a: &Offer, b: &Offer) -> bool {
     }
 }
 
-/// `from:`, `to:`, `label:` and `in:`; a space after the value says it is done.
 fn operator_typed(typed: &str) -> Option<(postio_search::query::Field, String, usize)> {
     use postio_search::query::Field;
     if typed.is_empty() || typed.ends_with(char::is_whitespace) {

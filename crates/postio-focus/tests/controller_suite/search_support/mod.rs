@@ -78,6 +78,13 @@ pub fn footer_of(effects: &[Effect]) -> Option<postio_ui::scope::FooterView> {
         })
 }
 
+pub fn shown_but_the_footer(effects: &[Effect]) -> Vec<Intent> {
+    shown(effects)
+        .into_iter()
+        .filter(|intent| !matches!(intent, Intent::Footer(_)))
+        .collect()
+}
+
 pub fn asks(effects: &[Effect]) -> Vec<(Ticket, Request)> {
     effects
         .iter()

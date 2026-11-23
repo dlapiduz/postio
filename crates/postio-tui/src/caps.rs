@@ -1,29 +1,17 @@
-//! What this terminal can do, found out once, before raw mode.
-//!
-//! Colour depth comes from the environment and nothing else, so it is a pure
-//! function and tested as one. The keyboard protocol and the background colour
-//! are asked of the terminal itself; they are read at startup and handed in,
-//! and a terminal that does not answer is taken to lack them
-//! (`data-model.md`, Terminal session).
+//! What this terminal can do, found out once before raw mode. Colour depth comes from the
+//! environment alone; the keyboard protocol and background are asked of the terminal at startup,
+//! and a terminal that does not answer is taken to lack them.
 
-/// How many colours the terminal draws.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Colour {
-    /// None: `NO_COLOR`, or a dumb terminal. Marks carry every meaning.
     None,
-    /// The sixteen ANSI colours, as the user's theme defines them.
     Ansi16,
-    /// The 256-colour palette.
     Ansi256,
-    /// Any RGB colour.
     TrueColor,
 }
 
 impl Colour {
-    /// The colour depth these environment variables describe.
-    ///
-    /// `NO_COLOR`, when set to anything non-empty, wins over everything
-    /// (<https://no-color.org>).
+    /// `NO_COLOR`, when non-empty, wins over everything (<https://no-color.org>).
     pub fn from_env(no_color: Option<&str>, colorterm: Option<&str>, term: Option<&str>) -> Colour {
         if no_color.is_some_and(|value| !value.is_empty()) {
             return Colour::None;
@@ -38,7 +26,6 @@ impl Colour {
         }
     }
 
-    /// The colour depth of this process's environment.
     pub fn detect() -> Colour {
         let var = |name| std::env::var(name).ok();
         Colour::from_env(
@@ -49,32 +36,23 @@ impl Colour {
     }
 }
 
-/// Whether the terminal's background is light or dark.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Background {
-    /// A light background.
     Light,
-    /// A dark background.
     Dark,
-    /// The terminal did not say.
     #[default]
     Unknown,
 }
 
-/// Everything the frontend knows about its terminal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Caps {
-    /// How many colours.
     pub colour: Colour,
     /// Whether the kitty keyboard protocol is spoken, so `ctrl+Return` is
     /// not `Return`.
     pub keyboard_enhancement: bool,
-    /// Whether mouse events are wanted (`[tui].mouse`).
     pub mouse: bool,
-    /// The background, for choosing readable colours.
     pub background: Background,
-    /// Reserved for the next iteration: which image protocol, if any
-    /// (research R8). Always `None` in this one.
+    /// Always `None`: reserved for an image protocol.
     pub graphics: Option<()>,
 }
 

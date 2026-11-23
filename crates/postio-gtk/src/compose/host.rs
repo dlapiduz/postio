@@ -210,6 +210,7 @@ impl ComposerHost for DialogHost {
             } else {
                 self.dialog.present(Some(&window));
             }
+            window.sync_surfaces();
         }
         crate::a11y::teach_shortcuts(&self.surface);
         crate::motion::keep_to_budget(&self.surface);
@@ -243,6 +244,7 @@ impl ComposerHost for DialogHost {
                 },
                 None => window.focus_cursor(),
             }
+            window.sync_surfaces();
         }
     }
 

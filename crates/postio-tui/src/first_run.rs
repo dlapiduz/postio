@@ -1,58 +1,34 @@
-//! The first run: an address, its servers and a password, then how far back
-//! to sync (US7).
-//!
-//! The desktop's first-run screen, in a terminal: the same three steps, the
-//! same states (`postio_ui::onboarding::Status`), the same sentences. What is
-//! typed is kept here; finding the servers and proving the password are the
-//! host's (`Req::Discover`, `Req::AddAccount`), which do it as the desktop
-//! does.
+//! The first run, as in the desktop: address, servers and password, then how far back to sync.
+//! What is typed is kept here; finding servers and proving the password are the host's.
 
 use crossterm::event::{KeyCode, KeyEvent};
 use postio_ui::onboarding::{Server, Settings, Status, Submission, SyncWindow};
 use tui_input::Input;
 use tui_input::backend::crossterm::EventHandler;
 
-/// Which field the keyboard is in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Field {
-    /// The address.
     Address,
-    /// The name to send as.
     Name,
-    /// The password.
     Password,
-    /// The incoming server, when it has to be typed.
     Incoming,
-    /// The outgoing server, when it has to be typed.
     Outgoing,
-    /// The OAuth client's id, for a provider that signs in in a browser.
     ClientId,
-    /// Its secret, when the provider issued one.
     ClientSecret,
 }
 
-/// What a key in the first run asks for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Asked {
-    /// Nothing beyond a redraw.
     Nothing,
-    /// Look up this address's servers.
     Discover(String),
-    /// Prove and save this account.
     Add(Box<Submission>),
-    /// Sync this far back, and start.
     Start(SyncWindow),
-    /// Begin a browser sign-in.
     BeginOAuth(Box<Submission>),
-    /// Open the consent URL, the person having asked.
     Open(String),
-    /// Copy the consent URL to the clipboard.
     Copy(String),
-    /// Give up the browser sign-in for this address.
     CancelOAuth(String),
 }
 
-/// The first run, as far as it has got.
 pub struct FirstRun {
     status: Status,
     address: Input,
@@ -63,9 +39,7 @@ pub struct FirstRun {
     client_id: Input,
     client_secret: Input,
     field: Field,
-    /// Where a browser sign-in waits for the person.
     sign_in: Option<postio_ui::onboarding::BrowserSignIn>,
-    /// The servers, once found or typed.
     settings: Option<Settings>,
     /// Signing in again to an account that exists, not adding one.
     repair: bool,
@@ -121,7 +95,6 @@ impl FirstRun {
         }
     }
 
-    /// Adding an account beside the ones there are.
     pub fn another() -> Self {
         FirstRun {
             another: true,
@@ -129,13 +102,11 @@ impl FirstRun {
         }
     }
 
-    /// Whether there is mail to go back to: this was asked for, not the
-    /// first screen of a store with no account.
+    /// True when asked for, not the first screen of a store with no account.
     pub fn leavable(&self) -> bool {
         self.repair || self.another
     }
 
-    /// What the screen is for.
     pub fn heading(&self) -> &'static str {
         if self.repair {
             "Sign in again"
@@ -146,7 +117,6 @@ impl FirstRun {
         }
     }
 
-    /// The keys, while nothing more pressing is to be said.
     pub fn hint(&self) -> &'static str {
         if self.leavable() {
             "Enter moves on. Tab changes field. Esc goes back."
@@ -155,34 +125,28 @@ impl FirstRun {
         }
     }
 
-    /// Whether this is a sign-in again rather than a first account.
     pub fn repairing(&self) -> bool {
         self.repair
     }
 
-    /// Where the first run is.
     pub fn status(&self) -> &Status {
         &self.status
     }
 
-    /// Where the keyboard is.
     pub fn field(&self) -> Field {
         self.field
     }
 
-    /// The servers found, or suggested for typing.
     pub fn settings(&self) -> Option<&Settings> {
         self.settings.as_ref()
     }
 
-    /// Whether the servers have to be typed: nothing was found for the
-    /// address, as the desktop's manual step.
     pub fn manual(&self) -> bool {
         matches!(self.status, Status::Manual { .. })
             || (matches!(self.status, Status::Failed(_)) && self.settings.is_none())
     }
 
-    /// What a field holds, for drawing. The password as dots.
+    /// The password as dots.
     pub fn value(&self, field: Field) -> String {
         match field {
             Field::Address => self.address.value().to_owned(),
@@ -195,8 +159,6 @@ impl FirstRun {
         }
     }
 
-    /// Whether this provider signs in in a browser rather than with a
-    /// password.
     pub fn browser(&self) -> bool {
         self.settings
             .as_ref()
@@ -204,23 +166,19 @@ impl FirstRun {
             && !self.manual()
     }
 
-    /// Where the browser sign-in waits, while it does.
     pub fn sign_in(&self) -> Option<&postio_ui::onboarding::BrowserSignIn> {
         self.sign_in.as_ref()
     }
 
-    /// The consent URL came back: the sign-in waits for the person.
     pub fn consent(&mut self, sign_in: postio_ui::onboarding::BrowserSignIn) {
         self.sign_in = Some(sign_in);
         self.status = Status::WaitingForBrowser;
     }
 
-    /// The address being signed in.
     pub fn address(&self) -> String {
         self.address.value().trim().to_owned()
     }
 
-    /// The fields shown at this step, in order.
     pub fn fields(&self) -> Vec<Field> {
         match (&self.status, self.manual()) {
             (Status::Idle | Status::Probing, _) => vec![Field::Address],
@@ -241,7 +199,6 @@ impl FirstRun {
         }
     }
 
-    /// What discovery found.
     pub fn discovered(&mut self, status: Status) {
         match &status {
             Status::Found(settings) => {
@@ -272,7 +229,6 @@ impl FirstRun {
         self.status = status;
     }
 
-    /// The host could not be asked, or said no.
     pub fn failed(&mut self, sentence: String) {
         self.sign_in = None;
         self.field = if self.browser() {
@@ -283,12 +239,10 @@ impl FirstRun {
         self.status = Status::Failed(sentence);
     }
 
-    /// The account is saved: the last question is how far back to sync.
     pub fn added(&mut self) {
         self.status = Status::SyncWindow;
     }
 
-    /// A key, and what it asks for.
     pub fn key(&mut self, key: KeyEvent) -> Asked {
         if self.status == Status::SyncWindow {
             return match key.code {
@@ -299,8 +253,7 @@ impl FirstRun {
             };
         }
         if self.status == Status::WaitingForBrowser {
-            // Nothing leaves this machine on its own: Enter opens the URL,
-            // `y` copies it, Escape gives the sign-in up.
+            // Nothing leaves the machine unasked: Enter opens the URL, `y` copies it.
             let url = self
                 .sign_in
                 .as_ref()
@@ -375,7 +328,6 @@ impl FirstRun {
         }
     }
 
-    /// What would be submitted, once there is enough of it.
     fn submission(&self) -> Option<Submission> {
         let address = self.address.value().trim().to_owned();
         if self.browser() {

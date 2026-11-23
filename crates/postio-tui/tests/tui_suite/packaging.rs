@@ -1,12 +1,3 @@
-//! The two Flatpaks share one store (FR-040, research R10).
-//!
-//! Each package gets a private data directory unless it asks otherwise, and a
-//! package that forgot one grant would quietly have a store or a config of
-//! its own: two mailboxes that each look fine. So the grants are checked side
-//! by side. Each package runs its own app and nothing else: whichever opens
-//! the store first has it, and the other is told to close it -- there is no
-//! background service to ship, and no runtime directory to reach one in.
-
 use std::path::PathBuf;
 
 fn manifest(name: &str) -> String {
@@ -51,10 +42,8 @@ fn each_package_installs_its_own_app_and_no_daemon() {
     }
 }
 
-/// The helper reads strangers' PDFs and recovers from a page that panics
-/// (`catch_unwind` per page), which `release-tui`'s `panic = "abort"` would
-/// turn into a lost file. So the terminal package builds it under `release`,
-/// which unwinds, and ships it beside the app (#1824).
+/// The helper recovers from a page that panics (`catch_unwind`), which `panic = "abort"` would
+/// turn into a lost file, so the package builds it under `release` (#1824).
 #[test]
 fn the_terminal_package_ships_an_unwinding_extraction_helper() {
     let manifest = manifest("dev.postio.PostioTui.json");

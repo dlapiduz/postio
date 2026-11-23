@@ -1,6 +1,4 @@
-//! A small rounded box over the window, for the questions and the forms
-//! that are not the open message: the sweep's question, the rule dialog and
-//! the capture frame.
+//! A small rounded box over the window, for questions and forms.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -9,10 +7,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Clear};
 use crate::theme::{Role, Theme};
 use crate::view::hit::{Hits, Target};
 
-/// A box `width` by `height` cells, centred in `area` and no larger than
-/// it, drawn over whatever is there, with `title` in its top edge. A click
-/// anywhere on the screen lands on nothing underneath. Answers what is inside
-/// the border.
+/// Centred in `area`, no larger than it, with `title` in its top edge. Answers the inside.
 pub fn draw(
     frame: &mut Frame,
     area: Rect,
@@ -47,21 +42,13 @@ pub fn draw(
     inside
 }
 
-/// One button of a box: its words, the key that runs it, what a click on it
-/// is, and whether it is the one that does the thing.
 pub struct Button {
-    /// Its words.
     pub words: String,
-    /// The key that runs it, as it is drawn; empty for none.
     pub key: String,
-    /// What a click on it stands for.
     pub target: Target,
-    /// Whether it is the box's own act, drawn bold.
     pub primary: bool,
 }
 
-/// `buttons` on the row `y`, side by side and centred in `inside`, each
-/// `[ words key ]` and each a click.
 pub fn buttons(
     frame: &mut Frame,
     inside: Rect,

@@ -6,13 +6,13 @@ postio-body 833
 postio-calendar 51
 postio-classify 220
 postio-client 121
-postio-config 341
+postio-config 338
 postio-contact-sync 41
 postio-core 772
 postio-demo 57
 postio-extract 100
 postio-ffi 2477
-postio-focus 704
+postio-focus 601
 postio-gmail 43
 postio-gtk 1559
 postio-host 578
@@ -30,8 +30,8 @@ postio-storyboard 97
 postio-sync 994
 postio-test-support 106
 postio-transport 69
-postio-tui 2927
-postio-ui 1669
+postio-tui 498
+postio-ui 1667
 postio-vault 16
 postio-vcard 12
 postio-widgets 2231

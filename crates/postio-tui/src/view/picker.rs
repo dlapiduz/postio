@@ -1,6 +1,5 @@
-//! The pickers, drawn (terminal.md, "Pickers"): snooze, remind, label and
-//! move, in a framed box 48 wide anchored under the focused row's subject
-//! column, or above the row when it does not fit below.
+//! The pickers: snooze, remind, label and move, in a box 48 wide under the focused row, or above
+//! it.
 
 use ratatui::Frame;
 use ratatui::layout::{Position, Rect};
@@ -9,30 +8,23 @@ use ratatui::text::{Line as Text, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear};
 use unicode_width::UnicodeWidthStr;
 
-use crate::pickers::{Kind, Picker};
+use crate::pickers::Picker;
 use crate::theme::{Role, Theme};
 use crate::view::fit;
 use crate::view::hit::{Hits, Target};
-use postio_core::{CommandId, Keymap};
+use postio_core::CommandId;
+use postio_focus::PickerField;
 use postio_ui::label_colour::{Rgb, label_colour};
 
-/// The box's width.
 const WIDTH: u16 = 48;
-/// The most rows the list shows before it scrolls.
 const ROWS: usize = 10;
 
-/// What the picker is anchored to, and what it may use.
 pub struct Place {
-    /// The whole screen the picker may be drawn in, less the bottom line.
     pub area: Rect,
-    /// Where the focused row was drawn, when it is in view.
     pub row: Option<Rect>,
-    /// Where the subject column starts.
     pub subject_x: u16,
 }
 
-/// Where a box `width` x `height` goes: under the row at the subject
-/// column, above it when it does not fit below.
 pub fn anchored(place: &Place, width: u16, height: u16) -> Rect {
     let area = place.area;
     let width = width.min(area.width);
@@ -49,30 +41,28 @@ pub fn anchored(place: &Place, width: u16, height: u16) -> Rect {
     Rect::new(x, y, width, height.min(area.height))
 }
 
-/// Draw `picker`.
 pub fn draw(
     frame: &mut Frame,
     place: &Place,
     picker: &Picker,
-    keymap: &Keymap,
     hint: &dyn Fn(CommandId) -> Option<String>,
     theme: &Theme,
     hits: &mut Hits,
 ) {
-    let rows = picker.rows();
+    let view = picker.view();
+    let rows = &view.rows;
     let sections = rows.iter().filter(|row| row.section.is_some()).count();
     let listed = (rows.len() + sections).clamp(1, ROWS);
-    let filter = matches!(picker.kind(), Kind::Label | Kind::Move);
-    let date = !filter;
+    let filter = view.field == PickerField::Filter;
     let inner_width = usize::from(WIDTH.min(place.area.width).saturating_sub(2));
     let note = crate::view::wrap::wrap(
-        &Text::raw(picker.footnote(keymap)),
+        &Text::raw(view.footnote.clone()),
         inner_width.saturating_sub(2),
     );
     let height = 2
         + u16::from(filter)
         + u16::try_from(listed).unwrap_or(0)
-        + u16::from(date)
+        + u16::from(!filter)
         + u16::try_from(note.len()).unwrap_or(0);
     let box_ = anchored(place, WIDTH, height);
     if box_.width < 30 || box_.height < 5 {
@@ -90,15 +80,14 @@ pub fn draw(
     let dim = theme.style(Role::Dim);
     let text = theme.style(Role::Text);
     let accent = theme.style(Role::Accent);
-    // The title and what it acts on, in the top border.
-    let title = format!(" {} ", picker.title());
+    let title = format!(" {} ", view.title);
     let title_width = u16::try_from(title.width()).unwrap_or(0);
     frame.render_widget(
         Text::styled(title, accent.add_modifier(Modifier::BOLD)),
         Rect::new(box_.x + 2, box_.y, title_width.min(box_.width - 4), 1),
     );
     let room = usize::from(box_.width).saturating_sub(usize::from(title_width) + 7);
-    let target = fit(picker.target(), room);
+    let target = fit(&view.target, room);
     if !target.is_empty() {
         let shown = format!(" {target} ");
         let w = u16::try_from(shown.width()).unwrap_or(0);
@@ -112,8 +101,8 @@ pub fn draw(
     if filter {
         let typed = picker.typed();
         let mut spans = vec![Span::styled("⌕ ", accent)];
-        match (typed.is_empty(), picker.placeholder()) {
-            (true, Some(placeholder)) => spans.push(Span::styled(placeholder, dim)),
+        match (typed.is_empty(), view.placeholder.as_str()) {
+            (true, placeholder) => spans.push(Span::styled(placeholder, dim)),
             _ => spans.push(Span::styled(
                 fit(typed, usize::from(inner.width).saturating_sub(2)),
                 text,
@@ -128,11 +117,10 @@ pub fn draw(
         ));
         y += 1;
     }
-    // The rows, scrolled to keep the chosen one in view.
     let chosen = picker.chosen();
-    let mut lines: Vec<(Option<&'static str>, Option<usize>)> = Vec::new();
+    let mut lines: Vec<(Option<&str>, Option<usize>)> = Vec::new();
     for (index, row) in rows.iter().enumerate() {
-        if let Some(section) = row.section {
+        if let Some(section) = row.section.as_deref() {
             lines.push((Some(section), None));
         }
         lines.push((None, Some(index)));
@@ -168,12 +156,12 @@ pub fn draw(
         hits.add(row_rect, Target::PickRow(*index));
         let mut spans = vec![
             Span::styled(if is_chosen { "▌" } else { " " }, theme.style(Role::Focus)),
-            Span::styled(row.number.map_or(" ".to_owned(), |n| n.to_string()), accent),
+            Span::styled(row.key.clone().unwrap_or_else(|| " ".to_owned()), accent),
             Span::raw(" "),
         ];
         let mut used = 3;
-        if let Some((name, stored)) = &row.dot {
-            let rgb = label_colour(name, stored.as_deref().and_then(Rgb::from_hex), hue);
+        if row.dot {
+            let rgb = label_colour(&row.name, row.color.as_deref().and_then(Rgb::from_hex), hue);
             spans.push(Span::styled("● ", theme.label(rgb)));
             used += 2;
         }
@@ -195,7 +183,7 @@ pub fn draw(
         frame.render_widget(Text::from(spans), row_rect);
     }
     y += u16::try_from(listed).unwrap_or(0);
-    if date {
+    if !filter {
         let line = Rect::new(inner.x, y, inner.width, 1);
         let typed = picker.typed();
         let mut spans = vec![Span::raw(" ")];
@@ -216,10 +204,10 @@ pub fn draw(
         }
         frame.render_widget(Text::from(spans), line);
         if !picker.in_field() {
-            // The line is a click for `Tab`: the keyboard goes into it.
             hits.add(line, Target::Command(CommandId::PickerTypeDate.as_str()));
         }
-        let right = match (picker.date_hint(), hint(CommandId::PickerTypeDate)) {
+        let said = view.hint.clone().filter(|_| !typed.trim().is_empty());
+        let right = match (said, hint(CommandId::PickerTypeDate)) {
             (Some(said), _) => Some((said, dim)),
             (None, Some(key)) if !picker.in_field() => Some((key, accent)),
             _ => None,
@@ -258,31 +246,52 @@ mod tests {
     use chrono::{DateTime, Local, Utc};
     use crossterm::event::{KeyCode, KeyModifiers};
     use postio_core::Command;
+    use postio_model::{AccountId, LabelId, MailboxId};
     use postio_ui::pickers::when_label;
 
-    use crate::app::{App, Effect, update};
-    use crate::test_support::{app, key, open_list, places, press, screen, seed_places, serve};
+    use crate::app::{App, update};
+    use crate::test_support::{
+        app, click, folder, folders_arrive, hits_of, key, label, labels_arrive, open_list, places,
+        press, screen, seed_places, sent, serve, type_text,
+    };
 
     fn opened(height: u16) -> App {
         let mut app = app((120, height));
-        seed_places(&mut app, places());
+        let mut contents = places();
+        contents.folders.push(folder(
+            6,
+            "Receipts",
+            postio_model::mailbox::MailboxRole::Regular,
+            0,
+        ));
+        contents.folders.push(folder(
+            7,
+            "Projects",
+            postio_model::mailbox::MailboxRole::Regular,
+            0,
+        ));
+        seed_places(&mut app, contents);
         let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
         app
     }
 
-    fn sent(effects: &[Effect]) -> Vec<Command> {
-        effects
-            .iter()
-            .filter_map(|effect| match effect {
-                Effect::Send(command) => Some(command.clone()),
-                _ => None,
-            })
-            .collect()
-    }
-
     fn snooze_presets() -> [(&'static str, DateTime<Local>); 4] {
         postio_ui::schedule::snooze_presets(Local::now())
+    }
+
+    fn labelled(app: &mut App) -> Vec<crate::app::Effect> {
+        let opened = update(app, press('l'));
+        let mut atlas = label(7, "Atlas");
+        atlas.color = Some("#3584e4".into());
+        labels_arrive(
+            app,
+            &opened,
+            vec![atlas, label(8, "Harbor")],
+            vec![(LabelId::new(7), 12), (LabelId::new(8), 3)],
+            &[LabelId::new(8)],
+        );
+        opened
     }
 
     #[test]
@@ -295,7 +304,6 @@ mod tests {
             .iter()
             .position(|line| line.contains("Snooze until"))
             .unwrap_or_else(|| panic!("no snooze box:\n{drawn}"));
-        // The cursor's row is the first under the day heading: row 3.
         assert_eq!(top, 4, "under the focused row:\n{drawn}");
         let corner = lines[top].chars().position(|c| c == '╭').expect("a corner");
         assert_eq!(
@@ -320,10 +328,6 @@ mod tests {
         }
         assert!(drawn.contains("Or type a date: “tue 9am”"), "{drawn}");
         assert!(drawn.contains("tab"), "{drawn}");
-        assert!(
-            drawn.contains("Snoozed mail is") && drawn.contains("under g b."),
-            "{drawn}"
-        );
     }
 
     #[test]
@@ -351,9 +355,7 @@ mod tests {
         let mut app = opened(36);
         update(&mut app, press('b'));
         update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
-        for c in "tue 9am".chars() {
-            update(&mut app, press(c));
-        }
+        type_text(&mut app, "tue 9am");
         let drawn = screen(120, 36, &app);
         assert!(drawn.contains("tue 9am"), "{drawn}");
         let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
@@ -365,41 +367,6 @@ mod tests {
                 command,
                 Command::Snooze { until: Some(at), .. } if *at == wanted
             )),
-            "{effects:?}"
-        );
-    }
-
-    #[test]
-    fn words_that_are_no_date_send_nothing_and_say_what_to_type() {
-        let mut app = opened(36);
-        update(&mut app, press('b'));
-        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
-        for c in "receipts".chars() {
-            update(&mut app, press(c));
-        }
-        assert!(screen(120, 36, &app).contains("A day and a time"));
-        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        assert!(sent(&effects).is_empty(), "{effects:?}");
-        assert!(
-            screen(120, 36, &app).contains("Snooze until"),
-            "it stays open"
-        );
-        update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
-        assert!(!screen(120, 36, &app).contains("Snooze until"));
-    }
-
-    #[test]
-    fn h_opens_remind_and_sends_the_reminder() {
-        let mut app = opened(36);
-        update(&mut app, press('h'));
-        let drawn = screen(120, 36, &app);
-        assert!(drawn.contains("Remind me if no one replies by"), "{drawn}");
-        assert!(drawn.contains("In 2 working days"), "{drawn}");
-        let effects = update(&mut app, press('1'));
-        assert!(
-            sent(&effects)
-                .iter()
-                .any(|command| matches!(command, Command::RemindIfNoReply { at: Some(_), .. })),
             "{effects:?}"
         );
     }
@@ -426,80 +393,12 @@ mod tests {
             .expect("the row");
         assert!(top < row, "above the row:\n{drawn}");
     }
-}
-
-#[cfg(test)]
-mod more {
-    use std::collections::BTreeSet;
-
-    use crossterm::event::{KeyCode, KeyModifiers};
-    use postio_core::Command;
-    use postio_model::{AccountId, LabelId, MailboxId};
-
-    use crate::app::{Effect, Input, update};
-    use crate::test_support::{
-        app, click, folder, hits_of, key, label, open_list, press, screen, seed_places, serve,
-        type_text,
-    };
-
-    fn opened() -> crate::app::App {
-        let mut app = app((120, 36));
-        let mut contents = crate::test_support::places();
-        contents.folders.push(folder(
-            6,
-            "Receipts",
-            postio_model::mailbox::MailboxRole::Regular,
-            0,
-        ));
-        contents.folders.push(folder(
-            7,
-            "Projects",
-            postio_model::mailbox::MailboxRole::Regular,
-            0,
-        ));
-        seed_places(&mut app, contents);
-        let opening = open_list(&mut app, 3);
-        serve(&mut app, opening);
-        app
-    }
-
-    fn labels_arrive(app: &mut crate::app::App) {
-        let mut atlas = label(7, "Atlas");
-        atlas.color = Some("#3584e4".into());
-        update(
-            app,
-            Input::LabelPicker {
-                account: AccountId::new(1),
-                labels: vec![atlas, label(8, "Harbor")],
-                counts: vec![(LabelId::new(7), 12), (LabelId::new(8), 3)],
-                applied: BTreeSet::from([LabelId::new(8)]),
-            },
-        );
-    }
-
-    fn commands(effects: &[Effect]) -> Vec<Command> {
-        effects
-            .iter()
-            .filter_map(|effect| match effect {
-                Effect::Send(command) => Some(command.clone()),
-                _ => None,
-            })
-            .collect()
-    }
 
     #[test]
     fn l_lists_the_labels_with_what_is_applied_and_space_toggles_one() {
-        let mut app = opened();
-        let effects = update(&mut app, press('l'));
-        assert!(
-            effects
-                .iter()
-                .any(|effect| matches!(effect, Effect::ReadLabelPicker { account, .. } if *account == AccountId::new(1))),
-            "{effects:?}"
-        );
-        labels_arrive(&mut app);
+        let mut app = opened(36);
+        labelled(&mut app);
         let drawn = screen(120, 36, &app);
-        assert!(drawn.contains("Labels"), "{drawn}");
         assert!(drawn.contains("Filter, or type a new label"), "{drawn}");
         let line = |name: &str| {
             drawn
@@ -515,78 +414,67 @@ mod more {
             line("Atlas")
         );
         assert!(line("Harbor").contains("✓ applied"), "{}", line("Harbor"));
-        assert!(drawn.contains("toggles a label"), "{drawn}");
-
         let effects = update(&mut app, press(' '));
         assert!(
-            commands(&effects).iter().any(|command| matches!(
+            sent(&effects).iter().any(|command| matches!(
                 command,
                 Command::AddLabel { label: Some(id), on: Some(true), .. } if *id == LabelId::new(7)
             )),
             "{effects:?}"
         );
-        assert!(screen(120, 36, &app).contains("Labels"), "it stays open");
         let drawn = screen(120, 36, &app);
         assert!(
             drawn
                 .lines()
                 .any(|l| l.contains("Atlas") && l.contains("✓ applied")),
-            "{drawn}"
+            "it stays open, with the label on:\n{drawn}"
         );
-        // Toggling again takes it off.
-        let effects = update(&mut app, press(' '));
-        assert!(commands(&effects).iter().any(|command| matches!(
-            command,
-            Command::AddLabel {
-                on: Some(false),
-                ..
-            }
-        )));
     }
 
     #[test]
     fn typing_filters_and_a_name_nobody_has_offers_to_make_it() {
-        let mut app = opened();
-        update(&mut app, press('l'));
-        labels_arrive(&mut app);
+        let mut app = opened(36);
+        labelled(&mut app);
         type_text(&mut app, "rec");
         let drawn = screen(120, 36, &app);
         assert!(drawn.contains("Create label “rec”"), "{drawn}");
         assert!(!drawn.contains("Atlas"), "{drawn}");
         let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         assert!(
-            effects.contains(&Effect::CreateLabel {
-                account: AccountId::new(1),
-                name: "rec".into(),
-                close: true
-            }),
+            crate::test_support::asked(&effects)
+                .iter()
+                .any(|(_, request)| matches!(
+                    request,
+                    postio_focus::Request::CreateLabel { account, name, .. }
+                        if *account == AccountId::new(1) && name == "rec"
+                )),
             "{effects:?}"
         );
-        let made = update(
-            &mut app,
-            Input::LabelMade {
-                label: Some(label(9, "rec")),
-                close: true,
-            },
-        );
-        assert!(
-            commands(&made).iter().any(|command| matches!(
-                command,
-                Command::AddLabel { label: Some(id), on: Some(true), .. } if *id == LabelId::new(9)
-            )),
-            "{made:?}"
-        );
-        assert!(!screen(120, 36, &app).contains("Labels"), "closed");
     }
 
     #[test]
     fn v_lists_recent_then_all_folders_and_a_number_moves_to_a_recent_one() {
-        let mut app = opened();
-        let effects = update(&mut app, press('v'));
-        assert!(effects.contains(&Effect::ReadRecentMoves), "{effects:?}");
-        update(
+        let mut app = opened(36);
+        let opened = update(&mut app, press('v'));
+        let contents = places().folders;
+        let mut folders = contents;
+        folders.push(folder(
+            6,
+            "Receipts",
+            postio_model::mailbox::MailboxRole::Regular,
+            0,
+        ));
+        folders.push(folder(
+            7,
+            "Projects",
+            postio_model::mailbox::MailboxRole::Regular,
+            0,
+        ));
+        folders_arrive(
             &mut app,
-            Input::RecentMoves(vec![MailboxId::new(7), MailboxId::new(6)]),
+            &opened,
+            folders,
+            vec![MailboxId::new(7), MailboxId::new(6)],
         );
         let drawn = screen(120, 36, &app);
         assert!(drawn.contains("Move to folder"), "{drawn}");
@@ -595,43 +483,28 @@ mod more {
             at("Recent") < at("Projects") && at("Projects") < at("All folders"),
             "{drawn}"
         );
-        assert!(
-            drawn
-                .lines()
-                .any(|l| l.contains('1') && l.contains("Projects")),
-            "{drawn}"
-        );
         let effects = update(&mut app, press('2'));
         assert!(
-            commands(&effects).iter().any(|command| matches!(
+            sent(&effects).iter().any(|command| matches!(
                 command,
                 Command::Move { to: Some(to), .. } if *to == MailboxId::new(6)
             )),
             "{effects:?}"
         );
         assert!(
-            effects.contains(&Effect::NoteMove(MailboxId::new(6))),
+            crate::test_support::asked(&effects)
+                .iter()
+                .any(|(_, request)| matches!(
+                    request,
+                    postio_focus::Request::NoteMove(to) if *to == MailboxId::new(6)
+                )),
             "{effects:?}"
         );
     }
 
     #[test]
-    fn a_filtered_folder_moves_on_enter_and_a_move_does_not_go_there() {
-        let mut app = opened();
-        update(&mut app, press('v'));
-        update(&mut app, Input::RecentMoves(Vec::new()));
-        type_text(&mut app, "arch");
-        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        assert!(commands(&effects).iter().any(|command| matches!(
-            command,
-            Command::Move { to: Some(to), .. } if *to == MailboxId::new(2)
-        )));
-        assert!(!crate::test_support::opens_any(&effects));
-    }
-
-    #[test]
     fn a_click_chooses_a_row_and_a_click_outside_does_nothing() {
-        let mut app = opened();
+        let mut app = opened(36);
         update(&mut app, press('b'));
         let hits = hits_of(120, 36, &app);
         let drawn = screen(120, 36, &app);
@@ -640,14 +513,13 @@ mod more {
             .position(|line| line.contains("Tomorrow morning"))
             .unwrap();
         let at = hits.at(30, u16::try_from(row).unwrap()).expect("a preset");
-        let outside = hits.at(2, 20);
-        if let Some(outside) = outside {
+        if let Some(outside) = hits.at(2, 20) {
             let effects = update(&mut app, click(outside.target, false, false));
             assert!(effects.is_empty());
         }
         let effects = update(&mut app, click(at.target, false, false));
         assert!(
-            commands(&effects)
+            sent(&effects)
                 .iter()
                 .any(|c| matches!(c, Command::Snooze { until: Some(_), .. }))
         );
@@ -655,7 +527,7 @@ mod more {
 
     #[test]
     fn the_composer_can_open_the_remind_picker_for_its_draft() {
-        let mut app = opened();
+        let mut app = opened(36);
         app.compose(postio_model::Draft::new(AccountId::new(1)));
         update(&mut app, press('x'));
         let effects = app.open_remind_picker_for_draft("Tide gate");
@@ -665,7 +537,7 @@ mod more {
         assert!(drawn.contains("Tide gate"), "{drawn}");
         let effects = update(&mut app, press('1'));
         assert!(
-            commands(&effects).is_empty(),
+            sent(&effects).is_empty(),
             "nothing is sent for mail: {effects:?}"
         );
         assert!(

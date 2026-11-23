@@ -19,7 +19,7 @@ expect = "The inbox opens with the cursor ring on its first row and the keyboard
 id      = "empty"
 command = "go_to_snoozed"
 settle  = { until = { rows.count = 0 }, watch_ms = 500 }
-check   = { scope = "Snoozed", app.focus.empty.heading = "Nothing snoozed", keyboard.reachable = true, app.focus.keyboard.on_control = false, app.focus.footer.title = "" }
+check   = { scope = "Snoozed", app.focus.empty.heading = "Nothing snoozed", keyboard.reachable = true, app.focus.keyboard.on_control = false, app.focus.footer.title = { absent = true } }
 expect  = "Snoozed is empty and says so. No shortcut button wears a focus ring: the keyboard rests on the page, so Space or Return would press nothing. The footer names no message: the inbox's row is not here, and no verb is offered on it."
 
 [[step]]

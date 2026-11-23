@@ -183,6 +183,20 @@ pub fn digest_footer(rule: &str, count: usize, keymap: &Keymap) -> FooterView {
     }
 }
 
+pub fn outgoing(subject: &str, verbs: &[CommandId], keymap: &Keymap) -> FooterView {
+    let keys = crate::focus_dialog::SEND_TOOLBAR
+        .iter()
+        .filter(|verb| verbs.contains(&verb.command))
+        .filter_map(|verb| hints::hint(keymap, verb.command, &verb.label.to_lowercase()))
+        .map(|hint| (hints::short(&hint.key), hint.label))
+        .collect();
+    FooterView {
+        title: subject.to_owned(),
+        keys,
+        note: None,
+    }
+}
+
 /// Escape goes back to the results, so the footer says so rather than "back to inbox" (#2193).
 pub fn over_results(mut view: FooterView, keymap: &Keymap) -> FooterView {
     if let Some(hint) = hints::hint(keymap, CommandId::Back, "back to results") {

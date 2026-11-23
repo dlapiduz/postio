@@ -1,19 +1,18 @@
-//! The list, driven by `postio_focus::FocusController`: its intents become
-//! this app's cursor, selection, rows and toast.
+//! The list, driven by `postio_focus::FocusController`.
 
-use postio_focus::{Effect as Said, Input as Told, Intent, ToastKind};
+use postio_focus::{Effect as Said, Input as Told, Intent, SurfaceKind, ToastKind};
 
 use super::{App, Effect, TOAST, Tone};
 use crate::focus::{Held, RowsView};
 
 impl App {
-    /// Tell the controller `input` over the rows held, and do what it says.
     pub(super) fn tell(&mut self, input: Told) -> Vec<Effect> {
         let said = self.ctl.handle_on(input, &RowsView(&self.list));
-        self.carry_out(said)
+        let mut effects = self.carry_out(said);
+        effects.extend(self.drop_closed_composer());
+        effects
     }
 
-    /// Open `scope`: the controller reads it, and the rows arrive as intents.
     pub(super) fn open_scope(&mut self, scope: postio_model::ListScope) -> Vec<Effect> {
         let said = self.ctl.open(scope);
         self.scope = Some(scope);
@@ -23,7 +22,7 @@ impl App {
         effects
     }
 
-    fn carry_out(&mut self, said: Vec<Said>) -> Vec<Effect> {
+    pub(super) fn carry_out(&mut self, said: Vec<Said>) -> Vec<Effect> {
         let mut effects = Vec::new();
         for one in said {
             match one {
@@ -39,6 +38,8 @@ impl App {
     fn show_intent(&mut self, intent: Intent) -> Vec<Effect> {
         match intent {
             Intent::ReplaceSource { total } => {
+                self.scope = self.ctl.scope().or(self.scope);
+                self.account = self.scope.and_then(|scope| self.account_of(scope));
                 let stamp = self.list.reset(total);
                 self.cursor = 0;
                 self.top = 0;
@@ -112,7 +113,38 @@ impl App {
                 vec![Effect::Redraw]
             }
             Intent::Toast { text, kind } => self.toast(&text, &kind),
-            _ => Vec::new(),
+            intent @ Intent::OpenMessage {
+                host: postio_focus::Host::Digest,
+                ..
+            } => self.show_surface_intent(intent).unwrap_or_default(),
+            intent @ Intent::OpenMessage {
+                host: postio_focus::Host::Own,
+                ..
+            } if self.over_filtered() => self.show_surface_intent(intent).unwrap_or_default(),
+            intent @ (Intent::OpenMessage { .. }
+            | Intent::CloseSurface(SurfaceKind::Message)
+            | Intent::Reader(_)
+            | Intent::ThreadBar(_)
+            | Intent::Kicker(_)
+            | Intent::OlderBanner(_)
+            | Intent::NewReply(_)
+            | Intent::ReplyTo(_)
+            | Intent::MatchBanner(_)) => self.show_reader_intent(intent),
+            intent @ (Intent::Composer { .. }
+            | Intent::CloseSurface(SurfaceKind::Composer)
+            | Intent::SaveDraft { .. }
+            | Intent::ForwardChooser(_)
+            | Intent::OlderReply(_)
+            | Intent::NewerMessages(_)
+            | Intent::QuotedExpanded(_)
+            | Intent::ComposerDraftWanted(_)
+            | Intent::ComposerDraft(_)) => self.show_composer_intent(intent),
+            other => self
+                .show_picker_intent(&other)
+                .or_else(|| self.show_places_intent(&other))
+                .or_else(|| self.show_bar_intent(&other))
+                .or_else(|| self.show_sheet_intent(&other))
+                .unwrap_or_else(|| self.show_surface_intent(other).unwrap_or_default()),
         }
     }
 
@@ -136,7 +168,6 @@ impl App {
 }
 
 impl App {
-    /// Whether the controller, not this app, runs `command` on the list.
     pub(super) fn the_controllers(command: postio_core::CommandId) -> bool {
         use postio_core::CommandId as C;
         matches!(
@@ -154,10 +185,13 @@ impl App {
                 | C::AcceptInvite
                 | C::DeclineInvite
                 | C::DismissMarker
+                | C::Move
+                | C::AddLabel
+                | C::Snooze
+                | C::RemindIfNoReply
         ) || postio_ui::focus_target::dispatch(command).is_some()
     }
 
-    /// Ask for every page in view that is neither here nor on its way.
     pub(super) fn fetches(&mut self) -> Vec<Effect> {
         let end = (self.top + self.fit_from(self.top)).min(self.list.total());
         let mut wanted = Vec::new();
@@ -178,8 +212,6 @@ impl App {
 
 #[cfg(any(test, feature = "test-support"))]
 impl App {
-    /// Open `scope` over `total` rows the way the host's answer would,
-    /// with no page read yet.
     pub(crate) fn open_for_tests(&mut self, scope: postio_model::ListScope, total: u32) {
         let asked = self.ctl.open(scope);
         self.scope = Some(scope);
@@ -221,11 +253,22 @@ impl App {
         self.top = 0;
     }
 
+    pub(crate) fn clock_for_tests(&mut self, at: chrono::DateTime<chrono::Local>) {
+        let _ = self.tell(postio_focus::Input::Clock(Some(at)));
+    }
+
     pub(crate) fn counts_for_tests(&mut self, counts: postio_client::protocol::FocusCounts) {
+        if let Said::Ask(ticket, _) = self.ctl.refresh_counts() {
+            let reply = postio_focus::Reply::FocusCounts(Ok(counts));
+            let _ = self.tell(postio_focus::Input::Reply(ticket, reply));
+        }
         self.counts = Some(counts);
     }
 
-    /// Deliver every page of the list from `row_at`; how many pages.
+    pub(crate) fn folders_for_tests(&self) -> Vec<postio_model::mailbox::Mailbox> {
+        self.folders.clone()
+    }
+
     pub(crate) fn serve_for_tests(&mut self, row_at: impl Fn(u32) -> Held) -> usize {
         let (stamp, total) = (self.list.generation(), self.list.total());
         let size = postio_ui::list::PAGE_SIZE;

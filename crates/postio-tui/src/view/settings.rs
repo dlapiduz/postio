@@ -1,5 +1,4 @@
-//! The settings, drawn: the desktop's navigation, and the section under it
-//! (US7).
+//! The settings: the navigation and the section under it.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -12,13 +11,10 @@ use crate::view::fit;
 use postio_ui::settings::{Group, Section};
 use postio_ui::terminal::SafeText;
 
-/// The navigation's width.
 const NAV: u16 = 26;
 
-/// The widest a connection's "who and where" is set.
 const CONNECTION: usize = 44;
 
-/// Draw the settings over `area`.
 pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     let Some(settings) = app.settings() else {
         return;
@@ -119,9 +115,6 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
         privacy(&mut pane, app, settings.in_list(), columns, theme);
     } else {
         if section == Section::Filtering {
-            // The desktop's page in words: what filtering does, today's
-            // count while it is on, and that nothing is lost. The switch
-            // and the lists are the file's, edited where it lives.
             let (on, today) = app.filtering();
             let mut said = vec![postio_ui::filtering::state(on)];
             said.extend(postio_ui::filtering::today(on, today));
@@ -149,8 +142,6 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     }
 }
 
-/// An account's signatures, under the accounts: each name with the first
-/// line of its text, and the keys that work on them.
 fn signatures(
     pane: &mut Vec<Line>,
     account: &postio_model::Account,
@@ -193,13 +184,9 @@ fn signatures(
     ));
 }
 
-/// The privacy pane, as the desktop's: who may load remote images, the
-/// lists left, the read receipts asked for, and every connection made. All
-/// of it is read back from the store, and none of it is in the file.
+/// Everything here is read back from the store; none of it is in the file.
 fn privacy(pane: &mut Vec<Line>, app: &App, in_list: bool, columns: usize, theme: &Theme) {
     use postio_ui::privacy;
-    // In capitals, as the terminal sets every heading; the words are the
-    // desktop's.
     let kicker = |text: &'static str| {
         Line::styled(
             text.to_uppercase(),
@@ -221,7 +208,6 @@ fn privacy(pane: &mut Vec<Line>, app: &App, in_list: bool, columns: usize, theme
         .map_or(0, |settings| settings.row(senders.len()));
     for (index, sender) in senders.iter().enumerate() {
         let here = in_list && index == cursor;
-        // An address the person allowed, but it came from a message.
         let sender = SafeText::new(sender);
         pane.push(Line::from(vec![
             Span::styled(if here { "› " } else { "  " }, theme.style(Role::Accent)),
@@ -292,10 +278,7 @@ fn privacy(pane: &mut Vec<Line>, app: &App, in_list: bool, columns: usize, theme
             .format(privacy::CONNECTION_WHEN)
             .to_string();
         let outcome = connection.outcome.as_str();
-        // The host is what a server or an autoconfig answer named.
         let what = SafeText::new(&privacy::connection(connection)).to_string();
-        // A column wide enough for a host, not the whole pane: the outcome
-        // belongs beside what it is about.
         let room = columns
             .saturating_sub(when.len() + outcome.len() + 6)
             .min(CONNECTION);

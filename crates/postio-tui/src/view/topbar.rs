@@ -1,11 +1,6 @@
-//! The bar across the top (terminal.md, "The screen").
-//!
-//! `Compose c` at the left; the command field, `min(60, W - 40)` wide and
-//! centred, holding its placeholder and the keys that open it, or the query
-//! once it is open; at the right the sync label and `? keys`. Below 80
-//! columns the field shrinks to its placeholder's first word and its key.
-//! Keys come from the keymap in force, so a rebound key is hinted as
-//! rebound. Each control is a click target for the command its key runs.
+//! The bar across the top: `Compose c`, the command field `min(60, W - 40)` wide and centred, the
+//! sync
+//! label and `? keys`. Below 80 columns the field shrinks to its first word and key.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -18,14 +13,10 @@ use crate::theme::{Role, Theme};
 use crate::view::hit::{Hits, Target};
 use postio_core::CommandId;
 
-/// The field's width when there is room.
 const FIELD: u16 = 60;
-/// Below this width the field shrinks.
 const NARROW: u16 = 80;
-/// The gap between the bar's parts.
 const GAP: u16 = 3;
 
-/// The symbol that stands for a sync label's icon.
 fn sync_mark(icon: &str) -> &'static str {
     match icon {
         "emblem-ok-symbolic" => "✓",
@@ -35,17 +26,14 @@ fn sync_mark(icon: &str) -> &'static str {
     }
 }
 
-/// A piece of text as a width.
 fn cells(text: &str) -> u16 {
     u16::try_from(text.width()).unwrap_or(u16::MAX)
 }
 
-/// Draw the bar into `area`, one row.
 pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut Hits) {
     let dim = theme.style(Role::Dim);
     let accent = theme.style(Role::Accent);
 
-    // Compose, at the left.
     let compose_key = app.hint(CommandId::Compose);
     let compose = format!(
         "Compose{}",
@@ -72,7 +60,6 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut 
     );
     let left_end = compose_at + compose_width;
 
-    // The right side: the sync label, then the keys.
     let keys = app.hint(CommandId::CheatSheet);
     let keys_text = keys
         .as_deref()
@@ -101,7 +88,6 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut 
         Target::Command("cheat_sheet"),
     );
 
-    // The field: centred, between what is either side of it.
     let search_key = app.hint(CommandId::Search);
     let palette_key = app.hint(CommandId::CommandPalette);
     let key_text = [search_key.as_deref(), palette_key.as_deref()]
@@ -117,7 +103,6 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut 
         placeholder
     };
     let mut width = if narrow {
-        // The word, and the one key.
         (2 + cells(placeholder) + 2 + cells(search_key.as_deref().unwrap_or(""))).min(FIELD)
     } else {
         FIELD.min(area.width.saturating_sub(40))
@@ -133,11 +118,9 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut 
     let centred = area.x + area.width.saturating_sub(width) / 2;
     let mut at = centred.max(left_end + GAP);
     if at + width + GAP > right_start(true) {
-        // No room for the sync label beside the field: it goes.
         with_sync = false;
     }
     if at + width + 1 > right_start(with_sync) {
-        // Nor for the field as wide: it shrinks.
         width = right_start(with_sync).saturating_sub(at + 1);
     }
     if width < 4 {
@@ -167,11 +150,8 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut 
                 Rect::new(inner.x, inner.y, inner.width, 1),
             );
             let key_width = cells(&key_text);
-            // Its keys, at the field's right end, while they leave the
-            // placeholder whole.
             if !key_text.is_empty() && cells(placeholder) + 2 + 3 + key_width <= inner.width {
                 let mut keys = Vec::new();
-                // Each key is a click for its own command.
                 let mut x = inner.x + inner.width - key_width;
                 if let Some(key) = &search_key {
                     keys.push(Span::styled(key.clone(), accent));
@@ -232,7 +212,6 @@ mod tests {
         assert!(bar.contains("/ ctrl+k"), "the field's keys: {bar}");
         assert!(bar.contains("✓ Synced 16:09   ? keys"), "{bar}");
         assert!(bar.trim_end().ends_with("? keys"), "{bar}");
-        // 60 wide and centred: the field starts at column 30.
         let field = bar.chars().position(|c| c == '⌕').expect("the field");
         assert_eq!(field, 31, "the field is 60 wide and centred: {bar}");
     }

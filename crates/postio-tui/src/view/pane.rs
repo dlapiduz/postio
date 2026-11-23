@@ -1,8 +1,5 @@
-//! Reading beside the list (terminal.md, "Reading beside the list").
-//!
-//! From 128 columns, `[focus] reading = "pane"` puts the open message to the
-//! right of the list: its header rows under the strip, a `│` between the
-//! two, no border. With nothing open the pane says so, and how to open one.
+//! Reading beside the list: from 128 columns, `[focus] reading = "pane"` puts the open message
+//! right of the list.
 
 use chrono::{DateTime, Local};
 use ratatui::Frame;
@@ -13,8 +10,6 @@ use crate::app::App;
 use crate::theme::{Role, Theme};
 use crate::view::hit::{Hits, Target};
 
-/// Draw the pane into `area`: the divider down its left column, then the
-/// open message, or the page that says none is open.
 pub fn draw(
     frame: &mut Frame,
     area: Rect,
@@ -57,7 +52,6 @@ mod tests {
     };
     use crossterm::event::{KeyCode, KeyModifiers};
 
-    /// Pane mode, as `[focus] reading = "pane"` puts it.
     fn pane_app(size: (u16, u16)) -> App {
         let mut app = app(size);
         let mut contents = places();
@@ -103,8 +97,6 @@ mod tests {
         let drawn = screen(128, 30, &app);
         let lines: Vec<&str> = drawn.lines().collect();
         assert!(!drawn.contains('╭'), "borderless:\n{drawn}");
-        // The pane is 72 wide, the list keeps 56, the divider is the pane's
-        // first column.
         for (y, line) in lines.iter().enumerate().take(29).skip(2) {
             assert_eq!(line.chars().nth(56), Some('│'), "row {y}:\n{drawn}");
         }
@@ -118,7 +110,6 @@ mod tests {
         );
         assert!(drawn.contains("Hello from the pane"), "{drawn}");
         assert!(lines[2].contains("↑ k  ↓ j"), "{drawn}");
-        // The list is still there, narrow, with its trailing column.
         assert!(lines[4].contains("Lena Park"), "{drawn}");
     }
 
@@ -128,7 +119,6 @@ mod tests {
         let drawn = screen(128, 30, &app);
         let row = drawn.lines().find(|l| l.contains("Harbor note 1")).unwrap();
         let at = row[..row.find("Harbor note 1").unwrap()].chars().count();
-        // Cursor, mark and a space, then twelve.
         assert_eq!(at, 3 + 12, "{drawn}");
     }
 
@@ -181,7 +171,6 @@ mod tests {
         );
         update(&mut app, body(2, "Second"));
         assert!(screen(140, 30, &app).contains("Second"));
-        // A click on a row is the pointer's j.
         let hit = hits_of(140, 30, &app).at(5, 5).expect("a row");
         let effects = update(
             &mut app,
@@ -217,7 +206,6 @@ mod tests {
             "{effects:?}"
         );
         assert_eq!(app.notice(), Some("Messages open over the list"));
-        // Too narrow for a pane: the choice is made and the words say when.
         let mut narrow = crate::test_support::app((100, 30));
         seed_places(&mut narrow, places());
         update(&mut narrow, key(KeyCode::F(8), KeyModifiers::NONE));
