@@ -95,7 +95,7 @@ pub enum Input {
     },
     Source {
         message: postio_model::MessageId,
-        raw: Result<Vec<u8>, String>,
+        view: Result<postio_ui::source::SourceView, String>,
     },
     Settled {
         generation: u64,
@@ -2288,6 +2288,7 @@ impl App {
     fn key_context(&self) -> KeyContext {
         match self.focus {
             Focus::List => KeyContext::List,
+            Focus::Reader if self.open.raw.is_some() => KeyContext::Source,
             Focus::Reader => KeyContext::Reader,
             Focus::Composer => KeyContext::Composer,
             Focus::Bar | Focus::Folders => KeyContext::Search,
@@ -2743,6 +2744,11 @@ impl App {
             "prev_in_thread" => return self.walk_conversation(-1),
             "toggle_reading_pane" => return self.toggle_reading_pane(),
             "view_source" => return self.view_source(),
+            "source_tab_verification" => {
+                return self.source_tab(postio_ui::source::Tab::Verification);
+            }
+            "source_tab_headers" => return self.source_tab(postio_ui::source::Tab::Headers),
+            "source_tab_raw" => return self.source_tab(postio_ui::source::Tab::Raw),
             "open_attachment_or_link" => return self.offer_choices(),
             "more_actions" => return self.more_actions(),
             "dismiss_marker" if self.focus == Focus::Reader => {
@@ -3498,7 +3504,7 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
                 Vec::new()
             }
         }
-        Input::Source { message, raw } => app.source_read(message, raw),
+        Input::Source { message, view } => app.source_read(message, view),
         Input::DwellDue {
             generation,
             message,

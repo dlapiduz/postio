@@ -607,3 +607,76 @@ fn local(input: &SourceInput<'_>) -> Section {
         ..Section::default()
     }
 }
+
+/// One tab as plain text, for a frontend that draws text frames. A fold is its label line.
+pub fn text(view: &SourceView, tab: Tab) -> String {
+    let mut out = String::new();
+    match tab {
+        Tab::Verification => {
+            for section in &view.verification.sections {
+                out.push_str(&section.title);
+                out.push('\n');
+                if let Some(intro) = &section.intro {
+                    out.push_str(&format!("  {intro}\n"));
+                }
+                if let Some(mono) = &section.mono {
+                    out.push_str(&format!("  {mono}\n"));
+                }
+                for line in &section.lines {
+                    out.push_str(&format!("  {}\n", line.text));
+                    if let Some(mono) = &line.mono {
+                        out.push_str(&format!("    {mono}\n"));
+                    }
+                }
+                out.push('\n');
+            }
+        }
+        Tab::Headers => {
+            if let Some(note) = &view.headers.note {
+                out.push_str(&format!("{note}\n\n"));
+            }
+            if !view.headers.hops.is_empty() {
+                out.push_str("Received, newest first\n");
+                for hop in &view.headers.hops {
+                    let mut line = String::from(" ");
+                    if let Some(from) = &hop.from {
+                        line.push_str(&format!(" from {from}"));
+                    }
+                    if let Some(by) = &hop.by {
+                        line.push_str(&format!(" by {by}"));
+                    }
+                    if let Some(at) = &hop.at {
+                        line.push_str(&format!(" · {at}"));
+                    }
+                    if let Some(delay) = &hop.delay {
+                        line.push_str(&format!(" · {delay} after the hop before"));
+                    }
+                    out.push_str(&line);
+                    out.push('\n');
+                }
+                out.push('\n');
+            }
+            for row in &view.headers.rows {
+                if let Some(boundary) = &row.boundary_above {
+                    out.push_str(&format!("──── {boundary}\n"));
+                }
+                out.push_str(&format!("{}: {}\n", row.name, row.value));
+                if let Some(raw) = &row.raw {
+                    out.push_str(&format!("    as written: {raw}\n"));
+                }
+            }
+        }
+        Tab::Raw => match &view.raw.state_line {
+            Some(state) => out.push_str(state),
+            None => {
+                for segment in &view.raw.segments {
+                    match segment {
+                        RawSegment::Text(text) => out.push_str(text),
+                        RawSegment::Fold { label, .. } => out.push_str(&format!("[{label}]")),
+                    }
+                }
+            }
+        },
+    }
+    out
+}

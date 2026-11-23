@@ -1031,11 +1031,11 @@ fn perform(
                 let client = client.clone();
                 let inputs = inputs.clone();
                 tokio::spawn(async move {
-                    let raw = client
-                        .raw_source(message)
+                    let view = client
+                        .source_view(message, false)
                         .await
                         .map_err(|error| error.message().to_owned());
-                    let _ = inputs.send(Input::Source { message, raw }).await;
+                    let _ = inputs.send(Input::Source { message, view }).await;
                 });
             }
             Effect::Settle { generation, after } => {

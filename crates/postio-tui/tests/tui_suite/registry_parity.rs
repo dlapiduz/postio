@@ -25,11 +25,18 @@ const PALETTE_SURFACES: &[Context] = &[
     Context::Digest,
     Context::Filtered,
     Context::Capture,
+    Context::Source,
 ];
 
 /// Commands whose surface the terminal does not have yet, each with the task
 /// that brings it. Taking a name off this list is how that task proves it.
-const NOT_YET: &[(&str, &str)] = &[];
+const NOT_YET: &[(&str, &str)] = &[
+    // The terminal has no clipboard or file chooser yet, and its Raw frame draws a fold as its
+    // label line.
+    ("copy_source", "specs/016-message-authenticity T023"),
+    ("save_source", "specs/016-message-authenticity T023"),
+    ("unfold_part", "specs/016-message-authenticity T023"),
+];
 
 /// `chord` as a terminal reports it.
 fn key_event(chord: &Chord) -> KeyEvent {

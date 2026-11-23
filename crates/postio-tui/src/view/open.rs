@@ -853,8 +853,18 @@ pub fn draw(
     }
     right.push(Span::styled("✕", text));
     let right_width = width_of(&right);
-    let title = if app.raw().is_some() {
-        "Raw source".to_owned()
+    let title = if let Some(raw) = app.raw() {
+        postio_ui::source::Tab::ALL
+            .iter()
+            .zip(["1", "2", "3"])
+            .map(|(tab, key)| {
+                if *tab == raw.tab {
+                    format!("[{}] {key}", tab.title())
+                } else {
+                    format!("{} {key}", tab.title())
+                }
+            })
+            .fold("Source".to_owned(), |title, tab| format!("{title} · {tab}"))
     } else {
         match row {
             Some(row) if !row.subject.as_str().trim().is_empty() => row.subject.as_str().to_owned(),
@@ -1621,11 +1631,32 @@ mod tests {
             &mut app,
             Input::Source {
                 message: MessageId::new(6),
-                raw: Ok(b"From: lena@example.com\r\nSubject: Harbor\x1b[2J\r\n\r\nbody".to_vec()),
+                view: Ok(crate::test_support::source_view(
+                    b"From: lena@example.com\r\nSubject: Harbor\x1b[2J\r\n\r\nbody",
+                )),
             },
         );
         let drawn = screen(120, 36, &app);
-        assert!(drawn.contains("Raw source"), "{drawn}");
+        assert!(
+            drawn.contains("Source · [Verification] 1 · Headers 2 · Raw 3"),
+            "{drawn}"
+        );
+        assert!(
+            drawn.contains(
+                postio_ui::source::NOT_CHECKED_HERE
+                    .split('.')
+                    .next()
+                    .unwrap_or_default()
+            ),
+            "{drawn}"
+        );
+        update(&mut app, press('2'));
+        let drawn = screen(120, 36, &app);
+        assert!(drawn.contains("[Headers] 2"), "{drawn}");
+        assert!(drawn.contains("Subject: Harbor"), "{drawn}");
+        update(&mut app, press('3'));
+        let drawn = screen(120, 36, &app);
+        assert!(drawn.contains("[Raw] 3"), "{drawn}");
         assert!(drawn.contains("From: lena@example.com"), "{drawn}");
         assert!(!drawn.contains('\u{1b}'), "made safe: {drawn:?}");
         update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));

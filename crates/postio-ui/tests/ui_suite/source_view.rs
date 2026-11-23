@@ -425,3 +425,26 @@ fn save_offers_the_subject_as_a_file_name() {
     assert_eq!(source::eml_name("../../etc"), "etc.eml");
     assert_eq!(source::eml_name("  "), "message.eml");
 }
+
+#[test]
+fn each_tab_reads_as_text_for_a_terminal() {
+    let view = view_of("attachment-large", Some(PROVIDER));
+    let verification = source::text(&view, source::Tab::Verification);
+    assert!(
+        verification.starts_with("What your provider checked\n"),
+        "{verification}"
+    );
+    assert!(verification.contains(source::FIXED_LINE));
+    let headers = source::text(&view, source::Tab::Headers);
+    assert!(
+        headers.contains("Content-Type: multipart/mixed"),
+        "{headers}"
+    );
+    let raw = source::text(&view, source::Tab::Raw);
+    assert!(
+        raw.contains("[base64 · "),
+        "the fold is one line: {}",
+        &raw[..raw.len().min(400)]
+    );
+    assert!(raw.len() < 64 * 1024, "the folded part is not in the text");
+}

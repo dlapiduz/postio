@@ -14,9 +14,10 @@ use crate::view::open as draw;
 /// The message's source, being shown in place of the message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Raw {
-    /// Whose source.
     pub message: MessageId,
-    /// What came off the wire, once it has.
+    pub view: Option<postio_ui::source::SourceView>,
+    pub tab: postio_ui::source::Tab,
+    /// The tab's text, made safe to draw; `None` until the view arrives.
     pub text: Option<SafeText>,
     /// Where the message was scrolled to, for when this closes.
     pub back_to: usize,
@@ -533,6 +534,8 @@ impl App {
         };
         self.open.raw = Some(Raw {
             message,
+            view: None,
+            tab: postio_ui::source::Tab::Verification,
             text: None,
             back_to: self.reader_top,
         });
@@ -544,15 +547,16 @@ impl App {
     pub(super) fn source_read(
         &mut self,
         message: MessageId,
-        read: Result<Vec<u8>, String>,
+        read: Result<postio_ui::source::SourceView, String>,
     ) -> Vec<Effect> {
         if self.open.raw.as_ref().map(|raw| raw.message) != Some(message) {
             return Vec::new();
         }
         match read {
-            Ok(bytes) => {
+            Ok(view) => {
                 if let Some(raw) = self.open.raw.as_mut() {
-                    raw.text = Some(SafeText::new(&String::from_utf8_lossy(&bytes)));
+                    raw.text = Some(SafeText::new(&postio_ui::source::text(&view, raw.tab)));
+                    raw.view = Some(view);
                 }
                 vec![Effect::Redraw]
             }
@@ -561,6 +565,19 @@ impl App {
                 self.say(&reason)
             }
         }
+    }
+
+    pub(super) fn source_tab(&mut self, tab: postio_ui::source::Tab) -> Vec<Effect> {
+        let Some(raw) = self.open.raw.as_mut() else {
+            return Vec::new();
+        };
+        raw.tab = tab;
+        raw.text = raw
+            .view
+            .as_ref()
+            .map(|view| SafeText::new(&postio_ui::source::text(view, tab)));
+        self.reader_top = 0;
+        vec![Effect::Redraw]
     }
 
     /// `A`: the message's links and its attachments, to choose one to open.

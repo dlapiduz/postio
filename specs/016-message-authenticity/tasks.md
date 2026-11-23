@@ -126,7 +126,7 @@ throwaway code is not merged.
 - [x] T020 [US1] Implement the Source surface's behaviour in `crates/postio-focus/src/source.rs`, and wire it in `crates/postio-focus/src/surfaces.rs`
 - [x] T021 [US1] GTK: replace `crates/postio-gtk/src/source.rs` with a `postio-widgets` dialog (a new `crates/postio-widgets/src/source/`) drawing the view model. Use `/gtk-design`, the one close and non-editable text with no link detection. Make `crates/postio-gtk/tests/focus_suite/view_source.rs` assert the tabs, with one case per path. T003 goes green
 - [x] T022 [P] [US2] GTK: `copy_source` and `save_source` (through `postio-host/src/export.rs`), with the case "the saved file equals `Client::raw_source`" in `crates/postio-gtk/tests/focus_suite/view_source.rs`
-- [ ] T023 [P] [US1] Terminal: draw the three tabs as frames in `crates/postio-tui/src/view/open.rs`, replacing its single raw frame, with cases in `crates/postio-tui/tests/tui_suite/`
+- [x] T023 [P] [US1] Terminal: draw the three tabs as frames in `crates/postio-tui/src/view/open.rs`, replacing its single raw frame, with cases in `crates/postio-tui/tests/tui_suite/`
 - [ ] T024 [P] [US1] Mac: expose `SourceView` in `crates/postio-ffi/src/focus_reader.rs`, and draw it in `macos/Sources/PostioKit/MessageWindow.swift`, with `macos/Tests/PostioKitTests/MessageWindowModelTests.swift` cases. The FFI command sweep `crates/postio-ffi/tests/ffi_suite/command_coverage.rs` stays green
 - [ ] T025 [US1] Run `/ux-review` on T003's storyboard, and fix or contest its verdicts
 
