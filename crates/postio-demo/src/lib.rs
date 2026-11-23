@@ -901,15 +901,12 @@ pub async fn source_demo(
         "<demo.{OPENED}.{}@example.test>",
         TODAY[OPENED].messages - 1
     ));
-    let Some(id) = messages
+    let id = messages
         .ids_by_rfc_message_id(account, &newest)
         .await
         .expect("a lookup")
         .first()
-        .copied()
-    else {
-        return None;
-    };
+        .copied()?;
     let scratch = tempfile::tempdir().expect("scratch for the blob");
     let blobs = postio_storage::BlobStore::open(
         scratch.path().to_path_buf(),
