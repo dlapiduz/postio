@@ -167,6 +167,26 @@ const CASES: &[(&str, fn())] = &[
         calendar::slash_searches_events_and_escape_brings_the_agenda_back as fn(),
     ),
     (
+        "calendar::c_types_a_new_event_and_mod_s_puts_it_in_the_agenda",
+        calendar::c_types_a_new_event_and_mod_s_puts_it_in_the_agenda as fn(),
+    ),
+    (
+        "calendar::escape_leaves_the_editor_without_saving",
+        calendar::escape_leaves_the_editor_without_saving as fn(),
+    ),
+    (
+        "calendar::a_due_reminder_becomes_a_notification_that_says_what_and_when",
+        calendar::a_due_reminder_becomes_a_notification_that_says_what_and_when as fn(),
+    ),
+    (
+        "calendar::v_moves_the_ringed_event_to_next_week",
+        calendar::v_moves_the_ringed_event_to_next_week as fn(),
+    ),
+    (
+        "calendar::hash_deletes_the_ringed_event_and_undo_brings_it_back",
+        calendar::hash_deletes_the_ringed_event_and_undo_brings_it_back as fn(),
+    ),
+    (
         "calendar::g_e_opens_agenda_on_the_next_event_and_return_and_escape_walk_back_home",
         calendar::g_e_opens_agenda_on_the_next_event_and_return_and_escape_walk_back_home as fn(),
     ),

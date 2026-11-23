@@ -349,3 +349,43 @@ mod tests {
         assert_eq!(parse_object(&ics), Err(CalendarError::NoUid));
     }
 }
+
+pub fn due_times(alarms: &[Alarm], start: DateTime<Utc>, end: DateTime<Utc>) -> Vec<DateTime<Utc>> {
+    let mut due: Vec<DateTime<Utc>> = alarms
+        .iter()
+        .filter(|alarm| matches!(alarm.action, AlarmAction::Display | AlarmAction::Audio))
+        .map(|alarm| match alarm.trigger {
+            Trigger::SecondsBeforeStart(seconds) => start - chrono::Duration::seconds(seconds),
+            Trigger::SecondsBeforeEnd(seconds) => end - chrono::Duration::seconds(seconds),
+            Trigger::At(at) => at,
+        })
+        .collect();
+    due.sort();
+    due.dedup();
+    due
+}
+
+#[cfg(test)]
+mod due_tests {
+    use chrono::TimeZone;
+
+    use super::*;
+
+    #[test]
+    fn display_and_audio_alarms_are_due_and_an_email_alarm_never_is() {
+        let ics = include_bytes!("../tests/fixtures/email-alarm.ics");
+        let event = &crate::parse_object(ics).expect("parses")[0];
+        let start = Utc.with_ymd_and_hms(2026, 11, 12, 15, 0, 0).unwrap();
+
+        let due = due_times(&event.alarms, start, start + chrono::Duration::minutes(30));
+
+        assert_eq!(
+            due,
+            [
+                Utc.with_ymd_and_hms(2026, 11, 12, 14, 45, 0).unwrap(),
+                Utc.with_ymd_and_hms(2026, 11, 12, 14, 50, 0).unwrap(),
+            ],
+            "the absolute audio alarm and ten minutes before; never the email alarm, which would send mail unasked"
+        );
+    }
+}

@@ -102,5 +102,5 @@ with_connect_timeout              # crates/postio-account/src/imap/settings.rs:1
 with_html                         # crates/postio-model/src/account.rs:188
 with_internal_date                # crates/postio-account/src/backend/message.rs:638
 with_user_names                   # crates/postio-ui/src/reader/header.rs:162 -- the To and Cc names of the reader header (FR-032); the Mac window reads the sender the list statement already names
-parse_end                         # crates/postio-search/src/date.rs -- the event editor's end field (specs/017-calendar T030) is its caller; lands with it
-title_in                          # crates/postio-core/src/registry.rs -- a verb's title per context ("Delete event" in Calendar); the event card and editor's verbs (T030) read it
+fail_next                         # crates/postio-dav/src/fake.rs -- sync's calendar cases (specs/017-calendar T034) queue faults with it
+sync_account                      # crates/postio-sync/src/caldav.rs -- the host's poll (specs/017-calendar T034, wired with T036's account switch) calls it

@@ -5,6 +5,8 @@
 
 pub mod backfill;
 pub mod blob_sink;
+pub mod caldav;
+pub mod calendar;
 mod carry;
 pub mod coalesce;
 pub mod connect;

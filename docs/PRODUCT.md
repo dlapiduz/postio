@@ -297,6 +297,14 @@ Each surface's look is
 [`contracts/focus-surface.md`](../specs/007-postio-focus/contracts/focus-surface.md)
 held against [`screens.md`](../specs/007-postio-focus/screens.md). §19.
 
+**Calendar is a mode of the main window** (`g e`; `specs/017-calendar`).
+Agenda lists occurrences under day headings in the list's language; `c` adds
+an event, `mod+e` edits one, `v` moves and `#` deletes it, each undoable, and
+`mod+shift+o` gives Calendar a window of its own. Times are typed the way search
+reads them ("thu 3pm", "1h"). An invitation in mail says what it clashes
+with. Events live on this computer or in an account's CalDAV calendars, kept
+in both directions; nothing in an event is fetched.
+
 ---
 
 ## 10. Compose
@@ -564,6 +572,8 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) and [`decisions/`](decisions).
   notifications.
 - Flagging is `*` (key, row menu or command bar), `g *` lists flagged mail, and
   a row carries no flag mark (spec 007 C13).
+- A calendar: Agenda, invitations answered from the inbox, events made and
+  changed on this computer or in a CalDAV account (`specs/017-calendar`).
 - Focus: one dense inbox with action markers, digests, filtering with reasons,
   Obsidian capture, and an optional local model (§2, §9). All of it in the
   terminal too, on the same store.

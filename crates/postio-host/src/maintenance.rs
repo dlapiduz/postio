@@ -24,6 +24,54 @@ pub fn spawn_idle_passes(wiring: &Wiring) {
     build_contacts(wiring);
     reclaim_disk(wiring);
     empty_junk_and_trash(wiring);
+    remind(wiring);
+}
+
+const PLAN_AHEAD: chrono::Duration = chrono::Duration::days(2);
+const WAKE_AT_LEAST_EVERY: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+
+pub fn remind(wiring: &Wiring) {
+    let database = wiring.database.clone();
+    let events = wiring.events.clone();
+    let Some(changed) = wiring.events.subscribe("reminders") else {
+        return;
+    };
+    wiring.runtime.spawn(async move {
+        let started = chrono::Utc::now();
+        loop {
+            let now = chrono::Utc::now();
+            if let Err(error) =
+                postio_session::reminders::plan_reminders(&database, now, now + PLAN_AHEAD).await
+            {
+                tracing::warn!(%error, "could not plan reminders");
+            }
+            match postio_session::reminders::due_notices(&database, now, started).await {
+                Ok(notices) => {
+                    for notice in notices {
+                        events.emit(postio_core::Event::ReminderDue {
+                            event: notice.reminder.event,
+                            title: notice.reminder.title,
+                            starts: notice.reminder.occurrence,
+                            missed: notice.missed,
+                        });
+                    }
+                }
+                Err(error) => tracing::warn!(%error, "could not read due reminders"),
+            }
+            let next = postio_session::reminders::next_due(&database)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|at| (at - chrono::Utc::now()).to_std().ok())
+                .map_or(WAKE_AT_LEAST_EVERY, |wait| wait.min(WAKE_AT_LEAST_EVERY));
+            tokio::select! {
+                () = tokio::time::sleep(next) => {}
+                event = changed.next() => if event.is_none() {
+                    return;
+                },
+            }
+        }
+    });
 }
 
 /// The setting counts days, so hours are plenty.

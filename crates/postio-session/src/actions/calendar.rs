@@ -122,6 +122,7 @@ async fn record(
             calendar,
             kind,
             base.map(|held| (held.object.as_slice(), held.etag.as_deref())),
+            base.and_then(|held| held.href.as_deref()),
             now,
         )
         .await
@@ -456,6 +457,7 @@ impl Actions {
         };
         match (change.kind, current, change.base) {
             (ChangeKind::Create, Some(current), _) => {
+                unanswer(&connection, &current).await?;
                 record(
                     &connection,
                     Some(current.id),
@@ -469,6 +471,7 @@ impl Actions {
             }
             (ChangeKind::Update, Some(current), Some(base)) => {
                 put(&connection, current.calendar, &base, Some(&current), now).await?;
+                unanswer(&connection, &current).await?;
                 record(
                     &connection,
                     Some(current.id),
@@ -517,4 +520,15 @@ fn invitation_text(fields: &EventFields, from: &Identity) -> String {
         format!(", {}", fields.location)
     };
     format!("{who} invites you to {}: {at}{place}.", fields.title)
+}
+
+async fn unanswer(connection: &Connection, event: &HeldEvent) -> Result<(), CommandError> {
+    let (Some(message), Some(_)) = (event.source_message, &event.my_partstat) else {
+        return Ok(());
+    };
+    postio_storage::repository::MarkerRepository::new(connection)
+        .answer(message, None, None)
+        .await
+        .map_err(store_failure)?;
+    Ok(())
 }

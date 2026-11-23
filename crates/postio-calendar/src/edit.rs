@@ -622,6 +622,97 @@ pub fn new_object<Z: TimeZone>(event: &NewEvent, stamp: DateTime<Utc>, reader: &
     calendar.to_string().into_bytes()
 }
 
+fn bookkeeping(action: &ical::tree::merge::IcalMergeAction<'_>) -> bool {
+    use ical::tree::merge::IcalMergeAction as Action;
+    let path = match action {
+        Action::PropAdded { at, .. }
+        | Action::PropRemoved { at, .. }
+        | Action::ValueChanged { at, .. }
+        | Action::ValueItemAdded { at, .. }
+        | Action::ValueItemRemoved { at, .. }
+        | Action::ParamAdded { at, .. }
+        | Action::ParamRemoved { at, .. } => at,
+        _ => return false,
+    };
+    ["SEQUENCE", "DTSTAMP", "LAST-MODIFIED"]
+        .iter()
+        .any(|name| path.name.eq_ignore_ascii_case(name))
+}
+
+fn highest_sequence(ics: &[u8]) -> u32 {
+    String::from_utf8_lossy(ics)
+        .lines()
+        .filter_map(|line| line.strip_prefix("SEQUENCE:"))
+        .filter_map(|value| value.trim().parse().ok())
+        .max()
+        .unwrap_or(0)
+}
+
+pub fn merge(base: &[u8], ours: &[u8], theirs: &[u8]) -> Result<Option<Vec<u8>>, CalendarError> {
+    let (base_cst, ours_cst, theirs_cst) =
+        (parse_owned(base)?, parse_owned(ours)?, parse_owned(theirs)?);
+    let report = ical::tree::merge::IcalMerge {
+        base: &base_cst,
+        left: &ours_cst,
+        right: &theirs_cst,
+    }
+    .merge();
+    let collided = report
+        .conflicts
+        .iter()
+        .any(|conflict| match &conflict.left {
+            ical::tree::merge::IcalMergeReason::Divergent(left) => {
+                !(bookkeeping(left) && bookkeeping(&conflict.right))
+            }
+            ical::tree::merge::IcalMergeReason::Recurrence(_) => false,
+        });
+    if collided {
+        return Ok(None);
+    }
+    let mut merged = report.merged.into_static();
+    let next = highest_sequence(ours)
+        .max(highest_sequence(theirs))
+        .saturating_add(1);
+    for item in &mut merged.items {
+        if let IcalItem::Component(child) = item
+            && is_event(child)
+        {
+            set_or_add(child, "SEQUENCE", &next.to_string());
+        }
+    }
+    Ok(Some(merged.to_bytes()))
+}
+
+pub fn answered(ics: &[u8], me: &str, partstat: &str) -> Result<Vec<u8>, CalendarError> {
+    let mut root = parse_owned(ics)?;
+    drop_lines(&mut root, &["METHOD"]);
+    let mailto = format!("mailto:{}", me.to_ascii_lowercase());
+    for item in &mut root.items {
+        let IcalItem::Component(child) = item else {
+            continue;
+        };
+        if !is_event(child) {
+            continue;
+        }
+        for item in &mut child.items {
+            let IcalItem::Prop(line) = item else { continue };
+            let mine = line.name.get().eq_ignore_ascii_case("ATTENDEE")
+                && line.raw_value_str().trim().eq_ignore_ascii_case(&mailto);
+            if !mine {
+                continue;
+            }
+            line.params.retain(|param| {
+                let name = param.name.get();
+                !name.eq_ignore_ascii_case("PARTSTAT") && !name.eq_ignore_ascii_case("RSVP")
+            });
+            let mut param = ical::tree::param::node::IcalParamNode::parse("PARTSTAT=NEEDS-ACTION");
+            param.values = vec![ical::tree::leaf::IcalLeaf::from(partstat.to_owned())];
+            line.params.push(param);
+        }
+    }
+    Ok(root.to_bytes())
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::{FixedOffset, TimeDelta};
@@ -870,5 +961,77 @@ mod tests {
             crate::Trigger::SecondsBeforeStart(600)
         );
         assert_eq!(starts(&ics), ["11-26 15:00"]);
+    }
+
+    #[test]
+    fn edits_to_different_fields_merge_and_the_same_field_does_not() {
+        let reader = reader();
+        let ours = patch(
+            UNKNOWN,
+            &Edits {
+                title: Some("Paint the hall".to_owned()),
+                ..Edits::default()
+            },
+            &Scope::All,
+            &reader,
+        )
+        .expect("ours")
+        .object;
+        let theirs = patch(
+            UNKNOWN,
+            &Edits {
+                location: Some("Upstairs".to_owned()),
+                ..Edits::default()
+            },
+            &Scope::All,
+            &reader,
+        )
+        .expect("theirs")
+        .object;
+
+        let merged = merge(UNKNOWN, &ours, &theirs)
+            .expect("parsed")
+            .expect("no collision");
+        let event = &crate::parse_object(&merged).expect("parses")[0];
+        assert_eq!(
+            (event.title.as_str(), event.location.as_str()),
+            ("Paint the hall", "Upstairs")
+        );
+        assert!(
+            String::from_utf8_lossy(&merged).contains("X-APPLE-SORT-ORDER:42"),
+            "nothing else is lost"
+        );
+        assert!(highest_sequence(&merged) > highest_sequence(&ours));
+
+        let rival = patch(
+            UNKNOWN,
+            &Edits {
+                title: Some("Paint the stairs".to_owned()),
+                ..Edits::default()
+            },
+            &Scope::All,
+            &reader,
+        )
+        .expect("rival")
+        .object;
+        assert_eq!(merge(UNKNOWN, &ours, &rival).expect("parsed"), None);
+    }
+
+    #[test]
+    fn an_answer_sets_only_my_partstat_and_drops_the_method() {
+        let invite = include_bytes!("../tests/fixtures/hostile-urls.ics");
+        let answered = String::from_utf8(
+            answered(invite, "Ada.Norwood@example.com", "TENTATIVE").expect("answered"),
+        )
+        .expect("utf-8");
+
+        assert!(
+            answered.contains(
+                "ATTENDEE;CN=Ada Norwood;PARTSTAT=TENTATIVE:mailto:ada.norwood@example.com"
+            ),
+            "{answered}"
+        );
+        assert!(!answered.contains("NEEDS-ACTION"));
+        assert!(!answered.contains("METHOD:"));
     }
 }

@@ -90,7 +90,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
         }
         match app.front() {
             _ if let Some(view) = app.calendar() => {
-                calendar::body(frame, body, view, theme, &mut hits);
+                calendar::body(frame, body, view, app.editor_field(), theme, &mut hits);
             }
             _ if app.filtered().is_some() => {
                 filtered::body(frame, body, app, theme, &mut hits);

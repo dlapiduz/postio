@@ -89,6 +89,12 @@ pub enum Event {
     /// several.
     SurfacedChanged,
     CalendarChanged,
+    ReminderDue {
+        event: postio_model::ids::EventId,
+        title: String,
+        starts: chrono::DateTime<chrono::Utc>,
+        missed: bool,
+    },
 
     /// Subscribers refetch what is on screen; when `names_changed`, message rows and an open
     /// conversation too, since a name the user set is what those rows draw.

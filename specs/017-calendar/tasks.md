@@ -173,9 +173,9 @@ focused window.
 **Independent test**: quickstart "Slice C"; US4 scenarios 1 to 3; US3
 scenario 5.
 
-- [ ] T031 [US4] Create the crate `crates/postio-dav/` (the `CalendarBackend` trait, the fake, and `io-webdav`), with a `check-crate-boundaries.py` entry that keeps the store engine and toolkit out, and `postio-sync` free of `io-webdav` types. See the check fail on a deliberate `postio-storage` dependency, then remove it
-- [ ] T032 [US4] Write the in-process wire server and its suite, `crates/postio-dav/tests/dav_suite/`, from `contracts/caldav-backend.md`'s table, red first. Then implement the backend.
-- [ ] T033 [US4] Add the `[caldav]` schema to `crates/postio-account/src/discovery/providers_toml.rs` with validation, the rows for iCloud and Fastmail to `crates/postio-account/data/providers.toml`, and `io-pim-discovery`'s `rfc6764` feature in `crates/postio-account/Cargo.toml`, with `account_suite` cases
+- [x] T031 [US4] Create the crate `crates/postio-dav/` (the `CalendarBackend` trait, the fake, and `io-webdav`), with a `check-crate-boundaries.py` entry that keeps the store engine and toolkit out, and `postio-sync` free of `io-webdav` types. See the check fail on a deliberate `postio-storage` dependency, then remove it
+- [x] T032 [US4] Write the in-process wire server and its suite, `crates/postio-dav/tests/dav_suite/`, from `contracts/caldav-backend.md`'s table, red first. Then implement the backend.
+- [x] T033 [US4] Add the `[caldav]` schema to `crates/postio-account/src/discovery/providers_toml.rs` with validation, the rows for iCloud and Fastmail to `crates/postio-account/data/providers.toml`, and `io-pim-discovery`'s `rfc6764` feature in `crates/postio-account/Cargo.toml`, with `account_suite` cases
 - [ ] T034 [US4] Write failing cases in `crates/postio-sync/tests/sync_suite/calendar.rs` against the fake:
   - the first sync windowed, then the rest;
   - incremental by token;
@@ -184,7 +184,7 @@ scenario 5.
   - `egress_log` rows with `caldav`.
 
   Then implement the queue drain and the poll in `crates/postio-sync/src/`.
-- [ ] T035 [US4] Add the scheduling path to RSVP and invitations: with `calendars.schedules`, a PUT and no mail. Add the case to `crates/postio-host/tests/host_suite/calendar_invitations.rs`
+- [x] T035 [US4] Add the scheduling path to RSVP and invitations: with `calendars.schedules`, a PUT and no mail. Add the case to `crates/postio-host/tests/host_suite/calendar_invitations.rs`
 - [ ] T036 [US4] Settings: turn on an account's calendars, show or hide each, the default reminder, "Enter a calendar address". Do this in the settings model in `crates/postio-ui/src/` and each frontend, with cases. Show the conflict state with "Keep this one" for each version.
 
 ## Phase 9: User Story 5, reminders (P2)
@@ -193,7 +193,7 @@ scenario 5.
 once.
 **Independent test**: quickstart "Slice D".
 
-- [ ] T037 [US5] Write failing fake-clock cases in `crates/postio-host/tests/host_suite/calendar_reminders.rs`:
+- [x] T037 [US5] Write failing fake-clock cases in `crates/postio-host/tests/host_suite/calendar_reminders.rs`:
   - display and audio alarms notify;
   - email alarms do nothing;
   - snooze;
@@ -218,7 +218,7 @@ Every task here is held for the designer handoff (Q4 = C).
 
 ## Phase 12: Polish and landing
 
-- [ ] T044 [P] Add the hostile event fixtures' zero-connection test to `crates/postio-host/tests/host_suite/calendar_privacy.rs` (spec SC-007)
+- [x] T044 [P] Add the hostile event fixtures' zero-connection test to `crates/postio-host/tests/host_suite/calendar_privacy.rs` (spec SC-007)
 - [ ] T045 [P] Update `docs/ARCHITECTURE.md` (the diagram and §9 for `postio-dav`) and `docs/PRODUCT.md` (a calendar section, and §17 for reminders)
 - [ ] T046 Run `/ux-review` on every calendar storyboard, then land with `scripts/issue-land.sh --detach --full-suite`
 

@@ -101,6 +101,7 @@ def build_fixture(
     # Bystanders: every crate `RULES` names must exist as a member or `find_violations` raises
     # before any rule is checked (#560).
     for bystander in (
+        "postio-dav",
         "postio-demo",
         "postio-ffi",
         "postio-gmail",
@@ -108,6 +109,7 @@ def build_fixture(
         "postio-mcp",
         "postio-render",
         "postio-smtp",
+        "postio-sync",
     ):
         write_crate(root, "crates", bystander)
     if hack_deps is not None:

@@ -1,4 +1,6 @@
 use postio_focus::CalendarView;
+use postio_model::calendar::EditScope;
+use postio_ui::calendar::editor::{EditorField, EditorView, scope_label};
 use postio_ui::calendar::{AgendaRow, EventView};
 use postio_ui::terminal::SafeText;
 use ratatui::Frame;
@@ -31,7 +33,14 @@ pub fn strip(frame: &mut Frame, area: Rect, view: &CalendarView, typing: bool, t
     frame.render_widget(Line::from(spans), area);
 }
 
-pub fn body(frame: &mut Frame, area: Rect, view: &CalendarView, theme: &Theme, hits: &mut Hits) {
+pub fn body(
+    frame: &mut Frame,
+    area: Rect,
+    view: &CalendarView,
+    editor_field: usize,
+    theme: &Theme,
+    hits: &mut Hits,
+) {
     if area.height < 2 {
         return;
     }
@@ -72,8 +81,98 @@ pub fn body(frame: &mut Frame, area: Rect, view: &CalendarView, theme: &Theme, h
         ),
         footer,
     );
-    if let Some(open) = &view.open {
+    if let Some(editing) = &view.editor {
+        editor(frame, area, editing, editor_field, theme, hits);
+    } else if let Some(open) = &view.open {
         event(frame, area, open, theme, hits);
+    }
+}
+
+fn editor(
+    frame: &mut Frame,
+    area: Rect,
+    view: &EditorView,
+    at: usize,
+    theme: &Theme,
+    hits: &mut Hits,
+) {
+    let mut lines: Vec<(String, Role)> = Vec::new();
+    for (index, (field, text)) in view.fields.iter().enumerate() {
+        let shown = if text.is_empty() && index != at {
+            field.placeholder().to_owned()
+        } else {
+            text.replace('\n', " \u{21b5} ")
+        };
+        let mark = if index == at { "\u{25b8}" } else { " " };
+        let role = match (index == at, text.is_empty()) {
+            (true, _) => Role::Focus,
+            (false, true) => Role::Dim,
+            (false, false) => Role::Text,
+        };
+        lines.push((
+            format!(
+                "{mark} {:<7} {}",
+                field.label(),
+                SafeText::new(&shown).as_str()
+            ),
+            role,
+        ));
+        if *field == EditorField::Ends {
+            match &view.when {
+                Ok(when) => lines.push((format!("          {when}"), Role::Dim)),
+                Err(why) => lines.push((format!("          {why}"), Role::Error)),
+            }
+        }
+    }
+    if let Some(scope) = view.scope {
+        let chosen = view.fields.len() == at;
+        let words: Vec<String> = [EditScope::This, EditScope::ThisAndFollowing, EditScope::All]
+            .iter()
+            .map(|each| {
+                if *each == scope {
+                    format!("[{}]", scope_label(*each))
+                } else {
+                    scope_label(*each).to_owned()
+                }
+            })
+            .collect();
+        lines.push((
+            format!(
+                "{} {:<7} {}",
+                if chosen { "\u{25b8}" } else { " " },
+                "Which",
+                words.join("  ")
+            ),
+            if chosen { Role::Focus } else { Role::Text },
+        ));
+    }
+    if let Some(error) = &view.error {
+        lines.push((error.clone(), Role::Error));
+    }
+    let keys: Vec<String> = view
+        .keys
+        .iter()
+        .map(|hint| format!("{} {}", hint.key, hint.label))
+        .chain(std::iter::once("Tab next field".to_owned()))
+        .collect();
+    lines.push((String::new(), Role::Text));
+    lines.push((keys.join(" \u{b7} "), Role::Dim));
+    let height = u16::try_from(lines.len() + 2).unwrap_or(u16::MAX);
+    let inside = crate::view::boxed::draw(
+        frame,
+        area,
+        area.width.min(72),
+        height,
+        &view.heading,
+        theme,
+        hits,
+    );
+    let width = usize::from(inside.width);
+    for (offset, (line, role)) in lines.iter().take(usize::from(inside.height)).enumerate() {
+        frame.render_widget(
+            Line::styled(fit(line, width), theme.style(*role)),
+            Rect::new(inside.x, inside.y + offset as u16, inside.width, 1),
+        );
     }
 }
 

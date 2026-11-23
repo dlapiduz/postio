@@ -409,3 +409,80 @@ mod tests {
         assert!(!watched(&config, MailboxRole::Inbox));
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReminderNotice {
+    pub identifier: String,
+    pub title: String,
+    pub body: String,
+}
+
+pub fn reminder<Z: chrono::TimeZone>(
+    event: i64,
+    title: &str,
+    starts: chrono::DateTime<chrono::Utc>,
+    now: chrono::DateTime<chrono::Utc>,
+    missed: bool,
+    zone: &Z,
+) -> ReminderNotice
+where
+    Z::Offset: std::fmt::Display,
+{
+    let at = starts.with_timezone(zone).format("%H:%M");
+    let body = if missed {
+        format!("While Postio was closed: {title} at {at}")
+    } else {
+        let minutes = (starts - now).num_minutes();
+        match minutes {
+            ..=0 => format!("{title} \u{b7} {at} \u{b7} now"),
+            1..=59 => format!("{title} \u{b7} {at} \u{b7} in {minutes} min"),
+            _ => format!("{title} \u{b7} {at}"),
+        }
+    };
+    ReminderNotice {
+        identifier: format!("reminder-{event}-{}", starts.timestamp()),
+        title: if missed {
+            "Missed reminder"
+        } else {
+            "Reminder"
+        }
+        .to_owned(),
+        body,
+    }
+}
+
+#[cfg(test)]
+mod reminder_tests {
+    use chrono::{Duration, TimeZone, Utc};
+
+    use super::reminder;
+
+    #[test]
+    fn a_reminder_says_what_when_and_how_soon_and_a_missed_one_says_so() {
+        let starts = Utc.with_ymd_and_hms(2026, 11, 24, 9, 30, 0).unwrap();
+        let soon = reminder(
+            7,
+            "Standup",
+            starts,
+            starts - Duration::minutes(10),
+            false,
+            &Utc,
+        );
+        assert_eq!(soon.body, "Standup \u{b7} 09:30 \u{b7} in 10 min");
+        assert_eq!(soon.title, "Reminder");
+
+        let missed = reminder(
+            7,
+            "Standup",
+            starts,
+            starts + Duration::hours(2),
+            true,
+            &Utc,
+        );
+        assert_eq!(missed.body, "While Postio was closed: Standup at 09:30");
+        assert_ne!(
+            soon.identifier,
+            reminder(8, "Standup", starts, starts, false, &Utc).identifier
+        );
+    }
+}

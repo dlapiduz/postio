@@ -9,7 +9,7 @@ use postio_config::paths::Platform;
 use postio_model::MailboxRole;
 use std::sync::LazyLock;
 
-use crate::discovery::providers_toml::{self, OAuthRow, ProviderRow, Security};
+use crate::discovery::providers_toml::{self, CaldavRow, OAuthRow, ProviderRow, Security};
 use crate::discovery::settings::{AccountSettings, Encryption, ServerSettings, SettingsSource};
 
 /// Worded without naming anybody and derived from `requires_app_password`, so no row can say
@@ -127,6 +127,10 @@ impl Preset {
 
     fn note(&self) -> Option<&'static str> {
         self.row.requires_app_password.then_some(APP_PASSWORD_NOTE)
+    }
+
+    pub fn caldav(&self) -> Option<&CaldavRow> {
+        self.row.caldav.as_ref()
     }
 
     pub fn password_help_url(&self) -> Option<&str> {

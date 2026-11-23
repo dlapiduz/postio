@@ -31,6 +31,7 @@ pub struct CalendarView {
     pub popped: bool,
     pub search_key: Option<String>,
     pub open_keys: Vec<Hint>,
+    pub editor: Option<postio_ui::calendar::editor::EditorView>,
 }
 
 #[derive(Debug)]
@@ -44,13 +45,17 @@ pub(crate) struct Calendar {
     ended_before: bool,
     ended_after: bool,
     pending_cursor: Option<DateTime<chrono::Utc>>,
-    open: Option<EventDetail>,
+    pub(crate) open: Option<EventDetail>,
     detail_stamp: u64,
     filter: String,
     ignored: Vec<String>,
     search_stamp: u64,
     agenda: Option<(Vec<AgendaEntry>, Option<usize>)>,
     pub(crate) popped: bool,
+    pub(crate) editor: Option<crate::event_editor::Editor>,
+    edit_when_open: bool,
+    pub(crate) follow: Option<DateTime<chrono::Utc>>,
+    pub(crate) undo_follows: Option<DateTime<chrono::Utc>>,
 }
 
 impl Calendar {
@@ -72,6 +77,10 @@ impl Calendar {
             search_stamp: 0,
             agenda: None,
             popped: false,
+            editor: None,
+            edit_when_open: false,
+            follow: None,
+            undo_follows: None,
         }
     }
 
@@ -142,11 +151,83 @@ impl FocusController {
                 | CommandId::CalendarToday
                 | CommandId::GoToCalendar
                 | CommandId::Search
+                | CommandId::NewEvent
+                | CommandId::EditEvent
+                | CommandId::Delete
+                | CommandId::MoveEvent
+                | CommandId::DuplicateEvent
+                | CommandId::SaveEvent
+                | CommandId::SaveAndSendEvent
         )
     }
 
     pub(crate) fn calendar_command(&mut self, id: CommandId, rows: &dyn Rows) -> Option<Vec<Step>> {
+        if self.calendar.as_ref()?.editor.is_some() {
+            return self.editor_command(id);
+        }
+        if id == CommandId::Undo {
+            if let Some(calendar) = self.calendar.as_mut() {
+                calendar.follow = calendar.undo_follows.take();
+            }
+            return None;
+        }
+        let now = self.now();
         let calendar = self.calendar.as_mut()?;
+        if id == CommandId::NewEvent {
+            calendar.editor = Some(crate::event_editor::Editor::new(now));
+            return Some(self.draw_calendar());
+        }
+        let acted_on = match &calendar.open {
+            Some(detail) => Some(detail.entry.clone()),
+            None => calendar.current().cloned(),
+        };
+        match (id, acted_on) {
+            (CommandId::Delete, Some(entry)) if entry.recurrence_id.is_some() => {
+                calendar.editor = Some(crate::event_editor::Editor::deleting(&entry));
+                return Some(self.draw_calendar());
+            }
+            (CommandId::Delete, Some(entry)) => {
+                calendar.open = None;
+                calendar.undo_follows = Some(entry.start);
+                let mut steps = self.verbs.post(postio_core::Command::DeleteEvent {
+                    event: postio_model::calendar::EventTarget {
+                        occurrence: entry.cursor(),
+                        recurrence_id: None,
+                    },
+                    scope: None,
+                });
+                steps.extend(self.draw_calendar());
+                return Some(steps);
+            }
+            (CommandId::MoveEvent, Some(entry)) => {
+                calendar.editor = Some(crate::event_editor::Editor::moving(&entry));
+                return Some(self.draw_calendar());
+            }
+            (CommandId::DuplicateEvent, Some(entry)) => {
+                calendar.follow = Some(entry.start);
+                return Some(
+                    self.verbs
+                        .post(postio_core::Command::DuplicateEventOf { event: entry.event }),
+                );
+            }
+            (CommandId::Delete | CommandId::MoveEvent | CommandId::DuplicateEvent, None) => {
+                return Some(Vec::new());
+            }
+            _ => {}
+        }
+        if id == CommandId::EditEvent {
+            return Some(match &calendar.open {
+                Some(detail) if detail.writable => {
+                    calendar.editor = Some(crate::event_editor::Editor::of(detail));
+                    self.draw_calendar()
+                }
+                Some(_) => Vec::new(),
+                None => {
+                    calendar.edit_when_open = true;
+                    self.calendar_open()
+                }
+            });
+        }
         if calendar.open.is_some() {
             return match id {
                 CommandId::Back | CommandId::OpenMessage => {
@@ -383,12 +464,49 @@ impl FocusController {
             }
             Reply::EventDetail { stamp, answer } if stamp == calendar.detail_stamp => {
                 if let Ok(Some(detail)) = answer {
+                    if std::mem::take(&mut calendar.edit_when_open) && detail.writable {
+                        calendar.editor = Some(crate::event_editor::Editor::of(&detail));
+                    }
                     calendar.open = Some(*detail);
                 }
                 self.draw_calendar()
             }
             _ => Vec::new(),
         }
+    }
+
+    pub(crate) fn calendar_heard(&mut self, event: &postio_core::Event) -> Vec<Step> {
+        if !matches!(event, postio_core::Event::CalendarChanged) {
+            return Vec::new();
+        }
+        let Some(calendar) = self.calendar.as_mut() else {
+            return Vec::new();
+        };
+        if !calendar.filter.is_empty() {
+            let filter = calendar.filter.clone();
+            return self.calendar_filter_typed(filter);
+        }
+        let ringed = calendar.current().map(|entry| entry.start);
+        let first = calendar.entries.first().map(|entry| entry.start);
+        calendar.stamp += 1;
+        calendar.pending_cursor = calendar.follow.take().or(ringed);
+        calendar.asked_before = false;
+        calendar.asked_after = false;
+        let from = match (first, calendar.pending_cursor) {
+            (Some(first), Some(at)) => first.min(at),
+            (first, at) => first.or(at).unwrap_or_else(|| self.now().to_utc()),
+        };
+        let calendar = self.calendar.as_ref().expect("checked above");
+        let mut steps = vec![Step::Ask(Request::AgendaPage {
+            anchor: AgendaAnchor::From(from),
+            limit: AGENDA_PAGE,
+            stamp: calendar.stamp,
+            placement: Placement::Replace,
+        })];
+        if calendar.open.is_some() {
+            steps.extend(self.calendar_open());
+        }
+        steps
     }
 
     pub(crate) fn draw_calendar(&self) -> Vec<Step> {
@@ -430,7 +548,11 @@ impl FocusController {
                 .keymap()
                 .binding(CommandId::Search)
                 .map(str::to_owned),
-            open_keys: words::open_keys(self.bar.keymap()),
+            open_keys: words::open_keys(
+                self.bar.keymap(),
+                calendar.open.as_ref().is_some_and(|detail| detail.writable),
+            ),
+            editor: self.editor_view(),
         })))]
     }
 }

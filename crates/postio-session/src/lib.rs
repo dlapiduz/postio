@@ -27,6 +27,7 @@ pub mod provision;
 pub mod reachability;
 pub mod reading;
 pub mod refresh;
+pub mod reminders;
 pub mod search;
 pub mod signin;
 pub mod start_over;

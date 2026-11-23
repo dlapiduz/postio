@@ -119,6 +119,64 @@ pub struct EventChange {
     pub kind: ChangeKind,
     pub base: Option<Vec<u8>>,
     pub base_etag: Option<String>,
+    pub href: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlannedReminder {
+    pub event: EventId,
+    pub occurrence: DateTime<Utc>,
+    pub due: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DueReminder {
+    pub event: EventId,
+    pub occurrence: DateTime<Utc>,
+    pub due: DateTime<Utc>,
+    pub title: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReminderState {
+    Fired,
+    Snoozed,
+    Missed,
+}
+
+impl ReminderState {
+    fn text(self) -> &'static str {
+        match self {
+            ReminderState::Fired => "fired",
+            ReminderState::Snoozed => "snoozed",
+            ReminderState::Missed => "missed",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteCalendar {
+    pub id: CalendarId,
+    pub href: String,
+    pub token: Option<String>,
+    pub writable: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChangeState {
+    Sent,
+    Conflict,
+    Failed,
+}
+
+impl ChangeState {
+    fn text(self) -> &'static str {
+        match self {
+            ChangeState::Sent => "sent",
+            ChangeState::Conflict => "conflict",
+            ChangeState::Failed => "failed",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -134,8 +192,9 @@ const OCCURRENCE_CHUNK: usize = 200;
 
 const AGENDA: &str = "SELECT o.event_id, e.calendar_id, c.name, c.colour, e.title, e.location,
         o.start_utc, o.end_utc, o.all_day, o.floating, o.recurrence_id, e.status, e.my_partstat,
-        EXISTS (SELECT 1 FROM event_changes x
-                 WHERE x.event_id = o.event_id AND x.state IN ('queued', 'conflict', 'failed'))
+        c.account_id IS NOT NULL
+        AND EXISTS (SELECT 1 FROM event_changes x
+                     WHERE x.event_id = o.event_id AND x.state IN ('queued', 'conflict', 'failed'))
    FROM event_occurrences o
    JOIN events e ON e.id = o.event_id
    JOIN calendars c ON c.id = e.calendar_id";
@@ -389,6 +448,7 @@ impl CalendarRepository<'_> {
         calendar: CalendarId,
         kind: ChangeKind,
         base: Option<(&[u8], Option<&str>)>,
+        href: Option<&str>,
         at: DateTime<Utc>,
     ) -> Result<EventChangeId> {
         let (object, etag) =
@@ -396,8 +456,8 @@ impl CalendarRepository<'_> {
         let id: i64 = sql::one(
             self.connection,
             "INSERT INTO event_changes (event_id, calendar_id, kind, base_object, base_etag, state,
-                                        created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, 'queued', ?6) RETURNING id",
+                                        created_at, href)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'queued', ?6, ?7) RETURNING id",
             bind![
                 event.map(EventId::get),
                 calendar.get(),
@@ -405,6 +465,7 @@ impl CalendarRepository<'_> {
                 object,
                 etag,
                 to_millis(at),
+                href.map(str::to_owned),
             ],
             |row| row.col(0),
         )
@@ -415,7 +476,7 @@ impl CalendarRepository<'_> {
     pub async fn change(&self, id: EventChangeId) -> Result<Option<EventChange>> {
         sql::first(
             self.connection,
-            "SELECT id, event_id, calendar_id, kind, base_object, base_etag FROM event_changes
+            "SELECT id, event_id, calendar_id, kind, base_object, base_etag, href FROM event_changes
               WHERE id = ?1",
             [id.get()],
             |row| {
@@ -430,9 +491,252 @@ impl CalendarRepository<'_> {
                     },
                     base: row.col(4)?,
                     base_etag: row.col(5)?,
+                    href: row.col(6)?,
                 })
             },
         )
+        .await
+    }
+
+    pub async fn upsert_remote(
+        &self,
+        account: AccountId,
+        remote: &NewCalendar,
+    ) -> Result<CalendarId> {
+        sql::execute(
+            self.connection,
+            "INSERT INTO calendars (account_id, href, name, colour, writable, schedules)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT (account_id, href) DO UPDATE SET
+                name = excluded.name, colour = excluded.colour, schedules = excluded.schedules",
+            bind![
+                account.get(),
+                remote.href.clone(),
+                remote.name.clone(),
+                remote.colour.clone(),
+                remote.writable,
+                remote.schedules,
+            ],
+        )
+        .await?;
+        let id: i64 = sql::one(
+            self.connection,
+            "SELECT id FROM calendars WHERE account_id = ?1 AND href = ?2",
+            bind![account.get(), remote.href.clone()],
+            |row| row.col(0),
+        )
+        .await?;
+        Ok(CalendarId::new(id))
+    }
+
+    pub async fn remote(&self, account: AccountId) -> Result<Vec<RemoteCalendar>> {
+        sql::all_unbounded(
+            self.connection,
+            "SELECT id, href, sync_token, writable FROM calendars
+              WHERE account_id = ?1 AND href IS NOT NULL ORDER BY id",
+            [account.get()],
+            |row| {
+                Ok(RemoteCalendar {
+                    id: CalendarId::new(row.col(0)?),
+                    href: row.col(1)?,
+                    token: row.col(2)?,
+                    writable: row.col(3)?,
+                })
+            },
+        )
+        .await
+    }
+
+    pub async fn set_synced(
+        &self,
+        calendar: CalendarId,
+        token: Option<&str>,
+        at: DateTime<Utc>,
+    ) -> Result<()> {
+        sql::execute(
+            self.connection,
+            "UPDATE calendars SET sync_token = ?2, synced_at = ?3, error = NULL WHERE id = ?1",
+            bind![calendar.get(), token.map(str::to_owned), to_millis(at)],
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn set_error(&self, calendar: CalendarId, error: &str) -> Result<()> {
+        sql::execute(
+            self.connection,
+            "UPDATE calendars SET error = ?2 WHERE id = ?1",
+            bind![calendar.get(), error.to_owned()],
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn set_writable(&self, calendar: CalendarId, writable: bool) -> Result<()> {
+        sql::execute(
+            self.connection,
+            "UPDATE calendars SET writable = ?2 WHERE id = ?1",
+            bind![calendar.get(), writable],
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn held_at(&self, calendar: CalendarId, href: &str) -> Result<Option<HeldEvent>> {
+        let id: Option<i64> = sql::first(
+            self.connection,
+            "SELECT id FROM events WHERE calendar_id = ?1 AND href = ?2",
+            bind![calendar.get(), href.to_owned()],
+            |row| row.col(0),
+        )
+        .await?;
+        match id {
+            Some(id) => self.held(EventId::new(id)).await,
+            None => Ok(None),
+        }
+    }
+
+    pub async fn held_uid(&self, calendar: CalendarId, uid: &str) -> Result<Option<HeldEvent>> {
+        let id: Option<i64> = sql::first(
+            self.connection,
+            "SELECT id FROM events WHERE calendar_id = ?1 AND uid = ?2",
+            bind![calendar.get(), uid.to_owned()],
+            |row| row.col(0),
+        )
+        .await?;
+        match id {
+            Some(id) => self.held(EventId::new(id)).await,
+            None => Ok(None),
+        }
+    }
+
+    pub async fn unsettled(&self, event: EventId) -> Result<bool> {
+        sql::one(
+            self.connection,
+            "SELECT EXISTS (SELECT 1 FROM event_changes
+                             WHERE event_id = ?1 AND state IN ('queued', 'conflict'))",
+            [event.get()],
+            |row| row.col(0),
+        )
+        .await
+    }
+
+    pub async fn set_remote(&self, event: EventId, href: &str, etag: &str) -> Result<()> {
+        sql::execute(
+            self.connection,
+            "UPDATE events SET href = ?2, etag = ?3 WHERE id = ?1",
+            bind![event.get(), href.to_owned(), etag.to_owned()],
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn queued(&self, calendar: CalendarId) -> Result<Vec<EventChange>> {
+        sql::all_unbounded(
+            self.connection,
+            "SELECT id, event_id, calendar_id, kind, base_object, base_etag, href FROM event_changes
+              WHERE calendar_id = ?1 AND state = 'queued' ORDER BY id",
+            [calendar.get()],
+            |row| {
+                Ok(EventChange {
+                    id: EventChangeId::new(row.col(0)?),
+                    event: row.col::<Option<i64>>(1)?.map(EventId::new),
+                    calendar: CalendarId::new(row.col(2)?),
+                    kind: match row.col::<String>(3)?.as_str() {
+                        "create" => ChangeKind::Create,
+                        "delete" => ChangeKind::Delete,
+                        _ => ChangeKind::Update,
+                    },
+                    base: row.col(4)?,
+                    base_etag: row.col(5)?,
+                    href: row.col(6)?,
+                })
+            },
+        )
+        .await
+    }
+
+    pub async fn settle(&self, change: EventChangeId, state: ChangeState) -> Result<()> {
+        sql::execute(
+            self.connection,
+            "UPDATE event_changes SET state = ?2 WHERE id = ?1",
+            bind![change.get(), state.text()],
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn plan_reminders(&self, planned: &[PlannedReminder]) -> Result<()> {
+        for reminder in planned {
+            sql::execute(
+                self.connection,
+                "INSERT OR IGNORE INTO event_reminders (event_id, occurrence_start_utc, due_at, state)
+                 VALUES (?1, ?2, ?3, 'pending')",
+                bind![
+                    reminder.event.get(),
+                    to_millis(reminder.occurrence),
+                    to_millis(reminder.due),
+                ],
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    pub async fn pending_by(&self, at: DateTime<Utc>, limit: u32) -> Result<Vec<DueReminder>> {
+        sql::all(
+            self.connection,
+            "SELECT r.event_id, r.occurrence_start_utc, r.due_at, e.title FROM event_reminders r
+               JOIN events e ON e.id = r.event_id
+              WHERE r.state = 'pending' AND r.due_at <= ?1
+              ORDER BY r.due_at LIMIT ?2",
+            bind![to_millis(at), i64::from(limit)],
+            |row| {
+                Ok(DueReminder {
+                    event: EventId::new(row.col(0)?),
+                    occurrence: from_millis(row.col(1)?),
+                    due: from_millis(row.col(2)?),
+                    title: row.col(3)?,
+                })
+            },
+        )
+        .await
+    }
+
+    pub async fn next_reminder(&self) -> Result<Option<DateTime<Utc>>> {
+        let at: Option<i64> = sql::first(
+            self.connection,
+            "SELECT due_at FROM event_reminders WHERE state = 'pending' ORDER BY due_at LIMIT 1",
+            (),
+            |row| row.col(0),
+        )
+        .await?;
+        Ok(at.map(from_millis))
+    }
+
+    pub async fn settle_reminder(&self, due: &DueReminder, state: ReminderState) -> Result<()> {
+        sql::execute(
+            self.connection,
+            "UPDATE event_reminders SET state = ?4
+              WHERE event_id = ?1 AND occurrence_start_utc = ?2 AND due_at = ?3",
+            bind![
+                due.event.get(),
+                to_millis(due.occurrence),
+                to_millis(due.due),
+                state.text(),
+            ],
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn snooze_reminder(&self, due: &DueReminder, until: DateTime<Utc>) -> Result<()> {
+        self.settle_reminder(due, ReminderState::Snoozed).await?;
+        self.plan_reminders(&[PlannedReminder {
+            event: due.event,
+            occurrence: due.occurrence,
+            due: until,
+        }])
         .await
     }
 

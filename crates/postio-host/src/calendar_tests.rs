@@ -380,7 +380,7 @@ fn a_new_event_is_stored_and_logged_with_no_connection_and_undo_removes_it() {
         (shown[0].title.as_str(), shown[0].start),
         ("Dentist", start)
     );
-    assert!(shown[0].queued, "a change waits to be sent");
+    assert!(!shown[0].queued, "On this computer waits on no server");
     assert_eq!(changes(&world), ["create"]);
     assert!(egress(&world).is_empty(), "{:?}", egress(&world));
 
@@ -617,4 +617,63 @@ fn a_deleted_event_comes_back_on_undo_and_a_duplicate_is_its_own() {
     let back = agenda(&world);
     assert_eq!(back.len(), 2);
     assert!(back.iter().all(|entry| entry.title == "Dentist"));
+}
+
+#[test]
+fn a_scheduling_server_gets_the_answer_as_its_event_and_no_mail_goes() {
+    let world = World::new();
+    crate::verbs_tests::sending(&world);
+    let work = world.rt.block_on(async {
+        let connection = world.database().connect().await.expect("a connection");
+        CalendarRepository::new(&connection)
+            .create(&postio_model::calendar::NewCalendar {
+                account: Some(world.account),
+                href: Some("work".to_owned()),
+                name: "Work".to_owned(),
+                colour: None,
+                writable: true,
+                schedules: true,
+            })
+            .await
+            .expect("a calendar")
+    });
+    let request = crate::verbs_tests::invited(&world);
+    focus_caught_up(&world);
+    let (client, events) = world.frontend(ClientKind::Focus);
+
+    answer(
+        &world,
+        &client,
+        &events,
+        Command::AcceptInvite {
+            message: Some(request),
+        },
+    );
+
+    assert!(queued_drafts(&world).is_empty(), "no reply by mail");
+    assert_eq!(changes(&world), ["create"], "a PUT waits for sync");
+    assert!(egress(&world).is_empty());
+    let shown = agenda(&world);
+    assert_eq!(shown.len(), 1, "{shown:?}");
+    assert_eq!(shown[0].calendar, work);
+    assert_eq!(shown[0].my_partstat.as_deref(), Some("ACCEPTED"));
+    let object = world.rt.block_on(async {
+        let connection = world.database().connect().await.expect("a connection");
+        CalendarRepository::new(&connection)
+            .held(shown[0].event)
+            .await
+            .expect("a read")
+            .expect("held")
+            .object
+    });
+    assert!(
+        String::from_utf8_lossy(&object).contains("PARTSTAT=ACCEPTED"),
+        "the object itself says so"
+    );
+
+    answer(&world, &client, &events, Command::Undo);
+    assert!(
+        agenda(&world).is_empty(),
+        "undo takes it back before sync sends it"
+    );
 }

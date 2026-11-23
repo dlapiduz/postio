@@ -1,3 +1,5 @@
+pub mod editor;
+
 use chrono::{DateTime, Datelike, NaiveDate, TimeZone, Utc, Weekday};
 use postio_model::calendar::{
     AgendaCursor, AgendaEntry, EventDetail, EventStatus, Frequency, Participation, Repeat,
@@ -375,6 +377,9 @@ pub fn footer(keymap: &postio_core::Keymap) -> Vec<crate::hints::Hint> {
             "move",
         ),
         hint(keymap, CommandId::OpenMessage, "open"),
+        hint(keymap, CommandId::NewEvent, "new event"),
+        hint(keymap, CommandId::MoveEvent, "move to"),
+        hint(keymap, CommandId::Delete, "delete"),
         hint(keymap, CommandId::Search, "search"),
         pair(
             keymap,
@@ -391,8 +396,18 @@ pub fn footer(keymap: &postio_core::Keymap) -> Vec<crate::hints::Hint> {
     .collect()
 }
 
-pub fn open_keys(keymap: &postio_core::Keymap) -> Vec<crate::hints::Hint> {
-    crate::hints::hint(keymap, postio_core::CommandId::Back, "close")
+pub fn open_keys(keymap: &postio_core::Keymap, writable: bool) -> Vec<crate::hints::Hint> {
+    use postio_core::CommandId;
+    let verbs = [
+        (CommandId::EditEvent, "edit"),
+        (CommandId::MoveEvent, "move"),
+        (CommandId::Delete, "delete"),
+        (CommandId::DuplicateEvent, "duplicate"),
+    ];
+    verbs
         .into_iter()
+        .filter(|_| writable)
+        .filter_map(|(id, label)| crate::hints::hint(keymap, id, label))
+        .chain(crate::hints::hint(keymap, CommandId::Back, "close"))
         .collect()
 }
