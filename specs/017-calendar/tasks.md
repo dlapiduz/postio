@@ -175,7 +175,7 @@ scenario 5.
 
 - [x] T031 [US4] Create the crate `crates/postio-dav/` (the `CalendarBackend` trait, the fake, and `io-webdav`), with a `check-crate-boundaries.py` entry that keeps the store engine and toolkit out, and `postio-sync` free of `io-webdav` types. See the check fail on a deliberate `postio-storage` dependency, then remove it
 - [x] T032 [US4] Write the in-process wire server and its suite, `crates/postio-dav/tests/dav_suite/`, from `contracts/caldav-backend.md`'s table, red first. Then implement the backend.
-- [ ] T033 [US4] Add the `[caldav]` schema to `crates/postio-account/src/discovery/providers_toml.rs` with validation, the rows for iCloud and Fastmail to `crates/postio-account/data/providers.toml`, and `io-pim-discovery`'s `rfc6764` feature in `crates/postio-account/Cargo.toml`, with `account_suite` cases
+- [x] T033 [US4] Add the `[caldav]` schema to `crates/postio-account/src/discovery/providers_toml.rs` with validation, the rows for iCloud and Fastmail to `crates/postio-account/data/providers.toml`, and `io-pim-discovery`'s `rfc6764` feature in `crates/postio-account/Cargo.toml`, with `account_suite` cases
 - [ ] T034 [US4] Write failing cases in `crates/postio-sync/tests/sync_suite/calendar.rs` against the fake:
   - the first sync windowed, then the rest;
   - incremental by token;
