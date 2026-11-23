@@ -748,8 +748,8 @@ const CASES: &[(&str, fn())] = &[
         observe::the_window_says_where_the_keyboard_cursor_and_notices_are as fn(),
     ),
     (
-        "open_keys::the_keyboard_lands_on_the_message_not_a_button",
-        open_keys::the_keyboard_lands_on_the_message_not_a_button as fn(),
+        "open_keys::the_keyboard_lands_on_the_message_each_time_it_opens",
+        open_keys::the_keyboard_lands_on_the_message_each_time_it_opens as fn(),
     ),
     (
         "open_keys::a_toast_raised_under_the_open_message_is_drawn_over_it",

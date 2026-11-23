@@ -92,19 +92,32 @@ pub fn the_arrows_and_paging_keys_scroll_the_open_message_in_steps() {
     });
 }
 
-pub fn the_keyboard_lands_on_the_message_not_a_button() {
+pub fn the_keyboard_lands_on_the_message_each_time_it_opens() {
     crate::gtk_case(async {
         let fixture = Fixture::empty().await;
         three(&fixture).await;
         let window = opened(&fixture).await;
-        let focus = gtk::prelude::GtkWindowExt::focus(&window);
-        let on_the_message = focus.as_ref().is_some_and(|focus| {
-            focus.is::<gtk::ScrolledWindow>()
-                || focus.ancestor(gtk::ScrolledWindow::static_type()).is_some()
-        });
+        let on_the_message = |window: &postio_gtk::window::FocusWindow| {
+            gtk::prelude::GtkWindowExt::focus(window).is_some_and(|focus| {
+                focus.is::<gtk::ScrolledWindow>()
+                    || focus.ancestor(gtk::ScrolledWindow::static_type()).is_some()
+            })
+        };
         assert!(
-            on_the_message,
+            on_the_message(&window),
             "the keyboard is on {}",
+            support::focus_path(&window)
+        );
+        let reading = window.reading().expect("open");
+        support::deliver(&window, "Escape");
+        assert!(
+            crate::settle_until(async || !reading.is_open()).await,
+            "Escape did not close the message"
+        );
+        support::deliver(&window, "Return");
+        assert!(
+            crate::settle_until(async || reading.is_open() && on_the_message(&window)).await,
+            "opened again, the keyboard is on {}",
             support::focus_path(&window)
         );
     });
