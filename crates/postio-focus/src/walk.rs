@@ -103,6 +103,7 @@ impl FocusController {
             self.walk_asked = None;
             self.walk_seed = None;
             self.bar_up = false;
+            self.footer.lone = None;
             return if from_a_match {
                 self.results_returned()
             } else {
@@ -127,8 +128,10 @@ impl FocusController {
         }
         self.walk = None;
         self.walk_asked = None;
-        if host != Host::Own || self.surfaces.origin() != Origin::List {
-            return self.unbarred_over_results(message);
+        self.footer.lone = None;
+        let over_list = host == Host::Own && self.surfaces.origin() == Origin::List;
+        if !over_list {
+            return self.unbarred(message, false, rows);
         }
         let facts = self
             .cursor
@@ -137,10 +140,10 @@ impl FocusController {
             .filter(|facts| facts.id == message || self.opened_for(facts.id, Some(message)))
             .or_else(|| self.hit_facts(message));
         let Some(facts) = facts else {
-            return self.unbarred_over_results(message);
+            return self.unbarred(message, true, rows);
         };
         let Some(&thread) = facts.threads.first() else {
-            return self.unbarred_over_results(message);
+            return self.unbarred(message, true, rows);
         };
         if self
             .results
@@ -148,7 +151,7 @@ impl FocusController {
             .and_then(|results| results.lone_subject(message))
             .is_some()
         {
-            return self.unbarred_over_results(message);
+            return self.unbarred(message, true, rows);
         }
         if self
             .cursor
@@ -159,7 +162,7 @@ impl FocusController {
             .is_some_and(|count| count <= 1)
             && seed.is_none()
         {
-            return self.unbarred_over_results(message);
+            return self.unbarred(message, true, rows);
         }
         match seed.filter(|view| view.thread == thread) {
             Some(view) => self.begin_walk(
@@ -203,20 +206,47 @@ impl FocusController {
         }
     }
 
-    /// For a window on `message` that walks no thread, with its own footer when it is over the
-    /// results: theirs, Escape "back to inbox" among it, is not the window's (#2193).
-    fn unbarred_over_results(&mut self, message: MessageId) -> Vec<Step> {
-        let subject = self
+    fn unbarred(&mut self, message: MessageId, over_list: bool, rows: &dyn Rows) -> Vec<Step> {
+        self.footer.lone = self
+            .lone_footer(message, over_list, rows)
+            .map(|footer| crate::footer::Lone { message, footer });
+        self.walk_unbarred()
+    }
+
+    fn lone_footer(
+        &self,
+        message: MessageId,
+        over_list: bool,
+        rows: &dyn Rows,
+    ) -> Option<postio_ui::scope::FooterView> {
+        let keymap = self.keymap();
+        let row = rows
+            .position_of(message)
+            .and_then(|position| rows.row(position));
+        let row = row.as_ref().and_then(|row| row.as_conversation());
+        let subject = |row: &postio_ui::focus_list::Conversation| {
+            row.summary
+                .representative
+                .subject
+                .clone()
+                .unwrap_or_else(|| crate::thread_expand::NO_SUBJECT.to_owned())
+        };
+        if over_list
+            && let Some(row) = row
+            && let Some(verbs) =
+                postio_ui::focus_dialog::send_verbs(row.summary.representative.send_state)
+        {
+            return Some(scope::outgoing(&subject(row), verbs, keymap));
+        }
+        if let Some(subject) = self
             .results
             .as_ref()
-            .and_then(|results| results.lone_subject(message));
-        let footer = subject.map(|subject| {
-            let keymap = self.keymap();
-            scope::over_results(scope::lone(&subject, keymap), keymap)
-        });
-        let mut steps = self.walk_unbarred();
-        steps.extend(footer.map(|footer| Step::Show(Intent::Footer(footer))));
-        steps
+            .and_then(|results| results.lone_subject(message))
+        {
+            return Some(scope::over_results(scope::lone(&subject, keymap), keymap));
+        }
+        let row = row.filter(|_| over_list)?;
+        Some(scope::lone(&subject(row), keymap))
     }
 
     pub(crate) fn walk_unbarred(&mut self) -> Vec<Step> {
@@ -495,30 +525,37 @@ impl FocusController {
         if let Some(banner) = self.match_banner(walk) {
             steps.push(Step::Show(Intent::MatchBanner(Some(banner))));
         }
-        // The footer behind the window says what r acts on from here: the
-        // message on screen, whatever row the window came from. Over the
-        // results a message alone has one too: the results' is not the
-        // window's (#2193).
-        if many || self.results.is_some() {
-            let member = &walk.view.members[at];
-            let about = FooterAbout {
-                subject: walk.view.subject.as_deref().unwrap_or("(no subject)"),
-                count: walk.view.members.len(),
-                index: at,
-                sender: crate::thread_expand::sender_of(member),
-            };
-            let focus = ScopeFocus::Window {
-                thread: walk.view.thread,
-                message: member.id,
-            };
-            let footer = scope::footer(focus, &about, keymap);
-            let footer = match self.results {
-                Some(_) => scope::over_results(footer, keymap),
-                None => footer,
-            };
-            steps.push(Step::Show(Intent::Footer(footer)));
-        }
         steps
+    }
+
+    pub(crate) fn walk_footer(&self) -> Option<scope::FooterView> {
+        let walk = self.walk.as_ref()?;
+        let at = walk.at()?;
+        let keymap = self.keymap();
+        let subject = walk
+            .view
+            .subject
+            .as_deref()
+            .unwrap_or(crate::thread_expand::NO_SUBJECT);
+        if walk.view.members.len() <= 1 && self.results.is_none() {
+            return Some(scope::lone(subject, keymap));
+        }
+        let member = &walk.view.members[at];
+        let about = FooterAbout {
+            subject,
+            count: walk.view.members.len(),
+            index: at,
+            sender: crate::thread_expand::sender_of(member),
+        };
+        let focus = ScopeFocus::Window {
+            thread: walk.view.thread,
+            message: member.id,
+        };
+        let footer = scope::footer(focus, &about, keymap);
+        Some(match self.results {
+            Some(_) => scope::over_results(footer, keymap),
+            None => footer,
+        })
     }
 
     fn match_banner(&self, walk: &Walk) -> Option<thread_bar::MatchBannerView> {

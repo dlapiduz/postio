@@ -1,4 +1,4 @@
-use crate::search_support::shown;
+use crate::search_support::{shown, shown_but_the_footer};
 use postio_config::paths::Platform;
 use postio_core::{Command, CommandId, MessageTarget};
 use postio_focus::{
@@ -112,7 +112,7 @@ fn a_draft_opens_to_be_written_not_read() {
     let mut focus = mac();
     let effects = reading(&mut focus, &rows);
     assert_eq!(
-        shown(&effects),
+        shown_but_the_footer(&effects),
         vec![Intent::Composer {
             kind: postio_focus::ComposerKind::Draft,
             message: Some(MessageId::new(100))

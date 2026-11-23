@@ -918,7 +918,7 @@ impl FocusWindow {
         now
     }
 
-    fn sync_surfaces(&self) {
+    pub(crate) fn sync_surfaces(&self) {
         let Some(pane) = self.pane() else {
             return;
         };
@@ -1357,10 +1357,16 @@ impl FocusWindow {
                     window.follow_toast();
                 }
             ));
+            sheet.dialog().connect_closed(glib::clone!(
+                #[weak(rename_to = window)]
+                self,
+                move |_| window.sync_surfaces()
+            ));
             imp.capture.replace(Some(Rc::clone(&sheet)));
             sheet
         });
         sheet.open(self, source, mode);
+        self.sync_surfaces();
         crate::a11y::teach_shortcuts(sheet.dialog());
         crate::motion::keep_to_budget(sheet.dialog());
     }
@@ -6410,7 +6416,7 @@ impl FocusWindow {
             (None, Some(results)) => results.window_footer(),
             (None, None) => self.imp().scope_footer.borrow().clone(),
         };
-        if let Some(footer) = footer {
+        if let Some(footer) = footer.filter(|footer| footer.widget().is_visible()) {
             app.insert(
                 "focus.footer.title".to_owned(),
                 serde_json::json!(footer.title()),

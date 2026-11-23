@@ -22,6 +22,7 @@ mod digest;
 mod edge_cases;
 mod feed;
 mod filtered;
+mod footers;
 mod history;
 mod keymap;
 mod keys;

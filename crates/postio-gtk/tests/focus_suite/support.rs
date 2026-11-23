@@ -1132,6 +1132,8 @@ fn native_of(widget: &gtk::Widget, window: &postio_gtk::window::FocusWindow) -> 
         .unwrap_or_else(|| window.clone().upcast())
 }
 
+const DRAWN_AT_SIZE: f32 = 0.01;
+
 /// Waits for `widget` to stop moving on `native`: libadwaita opens a dialog by scaling it from 0.8
 /// to 1, so a press and a release a frame later land at two places (#1817). Whether `widget` is
 /// drawn at its own size now: a stalled frame clock draws no frames and stalls an opening dialog's
@@ -1140,10 +1142,30 @@ fn drawn_at_own_size(native: &gtk::Widget, widget: &gtk::Widget) -> bool {
     use gtk::prelude::*;
     match (widget.compute_bounds(native), widget.compute_bounds(widget)) {
         (Some(drawn), Some(own)) => {
-            (drawn.width() - own.width()).abs() < 0.5 && (drawn.height() - own.height()).abs() < 0.5
+            (drawn.width() - own.width()).abs() < DRAWN_AT_SIZE
+                && (drawn.height() - own.height()).abs() < DRAWN_AT_SIZE
         }
         _ => true,
     }
+}
+
+pub fn wait_for_dialog_opened(
+    window: &postio_gtk::window::FocusWindow,
+    dialog: &impl gtk::prelude::IsA<adw::Dialog>,
+) {
+    use adw::prelude::*;
+    let content = dialog.as_ref().child().expect("the dialog's content");
+    let deadline =
+        std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
+    while !(content.is_mapped() && content.width() > 0) && std::time::Instant::now() < deadline {
+        crate::settle();
+    }
+    let native = native_of(&content, window);
+    wait_to_be_still(&native, &content);
+    assert!(
+        drawn_at_own_size(&native, &content),
+        "the dialog never finished opening"
+    );
 }
 
 fn wait_to_be_still(native: &gtk::Widget, widget: &gtk::Widget) {
@@ -1169,8 +1191,8 @@ fn wait_to_be_still(native: &gtk::Widget, widget: &gtk::Widget) {
             return false;
         };
         before == last
-            && (last.width() - own.width()).abs() < 0.5
-            && (last.height() - own.height()).abs() < 0.5
+            && (last.width() - own.width()).abs() < DRAWN_AT_SIZE
+            && (last.height() - own.height()).abs() < DRAWN_AT_SIZE
     };
     let started = std::time::Instant::now();
     let deadline = started + postio_test_support::scaled(std::time::Duration::from_secs(10));
