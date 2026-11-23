@@ -140,6 +140,39 @@ new recurrence fixtures.
 - Otherwise calcard stays, and edits keep the raw object and patch only what
   Postio models.
 
+**S1 verdict (2026-11-23): go for `ical-rs` 0.7.3.** A scratch crate expanded
+R9's eight corpus invitations and T001's eight fixtures over 2026 to 2027 with
+both libraries. All 16 gave the same instants, ends and floating flags:
+
+- the New York weekly rule across the end of daylight time, with two EXDATEs
+  and a moved occurrence;
+- Chicago's EXDATEs;
+- a floating daily rule;
+- an all-day span;
+- `Pacific Standard Time` with no VTIMEZONE (its `tzdb` feature carries CLDR's
+  `windowsZones`, so no table of Postio's own is needed);
+- `Europe/Berlin` and `Asia/Kolkata` with no VTIMEZONE.
+
+Renaming SUMMARY in `unknown-properties.ics` changed that one line and no other
+byte. `IcalMerge` reports each side's actions and their collisions, which is
+FR-033's merge. So:
+
+- `postio-calendar` moves to `ical-rs`, pinned exactly, with features `parser`
+  and `tzdb`, and calcard leaves the workspace;
+- `parse` and `reply` move with it, and the crate's public types are
+  unchanged.
+
+**Effect on #2145:**
+
+- `ical-rs` is built on jiff 1.x, which leaves no chrono inside the calendar
+  library, and adds jiff 1.x and `jiff-tzdb` to the graph;
+- `postio-calendar`'s own edge stays on chrono (`EventTime`) until #2145
+  chooses, because its callers are chrono today;
+- if #2145 chooses jiff, the crate's edge moves with no library in the way;
+- if it chooses `time`, the adapter converts at the edge.
+
+Either way, one fewer crate holds chrono through a dependency.
+
 ### R3. CalDAV sync shape
 
 - **Discovery**:

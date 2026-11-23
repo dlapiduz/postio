@@ -64,7 +64,7 @@ test that is green on arrival is a guard, and says so.
 Each spike ends with a one-paragraph verdict, "go" or "no-go", appended to
 the plan's research section it settles. Spike code is not merged.
 
-- [ ] T003 **S1, the iCalendar library (gates Phase 4 onward).**
+- [x] T003 **S1, the iCalendar library (gates Phase 4 onward).**
   - In a scratch crate, run Pimalaya's `ical-rs` 0.7 and calcard 0.3.14 over spec 007 R9's corpus invitations and T001's fixtures.
   - Compare instants (expansion over two years), Windows zone names, byte-faithful edits of an unmodelled property, and three-way merge.
   - **Go for `ical-rs`** if its instants match. With Windows names missing, it is still a go, with a CLDR `windowsZones` table. Otherwise calcard stays.
