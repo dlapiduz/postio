@@ -48,7 +48,6 @@ fn run(focus: &mut FocusController, command: CommandId, rows: &List) -> Vec<Effe
     focus.handle_on(Input::Command(command), rows)
 }
 
-/// What the surface itself was told, footers aside: those have their own case.
 fn told(effects: &[Effect]) -> Vec<Intent> {
     shown(effects)
         .into_iter()
@@ -56,7 +55,6 @@ fn told(effects: &[Effect]) -> Vec<Intent> {
         .collect()
 }
 
-/// The frontend opens what it was told to, and says so.
 fn follow(focus: &mut FocusController, effects: &[Effect], rows: &List) {
     if shown(effects)
         .iter()

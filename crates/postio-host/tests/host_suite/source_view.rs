@@ -32,7 +32,6 @@ impl Scene {
         }
     }
 
-    /// The fixture filed with its body and header block, and its raw bytes when `raw`.
     pub(crate) async fn file(&self, fixture: &str, raw: bool) -> MessageId {
         let bytes = test_corpus::load(fixture).bytes();
         let parsed = postio_model::mime::parse(bytes);

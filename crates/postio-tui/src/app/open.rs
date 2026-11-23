@@ -17,7 +17,6 @@ pub struct Raw {
     pub message: MessageId,
     pub view: Option<postio_ui::source::SourceView>,
     pub tab: postio_ui::source::Tab,
-    /// The tab's text, made safe to draw; `None` until the view arrives.
     pub text: Option<SafeText>,
     /// Where the message was scrolled to, for when this closes.
     pub back_to: usize,

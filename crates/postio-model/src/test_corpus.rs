@@ -38,7 +38,6 @@ pub enum Category {
     BrokenReferences,
     MailingList,
     Pgp,
-    /// A signature to check, or the provider's record of one: the corpus keys verify these.
     Signature,
     RemoteContent,
     Calendar,

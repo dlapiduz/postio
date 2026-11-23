@@ -710,7 +710,6 @@ pub fn summary_of(cites: &[(&str, &str, i64)]) -> postio_model::summary::DigestS
     }
 }
 
-/// The Source surface's view over `raw`, as the host would build it with the bytes here.
 pub fn source_view(raw: &[u8]) -> postio_ui::source::SourceView {
     postio_ui::source::view(postio_ui::source::SourceInput {
         subject: "Harbor",

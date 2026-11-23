@@ -1,5 +1,3 @@
-//! The Source surface's behaviour: which tab is showing, and which of its verbs a tab has.
-
 use postio_core::CommandId;
 use postio_ui::source::Tab;
 
@@ -15,9 +13,7 @@ pub enum SourceVerb {
     Tab(Tab),
     Copy,
     Save,
-    /// The fold under the frontend's cursor; only on Raw.
     Unfold,
-    /// Only where there is text to find: Headers and Raw.
     Find,
 }
 
@@ -47,7 +43,6 @@ impl Source {
         )
     }
 
-    /// `None` for a key this tab does nothing with: it reaches nothing behind the surface either.
     pub(crate) fn verb(&mut self, id: CommandId) -> Option<SourceVerb> {
         let tab = match id {
             CommandId::SourceTabVerification => Tab::Verification,

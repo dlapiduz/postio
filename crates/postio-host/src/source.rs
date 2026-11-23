@@ -1,6 +1,3 @@
-//! The Source surface's read: one view over what the store holds, built without waiting on the
-//! network. Raw bytes not here are a fetch the caller starts, from the account's own server (D5).
-
 use postio_model::MessageId;
 use postio_storage::repository::{AccountRepository, MessageRepository};
 use postio_storage::{BlobStore, Store};
@@ -8,13 +5,9 @@ use postio_ui::source::{BodyState, Provider, RawState, SourceInput, SourceView};
 
 pub struct Opened {
     pub view: SourceView,
-    /// The bytes are not here and the account can be asked for them.
     pub fetch: bool,
 }
 
-/// # Errors
-///
-/// A sentence for the person when the message is gone or the store cannot be read.
 pub async fn view(
     database: &Store,
     blobs: &BlobStore,

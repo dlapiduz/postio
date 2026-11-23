@@ -798,8 +798,6 @@ fn disposition(part: &MessagePart<'_>) -> Disposition {
     }
 }
 
-/// Where each leaf part's body sits in `raw`, in byte order and never overlapping: what a view of
-/// the source folds. Empty when the bytes do not parse. Contained like `try_parse` (#277).
 pub fn leaf_bodies(raw: &[u8]) -> Vec<LeafBody> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let Some(parsed) = MessageParser::default().parse(raw) else {
@@ -837,7 +835,6 @@ pub fn leaf_bodies(raw: &[u8]) -> Vec<LeafBody> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LeafBody {
     pub range: std::ops::Range<usize>,
-    /// The `Content-Transfer-Encoding` as written, lower-cased; `7bit` when absent.
     pub encoding: String,
     pub name: Option<String>,
 }

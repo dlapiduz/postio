@@ -1,6 +1,3 @@
-//! The Source surface's view model: the Verification, Headers and Raw tabs as text, and every
-//! string they say. Nothing here is rendered or resolved: a URL is characters (spec 016 D3).
-
 use postio_model::{EmailAddress, Headers, headers};
 
 use crate::reader::authenticity::{self, Alignment, AuthReport, Method, MethodResult};
@@ -24,7 +21,6 @@ impl Tab {
         }
     }
 
-    /// What storyboards and tests observe.
     pub fn id(self) -> &'static str {
         match self {
             Tab::Verification => "verification",
@@ -36,7 +32,6 @@ impl Tab {
 
 #[derive(Debug, Clone, Copy)]
 pub struct Provider<'a> {
-    /// The preset's display name.
     pub name: &'a str,
     pub authserv_ids: &'a [&'a str],
 }
@@ -46,7 +41,6 @@ pub enum RawState {
     Here,
     Fetching,
     Offline,
-    /// The account has no sync running, so nothing can be fetched.
     Unreachable,
 }
 
@@ -59,16 +53,13 @@ pub enum BodyState {
 pub struct SourceInput<'a> {
     pub subject: &'a str,
     pub from: &'a [EmailAddress],
-    /// The stored header block, as `postio_model::headers::block_of` keeps it.
     pub headers: Option<&'a str>,
-    /// From, To, Subject and the like as a header block, drawn when no stored header is here.
     pub envelope: Option<&'a str>,
     pub raw: Option<Vec<u8>>,
     pub raw_state: RawState,
     pub body: BodyState,
     pub provider: Option<Provider<'a>>,
     pub sent_by_you: bool,
-    /// The account's name, for the fetch and offline lines.
     pub account: &'a str,
 }
 
@@ -89,7 +80,6 @@ pub struct VerificationView {
 pub struct Section {
     pub title: String,
     pub intro: Option<String>,
-    /// Drawn in mono after the intro: an authserv-id, a fingerprint.
     pub mono: Option<String>,
     pub lines: Vec<Line>,
     pub quiet: bool,
@@ -120,11 +110,8 @@ pub struct HeadersView {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HeaderRow {
     pub name: String,
-    /// Unfolded, with encoded words decoded.
     pub value: String,
-    /// As written, when decoding changed it.
     pub raw: Option<String>,
-    /// The trust boundary is drawn above this row: rows above it the provider wrote.
     pub boundary_above: Option<String>,
 }
 
@@ -133,7 +120,6 @@ pub struct Hop {
     pub from: Option<String>,
     pub by: Option<String>,
     pub at: Option<String>,
-    /// Since the hop before it, which is the next one down.
     pub delay: Option<String>,
 }
 
@@ -141,21 +127,18 @@ pub struct Hop {
 pub struct RawView {
     pub segments: Vec<RawSegment>,
     pub state_line: Option<String>,
-    /// Every byte, which a fold's range indexes; what copy acts on. Empty when not here.
     pub bytes: Vec<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RawSegment {
     Text(String),
-    /// A part body over `FOLD_OVER`, drawn as one line; `range` indexes the raw bytes.
     Fold {
         label: String,
         range: std::ops::Range<usize>,
     },
 }
 
-/// The file name Save offers: the subject with what a file system refuses taken out.
 pub fn eml_name(subject: &str) -> String {
     let kept: String = subject
         .chars()
@@ -184,7 +167,6 @@ pub const FIXED_LINE: &str = "These checks are about the sending domain and the 
 pub const NOT_CHECKED_HERE: &str = "DKIM, SPF and DMARC were not checked on this computer. Your provider checked them when the mail arrived.";
 
 pub fn view(mut input: SourceInput<'_>) -> SourceView {
-    // The raw bytes, when here, hold every header; the stored block may be cut at its limit.
     let raw = input.raw.take();
     let parsed = match raw.as_deref() {
         Some(raw) => Some(postio_model::mime::parse_headers(raw).headers),
@@ -649,7 +631,6 @@ fn local(input: &SourceInput<'_>) -> Section {
     }
 }
 
-/// One tab as plain text, for a frontend that draws text frames. A fold is its label line.
 pub fn text(view: &SourceView, tab: Tab) -> String {
     let mut out = String::new();
     match tab {
@@ -722,7 +703,6 @@ pub fn text(view: &SourceView, tab: Tab) -> String {
     out
 }
 
-/// What the footer teaches while the surface holds the keyboard: its own keys, never the list's.
 pub fn footer(keymap: &postio_core::Keymap) -> crate::scope::FooterView {
     use postio_core::CommandId;
     let keys = [

@@ -1,7 +1,3 @@
-//! The Source surface as one dialog: a tab strip over three pages drawn from
-//! `postio_ui::source::SourceView`. Every page is plain text in non-editable views with no link
-//! detection and no markup, so a hostile header is characters and nothing else (spec 016 D3).
-
 use std::cell::{Cell, RefCell};
 use std::ops::Range;
 use std::rc::Rc;
@@ -49,8 +45,6 @@ struct Fold {
 }
 
 impl SourceDialog {
-    /// `command` runs a registry command, as a key would: the tab buttons and close say what to
-    /// do and the controller decides.
     pub fn new(
         view: SourceView,
         keymap: &Keymap,
@@ -211,7 +205,6 @@ impl SourceDialog {
         &self.inner.dialog
     }
 
-    /// The subject the surface is titled with.
     pub fn subject(&self) -> String {
         let view = self.inner.view.borrow();
         view.title
@@ -224,7 +217,6 @@ impl SourceDialog {
         self.inner.tab.get()
     }
 
-    /// The bytes arrived, or the view changed under the surface; the tab stays.
     pub fn set_view(&self, view: SourceView) {
         self.inner.view.replace(view);
         self.draw();
@@ -242,8 +234,6 @@ impl SourceDialog {
             }
         }
         inner.find.set_visible(false);
-        // Verification's labels are not a place to type or select into: the tab's own button
-        // holds the keyboard there, and a text page holds it on the other two.
         match tab {
             Tab::Verification => {
                 if let Some(button) = inner.tabs.first() {
@@ -256,7 +246,6 @@ impl SourceDialog {
         }
     }
 
-    /// Every stored byte, folded or not; empty when the bytes are not here yet.
     pub fn bytes(&self) -> Vec<u8> {
         self.inner.view.borrow().raw.bytes.clone()
     }
@@ -266,7 +255,6 @@ impl SourceDialog {
         self.inner.find.grab_focus();
     }
 
-    /// The fold under the Raw tab's cursor, or the first one after it. `false` when none is left.
     pub fn unfold(&self) -> bool {
         let inner = &self.inner;
         let buffer = inner.raw.buffer();

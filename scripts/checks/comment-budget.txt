@@ -14,7 +14,7 @@ postio-extract 100
 postio-ffi 2477
 postio-focus 702
 postio-gmail 43
-postio-gtk 1559
+postio-gtk 1558
 postio-host 578
 postio-index 541
 postio-jmap 46
@@ -24,6 +24,7 @@ postio-render 313
 postio-runtime 858
 postio-search 276
 postio-session 1123
+postio-signature 26
 postio-smtp 205
 postio-storage 2498
 postio-storyboard 97

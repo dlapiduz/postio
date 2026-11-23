@@ -50,7 +50,6 @@ pub enum Context {
     Outline,
     /// Not the picker's context, which already gives each digit to `picker_choose_n`.
     ForwardChooser,
-    /// Its own context: digits pick its tabs, and a list letter must not act on the row behind it.
     Source,
 }
 

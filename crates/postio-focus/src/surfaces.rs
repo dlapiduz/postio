@@ -257,7 +257,6 @@ impl Surfaces {
             | SurfaceKind::Picker
             | SurfaceKind::RowMenu => Route::Surface(top),
             SurfaceKind::Bar | SurfaceKind::Filtered => Route::List,
-            // Its own keys are the controller's; the rest scroll and select its text.
             SurfaceKind::Source if crate::source::Source::owns(id) => Route::Controller,
             SurfaceKind::Source => Route::Toolkit,
         }

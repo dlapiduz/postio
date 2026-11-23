@@ -89,8 +89,6 @@ impl FocusController {
                 .iter()
                 .any(|effect| matches!(effect, Effect::Show(Intent::Footer(_))));
             if was != Owner::List && !said {
-                // The surface's own keys must not outlive it, even when the row has nothing to
-                // say.
                 let footer = self
                     .list_footer(raw)
                     .or_else(|| (was == Owner::Source).then(FooterView::default));

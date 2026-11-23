@@ -1403,7 +1403,6 @@ pub async fn rows_shown(window: &postio_gtk::window::FocusWindow, count: usize) 
     );
 }
 
-/// A Source dialog over a two-line message, for the checks every dialog meets.
 pub fn source_dialog(keymap: &postio_core::Keymap) -> adw::Dialog {
     let view = postio_ui::source::view(postio_ui::source::SourceInput {
         subject: "x",

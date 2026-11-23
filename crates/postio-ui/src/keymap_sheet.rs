@@ -288,7 +288,6 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::ForwardWhat3 => None,
         C::EditExternally | C::TogglePreview => None,
         C::ToggleFold | C::ExpandAll => None,
-        // The Source surface's tab strip names its own keys.
         C::SourceTabVerification
         | C::SourceTabHeaders
         | C::SourceTabRaw

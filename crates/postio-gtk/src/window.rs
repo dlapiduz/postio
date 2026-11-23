@@ -1285,8 +1285,6 @@ impl FocusWindow {
     }
 
     fn is_typing(&self) -> bool {
-        // A read-only text view (the Source surface's pages) takes no typing, so its keys stay
-        // commands.
         gtk::prelude::GtkWindowExt::focus(self).is_some_and(|focus| {
             focus.is::<gtk::Text>()
                 || focus
@@ -5121,7 +5119,6 @@ impl FocusWindow {
             }
         });
         dialog.dialog().present(Some(self));
-        // Focus set before presenting falls to the close button, where Return would close it.
         dialog.show_tab(dialog.tab());
         self.imp().source.replace(Some((message, dialog)));
         self.sync_surfaces();
@@ -5134,7 +5131,6 @@ impl FocusWindow {
         let window = self.downgrade();
         glib::spawn_future_local(async move {
             // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
-            // answers on its own runtime (ADR 0041).
             let read = client.source_view(message, false).await;
             if let (Some(window), Ok(view)) = (window.upgrade(), read)
                 && let Some(dialog) = window
@@ -5163,7 +5159,6 @@ impl FocusWindow {
             move |to| {
                 glib::spawn_future_local(async move {
                     // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host answers on
-                    // its own runtime (ADR 0041).
                     let saved = client.export_messages(vec![(message, to)]).await;
                     let Some(window) = window.upgrade() else {
                         return;

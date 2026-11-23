@@ -118,8 +118,6 @@ const NOT_YET: &[&str] = &[
     "filtered_tab_5",
     "filtered_tab_6",
     "filtered_tab_7",
-    // The Source surface's own keys each have a control on the surface; the command bar lists what
-    // the list reaches.
     "source_tab_verification",
     "source_tab_headers",
     "source_tab_raw",

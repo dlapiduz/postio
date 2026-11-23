@@ -381,7 +381,6 @@ pub enum Intent {
     },
     CloseSurface(SurfaceKind),
     Reader(ReaderVerb),
-    /// Always on Verification: one key that always opens one surface on the same tab.
     OpenSource {
         message: MessageId,
         tab: postio_ui::source::Tab,
@@ -2185,7 +2184,6 @@ impl FocusController {
         steps
     }
 
-    /// Taken off at once, as a dialog is: the frontend's echo of the close is then nothing.
     fn source_command(&mut self, id: CommandId) -> Vec<feed::Step> {
         if id == CommandId::Back {
             self.surfaces.dismiss(SurfaceKind::Source);

@@ -137,7 +137,6 @@ impl Method {
     }
 }
 
-/// DMARC's relaxed alignment: the result's domain and From's share an organisational domain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Alignment {
     Aligned,
@@ -148,7 +147,6 @@ pub enum Alignment {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MethodResult {
     pub method: Method,
-    /// As written, lower-cased: `pass`, `fail`, `softfail`, `neutral`, `none`, ...
     pub result: String,
     pub domain: Option<String>,
     pub selector: Option<String>,
@@ -160,14 +158,11 @@ pub struct MethodResult {
 pub struct AuthReport {
     pub authserv_id: String,
     pub trusted: bool,
-    /// Index among the message's headers of the same name, topmost first.
     pub position: usize,
-    /// `Some` for an `ARC-Authentication-Results`, its instance.
     pub arc_instance: Option<u32>,
     pub results: Vec<MethodResult>,
 }
 
-/// Named only: Postio never verifies a seal, which would need the sealer's DNS.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArcSet {
     pub instance: u32,
@@ -178,15 +173,11 @@ pub struct ArcSet {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Verification {
     pub provider: Option<AuthReport>,
-    /// How many headers the provider's authserv-id wrote; only the topmost is believed.
     pub provider_headers: usize,
     pub not_believed: Vec<AuthReport>,
-    /// By instance, oldest first.
     pub arc: Vec<ArcSet>,
 }
 
-/// The same trust rule as `verdict`: the topmost header from the provider is believed, and every
-/// other `Authentication-Results` and every `ARC-Authentication-Results` is not.
 pub fn verification<T: AsRef<str>>(
     headers: &Headers,
     from: &[EmailAddress],
@@ -308,7 +299,6 @@ impl Result {
         let selector = (method == Method::Dkim)
             .then(|| self.property("header.s").map(str::to_owned))
             .flatten();
-        // Gmail and Fastmail write the policy as a comment, `(p=REJECT ...)`.
         let policy = (method == Method::Dmarc)
             .then(|| {
                 self.properties
@@ -401,8 +391,6 @@ fn parse(value: &str) -> Option<Parsed> {
     })
 }
 
-/// Each `;`-separated section with its comments taken out, and their text kept beside it: a `;`
-/// inside a comment does not end a section.
 fn sections(value: &str) -> Vec<(String, String)> {
     let mut depth = 0usize;
     let mut out = vec![(String::new(), String::new())];

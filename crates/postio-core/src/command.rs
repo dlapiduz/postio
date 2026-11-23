@@ -394,7 +394,6 @@ commands! {
     SourceTabVerification => "source_tab_verification",
     SourceTabHeaders => "source_tab_headers",
     SourceTabRaw => "source_tab_raw",
-    /// Every byte of the stored source, folded parts included.
     CopySource => "copy_source",
     SaveSource => "save_source",
     UnfoldPart => "unfold_part",

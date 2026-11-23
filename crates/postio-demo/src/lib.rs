@@ -25,7 +25,6 @@ pub enum Seed {
     Backfilling,
     Search,
     Threads,
-    /// The small demo with its fifth row refiled as a real message whose source is here.
     Source,
 }
 
@@ -837,29 +836,18 @@ pub fn opened_parts() -> Vec<Attachment> {
     .collect()
 }
 
-/// The corpus message the `source` seed refiles the fifth row as: a list's re-signed mail with a
-/// provider's results, an ARC set and two `Received` hops.
-/// Taken by path, not through `test_corpus`, whose feature must never reach a shipped build.
 const SOURCE: &[u8] = include_bytes!("../../postio-model/tests/corpus/auth-results-arc-list.eml");
 
 fn source_bytes() -> &'static [u8] {
     SOURCE
 }
 
-/// Puts the `source` seed's raw message in `blobs`; blob ids are the content's, so the seed's row
-/// names it.
-///
-/// # Errors
-///
-/// The store's: a blob that could not be written.
 pub fn store_source_blobs(
     blobs: &postio_storage::BlobStore,
 ) -> postio_storage::Result<postio_model::BlobId> {
     blobs.put(source_bytes())
 }
 
-/// The fifth row, refiled in place as a real message with its raw bytes and header block here, so
-/// the Source surface has something true to show and no other row moves.
 pub async fn source_demo(database: &Store, account: AccountId) {
     let connection = database.connect().await.expect("a connection");
     let messages = MessageRepository::new(&connection);

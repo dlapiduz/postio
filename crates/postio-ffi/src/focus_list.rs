@@ -974,8 +974,6 @@ impl FocusDriver {
                     self.say(UiEvent::FocusReader { verb });
                 }
             }
-            // The Mac's message window draws the raw source on this verb; the surface's tabs and
-            // the list's V are its own to build (spec 016 T024).
             Intent::OpenSource {
                 over: postio_focus::Over::Message,
                 ..

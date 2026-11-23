@@ -1619,8 +1619,6 @@ impl Client {
         .await
     }
 
-    /// Never waits on the network: bytes not here come back as a fetch in flight, and a
-    /// whole-message `Event::BodyLoaded` says when to ask again.
     pub async fn source_view(
         &self,
         message: MessageId,

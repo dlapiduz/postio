@@ -375,8 +375,6 @@ pub enum Req {
     SweepPreview,
     /// Fetched from the server on this request when never downloaded.
     RawSource(MessageId),
-    /// Answered from the store at once; absent bytes start a fetch that ends in a whole-message
-    /// `BodyLoaded`.
     SourceView {
         message: MessageId,
         offline: bool,
