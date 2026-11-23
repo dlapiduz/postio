@@ -343,47 +343,111 @@ pub fn filtered_row(
     }
 }
 
-/// Answer every ask among `effects` from `tabs` and `rows`, and whatever
-/// those asked for in turn; return how many there were.
+/// Answer every request of the controller among `effects` with `reply`, and
+/// whatever those asked for in turn; every effect the app returned on the
+/// way, the first `effects` included.
+pub fn serve_focus(
+    app: &mut App,
+    effects: Vec<Effect>,
+    mut reply: impl FnMut(&postio_focus::Request) -> Option<postio_focus::Reply>,
+) -> Vec<Effect> {
+    let mut seen = Vec::new();
+    let mut pending: Vec<Effect> = effects.into_iter().rev().collect();
+    while let Some(effect) = pending.pop() {
+        if let Effect::Focus { ticket, request } = &effect
+            && let Some(answer) = reply(request)
+        {
+            pending.extend(
+                update(app, Input::FocusReply(*ticket, answer))
+                    .into_iter()
+                    .rev(),
+            );
+        }
+        seen.push(effect);
+    }
+    seen
+}
+
+/// Answer what Filtered asks from `tabs` and `rows`, as the host would.
 pub fn serve_filtered(
     app: &mut App,
     effects: Vec<Effect>,
     tabs: &[(&str, u32)],
     rows: &[postio_client::protocol::FilteredRow],
-) -> usize {
-    use crate::ask::{Answer, Ask};
-    let mut asked = 0;
-    let mut pending = effects;
-    while let Some(effect) = pending.pop() {
-        let Effect::Ask(ask) = effect else {
-            continue;
-        };
-        asked += 1;
-        let answer = match ask {
-            Ask::FilteredTabs => Answer::FilteredTabs(Ok(tabs
+) -> Vec<Effect> {
+    use postio_focus::{Reply, Request};
+    serve_focus(app, effects, |request| match request {
+        Request::FilteredTabs => Some(Reply::FilteredTabs(Ok(tabs
+            .iter()
+            .map(|(reason, count)| ((*reason).to_owned(), *count))
+            .collect()))),
+        Request::Filtered {
+            reason,
+            offset,
+            stamp,
+        } => Some(Reply::Filtered {
+            stamp: *stamp,
+            offset: *offset,
+            answer: Ok(rows
                 .iter()
-                .map(|(reason, count)| ((*reason).to_owned(), *count))
-                .collect())),
-            Ask::FilteredPage {
-                generation,
-                reason,
-                offset,
-            } => Answer::FilteredPage {
-                generation,
-                offset,
-                rows: Ok(rows
-                    .iter()
-                    .filter(|row| reason.as_ref().is_none_or(|reason| *reason == row.reason))
-                    .skip(offset as usize)
-                    .take(postio_ui::filtered::PAGE as usize)
-                    .cloned()
-                    .collect()),
-            },
-            _ => continue,
-        };
-        pending.extend(update(app, Input::Answer(answer)));
-    }
-    asked
+                .filter(|row| reason.as_ref().is_none_or(|reason| *reason == row.reason))
+                .skip(*offset as usize)
+                .take(postio_ui::filtered::PAGE as usize)
+                .cloned()
+                .collect()),
+        }),
+        _ => None,
+    })
+}
+
+/// Answer the read of a digest's delivery with its `messages` and `summary`.
+pub fn serve_digest(
+    app: &mut App,
+    effects: Vec<Effect>,
+    messages: Vec<postio_model::listing::MessageSummary>,
+    summary: Option<postio_model::summary::DigestSummary>,
+) -> Vec<Effect> {
+    use postio_focus::{Reply, Request};
+    serve_focus(app, effects, |request| match request {
+        Request::DigestRead { stamp, .. } => Some(Reply::DigestRead {
+            stamp: *stamp,
+            rows: Ok(messages.clone()),
+            summary: summary.clone(),
+        }),
+        _ => None,
+    })
+}
+
+/// Answer what a rule would have caught with `preview`.
+pub fn serve_preview(
+    app: &mut App,
+    effects: Vec<Effect>,
+    preview: postio_client::protocol::DigestPreview,
+) -> Vec<Effect> {
+    use postio_focus::{Reply, Request};
+    serve_focus(app, effects, |request| match request {
+        Request::DigestPreview { stamp, .. } => Some(Reply::DigestPreview {
+            stamp: *stamp,
+            answer: Ok(preview.clone()),
+        }),
+        _ => None,
+    })
+}
+
+/// Answer the read of the vault with `picture`.
+pub fn serve_vault(
+    app: &mut App,
+    effects: Vec<Effect>,
+    picture: postio_client::protocol::VaultPicture,
+) -> Vec<Effect> {
+    use postio_focus::{Reply, Request};
+    serve_focus(app, effects, |request| match request {
+        Request::Vault { stamp, .. } => Some(Reply::Vault {
+            stamp: *stamp,
+            answer: Ok(picture.clone()),
+        }),
+        _ => None,
+    })
 }
 
 // -- Reading ---------------------------------------------------------------
@@ -664,6 +728,15 @@ pub fn digest_row(
         summary_line: None,
         at: local(23, 11, 0),
     })
+}
+
+/// `[focus]` with a model the person brought, so a digest has its summary read.
+pub fn with_model() -> postio_config::FocusConfig {
+    postio_config::Config::from_toml_str(
+        "[focus.model]\nendpoint = \"http://127.0.0.1:11434/v1\"\nmodel = \"a-small-model\"\n",
+    )
+    .expect("a config")
+    .focus
 }
 
 /// `config.toml`'s rule for "Newsletters": weekly, Sunday, 09:00.

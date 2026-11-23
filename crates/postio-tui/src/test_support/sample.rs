@@ -62,6 +62,7 @@ pub fn state(state: &str, width: u16, height: u16) -> (App, Colour) {
     let mut allowed = postio_ui::allowlist::RemoteImageAllowList::default();
     allowed.allow("newsletter@example.org");
     let mut app = crate::test_support::app((width, height)).with_allowlist(allowed);
+    app.clock_for_tests(crate::test_support::now());
 
     crate::test_support::seed_places(
         &mut app,
@@ -109,6 +110,7 @@ pub fn state(state: &str, width: u16, height: u16) -> (App, Colour) {
                     .digests,
                 ),
                 capture: state == "capture",
+                section: crate::places::Section::new(crate::test_support::with_model()),
                 reading: if state == "pane" {
                     postio_config::Reading::Pane
                 } else {
@@ -528,7 +530,10 @@ pub fn state(state: &str, width: u16, height: u16) -> (App, Colour) {
         "digest" | "digest-list" | "digest-email" => {
             use crate::test_support::{held, summary_of};
             key(&mut app, KeyCode::Char('j'), KeyModifiers::NONE);
-            key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+            let opening = update(
+                &mut app,
+                crate::test_support::key(KeyCode::Enter, KeyModifiers::NONE),
+            );
             let messages = vec![
                 held(
                     21,
@@ -563,14 +568,7 @@ pub fn state(state: &str, width: u16, height: u16) -> (App, Colour) {
                 ("Your town", "Bins are collected on Thursdays now.", 23),
             ]);
             summary.statements[1].reference.excerpt = "the 8:10 runs at 8:15.".into();
-            update(
-                &mut app,
-                Input::Answer(crate::ask::Answer::Digest {
-                    delivery: postio_model::ids::DeliveryId::new(1),
-                    messages: Ok(messages),
-                    summary: Ok(Some(summary)),
-                }),
-            );
+            crate::test_support::serve_digest(&mut app, opening, messages, Some(summary));
             match state {
                 "digest-list" => key(&mut app, KeyCode::Tab, KeyModifiers::NONE),
                 "digest-email" => {
@@ -617,24 +615,26 @@ pub fn state(state: &str, width: u16, height: u16) -> (App, Colour) {
                     ),
                 )],
             );
-            key(&mut app, KeyCode::Char('T'), KeyModifiers::NONE);
+            let opening = update(
+                &mut app,
+                crate::test_support::key(KeyCode::Char('T'), KeyModifiers::NONE),
+            );
             let project = |name: &str| postio_vault::Project {
                 name: name.into(),
                 note: std::path::PathBuf::from(format!("Projects/{name}.md")),
             };
-            update(
+            crate::test_support::serve_vault(
                 &mut app,
-                Input::Answer(crate::ask::Answer::Vault(Ok(
-                    postio_client::protocol::VaultPicture {
-                        projects: vec![project("Atlas"), project("Garden")],
-                        suggestion: Some(postio_vault::Suggestion {
-                            project: project("Atlas"),
-                            reason: postio_vault::Reason::NamedInSubject("atlas".into()),
-                        }),
-                        tasks_note: std::path::PathBuf::from("Tasks.md"),
-                        tasks: Vec::new(),
-                    },
-                ))),
+                opening,
+                postio_client::protocol::VaultPicture {
+                    projects: vec![project("Atlas"), project("Garden")],
+                    suggestion: Some(postio_vault::Suggestion {
+                        project: project("Atlas"),
+                        reason: postio_vault::Reason::NamedInSubject("atlas".into()),
+                    }),
+                    tasks_note: std::path::PathBuf::from("Tasks.md"),
+                    tasks: Vec::new(),
+                },
             );
         }
         "rules" | "rule" => {
@@ -659,45 +659,43 @@ pub fn state(state: &str, width: u16, height: u16) -> (App, Colour) {
                     &mut app,
                     crate::test_support::key(KeyCode::Enter, KeyModifiers::NONE),
                 );
-                let generation = effects.iter().find_map(|effect| match effect {
-                    Effect::Ask(crate::ask::Ask::Preview { generation, .. }) => Some(*generation),
+                crate::test_support::serve_focus(&mut app, effects, |request| match request {
+                    postio_focus::Request::DigestPreview { stamp, .. } => {
+                        Some(postio_focus::Reply::DigestPreview {
+                            stamp: *stamp,
+                            answer: Ok(postio_client::protocol::DigestPreview {
+                                count: 9,
+                                first: vec![
+                                    crate::test_support::held(
+                                        31,
+                                        "Local First",
+                                        "Local-first weekly 41",
+                                        "",
+                                    ),
+                                    crate::test_support::held(
+                                        32,
+                                        "Local First",
+                                        "Local-first weekly 40",
+                                        "",
+                                    ),
+                                    crate::test_support::held(
+                                        33,
+                                        "Ledger",
+                                        "The Ledger, September",
+                                        "",
+                                    ),
+                                    crate::test_support::held(
+                                        34,
+                                        "Local First",
+                                        "Local-first weekly 39",
+                                        "",
+                                    ),
+                                ],
+                            }),
+                        })
+                    }
                     _ => None,
                 });
-                update(
-                    &mut app,
-                    Input::Answer(crate::ask::Answer::Preview {
-                        generation: generation.unwrap_or(1),
-                        preview: Ok(postio_client::protocol::DigestPreview {
-                            count: 9,
-                            first: vec![
-                                crate::test_support::held(
-                                    31,
-                                    "Local First",
-                                    "Local-first weekly 41",
-                                    "",
-                                ),
-                                crate::test_support::held(
-                                    32,
-                                    "Local First",
-                                    "Local-first weekly 40",
-                                    "",
-                                ),
-                                crate::test_support::held(
-                                    33,
-                                    "Ledger",
-                                    "The Ledger, September",
-                                    "",
-                                ),
-                                crate::test_support::held(
-                                    34,
-                                    "Local First",
-                                    "Local-first weekly 39",
-                                    "",
-                                ),
-                            ],
-                        }),
-                    }),
-                );
             }
         }
         "filtered" | "sweep" => {
@@ -726,11 +724,14 @@ pub fn state(state: &str, width: u16, height: u16) -> (App, Colour) {
             crate::test_support::serve_filtered(&mut app, effects, &tabs, &filed);
             key(&mut app, KeyCode::Char('j'), KeyModifiers::NONE);
             if state == "sweep" {
-                key(&mut app, KeyCode::Char('F'), KeyModifiers::NONE);
-                update(
+                let effects = update(
                     &mut app,
-                    Input::Answer(crate::ask::Answer::SweepPreview(Ok(7))),
+                    crate::test_support::key(KeyCode::Char('F'), KeyModifiers::NONE),
                 );
+                crate::test_support::serve_focus(&mut app, effects, |request| {
+                    matches!(request, postio_focus::Request::SweepPreview)
+                        .then_some(postio_focus::Reply::SweepPreview(Ok(7)))
+                });
             }
         }
         _ => {}

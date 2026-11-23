@@ -1,14 +1,8 @@
-//! The rule dialog (terminal.md, "Digests"): a frame 64 wide holding the
-//! form and its preview.
-//!
-//! From, how often and when, "Match a list or a search instead…", what the
-//! rule would have caught in the last 90 days, the note, and Cancel and
-//! Create. The control the keyboard is on is reversed, so it shows without
-//! a colour; each is a click.
+//! The rule dialog: a frame 64 wide holding the form and its preview. The
+//! control the keyboard is on is reversed, so it shows without a colour.
 
-use chrono::{DateTime, Local};
 use postio_core::CommandId;
-use postio_ui::digest;
+use postio_ui::terminal::SafeText;
 use ratatui::Frame;
 use ratatui::layout::{Position, Rect};
 use ratatui::style::{Modifier, Style};
@@ -25,24 +19,15 @@ use crate::view::fit;
 use crate::view::hit::{Hits, Target};
 use crate::view::wrap::wrap;
 
-/// How wide the frame is.
 pub const WIDTH: u16 = 64;
 
-/// The label column: `From     `.
 const LABEL: u16 = 9;
 
-/// Draw the dialog over `area`, when one is open.
-pub fn draw(
-    frame: &mut Frame,
-    area: Rect,
-    app: &App,
-    theme: &Theme,
-    now: DateTime<Local>,
-    hits: &mut Hits,
-) {
+pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut Hits) {
     let Some(form) = app.rule_form() else {
         return;
     };
+    let view = form.view();
     let (dim, text, accent) = (
         theme.style(Role::Dim),
         theme.style(Role::Text),
@@ -50,17 +35,16 @@ pub fn draw(
     );
     let width = WIDTH.min(area.width);
     let room = usize::from(width).saturating_sub(4 + usize::from(LABEL));
-    let note = wrap(&Line::styled(form.note(), dim), room.max(1));
-    let shown = form.preview().map_or(0, |preview| preview.first.len());
+    let note = wrap(&Line::styled(view.note.clone(), dim), room.max(1));
     let height = 12
-        + u16::try_from(shown + note.len()).unwrap_or(0)
-        + u16::from(form.like_this().is_some())
-        + u16::from(form.error().is_some())
-        + u16::from(
-            form.preview()
-                .is_some_and(|p| digest::preview_more(p.count, shown).is_some()),
-        );
-    let heading = crate::view::fit(form.heading(), usize::from(width).saturating_sub(6));
+        + u16::try_from(view.preview.len() + note.len()).unwrap_or(0)
+        + u16::from(view.like_this.is_some())
+        + u16::from(view.error.is_some())
+        + u16::from(view.more.is_some());
+    let heading = crate::view::fit(
+        SafeText::new(&view.heading).as_str(),
+        usize::from(width).saturating_sub(6),
+    );
     let inside = boxed::draw(frame, area, width, height, &heading, theme, hits);
     let fields = form.fields();
     let focused = form.field();
@@ -86,8 +70,8 @@ pub fn draw(
     let value_x = x + LABEL;
 
     // From.
-    label(frame, y, "From");
-    if form.query_mode() {
+    label(frame, y, &view.from_label);
+    if view.query.is_some() {
         let value = form.query().value();
         let shown = fit(value, room);
         let w = u16::try_from(room).unwrap_or(0);
@@ -109,11 +93,17 @@ pub fn draw(
         y += 1;
     } else {
         frame.render_widget(
-            Line::styled(fit(form.senders(), room), text),
+            Line::styled(
+                fit(
+                    SafeText::new(view.from.as_deref().unwrap_or_default()).as_str(),
+                    room,
+                ),
+                text,
+            ),
             Rect::new(value_x, y, u16::try_from(room).unwrap_or(0), 1),
         );
         y += 1;
-        let words = "Match a list or a search instead…";
+        let words = view.match_instead.clone().unwrap_or_default();
         let w = u16::try_from(words.width()).unwrap_or(0);
         frame.render_widget(
             Line::styled(
@@ -124,12 +114,11 @@ pub fn draw(
         );
         field_at(hits, Rect::new(value_x, y, w, 1), Field::MatchInstead);
         y += 1;
-        if form.like_this().is_some() {
+        if let Some(words) = view.like_this.clone() {
             let key = app
                 .hint(CommandId::DigestLikeThis)
                 .map(|key| format!(" {}", cap(&key)))
                 .unwrap_or_default();
-            let words = "Digest mail like this";
             let w = u16::try_from(words.width() + key.width()).unwrap_or(0);
             frame.render_widget(
                 Line::from(vec![
@@ -145,7 +134,7 @@ pub fn draw(
 
     // Deliver: how often, on which day, at what time.
     y += 1;
-    label(frame, y, "Deliver");
+    label(frame, y, &view.deliver_label);
     let schedule = form.schedule();
     let mut at = value_x;
     let put = |frame: &mut Frame,
@@ -161,7 +150,7 @@ pub fn draw(
         }
         *at += w;
     };
-    let cadence = digest::CADENCES[schedule.cadence.min(2)].1;
+    let cadence = view.cadences[schedule.cadence.min(2)].clone();
     put(
         frame,
         hits,
@@ -173,9 +162,7 @@ pub fn draw(
     if fields.contains(&Field::Day) {
         put(frame, hits, &mut at, " on ".to_owned(), dim, None);
         let day = if schedule.cadence == 1 {
-            chrono::NaiveDate::from_isoywd_opt(2026, 1, digest::WEEKDAYS[schedule.weekday.min(6)])
-                .map(|date| date.format("%A").to_string())
-                .unwrap_or_default()
+            view.weekdays[schedule.weekday.min(6)].clone()
         } else {
             format!("day {}", schedule.month_day + 1)
         };
@@ -207,21 +194,18 @@ pub fn draw(
     y += 2;
 
     // What it would have caught.
-    if let Some(preview) = form.preview() {
+    if let Some(heading) = &view.preview_heading {
         frame.render_widget(
             Line::styled(
-                fit(
-                    &digest::preview_heading(preview.count),
-                    usize::from(inside.width) - 2,
-                ),
+                fit(heading, usize::from(inside.width) - 2),
                 text.add_modifier(Modifier::BOLD),
             ),
             Rect::new(x, y, inside.width - 2, 1),
         );
         y += 1;
-        for (subject, when) in &preview.first {
-            let day = digest::preview_day(when.with_timezone(&Local), now);
-            let room = usize::from(inside.width).saturating_sub(6 + day.width());
+        for line in &view.preview {
+            let subject = SafeText::new(&line.subject);
+            let room = usize::from(inside.width).saturating_sub(6 + line.day.width());
             let subject = fit(subject.as_str(), room);
             let gap = room.saturating_sub(subject.width());
             frame.render_widget(
@@ -229,13 +213,13 @@ pub fn draw(
                     Span::raw("  "),
                     Span::styled(subject, text),
                     Span::raw(" ".repeat(gap + 2)),
-                    Span::styled(day, dim),
+                    Span::styled(line.day.clone(), dim),
                 ]),
                 Rect::new(x, y, inside.width - 2, 1),
             );
             y += 1;
         }
-        if let Some(more) = digest::preview_more(preview.count, preview.first.len()) {
+        if let Some(more) = &view.more {
             frame.render_widget(
                 Line::styled(format!("  {more}"), dim),
                 Rect::new(x, y, inside.width - 2, 1),
@@ -251,8 +235,8 @@ pub fn draw(
         );
         y += 1;
     }
-    if let Some(error) = form.error() {
-        let said = fit(error, usize::from(inside.width) - 2);
+    if let Some(error) = &view.error {
+        let said = fit(SafeText::new(error).as_str(), usize::from(inside.width) - 2);
         frame.render_widget(
             Line::styled(said, theme.style(Role::Error)),
             Rect::new(x, y, inside.width - 2, 1),
@@ -271,7 +255,7 @@ pub fn draw(
                 primary: false,
             },
             Button {
-                words: digest::create_words(form.editing()).to_owned(),
+                words: view.create.clone(),
                 key: key(CommandId::PickerConfirm),
                 target: Target::Surface(Part::RuleCreate, 0),
                 primary: true,

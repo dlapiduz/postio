@@ -23,7 +23,6 @@ use crate::view::wrap::wrap;
 
 const GAP: usize = 3;
 
-/// The strip: back, the title with its count, and what held mail does.
 pub fn strip(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut Hits) {
     if theme.style(Role::Surface).bg.is_some() {
         frame
@@ -81,7 +80,6 @@ pub fn strip(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut
     }
 }
 
-/// The rows, or what to do with none, and the footer.
 pub fn body(
     frame: &mut Frame,
     area: Rect,
@@ -152,7 +150,6 @@ pub fn body(
     }
 }
 
-/// A rule's row.
 fn row_line(
     rule: &postio_config::DigestRule,
     owner: Option<&str>,
@@ -202,7 +199,6 @@ fn row_line(
     Line::from(spans)
 }
 
-/// The footer's hints, each a click for its command.
 fn footer(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut Hits) {
     let mut x = area.x + 1;
     for hint in digest::rules_footer(app.keymap()) {
@@ -234,7 +230,6 @@ fn footer(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut Hi
     }
 }
 
-/// The question over `Delete`: what comes back to the inbox.
 pub fn remove(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut Hits) {
     let Some(remove) = app.rules().and_then(|rules| rules.removing()) else {
         return;

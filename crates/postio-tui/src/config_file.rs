@@ -47,6 +47,7 @@ impl Read {
                     .focus
                     .model_for(postio_config::model::ModelFeature::LikeThis)
                     .is_some(),
+                section: crate::places::Section::new(config.focus.clone()),
             },
         }
     }
@@ -71,7 +72,8 @@ impl Read {
                     .map(|person| (rule.name.clone(), person.name.clone()))
             })
             .collect();
-        self.features.digests = crate::places::Rules(focus.digests);
+        self.features.digests = crate::places::Rules(focus.digests.clone());
+        self.features.section = crate::places::Section::new(focus);
         self
     }
 }

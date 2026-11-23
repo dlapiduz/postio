@@ -7,6 +7,7 @@ pub mod bottom;
 pub mod boxed;
 pub mod capture;
 pub mod composer;
+pub mod confirm;
 pub mod digest;
 pub mod filtered;
 pub mod first_run;
@@ -84,7 +85,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
         match app.front() {
             // Filtered takes the strip's place and the list's.
             _ if app.filtered().is_some() => {
-                filtered::body(frame, body, app, theme, now, &mut hits);
+                filtered::body(frame, body, app, theme, &mut hits);
             }
             _ if app.rules().is_some() => {
                 rules::body(frame, body, app, theme, now, &mut hits);
@@ -136,9 +137,9 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
         // A digest's window, in the message frame.
         digest::over_list(frame, area, app, theme, now, &mut hits);
         // The sweep's question, and the one over removing a rule.
-        filtered::sweep(frame, body, app, theme, &mut hits);
+        confirm::draw(frame, body, app, theme, &mut hits);
         rules::remove(frame, body, app, theme, &mut hits);
-        rule_dialog::draw(frame, body, app, theme, now, &mut hits);
+        rule_dialog::draw(frame, body, app, theme, &mut hits);
         capture::draw(frame, body, app, theme, &mut hits);
         // Over everything: a click there lands on nothing underneath.
         if let Some((bar, ctx)) = app.bar() {

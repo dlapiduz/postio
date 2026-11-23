@@ -645,7 +645,15 @@ fn the_verbs_filtered_and_the_rules_and_the_digest_offer_take_their_gmail_keys()
         for delivery in 0..how_many_deliveries(binding) {
             let (mut app, _) = sample::state("digest-list", 120, 30);
             let effects = press_binding(&mut app, binding, delivery);
-            if !effects.iter().any(|e| matches!(e, Effect::Unsubscribe(_))) {
+            if !effects.iter().any(|e| {
+                matches!(
+                    e,
+                    Effect::Focus {
+                        request: postio_focus::Request::Unsubscribe(_),
+                        ..
+                    }
+                )
+            }) {
                 failures.push(format!(
                     "unsubscribe: `{binding}` (delivery {delivery}) in a digest's list: {effects:?}"
                 ));

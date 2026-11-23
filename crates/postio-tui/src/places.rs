@@ -47,7 +47,21 @@ pub struct Features {
     /// Whether `[focus.model]` has `like_this` on, so the rule dialog offers
     /// "Digest mail like this".
     pub like_this: bool,
+    /// The `[focus]` section as the file has it, which the controller reads.
+    pub section: Section,
 }
+
+/// `[focus]` as the file has it. Equal when they are written the same.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Section(pub Box<postio_config::FocusConfig>);
+
+impl Section {
+    pub fn new(focus: postio_config::FocusConfig) -> Section {
+        Section(Box::new(focus))
+    }
+}
+
+impl Eq for Section {}
 
 /// The digest rules as the file has them. Equal when they are written the
 /// same: no rule holds a number that is not equal to itself.
@@ -68,12 +82,15 @@ impl Features {
 
     /// What the empty inbox is told of `[focus]`.
     pub fn focus(&self) -> postio_config::FocusConfig {
-        postio_config::FocusConfig {
-            filtering: self.filtering,
-            digests: self.digests.0.clone(),
-            reading: self.reading,
-            ..Default::default()
+        let mut focus = (*self.section.0).clone();
+        focus.filtering = self.filtering;
+        focus.digests = self.digests.0.clone();
+        focus.reading = self.reading;
+        focus.after_unsubscribe = self.after_unsubscribe;
+        if self.capture && focus.vault.is_none() {
+            focus.vault = Some(Default::default());
         }
+        focus
     }
 }
 

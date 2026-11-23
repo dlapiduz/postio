@@ -1,17 +1,10 @@
-//! The digest window (terminal.md, "Digests"): the message frame holding one
-//! delivery.
-//!
-//! The header is the digest's title and subtitle with `Archive all 14 A`;
-//! the tab row is `Summary  14 messages  Tab` with the rule line on the
-//! right; the bottom row is the window's keys. The summary's statements are
-//! paragraphs ending in their reference, the focused one reversed in the
-//! accent with its message's card under its paragraph. The plain list is
-//! one line a message, and an email opened from either shows inside the
-//! window under a banner naming the reference.
+//! The digest window: the message frame holding one delivery's summary,
+//! plain list or email. What came from mail is made safe here.
 
 use chrono::{DateTime, Local};
 use postio_core::CommandId;
-use postio_ui::digest::{self, Page};
+use postio_ui::digest::Page;
+use postio_ui::terminal::SafeText;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
@@ -20,7 +13,6 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::app::App;
 use crate::digest::Window;
-use crate::row::Row;
 use crate::surface::Part;
 use crate::theme::{Role, Theme};
 use crate::view::bottom::cap;
@@ -28,37 +20,27 @@ use crate::view::fit;
 use crate::view::hit::{Hits, Target};
 use crate::view::wrap::wrap;
 
-/// The gap between two hints of the key line.
 const GAP: usize = 2;
 
-/// One row of a page, and the statement it belongs to when it is the
-/// summary's.
 #[derive(Debug, Clone)]
 pub struct Ln {
-    /// What is drawn.
     pub line: Line<'static>,
-    /// The statement a click on it stands for.
     pub reference: Option<usize>,
 }
 
-/// The summary as rows `width` wide, and the rows of the focused paragraph
-/// with its card.
 pub fn summary_lines(
-    app: &App,
     window: &Window,
     theme: &Theme,
     width: usize,
-    now: DateTime<Local>,
+    key: Option<String>,
 ) -> (Vec<Ln>, Option<(usize, usize)>) {
-    let Some(summary) = window.summary() else {
-        return (Vec::new(), None);
-    };
+    let view = window.view();
     let text = theme.style(Role::Text);
     let dim = theme.style(Role::Dim);
     let surface = theme.style(Role::Surface);
     let mut lines: Vec<Ln> = Vec::new();
     let mut focus = None;
-    for (index, topic) in digest::topics(&summary.statements).into_iter().enumerate() {
+    for (index, topic) in view.topics.iter().enumerate() {
         if index > 0 {
             lines.push(Ln {
                 line: Line::default(),
@@ -66,13 +48,16 @@ pub fn summary_lines(
             });
         }
         lines.push(Ln {
-            line: Line::styled(topic.name.to_owned(), text.add_modifier(Modifier::BOLD)),
+            line: Line::styled(
+                SafeText::new(&topic.heading).as_str().to_owned(),
+                text.add_modifier(Modifier::BOLD),
+            ),
             reference: None,
         });
-        for (offset, statement) in topic.statements.iter().enumerate() {
-            let at = topic.start + offset;
+        for statement in &topic.statements {
+            let at = statement.index as usize;
             let focused = window.reference() == Some(at);
-            let mark = format!("[{}]", statement.reference.number);
+            let mark = format!("[{}]", statement.number);
             let mark_style = if focused {
                 theme
                     .style(Role::Accent)
@@ -81,7 +66,7 @@ pub fn summary_lines(
                 theme.style(Role::Accent)
             };
             let paragraph = Line::from(vec![
-                Span::styled(statement.text.clone(), text),
+                Span::styled(SafeText::new(&statement.text).as_str().to_owned(), text),
                 Span::raw(" "),
                 Span::styled(mark, mark_style),
             ]);
@@ -92,49 +77,46 @@ pub fn summary_lines(
                     reference: Some(at),
                 });
             }
-            if focused && let Some(row) = window.row_of(statement.reference.message) {
-                for line in card(app, row, theme, width, now) {
+            if focused && let Some(shown) = &view.card {
+                for line in card(shown, key.as_deref(), theme, width) {
                     lines.push(Ln {
                         line: line.style(surface),
                         reference: Some(at),
                     });
                 }
-                focus = Some((start, lines.len()));
-            } else if focused {
+            }
+            if focused {
                 focus = Some((start, lines.len()));
             }
         }
     }
-    lines.push(Ln {
-        line: Line::default(),
-        reference: None,
-    });
-    for line in wrap(
-        &Line::styled(digest::summary_footer(summary.messages), dim),
-        width,
-    ) {
+    if let Some(footer) = &view.footer {
         lines.push(Ln {
-            line,
+            line: Line::default(),
             reference: None,
         });
+        for line in wrap(
+            &Line::styled(SafeText::new(footer).as_str().to_owned(), dim),
+            width,
+        ) {
+            lines.push(Ln {
+                line,
+                reference: None,
+            });
+        }
     }
     (lines, focus)
 }
 
-/// A reference's message, under its paragraph: sender, subject, date, its
-/// opening, and what opens it.
 fn card(
-    app: &App,
-    row: &Row,
+    card: &postio_focus::DigestCard,
+    key: Option<&str>,
     theme: &Theme,
     width: usize,
-    now: DateTime<Local>,
 ) -> Vec<Line<'static>> {
-    let date = postio_ui::focus_row::message_date(row.when, now);
-    let head = format!("{} · {} · {date}", row.from.as_str(), row.subject.as_str());
-    let open = match app.hint(CommandId::OpenMessage) {
-        Some(key) => format!("{} {}", cap(&key), digest::OPEN_FULL_EMAIL),
-        None => digest::OPEN_FULL_EMAIL.to_owned(),
+    let open = match key {
+        Some(key) => format!("{} {}", cap(key), card.hint),
+        None => card.hint.clone(),
     };
     let pad = |text: String, style| {
         let text = fit(&text, width.saturating_sub(2));
@@ -145,16 +127,15 @@ fn card(
             Span::raw(" ".repeat(gap)),
         ])
     };
-    let mut lines = vec![pad(head, theme.style(Role::Text))];
-    if !row.preview.as_str().is_empty() {
-        lines.push(pad(row.preview.as_str().to_owned(), theme.style(Role::Dim)));
-    }
-    lines.push(pad(open, theme.style(Role::Accent)));
-    lines
+    vec![
+        pad(
+            SafeText::new(&card.title).as_str().to_owned(),
+            theme.style(Role::Text),
+        ),
+        pad(open, theme.style(Role::Accent)),
+    ]
 }
 
-/// The email's rows: the banner naming the reference, the sender grid and the
-/// body, the cited passage underlined. The message's subject is the title.
 pub fn email_lines(
     app: &App,
     window: &Window,
@@ -162,14 +143,14 @@ pub fn email_lines(
     width: u16,
     now: DateTime<Local>,
 ) -> Vec<Line<'static>> {
-    let Some(email) = window.email() else {
+    let Some(email) = &window.view().email else {
         return Vec::new();
     };
     let mut out: Vec<Line<'static>> = Vec::new();
-    if email.number > 0 {
+    if let Some(banner) = &email.banner {
         out.extend(wrap(
             &Line::styled(
-                digest::cited_banner(email.number),
+                SafeText::new(banner).as_str().to_owned(),
                 theme.style(Role::Accent),
             ),
             usize::from(width),
@@ -195,7 +176,11 @@ pub fn email_lines(
         .skip(from)
         .map(|line| line.line.clone())
         .collect();
-    if let Some(excerpt) = &email.excerpt {
+    if let Some(excerpt) = email
+        .excerpt
+        .as_deref()
+        .filter(|excerpt| !excerpt.is_empty())
+    {
         let mark = crate::view::open::surface_underline(theme);
         for (index, start, end) in crate::view::open::locate(&lines, excerpt) {
             lines[index] = crate::view::open::restyle(&lines[index], start, end, mark);
@@ -205,50 +190,37 @@ pub fn email_lines(
     out
 }
 
-/// How many rows the page on screen has, for scrolling it.
 pub fn extent(app: &App, width: u16) -> usize {
     let Some(window) = app.digest() else {
         return 0;
     };
     let theme = Theme::plain();
-    let now = Local::now();
     match window.page() {
-        Page::Summary => summary_lines(app, window, &theme, usize::from(width), now)
+        Page::Summary => summary_lines(window, &theme, usize::from(width), None)
             .0
             .len(),
-        Page::List => window.rows().len(),
-        Page::Email => email_lines(app, window, &theme, width, now).len(),
+        Page::List => window.view().rows.len(),
+        Page::Email => email_lines(app, window, &theme, width, Local::now()).len(),
     }
 }
 
-/// The rows of the summary the focused paragraph and its card take.
 pub fn focus_rows(app: &App, width: u16) -> Option<(usize, usize)> {
     let window = app.digest()?;
-    summary_lines(
-        app,
-        window,
-        &Theme::plain(),
-        usize::from(width),
-        Local::now(),
-    )
-    .1
+    summary_lines(window, &Theme::plain(), usize::from(width), None).1
 }
 
-/// A message of the plain list: the cursor, the sender, the subject and its
-/// first line, and the time.
 fn list_line(
-    row: &Row,
+    line: &postio_focus::DigestLine,
     cursor: bool,
     width: usize,
     theme: &Theme,
-    now: DateTime<Local>,
 ) -> Line<'static> {
     let sender_room = if width >= 100 { 20 } else { 16 };
-    let sender = fit(row.from.as_str(), sender_room - 1);
+    let sender = fit(SafeText::new(&line.sender).as_str(), sender_room - 1);
     let pad = sender_room.saturating_sub(sender.width());
-    let time = format!("{:>5}", postio_ui::row::timestamp(row.when, now));
+    let time = format!("{:>5}", line.time);
     let room = width.saturating_sub(3 + sender_room + time.width() + 2);
-    let subject = fit(row.subject.as_str(), room);
+    let subject = fit(SafeText::new(&line.subject).as_str(), room);
     let mut left = room.saturating_sub(subject.width());
     let mut spans = vec![
         Span::styled(if cursor { "▌" } else { " " }, theme.style(Role::Focus)),
@@ -257,8 +229,9 @@ fn list_line(
         Span::raw(" ".repeat(pad)),
         Span::styled(subject, theme.style(Role::Text)),
     ];
-    if !row.preview.as_str().is_empty() && left >= 4 {
-        let first = format!(" {}", fit(row.preview.as_str(), left - 1));
+    let preview = SafeText::new(line.preview.as_deref().unwrap_or(""));
+    if !preview.as_str().is_empty() && left >= 4 {
+        let first = format!(" {}", fit(preview.as_str(), left - 1));
         left -= first.width();
         spans.push(Span::styled(first, theme.style(Role::Dim)));
     }
@@ -267,14 +240,12 @@ fn list_line(
     Line::from(spans)
 }
 
-/// One hint of the key line: its key, its words, and the click it is.
 struct Hint {
     key: String,
     words: &'static str,
     command: Option<&'static str>,
 }
 
-/// The window's keys on the page on screen.
 fn hints(app: &App, window: &Window) -> Vec<Hint> {
     let key = |command| app.hint(command).map(|key| cap(&key)).unwrap_or_default();
     let both = |a, b| format!("{} {}", key(a), key(b));
@@ -310,7 +281,7 @@ fn hints(app: &App, window: &Window) -> Vec<Hint> {
             });
         }
     }
-    if window.page() != Page::Email && window.summary().is_some() {
+    if window.page() != Page::Email && window.view().tabs {
         hints.push(Hint {
             key: key(CommandId::ToggleDigestSummary),
             words: "summary / messages",
@@ -330,8 +301,6 @@ fn hints(app: &App, window: &Window) -> Vec<Hint> {
     hints
 }
 
-/// The window over the list: the frame, the header, the tab row, the page
-/// and its keys.
 pub fn over_list(
     frame: &mut Frame,
     area: Rect,
@@ -343,6 +312,7 @@ pub fn over_list(
     let Some(window) = app.digest() else {
         return;
     };
+    let view = window.view();
     let Some((outer, inside)) = crate::view::open::framed(frame, area, theme, hits) else {
         return;
     };
@@ -362,13 +332,9 @@ pub fn over_list(
     // Row 1: Archive all (or the way back), the title, Esc ✕.
     let mut left: Vec<Span<'static>> = Vec::new();
     let (left_command, left_words) = if email {
-        let back = match window.email().map(|email| email.from) {
-            Some(Page::List) => "‹ Messages",
-            _ => "‹ Summary",
-        };
-        (CommandId::Back, back.to_owned())
+        (CommandId::Back, format!("‹ {}", SafeText::new(&view.back)))
     } else {
-        (CommandId::Archive, digest::archive_all(window.count))
+        (CommandId::Archive, view.archive.clone())
     };
     left.push(Span::styled(
         left_words,
@@ -388,15 +354,11 @@ pub fn over_list(
     }
     right.push(Span::styled("✕", text));
     let right_width: usize = right.iter().map(|span| span.content.width()).sum();
-    let title = if email {
-        window
-            .email()
-            .and_then(|email| window.row_of(email.message))
-            .map(|row| row.subject.as_str().to_owned())
-            .filter(|subject| !subject.trim().is_empty())
-            .unwrap_or_else(|| "(no subject)".to_owned())
+    let title = SafeText::new(&view.title).as_str().to_owned();
+    let title = if email && title.trim().is_empty() {
+        "(no subject)".to_owned()
     } else {
-        digest::window_title(window.cadence, window.rule.as_str())
+        title
     };
     let room = width.saturating_sub(2 * (left_width.max(right_width) + 3));
     let title = fit(&title, room.max(8));
@@ -439,19 +401,7 @@ pub fn over_list(
     );
 
     // Row 2: the subtitle.
-    let subtitle = if email {
-        let at = window
-            .email()
-            .and_then(|email| window.rows().iter().position(|row| row.id == email.message));
-        digest::source_line(at, window.rows().len())
-    } else {
-        digest::window_subtitle(
-            window.count,
-            window.senders,
-            window.at.with_timezone(&Local),
-            now,
-        )
-    };
+    let subtitle = SafeText::new(&view.subtitle).as_str().to_owned();
     let subtitle = fit(&subtitle, width.saturating_sub(2));
     let at = width.saturating_sub(subtitle.width()) / 2;
     frame.render_widget(
@@ -466,7 +416,7 @@ pub fn over_list(
 
     // Row 3: the tabs, and the rule's line on the right.
     if !email {
-        let has_summary = window.summary().is_some();
+        let has_summary = view.tabs;
         let on = |page| {
             if window.page() == page {
                 text.add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
@@ -475,15 +425,7 @@ pub fn over_list(
             }
         };
         let mut x = inside.x + 1;
-        let messages = format!(
-            "{} {}",
-            window.rows().len().max(window.count as usize),
-            if window.count == 1 {
-                "message"
-            } else {
-                "messages"
-            }
-        );
+        let messages = view.list_tab.clone();
         let mut tabs: Vec<(String, ratatui::style::Style, usize)> = Vec::new();
         if has_summary {
             tabs.push(("Summary".to_owned(), on(Page::Summary), 0));
@@ -508,7 +450,7 @@ pub fn over_list(
             );
             x += w + 2;
         }
-        let mut said = digest::rule_line(window.rule_when.as_deref());
+        let mut said = view.rule_line.clone();
         let key = app
             .hint(CommandId::DigestRule)
             .map(|key| format!(" {}", cap(&key)))
@@ -516,7 +458,7 @@ pub fn over_list(
         let room =
             (usize::from(inside.x + inside.width)).saturating_sub(usize::from(x) + 3 + key.width());
         if said.width() > room {
-            said = digest::rule_line(None);
+            said = postio_ui::digest::rule_line(None);
         }
         if said.width() <= room {
             let total = said.width() + key.width();
@@ -540,7 +482,12 @@ pub fn over_list(
     let x = inside.x + (inside.width - column) / 2;
     match window.page() {
         Page::Summary => {
-            let (lines, _) = summary_lines(app, window, theme, usize::from(column), now);
+            let (lines, _) = summary_lines(
+                window,
+                theme,
+                usize::from(column),
+                app.hint(CommandId::OpenMessage),
+            );
             for (offset, ln) in lines
                 .iter()
                 .skip(window.top())
@@ -555,8 +502,8 @@ pub fn over_list(
             }
         }
         Page::List => {
-            for (offset, item) in window
-                .rows()
+            for (offset, item) in view
+                .rows
                 .iter()
                 .enumerate()
                 .skip(window.top())
@@ -565,17 +512,13 @@ pub fn over_list(
                 let y = body.y + u16::try_from(offset - window.top()).unwrap_or(0);
                 let rect = Rect::new(body.x, y, body.width, 1);
                 frame.render_widget(
-                    list_line(item, offset == window.cursor(), width, theme, now),
+                    list_line(item, Some(offset) == window.cursor(), width, theme),
                     rect,
                 );
                 hits.add(rect, Target::Surface(Part::DigestRow, offset));
             }
-            if window.rows().is_empty() {
-                let said = if window.is_read() {
-                    "Nothing here"
-                } else {
-                    "…"
-                };
+            if view.rows.is_empty() {
+                let said = if view.loading { "…" } else { "Nothing here" };
                 frame.render_widget(
                     Line::styled(format!(" {said}"), dim),
                     Rect::new(body.x, body.y, body.width, 1),
@@ -625,76 +568,5 @@ pub fn over_list(
             hits.add(Rect::new(x, keys.y, w, 1), Target::Command(command));
         }
         x += w + GAP as u16;
-    }
-    stop_question(frame, inside, app, window, theme, hits);
-}
-
-/// The question over `D`.
-fn stop_question(
-    frame: &mut Frame,
-    area: Rect,
-    app: &App,
-    window: &Window,
-    theme: &Theme,
-    hits: &mut Hits,
-) {
-    let Some(stop) = window.stopping() else {
-        return;
-    };
-    let title = postio_ui::focus_target::stop_digesting_title(stop.sender.as_str());
-    let width = 66.min(area.width);
-    let lines = wrap(
-        &Line::styled(
-            postio_ui::focus_target::STOP_DIGESTING_BODY,
-            theme.style(Role::Text),
-        ),
-        usize::from(width).saturating_sub(4).max(1),
-    );
-    let height = u16::try_from(lines.len())
-        .unwrap_or(u16::MAX)
-        .saturating_add(5);
-    let inside = crate::view::boxed::draw(frame, area, width, height, &title, theme, hits);
-    for (offset, line) in lines.into_iter().enumerate() {
-        let y = inside.y + 1 + u16::try_from(offset).unwrap_or(0);
-        if y < inside.y + inside.height {
-            frame.render_widget(
-                line,
-                Rect::new(inside.x + 1, y, inside.width.saturating_sub(2), 1),
-            );
-        }
-    }
-    let y = inside.y + inside.height.saturating_sub(1);
-    let mut buttons = Vec::new();
-    for (words, command, part, primary) in [
-        ("Cancel", CommandId::Back, Part::StopCancel, false),
-        (
-            "Stop digesting",
-            CommandId::OpenMessage,
-            Part::StopConfirm,
-            true,
-        ),
-    ] {
-        let key = app.hint(command).map(|key| cap(&key)).unwrap_or_default();
-        let style = if primary {
-            theme.style(Role::Text).add_modifier(Modifier::BOLD)
-        } else {
-            theme.style(Role::Text)
-        };
-        let spans = vec![
-            Span::styled(format!("[ {words}"), style),
-            Span::styled(format!(" {key}"), theme.style(Role::Accent)),
-            Span::styled(" ]", style),
-        ];
-        let w = words.width() + key.width() + 5;
-        buttons.push((spans, w, part));
-    }
-    let total: usize = buttons.iter().map(|(_, w, _)| w).sum::<usize>() + 2;
-    let mut x =
-        inside.x + u16::try_from(usize::from(inside.width).saturating_sub(total) / 2).unwrap_or(0);
-    for (spans, w, part) in buttons {
-        let w = u16::try_from(w).unwrap_or(0);
-        frame.render_widget(Line::from(spans), Rect::new(x, y, w, 1));
-        hits.add(Rect::new(x, y, w, 1), Target::Surface(part, 0));
-        x += w + 2;
     }
 }

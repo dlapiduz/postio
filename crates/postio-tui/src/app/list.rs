@@ -112,7 +112,7 @@ impl App {
                 vec![Effect::Redraw]
             }
             Intent::Toast { text, kind } => self.toast(&text, &kind),
-            _ => Vec::new(),
+            other => self.show_surface_intent(other).unwrap_or_default(),
         }
     }
 
@@ -219,6 +219,12 @@ impl App {
         self.list.reset(total);
         self.cursor = 0;
         self.top = 0;
+    }
+
+    /// The controller's clock, so what it words (today, yesterday) is what a
+    /// test's screen says.
+    pub(crate) fn clock_for_tests(&mut self, at: chrono::DateTime<chrono::Local>) {
+        let _ = self.tell(postio_focus::Input::Clock(Some(at)));
     }
 
     pub(crate) fn counts_for_tests(&mut self, counts: postio_client::protocol::FocusCounts) {

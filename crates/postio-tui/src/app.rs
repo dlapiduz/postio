@@ -10,6 +10,7 @@ use postio_ui::keymap::{KeyContext, Outcome};
 use postio_ui::list::ListWindow;
 
 mod capture;
+mod confirm;
 mod digest;
 mod filtered;
 mod find;
@@ -2619,23 +2620,11 @@ impl App {
     }
 
     fn command(&mut self, id: &str) -> Vec<Effect> {
-        if self.focus == Focus::Filtered
-            && let Some(effects) = self.filtered_command(id)
-        {
-            return effects;
-        }
-        if self.focus == Focus::Digest
-            && let Some(effects) = self.digest_command(id)
-        {
-            return effects;
+        if matches!(self.focus, Focus::Filtered | Focus::Digest | Focus::Capture) {
+            return self.surface_command(id);
         }
         if self.focus == Focus::Rules
             && let Some(effects) = self.rules_command(id)
-        {
-            return effects;
-        }
-        if self.focus == Focus::Capture
-            && let Some(effects) = self.capture_command(id)
         {
             return effects;
         }
@@ -2671,7 +2660,9 @@ impl App {
             // A draft being written is resumed; one on its way or stopped is read. A digest opens
             // in its own window.
             "open_message" if self.focus == Focus::List && self.cursor_is_digest() => {
-                return self.open_digest();
+                return self.tell(postio_focus::Input::Command(
+                    postio_core::CommandId::OpenMessage,
+                ));
             }
             "open_message" if self.focus == Focus::Reader && self.open_draft_offers_edit() => {
                 if let Some(message) = self.reading.as_ref().map(|reading| reading.row) {
@@ -2797,16 +2788,36 @@ impl App {
                     self.focus = Focus::FirstRun;
                 }
             }
-            "go_to_filtered" => return self.go_to_filtered(),
+            "go_to_filtered" => {
+                return self.tell(postio_focus::Input::Command(
+                    postio_core::CommandId::GoToFiltered,
+                ));
+            }
             "go_to_digest_rules" => return self.go_to_digest_rules(),
-            "digest_rule" => return self.digest_rule(),
+            "digest_rule" => {
+                return self.tell(postio_focus::Input::Command(
+                    postio_core::CommandId::DigestRule,
+                ));
+            }
             "digest_like_this" => return self.digest_like_this(),
-            "capture_task" => return self.open_capture(postio_ui::capture::Mode::Task),
-            "capture_note" => return self.open_capture(postio_ui::capture::Mode::Note),
+            "capture_task" => {
+                return self.tell(postio_focus::Input::Command(
+                    postio_core::CommandId::CaptureTask,
+                ));
+            }
+            "capture_note" => {
+                return self.tell(postio_focus::Input::Command(
+                    postio_core::CommandId::CaptureNote,
+                ));
+            }
             "capture_change_project" | "capture_use_subject" | "capture_write" => {
                 return Vec::new();
             }
-            "sweep_inbox" => return self.ask_sweep(),
+            "sweep_inbox" => {
+                return self.tell(postio_focus::Input::Command(
+                    postio_core::CommandId::SweepInbox,
+                ));
+            }
             "go_to_inbox" => return self.go_to(postio_model::mailbox::MailboxRole::Inbox),
             "go_to_sent" => return self.go_to(postio_model::mailbox::MailboxRole::Sent),
             "go_to_drafts" => return self.go_to(postio_model::mailbox::MailboxRole::Drafts),
@@ -3209,6 +3220,7 @@ impl App {
             .map(|account| account.id)
             .collect();
         self.tell(postio_focus::Input::Accounts(reach));
+        self.tell(postio_focus::Input::Config(self.features.focus()));
         if self.last_synced.is_none() {
             self.last_synced = contents
                 .folders
@@ -3439,7 +3451,7 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
         Input::Key(key) if app.open.find.is_some() && app.focus == Focus::Reader => {
             app.find_key(&key)
         }
-        Input::Key(key) if app.surfaces.sweep.is_some() => app.sweep_key(&key),
+        Input::Key(key) if app.surfaces.confirm.is_some() => app.confirm_key(&key),
         Input::Key(key) if app.focus == Focus::FirstRun => app.first_run_key(&key),
         Input::Key(key) if app.focus == Focus::Settings => app.settings_key(&key),
         Input::Key(key) if app.focus == Focus::Composer => app.composer_key(&key),
@@ -3458,12 +3470,8 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
         },
         Input::FocusReply(ticket, reply) => app.tell(postio_focus::Input::Reply(ticket, reply)),
         Input::FocusTimer(token) => app.tell(postio_focus::Input::Timer(token)),
-        Input::Host(event) => {
-            let mut effects = app.hear(&event);
-            effects.extend(app.filtered_hears(&event));
-            effects
-        }
-        Input::Answer(answer) => app.answered(answer),
+        Input::Host(event) => app.hear(&event),
+        Input::Answer(answer) => app.rules_answered(answer),
         Input::Places(contents) => {
             let mut effects = app.fill_places(&contents);
             effects.extend(app.rules_reread());

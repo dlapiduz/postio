@@ -1,12 +1,9 @@
-//! The capture sheet (terminal.md, "Obsidian capture"): a frame 72 wide
-//! with the Task and Note pair, the text, due quick picks, the project with
-//! its reason, and the exact markdown line as the preview.
-//!
-//! The chosen of a pair and the pick of the day are reversed, so they show
-//! without a colour; every control is a click.
+//! The capture sheet: a frame 72 wide. The chosen of a pair and the pick of
+//! the day are reversed, so they show without a colour.
 
 use postio_core::CommandId;
-use postio_ui::capture::{self, Mode};
+use postio_ui::capture::Mode;
+use postio_ui::terminal::SafeText;
 use ratatui::Frame;
 use ratatui::layout::{Position, Rect};
 use ratatui::style::Modifier;
@@ -23,13 +20,10 @@ use crate::view::fit;
 use crate::view::hit::{Hits, Target};
 use crate::view::wrap::wrap;
 
-/// How wide the frame is.
 pub const WIDTH: u16 = 72;
 
-/// The most projects the chooser lists at once.
 const LISTED: usize = 6;
 
-/// Draw the sheet over `area`, when one is open.
 pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut Hits) {
     let Some(sheet) = app.capture() else {
         return;
@@ -39,22 +33,21 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut 
         theme.style(Role::Text),
         theme.style(Role::Accent),
     );
+    let view = sheet.view();
     let width = WIDTH.min(area.width);
     let room = usize::from(width).saturating_sub(4);
-    let preview = wrap(&Line::styled(sheet.preview(), text), room.max(1));
-    let place = sheet.place();
-    let footnote = wrap(
-        &Line::styled(capture::footnote(sheet.mode(), &place, sheet.due()), dim),
+    let preview = wrap(
+        &Line::styled(SafeText::new(&view.preview).as_str().to_owned(), text),
         room.max(1),
     );
-    let choices = sheet.choices();
-    let listed = choices.len().min(LISTED);
-    let project_rows = if sheet.chooser().is_some() {
+    let footnote = wrap(&Line::styled(view.footnote.clone(), dim), room.max(1));
+    let listed = view.projects.len().min(LISTED);
+    let project_rows = if view.projects_open {
         3 + listed.max(1)
     } else {
         2
     };
-    let due_rows = if sheet.mode().has_due() { 3 } else { 0 };
+    let due_rows = if view.has_due { 3 } else { 0 };
     let height = 2
         + 3
         + 3
@@ -65,7 +58,7 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut 
         + preview.len()
         + 1
         + footnote.len()
-        + usize::from(sheet.error().is_some())
+        + usize::from(view.error.is_some())
         + 3;
     let height = u16::try_from(height).unwrap_or(u16::MAX);
     let inside = boxed::draw(frame, area, width, height, "Capture", theme, hits);
@@ -87,7 +80,7 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut 
             .map(|key| format!(" {}", cap(&key)))
             .unwrap_or_default();
         let words = format!(" {}{key} ", mode.field());
-        let style = if sheet.mode() == mode {
+        let style = if view.mode == mode {
             text.add_modifier(Modifier::REVERSED | Modifier::BOLD)
         } else {
             text
@@ -101,19 +94,20 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut 
         at += w + 1;
     }
     y += 1;
-    let source = sheet.source();
-    let from = format!(
-        "From {} · {} · {}",
-        source.sender, source.subject, source.when
+    frame.render_widget(
+        Line::styled(
+            fit(SafeText::new(&view.from).as_str(), usize::from(inner)),
+            dim,
+        ),
+        rect(y),
     );
-    frame.render_widget(Line::styled(fit(&from, usize::from(inner)), dim), rect(y));
     y += 2;
 
     // The text.
-    let focused = |field| sheet.field() == field && sheet.chooser().is_none();
+    let focused = |field| sheet.field() == field && !view.projects_open;
     frame.render_widget(
         Line::styled(
-            sheet.mode().field(),
+            view.field.clone(),
             if focused(Field::Text) {
                 text.add_modifier(Modifier::BOLD)
             } else {
@@ -138,15 +132,10 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut 
         ));
     }
     y += 1;
-    if source.sentence.is_some() {
-        let key = app
-            .hint(CommandId::CaptureUseSubject)
-            .map(|key| format!(" {}", cap(&key)))
-            .unwrap_or_default();
-        let lead = "The sentence from the mail, as written";
+    if let Some(key) = &view.subject_key {
+        let key = format!(" {}", cap(key));
         let link = "use the subject instead";
         let w = u16::try_from(link.width() + key.width()).unwrap_or(0);
-        frame.render_widget(Line::styled(fit(lead, usize::from(inner)), dim), rect(y));
         let start = x + inner.saturating_sub(w);
         frame.render_widget(
             Line::from(vec![Span::styled(link, text), Span::styled(key, accent)]),
@@ -160,7 +149,7 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut 
     y += 2;
 
     // The due day, for a task.
-    if sheet.mode().has_due() {
+    if view.has_due {
         frame.render_widget(
             Line::from(vec![
                 Span::styled(
@@ -171,11 +160,11 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut 
                         dim
                     },
                 ),
-                Span::styled(capture::due_label(sheet.due()), text),
+                Span::styled(view.due_label.clone(), text),
             ]),
             rect(y),
         );
-        let picks = sheet.picks();
+        let picks = &view.picks;
         let words: Vec<String> = picks
             .iter()
             .map(|pick| format!(" {} ", pick.words))
@@ -183,7 +172,7 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut 
         y += 1;
         let mut at = x + 5;
         for (index, (pick, word)) in picks.iter().zip(words).enumerate() {
-            let chosen = pick.day == sheet.due();
+            let chosen = pick.day == view.due;
             let style = match (chosen, focused(Field::Due)) {
                 (true, true) => text.add_modifier(Modifier::REVERSED | Modifier::BOLD),
                 (true, false) => text.add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
@@ -203,7 +192,7 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut 
     // The project, and why.
     frame.render_widget(
         Line::styled(
-            fit(&sheet.project_title(), usize::from(inner)),
+            fit(&view.project_title, usize::from(inner)),
             if focused(Field::Project) { text } else { dim },
         ),
         rect(y),
@@ -216,8 +205,11 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut 
     let change = format!("Change{change_key}");
     let change_w = u16::try_from(change.width()).unwrap_or(0);
     let left_room = usize::from(inner).saturating_sub(usize::from(change_w) + 2);
-    let name = fit(&place, left_room);
-    let note = fit(&sheet.note(), left_room.saturating_sub(name.width() + 2));
+    let name = fit(SafeText::new(&view.project).as_str(), left_room);
+    let note = fit(
+        SafeText::new(&view.project_note).as_str(),
+        left_room.saturating_sub(name.width() + 2),
+    );
     frame.render_widget(
         Line::from(vec![
             Span::styled(name, text.add_modifier(Modifier::BOLD)),
@@ -239,43 +231,34 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut 
         Target::Command(CommandId::CaptureChangeProject.as_str()),
     );
     y += 1;
-    if let Some(chooser) = sheet.chooser() {
-        let prompt = format!("Filter projects in your vault: {}", chooser.filter.value());
+    if view.projects_open {
+        let prompt = format!("Filter projects in your vault: {}", sheet.filter().value());
         frame.render_widget(
             Line::styled(fit(&prompt, usize::from(inner)), text),
             rect(y),
         );
         frame.set_cursor_position(Position::new(
             x + u16::try_from(
-                "Filter projects in your vault: ".width() + chooser.filter.visual_cursor(),
+                "Filter projects in your vault: ".width() + sheet.filter().visual_cursor(),
             )
             .unwrap_or(0)
             .min(inner.saturating_sub(1)),
             y,
         ));
         y += 1;
-        let top = chooser.at.saturating_sub(LISTED - 1);
-        for (index, (project, open)) in choices.iter().enumerate().skip(top).take(LISTED) {
-            let name = project
-                .as_ref()
-                .map_or_else(|| capture::INBOX.to_owned(), |project| project.name.clone());
-            let note = match project {
-                Some(project) => project.note.display().to_string(),
-                None => capture::inbox_note(&sheet.tasks_note()),
-            };
-            let count = capture::open_count(*open);
-            let mark = if project.as_ref() == sheet.project() {
-                "✓"
-            } else {
-                " "
-            };
-            let left = usize::from(inner).saturating_sub(count.width() + 5);
-            let name = fit(&name, 20);
-            let note = fit(&note, left.saturating_sub(name.width() + 2));
+        let top = sheet.at().saturating_sub(LISTED - 1);
+        for (index, project) in view.projects.iter().enumerate().skip(top).take(LISTED) {
+            let mark = if project.chosen { "✓" } else { " " };
+            let left = usize::from(inner).saturating_sub(project.open.width() + 5);
+            let name = fit(SafeText::new(&project.name).as_str(), 20);
+            let note = fit(
+                SafeText::new(&project.note).as_str(),
+                left.saturating_sub(name.width() + 2),
+            );
             let gap = left.saturating_sub(name.width() + 2 + note.width());
             let row = Line::from(vec![
                 Span::styled(
-                    if index == chooser.at { "▌" } else { " " },
+                    if index == sheet.at() { "▌" } else { " " },
                     theme.style(Role::Focus),
                 ),
                 Span::styled(mark, accent),
@@ -284,14 +267,14 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut 
                 Span::raw("  "),
                 Span::styled(note, dim),
                 Span::raw(" ".repeat(gap + 2)),
-                Span::styled(count, dim),
+                Span::styled(project.open.clone(), dim),
             ]);
             let at = Rect::new(x, y, inner, 1);
             frame.render_widget(row, at);
             hits.add(at, Target::Surface(Part::CaptureProject, index));
             y += 1;
         }
-        if choices.is_empty() {
+        if view.projects.is_empty() {
             frame.render_widget(Line::styled("No project matches", dim), rect(y));
             y += 1;
         }
@@ -301,7 +284,7 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut 
     // The exact line.
     frame.render_widget(
         Line::styled(
-            sheet.mode().preview_title(),
+            view.preview_title.clone(),
             text.add_modifier(Modifier::BOLD),
         ),
         rect(y),
@@ -316,9 +299,12 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut 
         frame.render_widget(line, rect(y));
         y += 1;
     }
-    if let Some(error) = sheet.error() {
+    if let Some(error) = &view.error {
         frame.render_widget(
-            Line::styled(fit(error, usize::from(inner)), theme.style(Role::Error)),
+            Line::styled(
+                fit(SafeText::new(error).as_str(), usize::from(inner)),
+                theme.style(Role::Error),
+            ),
             rect(y),
         );
     }
@@ -335,7 +321,7 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut 
                 primary: false,
             },
             Button {
-                words: sheet.mode().button().to_owned(),
+                words: view.button.clone(),
                 key: key(CommandId::CaptureWrite),
                 target: Target::Command(CommandId::CaptureWrite.as_str()),
                 primary: true,

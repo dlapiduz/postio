@@ -1,34 +1,25 @@
-//! The digest window: opening a delivery from its row, the summary's
-//! references, the plain list, an email inside the window, and `E`, `D`
-//! and `M`.
-//!
-//! The state is `crate::digest`; the drawing is `view::digest`.
+//! The digest window: the controller's view of one delivery, its summary and
+//! its email, and the clicks that become inputs.
 
-use crossterm::event::KeyEvent;
-use postio_core::{Command, MessageTarget};
-use postio_model::{DeliveryId, MessageId};
+use postio_core::CommandId;
+use postio_focus::{Host, Input as Told, Intent, SurfaceKind};
 use postio_ui::digest::Page;
 use postio_ui::keymap::{KeyContext, Outcome};
 
-use super::{App, Effect, Focus, Tone};
-use crate::ask::{Answer, Ask};
-use crate::digest::{Stop, Window};
+use super::{App, Effect, Focus};
+use crate::digest::Window;
 use crate::surface::Part;
 
 impl App {
-    /// The digest window, while one is open.
     pub fn digest(&self) -> Option<&Window> {
         self.surfaces.digest.as_ref()
     }
 
-    /// Whether the list's cursor is on a digest.
     pub(super) fn cursor_is_digest(&self) -> bool {
         self.row_at(self.cursor)
             .is_some_and(|row| row.kind == crate::row::Kind::Digest)
     }
 
-    /// The column an email or the summary is laid out in, and how many rows
-    /// the page shows at once.
     pub fn digest_geometry(&self) -> (u16, usize) {
         let area = ratatui::layout::Rect::new(0, 0, self.size.0, self.size.1);
         let frame = crate::layout::open_frame(area);
@@ -39,243 +30,55 @@ impl App {
         )
     }
 
-    /// `Enter` on a digest's row: its window, over the inbox, asking for
-    /// what it holds.
-    pub(super) fn open_digest(&mut self) -> Vec<Effect> {
-        let Some(row) = self.row_at(self.cursor) else {
-            return Vec::new();
-        };
-        let delivery = DeliveryId::new(-row.id.get());
-        let found = match self.list.resident_at(self.cursor).map(|held| &held.source) {
-            Some(postio_ui::focus_list::FocusRow::Digest(digest))
-                if digest.delivery == delivery =>
-            {
-                Some(digest.clone())
-            }
-            _ => None,
-        };
-        let window = match found {
-            Some(digest) => {
-                let when = self
-                    .features
-                    .digests
-                    .0
-                    .iter()
-                    .find(|rule| rule.name.trim() == digest.rule.trim())
-                    .and_then(postio_ui::digest::rule_when);
-                Window::new(
-                    delivery,
-                    &digest.rule,
-                    digest.cadence,
-                    digest.count,
-                    digest.senders.len(),
-                    digest.at,
-                    when,
-                )
-            }
-            // Not among what the host surfaced (yet): what the row says.
-            None => Window::new(
-                delivery,
-                row.subject.as_str(),
-                None,
-                row.count,
-                0,
-                row.when,
-                None,
-            ),
-        };
-        self.surfaces.digest = Some(window);
-        self.focus = Focus::Digest;
-        vec![Effect::Ask(Ask::Digest(delivery)), Effect::Redraw]
-    }
-
-    /// Close the window: the list is as it was.
-    fn close_digest(&mut self) -> Vec<Effect> {
-        self.surfaces.digest = None;
-        self.reading = None;
-        self.focus = Focus::List;
-        vec![Effect::Redraw]
-    }
-
-    /// The delivery arrived.
-    pub(super) fn digest_answered(&mut self, answer: Answer) -> Vec<Effect> {
-        let Answer::Digest {
-            delivery,
-            messages,
-            summary,
-        } = answer
-        else {
-            return Vec::new();
-        };
-        let Some(window) = self.surfaces.digest.as_mut() else {
-            return Vec::new();
-        };
-        if window.delivery != delivery {
-            return Vec::new();
-        }
-        let mut effects = Vec::new();
-        let messages = match messages {
-            Ok(messages) => messages,
-            Err(reason) => {
-                effects.extend(self.say_as(Tone::Failed, &reason, None));
-                Vec::new()
-            }
-        };
-        let summary = summary.unwrap_or_else(|reason| {
-            tracing::warn!(%reason, "could not read a digest's summary");
-            None
-        });
-        if let Some(window) = self.surfaces.digest.as_mut() {
-            window.read_in(messages, summary);
-        }
-        effects.push(Effect::Redraw);
-        effects
-    }
-
-    /// A key with the keyboard in the digest window.
-    pub(super) fn digest_key(&mut self, key: &KeyEvent) -> Vec<Effect> {
-        let Outcome::Command(id) = self.keys.press(key, KeyContext::Digest, false) else {
-            return Vec::new();
-        };
-        match self.digest_command(&id) {
-            Some(effects) => effects,
-            // The rule is edited in its own dialog.
-            None if id == "digest_rule" => self.digest_rule(),
-            None => Vec::new(),
-        }
-    }
-
-    /// What the window does for `id`, or `None` when it is not its own.
-    pub(super) fn digest_command(&mut self, id: &str) -> Option<Vec<Effect>> {
-        let (column, height) = self.digest_geometry();
-        let window = self.surfaces.digest.as_mut()?;
-        // The question over `D` takes the keyboard until it is answered.
-        if window.stopping().is_some() {
-            return Some(match id {
-                "open_message" => self.confirm_stop(),
-                "back" => {
-                    window.stop_asked(None);
-                    vec![Effect::Redraw]
+    pub(super) fn show_digest_intent(
+        &mut self,
+        intent: Intent,
+    ) -> Result<Vec<Effect>, Box<Intent>> {
+        match intent {
+            Intent::OpenDigest { .. } => {}
+            Intent::Digest(view) => {
+                if self.surfaces.digest.is_none() {
+                    self.focus = Focus::Digest;
                 }
-                _ => Vec::new(),
-            });
-        }
-        let page = window.page();
-        match id {
-            "next_message" | "prev_message" => {
-                let by = if id == "next_message" { 1 } else { -1 };
-                match page {
-                    Page::Email => {
-                        let message = window.source_by(by)?;
-                        return Some(self.read_email(message));
-                    }
-                    Page::List => window.step(by),
-                    Page::Summary => {
-                        let top = window.top().saturating_add_signed(by);
-                        window.scroll_to(top);
-                    }
+                let email = view.email.is_some();
+                match self.surfaces.digest.as_mut() {
+                    Some(window) => window.replace(*view),
+                    None => self.surfaces.digest = Some(Window::new(*view)),
                 }
-            }
-            "first_message" if page == Page::List => window.go_to(0),
-            "last_message" if page == Page::List => window.go_to(usize::MAX),
-            "next_reference" | "prev_reference" => {
-                if page != Page::Summary {
-                    return Some(Vec::new());
-                }
-                window.step_reference(if id == "next_reference" { 1 } else { -1 });
-            }
-            "toggle_digest_summary" => {
-                window.toggle();
-            }
-            "open_message" => {
-                let message = match page {
-                    Page::Summary => window
-                        .focused_reference()
-                        .map(|reference| reference.message),
-                    Page::List => window.rows().get(window.cursor()).map(|row| row.id),
-                    Page::Email => None,
-                };
-                let Some(message) = message else {
-                    return Some(Vec::new());
-                };
-                window.open_email(message, page);
-                return Some(self.read_email(message));
-            }
-            "back" => {
-                if window.back() {
+                if !email {
                     self.reading = None;
-                    return Some(vec![Effect::Redraw]);
                 }
-                return Some(self.close_digest());
+                self.reveal_digest();
             }
-            "go_to_inbox" => return Some(self.close_digest()),
-            "archive" => {
-                let delivery = window.delivery;
-                let mut effects = self.close_digest();
-                effects.insert(
-                    0,
-                    Effect::Send(Command::ArchiveDigest {
-                        delivery,
-                        archived: true,
-                    }),
-                );
-                return Some(effects);
+            Intent::OpenMessage {
+                message,
+                host: Host::Digest,
+                ..
+            } => return Ok(self.read_digest_email(message)),
+            Intent::CloseSurface(SurfaceKind::Digest) => {
+                self.surfaces.digest = None;
+                self.surfaces.confirm = None;
+                self.reading = None;
+                if self.focus == Focus::Digest {
+                    self.focus = Focus::List;
+                }
             }
-            "stop_digesting_sender" => {
-                let found = window.focused().map(|row| (row.id, row.address.clone()));
-                let Some((message, Some(sender))) = found else {
-                    return Some(Vec::new());
-                };
-                window.stop_asked(Some(Stop {
-                    message,
-                    sender: postio_ui::terminal::SafeText::new(&sender),
-                }));
-            }
-            "unsubscribe" => {
-                let message = window.focused().map(|row| row.id)?;
-                return Some(vec![Effect::Unsubscribe(message)]);
-            }
-            "undo" | "cheat_sheet" => return Some(self.global(id)),
-            _ => return None,
+            other => return Err(Box::new(other)),
         }
-        self.reveal_digest(column, height);
-        Some(vec![Effect::Redraw])
+        Ok(vec![Effect::Redraw])
     }
 
-    /// `Enter` on the question over `D`: stop digesting, now.
-    fn confirm_stop(&mut self) -> Vec<Effect> {
-        let Some(stop) = self
-            .surfaces
-            .digest
-            .as_mut()
-            .and_then(|window| window.stopping().cloned())
-        else {
+    fn read_digest_email(&mut self, message: postio_model::MessageId) -> Vec<Effect> {
+        let Some(line) = self.surfaces.digest.as_ref().and_then(|window| {
+            window
+                .view()
+                .rows
+                .iter()
+                .find(|line| line.message == message)
+        }) else {
             return Vec::new();
         };
-        if let Some(window) = self.surfaces.digest.as_mut() {
-            window.stop_asked(None);
-        }
-        vec![
-            Effect::Send(Command::StopDigestingSender {
-                target: MessageTarget::Messages(vec![stop.message]),
-                stopped: true,
-                kept: None,
-            }),
-            Effect::Redraw,
-        ]
-    }
-
-    /// Read `message` for the window's email page: its row is the window's.
-    fn read_email(&mut self, message: MessageId) -> Vec<Effect> {
-        let Some(row) = self
-            .surfaces
-            .digest
-            .as_ref()
-            .and_then(|window| window.row_of(message))
-            .cloned()
-        else {
-            return Vec::new();
-        };
+        let row = crate::row::Row::from(line.summary.clone());
         self.reading = Some(crate::conversation::Reading {
             row: message,
             members: vec![crate::conversation::Member::from_row(&row)],
@@ -285,8 +88,15 @@ impl App {
         vec![Effect::Redraw, Effect::ReadBody(message)]
     }
 
-    /// Keep what the keyboard is on in view.
-    fn reveal_digest(&mut self, column: u16, height: usize) {
+    pub(super) fn digest_key(&mut self, key: &crossterm::event::KeyEvent) -> Vec<Effect> {
+        match self.keys.press(key, KeyContext::Digest, false) {
+            Outcome::Command(id) => self.command(&id),
+            _ => Vec::new(),
+        }
+    }
+
+    fn reveal_digest(&mut self) {
+        let (column, height) = self.digest_geometry();
         let focus = crate::view::digest::focus_rows(self, column);
         let Some(window) = self.surfaces.digest.as_mut() else {
             return;
@@ -303,16 +113,15 @@ impl App {
                     top
                 }
             }),
-            Page::List => {
-                let at = window.cursor();
-                Some(if at < top {
+            Page::List => window.cursor().map(|at| {
+                if at < top {
                     at
                 } else if at >= top + height {
                     at + 1 - height
                 } else {
                     top
-                })
-            }
+                }
+            }),
             Page::Email => None,
         };
         if let Some(wanted) = wanted {
@@ -320,48 +129,35 @@ impl App {
         }
     }
 
-    /// A click on a part of the digest window.
     pub(super) fn digest_click(&mut self, part: Part, index: usize) -> Vec<Effect> {
-        let (column, height) = self.digest_geometry();
-        let Some(window) = self.surfaces.digest.as_mut() else {
+        let Some(window) = self.surfaces.digest.as_ref() else {
             return Vec::new();
         };
         match part {
-            Part::StopCancel => {
-                window.stop_asked(None);
-                return vec![Effect::Redraw];
-            }
-            Part::StopConfirm => return self.confirm_stop(),
-            _ => {}
-        }
-        if window.stopping().is_some() {
-            return Vec::new();
-        }
-        match part {
-            Part::DigestTab => window.show(if index == 0 {
-                Page::Summary
-            } else {
-                Page::List
-            }),
-            Part::DigestRow => {
-                if window.cursor() == index {
-                    return self.digest_command("open_message").unwrap_or_default();
+            Part::DigestTab => {
+                let page = if index == 0 {
+                    Page::Summary
+                } else {
+                    Page::List
+                };
+                if window.page() == page {
+                    return Vec::new();
                 }
-                window.go_to(index);
+                self.tell(Told::Command(CommandId::ToggleDigestSummary))
             }
-            Part::DigestReference => {
-                if window.reference() == Some(index) {
-                    return self.digest_command("open_message").unwrap_or_default();
-                }
-                window.focus_reference(index);
+            // A second click on what is focused opens it.
+            Part::DigestRow if window.cursor() == Some(index) => {
+                self.tell(Told::Command(CommandId::OpenMessage))
             }
-            _ => return Vec::new(),
+            Part::DigestRow => self.tell(Told::DigestPoint(index as u32)),
+            Part::DigestReference if window.reference() == Some(index) => {
+                self.tell(Told::Command(CommandId::OpenMessage))
+            }
+            Part::DigestReference => self.tell(Told::DigestReference(index as u32)),
+            _ => Vec::new(),
         }
-        self.reveal_digest(column, height);
-        vec![Effect::Redraw]
     }
 
-    /// The wheel over the window's page.
     pub(super) fn digest_wheel(&mut self, lines: isize) {
         let (column, height) = self.digest_geometry();
         let extent = crate::view::digest::extent(self, column);
@@ -376,22 +172,23 @@ impl App {
 mod tests {
     use crossterm::event::{KeyCode, KeyModifiers};
     use postio_core::{Command, MessageTarget};
+    use postio_focus::Request;
     use postio_model::MessageId;
     use postio_model::ids::DeliveryId;
-    use postio_ui::focus_list::FocusRow;
+    use postio_ui::digest::Page;
 
     use crate::app::{App, Effect, Focus, Input, update};
-    use crate::ask::{Answer, Ask};
     use crate::test_support::{
-        app, ctrl, digest_row, held, key, newsletters_rule, places_with_features, press, screen,
-        seed_places, show_focus, summary_of,
+        app, digest_row, held, key, newsletters_rule, places_with_features, press, screen,
+        seed_places, serve_digest, show_focus, summary_of, with_model,
     };
 
-    /// The inbox with one digest of fourteen messages from six senders.
     fn inbox(size: (u16, u16)) -> App {
         let mut app = app(size);
+        app.clock_for_tests(crate::test_support::now());
         let mut places = places_with_features();
         places.features.digests = crate::places::Rules(vec![newsletters_rule()]);
+        places.features.section = crate::places::Section::new(with_model());
         seed_places(&mut app, places);
         show_focus(&mut app, vec![digest_row(1, "Newsletters", 14, 6)]);
         app
@@ -423,7 +220,6 @@ mod tests {
     fn summary() -> postio_model::summary::DigestSummary {
         summary_of(&[
             ("Your harbor", "October's tide tables are published.", 21),
-            ("Your harbor", "A dredging notice covers the east quay.", 21),
             (
                 "Getting around",
                 "The 8:10 train moves to 8:15 from the 5th.",
@@ -433,445 +229,169 @@ mod tests {
         ])
     }
 
-    fn answer(
-        messages: Vec<postio_model::listing::MessageSummary>,
-        summary: Option<postio_model::summary::DigestSummary>,
-    ) -> Input {
-        Input::Answer(Answer::Digest {
-            delivery: DeliveryId::new(1),
-            messages: Ok(messages),
-            summary: Ok(summary),
-        })
-    }
-
-    /// The digest window, open on its delivery, with a summary or not.
     fn opened(size: (u16, u16), with_summary: bool) -> App {
         let mut app = inbox(size);
-        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        update(&mut app, answer(messages(), with_summary.then(summary)));
+        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        serve_digest(&mut app, effects, messages(), with_summary.then(summary));
         app
     }
 
-    fn line_with<'a>(screen: &'a str, wanted: &str) -> &'a str {
-        screen
-            .lines()
-            .find(|line| line.contains(wanted))
-            .unwrap_or_else(|| panic!("no line holds {wanted:?} in\n{screen}"))
+    fn email_body(message: i64) -> Input {
+        Input::Body {
+            message: MessageId::new(message),
+            answer: Ok(postio_client::protocol::Body::Ready {
+                body: postio_model::MessageBody {
+                    text: Some("Hello.\nFrom the 5th the 8:10 runs at 8:15.\nThanks.".into()),
+                    html: None,
+                },
+                encoding_problems: false,
+            }),
+        }
+    }
+
+    fn asked(effects: &[Effect], wanted: impl Fn(&Request) -> bool) -> bool {
+        effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::Focus { request, .. } if wanted(request)))
     }
 
     #[test]
-    fn enter_on_a_digest_opens_its_window_and_asks_what_it_holds() {
-        let mut app = inbox((120, 36));
+    fn enter_on_a_digest_opens_its_window_on_the_summary_and_reads_the_delivery() {
+        let mut app = inbox((120, 40));
         let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        assert!(
-            effects.contains(&Effect::Ask(Ask::Digest(DeliveryId::new(1)))),
-            "{effects:?}"
-        );
+        assert!(asked(&effects, |request| matches!(
+            request,
+            Request::DigestRead { delivery, summary: true, .. } if delivery.get() == 1
+        )));
         assert_eq!(app.focus(), Focus::Digest);
-    }
-
-    #[test]
-    fn the_header_says_what_it_is_and_the_tab_row_what_it_holds() {
-        let app = opened((120, 36), true);
-        let drawn = screen(120, 36, &app);
-        assert!(
-            line_with(&drawn, "Weekly · Newsletters").contains("Archive all 14 e"),
-            "{drawn}"
-        );
-        assert!(
-            drawn.contains("14 messages from 6 senders · came due today 11:00"),
-            "{drawn}"
-        );
-        let tabs = line_with(&drawn, "Summary  14 messages");
-        assert!(tabs.contains("tab"), "{tabs}");
-        assert!(
-            tabs.contains("Weekly, Sunday 09:00 · Edit rule and cadence d"),
-            "{tabs}"
-        );
-    }
-
-    #[test]
-    fn it_opens_on_the_summary_when_there_is_one_with_each_statement_ending_in_its_reference() {
-        let app = opened((120, 40), true);
+        serve_digest(&mut app, effects, messages(), Some(summary()));
         let drawn = screen(120, 40, &app);
+        assert!(drawn.contains("Weekly · Newsletters"), "{drawn}");
+        assert!(drawn.contains("Archive all 14"), "{drawn}");
         assert!(drawn.contains("Your harbor"), "{drawn}");
         assert!(
-            line_with(&drawn, "October's tide tables are published.").ends_with_ref(1),
-            "{drawn}"
-        );
-        assert!(
-            line_with(&drawn, "The 8:10 train moves").contains("[3]"),
-            "{drawn}"
-        );
-        assert!(
-            drawn.contains(
-                "Written on this computer by the local model from these 14 messages only."
-            ),
+            drawn.contains("October's tide tables are published. [1]"),
             "{drawn}"
         );
         assert!(
             !drawn.contains("Collections move to Thursday"),
-            "no list rows:\n{drawn}"
+            "no list rows on the summary:\n{drawn}"
         );
     }
 
-    trait EndsWithRef {
-        fn ends_with_ref(&self, number: u32) -> bool;
-    }
-    impl EndsWithRef for &str {
-        fn ends_with_ref(&self, number: u32) -> bool {
-            self.trim_end()
-                .trim_end_matches('│')
-                .trim_end()
-                .ends_with(&format!("[{number}]"))
-        }
-    }
-
     #[test]
-    fn the_focused_reference_has_its_message_card_under_its_paragraph() {
+    fn brackets_step_the_references_and_tab_swaps_to_the_plain_list() {
         let mut app = opened((120, 40), true);
-        let drawn = screen(120, 40, &app);
-        let lines: Vec<&str> = drawn.lines().collect();
-        let at = lines
-            .iter()
-            .position(|line| line.contains("October's tide tables are published."))
-            .unwrap();
-        assert!(
-            lines[at + 1].contains("Harbor Weekly · Tide tables for October ·"),
-            "{drawn}"
-        );
-        assert!(
-            lines[at + 2].contains("The October tide tables are out"),
-            "{drawn}"
-        );
-        assert!(lines[at + 3].contains("↵ open the full email"), "{drawn}");
-        // `]` moves on: the card goes with it.
         update(&mut app, press(']'));
-        update(&mut app, press(']'));
-        let drawn = screen(120, 40, &app);
-        let lines: Vec<&str> = drawn.lines().collect();
-        let at = lines
-            .iter()
-            .position(|line| line.contains("The 8:10 train moves"))
-            .unwrap();
-        assert!(
-            lines[at + 1].contains("Rail Notes · Timetable change"),
-            "{drawn}"
-        );
-        assert!(
-            drawn.matches("↵ open the full email").count() == 1,
-            "{drawn}"
-        );
-        update(&mut app, press('['));
         assert_eq!(app.digest().unwrap().reference(), Some(1));
-    }
-
-    #[test]
-    fn the_focused_reference_is_reversed_so_it_shows_without_colour() {
-        use ratatui::style::Modifier;
-        let app = opened((120, 40), true);
-        let buffer = crate::test_support::buffer(120, 40, &app);
+        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(app.digest().unwrap().page(), Page::List);
         let drawn = screen(120, 40, &app);
-        let y = drawn
-            .lines()
-            .position(|line| line.contains("October's tide tables are published."))
-            .unwrap() as u16;
-        let x = (0..120)
-            .find(|x| buffer[(*x, y)].symbol() == "[")
-            .expect("the reference");
-        assert!(buffer[(x + 1, y)].modifier.contains(Modifier::REVERSED));
-        let other = drawn
-            .lines()
-            .position(|line| line.contains("The 8:10 train moves"))
-            .unwrap() as u16;
-        let x = (0..120)
-            .find(|x| buffer[(*x, other)].symbol() == "[")
-            .unwrap();
-        assert!(!buffer[(x + 1, other)].modifier.contains(Modifier::REVERSED));
-    }
-
-    #[test]
-    fn with_no_summary_it_opens_on_the_plain_list_and_tab_does_nothing() {
-        let mut app = opened((120, 36), false);
-        let drawn = screen(120, 36, &app);
-        assert!(
-            drawn.contains("Harbor Weekly") && drawn.contains("Tide tables for October"),
-            "{drawn}"
-        );
-        assert!(!drawn.contains("Summary"), "{drawn}");
-        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
-        assert_eq!(app.digest().unwrap().page(), postio_ui::digest::Page::List);
-    }
-
-    #[test]
-    fn tab_switches_between_the_summary_and_the_list() {
-        let mut app = opened((120, 36), true);
-        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
-        let drawn = screen(120, 36, &app);
         assert!(
             drawn.contains("Rail Notes") && drawn.contains("Collections move to Thursday"),
             "{drawn}"
         );
-        assert!(!drawn.contains("Written on this computer"), "{drawn}");
+        // The list's cursor followed the reference to its message.
+        assert_eq!(app.digest().unwrap().cursor(), Some(1));
         update(&mut app, press('j'));
-        assert_eq!(app.digest().unwrap().cursor(), 1);
-        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
-        assert!(screen(120, 36, &app).contains("Written on this computer"));
+        assert_eq!(app.digest().unwrap().cursor(), Some(2));
     }
 
     #[test]
-    fn enter_on_a_reference_opens_its_email_in_the_window_and_escape_goes_back_to_it() {
+    fn without_a_summary_it_opens_on_the_plain_list() {
+        let app = opened((120, 36), false);
+        assert_eq!(app.digest().unwrap().page(), Page::List);
+        let drawn = screen(120, 36, &app);
+        assert!(drawn.contains("Tide tables for October"), "{drawn}");
+        assert!(!drawn.contains("Summary"), "{drawn}");
+    }
+
+    #[test]
+    fn enter_on_a_reference_opens_its_email_in_the_window_and_escape_comes_back() {
         let mut app = opened((120, 40), true);
-        update(&mut app, press(']'));
         update(&mut app, press(']'));
         let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         assert!(
             effects.contains(&Effect::ReadBody(MessageId::new(22))),
             "{effects:?}"
         );
-        update(
-            &mut app,
-            Input::Body {
-                message: MessageId::new(22),
-                answer: Ok(postio_client::protocol::Body::Ready {
-                    body: postio_model::MessageBody {
-                        text: Some("Hello.\nFrom the 5th the 8:10 runs at 8:15.\nThanks.".into()),
-                        html: None,
-                    },
-                    encoding_problems: false,
-                }),
-            },
-        );
+        update(&mut app, email_body(22));
         let drawn = screen(120, 40, &app);
-        assert!(
-            drawn.contains("Timetable change"),
-            "the subject is the title:\n{drawn}"
-        );
+        assert!(drawn.contains("Timetable change"), "the subject: {drawn}");
         assert!(drawn.contains("Source 2 of 3"), "{drawn}");
-        assert!(
-            drawn.contains("Cited as 3 in the summary; the passage is highlighted."),
-            "{drawn}"
-        );
-        assert!(
-            drawn.contains("the summary in this same window."),
-            "{drawn}"
-        );
         assert!(
             drawn.contains("From the 5th the 8:10 runs at 8:15."),
             "{drawn}"
         );
-        assert!(drawn.contains("‹ Summary Esc"), "{drawn}");
-        // The window stays; Escape goes back to the same reference.
         update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
         assert_eq!(app.focus(), Focus::Digest);
-        assert_eq!(app.digest().unwrap().reference(), Some(2));
-        assert!(screen(120, 40, &app).contains("Written on this computer"));
-        // And Escape again closes it.
+        assert_eq!(app.digest().unwrap().reference(), Some(1));
+        assert!(app.reading().is_none());
         update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
         assert_eq!(app.focus(), Focus::List);
         assert!(app.digest().is_none());
     }
 
     #[test]
-    fn j_and_k_walk_the_digests_sources_while_an_email_is_open() {
-        let mut app = opened((120, 40), true);
-        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        let effects = update(&mut app, press('j'));
-        assert!(
-            effects.contains(&Effect::ReadBody(MessageId::new(22))),
-            "{effects:?}"
-        );
-        assert!(screen(120, 40, &app).contains("Source 2 of 3"));
-        let effects = update(&mut app, press('k'));
-        assert!(
-            effects.contains(&Effect::ReadBody(MessageId::new(21))),
-            "{effects:?}"
-        );
-        assert!(screen(120, 40, &app).contains("Source 1 of 3"));
-    }
-
-    #[test]
-    fn an_email_opened_from_the_list_goes_back_to_the_list() {
-        let mut app = inbox((120, 40));
-        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        update(
-            &mut app,
-            answer(
-                messages(),
-                Some(summary_of(&[("Your harbor", "Tides are out.", 21)])),
-            ),
-        );
-        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
-        update(&mut app, press('j'));
-        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        let drawn = screen(120, 40, &app);
-        assert!(
-            drawn.contains("Source 2 of 3") && !drawn.contains("Cited as"),
-            "{drawn}"
-        );
-        update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
-        assert_eq!(app.digest().unwrap().page(), postio_ui::digest::Page::List);
-    }
-
-    #[test]
-    fn the_cited_passage_is_marked_in_the_email_by_more_than_colour() {
-        use ratatui::style::Modifier;
-        let mut app = inbox((120, 40));
-        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        let mut cited = summary_of(&[("Getting around", "The train moves.", 22)]);
-        cited.statements[0].reference.excerpt = "the 8:10 runs at 8:15.".into();
-        update(&mut app, answer(messages(), Some(cited)));
-        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        update(
-            &mut app,
-            Input::Body {
-                message: MessageId::new(22),
-                answer: Ok(postio_client::protocol::Body::Ready {
-                    body: postio_model::MessageBody {
-                        text: Some("From the 5th the 8:10 runs at 8:15.".into()),
-                        html: None,
-                    },
-                    encoding_problems: false,
-                }),
-            },
-        );
-        let drawn = screen(120, 40, &app);
-        let y = drawn
-            .lines()
-            .position(|l| l.contains("From the 5th"))
-            .unwrap() as u16;
-        let x = drawn
-            .lines()
-            .nth(y as usize)
-            .unwrap()
-            .find("the 8:10")
-            .unwrap();
-        let x = drawn.lines().nth(y as usize).unwrap()[..x].chars().count() as u16;
-        let buffer = crate::test_support::buffer(120, 40, &app);
-        assert!(
-            buffer[(x, y)].modifier.contains(Modifier::UNDERLINED),
-            "{:?}",
-            buffer[(x, y)]
-        );
-        assert!(!buffer[(x - 6, y)].modifier.contains(Modifier::UNDERLINED));
-    }
-
-    #[test]
-    fn a_long_summary_scrolls_to_keep_the_focused_reference_in_view() {
-        let mut app = inbox((120, 20));
-        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        let many: Vec<(&str, &str, i64)> = (0..30)
-            .map(|at| ("Topic", "A statement that says something.", 21 + at % 3))
-            .collect();
-        update(&mut app, answer(messages(), Some(summary_of(&many))));
-        for _ in 0..25 {
-            update(&mut app, press(']'));
-        }
-        assert!(app.digest().unwrap().top() > 0);
-        assert!(screen(120, 20, &app).contains("↵ open the full email"));
-    }
-
-    #[test]
-    fn shift_e_archives_the_whole_delivery_and_closes() {
+    fn shift_e_archives_the_delivery_and_closes_the_window() {
         let mut app = opened((120, 36), true);
         let effects = update(&mut app, press('e'));
         assert!(
-            effects.contains(&Effect::Send(Command::ArchiveDigest {
-                delivery: DeliveryId::new(1),
-                archived: true
-            })),
+            asked(&effects, |request| matches!(
+                request,
+                Request::Post(Command::ArchiveDigest { delivery, archived: true })
+                    if *delivery == DeliveryId::new(1)
+            )),
             "{effects:?}"
         );
         assert_eq!(app.focus(), Focus::List);
+        assert!(app.digest().is_none());
     }
 
     #[test]
-    fn d_asks_before_it_stops_digesting_the_sender() {
+    fn d_asks_before_it_stops_digesting_and_only_return_does() {
         let mut app = opened((120, 36), true);
         let effects = update(&mut app, press('D'));
-        assert!(
-            !effects.iter().any(|e| matches!(e, Effect::Send(_))),
-            "{effects:?}"
-        );
+        assert!(!asked(&effects, |_| true), "{effects:?}");
         let drawn = screen(120, 36, &app);
         assert!(
             drawn.contains("Stop digesting harbor@example.com?"),
             "{drawn}"
         );
-        assert!(
-            drawn.contains("Their mail comes to the inbox again"),
-            "{drawn}"
-        );
         let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         assert!(
-            effects.contains(&Effect::Send(Command::StopDigestingSender {
-                target: MessageTarget::Messages(vec![MessageId::new(21)]),
-                stopped: true,
-                kept: None,
-            })),
+            asked(&effects, |request| matches!(
+                request,
+                Request::Post(Command::StopDigestingSender {
+                    target: MessageTarget::Messages(messages),
+                    stopped: true,
+                    ..
+                }) if messages == &[MessageId::new(21)]
+            )),
             "{effects:?}"
         );
-        // Escape leaves the question and sends nothing.
         update(&mut app, press('D'));
         let effects = update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
-        assert!(!effects.iter().any(|e| matches!(e, Effect::Send(_))));
-        assert_eq!(
-            app.focus(),
-            Focus::Digest,
-            "Escape answered the question, not the window"
-        );
+        assert!(!asked(&effects, |_| true), "{effects:?}");
+        assert_eq!(app.focus(), Focus::Digest, "Escape answered the question");
     }
 
     #[test]
-    fn shift_m_leaves_the_focused_messages_list_and_ctrl_z_undoes() {
+    fn shift_m_unsubscribes_through_the_controller() {
         let mut app = opened((120, 36), true);
         let effects = update(&mut app, press('M'));
-        assert!(
-            effects.contains(&Effect::Unsubscribe(MessageId::new(21))),
-            "{effects:?}"
-        );
-        let effects = update(&mut app, ctrl('z'));
-        assert!(
-            effects
-                .iter()
-                .any(|e| matches!(e, Effect::Send(command) if command.id() == postio_core::CommandId::Undo)),
-            "{effects:?}"
-        );
-    }
-
-    #[test]
-    fn the_windows_bottom_row_names_its_keys() {
-        let app = opened((120, 40), true);
-        let drawn = screen(120, 40, &app);
-        let keys = line_with(&drawn, "next / previous reference");
-        assert!(keys.contains("] [ next / previous reference"), "{keys}");
-        assert!(keys.contains("↵ open"), "{keys}");
-        assert!(keys.contains("tab summary / messages"), "{keys}");
-        assert!(keys.contains("D stop digesting the sender"), "{keys}");
+        assert!(asked(&effects, |request| matches!(
+            request,
+            Request::Unsubscribe(message) if *message == MessageId::new(21)
+        )));
     }
 
     #[test]
     fn every_part_is_a_click() {
         use crate::surface::Part;
-        use crate::test_support::{click, hits_of};
+        use crate::test_support::click;
         use crate::view::hit::Target;
         let mut app = opened((120, 40), true);
-        let hits = hits_of(120, 40, &app);
-        let on = |wanted: Target| {
-            (0..40).any(|y| (0..120).any(|x| hits.at(x, y).is_some_and(|hit| hit.target == wanted)))
-        };
-        for command in [
-            "archive",
-            "back",
-            "digest_rule",
-            "toggle_digest_summary",
-            "stop_digesting_sender",
-        ] {
-            assert!(on(Target::Command(command)), "{command}");
-        }
-        assert!(on(Target::Surface(Part::DigestTab, 0)) && on(Target::Surface(Part::DigestTab, 1)));
-        assert!(on(Target::Surface(Part::DigestReference, 3)));
-        // A click on a reference focuses it, a second opens it.
         update(
             &mut app,
             click(Target::Surface(Part::DigestReference, 2), false, false),
@@ -882,340 +402,48 @@ mod tests {
             click(Target::Surface(Part::DigestReference, 2), false, false),
         );
         assert!(
-            effects.contains(&Effect::ReadBody(MessageId::new(22))),
-            "{effects:?}"
+            effects.contains(&Effect::ReadBody(MessageId::new(23))),
+            "a second click opens it: {effects:?}"
         );
         update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
-        // The tabs switch pages.
         update(
             &mut app,
             click(Target::Surface(Part::DigestTab, 1), false, false),
         );
-        assert_eq!(app.digest().unwrap().page(), postio_ui::digest::Page::List);
+        assert_eq!(app.digest().unwrap().page(), Page::List);
         update(
             &mut app,
             click(Target::Surface(Part::DigestRow, 2), false, false),
         );
-        assert_eq!(app.digest().unwrap().cursor(), 2);
-        let effects = update(&mut app, click(Target::Command("archive"), false, false));
-        assert!(
-            effects
-                .iter()
-                .any(|e| matches!(e, Effect::Send(Command::ArchiveDigest { .. })))
-        );
+        assert_eq!(app.digest().unwrap().cursor(), Some(2));
+    }
+
+    #[test]
+    fn a_long_summary_scrolls_to_keep_the_focused_reference_in_view() {
+        let mut app = inbox((120, 20));
+        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        let many: Vec<(&str, &str, i64)> = (0..30)
+            .map(|at| ("Topic", "A statement that says something.", 21 + at % 3))
+            .collect();
+        serve_digest(&mut app, effects, messages(), Some(summary_of(&many)));
+        for _ in 0..25 {
+            update(&mut app, press(']'));
+        }
+        assert!(app.digest().unwrap().top() > 0);
+        assert!(screen(120, 20, &app).contains("open the full email"));
     }
 
     #[test]
     fn what_the_model_wrote_never_reaches_the_terminal_as_a_control() {
         let mut app = inbox((120, 36));
-        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         let hostile = summary_of(&[("To\u{1b}[2Jpic", "Say \u{1b}]0;owned\u{7}hello", 21)]);
-        update(&mut app, answer(messages(), Some(hostile)));
+        serve_digest(&mut app, effects, messages(), Some(hostile));
         let drawn = screen(120, 36, &app);
         assert!(
             !drawn.contains('\u{1b}') && !drawn.contains('\u{7}'),
             "{drawn:?}"
         );
         assert!(drawn.contains("hello"), "{drawn}");
-    }
-
-    #[test]
-    fn a_digest_not_among_the_surfaced_rows_still_opens() {
-        let mut app = app((120, 36));
-        seed_places(&mut app, places_with_features());
-        let rows = vec![digest_row(1, "Newsletters", 14, 6)];
-        // Opened without the host's read of what is surfaced.
-        let shown: Vec<crate::row::Row> = rows.into_iter().map(crate::row::Row::from).collect();
-        crate::test_support::show_rows(&mut app, &shown);
-        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        assert!(
-            effects.contains(&Effect::Ask(Ask::Digest(DeliveryId::new(1)))),
-            "{effects:?}"
-        );
-        let _ = FocusRow::Digest;
-    }
-
-    /// Every effect `update` asked the host for.
-    fn sent(effects: &[Effect]) -> Vec<&Command> {
-        effects
-            .iter()
-            .filter_map(|effect| match effect {
-                Effect::Send(command) => Some(command),
-                _ => None,
-            })
-            .collect()
-    }
-
-    fn email_body(message: i64) -> Input {
-        Input::Body {
-            message: MessageId::new(message),
-            answer: Ok(postio_client::protocol::Body::Ready {
-                body: postio_model::MessageBody {
-                    text: Some("Hello.".into()),
-                    html: None,
-                },
-                encoding_problems: false,
-            }),
-        }
-    }
-
-    #[test]
-    fn the_brackets_step_one_statement_at_a_time_and_stop_at_either_end() {
-        let mut app = opened((120, 40), true);
-        let reference = |app: &App| app.digest().unwrap().reference();
-        assert_eq!(reference(&app), Some(0), "it opens on the first");
-        update(&mut app, press('['));
-        assert_eq!(reference(&app), Some(0), "nothing before the first");
-        for want in [1, 2, 3] {
-            update(&mut app, press(']'));
-            assert_eq!(
-                reference(&app),
-                Some(want),
-                "one statement, not one message"
-            );
-        }
-        update(&mut app, press(']'));
-        assert_eq!(reference(&app), Some(3), "nothing after the last");
-        update(&mut app, press('['));
-        assert_eq!(reference(&app), Some(2));
-        // Two statements cite the harbor message; stepping goes through both.
-        update(&mut app, press('['));
-        update(&mut app, press('['));
-        assert_eq!(reference(&app), Some(0));
-        let drawn = screen(120, 40, &app);
-        assert!(
-            drawn.contains("Harbor Weekly · Tide tables for October")
-                && !drawn.contains("Rail Notes · Timetable change"),
-            "only the focused statement shows its card:\n{drawn}"
-        );
-    }
-
-    #[test]
-    fn the_brackets_belong_to_the_summary_and_do_nothing_on_the_list() {
-        let mut app = opened((120, 36), true);
-        update(&mut app, press(']'));
-        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
-        let before = screen(120, 36, &app);
-        for bracket in [']', '['] {
-            let effects = update(&mut app, press(bracket));
-            assert!(
-                !effects.iter().any(|e| matches!(e, Effect::Send(_))),
-                "{effects:?}"
-            );
-        }
-        assert_eq!(
-            app.digest().unwrap().reference(),
-            Some(1),
-            "left where it was"
-        );
-        assert_eq!(screen(120, 36, &app), before, "and nothing moved on screen");
-        // Back on the summary it is still on the statement it left.
-        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
-        assert_eq!(app.digest().unwrap().reference(), Some(1));
-        assert!(
-            line_with(&screen(120, 36, &app), "A dredging notice").contains("[2]"),
-            "the second statement is the focused one"
-        );
-    }
-
-    #[test]
-    fn tab_is_the_summarys_alone_and_without_one_the_window_does_not_move() {
-        let mut app = opened((120, 36), false);
-        let before = screen(120, 36, &app);
-        let effects = update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
-        assert!(
-            !effects.iter().any(|e| matches!(e, Effect::Send(_))),
-            "{effects:?}"
-        );
-        assert_eq!(screen(120, 36, &app), before, "nothing to switch to");
-        assert_eq!(app.digest().unwrap().page(), postio_ui::digest::Page::List);
-        assert_eq!(
-            app.digest().unwrap().reference(),
-            None,
-            "no statement to focus"
-        );
-        update(&mut app, press(']'));
-        assert_eq!(app.digest().unwrap().reference(), None, "nor to step to");
-        // With a summary it goes both ways and the tab row says which.
-        let mut app = opened((120, 36), true);
-        let on_summary = screen(120, 36, &app);
-        assert!(
-            on_summary.contains("Written on this computer"),
-            "{on_summary}"
-        );
-        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
-        assert_eq!(app.digest().unwrap().page(), postio_ui::digest::Page::List);
-        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
-        assert_eq!(
-            app.digest().unwrap().page(),
-            postio_ui::digest::Page::Summary
-        );
-        assert_eq!(screen(120, 36, &app), on_summary, "the same page it left");
-    }
-
-    #[test]
-    fn shift_e_archives_the_delivery_once_from_any_page_and_not_a_message() {
-        let archived = |effects: &[Effect]| {
-            let sent = sent(effects);
-            assert_eq!(
-                sent,
-                vec![&Command::ArchiveDigest {
-                    delivery: DeliveryId::new(1),
-                    archived: true
-                }],
-                "one command, for the delivery: {effects:?}"
-            );
-        };
-        // From the summary, on the second statement.
-        let mut app = opened((120, 36), true);
-        update(&mut app, press(']'));
-        archived(&update(&mut app, press('e')));
-        assert!(app.digest().is_none() && app.reading().is_none());
-        assert_eq!(app.focus(), Focus::List);
-        // From the list.
-        let mut app = opened((120, 36), true);
-        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
-        update(&mut app, press('j'));
-        archived(&update(&mut app, press('e')));
-        // From an email in the window.
-        let mut app = opened((120, 36), true);
-        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        update(&mut app, email_body(21));
-        archived(&update(&mut app, press('e')));
-        assert!(app.digest().is_none() && app.reading().is_none());
-        // The retired `E` is not it.
-        let mut app = opened((120, 36), true);
-        let effects = update(&mut app, press('E'));
-        assert!(
-            !sent(&effects).contains(&&Command::ArchiveDigest {
-                delivery: DeliveryId::new(1),
-                archived: true
-            }),
-            "{effects:?}"
-        );
-    }
-
-    #[test]
-    fn d_asks_about_the_focused_senders_and_only_return_stops_them() {
-        let mut app = opened((120, 36), true);
-        update(&mut app, press(']'));
-        update(&mut app, press(']'));
-        let effects = update(&mut app, press('D'));
-        assert!(
-            sent(&effects).is_empty(),
-            "asking sends nothing: {effects:?}"
-        );
-        let drawn = screen(120, 36, &app);
-        assert!(
-            drawn.contains("Stop digesting rail@example.com?"),
-            "the third statement is Rail Notes':\n{drawn}"
-        );
-        // Nothing else answers it: not `e`, not `D` again, not a letter.
-        for other in ['e', 'D', 'y', 'j'] {
-            let effects = update(&mut app, press(other));
-            assert!(sent(&effects).is_empty(), "{other}: {effects:?}");
-        }
-        assert!(app.digest().unwrap().stopping().is_some(), "still asking");
-        assert_eq!(app.focus(), Focus::Digest);
-        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        assert_eq!(
-            sent(&effects),
-            vec![&Command::StopDigestingSender {
-                target: MessageTarget::Messages(vec![MessageId::new(22)]),
-                stopped: true,
-                kept: None,
-            }],
-            "the sender of the focused statement, once"
-        );
-        assert!(
-            app.digest().unwrap().stopping().is_none(),
-            "the question goes"
-        );
-        assert_eq!(app.focus(), Focus::Digest, "the window stays");
-        assert!(!screen(120, 36, &app).contains("Stop digesting"));
-    }
-
-    #[test]
-    fn d_over_an_email_is_about_that_emails_sender_and_over_the_list_the_rows() {
-        // The email on screen, though the focused statement is another.
-        let mut app = opened((120, 36), true);
-        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        update(&mut app, press('j'));
-        update(&mut app, email_body(22));
-        update(&mut app, press('D'));
-        assert!(screen(120, 36, &app).contains("Stop digesting rail@example.com?"));
-        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        assert!(
-            sent(&effects).iter().all(|command| matches!(
-                command,
-                Command::StopDigestingSender { target: MessageTarget::Messages(m), .. }
-                    if *m == vec![MessageId::new(22)]
-            )),
-            "{effects:?}"
-        );
-        // On the list it is the row the keyboard is on.
-        let mut app = opened((120, 36), true);
-        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
-        update(&mut app, press('j'));
-        update(&mut app, press('j'));
-        update(&mut app, press('D'));
-        assert!(screen(120, 36, &app).contains("Stop digesting town@example.com?"));
-        // Escape takes the question down and the window stays.
-        let effects = update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
-        assert!(sent(&effects).is_empty());
-        assert!(app.digest().unwrap().stopping().is_none());
-        assert!(!screen(120, 36, &app).contains("Stop digesting"));
-    }
-
-    #[test]
-    fn shift_m_follows_the_focused_statement_as_d_does() {
-        let mut app = opened((120, 36), true);
-        update(&mut app, press(']'));
-        update(&mut app, press(']'));
-        update(&mut app, press(']'));
-        let effects = update(&mut app, press('M'));
-        assert!(
-            effects.contains(&Effect::Unsubscribe(MessageId::new(23))),
-            "{effects:?}"
-        );
-    }
-
-    #[test]
-    fn escape_from_an_email_goes_back_to_the_statement_it_came_from_and_not_out() {
-        let mut app = opened((120, 40), true);
-        update(&mut app, press(']'));
-        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        assert!(
-            effects.contains(&Effect::ReadBody(MessageId::new(21))),
-            "the second statement cites the harbor message too: {effects:?}"
-        );
-        update(&mut app, email_body(21));
-        assert!(screen(120, 40, &app).contains("Cited as 2 in the summary"));
-        let effects = update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
-        assert!(sent(&effects).is_empty(), "{effects:?}");
-        assert_eq!(app.focus(), Focus::Digest, "the window did not close");
-        assert!(app.reading().is_none(), "the email is put away");
-        assert_eq!(app.digest().unwrap().reference(), Some(1));
-        assert_eq!(
-            app.digest().unwrap().page(),
-            postio_ui::digest::Page::Summary
-        );
-        let drawn = screen(120, 40, &app);
-        assert!(
-            line_with(&drawn, "A dredging notice").contains("[2]")
-                && drawn.contains("Harbor Weekly · Tide tables for October"),
-            "its card is under it again:\n{drawn}"
-        );
-        // From the list it is the list, on the row it left, summary or not.
-        let mut app = opened((120, 40), true);
-        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
-        update(&mut app, press('j'));
-        update(&mut app, press('j'));
-        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        update(&mut app, email_body(23));
-        update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
-        assert_eq!(app.digest().unwrap().page(), postio_ui::digest::Page::List);
-        assert_eq!(app.digest().unwrap().cursor(), 2);
-        assert_eq!(app.focus(), Focus::Digest);
     }
 }

@@ -418,11 +418,12 @@ impl App {
     /// Close the message: the list is as it was, the cursor and the
     /// selection with it.
     pub(super) fn close_message(&mut self) -> Vec<Effect> {
-        self.focus = self
+        let back = self
             .reading
             .as_ref()
             .and_then(|reading| reading.own.as_ref())
-            .map_or(Focus::List, |own| own.back);
+            .map(|own| own.back);
+        self.focus = back.unwrap_or(Focus::List);
         self.reading = None;
         self.reader_top = 0;
         self.armed_link = None;
@@ -430,7 +431,15 @@ impl App {
             dwell: self.open.dwell + 1,
             ..Open::default()
         };
-        vec![Effect::Redraw]
+        let mut effects = Vec::new();
+        // The controller opened it over Filtered, and keeps it there until told.
+        if back == Some(Focus::Filtered) {
+            effects.extend(self.tell(postio_focus::Input::SurfaceClosed(
+                postio_focus::SurfaceKind::Message,
+            )));
+        }
+        effects.push(Effect::Redraw);
+        effects
     }
 
     /// Escape: the find field first, then a menu, then the source, then the
