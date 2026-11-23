@@ -164,7 +164,7 @@ focused window.
   - `save_and_send_event` after the window.
 
   Then implement the verbs in `crates/postio-host/src/calendar/`.
-- [ ] T029 [US3] Extend the date grammar with durations ("1h", "until 4") in `crates/postio-search/src/date.rs`, with unit cases, for the editor (plan R6)
+- [x] T029 [US3] Extend the date grammar with durations ("1h", "until 4") in `crates/postio-search/src/date.rs`, with unit cases, for the editor (plan R6)
 - [ ] T030 [US3] The event editor dialog in `crates/postio-widgets/src/calendar/`, the terminal and the Mac, with one frontend case per path (`c`, type, `mod+s`; `v` "Next week"; `#` then `z`)
 
 ## Phase 8: User Story 4, CalDAV sync: generic, iCloud, Fastmail (P2) ⛔ S2

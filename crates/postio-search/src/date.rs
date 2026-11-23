@@ -359,6 +359,74 @@ impl When {
     }
 }
 
+pub fn parse_end<Tz: TimeZone>(text: &str, start: DateTime<Tz>) -> Option<DateTime<Tz>> {
+    let pieces = pieces(text)?;
+    let end = match pieces.first() {
+        Some(Piece::Word(word)) if matches!(word.as_str(), "until" | "till" | "to") => {
+            until(&pieces[1..], &start)?
+        }
+        _ => start.clone() + length(&pieces)?,
+    };
+    (end > start).then_some(end)
+}
+
+fn length(pieces: &[Piece]) -> Option<chrono::Duration> {
+    let mut total = chrono::Duration::zero();
+    let mut rest = pieces;
+    while let Some(Piece::Number(amount)) = rest.first() {
+        let unit = match rest.get(1) {
+            Some(Piece::Word(unit)) => unit.as_str(),
+            None if total > chrono::Duration::zero() => "m",
+            _ => return None,
+        };
+        let amount = i64::from(*amount);
+        total += match unit {
+            "h" | "hr" | "hrs" | "hour" | "hours" => chrono::Duration::hours(amount),
+            "m" | "min" | "mins" | "minute" | "minutes" => chrono::Duration::minutes(amount),
+            "d" | "day" | "days" => chrono::Duration::days(amount),
+            _ => return None,
+        };
+        rest = rest.get(2..).unwrap_or_default();
+    }
+    (rest.is_empty() && total > chrono::Duration::zero()).then_some(total)
+}
+
+fn until<Tz: TimeZone>(pieces: &[Piece], start: &DateTime<Tz>) -> Option<DateTime<Tz>> {
+    let (hour, minute) = match pieces.first()? {
+        Piece::Number(hour) => (*hour, 0),
+        Piece::Clock(hour, minute) => (*hour, *minute),
+        _ => return parse_when(&words(pieces), start.clone()),
+    };
+    let day = start.naive_local().date();
+    let at = |time: chrono::NaiveTime| resolve_local(&start.timezone(), day.and_time(time), start);
+    match pieces.get(1) {
+        None => [hour, hour + 12]
+            .into_iter()
+            .filter_map(|hour| clock(hour, minute, None))
+            .filter_map(at)
+            .find(|end| end > start),
+        next if pieces.len() == 2 => at(clock(hour, minute, Some(meridiem(next)?))?),
+        _ => parse_when(&words(pieces), start.clone()),
+    }
+}
+
+fn words(pieces: &[Piece]) -> String {
+    pieces
+        .iter()
+        .map(|piece| match piece {
+            Piece::Word(word) => word.clone(),
+            Piece::Number(number) => number.to_string(),
+            Piece::Clock(hour, minute) => format!("{hour}:{minute:02}"),
+            Piece::Numeric(parts) => parts
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("/"),
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// `local` in `zone`, as a real instant even when the clocks skip or repeat it: a skipped time is
 /// pushed forward by the gap, a repeated one is its first occurrence still after `now`. Public so
 /// everything turning a wall-clock time into an instant does it one way. `Some` always.
@@ -853,5 +921,52 @@ mod when_tests {
             .single()
             .expect("an unambiguous local time");
         assert_eq!(parse_when("tomorrow 8", now), Some(expected));
+    }
+}
+
+#[cfg(test)]
+mod end_tests {
+    use chrono::{TimeZone, Utc};
+
+    use super::parse_end;
+
+    fn start() -> chrono::DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 11, 24, 15, 0, 0).unwrap()
+    }
+
+    fn end(text: &str) -> Option<String> {
+        parse_end(text, start()).map(|end| end.format("%a %H:%M").to_string())
+    }
+
+    #[test]
+    fn a_length_counts_from_the_start() {
+        assert_eq!(end("1h").as_deref(), Some("Tue 16:00"));
+        assert_eq!(end("90m").as_deref(), Some("Tue 16:30"));
+        assert_eq!(end("1h30").as_deref(), Some("Tue 16:30"));
+        assert_eq!(end("1h 15m").as_deref(), Some("Tue 16:15"));
+        assert_eq!(end("2 hours").as_deref(), Some("Tue 17:00"));
+        assert_eq!(end("45 min").as_deref(), Some("Tue 15:45"));
+    }
+
+    #[test]
+    fn until_a_bare_hour_is_the_first_one_after_the_start() {
+        assert_eq!(end("until 4").as_deref(), Some("Tue 16:00"));
+        assert_eq!(end("till 16").as_deref(), Some("Tue 16:00"));
+        assert_eq!(end("until 4:30pm").as_deref(), Some("Tue 16:30"));
+        assert_eq!(end("to thu 5pm").as_deref(), Some("Thu 17:00"));
+    }
+
+    #[test]
+    fn nothing_that_ends_before_it_starts_or_is_not_a_length() {
+        assert_eq!(
+            end("until 2"),
+            None,
+            "02:00 and 14:00 have both passed by 15:00"
+        );
+        assert_eq!(end("until 2pm"), None);
+        assert_eq!(end("0m"), None);
+        assert_eq!(end("1x"), None);
+        assert_eq!(end("soon"), None);
+        assert_eq!(end("30"), None, "a bare number names no unit");
     }
 }
