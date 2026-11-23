@@ -23,7 +23,7 @@ impl App {
         effects
     }
 
-    fn carry_out(&mut self, said: Vec<Said>) -> Vec<Effect> {
+    pub(super) fn carry_out(&mut self, said: Vec<Said>) -> Vec<Effect> {
         let mut effects = Vec::new();
         for one in said {
             match one {
@@ -39,6 +39,8 @@ impl App {
     fn show_intent(&mut self, intent: Intent) -> Vec<Effect> {
         match intent {
             Intent::ReplaceSource { total } => {
+                self.scope = self.ctl.scope().or(self.scope);
+                self.account = self.scope.and_then(|scope| self.account_of(scope));
                 let stamp = self.list.reset(total);
                 self.cursor = 0;
                 self.top = 0;
@@ -112,7 +114,12 @@ impl App {
                 vec![Effect::Redraw]
             }
             Intent::Toast { text, kind } => self.toast(&text, &kind),
-            other => self.show_surface_intent(other).unwrap_or_default(),
+            other => self
+                .show_picker_intent(&other)
+                .or_else(|| self.show_places_intent(&other))
+                .or_else(|| self.show_bar_intent(&other))
+                .or_else(|| self.show_sheet_intent(&other))
+                .unwrap_or_else(|| self.show_surface_intent(other).unwrap_or_default()),
         }
     }
 
@@ -154,6 +161,10 @@ impl App {
                 | C::AcceptInvite
                 | C::DeclineInvite
                 | C::DismissMarker
+                | C::Move
+                | C::AddLabel
+                | C::Snooze
+                | C::RemindIfNoReply
         ) || postio_ui::focus_target::dispatch(command).is_some()
     }
 
@@ -228,7 +239,15 @@ impl App {
     }
 
     pub(crate) fn counts_for_tests(&mut self, counts: postio_client::protocol::FocusCounts) {
+        if let Said::Ask(ticket, _) = self.ctl.refresh_counts() {
+            let reply = postio_focus::Reply::FocusCounts(Ok(counts));
+            let _ = self.tell(postio_focus::Input::Reply(ticket, reply));
+        }
         self.counts = Some(counts);
+    }
+
+    pub(crate) fn folders_for_tests(&self) -> Vec<postio_model::mailbox::Mailbox> {
+        self.folders.clone()
     }
 
     /// Deliver every page of the list from `row_at`; how many pages.

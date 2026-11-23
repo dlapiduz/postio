@@ -556,7 +556,7 @@ fn sample_with_vault(state: &str) -> (App, postio_tui::caps::Colour) {
 
 #[test]
 fn reply_reply_all_forward_and_the_pickers_are_what_their_gmail_keys_say() {
-    use postio_tui::pickers::Kind;
+    use postio_focus::PickerKind as Kind;
     let mut failures = Vec::new();
     for (id, kind) in [
         ("reply", "Reply"),
@@ -596,7 +596,7 @@ fn reply_reply_all_forward_and_the_pickers_are_what_their_gmail_keys_say() {
             ] {
                 let mut app = make();
                 press_binding(&mut app, binding, 0);
-                let opened = app.picker().map(|(picker, _)| picker.kind());
+                let opened = app.picker().map(|picker| picker.kind());
                 if opened != Some(kind) {
                     failures.push(format!(
                         "{id}: `{binding}` in the {surface} opened {opened:?}, not {kind:?}"

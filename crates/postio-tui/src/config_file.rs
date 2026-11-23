@@ -78,26 +78,6 @@ impl Read {
     }
 }
 
-/// Add `query` to `[saved_searches]` at `path` as a pinned saved search, as the
-/// desktop's Ctrl+S does, and answer the pinned searches now.
-pub fn save_search(path: &Path, query: &str) -> Result<Read, String> {
-    rewrite(path, |config| {
-        config.save_filter(query);
-    })
-}
-
-/// Change the filters in the file at `path` with `change`, leaving the rest
-/// of it as it was.
-fn rewrite(path: &Path, change: impl FnOnce(&mut postio_config::Config)) -> Result<Read, String> {
-    let original = text(path);
-    let mut config = postio_config::Config::from_toml_str(&original).unwrap_or_default();
-    change(&mut config);
-    let patched = postio_config::patch_filters(&original, &config.filters)
-        .map_err(|error| error.to_string())?;
-    postio_config::Config::write_text_to_path(&patched, path).map_err(|error| error.to_string())?;
-    Ok(Read::of(&config))
-}
-
 /// Write `[focus] reading` at `path` as `reading`, leaving the rest of the
 /// file as it was, as the desktop's `F8` does.
 pub fn set_reading(path: &Path, reading: postio_config::Reading) -> Result<(), String> {
@@ -214,9 +194,16 @@ mod tests {
         })
         .expect("watching");
 
-        let pinned = save_search(&path, "from:ada is:unread").expect("saved");
-        assert_eq!(pinned.saved.len(), 1);
-        assert_eq!(pinned.saved[0].query, "from:ada is:unread");
+        let save = postio_focus::SaveSearch {
+            query: "from:ada is:unread".to_owned(),
+            name: None,
+            pin: true,
+            notify: false,
+            dates: postio_ui::saved_search::Dates::AsTyped,
+        };
+        let pinned = postio_focus::save_search(Some(&path), &save).expect("saved");
+        assert_eq!(pinned.searches.len(), 1);
+        assert_eq!(pinned.searches[0].query, "from:ada is:unread");
 
         let checked = heard
             .recv_timeout(Duration::from_secs(10))

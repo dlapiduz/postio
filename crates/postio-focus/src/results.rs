@@ -176,6 +176,8 @@ pub struct ResultRow {
     pub passage: Vec<Run>,
     pub folder: String,
     pub date: String,
+    /// When the newest match arrived.
+    pub at: chrono::DateTime<chrono::Utc>,
     pub checked: bool,
     pub accessible: String,
 }
@@ -2121,6 +2123,7 @@ impl Results {
             .then(|| words::reason_beside(&reasons, &sources))
             .filter(|line| !line.is_empty());
         Some(ResultRow {
+            at: hit.newest_match,
             message: hit.best,
             thread: thread_of(hit),
             group,

@@ -9,7 +9,7 @@ use crossterm::event::{KeyCode, KeyModifiers};
 use postio_model::mailbox::MailboxRole;
 use postio_model::{AccountId, EmailAddress, MailboxId, MessageId};
 
-use crate::app::{App, Effect, Input, update};
+use crate::app::{App, Input, update};
 use crate::caps::Colour;
 use crate::test_support::press_keys;
 
@@ -29,7 +29,6 @@ pub const STATES: &[&str] = &[
     "pane",
     "bar",
     "bar-commands",
-    "bar-folder",
     "folders",
     "snooze",
     "remind",
@@ -268,133 +267,83 @@ pub fn state(state: &str, width: u16, height: u16) -> (App, Colour) {
     let key = |app: &mut App, code: KeyCode, modifiers: KeyModifiers| {
         update(app, crate::test_support::key(code, modifiers));
     };
-    // Type `text`, and answer which search it asked last, if any.
-    let typed = |app: &mut App, text: &str| {
-        crate::test_support::type_text(app, text)
-            .into_iter()
-            .filter_map(|effect| match effect {
-                Effect::BarSearch(ask) => Some(ask.sequence),
-                _ => None,
-            })
-            .next_back()
-    };
     let mut colour = Colour::TrueColor;
     match state {
         "bar" => {
-            // Words that name an operator are a search, answered with its hits.
-            let sequence = typed(&mut app, "/from:ada tide").unwrap_or_default();
-            let hit = |message: i64, thread: i64, subject: &str, snippet: &str| {
-                postio_search::SearchHit {
-                    message_id: MessageId::new(message),
-                    thread_id: Some(postio_model::ThreadId::new(thread)),
-                    mailbox_id: MailboxId::new(2),
-                    subject: Some(subject.to_owned()),
-                    from: Some(EmailAddress::new(Some("Ada Moreno"), "ada@example.com")),
-                    received_at: crate::test_support::local(23, 11, 51).with_timezone(&Utc),
-                    preview: None,
-                    snippet: snippet.to_owned(),
-                    score: 0.0,
-                }
-            };
-            let hits = vec![
-                hit(
-                    3,
-                    3,
-                    "Re: Atlas Q3 budget, final numbers",
-                    "the \u{1}tide\u{2} tables for Q3",
-                ),
-                hit(4, 4, "Atlas staffing plan for Q4", "sharing the draft"),
-            ];
-            update(
-                &mut app,
-                Input::BarFound {
-                    sequence,
-                    found: Ok(Some(postio_client::protocol::Hits(
-                        postio_search::SearchResults {
-                            total_hits: 2,
-                            hits,
-                            total_hits_capped: false,
-                            elapsed: std::time::Duration::from_millis(4),
-                            corpus_complete: true,
-                            suggestion: None,
-                            instead: None,
-                        },
-                    ))),
-                    held: Vec::new(),
-                },
-            );
+            let opened = crate::test_support::type_text(&mut app, "/");
+            let folders = app.folders_for_tests();
+            crate::test_support::places_arrive(&mut app, &opened, &folders, &[], &[]);
+            crate::test_support::type_text(&mut app, "arch");
         }
         "bar-commands" => {
-            key(&mut app, KeyCode::Char('k'), KeyModifiers::CONTROL);
-            typed(&mut app, "ar");
+            let opened = update(
+                &mut app,
+                crate::test_support::key(KeyCode::Char('k'), KeyModifiers::CONTROL),
+            );
+            let folders = app.folders_for_tests();
+            crate::test_support::places_arrive(&mut app, &opened, &folders, &[], &[]);
+            crate::test_support::type_text(&mut app, "ar");
         }
         "folders" => {
-            typed(&mut app, "gl");
+            let opened = crate::test_support::type_text(&mut app, "gl");
             let mut atlas = crate::test_support::label(7, "Atlas");
             atlas.color = Some("#3584e4".into());
-            update(
+            let folders = app.folders_for_tests();
+            crate::test_support::places_arrive(
                 &mut app,
-                Input::PlaceDetails(crate::places::PlaceDetails {
-                    labels: vec![
-                        atlas,
-                        crate::test_support::label(8, "Harbor"),
-                        crate::test_support::label(9, "Kitchen reno"),
-                    ],
-                    label_counts: vec![
-                        (postio_model::LabelId::new(7), 12),
-                        (postio_model::LabelId::new(8), 5),
-                    ],
-                    correspondents: Vec::new(),
-                    outbox: vec![(AccountId::new(1), 2)],
-                }),
+                &opened,
+                &folders,
+                &[
+                    (atlas, 12),
+                    (crate::test_support::label(8, "Harbor"), 5),
+                    (crate::test_support::label(9, "Kitchen reno"), 0),
+                ],
+                &[(AccountId::new(1), 2)],
             );
         }
         "snooze" => {
-            typed(&mut app, "b");
+            crate::test_support::type_text(&mut app, "b");
         }
         "remind" => {
-            typed(&mut app, "h");
+            crate::test_support::type_text(&mut app, "h");
         }
         "label" => {
-            typed(&mut app, "l");
+            let opened = crate::test_support::type_text(&mut app, "l");
             let mut atlas = crate::test_support::label(7, "Atlas");
             atlas.color = Some("#3584e4".into());
-            update(
+            crate::test_support::labels_arrive(
                 &mut app,
-                Input::LabelPicker {
-                    account: AccountId::new(1),
-                    labels: vec![
-                        atlas,
-                        crate::test_support::label(8, "Harbor"),
-                        crate::test_support::label(9, "Kitchen reno"),
-                    ],
-                    counts: vec![
-                        (postio_model::LabelId::new(7), 12),
-                        (postio_model::LabelId::new(8), 5),
-                    ],
-                    applied: [postio_model::LabelId::new(8)].into(),
-                },
+                &opened,
+                vec![
+                    atlas,
+                    crate::test_support::label(8, "Harbor"),
+                    crate::test_support::label(9, "Kitchen reno"),
+                ],
+                vec![
+                    (postio_model::LabelId::new(7), 12),
+                    (postio_model::LabelId::new(8), 5),
+                ],
+                &[postio_model::LabelId::new(8)],
             );
         }
         "move" => {
-            typed(&mut app, "v");
-            update(
+            let opened = crate::test_support::type_text(&mut app, "v");
+            crate::test_support::folders_arrive(
                 &mut app,
-                Input::RecentMoves(vec![MailboxId::new(6), MailboxId::new(2)]),
+                &opened,
+                crate::test_support::places().folders,
+                vec![MailboxId::new(2), MailboxId::new(1)],
             );
-        }
-        "bar-folder" => {
-            crate::test_support::type_text(&mut app, "/in:arch");
         }
         "find" => {
             // The find field, over a word the message has twice.
             press_keys(&mut app, "<C-f>gate");
         }
         "keys" => {
-            typed(&mut app, "?");
+            crate::test_support::type_text(&mut app, "?");
         }
         "compose" => {
-            typed(&mut app, "c");
+            crate::test_support::type_text(&mut app, "c");
         }
         "privacy" => {
             key(&mut app, KeyCode::Char(','), KeyModifiers::ALT);

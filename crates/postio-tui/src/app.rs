@@ -9,6 +9,7 @@ use postio_model::ListScope;
 use postio_ui::keymap::{KeyContext, Outcome};
 use postio_ui::list::ListWindow;
 
+mod bar;
 mod capture;
 mod confirm;
 mod digest;
@@ -16,7 +17,10 @@ mod filtered;
 mod find;
 mod list;
 mod open;
+mod picker;
+mod places;
 mod rules;
+mod sheet;
 mod surface;
 
 pub use find::Find;
@@ -122,28 +126,6 @@ pub enum Input {
         saved: Result<postio_model::DraftId, String>,
     },
     Notified(postio_ui::notify::Notification),
-    LabelPicker {
-        account: postio_model::AccountId,
-        labels: Vec<postio_model::Label>,
-        counts: Vec<(postio_model::LabelId, u32)>,
-        applied: std::collections::BTreeSet<postio_model::LabelId>,
-    },
-    LabelMade {
-        label: Option<postio_model::Label>,
-        close: bool,
-    },
-    RecentMoves(Vec<postio_model::MailboxId>),
-    BarFound {
-        sequence: u64,
-        found: Result<Option<postio_client::protocol::Hits>, String>,
-        held: Vec<(postio_model::MessageId, String, bool)>,
-    },
-    BarFolder {
-        sequence: u64,
-        count: u32,
-        rows: Vec<crate::bar::ResultRow>,
-    },
-    PlaceDetails(crate::places::PlaceDetails),
     Recipients {
         prefix: String,
         found: Vec<postio_model::contact_group::RecipientCandidate>,
@@ -191,18 +173,6 @@ pub enum Effect {
         title: String,
         body: String,
     },
-    ReadLabelPicker {
-        message: postio_model::MessageId,
-        account: postio_model::AccountId,
-        threads: Vec<postio_model::ThreadId>,
-    },
-    CreateLabel {
-        account: postio_model::AccountId,
-        name: String,
-        close: bool,
-    },
-    ReadRecentMoves,
-    NoteMove(postio_model::MailboxId),
     SavePart {
         message: postio_model::MessageId,
         attachment: postio_model::ids::AttachmentId,
@@ -260,13 +230,6 @@ pub enum Effect {
         draft: postio_model::DraftId,
         href: String,
     },
-    SaveSearch(String),
-    BarSearch(crate::bar::Ask),
-    BarFolder {
-        sequence: u64,
-        mailbox: postio_model::MailboxId,
-    },
-    ReadPlaceDetails,
     Recipients {
         account: postio_model::AccountId,
         prefix: String,
@@ -365,6 +328,7 @@ pub struct App {
     composed_from: Focus,
     detached: bool,
     bar: Option<crate::bar::Bar>,
+    results: Option<crate::results::Results>,
     places_box: Option<crate::folders::Folders>,
     picker: Option<crate::pickers::Picker>,
     palette: Option<PaletteState>,
@@ -534,11 +498,13 @@ impl std::fmt::Debug for App {
 
 impl App {
     pub fn new(size: (u16, u16), keys: Keys) -> App {
+        let mut ctl = postio_focus::FocusController::new(crate::focus::policy());
+        ctl.handle(postio_focus::Input::Keymap(keys.keymap().clone()));
         App {
             size,
             keys,
             list: ListWindow::new(),
-            ctl: postio_focus::FocusController::new(crate::focus::policy()),
+            ctl,
             selection_words: None,
             cursor: 0,
             top: 0,
@@ -579,6 +545,7 @@ impl App {
             saved_at: None,
             composed_from: Focus::List,
             bar: None,
+            results: None,
             places_box: None,
             picker: None,
             palette: None,
@@ -858,6 +825,7 @@ impl App {
 
     pub fn rekey(&mut self, keys: Keys) {
         self.keys = keys;
+        self.tell(postio_focus::Input::Keymap(self.keys.keymap().clone()));
     }
 
     pub fn settings(&self) -> Option<&crate::settings::Settings> {
@@ -1107,12 +1075,7 @@ impl App {
                 {
                     return Vec::new();
                 }
-                Pointer::Wheel { down, .. } => {
-                    if let Some(picker) = self.picker.as_mut() {
-                        picker.wheel(down);
-                    }
-                    return vec![Effect::Redraw];
-                }
+                Pointer::Wheel { down, .. } => return self.picker_wheel(down),
                 Pointer::Click { .. } => {}
             }
         }
@@ -1121,10 +1084,7 @@ impl App {
                 Pointer::Click { hit, .. } if !matches!(hit.target, Target::PlaceRow(_)) => {
                     return Vec::new();
                 }
-                Pointer::Wheel { down, .. } => {
-                    self.with_folders(|folders, _, reach| folders.wheel(down, reach));
-                    return vec![Effect::Redraw];
-                }
+                Pointer::Wheel { down, .. } => return self.folders_wheel(down),
                 Pointer::Click { .. } => {}
             }
         }
@@ -1135,7 +1095,6 @@ impl App {
                         hit.target,
                         Target::BarRow(_)
                             | Target::BarSaved(_)
-                            | Target::BarChip(_)
                             | Target::BarRun
                             | Target::BarCommands
                             | Target::Command("save_search" | "back")
@@ -1143,10 +1102,7 @@ impl App {
                 {
                     return Vec::new();
                 }
-                Pointer::Wheel { down, .. } => {
-                    self.with_bar(|bar, _, ctx| bar.wheel(down, ctx));
-                    return vec![Effect::Redraw];
-                }
+                Pointer::Wheel { down, .. } => return self.bar_wheel(down),
                 Pointer::Click { .. } => {}
             }
         }
@@ -1171,17 +1127,13 @@ impl App {
                 }
                 Target::BarRow(index) => self.bar_click(index),
                 Target::BarSaved(index) => self.bar_saved(index),
-                Target::BarRun => match self.with_bar(|bar, _, ctx| bar.enter(ctx)) {
-                    Some(step) => self.bar_step(step),
-                    None => Vec::new(),
-                },
-                Target::BarCommands => {
-                    match self.bar.as_mut().map(crate::bar::Bar::commands_only) {
-                        Some(step) => self.bar_step(step),
-                        None => Vec::new(),
-                    }
-                }
-                Target::BarChip(index) => self.bar_chip(index),
+                Target::BarRun => self.bar_run(),
+                Target::BarCommands => self.tell(postio_focus::Input::Command(
+                    postio_core::CommandId::CommandPalette,
+                )),
+                Target::ResultRow(position) => self.result_click(position),
+                Target::ResultTab(index) => self.result_tab(index),
+                Target::ResultChip(token) => self.result_chip(token),
                 Target::PlaceRow(index) => self.folders_click(index),
                 Target::PickRow(index) => self.picker_click(index),
                 Target::Reader(line) => {
@@ -1225,14 +1177,15 @@ impl App {
                     effects
                 }
                 Target::Command("picker_type_date") if self.picker.is_some() => {
-                    let step = self
-                        .picker
-                        .as_mut()
-                        .map(|picker| picker.command(postio_core::CommandId::PickerTypeDate));
-                    step.map_or_else(Vec::new, |step| self.picker_step(step))
+                    self.picker_command(postio_core::CommandId::PickerTypeDate)
                 }
-                Target::Command("save_search") if self.bar.is_some() => self.bar_save(),
-                Target::Command("back") if self.bar.is_some() => self.close_bar(),
+                Target::Command(id @ ("save_search" | "back")) if self.bar.is_some() => {
+                    let command = id.parse::<postio_core::CommandId>();
+                    command.map_or_else(
+                        |_| Vec::new(),
+                        |command| self.tell(postio_focus::Input::Command(command)),
+                    )
+                }
                 Target::Command(id) => self.command(id),
                 Target::ComposerAction(id) => {
                     if self.composer.is_none() {
@@ -1246,6 +1199,7 @@ impl App {
                 let lines: isize = if down { WHEEL } else { -WHEEL };
                 match hit.target {
                     Target::Row(_) => self.scroll_list(lines),
+                    Target::ResultRow(_) => return self.result_wheel(down),
                     Target::Reader(_) => self.scroll_open_lines(lines),
                     Target::ComposerBody => match self.composer.as_mut() {
                         Some(composer) => composer.scroll(lines),
@@ -1332,610 +1286,11 @@ impl App {
         vec![Effect::Redraw]
     }
 
-    pub fn bar(&self) -> Option<(&crate::bar::Bar, crate::bar::Ctx<'_>)> {
-        let bar = self.bar.as_ref()?;
-        Some((bar, self.bar_ctx(bar.from(), self.keys.keymap())))
-    }
-
-    fn bar_ctx<'a>(&self, from: Focus, keymap: &'a postio_core::Keymap) -> crate::bar::Ctx<'a> {
-        crate::bar::Ctx {
-            keymap,
-            context: Self::context_of(from),
-            state: self.availability(),
-            enhanced: self.enhanced_keys,
-        }
-    }
-
-    pub fn bar_typed(&self) -> Option<&str> {
-        self.bar.as_ref().map(crate::bar::Bar::typed)
-    }
-
-    fn open_bar(&mut self, typed: &str) -> Vec<Effect> {
-        let from = match (&self.bar, self.focus) {
-            (Some(bar), _) => bar.from(),
-            (None, Focus::Palette) => Focus::List,
-            (None, focus) => focus,
-        };
-        let folders: Vec<&postio_model::Mailbox> = self
-            .folders
-            .iter()
-            .filter(|folder| folder.selectable)
-            .collect();
-        let sources = crate::bar::Sources {
-            places: folders
-                .iter()
-                .map(|folder| postio_ui::places::mailbox_place(folder))
-                .collect(),
-            folders: folders
-                .iter()
-                .map(|folder| (folder.id, postio_ui::places::place_name(folder)))
-                .collect(),
-            saved: self
-                .places
-                .saved
-                .iter()
-                .map(|saved| (saved.name.clone(), saved.query.clone()))
-                .collect(),
-            digesting: self.features.digest_rules > 0,
-        };
-        let (bar, step) = crate::bar::Bar::open(from, sources, typed);
-        self.bar = Some(bar);
-        self.focus = Focus::Bar;
-        let mut effects = self.bar_step(step);
-        effects.push(Effect::ReadPlaceDetails);
-        effects
-    }
-
-    fn with_bar<T>(
-        &mut self,
-        f: impl FnOnce(&mut crate::bar::Bar, &mut Keys, &crate::bar::Ctx<'_>) -> T,
-    ) -> Option<T> {
-        let mut bar = self.bar.take()?;
-        let keymap = self.keys.keymap().clone();
-        let ctx = self.bar_ctx(bar.from(), &keymap);
-        let out = f(&mut bar, &mut self.keys, &ctx);
-        self.bar = Some(bar);
-        Some(out)
-    }
-
-    fn bar_key(&mut self, key: &KeyEvent) -> Vec<Effect> {
-        match self.with_bar(|bar, keys, ctx| bar.key(key, keys, ctx)) {
-            Some(step) => self.bar_step(step),
-            None => Vec::new(),
-        }
-    }
-
-    fn bar_click(&mut self, index: usize) -> Vec<Effect> {
-        match self.with_bar(|bar, _, ctx| bar.click(index, ctx)) {
-            Some(step) => self.bar_step(step),
-            None => Vec::new(),
-        }
-    }
-
-    fn bar_saved(&mut self, index: usize) -> Vec<Effect> {
-        match self.bar.as_mut().map(|bar| bar.open_saved(index)) {
-            Some(step) => self.bar_step(step),
-            None => Vec::new(),
-        }
-    }
-
-    fn bar_save(&mut self) -> Vec<Effect> {
-        match self.bar.as_ref().map(crate::bar::Bar::save) {
-            Some(step) => self.bar_step(step),
-            None => Vec::new(),
-        }
-    }
-
-    fn bar_chip(&mut self, index: usize) -> Vec<Effect> {
-        match self.bar.as_mut().map(|bar| bar.edit_chip(index)) {
-            Some(step) => self.bar_step(step),
-            None => Vec::new(),
-        }
-    }
-
-    fn bar_step(&mut self, step: crate::bar::Step) -> Vec<Effect> {
-        use crate::bar::Step;
-        match step {
-            Step::Stay => vec![Effect::Redraw],
-            Step::Close => self.close_bar(),
-            Step::Search(ask) => vec![Effect::BarSearch(ask), Effect::Redraw],
-            Step::Folder(mailbox, sequence) => {
-                vec![Effect::BarFolder { sequence, mailbox }, Effect::Redraw]
-            }
-            Step::Save(query) => {
-                let mut effects = self.say(&postio_ui::focus_target::search_saved(&query));
-                effects.insert(0, Effect::SaveSearch(query));
-                effects
-            }
-            Step::Act(action) => self.bar_act(action),
-        }
-    }
-
-    fn close_bar(&mut self) -> Vec<Effect> {
-        if let Some(bar) = self.bar.take() {
-            self.focus = bar.from();
-        }
-        vec![Effect::Redraw]
-    }
-
-    fn bar_act(&mut self, action: postio_ui::command_bar::BarAction) -> Vec<Effect> {
-        use postio_ui::command_bar::BarAction;
-        let Some(bar) = self.bar.take() else {
-            return Vec::new();
-        };
-        let from = bar.from();
-        self.focus = from;
-        match action {
-            BarAction::Open { message, .. } => self.open_found(message, bar.result_of(message)),
-            BarAction::Command(id) => {
-                if postio_ui::command_bar::ACCOUNT_VERBS.contains(&id) && from != Focus::Settings {
-                    self.settings = Some(crate::settings::Settings::default());
-                    self.focus = Focus::Settings;
-                    return self.say("Pick an account in Settings, then run it again");
-                }
-                match from {
-                    Focus::Composer => self.composer_command(id.as_str()),
-                    Focus::Settings => self.settings_command(id.as_str()),
-                    _ => self.command(id.as_str()),
-                }
-            }
-            BarAction::Go { destination, name } => self.go_destination(destination, &name),
-        }
-    }
-
-    fn go_destination(
-        &mut self,
-        destination: postio_ui::finder::Destination,
-        name: &str,
-    ) -> Vec<Effect> {
-        use postio_ui::finder::Destination;
-        match destination {
-            Destination::Mailbox(mailbox) => {
-                let inbox = self.folders.iter().any(|folder| {
-                    folder.id == mailbox && folder.role == postio_model::mailbox::MailboxRole::Inbox
-                });
-                self.open_scope(if inbox {
-                    ListScope::Focus(postio_model::FocusScope::Inbox)
-                } else {
-                    ListScope::Mailbox(mailbox)
-                })
-            }
-            Destination::Label(_) => self.open_bar(&format!("label:\"{name}\"")),
-            Destination::Search(query) => self.open_bar(&query),
-            Destination::Outbox(account) => self.open_scope(ListScope::Outbox(account)),
-        }
-    }
-
-    fn open_found(
-        &mut self,
-        message: postio_model::MessageId,
-        found: Option<&crate::bar::ResultRow>,
-    ) -> Vec<Effect> {
-        let row = self
-            .list
-            .row_of(message)
-            .map(|held| held.row.clone())
-            .or_else(|| {
-                found.map(|found| Row {
-                    id: message,
-                    thread: None,
-                    is_thread: false,
-                    kind: crate::row::Kind::Message,
-                    from: found.sender.clone(),
-                    address: None,
-                    subject: found.subject.clone(),
-                    preview: found.snippet.clone(),
-                    when: found.at,
-                    unread: false,
-                    attachment: false,
-                    count: 1,
-                    marker: None,
-                    labels: Vec::new(),
-                    send_state: None,
-                })
-            });
-        let Some(row) = row else {
-            return Vec::new();
-        };
-        let back = match self.focus {
-            Focus::Filtered => Focus::Filtered,
-            _ => Focus::List,
-        };
-        self.open_for_itself(row, back)
-    }
-
-    fn bar_found(
-        &mut self,
-        sequence: u64,
-        found: Result<Option<postio_client::protocol::Hits>, String>,
-        held: &[(postio_model::MessageId, String, bool)],
-    ) -> Vec<Effect> {
-        if let Ok(Some(postio_client::protocol::Hits(results))) = found {
-            self.with_bar(|bar, _, ctx| bar.found(ctx, sequence, results, held));
-        }
-        vec![Effect::Redraw]
-    }
-
-    fn bar_listed(
-        &mut self,
-        sequence: u64,
-        count: u32,
-        rows: Vec<crate::bar::ResultRow>,
-    ) -> Vec<Effect> {
-        self.with_bar(|bar, _, ctx| bar.listed(ctx, sequence, count, rows));
-        vec![Effect::Redraw]
-    }
-
-    fn place_details(&mut self, details: crate::places::PlaceDetails) -> Vec<Effect> {
-        let labels = details
-            .labels
-            .iter()
-            .map(postio_ui::places::label_place)
-            .collect();
-        let names = postio_ui::names::Names::new(&details.correspondents);
-        if let Some(folders) = self.places_box.as_mut() {
-            folders.learn(details.clone());
-        }
-        let step = self.bar.as_mut().map(|bar| {
-            bar.learn(labels, names);
-            bar.places_known()
-        });
-        match step {
-            Some(step) => self.bar_step(step),
-            None => Vec::new(),
-        }
-    }
-
-    pub fn picker(&self) -> Option<(&crate::pickers::Picker, &postio_core::Keymap)> {
-        Some((self.picker.as_ref()?, self.keys.keymap()))
-    }
-
-    fn aimed_rows(&self) -> Vec<&Row> {
-        if let Some(own) = self
-            .reading
-            .as_ref()
-            .and_then(|reading| reading.own.as_ref())
-        {
-            return vec![&own.row];
-        }
-        let picked = match self.selection.selection() {
-            postio_core::Selection::These(picked) => picked,
-            postio_core::Selection::Everything { .. } => return Vec::new(),
-        };
-        let rows: Vec<&Row> = picked
-            .iter()
-            .filter_map(|message| self.row(*message))
-            .collect();
-        if rows.is_empty() {
-            self.cursor_message()
-                .and_then(|message| self.row(message))
-                .into_iter()
-                .collect()
-        } else {
-            rows
-        }
-    }
-
-    fn picker_target(&self) -> Option<String> {
-        if let postio_core::Selection::Everything { .. } = self.selection.selection() {
-            return Some(postio_ui::pickers::EVERY_THREAD.to_owned());
-        }
-        let rows = self.aimed_rows();
-        let first = rows.first()?;
-        Some(postio_ui::pickers::target(
-            rows.len(),
-            first.from.as_str(),
-            first.subject.as_str(),
-        ))
-    }
-
-    fn open_picker(&mut self, kind: crate::pickers::Kind) -> Vec<Effect> {
-        use crate::pickers::{Kind, Picker};
-        let Some(target) = self.picker_target() else {
-            return Vec::new();
-        };
-        let from = match self.focus {
-            Focus::Picker => Focus::List,
-            focus => focus,
-        };
-        let now = chrono::Local::now();
-        let mut effects = vec![Effect::Redraw];
-        let picker = match kind {
-            Kind::Snooze | Kind::Remind => Picker::when(kind, &target, from, now),
-            Kind::Label => {
-                let Some(account) = self.account_here() else {
-                    return Vec::new();
-                };
-                let rows = self.aimed_rows();
-                let threads = rows.iter().filter_map(|row| row.thread).collect();
-                let message = rows
-                    .first()
-                    .map_or(postio_model::MessageId::new(0), |row| row.id);
-                effects.push(Effect::ReadLabelPicker {
-                    message,
-                    account,
-                    threads,
-                });
-                Picker::labelling(&target, from, account)
-            }
-            Kind::Move => {
-                let enabled: Vec<postio_model::mailbox::Mailbox> = self
-                    .folders
-                    .iter()
-                    .filter(|folder| {
-                        self.accounts
-                            .iter()
-                            .any(|account| account.enabled && account.id == folder.account_id)
-                    })
-                    .cloned()
-                    .collect();
-                effects.push(Effect::ReadRecentMoves);
-                Picker::moving(&target, from, enabled)
-            }
-        };
-        self.picker = Some(picker);
-        self.focus = Focus::Picker;
-        effects
-    }
-
-    pub fn open_remind_picker_for_draft(&mut self, target: &str) -> Vec<Effect> {
-        let from = match self.focus {
-            Focus::Picker => Focus::Composer,
-            focus => focus,
-        };
-        self.picker = Some(crate::pickers::Picker::for_draft(
-            target,
-            from,
-            chrono::Local::now(),
-        ));
-        self.focus = Focus::Picker;
-        vec![Effect::Redraw]
-    }
-
-    fn picker_key(&mut self, key: &KeyEvent) -> Vec<Effect> {
-        let Some(mut picker) = self.picker.take() else {
-            return Vec::new();
-        };
-        let step = picker.key(key, &mut self.keys);
-        self.picker = Some(picker);
-        self.picker_step(step)
-    }
-
-    fn picker_click(&mut self, index: usize) -> Vec<Effect> {
-        let step = self.picker.as_mut().map(|picker| picker.choose(index));
-        match step {
-            Some(step) => self.picker_step(step),
-            None => Vec::new(),
-        }
-    }
-
-    fn picker_step(&mut self, step: crate::pickers::Step) -> Vec<Effect> {
-        use crate::pickers::Step;
-        match step {
-            Step::Stay => vec![Effect::Redraw],
-            Step::Close => self.close_picker(),
-            Step::Keep(pick) => self.picker_pick(pick, false),
-            Step::Choose(pick) => self.picker_pick(pick, true),
-        }
-    }
-
-    fn close_picker(&mut self) -> Vec<Effect> {
-        if let Some(picker) = self.picker.take() {
-            self.focus = picker.from();
-        }
-        vec![Effect::Redraw]
-    }
-
-    fn picker_pick(&mut self, pick: crate::pickers::Pick, close: bool) -> Vec<Effect> {
-        use crate::pickers::{Kind, Pick};
-        use postio_core::{Command, CommandId};
-        let Some(picker) = self.picker.as_ref() else {
-            return Vec::new();
-        };
-        let (kind, draft, account) = (picker.kind(), picker.is_for_draft(), picker.account());
-        if close {
-            self.close_picker();
-        }
-        match pick {
-            Pick::When(at) if draft => match self.composer.as_mut() {
-                Some(composer) => {
-                    composer.set_remind_at(Some(at.with_timezone(&chrono::Utc)));
-                    vec![
-                        Effect::Autosave {
-                            generation: composer.generation(),
-                            edit: composer.edits(),
-                        },
-                        Effect::Redraw,
-                    ]
-                }
-                None => vec![Effect::Redraw],
-            },
-            Pick::When(at) => {
-                let at = at.with_timezone(&chrono::Utc);
-                let (id, set): (CommandId, fn(&mut Command, chrono::DateTime<chrono::Utc>)) =
-                    if kind == Kind::Snooze {
-                        (CommandId::Snooze, |command, at| {
-                            if let Command::Snooze { until, .. } = command {
-                                *until = Some(at);
-                            }
-                        })
-                    } else {
-                        (CommandId::RemindIfNoReply, |command, when| {
-                            if let Command::RemindIfNoReply { at, .. } = command {
-                                *at = Some(when);
-                            }
-                        })
-                    };
-                self.send_answered(id, |command| set(command, at))
-            }
-            Pick::Label { label, on } => self.send_answered(CommandId::AddLabel, |command| {
-                if let Command::AddLabel {
-                    label: chosen,
-                    on: state,
-                    ..
-                } = command
-                {
-                    *chosen = Some(label);
-                    *state = Some(on);
-                }
-            }),
-            Pick::Create { name, close } => match account {
-                Some(account) => vec![Effect::CreateLabel {
-                    account,
-                    name,
-                    close,
-                }],
-                None => Vec::new(),
-            },
-            Pick::Move(to) => {
-                let mut effects = self.send_answered(CommandId::Move, |command| {
-                    if let Command::Move { to: chosen, .. } = command {
-                        *chosen = Some(to);
-                    }
-                });
-                effects.push(Effect::NoteMove(to));
-                effects
-            }
-        }
-    }
-
-    fn label_made(&mut self, label: Option<postio_model::Label>, close: bool) -> Vec<Effect> {
-        let Some(mut label) = label else {
-            return self.say("The label could not be made");
-        };
-        label.name = postio_ui::terminal::SafeText::new(&label.name)
-            .as_str()
-            .to_owned();
-        let id = label.id;
-        if let Some(picker) = self.picker.as_mut() {
-            picker.made(label, close);
-        }
-        if close {
-            self.close_picker();
-        }
-        self.send_answered(postio_core::CommandId::AddLabel, |command| {
-            if let postio_core::Command::AddLabel { label, on, .. } = command {
-                *label = Some(id);
-                *on = Some(true);
-            }
-        })
-    }
-
-    pub fn folders(&self) -> Option<(&crate::folders::Folders, crate::folders::Reach<'_>)> {
-        Some((self.places_box.as_ref()?, self.folders_reach()))
-    }
-
     pub fn filtering(&self) -> (bool, Option<u32>) {
         (
             self.features.filtering,
             self.counts.map(|counts| counts.filtered_today),
         )
-    }
-
-    fn folders_reach(&self) -> crate::folders::Reach<'_> {
-        crate::folders::Reach {
-            folders: &self.folders,
-            filtered_today: self
-                .features
-                .filtering
-                .then(|| self.counts.map_or(0, |counts| counts.filtered_today)),
-        }
-    }
-
-    fn open_folders(&mut self) -> Vec<Effect> {
-        let from = match (&self.places_box, self.focus) {
-            (Some(open), _) => open.from(),
-            (None, Focus::Palette) => Focus::List,
-            (None, focus) => focus,
-        };
-        self.places_box = Some(crate::folders::Folders::open(from));
-        self.focus = Focus::Folders;
-        vec![Effect::ReadPlaceDetails, Effect::Redraw]
-    }
-
-    fn with_folders<T>(
-        &mut self,
-        f: impl FnOnce(&mut crate::folders::Folders, &mut Keys, &crate::folders::Reach<'_>) -> T,
-    ) -> Option<T> {
-        let mut open = self.places_box.take()?;
-        let reach = crate::folders::Reach {
-            folders: &self.folders,
-            filtered_today: self
-                .features
-                .filtering
-                .then(|| self.counts.map_or(0, |counts| counts.filtered_today)),
-        };
-        let out = f(&mut open, &mut self.keys, &reach);
-        self.places_box = Some(open);
-        Some(out)
-    }
-
-    fn folders_key(&mut self, key: &KeyEvent) -> Vec<Effect> {
-        match self.with_folders(|folders, keys, reach| folders.key(key, keys, reach)) {
-            Some(step) => self.folders_step(step),
-            None => Vec::new(),
-        }
-    }
-
-    fn folders_click(&mut self, index: usize) -> Vec<Effect> {
-        let step = self
-            .places_box
-            .as_ref()
-            .map(|open| open.go(index, &self.folders_reach()));
-        match step {
-            Some(step) => self.folders_step(step),
-            None => Vec::new(),
-        }
-    }
-
-    fn folders_step(&mut self, step: crate::folders::Step) -> Vec<Effect> {
-        use crate::folders::Step;
-        match step {
-            Step::Stay => vec![Effect::Redraw],
-            Step::Close => self.close_folders(),
-            Step::Go(destination, name) => {
-                self.close_folders();
-                self.go_destination(destination, &name)
-            }
-            Step::Run(command) => {
-                self.close_folders();
-                self.command(command.as_str())
-            }
-        }
-    }
-
-    fn close_folders(&mut self) -> Vec<Effect> {
-        if let Some(open) = self.places_box.take() {
-            self.focus = open.from();
-        }
-        vec![Effect::Redraw]
-    }
-
-    fn context_of(focus: Focus) -> postio_core::Context {
-        match focus {
-            Focus::List | Focus::Palette | Focus::FirstRun => postio_core::Context::List,
-            Focus::Settings => postio_core::Context::Accounts,
-            Focus::Bar | Focus::Folders => postio_core::Context::Search,
-            Focus::Picker => postio_core::Context::Picker,
-            Focus::Keys => postio_core::Context::List,
-            Focus::Reader => postio_core::Context::Reader,
-            Focus::Composer => postio_core::Context::Composer,
-            Focus::Filtered => postio_core::Context::Filtered,
-            Focus::Digest => postio_core::Context::Digest,
-            Focus::Rules => postio_core::Context::Filtered,
-            Focus::RuleDialog => postio_core::Context::Picker,
-            Focus::Capture => postio_core::Context::Capture,
-        }
-    }
-
-    fn availability(&self) -> postio_core::Availability {
-        postio_core::Availability {
-            frontend: postio_core::Frontend::Terminal,
-            ..postio_core::Availability::open(
-                self.account
-                    .map_or(postio_core::Scope::Unified, postio_core::Scope::Account),
-            )
-        }
     }
 
     pub fn key_map(&self) -> Option<(&crate::sheet::Sheet, Vec<Vec<crate::sheet::Line>>)> {
@@ -1956,34 +1311,6 @@ impl App {
         let columns = crate::sheet::columns(self.keys.keymap(), self.enhanced_keys, body.width);
         let page = usize::from(body.height);
         (crate::sheet::height(&columns).saturating_sub(page), page)
-    }
-
-    pub(crate) fn open_keys(&mut self) -> Vec<Effect> {
-        let from = match (&self.sheet, self.focus) {
-            (Some(open), _) => open.from(),
-            (None, focus) => focus,
-        };
-        self.sheet = Some(crate::sheet::Sheet::open(from));
-        self.focus = Focus::Keys;
-        vec![Effect::Redraw]
-    }
-
-    fn keys_key(&mut self, key: &KeyEvent) -> Vec<Effect> {
-        let (max, page) = self.sheet_limits();
-        let Some(sheet) = self.sheet.as_mut() else {
-            return Vec::new();
-        };
-        match sheet.key(key, &mut self.keys, page, max) {
-            crate::sheet::Step::Stay => vec![Effect::Redraw],
-            crate::sheet::Step::Close => self.close_keys(),
-        }
-    }
-
-    fn close_keys(&mut self) -> Vec<Effect> {
-        if let Some(sheet) = self.sheet.take() {
-            self.focus = sheet.from();
-        }
-        vec![Effect::Redraw]
     }
 
     pub fn palette(&self) -> Option<PaletteView> {
@@ -2288,7 +1615,7 @@ impl App {
 
     fn key_context(&self) -> KeyContext {
         match self.focus {
-            Focus::List => KeyContext::List,
+            Focus::List => self.results_context().unwrap_or(KeyContext::List),
             Focus::Reader => KeyContext::Reader,
             Focus::Composer => KeyContext::Composer,
             Focus::Bar | Focus::Folders => KeyContext::Search,
@@ -2620,6 +1947,11 @@ impl App {
     }
 
     fn command(&mut self, id: &str) -> Vec<Effect> {
+        if let Ok(command) = id.parse::<postio_core::CommandId>()
+            && self.in_results_command(command)
+        {
+            return self.tell(postio_focus::Input::Command(command));
+        }
         if matches!(self.focus, Focus::Filtered | Focus::Digest | Focus::Capture) {
             return self.surface_command(id);
         }
@@ -2694,12 +2026,20 @@ impl App {
                 }
             }
             "go_to_folders" => return self.open_folders(),
-            "search" => return self.open_bar(""),
+            "search" => {
+                return self.tell(postio_focus::Input::Command(postio_core::CommandId::Search));
+            }
             "command_palette" => {
-                return self.open_bar(&postio_ui::finder::COMMANDS_ONLY.to_string());
+                return self.tell(postio_focus::Input::Command(
+                    postio_core::CommandId::CommandPalette,
+                ));
             }
             "cheat_sheet" if self.sheet.is_some() => return self.close_keys(),
-            "cheat_sheet" => return self.open_keys(),
+            "cheat_sheet" => {
+                return self.tell(postio_focus::Input::Command(
+                    postio_core::CommandId::CheatSheet,
+                ));
+            }
             "settings" => {
                 self.settings = Some(crate::settings::Settings::default());
                 self.focus = Focus::Settings;
@@ -2709,7 +2049,6 @@ impl App {
                 self.first_run = Some(crate::first_run::FirstRun::another());
                 self.focus = Focus::FirstRun;
             }
-            "toggle_result_order" | "save_search" | "back_to_words" => {}
             "back" if self.focus == Focus::Reader => return self.back_from_message(),
             "picker_choose_1" | "picker_choose_2" | "picker_choose_3" | "picker_choose_4"
             | "picker_type_date" | "picker_toggle" | "picker_confirm" => {}
@@ -2827,10 +2166,6 @@ impl App {
             "go_to_outbox" => return self.go_to(postio_model::mailbox::MailboxRole::Outbox),
             "go_to_junk" => return self.go_to(postio_model::mailbox::MailboxRole::Junk),
             "go_to_trash" => return self.go_to(postio_model::mailbox::MailboxRole::Trash),
-            "saved_search_1" => return self.pinned_search(0),
-            "saved_search_2" => return self.pinned_search(1),
-            "saved_search_3" => return self.pinned_search(2),
-            "saved_search_4" => return self.pinned_search(3),
             "prev_view" if self.focus == Focus::Reader => return self.back_from_message(),
             "prev_view" => {
                 return self.tell(postio_focus::Input::Command(
@@ -2899,18 +2234,6 @@ impl App {
         }
     }
 
-    fn pinned_search(&mut self, index: usize) -> Vec<Effect> {
-        let Some(query) = self
-            .places
-            .saved
-            .get(index)
-            .map(|saved| saved.query.clone())
-        else {
-            return self.say(&postio_ui::focus_target::no_saved_search(index));
-        };
-        self.open_bar(&query)
-    }
-
     fn next_scope(&mut self) -> Vec<Effect> {
         use postio_model::mailbox::MailboxRole;
         let mut scopes: Vec<ListScope> = self
@@ -2969,29 +2292,12 @@ impl App {
             return Vec::new();
         };
         match id {
-            postio_core::CommandId::Move => self.open_picker(crate::pickers::Kind::Move),
-            postio_core::CommandId::AddLabel => self.open_picker(crate::pickers::Kind::Label),
-            postio_core::CommandId::Snooze => self.open_picker(crate::pickers::Kind::Snooze),
-            postio_core::CommandId::RemindIfNoReply => {
-                self.open_picker(crate::pickers::Kind::Remind)
-            }
+            postio_core::CommandId::Move
+            | postio_core::CommandId::AddLabel
+            | postio_core::CommandId::Snooze
+            | postio_core::CommandId::RemindIfNoReply => self.open_picker(id),
             id => self.send_aimed(id),
         }
-    }
-
-    fn send_answered(
-        &mut self,
-        id: postio_core::CommandId,
-        answer: impl Fn(&mut postio_core::Command),
-    ) -> Vec<Effect> {
-        let mut effects = self.send_aimed(id);
-        for effect in &mut effects {
-            if let Effect::Send(command) = effect {
-                answer(command);
-            }
-        }
-        effects.push(Effect::Redraw);
-        effects
     }
 
     fn send_aimed(&mut self, id: postio_core::CommandId) -> Vec<Effect> {
@@ -3201,15 +2507,6 @@ impl App {
 
     fn fill_places(&mut self, contents: &crate::places::Places) -> Vec<Effect> {
         self.places = contents.clone();
-        if let Some(bar) = self.bar.as_mut() {
-            bar.set_saved(
-                contents
-                    .saved
-                    .iter()
-                    .map(|saved| (saved.name.clone(), saved.query.clone()))
-                    .collect(),
-            );
-        }
         self.features = contents.features.clone();
         self.folders = contents.folders.clone();
         self.accounts = contents.accounts.clone();
@@ -3220,7 +2517,18 @@ impl App {
             .map(|account| account.id)
             .collect();
         self.tell(postio_focus::Input::Accounts(reach));
-        self.tell(postio_focus::Input::Config(self.features.focus()));
+        let mut told = self.tell(postio_focus::Input::Config(self.features.focus()));
+        let saved = contents
+            .saved
+            .iter()
+            .map(|saved| postio_ui::saved_search::SavedSearch {
+                key: saved.key.clone(),
+                name: saved.name.clone(),
+                query: saved.query.clone(),
+                notify: false,
+            })
+            .collect();
+        told.extend(self.tell(postio_focus::Input::SavedSearches(saved)));
         if self.last_synced.is_none() {
             self.last_synced = contents
                 .folders
@@ -3256,6 +2564,7 @@ impl App {
             self.focus = Focus::List;
         }
         let mut effects = vec![Effect::Redraw];
+        effects.extend(told);
         if self.scope.is_none()
             && self.first_run.is_none()
             && contents
@@ -3663,51 +2972,12 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
                 crate::paths::name_of(&path)
             )),
         },
-        Input::BarFound {
-            sequence,
-            found,
-            held,
-        } => app.bar_found(sequence, found, &held),
-        Input::BarFolder {
-            sequence,
-            count,
-            rows,
-        } => app.bar_listed(sequence, count, rows),
-        Input::PlaceDetails(details) => app.place_details(details),
         Input::Notified(notification) => {
             let safe = |text: &str| postio_ui::terminal::SafeText::new(text).to_string();
             let (title, body) = (safe(&notification.title), safe(&notification.body));
             let mut effects = app.say(&format!("New mail — {title}: {body}"));
             effects.push(Effect::DesktopNotify { title, body });
             effects
-        }
-        // Outside text, made safe to draw once, here, as the list's rows are.
-        Input::LabelPicker {
-            account,
-            labels,
-            counts,
-            applied,
-        } => {
-            let labels = labels
-                .into_iter()
-                .map(|mut label| {
-                    label.name = postio_ui::terminal::SafeText::new(&label.name)
-                        .as_str()
-                        .to_owned();
-                    label
-                })
-                .collect();
-            if let Some(picker) = app.picker.as_mut() {
-                picker.learn_labels(account, labels, counts, applied.into_iter().collect());
-            }
-            vec![Effect::Redraw]
-        }
-        Input::LabelMade { label, close } => app.label_made(label, close),
-        Input::RecentMoves(recent) => {
-            if let Some(picker) = app.picker.as_mut() {
-                picker.learn_recent(recent);
-            }
-            vec![Effect::Redraw]
         }
         Input::Recipients { prefix, found } => {
             if let Some(composer) = app.composer.as_mut() {

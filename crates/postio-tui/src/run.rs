@@ -20,7 +20,7 @@ use postio_client::Client;
 use postio_client::protocol::ClientKind;
 use postio_host::Host;
 use postio_model::ListScope;
-use postio_model::listing::{MailStore, PageRequest};
+use postio_model::listing::MailStore;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
@@ -1131,110 +1131,6 @@ fn perform(
                     let _ = inputs.send(Input::Attached { path, attached }).await;
                 });
             }
-            Effect::BarSearch(ask) => {
-                let client = client.clone();
-                let inputs = inputs.clone();
-                tokio::spawn(async move {
-                    let sequence = ask.sequence;
-                    let found = client
-                        .search_hits(
-                            postio_model::AccountScope::Unified,
-                            ask.query,
-                            postio_search::facets::Scope::AllMail,
-                            ask.order,
-                            0,
-                        )
-                        .await
-                        .map(|found| found.map(postio_client::protocol::Hits))
-                        .map_err(|error| error.message().to_owned());
-                    // Held mail says where it waits, not the folder it is
-                    // filed in.
-                    let held = match &found {
-                        Ok(Some(postio_client::protocol::Hits(results))) if ask.digesting => {
-                            let ids = results
-                                .hits
-                                .iter()
-                                .take(postio_ui::command_bar::HITS * 4)
-                                .map(|hit| hit.message_id)
-                                .collect();
-                            client.held(ids).await.unwrap_or_default()
-                        }
-                        _ => Vec::new(),
-                    };
-                    let _ = inputs
-                        .send(Input::BarFound {
-                            sequence,
-                            found,
-                            held,
-                        })
-                        .await;
-                });
-            }
-            Effect::BarFolder { sequence, mailbox } => {
-                let client = client.clone();
-                let inputs = inputs.clone();
-                tokio::spawn(async move {
-                    let scope = ListScope::Mailbox(mailbox);
-                    let count = client.list_count(scope).await.unwrap_or(0);
-                    let page = client
-                        .list_page(PageRequest {
-                            scope,
-                            offset: 0,
-                            limit: postio_ui::command_bar::FOLDER_ROWS,
-                        })
-                        .await;
-                    let rows = match page {
-                        Ok(postio_model::listing::ListPage::Threads(page)) => page
-                            .rows
-                            .iter()
-                            .map(crate::bar::ResultRow::of_thread)
-                            .collect(),
-                        Ok(postio_model::listing::ListPage::Messages(page)) => page
-                            .rows
-                            .iter()
-                            .map(crate::bar::ResultRow::of_message)
-                            .collect(),
-                        Err(error) => {
-                            tracing::warn!(%error, "the bar could not list a folder: {error}");
-                            Vec::new()
-                        }
-                    };
-                    let _ = inputs
-                        .send(Input::BarFolder {
-                            sequence,
-                            count,
-                            rows,
-                        })
-                        .await;
-                });
-            }
-            Effect::ReadPlaceDetails => {
-                let client = client.clone();
-                let inputs = inputs.clone();
-                tokio::spawn(async move {
-                    let mut details = crate::places::PlaceDetails::default();
-                    for account in client.accounts().await.unwrap_or_default() {
-                        if !account.enabled {
-                            continue;
-                        }
-                        details
-                            .labels
-                            .extend(client.labels(account.id).await.unwrap_or_default());
-                        details
-                            .label_counts
-                            .extend(client.label_counts(account.id).await.unwrap_or_default());
-                        details
-                            .correspondents
-                            .extend(client.correspondents(account.id).await.unwrap_or_default());
-                        let waiting = client
-                            .list_count(ListScope::Outbox(account.id))
-                            .await
-                            .unwrap_or(0);
-                        details.outbox.push((account.id, waiting));
-                    }
-                    let _ = inputs.send(Input::PlaceDetails(details)).await;
-                });
-            }
             // The desktop's own notification service, where the session has
             // one; over SSH there is none, and the status line has said it.
             // POSTIO-CONSENT: a local notification of mail that arrived,
@@ -1249,75 +1145,6 @@ fn perform(
                         .stderr(std::process::Stdio::null())
                         .spawn();
                 }
-            }
-            // Nothing to offer is what a store that cannot be read offers:
-            // the finder says "no label matches" either way.
-            Effect::ReadLabelPicker {
-                message,
-                account,
-                threads,
-            } => {
-                let client = client.clone();
-                let inputs = inputs.clone();
-                tokio::spawn(async move {
-                    // The row's own account: a label is an account's, and a
-                    // message can carry only its account's.
-                    let account = client
-                        .account_of(message)
-                        .await
-                        .ok()
-                        .flatten()
-                        .unwrap_or(account);
-                    let labels = client.labels(account).await.unwrap_or_default();
-                    let counts = client.label_counts(account).await.unwrap_or_default();
-                    let carried = if threads.is_empty() {
-                        Vec::new()
-                    } else {
-                        client
-                            .thread_labels(threads.clone())
-                            .await
-                            .unwrap_or_default()
-                    };
-                    let applied = postio_ui::pickers::applied_labels(carried, &threads)
-                        .into_iter()
-                        .collect();
-                    let _ = inputs
-                        .send(Input::LabelPicker {
-                            account,
-                            labels,
-                            counts,
-                            applied,
-                        })
-                        .await;
-                });
-            }
-            Effect::CreateLabel {
-                account,
-                name,
-                close,
-            } => {
-                let client = client.clone();
-                let inputs = inputs.clone();
-                tokio::spawn(async move {
-                    let label = client.create_label(account, name).await.ok().flatten();
-                    let _ = inputs.send(Input::LabelMade { label, close }).await;
-                });
-            }
-            Effect::ReadRecentMoves => {
-                let client = client.clone();
-                let inputs = inputs.clone();
-                tokio::spawn(async move {
-                    let recent = client.move_recent().await.unwrap_or_default();
-                    let _ = inputs.send(Input::RecentMoves(recent)).await;
-                });
-            }
-            Effect::NoteMove(mailbox) => {
-                let client = client.clone();
-                tokio::spawn(async move {
-                    if let Err(error) = client.note_move(mailbox).await {
-                        tracing::warn!(%error, "could not keep a recent move: {error}");
-                    }
-                });
             }
             Effect::Recipients { account, prefix } => {
                 let client = client.clone();
@@ -1385,30 +1212,6 @@ fn perform(
                 tokio::spawn(async move {
                     let answer = ask.perform(&client).await;
                     let _ = inputs.send(Input::Answer(answer)).await;
-                });
-            }
-            Effect::SaveSearch(query) => {
-                let client = client.clone();
-                let inputs = inputs.clone();
-                let focus = senders.host.wiring().focus.config();
-                tokio::spawn(async move {
-                    let saved = tokio::task::spawn_blocking(move || {
-                        crate::config_file::path()
-                            .ok_or_else(|| "There is no config.toml here".to_owned())
-                            .and_then(|path| crate::config_file::save_search(&path, &query))
-                    })
-                    .await
-                    .unwrap_or_else(|error| Err(error.to_string()));
-                    match saved {
-                        Ok(read) => {
-                            let contents =
-                                places_contents(&client, read.with_contacts(focus)).await;
-                            let _ = inputs.send(Input::Places(contents)).await;
-                        }
-                        Err(reason) => {
-                            tracing::warn!(%reason, "could not save the search");
-                        }
-                    }
                 });
             }
             Effect::ReadPrivacy => {

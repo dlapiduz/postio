@@ -33,6 +33,7 @@ pub mod paths;
 pub mod pickers;
 pub mod places;
 pub mod reader;
+pub mod results;
 pub mod row;
 pub mod rule_dialog;
 pub mod rules;
