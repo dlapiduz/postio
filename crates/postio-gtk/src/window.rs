@@ -2279,6 +2279,11 @@ impl FocusWindow {
             }
             Intent::Contacts(view) => self.show_contacts(view),
             Intent::Calendar(view) => self.show_calendar(view),
+            Intent::CalendarFocusFilter => {
+                if let Some(view) = self.calendar() {
+                    view.focus_filter();
+                }
+            }
             Intent::ContactsRows { .. } => {
                 if let Some(view) = self.contacts() {
                     view.show_rows();

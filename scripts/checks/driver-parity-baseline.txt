@@ -1,6 +1,7 @@
 # A gap without a why predates this check; a new one needs `# why`.
 postio-ffi Input::Accounts
 postio-ffi Input::ArchiveDigest
+postio-ffi Input::CalendarFilterTyped # the Mac's Agenda is PostioKit work (specs/017 T016), built on a Mac
 postio-ffi Input::CalendarPoint # the Mac's Agenda is PostioKit work (specs/017 T016), built on a Mac
 postio-ffi Input::Clock
 postio-ffi Input::EditRule
@@ -10,6 +11,7 @@ postio-ffi Input::Post
 postio-ffi Input::Shown
 postio-ffi Input::Verb
 postio-ffi Intent::Calendar # the Mac's Agenda is PostioKit work (specs/017 T016), built on a Mac
+postio-ffi Intent::CalendarFocusFilter # the Mac's Agenda is PostioKit work (specs/017 T016), built on a Mac
 postio-ffi Intent::Counts
 postio-ffi Intent::DraftReminder
 postio-ffi Intent::Quit

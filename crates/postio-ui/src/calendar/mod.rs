@@ -143,6 +143,27 @@ pub fn empty_line(range: &str) -> String {
     format!("Nothing on {range}.")
 }
 
+pub fn nothing_found(words: &str) -> String {
+    format!("No events match \u{201c}{words}\u{201d}.")
+}
+
+pub fn ignored_hint(keywords: &[String]) -> Option<String> {
+    let named: Vec<String> = keywords
+        .iter()
+        .map(|keyword| format!("{keyword}:"))
+        .collect();
+    match named.as_slice() {
+        [] => None,
+        [one] => Some(format!(
+            "{one} means nothing for an event, so it narrows nothing"
+        )),
+        many => Some(format!(
+            "{} mean nothing for an event, so they narrow nothing",
+            many.join(" and ")
+        )),
+    }
+}
+
 pub fn no_account_line() -> &'static str {
     "Add a calendar account in Settings to sync"
 }

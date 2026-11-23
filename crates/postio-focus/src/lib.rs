@@ -237,6 +237,7 @@ pub enum Input {
     ContactsFilterTyped(String),
     ContactsPoint(u32),
     CalendarPoint(usize),
+    CalendarFilterTyped(String),
     ContactSplit(String),
     ContactMergeKeep(u32),
     ContactEditChange(contact_edit::EditChange),
@@ -462,6 +463,7 @@ pub enum Intent {
     WriteTo(String),
     Contacts(Box<contacts::ContactsView>),
     Calendar(Box<calendar::CalendarView>),
+    CalendarFocusFilter,
     ContactsRows {
         first: u32,
         count: u32,
@@ -676,6 +678,11 @@ pub enum Request {
     },
     EventDetail {
         cursor: postio_model::calendar::AgendaCursor,
+        stamp: u64,
+    },
+    EventSearch {
+        text: String,
+        limit: u32,
         stamp: u64,
     },
     ContactsPage {
@@ -895,6 +902,10 @@ pub enum Reply {
     EventDetail {
         stamp: u64,
         answer: Result<Option<Box<postio_model::calendar::EventDetail>>, String>,
+    },
+    EventSearch {
+        stamp: u64,
+        answer: Result<(Vec<postio_model::calendar::AgendaEntry>, Vec<String>), String>,
     },
     ContactsPage {
         stamp: u64,
@@ -1229,6 +1240,7 @@ impl FocusController {
                 | Reply::ContactsOverview(_)
                 | Reply::AgendaPage { .. }
                 | Reply::EventDetail { .. }
+                | Reply::EventSearch { .. }
                 | Reply::ContactsPage { .. }
                 | Reply::ContactsFiltered { .. }
                 | Reply::ContactCard { .. }
@@ -1466,6 +1478,10 @@ impl FocusController {
             }
             Input::ContactsFilterTyped(text) => {
                 let steps = self.contacts_filter_typed(text);
+                self.effects(steps)
+            }
+            Input::CalendarFilterTyped(text) => {
+                let steps = self.calendar_filter_typed(text);
                 self.effects(steps)
             }
             Input::CalendarPoint(row) => {
@@ -2218,9 +2234,9 @@ impl FocusController {
             | Reply::ContactPosition { .. }
             | Reply::ContactMergeOf(_)
             | Reply::ContactSeen(_)) => self.contacts_reply(reply),
-            reply @ (Reply::AgendaPage { .. } | Reply::EventDetail { .. }) => {
-                self.calendar_reply(reply)
-            }
+            reply @ (Reply::AgendaPage { .. }
+            | Reply::EventDetail { .. }
+            | Reply::EventSearch { .. }) => self.calendar_reply(reply),
             Reply::ContactSuggestions(answer) => self.contacts_suggestions_read(answer),
             Reply::FoundMessage { message, row } => self.link_found(message, row, rows),
             Reply::ThreadOf { message, thread } => self.walk_followed(message, thread),

@@ -263,3 +263,46 @@ fn an_empty_range_says_so() {
     assert_eq!(view.empty.as_deref(), Some("Nothing on these weeks."));
     assert_eq!(view.cursor, None);
 }
+
+#[test]
+fn slash_searches_events_names_what_it_ignored_and_escape_brings_the_agenda_back() {
+    let (mut focus, _) = opened();
+
+    assert!(shown(&run(&mut focus, CommandId::Search)).contains(&Intent::CalendarFocusFilter));
+    let asked = focus.handle_on(
+        Input::CalendarFilterTyped("dentist has:attachment".to_owned()),
+        &NoRows,
+    );
+    let asks = asks(&asked);
+    let [(ticket, Request::EventSearch { text, stamp, .. })] = &asks[..] else {
+        panic!("the search is asked: {asked:?}");
+    };
+    let (ticket, stamp) = (*ticket, *stamp);
+    assert_eq!(text, "dentist has:attachment");
+    let found = frame(&focus.handle_on(
+        Input::Reply(
+            ticket,
+            Reply::EventSearch {
+                stamp,
+                answer: Ok((
+                    vec![entry(4, local(26, 11), "Dentist")],
+                    vec!["has".to_owned()],
+                )),
+            },
+        ),
+        &NoRows,
+    ))
+    .expect("redrawn");
+    assert_eq!(ringed(&found), "Dentist");
+    assert_eq!(found.filter, "dentist has:attachment");
+    assert_eq!(
+        found.hint.as_deref(),
+        Some("has: means nothing for an event, so it narrows nothing")
+    );
+
+    let back = frame(&run(&mut focus, CommandId::Back)).expect("redrawn");
+    assert_eq!(back.filter, "");
+    assert_eq!(ringed(&back), "Review", "the agenda is back where it was");
+    let effects = run(&mut focus, CommandId::Back);
+    assert!(shown(&effects).contains(&Intent::CloseSurface(SurfaceKind::Calendar)));
+}

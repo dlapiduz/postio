@@ -68,8 +68,8 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
         topbar::draw(frame, window.top, app, theme, &mut hits);
         let tab = app.composer_detached() && app.focus() == Focus::Composer;
         if !tab {
-            if app.calendar().is_some() {
-                calendar::strip(frame, window.strip, theme);
+            if let Some(view) = app.calendar() {
+                calendar::strip(frame, window.strip, view, app.calendar_typing(), theme);
             } else if app.filtered().is_some() {
                 filtered::strip(frame, window.strip, app, theme, &mut hits);
             } else if app.rules().is_some() {

@@ -517,6 +517,13 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
                 .await
                 .map_err(|error| error.to_string()),
         },
+        Request::EventSearch { text, limit, stamp } => Reply::EventSearch {
+            stamp,
+            answer: client
+                .event_search(&text, limit)
+                .await
+                .map_err(|error| error.to_string()),
+        },
         Request::EventDetail { cursor, stamp } => Reply::EventDetail {
             stamp,
             answer: client
