@@ -178,7 +178,7 @@ pub(crate) fn sender_of(member: &postio_model::ThreadMember) -> &str {
     }
 }
 
-const NO_SUBJECT: &str = "(no subject)";
+pub(crate) const NO_SUBJECT: &str = "(no subject)";
 
 pub(crate) struct Through<'a> {
     inner: &'a dyn Rows,

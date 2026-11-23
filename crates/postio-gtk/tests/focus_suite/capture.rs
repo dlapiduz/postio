@@ -4,7 +4,7 @@ use postio_storage::repository::{Marker, MarkerRepository, MarkerSource};
 
 use crate::support::{self, Fixture};
 
-struct TempVault {
+pub(crate) struct TempVault {
     dir: tempfile::TempDir,
 }
 
@@ -12,7 +12,7 @@ const HARBOR: &str = "---\ntype: project\n---\n# Harbor\n\n- [ ] Earlier task\n"
 const TASKS: &str = "# Tasks\n";
 
 impl TempVault {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let dir = tempfile::tempdir().expect("a vault folder");
         std::fs::create_dir(dir.path().join("Projects")).expect("a projects folder");
         std::fs::write(dir.path().join("Projects/Harbor.md"), HARBOR).expect("Harbor");
@@ -20,7 +20,7 @@ impl TempVault {
         TempVault { dir }
     }
 
-    fn config(&self) -> postio_config::Config {
+    pub(crate) fn config(&self) -> postio_config::Config {
         postio_config::Config::from_toml_str(&format!(
             "[focus.vault]\npath = \"{}\"\nprojects = \"Projects\"\n",
             self.dir.path().display()
@@ -33,7 +33,7 @@ impl TempVault {
     }
 }
 
-async fn harbor_to_do(fixture: &Fixture) -> postio_model::MessageId {
+pub(crate) async fn harbor_to_do(fixture: &Fixture) -> postio_model::MessageId {
     let (message, _) = fixture
         .file(
             ("Lena Park", "lena@example.org"),

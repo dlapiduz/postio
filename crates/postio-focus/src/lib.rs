@@ -26,6 +26,7 @@ mod digest;
 mod dropdown;
 mod feed;
 mod filtered;
+mod footer;
 mod history;
 mod keys;
 mod perform;
@@ -964,6 +965,7 @@ pub struct FocusController {
     /// The row is not opened again for showing a message other than its own.
     opened_from: Option<(MessageId, MessageId)>,
     walk: Option<walk::Walk>,
+    footer: footer::Footer,
     walk_asked: Option<walk::Opening>,
     walk_seed: Option<ThreadView>,
     /// Something must take the thread bar away when no walk is left to own it.
@@ -1007,6 +1009,7 @@ impl FocusController {
             pending: None,
             opened_from: None,
             walk: None,
+            footer: footer::Footer::default(),
             walk_asked: None,
             walk_seed: None,
             bar_up: false,
@@ -1050,17 +1053,8 @@ impl FocusController {
             let steps = self.hit_closed(rows);
             effects.extend(self.effects(steps));
         }
-        let was_walking = self.walk.is_some();
         let steps = self.walk_after(&effects, rows);
         effects.extend(self.effects(steps));
-        if was_walking
-            && self.walk.is_none()
-            && let Some(position) = self.cursor.position()
-            && let Some(footer) =
-                thread_expand::footer_at(self.expansion.as_ref(), position, raw, self.keymap())
-        {
-            effects.push(Effect::Show(Intent::Footer(footer)));
-        }
         let steps = self.composer_gone();
         effects.extend(self.effects(steps));
         let footer = self.footer_after(&effects, raw).or_else(|| {
@@ -1079,6 +1073,7 @@ impl FocusController {
         if let Some(footer) = footer {
             effects.push(Effect::Show(Intent::Footer(footer)));
         }
+        self.settle_footer(&mut effects, raw);
         effects
     }
 
@@ -1589,6 +1584,7 @@ impl FocusController {
         if let Some(footer) = footer {
             effects.push(Effect::Show(Intent::Footer(footer)));
         }
+        self.settle_footer(&mut effects, raw);
         effects.push(self.refresh_counts());
         effects
     }

@@ -496,6 +496,14 @@ impl crate::window::FocusWindow {
             let keymap = self.keymap();
             let (_, problems) = crate::keys::resolver(&keymap);
             settings.set_keymap(&keymap, &problems);
+            settings.dialog().connect_closed({
+                let window = self.downgrade();
+                move |_| {
+                    if let Some(window) = window.upgrade() {
+                        window.sync_surfaces();
+                    }
+                }
+            });
             self.imp_settings().replace(Some(Rc::clone(&settings)));
             settings
         });
@@ -504,6 +512,7 @@ impl crate::window::FocusWindow {
             .panel()
             .set_contact_rules(self.imp().focus_config.borrow().contacts().to_vec());
         settings.present(self.upcast_ref());
+        self.sync_surfaces();
     }
 
     pub(crate) fn edit_config(&self) {

@@ -3,9 +3,9 @@ use postio_storage::repository::DraftRepository;
 
 use crate::support::{self, Fixture};
 
-const SUBJECT: &str = "Tide gate interlock";
+pub(crate) const SUBJECT: &str = "Tide gate interlock";
 
-async fn with_a_draft(
+pub(crate) async fn with_a_draft(
     state: DraftState,
 ) -> (
     Fixture,
@@ -68,7 +68,24 @@ fn row_texts(window: &postio_gtk::window::FocusWindow, subject: &str) -> Option<
         .find(|texts| texts.iter().any(|text| text == subject))
 }
 
-async fn open_the_draft(window: &postio_gtk::window::FocusWindow) {
+pub(crate) async fn go_to(window: &postio_gtk::window::FocusWindow, name: &str) {
+    support::keys(window, &["g", "l"]);
+    let places = window.places().expect("g l opened the folders popover");
+    assert!(
+        crate::settle_until(async || places.names().contains(&name.to_owned())).await,
+        "the folders popover does not list {name}: {:?}",
+        places.names()
+    );
+    places.set_filter(name);
+    support::click_row_saying(window, window, name);
+    assert!(
+        crate::settle_until(async || window.place_name() == name).await,
+        "the list did not go to {name}: {}",
+        window.place_name()
+    );
+}
+
+pub(crate) async fn open_the_draft(window: &postio_gtk::window::FocusWindow) {
     assert!(
         crate::settle_until(async || support::subjects(window) == [SUBJECT]).await,
         "the draft is not listed: {:?}",
@@ -78,7 +95,7 @@ async fn open_the_draft(window: &postio_gtk::window::FocusWindow) {
     support::deliver(window, "Return");
 }
 
-async fn reading(
+pub(crate) async fn reading(
     window: &postio_gtk::window::FocusWindow,
 ) -> std::rc::Rc<postio_gtk::open::OpenMessage> {
     assert!(
