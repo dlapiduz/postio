@@ -208,11 +208,8 @@ pub fn no_more_matches(forward: bool) -> &'static str {
 }
 
 pub fn new_reply_banner(member: &ThreadMember, keymap: &Keymap) -> BannerView {
-    let who = match (&member.from, member.own) {
-        (_, true) => "You",
-        (Some(from), false) => focus_row::first_name(from),
-        (None, false) => "Someone",
-    };
+    let who = crate::author::Author::of(member);
+    let who = who.subject();
     let line = match &member.line {
         Line::Own(text) | Line::Preview(text) => text.trim(),
         Line::Quoted => "",

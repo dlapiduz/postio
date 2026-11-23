@@ -761,7 +761,7 @@ pub fn fold_quote(body: &str) -> Option<QuoteFold> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewerMessage {
-    pub who: String,
+    pub who: crate::author::Author,
     pub at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -769,7 +769,7 @@ pub struct NewerMessage {
 pub struct OlderReplyFacts {
     pub number: usize,
     pub total: usize,
-    pub who: String,
+    pub who: crate::author::Author,
     pub at: chrono::DateTime<chrono::Utc>,
     pub newer: Vec<NewerMessage>,
 }
@@ -786,14 +786,6 @@ pub struct OlderReplyView {
     pub detail: String,
     pub actions: [BarAction; 2],
     pub newer_shown: bool,
-}
-
-pub fn member_name(member: &postio_model::thread_view::ThreadMember) -> String {
-    match (&member.from, member.own) {
-        (_, true) => "You".to_owned(),
-        (Some(from), false) => crate::focus_row::first_name(from).to_owned(),
-        (None, false) => "Someone".to_owned(),
-    }
 }
 
 fn newer_count_words(count: usize) -> String {
@@ -820,7 +812,13 @@ pub fn older_reply(
     let named: Vec<String> = facts
         .newer
         .iter()
-        .map(|message| format!("{} at {}", message.who, clock_and_day(message.at).0))
+        .map(|message| {
+            format!(
+                "{} at {}",
+                message.who.mid_sentence(),
+                clock_and_day(message.at).0
+            )
+        })
         .collect();
     let newer = match (named.len(), named.split_last()) {
         (0, _) | (_, None) => String::new(),
@@ -831,8 +829,8 @@ pub fn older_reply(
         (n, Some((last, _))) => format!("{}, the latest {last}.", newer_count_words(n)),
     };
     let quoted = format!(
-        "Your reply quotes {}\u{2019}s {} message and threads under it.",
-        facts.who,
+        "Your reply quotes {} {} message and threads under it.",
+        facts.who.possessive(),
         clock_and_day(facts.at).1
     );
     OlderReplyView {
@@ -878,14 +876,15 @@ pub struct ChooserView {
 pub fn forward_chooser(
     selected: postio_model::ForwardForm,
     messages: usize,
-    of: Option<(&str, chrono::DateTime<chrono::Utc>)>,
+    of: Option<(&crate::author::Author, chrono::DateTime<chrono::Utc>)>,
     keymap: &postio_core::Keymap,
 ) -> ChooserView {
     use postio_core::CommandId;
     use postio_model::ForwardForm;
     let this = match of {
         Some((who, at)) => format!(
-            "Only {who}\u{2019}s {} message, quoted as usual.",
+            "Only {} {} message, quoted as usual.",
+            who.possessive(),
             clock_and_day(at).1
         ),
         None => "Only this message, quoted as usual.".to_owned(),
@@ -939,6 +938,7 @@ pub fn forward_not_local(form: postio_model::ForwardForm, missing: usize) -> Str
 
 #[cfg(test)]
 mod thread_words_tests {
+    use crate::author::Author;
     use chrono::{Local, TimeZone, Utc};
     use postio_core::Keymap;
     use postio_model::ForwardForm;
@@ -957,15 +957,15 @@ mod thread_words_tests {
         let facts = OlderReplyFacts {
             number: 4,
             total: 6,
-            who: "Ben".into(),
+            who: Author::Named("Ben".into()),
             at: at(9, 0),
             newer: vec![
                 NewerMessage {
-                    who: "Lena".into(),
+                    who: Author::Named("Lena".into()),
                     at: at(15, 22),
                 },
                 NewerMessage {
-                    who: "Ben".into(),
+                    who: Author::Named("Ben".into()),
                     at: at(16, 40),
                 },
             ],
@@ -1003,17 +1003,55 @@ mod thread_words_tests {
     }
 
     #[test]
+    fn the_bar_and_the_chooser_name_every_author_in_its_place() {
+        let forms = [
+            (Author::You, "your", "you"),
+            (Author::Named("Ben".into()), "Ben\u{2019}s", "Ben"),
+            (Author::Someone, "someone\u{2019}s", "someone"),
+        ];
+        for (who, possessive, mid) in forms {
+            let facts = OlderReplyFacts {
+                number: 1,
+                total: 3,
+                who: who.clone(),
+                at: at(9, 0),
+                newer: vec![NewerMessage {
+                    who: who.clone(),
+                    at: at(15, 22),
+                }],
+            };
+            assert_eq!(
+                older_reply(&facts, false, Keymap::defaults()).detail,
+                format!(
+                    "One newer message: {mid} at 15:22. Your reply quotes {possessive} \
+                     Thursday message and threads under it."
+                )
+            );
+            let chooser = forward_chooser(
+                ForwardForm::This,
+                3,
+                Some((&who, at(9, 0))),
+                Keymap::defaults(),
+            );
+            assert_eq!(
+                chooser.cards[0].detail,
+                format!("Only {possessive} Thursday message, quoted as usual.")
+            );
+        }
+    }
+
+    #[test]
     fn many_newer_messages_name_only_the_latest() {
         let newer = (0..5)
             .map(|n| NewerMessage {
-                who: "Ana".into(),
+                who: Author::Named("Ana".into()),
                 at: at(10 + n, 0),
             })
             .collect();
         let facts = OlderReplyFacts {
             number: 2,
             total: 8,
-            who: "Ben".into(),
+            who: Author::Named("Ben".into()),
             at: at(9, 0),
             newer,
         };
@@ -1031,7 +1069,7 @@ mod thread_words_tests {
         let view = forward_chooser(
             ForwardForm::This,
             6,
-            Some(("Ben", at(9, 0))),
+            Some((&Author::Named("Ben".into()), at(9, 0))),
             Keymap::defaults(),
         );
         assert_eq!(view.heading, "What to forward");

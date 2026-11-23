@@ -237,6 +237,17 @@ impl OutlinePopover {
                 }
             }
         });
+        let focus = gtk::EventControllerFocus::new();
+        let filtering = |weak: std::rc::Weak<OutlinePopover>, filtering: bool| {
+            move |_: &gtk::EventControllerFocus| {
+                if let Some(outline) = weak.upgrade() {
+                    outline.say(OutlineInput::Filtering(filtering));
+                }
+            }
+        };
+        focus.connect_enter(filtering(weak.clone(), true));
+        focus.connect_leave(filtering(weak.clone(), false));
+        outline.filter.add_controller(focus);
         // Arrows and Return are the outline's even while the field holds the
         // keyboard: the list is what they move.
         let keys = gtk::EventControllerKey::new();
@@ -409,6 +420,10 @@ impl OutlinePopover {
 
     pub fn row_count(&self) -> usize {
         self.shown.borrow().rows.len()
+    }
+
+    pub fn hint(&self) -> String {
+        self.footer.text().to_string()
     }
 
     pub fn cursor(&self) -> usize {

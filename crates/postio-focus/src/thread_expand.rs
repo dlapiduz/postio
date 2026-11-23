@@ -122,6 +122,11 @@ pub(crate) fn footer_at(
                 .subject
                 .as_deref()
                 .unwrap_or(NO_SUBJECT);
+            if let Some(unsent) =
+                scope::unsent_row(subject, summary.representative.send_state, keymap)
+            {
+                return Some(unsent);
+            }
             let about = FooterAbout {
                 subject,
                 count: summary.message_count as usize,

@@ -748,8 +748,8 @@ const CASES: &[(&str, fn())] = &[
         observe::the_window_says_where_the_keyboard_cursor_and_notices_are as fn(),
     ),
     (
-        "open_keys::the_keyboard_lands_on_the_message_not_a_button",
-        open_keys::the_keyboard_lands_on_the_message_not_a_button as fn(),
+        "open_keys::the_keyboard_lands_on_the_message_each_time_it_opens",
+        open_keys::the_keyboard_lands_on_the_message_each_time_it_opens as fn(),
     ),
     (
         "open_keys::a_toast_raised_under_the_open_message_is_drawn_over_it",
@@ -1428,6 +1428,18 @@ const CASES: &[(&str, fn())] = &[
     (
         "footers::the_capture_sheet_has_no_footer",
         footers::the_capture_sheet_has_no_footer as fn(),
+    ),
+    (
+        "footers::a_draft_row_offers_to_be_finished",
+        footers::a_draft_row_offers_to_be_finished as fn(),
+    ),
+    (
+        "footers::the_places_popover_has_no_footer",
+        footers::the_places_popover_has_no_footer as fn(),
+    ),
+    (
+        "footers::a_removal_in_the_window_has_the_next_messages_footer",
+        footers::a_removal_in_the_window_has_the_next_messages_footer as fn(),
     ),
 ];
 

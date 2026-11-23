@@ -10,18 +10,28 @@ use postio_ui::scope::FooterView;
 
 struct List {
     states: Vec<Option<DraftState>>,
+    first: i64,
 }
 
 impl List {
     fn of(states: &[Option<DraftState>]) -> Self {
         List {
             states: states.to_vec(),
+            first: 0,
         }
     }
 
     fn received(len: usize) -> Self {
         List {
             states: vec![None; len],
+            first: 0,
+        }
+    }
+
+    fn without_the_first(&self) -> Self {
+        List {
+            states: self.states[1..].to_vec(),
+            first: self.first + 1,
         }
     }
 }
@@ -34,15 +44,16 @@ impl Rows for List {
         self.row(position).map(|row| RowFacts::of(&row))
     }
     fn position_of(&self, id: MessageId) -> Option<u32> {
-        let at = id.get().checked_sub(100)?;
+        let at = id.get().checked_sub(100 + self.first)?;
         (at >= 0 && (at as usize) < self.states.len()).then_some(at as u32)
     }
     fn row(&self, position: u32) -> Option<FocusRow> {
         let state = *self.states.get(position as usize)?;
         let at = Utc.with_ymd_and_hms(2026, 9, 28, 9, 0, 0).unwrap();
-        let id = MessageId::new(100 + i64::from(position));
-        let thread = ThreadId::new(500 + i64::from(position));
-        let subject = Some(format!("Subject {position}"));
+        let n = self.first + i64::from(position);
+        let id = MessageId::new(100 + n);
+        let thread = ThreadId::new(500 + n);
+        let subject = Some(format!("Subject {n}"));
         Some(FocusRow::conversation(ThreadSummary {
             id: Some(thread),
             representative: MessageSummary {
@@ -207,4 +218,70 @@ fn the_command_bar_draws_no_footer() {
     let effects = run(&mut focus, CommandId::Back, &rows);
     assert_eq!(focus.top_surface(), None, "Escape closed the bar");
     assert_eq!(footer(&effects), Some(row), "the row's footer came back");
+}
+
+#[test]
+fn a_row_of_unsent_mail_says_only_the_verbs_that_act_on_it() {
+    for (state, want) in [
+        (DraftState::Editing, &["move", "edit"][..]),
+        (DraftState::Queued, &["move", "open", "cancel send"][..]),
+    ] {
+        let rows = List::of(&[Some(state), Some(state)]);
+        let mut focus = linux();
+        let row = landed(&mut focus, &rows);
+        assert_eq!(row.title, "Subject 0", "{state:?}");
+        assert_eq!(labels(&row), want, "{state:?}");
+    }
+}
+
+#[test]
+fn the_places_popover_draws_no_footer() {
+    let rows = List::received(3);
+    let mut focus = linux();
+    let row = landed(&mut focus, &rows);
+    let effects = focus.handle_on(Input::PlacesShown(true), &rows);
+    assert_eq!(footer(&effects), Some(FooterView::default()), "no footer");
+    let effects = focus.landed(&rows, false);
+    assert!(
+        footer(&effects).is_none_or(|footer| footer.title.is_empty()),
+        "the list's footer came back under the popover: {:?}",
+        footer(&effects)
+    );
+    let effects = focus.handle_on(Input::PlacesShown(false), &rows);
+    assert_eq!(footer(&effects), Some(row), "the row's footer came back");
+}
+
+#[test]
+fn a_removal_in_the_window_says_the_footer_of_the_message_it_steps_on_to() {
+    let rows = List::received(3);
+    let mut focus = linux();
+    let _ = landed(&mut focus, &rows);
+    let _ = run(&mut focus, CommandId::OpenMessage, &rows);
+    let _ = run(&mut focus, CommandId::Delete, &rows);
+    let rows = rows.without_the_first();
+    let effects = focus.landed(&rows, false);
+    assert_eq!(focus.reading(), Some(MessageId::new(101)), "stepped on");
+    let window = footer(&effects).expect("the window's footer");
+    assert_eq!(window.title, "Subject 1");
+    assert_eq!(labels(&window), ["reply", "forward", "archive"]);
+}
+
+#[test]
+fn the_thread_outline_and_menu_draw_no_footer_over_the_window() {
+    let (mut focus, rows) = crate::thread_menu::window();
+    for (open, kind) in [
+        (CommandId::ThreadOutline, SurfaceKind::Outline),
+        (CommandId::ThreadMenu, SurfaceKind::ThreadMenu),
+    ] {
+        let effects = focus.handle_on(Input::Command(open), &rows);
+        assert_eq!(focus.top_surface(), Some(kind));
+        assert_eq!(footer(&effects), Some(FooterView::default()), "{kind:?}");
+        let effects = focus.handle_on(Input::Command(CommandId::Back), &rows);
+        assert_eq!(focus.top_surface(), Some(SurfaceKind::Message));
+        let back = footer(&effects).expect("the window's footer came back");
+        assert!(
+            back.title.starts_with("Message 5 of 6"),
+            "{kind:?}: {back:?}"
+        );
+    }
 }
