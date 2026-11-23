@@ -27,8 +27,7 @@ pub struct Sender {
     name: String,
     local: Vec<Vec<String>>,
     domain: Vec<String>,
-    /// `None`: a machine wrote it, so no person-style marker is asked of it, but nothing here
-    /// says what it is, so the table does not file it.
+    // None: a machine's mail, often the one thing to act on, so it is not filed.
     reason: Option<ReasonKind>,
     source: Option<SourceName>,
 }
@@ -198,8 +197,6 @@ mod tests {
 
     #[test]
     fn a_machine_that_writes_for_a_company_is_found_with_no_reason() {
-        // T225: a bank's statement or a utility's bill carries no list header, and nobody reads
-        // replies to it; nor is it the table's to file, since it is often the one thing to act on.
         for (address, entry) in [
             ("statements@email.bank.example", "bulk-subdomain"),
             ("hello@news.utility.example", "bulk-subdomain"),

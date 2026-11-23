@@ -17,8 +17,6 @@ use crate::input::{BodyMessage, OwnText};
 use crate::outcome::{MarkedBy, MarkerCandidate, MarkerKind};
 use crate::rules::Rules;
 
-/// `messages.automation`'s bits: `Precedence` bulk, list, junk; `Auto-Submitted` auto-generated,
-/// auto-replied; a bulk sending service's own header.
 const BULK_OR_AUTOMATED: u8 = postio_model::promoted::PRECEDENCE
     | postio_model::promoted::AUTO_SUBMITTED
     | postio_model::promoted::BULK_SENDER;
@@ -233,7 +231,6 @@ fn excluded(lower: &str, body: &str) -> bool {
             .any(|word| contains_word(lower, word))
 }
 
-/// "If you would like a copy, please ask": what to do should the reader want something, not an ask.
 fn conditional_instruction(body: &str) -> bool {
     let body = body.replace("you'd", "you would");
     starts_with_words(&body, "if you")
@@ -242,7 +239,6 @@ fn conditional_instruction(body: &str) -> bool {
             .any(|request| starts_with_words(&body, request))
 }
 
-/// "Please view your statement online": where to look, not an ask to answer.
 fn pointer(lower: &str) -> bool {
     lexicon::POINTER_PHRASES
         .iter()
@@ -958,8 +954,6 @@ mod tests {
 
     #[test]
     fn transactional_mail_with_no_list_header_is_not() {
-        // T225: a bank, a utility, a billing system. None says List-Id, List-Unsubscribe or
-        // Auto-Submitted, so before this each read as a person writing.
         let identities = identities();
         let shipped = |message: &Message| {
             considered(

@@ -1,6 +1,5 @@
-//! The three headers Focus reads before a body arrives: `List-Unsubscribe`, `Precedence`,
-//! `Auto-Submitted`. Promoted (ADR 0025) so the filing pass can tell bulk and automated mail at
-//! arrival; one reading here keeps the fetch, the body and `is:bulk`/`is:automated` in agreement.
+//! The headers Focus reads before a body arrives, promoted (ADR 0025) so filing can tell bulk and
+//! automated mail; one reading keeps the fetch, the body and `is:bulk`/`is:automated` in agreement.
 
 use serde::{Deserialize, Serialize};
 
@@ -9,9 +8,8 @@ use crate::headers::Headers;
 pub const PRECEDENCE_BULK: u8 = 1;
 pub const PRECEDENCE_LIST: u8 = 2;
 pub const PRECEDENCE_JUNK: u8 = 4;
-/// `Auto-Submitted: auto-generated`, or any value but `no` and
-/// `auto-replied`: RFC 3834 §5 asks a reader to treat an unknown `auto-`
-/// keyword as automatic.
+/// `Auto-Submitted: auto-generated`, or any value but `no` and `auto-replied`: RFC 3834 §5 asks a
+/// reader to treat an unknown `auto-` keyword as automatic.
 pub const AUTO_GENERATED: u8 = 8;
 pub const AUTO_REPLIED: u8 = 16;
 
@@ -19,8 +17,7 @@ pub const AUTO_REPLIED: u8 = 16;
 pub const PRECEDENCE: u8 = PRECEDENCE_BULK | PRECEDENCE_LIST | PRECEDENCE_JUNK;
 pub const AUTO_SUBMITTED: u8 = AUTO_GENERATED | AUTO_REPLIED;
 
-/// A header only a bulk sending service writes, on mail that may carry no list header at all: a
-/// bank's statement, a utility's bill (spec 007 T225).
+/// A bulk sending service's own header, on mail that may carry no list header: a bank's statement.
 pub const BULK_SENDER: u8 = 32;
 
 /// Generic headers, not one provider's: a feedback loop's id and the senders' certification.
@@ -159,7 +156,6 @@ mod tests {
                 AUTO_REPLIED,
             ),
             (&[("Precedence", "first-class")], false, 0),
-            // A bulk sending service's own headers, on mail that carries no list header (T225).
             (
                 &[("Feedback-ID", "4821:statements:bank.example:sender")],
                 false,

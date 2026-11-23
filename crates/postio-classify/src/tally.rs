@@ -1,6 +1,4 @@
-//! What the classifier made of a run of stored mail, as counts and message ids only (spec 007
-//! T224): the before and after of a rule change, measured over a real store without a word of its
-//! mail. A source name is a sender's or a list's, so it is left out too.
+//! Counts and message ids only, never a source name: it is a sender's or a list's.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -25,8 +23,7 @@ impl Tally {
         Self::default()
     }
 
-    /// The filing stage's answer for one message. A hold wins over a reason, as the pass carries
-    /// it out.
+    /// A hold wins over a reason, as the pass carries it out.
     pub fn filing(&mut self, id: MessageId, outcome: &Outcome) {
         self.examined += 1;
         if let Some(rule) = &outcome.hold {
@@ -42,8 +39,7 @@ impl Tally {
         }
     }
 
-    /// The needs-action guard's answer, and the body stage's when it was asked. `None` with
-    /// `considered` is a body this machine does not hold.
+    /// `None` with `considered` is a body this machine does not hold.
     pub fn body(&mut self, id: MessageId, considered: bool, outcome: Option<&Outcome>) {
         if !considered {
             self.not_considered += 1;

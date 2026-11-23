@@ -22,7 +22,6 @@ pub(crate) fn reason(filed: &FiledMessage<'_>, rules: &dyn Rules) -> Option<Reas
     if filed.has_calendar() {
         return None;
     }
-    // An entry with no reason is a machine the table does not file; its headers still may.
     if let Some((sender, kind)) = message
         .from
         .iter()

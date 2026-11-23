@@ -205,8 +205,6 @@ impl FocusFiling {
             .collect())
     }
 
-    /// What this pass decides for each of `filed`, writing nothing: what `postio-diag classify`
-    /// counts.
     pub async fn outcomes(
         &self,
         connection: &Connection,

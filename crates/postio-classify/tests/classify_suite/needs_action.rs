@@ -534,9 +534,6 @@ fn the_built_in_detector_is_right_nine_times_in_ten() {
     );
 }
 
-/// T226: a footer, a conditional instruction and a pointer to a portal are the sender's template.
-/// The gate overall is nine in ten; on these it is none wrong, since each is a whole kind of mail
-/// that would otherwise be marked every time.
 #[test]
 fn the_sender_s_template_is_never_marked() {
     let score = measure();

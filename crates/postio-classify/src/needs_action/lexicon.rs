@@ -130,8 +130,7 @@ pub(crate) const IMPERATIVES: &[&str] = &[
     "pick", "leave", "move", "fix", "test", "look", "verify",
 ];
 
-/// The word after an imperative verb that shows it is one: "Send me", not "Book club is on
-/// Thursday".
+/// The word after an imperative that shows it is one: "Send me", not "Book club is on Thursday".
 pub(super) const OBJECTS: &[&str] = &[
     "the",
     "a",
@@ -274,8 +273,6 @@ pub(super) const BOILERPLATE: &[&str] = &[
     "do not reply",
 ];
 
-/// A disclaimer, a notice or a footer: the message's own words end here, and nothing after is an
-/// ask of the reader (T226).
 pub(super) const FOOTERS: &[&str] = &[
     "confidentiality notice",
     "disclaimer:",
@@ -295,8 +292,6 @@ pub(super) const FOOTERS: &[&str] = &[
     "to unsubscribe",
 ];
 
-/// "If you ..." that is still a request: everything else after "if you" is an instruction for
-/// should the reader want something (T226).
 pub(super) const CONDITIONAL_REQUESTS: &[&str] = &[
     "if you could",
     "if you can",
@@ -310,7 +305,6 @@ pub(super) const CONDITIONAL_REQUESTS: &[&str] = &[
     "if you do not mind",
 ];
 
-/// A clause that sends the reader somewhere to look, rather than asking them anything (T226).
 pub(super) const POINTER_PHRASES: &[&str] = &[
     "click here",
     "log in to your",
@@ -339,8 +333,7 @@ pub(super) const ASSISTANT: &[&str] = &[
 ];
 
 /// What only text aimed at a model says (ADR 0009 Q4); a message holding any of it is asked
-/// nothing.
-/// Nothing here is a word ordinary mail uses.
+/// nothing. Nothing here is a word ordinary mail uses.
 pub(super) const TO_A_MACHINE: &[&str] = &[
     "previous instructions",
     "prior instructions",

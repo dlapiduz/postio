@@ -71,8 +71,7 @@ struct Report {
 pub(crate) type Outcome = Result<(), postio_storage::Error>;
 
 impl Report {
-    /// `words` searched as the search box searches, timed, as typed and quoted; the difference is
-    /// what the spelling offer costs. The offered word is not printed.
+    /// `words` searched as typed and quoted; the difference is what the spelling offer costs.
     async fn search(&self, words: &str) -> Outcome {
         use postio_model::AccountScope;
         use postio_search::ResultOrder;
@@ -264,8 +263,7 @@ impl Report {
         Ok(())
     }
 
-    /// The bodies carrying the decode caveat, and what their parts declared; the body is read only
-    /// to answer two booleans.
+    /// The bodies carrying the decode caveat; each is read only to answer two booleans.
     async fn encoding(&self) -> Outcome {
         let total = self.count("SELECT count(*) FROM messages").await;
         let bodied = self
@@ -510,10 +508,7 @@ fn bytes(n: u64) -> String {
     format!("{value:.1} {}", UNITS[unit])
 }
 
-/// `postio-diag classify` (spec 007 T224): the classifier over every inbox in the store, a window
-/// at a time, through the filing stage and the needs-action guard and detector, printed by
-/// [`postio_classify::Tally`] as counts and ids. Writes nothing; asks no model, so what it measures
-/// is the built-in rules.
+/// Every inbox through the filing and body stages, writing nothing and asking no model.
 pub async fn classify(
     connection: postio_storage::Checkout,
     focus: &postio_config::FocusConfig,
@@ -607,7 +602,6 @@ async fn classify_inner(
     Ok(tally.render())
 }
 
-/// The person's stopped marker kinds, as the body stage reads them; the shipped senders table.
 struct Corrections(postio_config::FocusFilter);
 
 impl postio_classify::Rules for Corrections {
@@ -629,7 +623,6 @@ impl postio_classify::Rules for Corrections {
     }
 }
 
-/// The body stage asks nothing of the guards: it files and holds nothing.
 struct NoGuards;
 
 impl postio_classify::Facts for NoGuards {

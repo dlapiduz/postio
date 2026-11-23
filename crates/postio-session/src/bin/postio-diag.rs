@@ -86,7 +86,6 @@ async fn main() -> ExitCode {
         }
     };
     let report = if command == "classify" {
-        // The person's own rules, so a hold is counted as the pass would make it.
         let focus = postio_config::Config::load()
             .map(|config| config.focus)
             .unwrap_or_default();

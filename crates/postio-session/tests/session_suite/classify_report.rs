@@ -1,6 +1,3 @@
-//! `postio-diag classify` (spec 007 T224): the classifier over a store's inbox, printed as counts
-//! and ids, never a subject, a sender or a word of a body.
-
 use postio_account::backend::{MailBackend, MockBackend, MockMailbox, MockMessage};
 use postio_account::cancel::CancelToken;
 use postio_model::promoted::PromotedHeaders;
