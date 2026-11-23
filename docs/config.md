@@ -39,7 +39,7 @@ The macOS app's appearance. The desktop app and the terminal read none of these:
 | `sync_on_startup` | boolean | `true` | Start a sync as soon as the app opens. |
 | `body_fetch` | string | `"lazy"` | When message bodies are downloaded: `lazy` (headers first, bodies backfilled) or `eager`. |
 | `attachment_fetch` | string | `"on_open"` | When an attachment's bytes are downloaded: `on_open`, `eager`, or `never`. |
-| `max_inline_bytes` | integer | `262144` | The largest inline part fetched with the message's text rather than left on the payload axis. A `cid:` image under this size arrives with the body, so HTML mail reads correctly offline; `0` turns the rule off. |
+| `max_inline_bytes` | integer | `262144` | The largest inline part fetched with the message's text. A `cid:` image under this size arrives with the body, so HTML mail reads offline; `0` turns this off. |
 | `initial_sync_messages` | integer or string | `5000` | How many messages the first sync reaches back for, newest first, or `"all"` for everything the server has. |
 | `notify` | boolean | `true` | Master switch for desktop notifications on new mail. |
 | `notify_roles` | array of strings | `["inbox"]` | Which mailbox roles produce a notification when mail arrives in them. |
@@ -59,7 +59,7 @@ The macOS app's appearance. The desktop app and the terminal read none of these:
 |---|---|---|---|
 | `signature_on_reply` | string | `"above_quote"` | Where the signature goes on a reply: `above_quote` or `below_quote`. |
 | `signature_on_forward` | string | `"above_quote"` | Where the signature goes on a forward. |
-| `editor` | string | `""` | Which editor the compose window's hand-off opens the draft in: an application by name (`"BBEdit"`), a bundle identifier (`"com.apple.TextEdit"`), or a path. Empty means whatever the desktop already opens a text file with. A program that needs a terminal -- `vim`, `nano` -- cannot be opened by either frontend, and Postio says so rather than appearing to do nothing. |
+| `editor` | string | `""` | The editor a draft is handed to: an application name (`"BBEdit"`), a bundle identifier (`"com.apple.TextEdit"`) or a path. Empty means the desktop's text editor. A terminal program (`vim`) cannot be opened, and Postio says so. |
 
 ## `[tui]`
 
@@ -67,7 +67,7 @@ The macOS app's appearance. The desktop app and the terminal read none of these:
 |---|---|---|---|
 | `preview` | string | `"toggle"` | How the terminal composer shows the message it would send: `toggle` (one key swaps editor and preview) or `split` (side by side). |
 | `mouse` | boolean | `true` | Whether the terminal frontend takes the mouse. `false` leaves the terminal's own text selection; every key still works. |
-| `colors` | table | `{}` | Colour overrides for the terminal frontend, by role: `text`, `dim`, `accent`, `selection`, `focus`, `unread`, `flagged`, `link`, `quote`, `code`, `error`, `warning`, `success`. A value is a colour name, a palette number or `#rrggbb`. `NO_COLOR` overrides every one. |
+| `colors` | table | `{}` | Terminal colours by role: `text`, `dim`, `accent`, `selection`, `focus`, `unread`, `flagged`, `link`, `quote`, `code`, `error`, `warning`, `success`. A value is a colour name, a palette number or `#rrggbb`. `NO_COLOR` overrides every one. |
 
 ## `[logging]`
 
@@ -171,7 +171,7 @@ Where Focus captures a message as a task or a note. A task is one Obsidian Tasks
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `gnupg_keyring` | bool | `false` | Use public keys from your GnuPG keyring to check signatures. Postio reads the public keyring files under `GNUPGHOME` or `~/.gnupg`, read-only; it never runs `gpg` or opens secret keys. |
+| `gnupg_keyring` | bool | `false` | Check signatures with your GnuPG keyring's public keys, read-only. Postio never runs `gpg`. |
 
 ## `[keys]`
 
