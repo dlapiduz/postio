@@ -122,6 +122,38 @@ pub struct EventChange {
     pub href: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlannedReminder {
+    pub event: EventId,
+    pub occurrence: DateTime<Utc>,
+    pub due: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DueReminder {
+    pub event: EventId,
+    pub occurrence: DateTime<Utc>,
+    pub due: DateTime<Utc>,
+    pub title: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReminderState {
+    Fired,
+    Snoozed,
+    Missed,
+}
+
+impl ReminderState {
+    fn text(self) -> &'static str {
+        match self {
+            ReminderState::Fired => "fired",
+            ReminderState::Snoozed => "snoozed",
+            ReminderState::Missed => "missed",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteCalendar {
     pub id: CalendarId,
@@ -632,6 +664,80 @@ impl CalendarRepository<'_> {
         )
         .await?;
         Ok(())
+    }
+
+    pub async fn plan_reminders(&self, planned: &[PlannedReminder]) -> Result<()> {
+        for reminder in planned {
+            sql::execute(
+                self.connection,
+                "INSERT OR IGNORE INTO event_reminders (event_id, occurrence_start_utc, due_at, state)
+                 VALUES (?1, ?2, ?3, 'pending')",
+                bind![
+                    reminder.event.get(),
+                    to_millis(reminder.occurrence),
+                    to_millis(reminder.due),
+                ],
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    pub async fn pending_by(&self, at: DateTime<Utc>, limit: u32) -> Result<Vec<DueReminder>> {
+        sql::all(
+            self.connection,
+            "SELECT r.event_id, r.occurrence_start_utc, r.due_at, e.title FROM event_reminders r
+               JOIN events e ON e.id = r.event_id
+              WHERE r.state = 'pending' AND r.due_at <= ?1
+              ORDER BY r.due_at LIMIT ?2",
+            bind![to_millis(at), i64::from(limit)],
+            |row| {
+                Ok(DueReminder {
+                    event: EventId::new(row.col(0)?),
+                    occurrence: from_millis(row.col(1)?),
+                    due: from_millis(row.col(2)?),
+                    title: row.col(3)?,
+                })
+            },
+        )
+        .await
+    }
+
+    pub async fn next_reminder(&self) -> Result<Option<DateTime<Utc>>> {
+        let at: Option<i64> = sql::first(
+            self.connection,
+            "SELECT due_at FROM event_reminders WHERE state = 'pending' ORDER BY due_at LIMIT 1",
+            (),
+            |row| row.col(0),
+        )
+        .await?;
+        Ok(at.map(from_millis))
+    }
+
+    pub async fn settle_reminder(&self, due: &DueReminder, state: ReminderState) -> Result<()> {
+        sql::execute(
+            self.connection,
+            "UPDATE event_reminders SET state = ?4
+              WHERE event_id = ?1 AND occurrence_start_utc = ?2 AND due_at = ?3",
+            bind![
+                due.event.get(),
+                to_millis(due.occurrence),
+                to_millis(due.due),
+                state.text(),
+            ],
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn snooze_reminder(&self, due: &DueReminder, until: DateTime<Utc>) -> Result<()> {
+        self.settle_reminder(due, ReminderState::Snoozed).await?;
+        self.plan_reminders(&[PlannedReminder {
+            event: due.event,
+            occurrence: due.occurrence,
+            due: until,
+        }])
+        .await
     }
 
     pub async fn recurring(&self) -> Result<Vec<(EventId, Vec<u8>)>> {
