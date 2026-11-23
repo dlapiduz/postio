@@ -138,7 +138,7 @@ throwaway code is not merged.
 - [x] T026 [US3] Create the pure leaf `crates/postio-signature/` (`Cargo.toml` with `pgp` pinned exactly and default features trimmed, and the parser S1 chose). Add its entry to `scripts/checks/check-crate-boundaries.py` beside `postio-calendar`'s, with no store engine, toolkit, async runtime or network crate, and see the check fail on a deliberately added `tokio` dev-dependency, then remove it
 - [x] T027 [P] [US3] Write failing cases in `crates/postio-signature/src/scope.rs` for `signed_scope` over T002's fixtures: whole, part (the list footer), inline, encrypted, and none
 - [x] T028 [US3] Implement `signed_scope` and the exact-bytes slice of `contracts/verdict.md` in `crates/postio-signature/src/scope.rs`
-- [ ] T029 [P] [US3] Write failing cases in `crates/postio-signature/src/policy.rs`, one per row of `contracts/verdict.md`'s policy table
+- [x] T029 [P] [US3] Write failing cases in `crates/postio-signature/src/policy.rs`, one per row of `contracts/verdict.md`'s policy table
 - [ ] T030 [US3] Implement `verify` and `Policy` in `crates/postio-signature/src/verify.rs` and `crates/postio-signature/src/policy.rs`
 - [ ] T031 [US3] Write the sweeps SC-003 and SC-004 as `crates/postio-signature/tests/signature_suite/sweeps.rs`: every fixture, against every key subset
 - [ ] T032 [P] [US3] Write failing cases, then implement `autocrypt`, in `crates/postio-signature/src/autocrypt.rs`: `addr` equals From, `keydata` parsed, and a mismatched `addr` refused
