@@ -89,8 +89,6 @@ mod imp {
         pub chrome: RefCell<Option<Rc<Chrome>>>,
         pub client: RefCell<Option<Client>>,
         pub source: RefCell<Option<(MessageId, postio_widgets::source::SourceDialog)>>,
-        /// The controller's last footer, drawn again when the Source surface closes.
-        pub list_footer: RefCell<Option<postio_ui::scope::FooterView>>,
         pub waiting: Cell<Option<Waiting>>,
         pub waiting_since: Cell<Option<std::time::Instant>>,
         pub on_retry: RefCell<Option<Rc<dyn Fn()>>>,
@@ -194,7 +192,6 @@ mod imp {
                 chrome: RefCell::default(),
                 client: RefCell::default(),
                 source: RefCell::default(),
-                list_footer: RefCell::default(),
                 waiting: Cell::default(),
                 waiting_since: Cell::default(),
                 on_retry: RefCell::default(),
@@ -2175,10 +2172,7 @@ impl FocusWindow {
                 }
             }
             Intent::Footer(footer) => {
-                self.imp().list_footer.replace(Some(footer.clone()));
-                if self.source().is_none()
-                    && let Some(bar) = self.imp().scope_footer.borrow().as_ref()
-                {
+                if let Some(bar) = self.imp().scope_footer.borrow().as_ref() {
                     bar.set(footer);
                 }
             }
@@ -5121,21 +5115,14 @@ impl FocusWindow {
             if let Some(window) = weak.upgrade() {
                 window.imp().source.replace(None);
                 window.sync_surfaces();
-                let footer = window.imp().list_footer.borrow().clone();
-                if let (Some(footer), Some(bar)) =
-                    (footer, window.imp().scope_footer.borrow().as_ref())
-                {
-                    bar.set(&footer);
-                }
                 if !window.reading().is_some_and(|reading| reading.is_open()) {
                     window.focus_cursor_soon();
                 }
             }
         });
         dialog.dialog().present(Some(self));
-        if let Some(bar) = self.imp().scope_footer.borrow().as_ref() {
-            bar.set(&postio_ui::source::footer(&self.keymap()));
-        }
+        // Focus set before presenting falls to the close button, where Return would close it.
+        dialog.show_tab(dialog.tab());
         self.imp().source.replace(Some((message, dialog)));
         self.sync_surfaces();
     }

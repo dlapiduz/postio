@@ -19,6 +19,7 @@ pub(crate) enum Owner {
     #[default]
     List,
     Window,
+    Source,
     Nobody,
 }
 
@@ -37,6 +38,12 @@ pub(crate) struct Footer {
 
 impl FocusController {
     fn footer_owner(&self) -> (Owner, Option<FooterView>) {
+        if self.surfaces.top() == Some(SurfaceKind::Source) {
+            return (
+                Owner::Source,
+                Some(postio_ui::source::footer(self.keymap())),
+            );
+        }
         if OWN_KEYS.iter().any(|kind| self.surfaces.has(*kind)) {
             return (Owner::Nobody, Some(FooterView::default()));
         }
@@ -81,11 +88,15 @@ impl FocusController {
             let said = effects
                 .iter()
                 .any(|effect| matches!(effect, Effect::Show(Intent::Footer(_))));
-            if was != Owner::List
-                && !said
-                && let Some(footer) = self.list_footer(raw)
-            {
-                effects.push(Effect::Show(Intent::Footer(footer)));
+            if was != Owner::List && !said {
+                // The surface's own keys must not outlive it, even when the row has nothing to
+                // say.
+                let footer = self
+                    .list_footer(raw)
+                    .or_else(|| (was == Owner::Source).then(FooterView::default));
+                if let Some(footer) = footer {
+                    effects.push(Effect::Show(Intent::Footer(footer)));
+                }
             }
             return;
         };

@@ -48,6 +48,14 @@ fn run(focus: &mut FocusController, command: CommandId, rows: &List) -> Vec<Effe
     focus.handle_on(Input::Command(command), rows)
 }
 
+/// What the surface itself was told, footers aside: those have their own case.
+fn told(effects: &[Effect]) -> Vec<Intent> {
+    shown(effects)
+        .into_iter()
+        .filter(|intent| !matches!(intent, Intent::Footer(_)))
+        .collect()
+}
+
 /// The frontend opens what it was told to, and says so.
 fn follow(focus: &mut FocusController, effects: &[Effect], rows: &List) {
     if shown(effects)
@@ -72,7 +80,7 @@ fn v_on_a_row_opens_source_on_verification_over_the_list() {
     let (mut focus, rows) = on_row_two();
     let effects = run(&mut focus, CommandId::ViewSource, &rows);
     assert_eq!(
-        shown(&effects),
+        told(&effects),
         vec![Intent::OpenSource {
             message: MessageId::new(102),
             tab: Tab::Verification,
@@ -96,7 +104,7 @@ fn digits_switch_the_tabs() {
     ] {
         assert!(focus.answers(command), "{command:?} is the surface's");
         assert_eq!(
-            shown(&run(&mut focus, command, &rows)),
+            told(&run(&mut focus, command, &rows)),
             vec![Intent::Source(SourceVerb::Tab(tab))],
             "{command:?}"
         );
@@ -110,7 +118,7 @@ fn esc_closes_the_source_back_to_the_same_row_with_nothing_moved() {
     follow(&mut focus, &effects, &rows);
     let _ = run(&mut focus, CommandId::SourceTabRaw, &rows);
     let closed = run(&mut focus, CommandId::Back, &rows);
-    let said = shown(&closed);
+    let said = told(&closed);
     assert!(
         said.contains(&Intent::CloseSurface(SurfaceKind::Source)),
         "{said:?}"
@@ -124,7 +132,7 @@ fn esc_closes_the_source_back_to_the_same_row_with_nothing_moved() {
     assert_eq!(focus.key_context(), KeyContext::List);
     let again = run(&mut focus, CommandId::ViewSource, &rows);
     assert_eq!(
-        shown(&again),
+        told(&again),
         vec![Intent::OpenSource {
             message: MessageId::new(102),
             tab: Tab::Verification,
@@ -139,14 +147,14 @@ fn v_in_the_open_message_stacks_the_source_and_esc_takes_one_rung() {
     let (mut focus, rows) = on_row_two();
     let opened = run(&mut focus, CommandId::OpenMessage, &rows);
     assert!(
-        shown(&opened)
+        told(&opened)
             .iter()
             .any(|intent| matches!(intent, Intent::OpenMessage { .. }))
     );
     let _ = focus.handle_on(Input::SurfaceOpened(SurfaceKind::Message), &rows);
     let effects = run(&mut focus, CommandId::ViewSource, &rows);
     assert_eq!(
-        shown(&effects),
+        told(&effects),
         vec![Intent::OpenSource {
             message: MessageId::new(102),
             tab: Tab::Verification,
@@ -156,7 +164,7 @@ fn v_in_the_open_message_stacks_the_source_and_esc_takes_one_rung() {
     follow(&mut focus, &effects, &rows);
     let first = run(&mut focus, CommandId::Back, &rows);
     assert_eq!(
-        shown(&first),
+        told(&first),
         vec![Intent::CloseSurface(SurfaceKind::Source)]
     );
     assert_eq!(
@@ -165,7 +173,7 @@ fn v_in_the_open_message_stacks_the_source_and_esc_takes_one_rung() {
         "the message is still open"
     );
     let second = run(&mut focus, CommandId::Back, &rows);
-    assert!(shown(&second).contains(&Intent::CloseSurface(SurfaceKind::Message)));
+    assert!(told(&second).contains(&Intent::CloseSurface(SurfaceKind::Message)));
     assert_eq!(focus.key_context(), KeyContext::List);
 }
 
@@ -193,28 +201,28 @@ fn copy_save_find_and_unfold_go_to_the_tab_that_has_them() {
     let effects = run(&mut focus, CommandId::ViewSource, &rows);
     follow(&mut focus, &effects, &rows);
     assert_eq!(
-        shown(&run(&mut focus, CommandId::CopySource, &rows)),
+        told(&run(&mut focus, CommandId::CopySource, &rows)),
         vec![Intent::Source(SourceVerb::Copy)]
     );
     assert_eq!(
-        shown(&run(&mut focus, CommandId::SaveSource, &rows)),
+        told(&run(&mut focus, CommandId::SaveSource, &rows)),
         vec![Intent::Source(SourceVerb::Save)]
     );
     assert!(
-        shown(&run(&mut focus, CommandId::UnfoldPart, &rows)).is_empty(),
+        told(&run(&mut focus, CommandId::UnfoldPart, &rows)).is_empty(),
         "nothing folds on Verification"
     );
     assert!(
-        shown(&run(&mut focus, CommandId::FindInMessage, &rows)).is_empty(),
+        told(&run(&mut focus, CommandId::FindInMessage, &rows)).is_empty(),
         "Verification has no find"
     );
     let _ = run(&mut focus, CommandId::SourceTabRaw, &rows);
     assert_eq!(
-        shown(&run(&mut focus, CommandId::UnfoldPart, &rows)),
+        told(&run(&mut focus, CommandId::UnfoldPart, &rows)),
         vec![Intent::Source(SourceVerb::Unfold)]
     );
     assert_eq!(
-        shown(&run(&mut focus, CommandId::FindInMessage, &rows)),
+        told(&run(&mut focus, CommandId::FindInMessage, &rows)),
         vec![Intent::Source(SourceVerb::Find)]
     );
 }
@@ -229,5 +237,29 @@ fn a_source_the_frontend_closed_is_forgotten() {
     assert!(
         !run(&mut focus, CommandId::NextMessage, &rows).is_empty(),
         "the list has its keys back"
+    );
+}
+
+#[test]
+fn the_footer_speaks_for_the_source_while_it_is_open() {
+    let (mut focus, rows) = on_row_two();
+    let opened = run(&mut focus, CommandId::ViewSource, &rows);
+    let footer = shown(&opened).into_iter().find_map(|intent| match intent {
+        Intent::Footer(footer) => Some(footer),
+        _ => None,
+    });
+    assert_eq!(
+        footer.map(|footer| footer.title),
+        Some("Source and verification".to_owned()),
+        "{opened:?}"
+    );
+    follow(&mut focus, &opened, &rows);
+    let closed = run(&mut focus, CommandId::Back, &rows);
+    assert!(
+        shown(&closed).iter().any(|intent| matches!(
+            intent,
+            Intent::Footer(footer) if footer.title != "Source and verification"
+        )),
+        "closing gives the list its footer back: {closed:?}"
     );
 }
