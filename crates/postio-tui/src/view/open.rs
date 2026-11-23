@@ -1,101 +1,57 @@
-//! The open message (terminal.md, "The open message").
-//!
-//! A frame over the list, or a pane beside it, holds three header rows --
-//! the step keys, the subject and `Esc ✕`; the position line; the action
-//! row -- and under a hairline one column that scrolls as a whole: the
-//! thread line, the subject, the labels, the sender grid, the action card,
-//! the body, the attachments and the fold line. [`document`] lays the column
-//! out as rows; [`draw`] puts the header and the visible rows on screen and
-//! records what each is for, so the mouse does what the keys do.
-//!
-//! Everything from mail reaches here as `SafeText` or as lines `reader`
-//! already made safe.
+//! The open message: three header rows, a hairline, and one column that scrolls as a whole.
+//! [`document`] lays the column out and records what each row is for, so the mouse does what the
+//! keys do. Everything from mail reaches here as `SafeText` or as lines `reader` made safe.
 
 use chrono::{DateTime, Local};
 use postio_core::CommandId;
 use postio_ui::focus_dialog;
 use postio_ui::terminal::SafeText;
+use postio_ui::thread_bar::Chip;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::app::App;
-use crate::conversation::{At, Member};
+use crate::app::{App, Thread};
+use crate::conversation::At;
 use crate::reader::{Block, LineTarget};
 use crate::row::Row;
+use crate::surface::Part;
 use crate::theme::{Role, Theme};
 use crate::view::bottom::cap;
 use crate::view::fit;
 use crate::view::hit::{Hits, Target};
 use crate::view::wrap::wrap;
 
-/// A piece of a row that is a click of its own.
+/// A piece of a row that is a click of its own, in columns from the column's left edge.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Segment {
-    /// Columns in from the column's left edge.
     pub start: u16,
-    /// How wide it is.
     pub width: u16,
-    /// The command a click runs.
-    pub command: &'static str,
+    pub target: Target,
 }
 
-/// One row of the scrolling column.
 #[derive(Debug, Clone)]
 pub struct DocLine {
-    /// What is drawn.
     pub line: Line<'static>,
-    /// What a click on the row, outside its segments, stands for.
+    /// What a click on the row stands for outside its segments.
     pub at: At,
-    /// The clicks within it.
     pub segments: Vec<Segment>,
 }
 
-/// The column, row by row.
 #[derive(Debug, Clone, Default)]
 pub struct Document {
-    /// Every row, top to bottom.
     pub lines: Vec<DocLine>,
 }
 
-impl Document {
-    /// What a click on column `column` of row `row` stands for.
-    pub fn click(&self, row: usize, column: u16) -> Click {
-        let Some(line) = self.lines.get(row) else {
-            return Click::Nothing;
-        };
-        match line
-            .segments
-            .iter()
-            .find(|segment| column >= segment.start && column < segment.start + segment.width)
-        {
-            Some(segment) => Click::Command(segment.command),
-            None => Click::At(line.at.clone()),
-        }
-    }
-}
-
-/// What a click on the column did land on.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Click {
-    /// Nothing to act on.
-    Nothing,
-    /// A command's own words.
-    Command(&'static str),
-    /// A link, a fold or an attachment.
-    At(At),
-}
-
-/// A builder of the column's rows.
 struct Rows<'a> {
     width: usize,
     theme: &'a Theme,
     lines: Vec<DocLine>,
 }
 
-impl<'a> Rows<'a> {
+impl Rows<'_> {
     fn push(&mut self, line: Line<'static>, at: At, segments: Vec<Segment>) {
         self.lines.push(DocLine { line, at, segments });
     }
@@ -114,14 +70,27 @@ impl<'a> Rows<'a> {
             self.theme.style(Role::Dim),
         ));
     }
+
+    fn click(
+        spans: &mut Vec<Span<'static>>,
+        segments: &mut Vec<Segment>,
+        words: String,
+        style: Style,
+        target: Target,
+    ) {
+        segments.push(Segment {
+            start: u16::try_from(width_of(spans)).unwrap_or(0),
+            width: u16::try_from(words.width()).unwrap_or(0),
+            target,
+        });
+        spans.push(Span::styled(words, style));
+    }
 }
 
-/// The width of `spans`.
 fn width_of(spans: &[Span]) -> usize {
     spans.iter().map(|span| span.content.width()).sum()
 }
 
-/// `names` as a header draws them: the first few, and how many are left.
 fn names_line(names: &[SafeText]) -> String {
     use postio_ui::reader::header::RECIPIENTS_SHOWN;
     let shown: Vec<&str> = names
@@ -140,22 +109,13 @@ fn names_line(names: &[SafeText]) -> String {
     said
 }
 
-/// The message on screen: the member the keyboard is on.
-fn shown(app: &App) -> Option<(Option<&Row>, &Member)> {
-    let reading = app.reading()?;
-    let member = reading.members.get(reading.current)?;
-    Some((app.row(reading.row), member))
-}
-
-/// The marker's sentence found in the body's own words, as the character
-/// ranges to mark on each line of `lines`: whitespace is not part of what is
-/// matched, so a sentence the sender wrapped is still found.
+/// The marker's sentence in the body's own words, as the character ranges to mark on each line:
+/// whitespace is not matched, so a sentence the sender wrapped is still found.
 pub(super) fn locate(lines: &[Line<'static>], excerpt: &str) -> Vec<(usize, usize, usize)> {
     let wanted: Vec<&str> = excerpt.split_whitespace().collect();
     if wanted.is_empty() {
         return Vec::new();
     }
-    // Every word of the body: its line and where it starts and ends.
     let mut words: Vec<(usize, usize, usize, String)> = Vec::new();
     for (index, line) in lines.iter().enumerate() {
         let text = line.to_string();
@@ -196,8 +156,6 @@ pub(super) fn locate(lines: &[Line<'static>], excerpt: &str) -> Vec<(usize, usiz
     ranges
 }
 
-/// `line` with characters `from..to` drawn in `style` on top of what they
-/// were.
 pub(super) fn restyle(line: &Line<'static>, from: usize, to: usize, style: Style) -> Line<'static> {
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut at = 0;
@@ -232,8 +190,6 @@ pub(super) fn restyle(line: &Line<'static>, from: usize, to: usize, style: Style
     Line::from(spans).style(line.style)
 }
 
-/// The action card's rows: the chip, the date and the quote in the accent,
-/// and on the right what answers it, on the surface background.
 fn card(
     rows: &mut Rows,
     row: &Row,
@@ -264,7 +220,6 @@ fn card(
             accent.add_modifier(Modifier::ITALIC),
         ));
     }
-    // What answers it, then Dismiss, each its words and its key.
     let mut answers: Vec<(String, Option<&'static str>)> = Vec::new();
     match line.status {
         Some(status) => answers.push((status.to_owned(), None)),
@@ -297,22 +252,20 @@ fn card(
         let total: usize = answers.iter().map(|(text, _)| text.width()).sum::<usize>()
             + 2 * answers.len().saturating_sub(1);
         pad(&mut spans, width.saturating_sub(total));
-        let mut x = width_of(&spans);
         for (index, (text, command)) in answers.iter().enumerate() {
             if index > 0 {
                 spans.push(Span::raw("  "));
-                x += 2;
             }
-            let w = text.width();
-            spans.push(Span::styled(text.clone(), theme.style(Role::Dim)));
-            if let Some(command) = command {
-                segments.push(Segment {
-                    start: u16::try_from(x).unwrap_or(0),
-                    width: u16::try_from(w).unwrap_or(0),
-                    command,
-                });
+            match command {
+                Some(command) => Rows::click(
+                    &mut spans,
+                    &mut segments,
+                    text.clone(),
+                    theme.style(Role::Dim),
+                    Target::Command(command),
+                ),
+                None => spans.push(Span::styled(text.clone(), theme.style(Role::Dim))),
             }
-            x += w;
         }
         pad(&mut spans, width);
         (Line::from(spans).style(surface), segments)
@@ -321,8 +274,7 @@ fn card(
         let (card, segments) = make(left, &answers);
         rows.push(card, At::Nothing, segments);
     } else {
-        // Too wide for one row: the words on the first, what answers on the
-        // second; the words give way to fit.
+        // The words on the first row and what answers on the second; the words give way to fit.
         let mut first = left;
         if left_width > width {
             let words: String = first.iter().map(|span| span.content.as_ref()).collect();
@@ -335,12 +287,152 @@ fn card(
     }
 }
 
-/// The column of the open message at `width` columns, as of `now`.
+/// The controller's thread bar, kicker and banners, as a terminal line can show them: a chip is
+/// its initials, the one on screen its label.
+fn thread_rows(rows: &mut Rows, thread: &Thread) {
+    let theme = rows.theme;
+    let (dim, text) = (theme.style(Role::Dim), theme.style(Role::Text));
+    if let Some(bar) = thread.bar.as_ref().filter(|bar| !bar.chips.is_empty()) {
+        let mut spans = vec![Span::styled(
+            format!("{} {}", bar.title, bar.count_line),
+            dim,
+        )];
+        let mut segments = Vec::new();
+        for chip in &bar.chips {
+            let (words, style, index) = match chip {
+                Chip::Message {
+                    label,
+                    current: true,
+                    ..
+                } => (
+                    format!("[{label}]"),
+                    theme.style(Role::Accent).add_modifier(Modifier::BOLD),
+                    None,
+                ),
+                Chip::Message {
+                    index,
+                    initials,
+                    unread,
+                    matched,
+                    ..
+                } => {
+                    let style = if *unread {
+                        text.add_modifier(Modifier::BOLD)
+                    } else {
+                        dim
+                    };
+                    let style = if *matched {
+                        style.add_modifier(Modifier::UNDERLINED)
+                    } else {
+                        style
+                    };
+                    (initials.clone(), style, Some(*index as usize))
+                }
+                Chip::More { count, .. } => (format!("+{count}"), dim, None),
+            };
+            if width_of(&spans) + 2 + words.width() > rows.width {
+                break;
+            }
+            spans.push(Span::raw("  "));
+            match index {
+                Some(index) => Rows::click(
+                    &mut spans,
+                    &mut segments,
+                    words,
+                    style,
+                    Target::Surface(Part::ThreadChip, index),
+                ),
+                None => spans.push(Span::styled(words, style)),
+            }
+        }
+        rows.push(Line::from(spans), At::Nothing, segments);
+    }
+    if !thread.kicker.is_empty() {
+        let mut spans = Vec::new();
+        let mut segments = Vec::new();
+        for (at, part) in thread.kicker.split(" \u{b7} ").enumerate() {
+            if at > 0 {
+                spans.push(Span::styled(" \u{b7} ", dim));
+            }
+            let step = if part.ends_with(" newer") {
+                Some(CommandId::NextInConversation)
+            } else if part.ends_with(" older") {
+                Some(CommandId::PrevInConversation)
+            } else {
+                None
+            };
+            match step {
+                Some(command) => Rows::click(
+                    &mut spans,
+                    &mut segments,
+                    part.to_owned(),
+                    dim,
+                    Target::Command(command.as_str()),
+                ),
+                None => spans.push(Span::styled(part.to_owned(), dim)),
+            }
+        }
+        rows.push(Line::from(spans), At::Nothing, segments);
+    }
+    for banner in [&thread.older, &thread.new_reply].into_iter().flatten() {
+        let latest = (
+            banner.action.as_str(),
+            banner.key.as_deref(),
+            CommandId::LatestInConversation,
+        );
+        banner_rows(rows, &banner.text, &[latest]);
+    }
+    if let Some(found) = &thread.matches {
+        let actions = [
+            (
+                found.next.as_str(),
+                found.next_key.as_deref(),
+                CommandId::FindNext,
+            ),
+            (
+                found.back.as_str(),
+                found.back_key.as_deref(),
+                CommandId::Back,
+            ),
+        ];
+        banner_rows(rows, &found.text, &actions);
+    }
+}
+
+fn banner_rows(rows: &mut Rows, text: &str, actions: &[(&str, Option<&str>, CommandId)]) {
+    let theme = rows.theme;
+    for line in wrap(
+        &Line::styled(text.to_owned(), theme.style(Role::Accent)),
+        rows.width,
+    ) {
+        rows.plain(line);
+    }
+    let mut spans = Vec::new();
+    let mut segments = Vec::new();
+    for (words, key, command) in actions {
+        if !spans.is_empty() {
+            spans.push(Span::raw("  "));
+        }
+        let said = match key {
+            Some(key) => format!("{words} {}", cap(key)),
+            None => (*words).to_owned(),
+        };
+        Rows::click(
+            &mut spans,
+            &mut segments,
+            said,
+            theme.style(Role::Text),
+            Target::Command(command.as_str()),
+        );
+    }
+    rows.push(Line::from(spans), At::Nothing, segments);
+}
+
 pub fn document(app: &App, theme: &Theme, width: u16, now: DateTime<Local>) -> Document {
-    let Some((row, member)) = shown(app) else {
+    let Some(member) = app.reading().map(|reading| &reading.shown) else {
         return Document::default();
     };
-    let reading = app.reading().expect("shown has a reading");
+    let row = app.row_of_open();
     let hint = |command| app.hint(command);
     let mut rows = Rows {
         width: usize::from(width),
@@ -349,32 +441,9 @@ pub fn document(app: &App, theme: &Theme, width: u16, now: DateTime<Local>) -> D
     };
     let dim = theme.style(Role::Dim);
     let text = theme.style(Role::Text);
-    let accent = theme.style(Role::Accent);
 
-    // The thread line.
-    if let Some(chip) = focus_dialog::thread_chip(row.map_or(1, |row| row.count)) {
-        let mut spans = vec![Span::styled(chip, dim)];
-        let mut segments = Vec::new();
-        if let Some(key) = hint(CommandId::PrevInConversation) {
-            spans.push(Span::raw("  "));
-            let start = width_of(&spans);
-            let key = cap(&key);
-            spans.push(Span::styled(key.clone(), accent));
-            spans.push(Span::styled(
-                format!(" {}", focus_dialog::EARLIER_MESSAGE),
-                dim,
-            ));
-            segments.push(Segment {
-                start: u16::try_from(start).unwrap_or(0),
-                width: u16::try_from(key.width() + 1 + focus_dialog::EARLIER_MESSAGE.width())
-                    .unwrap_or(0),
-                command: CommandId::PrevInConversation.as_str(),
-            });
-        }
-        rows.push(Line::from(spans), At::Nothing, segments);
-    }
+    thread_rows(&mut rows, app.thread());
 
-    // The subject, in bold.
     let subject = match row {
         Some(row) if !row.subject.as_str().trim().is_empty() => row.subject.as_str(),
         _ => "(no subject)",
@@ -389,28 +458,26 @@ pub fn document(app: &App, theme: &Theme, width: u16, now: DateTime<Local>) -> D
         rows.plain(line);
     }
 
-    // The pills, and the way to add one.
     let mut spans: Vec<Span<'static>> = Vec::new();
     for pill in row.iter().flat_map(|row| &row.labels) {
         spans.push(Span::styled("●", theme.label(pill.colour)));
         spans.push(Span::styled(format!("{}  ", pill.name.as_str()), dim));
     }
     let mut segments = Vec::new();
-    let start = width_of(&spans);
     let add = match hint(CommandId::AddLabel) {
         Some(key) => format!("+ Label {}", cap(&key)),
         None => "+ Label".to_owned(),
     };
-    segments.push(Segment {
-        start: u16::try_from(start).unwrap_or(0),
-        width: u16::try_from(add.width()).unwrap_or(0),
-        command: CommandId::AddLabel.as_str(),
-    });
-    spans.push(Span::styled(add, dim));
+    Rows::click(
+        &mut spans,
+        &mut segments,
+        add,
+        dim,
+        Target::Command(CommandId::AddLabel.as_str()),
+    );
     rows.push(Line::from(spans), At::Nothing, segments);
     rows.hairline();
 
-    // From, To and Cc, the date on the right of From.
     let label = |name: &str| Span::styled(format!("{name:<6}"), dim);
     let date = postio_ui::focus_row::message_date(member.when, now);
     let from = match &member.address {
@@ -445,8 +512,14 @@ pub fn document(app: &App, theme: &Theme, width: u16, now: DateTime<Local>) -> D
             ),
         ]));
     }
-    // Who the sender may really be, only when the host doubts it (#1928):
-    // one sentence in the warning role, no box and no badge.
+    if let Some(answered) = &app.thread().reply_to {
+        let said = fit(answered, usize::from(width).saturating_sub(9));
+        rows.plain(Line::from(vec![
+            Span::styled("Reply to ", dim),
+            Span::styled(said, text),
+        ]));
+    }
+    // One sentence in the warning role, only when the host doubts the sender (#1928).
     if let Some(warning) = &member.warning {
         let style = theme.style(Role::Warning);
         let said = Line::styled(warning.as_str().to_owned(), style);
@@ -465,16 +538,12 @@ pub fn document(app: &App, theme: &Theme, width: u16, now: DateTime<Local>) -> D
     }
     rows.hairline();
 
-    // The action card, on the message the marker is about.
     let carded = row.is_some_and(|row| app.marker_shown(row, member));
     if let (true, Some(row)) = (carded, row) {
         card(&mut rows, row, now, &hint, app.captures());
-        rows.blank();
-    } else {
-        rows.blank();
     }
+    rows.blank();
 
-    // The body.
     let notice = |text: String| Line::styled(text, dim);
     if member.images_allowed {
         rows.plain(notice(
@@ -486,6 +555,11 @@ pub fn document(app: &App, theme: &Theme, width: u16, now: DateTime<Local>) -> D
             member.held_back.summary()
         )));
     }
+    let at_of = |target: LineTarget, links: &[SafeText]| match target {
+        LineTarget::Text => At::Nothing,
+        LineTarget::Fold(block) => At::Fold(block),
+        LineTarget::Link(link) => At::Link(links[link].as_str().to_owned()),
+    };
     let mut closing_fold: Option<(Line<'static>, At)> = None;
     match &member.body {
         Some(body) => {
@@ -495,16 +569,8 @@ pub fn document(app: &App, theme: &Theme, width: u16, now: DateTime<Local>) -> D
             if matches!(body.blocks.last(), Some(Block::Fold { folded: true, .. }))
                 && let (Some(line), Some(target)) = (lines.pop(), targets.pop())
             {
-                let at = match target {
-                    LineTarget::Fold(block) => At::Fold {
-                        member: reading.current,
-                        block,
-                    },
-                    _ => At::Nothing,
-                };
-                closing_fold = Some((line, at));
+                closing_fold = Some((line, at_of(target, &body.links)));
             }
-            // The marker's sentence, in its own words.
             if carded
                 && let Some(excerpt) = row
                     .and_then(|row| row.marker.as_ref())
@@ -516,14 +582,7 @@ pub fn document(app: &App, theme: &Theme, width: u16, now: DateTime<Local>) -> D
                 }
             }
             for (line, target) in lines.iter().zip(targets) {
-                let at = match target {
-                    LineTarget::Text => At::Nothing,
-                    LineTarget::Fold(block) => At::Fold {
-                        member: reading.current,
-                        block,
-                    },
-                    LineTarget::Link(link) => At::Link(body.links[link].as_str().to_owned()),
-                };
+                let at = at_of(target, &body.links);
                 for wrapped in wrap(line, usize::from(width)) {
                     rows.push(wrapped, at.clone(), Vec::new());
                 }
@@ -532,14 +591,12 @@ pub fn document(app: &App, theme: &Theme, width: u16, now: DateTime<Local>) -> D
         None => rows.plain(Line::raw("…")),
     }
 
-    // The attachments, as chips that wrap.
     let parts = member.attachments();
     if !parts.is_empty() {
         rows.blank();
         let mut spans: Vec<Span<'static>> = Vec::new();
-        let mut at_part: Vec<(usize, usize)> = Vec::new();
         let mut used = 0;
-        for (index, part) in parts.iter().enumerate() {
+        for part in parts {
             let name = SafeText::new(part.filename.as_deref().unwrap_or(&part.mime_type));
             let chip = format!(
                 "⎘ {} {}",
@@ -549,28 +606,17 @@ pub fn document(app: &App, theme: &Theme, width: u16, now: DateTime<Local>) -> D
             let chip = fit(&chip, usize::from(width));
             let w = chip.width();
             if used > 0 && used + 3 + w > usize::from(width) {
-                rows.push(
-                    Line::from(std::mem::take(&mut spans)),
-                    At::Nothing,
-                    part_segments(&at_part, reading.current),
-                );
-                at_part.clear();
+                rows.plain(Line::from(std::mem::take(&mut spans)));
                 used = 0;
             }
             if used > 0 {
                 spans.push(Span::raw("   "));
                 used += 3;
             }
-            at_part.push((index, used));
             spans.push(Span::styled(chip, text));
             used += w;
-            at_part.push((index, used));
         }
-        rows.push(
-            Line::from(spans),
-            At::Nothing,
-            part_segments(&at_part, reading.current),
-        );
+        rows.plain(Line::from(spans));
     }
     if let Some((line, at)) = closing_fold {
         rows.push(line, at, Vec::new());
@@ -590,8 +636,7 @@ pub fn document(app: &App, theme: &Theme, width: u16, now: DateTime<Local>) -> D
     Document { lines: rows.lines }
 }
 
-/// A find match: the accent reversed, so it reads without colour; the one the
-/// field is on besides bold and underlined.
+/// Reversed, so it reads without colour; the current one bold and underlined too.
 pub(super) fn find_style(theme: &Theme, current: bool) -> Style {
     let style = theme.style(Role::Accent).add_modifier(Modifier::REVERSED);
     if current {
@@ -601,14 +646,6 @@ pub(super) fn find_style(theme: &Theme, current: bool) -> Style {
     }
 }
 
-/// A part chip's click regions are drawn as parts of the row: every chip
-/// on it is the part itself.
-fn part_segments(_edges: &[(usize, usize)], _member: usize) -> Vec<Segment> {
-    Vec::new()
-}
-
-/// The marker's sentence in the body: on the surface, with an accent
-/// underline.
 pub(super) fn surface_underline(theme: &Theme) -> Style {
     theme
         .style(Role::Surface)
@@ -616,7 +653,6 @@ pub(super) fn surface_underline(theme: &Theme) -> Style {
         .add_modifier(Modifier::UNDERLINED)
 }
 
-/// A header's verb: its words and its key, and the command a click runs.
 fn verb(app: &App, theme: &Theme, command: CommandId, label: &str) -> (Vec<Span<'static>>, usize) {
     let mut spans = vec![Span::styled(label.to_owned(), theme.style(Role::Text))];
     if let Some(key) = app.hint(command) {
@@ -629,8 +665,6 @@ fn verb(app: &App, theme: &Theme, command: CommandId, label: &str) -> (Vec<Span<
     (spans, width)
 }
 
-/// The verbs on the action row, in order: the received message's, or the
-/// ones that settle a draft's send.
 fn action_verbs(app: &App, folded: bool) -> Vec<focus_dialog::Verb> {
     let state = app.row_of_open().and_then(|row| row.send_state);
     match focus_dialog::send_verbs(state) {
@@ -653,8 +687,7 @@ fn action_verbs(app: &App, folded: bool) -> Vec<focus_dialog::Verb> {
     }
 }
 
-/// Whether the action row folds Label, Move and Delete into More at this
-/// width: a narrow frame, or a row that would not fit.
+/// Label, Move and Delete fold into More in a narrow frame, or a row that would not fit.
 pub fn folded(app: &App, width: u16, inside: u16) -> bool {
     if app
         .row_of_open()
@@ -679,9 +712,6 @@ pub fn folded(app: &App, width: u16, inside: u16) -> bool {
     used + 2 > usize::from(inside)
 }
 
-/// The open message as an overlay: the list behind it drawn dimmed, and over
-/// it a rounded frame covering every row but the top bar and the bottom
-/// line.
 pub fn over_list(
     frame: &mut Frame,
     area: Rect,
@@ -699,9 +729,7 @@ pub fn over_list(
     }
 }
 
-/// A rounded frame covering every row of `area` but the first and the last,
-/// the rows behind it dimmed and taking no click, its header's hairline
-/// meeting the border. Answers the frame and what is inside it.
+/// Every row of `area` but the first and the last; answers the frame and what is inside it.
 pub fn framed(
     frame: &mut Frame,
     area: Rect,
@@ -713,7 +741,6 @@ pub fn framed(
     if outer.width < 12 || outer.height < 8 {
         return None;
     }
-    // Everything under the frame is dimmed and takes no click.
     let behind = Rect::new(
         area.x,
         area.y + 1,
@@ -739,7 +766,6 @@ pub fn framed(
     Some((outer, inside))
 }
 
-/// A small framed list in the middle of `area`.
 pub(super) fn draw_menu(
     frame: &mut Frame,
     area: Rect,
@@ -807,9 +833,6 @@ pub(super) fn draw_menu(
     }
 }
 
-/// Draw the open message into `area`: three header rows, a hairline, and the
-/// column below, scrolled to `top`. `framed` is whether `area` is the inside
-/// of a frame, whose border draws the hairline's tees.
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
     frame: &mut Frame,
@@ -823,9 +846,9 @@ pub fn draw(
     if area.width < 10 || area.height < 5 {
         return;
     }
-    let Some(reading) = app.reading() else {
+    if app.reading().is_none() {
         return;
-    };
+    }
     let row = app.row_of_open();
     let dim = theme.style(Role::Dim);
     let text = theme.style(Role::Text);
@@ -833,7 +856,6 @@ pub fn draw(
     let inner = usize::from(area.width);
     let at = |y: u16| Rect::new(area.x, area.y + y, area.width, 1);
 
-    // Row 1: the step keys, the subject, and Esc ✕.
     let mut left: Vec<Span<'static>> = Vec::new();
     let mut targets: Vec<(usize, usize, &'static str)> = Vec::new();
     for (arrow, command) in [("↑", CommandId::PrevMessage), ("↓", CommandId::NextMessage)] {
@@ -907,7 +929,6 @@ pub fn draw(
         Target::Command(CommandId::Back.as_str()),
     );
 
-    // Row 2: where in the list and the thread.
     let position = app.position_line();
     let position = fit(&position, inner.saturating_sub(2));
     let at_x = inner.saturating_sub(position.width()) / 2;
@@ -921,7 +942,6 @@ pub fn draw(
         ),
     );
 
-    // Row 3: the action row.
     if app.raw().is_none() {
         let fold = folded(app, outer, area.width);
         let mut x = area.x + 1;
@@ -932,7 +952,6 @@ pub fn draw(
             if x + w16 > end {
                 break;
             }
-            // The one primary verb of a draft's action row is bold.
             frame.render_widget(Line::from(spans), Rect::new(x, area.y + 2, w16, 1));
             hits.add(
                 Rect::new(x, area.y + 2, w16, 1),
@@ -942,7 +961,6 @@ pub fn draw(
         }
     }
 
-    // The hairline, then the column.
     frame.render_widget(Line::styled("─".repeat(inner), dim), at(3));
     let find_height = app.find_rows().min(area.height.saturating_sub(5));
     let body = Rect::new(
@@ -977,16 +995,12 @@ pub fn draw(
         for segment in &line.segments {
             hits.add(
                 Rect::new(x + segment.start, y, segment.width, 1),
-                Target::Command(segment.command),
+                segment.target,
             );
         }
     }
-    let _ = reading;
 }
 
-/// The find field, on the last row inside the frame: what is typed, how
-/// many matches it has and which it is on, and the keys that step and close,
-/// each a click.
 fn draw_find(frame: &mut Frame, row: Rect, app: &App, theme: &Theme, hits: &mut Hits) {
     let Some(find) = app.find() else {
         return;
@@ -996,7 +1010,6 @@ fn draw_find(frame: &mut Frame, row: Rect, app: &App, theme: &Theme, hits: &mut 
     let accent = theme.style(Role::Accent);
     let total = app.find_total();
     let says = find.says(total);
-    // From the right: the words and keys that act, then the count.
     let mut hints: Vec<(String, &'static str)> = Vec::new();
     for (command, word) in [
         (CommandId::FindNext, "next"),
@@ -1008,7 +1021,6 @@ fn draw_find(frame: &mut Frame, row: Rect, app: &App, theme: &Theme, hits: &mut 
         }
     }
     let inner = usize::from(row.width);
-    let query_room = inner.saturating_sub(4 + says.width() + 2);
     // Keys give way first when the row is narrow, the last first.
     let mut keep = hints.len();
     let used = |keep: usize| {
@@ -1020,7 +1032,6 @@ fn draw_find(frame: &mut Frame, row: Rect, app: &App, theme: &Theme, hits: &mut 
     while keep > 0 && used(keep) + says.width() + 12 > inner {
         keep -= 1;
     }
-    let _ = query_room;
     let mut right: Vec<Span<'static>> = Vec::new();
     let mut targets: Vec<(usize, usize, &'static str)> = Vec::new();
     let mut at = 0;
@@ -1071,7 +1082,6 @@ fn draw_find(frame: &mut Frame, row: Rect, app: &App, theme: &Theme, hits: &mut 
     }
 }
 
-/// The message as it came off the wire, wrapped to the frame.
 fn draw_raw(
     frame: &mut Frame,
     area: Rect,
@@ -1118,8 +1128,7 @@ fn draw_raw(
     }
 }
 
-/// The raw source's rows at `width` columns: each line of it broken at the
-/// width, so nothing runs past the frame.
+/// Each line broken at `width`, so nothing runs past the frame.
 pub fn raw_lines(text: &SafeText, width: usize) -> Vec<String> {
     let mut rows = Vec::new();
     for line in text.as_str().lines() {
@@ -1147,15 +1156,14 @@ mod tests {
 
     use crate::app::{App, Effect, Input, Pointer, update};
     use crate::test_support::{
-        app, conversation, hits_of, key, label, local, places, press, screen, seed_places,
-        show_focus, unread,
+        app, conversation, enter_thread, header, hits_of, key, label, local, places, press, screen,
+        seed_places, show_focus, unread,
     };
     use crossterm::event::{KeyCode, KeyModifiers};
 
     const QUOTE: &str = "Please leave comments by Wednesday";
 
-    /// The inbox of terminal.md's open message: a conversation of six, the
-    /// newest asking for comments, with a label, a marker and two files.
+    /// A conversation of six, the newest asking for comments, with a label, a marker and two files.
     fn inbox(size: (u16, u16)) -> App {
         let mut app = app(size);
         seed_places(&mut app, places());
@@ -1206,46 +1214,27 @@ mod tests {
         }
     }
 
-    /// The first message opened, its thread of six read, its body here.
     fn opened(size: (u16, u16)) -> App {
         opened_warning(size, None)
     }
 
-    /// [`opened`], its sender flagged by the host as `warning`.
     fn opened_warning(size: (u16, u16), warning: Option<&str>) -> App {
         let mut app = inbox(size);
-        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        let members = (1..=6)
-            .map(|id| {
-                conversation(
-                    id,
-                    "Lena Park",
-                    "Harbor API draft v3",
-                    "",
-                    local(23, 11, 22),
-                )
-                .representative
-            })
-            .collect();
-        update(
-            &mut app,
-            Input::Conversation {
-                thread: ThreadId::new(60),
-                members: Ok(members),
-            },
-        );
+        enter_thread(&mut app, &[1, 2, 3, 4, 5, 6]);
+        let mut row = header(&app, MessageId::new(6));
+        row.to = vec![
+            EmailAddress::new(None::<String>, "you@example.com"),
+            EmailAddress::new(Some("Ben Adeyemi"), "ben@example.com"),
+        ];
+        row.cc = vec![EmailAddress::new(
+            Some("Grace Oyelaran"),
+            "grace@example.com",
+        )];
         update(
             &mut app,
             Input::Addressed {
                 message: MessageId::new(6),
-                to: vec![
-                    EmailAddress::new(None::<String>, "you@example.com"),
-                    EmailAddress::new(Some("Ben Adeyemi"), "ben@example.com"),
-                ],
-                cc: vec![EmailAddress::new(
-                    Some("Grace Oyelaran"),
-                    "grace@example.com",
-                )],
+                row,
                 warning: warning.map(str::to_owned),
             },
         );
@@ -1326,7 +1315,7 @@ mod tests {
         assert!(step.contains("↑ k  ↓ j"), "{drawn}");
         assert!(step.contains("Harbor API draft v3"), "{drawn}");
         assert!(step.contains("Esc ✕"), "{drawn}");
-        assert!(lines[3].contains("Message 1 of 3 · thread of 6"), "{drawn}");
+        assert!(lines[3].contains("Message 1 of 3"), "{drawn}");
         let verbs = lines[4];
         for wanted in [
             "Reply r",
@@ -1366,8 +1355,15 @@ mod tests {
                 .position(|line| line.contains(needle))
                 .unwrap_or_else(|| panic!("{needle} missing:\n{drawn}"))
         };
-        let thread = at("Latest of 6 in this thread");
-        assert!(text[thread].contains("[ earlier message"), "{drawn}");
+        let thread = at("Thread 6");
+        assert!(
+            text[thread].contains("LP  LP"),
+            "a chip a message:\n{drawn}"
+        );
+        assert!(
+            text[thread + 1].contains("Message 6 of 6 · [ older"),
+            "{drawn}"
+        );
         let subject = text
             .iter()
             .enumerate()
@@ -1375,7 +1371,7 @@ mod tests {
             .find(|(_, line)| line.contains("Harbor API draft v3"))
             .map(|(at, _)| at)
             .unwrap();
-        assert_eq!(subject, thread + 1, "{drawn}");
+        assert_eq!(subject, thread + 2, "{drawn}");
         assert_eq!(at("●Harbor"), subject + 1, "{drawn}");
         assert!(text[subject + 1].contains("+ Label l"), "{drawn}");
         assert!(text[subject + 2].contains("────"), "a hairline:\n{drawn}");
@@ -1420,7 +1416,6 @@ mod tests {
         );
     }
 
-    /// The column's text, one entry per frame row.
     fn reader(drawn: &str) -> Vec<String> {
         drawn
             .lines()
@@ -1486,66 +1481,51 @@ mod tests {
     }
 
     #[test]
-    fn only_the_body_shown_is_read_and_opening_reads_it_once() {
+    fn a_thread_is_read_once_by_the_controller_and_only_the_message_shown_has_its_body_read() {
         let mut app = inbox((120, 36));
-        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        assert!(
-            effects.contains(&Effect::ReadConversation(ThreadId::new(60))),
-            "{effects:?}"
-        );
-        assert!(
-            !effects.iter().any(|e| matches!(e, Effect::ReadBody(_))),
+        let effects = enter_thread(&mut app, &[1, 2, 3, 4, 5, 6]);
+        let bodies: Vec<&Effect> = effects
+            .iter()
+            .filter(|effect| matches!(effect, Effect::ReadBody(_)))
+            .collect();
+        assert_eq!(
+            bodies,
+            [&Effect::ReadBody(MessageId::new(6))],
             "{effects:?}"
         );
     }
 
     #[test]
-    fn j_and_k_step_the_list_with_the_message_open_and_read_the_next_body() {
-        let mut app = opened((120, 36));
-        let effects = update(&mut app, press('j'));
-        assert_eq!(app.cursor(), 1);
-        assert!(
-            effects.contains(&Effect::ReadBody(MessageId::new(7))),
-            "{effects:?}"
-        );
-        let drawn = screen(120, 36, &app);
-        assert!(lines_of(&drawn)[2].contains("Later 7"), "{drawn}");
-        assert!(lines_of(&drawn)[3].contains("Message 2 of 3"), "{drawn}");
-        update(&mut app, press('k'));
-        assert_eq!(app.cursor(), 0);
-        let effects = update(&mut app, press('k'));
-        assert!(effects.is_empty(), "the first row stops it: {effects:?}");
-    }
-
-    #[test]
-    fn n_and_p_step_the_thread_and_the_chip_shows_where() {
-        let mut app = opened((120, 36));
-        let effects = update(&mut app, press('p'));
+    fn the_thread_keys_and_its_chips_step_through_it_and_each_message_reads_its_own_body() {
+        let size = (120, 36);
+        let mut app = opened(size);
+        let effects = update(&mut app, press('['));
         assert!(
             effects.contains(&Effect::ReadBody(MessageId::new(5))),
             "{effects:?}"
         );
-        let drawn = screen(120, 36, &app);
-        assert!(drawn.contains("5 of 6 in the thread"), "{drawn}");
-        update(&mut app, press('n'));
-        assert!(screen(120, 36, &app).contains("thread of 6"));
+        let drawn = screen(size.0, size.1, &app);
+        assert!(
+            drawn.contains("Message 5 of 6 · ] newer · [ older"),
+            "{drawn}"
+        );
+        assert!(
+            drawn.contains("Harbor API draft v3"),
+            "the row's subject stays:\n{drawn}"
+        );
+        let (x, y) = find(&app, size, "LP", 6);
+        let effects = click_at(&mut app, size, x, y);
+        assert!(
+            effects.contains(&Effect::ReadBody(MessageId::new(1))),
+            "the first chip: {effects:?}"
+        );
+        assert!(screen(size.0, size.1, &app).contains("Message 1 of 6"));
     }
 
     #[test]
     fn the_message_counts_as_read_after_the_dwell_and_shift_i_stops_the_clock() {
         let mut app = inbox((120, 36));
-        let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        let _ = effects;
-        let members = (1..=6)
-            .map(|id| conversation(id, "Lena Park", "s", "", local(23, 11, 22)).representative)
-            .collect();
-        let effects = update(
-            &mut app,
-            Input::Conversation {
-                thread: ThreadId::new(60),
-                members: Ok(members),
-            },
-        );
+        let effects = enter_thread(&mut app, &[1, 2, 3, 4, 5, 6]);
         let Some(Effect::ArmDwell {
             generation,
             message,
@@ -1639,19 +1619,10 @@ mod tests {
     #[test]
     fn shift_a_lists_the_links_and_attachments_and_choosing_one_opens_it() {
         let mut app = inbox((120, 36));
-        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        enter_thread(&mut app, &[6]);
         let nothing = update(&mut app, press('A'));
         assert!(app.menu().is_none(), "{nothing:?}");
         assert_eq!(app.notice(), Some(postio_ui::focus_target::NOTHING_TO_OPEN));
-        update(
-            &mut app,
-            Input::Conversation {
-                thread: ThreadId::new(60),
-                members: Ok(vec![
-                    conversation(6, "Lena Park", "s", "", local(23, 11, 22)).representative,
-                ]),
-            },
-        );
         update(
             &mut app,
             Input::Body {
@@ -1693,9 +1664,16 @@ mod tests {
         update(&mut app, press('j'));
         let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         assert!(
-            effects
-                .iter()
-                .any(|e| matches!(e, Effect::Send(postio_core::Command::Delete { .. }))),
+            effects.iter().any(|e| matches!(
+                e,
+                Effect::Focus {
+                    request: postio_focus::Request::Send {
+                        command: postio_core::Command::Delete { .. },
+                        ..
+                    },
+                    ..
+                }
+            )),
             "{effects:?}"
         );
         // Wide enough to have no folded verbs: nothing opens.
@@ -1732,25 +1710,33 @@ mod tests {
     fn every_header_control_and_the_card_is_a_click_for_its_key() {
         let size = (120, 36);
         let mut app = opened(size);
-        // An action row verb.
         let (x, y) = find(&app, size, "Archive e", 2);
         let effects = click_at(&mut app, size, x, y);
         assert!(
-            effects
-                .iter()
-                .any(|e| matches!(e, Effect::Send(postio_core::Command::Archive { .. }))),
+            effects.iter().any(|e| matches!(
+                e,
+                Effect::Focus {
+                    request: postio_focus::Request::Send {
+                        command: postio_core::Command::Archive { .. },
+                        ..
+                    },
+                    ..
+                }
+            )),
             "{effects:?}"
         );
-        // The card's Dismiss.
         let (x, y) = find(&app, size, "Dismiss -", 6);
         let effects = click_at(&mut app, size, x, y);
         assert!(
             effects.iter().any(|e| matches!(
                 e,
-                Effect::Send(postio_core::Command::DismissMarker {
-                    dismissed: true,
+                Effect::Focus {
+                    request: postio_focus::Request::Post(postio_core::Command::DismissMarker {
+                        dismissed: true,
+                        ..
+                    }),
                     ..
-                })
+                }
             )),
             "{effects:?}"
         );
@@ -1758,15 +1744,13 @@ mod tests {
             !screen(size.0, size.1, &app).contains("To-do"),
             "the card goes"
         );
-        // The thread chip steps back.
-        let (x, y) = find(&app, size, "[ earlier message", 6);
+        // The kicker's key steps back.
+        let (x, y) = find(&app, size, "[ older", 2);
         click_at(&mut app, size, x, y);
-        assert_eq!(app.reading().unwrap().current, 4);
-        // The down step key opens the next row.
+        assert_eq!(app.reading().unwrap().shown.id, MessageId::new(5));
         let (x, y) = find(&app, size, "↓ j", 2);
         click_at(&mut app, size, x, y);
         assert_eq!(app.cursor(), 1);
-        // And the close.
         let (x, y) = find(&app, size, "Esc ✕", 2);
         click_at(&mut app, size, x, y);
         assert_eq!(app.front(), crate::app::Front::List);
@@ -1780,16 +1764,7 @@ mod tests {
         assert!(effects.is_empty(), "{effects:?}");
         assert_eq!(app.front(), crate::app::Front::Reader);
         let mut app = inbox(size);
-        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        update(
-            &mut app,
-            Input::Conversation {
-                thread: ThreadId::new(60),
-                members: Ok(vec![
-                    conversation(6, "Lena Park", "s", "", local(23, 11, 22)).representative,
-                ]),
-            },
-        );
+        enter_thread(&mut app, &[6]);
         let long: Vec<String> = (0..80).map(|n| format!("paragraph {n}")).collect();
         update(&mut app, body(&long.join("\n")));
         let hit = hits_of(size.0, size.1, &app).at(60, 20).unwrap();
@@ -1797,7 +1772,7 @@ mod tests {
         assert!(app.reader_top() > 0);
         let drawn = screen(size.0, size.1, &app);
         assert!(
-            !drawn.contains("Latest of"),
+            !drawn.contains("+ Label"),
             "scrolled past the head:\n{drawn}"
         );
     }

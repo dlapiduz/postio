@@ -45,13 +45,7 @@ impl App {
                     return Some(vec![Effect::Redraw]);
                 };
                 composer.set_remind_at(Some(*at));
-                return Some(vec![
-                    Effect::Autosave {
-                        generation: composer.generation(),
-                        edit: composer.edits(),
-                    },
-                    Effect::Redraw,
-                ]);
+                return Some(self.edited());
             }
             _ => return None,
         }
@@ -63,14 +57,6 @@ impl App {
     }
 
     pub(super) fn open_picker(&mut self, command: CommandId) -> Vec<Effect> {
-        // The controller aims at the list's cursor; a message opened from elsewhere is not on it.
-        if self
-            .reading
-            .as_ref()
-            .is_some_and(|reading| reading.own.is_some())
-        {
-            return Vec::new();
-        }
         self.tell(Told::Command(command))
     }
 

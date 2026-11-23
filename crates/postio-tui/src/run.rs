@@ -390,12 +390,22 @@ async fn write_drafts(
 ) {
     while let Ok(job) = jobs.recv().await {
         match job {
-            Effect::SaveDraft { generation, draft } => {
+            Effect::SaveDraft {
+                generation,
+                composition,
+                draft,
+            } => {
                 let saved = client
                     .save_draft(generation, *draft)
                     .await
                     .map_err(|error| error.message().to_owned());
-                let _ = inputs.send(Input::DraftSaved { generation, saved }).await;
+                let _ = inputs
+                    .send(Input::DraftSaved {
+                        generation,
+                        composition,
+                        saved,
+                    })
+                    .await;
             }
             Effect::DiscardDraft { generation, known } => {
                 let _ = client.discard_draft(generation, known).await;
@@ -408,7 +418,7 @@ async fn write_drafts(
                 let queued = client
                     .queue_send(generation, *draft, at)
                     .await
-                    .map(|_| ())
+                    .map(|queued| queued.draft)
                     .map_err(|error| error.message().to_owned());
                 let _ = inputs.send(Input::Queued { at, queued }).await;
             }
@@ -419,8 +429,8 @@ async fn write_drafts(
 
 /// The local draft behind a row, taken back from the Outbox if it was
 /// queued, as the desktop does on opening one (#433).
-async fn resume(client: &Client, message: postio_model::MessageId) -> Input {
-    let Some(draft) = client.draft_behind(message).await.ok().flatten() else {
+async fn resume(client: &Client, found: Option<postio_model::Draft>) -> Input {
+    let Some(draft) = found else {
         return Input::Resumed {
             found: None,
             failure: None,
@@ -886,17 +896,6 @@ fn perform(
                         .await;
                 });
             }
-            Effect::ReadParts(message) => {
-                let client = client.clone();
-                let inputs = inputs.clone();
-                tokio::spawn(async move {
-                    let parts = client
-                        .parts(message)
-                        .await
-                        .map_err(|error| error.message().to_owned());
-                    let _ = inputs.send(Input::Parts { message, parts }).await;
-                });
-            }
             Effect::SavePart {
                 message,
                 attachment,
@@ -1068,13 +1067,6 @@ fn perform(
                     let _ = inputs.send(Input::NoticeDue { generation }).await;
                 });
             }
-            Effect::Autosave { generation, edit } => {
-                let inputs = inputs.clone();
-                tokio::spawn(async move {
-                    tokio::time::sleep(crate::app::AUTOSAVE).await;
-                    let _ = inputs.send(Input::AutosaveDue { generation, edit }).await;
-                });
-            }
             // One writer, in order: see `write_drafts`.
             effect @ (Effect::SaveDraft { .. }
             | Effect::DiscardDraft { .. }
@@ -1161,18 +1153,25 @@ fn perform(
                 let client = client.clone();
                 let inputs = inputs.clone();
                 tokio::spawn(async move {
-                    let _ = inputs.send(resume(&client, message).await).await;
+                    let found = client.draft_behind(message).await.ok().flatten();
+                    let _ = inputs.send(resume(&client, found).await).await;
                 });
             }
-            Effect::ReadConversation(thread) => {
+            Effect::ResumeDraft(draft) => {
                 let client = client.clone();
                 let inputs = inputs.clone();
                 tokio::spawn(async move {
-                    let members = client
-                        .conversation(thread)
-                        .await
-                        .map_err(|error| error.message().to_owned());
-                    let _ = inputs.send(Input::Conversation { thread, members }).await;
+                    let found = client.draft_by_id(draft).await.ok().flatten();
+                    let _ = inputs.send(resume(&client, found).await).await;
+                });
+            }
+            Effect::ReadNewer(messages) => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    use postio_model::listing::MailStore as _;
+                    let rows = client.message_rows(messages).await.unwrap_or_default();
+                    let _ = inputs.send(Input::Newer(rows)).await;
                 });
             }
             Effect::ReadBody(message) => {
@@ -1192,8 +1191,7 @@ fn perform(
                                 let _ = inputs
                                     .send(Input::Addressed {
                                         message,
-                                        to: row.to,
-                                        cc: row.cc,
+                                        row,
                                         warning: reading.sender_warning,
                                     })
                                     .await;

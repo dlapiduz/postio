@@ -62,7 +62,7 @@ impl App {
             return Vec::new();
         };
         if choosing {
-            return self.chooser_key(key);
+            return self.project_chooser_key(key);
         }
         match (key.code, sheet.field()) {
             (KeyCode::Tab, _) => sheet.walk(1),
@@ -107,7 +107,7 @@ impl App {
         }
     }
 
-    fn chooser_key(&mut self, key: &KeyEvent) -> Vec<Effect> {
+    fn project_chooser_key(&mut self, key: &KeyEvent) -> Vec<Effect> {
         let Some(sheet) = self.surfaces.capture.as_mut() else {
             return Vec::new();
         };

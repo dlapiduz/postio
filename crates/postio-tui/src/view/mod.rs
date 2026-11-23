@@ -984,11 +984,7 @@ mod tests {
         let mut app = with_places((160, 30));
         app.set_reading_for_tests(crate::conversation::Reading {
             row: postio_model::MessageId::new(1),
-            members: vec![crate::conversation::tests::member_saying(
-                1,
-                &words.join(" "),
-            )],
-            current: 0,
+            shown: crate::conversation::tests::member_saying(1, &words.join(" ")),
             own: None,
         });
         let screen = screen(160, 30, &app);

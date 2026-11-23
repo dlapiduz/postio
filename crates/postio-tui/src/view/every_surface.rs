@@ -244,7 +244,7 @@ fn cases() -> Vec<Case> {
                 Styled("Accept y", REVERSED),
             ],
             controls: vec![
-                ctl("↑ k", "k").after("j"),
+                ctl("↑ k", "k").after("G"),
                 ctl("↓ j", "j"),
                 ctl("Esc ✕", "<Esc>"),
                 ctl("Reply r", "r"),
@@ -306,7 +306,7 @@ fn cases() -> Vec<Case> {
                 Styled("Dismiss -", REVERSED),
             ],
             controls: vec![
-                ctl("↑ k", "k").after("j"),
+                ctl("↑ k", "k").after("G"),
                 ctl("↓ j", "j"),
                 ctl("Esc ✕", "<Esc>"),
                 ctl("Reply r", "r"),

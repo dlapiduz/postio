@@ -82,7 +82,7 @@ impl App {
         Ok(vec![Effect::Redraw])
     }
 
-    fn over_filtered(&self) -> bool {
+    pub(super) fn over_filtered(&self) -> bool {
         self.surfaces.filtered.is_some()
             && match self.focus {
                 Focus::Filtered => true,
@@ -490,6 +490,33 @@ mod tests {
         update(&mut app, press('j'));
         let drawn = screen(120, 30, &app);
         assert!(line_with(&drawn, "Filtered 13").contains('▌'), "{drawn}");
+    }
+
+    #[test]
+    fn a_picker_over_the_open_message_is_about_it_and_snoozes_it() {
+        let mut app = open_filtered((120, 30));
+        update(&mut app, press('j'));
+        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        update(&mut app, press('b'));
+        let drawn = screen(120, 30, &app);
+        assert!(drawn.contains("Ledger · Filtered 12"), "{drawn}");
+        let effects = update(&mut app, press('2'));
+        let aims: Vec<_> = crate::test_support::asked(&effects)
+            .into_iter()
+            .filter_map(|(_, request)| match request {
+                Request::Send {
+                    command: Command::Snooze { .. },
+                    aims,
+                    ..
+                } => Some(aims),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            aims,
+            vec![vec![MessageTarget::Messages(vec![MessageId::new(12)])]],
+            "{effects:?}"
+        );
     }
 
     #[test]

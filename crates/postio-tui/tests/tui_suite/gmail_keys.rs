@@ -83,7 +83,6 @@ fn in_reader() -> App {
             html: None,
         },
     );
-    update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
     assert_eq!(app.focus(), Focus::Reader, "the keyboard is in the message");
     app
 }
@@ -388,8 +387,14 @@ fn every_gmail_key_does_its_command_on_every_surface_that_offers_it() {
                     let (mut app, _) = sample::state(state, 120, 30);
                     if *id == "prev_message" {
                         // The cursor starts on the first row: step off it, so
-                        // that stepping back has somewhere to go.
-                        press_binding(&mut app, "j", 0);
+                        // that stepping back has somewhere to go. A message open
+                        // goes to the last row, for the next one is a digest.
+                        let off = if matches!(*state, "open" | "open-narrow" | "find" | "pane") {
+                            "G"
+                        } else {
+                            "j"
+                        };
+                        press_binding(&mut app, off, 0);
                     }
                     let before = screen(120, 30, &app);
                     let effects = press_binding(&mut app, binding, delivery);
@@ -410,37 +415,21 @@ fn every_gmail_key_does_its_command_on_every_surface_that_offers_it() {
 
 /// An app with a three-message conversation open, on its newest message.
 fn in_thread() -> App {
-    use postio_model::ThreadId;
-    use postio_tui::test_support::{held, row};
+    use postio_tui::test_support::{conversation, enter_thread, local, show_focus};
     let mut app = in_list();
-    let mut thread = row(0);
-    thread.thread = Some(ThreadId::new(9));
-    thread.is_thread = true;
-    thread.count = 3;
-    postio_tui::test_support::show_rows(&mut app, &[thread]);
-    let effects = app.open_reading(MessageId::new(1));
-    assert!(
-        effects.contains(&Effect::ReadConversation(ThreadId::new(9))),
-        "{effects:?}"
-    );
-    update(
+    let mut thread = conversation(1, "Ada", "Atlas", "", local(20, 9, 0));
+    thread.message_count = 3;
+    show_focus(
         &mut app,
-        Input::Conversation {
-            thread: ThreadId::new(9),
-            members: Ok(vec![
-                held(11, "Ada", "Atlas", "first"),
-                held(12, "Bea", "Atlas", "second"),
-                held(13, "Cy", "Atlas", "third"),
-            ]),
-        },
+        vec![postio_ui::focus_list::FocusRow::conversation(thread)],
     );
-    update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+    enter_thread(&mut app, &[11, 12, 13]);
     assert_eq!(app.focus(), Focus::Reader);
     app
 }
 
-fn shown(app: &App) -> usize {
-    app.reading().expect("a message is open").current
+fn shown(app: &App) -> i64 {
+    app.reading().expect("a message is open").shown.id.get() - 11
 }
 
 #[test]

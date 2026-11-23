@@ -1,7 +1,7 @@
 //! The list, driven by `postio_focus::FocusController`: its intents become
 //! this app's cursor, selection, rows and toast.
 
-use postio_focus::{Effect as Said, Input as Told, Intent, ToastKind};
+use postio_focus::{Effect as Said, Input as Told, Intent, SurfaceKind, ToastKind};
 
 use super::{App, Effect, TOAST, Tone};
 use crate::focus::{Held, RowsView};
@@ -10,7 +10,9 @@ impl App {
     /// Tell the controller `input` over the rows held, and do what it says.
     pub(super) fn tell(&mut self, input: Told) -> Vec<Effect> {
         let said = self.ctl.handle_on(input, &RowsView(&self.list));
-        self.carry_out(said)
+        let mut effects = self.carry_out(said);
+        effects.extend(self.drop_closed_composer());
+        effects
     }
 
     /// Open `scope`: the controller reads it, and the rows arrive as intents.
@@ -114,6 +116,32 @@ impl App {
                 vec![Effect::Redraw]
             }
             Intent::Toast { text, kind } => self.toast(&text, &kind),
+            intent @ Intent::OpenMessage {
+                host: postio_focus::Host::Digest,
+                ..
+            } => self.show_surface_intent(intent).unwrap_or_default(),
+            intent @ Intent::OpenMessage {
+                host: postio_focus::Host::Own,
+                ..
+            } if self.over_filtered() => self.show_surface_intent(intent).unwrap_or_default(),
+            intent @ (Intent::OpenMessage { .. }
+            | Intent::CloseSurface(SurfaceKind::Message)
+            | Intent::Reader(_)
+            | Intent::ThreadBar(_)
+            | Intent::Kicker(_)
+            | Intent::OlderBanner(_)
+            | Intent::NewReply(_)
+            | Intent::ReplyTo(_)
+            | Intent::MatchBanner(_)) => self.show_reader_intent(intent),
+            intent @ (Intent::Composer { .. }
+            | Intent::CloseSurface(SurfaceKind::Composer)
+            | Intent::SaveDraft { .. }
+            | Intent::ForwardChooser(_)
+            | Intent::OlderReply(_)
+            | Intent::NewerMessages(_)
+            | Intent::QuotedExpanded(_)
+            | Intent::ComposerDraftWanted(_)
+            | Intent::ComposerDraft(_)) => self.show_composer_intent(intent),
             other => self
                 .show_picker_intent(&other)
                 .or_else(|| self.show_places_intent(&other))

@@ -21,6 +21,8 @@ pub enum Part {
     CaptureProject,
     CaptureText,
     CaptureCancel,
+    ThreadChip,
+    ForwardCard,
 }
 
 #[derive(Debug, Default)]

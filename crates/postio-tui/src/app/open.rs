@@ -1,97 +1,83 @@
-//! The open message: opening a row, stepping through the list and the
-//! thread, the raw source, the menus, and the read clock.
-//!
-//! The drawing is `view::open`; this is what the keys and the clicks do.
+//! The open message as the controller shows it, and what the terminal adds: its source, its
+//! menus, the read clock and the paint held for its reads.
 
+use postio_focus::{Input as Told, Intent, ReaderVerb, SurfaceKind};
 use postio_model::MessageId;
 use postio_model::ids::AttachmentId;
 use postio_ui::keymap::Outcome;
 use postio_ui::terminal::SafeText;
+use postio_ui::thread_bar::{BannerView, MatchBannerView, ThreadBarView};
 
 use super::{App, Effect, Focus};
+use crate::conversation::{Member, Own, Reading};
 use crate::view::open as draw;
 
-/// The message's source, being shown in place of the message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Raw {
-    /// Whose source.
     pub message: MessageId,
-    /// What came off the wire, once it has.
     pub text: Option<SafeText>,
     /// Where the message was scrolled to, for when this closes.
     pub back_to: usize,
 }
 
-/// What choosing a row of a menu does.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MenuAction {
-    /// Run a command, as its key does.
     Command(&'static str),
-    /// Open a link with the system's opener.
     Link(String),
-    /// Open a part of the message.
     Part(MessageId, AttachmentId),
 }
 
-/// One row of a menu.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MenuItem {
-    /// Its words.
     pub words: String,
-    /// What follows them: a key, a size, where a link goes.
     pub detail: String,
-    /// What choosing it does.
     pub action: MenuAction,
 }
 
-/// A small framed list over the open message: its links and attachments, or
-/// the verbs its action row folded away.
+/// Its links and attachments, or the verbs its action row folded away.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Menu {
-    /// What it is for.
     pub title: String,
-    /// Its rows.
     pub items: Vec<MenuItem>,
-    /// The row the keyboard is on.
     pub at: usize,
 }
 
-/// What the open message holds besides the message.
+/// What the controller says about the thread of the message on screen.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Thread {
+    pub bar: Option<ThreadBarView>,
+    pub kicker: String,
+    pub older: Option<BannerView>,
+    pub new_reply: Option<BannerView>,
+    pub reply_to: Option<String>,
+    pub matches: Option<MatchBannerView>,
+}
+
 #[derive(Debug, Default)]
 pub(super) struct Open {
     pub raw: Option<Raw>,
     pub menu: Option<Menu>,
-    /// Which read clock is running; a clock for an older one does nothing.
+    /// A clock for an older generation does nothing.
     pub dwell: u64,
-    /// The message whose marker was dismissed while it was open.
     pub dismissed: Option<MessageId>,
-    /// The find field, while it is open.
     pub find: Option<super::find::Find>,
-    /// The paint held for this message's reads, by which deadline; an
-    /// older deadline does nothing.
+    /// An older deadline does nothing.
     pub held: Option<u64>,
-    /// The last deadline asked for.
     pub holds: u64,
+    pub place: (u32, u32),
+    pub thread: Thread,
 }
 
-/// The longest the paint waits for an open message's reads: one frame of the
-/// interaction budget (`docs/PRODUCT.md` §18). A thread and a body read from
-/// the store land in a few milliseconds, so the frame is painted once with
-/// them rather than three times as they arrive, each moving what the last
-/// one drew; a slow read is painted without them after a frame.
+/// One frame of the interaction budget (`docs/PRODUCT.md` §18): a body read from the store lands
+/// within it, so the frame is painted once with it; a slow read is painted without it.
 pub(super) const SETTLE: std::time::Duration = std::time::Duration::from_millis(16);
 
 impl App {
-    /// Whether painting waits: a message is open and its thread or body is
-    /// still on its way, for at most [`SETTLE`].
     pub fn holds_paint(&self) -> bool {
         self.reading.is_some() && self.open.held.is_some()
     }
 
-    /// Hold the paint when `effects` ask for the open message's thread or
-    /// body, and say when to stop waiting. One deadline from the first
-    /// read: a thread's body, asked for once its members land, waits under
-    /// the same one.
+    /// One deadline from the first read, however many follow it.
     pub(super) fn hold_paint(&mut self, effects: &[Effect]) -> Option<Effect> {
         if self.reading.is_none() {
             self.open.held = None;
@@ -99,7 +85,7 @@ impl App {
         }
         let reads = effects
             .iter()
-            .any(|effect| matches!(effect, Effect::ReadBody(_) | Effect::ReadConversation(_)));
+            .any(|effect| matches!(effect, Effect::ReadBody(_)));
         if self.open.held.is_some() || !reads {
             return None;
         }
@@ -111,13 +97,10 @@ impl App {
         })
     }
 
-    /// What was waited for has landed, or failed: paint.
     pub(super) fn release_paint(&mut self) {
         self.open.held = None;
     }
 
-    /// A hold's deadline: paint the message as it is, unless a newer hold
-    /// has begun.
     pub(super) fn settled(&mut self, generation: u64) -> Vec<Effect> {
         if self.open.held != Some(generation) {
             return Vec::new();
@@ -126,18 +109,19 @@ impl App {
         vec![Effect::Redraw]
     }
 
-    /// The source being shown in place of the message.
     pub fn raw(&self) -> Option<&Raw> {
         self.open.raw.as_ref()
     }
 
-    /// The menu over the open message.
     pub fn menu(&self) -> Option<&Menu> {
         self.open.menu.as_ref()
     }
 
-    /// The row the open message stands for: its own, when it was opened for
-    /// itself, else the list row it was opened from.
+    pub fn thread(&self) -> &Thread {
+        &self.open.thread
+    }
+
+    /// Its own row when it was opened for itself, else the list row it was opened from.
     pub fn row_of_open(&self) -> Option<&crate::row::Row> {
         let reading = self.reading.as_ref()?;
         match &reading.own {
@@ -146,7 +130,6 @@ impl App {
         }
     }
 
-    /// The message verbs aim at while one is open for itself.
     pub(super) fn own_aim(&self) -> Option<MessageId> {
         self.reading
             .as_ref()
@@ -154,21 +137,20 @@ impl App {
             .map(|reading| reading.row)
     }
 
-    /// Open `row`'s message for itself, over whatever the window shows: its
-    /// verbs aim at it, the list's cursor and marks stay where they are, and
+    /// Over whatever the window shows: its verbs aim at it, the list's cursor and marks stay, and
     /// closing it returns the keyboard to `back`.
     pub(super) fn open_for_itself(&mut self, row: crate::row::Row, back: Focus) -> Vec<Effect> {
         let message = row.id;
-        self.reading = Some(crate::conversation::Reading {
-            row: message,
-            members: vec![crate::conversation::Member::from_row(&row)],
-            current: 0,
-            own: Some(crate::conversation::Own { row, back }),
+        let reading = Reading::of(&row);
+        self.reading = Some(Reading {
+            own: Some(Own { row, back }),
+            ..reading
         });
         self.focus = Focus::Reader;
         self.reader_top = 0;
         self.open = Open {
             dwell: self.open.dwell,
+            holds: self.open.holds,
             ..Open::default()
         };
         self.armed_link = None;
@@ -178,19 +160,11 @@ impl App {
         effects
     }
 
-    /// Whether the action card is drawn for `member`: the marker is the
-    /// conversation's, so it belongs to the message the row stands for, and
-    /// goes once dismissed.
-    pub fn marker_shown(
-        &self,
-        row: &crate::row::Row,
-        member: &crate::conversation::Member,
-    ) -> bool {
+    /// The marker is the conversation's, so it belongs to the message its row stands for.
+    pub fn marker_shown(&self, row: &crate::row::Row, member: &Member) -> bool {
         row.marker.is_some() && row.id == member.id && self.open.dismissed != Some(member.id)
     }
 
-    /// Whether the open message is a draft whose Edit is offered: one on
-    /// its way or stopped.
     pub(super) fn open_draft_offers_edit(&self) -> bool {
         self.row_of_open().is_some_and(|row| {
             postio_ui::focus_dialog::send_verbs(row.send_state)
@@ -198,7 +172,6 @@ impl App {
         })
     }
 
-    /// What a click on row `line` of the open message's column stands for.
     pub(super) fn line_at(&self, line: usize) -> crate::conversation::At {
         let (outer, inner, _) = self.open_geometry();
         let column = crate::layout::column_width(outer).min(inner);
@@ -213,38 +186,34 @@ impl App {
         .map_or(crate::conversation::At::Nothing, |line| line.at.clone())
     }
 
-    /// Whether a to-do offers Task: a vault is configured.
     pub fn captures(&self) -> bool {
         self.features.capture
     }
 
-    /// "Message 5 of 312 · thread of 6", for the open message; nothing for
-    /// one opened for itself.
+    /// Where its row is in the list; its place in the thread is the kicker's. Nothing for one
+    /// opened for itself, which is no place in the list.
     pub fn position_line(&self) -> String {
-        let Some(reading) = self.reading.as_ref() else {
+        let Some(reading) = self
+            .reading
+            .as_ref()
+            .filter(|reading| reading.own.is_none())
+        else {
             return String::new();
         };
-        // A message opened for itself is no place in the list.
-        if reading.own.is_some() {
-            return String::new();
-        }
-        let row = self.row(reading.row);
-        let latest = reading.current + 1 >= reading.members.len();
+        let (index, total) = self.open.place;
         postio_ui::focus_dialog::position_line(
-            self.cursor as usize,
-            self.list.total() as usize,
-            row.map_or(1, |row| row.count),
-            reading.current,
-            latest,
-            row.and_then(|row| row.send_state),
+            index as usize,
+            total as usize,
+            1,
+            0,
+            true,
+            self.row(reading.row).and_then(|row| row.send_state),
         )
     }
 
-    /// The pane the open message sits in beside the list, when it is placed
-    /// there: `[focus] reading` says so and the terminal is wide enough.
+    /// Beside the list when `[focus] reading` says so and the terminal is wide enough.
     pub fn pane(&self) -> Option<u16> {
-        // Filtered has the whole body: a message opened from it is in the
-        // frame, over it.
+        // Filtered has the whole body: a message opened from it is in the frame, over it.
         if self.features.reading != postio_config::Reading::Pane || self.surfaces.filtered.is_some()
         {
             return None;
@@ -253,13 +222,11 @@ impl App {
         crate::layout::split_pane(list).map(|(_, pane)| pane.width)
     }
 
-    /// The keymap in force.
     pub fn keymap(&self) -> &postio_core::Keymap {
         self.keys.keymap()
     }
 
-    /// `F8`: open messages beside the list, or over it again. The choice is
-    /// written to `config.toml` and said in the words the desktop uses.
+    /// Written to `config.toml` and said in the words the desktop uses.
     pub(super) fn toggle_reading_pane(&mut self) -> Vec<Effect> {
         use postio_config::Reading;
         let next = match self.features.reading {
@@ -276,8 +243,7 @@ impl App {
         effects
     }
 
-    /// The width the open message is laid out in, the width of what scrolls,
-    /// and how many rows the column shows at once.
+    /// The width it is laid out in, the width of what scrolls, and how many rows show at once.
     pub(super) fn open_geometry(&self) -> (u16, u16, u16) {
         let find = self.find_rows();
         if let Some(pane) = self.pane() {
@@ -293,8 +259,7 @@ impl App {
         )
     }
 
-    /// How many rows the open message's column has, and how many it shows
-    /// at once.
+    /// How many rows the column has, and how many it shows at once.
     pub(super) fn open_extent(&self) -> (usize, usize) {
         let (outer, inner, height) = self.open_geometry();
         let length = match &self.open.raw {
@@ -316,107 +281,78 @@ impl App {
         (length, usize::from(height))
     }
 
-    /// Scroll the open message by `lines`, never past its last row.
     pub(super) fn scroll_open_lines(&mut self, lines: isize) {
         let (length, shown) = self.open_extent();
         let last = length.saturating_sub(shown.min(length));
         self.reader_top = self.reader_top.saturating_add_signed(lines).min(last);
     }
 
-    /// Scroll by `pages` screenfuls, keeping two rows for the eye.
+    /// Two rows of the last screenful stay for the eye.
     pub(super) fn scroll_reader(&mut self, pages: isize) {
         let (_, shown) = self.open_extent();
         let step = isize::try_from(shown.saturating_sub(2).max(1)).unwrap_or(1);
         self.scroll_open_lines(step * pages);
     }
 
-    /// Open the row under the cursor in the open message: its body is read
-    /// now, its conversation when it has one, and the read clock starts.
-    pub(super) fn open_at_cursor(&mut self) -> Vec<Effect> {
-        let Some(message) = self.cursor_message() else {
-            return Vec::new();
-        };
-        // The row already open is open.
-        if self.focus == Focus::Reader
-            && self.reading.as_ref().map(|reading| reading.row) == Some(message)
-        {
+    /// A step through its thread keeps the row it was opened from, and what the controller said
+    /// of that thread until it says it again.
+    fn show_message(&mut self, message: MessageId, place: (u32, u32)) -> Vec<Effect> {
+        self.focus = Focus::Reader;
+        self.open.place = place;
+        let row = self.cursor_message().unwrap_or(message);
+        let kept = self
+            .reading
+            .as_ref()
+            .filter(|reading| reading.own.is_none() && reading.row == row);
+        if kept.is_some_and(|reading| reading.shown.id == message) {
             return vec![Effect::Redraw];
         }
-        let mut effects = self.open_reading(message);
-        self.focus = Focus::Reader;
+        let thread = match kept {
+            Some(_) => std::mem::take(&mut self.open.thread),
+            None => Thread::default(),
+        };
+        let shown = match self.row(message) {
+            Some(found) if found.id == message => Member::from_row(found),
+            _ => Member::new(message),
+        };
+        self.reading = Some(Reading {
+            row,
+            shown,
+            own: None,
+        });
         self.reader_top = 0;
         self.open = Open {
             dwell: self.open.dwell,
+            holds: self.open.holds,
+            place,
+            thread,
             ..Open::default()
         };
         self.armed_link = None;
+        let mut effects = vec![Effect::ReadBody(message)];
         effects.extend(self.arm_dwell());
         effects.push(Effect::Redraw);
         effects
     }
 
-    /// `j` and `k` in the open message: the next or previous row opens in
-    /// its place, the list's cursor with it. A digest is not a message and
-    /// is passed over.
-    pub(super) fn step_open(&mut self, by: i32) -> Vec<Effect> {
-        // One opened for itself steps through where it came from.
-        if let Some(own) = self
-            .reading
-            .as_ref()
-            .and_then(|reading| reading.own.as_ref())
-        {
-            return match own.back {
-                Focus::Filtered => self.step_filtered_open(by as isize),
-                _ => Vec::new(),
-            };
+    /// A message open on no cursor row (from Filtered, a digest, a search) is what the
+    /// controller's verbs and pickers aim at, so it hears which one is on screen.
+    pub(super) fn report_shown(&mut self) -> Vec<Effect> {
+        let shown = self.reading.as_ref().map(|reading| reading.shown.id);
+        if self.told_shown == shown {
+            return Vec::new();
         }
-        let last = self.list.total().saturating_sub(1);
-        let mut at = self.cursor;
-        loop {
-            let next = at.saturating_add_signed(by).min(last);
-            if next == at {
-                return Vec::new();
-            }
-            at = next;
-            if self
-                .row_at(at)
-                .is_none_or(|row| row.kind != crate::row::Kind::Digest)
-            {
-                break;
-            }
-        }
-        self.move_to(at);
-        self.open_at_cursor()
+        self.told_shown = shown;
+        self.tell(Told::Shown(shown))
     }
 
-    /// The cursor's row is not the one open, though a message is: open it.
-    /// What follows a list that moved on under an open message -- the one
-    /// archived from it, or a row that was not here yet when `j` was
-    /// pressed.
     pub(super) fn follow_cursor(&mut self) -> Vec<Effect> {
         if self.focus != Focus::Reader || self.own_aim().is_some() {
             return Vec::new();
         }
-        let Some(open) = self.reading.as_ref().map(|reading| reading.row) else {
-            return Vec::new();
-        };
-        match self.cursor_message() {
-            Some(message) if message != open => {
-                if self
-                    .row_at(self.cursor)
-                    .is_some_and(|row| row.kind == crate::row::Kind::Digest)
-                {
-                    return self.close_message();
-                }
-                self.open_at_cursor()
-            }
-            None if self.scope.is_some() && self.list.total() == 0 => self.close_message(),
-            _ => Vec::new(),
-        }
+        self.tell(Told::Follow)
     }
 
-    /// Close the message: the list is as it was, the cursor and the
-    /// selection with it.
     pub(super) fn close_message(&mut self) -> Vec<Effect> {
         let back = self
             .reading
@@ -429,6 +365,7 @@ impl App {
         self.armed_link = None;
         self.open = Open {
             dwell: self.open.dwell + 1,
+            holds: self.open.holds,
             ..Open::default()
         };
         let mut effects = Vec::new();
@@ -442,31 +379,147 @@ impl App {
         effects
     }
 
-    /// Escape: the find field first, then a menu, then the source, then the
-    /// message.
-    pub(super) fn back_from_message(&mut self) -> Vec<Effect> {
-        if self.open.find.is_some() {
-            return self.close_find();
-        }
+    fn close_more(&mut self) -> Vec<Effect> {
         if self.open.menu.take().is_some() {
             return vec![Effect::Redraw];
         }
         if let Some(raw) = self.open.raw.take() {
             self.reader_top = raw.back_to;
-            return vec![Effect::Redraw];
+        }
+        vec![Effect::Redraw]
+    }
+
+    /// The controller does not hold a message opened for itself.
+    pub(super) fn back_from_own(&mut self) -> Vec<Effect> {
+        if self.open.menu.is_some() || self.open.raw.is_some() {
+            return self.close_more();
         }
         self.close_message()
     }
 
-    /// Start the read clock on the message shown, stopping any other. The
-    /// delay and the rule are `postio_ui::dwell`'s.
+    pub(super) fn the_readers(command: postio_core::CommandId) -> bool {
+        use postio_core::CommandId as C;
+        matches!(
+            command,
+            C::NextMessage
+                | C::PrevMessage
+                | C::FirstMessage
+                | C::LastMessage
+                | C::Back
+                | C::PrevView
+                | C::DismissMarker
+                | C::OpenMessage
+                | C::Reply
+                | C::ReplyAll
+                | C::Forward
+                | C::ReplyToLatest
+                | C::CancelSend
+                | C::RetrySend
+                | C::MarkSent
+                | C::FindInMessage
+                | C::FindNext
+                | C::FindPrevious
+                | C::SwitchTreatment
+                | C::ViewSource
+                | C::MoreActions
+                | C::NextInConversation
+                | C::PrevInConversation
+                | C::FirstInConversation
+                | C::LatestInConversation
+                | C::FirstUnreadInConversation
+        ) || postio_ui::focus_target::dispatch(command).is_some()
+    }
+
+    /// What Back would close goes first, so the controller closes it before the message.
+    pub(super) fn tell_reader(&mut self, command: postio_core::CommandId) -> Vec<Effect> {
+        use postio_core::CommandId as C;
+        match command {
+            C::ToggleRead => self.cancel_dwell(),
+            C::DismissMarker => {
+                self.open.dismissed = self.reading.as_ref().map(|reading| reading.shown.id);
+            }
+            _ => {}
+        }
+        let mut effects = self.tell(Told::ReaderState {
+            more_open: self.open.menu.is_some() || self.open.raw.is_some(),
+            finding: self.open.find.is_some(),
+        });
+        effects.extend(self.tell(Told::Command(command)));
+        effects
+    }
+
+    pub(super) fn chip_clicked(&mut self, index: usize) -> Vec<Effect> {
+        match u32::try_from(index) {
+            Ok(index) => self.tell(Told::ThreadBarChipClicked(index)),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    pub(super) fn show_reader_intent(&mut self, intent: Intent) -> Vec<Effect> {
+        if let Intent::OpenMessage {
+            message,
+            index,
+            total,
+            host: postio_focus::Host::Own,
+        } = intent
+        {
+            return self.show_message(message, (index, total));
+        }
+        match intent {
+            Intent::CloseSurface(SurfaceKind::Message) => return self.close_message(),
+            Intent::Reader(verb) => return self.reader_verb(verb),
+            _ if self.reading.is_none() => return Vec::new(),
+            _ => {}
+        }
+        let thread = &mut self.open.thread;
+        match intent {
+            Intent::ThreadBar(bar) => thread.bar = Some(bar),
+            Intent::Kicker(kicker) => thread.kicker = kicker,
+            Intent::OlderBanner(banner) => thread.older = banner,
+            Intent::NewReply(banner) => thread.new_reply = banner,
+            Intent::ReplyTo(text) => thread.reply_to = text,
+            Intent::MatchBanner(banner) => thread.matches = banner,
+            _ => return Vec::new(),
+        }
+        vec![Effect::Redraw]
+    }
+
+    fn reader_verb(&mut self, verb: ReaderVerb) -> Vec<Effect> {
+        match verb {
+            ReaderVerb::CloseMore => self.close_more(),
+            ReaderVerb::CloseFind => self.close_find(),
+            ReaderVerb::FindInMessage => self.open_find(),
+            ReaderVerb::FindNext => self.find_step(true),
+            ReaderVerb::FindPrevious => self.find_step(false),
+            ReaderVerb::NextMatch => self.match_step(true),
+            ReaderVerb::PrevMatch => self.match_step(false),
+            ReaderVerb::SwitchTreatment => self.view_original(),
+            ReaderVerb::ViewSource => self.view_source(),
+            ReaderVerb::ShowMore => self.more_actions(),
+            // The rest are said only for a message with no thread to step through.
+            _ => Vec::new(),
+        }
+    }
+
+    pub(super) fn addressed(
+        &mut self,
+        message: MessageId,
+        row: &postio_model::Message,
+        warning: Option<&str>,
+    ) -> Vec<Effect> {
+        match self.reading.as_mut().map(|reading| &mut reading.shown) {
+            Some(shown) if shown.id == message => {
+                shown.address(row, warning);
+                vec![Effect::Redraw]
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// The delay and the rule are `postio_ui::dwell`'s.
     pub(super) fn arm_dwell(&mut self) -> Vec<Effect> {
         self.open.dwell += 1;
-        let shown = self
-            .reading
-            .as_ref()
-            .and_then(|reading| reading.members.get(reading.current))
-            .map(|member| member.id.get());
+        let shown = self.reading.as_ref().map(|reading| reading.shown.id.get());
         match postio_ui::dwell::on_cursor(shown) {
             postio_ui::dwell::Arm::Start { message, after } => vec![Effect::ArmDwell {
                 generation: self.open.dwell,
@@ -477,21 +530,17 @@ impl App {
         }
     }
 
-    /// Stop the read clock: the person set the read state themselves, or
-    /// the message closed.
+    /// The person set the read state themselves, or the message closed.
     pub(super) fn cancel_dwell(&mut self) {
         self.open.dwell += 1;
     }
 
-    /// The clock of `generation` ran out on `message`: it counts as read if
-    /// it is still the one on screen.
     pub(super) fn dwelt(&mut self, generation: u64, message: MessageId) -> Vec<Effect> {
         let shown = self
             .reading
             .as_ref()
             .filter(|_| self.focus == Focus::Reader)
-            .and_then(|reading| reading.members.get(reading.current))
-            .map(|member| member.id);
+            .map(|reading| reading.shown.id);
         if generation != self.open.dwell || shown != Some(message) {
             return Vec::new();
         }
@@ -503,39 +552,11 @@ impl App {
         })]
     }
 
-    /// `p` and `n`: another message of the conversation. Its body is read
-    /// the first time it is shown, and it starts its own read clock.
-    pub(super) fn walk_conversation(&mut self, step: isize) -> Vec<Effect> {
-        let Some(reading) = self.reading.as_mut() else {
-            return Vec::new();
-        };
-        let Some(next) =
-            postio_ui::focus_dialog::step_thread(reading.current, reading.members.len(), step)
-        else {
-            return Vec::new();
-        };
-        reading.current = next;
-        let mut effects = vec![Effect::Redraw];
-        if let Some(member) = reading.members.get_mut(next)
-            && member.body.is_none()
-            && !member.asked
-        {
-            member.asked = true;
-            effects.push(Effect::ReadBody(member.id));
-        }
-        self.reader_top = 0;
-        self.open.raw = None;
-        effects.extend(self.arm_dwell());
-        effects
-    }
-
-    /// `V`: the message as it came off the wire, in place of the message.
     pub(super) fn view_source(&mut self) -> Vec<Effect> {
         let Some(message) = self
             .reading
             .as_ref()
-            .and_then(|reading| reading.members.get(reading.current))
-            .map(|member| member.id)
+            .map(|reading| reading.shown.id)
             .or_else(|| self.cursor_message())
         else {
             return Vec::new();
@@ -549,7 +570,6 @@ impl App {
         vec![Effect::ReadSource(message), Effect::Redraw]
     }
 
-    /// The source arrived.
     pub(super) fn source_read(
         &mut self,
         message: MessageId,
@@ -572,29 +592,21 @@ impl App {
         }
     }
 
-    /// `A`: the message's links and its attachments, to choose one to open.
     pub(super) fn offer_choices(&mut self) -> Vec<Effect> {
-        let Some(reading) = self.reading.as_ref() else {
+        let Some(member) = self.reading.as_ref().map(|reading| &reading.shown) else {
             return Vec::new();
         };
-        let Some(member) = reading.members.get(reading.current) else {
-            return self.say(postio_ui::focus_target::NOTHING_TO_OPEN);
-        };
         let mut items: Vec<MenuItem> = Vec::new();
-        if let Some(body) = &member.body {
-            for link in &body.links {
-                if items
-                    .iter()
-                    .any(|item| item.action == MenuAction::Link(link.as_str().to_owned()))
-                {
-                    continue;
-                }
-                items.push(MenuItem {
-                    words: link.as_str().to_owned(),
-                    detail: "link".to_owned(),
-                    action: MenuAction::Link(link.as_str().to_owned()),
-                });
+        for link in member.body.iter().flat_map(|body| &body.links) {
+            let action = MenuAction::Link(link.as_str().to_owned());
+            if items.iter().any(|item| item.action == action) {
+                continue;
             }
+            items.push(MenuItem {
+                words: link.as_str().to_owned(),
+                detail: "link".to_owned(),
+                action,
+            });
         }
         for part in member.attachments() {
             let name = SafeText::new(part.filename.as_deref().unwrap_or(&part.mime_type));
@@ -615,11 +627,8 @@ impl App {
         vec![Effect::Redraw]
     }
 
-    /// After an unsubscribe: the status line says so and, when the list left
-    /// mail behind, offers the one action `[focus] after_unsubscribe` names
-    /// (#1952). A notice, not a menu: it takes the keyboard no more than a toast does, so ignoring it, or
-    /// `Esc`, keeps everything. The button is one command on exactly the
-    /// found messages, so one undo.
+    /// A notice, not a menu: ignoring it or Esc keeps everything, and its button is one command
+    /// on exactly the found messages, so one undo (#1952).
     pub(super) fn confirm_unsubscribed(
         &mut self,
         name: &str,
@@ -649,7 +658,6 @@ impl App {
         effects
     }
 
-    /// The notice a list that left `ids` behind makes, for the drawing tests.
     #[cfg(test)]
     pub(crate) fn confirm_unsubscribed_for_test(&mut self, name: &str, ids: &[i64]) {
         self.confirm_unsubscribed(
@@ -662,7 +670,6 @@ impl App {
         );
     }
 
-    /// A click on the notice's button: its command, once.
     pub(super) fn take_up_offer(&mut self) -> Vec<Effect> {
         match self.notice_offer.take() {
             Some((_, command)) => vec![Effect::Send(command), Effect::Redraw],
@@ -670,8 +677,7 @@ impl App {
         }
     }
 
-    /// `.`: the verbs the action row folded away, as a menu. Nothing when
-    /// nothing is folded.
+    /// Nothing when the action row folds nothing.
     pub(super) fn more_actions(&mut self) -> Vec<Effect> {
         let (outer, inner, _) = self.open_geometry();
         if self.reading.is_none() || !draw::folded(self, outer, inner) {
@@ -698,7 +704,6 @@ impl App {
         vec![Effect::Redraw]
     }
 
-    /// A key while a menu is over the message.
     pub(super) fn menu_key(&mut self, key: &crossterm::event::KeyEvent) -> Vec<Effect> {
         use crossterm::event::KeyCode;
         let Some(menu) = self.open.menu.as_mut() else {
@@ -734,7 +739,6 @@ impl App {
         vec![Effect::Redraw]
     }
 
-    /// Choose row `at` of the menu: it closes, and its row does what it says.
     pub(super) fn choose(&mut self, at: usize) -> Vec<Effect> {
         let Some(item) = self
             .open
@@ -760,26 +764,5 @@ impl App {
                 Effect::Redraw,
             ],
         }
-    }
-
-    /// `-` on the open message: its marker is a wrong one, taken off now and
-    /// from the store, with one undo.
-    pub(super) fn dismiss_open_marker(&mut self) -> Vec<Effect> {
-        let Some(message) = self
-            .reading
-            .as_ref()
-            .and_then(|reading| reading.members.get(reading.current))
-            .map(|member| member.id)
-        else {
-            return Vec::new();
-        };
-        self.open.dismissed = Some(message);
-        vec![
-            Effect::Send(postio_core::Command::DismissMarker {
-                target: postio_core::MessageTarget::Messages(vec![message]),
-                dismissed: true,
-            }),
-            Effect::Redraw,
-        ]
     }
 }

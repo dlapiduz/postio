@@ -79,12 +79,7 @@ impl App {
             return Vec::new();
         };
         let row = crate::row::Row::from(line.summary.clone());
-        self.reading = Some(crate::conversation::Reading {
-            row: message,
-            members: vec![crate::conversation::Member::from_row(&row)],
-            current: 0,
-            own: None,
-        });
+        self.reading = Some(crate::conversation::Reading::of(&row));
         vec![Effect::Redraw, Effect::ReadBody(message)]
     }
 
