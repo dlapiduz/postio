@@ -112,6 +112,9 @@ pub async fn store_object<Z: TimeZone>(
         .ok_or_else(|| failed(postio_calendar::CalendarError::NoEvent))?
         .clone();
     let connection = database.connect().await.map_err(failed)?;
+    postio_index::events::ensure(&connection)
+        .await
+        .map_err(failed)?;
     let window = expanded(&connection, now).await?;
     let rows = occurrences(object.ics, window.range(), zone).map_err(failed)?;
     let starts_at = rows.first().map_or(now, |row| row.start);
@@ -133,10 +136,24 @@ pub async fn store_object<Z: TimeZone>(
         my_partstat: object.my_partstat,
         source_message: object.source_message,
     };
+    let document = postio_index::events::EventDocument {
+        title: master.title.clone(),
+        location: master.location.clone(),
+        notes: master.notes.clone(),
+        people: master
+            .organiser
+            .iter()
+            .chain(master.attendees.iter().map(|attendee| &attendee.address))
+            .map(ToString::to_string)
+            .collect(),
+    };
     let id = postio_storage::sql::in_scope(&connection, |scope| async move {
         let calendars = CalendarRepository::new(&scope);
         let id = calendars.put_event(&event).await?;
         calendars.set_occurrences(id, &rows).await?;
+        postio_index::events::index_event(&scope, id, &document)
+            .await
+            .map_err(failed)?;
         set_expanded(&scope, window).await?;
         Ok::<_, StoreError>(id)
     })
@@ -165,6 +182,46 @@ pub async fn agenda_page<Z: TimeZone>(
         .agenda(anchor, limit)
         .await
         .map_err(failed)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct EventFound {
+    pub entries: Vec<AgendaEntry>,
+    pub ignored: Vec<String>,
+}
+
+pub async fn search_events<Z: TimeZone>(
+    database: &Store,
+    text: &str,
+    zone: &Z,
+    now: DateTime<Utc>,
+    limit: u32,
+) -> Result<EventFound, StoreError> {
+    let today = now.with_timezone(zone).date_naive();
+    let query = postio_search::parse(text, today);
+    let connection = database.read().await.map_err(failed)?;
+    let hits = postio_index::events::search_events(&connection, &query, zone, limit)
+        .await
+        .map_err(failed)?;
+    let from = query
+        .filters()
+        .find_map(|clause| match clause.filter {
+            postio_search::query::Filter::After(day) if !clause.negated => zone
+                .from_local_datetime(&day.and_hms_opt(0, 0, 0).unwrap_or_default())
+                .earliest()
+                .map(|at| at.with_timezone(&Utc)),
+            _ => None,
+        })
+        .unwrap_or(now);
+    let entries = CalendarRepository::new(&connection)
+        .next_of(&hits.events, from)
+        .await
+        .map_err(failed)?;
+    tracing::info!(found = entries.len(), "searched the calendar");
+    Ok(EventFound {
+        entries,
+        ignored: hits.ignored,
+    })
 }
 
 pub async fn event_detail(

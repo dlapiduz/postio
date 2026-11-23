@@ -209,3 +209,36 @@ async fn a_page_past_the_expanded_window_expands_the_rule_further() {
     assert!(rows[0].start >= later && rows[0].start < later + Duration::days(1));
     assert_eq!(rows[0].title, "Standup");
 }
+
+#[tokio::test]
+async fn a_search_finds_events_by_their_words_and_bounds_and_names_what_it_ignored() {
+    let database = test_support::memory().await;
+    store(&database, DST).await;
+    store(&database, FLOATING).await;
+
+    let found = postio_host::calendar::search_events(&database, "design", &Utc, now(), 20)
+        .await
+        .expect("searched");
+    assert_eq!(found.entries.len(), 1);
+    assert_eq!(found.entries[0].title, "Design sync");
+    assert_eq!(
+        found.entries[0].start,
+        Utc.with_ymd_and_hms(2026, 10, 6, 13, 30, 0).unwrap()
+    );
+
+    let found = postio_host::calendar::search_events(
+        &database,
+        "after:2026-11-15 with:ada.norwood@example.com is:unread",
+        &Utc,
+        now(),
+        20,
+    )
+    .await
+    .expect("searched");
+    assert_eq!(found.entries.len(), 1);
+    assert_eq!(
+        found.entries[0].start,
+        Utc.with_ymd_and_hms(2026, 11, 17, 14, 30, 0).unwrap()
+    );
+    assert_eq!(found.ignored, ["is"]);
+}

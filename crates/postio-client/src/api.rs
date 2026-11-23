@@ -115,6 +115,7 @@ impl Req {
             Req::ContactCard(_) => "ContactCard",
             Req::AgendaPage { .. } => "AgendaPage",
             Req::EventDetail(_) => "EventDetail",
+            Req::EventSearch { .. } => "EventSearch",
             Req::ContactGroups => "ContactGroups",
             Req::ContactsSyncBringIn { .. } => "ContactsSyncBringIn",
             Req::ContactsImport(_) => "ContactsImport",
@@ -682,6 +683,25 @@ impl Client {
             Req::EventDetail(cursor),
             "an event",
             only!(Resp::EventDetail),
+        )
+        .await
+    }
+
+    pub async fn event_search(
+        &self,
+        text: &str,
+        limit: u32,
+    ) -> Result<(Vec<postio_model::calendar::AgendaEntry>, Vec<String>), StoreError> {
+        self.read(
+            Req::EventSearch {
+                text: text.to_owned(),
+                limit,
+            },
+            "a calendar search",
+            |resp| match resp {
+                Resp::EventSearch { entries, ignored } => Some((entries, ignored)),
+                _ => None,
+            },
         )
         .await
     }

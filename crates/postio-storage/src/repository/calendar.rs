@@ -7,7 +7,7 @@ use turso::Row;
 
 use super::{from_millis, to_millis};
 use crate::error::Result;
-use crate::sql::{self, RowExt as _, bind};
+use crate::sql::{self, Bind as _, RowExt as _, bind};
 use crate::store::Connection;
 
 #[derive(Debug)]
@@ -221,6 +221,35 @@ impl CalendarRepository<'_> {
             self.connection,
             &format!("{AGENDA} WHERE o.event_id = ?1 AND o.start_utc = ?2"),
             bind![cursor.event.get(), to_millis(cursor.start)],
+            read_entry,
+        )
+        .await
+    }
+
+    pub async fn next_of(
+        &self,
+        events: &[EventId],
+        from: DateTime<Utc>,
+    ) -> Result<Vec<AgendaEntry>> {
+        if events.is_empty() {
+            return Ok(Vec::new());
+        }
+        let ids = (2..events.len() + 2)
+            .map(|n| format!("?{n}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut params = vec![to_millis(from).bind()];
+        params.extend(events.iter().map(|event| event.get().bind()));
+        sql::all(
+            self.connection,
+            &format!(
+                "{AGENDA} WHERE o.event_id IN ({ids}) AND o.start_utc = coalesce(
+                    (SELECT min(x.start_utc) FROM event_occurrences x
+                      WHERE x.event_id = o.event_id AND x.start_utc >= ?1),
+                    (SELECT max(x.start_utc) FROM event_occurrences x WHERE x.event_id = o.event_id))
+                 ORDER BY o.start_utc, o.event_id"
+            ),
+            params,
             read_entry,
         )
         .await

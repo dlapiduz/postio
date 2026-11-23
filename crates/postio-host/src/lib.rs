@@ -979,6 +979,21 @@ impl Inner {
                 Ok(page) => Resp::AgendaPage(page),
                 Err(error) => Resp::Failed(error),
             },
+            Req::EventSearch { text, limit } => match calendar::search_events(
+                &self.wiring.database,
+                &text,
+                &chrono::Local,
+                chrono::Utc::now(),
+                limit,
+            )
+            .await
+            {
+                Ok(found) => Resp::EventSearch {
+                    entries: found.entries,
+                    ignored: found.ignored,
+                },
+                Err(error) => Resp::Failed(error),
+            },
             Req::EventDetail(cursor) => {
                 match calendar::event_detail(&self.wiring.database, cursor).await {
                     Ok(detail) => Resp::EventDetail(detail.map(Box::new)),
