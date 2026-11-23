@@ -1104,8 +1104,6 @@ impl OpenMessage {
         self.load(message, generation);
     }
 
-    /// Only the open message is read, never the list. Same generation, nothing cleared first and
-    /// the view left where it is, so "Downloading this message" goes straight to the body (#1788).
     pub fn header_changed(&self, message: MessageId) {
         if !self.is_open() || self.shown.get() != Some(message) {
             return;
@@ -1133,6 +1131,8 @@ impl OpenMessage {
         });
     }
 
+    /// Only the open message is read, never the list. Same generation, nothing cleared first and
+    /// the view left where it is, so "Downloading this message" goes straight to the body (#1788).
     pub fn body_landed(&self, message: MessageId) {
         if !self.is_open() || self.shown.get() != Some(message) || self.body.borrow().is_some() {
             return;

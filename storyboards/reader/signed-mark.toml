@@ -8,7 +8,7 @@
 # verdict already checked. The mark is a word in the neutral chip style: no
 # lock, no tick, no accent.
 apps   = ["focus"]
-proof  = "open"
+proof  = "pinned"
 seed   = "signed"
 source = { kind = "flow", ref = "specs/016-message-authenticity US3" }
 
