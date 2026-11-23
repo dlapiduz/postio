@@ -136,8 +136,6 @@ fn prepend_style(attrs: &mut Vec<Attribute>, hints: &[String]) -> bool {
         .into_iter()
         .filter_map(property)
         .collect();
-    // A property the style declares wins over its hint anyway; leaving the hint out means a second
-    // pass over hinted markup adds nothing.
     let hint = hints
         .iter()
         .flat_map(|hint| hint.split("; "))

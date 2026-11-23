@@ -270,8 +270,6 @@ impl Tally {
         }
     }
 
-    /// Only what `part_uri` writes under this scope, case and all: a part the sender could have
-    /// named with `cid:`.
     pub(crate) fn is_own_part(&self, value: &str) -> bool {
         let Some(rest) = value
             .strip_prefix(CID_SCHEME)
@@ -503,8 +501,6 @@ pub fn sanitize_body_in(html: &str, remote: RemoteImages, scope: Option<&str>) -
     ));
 
     Sanitized {
-        // A parser drops whitespace before the body's first node, so output led by it would not
-        // sanitize to itself.
         html: builder.clean(input).to_string().trim_start().to_owned(),
         styles,
         remote_blocked: tally.blocked.load(Ordering::Relaxed),
@@ -855,7 +851,6 @@ fn rewrite_attribute<'u>(
     if attribute == "id" {
         let id = value.trim();
         let prefix = sender_id_prefix(scope);
-        // An id this pass already prefixed is the sender's own, so output sanitizes to itself.
         if id.len() > prefix.len() && id.starts_with(&prefix) {
             return Some(Cow::Owned(id.to_owned()));
         }
@@ -890,8 +885,7 @@ fn rewrite_attribute<'u>(
         return Some(Cow::Borrowed(value));
     }
     // Postio's own scheme written by the sender names the reader's internals (under ADR 0032,
-    // another message's parts): dropped, not rewritten. This message's own part is kept, so
-    // sanitized output sanitizes to itself.
+    // another message's parts): dropped, not rewritten, unless it is this message's own.
     if tally.is_own_part(value) {
         return Some(Cow::Borrowed(value));
     }
@@ -962,9 +956,7 @@ pub(crate) fn contain_declarations(value: &str, remote: RemoteImages, tally: &Ta
     kept.join("; ")
 }
 
-/// Read as CSS tokens, so an escaped function name (`\75 rl(`) is the function it is and a string
-/// given to `image-set()` or `src()` counts. A plain-text scheme scan backs it for spellings a
-/// later parser might accept.
+/// A plain-text scheme scan backs the tokens for spellings a later parser might accept.
 fn names_remote(value: &str) -> bool {
     let lower = value.to_ascii_lowercase();
     if ["http://", "https://", "ftp://"]
@@ -976,8 +968,7 @@ fn names_remote(value: &str) -> bool {
     names_url(value, &is_remote)
 }
 
-/// Every reference, not the first `url(` alone: `url(cid:a), url(postio-cid:9/b)` or an escaped
-/// `postio\2d cid:` would otherwise name another message's part.
+/// Every URL in the value, not its first `url(`: a second one or an escape named another message's.
 fn names_other_parts(value: &str, tally: &Tally) -> bool {
     let lower = value.to_ascii_lowercase();
     let spelled = lower.match_indices(CID_SCHEME).any(|(at, _)| {
@@ -993,6 +984,7 @@ fn names_other_parts(value: &str, tally: &Tally) -> bool {
         })
 }
 
+/// As CSS tokens, so an escaped `\75 rl(` is a URL and a string given to `image-set()` counts.
 fn names_url(value: &str, names: &dyn Fn(&str) -> bool) -> bool {
     fn walk(parser: &mut cssparser::Parser<'_>, names: &dyn Fn(&str) -> bool) -> bool {
         use cssparser::Token;

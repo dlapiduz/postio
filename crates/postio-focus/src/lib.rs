@@ -1220,8 +1220,6 @@ impl FocusController {
                 let steps = self.verbs.send(command, &mut self.cursor, rows, total);
                 self.effects(steps)
             }
-            // A removal the window did not aim (the unsubscribe offer) can take the open message,
-            // which then steps on as after the window's own Delete (#2231).
             Input::Post(command) => {
                 let mut steps: Vec<_> = self.step_past_posted(&command, rows).into_iter().collect();
                 steps.extend(self.verbs.post(command));

@@ -67,7 +67,6 @@ pub enum UndoKind {
 
 impl UndoKind {
     fn describe(self, count: usize, holding: usize) -> String {
-        // Rows holding more messages than there are rows were threads: one word would hide what went.
         let messages = if holding > count {
             format!("{count} {} ({holding} messages)", threads(count))
         } else {
@@ -193,9 +192,8 @@ impl UndoEntry {
         }
     }
 
-    /// The toast counts what the person chose (three rows) and, when those are threads, the
-    /// `holding` messages inside them, already-filed ones included; every message still has its
-    /// way back.
+    /// The toast counts the rows chosen and, when they are threads, the `holding` messages in them,
+    /// already-filed ones included; every message still has its way back.
     #[must_use]
     pub fn acting_on(mut self, rows: usize, holding: usize) -> Self {
         self.rows = Some(Rows {

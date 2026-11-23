@@ -30,8 +30,7 @@ fn popover(
     // Hung from the button's right edge: the button is at the dialog's right, and a popover centred
     // on it would run past the window.
     popover.set_halign(gtk::Align::End);
-    // The popover's own size counts its shadow; the box a person sees is the unpadded contents,
-    // which is the body (focus.css).
+    // The popover's own size counts its shadow; the box a person sees is the body (focus.css).
     body.set_size_request(width, -1);
     popover.set_child(Some(body));
     popover.set_parent(parent);
@@ -186,7 +185,6 @@ pub struct OutlinePopover {
     rows: gtk::Box,
     footer: gtk::Label,
     shown: RefCell<OutlineView>,
-    /// Raised while a view's text is put into the field, so it is not said back as typing.
     drawing: Cell<bool>,
     on_input: RefCell<Option<OutlineHandler>>,
     on_closed: RefCell<Option<Rc<dyn Fn()>>>,
@@ -197,8 +195,7 @@ impl OutlinePopover {
         let filter = gtk::Entry::new();
         filter.add_css_class("focus-outline-filter");
         filter.set_placeholder_text(Some("Filter this thread"));
-        // A popover takes its child's natural width, and a row of chips side by side is as wide
-        // as all of them: the chips wrap at the body's inner width (its padding is S2) instead.
+        // Chips side by side would set the popover's natural width, so they wrap at the body's.
         let chips = adw::WrapBox::builder()
             .child_spacing(space::S2)
             .line_spacing(space::S2)
@@ -260,8 +257,7 @@ impl OutlinePopover {
         focus.connect_enter(filtering(weak.clone(), true));
         focus.connect_leave(filtering(weak.clone(), false));
         outline.filter.add_controller(focus);
-        // Arrows and Return are the outline's even while the field holds the
-        // keyboard: the list is what they move.
+        // Arrows and Return move the list even while the field holds the keyboard.
         let keys = gtk::EventControllerKey::new();
         keys.set_propagation_phase(gtk::PropagationPhase::Capture);
         keys.connect_key_pressed({
@@ -360,7 +356,6 @@ impl OutlinePopover {
             words.set_xalign(0.0);
             words.set_hexpand(true);
             words.set_ellipsize(gtk::pango::EllipsizeMode::End);
-            // An ellipsized label still asks for its whole line; the row fills the outline instead.
             words.set_max_width_chars(1);
             let date = gtk::Label::new(Some(&row.date));
             date.add_css_class("dim-label");
