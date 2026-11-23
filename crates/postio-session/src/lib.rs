@@ -211,6 +211,7 @@ pub struct Wiring {
     pub storage_ceiling: Option<u64>,
     /// How long Junk and Trash keep mail before it is purged, from `[sync]`. Off by default.
     pub auto_empty: postio_core::retention::AutoEmpty,
+    pub gnupg_keyring: bool,
     /// The mail transport every account's engine uses instead of the one its settings name; `None`
     /// in the application. Lets tests drive the engine through a mock server.
     pub mail: Option<MailOverride>,
@@ -261,6 +262,7 @@ impl Wiring {
             watch: postio_sync::WatchPolicy::default(),
             storage_ceiling: None,
             auto_empty: postio_core::retention::AutoEmpty::default(),
+            gnupg_keyring: false,
             mail: None,
             filing: postio_runtime::FilingSlot::default(),
             focus: focus::FocusSettings::default(),
@@ -288,6 +290,11 @@ impl Wiring {
     /// The same wiring, holding the blob store to `[storage] max_bytes`; `None` is unbounded.
     pub fn with_storage_ceiling(mut self, max_bytes: Option<u64>) -> Self {
         self.storage_ceiling = max_bytes;
+        self
+    }
+
+    pub fn with_gnupg_keyring(mut self, on: bool) -> Self {
+        self.gnupg_keyring = on;
         self
     }
 

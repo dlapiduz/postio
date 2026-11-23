@@ -379,6 +379,9 @@ pub enum Req {
         message: MessageId,
         offline: bool,
     },
+    GnupgKeyring {
+        on: bool,
+    },
     Surfaced,
     /// Fails with a sentence when no `[focus.vault]` is configured.
     Vault {
@@ -586,6 +589,7 @@ pub enum Resp {
     DigestSummary(Option<postio_model::summary::DigestSummary>),
     RawSource(Vec<u8>),
     SourceView(Box<postio_ui::source::SourceView>),
+    GnupgKeyring(postio_ui::settings::GnupgKeyring),
     Vault(VaultPicture),
     Captured(postio_vault::Captured),
     /// The sentence is for the user.

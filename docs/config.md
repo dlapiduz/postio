@@ -167,6 +167,12 @@ A rule that does not validate is not applied, and the other rules still are. Val
 
 Where Focus captures a message as a task or a note. A task is one Obsidian Tasks line whose link opens the message in Focus, as `postio://message/<id>`. A vault that is not a folder on this computer, or a note or folder named outside it, is reported, and nothing is captured until it is fixed.
 
+## `[signatures]`
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `gnupg_keyring` | bool | `false` | Use public keys from your GnuPG keyring to check signatures. Postio reads the public keyring files under `GNUPGHOME` or `~/.gnupg`, read-only; it never runs `gpg` or opens secret keys. |
+
 ## `[keys]`
 
 Overrides a command's binding, keyed by the command id. See the

@@ -23,6 +23,13 @@ pub enum Keyring {
     Absent,
 }
 
+pub fn home_of_this_user() -> Option<PathBuf> {
+    home(
+        std::env::var_os("GNUPGHOME").as_deref(),
+        std::env::var_os("HOME").map(PathBuf::from).as_deref(),
+    )
+}
+
 pub fn home(gnupghome: Option<&std::ffi::OsStr>, home: Option<&Path>) -> Option<PathBuf> {
     match gnupghome.filter(|value| !value.is_empty()) {
         Some(value) => Some(PathBuf::from(value)),
@@ -90,4 +97,75 @@ pub async fn read(home: &Path) -> Keyring {
 
 fn read_whole(path: &Path) -> Option<Vec<u8>> {
     std::fs::read(path).ok()
+}
+
+pub async fn sync(
+    database: &postio_storage::Store,
+    blobs: &postio_storage::BlobStore,
+    home: Option<&Path>,
+    on: bool,
+) -> Result<postio_ui::settings::GnupgKeyring, postio_storage::Error> {
+    use postio_storage::repository::{KeyKind, KeyRepository, KeySource, NewKey};
+    use postio_ui::settings::GnupgKeyring;
+    let connection = database.connect().await?;
+    let keys = KeyRepository::new(&connection);
+    if !on {
+        keys.drop_source(KeySource::Gnupg).await?;
+        return Ok(GnupgKeyring::Off);
+    }
+    let Some(home) = home else {
+        return Ok(GnupgKeyring::Absent {
+            home: "~/.gnupg".to_owned(),
+        });
+    };
+    let (found, skipped) = match read(home).await {
+        Keyring::Read { keys, skipped, .. } => (keys, skipped),
+        Keyring::Unreadable { .. } => return Ok(GnupgKeyring::Unreadable),
+        Keyring::Absent => {
+            return Ok(GnupgKeyring::Absent {
+                home: home.display().to_string(),
+            });
+        }
+    };
+    keys.drop_source(KeySource::Gnupg).await?;
+    let now = chrono::Utc::now().timestamp();
+    let mut senders: Vec<postio_model::EmailAddress> = Vec::new();
+    for key in &found {
+        let addresses: Vec<postio_model::EmailAddress> = key
+            .addresses
+            .iter()
+            .map(|address| postio_model::EmailAddress::new(None::<String>, address.as_str()))
+            .collect();
+        keys.record(&NewKey {
+            fingerprint: &key.fingerprint,
+            kind: KeyKind::OpenPgp,
+            keyblock: &key.keyblock,
+            primary_uid: key.primary_uid.as_deref(),
+            revoked: key.revoked,
+            addresses: &addresses,
+            source: KeySource::Gnupg,
+            message: None,
+            at: now,
+        })
+        .await?;
+        senders.extend(addresses);
+    }
+    let mut again = Vec::new();
+    for sender in &senders {
+        again.extend(keys.signed_messages_from(sender).await?);
+    }
+    drop(connection);
+    again.sort_unstable();
+    again.dedup();
+    postio_session::signature::check_messages(database, blobs, &again).await?;
+    tracing::info!(
+        keys = found.len(),
+        skipped,
+        rechecked = again.len(),
+        "GnuPG keyring read"
+    );
+    Ok(GnupgKeyring::Read {
+        keys: found.len(),
+        skipped,
+    })
 }

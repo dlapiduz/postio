@@ -702,6 +702,10 @@ const CASES: &[(&str, fn())] = &[
         settings_privacy::allowed_senders_render_as_rows_and_hide_when_there_are_none as fn(),
     ),
     (
+        "settings_privacy::the_gnupg_switch_writes_the_config_asks_the_host_and_shows_what_it_read",
+        settings_privacy::the_gnupg_switch_writes_the_config_asks_the_host_and_shows_what_it_read as fn(),
+    ),
+    (
         "settings_privacy::revoking_a_sender_removes_its_row_and_persists",
         settings_privacy::revoking_a_sender_removes_its_row_and_persists as fn(),
     ),

@@ -709,3 +709,36 @@ fn an_encrypted_message_is_said_and_a_signature_part_is_no_attachment() {
         "a key is offered for import"
     );
 }
+
+#[test]
+fn settings_says_what_the_gnupg_keyring_gave() {
+    use postio_ui::settings::{GnupgKeyring, gnupg_line};
+    assert_eq!(
+        gnupg_line(&GnupgKeyring::Read {
+            keys: 312,
+            skipped: 2
+        }),
+        "312 keys read from your GnuPG keyring · 2 skipped"
+    );
+    assert_eq!(
+        gnupg_line(&GnupgKeyring::Read {
+            keys: 1,
+            skipped: 0
+        }),
+        "1 key read from your GnuPG keyring"
+    );
+    assert_eq!(
+        gnupg_line(&GnupgKeyring::Unreadable),
+        "Postio can't read this GnuPG keyring. Export the keys you need with `gpg --export --armor <address> > keys.asc` and import the file."
+    );
+    assert_eq!(
+        gnupg_line(&GnupgKeyring::Absent {
+            home: "/home/ada/.gnupg".to_owned()
+        }),
+        "No GnuPG keyring was found in /home/ada/.gnupg."
+    );
+    assert_eq!(
+        gnupg_line(&GnupgKeyring::Off),
+        "Off: Postio reads no file outside its own store."
+    );
+}

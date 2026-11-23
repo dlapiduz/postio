@@ -226,3 +226,49 @@ fn empty_state_visible(panel: &SettingsPanel) -> bool {
     .into_iter()
     .any(|w| w.is_visible())
 }
+
+pub fn the_gnupg_switch_writes_the_config_asks_the_host_and_shows_what_it_read() {
+    let Some((window, panel, _dir)) = panel_with_allowlist(RemoteImageAllowList::default()) else {
+        return;
+    };
+    assert_eq!(
+        panel.gnupg_keyring_line(),
+        "Off: Postio reads no file outside its own store."
+    );
+    let asked = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let seen = asked.clone();
+    panel.connect_gnupg_keyring(move |on| seen.borrow_mut().push(on));
+    panel.turn_gnupg_keyring(true);
+    pump();
+    assert_eq!(*asked.borrow(), [true]);
+    panel.reload_gnupg_keys();
+    assert_eq!(
+        *asked.borrow(),
+        [true, true],
+        "Reload GnuPG keys reads the files again"
+    );
+    assert!(
+        postio_config::Config::from_toml_str(&panel.text())
+            .expect("parses")
+            .signatures
+            .gnupg_keyring,
+        "the switch is in the config: {}",
+        panel.text()
+    );
+    panel.set_gnupg_keyring(&postio_ui::settings::GnupgKeyring::Read {
+        keys: 312,
+        skipped: 2,
+    });
+    assert_eq!(
+        panel.gnupg_keyring_line(),
+        "312 keys read from your GnuPG keyring · 2 skipped"
+    );
+    panel.set_text("");
+    pump();
+    assert_eq!(
+        *asked.borrow(),
+        [true, true],
+        "a reloaded file moves the switch without asking"
+    );
+    window.destroy();
+}

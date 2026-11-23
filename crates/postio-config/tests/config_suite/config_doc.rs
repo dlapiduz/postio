@@ -327,6 +327,14 @@ const ENTRIES: &[Entry] = &[
         description: "A folder of project notes, relative to the vault and inside it, besides \
                        the notes whose frontmatter says `type: project`.",
     },
+    Entry {
+        path: "signatures.gnupg_keyring",
+        kind: "bool",
+        default: "false",
+        description: "Use public keys from your GnuPG keyring to check signatures. Postio \
+                       reads the public keyring files under `GNUPGHOME` or `~/.gnupg`, read-only; \
+                       it never runs `gpg` or opens secret keys.",
+    },
 ];
 
 struct Nested {

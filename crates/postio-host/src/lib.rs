@@ -397,6 +397,9 @@ impl Host {
             .map(postio_session::mailbox_roles_at)
             .unwrap_or_default();
         let storage_ceiling = config_path.and_then(postio_session::storage_ceiling_at);
+        let gnupg_keyring = config_path
+            .and_then(|path| postio_config::Config::load_from_path(path).ok())
+            .is_some_and(|config| config.signatures.gnupg_keyring);
 
         let host = Host::start(database, blobs, |wiring| {
             wiring
@@ -404,6 +407,7 @@ impl Host {
                 .with_backfill(postio_session::backfill_policy(&sync_config))
                 .with_watch(postio_session::watch_policy(&sync_config))
                 .with_storage_ceiling(storage_ceiling)
+                .with_gnupg_keyring(gnupg_keyring)
                 .with_auto_empty(postio_core::retention::AutoEmpty {
                     junk_days: sync_config.empty_junk_after_days,
                     trash_days: sync_config.empty_trash_after_days,
@@ -1635,6 +1639,22 @@ impl Inner {
                     Err(reason) => Resp::Failed(postio_model::listing::StoreError::new(reason)),
                 }
             }
+            Req::GnupgKeyring { on } => match self.write_gnupg_switch(on) {
+                Err(reason) => Resp::Failed(postio_model::listing::StoreError::new(reason)),
+                Ok(()) => match gnupg::sync(
+                    &self.wiring.database,
+                    &self.wiring.blobs,
+                    gnupg::home_of_this_user().as_deref(),
+                    on,
+                )
+                .await
+                {
+                    Ok(state) => Resp::GnupgKeyring(state),
+                    Err(error) => {
+                        Resp::Failed(postio_model::listing::StoreError::new(error.to_string()))
+                    }
+                },
+            },
             Req::DigestLikeThis(message) => focus::like_this(self, message)
                 .await
                 .map_or_else(Resp::Failed, Resp::DigestLikeThis),
@@ -1755,6 +1775,19 @@ impl Inner {
 
     /// UIDs and mailbox paths are scoped to an account: another engine can fetch unrelated bytes
     /// under the same identity.
+    fn write_gnupg_switch(&self, on: bool) -> Result<(), String> {
+        let Some(path) = self.config_path.lock().expect("never poisoned").clone() else {
+            return Ok(());
+        };
+        let text = std::fs::read_to_string(&path).unwrap_or_default();
+        match postio_config::signatures::set_gnupg_keyring(&text, on) {
+            Ok(Some(written)) => postio_config::save::write_atomically(&path, &written)
+                .map_err(|error| error.to_string()),
+            Ok(None) => Ok(()),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
     async fn engine_for_message(
         &self,
         message: postio_model::MessageId,

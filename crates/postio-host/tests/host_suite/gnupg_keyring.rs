@@ -192,3 +192,61 @@ fn gnupghome_wins_over_the_home_directory() {
         Some(std::path::PathBuf::from("/home/ada/.gnupg"))
     );
 }
+
+#[test]
+fn turning_the_keyring_on_records_its_keys_and_off_forgets_the_ones_only_it_held() {
+    use postio_storage::repository::{KeyRepository, KeySource};
+    use postio_ui::settings::GnupgKeyring;
+    let home = home();
+    std::fs::write(
+        home.path().join("pubring.kbx"),
+        keybox(&["ada-a.asc", "ada-b.asc"]),
+    )
+    .expect("a keybox");
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("a runtime");
+    let database = rt.block_on(postio_storage::test_support::memory());
+    let dir = tempfile::tempdir().expect("blobs");
+    let blobs = postio_storage::BlobStore::open(
+        dir.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
+    let ada = postio_model::EmailAddress::new(None::<String>, "ada@example.com");
+    let held = || {
+        rt.block_on(async {
+            let connection = database.connect().await.expect("c");
+            KeyRepository::new(&connection)
+                .for_address(&ada)
+                .await
+                .expect("r")
+                .into_iter()
+                .map(|key| key.fingerprint)
+                .collect::<Vec<_>>()
+        })
+    };
+    assert_eq!(
+        rt.block_on(gnupg::sync(&database, &blobs, Some(home.path()), true))
+            .expect("read"),
+        GnupgKeyring::Read {
+            keys: 2,
+            skipped: 0
+        }
+    );
+    let both = held();
+    assert_eq!(both.len(), 2);
+    rt.block_on(async {
+        let connection = database.connect().await.expect("c");
+        let keys = KeyRepository::new(&connection);
+        assert_eq!(keys.sources(&both[0]).await.expect("r"), [KeySource::Gnupg]);
+        keys.accept(&ada, &both[0], 1).await.expect("accepted");
+    });
+    assert_eq!(
+        rt.block_on(gnupg::sync(&database, &blobs, Some(home.path()), false))
+            .expect("off"),
+        GnupgKeyring::Off
+    );
+    assert_eq!(held(), [both[0].clone()], "only the accepted key stays");
+}

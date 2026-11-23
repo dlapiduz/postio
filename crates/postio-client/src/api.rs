@@ -191,6 +191,7 @@ impl Req {
             Req::SweepPreview => "SweepPreview",
             Req::RawSource(_) => "RawSource",
             Req::SourceView { .. } => "SourceView",
+            Req::GnupgKeyring { .. } => "GnupgKeyring",
             Req::Surfaced => "Surfaced",
             Req::DigestPreview { .. } => "DigestPreview",
             Req::DigestSummary(_) => "DigestSummary",
@@ -1631,6 +1632,18 @@ impl Client {
         )
         .await
         .map(|view| *view)
+    }
+
+    pub async fn gnupg_keyring(
+        &self,
+        on: bool,
+    ) -> Result<postio_ui::settings::GnupgKeyring, StoreError> {
+        self.read(
+            Req::GnupgKeyring { on },
+            "the GnuPG keyring",
+            only!(Resp::GnupgKeyring),
+        )
+        .await
     }
 
     pub async fn surfaced(&self) -> Result<Vec<postio_model::listing::Surfaced>, StoreError> {

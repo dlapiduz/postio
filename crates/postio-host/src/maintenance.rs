@@ -25,6 +25,15 @@ pub fn spawn_idle_passes(wiring: &Wiring) {
         wiring.events.subscribe("signature-checker"),
         &wiring.runtime,
     );
+    if wiring.gnupg_keyring {
+        let (database, blobs) = (wiring.database.clone(), wiring.blobs.clone());
+        wiring.runtime.spawn(async move {
+            let home = crate::gnupg::home_of_this_user();
+            if let Err(error) = crate::gnupg::sync(&database, &blobs, home.as_deref(), true).await {
+                tracing::warn!(%error, "the GnuPG keyring could not be read: {error}");
+            }
+        });
+    }
     repair_the_header_blocks(wiring);
     catch_up_the_header_index(wiring);
     build_contacts(wiring);

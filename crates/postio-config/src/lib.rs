@@ -20,6 +20,7 @@ pub mod paths;
 pub mod reader;
 pub mod save;
 pub mod secrets;
+pub mod signatures;
 mod source;
 mod splice;
 pub mod storage;
@@ -51,6 +52,7 @@ pub use logging::{LogLevel, LoggingConfig};
 pub use mcp::{McpAccount, McpConfig, revoke_all_mcp, revoke_mcp_account};
 pub use model::{EndpointRefused, FocusModel, ModelEndpoint, ModelFeature, ModelProblem, Reach};
 pub use reader::{ReaderConfig, ZOOM_STEPS, nearest_zoom, patch_reader, save_zoom};
+pub use signatures::SignaturesConfig;
 pub use storage::StorageConfig;
 pub use sync::{ALL_MESSAGES, AttachmentFetch, BodyFetch, CheckForMail, SyncConfig, patch_sync};
 pub use tui::{Preview, TuiConfig};
@@ -106,10 +108,11 @@ pub struct Config {
     pub focus: FocusConfig,
     #[serde(default)]
     pub mcp: McpConfig,
+    #[serde(default)]
+    pub signatures: SignaturesConfig,
     #[serde(flatten)]
     pub extra: Extras,
 
-    /// Secret keys found in the file and dropped. Never serialized.
     #[serde(skip)]
     rejected_secrets: Vec<String>,
 }
