@@ -436,12 +436,18 @@ impl Surfaces {
             self.stepping = Some(stepping);
             return None;
         }
-        if rows.is_empty() {
-            self.remove(SurfaceKind::Message);
-            return Some(Landing::Close);
+        let unread_or_message = |at: &u32| rows.facts(*at).is_none_or(|row| !row.digest);
+        let from = stepping.index.min(rows.len().saturating_sub(1));
+        let next = (from..rows.len())
+            .find(unread_or_message)
+            .or_else(|| (0..from).rev().find(unread_or_message));
+        match next {
+            Some(index) => Some(Landing::Open(index)),
+            None => {
+                self.remove(SurfaceKind::Message);
+                Some(Landing::Close)
+            }
         }
-        let index = stepping.index.min(rows.len() - 1);
-        Some(Landing::Open(index))
     }
 }
 

@@ -361,6 +361,49 @@ pub fn clicking_the_more_chip_opens_the_outline() {
     });
 }
 
+pub fn the_outline_keeps_its_width_however_many_people_wrote() {
+    crate::gtk_case(async {
+        let fixture = Fixture::empty().await;
+        let authors = [
+            ("Ada Moreno-Castellanos", "ada@example.com"),
+            ("Benedict Adeyemi-Okafor", "ben@example.com"),
+            ("Carlota Fitzgerald-Whitmore", "carlota@example.com"),
+            ("Dmitri Vasquez-Lindqvist", "dmitri@example.com"),
+            ("Ada Moreno-Castellanos", "ada@example.com"),
+        ];
+        fixture.thread_by("Harbor plan", &authors, 10).await;
+        let (window, _client) = fixture.open().await;
+        assert!(crate::settle_until(async || window.cursor_row().is_some()).await);
+        support::keys(&window, &["Return"]);
+        assert!(crate::settle_until(async || window.reading().is_some_and(|r| r.is_open())).await);
+        support::press(&window, "t", gtk::gdk::ModifierType::ALT_MASK);
+        assert!(
+            crate::settle_until(
+                async || said(&window, "focus.outline.open") == Some(serde_json::json!(true))
+            )
+            .await,
+            "alt+t opened the outline"
+        );
+        let reading = window.reading().expect("open");
+        let outline = support::only(&reading.dialog(), "focus-outline");
+        assert!(
+            crate::settle_until(async || outline.width() > 0).await,
+            "the outline was laid out"
+        );
+        assert_eq!(
+            support::with_class(&outline, "focus-outline-chip").len(),
+            4,
+            "a chip for each person"
+        );
+        let shown = outline.first_child().expect("the popover's box");
+        assert_eq!(
+            shown.width(),
+            440,
+            "four people's chips widened the outline past its rule"
+        );
+    });
+}
+
 pub fn a_search_childs_row_says_who_wrote_it_and_when() {
     crate::gtk_case(async {
         let fixture = Fixture::empty().await;

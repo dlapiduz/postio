@@ -2581,6 +2581,7 @@ button.focus-filtered-tab.focus-filtered-tab-on {
 .focus-thread-menu > contents,
 .focus-outline > contents {
   font-family: var(--postio-font-body);
+  padding: 0;
 }
 
 /* The menu's entries are choices, in ink: a ghost button's chrome grey
