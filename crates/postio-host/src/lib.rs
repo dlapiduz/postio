@@ -2464,6 +2464,7 @@ impl Transport for Local {
     }
 }
 
+pub mod anchors;
 pub mod compose;
 pub mod contacts;
 pub mod export;

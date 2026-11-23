@@ -20,3 +20,4 @@ mod oauth_signin;
 mod reclaim;
 mod search_index;
 mod source_view;
+mod trust_anchors;

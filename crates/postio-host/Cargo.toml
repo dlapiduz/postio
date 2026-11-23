@@ -41,6 +41,7 @@ tracing = { workspace = true }
 postio-workspace-hack.workspace = true
 
 [dev-dependencies]
+base64 = { workspace = true }
 postio-ai = { workspace = true, features = ["test-support"] }
 tracing-subscriber = { workspace = true, features = ["fmt", "env-filter"] }
 postio-smtp.workspace = true

@@ -5,6 +5,22 @@ use postio_storage::repository::{
 };
 use postio_storage::{BlobStore, Checkout, Store, WritePriority};
 
+static ANCHOR_SOURCE: std::sync::OnceLock<fn() -> Vec<Vec<u8>>> = std::sync::OnceLock::new();
+static ANCHORS: std::sync::OnceLock<Vec<Vec<u8>>> = std::sync::OnceLock::new();
+
+pub fn read_anchors_with(source: fn() -> Vec<Vec<u8>>) {
+    let _ = ANCHOR_SOURCE.set(source);
+}
+
+fn anchors() -> &'static [Vec<u8>] {
+    ANCHORS.get_or_init(|| {
+        ANCHOR_SOURCE
+            .get()
+            .map(|source| source())
+            .unwrap_or_default()
+    })
+}
+
 const INLINE: &str = "-----BEGIN PGP SIGNED MESSAGE-----";
 
 pub async fn check_messages(
@@ -142,7 +158,14 @@ async fn check_one(
         }
     };
     let held = KeyRepository::new(connection).for_address(from).await?;
-    let keys = KeySet::from_keyblocks(held.iter().map(|key| key.keyblock.as_slice()));
+    let mut keys = KeySet::from_keyblocks(held.iter().map(|key| key.keyblock.as_slice()));
+    if postio_signature::signed_scope(&bytes).and_then(|scope| scope.format())
+        == Some(Format::Smime)
+    {
+        for anchor in anchors() {
+            keys.push_anchor(anchor.clone());
+        }
+    }
     let Some(verdict) = postio_signature::verify(&bytes, &keys, &Policy) else {
         return Ok(false);
     };

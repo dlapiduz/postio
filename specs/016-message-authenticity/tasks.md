@@ -208,7 +208,7 @@ S/MIME is filed as its own spec.
 
 - [x] T051 [US4] ⛔ S2 Add the T006-chosen crates to `crates/postio-signature/Cargo.toml`, keeping the boundary check and the no-`-sys` rule green. Add S/MIME fixtures (good, tampered, expired, unknown anchor, address mismatch) through `/add-fixture`
 - [x] T052 [US4] ⛔ S2 Write failing cases, then implement S/MIME `verify` in `crates/postio-signature/src/smime.rs`: chain to anchors handed in, `id-kp-emailProtection`, the From address against the certificate, and no revocation
-- [ ] T053 [US4] ⛔ S2 Read the system trust anchors from disk in `crates/postio-host/src/` (`/etc/pki/tls/certs`, `/etc/ssl/certs`; the Mac's keychain through `postio-ffi`), with a case over a temporary anchor directory
+- [x] T053 [US4] ⛔ S2 Read the system trust anchors from disk in `crates/postio-host/src/` (`/etc/pki/tls/certs`, `/etc/ssl/certs`; the Mac's keychain through `postio-ffi`), with a case over a temporary anchor directory (Linux; the Mac's keychain half waits for a Mac)
 - [ ] T054 [US4] ⛔ S2 Add "Revocation not checked", and the mark for S/MIME, to the view model and `contracts/header-mark.md`'s cases
 
 ## Phase 9: Polish and landing

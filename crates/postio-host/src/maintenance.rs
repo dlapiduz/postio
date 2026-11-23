@@ -25,6 +25,7 @@ pub fn spawn_idle_passes(wiring: &Wiring) {
         wiring.events.subscribe("signature-checker"),
         &wiring.runtime,
     );
+    postio_session::signature::read_anchors_with(|| crate::anchors::system().certificates);
     if wiring.gnupg_keyring {
         let (database, blobs) = (wiring.database.clone(), wiring.blobs.clone());
         wiring.runtime.spawn(async move {
