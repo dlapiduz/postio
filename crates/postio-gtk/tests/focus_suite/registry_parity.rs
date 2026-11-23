@@ -28,6 +28,8 @@ const NOT_YET: &[&str] = &[
     "save_event",
     "save_and_send_event",
     "email_attendees",
+    // A window's own close button is its control, drawn by its header bar, not listed here.
+    "close_window",
     "first_message",
     "last_message",
     "toggle_selection",
