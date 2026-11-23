@@ -1735,11 +1735,15 @@ impl OpenMessage {
         let chip = gtk::Label::new(Some(line.chip));
         chip.add_css_class("focus-marker-chip");
         chip.set_valign(gtk::Align::Center);
+        chip.update_property(&[gtk::accessible::Property::Label(line.spoken)]);
         card.append(&chip);
         if let Some(date) = &line.date {
             let date = gtk::Label::new(Some(date));
             date.add_css_class("focus-marker-date");
             card.append(&date);
+        }
+        if line.automated {
+            card.add_css_class("automated");
         }
         if let Some(quote) = &line.quote {
             let quote = gtk::Label::new(Some(&format!("\u{201c}{quote}\u{201d}")));

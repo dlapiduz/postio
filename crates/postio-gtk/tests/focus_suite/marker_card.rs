@@ -137,3 +137,49 @@ pub fn the_highlight_starts_and_ends_on_the_sentences_own_words() {
         assert_eq!(document.text.slice(range), ASK);
     });
 }
+
+pub fn a_notice_s_card_draws_its_chip_in_the_secondary_ink() {
+    crate::gtk_case(async {
+        use gtk::prelude::*;
+        const OWED: &str = "A payment of $142.18 is due by Friday.";
+        let fixture = Fixture::empty().await;
+        let (bill, _) = fixture
+            .file(
+                ("Harbour Bank", "statements@bank.example"),
+                "Your statement",
+                "Your statement is ready.",
+                5,
+            )
+            .await;
+        fixture
+            .write_body(bill, &format!("Your statement is ready. {OWED}\n"))
+            .await;
+        fixture.notice(bill, OWED).await;
+        let (window, _client) = fixture.open().await;
+        support::rows_shown(&window, 1).await;
+        support::keys(&window, &["j"]);
+        support::press(&window, "Return", gtk::gdk::ModifierType::empty());
+        let reading = window.reading().expect("open");
+        assert!(
+            crate::settle_until(async || !reading.marker_card_said().is_empty()).await,
+            "no marker card"
+        );
+
+        let chip = support::only(&window, "focus-marker-chip");
+        let quote = support::only(&window, "focus-marker-quote");
+        let manager = adw::StyleManager::default();
+        let accent = manager.accent_color().to_standalone_rgba(manager.is_dark());
+        assert_ne!(chip.color(), accent, "a bill's chip is not in the accent");
+        assert_ne!(
+            chip.color(),
+            quote.color(),
+            "it wears the secondary ink, not the quote's"
+        );
+        assert!(
+            reading
+                .marker_card_said()
+                .iter()
+                .any(|said| said == "To-do")
+        );
+    });
+}
