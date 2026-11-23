@@ -24,3 +24,7 @@ postio-model = { workspace = true, features = ["test-corpus"] }
 
 [lints]
 workspace = true
+
+[package.metadata.cargo-machete]
+# Imported as `ical`, its library name, which cargo-machete does not map back to the package.
+ignored = ["ical-rs"]
