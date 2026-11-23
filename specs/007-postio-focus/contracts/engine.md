@@ -151,7 +151,7 @@ no toolkit, no network, no async runtime.
 
 | Backend | How they arrive |
 |---|---|
-| IMAP | A separate `BODY.PEEK[HEADER.FIELDS (LIST-UNSUBSCRIBE PRECEDENCE AUTO-SUBMITTED)]` item in the same FETCH, on incremental fetches only (`MailBackend::fetch_headers_for_filing`), so still one round trip |
+| IMAP | A separate `BODY.PEEK[HEADER.FIELDS (LIST-UNSUBSCRIBE PRECEDENCE AUTO-SUBMITTED FEEDBACK-ID X-CSA-COMPLAINTS)]` item in the same FETCH, on incremental fetches only (`MailBackend::fetch_headers_for_filing`), so still one round trip |
 | JMAP | From the body. io-jmap 0.3's `JmapEmailProperty` has no `header:<name>` form, only every header, which is the cost ADR 0025 refused. io-jmap is surveyed again before landing |
 | Gmail | The metadata it already fetches |
 

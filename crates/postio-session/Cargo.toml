@@ -13,6 +13,9 @@ repository.workspace = true
 # drainer replays them in the order they happened.
 chrono = { workspace = true, features = ["std"] }
 postio-config.workspace = true
+# `postio-diag classify` (spec 007 T224): the needs-action guard and detector
+# over stored mail, counted. Already in the graph under `postio-sync`.
+postio-classify.workspace = true
 postio-core.workspace = true
 # `maildir` on: the composition root is where a stored account's backend is
 # chosen, so it has to be able to build every kind an account row can name.

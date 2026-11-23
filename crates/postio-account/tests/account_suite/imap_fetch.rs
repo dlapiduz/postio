@@ -502,7 +502,8 @@ async fn live_server_fetches_real_headers() {
     pool.close();
 }
 
-const PROMOTED: &str = "HEADER.FIELDS (LIST-UNSUBSCRIBE PRECEDENCE AUTO-SUBMITTED)";
+const PROMOTED: &str =
+    "HEADER.FIELDS (LIST-UNSUBSCRIBE PRECEDENCE AUTO-SUBMITTED FEEDBACK-ID X-CSA-COMPLAINTS)";
 
 fn filing_line(seq: u32, uid: u32, block: &str) -> String {
     let line = fetch_line(seq, uid);

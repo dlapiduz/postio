@@ -6243,6 +6243,10 @@ impl FocusWindow {
                     "focus.outline.filtering".to_owned(),
                     serde_json::json!(outline.filtering()),
                 );
+                app.insert(
+                    "focus.outline.hint".to_owned(),
+                    serde_json::json!(outline.hint()),
+                );
             }
         }
         let footer = match (self.filtered(), self.results()) {

@@ -339,7 +339,7 @@ fn promoted_section() -> Section<'static> {
         .collect();
     Section::HeaderFields(
         None,
-        Vec1::try_from(names).expect("three field names are not an empty list"),
+        Vec1::try_from(names).expect("the promoted fields are not an empty list"),
     )
 }
 

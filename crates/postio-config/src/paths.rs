@@ -193,4 +193,16 @@ mod tests {
             Err(ConfigError::NoConfigDir)
         ));
     }
+
+    #[test]
+    fn a_test_never_sees_the_real_config() {
+        let path = config_path().unwrap();
+        assert!(
+            path.components()
+                .any(|part| part.as_os_str() == "test-home"),
+            "{} is outside the test home: run tests with cargo nextest or scripts/test-fast.sh, \
+             which take one from scripts/test-home.sh",
+            path.display()
+        );
+    }
 }

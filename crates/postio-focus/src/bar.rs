@@ -513,7 +513,11 @@ impl Bar {
         self.places_asked = false;
     }
 
-    pub(crate) fn places_shown(&mut self, shown: bool) {
+    pub(crate) fn places_shown(&self) -> bool {
+        self.places_shown
+    }
+
+    pub(crate) fn set_places_shown(&mut self, shown: bool) {
         self.places_shown = shown;
         if !shown {
             self.places_stale = false;
@@ -1025,7 +1029,7 @@ impl FocusController {
             Input::SearchExclude(token) => self.bar.exclude(token),
             Input::OpenPlace(token) => self.open_place(token, rows),
             Input::PlacesShown(shown) => {
-                self.bar.places_shown(shown);
+                self.bar.set_places_shown(shown);
                 Vec::new()
             }
             Input::SavedSearches(saved) => {

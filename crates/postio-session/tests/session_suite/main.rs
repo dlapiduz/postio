@@ -7,6 +7,7 @@ mod body_failed_reading;
 mod body_index_pass;
 mod checkup;
 mod cid_scoping;
+mod classify_report;
 mod correlation;
 mod damaged_body_reading;
 mod drag_reclaim;
