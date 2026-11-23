@@ -193,7 +193,7 @@ scenario 5.
 once.
 **Independent test**: quickstart "Slice D".
 
-- [ ] T037 [US5] Write failing fake-clock cases in `crates/postio-host/tests/host_suite/calendar_reminders.rs`:
+- [x] T037 [US5] Write failing fake-clock cases in `crates/postio-host/tests/host_suite/calendar_reminders.rs`:
   - display and audio alarms notify;
   - email alarms do nothing;
   - snooze;
