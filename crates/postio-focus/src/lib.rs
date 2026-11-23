@@ -1220,8 +1220,11 @@ impl FocusController {
                 let steps = self.verbs.send(command, &mut self.cursor, rows, total);
                 self.effects(steps)
             }
+            // A removal the window did not aim (the unsubscribe offer) can take the open message,
+            // which then steps on as after the window's own Delete (#2231).
             Input::Post(command) => {
-                let steps = self.verbs.post(command);
+                let mut steps: Vec<_> = self.step_past_posted(&command, rows).into_iter().collect();
+                steps.extend(self.verbs.post(command));
                 self.effects(steps)
             }
             Input::ArchiveDigest(delivery) => {
@@ -1726,6 +1729,23 @@ impl FocusController {
                 threads: Vec::new(),
                 writes: false,
             })
+    }
+
+    fn step_past_posted(&mut self, command: &Command, rows: &dyn Rows) -> Option<feed::Step> {
+        let (Command::Archive {
+            target: MessageTarget::Messages(ids),
+        }
+        | Command::Delete {
+            target: MessageTarget::Messages(ids),
+        }) = command
+        else {
+            return None;
+        };
+        let reading = self.surfaces.reading()?;
+        let at = rows
+            .position_of(reading)
+            .filter(|_| ids.contains(&reading))?;
+        Some(self.surfaces.step_past(at, reading))
     }
 
     fn leaves_the_list(&self, id: CommandId) -> bool {

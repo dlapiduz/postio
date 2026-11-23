@@ -16,6 +16,10 @@
 #
 # The small seed's senders repeat, and a message with no List-Id is swept by
 # its exact sender address, so the cursor's row always has mail to clear.
+#
+# The open message is among what the offer clears, so the window steps on
+# to the next row (#2231). Red on the base: there it stayed on the archived
+# message.
 source = { kind = "issue", ref = "#1953" }
 proof  = "base"
 apps   = ["focus"]
@@ -62,5 +66,5 @@ expect  = "The same toast, asked for again. Its button shows the key that takes 
 [[step]]
 id     = "accept"
 key    = "C"
-check  = { overlay.kind = "none", notice.undo = true, notice.text = "Archived 2 messages" }
-expect = "C, the key the toast's button shows, takes up the offer without the pointer: both messages from that sender are archived as one command, and the new toast says it can be undone. The verb keys (e, #) were never the way in: they still mean the open message."
+check  = { overlay.kind = "none", notice.undo = true, notice.text = "Archived 2 messages", view = "reader", reading.id = { changed = true }, keyboard.region = "reader" }
+expect = "C, the key the toast's button shows, takes up the offer without the pointer: both messages from that sender are archived as one command, and the new toast says it can be undone. The open message was one of them, so the window goes on to the row that took its place, as an Archive in the window does (#2231). The verb keys (e, #) were never the way in: they still mean the open message."

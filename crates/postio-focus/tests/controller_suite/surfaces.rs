@@ -329,6 +329,40 @@ fn archive_in_the_message_moves_on_to_the_row_that_took_its_place() {
 }
 
 #[test]
+fn clearing_a_lists_mail_that_takes_the_open_message_moves_on_like_archive() {
+    let rows = List::of(4, &[]);
+    for mut focus in [linux(), mac()] {
+        let _ = reading(&mut focus, &rows);
+        let cleared = vec![MessageId::new(100), MessageId::new(102)];
+        let _ = focus.handle_on(
+            Input::Post(Command::Archive {
+                target: MessageTarget::Messages(cleared),
+            }),
+            &rows,
+        );
+        let effects = focus.landed(&rows.without(100).without(102), false);
+        assert_eq!(opened(&effects), Some(MessageId::new(101)), "the next one");
+        assert_eq!(focus.key_context(), KeyContext::Reader, "still reading");
+    }
+}
+
+#[test]
+fn clearing_mail_the_open_message_is_not_among_leaves_it_open() {
+    let rows = List::of(4, &[]);
+    let mut focus = linux();
+    let _ = reading(&mut focus, &rows);
+    let _ = focus.handle_on(
+        Input::Post(Command::Delete {
+            target: MessageTarget::Messages(vec![MessageId::new(102)]),
+        }),
+        &rows,
+    );
+    let effects = focus.landed(&rows.without(102), false);
+    assert_eq!(opened(&effects), None, "the open message stayed");
+    assert_eq!(focus.reading(), Some(MessageId::new(100)));
+}
+
+#[test]
 fn archiving_the_last_message_steps_back_and_the_only_one_closes() {
     let rows = List::of(2, &[]);
     let mut focus = mac();
