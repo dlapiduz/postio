@@ -4103,7 +4103,7 @@ impl SettingsPanel {
         privacy.section(postio_ui::privacy::READ_RECEIPTS);
         privacy.append(&imp.read_receipt_count);
         privacy.section("Signatures");
-        let gnupg_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        let gnupg_row = gtk::Box::new(gtk::Orientation::Horizontal, space::S3);
         let gnupg_label = gtk::Label::new(Some("Use keys from my GnuPG keyring"));
         gnupg_label.set_xalign(0.0);
         gnupg_label.set_hexpand(true);
