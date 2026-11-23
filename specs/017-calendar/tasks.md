@@ -218,7 +218,7 @@ Every task here is held for the designer handoff (Q4 = C).
 
 ## Phase 12: Polish and landing
 
-- [ ] T044 [P] Add the hostile event fixtures' zero-connection test to `crates/postio-host/tests/host_suite/calendar_privacy.rs` (spec SC-007)
+- [x] T044 [P] Add the hostile event fixtures' zero-connection test to `crates/postio-host/tests/host_suite/calendar_privacy.rs` (spec SC-007)
 - [ ] T045 [P] Update `docs/ARCHITECTURE.md` (the diagram and §9 for `postio-dav`) and `docs/PRODUCT.md` (a calendar section, and §17 for reminders)
 - [ ] T046 Run `/ux-review` on every calendar storyboard, then land with `scripts/issue-land.sh --detach --full-suite`
 
