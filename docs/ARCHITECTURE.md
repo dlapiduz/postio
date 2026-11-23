@@ -1,15 +1,7 @@
 # Postio architecture
 
-How Postio is put together, and **why** — the decisions that are load-bearing,
-so a change that would break one is recognisable as such before it is written.
-
-Scope note: this describes what is **built**, as of 0.4.0. Where a decision is
-made but not yet implemented it says so explicitly. `docs/decisions/` holds
-the long-form ADRs, with [an index](decisions/README.md) of where each one
-stands. The August 2026 outside review that shaped several of them is kept
-in [`docs/archive/`](archive); every finding it raised has since landed.
-
----
+How Postio is put together. The rules are in `.specify/memory/constitution.md`;
+long-form decisions are the ADRs in [`docs/decisions/`](decisions/README.md).
 
 ## The shape
 
@@ -49,6 +41,8 @@ graph TD
         model["<b>postio-model</b><br/>domain types · JWZ threading"]
     end
 
+    focus["<b>postio-focus</b><br/>the Focus controller: cursor · surfaces · keys · intents<br/><i>no I/O · ADR 0045</i>"]
+
     subgraph focusdomain ["Focus's engine work"]
         classify["<b>postio-classify</b><br/>filter · hold · mark, in layers<br/><i>no send path · no network</i>"]
         calendar["<b>postio-calendar</b><br/>invitations · RSVP replies<br/><i>pure leaf</i>"]
@@ -58,6 +52,13 @@ graph TD
 
     app --> session
     app --> widgets
+    app --> focus
+    tui --> focus
+    ffi --> focus
+    focus --> client
+    focus --> ui
+    focus --> core
+    focus --> vault
     app --> ui
     app --> core
     app --> search
@@ -118,528 +119,115 @@ graph TD
     classDef pure fill:#eef3f8,stroke:#5980a6,color:#1c2b3a
     classDef guard stroke-dasharray:4 3,stroke:#5980a6
     class model,search,calendar pure
-    class core,app,session,client,tui,mcp,widgets,classify,ai,vault guard
+    class core,app,focus,session,client,tui,mcp,widgets,classify,ai,vault guard
 ```
 
-Arrows are "depends on", and every arrow drawn is a real direct dependency.
-Two sets are left out to keep the layering legible: `postio-session`'s direct
-edges to most leaves (it is the composition root — it assembles them, which
-says nothing about rank), and edges already implied by a path through the
-diagram, such as `postio-runtime -> postio-search` or the fact that very
-nearly everything depends on `postio-model`.
+Arrows are "depends on" and each is a real direct dependency. Omitted:
+`postio-session`'s edges to most leaves (it is the composition root), edges
+implied by a longer path, and `postio-workspace-hack`, which every crate
+depends on and which has no code (ADR 0047).
 
-**The desktop app is `postio-gtk`**, the Focus design
-(`specs/007-postio-focus`, [ADR 0043](decisions/0043-focus-is-the-one-desktop-app.md)):
-the binary `postio`, the app id `dev.postio.Postio`. What it draws outside its
-own window — the message view, the composer, the keycaps, chips and pickers,
-the settings window — is `postio-widgets`, which depends on no app. Focus's
-engine work is four crates. `postio-classify` decides what is filtered, held
-and marked; the filing pass in `postio-sync` and the host's body-stage task
-call it. `postio-calendar` reads invitations and writes their replies.
-`postio-ai` asks the user's own model. `postio-vault` writes a capture into
-an Obsidian vault.
+## Crates
 
-`postio-gtk` and `postio-session` are split along one line: does it name a
-toolkit. Everything the application *is* — the store, the runtime, the
-engines, and the verb vocabulary that turns a `Command` into rows and events —
-is in `postio-session`, behind `postio-host`, which every frontend links. What
-is in `postio-gtk` is a window, its rows and its dialogs, each of which names
-a widget. See [ADR 0010](decisions/0010-mcp-surface.md) for why the
-alternative — a second binary opening the store directly — is not a second
-frontend but a second application sharing a file.
+| Crate | Role |
+|---|---|
+| `postio-gtk` | The desktop app (Focus design, binary `postio`, app id `dev.postio.Postio`). A window, its rows and dialogs; each names a widget. No SQL, no protocol. |
+| `postio-widgets` | The GTK the app draws outside its window: message view, composer, keycaps, chips, pickers, settings. |
+| `postio-focus` | The Focus controller: cursor, selection, surface stack, key resolver. Does no I/O. Frontends feed it inputs and draw its intents (ADR 0045). |
+| `postio-tui` | The terminal app (ratatui, crossterm). Drives the `postio-focus` controller like the GTK and macOS frontends. |
+| `postio-ffi`, `macos/` | The UniFFI boundary and the Swift app over it (ADR 0019). |
+| `postio-mcp` | The frontend with no screen: MCP over stdio, reads and drafts, never sends (ADR 0010, [`mcp.md`](mcp.md)). |
+| `postio-ui` | Presentation with no toolkit: keymap, list window, reader document, tokens, verb scope. No GTK, no SQL. |
+| `postio-host` | Every store operation, written once: paging, reading, search, compose, settings, onboarding, sync, upkeep. Runs inside each app's process. |
+| `postio-client` | Commands down, events up. The frontends' whole view of mail. No engine. |
+| `postio-session` | Composition root: store, runtime, engines, the verb vocabulary. No toolkit. |
+| `postio-runtime` | Async runtime, sync and index orchestration. |
+| `postio-core` | Commands, events, registry, undo, bridge. No GTK, no optional dependencies. |
+| `postio-config` | TOML schema, validation, live reload. |
+| `postio-search` | Query parser, highlighter, facets. Pure. |
+| `postio-body` | Document, HTML subset, quoting, sanitising (ammonia, both directions). Pure leaf. |
+| `postio-model` | Domain types, JWZ threading. |
+| `postio-storage`, `postio-index` | The store (Turso, ADR 0038) and the search index. |
+| `postio-sync`, `postio-transport`, `postio-gmail`, `postio-jmap`, `postio-smtp` | Sync over the `MailBackend` trait; protocol crates. |
+| `postio-classify` | Filter, hold, mark, in layers. No send path, no network. |
+| `postio-calendar` | Invitations and RSVP replies. Pure leaf. |
+| `postio-ai` | Asks the user's own model, on this computer. No send path, no store, no model. |
+| `postio-vault` | Appends Markdown to an Obsidian vault. Files only. |
+| `postio-render` | The memory-safe reading renderer (ADR 0042). |
 
-**`postio-mcp` is the frontend with no screen** (ADR 0010, [`mcp.md`](mcp.md)).
-An AI agent launches it and speaks the Model Context Protocol on its stdin
-and stdout. When an app holds the store, that app answers each call
-itself, over a private Unix socket beside the store (ADR 0041's 2026-10-14
-amendment), and the agent's change lands on that window's undo. When no app
-is open, `postio-mcp` opens the store for one call and closes it afterwards,
-so it never keeps the person's own mail client out. It reads
-only the accounts and folders `[mcp]` in `config.toml` shares, returns
-bodies as `postio-body` text inside a block labelled untrusted. It writes
-drafts, and archives, moves and labels where `[mcp]`'s `actions` allow it,
-by the same commands the apps send; it has no tool that sends, deletes or
-marks mail.
+Other crates (account, contact-sync, extract, vcard, demo, bench, storyboard,
+test-support) are support code.
 
-Dashed borders mark the crates whose dependency closure CI polices
-(`scripts/checks/check-crate-boundaries.py`). Not drawn: every crate also
-depends on `postio-workspace-hack`, which has no code and exists so that
-building one crate reuses the workspace build's dependencies. A boundary is
-what a crate's code can call, so the check does not walk into it
-([ADR 0047](decisions/0047-one-feature-set-for-the-workspace.md)).
+## Boundaries
 
-**One app opens the store at a time** ([ADR 0041](decisions/0041-one-app-opens-the-store-at-a-time.md)).
-The desktop app, the terminal and the macOS app each run `postio-host` inside
-their own process and reach mail only through `postio-client`, whose in-process
-transport is a spawn and a oneshot. The host is where every store operation
-is written once -- paging, reading, search, compose, settings, onboarding,
-sync and upkeep -- and the frontends draw. Whichever app starts first holds
-the store; the other says so and waits to be asked again. An AI agent's
-calls are the exception that proves it: they reach the app that holds the
-store over its agent socket, rather than opening the store a second time.
+`scripts/checks/check-crate-boundaries.py` enforces them against
+`cargo metadata`'s resolved graph, dev-dependencies included. Dashed boxes
+above are the guarded crates. A boundary is what a crate's code can call, so
+the check does not walk into `postio-workspace-hack`.
 
----
+- `postio-core` and `postio-session` take no GTK. `postio-core` has no
+  optional dependencies: features unify across the build, so a
+  `postio-core/runtime` feature would put the engine in every crate's graph.
+- An interface (`postio-gtk`, `postio-tui`, `postio-ffi`) takes no store
+  engine and no mail protocol as a direct dependency; it opens the store
+  through `postio-host` (ADR 0041). `rusqlite` stays banned beside `turso`.
+- `postio-client` takes no toolkit, WebKit, store engine or protocol.
+  `postio-tui` takes no toolkit or WebKit.
+- `postio-widgets` takes no store engine, protocol, store-owning crate
+  (`postio-host`, `postio-session`, `postio-runtime`, `postio-storage`,
+  `postio-sync`) or app (ADR 0043).
+- `postio-classify` takes no send path or network crate (ADR 0009).
+  `postio-calendar` takes no store engine, toolkit, async runtime or network.
+- `postio-ai` takes no send path, store, toolkit, inference engine or HTTP
+  client but `io-http`; its endpoint can only name this computer.
+- `postio-vault` takes no network crate, toolkit, store engine or async
+  runtime.
+- `postio-mcp` takes no store engine, protocol, toolkit, WebKit, inference
+  engine or HTTP/WebSocket server. Its only transport is stdio.
+- No app binary links an inference engine.
+- `postio-model`, `postio-search`, `postio-body`, `postio-config` and
+  `postio-sync` have the narrower rules in the check's table.
+- `scripts/issue-land.sh` refuses a changed crate the host cannot build,
+  probing `pkg-config`, not `uname`. The GTK crates are the portable half's
+  exclusion set (`postio-gtk`, `postio-widgets`).
+
+One app opens the store at a time (ADR 0041). Each runs `postio-host` in its
+own process; the first to start holds the store. An agent reaches the holder
+over its private agent socket instead of opening the store.
+
+**Verb scope** is decided in one place: `postio_ui::scope::target` resolves
+whether a key acts on a message or a thread, and `scope::footer` says so. No
+frontend decides scope itself; a new verb that acts on mail gets a row in that
+table and a test per cell.
+
+**Frontend coverage is a test.** `postio-ffi`'s `command_coverage.rs` fails
+when a registry command reaches no boundary, bus or window unless listed as
+debt with an issue. `focus_suite`'s `every_command` presses every bound command
+and fails on one with no visible effect that `storyboards/gaps/focus.toml`
+does not name.
 
 ## The decisions
 
-### 1. Commands down, events up — and the UI never awaits the network
-
-The frontend never mutates anything. It sends a `Command` and repaints from the
-`Event`s that come back. Every mutating action follows the same order:
-
-> **Store write → enqueue the remote operation → emit the event → repaint.**
-
-The network is not in that sequence. `postio-sync` drains the queue later and
-somewhere else, and reports back through its own events.
-
-**Why:** it is what makes Postio work on a train, and what makes it reconcile
-when the link returns. It is also the only version of "feels instant" that
-survives a slow server — a design that awaits the server is fast only when the
-server is.
-
-**How it is held:** `postio-core::bridge` is the single place the tokio half and
-the UI main loop touch, in both directions, over unbounded non-blocking
-channels. `send` returns immediately; the frontend drains the event stream from
-its own loop. No GTK type appears in that module, and none may.
-
-### 2. The registry is the source of truth for every command surface
-
-`PRODUCT.md` §8 wants every command to have a keyboard shortcut, a palette entry
-and an accessible action. There is **one enumerable table** — `postio-core::registry` —
-and the keymap, the `Ctrl+K` palette, the `?` cheat sheet, the right-click menu,
-the action bars' key caps and `docs/keybindings.md` are all *derived*
-from it.
-
-**Why:** three hand-maintained lists drift within a release. One table cannot.
-
-**Consequence to respect:** a command that is not in the registry **does not
-exist** — not merely unbound, but absent from every way a user could discover
-it. An extension mechanism must therefore register rather than bypass, or
-extension commands become second-class in exactly the surfaces that make the
-app good.
-
-**How an extension command reaches those surfaces** (`postio-plp4`, ADR 0002):
-`registry::register` takes an owned `ExtCommand` with a namespaced id —
-`"mcp:summarise-thread"` — and returns an interned `ExtId`. `ActionId` is the
-union of that and the built-in `CommandId`, and it is what the keymap, the
-palette, the cheat sheet and the key hints deal in; `registry::reachable`
-yields the merged vocabulary for a context. `registry::all` and `get` still
-mean *the built-in table*, so `docs/keybindings.md` keeps documenting what
-ships.
-
-Three properties worth not losing:
-
-- `CommandId` stays closed, fieldless and `Copy`. `registry::get` is
-  `SPECS[id as usize]`, and rustc allows that cast only for a fieldless enum,
-  so a data-carrying variant would cost the registry its O(1) shape. This is
-  why the seam is `ActionId` rather than a new `CommandId` variant.
-- Extension commands are equal to built-ins where it matters to the *user* —
-  palette, cheat sheet, `[keys]` — and distinguishable where it matters to the
-  *compiler*. Dispatch keeps a `Command`-typed path for built-ins and a
-  parallel `ExtId`-keyed one for registrations, because a built-in is
-  statically known to have a handler and carries a typed payload, and an
-  extension is neither.
-- **`destructive: true` with `Recovery::None` is rejected at registration.**
-  For the built-in table that invariant is a test over a literal; a table that
-  grows at runtime cannot be checked that way, so the check moved into the
-  door. An AI- or plugin-invoked destructive action with no undo is worse than
-  a built-in one, because the user did not type it.
-
-The right-click menu is the one surface that stays built-in only. It is a
-`PopoverMenu` with no query box and no ranking, so it has no answer for a
-vocabulary that grows, and its contents would otherwise depend on what is
-installed rather than on which build you are running — and right-click is
-muscle memory in a way `Ctrl+K` deliberately is not.
-
-**Bonus the table buys:** `destructive` and `recovery` are fields, so
-"a destructive command must be recoverable" is machine-checked rather than a
-review habit.
-
-### 3. Command ids are a file format
-
-`CommandId` serialises as a stable string, because `[keys]` in `config.toml`
-refers to commands by id. Renaming one silently breaks a user's configuration.
-A test holds `postio-core`'s ids and `postio-config`'s `DEFAULT_BINDINGS`
-together so they cannot drift.
-
-### 4. Selection is a predicate, not a list — and it is not the cursor
-
-Two separate decisions that are usually conflated, and both are correctness
-issues rather than preferences.
-
-**The list has a cursor *and* a selection.** The cursor is where the keyboard
-is: `j`/`k` move it, and an open message follows. The selection is what `e`
-would archive. Most of the time they are the same row, which is exactly why
-conflating them is the classic bug — it only surfaces once a selection is more
-than one row, and then every bulk action lands somewhere the user did not
-expect. `GtkSingleSelection` is the *cursor* here; the name is GTK's, the
-meaning is Postio's.
-
-**"Select all" is a predicate.** `Selection::Everything { except }`, never a
-`Vec`. Selecting a 100k mailbox and taking three rows back out is four ids, and
-archiving it is one statement for the store to resolve rather than 100k of
-anything. This is why `Event::SelectionChanged` carries the selection rather
-than a list of ids: an event that flattened it would undo the reason it exists.
-
-Related: **the message list is never loaded into memory.** It is windowed over
-the paged store (`PRODUCT.md` §18).
-
-### 5. Undo replays inverses through the same machinery
-
-An undo entry carries its inverse as `Command`s, and undo applies them through
-the path the original action used — but with `Recording::Replay`, so nothing is
-pushed back onto the stack. Sending them through the bus instead would record
-an undo of the undo, and `u` `u` would toggle rather than walk back through
-history.
-
-### 6. One matching language: searches, saved searches, virtual folders, filters
-
-**The decision:** Postio has exactly one way to express *which messages* — the
-search query language. Everything that selects a set of mail is that language
-wearing a different hat.
-
-| Concept | Is | Status |
-|---|---|---|
-| A search | A query | Built |
-| A saved search | A query with a name | Built (`Ctrl+S` in the command bar; the macOS sidebar renames, reorders and deletes them) |
-| A pinned search | A saved search that is pinned | Built (the desktop app offers it in the command bar, `Alt+1`…`Alt+4`; macOS in its sidebar) |
-| A rule | An ordered `[[rules]]` entry naming actions, optionally reusing a named `[saved_searches]` query rather than `[saved_searches]` itself growing actions (ADR 0008 Q4) | Not built ([#5](https://github.com/dlapiduz/postio/issues/5)); the engine lives on `feature/rules` |
-
-`crates/postio-config/src/filters.rs` implements the schema and names it
-exactly this way — *"`[saved_searches]` — named saved queries"* — with a `pinned`
-field meaning "offer this filter where the app keeps its places":
-
-```toml
-[saved_searches.needs-reply]
-query  = "is:unread from:team"
-pinned = true
-```
-
-The desktop app's command bar offers pinned filters, the macOS sidebar lists
-them, the settings window edits them, and a saved search re-runs its query
-when opened. There is no rules engine on
-`main`: ADR 0008, 0028 and 0030 decide its shape, and the implementation
-waits on an unmerged branch.
-
-**Why one language:** there is one matching engine to write and one syntax for
-a user to learn. Dry-run — showing what a rule *would* match before enabling it
-— comes almost free, because it is just running the query. A second matching
-language for rules would mean two parsers, two sets of operator semantics, two
-bug surfaces, and a rule that does not agree with the search bar about what
-`from:team` means.
-
-**The boundary that keeps this honest:** parsing lives in `postio-search`,
-which is pure — no SQL, no toolkit, `postio-model` only. `postio-config` keeps
-queries as *text* and does not parse them. `postio-index` executes a parsed
-query against the engine's full-text index. So the same string means the same thing whether it was
-typed in the command bar, saved as a pinned search, or written into
-`config.toml` in `$EDITOR`.
-
-**A header wanted before its body is promoted, not special-cased.** It gets a
-column, its own operator and its own fetch, so filing and search ask the same
-question. `list:` (`List-Id`) was the first. Focus's `is:bulk` and
-`is:automated` read `List-Unsubscribe`, `Precedence` and `Auto-Submitted`
-from `messages.unsubscribe_offered` and `messages.automation`. How each
-backend learns them is in
-[ADR 0025](decisions/0025-arbitrary-headers-are-indexed-rows.md) Q4's note.
-
-**What this decision does NOT say.** A real IMAP mailbox is *not* a saved
-search. It is server state with a `UIDVALIDITY`, a message set that physically
-lives there, and a `MailboxRole` (`Inbox`, `Archive`, `Sent`, `Drafts`,
-`Trash`, `Junk`, `Flagged`, `Regular`). `e` archives *into* one. Two kinds
-of place look alike and behave differently: real mailboxes that mail moves
-between, and views — Flagged, Snoozed, Filtered, the Outbox, and on macOS
-the pinned searches — that are queries re-run on open.
-Collapsing that distinction would break move, archive and sync. Saved searches
-are how you get a *view*; mailboxes are where mail *is*.
-
-### 7. Providers are data, not code
-
-`PRODUCT.md` §3 requires provider configuration to be extensible rather than
-hard-coded. Server settings belong in a preset table where every provider is
-one row — never a named constant, never a special-cased branch, never an
-identifier like `ICLOUD_IMAP_HOST`.
-
-**Why:** Postio is not an iCloud client. iCloud is one preset among many, and
-the maintainer's own provider must not be visible in the shape of the code.
-Naming a provider in a *comment* is fine where it explains a real compatibility
-quirk ("some servers spell it `Sent Messages`").
-
-### 8. The protocol crate is held at arm's length
-
-`postio-sync` talks to the `MailBackend` trait and never to `io-imap` types.
-`postio-account`'s `imap` feature is on by default but `postio-sync` depends on it
-with `default-features = false`, so the pre-1.0 protocol crate and its TLS
-stack are **not in the sync engine's dependency graph at all** — what is left is
-the seam, its mock, autoconfig discovery and the keyring.
-
-**Why:** `io-imap` was days old and six minor versions in eleven weeks when it
-was adopted (ADR 0001). It is pinned `=0.6.0`. The seam means a breaking
-release costs one adapter rather than the engine.
-
-This is also why `postio-account`'s in-process test server is written **against
-the wire** rather than against `io-imap`: a bug in the protocol crate cannot
-hide inside the thing meant to catch it.
-
-### 9. The crate boundaries are enforced, not encouraged
-
-- **`postio-core` must not depend on `gtk4`/`libadwaita`.** It is the
-  UI-agnostic contract; this is what keeps a second frontend possible.
-- **`postio-gtk` must not depend *directly* on `turso`/`io-imap`.** The
-  desktop app's own code does no SQL and speaks no protocol. It opens the
-  store in its own process through `postio-host` (ADR 0041), so the engine is
-  in its graph, transitively and only there. (`rusqlite` stays on the banned
-  list beside `turso`, so the rule outlives the engine that made it.)
-- **`postio-client` must not depend on a toolkit, WebKit, the database
-  engine or the protocol crates**, and **`postio-tui` on a toolkit or
-  WebKit.** The client is the frontends' whole view of mail, and it stays
-  free of what any one of them draws with; the terminal opens the store
-  through the host like every app, and is held to being small
-  (`docs/archive/specs/005-tui-frontend` FR-051) by leaving GTK and WebKit out.
-- **`postio-widgets` must not depend on the database engine, the protocol,
-  the crates that own the store (`postio-host`, `postio-session`,
-  `postio-runtime`, `postio-storage`, `postio-sync`) or the app.** The
-  widgets reach mail only through `postio-client`
-  ([ADR 0043](decisions/0043-focus-is-the-one-desktop-app.md)).
-- **`postio-classify` links nothing that sends mail or reaches the network**,
-  and **`postio-calendar` is a pure leaf**: no database engine, toolkit,
-  async runtime or network. The classifier's answer is a fixed schema, and it
-  cannot send mail by construction (ADR 0009).
-- **`postio-ai` links no send path, no store, no toolkit, no inference engine
-  and no HTTP client but `io-http`.** It speaks to the user's own model, and
-  its endpoint can only name this computer (`specs/007-postio-focus` FR-165,
-  FR-168).
-- **`postio-vault` links no network crate, toolkit or database engine**, and
-  no async runtime. It appends Markdown to a folder on this computer.
-- **`postio-mcp` names neither the database engine nor the protocol**,
-  and links no toolkit, WebKit, inference engine or HTTP or WebSocket
-  server. It is a frontend over `postio-client`, and its only transport
-  is stdio (ADR 0010).
-- **No app binary links an inference engine**: not `postio-gtk`,
-  `postio-tui`, `postio-mcp` or `postio-ffi`. The model is the user's own,
-  run beside Postio, and optional.
-
-`scripts/checks/check-crate-boundaries.py` inspects `cargo metadata`'s **resolved
-graph**, not source text, so a violation arriving transitively through an
-innocent-looking intermediate is caught, and a string in a comment cannot fool
-it. It counts the guarded crate's own dev-dependencies too — a test that pulls
-`turso` into `postio-widgets` violates the invariant just as much as the
-library would. A rule about *direct* dependencies, as `postio-gtk`'s is, looks
-at the crate's own dependency list, dev-dependencies included, and stops
-there.
-
-**This is also why `postio-runtime` and `postio-session` are separate crates
-rather than features of `postio-core`.** Cargo resolves features as a *union* across
-everything being built, so a `postio-core/runtime` feature would put the
-database engine in the graph of every crate depending on `postio-core` the moment anything turned
-it on — the view layer included. `postio-core` therefore has **no optional
-dependencies at all.**
-
-**What a verb acts on is decided in one place.** Since spec 013 a Focus list
-can expand a thread in place, so a key can mean one message or the whole
-thread. `postio_ui::scope::target` resolves it from the focus (a collapsed
-row, a child row, or the message window) and the command, as the spec's D2
-table says, and `postio_ui::scope::footer` says it in the footer. No
-frontend, and no other module of the controller, decides scope for itself:
-the Mac and GTK draw what it answers. A new verb that acts on mail gets its
-row in that table, with a test per cell.
-
-**The macOS frontend is built** ([#15](https://github.com/dlapiduz/postio/issues/15),
-[ADR 0019](decisions/0019-macos-frontend.md)) — a native Swift frontend in
-`macos/` over the same engine, through a UniFFI boundary in `postio-ffi`, with
-the toolkit-free presentation logic extracted into `postio-ui`. It sets
-accounts up, reads, searches, threads and writes mail, and it is on `main`
-(#1306). Compose was deferred in the original scope and is not deferred any
-more. It is built from the checkout and not yet released.
-
-**How far along it is, is a test rather than a claim.**
-`crates/postio-ffi/tests/ffi_suite/command_coverage.rs` sweeps every command in
-the registry and fails if one reaches neither the boundary, the bus, nor a
-window this frontend presents — unless it is listed as debt with the issue
-that will build it. On the desktop, `focus_suite`'s `every_command` presses
-every command the app binds and fails on one with no visible effect that
-`storyboards/gaps/focus.toml` does not name. A frontend without such a sweep
-accumulates commands that are drawn in a menu, bound to a key, offered in the
-palette, and answered by nobody; the macOS one had **forty-nine** when the
-sweep was first written.
-
-The invariant is what made that possible, and it was not a theory: measured on
-2026-08-27, when the workspace had fifteen crates, **thirteen of them built and
-tested on macOS with no changes at all** — everything but the two GTK crates
-of the time; the whole-workspace run failed only on `glib-sys` wanting
-`glib-2.0` from `pkg-config`. The GTK crates are still the exclusion set:
-today `postio-gtk` and `postio-widgets`. The boundary this section describes
-turns out to be exactly where the portable half ends.
-
-`scripts/issue-land.sh` enforces the same line at landing time: a changed crate
-the host cannot build is refused rather than merged unverified, probing
-`pkg-config` rather than `uname` so a Linux box without the `-dev` packages is
-caught identically ([#555](https://github.com/dlapiduz/postio/issues/555)).
-
-### 10. Design tokens are generated, never retyped
-
-`Design/_ds/industry-*/styles.css` → `postio_ui::tokens` → `postio-widgets`'
-`build.rs` → `data/metrics.css` (spacing, radii, chip and type sizes),
-`data/space.rs` (the spacing ramp, in Rust) and `postio-ui`'s
-`data/reader-tokens.css` (the reader's palette). Every length in the output is
-copied from a parsed token or computed from one. The generated files are
-checked in, so a build without the `Design/` tree still works, and
-`postio-ui`'s drift tests fail when a checked-in copy no longer matches its
-source. The build script runs the same `postio_ui::tokens` the tests do, so
-drift is caught by a test rather than by eye.
-
-**Colour is the system's.** The desktop app defines its `--postio-*` colour
-roles from libadwaita's named colours (`postio-gtk/data/focus-colours.css`),
-so light, dark and the accent come from the desktop (`specs/007-postio-focus`
-C26, research R11). No hex or `rgba()` literal appears there but the message
-dialog's surface, ink and rules.
-
-### 11. Privacy is a feature, not a setting
-
-**Nothing leaves this machine that the user did not ask for.**
-
-Remote images blocked per-sender until allowed; read receipts never automatic;
-`List-Unsubscribe` One-Click only on deliberate activation; no link prefetch, no
-favicon fetch, no speculative connections; no telemetry, no crash reporting, no
-update ping; credentials in the OS keyring, never in `config.toml`, never in a
-log.
-
-#### Script never touches message content — in either direction
-
-The rule attaches to **content that came from a message**, not to which widget
-is on screen. Mail is attacker-controlled text; Postio's own code is not. Three
-consequences, and the third is the one that is easy to forget:
-
-- **Nothing from a message ever executes.** The reader's `WebView` has
-  JavaScript off and network off, and `cid:` images resolve from the local blob
-  store. Message-derived markup is sanitised before it reaches any surface —
-  script, event handlers, embedded objects and `style` removed.
-- **Postio's own script is not an exception to that rule, because it is not
-  message content.** The composer runs a bundled editor script from the
-  GResource bundle, and that is permitted: no message-derived script exists in
-  its document, because quoted and forwarded content is sanitised *before* it
-  is inserted. What is forbidden is script that arrived in the mail, wherever
-  it would run. A composer surface still takes no network and loads no remote
-  script.
-- **Replies and forwards carry no script outward.** Quoted content is sanitised
-  on the way in, and the outgoing body is generated from Postio's own document
-  types rather than passed through, so nothing a sender wrote is re-emitted.
-  This direction matters as much as the other one: Postio must never make a
-  recipient run something its own user was protected from. A forwarded phishing
-  mail is the most likely way that happens, and it is silent when it does.
-
-**Logs never carry message content** — no bodies, subjects or recipient
-addresses, at any level. Ids, counts and outcomes only. A debug log full of
-someone's mail is the same leak as shipping their address in a fixture.
-
-When adding anything that could make a network request, the question is not
-"is this useful" but "did the user ask for it".
-
-### 12. AI is a founding principle and is deliberately absent from v1
-
-`PRODUCT.md` §23 is explicit: the MVP ships without AI, because core mail, search
-and the keyboard have to be excellent first. Epic E12 holds the work.
-
-Two constraints already decided, before any of it is built:
-
-- **AI must never silently modify or send mail** (`PRODUCT.md` §12). Read and
-  search tools may be exposed relatively freely; **every externally visible
-  action — send, forward, delete, move, mark read — requires explicit human
-  confirmation in the Postio UI.**
-- **Mail is attacker-controlled text.** An agent reading mail over MCP is
-  exposed to prompt injection: an attacker emails the user, the agent reads it,
-  and the body contains instructions. This is an actively exploited class of
-  attack against mail-reading agents, and it is the dominant design constraint
-  on `postio-z3b.2` rather than an afterthought.
-
-**`postio-mcp` meets both by having fewer tools** (ADR 0010, #14). It has no
-send, forward, delete or mark-read tool for a confirmation to guard, and a
-draft leaves only when the person sends it from Postio. Archive, move and
-label are its other writes, added by the maintainer on 2026-10-14: each is
-off until the person names it in `[mcp]`'s `actions`, none can reach the
-Trash or Junk, and none can be undone from the app, so each answers with
-where every message came from. Its injection test
-(`crates/postio-mcp/tests/mcp_suite/injection.rs`) reads ADR 0009's hostile
-fixture and asserts that no operation, no move, no label, no draft and no
-connection follow, with every organizing verb switched on.
-
-**The one exception is Focus's model** (the constitution's Scope,
-`specs/007-postio-focus` research R16). `postio-ai` is built, and narrower
-than ADR 0009's provider trait: it is a client for one model the user runs
-on this computer and names in `[focus.model]`. Both constraints above hold
-by construction. It has no send path in its graph (§9), and it asks questions
-in a fixed schema whose answers are checked before they are believed: a quote
-or excerpt that is not found in the mail is dropped. Without the model, a
-built-in detector answers.
-
-### 13. The composer's document is not the toolkit's buffer
-
-**Built** ([#30](https://github.com/dlapiduz/postio/issues/30), ADR 0004). The
-document is `postio_body::Document`; `composer.rs`'s `gtk::TextView` is a view
-over it, and the buffer's own undo is turned off explicitly.
-
-`GtkTextBuffer`, `NSTextStorage` and a `contenteditable` DOM disagree about
-attribute runs versus nested spans, about what one undo step is, and about list
-and blockquote nesting. If the composer's state is "whatever is in the
-`TextBuffer`", a second frontend's composer is a rewrite rather than a port, and
-the two produce subtly different HTML from identical gestures. So each
-platform's editor is a *view*, and an `EditStep` is a change to the document
-rather than to a widget.
-
-Sanitisation is **bidirectional**, and the two directions are not symmetrical.
-Incoming markup is *filtered* — ammonia, with the reader's allowlist. Outgoing
-markup is **generated** from a closed type and never passed through: the only
-route a sender's markup can take into an outgoing body is the quoting path,
-which runs `postio_body::parse` into a `Document` that has no variant capable
-of holding a script, a remote image or a `javascript:` href. The subset *is*
-the allowlist, enforced by the compiler on the way in rather than by a filter
-on the way out. The ammonia pass that still runs on outgoing HTML is a
-backstop with a test asserting it never changes anything.
-
-v1 ships a plain-text editor over that model: a `Document` of paragraphs and
-text *is* a plain-text document, so what is restricted is the editor, not the
-document. The rich editing surface stays in epic E10.
-
----
-
-### 14. Content identity is distinct from mailbox identity
-
-`messages.id` remains the mailbox occurrence used by flags, local-first
-operations and protocol addresses. `message_contents` owns decoded bodies
-and header bytes. A backend may supply a namespaced immutable content key;
-storage scopes it to the account. Gmail message IDs and JMAP Email IDs share
-content across their memberships. Ordinary IMAP and Maildir occurrences
-remain independent; an RFC Message-ID never establishes byte identity.
-
-Metadata, body and header indexes belong to content. Search selects a
-qualifying occurrence after applying folder and flag predicates, so a hit
-still addresses the mailbox in which the user searched. Availability and
-MIME parts project onto occurrences without putting a body join in mailbox
-paging. Deleting the last membership collects its content. The preceding
-schema migrates each old row independently; a native resync can establish
-sharing. [ADR 0046](decisions/0046-content-identity-is-distinct-from-mailbox-identity.md)
-records the contract and rejected alternatives.
-
-## Known gaps
-
-Recorded rather than hidden. The August 2026 review
-([`docs/archive/architecture-review-2026-08.md`](archive/architecture-review-2026-08.md))
-listed seven findings, and every one has landed: `postio-session` split out of
-the GTK binary with the same CI-enforced no-GTK rule `postio-core` has
-([#82](https://github.com/dlapiduz/postio/issues/82)); the toolkit-free
-keymap, selection and tokens moved into `postio-ui`; the sanitiser and quote
-folder into `postio-body` ([ADR 0004](decisions/0004-composer-document-model.md));
-the extension vocabulary and correlation ids as
-[ADR 0002](decisions/0002-extensible-command-vocabulary.md); the event hub as
-[ADR 0013](decisions/0013-event-fanout.md), so a second frontend subscribes
-beside the window without stealing a repaint; and the boundary check now
-guards ten crates against cargo's resolved graph rather than two, so
-`postio-search` cannot re-acquire the store engine.
-
-What remains open, as of 0.4.0:
-
-| Gap | Effect | Where |
-|---|---|---|
-| The rules engine is designed and not on `main` | `[saved_searches]` are saved searches only; nothing files mail on arrival | ADR 0008/0028/0030, [#5](https://github.com/dlapiduz/postio/issues/5) |
-| `[sync] notify_roles` does not cross the FFI | The macOS build notifies for every folder, not the configured ones | `docs/notes/2026-09-13-what-the-frontend-audit-found-and-what-remains.md` |
-| Wall-clock performance figures predate the engine swap | The counted budgets hold; the timings in `PERFORMANCE.md` have not been re-measured on Turso against a real mailbox | [`PERFORMANCE.md`](PERFORMANCE.md) |
+The numbered sections are cited from code; each is one line and a home.
+
+1. **§1.** Commands down, events up; the UI never awaits the network. Store write, enqueue, emit, repaint; `postio-core::bridge` is the only place the tokio half meets the UI loop, over unbounded channels. (constitution I.)
+2. **§2.** The registry is the source of truth for every command surface; a command not in it does not exist. (constitution II, ADR 0002 (the extension-command layer is removed).)
+3. **§3.** Command ids are a file format: `[keys]` in `config.toml` is keyed by them. (constitution II.)
+4. **§4.** Selection is a predicate, not a list, and not the cursor. (constitution II.)
+5. **§5.** Undo replays inverses through the same machinery as the original action. (`postio-core`.)
+6. **§6.** One matching language for searches, saved searches, virtual folders and filters. (constitution III, ADR 0008, ADR 0025, ADR 0027.)
+7. **§7.** Providers are data, not code. (constitution VII, ADR 0006.)
+8. **§8.** The protocol crate is held at arm's length: `postio-sync` talks to `MailBackend`, never to `io-imap` types. (ADR 0001.)
+9. **§9.** The crate boundaries are enforced, not encouraged (the Boundaries section above). (constitution VII, ADR 0041, ADR 0043, ADR 0047.)
+10. **§10.** Design tokens are generated from `Design/_ds` into `postio_ui::tokens` and checked in; drift tests fail on a stale copy. Colour comes from libadwaita's named colours. (`postio-ui`.)
+11. **§11.** Privacy is a feature, not a setting. Script never touches message content, in either direction. (constitution VI, ADR 0042, ADR 0010.)
+12. **§12.** No AI inside Postio; a user-run local model is optional. (constitution (Additional Constraints), ADR 0009.)
+13. **§13.** The composer's document (`postio_body::Document`) is not the toolkit's buffer; each platform's editor is a view over it. Sanitisation is bidirectional. (ADR 0004, ADR 0039.)
+14. **§14.** Content identity is distinct from mailbox identity. (ADR 0046.)
+
+Also: [ADR 0020](decisions/0020-where-message-bodies-live.md) (where bodies
+live), [ADR 0013](decisions/0013-event-fanout.md) (event fan-out),
+[ADR 0021](decisions/0021-exactly-once-send.md) (exactly-once send),
+[ADR 0040](decisions/0040-the-store-keeps-few-connections-maintains-its-counts-and-budgets-its-index.md)
+(store connections and counts), [ADR 0049](decisions/0049-each-layer-asserts-its-own-question.md)
+(each layer asserts its own question).

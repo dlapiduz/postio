@@ -2,13 +2,6 @@ import Foundation
 import Testing
 @testable import PostioKit
 
-/// Reading a `mailto:` URL.
-///
-/// Declaring the scheme is what makes Postio eligible to be the machine's mail
-/// client; this is what it does when something takes it up on that. Compose
-/// does not exist yet, so the honest outcome is to say so — an application
-/// that silently swallows a `mailto:` click is worse than one that has not
-/// claimed the scheme at all, because the user has no way to tell it happened.
 @Suite("mailto:")
 struct MailtoTests {
     @Test("a plain address is the recipient")
@@ -46,16 +39,13 @@ struct MailtoTests {
 
     @Test("an address in the query joins the ones in the path")
     func toInQuery() {
-        // RFC 6068 allows `to` as a header field as well as in the path, and
-        // some applications only ever write it that way.
         let url = URL(string: "mailto:ada@example.com?to=grace@example.net")!
         #expect(Mailto(url)?.to == ["ada@example.com", "grace@example.net"])
     }
 
     @Test("a bare mailto: with no address is still a request to compose")
     func noAddress() {
-        // What "New Message" in another application sends. Not a malformed
-        // URL: a composer with an empty To: field is exactly right.
+        // A bare `mailto:` is what "New Message" elsewhere sends, not a malformed URL.
         let parsed = Mailto(URL(string: "mailto:")!)
         #expect(parsed != nil)
         #expect(parsed?.to.isEmpty == true)
@@ -68,9 +58,8 @@ struct MailtoTests {
 
     @Test("no header this build does not know is invented")
     func unknownHeadersIgnored() {
-        // RFC 6068 permits arbitrary header fields and warns against honouring
-        // them blindly. Postio reads the four a composer has fields for and
-        // drops the rest rather than guessing.
+        // Postio reads the four headers a composer has fields for and drops the rest rather than
+        // honouring them blindly (RFC 6068).
         let url = URL(string: "mailto:ada@example.com?from=someone@example.net&subject=Hi")!
         let parsed = Mailto(url)
         #expect(parsed?.subject == "Hi")

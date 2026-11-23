@@ -2,10 +2,7 @@ import Testing
 
 @testable import PostioKit
 
-/// The reader's zoom: fixed steps, one reader-wide preference (spec 006
-/// FR-021, FR-021b, FR-021d; #1705).
 @Suite struct ReaderZoomTests {
-    /// The design's steps, as `[reader] zoom` takes them.
     private let steps: [UInt16] = [50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250, 300]
 
     @Test func zoomingInTakesTheNextStepNotAFixedAmount() {
@@ -26,8 +23,6 @@ import Testing
     }
 
     @Test func theEndsAreTheEnds() {
-        // Pressing past the last step changes nothing, and says so -- the
-        // caller writes the file only when something moved.
         var big = ReaderZoom(percent: 300, steps: steps)
         let moved4 = big.zoomIn()
         #expect(!moved4)
@@ -48,8 +43,6 @@ import Testing
     }
 
     @Test func aValueBetweenStepsStepsFromWhereItIs() {
-        // A hand-edited `zoom = 105` is honoured as it is, and the next press
-        // moves to the step beyond it rather than snapping back first.
         var zoom = ReaderZoom(percent: 105, steps: steps)
         let moved8 = zoom.zoomIn()
         #expect(moved8)

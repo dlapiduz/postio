@@ -1,34 +1,6 @@
-//! The list indexes can answer the list's filters (#638).
-//!
-//! Every list query filters on two columns beyond the one the scope names:
-//! the message is not locally deleted, and it is not still snoozed. Only rows
-//! that *pass* a `WHERE` count toward an `OFFSET`, so if the index cannot
-//! answer those two, SQLite has to fetch and test every row it is about to
-//! discard — fifty thousand table rows to return fifty. Migration 0005 put
-//! the filter columns in the four list indexes, which keeps the skip inside
-//! the index: the same encrypted jump went from 207ms to 3.5ms.
-//!
-//! # Why this is a schema assertion and not a count
-//!
-//! It is the wrong shape for one, and that took measuring to establish.
-//! Neither statements nor rows can see a skipped row — an `OFFSET` discards
-//! rows before they are returned, so the counts are one statement and fifty
-//! rows either way. VDBE steps look like the answer and are not: measured
-//! across the fix they are *identical*, 82,614 either way, because the
-//! program SQLite runs is the same. What changed is whether each step's fetch
-//! stays in the index or reaches the table b-tree, and that shows up only in
-//! page reads, which `sqlite3_db_status` reports and rusqlite does not
-//! expose.
-//!
-//! Wall-clock does see it — that is how it was found — but a 207ms-versus-3ms
-//! assertion on a shared runner is exactly the kind of budget `#100` replaced,
-//! and the bench in `postio-bench` keeps that measurement anyway.
-//!
-//! So assert the cause directly. The invariant is not "the jump is fast", it
-//! is "the columns the list filters on are in the indexes the list uses", and
-//! that is a fact about the schema: deterministic, free, and false the moment
-//! somebody adds a filter without widening the indexes or narrows an index
-//! back to what it was.
+//! Asserts the cause of #638: the columns every list query filters on (`deleted_locally`,
+//! `snoozed_until`) are in the list indexes, so an `OFFSET` skips inside the index. Counts and VDBE
+//! steps cannot see it, and wall-clock is too flaky.
 
 use postio_model::MailboxRole;
 use postio_storage::Connection;
@@ -36,25 +8,15 @@ use postio_storage::repository::{ListQuery, ListScope, MessageRepository};
 use postio_storage::seed::seed_small;
 use postio_storage::test_support;
 
-/// The indexes the list's scopes seek and order through.
 const LIST_INDEXES: &[&str] = &[
-    // ListScope::Mailbox
     "idx_messages_list",
-    // ListScope::Account, ::Flagged, ::Snoozed
     "idx_messages_account_list",
-    // ListScope::Unified — nothing pins the leading column, so recency is it
     "idx_messages_recency",
-    // ListScope::Thread
     "idx_messages_thread",
 ];
 
-/// The columns `where_clause` adds to every scope's own predicate.
-///
-/// `deleted_locally` is in all six scopes; `snoozed_until` is in all six too,
-/// as `NOT_YET_DUE` in five and inverted as `STILL_SNOOZED` in `Snoozed`.
 const FILTER_COLUMNS: &[&str] = &["deleted_locally", "snoozed_until"];
 
-/// The columns `index` is keyed on, in order.
 async fn columns_of(connection: &Connection, index: &str) -> Vec<String> {
     let mut statement = connection
         .prepare(&format!("PRAGMA index_info({index})"))
@@ -70,10 +32,7 @@ async fn columns_of(connection: &Connection, index: &str) -> Vec<String> {
     .collect()
 }
 
-/// Which of [`FILTER_COLUMNS`] `index` cannot answer.
 async fn missing_from(connection: &Connection, index: &str) -> Vec<&'static str> {
-    // Read before the filter: a closure cannot await, and the answer is the
-    // same for every column.
     let columns = columns_of(connection, index).await;
     FILTER_COLUMNS
         .iter()
@@ -84,11 +43,8 @@ async fn missing_from(connection: &Connection, index: &str) -> Vec<&'static str>
 
 #[tokio::test]
 async fn a_narrow_list_index_is_reported_as_missing_its_filters() {
-    // The control. This test was written after migration 0005, so on its own
-    // it says only that the schema is what it is today; what makes it an
-    // assertion is that the same check fails on the shape 0005 replaced.
-    // Built here rather than by undoing the migration, because re-breaking
-    // working code to test the test is the one thing CLAUDE.md rules out.
+    // The control: the same check must fail on the shape migration 0005 replaced, built here rather
+    // than by undoing the migration.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("a connection");
     connection
@@ -143,9 +99,6 @@ async fn every_list_index_carries_the_columns_every_list_query_filters_on() {
 
 #[tokio::test]
 async fn a_deep_page_returns_the_same_rows_the_narrow_index_would_have() {
-    // The index changed shape, so the thing to prove beyond the schema is
-    // that it still answers the same question. A wider key that reordered or
-    // dropped rows would be a far worse bug than the one it fixes.
     let database = test_support::temp().await;
     let report = seed_small(&database, 11).await;
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
@@ -165,9 +118,7 @@ async fn a_deep_page_returns_the_same_rows_the_narrow_index_would_have() {
         .map(|row| row.id)
         .collect();
 
-    // The same window, taken without the index: `+0` on a column defeats its
-    // use without changing what the query means, so this is the same rows by
-    // a route the optimiser cannot take.
+    // The same window without the index: `+0` defeats its use without changing the query.
     let unindexed: Vec<_> = postio_storage::sql::all(
         &connection,
         "SELECT id FROM messages

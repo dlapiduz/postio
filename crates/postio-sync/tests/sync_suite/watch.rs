@@ -1,12 +1,3 @@
-//! Watching for new mail: IDLE on the pushed mailbox, interval polling
-//! everywhere else, and the ways a watcher goes quietly deaf.
-//!
-//! The schedule itself is unit-tested in `src/watch.rs`. What needs a backend
-//! is the part that can only be shown end to end: that mail appearing on the
-//! server reaches the local store without anybody asking for it, that a
-//! suspend never leaves a second connection behind, and that a server which
-//! accepts `IDLE` and then says nothing is still unable to hide new mail.
-
 use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta, TimeZone, Utc};
@@ -37,7 +28,6 @@ fn note(n: u32) -> Vec<u8> {
     .into_bytes()
 }
 
-/// A connected server with `count` messages in INBOX and an empty Archive.
 async fn server(count: u32) -> MockBackend {
     let mut inbox = MockMailbox::new(INBOX).uid_validity(UidValidity::new(VALIDITY));
     for n in 1..=count {
@@ -51,7 +41,6 @@ async fn server(count: u32) -> MockBackend {
     backend
 }
 
-/// The local half: a database with an account, an INBOX and an Archive.
 struct Local {
     _database: postio_storage::Store,
     connection: postio_storage::Checkout,
@@ -73,7 +62,6 @@ async fn local() -> Local {
     }
 }
 
-/// The default policy, with the poll interval `[sync]` ships.
 fn policy() -> WatchPolicy {
     WatchPolicy {
         idle: true,
@@ -87,7 +75,6 @@ async fn capabilities(backend: &MockBackend) -> Capabilities {
     backend.capabilities().await.expect("capabilities")
 }
 
-/// A watcher pushing on INBOX and polling Archive.
 async fn watcher(backend: &MockBackend, local: &Local) -> Watcher {
     let mut watcher = Watcher::new(policy(), &capabilities(backend).await);
     watcher.watch(local.inbox.id, INBOX, Attention::Push);
@@ -95,8 +82,6 @@ async fn watcher(backend: &MockBackend, local: &Local) -> Watcher {
     watcher
 }
 
-/// Runs the first push step, which is always a verifying `STATUS`, so a test
-/// about what happens *afterwards* can start from a watcher that is idling.
 async fn settle(
     watcher: &mut Watcher,
     backend: &MockBackend,
@@ -110,10 +95,6 @@ async fn settle(
     let status = backend.status(INBOX).await.expect("status");
     watcher.observed(inbox, &status, now);
 }
-
-// ---------------------------------------------------------------------------
-// New mail arrives without anybody asking — the acceptance criterion
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn mail_that_arrives_while_idling_reaches_the_local_store() {
@@ -143,7 +124,6 @@ async fn mail_that_arrives_while_idling_reaches_the_local_store() {
     };
     assert_eq!(path, INBOX);
 
-    // Mail lands while the IDLE is outstanding.
     let delivery = backend.clone();
     tokio::spawn(async move {
         delivery
@@ -187,25 +167,18 @@ async fn mail_that_arrives_while_idling_reaches_the_local_store() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Re-arming — the acceptance criterion
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn idle_re_arms_well_inside_the_servers_timeout() {
     let backend = server(1).await;
     let local = local().await;
     let mut watcher = watcher(&backend, &local).await;
 
-    // A server that drops an IDLE it has not heard from in this long. RFC 2177
-    // §3 caps a client at 29 minutes; middle-boxes are stricter.
     let tolerance = TimeDelta::minutes(5);
 
     let mut now = at(0);
     let mut last_spoke = now;
     let mut idles = 0;
 
-    // An hour of a mailbox where nothing at all happens.
     while now < at(3_600) {
         match watcher.next_push(now) {
             Watch::Idle { timeout, .. } => {
@@ -255,8 +228,6 @@ async fn a_server_that_accepts_idle_and_then_says_nothing_cannot_hide_mail() {
     let mut watcher = watcher(&backend, &local).await;
     settle(&mut watcher, &backend, local.inbox.id, at(0)).await;
 
-    // Mail arrives, and this server never says so: the untagged EXISTS is
-    // simply not sent, which is indistinguishable from a quiet mailbox.
     backend
         .append(INBOX, &AppendMessage::new(note(2)))
         .await
@@ -272,7 +243,6 @@ async fn a_server_that_accepts_idle_and_then_says_nothing_cannot_hide_mail() {
         match watcher.next_push(now) {
             Watch::Idle { timeout, .. } => {
                 now += TimeDelta::from_std(timeout).expect("a sane timeout");
-                // The deaf server: silence, every time.
                 watcher.woke(local.inbox.id, &[], now);
             }
             Watch::Poll { .. } => {
@@ -310,10 +280,6 @@ async fn a_server_that_accepts_idle_and_then_says_nothing_cannot_hide_mail() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Suspend and resume — the acceptance criterion
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn suspending_stops_the_idle_in_flight_and_hands_out_no_second_one() {
     let backend = server(1).await;
@@ -328,7 +294,6 @@ async fn suspending_stops_the_idle_in_flight_and_hands_out_no_second_one() {
         panic!("expected an IDLE");
     };
 
-    // The lid closes.
     watcher.suspend();
     assert!(
         cancel.is_cancelled(),
@@ -340,7 +305,6 @@ async fn suspending_stops_the_idle_in_flight_and_hands_out_no_second_one() {
         "a suspended watcher issues nothing"
     );
 
-    // The cancelled IDLE returns promptly and empty, and reports back.
     let events = backend
         .idle(INBOX, timeout, &cancel)
         .await
@@ -396,10 +360,6 @@ async fn an_unreported_step_is_never_handed_out_twice() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Capability gating
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn a_server_without_idle_is_polled_instead() {
     let backend = MockBackend::builder()
@@ -413,7 +373,6 @@ async fn a_server_without_idle_is_polled_instead() {
     watcher.watch(local.inbox.id, INBOX, Attention::Push);
     settle(&mut watcher, &backend, local.inbox.id, at(0)).await;
 
-    // An IDLE-capable watcher would idle here.
     match watcher.next_push(at(1)) {
         Watch::Wait { until: Some(until) } => assert_eq!(
             until,
@@ -444,10 +403,6 @@ async fn idle_turned_off_in_configuration_is_honoured() {
         "`[sync] idle = false` means poll, whatever the server can do"
     );
 }
-
-// ---------------------------------------------------------------------------
-// Everything that is not the pushed mailbox
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn other_mailboxes_are_polled_on_the_interval_and_not_before() {
@@ -544,10 +499,6 @@ async fn the_pushed_mailbox_is_not_also_polled_on_the_shared_connection() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Failure
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn a_failed_step_releases_the_mailbox_rather_than_wedging_it() {
     let backend = server(1).await;
@@ -559,8 +510,6 @@ async fn a_failed_step_releases_the_mailbox_rather_than_wedging_it() {
     backend.status(INBOX).await.expect_err("dropped");
     watcher.failed(local.inbox.id, at(0));
 
-    // The mailbox is not wedged in flight forever; it comes back on the
-    // interval, by which time the supervisor has had its say about the link.
     match watcher.next_push(at(1)) {
         Watch::Wait { until: Some(until) } => assert_eq!(until, at(300)),
         other => panic!("a failed step must not be retried instantly: {other:?}"),

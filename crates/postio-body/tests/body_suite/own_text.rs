@@ -1,8 +1,3 @@
-//! Own-text extraction (spec 007 T115, FR-104): the newest message's own
-//! words, read from the part the reader draws, without the history it
-//! quotes, its signature, or what the reader never draws. The needs-action
-//! detector reads this text, and a marker's excerpt and offset point into it.
-
 use postio_body::own_text;
 use postio_model::{MessageBody, mime, test_corpus};
 
@@ -13,21 +8,16 @@ fn body_of(name: &str) -> MessageBody {
 #[test]
 fn a_top_posted_reply_is_its_answer_without_the_history_or_the_signature() {
     let body = body_of("top-posted-reply-signature");
-    // The reader draws the HTML part, so that is what is read: the sentence
-    // the plain part wraps is one line here.
     let expected = "Hi Ada,\n\nThanks for sending the lease over. Could you initial page \
                     four as well? The agent needs it back by Friday.";
     assert_eq!(own_text(&body), expected);
-    // The same body always gives the same text, so an offset into it holds.
     assert_eq!(own_text(&body), own_text(&body));
 }
 
 #[test]
 fn a_plain_reply_leaves_out_a_signature_written_above_its_quote() {
-    // The same reply as a client that sends only text writes it. The
-    // signature sits above the quoted history, where the composer's rule
-    // calls the separator part of the quote; the history is left out
-    // first, so here it is a signature.
+    // As a text-only client writes it: the signature sits above the quoted history, and the history
+    // is left out first, so here it is a signature.
     let plain = MessageBody {
         html: None,
         text: body_of("top-posted-reply-signature").text,

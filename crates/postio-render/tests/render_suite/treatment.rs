@@ -1,13 +1,3 @@
-//! The two treatments, drawn (specs/007-postio-focus T211, T212): app
-//! colours holds every run to the contrast floor in the app's own ink, and
-//! paper is drawn exactly as sent on a white sheet, dimmed to 92% in dark
-//! and never recoloured. And a paper layout wider than its column is
-//! zoomed to fit, down to 0.85.
-//!
-//! These read what the renderer drew -- each run's colour and the ground
-//! painted behind it, and the raster's pixels -- not what the document
-//! asked for.
-
 use crate::support::{DARK, LIGHT, render, request_for};
 use postio_body::RemoteImages;
 use postio_body::treatment::Treatment;
@@ -16,14 +6,10 @@ use postio_render::theme::{contrast, relative_luminance};
 use postio_render::{Presentation, RenderedDocument, Rgb, Theme};
 use postio_ui::reader::document;
 
-/// A fixture drawn under `chosen` (or the rule's choice), in `theme`, in a
-/// column `width` CSS pixels wide.
 fn drawn(name: &str, chosen: Option<Treatment>, theme: Theme, width: f64) -> RenderedDocument {
     drawn_with(name, chosen, theme, width, "")
 }
 
-/// [`drawn`], with `css` added after the reader's own sheet, as the column
-/// adds its palette.
 fn drawn_with(
     name: &str,
     chosen: Option<Treatment>,
@@ -40,8 +26,6 @@ fn drawn_with(
         RemoteImages::Blocked,
         treated.shown,
     );
-    // As the open message's column draws it: the body has no padding of
-    // its own there, so the column is the view's width.
     let html = html.replacen(
         "</style>",
         &format!("body {{ padding: 0; }}{css}</style>"),
@@ -61,7 +45,6 @@ fn text_of(doc: &RenderedDocument, cluster: &postio_render::Cluster) -> String {
         .collect()
 }
 
-/// The first drawn character of `words`: clusters are per glyph.
 fn cluster_of<'a>(doc: &'a RenderedDocument, words: &str) -> &'a postio_render::Cluster {
     let at = doc
         .text
@@ -103,8 +86,6 @@ fn app_colours_draws_office_mail_in_ink_and_every_run_reads() {
                 cluster.painted_ground
             );
         }
-        // The ground behind the words is the reader's, never the sender's
-        // tinted header cells.
         let grounds: std::collections::HashSet<[u8; 3]> = doc
             .text
             .clusters
@@ -156,7 +137,6 @@ fn paper_is_drawn_as_sent_and_dimmed_to_92_percent_in_dark() {
     }
     assert_eq!(dark_doc.counts.repaired_runs, 0, "nothing was recoloured");
     assert_eq!(dark_doc.messages[0].presentation, Presentation::Paper);
-    // The words are the sender's, unchanged, in both.
     let colours = |doc: &RenderedDocument| {
         doc.text
             .clusters
@@ -224,7 +204,6 @@ fn a_paper_layout_wider_than_its_column_is_zoomed_to_fit() {
         floor.size.width > 480.0,
         "below the floor it scrolls sideways"
     );
-    // App colours is never zoomed: it reflows.
     let app = drawn("html-work-black-text", None, LIGHT, 400.0);
     assert_eq!(app.fit, 1.0);
 }
@@ -238,19 +217,14 @@ fn the_fit_is_the_columns_share_clamped_to_the_floor() {
     assert_eq!(fit_scale(1000.0, 480.0), PAPER_FIT_FLOOR);
 }
 
-/// An ordinary newsletter in the app's colours lays out once, in dark as in
-/// light (T218). The dark-mode white behind an image is the treatment's
-/// stylesheet's, not a mark per `<img>` for a second layout: that doubled
-/// every newsletter's layout in dark, and with the render's other costs
-/// took a long one past the reader's deadline into the plain-text
-/// fallback.
+/// The dark-mode white behind an image is the treatment's stylesheet's, not a mark per
+/// `<img>` for a second layout: that doubled layout in dark and pushed a long newsletter past the
+/// deadline.
 #[test]
 fn an_app_colours_newsletter_with_images_lays_out_once() {
     for theme in [LIGHT, DARK] {
-        // The column supplies its own accent, the system's, which reads on
-        // its ground (`FLOW_PALETTE`); the generated palette's light accent
-        // does not reach 4.5:1 on its ground, and every link would be
-        // repaired -- a second layout this test is not about.
+        // The column supplies its own accent: the generated palette's light accent misses 4.5:1 and
+        // every link would be repaired, a second layout.
         let accent = if theme.dark { "#78aeed" } else { "#0461be" };
         let doc = drawn_with(
             "html-newsletter-many-tables",
@@ -276,9 +250,8 @@ fn an_app_colours_newsletter_with_images_lays_out_once() {
     }
 }
 
-/// Where `words` start drawing, with the cluster at exactly that character:
-/// [`cluster_of`] tolerates a word missing from the drawing by taking the
-/// next one drawn, which is the very failure this asks about.
+/// [`cluster_of`] tolerates a missing word by taking the next one drawn, which is the failure this
+/// asks about.
 fn drawn_at(doc: &RenderedDocument, words: &str) -> kurbo::Rect {
     let at = doc
         .text
@@ -300,12 +273,9 @@ fn drawn_at(doc: &RenderedDocument, words: &str) -> kurbo::Rect {
     cluster.rect
 }
 
-/// T222: a responsive newsletter stacks its columns by making its cells
-/// `display:block` under `@media (max-width: 600px)`, which the 480px
-/// app-colours column satisfies. The engine dropped every such cell, so
-/// all but the header and footer vanished. Every column is drawn, stacked
-/// under its neighbour at 480px and beside it at 700px, where the query
-/// does not apply.
+/// A responsive newsletter stacks by making its cells `display:block` under
+/// `@media (max-width: 600px)`, which the 480px column satisfies; the engine dropped every such
+/// cell.
 #[test]
 fn app_colours_draws_the_stacked_cells_of_a_responsive_newsletter() {
     let name = "html-responsive-stacked-cells";
@@ -349,8 +319,6 @@ fn app_colours_draws_the_stacked_cells_of_a_responsive_newsletter() {
             "{right} is not beside {left} at 700px"
         );
     }
-    // Each stacked column has the whole width: its paragraph runs past the
-    // middle of the column, where a half-width cell would have wrapped it.
     let paragraph = "The press is mended and the first pressing is booked for the twelfth.";
     let at = narrow
         .text
@@ -369,8 +337,6 @@ fn app_colours_draws_the_stacked_cells_of_a_responsive_newsletter() {
         reach > 300.0,
         "the stacked paragraph reaches only {reach}px"
     );
-    // Stacked, the page is longer: about 594px at 480 against 408 side by
-    // side. Dropping the stacked cells left the header and footer alone.
     let (tall, short) = (narrow.size.height, wide.size.height);
     assert!(
         (520.0..680.0).contains(&tall) && tall > short,
@@ -380,10 +346,8 @@ fn app_colours_draws_the_stacked_cells_of_a_responsive_newsletter() {
 
 #[test]
 fn a_blocked_image_leaves_a_marked_strip_not_a_page_tall_hole() {
-    // The newsletter's sections each open on a remote picture, declared
-    // 260 by 160 and stretched to the column. Blocked, the picture has no
-    // source, and what it left was a blank the picture's height: the first
-    // screen of the message had no text on it at all.
+    // Blocked, the picture has no source and left a blank its own height: the first screen had no
+    // text on it.
     let doc = drawn("html-newsletter-many-tables", None, LIGHT, 480.0);
     let first = cluster_of(&doc, "Release notes, part 1");
     assert!(
@@ -399,11 +363,8 @@ fn a_blocked_image_leaves_a_marked_strip_not_a_page_tall_hole() {
     );
 }
 
-/// The Mac cannot run `theme::guard`, so `postio_body` decides the same thing
-/// in the markup (spec 009 T060, T061). This holds the two to one answer: in
-/// each theme, the red of the fixture is kept by the renderer exactly where
-/// `guard_kept_colours` scopes it, and the surfaces it judged against are the
-/// grounds the renderer painted.
+/// The Mac cannot run `theme::guard`, so `postio_body` decides the same thing in the markup; this
+/// holds the two to one answer.
 #[test]
 fn the_markup_guard_decides_what_the_render_guard_decides() {
     use postio_body::treatment::{SURFACES, Scheme, guard_kept_colours};
@@ -439,12 +400,6 @@ fn the_markup_guard_decides_what_the_render_guard_decides() {
     }
 }
 
-/// A held-back picture is Postio's placeholder, not the sender's pixels,
-/// so in dark it is drawn on the app's ground like the rest of the column.
-/// The white kept behind an image in dark (spec 006 FR-015) is for a
-/// picture that paints; behind a placeholder it was a white box over the
-/// dark column with the alt text in light ink on it, invisible (the message
-/// window spec, section 7: the sender's colours never meet the app's).
 #[test]
 fn a_held_back_picture_in_dark_is_drawn_on_the_apps_ground() {
     let doc = drawn(
@@ -453,8 +408,6 @@ fn a_held_back_picture_in_dark_is_drawn_on_the_apps_ground() {
         DARK,
         480.0,
     );
-    // Everything above the first section's heading: the sender's logo
-    // and the section's picture, both held back, and nothing else.
     let heading = cluster_of(&doc, "Release notes, part 1").rect;
     let raster = postio_render::rasterize(&doc);
     let width = raster.width as usize;

@@ -1,17 +1,3 @@
-//! One size total, and a refusal that says what to do about it (spec 002,
-//! FR-055 and FR-056).
-//!
-//! There was no client-side size check at all. A draft over the provider's
-//! limit was queued, sent, and rejected by the server — after the composer
-//! had closed, which is the failure FR-056 exists to prevent. By then the
-//! message is a `Failed` draft and the person has to work out for themselves
-//! which of six attachments to remove.
-//!
-//! The limit comes from the account's configuration and never from the SMTP
-//! `SIZE` capability (research §3): `postio-smtp` is explicit that Postio
-//! "announces nothing and relies on nothing", and a refusal conditional on a
-//! capability list is how that erodes.
-
 use postio_model::attachment::Disposition;
 use postio_model::ids::{AccountId, AttachmentId, MessageId};
 use postio_model::size::{self, TooLarge};
@@ -45,9 +31,6 @@ fn draft_with(parts: Vec<Attachment>) -> Draft {
 
 #[test]
 fn inline_images_and_attached_files_count_against_one_total() {
-    // FR-055, and the maintainer's clarification: one number, not two. Two
-    // budgets is the arrangement where a message under both is still over
-    // what the server will take -- which is the only limit that exists.
     let draft = draft_with(vec![
         part("diagram.png", 4_000_000, true),
         part("report.pdf", 4_000_000, false),
@@ -62,8 +45,6 @@ fn inline_images_and_attached_files_count_against_one_total() {
 
 #[test]
 fn the_body_counts_too_because_the_server_weighs_the_whole_message() {
-    // A long quoted reply is not free. The limit is on the message, so the
-    // check has to be on the message.
     let mut draft = draft_with(Vec::new());
     draft.body.text = Some("x".repeat(10_000));
     assert!(
@@ -81,10 +62,6 @@ fn a_draft_under_the_limit_is_not_refused() {
 
 #[test]
 fn an_oversize_draft_names_the_limit_the_overage_and_the_largest_items() {
-    // FR-056. "Too large" on its own leaves the person guessing which of six
-    // attachments to remove, so the refusal carries the three facts that
-    // turn it into an action: what the ceiling is, how far over they are,
-    // and what is taking up the room.
     let draft = draft_with(vec![
         part("tiny.txt", 1_000, false),
         part("video.mp4", 30_000_000, false),
@@ -126,10 +103,6 @@ fn an_oversize_draft_names_the_limit_the_overage_and_the_largest_items() {
 
 #[test]
 fn no_configured_limit_checks_nothing() {
-    // T039, decided: when the account carries no limit, the composer checks
-    // nothing rather than inventing a number. A guessed ceiling refuses mail
-    // the server would have taken, and the person has no way to tell that it
-    // was Postio's opinion rather than their provider's.
     let draft = draft_with(vec![part("enormous.bin", 500_000_000, false)]);
     assert_eq!(
         size::check(&draft, None),
@@ -140,9 +113,6 @@ fn no_configured_limit_checks_nothing() {
 
 #[test]
 fn the_refusal_reads_as_a_sentence_a_person_can_act_on() {
-    // The wording is part of the requirement: FR-056 says the refusal names
-    // the limit, the overage and the largest items, and a struct nobody
-    // renders names nothing.
     let draft = draft_with(vec![part("video.mp4", 30_000_000, false)]);
     let refusal = size::check(&draft, Some(25_000_000)).expect("over the limit");
     let said = refusal.to_string();

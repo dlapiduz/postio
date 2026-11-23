@@ -1,24 +1,9 @@
-//! The SMTP session: connect, authenticate, send one message, quit.
-//!
-//! Unlike IMAP there is no long-lived mailbox state to cache — a send opens
-//! a connection, runs one mail transaction, and closes it. So there is no
-//! pool here, only a session type a caller opens once per send.
-//!
-//! # Reply codes decide retryability, not which command failed
-//!
-//! RFC 5321's first reply digit is the signal that matters: `4xx` means "try
-//! again later" and `5xx` means "this will never work as sent," regardless
-//! of whether it arrived answering `MAIL FROM`, `RCPT TO`, `DATA` or `AUTH`.
-//! [`classify`] is the one place that rule lives; every error-mapping
-//! function here routes through it rather than assuming a command's reply
-//! is always permanent.
-//!
-//! # No plaintext fallback, ever
-//!
-//! A failed TLS handshake ends the connection. [`ConnectionSettings::validate`]
-//! refuses cleartext to anything but loopback before a socket is even
-//! opened, so a mistyped port cannot hand an app-specific password to
-//! whoever is listening.
+//! The SMTP session: connect, authenticate, send one message, quit. No pool: a send opens a
+//! connection, runs one mail transaction and closes it.
+//! The reply code decides retryability (4xx try again, 5xx never), regardless of which command it
+//! answered; [`classify`] is the one place that rule lives.
+//! No plaintext fallback: a failed TLS handshake ends the connection, and
+//! [`ConnectionSettings::validate`] refuses cleartext to anything but loopback.
 
 use bounded_static::IntoBoundedStatic;
 use std::fmt;
@@ -54,19 +39,14 @@ use crate::reply::ReplyTap;
 use crate::settings::ConnectionSettings;
 use crate::transport::{SmtpConnector, SmtpStream, TransportError};
 
-/// Read buffer, sized for line-oriented protocol traffic.
 const READ_BUFFER: usize = 16 * 1024;
 
-/// An authenticated SMTP session over one connection.
 pub struct SmtpSession {
     stream: Box<dyn SmtpStream>,
-    /// The last complete reply the server sent, so a rejection keeps every
-    /// line of its own explanation (#921). See `crate::reply`.
     replies: ReplyTap,
     endpoint: String,
     account: String,
-    /// The EHLO keywords the server offered, uppercased. Read for exactly
-    /// one thing — see [`SmtpSession::supports`].
+    /// Read for exactly one thing: [`SmtpSession::supports`].
     capabilities: Vec<String>,
 }
 
@@ -81,7 +61,6 @@ impl fmt::Debug for SmtpSession {
 }
 
 impl SmtpSession {
-    /// Opens a session: connect, secure, `EHLO`, authenticate.
     pub async fn open(
         settings: &ConnectionSettings,
         password: &SecretString,
@@ -117,18 +96,9 @@ impl SmtpSession {
         // connect is kept for the certificate check the upgrade performs.
         let mut upgrade_host = settings.host.clone();
         let mut replies = ReplyTap::default();
-        // What the server said it can do, kept rather than dropped.
-        //
-        // Reading this is *not* a licence to start announcing things: the
-        // compliance argument for `SIZE` and `8BITMIME` is that Postio
-        // announces nothing and relies on nothing, and that still holds.
-        // RFC 6531 is the one case where relying on nothing is not enough,
-        // because the address itself carries the 8-bit octets and no
-        // encoding can hide them from the envelope (#922).
-        //
-        // Uppercased once here: EHLO keywords are case-insensitive
-        // (RFC 5321 §2.4), and comparing them case-insensitively at every
-        // call site is how one of them eventually is not.
+        // Kept for one case: RFC 6531, where relying on nothing is not enough because the address
+        // itself carries the 8-bit octets (#922). Uppercased once, since EHLO keywords are
+        // case-insensitive (RFC 5321 §2.4).
         let capabilities: Vec<String>;
 
         loop {
@@ -188,17 +158,9 @@ impl SmtpSession {
         })
     }
 
-    /// Whether the server advertised `keyword` in its EHLO reply.
-    ///
-    /// `keyword` is matched case-insensitively, as RFC 5321 §2.4 requires,
-    /// and against the keyword only: `SIZE 35882577` advertises `SIZE`.
-    ///
-    /// **One caller, deliberately.** Postio's compliance argument for `SIZE`
-    /// and `8BITMIME` is that it announces nothing and relies on nothing, and
-    /// a capability list is exactly the thing that erodes that one
-    /// `if server_supports` at a time. RFC 6531 is the case where relying on
-    /// nothing is not available: a non-ASCII local part cannot be encoded
-    /// away, because the envelope carries it in the clear (#922).
+    /// Matched case-insensitively, against the keyword only. One caller, deliberately: Postio
+    /// announces nothing and relies on nothing for `SIZE` and `8BITMIME`, and a capability list
+    /// erodes that one `if server_supports` at a time; RFC 6531 is the exception (#922).
     pub fn supports(&self, keyword: &str) -> bool {
         let keyword = keyword.to_ascii_uppercase();
         self.capabilities
@@ -206,29 +168,20 @@ impl SmtpSession {
             .any(|advertised| advertised.split_whitespace().next() == Some(keyword.as_str()))
     }
 
-    /// The `host:port` this session is connected to.
     pub fn endpoint(&self) -> &str {
         &self.endpoint
     }
 
-    /// The account this session authenticated as.
     pub fn account(&self) -> &str {
         &self.account
     }
 
-    /// Whether the bytes on this connection are encrypted.
     pub fn is_encrypted(&self) -> bool {
         self.stream.is_encrypted()
     }
 
-    /// Sends one message: `MAIL FROM`, one `RCPT TO` per recipient, then
-    /// `DATA`.
-    ///
-    /// `from` and every entry of `to` are bare addresses
-    /// (`local@domain`) — the message's own `From`/`To` headers are inside
-    /// `raw` already and are not derived from these. Recipients are tried
-    /// in order and the first rejection ends the send; there is no partial
-    /// delivery to the recipients that would have succeeded.
+    /// `from` and every entry of `to` are bare addresses; the message's own headers are in `raw`.
+    /// The first rejected recipient ends the send, with no partial delivery.
     pub async fn send_message(
         &mut self,
         from: &str,
@@ -245,11 +198,9 @@ impl SmtpSession {
             });
         }
 
-        // RFC 6531, before anything reaches the wire. A server that never
-        // advertised `SMTPUTF8` is entitled to reject an 8-bit address — and
-        // some accept it and mangle it instead, which reaches the user as the
-        // recipient ignoring their mail. Refusing here means the failure is
-        // legible and nothing has been half-sent (#922).
+        // RFC 6531, before anything reaches the wire: a server that never advertised `SMTPUTF8` may
+        // reject an 8-bit address or accept and mangle it. Refusing here keeps the failure legible
+        // and nothing half-sent (#922).
         let needs_utf8 = std::iter::once(from)
             .chain(to.iter().map(String::as_str))
             .find(|address| local_part_needs_utf8(address));
@@ -263,15 +214,11 @@ impl SmtpSession {
                 ),
             });
         }
-        // The parameter RFC 6531 §3.4 requires: it is what tells the server
-        // the transaction carries UTF-8. Sending the octets without it would
-        // be relying on an extension nobody asked for, which is the same
-        // fault as not reading the capability at all.
+        // The parameter RFC 6531 §3.4 requires: sending the octets without it relies on an
+        // extension nobody asked for.
         let parameters = match needs_utf8 {
-            // Through `new`, because `SmtpParameter`'s fields are private to
-            // `io-smtp` and this is the only public way to make one. The
-            // input is a `&'static str` this file owns, so the failure is
-            // impossible rather than merely unlikely.
+            // Through `new`: `SmtpParameter`'s fields are private to `io-smtp`. The input is a
+            // `&'static str`, so the failure is impossible.
             Some(_) => {
                 vec![SmtpParameter::new(SMTPUTF8, None).expect("SMTPUTF8 is a valid ESMTP keyword")]
             }
@@ -296,35 +243,18 @@ impl SmtpSession {
         if cancel.is_cancelled() {
             return Err(SmtpError::Cancelled);
         }
-        // Whatever bytes reach the transport, a `Bcc` field in them would go
-        // to every recipient (RFC 5322 §3.6.3). See [`crate::bcc`].
         self.send_payload(crate::bcc::strip_bcc(raw).into_owned())
             .await
     }
 
-    /// Runs the `DATA` exchange, tagging whatever fails once the message
-    /// payload has begun going out.
-    ///
-    /// Written out rather than calling [`SmtpClientAsync::data`] because the
-    /// boundary ADR 0021 turns on is invisible from outside that call: it
-    /// writes the command, reads the `354`, writes the body and reads the
-    /// reply, and hands back one error for any of it. From here the shape is
-    /// legible — `SmtpData` yields exactly `WantsWrite("DATA\r\n")`,
-    /// `WantsRead`, `WantsWrite(body)`, `WantsRead` — so **the first write
-    /// after a reply has been read is the payload going onto the wire**, and
-    /// everything from that instant until the last reply is read is a failure
+    /// Written out rather than calling [`SmtpClientAsync::data`] because the boundary ADR 0021
+    /// turns on is invisible from outside it. `SmtpData` yields `WantsWrite("DATA\r\n")`,
+    /// `WantsRead`, `WantsWrite(body)`, `WantsRead`, so the first write after a reply has been read
+    /// is the payload going out, and every failure from then until the last reply is read is one
     /// the client cannot resolve.
-    ///
-    /// Derived from the exchange rather than from a byte count or a state
-    /// name: `SmtpData`'s states are private, and a rule that said "the
-    /// second write" would quietly stop being true if the body were ever
-    /// chunked.
-    ///
-    /// It also maps its own transport errors instead of routing them through
-    /// [`SmtpClientAsync::run`], which flattens every [`TransportError`] into
-    /// an opaque `io::Error`. That is what lets a timeout waiting for the
-    /// reply to the terminating `.` arrive as [`SmtpError::TimedOut`] rather
-    /// than as an `Io` that merely mentions the word.
+    /// Derived from the exchange, not a byte count or state name, so chunking the body would not
+    /// break it. It maps its own transport errors so a timeout waiting for the reply to the
+    /// terminating `.` arrives as [`SmtpError::TimedOut`] rather than an `Io`.
     async fn send_payload(&mut self, raw: Vec<u8>) -> SmtpResult<()> {
         let mut coroutine = SmtpData::new(raw);
         let mut buffer = [0u8; READ_BUFFER];
@@ -332,10 +262,8 @@ impl SmtpSession {
         let mut answered = false;
         let mut payload_begun = false;
 
-        // Every exit goes through this, and it is read at the moment of
-        // failure rather than at the end: a write that fails *is* the payload
-        // beginning, so the byte that never made it counts the same as one
-        // that did. There is no way to know which.
+        // Read at the moment of failure: a write that fails is the payload beginning, and there is
+        // no way to know which byte made it.
         fn tag(payload_begun: bool, error: SmtpError) -> SmtpError {
             if payload_begun {
                 error.once_the_payload_was_on_the_wire()
@@ -364,7 +292,6 @@ impl SmtpSession {
                     resume = Some(&buffer[..read]);
                 }
                 SmtpCoroutineState::Yielded(SmtpYield::WantsWrite(bytes)) => {
-                    // The `354` has been read, so this is the body.
                     payload_begun |= answered;
                     self.stream
                         .write_all(&bytes)
@@ -375,11 +302,8 @@ impl SmtpSession {
         }
     }
 
-    /// Ends the session politely.
-    ///
-    /// Best-effort: a message [`send_message`](Self::send_message) already
-    /// delivered is not undone by a `QUIT` that fails, so a caller that only
-    /// cares about the send may ignore this result.
+    /// Best-effort: a failed `QUIT` does not undo a delivered message, so a caller may ignore this
+    /// result.
     pub async fn quit(mut self) -> SmtpResult<()> {
         self.run(SmtpQuit::new())
             .await
@@ -425,17 +349,11 @@ impl SmtpClientAsync for SmtpSession {
     }
 }
 
-/// The SASL credentials for `settings`' auth method (#193).
-///
-/// The IMAP side has the same mapping, and the two are deliberately identical
-/// in shape: an account authenticates one way, and both of its sessions have
-/// to agree about which. The credential itself is the same `SecretString`
-/// whichever branch is taken — this crate still never fetches one, it takes
-/// it as a parameter (ADR 0006 Q1).
+/// Deliberately identical in shape to the IMAP side: an account authenticates one way and both
+/// sessions must agree. This crate never fetches the credential, it takes it as a parameter (ADR
+/// 0006 Q1).
 fn sasl_for(settings: &ConnectionSettings, password: &SecretString) -> Sasl {
     match settings.auth {
-        // An app-specific password is a password; the distinction is for the
-        // user interface and reaches the wire not at all.
         AuthMethod::Password | AuthMethod::AppPassword => Sasl::Plain(SaslPlainCreds {
             authzid: None,
             authcid: settings.username.clone(),
@@ -456,32 +374,15 @@ fn sasl_for(settings: &ConnectionSettings, password: &SecretString) -> Sasl {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Address parsing
-// ---------------------------------------------------------------------------
-
-/// The `EHLO` identity this client announces: the loopback address literal,
-/// `[127.0.0.1]`.
-///
-/// RFC 5321 §4.1.1.1 asks for the client's own FQDN, and §4.1.3 reserves the
-/// address literal for a client without one, which is what a desktop behind
-/// a NAT is. This used to announce the account's mail domain (the
-/// provider's name, not this machine's) or `localhost` with no `@` in the
-/// username, on the belief that no server gates on it. Servers do: Stalwart
-/// refuses `localhost` with `550 5.5.0 Invalid EHLO domain` before
-/// `MAIL FROM`, and a server checking HELO against its own domains refuses
-/// a client claiming to be it.
+/// RFC 5321 §4.1.3 reserves the address literal for a client without an FQDN. Servers gate on it:
+/// Stalwart refuses `localhost` with `550 5.5.0 Invalid EHLO domain`, and a server checking HELO
+/// against its own domains refuses a client claiming to be it.
 fn client_identity() -> SmtpEhloDomain<'static> {
     SmtpEhloDomain::from(Ipv4Addr::LOCALHOST)
 }
 
-/// Splits a bare `local@domain` address into the wire type, refusing
-/// anything that could inject a second command into the stream.
-///
-/// `SmtpLocalPart`/`SmtpDomain` are unchecked `Cow<str>` wrappers with no
-/// validating constructor of their own — they are formatted straight into
-/// the command line — so an address containing CR, LF or the `<>` path
-/// delimiters must be rejected here, before it reaches `Display`.
+/// `SmtpLocalPart`/`SmtpDomain` are unchecked wrappers formatted straight into the command line, so
+/// an address containing CR, LF or `<>` must be rejected here.
 fn parse_mailbox(address: &str) -> SmtpResult<SmtpMailbox<'static>> {
     let invalid = || SmtpError::Configuration {
         reason: format!("{address:?} is not a usable email address"),
@@ -495,21 +396,13 @@ fn parse_mailbox(address: &str) -> SmtpResult<SmtpMailbox<'static>> {
         return Err(invalid());
     }
 
-    // The domain becomes ASCII whatever the server offered (RFC 5891): IDNA
-    // is a conversion, not a negotiation, and `例え.jp` and `xn--r8jz45g.jp`
-    // are the same domain. A domain IDNA cannot render is not usable as an
-    // envelope address, which is what `invalid` already means.
-    //
-    // The local part is deliberately untouched. There is no encoding for it —
-    // RFC 6531 exists precisely because the only way to carry one is to send
-    // the octets — so it stays as typed and `send_message` decides whether
-    // this connection may carry it.
+    // The domain becomes ASCII whatever the server offered (IDNA is a conversion, not a
+    // negotiation). The local part is untouched: RFC 6531 exists because the only way to carry one
+    // is to send the octets, and `send_message` decides whether the connection may.
     let domain = idna::domain_to_ascii(domain).map_err(|_| invalid())?;
 
-    // Through `try_from`, the only public constructors: each checks its
-    // piece against RFC 5321's grammar (non-ASCII allowed, RFC 6531 §3.3),
-    // so an address that slipped past `is_safe_address_component` but is not
-    // a mailbox fails here, before a byte reaches the server.
+    // Through `try_from`, which checks each piece against RFC 5321's grammar (non-ASCII allowed,
+    // RFC 6531 §3.3), before a byte reaches the server.
     let local_part = SmtpLocalPart::try_from(local).map_err(|_| invalid())?;
     let domain = SmtpDomain::try_from(domain.as_str()).map_err(|_| invalid())?;
     Ok(SmtpMailbox {
@@ -519,14 +412,9 @@ fn parse_mailbox(address: &str) -> SmtpResult<SmtpMailbox<'static>> {
     .into_static())
 }
 
-/// The `SMTPUTF8` keyword, as RFC 6531 spells it.
 const SMTPUTF8: &str = "SMTPUTF8";
 
-/// Whether `address`'s local part needs RFC 6531 to reach a server.
-///
-/// The domain never does — [`parse_mailbox`] punycodes it — so this asks
-/// only about the part before the `@`, and about the address as typed rather
-/// than as converted.
+/// The domain never does ([`parse_mailbox`] punycodes it); this asks about the local part as typed.
 fn local_part_needs_utf8(address: &str) -> bool {
     address
         .split_once('@')
@@ -541,10 +429,6 @@ fn is_safe_address_component(part: &str) -> bool {
         .all(|c| !c.is_control() && !c.is_whitespace() && c != '<' && c != '>')
 }
 
-// ---------------------------------------------------------------------------
-// Error mapping
-// ---------------------------------------------------------------------------
-
 fn no_stream() -> SmtpError {
     SmtpError::Protocol {
         reason: "the SMTP session asked for I/O before it asked for a connection".to_owned(),
@@ -555,16 +439,10 @@ fn as_io(error: TransportError) -> SmtpClientError {
     SmtpClientError::Io(io::Error::other(error.to_string()))
 }
 
-/// RFC 5321's rule: the first reply digit decides retryability, whichever
-/// command it answered. `4xx` is [`SmtpError::Transient`]; anything else is
-/// `permanent`'s business.
-/// Build the error a rejection becomes, with the server's whole answer.
-///
-/// `message` is what `io-smtp` handed over, which is the reply's **first
-/// line** and only that: every rejection in that crate is built from
-/// `response.text()`. `replies` is the same reply as it arrived, so the
-/// continuation lines -- the typo hint, the help URL, the half a person can
-/// act on -- are recovered here rather than lost (#921, `crate::reply`).
+/// RFC 5321: the first reply digit decides retryability, whichever command it answered; `4xx` is
+/// [`SmtpError::Transient`].
+/// `message` is only the reply's first line (`io-smtp` builds every rejection from
+/// `response.text()`), so `replies` recovers the continuation lines (#921, `crate::reply`).
 fn classify(
     replies: &ReplyTap,
     code: u16,
@@ -649,10 +527,6 @@ fn map_data_error(replies: &ReplyTap, error: SmtpClientError) -> SmtpError {
     }
 }
 
-/// The coarse mapping for whatever a command failed with beyond a reply
-/// code: a transport hiccup is [`SmtpError::Io`], everything else — a
-/// framing or parse failure this crate did not name a variant for — is
-/// [`SmtpError::Protocol`].
 fn map_transport_error(command: &str, error: SmtpClientError) -> SmtpError {
     match error {
         SmtpClientError::Io(io_error) => SmtpError::Io {

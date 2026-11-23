@@ -1,9 +1,6 @@
-//! The reviewer's answer, and the validator that decides whether it is one
-//! (`contracts/review.md` § `verdicts.json`, FR-019).
-//!
-//! A review that cannot be traced back to a frame is worth nothing to the
-//! person who has to act on it, so the validator is strict about citation
-//! and says which rule each rejection broke.
+//! The reviewer's answer, and the validator that decides whether it is one (`contracts/review.md`).
+//! A review that cannot be traced back to a frame is worth nothing, so the validator is strict
+//! about citation and says which rule each rejection broke.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -12,226 +9,151 @@ use serde::{Deserialize, Serialize};
 
 use crate::bundle::Manifest;
 
-/// What a reviewer says about one step.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Kind {
-    /// The frame meets the expectation.
     Pass,
-    /// It does not.
     Fail,
-    /// The reviewer cannot tell; the maintainer is asked.
     Question,
 }
 
-/// How much a failure or finding matters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Severity {
-    /// The branch cannot land with it.
     Blocker,
-    /// A person would be misled or slowed.
     Wrong,
-    /// Worth listing; does not hold the branch.
     Polish,
 }
 
-/// What the implementing session did about it (FR-020).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Resolution {
-    /// Nothing yet.
     #[default]
     Open,
-    /// Fixed, and this re-run passed.
     Fixed {
-        /// The run that proves it.
         rerun: String,
     },
-    /// The implementer says the reviewer is wrong; the maintainer decides.
     Contested {
-        /// Why.
         reason: String,
     },
 }
 
-/// A verdict on one step.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Verdict {
-    /// The storyboard cited.
     #[serde(default)]
     pub storyboard: String,
-    /// Its step, by id or index.
     #[serde(default, deserialize_with = "step_name")]
     pub step: String,
-    /// The app.
     #[serde(default)]
     pub app: String,
-    /// The variant directory name.
     #[serde(default)]
     pub variant: String,
-    /// The outlined frame, relative to the bundle.
     #[serde(default)]
     pub frame: String,
-    /// Pass, fail or question.
     pub verdict: Kind,
-    /// Required on a fail.
     #[serde(default)]
     pub severity: Option<Severity>,
-    /// What a person would notice.
     #[serde(default)]
     pub says: String,
-    /// The rule it rests on.
     #[serde(default)]
     pub rule: String,
-    /// Set by the implementing session.
     #[serde(default)]
     pub resolution: Resolution,
 }
 
-/// Something no expectation covered.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Finding {
-    /// The storyboard cited.
     #[serde(default)]
     pub storyboard: String,
-    /// Its step, by id or index.
     #[serde(default, deserialize_with = "step_name")]
     pub step: String,
-    /// The app.
     #[serde(default)]
     pub app: String,
-    /// The variant directory name.
     #[serde(default)]
     pub variant: String,
-    /// The outlined frame, relative to the bundle.
     #[serde(default)]
     pub frame: String,
-    /// Required.
     #[serde(default)]
     pub severity: Option<Severity>,
-    /// What a person would notice.
     #[serde(default)]
     pub says: String,
-    /// The rule it rests on.
     #[serde(default)]
     pub rule: String,
-    /// Set by the implementing session.
     #[serde(default)]
     pub resolution: Resolution,
 }
 
-/// The bundle a review answers.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BundleId {
-    /// The review key.
     #[serde(default)]
     pub tree_key: String,
-    /// The base.
     #[serde(default)]
     pub base: Option<String>,
 }
 
-/// Who reviewed.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Reviewer {
-    /// The agent definition.
     #[serde(default)]
     pub agent: String,
-    /// The model.
     #[serde(default)]
     pub model: String,
-    /// The prompt template's blake3.
     #[serde(default)]
     pub template: String,
 }
 
-/// `verdicts.json`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Review {
-    /// The bundle it answers.
     #[serde(default)]
     pub bundle: BundleId,
-    /// The reviewer.
     #[serde(default)]
     pub reviewer: Reviewer,
-    /// One per step that needed one.
     #[serde(default)]
     pub verdicts: Vec<Verdict>,
-    /// What no expectation covered.
     #[serde(default)]
     pub findings: Vec<Finding>,
 }
 
-/// An entry in `contests.toml`.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Contest {
-    /// `<storyboard>/<step>/<app>/<variant>`.
     #[serde(rename = "ref")]
     pub reference: String,
-    /// Why the reviewer is wrong.
     pub reason: String,
 }
 
-/// Why a review is rejected. Each is a rule of FR-019.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum Rejection {
-    /// `verdicts.json` is missing or is not the schema.
     #[error("verdicts.json: {0}")]
     Unreadable(String),
-    /// A citation field is empty or absent.
     #[error("{what} {index}: missing citation field `{field}`")]
     MissingCitation {
-        /// `verdict` or `finding`.
         what: &'static str,
-        /// Its position, from 1.
         index: usize,
-        /// The field.
         field: &'static str,
     },
-    /// The cited frame is not in the bundle.
     #[error("{what} {index}: frame `{frame}` is not in the bundle")]
     FrameAbsent {
-        /// `verdict` or `finding`.
         what: &'static str,
-        /// Its position, from 1.
         index: usize,
-        /// The path cited.
         frame: String,
     },
-    /// A step the manifest lists has no verdict.
     #[error("no verdict for {0}")]
     StepWithoutVerdict(String),
-    /// A fail, or a finding, with no severity.
     #[error("{what} {index}: a {kind} needs a severity (blocker, wrong or polish)")]
     MissingSeverity {
-        /// `verdict` or `finding`.
         what: &'static str,
-        /// Its position, from 1.
         index: usize,
-        /// `fail` or `finding`.
         kind: &'static str,
     },
-    /// `says` is empty.
     #[error("{what} {index}: `says` is empty")]
-    EmptySays {
-        /// `verdict` or `finding`.
-        what: &'static str,
-        /// Its position, from 1.
-        index: usize,
-    },
-    /// A contest names nothing in the review.
+    EmptySays { what: &'static str, index: usize },
     #[error("contests.toml: `{0}` matches no verdict or finding")]
     ContestWithoutTarget(String),
 }
 
-/// The reference a contest uses for a citation.
 pub fn reference(storyboard: &str, step: &str, app: &str, variant: &str) -> String {
     format!("{storyboard}/{step}/{app}/{variant}")
 }
 
-/// The citation fields of a verdict or finding, in the order they are
-/// reported.
 fn citation<'a>(
     storyboard: &'a str,
     step: &'a str,
@@ -248,8 +170,6 @@ fn citation<'a>(
     ]
 }
 
-/// A frame path is in the bundle when it is relative, stays inside it and
-/// exists (through the `runs` and `base` links).
 fn frame_in_bundle(bundle: &Path, frame: &str) -> bool {
     let path = Path::new(frame);
     path.is_relative()
@@ -259,7 +179,6 @@ fn frame_in_bundle(bundle: &Path, frame: &str) -> bool {
         && bundle.join(path).is_file()
 }
 
-/// Every rule of FR-019, against a manifest and the bundle's files.
 pub fn validate(review: &Review, manifest: &Manifest, bundle: &Path) -> Vec<Rejection> {
     let mut found = Vec::new();
     let mut check_entry = |what: &'static str,
@@ -356,7 +275,6 @@ pub fn attach_contests(review: &mut Review, contests: &[Contest]) -> Vec<Rejecti
     dangling
 }
 
-/// The contests in `contests.toml`, or none when there is no file.
 pub fn load_contests(bundle: &Path) -> Result<Vec<Contest>, String> {
     #[derive(Deserialize)]
     struct File {
@@ -373,7 +291,6 @@ pub fn load_contests(bundle: &Path) -> Result<Vec<Contest>, String> {
         .map_err(|e| format!("{}: {e}", path.display()))
 }
 
-/// Reads and validates a bundle's review, with its contests attached.
 pub fn check(bundle: &Path) -> Result<Review, Vec<Rejection>> {
     let manifest =
         crate::prompt::load_manifest(bundle).map_err(|e| vec![Rejection::Unreadable(e)])?;
@@ -394,11 +311,7 @@ pub fn check(bundle: &Path) -> Result<Review, Vec<Rejection>> {
     }
 }
 
-/// Merges the per-batch files a multi-batch review writes
-/// (`verdicts.1.json`, `verdicts.2.json`, ...) into `verdicts.json`, so one
-/// `check` reads the whole review. Batches are taken in number order; the
-/// bundle and reviewer come from the first. A single-batch review already
-/// wrote `verdicts.json` and has nothing to merge.
+/// Batches are taken in number order; the bundle and reviewer come from the first.
 pub fn merge(bundle: &Path) -> Result<usize, String> {
     let mut batches: Vec<(usize, std::path::PathBuf)> = std::fs::read_dir(bundle)
         .map_err(|error| format!("{}: {error}", bundle.display()))?
@@ -432,8 +345,6 @@ pub fn merge(bundle: &Path) -> Result<usize, String> {
     Ok(batches.len())
 }
 
-/// A step as the reviewer wrote it: its id, or its index as a string or a
-/// bare number, which is how the prompt lists an unnamed step.
 fn step_name<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
     #[derive(Deserialize)]
     #[serde(untagged)]
@@ -455,7 +366,6 @@ mod tests {
     use crate::fixtures::{run, storyboard, write};
     use serde_json::{Value, json};
 
-    /// A bundle of one run of two steps, and a complete review of it.
     fn bundled() -> (tempfile::TempDir, Review) {
         let dir = tempfile::tempdir().expect("temp");
         let runs = dir.path().join("runs");
@@ -463,7 +373,6 @@ mod tests {
         let catalogue = dir.path().join("storyboards/list");
         std::fs::create_dir_all(&catalogue).expect("dir");
         std::fs::write(catalogue.join("archive-walks-down.toml"), storyboard(None)).expect("board");
-        // `storyboard()` has no name field; the name is the file's stem.
         std::fs::write(dir.path().join("acc.md"), "acceptance").expect("acc");
         bundle::build(
             &Inputs {
@@ -517,8 +426,6 @@ mod tests {
 
     #[test]
     fn a_step_written_as_a_number_is_its_index() {
-        // The prompt lists steps as `archive-walks-down / 2 / terminal`, and
-        // a reviewer that writes `"step": 2` means step 2.
         let mut value = complete();
         value["verdicts"][1]["step"] = json!(1);
         let review: Review = serde_json::from_value(value).expect("a number is a step");

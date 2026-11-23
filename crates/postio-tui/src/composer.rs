@@ -45,8 +45,30 @@ pub enum Format {
     Bold,
     /// `*…*`.
     Italic,
-    /// `# ` at the start of the line.
-    Heading1,
+    /// `~~…~~`.
+    Strikethrough,
+    /// A backtick run around the words.
+    InlineCode,
+    /// One to six `#`s at the start of the line.
+    Heading(u8),
+    /// The line's `#`s taken off.
+    NormalText,
+    /// Fences around the lines.
+    CodeBlock,
+    /// `[ ] ` after each item's marker.
+    TaskList,
+    /// `[ ]` and `[x]` swapped.
+    ToggleTask,
+    /// The item nested under the one above.
+    Indent,
+    /// The item out one level.
+    Outdent,
+    /// `---` below the block.
+    Divider,
+    /// A two-by-two table template.
+    Table,
+    /// The marks taken off the words.
+    ClearFormatting,
     /// `- ` at the start of the line.
     BulletList,
     /// `1. ` at the start of the line.
@@ -55,6 +77,47 @@ pub enum Format {
     Quote,
     /// `[…](…)`.
     Link,
+}
+
+impl Format {
+    /// The formatting command `id` names, if it is one the body answers.
+    pub fn for_command(id: &str) -> Option<Self> {
+        Some(match id {
+            "bold" => Format::Bold,
+            "italic" => Format::Italic,
+            "strikethrough" => Format::Strikethrough,
+            "inline_code" => Format::InlineCode,
+            "heading_1" => Format::Heading(1),
+            "heading_2" => Format::Heading(2),
+            "heading_3" => Format::Heading(3),
+            "heading_4" => Format::Heading(4),
+            "heading_5" => Format::Heading(5),
+            "heading_6" => Format::Heading(6),
+            "normal_text" => Format::NormalText,
+            "bullet_list" => Format::BulletList,
+            "numbered_list" => Format::NumberedList,
+            "quote_block" => Format::Quote,
+            "insert_link" => Format::Link,
+            "code_block" => Format::CodeBlock,
+            "task_list" => Format::TaskList,
+            "toggle_task" => Format::ToggleTask,
+            "indent" => Format::Indent,
+            "outdent" => Format::Outdent,
+            "divider" => Format::Divider,
+            "table" => Format::Table,
+            "clear_formatting" => Format::ClearFormatting,
+            _ => return None,
+        })
+    }
+}
+
+/// Where a remote image's download stands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Remote {
+    /// Running.
+    Downloading,
+    /// Refused, and why.
+    Refused(postio_ui::compose::RemoteRefusal),
 }
 
 /// One draft being written.
@@ -83,6 +146,9 @@ pub struct Composer {
     /// How many times what would be saved has changed, so a save that was
     /// asked for before the last edit knows it is stale.
     edits: u64,
+    /// Remote images whose download is running, or why one was refused,
+    /// by address (spec 014 US8).
+    remote: std::collections::HashMap<String, Remote>,
     /// The first body line the last frame showed: the textarea's own
     /// scroll, mirrored, since it does not say where it scrolled to.
     body_top: std::cell::Cell<u16>,
@@ -173,6 +239,7 @@ impl Composer {
             identities: Vec::new(),
             identity: 0,
             edits: 0,
+            remote: std::collections::HashMap::new(),
             body_top: std::cell::Cell::new(0),
             body_height: std::cell::Cell::new(0),
             suggestions: Vec::new(),
@@ -255,81 +322,112 @@ impl Composer {
         if self.field != Field::Body {
             return false;
         }
+        use postio_ui::editor::markdown_edit as edit;
         match format {
-            Format::Bold => self.wrap("**", "**"),
-            Format::Italic => self.wrap("*", "*"),
-            Format::Link => {
-                let words = self.take_selection();
-                if words.is_empty() {
-                    self.body.insert_str("[]()");
-                    self.back(3);
-                } else {
-                    self.body.insert_str(format!("[{words}]()"));
-                    self.back(1);
-                }
-            }
-            Format::Heading1 => self.toggle_prefix("# "),
-            Format::BulletList => self.toggle_prefix("- "),
-            Format::NumberedList => self.toggle_prefix("1. "),
-            Format::Quote => self.toggle_prefix("> "),
+            Format::Bold => self.apply(|text, at| edit::wrap(text, at, "**", "**")),
+            Format::Italic => self.apply(|text, at| edit::wrap(text, at, "*", "*")),
+            Format::Link => self.apply(edit::link),
+            Format::Strikethrough => self.apply(edit::strikethrough),
+            Format::InlineCode => self.apply(edit::inline_code),
+            Format::Heading(level) => self.apply(|text, at| edit::heading(text, at, level)),
+            Format::NormalText => self.apply(edit::normal_text),
+            Format::CodeBlock => self.apply(edit::code_block),
+            Format::TaskList => self.apply(edit::task_list),
+            Format::ToggleTask => self.apply(edit::toggle_task),
+            Format::Indent => self.apply(edit::indent),
+            Format::Outdent => self.apply(edit::outdent),
+            Format::Divider => self.apply(edit::divider),
+            Format::Table => self.apply(edit::table),
+            Format::ClearFormatting => self.apply(edit::clear_formatting),
+            Format::BulletList => self.apply(|text, at| edit::toggle_prefix(text, at, "- ")),
+            Format::NumberedList => self.apply(|text, at| edit::toggle_prefix(text, at, "1. ")),
+            Format::Quote => self.apply(|text, at| edit::toggle_prefix(text, at, "> ")),
         }
         self.edits += 1;
         true
     }
 
-    /// The selected words, taken out of the body; nothing when there is no
-    /// selection. The yank buffer is left as it was.
-    fn take_selection(&mut self) -> String {
-        match self.body.selection_range() {
-            Some((start, end)) if start != end => {
-                let yanked = self.body.yank_text();
-                self.body.cut();
-                let words = self.body.yank_text();
-                self.body.set_yank_text(yanked);
-                words
+    /// Run a Markdown edit (`postio_ui::editor::markdown_edit`) over the
+    /// body: the edit decides, and the text area is brought to match.
+    ///
+    /// Only the span that changed is replaced, so the text area's own undo
+    /// takes the edit back rather than the whole body.
+    fn apply(
+        &mut self,
+        edit: impl FnOnce(&str, std::ops::Range<usize>) -> postio_ui::editor::markdown_edit::Edit,
+    ) {
+        let before = self.body.lines().join("\n");
+        let offset = |row: usize, column: usize| -> usize {
+            let lines = self.body.lines();
+            let above: usize = lines.iter().take(row).map(|line| line.len() + 1).sum();
+            let line = lines.get(row).map_or("", String::as_str);
+            above
+                + line
+                    .char_indices()
+                    .nth(column)
+                    .map_or(line.len(), |(at, _)| at)
+        };
+        let selection = match self.body.selection_range() {
+            Some(((r0, c0), (r1, c1))) => offset(r0, c0)..offset(r1, c1),
+            None => {
+                let ratatui_textarea::DataCursor(row, column) = self.body.cursor();
+                let at = offset(row, column);
+                at..at
             }
-            _ => {
-                self.body.cancel_selection();
-                String::new()
-            }
-        }
-    }
+        };
+        let after = edit(&before, selection);
 
-    fn wrap(&mut self, open: &str, close: &str) {
-        let words = self.take_selection();
-        self.body.insert_str(format!("{open}{words}{close}"));
-        if words.is_empty() {
-            self.back(close.chars().count());
+        // The changed span: what is left once the common start and end are
+        // taken off, on character boundaries.
+        let mut head = before
+            .bytes()
+            .zip(after.text.bytes())
+            .take_while(|(a, b)| a == b)
+            .count();
+        while !before.is_char_boundary(head) || !after.text.is_char_boundary(head) {
+            head -= 1;
         }
-    }
-
-    fn back(&mut self, columns: usize) {
-        for _ in 0..columns {
-            self.body.move_cursor(ratatui_textarea::CursorMove::Back);
+        let mut tail = before[head..]
+            .bytes()
+            .rev()
+            .zip(after.text[head..].bytes().rev())
+            .take_while(|(a, b)| a == b)
+            .count();
+        while !before.is_char_boundary(before.len() - tail)
+            || !after.text.is_char_boundary(after.text.len() - tail)
+        {
+            tail -= 1;
         }
-    }
-
-    /// `prefix` at the start of the caret's line, or taken off it again.
-    fn toggle_prefix(&mut self, prefix: &str) {
-        let ratatui_textarea::DataCursor(row, column) = self.body.cursor();
-        let line = self.body.lines().get(row).cloned().unwrap_or_default();
-        let jump = |row: usize, column: usize| {
+        let jump = |text: &str, at: usize| {
+            let row = text[..at].matches('\n').count();
+            let column = text[text[..at].rfind('\n').map_or(0, |n| n + 1)..at]
+                .chars()
+                .count();
             ratatui_textarea::CursorMove::Jump(
                 u16::try_from(row).unwrap_or(u16::MAX),
                 u16::try_from(column).unwrap_or(u16::MAX),
             )
         };
-        let width = prefix.chars().count();
-        self.body.move_cursor(jump(row, 0));
-        if line.starts_with(prefix) {
-            for _ in 0..width {
-                self.body.delete_next_char();
-            }
+        self.body.cancel_selection();
+        self.body.move_cursor(jump(&before, head));
+        if before.len() - tail > head {
+            self.body.start_selection();
+            self.body.move_cursor(jump(&before, before.len() - tail));
+            let yanked = self.body.yank_text();
+            self.body.cut();
+            self.body.set_yank_text(yanked);
+        }
+        self.body
+            .insert_str(&after.text[head..after.text.len() - tail]);
+        if after.selection.is_empty() {
             self.body
-                .move_cursor(jump(row, column.saturating_sub(width)));
+                .move_cursor(jump(&after.text, after.selection.start));
         } else {
-            self.body.insert_str(prefix);
-            self.body.move_cursor(jump(row, column + width));
+            self.body
+                .move_cursor(jump(&after.text, after.selection.start));
+            self.body.start_selection();
+            self.body
+                .move_cursor(jump(&after.text, after.selection.end));
         }
     }
 
@@ -466,6 +564,84 @@ impl Composer {
     /// The files this draft carries.
     pub fn attachments(&self) -> &[postio_model::Attachment] {
         &self.draft.attachments
+    }
+
+    /// The remote images the body names and has not attached, with their
+    /// words (spec 014 US8).
+    ///
+    /// Asked on every frame, so a body that cannot name one -- no `](http`
+    /// in it -- is not read as Markdown at all.
+    pub fn remote_images(&self) -> Vec<(postio_body::WebHref, String)> {
+        let text = self.markdown();
+        if !text.to_ascii_lowercase().contains("](http") {
+            return Vec::new();
+        }
+        markdown::to_document(&text).remote_images()
+    }
+
+    /// Each remote image's row: its words, and its host or what became of
+    /// its download.
+    pub fn remote_rows(&self, key: &str) -> Vec<(String, String)> {
+        self.remote_images()
+            .into_iter()
+            .map(|(href, alt)| {
+                let host = postio_ui::compose::remote_host(href.as_str());
+                let words = match self.remote.get(href.as_str()) {
+                    Some(Remote::Downloading) => postio_ui::compose::DOWNLOADING.to_owned(),
+                    Some(Remote::Refused(refusal)) => {
+                        postio_ui::compose::remote_refusal(refusal, &host, key)
+                    }
+                    None => host,
+                };
+                (alt, words)
+            })
+            .collect()
+    }
+
+    /// The first remote image not already downloading, marked as downloading:
+    /// what one Download and attach press asks for.
+    pub fn start_remote(&mut self) -> Option<postio_body::WebHref> {
+        let href = self
+            .remote_images()
+            .into_iter()
+            .map(|(href, _)| href)
+            .find(|href| self.remote.get(href.as_str()) != Some(&Remote::Downloading))?;
+        self.remote
+            .insert(href.as_str().to_owned(), Remote::Downloading);
+        Some(href)
+    }
+
+    /// A download came back: the picture in the image's place, by its
+    /// content id, or the row saying why it stays a link.
+    pub fn settle_remote(
+        &mut self,
+        href: &str,
+        outcome: Result<postio_model::Attachment, postio_ui::compose::RemoteRefusal>,
+    ) {
+        match outcome {
+            Ok(attachment) => {
+                self.remote.remove(href);
+                if let Some(id) = attachment.content_id.clone() {
+                    let from = format!("]({href})");
+                    let to = format!("](cid:{id})");
+                    self.apply(|text, at| {
+                        let mut edited = text.to_owned();
+                        if let Some(found) = text.find(&from) {
+                            edited.replace_range(found..found + from.len(), &to);
+                        }
+                        postio_ui::editor::markdown_edit::Edit {
+                            text: edited,
+                            selection: at,
+                        }
+                    });
+                }
+                self.attach(attachment);
+            }
+            Err(refusal) => {
+                self.remote
+                    .insert(href.to_owned(), Remote::Refused(refusal));
+            }
+        }
     }
 
     /// Carry `attachment`, already stored by the host.
@@ -678,20 +854,28 @@ impl Composer {
     }
 }
 
-/// What a body of Markdown, followed by `quote`, sends: the Markdown and
-/// then the quote's text as the text part (FR-021), and the rendering of
-/// both as the HTML part when there is anything to style.
+/// What a body of Markdown, followed by `quote`, sends: the written
+/// document's plain alternative and then the quote's text as the text part,
+/// and the rendering of both as the HTML part when there is anything to
+/// style.
+///
+/// The plain alternative, not the Markdown as typed: `**bold**` in a text
+/// part is the doubled marker spec 002 FR-072 forbids, and spec 014 D6 keeps
+/// exactly the markers that carry meaning, the same from every composer. A
+/// document of plain paragraphs reads as the words typed either way.
 pub fn body_of(markdown: &str, quote: &[Block]) -> MessageBody {
     if markdown.trim().is_empty() && quote.is_empty() {
         return MessageBody::default();
     }
-    let mut document = markdown::to_document(markdown);
+    let written = markdown::to_document(markdown);
+    let written_text = written.to_flowed_text();
+    let mut document = written;
     document.blocks.extend(quote.iter().cloned());
     let quoted = quote_text(quote);
     let text = match (markdown.trim().is_empty(), quoted.is_empty()) {
-        (_, true) => markdown.to_owned(),
+        (_, true) => written_text,
         (true, false) => quoted,
-        (false, false) => format!("{}\n\n{quoted}", markdown.trim_end()),
+        (false, false) => format!("{}\n\n{quoted}", written_text.trim_end()),
     };
     MessageBody {
         text: Some(text),
@@ -830,7 +1014,7 @@ pub(crate) mod tests {
     #[test]
     fn headings_lists_and_quotes_prefix_the_line_and_a_second_press_takes_it_off() {
         for (format, prefix) in [
-            (Format::Heading1, "# "),
+            (Format::Heading(1), "# "),
             (Format::BulletList, "- "),
             (Format::NumberedList, "1. "),
             (Format::Quote, "> "),
@@ -841,6 +1025,92 @@ pub(crate) mod tests {
             assert!(composer.format(format));
             assert_eq!(composer.markdown(), "one", "{format:?} again takes it off");
         }
+    }
+
+    #[test]
+    fn every_now_phase_formatting_command_writes_its_markdown() {
+        // Spec 014 US6 scenario 4: the terminal authors every construct.
+        // The edits are `markdown_edit`'s; this is that the terminal runs
+        // the right one for each command, over the whole line selected.
+        for (format, before, after) in [
+            (Format::Strikethrough, "gone", "~~gone~~"),
+            (Format::InlineCode, "x", "`x`"),
+            (Format::Heading(1), "Plan", "# Plan"),
+            (Format::Heading(4), "Plan", "#### Plan"),
+            (Format::Heading(6), "Plan", "###### Plan"),
+            (Format::NormalText, "## Plan", "Plan"),
+            (Format::CodeBlock, "let x", "```\nlet x\n```"),
+            (Format::TaskList, "- one", "- [ ] one"),
+            (Format::ToggleTask, "- [ ] one", "- [x] one"),
+            (Format::Indent, "- a\n- b", "- a\n  - b"),
+            (Format::Outdent, "- a\n  - b", "- a\n- b"),
+            (Format::Divider, "above", "above\n\n---\n"),
+            (
+                Format::Table,
+                "",
+                "| Column 1 | Column 2 |\n|---|---|\n|  |  |",
+            ),
+            (Format::ClearFormatting, "**b** and *i*", "b and i"),
+        ] {
+            let mut composer = in_body(before);
+            // The last line, selected: what a person would mark.
+            composer
+                .body
+                .move_cursor(ratatui_textarea::CursorMove::Bottom);
+            composer
+                .body
+                .move_cursor(ratatui_textarea::CursorMove::Head);
+            composer.body.start_selection();
+            composer.body.move_cursor(ratatui_textarea::CursorMove::End);
+            assert!(composer.format(format), "{format:?}");
+            assert_eq!(composer.markdown(), after, "{format:?} over {before:?}");
+        }
+    }
+
+    #[test]
+    fn a_remote_image_is_a_row_downloaded_on_a_press_and_put_in_place() {
+        let mut composer = in_body("See ![chart](https://example.com/x.png).");
+        assert_eq!(
+            composer.remote_rows("alt+I"),
+            vec![("chart".to_owned(), "example.com".to_owned())]
+        );
+        let href = composer.start_remote().expect("one to download");
+        assert_eq!(href.as_str(), "https://example.com/x.png");
+        assert_eq!(composer.remote_rows("alt+I")[0].1, "Downloading\u{2026}");
+        assert_eq!(
+            composer.start_remote(),
+            None,
+            "one request at a time for one image"
+        );
+        let mut part = postio_model::Attachment::new(
+            postio_model::ids::MessageId::UNASSIGNED,
+            "image/png",
+            10,
+        );
+        part.content_id = Some("x1@postio.invalid".to_owned());
+        composer.settle_remote(href.as_str(), Ok(part));
+        assert_eq!(composer.markdown(), "See ![chart](cid:x1@postio.invalid).");
+        assert!(composer.remote_rows("alt+I").is_empty());
+        assert_eq!(composer.attachments().len(), 1);
+    }
+
+    #[test]
+    fn a_refused_download_says_why_and_stays_a_link() {
+        let mut composer = in_body("![chart](https://example.com/x.png)");
+        let href = composer.start_remote().expect("one");
+        composer.settle_remote(
+            href.as_str(),
+            Err(postio_ui::compose::RemoteRefusal::TooLarge),
+        );
+        assert_eq!(
+            composer.remote_rows("alt+I")[0].1,
+            "Larger than 10 MB \u{b7} not attached \u{b7} it will be sent as a link"
+        );
+        assert_eq!(composer.markdown(), "![chart](https://example.com/x.png)");
+        assert!(
+            composer.start_remote().is_some(),
+            "a press again asks again"
+        );
     }
 
     #[test]
@@ -885,7 +1155,9 @@ pub(crate) mod tests {
         );
         assert_eq!(draft.subject, "Tide gate");
         assert_eq!(draft.body_markdown.as_deref(), Some("Some **bold** words"));
-        assert_eq!(draft.body.text.as_deref(), Some("Some **bold** words"));
+        // The text part is the plain alternative every composer sends
+        // (spec 014 D6): bold's stars are dropped, as spec 002 FR-072 has it.
+        assert_eq!(draft.body.text.as_deref(), Some("Some bold words"));
         assert!(
             draft
                 .body

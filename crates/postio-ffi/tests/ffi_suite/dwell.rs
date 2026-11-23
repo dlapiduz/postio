@@ -1,11 +1,3 @@
-//! Resting on a message marks it read; passing over it does not (#71, #1159).
-//!
-//! The macOS frontend marked nothing at all until #1159 — no dwell path
-//! existed, so a Mac's inbox count never moved however much mail was read.
-//! These hold the boundary half: that the verb reaches the store, and that it
-//! is the *dwell* verb rather than the toggle, which is a different thing with
-//! different undo behaviour.
-
 use chrono::Utc;
 use postio_core::bridge::Bridge;
 use postio_core::dispatch::Dispatcher;
@@ -15,7 +7,6 @@ use postio_model::{Flag, Message};
 use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
 
-/// Whether the store says `message` carries `\Seen`.
 async fn is_read(database: &postio_storage::Store, message: i64) -> bool {
     let connection = database.connect().await.expect("a connection");
     MessageRepository::new(&connection)
@@ -25,7 +16,6 @@ async fn is_read(database: &postio_storage::Store, message: i64) -> bool {
         .is_some_and(|message| message.flags.contains(&Flag::Seen))
 }
 
-/// A store with one unread message, and the session over it.
 async fn one_unread() -> (std::sync::Arc<Session>, postio_storage::Store, i64) {
     let database = test_support::memory().await;
     let message = {
@@ -37,9 +27,8 @@ async fn one_unread() -> (std::sync::Arc<Session>, postio_storage::Store, i64) {
         repository.create(&mut message).await.expect("a message");
         message.id.get()
     };
-    // The real action handlers on the bus. An in-memory session's default
-    // bridge takes commands and drops them, so a verb dispatched against it
-    // would prove only that nothing panicked.
+    // Real action handlers: an in-memory session's default bridge drops commands, proving only that
+    // nothing panicked.
     let state = SharedState::default();
     let bus = postio_session::actions::wire(
         Dispatcher::builder(),
@@ -47,8 +36,7 @@ async fn one_unread() -> (std::sync::Arc<Session>, postio_storage::Store, i64) {
     )
     .build();
     let (bridge, _replies) = Bridge::new(bus).expect("a runtime");
-    // Leaked on purpose: the bridge has to outlive the session, and this
-    // process ends with the test.
+    // Leaked: the bridge must outlive the session.
     let bridge = Box::leak(Box::new(bridge));
     let session = Session::open(
         SessionOptions::in_memory_with(database.clone())
@@ -76,10 +64,8 @@ async fn a_dwell_marks_the_message_read() {
 
 #[test]
 fn the_arming_decision_crosses_whole() {
-    // The delay *and* the rule, in one answer. Handing over only the number
-    // is what made the first version of this dead code: a frontend given a
-    // constant wrote the rule again beside it, and a rule with no caller
-    // cannot keep anything in step (#1167's review).
+    // The delay and the rule in one answer: given a bare constant, a frontend wrote the rule again
+    // beside it (#1167).
     assert_eq!(
         postio_ffi::dwell_on_cursor(Some(7)),
         postio_ffi::DwellArmFfi::Start {
@@ -87,25 +73,19 @@ fn the_arming_decision_crosses_whole() {
             milliseconds: postio_ui::dwell::DWELL_TO_READ.as_millis() as u64,
         }
     );
-    // A cursor on nothing — no row, or a row whose page has not arrived —
-    // cancels. That is the core's answer, so a frontend cannot get it wrong
-    // by writing its own `guard`.
     assert_eq!(
         postio_ffi::dwell_on_cursor(None),
         postio_ffi::DwellArmFfi::Cancel
     );
 }
 
-/// Drive until `done`, or give up. The verb is local-first: it writes and
-/// returns, and the write lands on the runtime a moment later.
 async fn settle_until<F, Fut>(done: F) -> bool
 where
     F: Fn() -> Fut,
     Fut: std::future::Future<Output = bool>,
 {
-    // Scaled, so `POSTIO_TEST_PATIENCE` reaches it. A hand-rolled deadline
-    // measures the process it runs in, which on a shared machine is a flake
-    // nobody can reproduce alone (#842, #957).
+    // Scaled so `POSTIO_TEST_PATIENCE` reaches it; a hand-rolled deadline is a flake nobody can
+    // reproduce alone (#842).
     let deadline =
         std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
     while std::time::Instant::now() < deadline {

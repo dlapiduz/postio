@@ -1,17 +1,3 @@
-//! Repairing the header blocks of mail that was downloaded before there was
-//! anywhere to put them (#884).
-//!
-//! `messages.body_headers` has been NULL on every row in every store since
-//! migration 0001, because both backfill paths passed `headers: None` on
-//! purpose. New mail carries its block from now on; this is the pass for the
-//! mail that is already here, and without it `header:` answers "no such mail"
-//! for a mailbox somebody has been using for a year.
-//!
-//! **It reaches no network.** The raw source is already on disk for every
-//! message this pass touches — that is what makes it a repair rather than a
-//! re-download — and the test below proves it by handing the pass a store and
-//! nothing else to talk to.
-
 use postio_storage::repository::{MessageRepository, StoredBody};
 use postio_storage::{BlobStore, test_support};
 
@@ -21,8 +7,6 @@ const RAW: &[u8] = b"From: Ada Lovelace <ada@example.com>\r\n\
                      \r\n\
                      the body, which is not a header\r\n";
 
-/// A store holding one message whose body was fetched before blocks were
-/// stored: raw source on disk, `body_headers` NULL.
 async fn a_store_from_before() -> (test_support::TempStore, BlobStore, postio_model::MessageId) {
     let database = test_support::temp().await;
     let blobs = BlobStore::open(
@@ -85,9 +69,6 @@ async fn a_block_is_rebuilt_from_the_raw_source_already_on_disk() {
 
 #[tokio::test]
 async fn a_second_pass_finds_nothing_left_to_do() {
-    // The contract #500's guard is watching: repairing a message has to remove
-    // it from the candidate query. A pass that kept being offered the same
-    // batch would run at 100% of a core for as long as the app was open.
     let (database, blobs, _id) = a_store_from_before().await;
 
     assert_eq!(
@@ -107,12 +88,6 @@ async fn a_second_pass_finds_nothing_left_to_do() {
 
 #[tokio::test]
 async fn a_message_whose_raw_source_has_gone_is_left_for_the_fetch_lane() {
-    // Eviction takes raw source first (PRODUCT.md §6), so this is the ordinary
-    // state of the oldest mail in a store with a ceiling. The row still points
-    // at a blob that is not there, and the pass must not treat "I could not
-    // read it" as "there is nothing to read": writing an empty block would
-    // make `header:` answer "no such header" for ever, with nothing left to
-    // say otherwise.
     let (database, blobs, id) = a_store_from_before().await;
     let connection = database.connect().await.expect("checkout");
     let messages = MessageRepository::new(&connection);

@@ -1,16 +1,9 @@
 import PostioFFI
 import SwiftUI
 
-/// The blocked-images notice, and the grants behind it (#1274, canvas 26).
-///
-/// One row that never wraps: an icon, what was held back, `Show`, and a `⋯`
-/// that opens an anchored popover — not a menu strip, because the choices are
-/// about *this sender* and a menu that appeared at the pointer would not say
-/// so.
-///
-/// Per message, never per pane. A conversation can hold back pictures from
-/// three different senders, and one notice above them all could not say
-/// whose.
+/// Per message, never per pane: a conversation can hold back pictures from several senders, and one
+/// notice could not say whose.
+/// The `⋯` opens an anchored popover because the choices are about this sender.
 public struct BlockedImagesNotice: View {
     private let notice: ReaderNoticeFfi
     private let session: PostioSession
@@ -62,8 +55,6 @@ public struct BlockedImagesNotice: View {
         }
     }
 
-    /// The four choices, in the canvas' order: the narrow grant, the wide
-    /// one, an explanation, and the settings that hold every grant made.
     private var grants: some View {
         VStack(alignment: .leading, spacing: 0) {
             item("Always allow \(BlockedImagesNotice.shortened(notice.sender))") {
@@ -124,12 +115,8 @@ public struct BlockedImagesNotice: View {
         .buttonStyle(.plain)
     }
 
-    /// The address, middle-truncated: `notices_at_…@relay.example.net`.
-    ///
-    /// The wording is `postio_ui::format::middle_truncate`'s, and the middle
-    /// is what goes because both ends identify the sender — the local part
-    /// says which service and the domain says whose it is. A tail-truncated
-    /// address would hide exactly the half a person judges by.
+    /// The middle goes, because both ends identify the sender: a tail-truncated address would hide
+    /// the half a person judges by.
     public static func shortened(_ address: String, width: Int = 34) -> String {
         middleTruncate(text: address, width: UInt32(width))
     }

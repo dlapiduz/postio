@@ -1,22 +1,6 @@
-//! Startup instrumentation.
-//!
-//! CLAUDE.md budgets startup to **under 500 ms** from process start to a
-//! usable UI on a populated database. A budget nobody measures is a wish, so
-//! the app records where its startup time goes and hands the numbers to
-//! whoever asks: a [`Timeline`] is created as the first statement in `main`,
-//! marked at each [`Phase`], and read back by the bench harness (E1.10).
-//!
-//! Two environment variables make it usable from a shell or a benchmark
-//! without a debugger attached:
-//!
-//! * `POSTIO_STARTUP_TRACE=1` prints [`Timeline::report`] to stderr once the
-//!   first frame is on screen.
-//! * `POSTIO_STARTUP_EXIT=1` quits the application at that same moment, so
-//!   `hyperfine 'POSTIO_STARTUP_EXIT=1 postio'` measures exactly the interval
-//!   the budget is written against — process start to first frame.
-//!
-//! Nothing here allocates on a hot path or touches a clock the UI depends on:
-//! it is a handful of [`Instant`]s.
+//! Startup timeline: marks each `Phase` so the bench harness can read where startup time goes.
+//! `POSTIO_STARTUP_TRACE=1` prints the report at first frame; `POSTIO_STARTUP_EXIT=1` quits then,
+//! for hyperfine.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -25,76 +9,33 @@ use std::time::{Duration, Instant};
 use gtk::glib;
 use gtk::prelude::*;
 
-/// The startup budget from CLAUDE.md: process start to a usable UI.
 pub const BUDGET: Duration = Duration::from_millis(500);
 
-/// Set to `1` to print the timeline to stderr once the first frame is up.
 pub const TRACE_ENV: &str = "POSTIO_STARTUP_TRACE";
 
-/// Set to `1` to quit as soon as the first frame is up, for benchmarking.
 pub const EXIT_ENV: &str = "POSTIO_STARTUP_EXIT";
 
-/// The milestones between `main` and a window the user can act on.
-///
-/// The order of the variants is the order they happen in, and
-/// [`Timeline::report`] leans on that.
+/// Variant order is occurrence order; `Timeline::report` relies on it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Phase {
-    /// GTK and libadwaita are up and a display is open.
     Init,
-    /// The embedded font faces are registered — before the first widget.
     Fonts,
-    /// The generated tokens are installed on the display.
     Styles,
-    /// The window and its widget tree exist, but nothing is on screen yet.
     Window,
-    /// The compositor has shown the window. Pixels, but no mail in them yet.
-    ///
-    /// New in #1114, and the reason the rest of this list moved: Postio
-    /// presents its window *before* it opens its store, so "there is a window
-    /// on screen" and "there is a mailbox in it" are two different moments
-    /// with, on a real install, tens of seconds between them.
+    /// Pixels, but no mail yet: the window is presented before the store opens (#1114).
     Shell,
-    /// The store key is out of the keyring and the database is open.
-    ///
-    /// I/O, and on a thread of its own since #1114 — a D-Bus round trip to
-    /// the keyring, the store's key derivation, the schema migrations and the
-    /// search-index rebuild, none of which the main loop waits for any more.
-    /// Separated from [`Window`](Phase::Window) by #790, which found the two
-    /// of them sharing one 228 ms phase that `docs/PERFORMANCE.md` then
-    /// attributed to GTK.
+    /// Runs on its own thread: keyring D-Bus round trip, key derivation, migrations, index rebuild.
     Store,
-    /// The keyring has answered and the window is about to be pointed at the
-    /// store: the app has begun feeding the window.
-    ///
-    /// Everything between [`Window`](Phase::Window) and here is the crossing
-    /// the app makes when it opens the store or onboards — a D-Bus round trip to the
-    /// keyring, asked on the runtime and answered back on the main context.
-    /// It is the one part of this stretch that is *not* the main thread's
-    /// own work, and telling it apart from what follows is the whole reason
-    /// it is a phase.
+    /// The keyring has answered. Its D-Bus round trip is not main-thread work, which is why this is
+    /// a phase.
     Account,
-    /// The panes are pointed at the store and every gesture has a handler:
-    /// the app has finished feeding the window.
-    ///
-    /// Synchronous main-thread work, all of it, and therefore work the first
-    /// frame is waiting on. #1479 split this off because the trace could say
-    /// the first frame was 84% of a 1250 ms startup and not say what any of
-    /// it was — and the answer turned out to be a store read in here rather
-    /// than anything GTK was doing.
+    /// Synchronous main-thread work that the first frame waits on.
     Feeds,
-    /// The compositor has shown a frame with the mail in it. This is "usable
-    /// UI", and it is what the budget is measured against.
-    ///
-    /// Not the same as [`Shell`](Phase::Shell) since #1114. The window
-    /// arrives first and is fed afterwards, so a start that reached pixels in
-    /// 200 ms and mail in twelve seconds took twelve seconds to be usable —
-    /// and a budget that closed at the first frame would call it a pass.
+    /// "Usable UI", where the budget ends: mail is on screen, not just the window (#1114).
     FirstFrame,
 }
 
 impl Phase {
-    /// Every phase, in the order they occur.
     pub const ALL: [Phase; 9] = [
         Phase::Init,
         Phase::Fonts,
@@ -107,7 +48,6 @@ impl Phase {
         Phase::FirstFrame,
     ];
 
-    /// The name used in [`Timeline::report`].
     pub fn label(self) -> &'static str {
         match self {
             Phase::Init => "init",
@@ -127,38 +67,28 @@ impl Phase {
     }
 }
 
-/// When each [`Phase`] was reached, relative to when the timeline started.
-///
-/// Cheap to clone — the closures that mark it are scattered across the
-/// application's `startup`, `activate` and tick callbacks, and they all share
-/// one timeline.
+/// When each `Phase` was reached; clones share one timeline.
 #[derive(Clone)]
 pub struct Timeline(Rc<Inner>);
 
 struct Inner {
     origin: Instant,
-    /// How long the process ran before the timeline started: exec, the
-    /// dynamic loader, static initialisers -- when it could be read.
+    /// Exec and loader time before `main`; `None` if unreadable.
     before_main: Option<Duration>,
     marks: RefCell<[Option<Duration>; Phase::ALL.len()]>,
 }
 
 impl Timeline {
-    /// Start a timeline now. Call it as the first statement in `main`: the
-    /// budget is measured from process start, and this is as close as a Rust
-    /// program gets to it without reading `/proc`.
+    /// Call as the first statement in `main`: the budget runs from process start.
     pub fn start() -> Self {
         Self::start_after(Instant::now(), this_process_age())
     }
 
-    /// Start a timeline from an origin you already have.
     #[cfg(test)]
     pub fn start_at(origin: Instant) -> Self {
         Self::start_after(origin, None)
     }
 
-    /// Start a timeline at `origin`, knowing the process had already run for
-    /// `before_main` by then.
     pub fn start_after(origin: Instant, before_main: Option<Duration>) -> Self {
         Timeline(Rc::new(Inner {
             origin,
@@ -167,16 +97,8 @@ impl Timeline {
         }))
     }
 
-    /// Record that `phase` has been reached.
-    ///
-    /// The first mark for a phase wins, so a retried activation — GTK will
-    /// activate a running application again when it is launched a second
-    /// time — does not overwrite the startup that was actually measured.
-    ///
-    /// And it is logged, at info, every launch (#1604): a mark used to record
-    /// an instant and say nothing, so the journal of a slow start held two
-    /// lines for its first second and the time could not be attributed after
-    /// the fact. Numbers and a phase name only, which is all a log may carry.
+    /// The first mark per phase wins, so a re-activation does not overwrite it. Each mark is logged
+    /// at info.
     pub fn mark(&self, phase: Phase) {
         let elapsed = self.0.origin.elapsed();
         {
@@ -187,9 +109,8 @@ impl Timeline {
             *slot = Some(elapsed);
         }
         let cost = self.cost(phase).unwrap_or_default();
-        // Every line carries what ran before `main` -- exec, the loader
-        // relocating a few hundred shared objects -- which the timeline's own
-        // origin cannot see (#1604); 0 where it could not be read.
+        // Includes pre-`main` time (exec, loader) that the origin cannot see; 0 if unreadable
+        // (#1604).
         tracing::info!(
             phase = phase.label(),
             at_ms = elapsed.as_millis() as u64,
@@ -202,13 +123,11 @@ impl Timeline {
         );
     }
 
-    /// How long after the start `phase` was reached, if it has been.
     pub fn at(&self, phase: Phase) -> Option<Duration> {
         self.0.marks.borrow()[phase.index()]
     }
 
-    /// How long `phase` itself took: the gap from the previous phase that was
-    /// marked, or from the start if it is the first.
+    /// The gap from the previous marked phase, or from the start.
     pub fn cost(&self, phase: Phase) -> Option<Duration> {
         let at = self.at(phase)?;
         let previous = Phase::ALL
@@ -220,18 +139,15 @@ impl Timeline {
         Some(at.saturating_sub(previous))
     }
 
-    /// Start to usable UI: the whole point of the exercise.
     pub fn total(&self) -> Option<Duration> {
         self.at(Phase::FirstFrame)
     }
 
-    /// Whether startup came in under [`BUDGET`]. `None` until the first frame.
     #[cfg(test)]
     pub fn within_budget(&self) -> Option<bool> {
         Some(self.total()? <= BUDGET)
     }
 
-    /// One line, meant for a terminal and for grepping out of a bench log.
     pub fn report(&self) -> String {
         let phases: Vec<String> = Phase::ALL
             .iter()
@@ -259,14 +175,10 @@ impl Timeline {
     }
 }
 
-/// How long ago this process started, from `/proc/self/stat`'s start time
-/// and `/proc/uptime`: `None` where either cannot be read or parsed.
+/// `None` where either input cannot be parsed.
 pub fn process_age(stat: &str, uptime: &str) -> Option<Duration> {
-    // Fields are counted after the *last* `)`: the command name inside the
-    // brackets may itself hold spaces and brackets. The start time is field
-    // 22 of the line, the 20th after the name, in clock ticks -- which the
-    // kernel reports to user space at 100 a second on every Linux, whatever
-    // the internal tick rate.
+    // Fields count after the last `)`: the command name may hold spaces and brackets.
+    // Start time is field 22, in 100 Hz ticks on every Linux.
     let after_name = &stat[stat.rfind(')')? + 1..];
     let started_ticks: u64 = after_name.split_whitespace().nth(19)?.parse().ok()?;
     let up: f64 = uptime.split_whitespace().next()?.parse().ok()?;
@@ -275,29 +187,17 @@ pub fn process_age(stat: &str, uptime: &str) -> Option<Duration> {
     up_ms.checked_sub(started_ms).map(Duration::from_millis)
 }
 
-/// [`process_age`] of this process, now.
 fn this_process_age() -> Option<Duration> {
     let stat = std::fs::read_to_string("/proc/self/stat").ok()?;
     let uptime = std::fs::read_to_string("/proc/uptime").ok()?;
     process_age(&stat, &uptime)
 }
 
-/// Run `f` once, on the first frame after `widget` reaches the screen.
-///
-/// The hook is a tick callback added when the widget is mapped and removed
-/// again as soon as it runs, so it costs one frame's worth of bookkeeping and
-/// then nothing at all. It fires within a frame of the moment the compositor
-/// first shows the window — as close to "the user can see it" as the frame
-/// clock can say.
+/// The tick callback removes itself after it runs.
 pub fn on_first_frame<W: IsA<gtk::Widget>>(widget: &W, f: impl Fn() + 'static) {
     let pending = Rc::new(RefCell::new(Some(f)));
-    // **A widget that is already mapped never emits `map` again.** The
-    // measurement path registers this while building the window, so it never
-    // met that; a caller that hangs real work off the first frame does --
-    // `activate` handlers run in registration order, and the one that
-    // presents the window runs first. Hooked that way, the work would simply
-    // never run, and the failure is silent: no account opens and nothing says
-    // why.
+    // An already-mapped widget never emits `map` again, and the `activate` handler that presents
+    // the window runs first; without this the work silently never runs.
     fn arm<F: Fn() + 'static>(widget: &gtk::Widget, pending: &Rc<RefCell<Option<F>>>) {
         let Some(f) = pending.borrow_mut().take() else {
             return;
@@ -314,19 +214,8 @@ pub fn on_first_frame<W: IsA<gtk::Widget>>(widget: &W, f: impl Fn() + 'static) {
     widget.connect_map(move |widget| arm(widget.as_ref(), &pending));
 }
 
-/// Close the timeline once `window` is showing mail, and act on the
-/// benchmarking switches documented in this module.
-///
-/// Called by whoever fed the window, which is the composition root — not by
-/// `app::build_with`, which cannot know. Before #1114 the two were the same
-/// moment and this lived there; now the window is presented first and fed
-/// afterwards, so the frame that closes the budget is the one after the panes
-/// were pointed at the store.
-///
-/// A start that never gets a store never calls this, and the timeline stays
-/// open. That is the honest answer — there is no usable UI to have reached —
-/// and it is visible rather than silent: [`Timeline::report`] says `startup
-/// incomplete` and names the phases that did happen.
+/// Called by the composition root once the window is fed. A start with no store never calls it,
+/// and `Timeline::report` then says `startup incomplete`.
 pub fn report_usable<W: IsA<gtk::Window>>(window: &W, timeline: &Timeline) {
     let timeline = timeline.clone();
     let window = window.as_ref().clone();
@@ -334,10 +223,8 @@ pub fn report_usable<W: IsA<gtk::Window>>(window: &W, timeline: &Timeline) {
     on_first_frame(&window, move || {
         timeline.mark(Phase::FirstFrame);
         if enabled(TRACE_ENV) {
-            // Through tracing rather than straight to stderr, so it is
-            // filtered and formatted like everything else. `POSTIO_LOG=off`
-            // now silences it, which is the correct reading of `off`; the
-            // benchmark path is `POSTIO_STARTUP_EXIT` and does not read this.
+            // Through tracing so `POSTIO_LOG` filters it; the benchmark path is
+            // `POSTIO_STARTUP_EXIT`.
             tracing::info!("{}", timeline.report());
         }
         if enabled(EXIT_ENV)
@@ -352,15 +239,11 @@ fn millis(d: Duration) -> String {
     format!("{:.1}ms", d.as_secs_f64() * 1000.0)
 }
 
-/// Whether an environment variable is switched on.
-///
-/// Deliberately strict: only `1` counts, so `POSTIO_STARTUP_EXIT=0` in a shell
-/// profile does not quit the application out from under someone.
+/// Strict: only `1` counts, so `POSTIO_STARTUP_EXIT=0` in a profile cannot quit the app.
 pub fn enabled(var: &str) -> bool {
     switched_on(std::env::var(var).ok().as_deref())
 }
 
-/// Whether a variable's value, if it is set, switches its trace on.
 fn switched_on(value: Option<&str>) -> bool {
     value == Some("1")
 }
@@ -371,19 +254,6 @@ mod tests {
 
     #[test]
     fn the_store_is_its_own_phase_and_no_longer_precedes_the_window() {
-        // #790: `window` measured 228ms of a 427ms startup and
-        // `docs/PERFORMANCE.md` attributed it to GTK's first-realize cost.
-        // It cannot be that -- `present()` is called *after* `Phase::Window`
-        // is marked, so the shader compile lands in `first frame`. What
-        // actually sat in that gap was the blocking keyring read and the
-        // store open, which is I/O. It got its own phase so the trace could
-        // say which.
-        //
-        // #1114 then moved that I/O off the main thread and behind the
-        // window, which is what this half of the assertion is: the store now
-        // opens *after* there are pixels, so a list in the old order would
-        // have `report` computing every cost from a phase that had not
-        // happened yet.
         assert!(Phase::Window < Phase::Shell);
         assert!(Phase::Shell < Phase::Store);
         assert_eq!(Phase::Store.label(), "store");
@@ -398,11 +268,8 @@ mod tests {
 
     #[test]
     fn pixels_and_usable_are_two_different_moments() {
-        // The distinction #1114 creates, and the one a budget cannot be
-        // allowed to blur: a start that put a window on screen in 200ms and
-        // mail in it twelve seconds later took twelve seconds to be usable.
-        // `total` has to be the second of those or the budget passes every
-        // launch it exists to catch.
+        // `total` must mean mail in the window, not first pixels, or the budget passes every slow
+        // launch.
         let origin = Instant::now();
         let timeline = Timeline::start_at(origin);
         timeline.mark(Phase::Shell);
@@ -423,13 +290,6 @@ mod tests {
 
     #[test]
     fn the_first_frame_gap_is_split_into_what_waits_and_what_works() {
-        // #1479: `first frame` measured 1044ms of a 1250ms startup on a real
-        // store, and the trace could say which phase and not what. Everything
-        // in that gap is local -- `start_syncing` runs *after* it -- so what
-        // it wanted was telling apart the three things it holds: a keyring
-        // round trip that is not this thread's work, the synchronous main
-        // thread work that points the panes at the store, and GTK's own
-        // paint. One phase could not, and three can.
         assert!(Phase::Window < Phase::Account);
         assert!(Phase::Account < Phase::Feeds);
         assert!(Phase::Feeds < Phase::FirstFrame);
@@ -465,7 +325,6 @@ mod tests {
         assert_eq!(timeline.at(Phase::Styles), None, "styles was never marked");
     }
 
-    /// Log lines written while `body` runs, as text.
     fn logged(body: impl FnOnce()) -> String {
         use postio_test_support::logs::Captured;
         let captured = Captured::default();
@@ -481,8 +340,7 @@ mod tests {
 
     #[test]
     fn a_process_s_age_is_the_uptime_less_its_start() {
-        // A name with spaces and a closing bracket in it: the fields are
-        // counted from the *last* `)`, or a hostile name shifts them all.
+        // Fields count from the last `)`.
         let stat = "4242 (postio (main) x) S 1 4242 4242 0 -1 4194560 100 0 0 0 \
                     5 3 0 0 20 0 8 0 12345 0 0 18446744073709551615";
         assert_eq!(
@@ -500,8 +358,6 @@ mod tests {
 
     #[test]
     fn a_phase_says_what_ran_before_main() {
-        // #1604: the ~215 ms of exec and relocation before `main` was outside
-        // the timeline, so no launch's journal could say it had happened.
         let timeline = Timeline::start_after(Instant::now(), Some(Duration::from_millis(215)));
         let log = logged(|| {
             timeline.mark(Phase::Init);
@@ -520,11 +376,6 @@ mod tests {
 
     #[test]
     fn every_phase_reaches_the_log_with_its_cost() {
-        // #1604: the journal of a real launch had two lines in its first
-        // second, because a mark recorded an instant and said nothing, and the
-        // report was printed only under a debugging switch. A slow start could
-        // not be attributed after the fact. Every mark now says which phase,
-        // when, and what it cost -- once, the first time, like the mark.
         let timeline = Timeline::start();
         let log = logged(|| {
             timeline.mark(Phase::Init);
@@ -567,8 +418,7 @@ mod tests {
         let timeline = Timeline::start_at(origin);
         timeline.mark(Phase::Init);
         std::thread::sleep(Duration::from_millis(5));
-        // Styles, not Fonts: the gap should be measured from whatever was
-        // marked last, not from a phase that never happened.
+        // Styles, not Fonts: the gap runs from the last mark.
         timeline.mark(Phase::Styles);
 
         let init = timeline.cost(Phase::Init).unwrap();

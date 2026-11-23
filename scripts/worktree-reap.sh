@@ -73,7 +73,6 @@ WORKTREES="$(cd "$WORKTREES" && pwd -P)"
 HERE="$(pwd -P)"
 NOW=$(date +%s)
 
-# Seconds since the epoch of the newest thing a working session touches.
 last_touched() {
     local gitdir="$1" tree="$2" newest=0 file stamp
     for file in "$gitdir/index" "$gitdir/HEAD" "$gitdir/ORIG_HEAD" \
@@ -85,8 +84,6 @@ last_touched() {
     echo "$newest"
 }
 
-# One fetch per base, however many trees were cut from it. A base that is
-# gone from origin is remembered as such rather than retried.
 FETCHED=""
 UNREACHABLE=""
 base_is_on_origin() {
@@ -101,10 +98,8 @@ base_is_on_origin() {
     return 1
 }
 
-# Branches whose pull request has merged, one per line. Asked of GitHub
-# once per run; POSTIO_MERGED_BRANCHES stands in for the answer, which is
-# how the self-test runs with no network. No answer -- no `gh`, no network --
-# is an empty list, and rule 2 then never applies: the others still do.
+# Branches whose pull request has merged, asked of GitHub once; POSTIO_MERGED_BRANCHES stands in for
+# the self-test. No answer is an empty list, so rule 2 never applies and the others still do.
 if [ -n "${POSTIO_MERGED_BRANCHES+set}" ]; then
     MERGED=$(printf '%b' "$POSTIO_MERGED_BRANCHES")
 else
@@ -115,10 +110,8 @@ is_merged() {
     printf '%s\n' "$MERGED" | grep -qxF -- "$1"
 }
 
-# An upper bound, not a cost: on btrfs a seeded tree shares extents with the
-# sibling it was reflinked from (#1102), and `du` counts a shared extent once
-# per tree. Removing five trees `du` called 11 GB each freed about 5 GB each
-# (docs/notes/2026-09-09-where-475-gigabytes-went.md).
+# An upper bound, not a cost: a reflink-seeded tree shares extents with its sibling and `du` counts
+# them per tree (11 GB each freed ~5 GB; docs/notes/2026-09-09-where-475-gigabytes-went.md).
 size_of() {
     local size
     size=$(du -sh "$1" 2>/dev/null | cut -f1)
@@ -130,7 +123,6 @@ going=0
 gone=0
 while IFS= read -r tree; do
     [ -n "$tree" ] || continue
-    # A tree whose directory is gone is git's to forget, not ours to judge.
     [ -d "$tree" ] || continue
     tree="$(cd "$tree" && pwd -P)"
     case "$tree" in "$WORKTREES"/*) ;; *) continue ;; esac

@@ -1,7 +1,3 @@
-//! A reply arriving while the window reads (spec 013 US4, FR-018): the
-//! reader is never moved. The bar gains a chip, a banner says who replied,
-//! and `}` is the way to it.
-
 use crate::search_support::shown;
 use crate::threads::{
     List, answer, member_id, read_asked, ringed, run, view, window_of, window_on_harbor,
@@ -15,8 +11,6 @@ use postio_ui::thread_bar::{BannerView, Chip};
 
 const THREAD: ThreadId = ThreadId::new(500);
 
-/// Harbor's read with `replies` more members after its six: each from Ana,
-/// unread, a minute after the one before.
 fn with_replies(replies: usize) -> ThreadView {
     let mut read = view(THREAD, 6, 2, false);
     for index in 0..replies {
@@ -45,7 +39,6 @@ fn changed(thread: ThreadId, added: &[usize]) -> Input {
     })
 }
 
-/// The window's thread changes by `added`, and the client reads it as `read`.
 fn arrives(
     focus: &mut FocusController,
     rows: &List,
@@ -139,7 +132,6 @@ fn latest_shows_the_reply_and_takes_the_banner_away() {
 fn the_row_behind_the_window_is_read_again() {
     let (mut focus, rows, _) = window_on_harbor(2);
     let effects = focus.handle_on(changed(THREAD, &[6]), &rows);
-    // The repaint waits out the burst a sync pass makes (T085 (f)).
     let token = effects
         .iter()
         .find_map(|effect| match effect {

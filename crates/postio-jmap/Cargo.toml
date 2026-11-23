@@ -15,14 +15,12 @@ workspace = true
 async-trait = { workspace = true }
 chrono = { workspace = true }
 
-# The RFC 8620/8621 protocol crate — coroutines plus the std blocking
-# client. No TLS features: connections are opened on this workspace's own
-# cancellable pimalaya-stream, exactly like postio-account's OAuth exchange.
+# No TLS features: connections open on the workspace's own cancellable pimalaya-stream.
 io-jmap = { version = "0.10.0", default-features = false, features = ["client"] }
 pimalaya-stream = { workspace = true }
 
-# The MailBackend seam and nothing else: default-features = false leaves
-# io-imap and the IMAP TLS stack out of this crate's tree entirely.
+# The MailBackend seam only: `default-features = false` leaves io-imap and its TLS stack out of the
+# tree.
 postio-account = { version = "0.6.2", path = "../postio-account", default-features = false }
 postio-model = { version = "0.6.2", path = "../postio-model" }
 

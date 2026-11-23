@@ -1,80 +1,20 @@
-//! What a message is made of: its MIME tree, and the rules for showing and
-//! saving one part of it.
-//!
-//! Toolkit-free and frontend-free on purpose. A message is a tree of parts,
-//! and a mail client that only ever shows you the one part it decided to
-//! render is one you cannot check — so both frontends draw the whole
-//! structure, and every judgement involved in drawing it is here rather than
-//! in either of them (ADR 0019).
-//!
-//! The tree, the box drawing, the words each row and each detail pane says,
-//! and above all [`save_name`] arrived from the classic app's parts, which is
-//! where they were written and where the bugs that shaped them were found.
-//! What stayed behind is the widget.
-//!
-//! # Structure before bytes
-//!
-//! Everything here comes from `BODYSTRUCTURE`, which IMAP returns without
-//! transferring a single byte of any part. [`Attachment`] already carries
-//! exactly that: a `part_id` like `2.1`, a `mime_type`, a declared `size`,
-//! and a `blob_id` that is `None` until the bytes have actually been
-//! downloaded. So the tree is a *reading* of metadata the store already has,
-//! and a panel can be complete and correct for a message nothing has been
-//! fetched for.
-//!
-//! That is the point rather than an optimisation. "Nothing downloads until
-//! the user asks" is a privacy promise (`PRODUCT.md`), and the way to keep it
-//! is for the surface that shows attachments to have no way to fetch one.
-//! Nothing in this module can: it takes rows and returns words.
-//!
-//! # The tree comes from the part ids
-//!
-//! IMAP part ids are paths — `1`, `2`, `2.1`, `2.2` — so the nesting is
-//! already in the data and [`tree`] only has to read it. Nothing here invents
-//! a hierarchy or asks the store for one.
+//! A message's MIME tree and the rules for showing and saving one part, read from `BODYSTRUCTURE`
+//! metadata only (ADR 0019).
+//! Nothing here can fetch a part: nothing downloads until the user asks.
 
 use postio_model::Attachment;
 use postio_model::ids::AttachmentId;
 
 use crate::format::human_size;
 
-/// Resolves a `Content-ID` to the bytes it names.
-///
-/// The GTK reader resolves `cid:` through a registered URI scheme and a
-/// `WKWebView` will resolve it through something else entirely, but *what a
-/// `Content-ID` may resolve to* is a security property rather than a
-/// rendering detail, so it is stated once here and both frontends are handed
-/// the same answer (ADR 0019 Q6, #608).
-///
-/// A `Content-ID` is passed exactly as `postio_body::sanitize::percent_decode`
-/// recovered it: without the `cid:` prefix and without the angle brackets some
-/// senders wrap it in (`sanitize_body` already strips those before encoding).
-///
-/// Synchronous and local by design — an implementation is a blob-store read or
-/// a lookup into whatever the caller already has in memory for the open
-/// message, never a call that blocks on I/O the reader would have to await.
-/// That is not only about latency: a `cid:` that could reach the network would
-/// be the tracking pixel the reader spends so much effort blocking, arriving
-/// through the back door.
+/// Resolves a `Content-ID` (no `cid:` prefix, no angle brackets) to bytes and MIME type.
+/// Synchronous and local: a `cid:` that reached the network would be a tracking pixel through the
+/// back door (ADR 0019).
 pub trait BlobSource {
-    /// The part's bytes and MIME type, or `None` if no part carries this id.
     fn resolve(&self, content_id: &str) -> Option<(Vec<u8>, String)>;
 
-    /// The same, for a reference that names *which message* it belongs to.
-    ///
-    /// A single-message document does not need to: the reader knows which
-    /// message is open, so `scope` is `None` and this is [`resolve`]. ADR
-    /// 0032's conversation document holds a whole thread, where "whichever is
-    /// open" names nothing — two messages may each carry a part called `logo`,
-    /// and a sender may reference a `Content-ID` they know belongs to somebody
-    /// else's message in the same thread.
-    ///
-    /// The default ignores the scope, which is right for a source that only
-    /// ever holds one message's parts and wrong for one that holds a thread's.
-    /// A thread source must override it, and a scope it does not recognise
-    /// must resolve to nothing rather than to whatever it has.
-    ///
-    /// [`resolve`]: Self::resolve
+    /// Names which message the reference belongs to. The default ignores `scope`; a thread source
+    /// must override it, and an unknown scope must resolve to nothing.
     fn resolve_in(&self, scope: Option<&str>, content_id: &str) -> Option<(Vec<u8>, String)> {
         let _ = scope;
         self.resolve(content_id)
@@ -87,46 +27,26 @@ impl<F: Fn(&str) -> Option<(Vec<u8>, String)>> BlobSource for F {
     }
 }
 
-/// One node of the tree, flattened into the order the keyboard walks it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Node {
     /// The IMAP part id — `2.1`. Empty for the synthetic root.
     pub part_id: String,
-    /// How deep it sits; the root is 0.
     pub depth: usize,
-    /// `text/html`, `image/png`, `multipart/mixed`.
     pub mime: String,
-    /// The name the sender gave it, if any.
     pub filename: Option<String>,
     /// Size in bytes as the server declared it. `0` for a container.
     pub size: u64,
-    /// Whether the bytes are already in the blob store.
     pub downloaded: bool,
-    /// Whether this is the last child of its parent, for `└` rather than `├`.
     pub last: bool,
     /// The attachment row this came from; `None` for the synthetic root.
     pub attachment: Option<AttachmentId>,
-    /// The `Content-ID` the body may reference this part by, if it has one.
     pub content_id: Option<String>,
-    /// Whether the message means this part to be shown in place rather than
-    /// offered as an attachment.
-    ///
-    /// Both halves of the question, because senders answer only one of them:
-    /// a `Content-Disposition: inline`, or a `Content-ID` the markup can
-    /// point at. A part with a `cid:` and no disposition is still one the
-    /// body draws, and a list that called it an attachment would offer the
-    /// sender's signature logo beside their invoice.
-    ///
-    /// It is a *label*, never a filter: an inline part is a part like any
-    /// other here, with a row, a size and a save. #751's oversized inline
-    /// image is exactly the case where being able to see and save it is the
-    /// only explanation the user gets for the broken box in the body.
+    /// Shown in place rather than offered: `Content-Disposition: inline` or a `Content-ID`.
+    /// A label, never a filter, so an inline part can still be seen and saved (#751).
     pub inline: bool,
 }
 
 impl Node {
-    /// What the row calls this part: its filename, or its type when the
-    /// sender did not name it.
     pub fn label(&self) -> &str {
         match self.filename.as_deref().map(str::trim) {
             Some(name) if !name.is_empty() => name,
@@ -134,23 +54,13 @@ impl Node {
         }
     }
 
-    /// Whether this part holds bytes worth saving, as opposed to being a
-    /// container for other parts.
     pub fn is_leaf(&self) -> bool {
         !self.mime.starts_with("multipart/") && self.attachment.is_some()
     }
 }
 
-/// Reads `parts` as a tree, flattened in walk order.
-///
-/// `root` is the message's own content type — `multipart/mixed` — which is a
-/// property of the message rather than of any part, so it is passed in rather
-/// than guessed. [`root_type`] is what works it out. A message with no parts
-/// still gets its root node: a tree with one entry is a true answer, where an
-/// empty panel would look broken.
-///
-/// Parts are ordered by their id read as a path of numbers, so `2.10` sorts
-/// after `2.9` rather than before it the way a string compare would.
+/// Flattened in walk order; ids sort as number paths, so `2.10` follows `2.9`.
+/// `root` is passed in, and a message with no parts still gets its root node.
 pub fn tree(root: &str, parts: &[Attachment]) -> Vec<Node> {
     let mut ordered: Vec<(Vec<u32>, &Attachment)> = parts
         .iter()
@@ -174,9 +84,7 @@ pub fn tree(root: &str, parts: &[Attachment]) -> Vec<Node> {
     });
 
     for (index, (path, part)) in ordered.iter().enumerate() {
-        // The last child of *this* parent, not the last row overall: a
-        // deeper branch that ends before its parent's next sibling still
-        // needs its own `└`.
+        // The last child of this parent, not the last row overall.
         let last = ordered.get(index + 1).is_none_or(|(next, _)| {
             next.len() < path.len() || next[..path.len() - 1] != path[..path.len() - 1]
         });
@@ -197,11 +105,7 @@ pub fn tree(root: &str, parts: &[Attachment]) -> Vec<Node> {
     nodes
 }
 
-/// A part id read as a path: `"2.1"` becomes `[2, 1]`.
-///
-/// A part with no id at all, or one that is not a path of numbers, sorts as
-/// nothing and is dropped — the tree draws what the server described, and a
-/// row nothing can be fetched for is a row that leads nowhere.
+/// A part with no numeric id is dropped: nothing can be fetched for it.
 fn path_of(part: &Attachment) -> Vec<u32> {
     let Some(id) = part.part_id.as_deref() else {
         return Vec::new();
@@ -216,25 +120,8 @@ fn path_of(part: &Attachment) -> Vec<u32> {
     path
 }
 
-/// The message's own content type — the row the parts tree hangs off.
-///
-/// # Read when it is there, derived otherwise
-///
-/// `BODYSTRUCTURE` says what it is and `postio-account` records it in
-/// [`Message::content_type`] at fetch time (`postio-roj4`), so `stored` is
-/// the honest answer whenever a sync has actually filled it in. `stored` is
-/// `None` for a row synced before that column existed and never refetched
-/// since — the composer's own in-progress drafts too — and for those this
-/// falls back to reconstructing a plausible shape from what *is* recorded: a
-/// message with parts is `multipart/mixed`, one with two bodies is
-/// `multipart/alternative`, and one with neither is whichever body it has.
-///
-/// The fallback can be wrong in exactly the case the real value fixes: a
-/// `multipart/related` with inline images has parts, so it reads as
-/// `multipart/mixed` here. That is a label on one row rather than a wrong
-/// tree, which is why it was P3 rather than a bug.
-///
-/// [`Message::content_type`]: postio_model::Message::content_type
+/// `stored` is `None` for rows synced before the column existed and for drafts; the fallback
+/// guesses from parts and bodies, so a `multipart/related` reads as `multipart/mixed`.
 pub fn root_type(
     stored: Option<&str>,
     body: &postio_model::MessageBody,
@@ -251,9 +138,6 @@ pub fn root_type(
     }
 }
 
-/// The box-drawing prefix the canvas draws down the left of the tree.
-///
-/// Two spaces per level of nesting, then `├ ` or `└ `. The root has none.
 pub fn prefix(node: &Node) -> String {
     if node.depth == 0 {
         return String::new();
@@ -263,10 +147,7 @@ pub fn prefix(node: &Node) -> String {
     format!("{indent}{branch}")
 }
 
-/// The header line: `multipart/mixed · 4 parts · 1.2 MB`.
-///
-/// The count is of parts, not of nodes — the root is the message, not a part
-/// of it.
+/// Counts parts, not nodes: the root is the message.
 pub fn summary(nodes: &[Node]) -> String {
     let Some(root) = nodes.first() else {
         return String::new();
@@ -279,7 +160,6 @@ pub fn summary(nodes: &[Node]) -> String {
     format!("{} · {count} · {}", root.mime, human_size(root.size))
 }
 
-/// What the detail pane says about one part: `text/html · 6 KB`.
 pub fn detail(node: &Node) -> String {
     if node.depth == 0 || node.size == 0 {
         return node.mime.clone();
@@ -287,26 +167,13 @@ pub fn detail(node: &Node) -> String {
     format!("{} · {}", node.mime, human_size(node.size))
 }
 
-/// What the detail pane says about a part nothing has fetched.
 pub const NOT_FETCHED: &str =
     "Described by the server, not downloaded. Nothing here has touched the network.";
 
-/// What it says about a container.
 pub const CONTAINER: &str = "A container for the parts below it. Nothing to save.";
 
-/// The sentence beside the part the cursor is on.
-///
-/// Four states with four different things to say, and the ordering matters:
-/// a held-back HTML part is *also* downloaded, and saying "already
-/// downloaded" about it would answer a question nobody asked while leaving
-/// the one they did ask — why is the body not showing — unanswered.
-///
-/// Shared rather than composed per frontend because this is the only place
-/// several of these states are ever explained. #751's oversized inline image
-/// is the case: the `cid:` request finds nothing, the pane draws a broken
-/// box, and [`NOT_FETCHED`] on that part's row is the entire explanation the
-/// user gets. A frontend that wrote its own three sentences would be one
-/// frontend where that explanation was missing.
+/// A held-back HTML part is also downloaded; say why it is held back, not "already downloaded".
+/// Shared so every frontend explains the oversized inline image (#751).
 pub fn note(node: &Node, remote_images: u32, trackers: u32) -> String {
     if let Some(held_back) = held_back_note(&node.mime, remote_images, trackers) {
         return held_back;
@@ -323,14 +190,8 @@ pub fn note(node: &Node, remote_images: u32, trackers: u32) -> String {
     )
 }
 
-/// Why a part is being held back, or `None` when it is not.
-///
-/// Only the markup parts: an `image/png` attachment references nothing and
-/// cannot phone home, so holding it back would be theatre. `text/html` is the
-/// one that loads things.
-///
-/// This is also what decides whether "Render once" is offered at all — the
-/// button exists exactly when there is a sentence to put above it.
+/// Only markup parts: an image cannot phone home. "Render once" is offered exactly when this is
+/// `Some`.
 pub fn held_back_note(mime: &str, remote_images: u32, trackers: u32) -> Option<String> {
     if !mime.trim().eq_ignore_ascii_case("text/html") {
         return None;
@@ -343,12 +204,8 @@ pub fn held_back_note(mime: &str, remote_images: u32, trackers: u32) -> Option<S
         1 => "1 remote image".to_string(),
         many => format!("{many} remote images"),
     };
-    // "Likely", always. The count comes from a size heuristic
-    // (`postio_body::sanitize`) that reads what an `<img>` declares about
-    // itself and nothing else -- it cannot know a beacon from a very small
-    // picture, and it deliberately under-counts rather than accuse an
-    // ordinary image. The word is the difference between a signal and a
-    // claim, and both kinds are blocked identically either way (#174).
+    // "Likely": a size heuristic cannot tell a beacon from a small picture, and it under-counts on
+    // purpose (#174).
     let trackers = match trackers {
         0 => String::new(),
         1 => "1 likely tracker".to_string(),
@@ -365,8 +222,6 @@ pub fn held_back_note(mime: &str, remote_images: u32, trackers: u32) -> Option<S
     ))
 }
 
-/// How a part reads to a screen reader: what it is, how big, and whether
-/// anything has actually been downloaded.
 pub fn spoken(node: &Node) -> String {
     if node.depth == 0 {
         return format!("{}, the whole message", node.mime);
@@ -386,48 +241,23 @@ pub fn spoken(node: &Node) -> String {
     format!("{name}, {}, {fetched}", human_size(node.size))
 }
 
-/// `name` as a file may be written under: a separator a dash, a control
-/// character gone, and no leading or trailing dot or space; `None` when
-/// nothing is left. A sender wrote it, so nothing in it is trusted.
+/// `None` when nothing is left. A sender wrote the name, so nothing in it is trusted.
 pub fn clean_file_name(name: &str) -> Option<String> {
     let name = name.trim();
     let cleaned: String = name
         .chars()
-        // A separator becomes a dash: the sender meant a character to be
-        // there, and eliding it silently joins two name components.
         .map(|c| if c == '/' || c == '\\' { '-' } else { c })
-        // A control character is dropped rather than marked, because the
-        // sender did not mean anything by it that a reader could see.
-        //
-        // #147, found by the `parse_message` fuzz target: a NUL reaches
-        // here both from a literal `filename="a\0b.txt"` and from one
-        // base64'd inside an RFC 2047 encoded word. The name then goes to
-        // a file dialog, and gtk-rs converts a `&str` to a C string on
-        // the way — a conversion an interior NUL has no valid answer for.
-        // Pressing `s` on a message must not be how the application ends.
+        // #147: an interior NUL (literal or inside an encoded word) panics gtk-rs's C-string
+        // conversion in the file dialog.
         .filter(|c| !c.is_control())
         .collect();
     let cleaned = cleaned.trim_matches(['.', ' '].as_slice()).to_owned();
     (!cleaned.is_empty()).then_some(cleaned)
 }
 
-/// A filename safe to write `node` out under.
-///
-/// The sender's name when there is one, with any path separators taken out —
-/// a part called `../../.bashrc` must not be able to steer where a save
-/// lands. Otherwise the part id and a guess at an extension, so no caller
-/// ever has to invent a name for an unnamed part.
-///
-/// This is where an attachment filename stops being *reported* and starts
-/// being *used*. [`postio_model::mime::parse`] hands over what the sender
-/// wrote, faithfully and on purpose; everything that makes it fit to name a
-/// file happens here, which is why the traversal and control-character tests
-/// live beside this function and not beside the parser.
-///
-/// It lives in this crate rather than in a frontend for the reason the whole
-/// module does, and more sharply: a second sanitiser is a second chance to
-/// miss a separator, and the platform that missed it would be the one with no
-/// test for the message that exploited it.
+/// The sender's name with separators removed so `../../.bashrc` cannot steer a save; else the part
+/// id and a guessed extension.
+/// The one sanitiser both frontends share, so no platform misses a separator.
 pub fn save_name(node: &Node) -> String {
     if let Some(cleaned) = node.filename.as_deref().and_then(clean_file_name) {
         return cleaned;
@@ -445,27 +275,8 @@ pub fn save_name(node: &Node) -> String {
     format!("part-{part}.{extension}")
 }
 
-/// A name for every one of `nodes`, no two of them the same.
-///
-/// [`save_name`] answers about one part in isolation, which is the right
-/// answer for "save this one" and the wrong one for "save all": nothing stops
-/// a message carrying two parts that both call themselves `invoice.pdf`, and
-/// writing them one after another under their own names produces a directory
-/// with one invoice in it and no sign that a second ever existed. A silent
-/// loss of the user's mail, from the command whose whole promise is that it
-/// got everything.
-///
-/// So a repeat is suffixed: `invoice.pdf`, `invoice-2.pdf`, `invoice-3.pdf`,
-/// before the extension so the file still opens in the right application.
-/// The first of a set keeps its plain name — a message with no collision at
-/// all is the common case and must look untouched.
-///
-/// **Compared without case**, because the filesystem may be: macOS and a
-/// default Windows share are case-insensitive, so `Invoice.pdf` beside
-/// `invoice.pdf` is one file there and two on Linux. Taking the cautious
-/// reading everywhere means "save all" writes the same number of files on
-/// every platform, which is a far better property than matching each
-/// filesystem's own rule.
+/// Repeats get `-2`, `-3` before the extension, so "save all" never overwrites a part.
+/// Compared without case, so every platform writes the same number of files.
 pub fn save_names(nodes: &[Node]) -> Vec<String> {
     let mut taken: Vec<String> = Vec::with_capacity(nodes.len());
     let mut names = Vec::with_capacity(nodes.len());
@@ -473,15 +284,10 @@ pub fn save_names(nodes: &[Node]) -> Vec<String> {
         let wanted = save_name(node);
         let folded = wanted.to_lowercase();
         let name = if taken.contains(&folded) {
-            // From two, because the unsuffixed name is the first one.
             (2..)
                 .map(|nth| suffixed(&wanted, nth))
                 .find(|candidate| !taken.contains(&candidate.to_lowercase()))
-                // `(2..)` over `u32` is not infinite, so the compiler wants
-                // an answer for running out. A message would need four
-                // billion parts of one name to get here; the unsuffixed
-                // name is a truthful fallback and the loop above is what
-                // actually runs.
+                // Unreachable: it takes four billion parts of one name.
                 .unwrap_or(wanted)
         } else {
             wanted
@@ -492,28 +298,15 @@ pub fn save_names(nodes: &[Node]) -> Vec<String> {
     names
 }
 
-/// `invoice.pdf` and 2 become `invoice-2.pdf`.
-///
-/// Before the extension rather than after it: `invoice.pdf-2` opens in
-/// nothing, and the point of the suffix is to keep both files usable.
-/// A name with no extension simply takes the suffix at the end.
+/// The suffix goes before the extension so both files still open.
 fn suffixed(name: &str, nth: u32) -> String {
     match name.rsplit_once('.') {
-        // A leading dot is the whole name, not an extension — and
-        // `save_name` has already refused to produce one, so this is
-        // defensive rather than reachable.
         Some((stem, extension)) if !stem.is_empty() => format!("{stem}-{nth}.{extension}"),
         _ => format!("{name}-{nth}"),
     }
 }
 
-/// What to say when "save all" could not get every part, or `None` when it
-/// could.
-///
-/// A count rather than which ones: a message can easily name a dozen parts,
-/// and one message per failure would be worse than the save. One sentence for
-/// the batch, shared, so the two frontends do not report the same partial
-/// save in two different ways.
+/// A count, shared so both frontends report a partial save the same way.
 pub fn save_all_failure(failed: usize) -> Option<String> {
     if failed == 0 {
         return None;
@@ -524,20 +317,14 @@ pub fn save_all_failure(failed: usize) -> Option<String> {
     ))
 }
 
-/// A part's own Save, where `A` offers the parts.
 pub const SAVE: &str = "Save";
 
-/// Save every part to a folder, where `A` offers the parts.
 pub const SAVE_ALL: &str = "Save all";
 
-/// What is said once one part is saved as `name`.
 pub fn saved(name: &str) -> String {
     format!("Saved {name}")
 }
 
-/// What is said once "save all" of `count` parts is done, `failed` of them
-/// not saved: the failure when there is one ([`save_all_failure`]), else
-/// how many were saved.
 pub fn saved_all(count: usize, failed: usize) -> String {
     save_all_failure(failed).unwrap_or_else(|| {
         format!(
@@ -547,16 +334,8 @@ pub fn saved_all(count: usize, failed: usize) -> String {
     })
 }
 
-/// Where the cursor goes when the walk keys are pressed.
-///
-/// **Clamps rather than wraps.** A tree is a thing you read down, and a `j`
-/// at the bottom that jumped back to the message header would lose the
-/// reader's place in a structure they were working through. The message list
-/// holds at its ends for the same reason.
-///
-/// `count` is the number of rows including the root, so a `count` of 0 — no
-/// tree drawn yet — leaves the cursor at 0 rather than moving it somewhere
-/// there is no row.
+/// Clamps rather than wraps, so the reader keeps their place. A `count` of 0 leaves the cursor at
+/// 0.
 pub fn step(current: usize, forward: bool, count: usize) -> usize {
     let Some(last) = count.checked_sub(1) else {
         return 0;
@@ -586,7 +365,6 @@ mod tests {
         part
     }
 
-    /// Canvas 3g's own message.
     fn message() -> Vec<Attachment> {
         vec![
             part("1", "text/plain", 2_100),
@@ -596,14 +374,11 @@ mod tests {
         ]
     }
 
-    /// One leaf, for the rules that are about a single node.
     fn leaf(mime: &str, filename: Option<&str>) -> Node {
         let mut row = part("1", mime, 10);
         row.filename = filename.map(str::to_owned);
         tree("multipart/mixed", &[row]).remove(1)
     }
-
-    // -- reading the tree --------------------------------------------------
 
     #[test]
     fn the_message_is_the_root_and_the_parts_hang_off_it() {
@@ -680,14 +455,8 @@ mod tests {
         assert!(!nodes[2].downloaded, "described, not fetched");
     }
 
-    // -- inline against attached -------------------------------------------
-
     #[test]
     fn a_part_the_body_draws_is_marked_inline_either_way_the_sender_said_so() {
-        // Senders answer one of the two questions and not the other, so both
-        // have to count. A `cid:` with no disposition is still a part the
-        // markup points at; a `Content-Disposition: inline` with no
-        // `Content-ID` is still one the message means to be shown in place.
         let mut by_cid = part("1", "image/png", 10);
         by_cid.content_id = Some("logo@example.com".to_owned());
         let mut by_disposition = part("2", "image/png", 10);
@@ -705,11 +474,8 @@ mod tests {
 
     #[test]
     fn an_inline_image_too_big_for_the_text_axis_is_a_part_the_panel_explains() {
-        // #751's last acceptance criterion. An inline part over
-        // `[sync] max_inline_bytes` stays on the payload axis, so the `cid:`
-        // request 404s and the pane draws a broken box. What stops that being
-        // *silent* is the parts panel: the part is listed, sized, and said to
-        // be undownloaded, so there is somewhere to go and find out why.
+        // #751: an oversized inline part is still listed, sized and undownloaded, which explains
+        // the broken box.
         let mut banner = part("2", "image/png", 4 * 1024 * 1024);
         banner.content_id = Some("banner@example.com".to_owned());
         banner.disposition = postio_model::Disposition::Inline;
@@ -736,8 +502,6 @@ mod tests {
              them is not"
         );
     }
-
-    // -- the message's own type --------------------------------------------
 
     #[test]
     fn the_root_type_is_read_when_the_sync_recorded_one() {
@@ -770,8 +534,6 @@ mod tests {
         );
     }
 
-    // -- the box drawing ---------------------------------------------------
-
     #[test]
     fn the_last_child_of_a_branch_closes_it() {
         let nodes = tree("multipart/mixed", &message());
@@ -800,8 +562,6 @@ mod tests {
         );
     }
 
-    // -- sizes -------------------------------------------------------------
-
     #[test]
     fn the_summary_counts_parts_and_not_the_message() {
         let nodes = tree("multipart/mixed", &message());
@@ -813,8 +573,6 @@ mod tests {
         let nodes = tree("multipart/mixed", &[part("1", "text/plain", 10)]);
         assert!(summary(&nodes).contains("1 part ·"));
     }
-
-    // -- what a row says ---------------------------------------------------
 
     #[test]
     fn a_part_is_called_by_its_name_when_it_has_one() {
@@ -855,9 +613,6 @@ mod tests {
 
     #[test]
     fn a_held_back_html_part_is_explained_before_it_is_called_downloaded() {
-        // The ordering that matters: the HTML part *is* on this machine, so
-        // "already downloaded" is true and useless. What the reader wants to
-        // know is why the pane is showing the plain-text version instead.
         let mut html = part("1", "text/html", 900);
         html.blob_id = Some(BlobId::new("abc"));
         let nodes = tree("multipart/alternative", &[html]);
@@ -889,8 +644,6 @@ mod tests {
         );
     }
 
-    // -- previewing and saving ---------------------------------------------
-
     #[test]
     fn a_save_name_comes_from_the_sender_when_it_is_usable() {
         let nodes = tree("multipart/mixed", &message());
@@ -911,14 +664,7 @@ mod tests {
         assert_eq!(save_name(&nodes[1]), "part-2.1.png");
     }
 
-    /// #147, found by the `parse_message` fuzz target within a minute of its
-    /// first run. A NUL reaches `Attachment::filename` two ways -- written
-    /// straight into the `filename=` parameter, or base64'd inside an RFC 2047
-    /// encoded word -- and `mime::parse` reports it faithfully, which is its
-    /// job. This is the layer that has to make it safe: the name goes to a
-    /// file dialog, and gtk-rs converts a `&str` to a C string on the way,
-    /// which an interior NUL is not a valid input for. Opening a message's
-    /// parts and pressing `s` is not allowed to be how the application ends.
+    /// #147: an interior NUL in a filename must not reach gtk-rs's C-string conversion.
     #[test]
     fn a_save_name_carries_no_control_characters() {
         for hostile in ["a\0b.txt", "a\nb.txt", "a\rb\tc.txt", "\u{7}bell.txt"] {
@@ -931,8 +677,6 @@ mod tests {
         }
     }
 
-    /// The same find's other half: a slash survives a *malformed* encoded
-    /// word, which is not the shape the existing traversal test used.
     #[test]
     fn a_save_name_launders_a_slash_out_of_an_undecoded_encoded_word() {
         let name = save_name(&leaf("text/plain", Some("=?utf-8Qa/b.txt")));
@@ -944,8 +688,6 @@ mod tests {
         let name = save_name(&leaf("image/png", Some("  ...  ")));
         assert_eq!(name, "part-1.png");
     }
-
-    // -- saving all of them ------------------------------------------------
 
     #[test]
     fn two_parts_claiming_one_name_do_not_become_one_file() {
@@ -1031,8 +773,6 @@ mod tests {
         );
     }
 
-    // -- walking -----------------------------------------------------------
-
     #[test]
     fn walking_holds_at_both_ends_rather_than_wrapping() {
         assert_eq!(step(1, true, 3), 2);
@@ -1053,8 +793,6 @@ mod tests {
     }
 }
 
-/// A closure is a blob source, and one that holds a single message's parts
-/// answers the same whatever scope is asked for.
 #[cfg(test)]
 mod blob_source_tests {
     use super::BlobSource;

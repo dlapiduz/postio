@@ -3,23 +3,6 @@ import PostioFFI
 import SwiftUI
 import PostioKit
 
-/// The composer (specs/009-focus-macos T079; screens 05 and 06), in the one
-/// secondary window over the list (M4).
-///
-/// The rows are From (the account picker), To with the Cc and Bcc hint,
-/// Cc and Bcc once asked for or holding somebody, and Subject; then the
-/// body -- a reply's quote folded under it -- what is attached, and a
-/// footer with Attach ⌘⇧A, Remind if no reply ⌘H (its day when on) and
-/// the word count. The title area (`ComposeWindowChrome`) says what this
-/// is and when it was saved, with Send later ▾ and Send ⌘↩.
-///
-/// Recipients complete from mail's correspondents and, after one prompt,
-/// Contacts (`ContactsSource`): nothing shows until a recipient is typed,
-/// ↑↓ choose, and Return or Tab take one.
-///
-/// Nothing here composes MIME, addresses a reply, or decides what a quote
-/// looks like. It takes what the boundary handed over, shows it, and hands
-/// back what was typed; when it is saved is the controller's.
 public struct ComposeView: View {
     private let session: PostioSession
     private let model: ComposeModel
@@ -29,28 +12,19 @@ public struct ComposeView: View {
     private let close: () -> Void
 
     @FocusState private var focus: Field?
-    /// The forward chooser holds the keyboard (T085 j): `1` `2` `3` choose a
-    /// card until Tab moves to To.
     @FocusState private var chooserFocus: Bool
-    /// Asks the rich surface for the keyboard. A web view is not a SwiftUI
-    /// field, so `focus = .body` reached only the plain editor: a rich
-    /// reply opened with the keyboard nowhere, and typing did nothing.
+    /// A web view is not a SwiftUI field, so `focus = .body` reached only the plain editor.
     @State private var richKeyboard = 0
-    /// Whether the Link button is asking where to point.
     @State private var askingForLink = false
     @State private var confirmingDiscard = false
-    /// The times the schedule-send picker is offering, or empty when it is
-    /// closed. Held rather than computed in the dialog because they are
-    /// computed *as it opens* -- see `schedulePresets`.
+    /// Held, not computed in the dialog, because they are computed as it opens (`schedulePresets`).
     @State private var schedule: [SchedulePresetFfi] = []
-    /// The reminder's times, while ⌘H is asking which.
     @State private var reminders: [SchedulePresetFfi] = []
     @State private var linkAddress = ""
 
     private enum Field: Hashable {
         case to, cc, bcc, subject, body
 
-        /// The same field in the order type, which Shift+Tab walks back.
         var ordered: ComposeField {
             switch self {
             case .to: return .to
@@ -81,7 +55,6 @@ public struct ComposeView: View {
         }
     }
 
-    /// The rows' rhythm, from screen 05.
     enum Metrics {
         static let rowHeight: CGFloat = 42
         static let labelWidth: CGFloat = 82
@@ -90,7 +63,6 @@ public struct ComposeView: View {
         static let labelSize: CGFloat = 13
         static let suggestionWidth: CGFloat = 440
         static let suggestionsShown = 6
-        /// 15 pt at 1.65 (screen 05).
         static let bodySize: CGFloat = 15
         static let bodyLeading: CGFloat = 6
     }
@@ -113,8 +85,6 @@ public struct ComposeView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            // The thread's part (spec 013 US7): the older-reply bar under
-            // the title, the forward chooser above the fields.
             if let bar = model.olderReply {
                 OlderReplyBar(bar: bar) { session.invoke($0) }
                 Divider()
@@ -172,12 +142,9 @@ public struct ComposeView: View {
         }
         .background(Color(nsColor: .textBackgroundColor))
         .task {
-            // A reply is addressed already: the keyboard goes to the body.
-            // A moment after appearing, once the window is key: set before,
-            // AppKit gave the window's first field (To) the keyboard over
-            // it, its text selected.
+            // A moment after appearing, once the window is key: set before, AppKit gave To the
+            // keyboard over it.
             try? await Task.sleep(for: .milliseconds(60))
-            // A forward's chooser holds the keyboard first; Tab goes to To.
             if model.chooserHasKeyboard {
                 chooserFocus = true
                 return
@@ -192,24 +159,18 @@ public struct ComposeView: View {
             if field != nil { model.releaseChooser() }
         }
         .onAppear {
-            // Which editor the hand-off names, read now: this window may
-            // have been open since before the setting was chosen (#1288).
+            // Read now: this window may have been open since before the setting was chosen (#1288).
             model.refreshEditor()
         }
-        // Coming back to this window is what a person means by "I am done
-        // over there".
         .onReceive(
             NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
         ) { _ in
             if model.isHandedOff { model.takeBack(through: session) }
         }
-        // Autosave, because unsaved words are the thing a compose window must
-        // never lose. On a pause rather than a keystroke: the controller
-        // waits out the quiet period and says when (`FocusSaveDraft`), and
-        // saves at once when the composer closes.
+        // On a pause rather than a keystroke: the controller waits out the quiet period
+        // (`FocusSaveDraft`) and saves at once on close.
         .onChange(of: model.edited) { _, _ in edited() }
-        // Completion follows typing in a recipient field, and only typing:
-        // a reply opens with no list showing (screen 06).
+        // Only typing completes: a reply opens with no list showing.
         .onChange(of: model.to) { _, text in complete(.to, text) }
         .onChange(of: model.cc) { _, text in complete(.cc, text) }
         .onChange(of: model.bcc) { _, text in complete(.bcc, text) }
@@ -221,8 +182,6 @@ public struct ComposeView: View {
             reminders: $reminders, askingForLink: $askingForLink, linkAddress: $linkAddress,
             confirmingDiscard: $confirmingDiscard, attach: attach, insertImage: insertImage))
     }
-
-    // -- the rows -----------------------------------------------------------
 
     private func row<Value: View>(_ label: String, @ViewBuilder value: () -> Value) -> some View {
         HStack(spacing: 0) {
@@ -236,7 +195,6 @@ public struct ComposeView: View {
         .frame(height: Metrics.rowHeight)
     }
 
-    /// From: who it is written as, and the account picker on the right.
     private var fromRow: some View {
         row("From") {
             Text(fromName)
@@ -260,7 +218,6 @@ public struct ComposeView: View {
         .accessibilityElement(children: .contain)
     }
 
-    /// The account the draft is written from, as the picker lists it.
     private var chosen: AccountFfi? { accounts.first { $0.id == model.account } }
 
     private var fromName: String {
@@ -270,10 +227,6 @@ public struct ComposeView: View {
 
     private var fromAddress: String { chosen?.address ?? "" }
 
-    /// Labels: what sending applies to the conversation, each a chip with
-    /// its ×, and "from the thread" while a reply's are its thread's
-    /// (screens 05 and 06). Drawn only while there are some: nothing here
-    /// adds one yet, and an empty row would be furniture.
     private var labelsRow: some View {
         row("Labels") {
             HStack(spacing: 6) {
@@ -307,8 +260,6 @@ public struct ComposeView: View {
         .accessibilityLabel("Labels")
     }
 
-    /// A recipient field, with the list of what completes it hanging under
-    /// it while it is being typed in.
     private func recipientRow(
         _ label: String, field: Field, text: Binding<String>, hint: Bool
     ) -> some View {
@@ -322,7 +273,6 @@ public struct ComposeView: View {
                 .onKeyPress(.upArrow) { suggestionKey { model.moveSuggestion(by: -1) } }
                 .onKeyPress(.return) { suggestionKey { model.acceptSuggestion() } }
                 .onKeyPress(keys: [.tab]) { press in
-                    // Shift+Tab goes back; only a bare Tab completes.
                     if press.modifiers.contains(.shift) { return stepBack(from: field) }
                     return suggestionKey { model.acceptSuggestion() }
                 }
@@ -344,8 +294,7 @@ public struct ComposeView: View {
         }
     }
 
-    /// Shift+Tab: the field above takes the keyboard. At the top it is
-    /// handled and goes nowhere, rather than leaving the composer.
+    /// At the top it is handled and goes nowhere, rather than leaving the composer.
     private func stepBack(from field: Field) -> KeyPress.Result {
         model.dismissSuggestions()
         if let previous = field.ordered.previous(showingCopyFields: model.showsCopyFields) {
@@ -354,30 +303,24 @@ public struct ComposeView: View {
         return .handled
     }
 
-    /// A key the list answers while it is showing; the field's otherwise.
     private func suggestionKey(_ act: () -> Void) -> KeyPress.Result {
         guard model.suggesting != nil else { return .ignored }
         act()
         return .handled
     }
 
-    /// "Cc · Bcc ⇧⌘C": both fields come with the one key (`copy_fields`),
-    /// so the key is said once.
     private var copyHint: String {
         let cap = KeyCapSpelling.cap(session.binding(for: "copy_fields"))
         return cap.map { "Cc \u{b7} Bcc \($0)" } ?? "Cc \u{b7} Bcc"
     }
 
-    /// ⌘H: the composer's own binding for the reminder, the chord rather
-    /// than the list's bare `h`, which is a letter being typed here.
+    /// The chord, not the list's bare `h`, which is a letter being typed here.
     private var remindCap: String? {
         session.bindings(for: "remind_if_no_reply")
             .first { $0.contains("+") }
             .flatMap { KeyCapSpelling.cap($0) }
     }
 
-    /// What completes the words being typed: each a name and its address
-    /// or a group, the highlighted one ringed.
     private var suggestionList: some View {
         VStack(alignment: .leading, spacing: 2) {
             ForEach(Array(model.suggestions.prefix(Metrics.suggestionsShown).enumerated()), id: \.offset) { index, suggestion in
@@ -416,7 +359,6 @@ public struct ComposeView: View {
         .accessibilityLabel("Suggested recipients")
     }
 
-    /// Ask what completes `text` in `field`, when the person is typing there.
     private func complete(_ field: RecipientField, _ text: String) {
         guard focus?.recipient == field else { return }
         guard !text.trimmingCharacters(in: .whitespaces).isEmpty else {
@@ -440,10 +382,6 @@ public struct ComposeView: View {
         }
     }
 
-    // -- the body -----------------------------------------------------------
-
-    /// The body fills the window up to M1's column (`ComposeColumn`),
-    /// which follows the window as it is resized.
     private var bodyEditor: some View {
         GeometryReader { window in
             bodyEditor(column: ComposeColumn.width(window: window.size.width))
@@ -453,10 +391,6 @@ public struct ComposeView: View {
     @ViewBuilder
     private func bodyEditor(column: CGFloat) -> some View {
         if model.rich {
-            // A document, not a text field (#1271): the format bar's
-            // marks have to apply to something, and on both frontends
-            // that something is a contenteditable web view over
-            // `postio_body`'s dialect.
             ComposeEditor(
                 session: session, model: model, keyboard: richKeyboard,
                 backtab: { _ = stepBack(from: .body) })
@@ -494,11 +428,7 @@ public struct ComposeView: View {
         }
     }
 
-    /// The reply's quote, folded under what is written (screen 06):
-    /// whose words, how many lines, and a way to show them.
     private func quoteFold(_ fold: QuoteFoldFfi) -> some View {
-        // Through the controller, which holds whether the quote is open
-        // (`expand_quoted`): it answers with `FocusQuotedExpanded`.
         Button { session.invoke("expand_quoted") } label: {
             HStack(spacing: 8) {
                 Text("\u{25b8} \(fold.summary)")
@@ -518,12 +448,10 @@ public struct ComposeView: View {
         .accessibilityLabel("\(fold.summary). Show the quoted text")
     }
 
-    /// The key that opens the folded messages, as the live keymap spells it.
     private var expandQuotedCap: String? {
         KeyCapSpelling.cap(session.binding(for: "expand_quoted"))
     }
 
-    /// What is attached, each with a way off again.
     private var attachments: some View {
         HStack(spacing: 8) {
             ForEach(model.attachments, id: \.id) { attachment in
@@ -570,15 +498,10 @@ public struct ComposeView: View {
         .accessibilityElement(children: .combine)
     }
 
-    // -- the format bar: rich drafts only ------------------------------------
-
-    /// Only what mail actually renders: paragraph marks, lists, a quote and
-    /// a link. Drawn while the draft is rich; the switch is in the footer.
     private var formatBar: some View {
         HStack(spacing: 8) {
             ForEach(ComposeFormat.marks, id: \.command) { mark in
                 Button {
-                    // The registry command *and* the document (#1271).
                     session.invoke(mark.command)
                     if mark.command == ComposeFormat.link {
                         linkAddress = ""
@@ -604,10 +527,6 @@ public struct ComposeView: View {
         .frame(height: 32)
     }
 
-    // -- the footer ---------------------------------------------------------
-
-    /// Attach ⌘⇧A, Remind if no reply ⌘H (its day when on), and on the
-    /// right the Rich/Plain switch and the word count.
     private var footer: some View {
         HStack(spacing: 6) {
             FocusVerbButton("Attach", cap: cap("attach_file")) { attach() }
@@ -632,8 +551,8 @@ public struct ComposeView: View {
             .menuIndicator(.hidden)
             .fixedSize()
             .accessibilityLabel(model.remindWords)
-            // Beside the menu, not in its label: a menu's label is drawn
-            // as text, and a keycap inside it is dropped.
+            // Beside the menu, not in its label: a menu's label is drawn as text and drops a
+            // keycap.
             if let cap = remindCap { KeyCap(cap) }
             Spacer()
             if let recipients = model.recipientSummary {
@@ -663,11 +582,8 @@ public struct ComposeView: View {
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
-    /// The Rich/Plain switch, carrying the words across as it flips.
-    ///
-    /// In the setter rather than an `onChange`: that runs after the body is
-    /// drawn, and the rich surface seeds itself once, when it is made, so it
-    /// would already be showing the stale document (#1293).
+    /// In the setter rather than an `onChange`: that runs after the body is drawn, and the rich
+    /// surface seeds itself once when made, so it would show the stale document (#1293).
     private var richSwitch: Binding<Bool> {
         Binding(
             get: { model.rich },
@@ -675,7 +591,6 @@ public struct ComposeView: View {
                 guard rich != model.rich else { return }
                 if rich {
                     model.switchedToRich(html: session.richHtmlOf(model.plainText))
-                    // The keyboard was in the plain editor, which is gone.
                     if focus == .body { richKeyboard += 1 }
                 } else {
                     model.switchedToPlain(text: session.plainTextOf(model.bodyHtml ?? ""))
@@ -683,8 +598,6 @@ public struct ComposeView: View {
             }
         )
     }
-
-    // -- what the buttons do ------------------------------------------------
 
     private func attach() {
         // POSTIO-CONSENT: a file leaves this machine only because somebody
@@ -718,12 +631,8 @@ public struct ComposeView: View {
     }
 }
 
-/// The plain body without Writing Tools. Its affordance, a round button
-/// AppKit hangs off a text view's leading edge, straddled the window's
-/// border at the first line of an empty body whichever field had the
-/// keyboard; `.limited` keeps it. And it is a model reading the message
-/// being written, which Postio does not bring in (no AI in
-/// Postio itself, v1 scope).
+/// `.limited` Writing Tools: AppKit's affordance straddled the window border at an empty body's
+/// first line, and it is a model reading the message being written, which Postio does not bring in.
 private struct NoWritingToolsAffordance: ViewModifier {
     func body(content: Content) -> some View {
         if #available(macOS 15.0, *) {
@@ -734,9 +643,7 @@ private struct NoWritingToolsAffordance: ViewModifier {
     }
 }
 
-/// What a command asks of the composer and only a view can grant: a sheet,
-/// an open panel, a confirmation, a list of times (`ComposeCommands` runs
-/// with no view in reach; it records the wish, and this grants it).
+/// `ComposeCommands` runs with no view in reach; it records the wish and this grants it.
 private struct Requests: ViewModifier {
     let model: ComposeModel
     let session: PostioSession
@@ -782,8 +689,6 @@ private struct Requests: ViewModifier {
                 isPresented: Binding(get: { !schedule.isEmpty }, set: { if !$0 { schedule = [] } }),
                 titleVisibility: .visible
             ) {
-                // The four times are the boundary's, recomputed as the
-                // picker opens.
                 ForEach(schedule, id: \.when) { preset in
                     Button(preset.label) {
                         model.send(at: preset.when, through: session)
@@ -817,7 +722,6 @@ private struct Requests: ViewModifier {
                 model.wantsDiscard = false
                 confirmingDiscard = true
             }
-            // `Recovery::Confirm` in the registry, so the verb asks.
             .confirmationDialog(
                 "Discard this draft?",
                 isPresented: $confirmingDiscard,
@@ -841,11 +745,6 @@ private struct Requests: ViewModifier {
     }
 }
 
-/// The marks a message can carry, and nothing else.
-///
-/// Limited to what mail renders — paragraph style, bold, italic, underline,
-/// monospace, lists, quote, link (canvas 26). The list is here rather than in
-/// the view so it can be asserted, and every entry is a registry command.
 public enum ComposeFormat {
     public struct Mark: Equatable, Sendable {
         public let command: String
@@ -853,11 +752,8 @@ public enum ComposeFormat {
         public let title: String
     }
 
-    /// The one mark that has to ask something before it can be applied.
-    ///
-    /// Named rather than written as a literal at the `if`, for the reason
-    /// `Intercepted` names its commands: a literal that no longer matches
-    /// the registry is a button that silently does nothing.
+    /// Named so a literal that no longer matches the registry cannot become a button that silently
+    /// does nothing.
     public static let link = "insert_link"
 
     public static let marks: [Mark] = [

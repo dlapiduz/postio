@@ -1,10 +1,5 @@
-//! A runtime that is not there: the fake transport every default test runs
-//! the client against, so no test in the default suite opens a connection,
-//! loopback included.
-//!
-//! It answers each request with what its answerer says -- a model's message
-//! content, an error status, or a refused connection -- and keeps what it
-//! was asked, so a test can read the request the client made.
+//! The fake transport every default test runs the client against, so no default test opens a
+//! connection, loopback included.
 
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
@@ -16,39 +11,28 @@ use serde_json::{Value, json};
 
 use crate::transport::{Stream, Transport};
 
-/// What the fake runtime answers one request with.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Reply {
-    /// A chat completion whose message content is this.
     Content(String),
-    /// An error status, with no completion.
     Status(u16),
-    /// The connection is refused: the runtime is not running.
     Refused,
 }
 
 impl Reply {
-    /// A completion whose message content is `content`.
     pub fn content(content: impl Into<String>) -> Self {
         Reply::Content(content.into())
     }
 }
 
-/// A request the fake runtime was sent.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Request {
-    /// Its method.
     pub method: String,
-    /// Its path.
     pub path: String,
-    /// Its `Host` header.
     pub host: String,
-    /// Its body, as JSON.
     pub body: Value,
 }
 
 impl Request {
-    /// The fenced data the request carried: its user message.
     pub fn data(&self) -> &str {
         self.body["messages"][1]["content"]
             .as_str()
@@ -58,11 +42,9 @@ impl Request {
 
 type Answerer = dyn Fn(&Request) -> Reply + Send + Sync;
 
-/// The fake runtime.
 #[derive(Clone)]
 pub struct FakeRuntime {
     answer: Arc<Answerer>,
-    /// Refuse every connection once nothing is queued.
     refusing: bool,
     state: Arc<Mutex<State>>,
 }
@@ -81,7 +63,6 @@ impl std::fmt::Debug for FakeRuntime {
 }
 
 impl FakeRuntime {
-    /// A runtime that answers each request as `answer` says.
     pub fn new(answer: impl Fn(&Request) -> Reply + Send + Sync + 'static) -> Self {
         Self {
             answer: Arc::new(answer),
@@ -90,7 +71,6 @@ impl FakeRuntime {
         }
     }
 
-    /// A runtime that answers every request with `reply`.
     pub fn always(reply: Reply) -> Self {
         let refusing = reply == Reply::Refused;
         Self {
@@ -99,7 +79,6 @@ impl FakeRuntime {
         }
     }
 
-    /// A runtime that answers with `replies`, in order, and then refuses.
     pub fn replying(replies: impl IntoIterator<Item = Reply>) -> Self {
         let runtime = Self::refusing();
         runtime
@@ -111,17 +90,14 @@ impl FakeRuntime {
         runtime
     }
 
-    /// A runtime that is not running: every connection is refused.
     pub fn refusing() -> Self {
         Self::always(Reply::Refused)
     }
 
-    /// How many connections were attempted.
     pub fn connections(&self) -> usize {
         self.state.lock().expect("never poisoned").connections
     }
 
-    /// Every request it was sent, in order.
     pub fn requests(&self) -> Vec<Request> {
         self.state.lock().expect("never poisoned").requests.clone()
     }
@@ -144,8 +120,6 @@ impl FakeRuntime {
 impl Transport for FakeRuntime {
     fn connect(&self, _: &ModelEndpoint, _: Instant) -> io::Result<Box<dyn Stream>> {
         self.state.lock().expect("never poisoned").connections += 1;
-        // A refusal refuses the connection itself; anything else is decided
-        // once the request is read.
         let refuses = {
             let mut state = self.state.lock().expect("never poisoned");
             match state.queued.front() {
@@ -169,7 +143,6 @@ impl Transport for FakeRuntime {
     }
 }
 
-/// One connection to the fake runtime.
 struct FakeStream {
     runtime: FakeRuntime,
     written: Vec<u8>,
@@ -212,7 +185,6 @@ impl Read for FakeStream {
     }
 }
 
-/// The request the client wrote: its head and its JSON body.
 fn parse(written: &[u8]) -> Option<Request> {
     let text = std::str::from_utf8(written).ok()?;
     let (head, body) = text.split_once("\r\n\r\n")?;
@@ -233,7 +205,6 @@ fn parse(written: &[u8]) -> Option<Request> {
     })
 }
 
-/// The bytes a runtime would send back for `reply`.
 fn response(reply: &Reply) -> Vec<u8> {
     let (status, body) = match reply {
         Reply::Content(content) => (

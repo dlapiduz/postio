@@ -1,19 +1,10 @@
 import PostioFFI
 import SwiftUI
 
-// The message window's chrome (specs/009-focus-macos T067; the Mac pack's
-// message-window SPEC section 2): a 52pt title area -- the traffic lights,
-// the subject and position line in the centre, one `k j` cap and the joined
-// previous/next pair on the right -- then a 44pt action row with every verb
-// and its key, Label, Move and Delete folding into More below 700.
-//
-// The title area is drawn into the window's unified toolbar
-// (`MessageWindowChrome` in PostioAppKit), which is what gives it the
-// 52pt height and centres the traffic lights in it; these are its views.
+// The title area is drawn into the window's unified toolbar (`MessageWindowChrome` in
+// PostioAppKit), which gives it the 52pt height; these are its views.
 
-/// The chrome's words, from the engine's record and the bindings in force.
 public struct MessageChromeWords: Equatable {
-    /// One button: its command, its words, and its key as a cap.
     public struct Verb: Equatable, Identifiable {
         public let command: String
         public let label: String
@@ -21,27 +12,15 @@ public struct MessageChromeWords: Equatable {
         public var id: String { command }
     }
 
-    /// The subject.
     public let title: String
-    /// "Message 5 of 60".
     public let position: String
-    /// The one cap beside the pair: previous then next, "k j".
     public let stepCap: String?
-    /// The command the up chevron runs (`k`).
     public let previous = "prev_message"
-    /// The command the down chevron runs (`j`).
     public let next = "next_message"
-    /// The verbs the row draws, in order.
     public let row: [Verb]
-    /// More, while anything waits in it.
     public let more: Verb?
-    /// What waits in More.
     public let folded: [Verb]
 
-    /// `view`'s chrome, in a window that `folds` (narrower than the fold,
-    /// as the engine said), with keys spelled from `binding`.
-    /// `place`, while a thread walk is up, is the thread's place ("Message
-    /// 5 of 6"), said in the position line instead of the list's.
     public init(
         view: FocusMessageViewFfi, folds: Bool, place: String? = nil, binding: (String) -> String?
     ) {
@@ -59,13 +38,9 @@ public struct MessageChromeWords: Equatable {
         more = folding ? view.more.map { verb($0.command, $0.label) } : nil
     }
 
-    /// What the More menu lists: what folded, or every verb when nothing
-    /// did (`.` still opens it).
     public var moreMenu: [Verb] { folded.isEmpty ? row : folded }
 }
 
-/// The title area's centre: the subject, 13.5 bold, and the position line
-/// under it in the tertiary label colour.
 public struct MessageTitleView: View {
     let words: MessageChromeWords
 
@@ -90,9 +65,6 @@ public struct MessageTitleView: View {
     }
 }
 
-/// The title area's right: one `k j` cap, then the previous/next pair --
-/// two 30x28 icon buttons joined into one group, a 1px outline, radius 6,
-/// and a 1px divider between them.
 public struct MessageStepperView: View {
     public static let button = CGSize(width: 30, height: 28)
     public static let radius: CGFloat = 6
@@ -134,8 +106,6 @@ public struct MessageStepperView: View {
     }
 }
 
-/// The 44pt action row: every verb with its key, then More when anything
-/// folded into it. A hairline under it.
 public struct MessageActionRow: View {
     public static let height: CGFloat = 44
     public static let buttonHeight: CGFloat = 30
@@ -179,7 +149,6 @@ public struct MessageActionRow: View {
         Binding(get: { moreOpen }, set: { setMore($0) })
     }
 
-    /// More's menu: one line per verb, with its key.
     private var menu: some View {
         VStack(alignment: .leading, spacing: 2) {
             ForEach(words.moreMenu) { verb in
@@ -203,8 +172,6 @@ public struct MessageActionRow: View {
     }
 }
 
-/// A text button with its keycap: 13.5 medium, 30pt tall, padding 0 6, 5pt
-/// between the words and the cap.
 public struct MessageVerbButton: View {
     let verb: MessageChromeWords.Verb
     let action: () -> Void
@@ -227,7 +194,6 @@ public struct MessageVerbButton: View {
         }
         .buttonStyle(ChromeButtonStyle())
         .accessibilityLabel(verb.cap.map { "\(verb.label), key \($0)" } ?? verb.label)
-        // Where it is, for a picker to hang from (T092).
         .background(
             GeometryReader { proxy in
                 Color.clear.preference(
@@ -237,11 +203,8 @@ public struct MessageVerbButton: View {
     }
 }
 
-/// Where each of the action row's buttons is, by its command, in the
-/// message window's content (top-left origin): what a picker opened from
-/// the open message hangs from (specs/009-focus-macos T092).
+/// Keyed by command, in the message window's content (top-left origin).
 public struct MessageVerbFrames: PreferenceKey {
-    /// The coordinate space the frames are in: the window's content.
     public static let space = "postio.message.content"
     public static let defaultValue: [String: CGRect] = [:]
 
@@ -250,9 +213,6 @@ public struct MessageVerbFrames: PreferenceKey {
     }
 }
 
-/// What the window holds under its title area: the action row, find while
-/// it is open, and the content -- the message, or its raw source in place
-/// of it (`v`, M4).
 public struct MessageWindowView<BodyView: View>: View {
     let model: MessageWindowModel
     let binding: (String) -> String?
@@ -264,9 +224,8 @@ public struct MessageWindowView<BodyView: View>: View {
     let barMore: (UInt32) -> Void
     let bodyView: (Int64, FocusReaderDocumentFfi, MessageHeaderWords.Card?) -> BodyView
 
-    /// `verbFrames` hears where the action row's buttons are, by command,
-    /// whenever they move. `barRoom` hears how many thread-bar chips the
-    /// window's width has room for, when it opens and on every resize. `body` draws a message's body, given which.
+    /// `verbFrames` hears where the action buttons are whenever they move; `barRoom` how many
+    /// thread-bar chips fit, on open and every resize.
     public init(
         model: MessageWindowModel,
         binding: @escaping (String) -> String?,
@@ -298,8 +257,6 @@ public struct MessageWindowView<BodyView: View>: View {
         }
     }
 
-    /// Whether More folds in a window `width` wide: the geometry's at the
-    /// width the person left it, not the one it opened at.
     private func folds(_ width: CGFloat) -> Bool {
         model.document.map { MessageColumn.at(window: width, document: $0).foldsIntoMore } ?? false
     }
@@ -333,12 +290,10 @@ public struct MessageWindowView<BodyView: View>: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(MessageSurface.content)
         }
-        // The keyboard is the key monitor's, through the controller: a
-        // focus ring on the first button would claim a focus nobody moved
-        // there, and the accent is for the list's cursor (FR-017).
+        // The key monitor owns the keyboard: a focus ring on the first button would claim focus
+        // nobody moved there.
         .focusEffectDisabled()
         .overlay(alignment: .bottom) {
-            // What was asked of an attachment, said quietly for a moment.
             if let notice = model.notice {
                 Text(notice)
                     .font(.system(size: 12.5))
@@ -359,11 +314,8 @@ public struct MessageWindowView<BodyView: View>: View {
         if model.showingSource {
             MessageSourceView(source: model.source)
         } else if let view = model.view, let displayed = model.displayed {
-            // The message on screen, and under it, out of sight, the one a
-            // step reached until its body is drawn. One `ForEach` by message,
-            // so the body that was drawn out of sight is the very one that
-            // comes up -- its web view kept, not made again blank. A new
-            // message is read from its top; `O` keeps the place.
+            // One `ForEach` by message keeps the out-of-sight body's web view when it comes up, not
+            // made again blank. A new message is read from its top; `O` keeps the place.
             ZStack(alignment: .top) {
                 ForEach(layers(displayed: displayed, view: view), id: \.message) { layer in
                     let front = layer.message == displayed
@@ -380,8 +332,6 @@ public struct MessageWindowView<BodyView: View>: View {
                         binding: binding,
                         run: run,
                         alwaysForSender: alwaysForSender,
-                        // The command, as `M` runs it: one way to leave a
-                        // list, whichever was pressed.
                         leave: { run(Intercepted.unsubscribe) },
                         clear: { model.clearListMail(delete: $0) },
                         openAttachment: { model.openAttachment($0) },
@@ -400,15 +350,12 @@ public struct MessageWindowView<BodyView: View>: View {
 }
 
 extension MessageWindowView {
-    /// One message the window draws, on screen or waiting under it.
     struct Layer {
         let message: Int64
         let view: FocusMessageViewFfi
         let document: FocusReaderDocumentFfi?
     }
 
-    /// What the window draws: the message on screen, then the one a step
-    /// reached, if any.
     func layers(displayed: Int64, view: FocusMessageViewFfi) -> [Layer] {
         var layers = [Layer(message: displayed, view: view, document: model.document)]
         if let next = model.incoming, next.message != displayed {
@@ -418,22 +365,18 @@ extension MessageWindowView {
     }
 }
 
-/// Said by a message's body once it has its height and has painted, so a
-/// body drawn out of sight can come up whole (`MessageWindowModel.bodyDrawn`).
+/// Said by a body once it has its height and has painted, so one drawn out of sight comes up whole.
 private struct MessageBodyDrawnKey: EnvironmentKey {
     static let defaultValue: @MainActor @Sendable () -> Void = {}
 }
 
 extension EnvironmentValues {
-    /// What a message's body calls once it is drawn.
     public var messageBodyDrawn: @MainActor @Sendable () -> Void {
         get { self[MessageBodyDrawnKey.self] }
         set { self[MessageBodyDrawnKey.self] = newValue }
     }
 }
 
-/// The raw source, in place of the content: every byte as sent, in mono,
-/// selectable.
 public struct MessageSourceView: View {
     let source: String?
 
@@ -454,10 +397,7 @@ public struct MessageSourceView: View {
     }
 }
 
-/// The surfaces the message window is painted with (SPEC section 6),
-/// semantic so they follow light, dark and the system's own changes.
 public enum MessageSurface {
-    /// The content: `textBackgroundColor`.
     public static var content: Color {
         #if os(macOS)
             Color(nsColor: .textBackgroundColor)
@@ -466,7 +406,6 @@ public enum MessageSurface {
         #endif
     }
 
-    /// The title area and the action row: the window's own background.
     public static var chrome: Color {
         #if os(macOS)
             Color(nsColor: .windowBackgroundColor)
@@ -476,7 +415,6 @@ public enum MessageSurface {
     }
 }
 
-/// The title area's centre, reading the open message as it changes.
 public struct MessageWindowTitle: View {
     let model: MessageWindowModel
     let binding: (String) -> String?
@@ -493,7 +431,6 @@ public struct MessageWindowTitle: View {
     }
 }
 
-/// The title area's right, reading the open message as it changes.
 public struct MessageWindowStepper: View {
     let model: MessageWindowModel
     let binding: (String) -> String?

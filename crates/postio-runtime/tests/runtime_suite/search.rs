@@ -1,14 +1,5 @@
-//! Proves `postio-index`'s executor is reachable from `postio-runtime`
-//! through an ordinary manifest dependency.
-//!
-//! Before `postio-svx`, `postio_search`'s executor sat behind an `index`
-//! Cargo feature that nothing in the workspace could turn on without pulling
-//! `rusqlite` into the view layer's graph (Cargo resolves features as a union
-//! across the whole workspace resolve), so `search` had never run inside
-//! Postio. `postio-index` is the split that fixes it: this test does not
-//! exercise the executor's *behaviour* — `postio-index`'s own tests already
-//! do that thoroughly — it exists only to fail loudly if the seam from this
-//! crate ever closes again.
+//! Fails if `postio-index`'s executor stops being reachable from this crate through an ordinary
+//! manifest dependency.
 
 use chrono::Utc;
 use postio_index::{SearchRequest, index, search};

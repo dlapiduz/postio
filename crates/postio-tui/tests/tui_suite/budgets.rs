@@ -16,7 +16,6 @@ use postio_tui::app::{App, Effect, Input, update};
 use postio_tui::test_support::{
     app, buffer, key, places_with_features, press, row, seed_places, serve_with,
 };
-use postio_ui::paging::Fetch;
 
 /// A mailbox no frontend may load.
 const MESSAGES: u32 = 100_000;
@@ -29,13 +28,8 @@ const SIZES: [(u16, u16); 2] = [(120, 36), (50, 12)];
 fn opened(size: (u16, u16)) -> (App, Vec<Effect>) {
     let mut app = app(size);
     seed_places(&mut app, places_with_features());
-    let effects = update(
-        &mut app,
-        Input::Opened {
-            scope: ListScope::Focus(FocusScope::Inbox),
-            total: MESSAGES,
-        },
-    );
+    postio_tui::test_support::open_scope(&mut app, ListScope::Focus(FocusScope::Inbox), MESSAGES);
+    let effects = update(&mut app, Input::Resize(size.0, size.1));
     (app, effects)
 }
 
@@ -46,14 +40,14 @@ fn reads(effects: &[Effect]) -> (usize, u32, u32) {
     let mut rows = 0;
     let mut reach = 0;
     for effect in effects {
-        if let Effect::Fetch {
-            fetch: Fetch::Scope(request),
+        if let Effect::Focus {
+            request: postio_focus::Request::Page { wanted, .. },
             ..
         } = effect
         {
             pages += 1;
-            rows += request.limit;
-            reach = reach.max(request.offset + request.limit);
+            rows += wanted.limit;
+            reach = reach.max(wanted.offset + wanted.limit);
         }
     }
     (pages, rows, reach)
@@ -119,10 +113,10 @@ fn j_held_across_a_page_boundary_reads_one_page_and_its_read_ahead() {
                 let offsets = effects
                     .iter()
                     .filter_map(|effect| match effect {
-                        Effect::Fetch {
-                            fetch: Fetch::Scope(request),
+                        Effect::Focus {
+                            request: postio_focus::Request::Page { wanted, .. },
                             ..
-                        } => Some(request.offset),
+                        } => Some(wanted.offset),
                         _ => None,
                     })
                     .collect();

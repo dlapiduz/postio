@@ -1,12 +1,3 @@
-//! The columns a search walk reads instead of three correlated lookups per
-//! matched message (spec 010 D30): `messages.people_ids`, `label_ids` and
-//! `attachment_count`, kept by triggers on `recipients`, `message_labels`
-//! and `attachments`.
-//!
-//! A maintained answer is only worth its write cost while it is the answer,
-//! so the test is the one `attachment_text_owed` has: after every kind of
-//! write, the columns say exactly what the lookups they replace would say.
-
 use chrono::Utc;
 use postio_model::{
     AccountId, Attachment, BlobId, BodyState, ContentIdentity, EmailAddress, Label, MailboxId,
@@ -16,8 +7,6 @@ use postio_storage::repository::{LabelRepository, MessageRepository, StoredBody}
 use postio_storage::sql::{self, RowExt as _};
 use postio_storage::{Connection, Store, test_support};
 
-/// What the walk used to ask per message, and what the columns hold, each
-/// as a sorted list so the order a trigger appended in does not matter.
 #[derive(Debug, PartialEq, Eq)]
 struct Walked {
     id: i64,
@@ -37,7 +26,6 @@ fn sorted(list: Option<String>) -> Vec<i64> {
     ids
 }
 
-/// Every message's columns, and the lookups they stand for.
 async fn walked(connection: &Connection) -> (Vec<Walked>, Vec<Walked>) {
     let rows = sql::all_unbounded(
         connection,
@@ -119,7 +107,6 @@ async fn the_walk_columns_follow_every_write() {
     let mut q3 = Label::new(account.id, "Q3 close");
     labels.create(&mut q3).await.expect("a second label");
 
-    // Every kind of person, two labels and two attachments.
     let mut first = message(account.id, inbox);
     first.labels = vec![atlas.id, q3.id];
     first.attachments = vec![attachment(0, true), attachment(1, false)];
@@ -135,7 +122,6 @@ async fn the_walk_columns_follow_every_write() {
     assert_eq!(columns[0].attachments, 2);
     assert_kept(&connection, "a message with people, labels and files").await;
 
-    // Nobody, nothing.
     let mut bare = Message::new(account.id, inbox, Utc::now());
     messages
         .create(&mut bare)
@@ -143,7 +129,6 @@ async fn the_walk_columns_follow_every_write() {
         .expect("create a bare message");
     assert_kept(&connection, "a message with no people, labels or files").await;
 
-    // A resync rewrites every child row.
     first.to = vec![address("Fay")];
     first.cc.clear();
     first.labels = vec![q3.id];
@@ -151,7 +136,6 @@ async fn the_walk_columns_follow_every_write() {
     messages.update(&mut first).await.expect("update");
     assert_kept(&connection, "an update that rewrites the child rows").await;
 
-    // A label on and off by hand, and a label gone from every message.
     labels.attach(bare.id, atlas.id).await.expect("attach");
     labels
         .attach(bare.id, atlas.id)
@@ -164,9 +148,8 @@ async fn the_walk_columns_follow_every_write() {
     labels.delete(atlas.id).await.expect("delete a label");
     assert_kept(&connection, "deleting a label every message loses").await;
 
-    // A recipient row moved to another message, and an attachment too:
-    // nothing writes either today, and a trigger that misses it would be
-    // wrong the day something does.
+    // Nothing writes these today, and a trigger that misses a moved row would be wrong the day
+    // something does.
     sql::execute(
         &connection,
         "UPDATE recipients SET message_id = ?2 WHERE message_id = ?1 AND kind = 'to'",
@@ -190,7 +173,6 @@ async fn the_walk_columns_follow_every_write() {
     .expect("move an attachment");
     assert_kept(&connection, "rows moved between messages").await;
 
-    // A downloaded part: no change to any count.
     sql::execute(
         &connection,
         "UPDATE attachments SET blob_id = 'blob-late' WHERE blob_id IS NULL",
@@ -200,8 +182,6 @@ async fn the_walk_columns_follow_every_write() {
     .expect("a download");
     assert_kept(&connection, "downloading an attachment").await;
 
-    // Two occurrences of one payload (#1780): the second is given its
-    // attachments by the content projection, not by its own write.
     let identity = Some(ContentIdentity::new("jmap-email", "email-7"));
     let mut shared = message(account.id, inbox);
     shared.server.content_identity = identity.clone();
@@ -243,7 +223,6 @@ async fn the_walk_columns_follow_every_write() {
         "the second occurrence carries the payload's parts"
     );
 
-    // Gone.
     messages
         .delete(&[first.id, shared.id])
         .await
@@ -251,8 +230,6 @@ async fn the_walk_columns_follow_every_write() {
     assert_kept(&connection, "deleting messages").await;
 }
 
-/// What a store at the previous schema held: two messages with people,
-/// labels and attachments, one with none.
 const HELD: &str = "
 INSERT INTO accounts (id, display_name, address, incoming_host, incoming_port,
                       incoming_username, outgoing_host, outgoing_port,
@@ -319,7 +296,6 @@ async fn a_migrated_store_has_its_walk_columns_filled() {
     );
     assert_kept(&connection, "the migration").await;
 
-    // And the triggers are there to keep them.
     sql::execute(
         &connection,
         "INSERT INTO message_labels (message_id, label_id) VALUES (12, 5)",

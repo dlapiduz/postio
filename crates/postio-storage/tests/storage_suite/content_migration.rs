@@ -1,9 +1,3 @@
-//! The content-ownership step (#1780, ADR 0046) carries each existing
-//! message's bytes and flags across, and infers no sharing from them.
-//!
-//! `migrations.rs` proves the step leaves a store shaped as a fresh one; this
-//! proves what was in it survives, and that two messages naming the same RFC
-//! Message-ID still own content of their own.
 use postio_model::MessageId;
 use postio_storage::{Store, repository::MessageRepository, schema, test_support};
 
@@ -37,7 +31,6 @@ async fn content_split_preserves_existing_mail_and_does_not_infer_identity() {
             .execute("UPDATE messages SET flags = ?1 WHERE id = 10", ("\\Seen",))
             .await
             .unwrap();
-        // The stamp that build wrote: what the file is named for.
         connection
             .execute(
                 &format!(

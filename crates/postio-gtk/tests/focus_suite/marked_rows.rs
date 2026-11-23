@@ -1,8 +1,3 @@
-//! The two-line row (T044; contracts/focus-surface.md, "Rows"): a row with
-//! a marker is 72 px -- its kind decides its height, never its content,
-//! focus or selection (FR-013) -- and its second line says the marker's
-//! kind, its sentence, and the action that answers it with its key.
-
 use gtk::prelude::*;
 use postio_core::{CommandId, Keymap};
 
@@ -10,21 +5,12 @@ use crate::support::{self, Fixture};
 
 pub fn a_marked_row_is_two_lines_whatever_its_state() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         fixture
-            .file(
-                ("Ada Moreno", "ada@example.com"),
-                "Atlas staffing",
-                "Sharing the draft.",
-                30,
-            )
+            .file_from_ada("Atlas staffing", "Sharing the draft.", 30)
             .await;
         let (asked, _) = fixture
-            .file(
-                ("Ada Moreno", "ada@example.com"),
+            .file_from_ada(
                 "Re: Atlas Q3 budget",
                 "Can you approve these by Friday so finance can close the quarter?",
                 10,
@@ -55,7 +41,6 @@ pub fn a_marked_row_is_two_lines_whatever_its_state() {
             .expect("the unmarked row");
         assert_eq!(plain.height(), 40, "an unmarked row keeps its one line");
 
-        // What the second line says.
         assert!(
             crate::settle_until(async || row.drawn().texts.iter().any(|text| text == "Question"))
                 .await,
@@ -76,7 +61,6 @@ pub fn a_marked_row_is_two_lines_whatever_its_state() {
             );
         }
 
-        // Neither the cursor nor keyboard focus moves its height.
         let position = (0..pane.feed().list().n_items())
             .find(|position| {
                 pane.feed()
@@ -96,20 +80,13 @@ pub fn a_marked_row_is_two_lines_whatever_its_state() {
     });
 }
 
-/// A selected marked row shows one mark in its gutter, the checked box. The
-/// box and the unread dot both stood at the gutter's centre on the first
-/// line, so selecting a row with an action drew the check over the dot; the
-/// box takes the dot's place, as it takes a digest's stack, and the second
-/// line still says what the marker is.
+/// The box and the unread dot both stood at the gutter's centre, so selecting a marked row drew the
+/// check over the dot; the box takes the dot's place.
 pub fn a_selected_marked_row_shows_its_check_not_its_dot() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let (asked, _) = fixture
-            .file(
-                ("Ada Moreno", "ada@example.com"),
+            .file_from_ada(
                 "Re: Atlas Q3 budget",
                 "Can you approve these by Friday?",
                 10,
@@ -143,14 +120,11 @@ pub fn a_selected_marked_row_shows_its_check_not_its_dot() {
             crate::settle_until(async || row.drawn().picked).await,
             "`x` never selected the marked row"
         );
-        // The selection can rebind the row: wait for the one on screen now
-        // to have painted its gutter, whatever it painted there.
         let _ = crate::settle_until(async || {
             marked().is_some_and(|row| row.drawn().picked && gutter_marks(&row) > 0)
         })
         .await;
         let row = marked().expect("the marked row is still there");
-        // What the row drew: the box in the dot's place, never both.
         let drawn = row.drawn();
         assert!(
             drawn.picked && !drawn.dot,
@@ -159,7 +133,6 @@ pub fn a_selected_marked_row_shows_its_check_not_its_dot() {
             drawn.picked,
             drawn.dot
         );
-        // And the pixels agree: exactly one mark, never the box over the dot.
         let marks = gutter_marks(&row);
         assert_eq!(
             marks,
@@ -176,26 +149,14 @@ pub fn a_selected_marked_row_shows_its_check_not_its_dot() {
     });
 }
 
-/// The gutter's dot is unread mail, beside the bold, as the search
-/// results draw it. A marked row says what it is on its second line; a dot
-/// for the marker read as new mail.
 pub fn the_dot_is_unread_mail_not_a_marker() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         fixture
-            .file(
-                ("Ada Moreno", "ada@example.com"),
-                "Atlas staffing",
-                "Sharing the draft.",
-                30,
-            )
+            .file_from_ada("Atlas staffing", "Sharing the draft.", 30)
             .await;
         let (asked, _) = fixture
-            .file(
-                ("Ada Moreno", "ada@example.com"),
+            .file_from_ada(
                 "Re: Atlas Q3 budget",
                 "Can you approve these by Friday?",
                 10,
@@ -236,8 +197,6 @@ pub fn the_dot_is_unread_mail_not_a_marker() {
     });
 }
 
-/// How many marks `row` paints in its gutter on the first line: the dot, the
-/// checked box, a digest's stack -- anything small standing there.
 fn gutter_marks(row: &postio_gtk::list::RowWidget) -> u32 {
     let paintable = gtk::WidgetPaintable::new(Some(row));
     let snapshot = gtk::Snapshot::new();

@@ -1,37 +1,8 @@
-//! The newest message's own text (spec 007 FR-104, T115).
-//!
-//! What its sender wrote in it: not the history it quotes, not the
-//! signature it ends with. The needs-action detector reads this text, and a
-//! marker's excerpt and offset point into it (data-model.md, `markers`).
-//!
-//! # Read what is drawn
-//!
-//! Spike S5 (spec 007 research R2) measured it. A sentence is highlighted by
-//! finding its words again in what the reader draws, so the text they come
-//! from must be the part the reader draws: the HTML, flattened, when there
-//! is HTML, and the plain part otherwise. Read that way, 99.5% of the
-//! corpus's sentences are found again; reading the plain part of a message
-//! drawn from its HTML loses sentences the HTML never says. So:
-//!
-//! * the HTML is sanitized first, as the reader's is, which takes out the
-//!   `<title>` and everything else the reader never receives;
-//! * what an inline style hides (`display: none`, `visibility: hidden`) is
-//!   left out, as the renderer's text index leaves it out: a preheader is
-//!   the usual case;
-//! * an image's `alt` text is left out: the picture is drawn, not its words.
-//!
-//! # One quote detector, one signature rule
-//!
-//! Quoted history is what [`crate::quote`] folds, found by the same
-//! [`Stretch`]es, so the text never includes what the reader folds away. A
-//! signature is what [`postio_model::signature::split`] finds, applied once
-//! the history is out: a signature written above the quote of a top-posted
-//! reply is then the end of the text, as RFC 3676 means it to be.
-//!
-//! # Offsets
-//!
-//! The text is a pure function of the body, so the same body always gives
-//! the same text and an offset into it stays true. Offsets are in chars.
+//! The newest message's own text, without quoted history or signature, read from what the reader
+//! draws (sanitized HTML flattened, else the plain part): 99.5% of sentences are then found again
+//! to highlight.
+//! Inline-hidden elements and image `alt` text are left out. Quotes are `quote`'s stretches,
+//! signatures `postio_model::signature::split`. A pure function of the body; offsets are in chars.
 
 use markup5ever_rcdom::{Handle, NodeData};
 use postio_model::MessageBody;
@@ -41,14 +12,10 @@ use crate::parse;
 use crate::quote::{self, Stretch};
 use crate::sanitize::{RemoteImages, sanitize_body};
 
-/// The sender's own words in `body`: its drawn part, without quoted
-/// history, the signature, or what the reader never draws. Empty when the
-/// message says nothing of its own.
 pub fn own_text(body: &MessageBody) -> String {
     let html = body.html.as_deref().filter(|html| !html.trim().is_empty());
     let text = body.text.as_deref().filter(|text| !text.trim().is_empty());
-    // The part the reader draws (`postio_ui::reader::document::body_html`):
-    // the HTML, unless it is over a cap, and then the plain part.
+    // The part the reader draws: the HTML unless over a cap, then the plain part.
     if let Some(html) = html {
         let sanitized = sanitize_body(html, RemoteImages::Blocked);
         if sanitized.over_cap.is_none() {
@@ -58,17 +25,12 @@ pub fn own_text(body: &MessageBody) -> String {
     text.map(from_text).unwrap_or_default()
 }
 
-/// A message's own words as one line for a thread's child row (spec 013,
-/// research R5): [`own_text`] flattened and cut to [`PREVIEW_CHARS`](postio_model::mime::PREVIEW_CHARS) with the
-/// preview's ellipsis. Empty when the message says nothing of its own, which
-/// is how an all-quote reply is told from one whose body has not landed.
+/// Empty when the message says nothing of its own, which tells an all-quote reply from one whose
+/// body has not landed.
 pub fn own_line(body: &MessageBody) -> String {
     preview(&own_text(body)).unwrap_or_default()
 }
 
-/// A plain part's own words: what it says before earlier mail begins, every
-/// run of `>` lines out, and the words either side of one kept apart by a
-/// blank line.
 fn from_text(text: &str) -> String {
     let text = before_history(&text.replace("\r\n", "\n"));
     let own: Vec<&str> = quote::text_stretches(&text)
@@ -82,24 +44,20 @@ fn from_text(text: &str) -> String {
     unsigned(&own.join("\n\n"))
 }
 
-/// Sanitized HTML's own words, flattened as the search index flattens a
-/// body ([`crate::Document::to_search_text`]).
 fn from_html(sanitized: &str) -> String {
     let mut own = String::with_capacity(sanitized.len());
     for stretch in quote::html_stretches(sanitized) {
         match stretch {
             Stretch::Own(markup) => own.push_str(markup),
-            // An empty paragraph ends the one before it, so the words either
-            // side of the history do not run together.
+            // An empty paragraph keeps the words either side of the history apart.
             Stretch::Quoted(_) => own.push_str("<p></p>"),
         }
     }
     let dom = parse::fragment(&own);
     leave_out_the_undrawn(&dom.document);
     let flat = parse::narrow(&dom).to_search_text();
-    // A flattened line's edges are the spaces between the sender's tags,
-    // which nobody wrote, and a signature's separator is only found at the
-    // start of a line.
+    // A flattened line's edges are spaces between tags, and a signature separator is found only at
+    // line start.
     let mut lines: Vec<&str> = Vec::new();
     for line in flat.lines().map(str::trim) {
         if !(line.is_empty() && lines.last().is_some_and(|last| last.is_empty())) {
@@ -109,17 +67,9 @@ fn from_html(sanitized: &str) -> String {
     unsigned(&before_history(&lines.join("\n")))
 }
 
-/// `text` up to where earlier mail begins, with the attribution line of a
-/// quote left out.
-///
-/// Not every client prefixes history with `>`, but each marks where it
-/// begins, and everything from there on is somebody else's mail: Outlook's
-/// "Original Message" and its rule of underscores, a forward's banner, a
-/// header block (`From:` over `Sent:` or `Date:`), a phone's "Sent from my"
-/// and its attribution over unquoted text. An attribution over a `>` quote
-/// is the quote's own line, and goes with it; over anything else, it is
-/// where the unquoted history starts. The rule an `<hr>` leaves, just before
-/// the history, goes too.
+/// Outlook's "Original Message" and underscore rule, forward banners, header blocks, "Sent from my"
+/// and attributions over unquoted text all mark where history begins.
+/// An attribution over a `>` quote goes with it; the `<hr>` before history goes too.
 fn before_history(text: &str) -> String {
     let lines: Vec<&str> = text.split_inclusive('\n').collect();
     let mut kept = String::with_capacity(text.len());
@@ -144,7 +94,6 @@ fn before_history(text: &str) -> String {
     without_trailing_rules(&kept).to_owned()
 }
 
-/// Whether `line`, with `next` after it, is where earlier mail begins.
 fn begins_history(line: &str, next: Option<&str>) -> bool {
     let lower = line.to_lowercase();
     let banner = |words: &str| lower.starts_with('-') && lower.contains(words);
@@ -160,14 +109,11 @@ fn begins_history(line: &str, next: Option<&str>) -> bool {
             }))
 }
 
-/// Whether `line` introduces somebody else's words: "On `<when>`, `<who>`
-/// wrote:".
 fn is_attribution(line: &str) -> bool {
     let lower = line.to_lowercase();
     lower.starts_with("on ") && lower.ends_with("wrote:")
 }
 
-/// `text` without the blank lines and horizontal rules at its end.
 fn without_trailing_rules(text: &str) -> &str {
     let mut end = text.len();
     for line in text[..end].split_inclusive('\n').rev() {
@@ -184,9 +130,7 @@ fn without_trailing_rules(text: &str) -> &str {
     &text[..end]
 }
 
-/// The lines that close a message: everything after one is its signature.
-/// Matched whole, with a trailing comma, full stop or exclamation mark, so a
-/// sentence that begins like one ("Thanks for the update.") is not one.
+/// Matched whole with trailing punctuation, so "Thanks for the update." is not a closing.
 const CLOSINGS: &[&str] = &[
     "thanks",
     "thank you",
@@ -203,7 +147,6 @@ const CLOSINGS: &[&str] = &[
     "all the best",
 ];
 
-/// `text` up to the line that closes it, when one does.
 fn before_closing(text: &str) -> &str {
     let mut offset = 0;
     for line in text.split_inclusive('\n') {
@@ -220,8 +163,6 @@ fn before_closing(text: &str) -> &str {
     text
 }
 
-/// `own` without the blank lines at either end, and without the spaces
-/// that end its last line.
 fn without_blank_edges(own: &str) -> &str {
     let own = own.trim_end();
     let first = own
@@ -232,7 +173,6 @@ fn without_blank_edges(own: &str) -> &str {
     &own[first..]
 }
 
-/// `text` up to its closing and its signature, if it has them, trimmed.
 fn unsigned(text: &str) -> String {
     postio_model::signature::split(before_closing(text))
         .0
@@ -240,8 +180,6 @@ fn unsigned(text: &str) -> String {
         .to_owned()
 }
 
-/// Take out of the tree what the reader never draws: every element an
-/// inline style hides, and every image's `alt` text.
 fn leave_out_the_undrawn(node: &Handle) {
     node.children.borrow_mut().retain(|child| !hidden(child));
     for child in node.children.borrow().iter() {
@@ -256,7 +194,6 @@ fn leave_out_the_undrawn(node: &Handle) {
     }
 }
 
-/// Whether an element's inline style hides it.
 fn hidden(node: &Handle) -> bool {
     let NodeData::Element { attrs, .. } = &node.data else {
         return false;
@@ -267,10 +204,8 @@ fn hidden(node: &Handle) -> bool {
         .any(|attribute| (&*attribute.name.local) == "style" && hides(&attribute.value))
 }
 
-/// Whether a `style` attribute hides what it is on: `display: none`, or
-/// `visibility: hidden` or `collapse`, the two the renderer's text index
-/// leaves out. A descendant could set `visibility` back, which mail does
-/// not do, so the whole element goes either way.
+/// `visibility: hidden` or `collapse` match the renderer's text index; a descendant resetting
+/// `visibility` is ignored, so the whole element goes.
 fn hides(style: &str) -> bool {
     style.split(';').any(|declaration| {
         let Some((property, value)) = declaration.split_once(':') else {
@@ -363,13 +298,8 @@ mod tests {
         assert_eq!(own_text(&body), "The plain part says this instead.");
     }
 
-    // --- Earlier mail that is not quoted (spec 007 T117) --------------------
-    //
-    // Clients that do not prefix history with `>` still mark where it begins:
-    // Outlook's "Original Message" and its underscore rule, a forward's
-    // banner, a header block, a phone's attribution over unquoted text. The
-    // needs-action detector must not read an ask in any of them as the
-    // sender's own, and SC-013's gate measures it through this cutter.
+    // Clients that do not prefix history with `>` still mark where it begins; the needs-action
+    // detector must not read an ask there as the sender's own.
 
     #[test]
     fn earlier_mail_after_a_client_s_separator_is_not_the_message() {

@@ -1,11 +1,5 @@
-//! Dragging messages out of Focus's list (T245; `classic-parity.md` row 22).
-//!
-//! A row grabbed and pulled out of the window offers the message it is, or
-//! the messages selected when it is one of them, to a file manager as `.eml`
-//! files. The offer is `postio_widgets::drag_out::LazyFiles` over
-//! `postio_widgets::present::export`: nothing is
-//! written until a drop somewhere asks, so picking mail up and putting it
-//! back writes nothing.
+//! Dragging messages out of Focus's list as `.eml` files. Nothing is written until a drop somewhere
+//! asks, so picking mail up and putting it back writes nothing.
 
 use adw::subclass::prelude::ObjectSubclassIsExt;
 use gtk::gdk;
@@ -16,20 +10,10 @@ use postio_widgets::drag_out::LazyFiles;
 use crate::window::FocusWindow;
 
 impl FocusWindow {
-    /// What a drag of the row at `position` offers a receiver: the selection
-    /// when the row is in it, else that row alone. `None` where there is
-    /// nothing to offer.
-    ///
-    /// Files are offered only for a selection that can be **named**. "Select
-    /// all" is a predicate over the whole mailbox, and a predicate has no
-    /// file form: resolving one would write an `.eml` for every message in a
-    /// folder that may hold a hundred thousand. So a select-all drag offers
-    /// nothing to the desktop, a drop that never highlights rather than one
-    /// that fails after the fact.
-    ///
-    /// A conversation's row stands for the message it shows. Public because
-    /// it is what the drag actually does, and a test that drove anything else
-    /// would be testing a copy of it.
+    /// `None` where there is nothing to offer. Only a selection that can be named is offered:
+    /// select-all is a predicate over the whole mailbox, and resolving it would write an `.eml` for
+    /// every message in the folder, so a select-all drag offers nothing. A conversation's row
+    /// stands for the message it shows.
     pub fn drag_offer(&self, position: u32) -> Option<gdk::ContentProvider> {
         let imp = self.imp();
         let pane = self.pane()?;
@@ -57,7 +41,6 @@ impl FocusWindow {
         Some(LazyFiles::for_messages(messages, materialise).upcast())
     }
 
-    /// Let a row be dragged out of the list.
     pub(crate) fn connect_drag_out(&self, pane: &crate::list::ListPane) {
         let window = self.downgrade();
         pane.connect_row_drag(move |position| window.upgrade()?.drag_offer(position));

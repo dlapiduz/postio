@@ -1,11 +1,3 @@
-//! The search box's prefix modes, across the boundary: `#` folders,
-//! `@` correspondents, `+` labels (`postio_ui::finder::MODES`).
-//!
-//! GTK's box has had all four since the finder was built; the Mac's had only
-//! `>`, while its keyboard sheet -- read from the same `MODES` -- listed all
-//! four. What crosses is each mode's matches, scored by the shared matcher,
-//! and the sentence to show when there are none.
-
 use chrono::Utc;
 use postio_ffi::{Session, SessionOptions};
 use postio_model::{EmailAddress, Label, Message};
@@ -20,8 +12,6 @@ struct World {
     label: i64,
 }
 
-/// A store with an inbox, two more folders, a correspondent, a label and one
-/// message, and a session over it with that message's folder open.
 async fn world() -> World {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("a connection");
@@ -59,8 +49,6 @@ async fn world() -> World {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_folder_is_found_the_way_a_command_is() {
-    // The palette's matcher, so `wd` finds `Wayland-devel` here exactly as
-    // `cp` finds "Command palette" in `>`.
     let world = world().await;
 
     let found = world.session.finder_folders("wd".to_owned()).await;
@@ -92,8 +80,6 @@ async fn an_empty_folder_query_offers_every_folder_and_a_miss_says_so() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_correspondent_is_found_and_becomes_a_with_query() {
-    // Picking one writes `from:` into the box and drops back into search,
-    // so what follows is an ordinary query -- GTK's behaviour.
     let world = world().await;
 
     let found = world.session.finder_contacts("ada".to_owned()).await;
@@ -107,8 +93,7 @@ async fn a_correspondent_is_found_and_becomes_a_with_query() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_store_with_no_correspondents_says_where_they_come_from() {
-    // Two empties: Postio has no address book, so none at all is a mailbox
-    // that has not synced, not a query that missed.
+    // Postio has no address book, so none at all means not synced, not a query that missed.
     let database = test_support::memory().await;
     {
         let connection = database.connect().await.expect("a connection");
@@ -134,7 +119,6 @@ async fn a_picked_label_goes_on_the_message_under_the_cursor() {
     let found = world.session.finder_labels("tax".to_owned()).await;
     assert_eq!(found.hits.first().map(|hit| hit.id), Some(world.label));
 
-    // The message is the inbox's one row, and the cursor opens on it.
     crate::focus::cursor_on_the_first_row(&world.session).await;
     world.session.apply_label(world.label);
 

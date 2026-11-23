@@ -15,13 +15,11 @@ workspace = true
 async-trait = { workspace = true }
 chrono = { workspace = true }
 
-# The Gmail REST v1 protocol crate — coroutines plus the std blocking
-# client. No TLS features: connections open on this workspace's own
-# cancellable pimalaya-stream, like the JMAP adapter beside it.
+# No TLS features: connections open on the workspace's own cancellable pimalaya-stream, like the
+# JMAP adapter.
 io-gmail = { version = "0.9", default-features = false, features = ["client"] }
 pimalaya-stream = { workspace = true }
 
-# The MailBackend seam and nothing else.
 postio-account = { version = "0.6.2", path = "../postio-account", default-features = false }
 postio-model = { version = "0.6.2", path = "../postio-model" }
 

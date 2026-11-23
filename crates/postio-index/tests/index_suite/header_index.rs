@@ -1,13 +1,3 @@
-//! `message_headers`: the table `header:` matches against (ADR 0025 Q2).
-//!
-//! The rows are derived data. What these tests hold to account is the part
-//! that makes them safe to derive — that re-indexing replaces rather than
-//! accumulates, that a deleted message takes its rows with it, that the two
-//! caps in ADR 0025 Q3 actually bind, and that a message the pass has
-//! finished with stops being offered to it. That last one is not a tidiness
-//! point: a candidate query that does not shrink is what ran a core flat out
-//! for as long as the application was open in #500.
-
 use postio_index::index::{
     HEADER_ROWS_PER_MESSAGE, ensure_schema, index_headers, messages_missing_header_rows,
 };
@@ -17,9 +7,6 @@ use postio_storage::Connection;
 use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
 
-/// A message with a stored header block, which is what the catch-up pass
-/// looks for. The block's *content* does not matter here — every one of
-/// these tests indexes explicitly — only that `body_headers` is not NULL.
 async fn a_message_with_a_stored_block(connection: &Connection) -> Message {
     let (account, mailbox) = test_support::account_with_inbox(connection).await;
     let mut message = Message::new(account.id, mailbox, chrono::Utc::now());
@@ -63,9 +50,6 @@ async fn rows(connection: &Connection, message_id: i64) -> Vec<(String, String, 
 
 #[tokio::test]
 async fn a_block_becomes_one_row_per_occurrence_in_wire_order() {
-    // `Received` chains are the reason `Headers` keeps duplicates at all, and
-    // ADR 0025 Q6 says any occurrence matching is a match — which needs every
-    // occurrence to be a row of its own.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     ensure_schema(&connection).await.expect("schema");
@@ -95,11 +79,6 @@ async fn a_block_becomes_one_row_per_occurrence_in_wire_order() {
 
 #[tokio::test]
 async fn a_value_past_the_cap_is_stored_exactly_as_the_matcher_would_hold_it() {
-    // The correctness half of ADR 0025 Q3: the index holds a prefix and an
-    // in-memory matcher holds the whole value, so they disagree about every
-    // long header unless both pass through `normalize_value`. Storing the
-    // raw value here would be a row `header:` could match and the matcher
-    // could not, or the other way round.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     ensure_schema(&connection).await.expect("schema");
@@ -123,8 +102,6 @@ async fn a_value_past_the_cap_is_stored_exactly_as_the_matcher_would_hold_it() {
 
 #[tokio::test]
 async fn a_message_is_capped_at_the_rows_per_message_limit() {
-    // The other cap in ADR 0025 Q3. A twenty-hop mailing-list message with a
-    // signature at each hop must not decide the size of the index.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     ensure_schema(&connection).await.expect("schema");
@@ -152,8 +129,6 @@ async fn a_message_is_capped_at_the_rows_per_message_limit() {
 
 #[tokio::test]
 async fn re_indexing_a_message_replaces_its_rows_rather_than_adding_to_them() {
-    // The pass is resumable and a version bump refills the whole table, so
-    // indexing the same message twice is the ordinary case, not an error one.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     ensure_schema(&connection).await.expect("schema");
@@ -177,9 +152,6 @@ async fn re_indexing_a_message_replaces_its_rows_rather_than_adding_to_them() {
 
 #[tokio::test]
 async fn deleting_a_message_takes_its_header_rows_with_it() {
-    // `ON DELETE CASCADE` rather than a hand-written trigger, which is what
-    // `message_bodies_fts` needed only because a contentless FTS table has no
-    // content row to cascade from.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     ensure_schema(&connection).await.expect("schema");
@@ -231,9 +203,6 @@ async fn the_catch_up_query_offers_a_stored_block_that_has_no_rows_yet() {
 
 #[tokio::test]
 async fn a_message_with_no_stored_block_is_not_a_candidate() {
-    // The pass is local-only: a message whose block has never been stored is
-    // `repair_header_blocks`'s or the backfill lane's, and offering it here
-    // would put work on a queue that can do nothing about it.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     ensure_schema(&connection).await.expect("schema");
@@ -254,10 +223,6 @@ async fn a_message_with_no_stored_block_is_not_a_candidate() {
 
 #[tokio::test]
 async fn a_block_that_yields_no_fields_still_stops_being_a_candidate() {
-    // The #500 shape, in this table's costume. A block that parses to nothing
-    // — malformed mail, or a block that was cut to nothing — writes no
-    // ordinary rows, so `NOT EXISTS` would keep offering it for ever and the
-    // pass would re-read the same batch every lap.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     ensure_schema(&connection).await.expect("schema");
@@ -278,10 +243,6 @@ async fn a_block_that_yields_no_fields_still_stops_being_a_candidate() {
 
 #[tokio::test]
 async fn bumping_the_headers_half_refills_it_and_leaves_the_bodies_alone() {
-    // The mechanism ADR 0025 Q3 leans on: the caps stay revisable because a
-    // version bump drops this table and the catch-up pass refills it from
-    // `body_headers`, with no network. Refilling the *body* index means
-    // decompressing every body on disk, so it must not be dropped for this.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     ensure_schema(&connection).await.expect("schema");

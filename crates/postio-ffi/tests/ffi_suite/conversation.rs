@@ -1,16 +1,3 @@
-//! A conversation crosses the boundary whole (#1263, ADR 0015 Q4).
-//!
-//! The macOS pane stacks every message of a thread. Two things have to be
-//! true for that to be possible at all: the boundary can name a conversation
-//! (`ScopeFfi::Thread`), and what comes back is the *whole* thread rather than
-//! the part of it that happens to be filed in the folder on screen. The
-//! second is what these hold — a thread routinely spans Inbox and Archive,
-//! and a pane that showed only the visible half would be lying quietly.
-//!
-//! The fold itself is `postio_ui::conversation`'s, tested there. What is
-//! tested here is that the boundary applies it rather than leaving it to
-//! whichever frontend asked.
-
 use chrono::{DateTime, TimeZone, Utc};
 use postio_core::bridge::Bridge;
 use postio_core::dispatch::Dispatcher;
@@ -26,7 +13,6 @@ fn at(seconds: i64) -> DateTime<Utc> {
         .unwrap()
 }
 
-/// One message of the conversation, in `mailbox`, read or not.
 async fn message(
     connection: &postio_storage::Checkout,
     account: AccountId,
@@ -54,11 +40,6 @@ async fn message(
     message
 }
 
-/// A store holding one conversation, and a session over it.
-///
-/// Four messages: three in the inbox and one filed in Archive, so "every
-/// message in the thread" is a claim with something to prove. The two oldest
-/// have been read.
 async fn a_conversation() -> (std::sync::Arc<Session>, i64, Vec<i64>) {
     let database = test_support::memory().await;
     let (thread, ids, _inbox) = {
@@ -71,8 +52,7 @@ async fn a_conversation() -> (std::sync::Arc<Session>, i64, Vec<i64>) {
         let threads = ThreadRepository::new(&connection);
         threads.create(&mut thread).await.expect("a thread");
 
-        // Out of order on purpose: what arrives from the store is not what
-        // the pane stacks, and the ordering is the boundary's to apply.
+        // Out of order on purpose: the ordering is the boundary's to apply.
         let third = message(&connection, account.id, inbox, "Ada", 300, false).await;
         let first = message(&connection, account.id, archive.id, "Ada", 100, true).await;
         let fourth = message(&connection, account.id, inbox, "Quinn", 400, false).await;
@@ -111,8 +91,6 @@ async fn a_conversation() -> (std::sync::Arc<Session>, i64, Vec<i64>) {
     (session, thread, ids)
 }
 
-/// Ask for the conversation and wait for the read the way a frontend would
-/// not have to: it repaints when the event arrives.
 fn read(session: &Session, thread: i64) -> ConversationFfi {
     session.open_conversation(thread);
     session.settle_for_test();
@@ -142,15 +120,8 @@ async fn the_boundary_folds_the_conversation_rather_than_the_frontend() {
     let (session, thread, _) = a_conversation().await;
     let conversation = read(&session, thread);
 
-    // The most recent message: that is where a pane opens, and it is
-    // `postio_ui::conversation`'s rule rather than Swift's.
-    //
-    // It used to be the first unread, which is index 2 here. FR-015 moved it
-    // to the newest — a thread is opened to read the latest thing said in it,
-    // and "first unread" put the pane somewhere in the middle of a thread
-    // somebody had already half-read. GTK made that move first; this is the
-    // assertion that the macOS pane came with it rather than keeping the old
-    // rule in the shared crate.
+    // The newest message, not the first unread (as in GTK); the rule is
+    // `postio_ui::conversation`'s.
     assert_eq!(conversation.focus, Some(3));
     assert_eq!(
         conversation.expanded,

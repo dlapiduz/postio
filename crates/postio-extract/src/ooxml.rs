@@ -1,23 +1,6 @@
-//! Office Open XML: a zip of XML parts, walked with `quick-xml`'s
-//! streaming reader (research R5).
-//!
-//! Three small walkers, one per format, each a loop over events with
-//! counters for depth rather than recursion, so a document nested two
-//! hundred thousand elements deep costs a counter, not a stack frame:
-//!
-//! * **DOCX** — `w:p` paragraphs, numbered from 1 outside tables
-//!   ([`Location::Paragraph`]); each top-level `w:tbl` row is one unit
-//!   ([`Location::Table`]).
-//! * **XLSX** — the workbook's sheets in its own order, by name; each
-//!   `row` one unit, its cells' values joined, shared strings resolved
-//!   ([`Location::Sheet`]).
-//! * **PPTX** — the deck's slides in `p:sldIdLst` order; each slide one
-//!   unit ([`Location::Slide`]).
-//!
-//! Parts are found the way the format says to find them, through the
-//! package's relationships, with the conventional path as the fallback.
-//! Every entry is read through [`Guarded`], so a part that inflates past
-//! the entry limit or compresses too well to be honest stops the walk.
+//! Office Open XML: a zip of XML parts walked with `quick-xml`'s streaming reader.
+//! Walkers count depth rather than recurse, so deep nesting costs a counter, not a stack.
+//! Entries are read through [`Guarded`]; parts are found through the package relationships.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -30,7 +13,6 @@ use zip::ZipArchive;
 use crate::Location;
 use crate::limits::{Budget, Guarded, Stop};
 
-/// Which package.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Kind {
     Docx,
@@ -38,7 +20,6 @@ pub(crate) enum Kind {
     Pptx,
 }
 
-/// How many XML events pass between two looks at the clock.
 const CLOCK_EVERY: u32 = 4_096;
 
 pub(crate) fn extract<R: Read + Seek>(
@@ -60,15 +41,10 @@ pub(crate) fn extract<R: Read + Seek>(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Reading a part.
-// ---------------------------------------------------------------------------
-
 type Xml<'z, R> = Reader<BufReader<Guarded<zip::read::ZipFile<'z, R>>>>;
 
-/// Open `name` and hand its XML reader to `walk`. `Ok(None)` when the
-/// package has no such part. A limit the entry's reader tripped is
-/// reported as that limit, not as the malformed XML it surfaces as.
+/// `Ok(None)` when the package has no such part. A limit the entry's reader
+/// tripped is reported as that limit, not as the malformed XML it surfaces as.
 fn with_part<R: Read + Seek, T>(
     archive: &mut ZipArchive<R>,
     name: &str,
@@ -90,8 +66,6 @@ fn with_part<R: Read + Seek, T>(
     }
 }
 
-/// The next event, with a look at the clock every [`CLOCK_EVERY`]. A
-/// malformed document is [`Stop::Failed`].
 fn next<'b, R: std::io::BufRead>(
     reader: &mut Reader<R>,
     buffer: &'b mut Vec<u8>,
@@ -106,8 +80,6 @@ fn next<'b, R: std::io::BufRead>(
     reader.read_event_into(buffer).map_err(|_| Stop::Failed)
 }
 
-/// The text an event carries: character data, CDATA, or a reference
-/// (`&amp;`, `&#233;`) resolved. `None` for everything else.
 fn text_of(event: &Event<'_>) -> Option<Cow<'static, str>> {
     match event {
         Event::Text(text) => Some(Cow::Owned(text.xml10_content().into_owned())),
@@ -128,7 +100,6 @@ fn text_of(event: &Event<'_>) -> Option<Cow<'static, str>> {
     }
 }
 
-/// An attribute's value by its local name, unescaped.
 fn attribute(element: &BytesStart<'_>, local: &str) -> Option<String> {
     element.attributes().flatten().find_map(|attribute| {
         (attribute.key.local_name().as_ref() == local).then(|| {
@@ -140,9 +111,6 @@ fn attribute(element: &BytesStart<'_>, local: &str) -> Option<String> {
     })
 }
 
-/// A relationship target, as a path inside the package: relative to the
-/// directory of the part whose relationships named it, or absolute from
-/// the package root.
 fn resolve(base_dir: &str, target: &str) -> String {
     let joined = if let Some(absolute) = target.strip_prefix('/') {
         absolute.to_owned()
@@ -168,7 +136,6 @@ fn directory_of(part: &str) -> &str {
     part.rsplit_once('/').map_or("", |(dir, _)| dir)
 }
 
-/// A part's relationships: id → (type, resolved target).
 fn relationships<R: Read + Seek>(
     archive: &mut ZipArchive<R>,
     part: &str,
@@ -205,23 +172,17 @@ fn relationships<R: Read + Seek>(
     Ok(found.unwrap_or_default())
 }
 
-/// The package's main part, from its root relationships.
 fn package_main<R: Read + Seek>(
     archive: &mut ZipArchive<R>,
     budget: &mut Budget<'_>,
 ) -> Result<Option<String>, Stop> {
-    // The root relationships are "_rels/.rels": the part named "" in the
-    // root directory.
+    // "_rels/.rels" is the part named "" in the root directory.
     let rels = relationships(archive, "", budget)?;
     Ok(rels
         .into_values()
         .find(|(kind, _)| kind.ends_with("/officeDocument"))
         .map(|(_, target)| target))
 }
-
-// ---------------------------------------------------------------------------
-// DOCX.
-// ---------------------------------------------------------------------------
 
 fn docx<R: Read + Seek>(
     archive: &mut ZipArchive<R>,
@@ -300,10 +261,6 @@ fn docx<R: Read + Seek>(
     walked.ok_or(Stop::Failed)
 }
 
-// ---------------------------------------------------------------------------
-// XLSX.
-// ---------------------------------------------------------------------------
-
 fn xlsx<R: Read + Seek>(
     archive: &mut ZipArchive<R>,
     main: &str,
@@ -311,8 +268,6 @@ fn xlsx<R: Read + Seek>(
 ) -> Result<(), Stop> {
     let rels = relationships(archive, main, budget)?;
 
-    // The sheets, in the workbook's order, by the relationship that names
-    // each one's part.
     let sheets = with_part(archive, main, budget, |reader, budget| {
         let (mut buffer, mut count) = (Vec::new(), 0);
         let mut sheets = Vec::new();
@@ -347,8 +302,7 @@ fn xlsx<R: Read + Seek>(
             || resolve(&dir, &format!("worksheets/sheet{}.xml", index + 1)),
             |(_, target)| target.clone(),
         );
-        // A sheet the workbook lists and the package lacks is skipped,
-        // not the whole file: the other sheets are still worth reading.
+        // A sheet the workbook lists and the package lacks is skipped, not the file.
         with_part(archive, &part, budget, |reader, budget| {
             sheet(reader, name, &strings, budget)
         })?;
@@ -356,7 +310,6 @@ fn xlsx<R: Read + Seek>(
     Ok(())
 }
 
-/// The shared string table: each `si`'s text, phonetic runs left out.
 fn shared_strings<R: Read + Seek>(
     archive: &mut ZipArchive<R>,
     part: &str,
@@ -404,7 +357,6 @@ fn shared_strings<R: Read + Seek>(
     Ok(found.unwrap_or_default())
 }
 
-/// One worksheet, a row at a time.
 fn sheet<R: std::io::BufRead>(
     reader: &mut Reader<R>,
     name: &str,
@@ -480,10 +432,6 @@ fn sheet<R: std::io::BufRead>(
     }
 }
 
-// ---------------------------------------------------------------------------
-// PPTX.
-// ---------------------------------------------------------------------------
-
 fn pptx<R: Read + Seek>(
     archive: &mut ZipArchive<R>,
     main: &str,
@@ -499,8 +447,6 @@ fn pptx<R: Read + Seek>(
                     Event::Start(element) | Event::Empty(element)
                         if element.local_name().as_ref() == "sldId" =>
                     {
-                        // `id` is the slide's number; `r:id`, the prefixed
-                        // one, is the relationship that names its part.
                         if let Some(relation) = element.attributes().flatten().find(|a| {
                             a.key.prefix().is_some() && a.key.local_name().as_ref() == "id"
                         }) {

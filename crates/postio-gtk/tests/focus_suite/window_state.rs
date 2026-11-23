@@ -1,22 +1,13 @@
-//! The window's size across a restart (row 10, T246): Focus reopens at the
-//! size it was closed at, and a state file it cannot use opens it at the
-//! default.
-//!
-//! The file is `$XDG_STATE_HOME/postio/window.ini`; the suite runs with
-//! `XDG_STATE_HOME` in a directory of its own (`hermetic`), so these cases
-//! write the real path without touching the developer's. Each removes what
-//! it wrote, because a later case in the same process opens a window too.
+//! The state file is `$XDG_STATE_HOME/postio/window.ini`; the suite runs with its own
+//! `XDG_STATE_HOME` (`hermetic`), and each case removes what it wrote because a later case opens a
+//! window too.
 
 use adw::prelude::*;
 use postio_gtk::window::FocusWindow;
 use postio_widgets::state::path;
 
-use crate::support;
-
-/// Focus's first-run size: what a window with nothing saved opens at.
 const DEFAULT: (i32, i32) = (1440, 900);
 
-/// Runs `body`, then clears the state file whatever it did.
 async fn with_clean_state(body: impl std::future::Future<Output = ()>) {
     let _ = std::fs::remove_file(path());
     body.await;
@@ -30,9 +21,6 @@ fn write_state(text: &str) {
 
 pub fn a_restarted_window_opens_at_the_size_it_was_closed_at() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         with_clean_state(async {
             let first = FocusWindow::new(None);
             assert_eq!(
@@ -59,9 +47,6 @@ pub fn a_restarted_window_opens_at_the_size_it_was_closed_at() {
 
 pub fn a_state_file_that_cannot_be_read_opens_at_the_default() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         with_clean_state(async {
             write_state("this is not a key file at all\u{1}");
             let corrupt = FocusWindow::new(None);

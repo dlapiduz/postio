@@ -1,8 +1,3 @@
-//! What a message's promoted headers say (spec 007, research R8):
-//! `messages.unsubscribe_offered` and `messages.automation`, known at filing
-//! on an incremental sync or from the body's headers later, and NULL until
-//! then.
-
 use chrono::{TimeDelta, TimeZone, Utc};
 use postio_model::promoted::{PRECEDENCE_BULK, PromotedHeaders};
 use postio_model::{Message, MessageId, RemoteId, Uid, UidValidity};
@@ -16,7 +11,6 @@ const NEWSLETTER: PromotedHeaders = PromotedHeaders {
     automation: PRECEDENCE_BULK,
 };
 
-/// The message at `uid` in `mailbox`, as a header sync would bring it.
 fn fetched(
     (account, mailbox): (postio_model::AccountId, postio_model::MailboxId),
     uid: u32,
@@ -61,18 +55,12 @@ async fn what_a_fetch_knew_is_stored_and_a_fetch_that_did_not_ask_keeps_it() {
         "a fetch that did not ask says nothing, rather than 'none of the three'"
     );
 
-    // The next pass over the folder is a first-sync-shaped fetch that does
-    // not ask: what was known stays known.
     let mut again = vec![fetched(here, 1, None), fetched(here, 2, Some(NEWSLETTER))];
     messages.upsert_batch(&mut again).await.expect("refiled");
     assert_eq!(stored(&connection, batch[0].id).await, Some(NEWSLETTER));
     assert_eq!(stored(&connection, batch[1].id).await, Some(NEWSLETTER));
 }
 
-/// The instrument counts reads (`counting`'s docs); the writes are the
-/// insert and the update the batch already issued, with two more
-/// parameters each. What this proves is that knowing the facts reads
-/// nothing more, per message or per batch.
 #[tokio::test]
 async fn the_facts_ride_on_the_insert_and_cost_no_statement_of_their_own() {
     let database = test_support::memory().await;
@@ -80,7 +68,6 @@ async fn the_facts_ride_on_the_insert_and_cost_no_statement_of_their_own() {
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let here = (account.id, inbox);
     let messages = MessageRepository::new(&connection);
-    // Warm, and the same shapes in both runs.
     let mut warm = vec![fetched(here, 100, Some(NEWSLETTER))];
     messages.upsert_batch(&mut warm).await.expect("warm");
 
@@ -143,8 +130,6 @@ async fn the_body_s_headers_say_what_a_first_sync_did_not_ask() {
         );
     })
     .await;
-    // One write, and no read: the instrument counts reads, and a write
-    // that read the row first would show here.
     assert_eq!((counts.statements, counts.rows), (0, 0), "{counts:?}");
     assert_eq!(stored(&connection, batch[0].id).await, Some(NEWSLETTER));
     assert!(

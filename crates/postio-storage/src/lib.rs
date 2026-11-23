@@ -1,56 +1,13 @@
-//! Postio's local store: the schema, the repositories over it, and the
-//! content-addressed blob store.
-//!
-//! # What lives where
-//!
-//! The database holds **metadata and message text** — everything the message
-//! list, threading, search and the sync engine need to answer a question
-//! without touching the network. Raw RFC 5322 bytes and attachment payloads
-//! live in a content-addressed blob directory; the database stores the blob
-//! key and the metadata beside it.
-//!
-//! Decoded message bodies live once per content in `message_contents`,
-//! packed by [`body_codec`]. Occurrences keep bounded envelope and availability
-//! projections; the folded search corpus is owned by the same content identity.
-//!
-//! The types being persisted come from [`postio_model`], which knows nothing
-//! about SQL. This crate is the only place that maps between the two.
-//!
-//! # Opening a store
-//!
-//! [`Store::open`] is the one call an application needs: it creates the file
-//! and its parent directory, opens it encrypted under the key, and applies the
-//! schema if the file is new or migrates it if an earlier build wrote it.
-//!
-//! ```no_run
-//! # async fn example() -> Result<(), postio_storage::Error> {
-//! # use postio_storage::key::{Purpose, StoreKey};
-//! # let key = StoreKey::generate().derive(Purpose::Database);
-//! let store = postio_storage::Store::open("postio.db", &key).await?;
-//! let connection = store.connect().await?;
-//! # let _ = connection;
-//! # Ok(())
-//! # }
-//! ```
-//!
-//! # Migrations
-//!
-//! [`schema::HEAD`] is the whole schema, applied in one batch to a file that
-//! is new. A file an earlier build wrote is carried forward in place by
-//! [`schema::MIGRATIONS`], chained by the schema stamp each build left; one
-//! whose stamp no step leads from is refused, untouched, and started over by
-//! `postio_session::start_over`. [`schema`] says how a schema change adds its
+//! Postio's local store: the schema, the repositories over it, and the content-addressed blob
+//! store.
+//! The database holds metadata and message text; raw RFC 5322 bytes and attachment payloads are
+//! blobs keyed from it.
+//! [`Store::open`] creates, encrypts and migrates the file; [`schema`] says how to add a migration
 //! step.
-//!
-//! See `test_support` (behind the `test-support` feature) for throwaway stores
-//! in tests.
 
-/// SQL for the name a contact is shown under -- the style they chose
-/// (`show_as`) applied to the parts of the name they gave -- for the contact
-/// aliased `$a`. `NULL` when they gave no name, so a caller's `coalesce`
-/// falls back to the header. The one home of the rule that
-/// `postio_model::Contact::shown_as` states in Rust; a test holds the two to
-/// each other.
+/// SQL for a contact's shown name, for the contact aliased `$a`; `NULL` when they gave no name.
+/// The one home of the rule `postio_model::Contact::shown_as` states in Rust; a test holds the two
+/// together.
 macro_rules! shown_name {
     ($a:literal) => {
         concat!(
@@ -98,11 +55,8 @@ pub mod schema;
 pub mod searches;
 #[cfg(feature = "test-support")]
 pub mod seed;
-/// Reading rows and opening transactions, for the other crate that speaks SQL.
-///
-/// `postio-index` maintains the search index over these same tables and needs
-/// the same accessors; everything else above this layer goes through the
-/// repositories. Public for that one caller rather than as an invitation.
+/// Public for `postio-index`, which maintains the search index over the same tables; everything
+/// else goes through the repositories.
 pub mod sql;
 pub mod store;
 #[cfg(feature = "test-support")]
@@ -115,20 +69,11 @@ pub use store::{
     WritePriority,
 };
 
-/// Run `work` inside one atomic write, committing if it succeeds and rolling
-/// back if it does not.
+/// `BEGIN IMMEDIATE` at the outermost level, a `SAVEPOINT` when nested, so a repository call
+/// composes inside a bigger write.
 ///
-/// `BEGIN IMMEDIATE` at the outermost level, a `SAVEPOINT` when it is nested
-/// inside a transaction the caller already opened — so a repository call
-/// composes inside a bigger write without a second `BEGIN`.
-///
-/// The sync engine is the caller this is public for: it writes a batch of
-/// messages, their threads and their correspondents as one unit, across three
-/// repositories, and half of that landing is worse than none of it.
-/// The error type is the caller's, not this crate's, as long as it can carry
-/// one of ours: a sync unit writes through three repositories and its own
-/// engine, and having to translate its error at the boundary would put a
-/// `map_err` on every line inside the transaction.
+/// The error type is the caller's as long as it can carry one of ours, so a sync unit need not
+/// `map_err` on every line.
 pub async fn transaction<T, E, F, Fut>(
     connection: &Connection,
     work: F,

@@ -41,8 +41,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -51,10 +49,6 @@ HERE = Path(__file__).resolve().parent.parent
 ISSUE_CLAIM = HERE / "issue-claim.sh"
 ISSUE_RELEASE = HERE / "issue-release.sh"
 
-# 4242 is free. 4243 is somebody's rider claim: assigned and `in-progress`,
-# with no worktree and no claim lock, which is exactly what the rider path in
-# CLAUDE.md produces. 4244 is unassigned but `needs-architecture` — not queue
-# work, still claimable by name.
 FIXTURE_ISSUES = [
     {
         "number": 4242,
@@ -158,9 +152,6 @@ def main() -> int:
         worktrees = base / "worktrees"
         claims = base / "claims"
 
-        # ── naming an issue does not walk through somebody's claim ────────
-        # #4243 is assigned and `in-progress` with no lock: a rider claim, or
-        # a session on another machine. The queue path already skips it.
         result = claim(repo, base, stub_dir, "4243")
         if result.returncode == 0:
             fail("claimed", "took an issue another session is working", result)
@@ -169,26 +160,18 @@ def main() -> int:
         elif "4243" not in (result.stdout + result.stderr):
             fail("claimed", "refused without naming the issue", result)
 
-        # ── ...and does not quietly release it either ─────────────────────
-        # The refusal above is what stops the damage that followed on #1142:
-        # a second claim, then a release that stripped the first session's
-        # labels. Nothing here should have touched the lock directory.
         if (claims / "issue-4243").exists():
             FAILURES.append(
                 "claimed: a refused claim left a lock behind, which would make "
                 "the issue unclaimable until the next stale sweep"
             )
 
-        # ── a named claim still bypasses the label filters ────────────────
-        # `needs-architecture` is not queue work and is claimable by name:
-        # that is how the architect takes one to write its ADR.
         result = claim(repo, base, stub_dir, "4244")
         if result.returncode != 0:
             fail("by-name", "refused a needs-architecture issue named explicitly", result)
         elif not (worktrees / "issue-4244").is_dir():
             fail("by-name", "took it without giving it a tree", result)
 
-        # ── the lock says who holds it ────────────────────────────────────
         owner = claims / "issue-4244.owner"
         if not owner.is_file():
             FAILURES.append(
@@ -201,13 +184,6 @@ def main() -> int:
                 f"not the worktree it created"
             )
 
-        # ── ...beside the lock, not inside it ─────────────────────────────
-        # Every worktree carries its own copy of these scripts at the commit
-        # it was cut from, and the main checkout is pulled when somebody
-        # remembers, so a lock's format is something several versions have to
-        # agree on at once. `rmdir` is what every older copy drops a lock
-        # with, and it refuses a directory with a file in it — which left
-        # #1216 unclaimable within an hour of #1218 landing.
         lock = claims / "issue-4244"
         try:
             lock.rmdir()
@@ -220,9 +196,6 @@ def main() -> int:
         else:
             lock.mkdir()
 
-        # ── --resume takes the lock, or refuses ───────────────────────────
-        # A branch on origin for 4242, and its lock already held by another
-        # session on this machine. `mkdir ... || true` walked through this.
         git("checkout", "-q", "-b", "issue-4242-red-pr", cwd=repo)
         (repo / "work.txt").write_text("landed on the branch\n", encoding="utf-8")
         git("add", "-A", cwd=repo)
@@ -233,11 +206,6 @@ def main() -> int:
         held = claims / "issue-4242"
         held.mkdir(parents=True)
         holder = worktrees / "somebody-elses-tree"
-        # The holder's tree exists, because that is what a live claim looks
-        # like: `--stale` and this both read a worktree as the evidence a
-        # session is still there. A lock whose tree is gone is the ordinary
-        # leftover of a session that landed and moved on, and resuming over
-        # that one is the flow `--resume` exists for.
         holder.mkdir(parents=True)
         held_owner = claims / "issue-4242.owner"
         held_owner.write_text(str(holder) + "\n", encoding="utf-8")
@@ -252,11 +220,6 @@ def main() -> int:
         elif not held_owner.is_file():
             fail("resume", "a refused resume removed the holder's lock", result)
 
-        # ── ...but a lock the holder has left behind is not a claim ───────
-        # The ordinary loop lands, claims the next issue into the same tree,
-        # and leaves this issue's lock where it was. Refusing on the lock
-        # alone would break coming back to a branch whose PR went red, which
-        # is the whole of what `--resume` is for.
         shutil.rmtree(holder)
         result = claim(repo, base, stub_dir, "--resume", "4242")
         if result.returncode != 0:

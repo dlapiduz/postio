@@ -1,13 +1,7 @@
-//! The Save popover (spec 010 step 6, design §3.9, screen 12): the
-//! controller's [`SaveView`] over a search's results, hung from their Save
-//! search button.
-//!
-//! Every word is the controller's, as on the Mac
-//! (`macos/Sources/PostioKit/SavePopoverView.swift`): the title, the name it
-//! offers, the query's terms as read-only chips, and three switches as they
-//! start. Save ↩ says what is set back as [`Input::SaveSearchAs`], once;
-//! Cancel, Escape or a click away write nothing, and the controller is not
-//! told, as the Mac's `SavePopoverModel` does not tell it.
+//! The Save popover: the controller's `SaveView` over a search's results, hung from the Save search
+//! button. Every word is the controller's.
+//! Save says what is set back as `Input::SaveSearchAs`, once; Cancel, Escape or a click away write
+//! nothing, and the controller is not told.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -17,7 +11,6 @@ use postio_focus::{Input, SaveView};
 use postio_widgets::widgets::keyhint;
 use postio_widgets::widgets::space::{S1, S2, S3};
 
-/// The Save popover.
 pub struct SavePopover {
     popover: gtk::Popover,
     title: gtk::Label,
@@ -29,14 +22,11 @@ pub struct SavePopover {
     rolling: Switch,
     cancel: gtk::Button,
     save: gtk::Button,
-    /// Save was said for the view shown: a second Return before the
-    /// controller takes it down says nothing more.
+    /// A second Return before the controller takes the popover down says nothing more.
     sent: Cell<bool>,
     say: Rc<dyn Fn(Input)>,
 }
 
-/// One switch with its words: the title over its note, the switch on the
-/// right.
 struct Switch {
     row: gtk::Box,
     title: gtk::Label,
@@ -69,7 +59,6 @@ impl Switch {
         }
     }
 
-    /// Say `title`, then `note` and `key` under it, and start `on`.
     fn show(&self, title: &str, note: &str, key: Option<&str>, on: bool) {
         self.title.set_text(title);
         self.switch
@@ -90,8 +79,6 @@ impl Switch {
 }
 
 impl SavePopover {
-    /// A popover nothing has opened; `say` hands the controller what Save
-    /// says.
     pub fn new(say: impl Fn(Input) + 'static) -> Rc<Self> {
         let title = gtk::Label::new(None);
         title.add_css_class("focus-save-title");
@@ -101,7 +88,6 @@ impl SavePopover {
         name_label.set_xalign(0.0);
         let name = gtk::Entry::new();
         name.add_css_class("focus-save-name");
-        // The terms wrap within the popover's width rather than widen it.
         let chips = gtk::FlowBox::new();
         chips.add_css_class("focus-save-chips");
         chips.set_selection_mode(gtk::SelectionMode::None);
@@ -132,10 +118,8 @@ impl SavePopover {
         let popover = gtk::Popover::new();
         popover.set_child(Some(&content));
         popover.set_position(gtk::PositionType::Bottom);
-        // From its button's end: the button sits at the window's right
-        // edge, and a compositor that does not slide a popup back inside
-        // would draw it cut off (as the filter popovers open from their
-        // buttons' start).
+        // From its button's end: the button sits at the window's right edge, and a compositor that
+        // does not slide a popup back inside would draw it cut off.
         popover.set_halign(gtk::Align::End);
         popover.set_has_arrow(false);
         popover.add_css_class("focus-save-popover");
@@ -179,9 +163,6 @@ impl SavePopover {
         pop
     }
 
-    /// Draw `view`, hung from `anchor`, the keyboard in the Name field
-    /// with the name offered selected, so typing replaces it; `cancel_key`
-    /// is Back's, which Cancel is.
     pub fn show(&self, view: &SaveView, anchor: &impl IsA<gtk::Widget>, cancel_key: Option<&str>) {
         if self.popover.parent().as_ref() != Some(anchor.upcast_ref()) {
             if self.popover.parent().is_some() {
@@ -208,7 +189,6 @@ impl SavePopover {
         );
         self.notify
             .show(&view.notify_label, &view.notify_note, None, view.notify);
-        // Drawn only when the query has a date to keep (§3.9).
         self.rolling.row.set_visible(view.rolling_note.is_some());
         if let Some(note) = &view.rolling_note {
             self.rolling
@@ -221,13 +201,10 @@ impl SavePopover {
         self.name.select_region(0, -1);
     }
 
-    /// Take it down: the controller's `SavePopover(None)`, Cancel, or Esc.
-    /// Nothing is written.
     pub fn close(&self) {
         self.popover.popdown();
     }
 
-    /// Save ↩: the controller writes it, and takes the popover down.
     fn say_save(&self) {
         if !self.is_open() || self.sent.replace(true) {
             return;
@@ -240,29 +217,24 @@ impl SavePopover {
         });
     }
 
-    /// Run `closed` whenever it goes, however it went: GTK hands the
-    /// keyboard back to the button it hangs from, which is not where it
-    /// was.
+    /// However it went: GTK hands the keyboard back to the button it hangs from, which is not where
+    /// it was.
     pub fn connect_closed(&self, closed: impl Fn() + 'static) {
         self.popover.connect_closed(move |_| closed());
     }
 
-    /// Whether it is up.
     pub fn is_open(&self) -> bool {
         self.popover.is_visible()
     }
 
-    /// What the Name field holds.
     pub fn name(&self) -> String {
         self.name.text().to_string()
     }
 
-    /// Whether the keyboard is in the Name field.
     pub fn name_has_keyboard(&self) -> bool {
         self.name.has_focus() || self.name.delegate().is_some_and(|text| text.has_focus())
     }
 
-    /// Every word it says, top to bottom.
     pub fn texts(&self) -> Vec<String> {
         let mut said = Vec::new();
         let mut stack = vec![self.popover.clone().upcast::<gtk::Widget>()];
@@ -284,9 +256,7 @@ impl SavePopover {
         said
     }
 
-    /// A key, as the popover's own field and buttons take it: Return saves
-    /// and Escape cancels. Whether it was the popover's -- what a test
-    /// presses, since a popover's keys never pass the window's.
+    /// What a test presses, since a popover's keys never pass the window's.
     pub fn key(&self, key: gtk::gdk::Key) -> bool {
         if !self.is_open() {
             return false;

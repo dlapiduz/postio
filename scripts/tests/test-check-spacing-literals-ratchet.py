@@ -78,10 +78,6 @@ expect(
     "lower the baseline",
 )
 
-# The desktop app lays out widgets, and the shared crate holds what it draws
-# (ADR 0043; specs/007-postio-focus R1). A baseline line names a file by its
-# path inside its crate's `src/`, so a file that moves between the crates keeps
-# its line.
 expect_root(
     "a literal planted in postio-widgets fails",
     {"crates/postio-widgets/src/reader/view.rs": "w.set_margin_end(8);"},

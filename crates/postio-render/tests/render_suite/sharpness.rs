@@ -1,6 +1,5 @@
-//! HiDPI (research R1, R8): a render at the surface's scale is sharp. The
-//! spike painted at 1.0 and let the compositor stretch it 2x, which is why
-//! it looked blurry on a HiDPI screen.
+//! A render at the surface's scale is sharp; painting at 1.0 and letting the compositor stretch it
+//! 2x looks blurry on HiDPI.
 
 use std::sync::Arc;
 
@@ -44,7 +43,6 @@ fn raster(scale: f64) -> Raster {
     postio_render::rasterize(&postio_render::render(&request, fonts()))
 }
 
-/// A 1x raster stretched 2x the way a compositor does it: bilinear.
 fn stretched(one: &Raster) -> Vec<u8> {
     let (w, h) = (one.width as usize * 2, one.height as usize * 2);
     let mut out = vec![0u8; w * h];
@@ -71,7 +69,6 @@ fn stretched(one: &Raster) -> Vec<u8> {
     out
 }
 
-/// The share of inked pixels that are neither ink nor paper: edge blur.
 fn blur(greys: impl Iterator<Item = u8>) -> f64 {
     let (mut inked, mut between) = (0usize, 0usize);
     for g in greys {

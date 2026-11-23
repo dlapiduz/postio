@@ -36,8 +36,7 @@ set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DIR="$HERE/tests"
-# `-P4` and not more: several of these build a cargo sandbox, and
-# .cargo/config.toml already pins two jobs per cargo.
+# `-P4`: several self-tests build a cargo sandbox, and .cargo/config.toml pins two jobs per cargo.
 JOBS=4
 LOGS=""
 SKIP=()
@@ -61,14 +60,11 @@ fi
 mkdir -p "$LOGS"
 
 LIST="$LOGS/.self-tests"
-# Sorted, so a failure is reported in the same order twice.
 find "$DIR" -maxdepth 1 -name 'test-*.py' | sort > "$LIST"
 
-# `--skip <file>`: a test that runs somewhere better. test-ffi-bindgen.py
-# builds postio-ffi -- most of the workspace -- and was 900 of a 919 s run
-# here, so CI runs it in the macOS job, which builds postio-ffi anyway, and
-# the self-test jobs skip it. Named in the output: a test that quietly
-# stopped running is what this runner exists to refuse.
+# `--skip <file>`: a test that runs somewhere better (test-ffi-bindgen.py builds postio-ffi, 900 of
+# a 919 s run, so the macOS job runs it).
+# Named in the output: a test that quietly stopped running is what this runner refuses.
 for name in ${SKIP[@]+"${SKIP[@]}"}; do
     if grep -q "/$name\$" "$LIST"; then
         grep -v "/$name\$" "$LIST" > "$LIST.kept" || true
@@ -84,27 +80,11 @@ COUNT="$(wc -l < "$LIST" | tr -d ' ')"
 
 echo "running $COUNT self-tests, $JOBS at a time"
 
-# One log per test, named after it, and the failures recorded by *exit status*
-# rather than by what they printed.
-#
-# `< "$LIST"` and not `-a "$LIST"`: `-a` is a GNU extension and BSD xargs
-# rejects the option outright. With stderr going to /dev/null below, that
-# failure was invisible -- no child ever ran, `.failed` stayed empty, and this
-# script printed "every self-test passed" and exited 0 on every Mac. Which
-# hid `test-run-self-tests.py`, the one test that reports this script broken,
-# along with all eighty-four others. #1151 is the issue about self-tests only
-# ever running on Linux; this is that issue inside its own runner, and it is
-# the same GNU-ism that cost `jobserver.sh` months of two-job builds.
-#
-# A child's exit status says which of three things happened: 0 passed,
-# 77 stood down, anything else failed.
-#
-# Exit 77 is the third: a self-test declaring that it cannot be
-# meaningful on this platform (`scripts/lib/prereq.py`'s `only_on`). #1151
-# asks that such a test *say so* rather than skip silently, so it is counted
-# and named below instead of being folded into the passes -- a Linux-only
-# test on a macOS runner has to be visible in the log, or the suite is
-# claiming coverage it does not have.
+# One log per test, failures recorded by exit status, not by what they printed. `< "$LIST"`, not
+# `-a`: BSD xargs rejects `-a`, and with stderr discarded this printed "every self-test passed" on
+# every Mac (#1151). A child's exit status says which of three things happened: 0 passed, 77 stood
+# down (`scripts/lib/prereq.py`'s `only_on`), anything else failed. 77 is counted and named, not
+# folded into the passes.
 NOT_APPLICABLE_EXIT=77
 FAILED="$LOGS/.failed"
 STOOD_DOWN="$LOGS/.not-applicable"
@@ -127,13 +107,8 @@ xargs -P "$JOBS" -I{} sh -c '
     exit 1
 ' _ {} "$LOGS" < "$LIST" >/dev/null 2>&1
 
-# Success is a positive fact, not the absence of a recorded failure.
-#
-# The check above was `[ ! -s "$FAILED" ]` alone, which is true both when
-# every test passed and when nothing ran at all -- and those are the two
-# answers a suite must never confuse. A runner that cannot start its children
-# has to say so, or it is the silent skip this whole repository writes gates
-# against, in the one place where it hides every other gate.
+# Success is a positive fact, not the absence of a failure: `[ ! -s "$FAILED" ]` is also true when
+# nothing ran.
 RAN="$(find "$LOGS" -maxdepth 1 -name '*.py.log' | wc -l | tr -d ' ')"
 if [ "$RAN" -ne "$COUNT" ]; then
     echo
@@ -149,10 +124,7 @@ if [ "$STOOD" -gt 0 ]; then
     sed 's|.*/|  |' "$STOOD_DOWN"
 fi
 
-# Where the time went. The CI job that runs these takes ten minutes and more
-# when scripts change, and until this nothing said which tests that was.
-# Whole seconds, wall clock, each test alone -- several run at once, so the
-# numbers add up to more than the job.
+# Where the time went: whole seconds, wall clock, each test alone (several run at once).
 echo
 echo "slowest self-tests:"
 sort -rn "$LOGS/.times" | head -n 10 | while read -r seconds name; do
@@ -171,8 +143,6 @@ while read -r path; do
     name="$(basename "$path")"
     echo
     echo "--- $name ---"
-    # Enough to carry a traceback and the case list around it. The old inline
-    # version used 40; a failure that scrolls off is the same problem again.
     tail -n 60 "$LOGS/$name.log" 2>/dev/null || echo "(no log was written)"
 done < "$FAILED"
 

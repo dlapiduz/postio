@@ -1,22 +1,11 @@
-//! What an account is, said the same way in both settings panes.
-//!
-//! The accounts pane is a list of rows and a form, and everything on the row
-//! that is not a number out of the store is a *wording* decision: which
-//! backend this is, how it signs in, whether it is the default, and whether
-//! the credential behind it still works. Those read the same on both
-//! platforms or the two panes describe different software.
+//! Wording for an account row, shared by both settings panes.
 
 use std::time::SystemTime;
 
 use postio_model::account::Account;
 
-/// An account row's connection-type and auth-method badge — "IMAP ·
-/// password", "Gmail · OAuth 2" — both already on the account itself, so
-/// unlike the mail weight and the token validity this needs nothing handed
-/// in from the composition root (#878).
+/// An account row's connection-type and auth-method badge, e.g. "IMAP · password".
 pub fn badge(account: &Account) -> String {
-    // A folder on this machine signs in to nothing, whatever auth method the
-    // row carries -- every account row has one.
     if matches!(
         account.backend,
         postio_model::account::Backend::Maildir { .. }
@@ -27,9 +16,6 @@ pub fn badge(account: &Account) -> String {
         postio_model::account::Backend::Imap => "IMAP",
         postio_model::account::Backend::Jmap { .. } => "JMAP",
         postio_model::account::Backend::Gmail => "Gmail",
-        // Not "Maildir": the badge says what kind of account this is to
-        // somebody who has one, and what is true of it is that the mail is
-        // already here.
         postio_model::account::Backend::Maildir { .. } => "Local mail",
     };
     let auth = match account.auth {
@@ -41,44 +27,23 @@ pub fn badge(account: &Account) -> String {
     format!("{backend} · {auth}")
 }
 
-/// How an OAuth account's access token stands right now, from the expiry
-/// `postio_account::oauth::token_source` persisted beside it (#870, #878).
-///
-/// A *state*, not a string, because two surfaces want different halves of
-/// it: the fact line wants the wording, and the row wants to know whether
-/// this is a problem — a warning mark beside the line, and the Reconnect
-/// button that fixes it. GTK derived the second from the first by asking
-/// whether the sentence it had just built began with "token expired", which
-/// works and is the kind of thing that stops working the day somebody
-/// rewords the sentence. Worse, on macOS there was nothing to ask at all:
-/// `AccountFfi` carried only the badge, so the row's `needsAttention` gate
-/// could never fire and the Reconnect button was unreachable code (#1584).
+/// Token standing from the persisted expiry. A state, not a string: the row needs the
+/// problem flag (warning mark, Reconnect) as well as the wording, and deriving one from
+/// the other by string match breaks on rewording (#1584).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenStanding {
-    /// Nothing to say, and that is a real answer rather than a failure: a
-    /// password account has no token, an account fed by an external broker
-    /// never had Postio's own token source write an expiry for it, a
-    /// provider that does not send `expires_in` leaves none behind, and a
-    /// keyring that would not open answers the same way. None of those is
-    /// something a person can act on, so the row stays quiet.
+    /// Nothing to say, and not a failure: password account, broker-fed token, no
+    /// `expires_in`, or an unopenable keyring. Nothing a person can act on.
     Unknown,
-    /// Good for a while yet.
     Valid {
-        /// Whole days remaining — `0` meaning less than one, which is said
-        /// in words rather than as a number nobody would trust.
+        /// Whole days remaining; `0` means less than one.
         days: u64,
     },
-    /// Past its stated expiry. The one state on an account row that is a
-    /// problem rather than a fact.
     Expired,
 }
 
 impl TokenStanding {
-    /// Where `expiry` leaves this account as of `now`.
-    ///
-    /// `now` is handed in rather than read here so the arithmetic can be
-    /// asserted against a fixed clock; every caller passes
-    /// [`SystemTime::now`].
+    /// `now` is passed in so tests can fix the clock.
     pub fn of(expiry: Option<SystemTime>, now: SystemTime) -> Self {
         let Some(at) = expiry else {
             return Self::Unknown;
@@ -91,12 +56,8 @@ impl TokenStanding {
         }
     }
 
-    /// The line this standing puts on the row's `·`-joined fact line, or
-    /// `None` when there is nothing to say.
-    ///
-    /// The expired wording names the repair rather than only the fault:
-    /// "expired" alone is a dead end, and the row draws a Reconnect button
-    /// beside it precisely because the sentence promises one.
+    /// The fact-line wording, or `None`. Expired names the repair, since the row draws a
+    /// Reconnect button beside it.
     pub fn line(self) -> Option<String> {
         match self {
             Self::Unknown => None,
@@ -106,37 +67,22 @@ impl TokenStanding {
         }
     }
 
-    /// Whether this is the state that calls for a warning mark and a repair.
     pub fn is_expired(self) -> bool {
         matches!(self, Self::Expired)
     }
 }
 
-/// What putting an account's credential right would actually take.
-///
-/// The two routes are not interchangeable and offering the wrong one is
-/// worse than offering none: an expired OAuth grant is re-consented in a
-/// browser and cannot be typed, and a rotated app password is typed and
-/// cannot be re-consented. So the boundary says which, from the account's
-/// own auth method, rather than each frontend reading `AuthMethod` and
-/// drawing its own conclusion (#1584).
+/// The repair route for an account's credential. Not interchangeable: an OAuth grant is
+/// re-consented in a browser, a password is typed (#1584).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Repair {
-    /// There is nothing this pane can repair. A local mail store signs in to
-    /// nothing, and an account whose token an external broker mints is one
-    /// Postio holds no client for and no credential of — both would be rows
-    /// offering to fix something that is not theirs to fix.
+    /// Nothing this pane can repair: a local store signs in to nothing, and a broker-minted
+    /// token is not Postio's to fix.
     Nothing,
-    /// A new password for the keyring — an app-specific password the
-    /// provider rotated, most of all.
     Password,
-    /// Sign in again through the system browser. The grant is re-consented,
-    /// which is a thing that happens to the person rather than a string they
-    /// hold.
     Browser,
 }
 
-/// Which repair route `account` takes.
 pub fn repair(account: &Account) -> Repair {
     if matches!(
         account.backend,
@@ -146,23 +92,9 @@ pub fn repair(account: &Account) -> Repair {
     }
     match account.auth {
         postio_model::account::AuthMethod::OAuth2 | postio_model::account::AuthMethod::XOAuth2 => {
-            // A token account is one a typed password would not repair —
-            // but only an account that signed in through Postio's own flow
-            // carries the OAuth client a browser round trip would need. One
-            // fed by a broker carries none, and offering to reconnect it
-            // would open a browser with nothing to ask for.
-            //
-            // The client id is read rather than merely counted, and trimmed,
-            // because this answer and the one `Session::browser_sign_in_for`
-            // gives have to be the same answer. That one refuses a blank
-            // client id — it has to: `sign_in_with_browser` beneath it
-            // refuses one as a fact about the product, since Postio ships no
-            // client id of its own (ADR 0006 Q1). A row that offered
-            // Reconnect where the resolution refuses would draw a button
-            // whose only outcome is a sentence about a credential the person
-            // never registered. `oauth.is_some()` is not that question:
-            // `AccountRepository` builds an `OAuthConfig` from two non-NULL
-            // columns without asking whether either says anything.
+            // Only an account signed in through Postio's own flow has a client for a browser
+            // round trip. Must agree with `Session::browser_sign_in_for`, which refuses a
+            // blank client id (ADR 0006 Q1); `oauth.is_some()` does not say that.
             let client = account
                 .oauth
                 .as_ref()
@@ -179,37 +111,22 @@ pub fn repair(account: &Account) -> Repair {
     }
 }
 
-/// What a connection test found wrong with an account's credential.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Trouble {
-    /// A grant past its expiry.
     Expired,
-    /// The server refused the credential it was given: a rotated app
-    /// password, or a revoked grant.
     Rejected,
-    /// Nothing in the keyring to sign in with.
     Missing,
 }
 
-/// What an account row says is wrong with its credential, and what to press.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Offer {
-    /// What is wrong, in words: a button with no reason beside it is a
-    /// button nobody knows whether to press.
     pub reason: String,
-    /// What the button says, or `None` when there is nothing the pane can
-    /// put right -- the row still says what is wrong.
+    /// `None` when the pane can put nothing right; the row still says what is wrong.
     pub button: Option<&'static str>,
 }
 
-/// What the row offers for an account whose repair route is `repair`, or
-/// `None` when its credential is fine as far as anything knows.
-///
-/// `expired` is the stored token's standing, read fresh on every settings
-/// open, so it outranks `found`, which is whatever the last connection test
-/// said. Every state a person can repair gets the same offer (#1584), and the
-/// button is named after what it does on that route: "Reconnect" in front of
-/// a password field promises a browser that is not going to open.
+/// `None` when the credential is fine. `expired` is read fresh on every settings open, so
+/// it outranks `found`, the last connection test. The button is named for its route (#1584).
 pub fn offer(
     repair: Repair,
     expired: bool,
@@ -262,8 +179,6 @@ mod tests {
         account
     }
 
-    /// An account signed in through Postio's own OAuth flow, which is the
-    /// only kind that carries the client a reconnect would sign in with.
     fn with_own_client(mut account: Account) -> Account {
         account.oauth = Some(OAuthConfig {
             client_id: "a-client-the-user-registered".to_owned(),
@@ -275,8 +190,6 @@ mod tests {
         account
     }
 
-    /// A fixed clock, so the day arithmetic below is not a race against the
-    /// second boundary it is measured across.
     fn noon() -> SystemTime {
         SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000)
     }
@@ -299,10 +212,6 @@ mod tests {
 
     #[test]
     fn a_local_maildir_reads_as_mail_that_is_already_here() {
-        // The word on the row is for somebody looking at their own account,
-        // not for somebody who knows the format's name. And nothing about
-        // signing in: a folder on this machine has no password, and the row
-        // said "password" because every account row carries an auth method.
         assert_eq!(
             badge(&account(
                 Backend::Maildir {
@@ -316,8 +225,6 @@ mod tests {
 
     #[test]
     fn both_oauth_spellings_read_the_same_to_a_person() {
-        // `XOAuth2` is a wire detail. A row that said "XOAUTH2" would be
-        // telling the user about SASL rather than about their account.
         assert_eq!(
             badge(&account(Backend::Imap, AuthMethod::XOAuth2)),
             badge(&account(Backend::Imap, AuthMethod::OAuth2))
@@ -349,8 +256,6 @@ mod tests {
 
     #[test]
     fn a_token_good_for_hours_says_so_in_words_rather_than_zero_days() {
-        // "token valid 0d" reads as broken. It is not: it is a token that
-        // will want renewing today, which is a different sentence.
         let standing = TokenStanding::of(Some(noon() + Duration::from_secs(3 * 3600)), noon());
         assert_eq!(standing, TokenStanding::Valid { days: 0 });
         assert_eq!(
@@ -362,9 +267,6 @@ mod tests {
 
     #[test]
     fn nothing_on_file_puts_nothing_on_the_row() {
-        // A password account, a broker-fed account, a provider that never
-        // said `expires_in`: all of them land here, and none of them is a
-        // problem to report.
         let standing = TokenStanding::of(None, noon());
         assert_eq!(standing, TokenStanding::Unknown);
         assert_eq!(standing.line(), None);
@@ -373,8 +275,6 @@ mod tests {
 
     #[test]
     fn an_account_that_signs_in_with_a_token_is_repaired_in_the_browser() {
-        // Both spellings, for the same reason the badge collapses them: the
-        // difference is SASL's, and the repair is identical.
         assert_eq!(
             repair(&with_own_client(account(
                 Backend::Imap,
@@ -393,11 +293,8 @@ mod tests {
 
     #[test]
     fn a_token_account_whose_credential_a_broker_owns_offers_no_repair_here() {
-        // `oama`, `mutt_oauth2.py` and their kin hold the grant, do the
-        // refreshing, and own the relationship with the provider. Postio has
-        // no client id to sign in with and no token to replace, so a
-        // Reconnect button here would open a browser to nowhere — the repair
-        // is in the broker's own configuration, not in this pane.
+        // Broker-held grant: no client id to sign in with, so Reconnect would open a browser to
+        // nowhere.
         assert_eq!(
             repair(&account(Backend::Imap, AuthMethod::XOAuth2)),
             Repair::Nothing
@@ -406,19 +303,8 @@ mod tests {
 
     #[test]
     fn a_token_account_whose_client_id_is_blank_offers_no_repair_either() {
-        // The row's offer and the boundary's resolution have to agree about
-        // which accounts Reconnect appears on, and the resolution refuses a
-        // blank client id — `Session::browser_sign_in_for` trims it, because
-        // `sign_in_with_browser` further down refuses one too and says so as
-        // a fact about the product ("Postio ships no client id"). An offer
-        // the resolution would turn away is a button that is drawn, pressed,
-        // and answered with a sentence about something the person cannot do
-        // anything about.
-        //
-        // A row can hold one: the store builds `OAuthConfig` from two
-        // non-NULL columns without asking whether either says anything, so
-        // `oauth.is_some()` is not the same question as "there is a client
-        // here".
+        // The offer must agree with `browser_sign_in_for`, which trims and refuses a blank
+        // client id; `oauth.is_some()` is not enough.
         let mut blank = with_own_client(account(Backend::Imap, AuthMethod::XOAuth2));
         blank.oauth.as_mut().expect("an oauth row").client_id = "   ".to_owned();
         assert_eq!(repair(&blank), Repair::Nothing);
@@ -438,10 +324,6 @@ mod tests {
 
     #[test]
     fn a_local_mail_store_has_no_credential_to_repair() {
-        // `provision_local` writes no keyring entry at all, so a Reconnect
-        // button here would be offering to replace a secret that was never
-        // stored — and the auth method on the row is whatever `Account::new`
-        // defaulted to, which is why the backend is asked first.
         assert_eq!(
             repair(&account(
                 Backend::Maildir {
@@ -455,9 +337,6 @@ mod tests {
 
     #[test]
     fn every_broken_credential_gets_a_reason_and_a_button_by_its_route() {
-        // A refused password -- a rotated app password, the commonest way an
-        // account stops working -- and nothing in the keyring at all used to
-        // get no button; only an expired grant did (#1584).
         let refused = offer(Repair::Password, false, Some(Trouble::Rejected), false)
             .expect("a refused password is something to repair");
         assert_eq!(
@@ -480,8 +359,6 @@ mod tests {
 
     #[test]
     fn an_expiry_outranks_what_a_test_found_and_nothing_found_offers_nothing() {
-        // The expiry is read fresh on every settings open; a test result is
-        // whatever the last press of the button said.
         assert_eq!(
             offer(Repair::Browser, true, Some(Trouble::Rejected), false).map(|offer| offer.reason),
             Some("This account's sign-in has expired.".to_owned())
@@ -491,7 +368,6 @@ mod tests {
 
     #[test]
     fn a_credential_nothing_here_can_mend_is_said_but_offers_no_button() {
-        // A broker's token: the row still says what is wrong.
         let broker = offer(Repair::Nothing, false, Some(Trouble::Rejected), false)
             .expect("the trouble is still said");
         assert_eq!(

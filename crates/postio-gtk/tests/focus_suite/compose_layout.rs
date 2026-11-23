@@ -1,26 +1,12 @@
-//! The composer is the message dialog's family (T221; screens.md, "The
-//! composer"): its size rule, a header of detach, title and the shared X, an
-//! action row for its verbs with Send first and the only primary, short
-//! keycaps, one column for the fields and the editor, and the editor drawn
-//! on the dialog's own surface.
-//!
-//! Opened with `c` delivered as GTK delivers a key, and measured on the
-//! screen: what a person sees is the allocated widgets, so that is what is
-//! read.
-
 use adw::prelude::*;
 use gtk::gdk;
 use postio_ui::focus_dialog;
 
 use crate::support::{self, Fixture};
 
-/// A window over one message with the composer open over it, `size` big
-/// (or as the compositor gives it), once the dialog has finished opening.
 async fn composing(size: Option<(i32, i32)>) -> (postio_gtk::window::FocusWindow, adw::Dialog) {
     let fixture = Fixture::empty().await;
-    fixture
-        .file(("Ada Moreno", "ada@example.com"), "Budget", "x", 10)
-        .await;
+    fixture.file_from_ada("Budget", "x", 10).await;
     let (window, _client) = fixture.open_sized(size).await;
     support::keep(fixture);
     if size.is_some() {
@@ -38,10 +24,7 @@ async fn composing(size: Option<(i32, i32)>) -> (postio_gtk::window::FocusWindow
         crate::settle_until(async || window.composer().is_some()).await,
         "Focus mounted no composer"
     );
-    assert!(
-        crate::settle_until(async || support::subjects(&window).len() == 1).await,
-        "the inbox never reached the screen"
-    );
+    support::rows_shown(&window, 1).await;
     assert!(support::deliver(&window, "c"), "nothing took c");
     assert!(
         crate::settle_until(async || window.compose_dialog().is_some()).await,
@@ -61,26 +44,22 @@ async fn composing(size: Option<(i32, i32)>) -> (postio_gtk::window::FocusWindow
     (window, dialog)
 }
 
-/// The one widget wearing `class` under `root`, on screen.
 fn shown(root: &impl IsA<gtk::Widget>, class: &str) -> gtk::Widget {
     let widget = support::only(root, class);
     assert!(widget.is_mapped(), "{class} is not on screen");
     widget
 }
 
-/// `widget`'s bounds in `root`'s coordinates.
 fn bounds(widget: &impl IsA<gtk::Widget>, root: &impl IsA<gtk::Widget>) -> gtk::graphene::Rect {
     widget
         .compute_bounds(root)
         .expect("laid out in the same tree")
 }
 
-/// Whether `widget` is `ancestor` or inside it.
 fn within(widget: &gtk::Widget, ancestor: &gtk::Widget) -> bool {
     widget == ancestor || widget.is_ancestor(ancestor)
 }
 
-/// The text of every keycap under `root` that is on screen.
 fn caps(root: &impl IsA<gtk::Widget>) -> Vec<String> {
     support::with_class(root, "postio-keyhint")
         .into_iter()
@@ -91,15 +70,8 @@ fn caps(root: &impl IsA<gtk::Widget>) -> Vec<String> {
         .collect()
 }
 
-/// The header holds three things -- Detach at the left, the title and its
-/// subtitle centred on the dialog, the shared X at the right -- and the
-/// verbs are a row of their own under it, Send first, as Reply is first in
-/// the message dialog's. There is no footer.
 pub fn the_header_is_detach_title_close_and_the_verbs_have_a_row_of_their_own() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_window, dialog) = composing(None).await;
         let header = shown(&dialog, "focus-compose-header")
             .downcast::<gtk::CenterBox>()
@@ -137,7 +109,6 @@ pub fn the_header_is_detach_title_close_and_the_verbs_have_a_row_of_their_own() 
         let end = header.end_widget().expect("something at the right");
         let close = shown(&dialog, "focus-compose-close");
         assert!(within(&close, &end), "the X is not at the header's right");
-        // Nothing else: no verb and no keycap in the header.
         for class in [
             "focus-compose-send",
             "focus-compose-send-later",
@@ -154,7 +125,6 @@ pub fn the_header_is_detach_title_close_and_the_verbs_have_a_row_of_their_own() 
             "the header draws keycaps: {:?}",
             caps(&header)
         );
-        // The title is centred on the dialog, whatever is beside it.
         let content = dialog.child().expect("content");
         let middle = bounds(&title, &content);
         let centre_x = middle.x() + middle.width() / 2.0;
@@ -164,7 +134,6 @@ pub fn the_header_is_detach_title_close_and_the_verbs_have_a_row_of_their_own() 
             content.width() as f32 / 2.0
         );
 
-        // The action row: under the header, the four verbs in order.
         let row = shown(&dialog, "focus-compose-actions");
         assert!(
             bounds(&row, &content).y()
@@ -197,14 +166,8 @@ pub fn the_header_is_detach_title_close_and_the_verbs_have_a_row_of_their_own() 
     });
 }
 
-/// Send is the dialog's one primary button, and in Focus a primary is a
-/// plain raised button (FR-091): nothing in the composer wears libadwaita's
-/// accent-filled `suggested-action`.
 pub fn send_is_the_one_primary_and_nothing_wears_the_accent() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_window, dialog) = composing(None).await;
         let send = shown(&dialog, "focus-compose-send");
         let primaries: Vec<gtk::Widget> = support::with_class(&dialog, "postio-button-primary")
@@ -236,14 +199,8 @@ pub fn send_is_the_one_primary_and_nothing_wears_the_accent() {
     });
 }
 
-/// The keycaps are the keymap's spelling, compacted as the message
-/// dialog's `Del` is: `Return` is `↵` and `shift` is `⇧`, so no cap is the
-/// widest thing in its row.
 pub fn the_keycaps_are_short() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_window, dialog) = composing(None).await;
         for (class, cap) in [
             ("focus-compose-send", "ctrl+\u{21b5}"),
@@ -268,15 +225,8 @@ pub fn the_keycaps_are_short() {
     });
 }
 
-/// The field rows share one column with the editor: one left edge and one
-/// right edge for every row, the toolbar and the editor; one label column,
-/// so every value starts at one x; and the column is the message dialog's
-/// app-colours column, centred.
 pub fn the_field_rows_share_their_edges() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (window, dialog) = composing(None).await;
         let content = dialog.child().expect("content");
         let rows: Vec<gtk::Widget> = support::with_class(&dialog, "postio-compose-row")
@@ -342,12 +292,10 @@ pub fn the_field_rows_share_their_edges() {
     });
 }
 
-/// `colour` as the CSS `rgb(r, g, b)` a document computes.
 fn css(colour: [u8; 3]) -> String {
     format!("rgb({}, {}, {})", colour[0], colour[1], colour[2])
 }
 
-/// The pixel at (`x`, `y`) of `texture`.
 fn pixel(texture: &gdk::Texture, x: i32, y: i32) -> [u8; 3] {
     let (width, height) = (texture.width(), texture.height());
     assert!(
@@ -361,14 +309,8 @@ fn pixel(texture: &gdk::Texture, x: i32, y: i32) -> [u8; 3] {
     [bytes[at], bytes[at + 1], bytes[at + 2]]
 }
 
-/// The editor is drawn on the dialog's own surface, in light and in dark:
-/// the document's ground is the colour the dialog paints beside it, and the text starts at the column's edge, under the
-/// field names, with no inset of its own.
 pub fn the_editor_is_drawn_on_the_dialogs_surface() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let manager = adw::StyleManager::default();
         manager.set_color_scheme(adw::ColorScheme::ForceLight);
         let (window, dialog) = composing(None).await;
@@ -380,7 +322,6 @@ pub fn the_editor_is_drawn_on_the_dialogs_surface() {
             crate::settle_for(std::time::Duration::from_millis(300)).await;
             let picture = postio_widgets::capture::texture(&dialog).expect("the dialog was drawn");
             let at = bounds(&body, &dialog);
-            // In the dialog's gutter, beside the editor.
             let around = pixel(
                 &picture.texture,
                 (at.x() - 12.0) as i32,
@@ -400,9 +341,8 @@ pub fn the_editor_is_drawn_on_the_dialogs_surface() {
         }
         manager.set_color_scheme(adw::ColorScheme::Default);
         assert_ne!(seen[0], seen[1], "the dialog did not go dark");
-        // The scheme change just made sends the editor a new sheet, which a
-        // slow runner applies after the next read; the padding is judged
-        // once it has landed.
+        // A scheme change sends the editor a new sheet, which a slow runner applies after the next
+        // read: judge once it has landed.
         assert!(
             crate::settle_until(async || composer
                 .test_body_eval("getComputedStyle(document.body).paddingLeft")
@@ -414,24 +354,15 @@ pub fn the_editor_is_drawn_on_the_dialogs_surface() {
     });
 }
 
-/// The field that holds the keyboard shows it: the composer's fields are
-/// flat rows with no frame of their own, and a caret alone blinks out of
-/// half the frames, so the row the keyboard is in draws the accent under it
-/// (reply-and-forward-focus, blank-compose). Read off the pixels.
 pub fn the_field_holding_the_keyboard_shows_it() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (window, dialog) = composing(None).await;
         let composer = window.composer().expect("the composer");
         let rows: Vec<gtk::Widget> = support::with_class(&dialog, "postio-compose-row")
             .into_iter()
             .filter(gtk::Widget::is_mapped)
             .collect();
-        // To is the first row, Subject the third (To, From, Subject).
         let (to, subject) = (&rows[0], &rows[2]);
-        // The row's bottom edge, a pixel in, mid-way along.
         let edge = |row: &gtk::Widget| {
             let at = bounds(row, &dialog);
             (
@@ -470,14 +401,8 @@ pub fn the_field_holding_the_keyboard_shows_it() {
     });
 }
 
-/// The close is the shared X, at the header's right end, and a click on it
-/// -- delivered as GTK delivers one -- closes the composer, keeping the
-/// draft.
 pub fn the_close_is_the_shared_x() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (window, dialog) = composing(None).await;
         let close = shown(&dialog, "focus-compose-close");
         assert!(
@@ -506,14 +431,8 @@ pub fn the_close_is_the_shared_x() {
     });
 }
 
-/// The dialog takes the message dialog's size rule from the window, not a
-/// size of its own: at 1024 wide it is 655 across and the window less 80
-/// tall.
 pub fn the_dialog_follows_the_message_dialogs_size_rule() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (window, dialog) = composing(Some((1024, 700))).await;
         let want = (
             focus_dialog::dialog_width(window.width()),
@@ -528,8 +447,6 @@ pub fn the_dialog_follows_the_message_dialogs_size_rule() {
             window.width(),
             window.height()
         );
-        // And the verbs fit their row at that width, with their keys --
-        // with a reminder's day on Remind too.
         let row = shown(&dialog, "focus-compose-actions");
         let fits = |when: &str| {
             let (_, natural, _, _) = row.measure(gtk::Orientation::Horizontal, -1);
@@ -553,11 +470,8 @@ pub fn the_dialog_follows_the_message_dialogs_size_rule() {
     });
 }
 
-/// The composer's body and fields are the open message's column at every
-/// window width -- `dialog - 40`, the one `focus_dialog` rule the
-/// reader fits too -- and not a width of their own (the Mac composer once
-/// capped its body at 720pt whatever the window, #1896). Measured on the
-/// allocated widgets.
+/// The composer is the reader's column at every width, not a width of its own (the Mac composer
+/// once capped its body at 720pt, #1896).
 async fn column_is_the_readers_at(size: Option<(i32, i32)>) {
     let (window, dialog) = composing(size).await;
     let content = dialog.child().expect("content");
@@ -595,27 +509,18 @@ async fn column_is_the_readers_at(size: Option<(i32, i32)>) {
 
 pub fn the_composer_column_is_the_readers_at_900() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         column_is_the_readers_at(Some((900, 700))).await;
     });
 }
 
 pub fn the_composer_column_is_the_readers_at_the_screens_width() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         column_is_the_readers_at(None).await;
     });
 }
 
 pub fn the_composer_column_is_the_readers_at_1024() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         column_is_the_readers_at(Some((1024, 700))).await;
     });
 }

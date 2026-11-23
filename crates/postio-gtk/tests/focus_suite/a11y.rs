@@ -1,13 +1,3 @@
-//! Focus as a screen reader meets it (FR-096, T142): a row announces its
-//! sender, subject, first line, unread state and marker, and a keycap is
-//! announced once, as its control's shortcut, never read as text.
-//!
-//! GTK records accessible properties only when an accessibility backend is
-//! running; the harness runs the suite under `GTK_A11Y=test`, and
-//! [`require_an_accessibility_backend`] proves it before anything here
-//! draws a conclusion (the classic app's `gtk_accessibility.rs` tells why).
-//! The Orca pass is by hand.
-
 use gtk::prelude::*;
 use gtk::{AccessibleProperty, AccessibleRole};
 
@@ -23,7 +13,6 @@ fn require_an_accessibility_backend() {
     );
 }
 
-/// Every widget under `root` that is a control carrying a keycap.
 fn controls_with_caps(root: &gtk::Widget) -> Vec<(gtk::Widget, gtk::Widget)> {
     let mut found = Vec::new();
     for cap in support::with_class(root, "postio-keyhint") {
@@ -44,18 +33,10 @@ fn controls_with_caps(root: &gtk::Widget) -> Vec<(gtk::Widget, gtk::Widget)> {
 
 pub fn a_row_announces_its_marker_and_every_keycap_is_its_control_s_shortcut() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         require_an_accessibility_backend();
         let fixture = support::Fixture::empty().await;
         let (budget, _) = fixture
-            .file(
-                ("Ada Moreno", "ada@example.com"),
-                "Atlas budget",
-                "The numbers are attached.",
-                10,
-            )
+            .file_from_ada("Atlas budget", "The numbers are attached.", 10)
             .await;
         fixture
             .ask(budget, "Can you approve these by Friday?")
@@ -68,8 +49,6 @@ pub fn a_row_announces_its_marker_and_every_keycap_is_its_control_s_shortcut() {
             "the marked row never drew its marker"
         );
 
-        // The row: a Row, named, and its name says everything a sighted
-        // person reads on it, the marker included.
         let row = row();
         assert!(gtk::test_accessible_has_role(&row, AccessibleRole::Row));
         assert!(gtk::test_accessible_has_property(
@@ -90,14 +69,11 @@ pub fn a_row_announces_its_marker_and_every_keycap_is_its_control_s_shortcut() {
                 "the row does not say {part:?}: {spoken}"
             );
         }
-        // Its drawn Reply button's key is the row's shortcut, not text.
         assert!(
             gtk::test_accessible_has_property(&row, AccessibleProperty::KeyShortcuts),
             "the row's action keys are not its shortcuts"
         );
 
-        // Every keycap on a control is presentation, and its control
-        // carries the key as its shortcut: the chrome and the bulk bar.
         support::keys(&window, &["j", "x"]);
         crate::settle();
         let found = controls_with_caps(window.upcast_ref());

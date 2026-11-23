@@ -1,8 +1,5 @@
-//! Recipient completion: when it is offered, which suggestions it offers
-//! and in what order, how a suggestion reads, and what accepting one does
-//! to the field.
-//!
-//! Shared so the desktop's popover and the terminal's list behave alike.
+//! Recipient completion: when it is offered, which suggestions, their order, and what accepting one
+//! does to the field.
 
 use std::cmp::Ordering;
 
@@ -10,18 +7,11 @@ use postio_model::address::current_entry;
 use postio_model::contact_group::RecipientCandidate;
 use postio_model::{Contact, ContactSource, EmailAddress};
 
-/// How much of the recipient being typed must exist before completion offers
-/// anything.
-///
-/// Four, from #424. One character matches most of an address book, so the
-/// popover opened over the field with a list nobody could choose from yet —
-/// and it did it while a query ran on every keystroke. Four is where a prefix
-/// starts to identify somebody.
+/// One character matches most of an address book; four is where a prefix identifies somebody
+/// (#424).
 pub const MIN_COMPLETION_PREFIX: usize = 4;
 
-/// The completion row's label: an address for a contact, or the name and
-/// size for a group -- distinguishable from a contact at a glance, since
-/// accepting one inserts several addresses rather than one.
+/// A group shows its name and size, since accepting it inserts several addresses.
 pub fn candidate_label(candidate: &RecipientCandidate) -> String {
     match candidate {
         RecipientCandidate::Contact(address) => address.to_string(),
@@ -31,12 +21,7 @@ pub fn candidate_label(candidate: &RecipientCandidate) -> String {
     }
 }
 
-/// `text` with the address being typed replaced by `candidate`, every
-/// address typed before it untouched, and a `, ` left for the next one.
-///
-/// A contact inserts one address; a group inserts every member as its own
-/// address, comma by comma, exactly as if they had been typed individually --
-/// there is no group reference to insert instead (specs/005-contacts).
+/// A group inserts every member as its own address, as if typed; there is no group reference.
 pub fn accepted(text: &str, candidate: &RecipientCandidate) -> String {
     let inserted: String = match candidate {
         RecipientCandidate::Contact(address) => format!("{address}, "),
@@ -51,27 +36,20 @@ pub fn accepted(text: &str, candidate: &RecipientCandidate) -> String {
     replaced
 }
 
-/// What is being typed in `text`, when there is enough of it to look up.
 pub fn prefix(text: &str) -> Option<&str> {
     let (_, token) = current_entry(text);
     (token.chars().count() >= MIN_COMPLETION_PREFIX).then_some(token)
 }
 
-/// One row of the recipient directory (spec 007 T076, research R15): a
-/// person, and how many times the user has written to any of their
-/// addresses -- the "wrote 42 times" a suggestion shows (FR-052).
+/// A person and how many times the user has written to any of their addresses.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Correspondent {
-    /// The person, as the store keeps them.
     pub contact: Contact,
-    /// Messages the user sent to any of this person's addresses, summed
-    /// from `correspondents.sent_count` (T075); zero until that table is
-    /// read.
+    /// Summed from `correspondents.sent_count`; zero until read.
     pub sent_count: u32,
 }
 
 impl From<Contact> for Correspondent {
-    /// A contact nobody has counted letters to yet.
     fn from(contact: Contact) -> Self {
         Self {
             contact,
@@ -80,21 +58,10 @@ impl From<Contact> for Correspondent {
     }
 }
 
-/// At most `limit` candidates for `prefix`, from a directory's `groups`
-/// and `correspondents`: the one completion rule every app shares (research
-/// R15), so an address ranks the same wherever it is typed.
-///
-/// * **Groups first**, whose name begins with the prefix, in the order
-///   given: a group is a deliberate choice the user is likelier typing
-///   towards. A group with no members expands to nothing, so it is never
-///   offered.
-/// * **Then people** one of whose addresses begins with the prefix, or any
-///   word of the name the user gave or the mail last gave them. A person
-///   is offered once per address they own, preferred address first, each
-///   under the person's one name (specs/005-contacts FR-030). The directory
-///   holds live people only: a deleted one is never offered. They are
-///   ranked by the letters written to each, then the address-book band,
-///   then how lately and how often each was seen.
+/// At most `limit` candidates for `prefix`: groups whose name begins with it first, then people
+/// by letters written, address-book band, recency and frequency.
+/// A person is offered once per address under their one name; a group with no members is never
+/// offered.
 pub fn suggest(
     groups: &[(String, Vec<EmailAddress>)],
     correspondents: &[Correspondent],
@@ -104,9 +71,8 @@ pub fn suggest(
     suggest_ranked(groups, correspondents, prefix, limit, false)
 }
 
-/// [`suggest`], and with `by_kind` a robot, a list or a newsletter ranks
-/// below every person and company unless the user has written to it: what a
-/// platform that has adopted people asks for (specs/011-focus-contacts S4).
+/// As `suggest`, and with `by_kind` a robot, list or newsletter ranks below every person unless the
+/// user has written to it.
 pub fn suggest_ranked(
     groups: &[(String, Vec<EmailAddress>)],
     correspondents: &[Correspondent],
@@ -140,22 +106,11 @@ pub fn suggest_ranked(
     candidates
 }
 
-/// Which of two people completion offers first (research R15, over the
-/// address-book band of specs/005-contacts):
-///
-/// 1. the more letters the user wrote to it: a letter is the user's own
-///    act, the one evidence that they want to write there again;
-/// 2. then a contact the user made or imported before one only seen in
-///    mail, because how often a list robot is seen says nothing about
-///    wanting to write to it (specs/005-contacts);
-/// 3. then the more lately seen, and one never seen last;
-/// 4. then the more often seen.
-///
-/// Until letters are counted (T075) every count is zero, and this is the
-/// store's order, `ContactRepository::search`'s.
+/// Order: more letters written, then a contact the user made or imported over one only seen in
+/// mail, then the more lately seen (never seen last), then the more often seen. Until letters are
+/// counted every count is zero and this is the store's order.
 fn rank(a: &Correspondent, b: &Correspondent, by_kind: bool) -> Ordering {
     let band = |row: &Correspondent| row.contact.source == ContactSource::Mail;
-    // Not someone you write to: nobody you have written to is demoted.
     let demoted = |row: &Correspondent| {
         by_kind
             && row.sent_count == 0
@@ -172,7 +127,6 @@ fn rank(a: &Correspondent, b: &Correspondent, by_kind: bool) -> Ordering {
         .then_with(|| b.contact.times_seen.cmp(&a.contact.times_seen))
 }
 
-/// Whether `person` completes `prefix`, which is already lowercase.
 fn completes(person: &Contact, prefix: &str) -> bool {
     prefix.is_empty()
         || person
@@ -185,7 +139,6 @@ fn completes(person: &Contact, prefix: &str) -> bool {
             .any(|name| begins_a_word(&name.to_lowercase(), prefix))
 }
 
-/// Whether `prefix` begins `text` or any space-separated word in it.
 fn begins_a_word(text: &str, prefix: &str) -> bool {
     text.starts_with(prefix)
         || text
@@ -193,8 +146,6 @@ fn begins_a_word(text: &str, prefix: &str) -> bool {
             .any(|(at, _)| text[at + 1..].starts_with(prefix))
 }
 
-/// Every address a person offers, preferred first (the store's order), each
-/// under the person's one name.
 fn offered_addresses(person: &Contact) -> Vec<EmailAddress> {
     let name = person_name(person);
     person
@@ -204,16 +155,12 @@ fn offered_addresses(person: &Contact) -> Vec<EmailAddress> {
         .collect()
 }
 
-/// The address a group member expands to: their preferred one
-/// (specs/005-contacts FR-041).
 pub fn preferred_address(person: &Contact) -> Option<EmailAddress> {
     person
         .preferred_address()
         .map(|owned| EmailAddress::new(person_name(person), owned.address.address.clone()))
 }
 
-/// A person's name for a recipient header -- the one the user set, else the
-/// one the mail gave them -- when they have one beyond their address.
 fn person_name(person: &Contact) -> Option<String> {
     [person.name.as_deref(), person.seen_name.as_deref()]
         .into_iter()
@@ -234,7 +181,6 @@ mod tests {
         ContactAddress::new(AddressId::new(id), EmailAddress::new(name, address))
     }
 
-    /// A person called `name` owning `addresses`, preferred first.
     fn person(name: &str, addresses: &[&str]) -> Contact {
         let base = addresses[0].len() as i64 * 100;
         let mut person = Contact::new(owned(base, Some(name), addresses[0]));
@@ -244,8 +190,6 @@ mod tests {
         person
     }
 
-    /// A correspondent seen on `seen` messages, last `days_ago`, and
-    /// written to `sent` times.
     fn correspondent(
         name: &str,
         address: &str,
@@ -274,10 +218,6 @@ mod tests {
             .collect()
     }
 
-    /// Spec 007 US3 scenario 6: completion ranks by how often the user
-    /// wrote to an address. Seen on a hundred messages, and more lately, but
-    /// never written to, is somebody who writes to the user; written to 42
-    /// times is somebody the user writes to.
     #[test]
     fn an_address_written_to_ranks_above_one_only_seen() {
         let rows = [
@@ -290,8 +230,6 @@ mod tests {
         );
     }
 
-    /// Research R15's rule, whole: sent count, then last seen, then times
-    /// seen.
     #[test]
     fn equals_are_ranked_by_the_later_seen_then_the_more_seen() {
         let rows = [
@@ -311,11 +249,6 @@ mod tests {
         );
     }
 
-    /// The address-book band still holds for what the user did not write: a contact
-    /// they made outranks every mail sighting, however frequent or recent,
-    /// because four hundred sightings of a list robot are not evidence they
-    /// want to write to it. A letter they wrote is that evidence, so it
-    /// outranks the band.
     #[test]
     fn a_letter_written_outranks_the_band_and_the_band_outranks_sightings() {
         let mut made = correspondent("Grace Made", "grace@example.org", 0, 0, 0);
@@ -336,10 +269,6 @@ mod tests {
         );
     }
 
-    /// What matched before still matches, and nothing else: a prefix of
-    /// an address or of any word in a name, and groups, which the user made
-    /// on purpose, first. (A deleted person is not in the directory at all:
-    /// the store hands completion live people only.)
     #[test]
     fn groups_come_first() {
         let rows = [
@@ -361,8 +290,6 @@ mod tests {
         assert_eq!(addresses(&suggest(&groups, &rows, "gra", 2)).len(), 2);
     }
 
-    /// Specs/005-contacts FR-030: a person is offered once per address they
-    /// own, preferred first, every one under the person's one name.
     #[test]
     fn a_person_is_offered_once_per_address_under_one_name() {
         let mut ada = person("Ada Lovelace", &["ada@work.example", "ada@home.example"]);

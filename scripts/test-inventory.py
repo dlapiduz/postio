@@ -198,7 +198,6 @@ def summarise(rows: list[dict], root: Path) -> dict:
             clusters.append(
                 {"item": item, "suites": len(suites), "cases_by_layer": dict(layers), "cpu_s": round(cpu, 6), "above_cheapest": above}
             )
-    # The cases above a cluster's cheapest layer are the ones ADR 0049 would reduce.
     clusters.sort(key=lambda c: (-c["cpu_s"], -c["above_cheapest"], c["item"]))
 
     smells = Counter(s for r in rows for s in r["smells"].split(";") if s)

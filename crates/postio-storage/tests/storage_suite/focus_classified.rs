@@ -1,8 +1,3 @@
-//! What Focus has classified (spec 007, data-model.md "`focus_classified`"):
-//! a record per message, stage and classifier version, and the catch-up's
-//! read of what has none at the current version -- recent inbox mail whose
-//! body is here, newest first (FR-141).
-
 use chrono::{DateTime, TimeDelta, TimeZone, Utc};
 use postio_model::{BodyState, Message, MessageId};
 use postio_storage::Connection;
@@ -17,8 +12,6 @@ fn since() -> DateTime<Utc> {
     now() - TimeDelta::days(30)
 }
 
-/// A message in `mailbox`, received `ago` before now, with its body in
-/// `state`.
 async fn message(
     connection: &Connection,
     account: postio_model::AccountId,
@@ -36,7 +29,6 @@ async fn message(
     id
 }
 
-/// The version `message` is recorded at for `stage`, if it is.
 async fn recorded(connection: &Connection, message: MessageId, stage: &str) -> Option<i64> {
     postio_storage::sql::first(
         connection,
@@ -102,8 +94,6 @@ async fn the_catch_up_reads_recent_inbox_mail_with_a_body_and_no_record_newest_f
         "a batch at a time"
     );
 
-    // Classified at this version: done. At another, or at another stage:
-    // still to do.
     focus
         .record(&[newest], FocusStage::Body, 1)
         .await
@@ -160,9 +150,6 @@ async fn a_record_is_one_per_message_and_stage_at_the_latest_version() {
 
 #[tokio::test]
 async fn the_catch_up_s_read_is_one_statement_that_seeks() {
-    // FR-141: the catch-up runs in the background over the last 30 days of
-    // an inbox, a batch at a time. Each batch is one statement, its rows are
-    // the batch, and it walks the inbox's own index newest first.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -205,9 +192,6 @@ async fn the_catch_up_s_read_is_one_statement_that_seeks() {
 
 #[tokio::test]
 async fn of_the_bodies_that_landed_the_stage_takes_recent_inbox_mail_it_has_not_classified() {
-    // The body stage hears of bodies as they land, in any folder, and takes
-    // the same mail its catch-up would: in an inbox, recent, body here, and
-    // not yet classified at this version. Newest first, in one statement.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -253,9 +237,6 @@ async fn of_the_bodies_that_landed_the_stage_takes_recent_inbox_mail_it_has_not_
 
 #[tokio::test]
 async fn the_filing_catch_up_reads_inbox_mail_filed_since_a_mark_newest_first() {
-    // FR-134, US9 scenario 8: mail another app filed while Focus was closed
-    // -- every message after the newest one Focus had accounted for -- and
-    // not yet filed at this classifier's version, newest first.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;

@@ -39,8 +39,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -51,11 +49,6 @@ REPO_ROOT = HERE.parent
 ISSUE_LAND = HERE / "issue-land.sh"
 WAIT_FOR_CHECKS = HERE / "wait-for-checks.sh"
 CI_EXPECTED_WORKFLOWS = HERE / "checks" / "ci-expected-workflows.py"
-# Sandboxes go under `target/`, which git ignores: inside the worktree because
-# the shared-tree guard only lifts its refusals for worktree paths, and not in
-# its root because a killed run leaves the sandbox behind and `git add -A` in a
-# worktree will commit it. `scripts/checks/check-test-sandboxes.py` says what
-# that cost (#1225).
 SANDBOXES = REPO_ROOT / "target" / "tmp"
 SANDBOXES.mkdir(parents=True, exist_ok=True)
 
@@ -70,15 +63,11 @@ STUB_CHECKS = [
 
 FAILURES: list[str] = []
 
-# The real bug's own message, so a regression reads exactly like the incident
-# it would be.
 DELETE_BRANCH_ERROR = (
     "failed to run git: fatal: 'main' is already used by worktree at "
     "'/home/user/src/postio'"
 )
 
-# Every call is appended to $STUB_DIR/calls, one line each, so the test can
-# assert on what was actually asked for -- not just on the exit code.
 GH_STUB = """#!/usr/bin/env bash
 if [ "$1" = "--version" ]; then echo "gh version 2.98.0 (2026-01-01)"; exit 0; fi
 printf '%s\\n' "$*" >> "$STUB_DIR/calls"
@@ -133,12 +122,6 @@ fi
 exit 0
 """
 
-# A workflow with no `pull_request` trigger at all, so ci-expected-workflows.py
-# predicts nothing is scheduled and wait-for-checks.sh takes its short GRACE
-# path rather than the long REGISTER_TIMEOUT one. A fixture of our own for
-# the reason test-wait-for-checks.py's own FIXTURE_CI_YML gives: this must
-# not start testing the wrong branch of the logic the day ci.yml's own
-# triggers change for operational reasons.
 FIXTURE_CI_YML = "name: CI\non:\n  workflow_dispatch:\n"
 
 
@@ -200,15 +183,9 @@ def land(
     environment["GIT_CONFIG_SYSTEM"] = "/dev/null"
     environment["PATH"] = f"{stub_dir / 'bin'}:{environment['PATH']}"
     environment["STUB_DIR"] = str(stub_dir)
-    # The bare remote the `pr merge` stub pushes into; see GH_STUB.
     environment["ORIGIN"] = str(origin)
-    # Which head branch the stub should treat as merged, and whether it
-    # should delete it itself -- see #1145.
     environment["BRANCH_NAME"] = branch_name
     environment["GH_STUB_DELETE_ON_MERGE"] = "1" if delete_on_merge else "0"
-    # A real merge, watched briefly: the fixture schedules no workflow, so
-    # this settles in POSTIO_CHECKS_GRACE seconds rather than the real
-    # default's 30.
     environment["POSTIO_CHECKS_GRACE"] = "1"
     environment["POSTIO_CHECKS_POLL"] = "1"
     return patience.run(
@@ -283,11 +260,6 @@ def run_case(branch_name: str, delete_on_merge: bool) -> None:
             FAILURES.append(f"{prefix}the script did not say it merged: {result.stdout!r}")
 
         if delete_on_merge:
-            # #1145: GitHub already removed the branch as part of the merge, so
-            # issue-land.sh's own delete attempt must not print git's
-            # "error:" lines for a ref it correctly expects to already be
-            # gone. The failing delete's own stderr is merged into the
-            # script's stdout by its `2>&1`, so that is where to look.
             if "error:" in result.stdout:
                 FAILURES.append(
                     f"{prefix}a successful landing printed a git error after "

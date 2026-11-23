@@ -1,20 +1,8 @@
-//! Remote images for a sender the user allowed (spec 006 FR-025, US5,
-//! `contracts/remote-image-fetch.md`).
-//!
+//! Remote images for a sender the user allowed.
 //! POSTIO-CONSENT: a fetch starts only for a message the user opened, whose
 //! sender is `Allowed` in the remote-image allow-list or for which the user
 //! chose "Show once", and only for URLs that message's sanitized document
-//! names as images. Nothing here prefetches: the reader's owner calls this
-//! when a message opens, never when the list cursor passes one.
-//!
-//! The request is the plainest one that fetches a picture: `GET`, `Accept:
-//! image/*`, a generic `User-Agent` that names neither Postio nor a version,
-//! and no `Cookie`, `Referer`, `Origin` or `Authorization`. Redirects are
-//! followed by hand, at most three, each target re-checked. A response is
-//! capped in bytes and in time, and kept only if it sniffs as an image the
-//! renderer decodes. Bytes live in memory for the process; nothing is
-//! written to disk. Logs carry counts and outcomes, never a URL: a URL is
-//! message content.
+//! names as images. Nothing here prefetches. Logs never carry a URL.
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -26,46 +14,29 @@ use io_http::rfc9110::request::HttpRequest;
 use pimalaya_stream::stream::{Stream, TlsConnectOptions};
 use url::Url;
 
-/// The most a response may carry (research R4's image limit).
 pub const MAX_BYTES: usize = 16 * 1024 * 1024;
-/// How long one image may take, connection to last byte.
 pub const TIMEOUT: Duration = Duration::from_secs(10);
-/// The most redirects one image may follow.
 pub const MAX_REDIRECTS: usize = 3;
-/// The most fetches in flight for one message.
 pub const CONCURRENCY: usize = 4;
-/// Says it is a browser-like client, and nothing about who.
 const USER_AGENT: &str = "Mozilla/5.0";
 
-/// Why an image did not arrive.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Failure {
-    /// More than [`MAX_REDIRECTS`] redirects.
     TooManyRedirects,
-    /// A redirect to something other than `http` or `https`.
     NotHttp,
-    /// More than [`MAX_BYTES`].
     TooLarge,
-    /// Longer than the timeout.
     TimedOut,
-    /// Whatever it said it was, it is not a png, jpeg, gif or webp.
     NotAnImage,
-    /// The server answered with this status.
     Status(u16),
-    /// The connection could not be made or broke.
     Network,
 }
 
-/// What a fetch came to.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Fetched {
-    /// The image's bytes.
     Image(Arc<Vec<u8>>),
-    /// Why not.
     Failed(Failure),
 }
 
-/// Fetches remote images and keeps them in memory for the process.
 pub struct RemoteImageFetcher {
     cache: Mutex<HashMap<String, Fetched>>,
     timeout: Duration,
@@ -78,12 +49,10 @@ impl Default for RemoteImageFetcher {
 }
 
 impl RemoteImageFetcher {
-    /// A fetcher with the production timeout.
     pub fn new() -> RemoteImageFetcher {
         RemoteImageFetcher::with_timeout(TIMEOUT)
     }
 
-    /// A fetcher whose images each have `timeout`.
     pub fn with_timeout(timeout: Duration) -> RemoteImageFetcher {
         RemoteImageFetcher {
             cache: Mutex::new(HashMap::new()),
@@ -91,8 +60,6 @@ impl RemoteImageFetcher {
         }
     }
 
-    /// Fetch every one of one message's image URLs, at most
-    /// [`CONCURRENCY`] at a time, from the cache where it can.
     pub async fn fetch_all(&self, urls: &[Url]) -> Vec<(Url, Fetched)> {
         let mut out = Vec::with_capacity(urls.len());
         for batch in urls.chunks(CONCURRENCY) {
@@ -141,6 +108,11 @@ impl RemoteImageFetcher {
 }
 
 fn fetch_blocking(url: &Url, timeout: Duration) -> Fetched {
+    fetch_one(url, timeout, MAX_BYTES)
+}
+
+/// What the composer's Download and attach uses, with its own limits.
+pub fn fetch_one(url: &Url, timeout: Duration, max_bytes: usize) -> Fetched {
     let deadline = Instant::now() + timeout;
     let mut url = url.clone();
     for _ in 0..=MAX_REDIRECTS {
@@ -154,7 +126,7 @@ fn fetch_blocking(url: &Url, timeout: Duration) -> Fetched {
             Ok(stream) => stream,
             Err(failure) => return Fetched::Failed(failure),
         };
-        let guard = Guard::new(stream, deadline);
+        let guard = Guard::new(stream, deadline, max_bytes);
         let over = guard.over.clone();
         let mut client = HttpClientStd::new(guard);
         let request = HttpRequest {
@@ -174,6 +146,9 @@ fn fetch_blocking(url: &Url, timeout: Duration) -> Fetched {
                     return Fetched::Failed(Failure::Status(status));
                 }
                 let body = out.response.body;
+                if body.len() > max_bytes {
+                    return Fetched::Failed(Failure::TooLarge);
+                }
                 return if image_format(&body) {
                     Fetched::Image(Arc::new(body))
                 } else {
@@ -192,8 +167,8 @@ fn fetch_blocking(url: &Url, timeout: Duration) -> Fetched {
     Fetched::Failed(Failure::TooManyRedirects)
 }
 
-/// Whether `bytes` are a png, jpeg, gif or webp, by their own signature.
-fn image_format(bytes: &[u8]) -> bool {
+/// By signature, never by what the server said. SVG is not an image here: it can carry script.
+pub fn image_format(bytes: &[u8]) -> bool {
     bytes.starts_with(b"\x89PNG\r\n\x1a\n")
         || bytes.starts_with(&[0xff, 0xd8, 0xff])
         || bytes.starts_with(b"GIF87a")
@@ -239,21 +214,21 @@ fn connect(url: &Url, host: &str, deadline: Instant) -> Result<Box<dyn ReadWrite
     }
 }
 
-/// A stream that refuses to read past the deadline or past the size cap,
-/// and says which it was.
 struct Guard {
     inner: Box<dyn ReadWriteSend>,
     deadline: Instant,
     read: usize,
+    max_bytes: usize,
     over: Arc<Mutex<Option<Failure>>>,
 }
 
 impl Guard {
-    fn new(inner: Box<dyn ReadWriteSend>, deadline: Instant) -> Guard {
+    fn new(inner: Box<dyn ReadWriteSend>, deadline: Instant, max_bytes: usize) -> Guard {
         Guard {
             inner,
             deadline,
             read: 0,
+            max_bytes,
             over: Arc::new(Mutex::new(None)),
         }
     }
@@ -280,8 +255,7 @@ impl Read for Guard {
             }
         })?;
         self.read += n;
-        // The headers' allowance on top of the body's.
-        if self.read > MAX_BYTES + 64 * 1024 {
+        if self.read > self.max_bytes + 64 * 1024 {
             return Err(self.refuse(Failure::TooLarge));
         }
         Ok(n)
@@ -308,8 +282,6 @@ mod tests {
 
     const PNG: &[u8] = b"\x89PNG\r\n\x1a\n0000rest-of-a-png";
 
-    /// A loopback server: each connection's request head is recorded, and
-    /// `answer` decides the response for its path.
     struct Server {
         port: u16,
         heads: Arc<Mutex<Vec<String>>>,
@@ -350,17 +322,13 @@ mod tests {
                         let path = head.split_whitespace().nth(1).unwrap_or("/").to_owned();
                         h.lock().expect("never poisoned").push(head);
                         std::thread::sleep(hold);
-                        // Out of flight before the answer goes: the client finishes on
-                        // these bytes and the next batch may connect at once, so a
-                        // decrement after `write_all` raced it and counted a fetch
-                        // that had already ended against one that had just begun.
+                        // Out of flight before the answer goes: the client finishes on these bytes,
+                        // so a decrement after `write_all` raced the next batch.
                         l.fetch_sub(1, Ordering::SeqCst);
                         let mut stream = stream;
                         let _ = stream.write_all(&answer(&path, port));
-                        // Linger before closing, as a real server may. The client
-                        // does not wait for the close, so this costs nothing, and it
-                        // turns a count that drops late from one red run in many
-                        // into a red run every time.
+                        // Linger before closing, as a real server may; a late-dropping count then
+                        // fails every run rather than rarely.
                         std::thread::sleep(Duration::from_millis(30));
                     });
                 }
@@ -398,7 +366,6 @@ mod tests {
             "/fake.png" => ok("image/png", b"<html><body>not a picture</body></html>"),
             "/huge.png" => {
                 let mut body = PNG.to_vec();
-                // Well past the cap, headers' allowance and all.
                 body.resize(MAX_BYTES + 512 * 1024, 0);
                 ok("image/png", &body)
             }
@@ -465,7 +432,7 @@ mod tests {
         ];
         for (path, expected) in cases {
             let got = fetcher.fetch_all(&[server.url(path)]).await;
-            // Compared by kind: a failure's bytes can be 16 MiB of noise.
+            // By kind: a failure's bytes can be huge.
             let kind = |f: &Fetched| match f {
                 Fetched::Image(bytes) => format!("image of {} bytes", bytes.len()),
                 Fetched::Failed(why) => format!("{why:?}"),

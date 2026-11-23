@@ -75,8 +75,6 @@ def main() -> int:
         r = run(root, gnome, fdo)
         case("every ref present passes", r.returncode == 0, r.stdout + r.stderr)
 
-        # GNOME's extension is on freedesktop's branch, not GNOME's own: the
-        # check must look for rust-stable//25.08, not //51.
         canned(root, [x for x in all_refs if x != f"{RUST}//25.08"])
         r = run(root, gnome)
         case("a GNOME manifest needs its extension on the SDK's freedesktop base",
@@ -97,7 +95,6 @@ def main() -> int:
         case("a missing SDK is named", r.returncode != 0 and "org.freedesktop.Sdk//26.08" in r.stdout + r.stderr,
              r.stdout + r.stderr)
 
-        # An SDK whose metadata cannot be read must fail, not pass unchecked.
         canned(root, all_refs)
         (root / "canned" / "metadata" / "org.gnome.Sdk@51").unlink()
         r = run(root, gnome)

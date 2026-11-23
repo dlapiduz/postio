@@ -1,5 +1,3 @@
-//! The composer's editing undo — the stack that is *not* `postio_core::undo`.
-
 use postio_body::{Document, EditHistory};
 
 fn doc(text: &str) -> Document {
@@ -23,8 +21,6 @@ fn undo_and_redo_walk_the_history() {
 
 #[test]
 fn a_typing_run_amends_rather_than_stacking() {
-    // Undo per keystroke is not undo, it is a way to lose an afternoon one
-    // character at a time.
     let mut history = EditHistory::new();
     history.record(doc(""), doc("h"));
     for run in ["he", "hel", "hell", "hello"] {
@@ -49,9 +45,6 @@ fn amending_nothing_says_so_rather_than_inventing_a_step() {
 
 #[test]
 fn a_change_that_changes_nothing_is_not_a_step() {
-    // Every autosave tick and every focus change re-reads the buffer. Without
-    // this, `Ctrl+Z` appears to do nothing several times before it does
-    // something, which reads as a broken key.
     let mut history = EditHistory::new();
     history.record(doc("same"), doc("same"));
 
@@ -60,8 +53,6 @@ fn a_change_that_changes_nothing_is_not_a_step() {
 
 #[test]
 fn typing_after_an_undo_discards_the_branch() {
-    // What every editor does: once you type after undoing, the thing you
-    // undid is gone rather than lurking behind a redo.
     let mut history = EditHistory::new();
     history.record(doc("a"), doc("ab"));
     history.undo();

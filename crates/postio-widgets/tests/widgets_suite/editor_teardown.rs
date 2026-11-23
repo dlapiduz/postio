@@ -1,5 +1,3 @@
-//! Closing a composer must release its WebView and WebKit process.
-
 use std::rc::Rc;
 
 use glib::object::ObjectExt;
@@ -17,11 +15,6 @@ impl BlobSource for NoBlobs {
 }
 
 pub fn closing_editors_releases_their_webviews() {
-    if adw::init().is_err() || gtk::gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-
     let mut weaks = Vec::new();
     for _ in 0..3 {
         let view = editor::editing_view(Rc::new(NoBlobs));

@@ -1,7 +1,3 @@
-//! The pickers (specs/007-postio-focus T091, US5; screens 11-14): a small
-//! popover anchored to the row, whose presets are chosen by number, whose
-//! date field `Tab` reaches, and whose typed date is read on this machine.
-
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -20,7 +16,6 @@ fn local_at(year: i32, month: u32, day: u32, hour: u32, minute: u32) -> DateTime
         .expect("an unambiguous local time")
 }
 
-/// A window with a row-sized button for the picker to hang from.
 fn anchored() -> (gtk::Window, gtk::Button) {
     let anchor = gtk::Button::with_label("Ada Moreno \u{b7} Atlas Q3 budget");
     anchor.set_valign(gtk::Align::Start);
@@ -33,14 +28,7 @@ fn anchored() -> (gtk::Window, gtk::Button) {
     (window, anchor)
 }
 
-/// US5 scenario 1 and T091: at Saturday 16:09 the snooze picker offers the
-/// four presets with their times; `2` picks the second, and `Tab` reaches
-/// the date field, where "tue 9am" is the coming Tuesday (scenario 2).
 pub fn two_picks_the_second_preset_and_tab_focuses_the_date_entry() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let (window, anchor) = anchored();
     let now = local_at(2026, 9, 26, 16, 9);
     let picker = WhenPicker::new(Keymap::defaults(), When::Snooze);

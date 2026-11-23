@@ -1,18 +1,11 @@
-//! Redrawing a list without losing the keyboard (T200).
-//!
-//! A list that clears its rows and builds them again destroys the row that
-//! holds the keyboard, and the window is left with a focus widget that has no
-//! parents. GTK delivers a key from the focus up, so none reaches the window
-//! until a click: `j`, `Delete` or `Esc` do nothing, about once in two runs,
-//! whenever an asynchronous read lands after the list opened. This is the one
-//! place that says what happens to the keyboard when rows are rebuilt.
+//! Redrawing a list without losing the keyboard: a list that clears and rebuilds its rows destroys
+//! the row holding the keyboard, leaving the window a focus widget with no parents, so `j`,
+//! `Delete` or `Esc` do nothing until a click.
 
 use gtk::prelude::*;
 
-/// Run `rebuild`, which clears and refills `list`, and keep the keyboard
-/// where it was: on the row that stands at the place of the one that had it,
-/// or the nearest one that can take it, or the window when the list is empty.
-/// Does nothing about the keyboard when it was not in the list.
+/// The keyboard goes to the row at the place of the one that had it, or the nearest that can take
+/// it, or the window when the list is empty.
 pub(crate) fn keeping_focus(list: &gtk::ListBox, rebuild: impl FnOnce()) {
     let focused_at = list
         .root()
@@ -36,7 +29,6 @@ pub(crate) fn keeping_focus(list: &gtk::ListBox, rebuild: impl FnOnce()) {
         list.row_at_index(index)
             .filter(|row| row.can_focus() && row.is_selectable())
     };
-    // The same place, then onward, then back from it.
     let row = (at..)
         .map_while(|index| list.row_at_index(index).map(|_| index))
         .find_map(takes_focus)
@@ -54,17 +46,10 @@ pub(crate) fn keeping_focus(list: &gtk::ListBox, rebuild: impl FnOnce()) {
     }
 }
 
-/// Build a list view over `model` with `build`, and keep the keyboard in it
-/// whenever `model`'s rows change. A list view draws a changed row as a new
-/// widget and destroys the old one, and the keyboard on it would be left on
-/// nothing -- or handed by GTK to whatever control came next -- until
-/// something put it back (#2136, #2150). It goes back to the row now at the
-/// place of the one that had it: the view's own idea of where its keyboard
-/// is, which it keeps across the change.
-///
-/// Hooked on the model itself, before and after the view's own handler, so
-/// it holds for every change, whoever makes it and however many turns of
-/// the loop the rows take to land.
+/// A list view draws a changed row as a new widget and destroys the old one, so the keyboard would
+/// be left on nothing, or handed by GTK to whatever control came next (#2136, #2150). Hooked on the
+/// model itself, before and after the view's own handler, so it holds for every change however many
+/// loop turns the rows take to land.
 pub(crate) fn keeping_keyboard(
     model: &impl IsA<gtk::gio::ListModel>,
     build: impl FnOnce() -> gtk::ListView,

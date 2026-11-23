@@ -1,18 +1,10 @@
-//! SC-002: designed mail looks the way its sender built it. Each designed
-//! fixture with a reference render is drawn through the production pipeline
-//! -- sanitize, compose, render -- at 800px in light, and compared with
-//! the reference by `postio_test_support::fidelity`
-//! (`contracts/fidelity-metric.md`).
-
 use std::path::PathBuf;
 
 use crate::support::{LIGHT, render, request};
 use postio_model::test_corpus::{self, Category};
 use postio_test_support::fidelity::{self, Image};
 
-/// The references are the message alone, so the reader's own frame around
-/// it -- its padding, border and margins -- is set aside for the comparison
-/// (research R13; the evaluation's S1 did the same for both engines).
+/// The references are the message alone, so the reader's own frame is set aside for the comparison.
 const NEUTRAL_CHROME: &str = "html, body { background: #ffffff !important; margin: 0 !important; padding: 0 !important; }\
  .postio-body { padding: 8px !important; border: 0 !important; border-radius: 0 !important; margin: 0 !important; max-width: none !important; min-height: 0 !important; }\
  .postio-body:has(> .postio-canvas) { padding: 0 !important; }\

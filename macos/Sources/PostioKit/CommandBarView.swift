@@ -2,32 +2,18 @@ import Foundation
 import PostioFFI
 import SwiftUI
 
-/// The command bar's content (specs/009-focus-macos T085; screens 07 to
-/// 09): the saved searches, the lines with their keycaps, and a footer
-/// naming the keys; spec 010's dropdown in their place while the words are
-/// a search.
-///
-/// It draws `CommandBarModel` and decides nothing. The words are the
-/// controller's; the field the person types in is the toolbar's, which
-/// keeps the keyboard.
-///
-/// Every row has a fixed height by its kind, so the panel's height is
-/// arithmetic (`CommandBarView.height`) rather than a measurement: the
-/// same rule as the list's rows.
-///
-/// Semantic colours only. The accent is the highlight's ring, which is
-/// focus.
+/// Every row has a fixed height by its kind, so the panel's height is arithmetic rather than a
+/// measurement.
+/// Semantic colours only; the accent is the highlight's ring.
 public struct CommandBarView: View {
     let model: CommandBarModel
     let saveCap: String?
 
-    /// `saveCap` is the keycap of `save_search` in force (`⌘S`).
     public init(model: CommandBarModel, saveCap: String?) {
         self.model = model
         self.saveCap = saveCap
     }
 
-    /// Fixed heights, by what is drawn.
     public enum Metrics {
         public static let saved: CGFloat = 44
         public static let heading: CGFloat = 30
@@ -36,8 +22,6 @@ public struct CommandBarView: View {
         public static let radius: CGFloat = 10
     }
 
-    /// How tall the bar is for what `model` holds, before the window caps
-    /// it (the lines then scroll).
     public static func height(for model: CommandBarModel) -> CGFloat {
         if model.showsDropdown { return DropdownView.height(for: model.dropdown) }
         var height = Metrics.footer
@@ -45,15 +29,12 @@ public struct CommandBarView: View {
         for row in model.rows {
             height += row.kind == .heading ? Metrics.heading : Metrics.line
         }
-        // The divider above the footer, and a little air under the last line.
         return height + 1 + 4
     }
 
     public var body: some View {
         Group {
             if model.showsDropdown {
-                // Search on the Mac (specs/010-focus-search): the dropdown
-                // in place of the lines, in the same panel.
                 DropdownView(model: model.dropdown) { token in model.dropdown.run(token) }
             } else {
                 lines
@@ -94,8 +75,6 @@ public struct CommandBarView: View {
         }
     }
 
-    // MARK: the saved row
-
     private var savedRow: some View {
         HStack(spacing: 8) {
             Text("Saved").font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
@@ -111,12 +90,10 @@ public struct CommandBarView: View {
                     .overlay(Capsule().strokeBorder(.separator, lineWidth: 1))
                 }
                 .buttonStyle(.plain)
-                // A name is never cut: the hint on the right gives way.
                 .fixedSize()
             }
             Spacer(minLength: 8)
             if let saveCap {
-                // Said whole or not at all: the footer names the key too.
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 4) {
                         KeyCap(saveCap)
@@ -134,8 +111,6 @@ public struct CommandBarView: View {
         .frame(height: Metrics.saved)
     }
 
-    // MARK: the lines
-
     @ViewBuilder
     private func line(_ row: CommandBarModel.Row) -> some View {
         switch row.kind {
@@ -147,8 +122,6 @@ public struct CommandBarView: View {
             }
         }
     }
-
-    // MARK: the footer
 
     private var footer: some View {
         HStack(spacing: 12) {
@@ -170,8 +143,6 @@ public struct CommandBarView: View {
     }
 }
 
-/// A section heading: the name on the left, the rest of it (after the
-/// first " · ") on the right, dimmer.
 private struct HeadingRow: View {
     let text: String
 
@@ -196,8 +167,6 @@ private struct HeadingRow: View {
     }
 }
 
-/// A line that runs: the highlight's ring when it is highlighted, and a
-/// click runs it.
 private struct LineButton<Content: View>: View {
     let row: CommandBarModel.Row
     let highlighted: Bool
@@ -220,7 +189,6 @@ private struct LineButton<Content: View>: View {
     }
 }
 
-/// A command, a correspondent, a hint: the title, its detail, the key.
 private struct PlainLine: View {
     let row: CommandBarModel.Row
 
@@ -240,7 +208,6 @@ private struct PlainLine: View {
     }
 }
 
-/// A footer hint: a keycap and what it does.
 private struct FooterHint: View {
     let cap: String
     let words: String

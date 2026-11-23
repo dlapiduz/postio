@@ -1,13 +1,8 @@
-//! The render thread (research R6): a panic is contained and falls back,
-//! stale results are never delivered, and an abandoned render does not
-//! hold up the next one.
-
 use std::sync::Arc;
 use std::time::Duration;
 
 use postio_render::{FallbackReason, Outcome, RenderRequest, Renderer, Resources, Theme, Viewport};
 
-/// Long enough that only a broken renderer waits it out.
 const PATIENCE: Duration = Duration::from_secs(20);
 
 fn fonts() -> &'static postio_render::fonts::FontSet {
@@ -24,8 +19,6 @@ fn fonts() -> &'static postio_render::fonts::FontSet {
     })
 }
 
-/// A request for a document that looks up one part, so a hook on the
-/// resource table runs inside the render.
 fn request(generation: u64, resources: Resources) -> RenderRequest {
     RenderRequest {
         generation,
@@ -94,7 +87,6 @@ fn after_abandon_the_next_request_goes_to_a_fresh_thread() {
     let abandoned = renderer.request(request(1, held));
     release.wait_until_held(PATIENCE);
     renderer.abandon(1);
-    // Generation 1 is still inside its render; one thread could not answer.
     let next = renderer
         .request(request(2, Resources::new()))
         .recv_timeout(PATIENCE)
@@ -107,13 +99,8 @@ fn after_abandon_the_next_request_goes_to_a_fresh_thread() {
     );
 }
 
-/// A newer request does not queue behind a render already superseded
-/// (specs/007-postio-focus T218). The reader's deadline runs from the
-/// moment it asks, so a request that waited for a stale render to finish
-/// spent its budget on a layout nobody would see: Focus asks twice as a
-/// message opens -- once at the column it had, again at the column the
-/// body's treatment gives it -- and stepping with `j` asks once per key,
-/// so an ordinary newsletter fell back to plain text on a busy machine.
+/// The reader's deadline runs from the moment it asks, so a request that waited for a stale render
+/// spent its budget on a layout nobody would see.
 #[test]
 fn a_newer_request_does_not_wait_for_a_superseded_render() {
     let renderer = Renderer::new(fonts());
@@ -121,8 +108,6 @@ fn a_newer_request_does_not_wait_for_a_superseded_render() {
     let release = held.hold_lookup();
     let stale = renderer.request(request(1, held));
     release.wait_until_held(PATIENCE);
-    // Generation 1 is inside its render, and stays there: the next request
-    // is answered while it is.
     let next = renderer
         .request(request(2, Resources::new()))
         .recv_timeout(PATIENCE / 4)
@@ -135,8 +120,6 @@ fn a_newer_request_does_not_wait_for_a_superseded_render() {
     );
 }
 
-/// A message the sanitizer found over an input cap falls back without the
-/// engine ever parsing it: its lookup would panic, and does not run.
 #[test]
 fn a_message_over_a_cap_falls_back_without_reaching_the_engine() {
     let renderer = Renderer::new(fonts());

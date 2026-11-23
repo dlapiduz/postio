@@ -26,8 +26,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -37,9 +35,6 @@ SCRIPT = HERE / "report-advisory-failure.sh"
 
 FAILURES: list[str] = []
 
-# Records every call it was given, then answers `issue list` from a fixture
-# and no-ops everything else -- which is all `create`/`comment` need, since
-# the test reads back the call log rather than anything `gh` would return.
 GH_STUB = """#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$STUB_DIR/calls"
 if [ "$1" = "issue" ] && [ "$2" = "list" ]; then

@@ -51,17 +51,12 @@ import os
 import subprocess
 from typing import Any
 
-#: The environment variable, spelled exactly as the Rust suite spells it.
-#:
-#: One name, because two dials meaning the same thing is one dial nobody sets.
+# : The environment variable, spelled as the Rust suite spells it; one name, since two dials meaning
+# one thing is a dial nobody sets.
 PATIENCE_ENV = "POSTIO_TEST_PATIENCE"
 
-#: What a self-test gets if it names no deadline of its own.
-#:
-#: Long, on purpose. These deadlines guard against a hang, not against slowness
-#: -- no self-test asserts anything about how long its subject takes -- so the
-#: only cost of a generous one is how long a genuine hang blocks the job, and
-#: the cost of a tight one is #1243.
+# : What a self-test gets if it names no deadline: long on purpose, since it guards a hang and a
+# tight one caused #1243.
 DEFAULT_TIMEOUT = 120.0
 
 

@@ -4,13 +4,6 @@ import Testing
 
 @testable import PostioKit
 
-/// The capture window, as the controller's intents leave it
-/// (specs/009-focus-macos T116, screen 25).
-///
-/// The controller keeps the text, the due day, the project and the
-/// vault's answers, and writes the exact line. The Mac draws every
-/// `FocusOpenCapture`/`FocusCapture` whole and hands back what was typed,
-/// a day or a project picked, and the buttons as their commands.
 @MainActor
 struct CaptureModelTests {
     final class Engine: CaptureEngine {
@@ -82,7 +75,6 @@ struct CaptureModelTests {
         #expect(engine.typed.isEmpty, "the controller's own words are not said back")
         model.typed("Leave comments")
         #expect(engine.typed == ["Leave comments"])
-        // ⌥S: the subject comes back as the text.
         model.apply(.focusCapture(view: Self.view(text: "API draft v3")))
         #expect(model.text == "API draft v3")
 

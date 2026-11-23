@@ -1,7 +1,3 @@
-//! `UID FETCH` of headers: `SELECT` caching, `ENVELOPE`/`BODYSTRUCTURE`
-//! mapping, `CHANGEDSINCE`, and cancellation. All replayed with no socket —
-//! see `imap_mailboxes.rs` for the same pattern applied to `LIST`.
-
 use std::sync::Arc;
 
 use postio_account::backend::UidSet;
@@ -38,8 +34,6 @@ async fn pool_over(connector: ScriptedConnector) -> ConnectionPool {
     )
 }
 
-/// One `FETCH` response line for a message with a simple text body and one
-/// `References` entry recovered from the extra header fetch.
 fn fetch_line(seq: u32, uid: u32) -> String {
     format!(
         "* {seq} FETCH (UID {uid} FLAGS (\\Seen) \
@@ -280,25 +274,14 @@ async fn a_cancelled_token_stops_before_any_round_trip() {
     assert!(connector.log().tls.is_empty());
 }
 
-// ---------------------------------------------------------------------------
-// Resync integrity: a line io-imap could not decode must not pass as success
-// ---------------------------------------------------------------------------
-
-/// A `-1` sequence number is not a valid IMAP `seq-number` (`1*DIGIT`, never
-/// signed) — `imap-types` models one as `NonZeroU32` regardless — so
-/// `io-imap` cannot decode this line and, per ADR 0001, silently drops it
-/// rather than failing the command. Apple Developer Forums thread 694251
-/// reports exactly this shape from iCloud under QRESYNC.
+/// `-1` is not a valid IMAP `seq-number`, so `io-imap` drops the line rather than failing the
+/// command (ADR 0001); iCloud sends this under QRESYNC.
 const UNDECODABLE_UNTAGGED_LINE: &str = "* -1 FETCH (FLAGS (\\Seen))";
 
 #[tokio::test]
 async fn an_unsolicited_flag_update_inside_the_reply_is_not_a_message_that_lost_its_date() {
-    // RFC 3501 §7.4.2 lets a server report a flag change on *any* message at
-    // any time, and a busy mailbox does: another client marks something read
-    // while this fetch is on the wire, and the reply carries `UID` and
-    // `FLAGS` for a message nobody asked about. Read as a requested message
-    // it has no INTERNALDATE, and it failed a whole first sync of an
-    // archive at UID 68776 of a real one.
+    // RFC 3501 §7.4.2: a server may report a flag change on any message. Read as a requested
+    // message it has no INTERNALDATE and failed a whole first sync.
     let unsolicited = "* 4 FETCH (UID 68776 FLAGS (\\Seen) MODSEQ (9001))".to_owned();
     let reply = fetch_reply(&[fetch_line(1, 101), unsolicited]);
     let connector = ScriptedConnector::new(
@@ -360,21 +343,15 @@ async fn a_line_io_imap_could_not_decode_forces_a_full_resync_not_a_silent_succe
     );
 }
 
-/// A `FETCH` line whose top level scans but one of whose items does not
-/// decode: an `INTERNALDATE` no server should send.
-///
-/// io-imap decodes such a line item by item. What decoded is handed back as
-/// the message's data, and the item that did not is named on the side, with
-/// no log line and no error, so the message arrives looking whole but short.
+/// A `FETCH` line with one undecodable item: io-imap hands back the rest and names the failure on
+/// the side, with no log or error.
 fn partly_decodable_fetch_line(seq: u32, uid: u32) -> String {
     fetch_line(seq, uid).replace("\"07-Feb-1994 21:52:25 -0800\"", "\"not a date\"")
 }
 
 #[tokio::test]
 async fn a_fetch_line_that_decoded_only_in_part_forces_a_full_resync() {
-    // The delta for 102 reached io-imap and lost an item on the way in. A
-    // `CHANGEDSINCE` round trip that hands back 101 alone would be read as
-    // "102 did not change", which is the lie ADR 0001's check exists for.
+    // A CHANGEDSINCE reply with 101 alone would read as "102 did not change" (ADR 0001).
     let reply = fetch_reply(&[fetch_line(1, 101), partly_decodable_fetch_line(2, 102)]);
     let connector = ScriptedConnector::new(
         ImapScript::extensions_hidden_until_login()
@@ -405,9 +382,6 @@ async fn a_fetch_line_that_decoded_only_in_part_forces_a_full_resync() {
 
 #[tokio::test]
 async fn a_message_that_decoded_only_in_part_is_left_out_of_a_plain_fetch() {
-    // Outside `CHANGEDSINCE` there is no baseline to miss a delta from, so
-    // the fetch succeeds, with what it can stand behind. A message missing
-    // an item it was asked for is not stored as if it had none.
     let reply = fetch_reply(&[fetch_line(1, 101), partly_decodable_fetch_line(2, 102)]);
     let connector = ScriptedConnector::new(
         ImapScript::extensions_hidden_until_login()
@@ -435,10 +409,8 @@ async fn a_message_that_decoded_only_in_part_is_left_out_of_a_plain_fetch() {
 
 #[tokio::test]
 async fn the_same_undecodable_line_is_tolerated_outside_a_changedsince_fetch() {
-    // The integrity check only brackets an incremental (CHANGEDSINCE)
-    // fetch: it is where a silently dropped delta is indistinguishable from
-    // "nothing changed," which is the failure mode this exists to catch. A
-    // plain fetch with no baseline to miss deltas from is not that case.
+    // The integrity check brackets only CHANGEDSINCE fetches, where a dropped delta looks like
+    // "nothing changed".
     let reply = fetch_reply(&[UNDECODABLE_UNTAGGED_LINE.to_owned(), fetch_line(1, 101)]);
     let connector = ScriptedConnector::new(
         ImapScript::extensions_hidden_until_login()
@@ -461,18 +433,6 @@ async fn the_same_undecodable_line_is_tolerated_outside_a_changedsince_fetch() {
     assert_eq!(messages.len(), 1);
 }
 
-// ---------------------------------------------------------------------------
-// Live server. Ignored by default; needs a real account. See
-// `imap_session.rs` for the connect/capability live tests and
-// `imap_mailboxes.rs` for folder discovery — this covers header fetch.
-// ---------------------------------------------------------------------------
-
-/// Reads the live-test credentials, or skips.
-///
-/// `POSTIO_TEST_IMAP_USER` and `POSTIO_TEST_IMAP_PASSWORD` — for a provider
-/// that requires one, an app-specific password. The host comes from Postio's
-/// preset table when it ships one for the address's domain, and
-/// `POSTIO_TEST_IMAP_HOST` overrides it for anything else.
 async fn live_pool() -> Option<ConnectionPool> {
     let user = std::env::var("POSTIO_TEST_IMAP_USER").ok()?;
     let password = std::env::var("POSTIO_TEST_IMAP_PASSWORD").ok()?;
@@ -509,10 +469,6 @@ async fn live_server_fetches_real_headers() {
         panic!("POSTIO_TEST_IMAP_USER and POSTIO_TEST_IMAP_PASSWORD must be set");
     };
 
-    // A bounded prefix, not "1:*": the point is proving the wire path works
-    // against a real server, not paging through everything a real inbox
-    // holds. Read-only (BODY.PEEK carries no \Seen side effect), so there is
-    // nothing to clean up afterward.
     let uids = UidSet::range(Uid::new(1), Uid::new(500));
 
     let messages = fetch_headers(
@@ -546,13 +502,8 @@ async fn live_server_fetches_real_headers() {
     pool.close();
 }
 
-// ── The promoted headers (spec 007, research R8) ─────────────────────────────
-
-/// The item a filing fetch adds, as the command spells it.
 const PROMOTED: &str = "HEADER.FIELDS (LIST-UNSUBSCRIBE PRECEDENCE AUTO-SUBMITTED)";
 
-/// [`fetch_line`], carrying the promoted headers' block as a literal: what a
-/// server answers a filing fetch with.
 fn filing_line(seq: u32, uid: u32, block: &str) -> String {
     let line = fetch_line(seq, uid);
     let (head, tail) = line.split_at(line.len() - 1);
@@ -660,8 +611,6 @@ async fn a_first_sync_s_fetch_asks_for_none_of_them_and_knows_nothing() {
     );
     assert_eq!(messages[0].promoted, None, "not asked, not known");
 }
-
-// --- a flags-only listing (#1915) --------------------------------------------
 
 #[tokio::test]
 async fn a_flag_sweep_asks_for_uids_and_flags_and_nothing_else() {

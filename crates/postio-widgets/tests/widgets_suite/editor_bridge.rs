@@ -1,26 +1,8 @@
-//! The editor bridge, end to end: #337.
-//!
-//! A [`Document`] goes in, WebKit's editing dialect comes out over the
-//! script-message channel, and the bridge parses it straight back into the
-//! canonical document — the DOM as a working copy, never the record
-//! (ADR 0004 Q3). This proves the loop against a live WebKit: an edit
-//! reaches [`Editor::document`], a typing run coalesces into one undo step,
-//! a pause starts a new one, and `undo`/`redo` move both the record and the
-//! DOM together.
-//!
-//! Coalescing is tested with injected windows (`Editor::with_coalesce`),
-//! never against the wall clock: a huge window must merge two edits, a zero
-//! window must split them — deterministic on any machine, per the
-//! under-load doctrine.
-//!
-//! One test function: GTK is single-threaded and initialised once.
-
 use crate::support_compose::settle_until as settle;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
 
-use gtk::gdk;
 use gtk::prelude::*;
 use postio_body::{Block, Document, Inline};
 use postio_widgets::composer::editor::Editor;
@@ -43,8 +25,6 @@ fn eval(view: &webkit6::WebView, script: &str) -> String {
     result.borrow_mut().take().unwrap()
 }
 
-/// Type `text` at the end of the body, through the same editing machinery a
-/// keystroke uses, so the bridge script's `input` listener fires.
 fn type_text(view: &webkit6::WebView, text: &str) {
     eval(
         view,
@@ -67,14 +47,8 @@ fn paragraph(text: &str) -> Block {
 }
 
 pub fn an_edit_becomes_the_document_and_undo_walks_typing_runs() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under the headless runner to exercise this)");
-        return;
-    }
-
     let window = gtk::Window::new();
     window.set_default_size(600, 400);
-    // A huge window first: every edit in this phase is one typing run.
     let editor = Editor::with_coalesce(Rc::new(|_: &str| None), Duration::from_secs(3600));
     window.set_child(Some(editor.widget()));
     window.present();
@@ -102,7 +76,6 @@ pub fn an_edit_becomes_the_document_and_undo_walks_typing_runs() {
     assert_eq!(editor.document(), start, "load must not count as an edit");
     assert_eq!(*changes.borrow(), 0);
 
-    // ── an edit crosses the bridge and becomes the document ───────────────
     type_text(editor.widget(), " world");
     settle("the edit to reach the record", || {
         editor.document() != start
@@ -114,7 +87,6 @@ pub fn an_edit_becomes_the_document_and_undo_walks_typing_runs() {
     );
     assert!(*changes.borrow() >= 1, "no change notification fired");
 
-    // ── the same run amends, one undo takes the whole run back ────────────
     type_text(editor.widget(), " again");
     settle("the second edit to land", || {
         editor.document().blocks == vec![paragraph("hello world again")]
@@ -131,13 +103,11 @@ pub fn an_edit_becomes_the_document_and_undo_walks_typing_runs() {
         eval(editor.widget(), "document.body.textContent") == "hello"
     });
 
-    // ── redo walks forward again ──────────────────────────────────────────
     editor.redo();
     settle("redo to reapply the run", || {
         editor.document().blocks == vec![paragraph("hello world again")]
     });
 
-    // ── a zero window splits runs ─────────────────────────────────────────
     let split = Editor::with_coalesce(Rc::new(|_: &str| None), Duration::ZERO);
     window.set_child(Some(split.widget()));
     let reloaded = Rc::new(RefCell::new(false));
@@ -169,20 +139,8 @@ pub fn an_edit_becomes_the_document_and_undo_walks_typing_runs() {
         "a zero coalescing window must keep the runs separate"
     );
 
-    // ── The fold is chrome, and must not become the message ─────────────
-    //
-    // A reply's quote is wrapped in `<details><summary>Quoted message</summary>`
-    // by `postio_ui::editor::document::fold_quotes`, so that is what sits in
-    // the editor's DOM. The bridge posts that DOM back and `parse` reads it,
-    // and `summary` is not a tag the authoring subset knows -- so its text was
-    // collected as ordinary content and the draft grew a line saying "Quoted
-    // message". Typing one character into a reply was enough, and the
-    // recipient got it.
-    //
-    // Driven through the editor rather than over `parse` directly, because the
-    // fold is added by the document assembly on the way *in*: a unit test over
-    // `parse` would have to hand-write the very markup whose shape is the
-    // thing in question.
+    // The fold is chrome and must not become the message: `summary` is not in the authoring subset,
+    // so its text was collected and the draft grew a "Quoted message" line.
     let mut reply = Document::new();
     reply.blocks.push(paragraph("Acknowledged."));
     reply.blocks.push(Block::Quoted(postio_body::quote_of(
@@ -198,12 +156,9 @@ pub fn an_edit_becomes_the_document_and_undo_walks_typing_runs() {
         ) == "1"
     });
 
-    // Typing is what makes this happen, and is the whole point: the host's
-    // document is only rebuilt from the DOM when the bridge reports an edit,
-    // so reading it back without typing returns what was loaded and asserts
-    // nothing.
-    // Into the paragraph the reply is written in, not at the end of `body` --
-    // that lands after the `<details>`, where an insert has nowhere to go.
+    // Typing makes the host rebuild its document from the DOM, so reading it back without typing
+    // asserts nothing.
+    // Typed into the reply's paragraph, not the end of `body`, which is after the `<details>`.
     eval(
         editor.widget(),
         "(() => { const p = document.body.firstChild; \
@@ -235,20 +190,9 @@ pub fn an_edit_becomes_the_document_and_undo_walks_typing_runs() {
         "the reply's own words went missing: {text:?}"
     );
 
-    // ── And it opens when you click it, inside a contenteditable ────────
-    //
-    // `docs/archive/specs/002-compose-editor` T048 left this to a person at a display,
-    // and the folded-by-default half is covered above and in
-    // `postio_ui::editor::document`'s own tests. This is the other half, and
-    // it is the half with a real way to fail: the fold sits *inside* the
-    // editing surface, where a click's ordinary job is to place a caret. The
-    // mitigation is `<summary contenteditable="false">`, and whether that is
-    // enough is a question about WebKit rather than about our markup — which
-    // is exactly the kind a test should answer once instead of a person
-    // answering it every release.
-    //
-    // No script runs the fold, by design (FR-041), so `open` flipping is the
-    // browser doing it.
+    // The fold sits inside the editing surface, where a click places a caret; `<summary
+    // contenteditable="false">` is the mitigation, and whether it suffices is a WebKit question.
+    // No script runs the fold, so `open` flipping is the browser's doing.
     let open = || eval(editor.widget(), "document.querySelector('details').open");
     assert_eq!(open(), "false", "a reply's quote starts folded");
 
@@ -263,8 +207,6 @@ pub fn an_edit_becomes_the_document_and_undo_walks_typing_runs() {
         "clicking the summary did not open the quote"
     );
 
-    // And it closes again, because a fold that only opens is a disclosure a
-    // person cannot undo.
     eval(
         editor.widget(),
         "(() => { document.querySelector('details > summary').click();            return 'clicked'; })()",
@@ -273,20 +215,9 @@ pub fn an_edit_becomes_the_document_and_undo_walks_typing_runs() {
     assert_eq!(open(), "false", "the quote would not fold back up");
 }
 
-/// The editor page says when its script is listening (#1716).
-///
-/// The page's HTML makes the body editable the moment it is parsed; the
-/// script that turns edits into bridge messages is injected afterwards, at
-/// document end. A test that types once the body is editable can type into
-/// that gap -- the edits happen, nothing reports them, and its wait for the
-/// edit to cross the bridge runs out its deadline. That failed on CI twice in
-/// a week. `editor.js` sets the marker as its last statement, and the tests
-/// that type wait for it.
+/// The page's script is injected at document end, after the body is already editable; typing into
+/// that gap is never reported (#1716). `editor.js` sets the marker last.
 pub fn the_editor_page_says_when_its_script_is_listening() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under the headless runner to exercise this)");
-        return;
-    }
     let window = gtk::Window::new();
     window.set_default_size(600, 400);
     let editor = Editor::with_coalesce(Rc::new(|_: &str| None), Duration::from_millis(1));
@@ -311,20 +242,9 @@ pub fn the_editor_page_says_when_its_script_is_listening() {
     );
 }
 
-/// A freshly loaded page holds its caret at the start of the body.
-///
-/// A reply is written above the quote, so typing into a page nobody has
-/// clicked yet has to land there. The composer used to ask for the caret
-/// with a script sent straight after `load`, which is asynchronous: the
-/// script ran against the page being replaced, the new page had no
-/// selection at all, and what was typed went nowhere -- the storyboard
-/// review of `body-typing-is-not-eaten` showed the reply queued as a bare
-/// quote.
+/// A reply is written above the quote. A caret requested by a script sent straight after `load` ran
+/// against the page being replaced, so typing went nowhere.
 pub fn a_loaded_page_takes_typing_at_the_start_of_the_body() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under the headless runner to exercise this)");
-        return;
-    }
     let window = gtk::Window::new();
     window.set_default_size(600, 400);
     let editor = Editor::with_coalesce(Rc::new(|_: &str| None), Duration::from_millis(1));
@@ -352,7 +272,6 @@ pub fn a_loaded_page_takes_typing_at_the_start_of_the_body() {
         "a freshly loaded page has no caret at the start of the body"
     );
 
-    // No selection is made here: this is a keystroke into an untouched page.
     eval(
         editor.widget(),
         "(() => { document.execCommand('insertText', false, 'typed '); return 'ok'; })()",
@@ -367,18 +286,10 @@ pub fn a_loaded_page_takes_typing_at_the_start_of_the_body() {
     );
 }
 
-/// The caret is drawn only while the body has the keyboard.
-///
-/// The page keeps a selection from load so that typing lands at the start,
-/// and WebKit draws that selection as a caret even while the keyboard is in
-/// To: a person looking for where to type saw the caret in the body and
-/// started the message there. The page paints it transparent until the web
-/// view has the keyboard, and the selection is untouched either way.
+/// The page keeps a selection from load so typing lands at the start; WebKit draws it as a caret
+/// even while the keyboard is in To, so the page paints it transparent until the view has the
+/// keyboard.
 pub fn the_caret_is_drawn_only_while_the_body_has_the_keyboard() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under the headless runner to exercise this)");
-        return;
-    }
     let window = gtk::Window::new();
     window.set_default_size(600, 400);
     let row = gtk::Box::new(gtk::Orientation::Vertical, 0);

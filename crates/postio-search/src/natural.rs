@@ -1,61 +1,8 @@
-//! Plain English, lowered into the one query language (spec FR-062,
-//! research R5).
-//!
-//! The command bar takes "the invoice Ada sent last month" and shows it as
-//! chips: `invoice from:ada after:2026-08-01 before:2026-09-01`. The chips
-//! are not a reading of the sentence alongside some other evaluation of it
-//! -- **they are the query** (constitution III). [`lower`] returns exactly
-//! what [`crate::parse`] makes of the lowered text, so running the chips
-//! returns what typing those operators by hand returns, and there is no
-//! second language for the sentence to mean something else in.
-//!
-//! # The rules
-//!
-//! Deterministic, local, and small enough to state:
-//!
-//! * **Correspondents**, when the words around a name say so: after `from`
-//!   or `by` (or `sent by`), or before `sent` or `wrote`, a name becomes
-//!   `from:`; after `to` (or `sent to`), `to:`. A name is only a name when
-//!   the caller's address book knows it -- the `names` closure, tried on the
-//!   longest run of up to three words first -- or when it is an address.
-//!   Names joined by `or` after one cue are either of them: "from Ada or
-//!   Grace" is `from:{ada grace}` (spec 010, D26).
-//! * **Dates**, as bounds: `today`, `yesterday`, `this week`, `last month`,
-//!   `last year`, `last Monday` become an `after:`/`before:` pair; `in
-//!   August` and `in 2025` too. `since`, `before` and `after` take any of
-//!   those, a weekday, a month, or a date `after:` would read, and become
-//!   one bound. `the last 30 days` and `past week` are an `after:` alone. A
-//!   week starts on Monday, as the pickers' "Monday morning" does.
-//! * **Ago**: `2 weeks ago`, `a month ago`, `3 days ago` are the calendar
-//!   day, week, month or year that held the date that far back -- `2 weeks
-//!   ago` on a Saturday is the Monday-to-Sunday week a fortnight back.
-//! * **Seasons**, meteorological and northern: spring is March to May,
-//!   summer June to August, autumn (or fall) September to November, winter
-//!   December to February. `last spring` is the latest spring that has
-//!   ended; `since winter` and `in summer` take the latest that has begun,
-//!   as a month does.
-//! * **Structure and state**: `with attachments` is `has:attach` (and
-//!   `without attachments` its negation), `unread` is `is:unread`, `flagged`
-//!   is `is:flagged`, and `in` a mailbox's role -- `in archive`, `in spam` --
-//!   is `in:`.
-//! * **Operators, quoted phrases and negations pass through**: typing the
-//!   language is always allowed.
-//! * **Stop words are dropped** -- articles, pronouns, prepositions, and
-//!   "email" or "message", which say what is being searched rather than
-//!   what for.
-//! * **Every other word stays free text**, which already searches senders,
-//!   subjects and bodies.
-//!
-//! # What it deliberately does not lower
-//!
-//! A bare name, a bare month or a bare weekday ("Ada", "August invoices")
-//! stays free text: without a word that says it is a sender or a date, it is
-//! as likely to be a subject. `in` a folder that is not a role ("in
-//! Receipts") stays free text too: `in:` naming a folder that does not exist
-//! selects nothing rather than everything, so guessing wrong would hide every
-//! result. The bar's own `in:` completion is how a folder is named.
-//!
-//! Pure: no clock (`today` is a parameter), no network, no model.
+//! Plain English lowered into the one query language: the chips are the query, since [`lower`]
+//! returns exactly what [`crate::parse`] makes of the lowered text. Deterministic, local, pure
+//! (`today` is a parameter).
+//! A bare name, month or weekday stays free text, and so does `in` a folder that is not a role:
+//! `in:` naming a missing folder selects nothing, so guessing wrong would hide every result.
 
 use chrono::{Datelike, Days, Months, NaiveDate, Weekday};
 
@@ -63,11 +10,8 @@ use crate::ParsedQuery;
 use crate::date::{month_from_name, parse_date, weekday_from_name};
 use crate::query::{Field, Span};
 
-/// The longest run of words tried as one name: "Ada Moreno", "Mary Ann
-/// Evans".
 const NAME_WORDS: usize = 3;
 
-/// Words that say nothing about which mail is meant.
 const STOP_WORDS: &[&str] = &[
     "a", "about", "after", "all", "an", "and", "any", "are", "at", "be", "been", "before", "by",
     "email", "emails", "find", "for", "from", "get", "give", "i", "in", "is", "it", "its", "list",
@@ -76,48 +20,26 @@ const STOP_WORDS: &[&str] = &[
     "we", "were", "which", "who", "whose", "with", "you", "your",
 ];
 
-/// `text`, read as plain English and lowered into the query language, with
-/// `today` as the day relative dates count from and `names` as the address
-/// book: given a name as typed ("Ada", "Ada Moreno"), what `from:` or `to:`
-/// should say for that correspondent, or `None` for a name it does not know.
-///
-/// The result is the parse of the lowered text, so its tokens are the chips
-/// and its input is what the bar's entry holds while the chips are edited.
-/// See the module for the rules.
+/// `names` is the address book: given a name as typed, what `from:` or `to:` should say, or `None`
+/// for an unknown name.
 pub fn lower(text: &str, today: NaiveDate, names: &dyn Fn(&str) -> Option<String>) -> ParsedQuery {
     lower_with_origins(text, today, names).query
 }
 
-/// A sentence lowered, with what each of its tokens came from: the
-/// "Understood as" bar's tiles (spec 010 US7), each "from ‘last month’".
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Lowered {
-    /// Exactly [`lower`]'s answer.
     pub query: ParsedQuery,
-    /// One a token of `query`, in the same order.
     pub origins: Vec<Origin>,
 }
 
-/// Where one token of a [`Lowered`] query came from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Origin {
-    /// The token's index in `query.tokens()`.
     pub token: usize,
-    /// The bytes of the English sentence it was lowered from, cue words
-    /// included ("from ada" for `from:ada`), punctuation around them not;
     /// `None` when the person typed the token in the language itself.
     pub from: Option<Span>,
-    /// The words, as typed: the sentence's text at `from`, or the token
-    /// itself when it was typed as is.
     pub words: String,
 }
 
-/// [`lower`], and for each token the words of `text` it came from.
-///
-/// Every token comes from one step of the lowering, which reads a run of
-/// words and writes one or two operators or a word: those operators' origin
-/// is that run. A date pair (`after:` and `before:`) shares its origin. Stop
-/// words write nothing and so are nobody's origin.
 pub fn lower_with_origins(
     text: &str,
     today: NaiveDate,
@@ -129,7 +51,6 @@ pub fn lower_with_origins(
         today,
         names,
     };
-    // Each piece of the lowered text, and the words it came from.
     let mut out = Vec::new();
     let mut sources: Vec<(usize, usize)> = Vec::new();
     let mut at = 0;
@@ -140,8 +61,6 @@ pub fn lower_with_origins(
         at = next;
     }
 
-    // Where each piece lands in the joined text, so a token is traced back
-    // by its span whatever the parser made of the piece.
     let mut joined = String::new();
     let mut placed = Vec::with_capacity(out.len());
     for piece in &out {
@@ -182,23 +101,14 @@ pub fn lower_with_origins(
     Lowered { query, origins }
 }
 
-/// One word, as typed.
 struct Word {
-    /// Where its text sits in the sentence, without the punctuation around
-    /// it: what an origin points at.
     core: Span,
-    /// Exactly as typed: what passes through when it is the language already.
     raw: String,
-    /// Without the punctuation around it, in the case it was typed in.
     bare: String,
-    /// `bare`, lowercased: what the rules compare.
     key: String,
-    /// An operator, a quoted phrase or a negation: the language already.
     verbatim: bool,
 }
 
-/// Splits `text` into words as the parser does: at whitespace, keeping a
-/// quoted phrase and a set of values (`from:{ada tomas}`, D26) in one word.
 fn words(text: &str) -> Vec<Word> {
     let mut out = Vec::new();
     let mut cursor = 0;
@@ -214,7 +124,6 @@ fn words(text: &str) -> Vec<Word> {
     out
 }
 
-/// The word `raw`, which starts at byte `start` of the sentence.
 fn word(raw: String, start: usize) -> Word {
     let punctuation = |c: char| !c.is_alphanumeric();
     let core = match raw.trim_start_matches(punctuation).len() {
@@ -243,8 +152,6 @@ fn word(raw: String, start: usize) -> Word {
     }
 }
 
-/// A run of whole days: `from` inclusive and `until` exclusive, the way
-/// `after:` and `before:` read their dates.
 #[derive(Debug, Clone, Copy)]
 struct Period {
     from: NaiveDate,
@@ -267,7 +174,6 @@ impl Period {
     }
 }
 
-/// A calendar unit a period can be "this" or "last" of.
 #[derive(Debug, Clone, Copy)]
 enum Unit {
     Week,
@@ -282,8 +188,6 @@ struct Lowering<'a> {
 }
 
 impl Lowering<'_> {
-    /// Lowers what starts at word `at` into `out`, returning the index of the
-    /// next word not yet read.
     fn step(&self, at: usize, out: &mut Vec<String>) -> usize {
         let word = &self.words[at];
         if word.verbatim {
@@ -311,7 +215,6 @@ impl Lowering<'_> {
         at + 1
     }
 
-    /// The comparable form of word `at`, if it is plain English.
     fn key(&self, at: usize) -> Option<&str> {
         self.words
             .get(at)
@@ -319,7 +222,6 @@ impl Lowering<'_> {
             .map(|word| word.key.as_str())
     }
 
-    /// `with attachments`, `without attachments`.
     fn attachments(&self, at: usize) -> Option<(usize, String)> {
         let negated = match self.key(at)? {
             "with" | "has" | "having" => false,
@@ -333,8 +235,7 @@ impl Lowering<'_> {
         Some((at + 2, operator.to_owned()))
     }
 
-    /// `in archive`, `in spam`: a mailbox by its role, which every account
-    /// has whatever its folders are called.
+    /// A mailbox by its role, which every account has whatever its folders are called.
     fn folder(&self, at: usize) -> Option<(usize, String)> {
         if self.key(at)? != "in" {
             return None;
@@ -353,8 +254,6 @@ impl Lowering<'_> {
         Some((at + 2, format!("in:{role}")))
     }
 
-    /// `from Ada`, `by Ada`, `to Ada`, `sent to Ada`, `Ada sent`, `Ada
-    /// wrote`.
     fn correspondent(&self, at: usize) -> Option<(usize, String)> {
         if matches!(self.key(at)?, "sent" | "wrote" | "written")
             && let Some(found) = self.after_cue(at + 1)
@@ -374,9 +273,6 @@ impl Lowering<'_> {
         })
     }
 
-    /// A name after the cue at `at`: `from`, `by` or `to`; and more joined
-    /// by `or`, which is either of them (D26): "from Ada or Grace" is
-    /// `from:{ada grace}`.
     fn after_cue(&self, at: usize) -> Option<(usize, String)> {
         let field = match self.key(at)? {
             "from" | "by" => "from",
@@ -394,8 +290,6 @@ impl Lowering<'_> {
         Some((next, set_operator(field, &values)))
     }
 
-    /// The person named at word `at` -- the longest run the address book
-    /// knows, or an address, which needs none -- and the word after it.
     fn correspondent_at(&self, at: usize) -> Option<(usize, String)> {
         if let Some(found) = (1..=NAME_WORDS)
             .rev()
@@ -408,7 +302,6 @@ impl Lowering<'_> {
         (!local.is_empty() && !domain.is_empty()).then(|| (at + 1, word.bare.clone()))
     }
 
-    /// What the address book says for the `len` words at `at`, as one name.
     fn name(&self, at: usize, len: usize) -> Option<String> {
         let words = self.words.get(at..at + len)?;
         if words
@@ -425,7 +318,6 @@ impl Lowering<'_> {
         (self.names)(&name).filter(|value| !value.trim().is_empty())
     }
 
-    /// A date phrase at `at`, as the operators it lowers to.
     fn dates(&self, at: usize) -> Option<(usize, Vec<String>)> {
         if let Some((next, period)) = self.ago(at) {
             return Some((next, period.bounds()));
@@ -469,8 +361,6 @@ impl Lowering<'_> {
         }
     }
 
-    /// The days a phrase at `at` names: `today`, `yesterday`, `this week`,
-    /// `last month`, `last Monday`, a weekday, a month, a year, or a date.
     fn period(&self, at: usize) -> Option<(usize, Period)> {
         let key = self.key(at)?;
         match key {
@@ -510,8 +400,6 @@ impl Lowering<'_> {
         Some((at + 1, period))
     }
 
-    /// `2 weeks ago`, `a month ago`: the calendar unit that held the date
-    /// that far back.
     fn ago(&self, at: usize) -> Option<(usize, Period)> {
         let count: u32 = match self.key(at)? {
             "a" | "an" | "one" => 1,
@@ -537,7 +425,6 @@ impl Lowering<'_> {
         Some((at + 3, period))
     }
 
-    /// The week (from Monday), month or year `date` falls in.
     fn containing(unit: Unit, date: NaiveDate) -> Option<Period> {
         let from = match unit {
             Unit::Week => {
@@ -554,8 +441,6 @@ impl Lowering<'_> {
         Some(Period { from, until })
     }
 
-    /// The latest season starting in month `first` that has ended by today
-    /// (`ended`), or that has begun.
     fn season(&self, first: u32, ended: bool) -> Option<Period> {
         let today = self.today;
         let mut year = today.year();
@@ -573,7 +458,6 @@ impl Lowering<'_> {
         }
     }
 
-    /// This or last week, month or year.
     fn calendar(&self, unit: Unit, back: bool) -> Option<Period> {
         let today = self.today;
         let (start, step) = match unit {
@@ -613,7 +497,6 @@ impl Lowering<'_> {
         })
     }
 
-    /// The last `weekday` on or before today, or strictly before it.
     fn latest(&self, weekday: Weekday, strictly: bool) -> Option<NaiveDate> {
         let today = self.today;
         let mut back =
@@ -624,8 +507,7 @@ impl Lowering<'_> {
         today.checked_sub_days(Days::new(u64::from(back)))
     }
 
-    /// The last `month` that has begun: in September, August is this year's
-    /// and December last year's.
+    /// In September, August is this year's and December last year's.
     fn month(&self, month: u32) -> Option<Period> {
         let year = if month <= self.today.month() {
             self.today.year()
@@ -639,7 +521,6 @@ impl Lowering<'_> {
         })
     }
 
-    /// A year that has begun, written as four digits.
     fn year(&self, key: &str) -> Option<Period> {
         if key.len() != 4 || !key.chars().all(|c| c.is_ascii_digit()) {
             return None;
@@ -654,7 +535,6 @@ impl Lowering<'_> {
         })
     }
 
-    /// `the last 30 days`, `past week`: from that far back until now.
     fn rolling(&self, at: usize) -> Option<(usize, Vec<String>)> {
         let (count, unit_at) = match self.key(at + 1)?.parse::<u32>() {
             Ok(count) => (count, at + 2),
@@ -672,7 +552,6 @@ impl Lowering<'_> {
     }
 }
 
-/// The first month of a season, by name: meteorological, northern.
 fn season_from_name(name: &str) -> Option<u32> {
     match name {
         "spring" => Some(3),
@@ -683,8 +562,6 @@ fn season_from_name(name: &str) -> Option<u32> {
     }
 }
 
-/// `field:value` for one value, `field:{a b}` for more (D26), each quoted
-/// when it has a space in it.
 fn set_operator(field: &str, values: &[String]) -> String {
     match values {
         [one] => operator(field, one),
@@ -701,7 +578,6 @@ fn set_operator(field: &str, values: &[String]) -> String {
     }
 }
 
-/// `field:value`, quoted when the value has a space in it.
 fn operator(field: &str, value: &str) -> String {
     let value: String = value.chars().filter(|c| *c != '"').collect();
     if value.chars().any(char::is_whitespace) {
@@ -719,13 +595,10 @@ mod tests {
     use crate::parse;
     use crate::query::TokenKind;
 
-    /// Saturday 26 September 2026, the clock screen 07 is drawn at.
     fn today() -> NaiveDate {
         NaiveDate::from_ymd_opt(2026, 9, 26).expect("a real date")
     }
 
-    /// The address book the tests search: two correspondents, one of them
-    /// known by a two-word name as well.
     fn names(name: &str) -> Option<String> {
         match name.to_lowercase().as_str() {
             "ada" => Some("ada".to_owned()),
@@ -735,16 +608,11 @@ mod tests {
         }
     }
 
-    /// Each phrase, and the query a person could have typed by hand instead.
     const LOWERED: &[(&str, &str)] = &[
-        // Screen 07's sentence (spec US4 scenario 1). "invoice" stays free
-        // text, which already searches subjects; the screen's `subject:`
-        // chip is a recorded difference (research R5).
         (
             "the invoice Ada sent last month",
             "invoice from:ada after:2026-08-01 before:2026-09-01",
         ),
-        // Correspondents, by the words around their names.
         ("invoice from Ada", "invoice from:ada"),
         ("budget by Grace", "budget from:grace"),
         ("notes Grace wrote", "notes from:grace"),
@@ -755,7 +623,6 @@ mod tests {
             "report from:ada.moreno@example.org",
         ),
         ("from ada@example.com", "from:ada@example.com"),
-        // Dates, as a pair of bounds (or one, when the range is open).
         ("today", "after:2026-09-26 before:2026-09-27"),
         ("yesterday", "after:2026-09-25 before:2026-09-26"),
         ("this week", "after:2026-09-21 before:2026-09-28"),
@@ -774,7 +641,6 @@ mod tests {
         ("before August", "before:2026-08-01"),
         ("after August", "after:2026-09-01"),
         ("the last 30 days", "after:2026-08-27"),
-        // Structure and state.
         (
             "emails from Grace with attachments",
             "from:grace has:attach",
@@ -783,7 +649,6 @@ mod tests {
         ("unread flagged invoices", "is:unread is:flagged invoices"),
         ("invoices in archive", "invoices in:archive"),
         ("in spam", "in:junk"),
-        // What the person typed in the language itself passes through.
         (
             "from:ada budget last month",
             "from:ada budget after:2026-08-01 before:2026-09-01",
@@ -792,9 +657,7 @@ mod tests {
             "\"quarterly report\" from Ada",
             "\"quarterly report\" from:ada",
         ),
-        // Punctuation is not part of a word.
         ("invoice, from Ada?", "invoice from:ada"),
-        // A set typed in the language is one word, spaces and all (D26).
         (
             "from:{ada@example.com tomas@example.com} budget last month",
             "from:{ada@example.com tomas@example.com} budget after:2026-08-01 before:2026-09-01",
@@ -838,9 +701,6 @@ mod tests {
 
     #[test]
     fn words_it_cannot_lower_stay_free_text() {
-        // Spec FR-062 and US4 scenario 8. A name the address book does not
-        // know is not a correspondent, whatever word is in front of it; a
-        // word after "in" that is not a mailbox's role is not a folder.
         for (text, typed) in [
             ("quarterly budget review", "quarterly budget review"),
             ("from Zork", "Zork"),
@@ -859,8 +719,6 @@ mod tests {
 
     #[test]
     fn a_lowering_is_only_ever_complete_operators_and_free_text() {
-        // Chips of the one language (constitution III): nothing half-typed,
-        // and the query is exactly the parse of its own text.
         for (text, _) in LOWERED {
             let lowered = lower(text, today(), &names);
             assert!(!lowered.is_empty(), "{text:?} lowered to nothing");
@@ -875,12 +733,8 @@ mod tests {
         }
     }
 
-    /// Spec 010 US7: each sentence, the query it lowers to, and for each of
-    /// its tokens the words of the sentence it came from -- `None` for a
-    /// token the person typed in the language itself.
     #[allow(clippy::type_complexity)]
     const ORIGINS: &[(&str, &str, &[Option<&str>])] = &[
-        // Screen 05.
         (
             "invoices from ada last month",
             "invoices from:ada after:2026-08-01 before:2026-09-01",
@@ -891,7 +745,6 @@ mod tests {
                 Some("last month"),
             ],
         ),
-        // The design's date examples (design SPEC "Plain English").
         ("since july", "after:2026-07-01", &[Some("since july")]),
         (
             "2 weeks ago",
@@ -924,7 +777,6 @@ mod tests {
             "report from:ada.moreno@example.org",
             &[Some("report"), Some("Ada Moreno sent")],
         ),
-        // A quoted phrase and an operator are the language already.
         (
             "\"quarterly report\" from Ada",
             "\"quarterly report\" from:ada",
@@ -935,9 +787,6 @@ mod tests {
             "from:ada budget after:2026-07-01",
             &[None, Some("budget"), Some("since July")],
         ),
-        // Stop words leave no token and no origin; punctuation is not part
-        // of the words a token came from; spans are bytes, and a word
-        // before them may be more than one byte a character.
         (
             "show me the invoices, from Ada?",
             "invoices from:ada",
@@ -948,8 +797,6 @@ mod tests {
             "café receipts from:ada",
             &[Some("café"), Some("receipts"), Some("from Ada")],
         ),
-        // Either of two people is one set, from all the words that said so
-        // (D26).
         (
             "invoices from ada or grace",
             "invoices from:{ada grace}",
@@ -1010,7 +857,6 @@ mod tests {
 
     #[test]
     fn the_same_words_always_give_the_same_chips() {
-        // Spec US4 scenario 8.
         for (text, _) in LOWERED {
             let first = lower(text, today(), &names);
             for _ in 0..3 {

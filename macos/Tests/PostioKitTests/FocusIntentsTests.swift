@@ -3,18 +3,8 @@ import Testing
 
 @testable import PostioKit
 
-/// What the controller says about the list, applied to the model the table
-/// and the bar read (specs/009-focus-macos T048, T049).
-///
-/// Each intent changes exactly what it says and nothing else: a cursor that
-/// moved must not clear the selection, a selection must not move the
-/// cursor, and a toast must leave the list alone. The controller decides;
-/// the Mac only holds the answer, so a field changed here that the event
-/// did not name is the Mac having an opinion of its own.
 @MainActor
 struct FocusIntentsTests {
-    /// A model with something in every field, so "nothing else changed" is
-    /// a claim about real values rather than about defaults.
     static func busy() -> FocusIntents {
         let focus = FocusIntents()
         focus.listResized(count: 20)
@@ -53,8 +43,8 @@ struct FocusIntentsTests {
     }
 
     @Test func everythingIsAPredicateNotAListOfIds() {
-        // C19: `X` selects every conversation in the view, including the
-        // ones whose pages have not arrived; it names none of them.
+        // `X` selects every conversation in the view, including those whose pages have not arrived;
+        // it names none.
         let focus = Self.busy()
         focus.apply(.focusSelection(selected: [], everything: true, summary: "All 312 selected"))
         #expect(focus.everything)
@@ -100,7 +90,6 @@ struct FocusIntentsTests {
     }
 
     @Test func aToastKeepsTheSecondsItWasGiven() {
-        // An answer's Undo lasts as long as its reply waits (FR-102).
         let focus = FocusIntents()
         focus.apply(.focusToast(text: "Accepted", kind: .completed, undoable: true, seconds: 30))
         #expect(focus.toast?.seconds == 30)
@@ -114,7 +103,6 @@ struct FocusIntentsTests {
     }
 
     @Test func theSameToastTwiceIsTwoToasts() {
-        // Archived, then Archived again: two things happened.
         let focus = FocusIntents()
         focus.apply(.focusToast(text: "Archived", kind: .completed, undoable: true, seconds: nil))
         let first = focus.toastToken
@@ -142,8 +130,6 @@ struct FocusIntentsTests {
     }
 
     @Test func untilTheControllerSpeaksTheCursorStandsOnTheFirstRow() {
-        // C30, drawn before the first FocusCursor arrives; the controller
-        // opens every list on row 0 as well, so the two never disagree.
         let focus = FocusIntents()
         #expect(focus.cursor == nil)
         focus.listResized(count: 3)
@@ -160,12 +146,8 @@ struct FocusIntentsTests {
         #expect(focus.cursor == 4)
     }
 
-    // MARK: the surfaces (T070)
-
     @Test func theOpenMessagesIntentsAreSurfacesNotTheLists() {
-        // The list's model holds the list; what opens, closes and acts on
-        // a window over it is another switch, and applying one here must
-        // not move the cursor or the selection.
+        // A window over the list must not move the cursor or the selection.
         let focus = Self.busy()
         let before = focus.snapshot
         let events: [UiEvent] = [

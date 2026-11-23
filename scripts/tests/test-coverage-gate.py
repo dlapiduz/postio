@@ -25,8 +25,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -58,9 +56,6 @@ def summary_json(percent: float) -> str:
 
 
 def cargo_llvm_cov_stub(percent: float) -> str:
-    # Only the one subcommand this script calls needs to do anything; every
-    # other invocation (there are none, today) would fall through and fail
-    # loudly rather than silently pretending to succeed.
     return f"""#!/usr/bin/env bash
 if [ "$1" = "llvm-cov" ]; then
     echo '{summary_json(percent)}'
@@ -93,10 +88,6 @@ def test_missing_tool_fails_before_touching_cargo() -> None:
         cargo.chmod(0o755)
         (stub_dir / "cargo-calls").write_text("", encoding="utf-8")
 
-        # Deliberately without ~/.cargo/bin, where a real cargo-llvm-cov
-        # would live -- `command -v cargo-llvm-cov` must find nothing here,
-        # the same as it would find nothing on a machine that never
-        # installed it.
         result = run(
             {"PATH": f"{binaries}:/usr/bin:/bin", "STUB_DIR": str(stub_dir)},
             [],
@@ -132,9 +123,6 @@ def with_stubbed_tool(percent: float, args: list[str]) -> subprocess.CompletedPr
 
 
 def test_a_crate_above_its_floor_passes() -> None:
-    # 99.9% rather than a value near postio-search's real floor: this test
-    # asserts the comparison direction, not today's measured number, and
-    # must keep passing as that number moves.
     result = with_stubbed_tool(99.9, ["postio-search"])
     report = f"exit={result.returncode}\nstdout={result.stdout}\nstderr={result.stderr}"
     if result.returncode != 0:

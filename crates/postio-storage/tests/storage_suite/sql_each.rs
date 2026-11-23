@@ -1,10 +1,3 @@
-//! `sql::each`: a read that streams its rows to a visitor and can stop early.
-//!
-//! What a fold over a large match wants (spec 010's conversation search):
-//! no `Vec` of every row, and no reading past the point where the visitor
-//! has what it needs. Stopping drops the rows, so the connection is free for
-//! the next statement, and the read is counted like every other.
-
 use postio_storage::sql::{self, RowExt as _};
 use postio_storage::test_support;
 use postio_storage::test_support::counting::counted_async;

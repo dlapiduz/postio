@@ -1,15 +1,5 @@
-//! A child row: one message of the expanded thread, drawn under its row
-//! (spec 013 US1; `Design/focus-macos-threads` §2, screens 02 and 11).
-//!
-//! 38 px tall on a slightly tinted ground, with a 1.5 px line down the
-//! gutter that joins the children and a dot on it for each (the accent when
-//! the message is unread): a 20 px initials avatar and the sender, the tag
-//! ("↳ to Ana") when it answers an older message, its own words, a
-//! paperclip, its time. An unsent reply is italic. While the cursor is on a
-//! child it shows, at its right, the keys that act on that one message.
-//!
-//! Like the thread row it is one `snapshot()`; it is the row widget in its
-//! child form, since a list view's rows are recycled between kinds.
+//! A child row: one message of the expanded thread, drawn under its row. One `snapshot()`; the row
+//! widget in its child form, since a list view's rows are recycled between kinds.
 
 use gtk::graphene;
 use gtk::pango;
@@ -21,18 +11,12 @@ use super::row::{
     DOT, Drawn, GAP, GUTTER_CENTRE, ICON, KEYCAP_PAD, Palette, RowWidget, TRAILING, rgba,
 };
 
-/// A child's height, in pixels at 100% text.
 pub const CHILD_HEIGHT: f32 = 38.0;
-/// The line that joins the children.
 const LINE_WIDTH: f32 = 1.5;
-/// The initials avatar's diameter.
 const AVATAR: f32 = 20.0;
-/// Where the avatar starts.
 const AVATAR_X: f32 = 44.0;
-/// Where the sender starts, beside it.
 const SENDER_X: f32 = AVATAR_X + AVATAR + 8.0;
 
-/// What a child says to a screen reader: who, what, and when.
 pub fn spoken(child: &ChildRowView) -> String {
     let mut said = child.sender.clone();
     if let Some(tag) = &child.tag {
@@ -50,8 +34,6 @@ pub fn spoken(child: &ChildRowView) -> String {
 }
 
 impl RowWidget {
-    /// A layout of `text` in the row's font, `bold`, `italic`, `scale` of
-    /// its size. Plain text, never markup.
     fn child_layout(&self, text: &str, bold: bool, italic: bool, scale: f64) -> pango::Layout {
         let layout = self.create_pango_layout(Some(text));
         let attributes = pango::AttrList::new();
@@ -82,12 +64,10 @@ impl RowWidget {
             ..Drawn::default()
         };
 
-        // The tinted ground.
         snapshot.append_color(
             &palette.raised,
             &graphene::Rect::new(0.0, 0.0, width, height),
         );
-        // The line that joins the children, and this one's dot on it.
         let line_bottom = if last { middle } else { height };
         snapshot.append_color(
             &palette.rule,
@@ -109,7 +89,6 @@ impl RowWidget {
         snapshot.pop();
         drawn.dot = child.bold;
 
-        // The trailing column from the right edge in: time, paperclip, keys.
         let time = self.child_layout(&child.time, child.bold, false, 1.0);
         let (time_width, _) = time.pixel_size();
         let mut trailing = width - TRAILING - time_width as f32;
@@ -176,7 +155,6 @@ impl RowWidget {
         }
         let end = trailing - GAP;
 
-        // The avatar and the sender.
         let avatar = graphene::Rect::new(AVATAR_X, middle - AVATAR / 2.0, AVATAR, AVATAR);
         let fill = rgba(label_colour(&child.sender, None, palette.accent_hue));
         snapshot.push_rounded_clip(&gtk::gsk::RoundedRect::from_rect(avatar, AVATAR / 2.0));
@@ -203,7 +181,6 @@ impl RowWidget {
         );
         drawn.texts.push(child.sender.clone());
 
-        // The tag, then the message's own words.
         let mut x = columns.subject_x;
         if let Some(tag) = &child.tag {
             let layout = self.child_layout(tag, false, false, 0.85);

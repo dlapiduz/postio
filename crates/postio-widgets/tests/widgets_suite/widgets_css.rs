@@ -1,11 +1,3 @@
-//! The shared stylesheet dresses the shared widgets, in whatever colours the
-//! app defines (specs/007-postio-focus research R11).
-//!
-//! The roles here are this test's own, and deliberately unlike any real
-//! palette: what is asserted is that a control wears the *role*, so the same
-//! sheet serves any palette, Focus's libadwaita colours among them.
-//! Asserted on the colour each widget resolves, which is what gets drawn.
-
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -14,7 +6,6 @@ use gtk::prelude::*;
 use postio_widgets::widgets::button::{self, Kind, Size};
 use postio_widgets::widgets::keyhint::KeyLine;
 
-/// The roles an app defines, as colours no theme has.
 const ROLES: &str = ":root {
   --postio-accent: rgb(10, 20, 30);
   --postio-accent-fg: rgb(200, 100, 50);
@@ -34,10 +25,6 @@ fn rgb(color: gdk::RGBA) -> (u8, u8, u8) {
 }
 
 pub fn the_shared_sheet_dresses_the_shared_widgets() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let display = gdk::Display::default().unwrap();
     let roles = gtk::CssProvider::new();
     roles.load_from_string(ROLES);
@@ -102,15 +89,7 @@ pub fn the_shared_sheet_dresses_the_shared_widgets() {
     gtk::style_context_remove_provider_for_display(&display, &roles);
 }
 
-/// The shared sheet brings the metrics every app lays these widgets out by:
-/// spacing, chip sizes and type sizes. An app defines only its colours
-/// (research R11), so with nothing but this test's colour roles, each metric
-/// must still resolve -- read back as the size it gives a probe.
 pub fn the_shared_sheet_brings_the_shared_metrics() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let display = gdk::Display::default().unwrap();
     let roles = gtk::CssProvider::new();
     roles.load_from_string(ROLES);
@@ -176,7 +155,6 @@ pub fn the_shared_sheet_brings_the_shared_metrics() {
     }
 }
 
-/// Every widget under `root` wearing `class`.
 fn wearing(root: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
     let mut found = Vec::new();
     if root.has_css_class(class) {
@@ -190,15 +168,7 @@ fn wearing(root: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
     found
 }
 
-/// The account form is both apps' (T165), so the shared sheet dresses it:
-/// in an app that defines only the roles -- Focus, opening it from its
-/// sign-in banner -- the refusal still reads as the callout, and the step
-/// as the dim line it is.
 pub fn the_shared_sheet_dresses_the_account_form() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let display = gdk::Display::default().unwrap();
     let roles = gtk::CssProvider::new();
     roles.load_from_string(ROLES);

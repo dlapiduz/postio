@@ -1,24 +1,3 @@
-//! An inline image, from the wire to the bytes the pane would draw. #751.
-//!
-//! Every layer under this one passed while the image did not appear, which is
-//! the shape of bug `mailbox_roles.rs` and `cid_scoping.rs` both name.
-//! `postio-body` proved `cid:` survives sanitisation, `postio-ui` proved the
-//! CSP allows the local scheme, the classic reader's test proved the WebView
-//! asks for all three ids, and `cid_scoping.rs` proved resolution is scoped to
-//! the open message — and none of them could see that nothing ever fetched the
-//! part's bytes, or that the id the IMAP path stored had angle brackets round
-//! it and could match no `cid:` URL at all.
-//!
-//! So this test refuses the two shortcuts that hid it. The parts map is not
-//! built by hand: the message arrives through `BODYSTRUCTURE` as a server
-//! reports it, brackets included, and is backfilled under the *default*
-//! policy. And the assertion is on what `postio_session::reading` hands the
-//! scheme handler — the bytes that become pixels — rather than on what some
-//! layer was handed.
-//!
-//! Nothing here touches the network: a mock backend, a temporary store, and a
-//! blob directory beside it.
-
 use postio_account::backend::{
     BodyStructure, Disposition, MailBackend, MockBackend, MockMailbox, MockMessage, PartNode,
 };
@@ -32,15 +11,8 @@ use postio_sync::sync_mailbox;
 const INBOX: &str = "INBOX";
 const VALIDITY: u32 = 1_707_000_000;
 
-/// Base64 for `PNGBYTES`, so a failure names the bytes it got.
 const LOGO: &str = "UE5HQllURVM=";
 
-/// The whole message, exactly as a server would describe and serve it.
-///
-/// The `Content-ID` carries its angle brackets because that is what RFC 3501
-/// puts in `BODYSTRUCTURE`'s id field, and the HTML references it without
-/// them because that is what RFC 2392 puts in a `cid:` URL. Reconciling those
-/// two spellings is half of what this test exists to prove.
 fn message_with_an_inline_logo() -> MockMessage {
     let structure = BodyStructure::from_parts(
         "multipart/related",
@@ -48,8 +20,6 @@ fn message_with_an_inline_logo() -> MockMessage {
             PartNode::new("1", "text/html", 64)
                 .with_charset("utf-8")
                 .with_encoding("7bit")
-                // A sender who marks the body itself `inline` -- common, and
-                // enough on its own to leave the pane with no HTML at all.
                 .with_disposition(Disposition::Inline),
             PartNode::new("2", "image/png", 8)
                 .with_encoding("base64")
@@ -116,8 +86,6 @@ async fn an_inline_image_synced_from_a_server_resolves_to_its_bytes() {
         .expect("look up")
         .expect("stored");
 
-    // The default policy, on purpose: payloads stay on the server until
-    // somebody asks. An inline image under the cap is not a payload.
     let policy = BackfillPolicy::default();
     fetch_body(
         &connection,
@@ -142,7 +110,6 @@ async fn an_inline_image_synced_from_a_server_resolves_to_its_bytes() {
     .await
     .expect("backfill the text axis");
 
-    // ── the body is the HTML, not the alternative ────────────────────────
     let body = messages
         .body(stored.id)
         .await
@@ -164,7 +131,6 @@ async fn an_inline_image_synced_from_a_server_resolves_to_its_bytes() {
     );
     drop(connection);
 
-    // ── and the id in that <img> resolves to real bytes ──────────────────
     let (bytes, mime) =
         postio_session::reading::resolve_cid(&database, &blobs, settled.id, "logo@example.com")
             .await
@@ -179,7 +145,6 @@ async fn an_inline_image_synced_from_a_server_resolves_to_its_bytes() {
     );
     assert_eq!(mime, "image/png");
 
-    // ── and a cid: the message does not declare still draws nothing ──────
     assert!(
         postio_session::reading::resolve_cid(&database, &blobs, settled.id, "missing@example.com")
             .await

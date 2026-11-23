@@ -4,13 +4,6 @@ import Testing
 
 @testable import PostioKit
 
-/// The composer's frame (specs/009-focus-macos T079; screens 05 and 06):
-/// its title and when it was saved, the reply's quote folded, the word
-/// count, Remind if no reply with its day, the From picker, and recipient
-/// completion that shows nothing until a recipient is typed.
-///
-/// The words are the shared ones, through the boundary: nothing here is
-/// composed in Swift.
 @MainActor
 @Suite struct ComposeFrameTests {
     static let quote = "On 2026-09-26, Lena Park wrote:\n> v3 is up.\n>\n> Comments welcome."

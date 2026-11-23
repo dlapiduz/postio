@@ -1,12 +1,5 @@
-//! Focus has no composer of its own (US3 scenario 2, FR-050; T081): the
-//! same content written in Focus and in the shared composer mounted
-//! anywhere else leaves as the same message, byte for byte.
-//!
-//! The other side is the shared composer -- `postio_widgets::composer::
-//! Composer` -- on a bare host of this test's own, sending through a
-//! `ClientKind::Test` client of the same host: the draft the composer hands
-//! over, queued. What is compared is what the host queued for each, built
-//! into the message the drainer would send.
+//! Focus has no composer of its own: the same content written in Focus and in the shared composer
+//! on a bare host leaves as the same message, byte for byte.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -22,10 +15,8 @@ use postio_widgets::composer::{Composer, ComposerHost};
 
 use crate::support::{self, Fixture};
 
-/// Who hears the commands a host dispatches.
 type Handlers = RefCell<Vec<Box<dyn Fn(CommandId)>>>;
 
-/// A host with nothing of Focus in it: a window and a box.
 struct Bare {
     window: gtk::Window,
     pane: gtk::Box,
@@ -73,7 +64,6 @@ impl ComposerHost for Bare {
     }
 }
 
-/// The Outbox's rows, as the second client lists them.
 async fn outbox(second: &Client, fixture: &Fixture) -> Vec<MessageId> {
     match second
         .list_page(PageRequest {
@@ -93,16 +83,12 @@ async fn outbox(second: &Client, fixture: &Fixture) -> Vec<MessageId> {
     }
 }
 
-/// The same message, written into `composer`: a recipient, a subject and a
-/// line of body.
 fn write(composer: &Composer) {
     composer.test_set_to("Lena Park <lena@example.org>, ");
     composer.test_set_subject("Harbor API draft v3");
     composer.test_set_body("v3 looks good. Two comments on the rate-limit headers.");
 }
 
-/// The message the drainer would send for `draft`, with the two lines that
-/// differ between any two sends -- when, and which Message-ID -- set aside.
 fn leaving(draft: &Draft, identity: &Identity) -> String {
     let built = postio_model::outgoing::build(draft, identity, &[], None, None);
     String::from_utf8_lossy(&built.raw)
@@ -114,17 +100,12 @@ fn leaving(draft: &Draft, identity: &Identity) -> String {
 
 pub fn the_same_content_from_either_composer_leaves_as_the_same_message() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         {
             let connection = fixture.database.connect().await.expect("a connection");
             postio_storage::test_support::mailbox(&connection, &fixture.account, "Drafts").await;
         }
-        fixture
-            .file(("Ada Moreno", "ada@example.com"), "Budget", "Numbers.", 5)
-            .await;
+        fixture.file_from_ada("Budget", "Numbers.", 5).await;
         let window = postio_gtk::window::FocusWindow::new(None);
         window.present();
         let session =
@@ -136,7 +117,6 @@ pub fn the_same_content_from_either_composer_leaves_as_the_same_message() {
             "Focus mounted no composer"
         );
 
-        // Focus writes it, and sends with its key.
         support::keys(&window, &["c"]);
         assert!(
             crate::settle_until(async || window.compose_dialog().is_some()).await,
@@ -166,7 +146,6 @@ pub fn the_same_content_from_either_composer_leaves_as_the_same_message() {
         );
         let from_focus = outbox(&second, &fixture).await[0];
 
-        // The bare host's composer writes the same, and sends through its client.
         let host_window = gtk::Window::new();
         host_window.set_default_size(900, 700);
         let pane = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -213,8 +192,6 @@ pub fn the_same_content_from_either_composer_leaves_as_the_same_message() {
             .expect("a read")
             .expect("the bare host's queued draft");
         let focus_bytes = leaving(&focus_draft, &identity);
-        // Not two empty messages that happen to agree: each line written is
-        // in what leaves.
         for written in [
             "Subject: Harbor API draft v3",
             "To: \"Lena Park\" <lena@example.org>",

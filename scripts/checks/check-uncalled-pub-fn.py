@@ -104,15 +104,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-# --- What is scanned for definitions ----------------------------------------
-
-# Crates whose public surface is called from outside Rust, or from tests on a
-# real display. Skipped wholesale rather than allow-listed one function at a
-# time: the reason applies to the crate, not to any particular function in it.
+# Crates whose public surface is called from outside Rust or from tests on a real display; skipped
+# wholesale, since the reason applies to the crate.
 FRONTENDS = frozenset({"postio-gtk", "postio-widgets", "postio-ffi"})
 
-# Test-support shipped in `src/` because tests in several crates need it.
-# Matched on the path so a new mock lands under the same reasoning.
+# Test-support shipped in `src/`, matched on the path so a new mock lands under the same reasoning.
 TEST_SUPPORT = (
     "test_support",
     "test_corpus",
@@ -121,12 +117,9 @@ TEST_SUPPORT = (
     "/seed.rs",
 )
 
-# The crate that exists only to support tests.
 TEST_SUPPORT_CRATES = frozenset({"postio-test-support"})
 
 BASELINE = Path("scripts/checks/uncalled-pub-fn-baseline.txt")
-
-# --- Rust, as much of it as counting names needs ----------------------------
 
 DEFINITION = re.compile(
     r"\bpub(?:\s*\([^)]*\))?\s+"
@@ -135,18 +128,12 @@ DEFINITION = re.compile(
 )
 IDENTIFIER = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
 CFG_TEST = re.compile(r"#\[cfg\((?:any\([^)]*\))?[^\]]*\btest\b[^\]]*\)\]")
-# Same idea, a different way a `pub fn` says "tests only": a feature name
-# containing "test" -- `test-support`, `testing`, `test-corpus`, `test-server`
-# all appear in this workspace. Matched against `head` below, which is *not*
-# comment/string-blanked -- see `definitions`' own note on why that is
-# deliberate rather than a gap to close.
+# Another way a `pub fn` says "tests only": a feature name containing "test". Matched against
+# `head`, which is not comment/string-blanked on purpose (see `definitions`).
 CFG_TEST_FEATURE = re.compile(r'#\[cfg\([^\]]*feature\s*=\s*"[^"]*test[^"]*"[^\]]*\)\]')
 UNIFFI = re.compile(r"#\[uniffi::export[^\]]*\]")
 
-# How far back to look for an attribute that exempts a definition. Long enough
-# to clear the doc comment that sits between an attribute and its `pub fn` --
-# but doc comments are blanked before this runs, so it is looking at
-# whitespace and other attributes only.
+# How far back to look for an exempting attribute, past the doc comment (docs are blanked first).
 ATTRIBUTE_REACH = 400
 
 
@@ -171,7 +158,6 @@ def blank_comments_and_strings(text: str) -> str:
             end = text.find("\n", index)
             end = length if end < 0 else end
         elif char == "/" and text[index + 1 : index + 2] == "*":
-            # Rust block comments nest, unlike C's.
             depth, end = 1, index + 2
             while end < length and depth:
                 if text[end : end + 2] == "/*":
@@ -181,28 +167,16 @@ def blank_comments_and_strings(text: str) -> str:
                 else:
                     end += 1
         elif char == "'":
-            # A char literal, or a lifetime -- and telling them apart matters
-            # more than it looks. `'"'` holds one double quote, so reading it
-            # as the start of a string inverts the quote parity of the whole
-            # rest of the file: real code gets blanked as "string", string
-            # contents get scanned as code, and every caller after that point
-            # silently disappears. A `pub fn` that is wired up is then
-            # reported as dead, in whichever file happened to contain the
-            # literal.
-            #
-            # A lifetime (`&'a str`, `'static`, a loop label) must fall
-            # through untouched: blanking from there to the next `'` would
-            # eat the code in between.
+            # A char literal or a lifetime: `'"'` holds one double quote, so reading it as a string
+            # inverts quote parity for the rest of the file and callers silently disappear. A
+            # lifetime falls through untouched.
             end = index + 1
             if end < length and text[end] == "\\":
-                # An escape: `'\n'`, `'\''`, `'\u{1f600}'`. Step over the
-                # escaped character, then run to the closing quote.
                 end += 2
                 while end < length and text[end] != "'":
                     end += 1
                 end += 1
             elif end + 1 < length and text[end + 1] == "'":
-                # One character between two quotes.
                 end += 2
             else:
                 index += 1
@@ -321,17 +295,10 @@ def definitions(paths: list[Path]) -> tuple[dict[str, list[str]], dict[Path, set
             offsets.add(match.start(1))
             if not scanned:
                 continue
-            # Attributes sit above the `pub fn` with only whitespace and
-            # other attributes between, the doc comment having been blanked.
-            # Raw, not `clean`/`body`: the feature-name pattern needs to read
-            # what a string literal actually says, which blanking erased
-            # from those two on purpose (`blank_comments_and_strings`'s own
-            # docs). The trade is the same one `#[doc(hidden)]` already
-            # makes on this same line -- a doc comment that happens to quote
-            # the attribute as prose reads the same as the real thing -- and
-            # it is the right trade for the same reason: a false exemption
-            # is a debt line worth reviewing, a false uncalled-fn report is
-            # noise on every commit.
+            # Raw, not `clean`/`body`: the feature-name pattern must read what a string literal
+            # says, which blanking erased.
+            # A false exemption is a reviewable debt line; a false uncalled report is noise on every
+            # commit.
             head = raw[max(0, match.start()) - ATTRIBUTE_REACH : match.start()]
             if (
                 "#[doc(hidden)]" in head
@@ -401,9 +368,8 @@ def main() -> int:
 
     uncalled = {name for name in defined if name not in live}
     fresh = sorted(uncalled - baseline)
-    # An entry that has gained a caller, or whose function is gone. Either
-    # way the line is no longer true, and a list of things that used to be
-    # true is how an allow-list stops being read.
+    # An entry that gained a caller, or whose function is gone, is no longer true; a stale
+    # allow-list stops being read.
     stale = sorted(baseline - uncalled)
 
     if not fresh and not stale:

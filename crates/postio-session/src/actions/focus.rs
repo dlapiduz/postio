@@ -1,11 +1,5 @@
-//! Postio Focus's own verbs (specs/007-postio-focus): the commands only
-//! Focus offers, carried out the way every verb here is -- resolve the aim,
-//! write the store, push the undo entry, emit the events.
-//!
-//! They live beside the rest of the vocabulary rather than in the host
-//! because undo replays an entry's inverse through [`Actions::act`]: a verb
-//! whose way back is its own command, the other direction, has to be one
-//! `act` knows (docs/ARCHITECTURE.md §5).
+//! Postio Focus's own verbs, carried out like every other verb here. They live beside the rest
+//! because undo replays an entry's inverse through `Actions::act` (docs/ARCHITECTURE.md §5).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -28,18 +22,10 @@ use postio_storage::repository::{
 use super::{Actions, Aim, Applied, Destination, RSVP_WINDOW, mailbox_for, store_failure};
 
 impl Actions {
-    /// Wait for a reply in each targeted conversation until `at`, or with
-    /// `None` stop waiting (spec 007 US5, FR-044, FR-045).
+    /// Wait for a reply in each targeted conversation until `at`, or with `None` stop waiting.
     ///
-    /// One reminder stands per conversation, however many of its messages
-    /// were targeted: it waits on a reply to the conversation. Setting one
-    /// where one stands moves it to the new time. The way back names each
-    /// conversation's previous time, `None` where there was none, so undo
-    /// puts back exactly what stood.
-    ///
-    /// Local only, like a snooze: no server hears of a reminder. It changes
-    /// no list either -- the conversation stays where it is until the
-    /// reminder fires -- so nothing is repainted.
+    /// One reminder stands per conversation; setting one moves it. The way back names each
+    /// conversation's previous time, `None` where there was none. Local only, and repaints nothing.
     pub(super) async fn remind(
         &self,
         target: &MessageTarget,
@@ -54,8 +40,6 @@ impl Actions {
                 ));
             }
         };
-        // The first targeted message of each conversation is the one the
-        // reminder waits on a reply to.
         let mut conversations: BTreeMap<ThreadId, MessageId> = BTreeMap::new();
         let mut account = None;
         for row in &rows {
@@ -79,8 +63,6 @@ impl Actions {
             let reminders = ReminderRepository::new(&transaction);
             for (thread, anchor) in &conversations {
                 let standing = reminders.standing(*thread).await.map_err(store_failure)?;
-                // A surfaced one, cleared or set again, leaves the inbox's
-                // surfaced rows.
                 surfaced |= standing
                     .as_ref()
                     .is_some_and(|reminder| reminder.fired_at.is_some());
@@ -132,20 +114,13 @@ impl Actions {
         })
     }
 
-    /// Answer the invitation `message` carries, or the focused message's,
-    /// and send the reply (spec 007 US8, FR-102, research R9).
+    /// Answer the invitation `message` carries, or the focused message's, and send the reply
+    /// (research R9).
     ///
-    /// Local-first, like a send: the reply is written as a draft and queued
-    /// with a not-before time [`RSVP_WINDOW`] away, and the marker says
-    /// `accepting` or `declining` until then. Nothing reaches the network
-    /// here, and nothing can before the window closes, so the undo entry --
-    /// which cancels the send -- lasts exactly that long; after it, the
-    /// answer stands, and `mod+z` reaches whatever was done before it.
-    ///
-    /// The reply goes out from the identity the invitation names among its
-    /// attendees, spelled as the invitation spells it: answering as some
-    /// other address would be a stranger's reply to the organiser's
-    /// calendar. With no such identity there is nobody to answer as.
+    /// The reply is written as a draft queued with a not-before time `RSVP_WINDOW` away, so nothing
+    /// reaches the network before the window closes and the undo entry (cancel the send) lasts
+    /// exactly that long. It goes out as the identity the invitation names among its attendees,
+    /// spelled as the invitation spells it.
     pub(super) async fn answer(
         &self,
         message: Option<MessageId>,
@@ -276,8 +251,6 @@ impl Actions {
             removed: Vec::new(),
             arrived: None,
             reloaded: Vec::new(),
-            // The row repaints with its answer, and the Outbox holds the
-            // reply while it waits.
             changed: vec![row.id],
             mailboxes_changed: true,
             inverse: vec![Command::CancelSend {
@@ -286,10 +259,8 @@ impl Actions {
         })
     }
 
-    /// When `draft`, whose send was just cancelled, is the reply to an
-    /// invitation, take the answer back whole: the reply goes -- it was
-    /// never the person's to edit -- and the invitation is unanswered again.
-    /// Answers the messages whose rows repaint.
+    /// When `draft`, whose send was just cancelled, is a reply to an invitation, take the answer
+    /// back whole. Returns the messages whose rows repaint.
     pub(super) async fn withdraw_answer(
         &self,
         connection: &Connection,
@@ -313,30 +284,16 @@ impl Actions {
     }
 }
 
-/// How many markers of one kind the person dismisses in one sender's mail
-/// before Focus takes it as a correction: that this sender's mail does not
-/// ask that of them (FR-108, the plan's answer to "how far a dismissal
-/// teaches").
+/// How many markers of one kind dismissed in one sender's mail make Focus take it as a correction.
 pub const STOPS_AFTER: u32 = 3;
 
 impl Actions {
-    /// Take the markers off the targeted messages as wrong, or bring them
-    /// back (spec 007 FR-108, US12 scenario 5).
+    /// Take the markers off the targeted messages as wrong, or bring them back.
     ///
-    /// A dismissal is for good on its own message: the body stage never
-    /// writes over one. And it teaches: once the person has dismissed
-    /// [`STOPS_AFTER`] markers of one kind in one sender's mail, the
-    /// correction goes into `[focus.filter] stop_markers`, written as an
-    /// editor saves it, and both detectors leave that kind alone in that
-    /// sender's mail from then on. Bringing markers back takes the
-    /// correction back when it drops the count below the line it crossed.
-    /// Only question and to-do markers teach; an invitation's comes from
-    /// its calendar part.
-    ///
-    /// The correction is the person's decision, so it lives in the file and
-    /// not the store; a file Focus cannot write leaves the dismissal
-    /// standing and the correction unwritten, which is said in the log by
-    /// outcome only.
+    /// Dismissing `STOPS_AFTER` markers of one kind in one sender's mail writes `[focus.filter]
+    /// stop_markers`; bringing them back undoes it when the count drops below. Only question and
+    /// to-do markers teach. The correction lives in the file, not the store; if the file cannot be
+    /// written the dismissal stands.
     pub(super) async fn dismiss(
         &self,
         target: &MessageTarget,
@@ -354,8 +311,6 @@ impl Actions {
         let now = Utc::now();
         let mut touched = Vec::new();
         let mut account = None;
-        // How many markers of each kind, in each sender's mail, this took
-        // off or put back.
         let mut taught: BTreeMap<(String, &'static str), u32> = BTreeMap::new();
         let transaction = connection.transaction().await.map_err(store_failure)?;
         {
@@ -433,7 +388,6 @@ impl Actions {
             removed: Vec::new(),
             arrived: None,
             reloaded: Vec::new(),
-            // The row draws its marker, or no longer does.
             changed: touched.clone(),
             mailboxes_changed: false,
             inverse: vec![Command::DismissMarker {
@@ -445,22 +399,12 @@ impl Actions {
 }
 
 impl Actions {
-    /// Put filtered messages back in the inbox and never filter their
-    /// senders again, or, with `restored` false, file them away again as
-    /// they were (spec 007 US9 scenario 4, FR-116).
+    /// Put filtered messages back in the inbox and never filter their senders again, or with
+    /// `restored` false file them away again.
     ///
-    /// Three things, and one undo takes back all three:
-    ///
-    /// - the message moves to its account's inbox, with the server's move
-    ///   queued, as any move is;
-    /// - its decision is marked restored rather than deleted: the store
-    ///   keeps what Focus decided and what the person said of it (SC-012),
-    ///   and undo puts back the very reason it had;
-    /// - its sender joins `[focus.filter] never`, written as an editor saves
-    ///   it, and the filing pass reads the file as written at once.
-    ///
-    /// On the way back a sender is unpinned only when no other restore of
-    /// theirs still stands behind the pin.
+    /// One undo takes back all three: the move to the inbox, the decision marked restored (not
+    /// deleted, SC-012), and the sender added to `[focus.filter] never`. A sender is unpinned on
+    /// the way back only when no other restore of theirs stands behind the pin.
     pub(super) async fn restore(
         &self,
         target: &MessageTarget,
@@ -477,8 +421,6 @@ impl Actions {
         for row in rows {
             by_account.entry(row.account_id).or_default().push(row);
         }
-        // Where each account's messages go: its inbox, or back to its
-        // archive. Resolved before anything is written, as `relocate` does.
         let to = if restored {
             Destination::Role(MailboxRole::Inbox)
         } else {
@@ -499,9 +441,7 @@ impl Actions {
             let transaction = connection.transaction().await.map_err(store_failure)?;
             {
                 let decisions = FilterDecisionRepository::new(&transaction);
-                // What the account's other machines are told (#2076): no
-                // reason on a restored message, and its own reason again
-                // on one filed back.
+                // What the account's other machines are told (#2076).
                 let mut marking: BTreeMap<Option<FilterReason>, Vec<&Message>> = BTreeMap::new();
                 for row in &rows {
                     if !decisions
@@ -527,8 +467,7 @@ impl Actions {
                         moved.entry(row.mailbox_id).or_default().push(row.id);
                     }
                 }
-                // Before the move, which clears what the server knows the
-                // message by.
+                // Before the move, which clears what the server knows the message by.
                 for (reason, rows) in &marking {
                     postio_storage::actions::mark_filtered(
                         &transaction,
@@ -611,16 +550,11 @@ impl Actions {
 }
 
 impl Actions {
-    /// File away what is already in every inbox, by Focus's filtering rules
-    /// and guards (spec 007 FR-118): the deliberate command that applies
-    /// filtering to mail filed before it was turned on. What it moves is
-    /// what `sweep_preview` counted, since both walk the inbox the same way
-    /// through the same pass.
+    /// File away what is already in every inbox, by Focus's filtering rules (FR-118); it moves what
+    /// `sweep_preview` counted.
     ///
-    /// A window at a time, each its own transaction and write permit, so a
-    /// large inbox never holds the writer for long; and one undo unit for
-    /// all of it, naming what moved, whose way back returns each message to
-    /// its inbox and withdraws the decisions the sweep made.
+    /// A window at a time, each its own transaction and write permit, so a large inbox never holds
+    /// the writer long; one undo unit for all of it.
     pub(super) async fn sweep(&self) -> Result<Vec<Applied>, CommandError> {
         let config = self
             .focus
@@ -692,9 +626,6 @@ impl Actions {
         Ok(applied)
     }
 
-    /// Undo's way back from a sweep: each message returns to its account's
-    /// inbox, with the server's move queued, and the decision the sweep
-    /// made for it is withdrawn -- the person never saw it stand.
     pub(super) async fn unsweep(
         &self,
         target: &MessageTarget,
@@ -723,8 +654,8 @@ impl Actions {
                         moved.entry(row.mailbox_id).or_default().push(row.id);
                     }
                 }
-                // Unmarked for the account's other machines too (#2076),
-                // before the move clears what the server knows it by.
+                // Unmarked for the account's other machines too (#2076), before the move clears
+                // what the server knows it by.
                 let unmarked: Vec<&Message> = rows.iter().collect();
                 postio_storage::actions::mark_filtered(&transaction, account, &unmarked, None, now)
                     .await
@@ -766,21 +697,15 @@ impl Actions {
 }
 
 impl Actions {
-    /// Archive every message a digest holds, and the digest's row with
-    /// them, or with `archived` false put the row back (spec 007 FR-125, US10
-    /// scenario 4).
-    ///
-    /// The messages move as `a` moves them -- the Archive, with the server's
-    /// move queued -- and the delivery is marked archived, so its row
-    /// leaves the inbox: one undo unit, whose way back moves each message
-    /// back where it was and then reopens the row.
+    /// Archive every message a digest holds and the digest's row, or with `archived` false put the
+    /// row back. One undo unit.
     pub(super) async fn archive_digest(
         &self,
         delivery: postio_model::DeliveryId,
         archived: bool,
     ) -> Result<Vec<Applied>, CommandError> {
-        // Its own connection and permit, let go before the move takes its
-        // own: the write gate is not re-entrant.
+        // Its own connection and permit, released before the move takes its own: the write gate is
+        // not re-entrant.
         let messages = {
             let (connection, _permit) = self.connect().await?;
             let digests = DigestRepository::new(&connection);
@@ -808,7 +733,6 @@ impl Actions {
                 .await
             {
                 Ok(applied) => applied,
-                // Everything in it was archived already: the row still goes.
                 Err(CommandError::Rejected(_)) => Vec::new(),
                 Err(error) => return Err(error),
             }
@@ -821,8 +745,6 @@ impl Actions {
         {
             return Err(CommandError::rejected("That digest is no longer here"));
         }
-        // The row leaves the inbox, and the way back reopens it after the
-        // messages are back.
         match applied.last_mut() {
             Some(last) => {
                 last.inverse.push(Command::ArchiveDigest {
@@ -842,16 +764,11 @@ impl Actions {
         Ok(applied)
     }
 
-    /// Stop gathering the targeted message's sender into its digest, or with
-    /// `stopped` false put them back (spec 007 FR-125, US10 scenario 5).
+    /// Stop gathering the targeted message's sender into its digest, or with `stopped` false put
+    /// them back.
     ///
-    /// The rule in `config.toml` loses the sender's `from:` query, written
-    /// as an editor saves it; a rule left holding nobody is removed. What
-    /// the rule held of the sender's mail and had not delivered rejoins the
-    /// inbox, and the filing pass reads the file as written, so their next
-    /// message goes to the inbox too. The undo entry keeps the rule as it
-    /// stood ([`postio_core::KeptRule`]), so its way back writes it again
-    /// exactly and holds the released mail again.
+    /// The sender's `from:` query leaves the rule in `config.toml` (a rule holding nobody is
+    /// removed); undo rewrites it exactly via `KeptRule`.
     pub(super) async fn stop_digesting(
         &self,
         target: &MessageTarget,
@@ -940,8 +857,6 @@ impl Actions {
         narrowed
             .queries
             .retain(|query| !names_sender(query, &sender));
-        // A correspondent's digest is theirs as a whole, whichever of their
-        // addresses wrote: stopping it takes the digest off them.
         let theirs = config.contact_digest(&narrowed.name).is_some();
         if narrowed.queries.is_empty() || theirs {
             self.focus
@@ -975,7 +890,6 @@ impl Actions {
             surfaced: false,
             account,
             kind: UndoKind::StopDigesting,
-            // One sender; the mail released is named by the way back.
             count: 1,
             messages: Vec::new(),
             removed: Vec::new(),
@@ -992,9 +906,6 @@ impl Actions {
     }
 }
 
-/// Whether `query` is a `from:` naming `sender` (an address, as
-/// `EmailAddress::normalized` spells it): what a sender rule the dialog
-/// wrote says.
 fn names_sender(query: &str, sender: &str) -> bool {
     let query = query.trim();
     let Some(prefix) = query.get(..5) else {
@@ -1007,8 +918,6 @@ fn names_sender(query: &str, sender: &str) -> bool {
             .eq_ignore_ascii_case(sender)
 }
 
-/// The mailboxes `rows` are in: what repaints when mail rejoins Focus's
-/// inbox or leaves it.
 fn inboxes_of(rows: &[Message]) -> Vec<MailboxId> {
     let mut mailboxes: Vec<MailboxId> = rows.iter().map(|row| row.mailbox_id).collect();
     mailboxes.sort_unstable();
@@ -1016,10 +925,8 @@ fn inboxes_of(rows: &[Message]) -> Vec<MailboxId> {
     mailboxes
 }
 
-/// The name `[focus.filter] stop_markers` gives a marker kind whose
-/// dismissals teach: a question or a to-do. An invitation's marker comes
-/// from its calendar part and a reminder's from its time, and dismissing
-/// either says nothing about what the sender's mail asks.
+/// The name `[focus.filter] stop_markers` gives a marker kind whose dismissals teach; invitation
+/// and reminder markers say nothing about what the sender's mail asks.
 fn teaches(kind: MarkerKind) -> Option<&'static str> {
     match kind {
         MarkerKind::Question => Some("question"),
@@ -1028,7 +935,6 @@ fn teaches(kind: MarkerKind) -> Option<&'static str> {
     }
 }
 
-/// The marker kind a stop names.
 fn marker_kind(name: &str) -> MarkerKind {
     if name == "todo" {
         MarkerKind::Todo
@@ -1037,9 +943,8 @@ fn marker_kind(name: &str) -> MarkerKind {
     }
 }
 
-/// The invitation `row`'s calendar part carries, when the part is on this
-/// machine and is a request: what can be answered. Read off the async
-/// runtime's threads, as parsing is.
+/// The invitation `row`'s calendar part carries, when the part is on this machine and is a request.
+/// Read off the async runtime's threads.
 async fn invitation_of(blobs: &postio_storage::BlobStore, row: &Message) -> Option<Invitation> {
     let parts: Vec<_> = row
         .attachments
@@ -1064,8 +969,6 @@ async fn invitation_of(blobs: &postio_storage::BlobStore, row: &Message) -> Opti
     .flatten()
 }
 
-/// The identity of `account` that `invitation` names among its attendees,
-/// and the attendee as the invitation spells it: who answers, and as whom.
 fn attendee_among<'a>(
     account: &'a Account,
     invitation: &Invitation,
@@ -1079,11 +982,7 @@ fn attendee_among<'a>(
     })
 }
 
-// -- Mute and split (specs/013-focus-threads US5) -----------------------------
-
 impl Actions {
-    /// Mutes or unmutes `thread` as a person's act: written, announced, and
-    /// on the undo stack with the other direction as its way back.
     pub async fn mute_thread(
         &self,
         thread: ThreadId,
@@ -1096,9 +995,6 @@ impl Actions {
         Ok(())
     }
 
-    /// Splits `message`, and the replies to it, off into a thread of their
-    /// own as a person's act, and answers the new thread. One undo folds it
-    /// back (`Command::SplitThread { rejoin }`).
     pub async fn split_thread(
         &self,
         message: MessageId,
@@ -1206,7 +1102,6 @@ impl Actions {
         ))
     }
 
-    /// Undo's half of a split: fold `split` back into `original`.
     pub(super) async fn unsplit(
         &self,
         split: ThreadId,
@@ -1220,9 +1115,6 @@ impl Actions {
             .await
             .map_err(store_failure)?
             .ok_or_else(|| CommandError::rejected("That thread is gone"))?;
-        // The messages the split thread holds now, replies that arrived
-        // since included: they are what rejoins, and what is asked of again
-        // if the undo is itself undone.
         let moved = threads.member_ids(split).await.map_err(store_failure)?;
         threads
             .unsplit(split, original)
@@ -1234,8 +1126,6 @@ impl Actions {
             thread: original,
             members_added: Vec::new(),
         });
-        // Not re-splittable by undo of undo: the split thread no longer
-        // exists, so the entry has no way back.
         Ok(thread_applied(
             UndoKind::Unsplit,
             account,
@@ -1245,7 +1135,6 @@ impl Actions {
     }
 }
 
-/// A verb that changed a thread and nothing a list repaints by message.
 fn thread_applied(
     kind: UndoKind,
     account: AccountId,

@@ -1,82 +1,49 @@
 //! Counters the tests read, in `src/` because tests in several crates need them.
-//!
-//! The same idiom as [`postio_core::test_support`] and
-//! `postio_storage::test_support::counting`, and the reasoning for counting
-//! rather than timing is in [`crate::reader::cost`].
-//!
-//! Every reader here is a running total for the process. A test takes a
-//! `before`, acts, and asserts on the delta -- which is what lets it measure
-//! across an async boundary, where a scoped closure could not.
+//! Each is a process-wide running total: take a `before`, act, assert on the delta.
 
 use crate::reader::cost;
 
-/// How many reader documents this process has assembled.
 pub fn documents_built() -> u64 {
     cost::read(&cost::DOCUMENTS)
 }
 
-/// Total bytes of every document assembled.
 pub fn document_bytes() -> u64 {
     cost::read(&cost::DOCUMENT_BYTES)
 }
 
-/// The largest single document assembled.
-///
-/// The one that catches per-message bulk coming back: a mean stays
-/// comfortable while one enormous document is handed over on every switch.
 pub fn largest_document() -> u64 {
     cost::read(&cost::LARGEST_DOCUMENT)
 }
 
-/// How many message bodies this thread has put through the sanitiser for a
-/// reader. The cost [`crate::reader::document::RenderCache`] exists to
-/// bound (#1605).
 pub fn bodies_sanitised() -> u64 {
     cost::read(&cost::BODIES_SANITISED)
 }
 
-/// How many message bodies this thread has classified and treated (app
-/// colours or paper) for a reader -- specs/007-postio-focus T223 holds this
-/// at zero on the interface thread.
 pub fn bodies_treated() -> u64 {
     cost::read(&cost::BODIES_TREATED)
 }
 
-/// How many message bodies this thread has parsed to decide whether they
-/// open in reader view -- a whole html5ever parse each.
 pub fn bulk_judged() -> u64 {
     cost::read(&cost::BULK_JUDGED)
 }
 
-/// How many documents this process has handed to a rendering surface.
 pub fn renders_issued() -> u64 {
     cost::read(&cost::RENDERS)
 }
 
-/// How many rendering surfaces this process has created.
 pub fn surfaces_created() -> u64 {
     cost::read(&cost::SURFACES_CREATED)
 }
 
-/// Surfaces created and not yet released.
-///
-/// Signed, because a frontend that reports a release it never created is a
-/// bug worth seeing rather than saturating quietly at zero.
+/// Signed, so a release without a create shows as negative rather than saturating at zero.
 pub fn surfaces_held() -> i64 {
     cost::read(&cost::SURFACES_CREATED) as i64 - cost::read(&cost::SURFACES_RELEASED) as i64
 }
 
-/// How many list pages this process has asked the store for.
-///
-/// The bound on opening a folder: a screen's worth, whatever the folder
-/// holds. See [`crate::reader::cost::note_page_requested`] — and #1534, which
-/// is what a number that grows with the mailbox looks like from the outside.
 pub fn pages_requested() -> u64 {
     cost::read(&cost::PAGES_REQUESTED)
 }
 
-/// Snapshots the reading renderer put on screen, and what they cost in
-/// total (spec 006): read a `before`, act, assert on the delta.
 pub fn snapshot_counts() -> (u64, crate::reader::cost::SnapshotCounts) {
     use crate::reader::cost::*;
     let get = cost::read;

@@ -1,17 +1,11 @@
-//! The structured result the onboarding screen renders and the user may
-//! override.
-
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-/// Transport security for one server.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Encryption {
-    /// Implicit TLS from the first byte (IMAPS on 993, SMTPS on 465).
     Tls,
-    /// Plaintext connection upgraded with STARTTLS.
     StartTls,
     /// No encryption. Never chosen by Postio on its own; only honoured when
     /// a provider's own autoconfig document says so.
@@ -28,19 +22,14 @@ impl fmt::Display for Encryption {
     }
 }
 
-/// Where to reach one server.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerSettings {
-    /// DNS hostname.
     pub host: String,
-    /// TCP port.
     pub port: u16,
-    /// Transport security.
     pub encryption: Encryption,
 }
 
 impl ServerSettings {
-    /// Builds settings for one server.
     pub fn new(host: impl Into<String>, port: u16, encryption: Encryption) -> Self {
         Self {
             host: host.into(),
@@ -56,28 +45,16 @@ impl fmt::Display for ServerSettings {
     }
 }
 
-/// Which probe produced a set of settings. The UI shows this so the user can
-/// judge how much to trust it before overriding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SettingsSource {
-    /// Postio's own table of known providers (currently iCloud).
     Builtin,
-    /// `https://<domain>/.well-known/autoconfig/mail/config-v1.1.xml`.
     WellKnown,
-    /// `https://autoconfig.<domain>/mail/config-v1.1.xml`.
     Autoconfig,
-    /// The Thunderbird ISPDB.
     Ispdb,
-    /// RFC 6186 `_imaps._tcp` / `_submission._tcp` SRV records.
     Srv,
-    /// The domain's MX records named a provider Postio ships settings for
-    /// (#94).
-    ///
-    /// Better evidence than a convention guess -- the domain really did
-    /// delegate its mail there -- but it is still not what the domain
-    /// published about *mail configuration*, so it prefills the manual form
-    /// rather than presenting itself as a discovered account.
+    /// Better evidence than a guess, but not what the domain published about mail configuration: it
+    /// prefills the manual form (#94).
     Mx,
     /// A common-name guess. Unverified: only ever used to prefill the manual
     /// form, never presented as a discovered account.
@@ -85,7 +62,6 @@ pub enum SettingsSource {
 }
 
 impl SettingsSource {
-    /// A short human label for the onboarding screen.
     pub fn label(&self) -> &'static str {
         match self {
             Self::Builtin => "known provider",
@@ -98,84 +74,45 @@ impl SettingsSource {
         }
     }
 
-    /// Whether these settings came from an authoritative source. Guesses are
-    /// not.
     pub fn is_authoritative(&self) -> bool {
-        // `Mx` joins `Guess` here (#94). Both are *inference*: the domain
-        // published where its mail is delivered, or nothing at all, and
-        // neither is a statement about how to reach a mailbox or how to log
-        // in to it. An MX hit is much better evidence than a convention
-        // guess, and it is still not the domain answering the question that
-        // was asked -- so it prefills the manual form rather than presenting
-        // itself as a discovered account.
+        // `Mx` and `Guess` are inference, not the domain answering how to reach a mailbox, so they
+        // prefill the manual form (#94).
         !matches!(self, Self::Guess | Self::Mx)
     }
 }
 
-/// Everything the onboarding screen needs after a probe.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccountSettings {
-    /// The address the probe was run for.
     pub email: String,
-    /// Incoming server.
     pub imap: ServerSettings,
-    /// Outgoing server.
     pub smtp: ServerSettings,
-    /// Login to present to both servers. Providers may template this; the
-    /// full address is the near-universal answer and the one we fill in.
     pub login: String,
-    /// Which probe produced this.
     pub source: SettingsSource,
-    /// The provider requires an application-specific password rather than
-    /// the account password. True for iCloud, which offers third parties no
-    /// OAuth path at all.
     pub requires_app_password: bool,
-    /// A sentence for the onboarding screen, when there is something the
-    /// user must know before typing a password.
     pub note: Option<String>,
-    /// Where to generate an app-specific password, when [`Self::note`] says
-    /// one is required. The onboarding screen links to this rather than
-    /// making the user go find it.
     pub password_help_url: Option<String>,
-    /// The provider's own display name, when it published one.
     pub display_name: Option<String>,
-    /// The provider's OAuth offer, when its preset row prefers `oauth2`
-    /// (#534): what the sign-in flow needs to run. Only preset-sourced
-    /// discoveries carry one — autoconfig and SRV say nothing about OAuth.
+    /// Only preset-sourced discoveries carry one (#534).
     pub oauth: Option<OAuthOffer>,
-    /// The provider's JMAP offer, when its preset row advertises the
-    /// backend (ADR 0018 Q5). Like [`oauth`](Self::oauth), preset-only:
-    /// autoconfig and SRV describe IMAP servers.
+    /// Preset-only, like `oauth`: autoconfig and SRV describe IMAP servers (ADR 0018 Q5).
     pub jmap: Option<JmapOffer>,
-    /// Preference order among the backends the provider is reached over.
-    /// `["imap"]` for everything but a preset row that says otherwise.
+    /// `["imap"]` unless a preset row says otherwise.
     pub backends: Vec<String>,
 }
 
-/// What a preset row offers a JMAP add (ADR 0018 Q5).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JmapOffer {
-    /// The RFC 8620 session resource URL.
     pub session_url: String,
 }
 
-/// What a preset row's `[provider.<id>.oauth]` table offers the sign-in
-/// flow (#534, ADR 0006 Q4 as amended by #152): endpoints directly, or an
-/// issuer to resolve them from, plus the scopes to request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OAuthOffer {
-    /// The RFC 8414 issuer to resolve endpoints from, when named.
     pub issuer: Option<String>,
-    /// The authorization endpoint, when the row carries it directly.
     pub authorize: Option<String>,
-    /// The token endpoint, when the row carries it directly.
     pub token: Option<String>,
-    /// The scopes the sign-in requests.
     pub scopes: Vec<String>,
-    /// How many days the provider says the refresh grant lives, when it
-    /// says (#954). Carried through to the account row at sign-in, so the
-    /// engine can re-record the deadline on every refresh without the
-    /// preset table.
+    /// Carried to the account row at sign-in so the engine can re-record the deadline on every
+    /// refresh without the preset table (#954).
     #[serde(default)]
     pub refresh_token_lifetime_days: Option<u32>,
 }

@@ -25,7 +25,6 @@ usage() {
     exit 2
 }
 
-# The crates a queue carries: every `[crates.<name>]` table in its manifest.
 crates_of() {
     sed -n 's/^\[crates\.\(.*\)\]$/\1/p' "$1/upstream.toml"
 }
@@ -34,7 +33,6 @@ version_of() {
     sed -n 's/^version = "\(.*\)"$/\1/p' "$1/upstream.toml"
 }
 
-# The top-level paths a queue carries, one per line; nothing means all.
 include_of() {
     sed -n 's/^include = \[\(.*\)\]$/\1/p' "$1/upstream.toml" |
         tr ',' '\n' | sed 's/^ *"//; s/" *$//; /^$/d'
@@ -45,7 +43,6 @@ checksum_of() {
         on && /^sha256/ { gsub(/.*= "|"/, ""); print; exit }' "$1/upstream.toml"
 }
 
-# Unpack the pristine release of every crate of queue $1 into $2.
 pristine() {
     local queue=$1 into=$2 crate file version keep entry
     version=$(version_of "$queue")
@@ -125,8 +122,6 @@ diff)
     cd "$work"
     for crate in $(crates_of "$queue"); do
         ln -s "$ROOT/vendor/$crate" "patched-$crate"
-        # Headers name both sides by the crate and carry no timestamps, so
-        # a regenerated patch differs only where the change does.
         diff -ruN "$crate" "patched-$crate/" | sed -E \
             -e "s#^diff -ruN ([^ ]*) patched-$crate/#diff -ruN \1 $crate/#" \
             -e "s#^(---|[+][+][+]) (patched-)?([^\t]*)\t.*#\1 \3#" || true

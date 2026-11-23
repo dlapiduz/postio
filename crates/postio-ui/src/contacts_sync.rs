@@ -1,38 +1,24 @@
-//! Syncing with Contacts, in words (specs/011-focus-contacts S12, handoff
-//! screen 08 and its sync section): the sheet that explains it, the dry run
-//! that says what it would do, and the words other screens use for a contact
-//! that syncs. A dry run only: every line says nothing was written.
-//!
-//! The plan has names in it; it is for the person to read and is never
-//! logged. No toolkit here.
+//! Syncing with Contacts in words: the explainer sheet, the dry run and the words other
+//! screens use. A dry run only. The plan has names in it and is never logged.
 
 use postio_contact_sync::{Plan, Scope};
 use postio_core::{CommandId, Keymap};
 
 use crate::contact_edit::EditButton;
 
-/// What the Mac's Contacts is called to the person.
 pub const ACCOUNT_NAME: &str = "Contacts (iCloud)";
 
-/// One choice of "What syncs".
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScopeOption {
-    /// Its words.
     pub label: String,
-    /// Which it is.
     pub scope: ScopeChoice,
-    /// Whether it is chosen.
     pub on: bool,
 }
 
-/// A scope, as a frontend names it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScopeChoice {
-    /// People.
     People,
-    /// People and companies.
     PeopleAndCompanies,
-    /// Everything saved.
     Everything,
 }
 
@@ -46,64 +32,42 @@ impl From<ScopeChoice> for Scope {
     }
 }
 
-/// The sheet: before sync is on, the dry run it shows, or a refusal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SyncSheetView {
-    /// "Sync with Contacts".
     pub title: String,
-    /// The paragraphs under it.
     pub lines: Vec<String>,
-    /// "Contacts on this Mac (iCloud)", while the choice is being made.
     pub account: Option<AccountRow>,
-    /// "What syncs", with its choices; empty once there is a plan.
     pub scopes: Vec<ScopeOption>,
-    /// What the chosen scope means.
     pub scope_note: Option<String>,
-    /// The dry run, once there is one.
     pub plan: Option<PlanView>,
-    /// The main button.
     pub primary: EditButton,
-    /// The other.
     pub secondary: Option<EditButton>,
 }
 
-/// The one account row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccountRow {
-    /// "Contacts on this Mac (iCloud)".
     pub title: String,
-    /// "Read only", the mode.
     pub mode: String,
-    /// "Read only until writes are reviewed".
     pub note: String,
 }
 
-/// What a dry run says.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanView {
-    /// "Would add 12, update 3, ask about 2, delete 0": counts only.
     pub summary: String,
-    /// The plan, a line each, with names.
     pub lines: Vec<String>,
-    /// "Read only until writes are reviewed. Postio changed nothing ..."
     pub foot: String,
-    /// The button that applies the Postio side of the plan, when it has one.
     pub bring_in: Option<BringIn>,
 }
 
-/// "Bring 12 into Postio": the person's yes to the plan above it, for
-/// Postio's own contacts only. Bound to the plan by its fingerprint, so a
-/// snapshot that changed since needs a new preview.
+/// The person's yes to the plan above it, for Postio's own contacts only. Bound by
+/// fingerprint, so a changed snapshot needs a new preview.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BringIn {
-    /// The button's words.
     pub label: String,
-    /// The plan it applies.
     pub fingerprint: u64,
 }
 
-/// The button's words for `people` who would come in and `fields` that would
-/// change in Postio, or `None` when there is nothing to bring.
+/// `None` when there is nothing to bring.
 pub fn bring_in_label(people: usize, fields: usize) -> Option<String> {
     match (people, fields) {
         (0, 0) => None,
@@ -119,7 +83,6 @@ pub fn bring_in_label(people: usize, fields: usize) -> Option<String> {
     }
 }
 
-/// What bringing in did, in words: counts only.
 pub fn brought_in_note(people: usize, fields: usize, skipped: usize) -> String {
     let mut parts = Vec::new();
     if people > 0 {
@@ -148,7 +111,6 @@ pub fn brought_in_note(people: usize, fields: usize, skipped: usize) -> String {
     note
 }
 
-/// The scope's words.
 pub fn scope_options(chosen: ScopeChoice) -> Vec<ScopeOption> {
     [
         ("People", ScopeChoice::People),
@@ -164,7 +126,6 @@ pub fn scope_options(chosen: ScopeChoice) -> Vec<ScopeOption> {
     .collect()
 }
 
-/// What `scope` keeps in Postio.
 pub fn scope_note(scope: ScopeChoice) -> String {
     match scope {
         ScopeChoice::People => {
@@ -187,7 +148,6 @@ fn done(keymap: &Keymap) -> EditButton {
     }
 }
 
-/// The sheet before anything is asked of the Mac.
 pub fn intro(chosen: ScopeChoice, keymap: &Keymap) -> SyncSheetView {
     SyncSheetView {
         title: "Sync with Contacts".to_owned(),
@@ -223,10 +183,8 @@ pub fn intro(chosen: ScopeChoice, keymap: &Keymap) -> SyncSheetView {
     }
 }
 
-/// How many plan lines the sheet shows before saying how many more.
 const SHOWN: usize = 40;
 
-/// What a dry run found.
 pub fn plan_sheet(plan: &Plan, keymap: &Keymap) -> SyncSheetView {
     let mut lines = plan.report();
     if lines.len() > SHOWN {
@@ -258,7 +216,6 @@ pub fn plan_sheet(plan: &Plan, keymap: &Keymap) -> SyncSheetView {
     }
 }
 
-/// The sheet when the Mac said no.
 pub fn denied(keymap: &Keymap) -> SyncSheetView {
     SyncSheetView {
         title: "Contacts access was declined".to_owned(),
@@ -275,8 +232,6 @@ pub fn denied(keymap: &Keymap) -> SyncSheetView {
     }
 }
 
-/// The words for a contact that syncs, once a sync has linked it: "saved in
-/// Postio, then synced to Contacts (iCloud) and your other devices".
 pub fn synced_bar_note(synced_with: Option<&str>) -> String {
     match synced_with {
         Some(account) => {
@@ -286,8 +241,6 @@ pub fn synced_bar_note(synced_with: Option<&str>) -> String {
     }
 }
 
-/// "saved, synced with Contacts (iCloud)" for a card's role line and the merge
-/// result.
 pub fn synced_status(saved: bool, synced_with: Option<&str>) -> String {
     match (saved, synced_with) {
         (true, Some(account)) => format!("saved, synced with {account}"),

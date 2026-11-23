@@ -1,38 +1,11 @@
-//! The IMAP session: TLS, authentication, and the capability list that
-//! everything else is gated on.
-//!
-//! # The one thing this module exists to get right
-//!
-//! iCloud does not advertise its real capability set in the pre-auth banner.
-//! `CONDSTORE`, `QRESYNC`, `IDLE` and `UIDPLUS` appear only *after* login, and
-//! a client that trusts the banner degrades to full resync forever without a
-//! single error being logged. `io-imap` makes this easy to get wrong:
-//! `ImapLoginOptions::ensure_capabilities` defaults to `false`, and a
-//! hand-driven auth coroutine will hand back an empty `Vec<Capability>` rather
-//! than failing.
-//!
-//! So there is exactly one way into a session — [`ImapSession::open`], which
-//! goes through `io-imap`'s `ImapSessionOpen` coroutine (that one hard-codes
-//! `ensure_capabilities = true`) — and an empty post-authentication capability
-//! list is [`BackendError::EmptyCapabilities`], never a silent downgrade. See
-//! ADR 0001, Q3.
-//!
-//! # No plaintext fallback, ever
-//!
-//! A failed TLS handshake ends the connection. Cleartext to anything but
-//! loopback is refused by [`ConnectionSettings::validate`] before a socket is
-//! opened, so a mistyped port cannot hand an app-specific password to whoever
-//! is listening.
-//!
-//! # Testing
-//!
-//! `io-imap` is sans-I/O, so the whole handshake runs over a canned transcript
-//! with no socket: see [`ScriptedConnector`]. That covers the exchanges whose
-//! exact bytes are the point; for the ones where *state* is the point — a
-//! resync, a UIDVALIDITY bump, a torn body fetch — point a [`ConnectionPool`]
-//! at the `test_server` module's in-process server, which is a real IMAP
-//! server on a loopback port. No test in the default suite touches the
-//! network.
+//! The one way into a session is `ImapSession::open`, via io-imap's `ImapSessionOpen`, which
+//! hard-codes `ensure_capabilities = true`; an empty post-auth capability list is
+//! `EmptyCapabilities`. iCloud advertises `CONDSTORE`, `QRESYNC`, `IDLE` and `UIDPLUS` only after
+//! login (ADR 0001 Q3).
+//! No plaintext fallback: a failed TLS handshake ends the connection, and
+//! `ConnectionSettings::validate` refuses cleartext to anything but loopback.
+//! `ScriptedConnector` runs the handshake over a canned transcript; the `test_server` module serves
+//! state tests on loopback.
 
 mod backend;
 mod body;
@@ -98,53 +71,28 @@ pub use self::transport::{
     TransportError,
 };
 
-/// The largest server message the parser will accept.
-///
-/// A mailbox can legitimately hold a message far bigger than anything a client
-/// wants in one buffer, but a *response* this large is a server misbehaving or
-/// a fetch that should have been streamed.
+/// A response this large is a server misbehaving or a fetch that should have streamed.
 pub(crate) const MAX_MESSAGE_SIZE: u32 = 100 * 1024 * 1024;
 
-/// The tagged command that starts compression, and the start of its `OK`.
 const COMPRESS_COMMAND: &[u8] = b"pz1 COMPRESS DEFLATE\r\n";
 const COMPRESS_TAG_OK: &str = "pz1 OK";
 
-/// Read buffer, sized for line-oriented protocol traffic.
 const READ_BUFFER: usize = 16 * 1024;
 
-/// An authenticated IMAP session over one connection.
-///
-/// Owns the socket and the connection-wide parser buffer, and nothing else:
-/// every command comes from `io-imap`'s `ImapClientAsync`, which this type
-/// implements by pumping coroutines against the stream.
 pub struct ImapSession {
     stream: Box<dyn ImapStream>,
     fragmentizer: Fragmentizer,
-    /// The tags of this connection's commands, handed to io-imap each time
-    /// a command asks for one (`WantsTag`).
     tags: TagGenerator,
     capabilities: Capabilities,
     endpoint: String,
     account: String,
-    /// The mailbox this session currently has selected, cached so a fetch
-    /// loop over many chunks of the same mailbox does not re-issue `SELECT`
-    /// for every one of them. See [`selection`].
     selected: Option<selection::SelectedMailbox>,
-    /// The UID generation observed for each mailbox. Shared with every other
-    /// session in the same pool, so one connection discovering a renumber
-    /// stops the rest from acting on what they cached before it.
+    /// Shared with every other session in the pool, so one connection discovering a renumber stops
+    /// the rest acting on stale generations.
     generations: std::sync::Arc<selection::Generations>,
-    /// How long [`selected`](Self::selected) may answer without the server
-    /// confirming it again. See [`selection`] for why a cached generation is the
-    /// dangerous half of that cache.
     selection_max_age: std::time::Duration,
-    /// How long a command may go without a byte from the server before it is
-    /// given up on. Silence, not duration: see
-    /// [`ImapStream::read_within`].
+    /// Silence, not duration; see `ImapStream::read_within`.
     command_timeout: std::time::Duration,
-    /// Set when one of this session's reads hit that bound, so the I/O error
-    /// `io-imap` reports back can be turned into the reason it happened.
-    /// Taken by [`command_error`](Self::command_error).
     timed_out: Option<BackendError>,
 }
 
@@ -160,10 +108,7 @@ impl fmt::Debug for ImapSession {
 }
 
 impl ImapSession {
-    /// Opens a session: connect, secure, authenticate, read capabilities.
-    ///
-    /// The capability set this returns is the one observed after
-    /// authentication. Nothing else in Postio is allowed to build one.
+    /// Nothing else in Postio may build a capability set.
     pub async fn open(
         settings: &ConnectionSettings,
         password: &Password,
@@ -195,12 +140,7 @@ impl ImapSession {
         let mut buffer = [0u8; READ_BUFFER];
         let mut resume: Option<&[u8]> = None;
 
-        // `WantsTlsUpgrade` carries no payload, so the host of the plaintext
-        // connect is kept for the certificate check the upgrade performs.
         let mut upgrade_host = settings.host.clone();
-        // io-imap asks for each command's tag (`WantsTag`) instead of
-        // numbering them itself; one generator per connection keeps them
-        // unique on it, and the session keeps it for every later command.
         let mut tags = TagGenerator::new();
         let mut tag: Tag<'static>;
 
@@ -240,10 +180,8 @@ impl ImapSession {
                 }
                 ImapCoroutineState::Yielded(ImapSessionOpenYield::WantsRead) => {
                     let stream = stream.as_mut().ok_or_else(no_stream)?;
-                    // The socket connected and TLS finished, so
-                    // `connect_timeout` has already been satisfied — but the
-                    // exchange after it can still hang, and an opening that
-                    // never completes holds a pool slot forever.
+                    // The handshake can still hang after connect; an opening that never completes
+                    // holds a pool slot forever.
                     let read = stream
                         .read_within(&mut buffer, settings.connect_timeout, "the IMAP handshake")
                         .await?;
@@ -269,8 +207,6 @@ impl ImapSession {
             endpoint: settings.endpoint(),
             account: settings.username.clone(),
             selected: None,
-            // A session opened outside a pool answers only to itself; the
-            // pool replaces both of these when it opens one.
             generations: std::sync::Arc::new(selection::Generations::new()),
             selection_max_age: DEFAULT_SELECTION_MAX_AGE,
             command_timeout: DEFAULT_COMMAND_TIMEOUT,
@@ -280,13 +216,8 @@ impl ImapSession {
         Ok(session)
     }
 
-    /// `COMPRESS DEFLATE` (RFC 4978), when the server advertised it after
-    /// authentication.
-    ///
-    /// `io-imap` has no coroutine for it, so the command goes through its raw
-    /// passthrough and the stream is swapped for a [`DeflateStream`] on the
-    /// tagged `OK`. A refusal leaves the session working in the clear: the
-    /// extension is an optimisation, and the server saying no is not an error.
+    /// `io-imap` has no coroutine for it, so the command goes through its raw passthrough. A
+    /// refusal leaves the session working in the clear.
     async fn negotiate_compression(&mut self) -> BackendResult<()> {
         if !self.capabilities.contains(Capability::Compress) {
             return Ok(());
@@ -309,32 +240,22 @@ impl ImapSession {
         Ok(())
     }
 
-    /// The capabilities this server advertised after authentication.
     pub fn capabilities(&self) -> &Capabilities {
         &self.capabilities
     }
 
-    /// The `host:port` this session is connected to.
     pub fn endpoint(&self) -> &str {
         &self.endpoint
     }
 
-    /// The account this session authenticated as.
     pub fn account(&self) -> &str {
         &self.account
     }
 
-    /// Whether the bytes on this connection are encrypted.
     pub fn is_encrypted(&self) -> bool {
         self.stream.is_encrypted()
     }
 
-    /// Re-reads the capability list.
-    ///
-    /// Needed after anything that changes what the server will admit to —
-    /// a `COMPRESS` negotiation, or a provider that revises its list mid
-    /// session. Not needed after authentication: [`open`](Self::open) already
-    /// did it.
     pub async fn refresh_capabilities(&mut self) -> BackendResult<&Capabilities> {
         let advertised = self.run(ImapCapabilityGet::new()).await;
         let advertised = advertised.map_err(|error| self.command_error("CAPABILITY", error))?;
@@ -343,23 +264,16 @@ impl ImapSession {
         Ok(&self.capabilities)
     }
 
-    /// How long this session waits on a silent server.
     pub(super) fn command_timeout(&self) -> std::time::Duration {
         self.command_timeout
     }
 
-    /// Sets how long a command may go without a byte from the server.
     pub(super) fn set_command_timeout(&mut self, timeout: std::time::Duration) {
         self.command_timeout = timeout;
     }
 
-    /// Maps a command failure, recovering a deadline this session imposed.
-    ///
-    /// `io-imap` reports our own timeout back as a plain I/O error, which
-    /// would surface as `BackendError::Io` — transient, so it would still be
-    /// retried, but indistinguishable in a log from a socket that broke. The
-    /// distinction is worth keeping: "the server stopped answering" is a
-    /// different thing to explain than "the connection dropped".
+    /// `io-imap` reports our own timeout as a plain I/O error; recovered here so a log tells "the
+    /// server stopped answering" from "the connection dropped".
     pub(crate) fn command_error(&mut self, command: &str, error: ImapClientError) -> BackendError {
         match self.timed_out.take() {
             Some(BackendError::TimedOut { after, .. }) => BackendError::TimedOut {
@@ -371,7 +285,6 @@ impl ImapSession {
         }
     }
 
-    /// Ends the session politely.
     pub async fn logout(mut self) -> BackendResult<()> {
         let result = self.run(ImapLogout::new()).await;
         result.map_err(|error| self.command_error("LOGOUT", error))
@@ -417,9 +330,6 @@ impl ImapClientAsync for ImapSession {
                         {
                             Ok(read) => read,
                             Err(error) => {
-                                // `io-imap` can only carry this back as an I/O
-                                // error, so the reason is kept here and
-                                // recovered by `command_error`.
                                 let error: BackendError = error.into();
                                 let carried = std::io::Error::other(error.to_string());
                                 self.timed_out = Some(error);
@@ -433,9 +343,6 @@ impl ImapClientAsync for ImapSession {
                         if let Err(error) =
                             self.stream.write_within(&bytes, timeout, "a command").await
                         {
-                            // As for a read: the deadline is carried back
-                            // out through `io-imap` and recovered by
-                            // `command_error`.
                             if matches!(error, TransportError::TimedOut { .. }) {
                                 let error: BackendError = error.into();
                                 let carried = std::io::Error::other(error.to_string());
@@ -451,30 +358,15 @@ impl ImapClientAsync for ImapSession {
     }
 }
 
-// ---------------------------------------------------------------------------
-// What a response held that did not decode
-// ---------------------------------------------------------------------------
-
-/// How much of a command's response io-imap could not decode.
-///
-/// io-imap completes a command `Ok` whatever it failed to read: a line it
-/// could not scan is dropped whole (`skipped`), and a `FETCH` line one of
-/// whose items did not decode comes back with the rest (`partial`). Either
-/// way the result is short of what the server sent, and only this says so.
-/// iCloud has sent `FETCH` sequence numbers no decoder accepts under QRESYNC
-/// (Apple Developer Forums thread 694251), and a `* SEARCH` line it could
-/// not parse once made a 60,934-message Archive list nothing at all.
+/// io-imap completes `Ok` however much it failed to read: unscanned lines are `skipped`, a `FETCH`
+/// with an undecoded item is `partial`. iCloud has sent `FETCH` sequence numbers no decoder accepts
+/// under QRESYNC.
 pub(crate) fn undecoded<T>(output: &ImapOutput<T>) -> u64 {
     (output.skipped.len() + output.partial.len()) as u64
 }
 
-/// A `FETCH` result holding only the messages that decoded whole, and how
-/// many lines did not ([`undecoded`]).
-///
-/// A message one of whose items did not decode is taken out. It is missing
-/// an item it was asked for -- its date, its envelope, its body -- and
-/// storing it as though it had none would be storing something the server
-/// did not say.
+/// A message with an undecoded item is taken out: storing it would store something the server did
+/// not say.
 pub(crate) fn whole_messages<T>(
     mut output: ImapOutput<BTreeMap<NonZeroU32, T>>,
 ) -> (BTreeMap<NonZeroU32, T>, u64) {
@@ -485,17 +377,8 @@ pub(crate) fn whole_messages<T>(
     (output.data, undecoded)
 }
 
-// ---------------------------------------------------------------------------
-// Capability and error mapping
-// ---------------------------------------------------------------------------
-
-/// Turns the wire capability list into Postio's, refusing an empty one.
-///
-/// The refusal is the whole point. `io-imap` returns `Ok(vec![])` when the
-/// capability round trip was skipped, and every gate downstream would read
-/// that as "this server supports nothing" and quietly fall back to full
-/// resync forever. A server that authenticated us always advertises
-/// something.
+/// `io-imap` returns `Ok(vec![])` when the capability round trip was skipped, which downstream
+/// gates would read as "supports nothing".
 fn post_auth_capabilities(
     host: &str,
     advertised: &[WireCapability<'static>],
@@ -523,11 +406,7 @@ fn as_io(error: TransportError) -> ImapClientError {
     ImapClientError::Io(std::io::Error::other(error.to_string()))
 }
 
-/// Maps a session-opening failure onto the predicate the caller branches on.
-///
-/// A rejected password must come out as [`BackendError::Auth`] — retrying it
-/// forever is the difference between "ask the user for a new app-specific
-/// password" and a backoff loop that never ends.
+/// A rejected password must come out as `Auth`, or a backoff loop never ends.
 fn map_open_error(settings: &ConnectionSettings, error: ImapSessionOpenError) -> BackendError {
     let account = settings.username.clone();
     match error {
@@ -555,11 +434,8 @@ fn map_open_error(settings: &ConnectionSettings, error: ImapSessionOpenError) ->
                 reason: inner.to_string(),
             }
         }
-        // A rejected bearer token is an authentication failure like any
-        // other, and has to arrive as one: `Auth` is what stops the caller
-        // retrying blindly and what a `TokenSource` invalidation hangs off
-        // (#193). Left as `Protocol`, a stale token would look like a broken
-        // server and be retried on a timer for ever.
+        // A rejected bearer token must arrive as `Auth`, which stops blind retries and drives
+        // `TokenSource` invalidation (#193); as `Protocol` a stale token would be retried for ever.
         ImapSessionOpenError::AuthOauthbearer(inner) if is_rejection_oauthbearer(&inner) => {
             BackendError::Auth {
                 account,
@@ -578,9 +454,6 @@ fn map_open_error(settings: &ConnectionSettings, error: ImapSessionOpenError) ->
     }
 }
 
-/// Maps a command failure. Commands cannot fail authentication, so this is
-/// the coarse mapping: a rejection stays a rejection, everything else is a
-/// protocol problem.
 fn map_client_error(command: &str, account: &str, error: ImapClientError) -> BackendError {
     match error {
         ImapClientError::Io(inner) => BackendError::Io {
@@ -593,38 +466,20 @@ fn map_client_error(command: &str, account: &str, error: ImapClientError) -> Bac
         },
         other => {
             let reason = other.to_string();
-            // **A throttle is not a refusal.** `Rejected` is not transient,
-            // so the operation queue gives up on it; `RateLimited` is, and
-            // the backoff loop retries. Told apart by what the server said,
-            // because IMAP has no status code for "slow down" -- `NO` covers
-            // both "I will not" and "not just now".
-            //
-            // Met against iCloud, which answers a sustained body backfill
-            // with `NO Service temporarily unavailable` after about two
-            // minutes. Classified as a rejection, that ended the mailbox's
-            // sync for the session and left mail missing from the list with
-            // nothing retrying for it (#1438).
+            // A throttle is not a refusal: `Rejected` is not transient, `RateLimited` is. IMAP has
+            // no status code for "slow down", so it is told apart by wording. iCloud answers a
+            // sustained backfill with `NO Service temporarily unavailable` (#1438).
             if reads_as_throttling(&reason) {
                 return BackendError::RateLimited {
-                    // No `retry_after`: iCloud names no interval, and
-                    // inventing one would be a claim the server did not make.
-                    // The backoff loop has its own schedule for that.
+                    // No `retry_after`: iCloud names no interval, and the backoff loop has its own
+                    // schedule.
                     retry_after: None,
                     reason,
                 };
             }
-            // **Silence is not a refusal either.** An exchange that ended with
-            // no tagged response is a command that did not complete, and
-            // `Rejected` says the server considered it and said no — which
-            // would be a claim the server never made, printed at the user as
-            // "the server refused COPY". `Disconnected` is the honest one: the
-            // session went away underneath the command, it is transient, and
-            // the queue retries instead of losing the mutation.
-            //
-            // Retrying may duplicate a copy the server did perform and did
-            // not confirm. Within one account that is visible and reversible;
-            // the alternative, seen against iCloud, is a message archived
-            // locally that the server is never told about, which is neither.
+            // Silence is not a refusal: an exchange with no tagged response did not complete, and
+            // `Rejected` would claim the server said no. `Disconnected` is transient, so the queue
+            // retries rather than losing the mutation; a duplicate copy is visible and reversible.
             if reads_as_incomplete(&reason) {
                 return BackendError::Disconnected {
                     context: command.to_owned(),
@@ -639,17 +494,11 @@ fn map_client_error(command: &str, account: &str, error: ImapClientError) -> Bac
     }
 }
 
-/// Whether a server's refusal is really "not just now".
-///
-/// Matched on wording, which is unlovely and is what IMAP leaves available:
-/// there is no response code for throttling that these servers send. Kept
-/// deliberately narrow -- each phrase is one a real server sends, and a
-/// refusal that is genuinely permanent must not be retried for ever.
+/// Matched on wording: IMAP has no throttling response code. Kept narrow, since a permanent refusal
+/// must not be retried for ever.
 fn reads_as_throttling(reason: &str) -> bool {
     const PHRASES: &[&str] = &[
-        // iCloud, under a sustained backfill.
         "service temporarily unavailable",
-        // Gmail, and several others.
         "try again later",
         "too many simultaneous connections",
         "temporarily deferred",
@@ -662,27 +511,15 @@ fn reads_as_throttling(reason: &str) -> bool {
     PHRASES.iter().any(|phrase| lowered.contains(phrase))
 }
 
-/// Whether the exchange ended without the server completing it.
-///
-/// io-imap gives every command a `MissingTagged` variant — "the exchange
-/// ended without a tagged response from the server" — distinct from its `No`,
-/// `Bad` and `Bye` variants and from `Send`, which carries EOF, decode and
-/// framing failures. It means the command did not complete: no answer, no
-/// refusal, and no way to know whether the server acted.
-///
-/// That is a transport outcome, and grouping it with refusals is what made an
-/// archive vanish between Postio and iCloud. Matched on wording for the same
-/// reason as [`reads_as_throttling`] — the variants are per-command types
-/// behind `ImapClientError`, and every one of them renders this identical
-/// phrase.
+/// io-imap's `MissingTagged` means no answer, no refusal and no way to know whether the server
+/// acted. Grouping it with refusals made an archive vanish between Postio and iCloud. Matched on
+/// wording since every per-command variant renders the same phrase.
 fn reads_as_incomplete(reason: &str) -> bool {
     reason
         .to_ascii_lowercase()
         .contains("did not return a tagged response")
 }
 
-/// Whether the server said "no" to the credentials, as opposed to the
-/// exchange going wrong.
 fn is_rejection_plain(error: &ImapAuthPlainError) -> bool {
     matches!(
         error,
@@ -704,12 +541,9 @@ fn is_rejection_imap_login(error: &ImapLoginError) -> bool {
     )
 }
 
-/// `NoWithError` is not an extra case to be thorough about — it is the
-/// *ordinary* one. Both bearer mechanisms report a rejected token by sending
-/// the server's error payload as a challenge and the `NO` after it (RFC 7628
-/// §3.2.3), so a stale token produces `NoWithError` and a bare `No` is the
-/// rarer shape. Matching only `No` would have left the common case classified
-/// as a protocol fault, which is a token that never gets refreshed.
+/// `NoWithError` is the ordinary case: both bearer mechanisms report a rejected token with an error
+/// challenge then `NO` (RFC 7628 §3.2.3); matching only `No` would leave a token that never
+/// refreshes.
 fn is_rejection_oauthbearer(error: &ImapAuthOauthbearerError) -> bool {
     matches!(
         error,
@@ -730,32 +564,17 @@ fn is_rejection_xoauth2(error: &ImapAuthXoauth2Error) -> bool {
     )
 }
 
-/// The SASL credentials for `settings`' auth method (#193).
-///
-/// The credential is the same [`Password`] whichever branch is taken — a
-/// stored app password, or whatever a [`TokenSource`](crate::auth::TokenSource)
-/// returned. Only the mechanism differs, which is why this is a mapping over
-/// data rather than a second `open`.
-///
-/// Every branch passes the secret through [`credential_copy`] and nothing
-/// else, so the zeroization argument that function documents holds for the
-/// bearer mechanisms exactly as it does for PLAIN: `SaslOauthbearerCreds`'
-/// and `SaslXoauth2Creds`' `token` are `secrecy::SecretString` too, and both
-/// mechanisms build the wire form from it internally rather than handing us a
-/// `String` to assemble.
+/// Every branch passes the secret through `credential_copy` only, so its zeroization holds for the
+/// bearer mechanisms too.
 fn sasl_for(settings: &ConnectionSettings, password: &Password) -> Sasl {
     match settings.auth {
-        // An app-specific password is a password. The distinction is for the
-        // user interface — what to call the box they paste into — and reaches
-        // the wire not at all.
         AuthMethod::Password | AuthMethod::AppPassword => Sasl::Plain(SaslPlainCreds {
             authzid: None,
             authcid: settings.username.clone(),
             passwd: credential_copy(password).into(),
         }),
-        // RFC 7628. `host` and `port` go verbatim into the GS2 header, so
-        // they have to be the server actually being contacted rather than
-        // anything canonicalised.
+        // RFC 7628: `host` and `port` go verbatim into the GS2 header, so they must be the server
+        // actually contacted.
         AuthMethod::OAuth2 => Sasl::Oauthbearer(SaslOauthbearerCreds {
             username: settings.username.clone(),
             host: settings.host.clone(),
@@ -769,26 +588,10 @@ fn sasl_for(settings: &ConnectionSettings, password: &Password) -> Sasl {
     }
 }
 
-/// The password, copied out of [`Password`] for the handshake.
-///
-/// The one copy of the secret this module makes. #144 asked whether it
-/// outlives the handshake unprotected; checked against io-sasl 0.1.0 and
-/// io-imap 0.6.0, it does not. `SaslPlainCreds::passwd` is a
-/// `secrecy::SecretString` — `SecretBox<str>`, zeroized on drop — and io-imap
-/// makes one further copy of its own inside `ImapAuthPlain::new`, which is
-/// another `SecretString` and therefore also zeroized. Two copies, both
-/// protected.
-///
-/// What is *not* obvious is why this must stay exactly one `to_owned`.
-/// `SecretString::from(String)` goes through `String::into_boxed_str`, which
-/// reallocates whenever capacity exceeds length — and reallocating frees the
-/// buffer holding the secret **without overwriting it**, which is the leak
-/// this whole issue is about, reintroduced one layer down. `str::to_owned`
-/// allocates exactly `len`, so the buffer moves rather than being copied and
-/// abandoned; io-imap's own `to_string()` on a `&str` does the same. Anything
-/// that builds this with spare capacity — a `String::with_capacity`, a
-/// `push_str`, a `format!` — breaks that silently, which is what the test
-/// below exists to catch.
+/// The one copy of the secret this module makes, and it must stay exactly one `to_owned`:
+/// `SecretString::from(String)` reallocates when capacity exceeds length, freeing the buffer
+/// without overwriting it. Spare capacity (`with_capacity`, `push_str`, `format!`) breaks that
+/// silently; the test below catches it (#144).
 fn credential_copy(password: &Password) -> String {
     password.expose().to_owned()
 }
@@ -800,9 +603,6 @@ mod tests {
 
     #[test]
     fn the_handshake_copy_of_a_password_has_no_spare_capacity() {
-        // See `credential_copy`: spare capacity here makes
-        // `SecretString::from` reallocate, and the abandoned buffer still
-        // holds the password.
         let copy = credential_copy(&Password::new("hunter2"));
         assert_eq!(copy, "hunter2");
         assert_eq!(
@@ -835,9 +635,6 @@ mod tests {
 
     #[test]
     fn an_empty_post_auth_capability_list_is_an_error() {
-        // ADR 0001 rule 1: io-imap returns Ok(vec![]) rather than failing when
-        // the capability round trip was skipped, and every gate downstream
-        // would read that as "supports nothing".
         let error = post_auth_capabilities("imap.example.com", &[]).unwrap_err();
 
         assert!(matches!(error, BackendError::EmptyCapabilities { .. }));
@@ -905,20 +702,8 @@ mod tests {
 mod throttling_is_not_refusal {
     use super::*;
 
-    /// iCloud's throttle is retried, not given up on (#1438).
-    ///
-    /// Taken from a real session: a sustained body backfill against
-    /// `imap.mail.me.com` ran for two minutes and then got
-    ///
-    /// ```text
-    /// the server refused FETCH: IMAP FETCH failed:
-    ///   NO Service temporarily unavailable
-    /// ```
-    ///
-    /// Classified as `Rejected`, which `is_transient` says no to, so the
-    /// mailbox's sync ended for the session and the mail it had not reached
-    /// yet simply never arrived. Nothing retried, and the list was short with
-    /// no sign of why.
+    /// iCloud answers a sustained body backfill with `NO Service temporarily unavailable`; as
+    /// `Rejected` it ended the mailbox's sync and mail never arrived (#1438).
     #[test]
     fn a_server_asking_us_to_slow_down_is_transient() {
         for reason in [
@@ -943,11 +728,6 @@ mod throttling_is_not_refusal {
         }
     }
 
-    /// The control: a real refusal is still a refusal.
-    ///
-    /// Without this the fix could be "retry everything", which burns the
-    /// user's battery against a server that will never say yes -- the exact
-    /// thing `is_transient`'s doc comment warns about.
     #[test]
     fn a_permanent_refusal_is_not_retried() {
         for reason in [
@@ -964,33 +744,12 @@ mod throttling_is_not_refusal {
     }
 }
 
-/// An exchange that never completed is not a refusal either.
 #[cfg(test)]
 mod silence_is_not_refusal {
     use super::*;
 
-    /// A missing tagged response is retried, not given up on.
-    ///
-    /// Taken from a real session: archiving a message on `imap.mail.me.com`,
-    /// which advertises no `MOVE`, so the archive is `COPY` then `STORE` then
-    /// `EXPUNGE`. The `COPY` produced
-    ///
-    /// ```text
-    /// Not moved -- the server refused COPY: IMAP COPY failed:
-    ///   server did not return a tagged response
-    /// ```
-    ///
-    /// The server refused nothing. io-imap's `MissingTagged` means the
-    /// exchange ended with no `BYE` and no tagged line — the command did not
-    /// complete, which is a transport outcome and not an answer. Flattened
-    /// into `Rejected`, it was non-transient, so the queue marked the row
-    /// `failed` on the first attempt: the message was archived locally, the
-    /// server was never told, and nothing would ever try again. Local and
-    /// remote diverge permanently, which is the one thing the queue exists to
-    /// prevent.
-    ///
-    /// The same shape as #1438 one module up, and the same remedy: classify
-    /// by what actually happened rather than by where the error surfaced.
+    /// A missing tagged response is retried, not given up on: flattened into `Rejected`, the queue
+    /// marked the row failed on the first attempt and local and remote diverged for good.
     #[test]
     fn an_exchange_without_a_tagged_response_is_transient() {
         for reason in [
@@ -1013,7 +772,6 @@ mod silence_is_not_refusal {
         }
     }
 
-    /// The control: an answer the server actually gave is still an answer.
     #[test]
     fn a_real_answer_is_not_mistaken_for_silence() {
         for reason in [

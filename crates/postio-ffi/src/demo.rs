@@ -1,12 +1,6 @@
-//! A session over one of Focus's demo stores (specs/009-focus-macos T004).
-//!
-//! The Mac app is photographed and compared with its design over the same
-//! seeded stores the GTK app is (`postio-demo`): today's inbox in the
-//! references' shape, thirty conversations, a long newsletter. They live in
-//! memory, so opening one reads no Keychain and touches nobody's mail.
-//!
-//! Only a build with the `demo` feature can open one; any other build says
-//! so, which is what lets the Swift side call this unconditionally.
+//! A session over one of Focus's demo stores, in memory: it reads no Keychain and touches nobody's
+//! mail.
+//! Without the `demo` feature a build says so, so Swift can call this unconditionally.
 
 use std::sync::Arc;
 
@@ -43,12 +37,8 @@ fn contacts_file() -> Vec<u8> {
 
 #[uniffi::export]
 impl Session {
-    /// Say what sync would have said about the demo's account, as the
-    /// engine says it, so screens 16 to 19 can be photographed over a store
-    /// that never syncs (specs/009-focus-macos T101): `offline`, `auth` (the
-    /// server refused its password), `first-sync` (a pass a third of the way
-    /// through) or `synced` (a pass that finished). `false` for any other
-    /// word, and always in a build without demos, which invents nothing.
+    /// `offline`, `auth`, `first-sync` or `synced`; `false` for any other word, and always without
+    /// demos.
     pub fn demo_state(&self, state: String) -> bool {
         show(self, &state)
     }
@@ -56,11 +46,9 @@ impl Session {
 
 #[uniffi::export]
 impl Session {
-    /// Deliver an arrival into the demo's store, and say what sync would
-    /// have said (spec 013 US4): `reply` files Ana's reply in the Harbor
-    /// thread, through the engine's own threading, then announces
-    /// `NewMail` and `ThreadChanged`. `false` for any other word, and
-    /// always in a build without demos.
+    /// `reply` files Ana's reply in the Harbor thread, then announces `NewMail` and
+    /// `ThreadChanged`;
+    /// `false` for any other word, and always without demos.
     pub fn demo_arrive(&self, what: String) -> bool {
         arrive(self, &what)
     }
@@ -104,7 +92,6 @@ fn arrive(_session: &Session, _what: &str) -> bool {
     false
 }
 
-/// The events `state` stands for, emitted for the demo's first account.
 #[cfg(feature = "demo")]
 fn show(session: &Session, state: &str) -> bool {
     use postio_core::{ConnectionState, Event, FailureReason};
@@ -125,7 +112,6 @@ fn show(session: &Session, state: &str) -> bool {
         "auth" => vec![connection(ConnectionState::Failing {
             reason: FailureReason::Auth,
         })],
-        // Screen 17's numbers.
         "first-sync" => vec![
             connection(ConnectionState::Online),
             progress(12_408, 18_204),
@@ -144,14 +130,8 @@ fn show(_session: &Session, _state: &str) -> bool {
     false
 }
 
-/// `seed`, or `seed:screen` -- `05`/`06` the composer's people and the
-/// Harbor thread to reply to (`postio_demo::compose_demo`); a store with
-/// the row screen 04 opens
-/// refiled as one of the handoff's HTML bodies (`postio_demo::treatment_demo`:
-/// `27` the newsletter on paper, `28` the work mail in app colours), which
-/// the message window's screens are photographed over; or a file that
-/// configures what a screen needs (`22`/`23` a model for the digest's
-/// summary, `25` a vault, [`demo_config`]).
+/// `seed`, or `seed:screen`: `05`/`06` composer people and the Harbor thread, `27`/`28` HTML-body
+/// treatments, `22`/`23` a model for the digest summary, `25` a vault.
 #[cfg(feature = "demo")]
 fn open(name: &str) -> Result<Arc<Session>, SessionError> {
     let (seed, screen) = match name.split_once(':') {
@@ -165,8 +145,6 @@ fn open(name: &str) -> Result<Arc<Session>, SessionError> {
     if let Some(screen @ ("27" | "28" | "29" | "30" | "31")) = screen {
         crate::session::blocking(postio_demo::treatment_demo(&database, account, screen));
     }
-    // Screens 05 and 06: the people To completes to, and the Harbor
-    // thread's recipients and body, as GTK's `shot` adds them.
     if matches!(screen, Some("05" | "06")) {
         crate::session::blocking(postio_demo::compose_demo(&database, account));
     }
@@ -178,24 +156,19 @@ fn open(name: &str) -> Result<Arc<Session>, SessionError> {
     {
         *kept = Some(vault);
     }
-    // The session reads, and watches, the demo's own file -- the one the
-    // Settings window shows and saves to -- never the installed one.
+    // Reads the demo's own file, never the installed one.
     let file = demo_config_file();
     std::fs::write(&file, &config).map_err(|error| SessionError::StoreUnavailable {
         message: format!("The demo's settings could not be written: {error}"),
     })?;
     let options = crate::SessionOptions::in_memory_with(database).with_config_file_for_test(&file);
-    // `POSTIO_DEMO_AGENTS=<socket>` has the demo answer agents there, so
-    // `postio-mcp` can be driven against an open app (ADR 0041, amended
-    // 2026-10-14). Off unless asked: the demo otherwise writes nothing to
-    // disk.
+    // `POSTIO_DEMO_AGENTS=<socket>` has the demo answer agents there (ADR 0041); off unless asked,
+    // since the demo otherwise writes nothing to disk.
     let options = match std::env::var_os("POSTIO_DEMO_AGENTS").filter(|path| !path.is_empty()) {
         Some(socket) => options.answering_agents_at(socket),
         None => options,
     };
-    // The search seed's files have their bytes on this machine, so the
-    // attachment indexer the session starts reads them (spec 010 step 9):
-    // its rows name the blobs a store under the test keys gives the bytes.
+    // The search seed's files have bytes on this machine, so the attachment indexer reads them.
     let options = if seed == postio_demo::Seed::Search {
         let scratch = tempfile::tempdir().map_err(|error| SessionError::StoreUnavailable {
             message: format!("The demo's files could not be stored: {error}"),
@@ -215,19 +188,12 @@ fn open(name: &str) -> Result<Arc<Session>, SessionError> {
     Session::open(options)
 }
 
-/// A model on this computer that nothing answers at: a socket path that
-/// does not exist, so configuring it connects to nothing, anywhere. Only
-/// the digest summary is switched on, and the demo's summary is already
-/// written (`postio_demo`), so nothing ever asks it anything; the inbox
-/// keeps the built-in detector.
+/// A model on a socket path that does not exist, so configuring it connects to nothing.
 #[cfg(feature = "demo")]
 const DEMO_MODEL: &str = "\n[focus.model]\nendpoint = \"unix:/nonexistent/postio-demo-model.sock\"\n\
 model = \"demo\"\nneeds_action = false\ndigest_summary = true\nlike_this = false\n";
 
-/// The demo's file for `screen`, and the vault it names, if any: the
-/// demo's own (`postio_demo::config`), with a model for the digest's
-/// summary on screens 22 and 23 (C6), and a throwaway vault with projects
-/// on screen 25 (C9), as GTK's `shot` makes one.
+/// The demo's file for `screen`, and the vault it names, if any.
 #[cfg(feature = "demo")]
 fn demo_config(screen: Option<&str>) -> std::io::Result<(String, Option<tempfile::TempDir>)> {
     let base = postio_demo::config();
@@ -245,19 +211,12 @@ fn demo_config(screen: Option<&str>) -> std::io::Result<(String, Option<tempfile
     }
 }
 
-/// The vault the demo session writes into, kept for the life of the
-/// process: it is a throwaway, but the session reads it until it quits.
+/// Kept for the life of the process: the session reads it until it quits.
 #[cfg(feature = "demo")]
 static DEMO_VAULT: std::sync::Mutex<Option<tempfile::TempDir>> = std::sync::Mutex::new(None);
 
-/// The demo's own `config.toml`, when this process is a demo: what
-/// `settings_path`, `start_logging` and the session all read instead of the
-/// installed file, so a demo never reads, seeds or saves anybody's settings.
-///
-/// A demo is asked for with `POSTIO_DEMO` -- read here because the log and
-/// the Settings window ask for the path before the demo's store is open --
-/// or by having opened one. `None` in any other process, and always in a
-/// build without demos.
+/// The demo's own `config.toml` when this is a demo process, so a demo never reads, seeds or saves
+/// anybody's settings. `None` otherwise, and always without demos.
 pub(crate) fn config_file() -> Option<std::path::PathBuf> {
     #[cfg(feature = "demo")]
     {
@@ -269,12 +228,9 @@ pub(crate) fn config_file() -> Option<std::path::PathBuf> {
     }
 }
 
-/// The directory the demo's `config.toml` lives in, for the life of the
-/// process: a throwaway, made the first time a demo asks for it.
 #[cfg(feature = "demo")]
 static DEMO_CONFIG: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
 
-/// [`config_file`] over an arbitrary environment.
 #[cfg(feature = "demo")]
 fn config_file_in(env: &dyn Fn(&str) -> Option<String>) -> Option<std::path::PathBuf> {
     if DEMO_CONFIG.get().is_none() && env("POSTIO_DEMO").is_none_or(|seed| seed.is_empty()) {
@@ -283,10 +239,8 @@ fn config_file_in(env: &dyn Fn(&str) -> Option<String>) -> Option<std::path::Pat
     Some(demo_config_file())
 }
 
-/// The demo's `config.toml`, made with the demo's own settings if it is not
-/// there yet. When no throwaway directory can be made, a path nothing can
-/// write: falling back to the installed file is the one thing this must
-/// never do.
+/// Made if absent. With no throwaway directory, a path nothing can write: falling back to the
+/// installed file must never happen.
 #[cfg(feature = "demo")]
 fn demo_config_file() -> std::path::PathBuf {
     let made = DEMO_CONFIG
@@ -322,8 +276,6 @@ fn open(_seed: &str) -> Result<Arc<Session>, SessionError> {
 mod tests {
     use super::*;
 
-    /// Screen 05's To completes to the people `compose_demo` adds, from
-    /// the shared rule's four letters (`MIN_COMPLETION_PREFIX`).
     #[test]
     fn screen_05s_people_complete_the_to_field() {
         let session = Session::open_demo("small:05".to_owned()).expect("the demo opens");
@@ -348,10 +300,6 @@ mod tests {
         session.shutdown();
     }
 
-    /// The row the inbox's Harbor draft stands in, refiled as one of the
-    /// handoff's HTML bodies, as GTK's screens 27-31 have it: `small:27` is
-    /// the newsletter that paints its own page, and the message window's
-    /// paper screens are photographed over it.
     #[test]
     fn a_screen_after_the_seed_refiles_the_opened_row() {
         let session = Session::open_demo("small:27".to_owned()).expect("the demo opens");
@@ -372,11 +320,8 @@ mod tests {
         session.shutdown();
     }
 
-    /// Screen 22 is the digest on its summary, which the Mac opens only
-    /// with a model configured for it (C6); screen 25 is capture, which
-    /// opens only with a vault (C9). `small:22`/`small:23` and `small:25`
-    /// say so in the demo's file -- a model nothing can reach, and a
-    /// throwaway vault with projects -- and leave the store as seeded.
+    /// Screens 22 and 23 need a model configured, 25 a vault: the demo's file says so and the store
+    /// stays as seeded.
     #[test]
     fn the_digest_and_capture_screens_have_a_model_and_a_vault() {
         let (text, vault) = demo_config(Some("22")).expect("a config");
@@ -410,10 +355,7 @@ mod tests {
         assert!(vault.is_none());
     }
 
-    /// The demo touches nobody's files: the Settings window, the log's
-    /// `[logging]` and its first-run seeding all ask for `config.toml`, and
-    /// in a demo the answer is the demo's own throwaway file -- the one the
-    /// session reads -- never the installed one under Application Support.
+    /// The demo touches nobody's files: every ask for `config.toml` gets the demo's throwaway file.
     #[test]
     fn a_demo_s_config_file_is_its_own_never_the_installed_one() {
         let session = Session::open_demo("small:25".to_owned()).expect("the demo opens");
@@ -432,8 +374,7 @@ mod tests {
         session.shutdown();
     }
 
-    /// Before any demo has opened -- `start_logging` and the Settings
-    /// window's path are asked for first -- `POSTIO_DEMO` alone is enough.
+    /// Before any demo has opened, `POSTIO_DEMO` alone is enough.
     #[test]
     fn asking_for_a_demo_is_enough_to_keep_the_installed_file_out_of_it() {
         if DEMO_CONFIG.get().is_none() {
@@ -446,9 +387,7 @@ mod tests {
         assert!(!file.starts_with(installed.parent().expect("its directory")));
     }
 
-    /// Whether the session says an event `wanted` picks, draining what it
-    /// says as the Mac's loop does (the controller hears the engine's
-    /// events only as they are drained).
+    /// Whether the session says an event `wanted` picks, draining as the Mac's loop does.
     fn says(session: &Session, mut wanted: impl FnMut(&crate::UiEvent) -> bool) -> bool {
         crate::session::blocking(async {
             let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
@@ -463,8 +402,6 @@ mod tests {
         })
     }
 
-    /// Screens 16 to 19 are photographed over the demo: it never syncs, so
-    /// what sync would have said is said for it, as the engine says it.
     #[test]
     fn a_demo_can_be_shown_offline_signed_out_or_syncing() {
         let session = Session::open_demo("small".to_owned()).expect("the demo opens");

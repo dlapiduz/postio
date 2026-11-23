@@ -49,7 +49,6 @@ from pathlib import Path
 
 ACQUIRES = re.compile(r"MainContext::default\s*\(\s*\)")
 TEST_FN = re.compile(r"^\s*#\[(?:tokio::)?test\]", re.M)
-# `harness = false` inside a `[[test]]` block, with the path it names.
 HARNESS_FALSE = re.compile(
     r"\[\[test\]\](?P<body>(?:[^\[]|\[(?!\[))*)", re.S
 )
@@ -90,7 +89,6 @@ def sequential_roots() -> set[Path]:
             if not named:
                 continue
             path = manifest.parent / named.group(1)
-            # `tests/x/main.rs` covers the whole directory; `tests/x.rs` itself.
             roots.add(path.parent if path.name == "main.rs" else path)
     return roots
 
@@ -100,7 +98,6 @@ def target_of(path: Path, sequential: set[Path]) -> tuple[Path, bool]:
     for root in sequential:
         if root == path or root in path.parents:
             return root, True
-    # A suite directory is one target; a bare `tests/x.rs` is its own.
     if path.parent.name != "tests":
         return path.parent, False
     return path, False
@@ -109,9 +106,7 @@ def target_of(path: Path, sequential: set[Path]) -> tuple[Path, bool]:
 def main() -> int:
     try:
         sequential = sequential_roots()
-        # Deduplicated: git pathspec `*` matches `/` as well, unlike a shell
-        # glob, so the two patterns return overlapping lists and a file would
-        # otherwise be counted -- and reported -- twice.
+        # Deduplicated: git pathspec `*` matches `/`, so the two patterns overlap.
         sources = sorted(
             set(tracked("crates/*/tests/*.rs")) | set(tracked("crates/*/tests/*/*.rs"))
         )

@@ -1,12 +1,6 @@
-//! What Focus has classified (spec 007, data-model.md "`focus_classified`").
-//!
-//! Focus classifies mail twice: as it is filed, from its headers, and once
-//! its body is here, for invitations and the needs-action detector. Mail it
-//! was not running for -- filed by another app, or here before Focus first
-//! opened -- is caught up on when Focus starts, in the background, newest
-//! first (FR-134, FR-141). A record says a message has had a stage at a
-//! classifier version; the catch-up reads what has none at the current one,
-//! so a newer classifier makes every message due again.
+//! A record says a message had a stage at a classifier version; catch-up (newest first, for mail
+//! filed by another app or before Focus first opened) reads what has none at the current one, so a
+//! newer classifier makes every message due again.
 
 use chrono::{DateTime, Utc};
 use postio_model::{MailboxId, MessageId};
@@ -18,17 +12,13 @@ use crate::error::Result;
 use crate::sql::{self, RowExt as _, bind};
 use crate::store::Connection;
 
-/// Which of Focus's two moments a record is for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FocusStage {
-    /// As the message was filed: filtering and holding.
     Filing,
-    /// Once its body was here: invitations, questions and to-dos.
     Body,
 }
 
 impl FocusStage {
-    /// The stage as the store spells it.
     pub const fn as_str(self) -> &'static str {
         match self {
             FocusStage::Filing => "filing",
@@ -37,25 +27,18 @@ impl FocusStage {
     }
 }
 
-/// Reads and writes Focus's classification records.
 #[derive(Debug)]
 pub struct FocusClassifiedRepository<'a> {
     connection: &'a Connection,
 }
 
 impl<'a> FocusClassifiedRepository<'a> {
-    /// Borrows a connection.
     pub fn new(connection: &'a Connection) -> Self {
         Self { connection }
     }
 
-    /// Up to `limit` messages in `inbox`, filed since `since`, whose body is
-    /// here and that the body stage has not classified at `version`, newest
-    /// first: the body stage's catch-up, a batch at a time (FR-141).
-    ///
-    /// One statement: a walk of the inbox's own list index, newest first,
-    /// that stops at `since` or at the batch, each row's record a lookup by
-    /// its key.
+    /// One statement: a walk of the inbox's list index newest first that stops at `since` or the
+    /// batch, each record a key lookup.
     pub async fn pending_bodies(
         &self,
         inbox: MailboxId,
@@ -77,7 +60,6 @@ impl<'a> FocusClassifiedRepository<'a> {
         .await
     }
 
-    /// The SQL [`Self::pending_bodies`] runs.
     pub fn explain_pending_bodies() -> &'static str {
         "SELECT m.id FROM messages m
           WHERE m.mailbox_id = ?1 AND m.sort_at >= ?2 AND m.deleted_locally = 0
@@ -89,13 +71,8 @@ impl<'a> FocusClassifiedRepository<'a> {
           LIMIT ?4"
     }
 
-    /// Up to `limit` messages filed in `inbox` after `after` -- the newest
-    /// message Focus had accounted for when it last ran -- that have not been
-    /// filed at `version`, newest first: mail another app filed while Focus
-    /// was closed, which Focus sorts when it opens (FR-134, US9 scenario 8).
-    ///
-    /// One statement: message ids only grow, so the walk is of the rows
-    /// newer than the mark, newest first, and never of the mail before it.
+    /// One statement: message ids only grow, so the walk is of rows newer than `after`, never the
+    /// mail before it.
     pub async fn pending_filings(
         &self,
         inbox: MailboxId,
@@ -117,7 +94,6 @@ impl<'a> FocusClassifiedRepository<'a> {
         .await
     }
 
-    /// The SQL [`Self::pending_filings`] runs.
     pub fn explain_pending_filings() -> &'static str {
         "SELECT m.id FROM messages m
           WHERE m.id > ?2 AND m.mailbox_id = ?1 AND m.deleted_locally = 0
@@ -128,10 +104,8 @@ impl<'a> FocusClassifiedRepository<'a> {
           LIMIT ?4"
     }
 
-    /// Which of `messages` -- bodies that just landed, in any folder -- are
-    /// the body stage's to classify: the mail its catch-up would take, in an
-    /// inbox, filed since `since`, body here, and not yet classified at
-    /// `version`. Newest first, in one statement.
+    /// The mail the body stage's catch-up would take: in an inbox, filed since `since`, body here,
+    /// not yet classified at `version`. One statement.
     pub async fn bodies_to_classify(
         &self,
         messages: &[MessageId],
@@ -167,8 +141,6 @@ impl<'a> FocusClassifiedRepository<'a> {
         .await
     }
 
-    /// Records that `messages` have had `stage` at `version`, replacing
-    /// whatever was recorded for them at that stage before.
     pub async fn record(
         &self,
         messages: &[MessageId],

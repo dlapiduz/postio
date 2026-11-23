@@ -2,141 +2,80 @@ import Foundation
 import Observation
 import PostioFFI
 
-/// What the message window asks the engine for (specs/009-focus-macos US3).
-///
-/// `PostioSession` is the one real answer; the protocol is what lets a test
-/// drive `MessageWindowModel` without a store. Every call blocks on the
-/// store, and `rawSource` may reach the server for bytes the person named,
-/// so none of them is ever made on the main actor.
+/// Every call blocks on the store, and `rawSource` may reach the server, so none runs on the main
+/// actor.
 public protocol MessageWindowSource: AnyObject, Sendable {
-    /// What surrounds the body: the chrome and the header block, composed.
     func focusMessageView(message: Int64, index: UInt32, total: UInt32) -> FocusMessageViewFfi
-    /// The treated body, and the window's geometry for `mainWidth` (M1).
     func focusReaderDocument(
         message: Int64, remote: RemoteImagesFfi, chosen: TreatmentFfi?, mainWidth: Int32
     ) -> FocusReaderDocumentFfi
-    /// The message as it came off the wire, for `v`.
     func rawSource(_ message: Int64) throws -> Data
-    /// What `A` offers for `message`: the links in `document`, the reader
-    /// document on screen, and the attachments.
     func openChoices(_ message: Int64, _ document: String) -> OpenChoicesFfi
-    /// A private copy of one attachment, fetched first if need be: its path.
     func openAttachment(_ message: Int64, _ attachment: Int64) throws -> String
-    /// One attachment written to the file at `to`, fetched first if need
-    /// be: what to say.
     func saveAttachment(_ message: Int64, _ attachment: Int64, to: String) throws -> String
-    /// Every attachment written into the folder at `folder`: what to say.
     func saveAttachments(_ message: Int64, folder: String) throws -> String
-    /// Leave the list `message` came from: `nil` when the activation was
-    /// recorded, else why not. Writes, so never on the main actor.
+    /// `nil` when recorded, else why not. Writes, so never on the main actor.
     func activateUnsubscribe(_ message: Int64) -> String?
-    /// What the list of `message` left behind, once it is left (#1931).
     func listMailOffer(_ message: Int64) -> ListMailOfferFfi?
-    /// Archive or delete what the list of `message` sent: `nil` once sent.
     func clearListMail(_ message: Int64, _ delete: Bool) -> String?
 }
 
 extension PostioSession: MessageWindowSource {}
 
-/// The message window's state, as the controller's intents leave it
-/// (specs/009-focus-macos T070; `FocusOpenMessage` and `FocusReader`).
-///
-/// The controller (`crates/postio-focus`) decides which message is open,
-/// what `j` and `k` reach, and what Back closes first. This holds what that
-/// left on screen and fetches what to draw, off the main actor, dropping an
-/// answer a later step has overtaken. It decides nothing about the list.
-///
-/// No AppKit: the window (`SecondaryWindowController`) and the SwiftUI
-/// views both read it, and iOS must stay reachable (#1264).
+/// Holds what the controller left on screen and fetches what to draw off the main actor, dropping
+/// answers a later step overtook. No AppKit, so iOS stays reachable (#1264).
 @MainActor
 @Observable
 public final class MessageWindowModel {
-    /// The list row the window was opened from, as the controller said it:
-    /// the row's message, and its place in the list.
     public struct Place: Equatable, Sendable {
         public let message: Int64
         public let index: UInt32
         public let total: UInt32
     }
 
-    /// One message as the window draws it: its chrome and its body, read
-    /// together so neither is ever drawn over the other message's.
+    /// Chrome and body are read together so neither is drawn over the other message's.
     public struct Screen: Equatable, Sendable {
         public let message: Int64
         public let view: FocusMessageViewFfi
         public let document: FocusReaderDocumentFfi
     }
 
-    /// How long a step waits for the next body to say it is drawn before
-    /// showing it anyway: long enough for a web view's first paint, short
-    /// enough that a body that never says so still comes.
+    /// Waits this long for a body's first paint; a body that never reports still shows.
     public static let drawPatience: Duration = .milliseconds(200)
 
-    /// The row the window shows, or `nil` while it is closed.
     public private(set) var place: Place?
-    /// The message on screen: the row's, or one of its conversation's that
-    /// the controller's walk stepped to.
     public private(set) var shown: Int64?
-    /// The message whose chrome and body are on screen: `shown`, once it
-    /// is read and its body drawn.
     public private(set) var displayed: Int64?
-    /// What surrounds the body on screen.
     public private(set) var view: FocusMessageViewFfi?
-    /// The body on screen, its treatment and the window's geometry.
     public private(set) var document: FocusReaderDocumentFfi?
-    /// The message a step reached, read whole and drawn out of sight until
-    /// its body says it is drawn (`bodyDrawn`): what keeps `j` from showing
-    /// a header over the last body, or a body still finding its height.
+    /// Drawn out of sight until its body is drawn (`bodyDrawn`), so `j` never shows a header over
+    /// the last body.
     public private(set) var incoming: Screen?
-    /// The treatment `O` chose for this message, or `nil` for the rule's
-    /// (or the sender's remembered) choice.
     public private(set) var chosen: TreatmentFfi?
-    /// Whether the last document is a switch of the one before, so the body
-    /// keeps the place being read rather than going back to the top.
+    /// The body keeps the place being read when the last document only switched treatment.
     public private(set) var keepsScroll = false
-    /// The raw source `v` put in place of the content, once read.
     public private(set) var source: String?
-    /// Whether `v` has put the source in place (it may still be reading).
     public private(set) var showingSource = false
-    /// Whether the More menu is open.
     public private(set) var moreOpen = false
-    /// Find in this message.
     public private(set) var find = FindInMessage()
-    /// Where each message's unsubscribe banner has got to (#1585).
     public private(set) var unsubscribing = Unsubscribing()
 
-    /// The thread bar the controller last drew. No chips: a message of one,
-    /// and no bar.
     public private(set) var bar: ThreadBarFfi?
-    /// The line above the subject, "Message 4 of 6 · ] newer · [ older";
-    /// empty when the message is alone.
     public private(set) var kicker = ""
-    /// The thread's place for the title line ("Message 5 of 6") while a
-    /// walk is up, the bar's own words; `nil` when the message is alone,
-    /// and the list's position stands.
     public var walkPlace: String? {
         guard !kicker.isEmpty, let place = bar?.place, !place.isEmpty else { return nil }
         return place
     }
-    /// The banner on a message that is not the latest.
     public private(set) var olderBanner: ThreadBannerFfi?
-    /// The accent-tinted banner a reply that arrived while reading puts
-    /// above the message (FR-018): the window never moves by itself.
+    /// Overlays the foot; the window never moves by itself.
     public private(set) var newReply: ThreadBannerFfi?
-    /// The Reply to row of the sender block.
     public private(set) var replyTo: String?
-    /// The banner of a window opened from a search: where the message on
-    /// screen is among the thread's matches (spec 013 US6).
     public private(set) var matchBanner: MatchBannerFfi?
-    /// The words of the search the window was opened from: what the
-    /// message's own find looks for when `⌘G` is pressed.
     public var searchWords = ""
 
-    /// The main window's width the window opened beside: kept while it is
-    /// open, so `j` and `k` never resize it (M1).
+    /// Kept while open so `j` and `k` never resize the window.
     public private(set) var mainWidth: Int32 = 0
 
-    /// Whether the window shows a message.
     public var isOpen: Bool { place != nil }
 
     @ObservationIgnored private let engine: any MessageWindowSource
@@ -144,35 +83,20 @@ public final class MessageWindowModel {
     @ObservationIgnored private let gate = RenderGate()
     @ObservationIgnored private let documentGate = RenderGate()
     @ObservationIgnored private var pending: [Task<Void, Never>] = []
-    /// What marks `shown` read once it has been in front of somebody for
-    /// `postio_ui::dwell`'s delay (#71, #1159). Set once, after `self` is.
+    /// Set once, after `self` is.
     @ObservationIgnored private var dwell: DwellClock?
-    /// Called with a message the read clock ran out on.
     @ObservationIgnored private let markRead: (Int64) -> Void
-    /// The message's own find ran out in a window opened from a search:
-    /// said to the controller, which goes on to the next matched message.
     @ObservationIgnored private let matchEdge: (Bool) -> Void
-    /// Which way the last step across messages went: the message that
-    /// shows next gets its first match going forward, or its last going back.
+    /// The next message shows its first match going forward, its last going back.
     @ObservationIgnored private var arriving: Bool?
-    /// Hand a file to the system to open: the one place a chosen
-    /// attachment leaves Postio. Nothing calls it but a person's choice.
+    /// The one place a chosen attachment leaves Postio.
     @ObservationIgnored private let handOff: (URL) -> Void
-    /// A quiet sentence about what was asked of an attachment, for a few
-    /// seconds; `nil` when there is none.
     public private(set) var notice: String?
     @ObservationIgnored private var noticeTask: Task<Void, Never>?
-    /// Whether Postio is in the background, where nothing is being read.
     @ObservationIgnored private var away = false
-    /// The message the read clock has finished with: run out on, or read
-    /// state set by the person. Not started again for it until another
-    /// message is shown (GTK's `settled`).
+    /// Not started again for this message until another is shown.
     @ObservationIgnored private var settledRead: Int64?
 
-    /// `report` is told More's and find's state whenever either changes:
-    /// what the controller's Back closes first (`focus_reader_state`).
-    /// `markRead` is given a message left open long enough to count as
-    /// read; `schedule` is the read clock's timer, injected for tests.
     public init(
         source: any MessageWindowSource,
         report: @escaping (Bool, Bool) -> Void,
@@ -192,10 +116,7 @@ public final class MessageWindowModel {
         }
     }
 
-    /// Postio became the active app, or stopped being it. A message open
-    /// behind another app is not being read: the clock stops, and starts
-    /// again from the top on the way back, for a message it has not
-    /// already finished with (GTK's `set_window_active`).
+    /// A message open behind another app is not being read: the clock stops and restarts on return.
     public func setAppActive(_ active: Bool) {
         away = !active
         if away {
@@ -205,14 +126,11 @@ public final class MessageWindowModel {
         }
     }
 
-    /// The person set the read state themselves (`toggle_read`): the clock
-    /// stops and does not overrule them while this message stays open.
     public func readStateSet() {
         settledRead = shown
         dwell?.stop()
     }
 
-    /// Start the read clock on the message shown, if anybody is looking.
     private func armDwell() {
         guard place != nil, !away, let shown else {
             dwell?.stop()
@@ -221,17 +139,14 @@ public final class MessageWindowModel {
         dwell?.cursorMoved(to: shown)
     }
 
-    /// The clock ran out on `message`: it is read, if it is still shown.
     private func dwellRanOut(_ message: Int64) {
         settledRead = message
         guard place != nil, shown == message else { return }
         markRead(message)
     }
 
-    /// `FocusOpenMessage`: show `message`, row `index` of `total`, opening
-    /// the window or in place of what it shows. `true` when the window was
-    /// closed and opens now, which is when its frame is set and the
-    /// surface is reported open; a step answers `false`.
+    /// `true` when the window was closed and opens now, which sets its frame; a step answers
+    /// `false`.
     @discardableResult
     public func open(message: Int64, index: UInt32, total: UInt32, mainWidth: Int32) -> Bool {
         let fresh = place == nil
@@ -247,9 +162,6 @@ public final class MessageWindowModel {
         return fresh
     }
 
-    /// What the controller said about the thread of the message shown. The
-    /// walk is the controller's: which message is next, which chip is ringed,
-    /// and what the banner offers are decided there, and this only holds them.
     public func said(_ thread: FocusIntents.ThreadSaid) {
         switch thread {
         case let .bar(view): bar = view.chips.isEmpty ? nil : view
@@ -261,7 +173,6 @@ public final class MessageWindowModel {
         }
     }
 
-    /// The window closed, however it did: forget the message.
     public func closed() {
         bar = nil
         kicker = ""
@@ -293,18 +204,12 @@ public final class MessageWindowModel {
         if wasOpen != (false, false) { tell() }
     }
 
-    /// What `message`'s unsubscribe banner shows.
     public func unsubscribeState(of message: Int64) -> Unsubscribing.State {
         unsubscribing.state(of: message)
     }
 
-    /// Leave the list the message on screen came from: the banner's button
-    /// and `M`, which are one command.
-    ///
-    /// **Only on deliberate activation**: nothing else here records one, and
-    /// the boundary re-derives the list from the message id and refuses a
-    /// message that offers nothing. A second press while the first is in
-    /// flight, or after it was recorded, does nothing.
+    /// Only on deliberate activation: the boundary re-derives the list from the message id and
+    /// refuses one that offers nothing. A repeat press in flight does nothing.
     public func unsubscribe() {
         guard let message = displayed, unsubscribing.begin(message) else { return }
         let source = engine
@@ -314,8 +219,6 @@ public final class MessageWindowModel {
                 guard let self, self.place != nil else { return }
                 self.unsubscribing.finish(message, complaint: complaint)
                 guard complaint == nil else { return }
-                // The list is left; ask what it left behind (#1931). A read,
-                // off the main actor like the write before it.
                 let offer = await Task.detached { source.listMailOffer(message) }.value
                 guard let offer, self.place != nil else { return }
                 self.unsubscribing.offerSweep(
@@ -324,9 +227,8 @@ public final class MessageWindowModel {
             })
     }
 
-    /// The answer to the banner's offer: `true` deletes what the list sent,
-    /// `false` archives it, `nil` dismisses the offer and keeps it. The one
-    /// action is one command on exactly those messages, so one undo.
+    /// `true` deletes, `false` archives, `nil` dismisses. One command on those messages, so one
+    /// undo.
     public func clearListMail(delete: Bool?) {
         guard let message = displayed else { return }
         unsubscribing.answerSweep(message)
@@ -336,9 +238,6 @@ public final class MessageWindowModel {
             Task.detached { _ = source.clearListMail(message, delete) })
     }
 
-    /// `clear_list_mail`: the banner's one button, from the keyboard and the
-    /// palette (#1953). The verb is the setting's, carried by the offer on
-    /// screen; with no offer up there is nothing to take and nothing happens.
     public func takeUpOffer() {
         guard let message = displayed,
             case .clearing(let sweep) = unsubscribing.state(of: message)
@@ -346,10 +245,7 @@ public final class MessageWindowModel {
         clearListMail(delete: sweep.delete)
     }
 
-    /// A chip was clicked, or chosen from the menu `o` offers: write the
-    /// attachment to a private file, fetching it first if it was never
-    /// downloaded, and hand it to the system. A failure is a sentence, never
-    /// an empty file. Off the main actor: it may reach the server.
+    /// A failure is a sentence, never an empty file. Off the main actor: it may reach the server.
     public func openAttachment(_ attachment: Int64) {
         guard let message = displayed else { return }
         let source = engine
@@ -372,10 +268,6 @@ public final class MessageWindowModel {
             })
     }
 
-    /// `A`: what the open message offers, as GTK's chooser offers it -- the
-    /// links in the document on screen, then the parts. Nothing to choose
-    /// from is said in the shared words; otherwise `present` gets the
-    /// choices, to be shown as a menu. Nothing opens until one is chosen.
     public func offerAttachments(present: @escaping (OpenChoicesFfi) -> Void) {
         guard let message = displayed else { return }
         let source = engine
@@ -392,15 +284,11 @@ public final class MessageWindowModel {
             })
     }
 
-    /// A link chosen from `A`'s menu: handed to the system as it is, the
-    /// target the menu showed beside its words.
     public func openLink(_ target: String) {
         guard place != nil, let url = URL(string: target) else { return }
         handOff(url)
     }
 
-    /// Save attachment `attachment` of the message on screen to the file a
-    /// person named, and say how it went.
     public func saveAttachment(_ attachment: Int64, to file: URL) {
         guard let message = displayed else { return }
         let source = engine
@@ -408,8 +296,6 @@ public final class MessageWindowModel {
         saving { try source.saveAttachment(message, attachment, to: path) }
     }
 
-    /// Save every attachment of the message on screen into the folder a
-    /// person chose, and say how it went.
     public func saveAttachments(to folder: URL) {
         guard let message = displayed else { return }
         let source = engine
@@ -417,7 +303,6 @@ public final class MessageWindowModel {
         saving { try source.saveAttachments(message, folder: path) }
     }
 
-    /// Run a save off the main actor and say its answer, or why it failed.
     private func saving(_ save: @escaping @Sendable () throws -> String) {
         pending.append(
             Task { [weak self] in
@@ -438,7 +323,6 @@ public final class MessageWindowModel {
             })
     }
 
-    /// Say `words` quietly for a few seconds.
     private func say(_ words: String) {
         notice = words
         noticeTask?.cancel()
@@ -449,7 +333,6 @@ public final class MessageWindowModel {
         }
     }
 
-    /// `FocusReader`: what the open message does as its own.
     public func apply(_ verb: ReaderVerbFfi) {
         guard place != nil else { return }
         switch verb {
@@ -470,8 +353,6 @@ public final class MessageWindowModel {
         case .findPrevious:
             _ = find.previous()
         case .nextMatch:
-            // The message's own matches first; when they run out, `found`
-            // tells the controller, which shows the next matched message.
             arriving = nil
             find.nextWithin(searchWords)
         case .prevMatch:
@@ -492,9 +373,6 @@ public final class MessageWindowModel {
         }
     }
 
-    /// "Always for this sender": hand the sender and the treatment shown
-    /// to `keep` (`always_treatment`), then read the document again as the
-    /// sender's own choice.
     public func keepForSender(_ keep: (String, TreatmentFfi) -> Void) {
         guard let document, let sender = document.sender else { return }
         keep(sender, document.treatmentShown)
@@ -502,31 +380,25 @@ public final class MessageWindowModel {
         loadDocument(keepingScroll: true)
     }
 
-    /// Back from the source to the message (`v` again, or Esc).
     public func closeSource() {
         showingSource = false
         source = nil
     }
 
-    /// The person typed in the find field.
     public func setFindQuery(_ text: String) {
         find.setQuery(text)
     }
 
-    /// The web view's answer to the last find.
     public func found(_ any: Bool) {
         let ranOut = !any && find.request?.bounded == true
         let backwards = find.request?.backwards ?? false
         find.found(any)
         if ranOut {
-            // The next message shows its first match going forward, its
-            // last going back.
             arriving = !backwards
             matchEdge(!backwards)
         }
     }
 
-    /// Wait for whatever is being read: a test's way to see the result.
     public func settled() async {
         while let next = pending.first {
             await next.value
@@ -534,17 +406,12 @@ public final class MessageWindowModel {
         }
     }
 
-    // MARK: reading
-
     private func tell() {
         report(moreOpen, find.isOpen)
     }
 
-    /// `BodyLoaded` (#1788): `message`'s words are on this machine now. If
-    /// it is the one on screen, read it again in place -- its chrome, whose
-    /// chips a body fetch replaces, and its document, keeping the treatment
-    /// chosen and the place being read. Not under the source `v` put there,
-    /// and nothing for any other message.
+    /// If `message` is on screen, reread in place keeping the treatment and the place being read;
+    /// not under the source `v` put there (#1788).
     public func bodyLanded(_ message: Int64) {
         guard place != nil, shown == message else { return }
         if showingSource {
@@ -554,20 +421,15 @@ public final class MessageWindowModel {
         }
     }
 
-    /// The network came back (#1986): what the window drew as "Offline" is
-    /// read again, and a read with the network up is what asks for the body.
     public func networkReturned() {
         if let shown { bodyLanded(shown) }
     }
 
-    /// The body of `message`, drawn out of sight, has its height and has
-    /// painted: put it on screen.
     public func bodyDrawn(_ message: Int64) {
         guard let incoming, incoming.message == message else { return }
         put(incoming)
     }
 
-    /// Show `message` in the window: its chrome and its body, read again.
     private func show(_ message: Int64) {
         shown = message
         chosen = nil
@@ -578,9 +440,6 @@ public final class MessageWindowModel {
         read(message, keepingScroll: false)
     }
 
-    /// Read `message`'s chrome and body together. The message on screen is
-    /// replaced in place; another waits as `incoming` until its body is
-    /// drawn, or `drawPatience` has passed.
     private func read(_ message: Int64, keepingScroll: Bool) {
         guard let place else { return }
         let token = gate.begin()
@@ -613,7 +472,6 @@ public final class MessageWindowModel {
             })
     }
 
-    /// `screen` is what the window draws now.
     private func put(_ screen: Screen, keepingScroll: Bool = false) {
         incoming = nil
         keepsScroll = keepingScroll
@@ -623,8 +481,6 @@ public final class MessageWindowModel {
         arrive(at: screen.message)
     }
 
-    /// A message from a search is on screen: select its first match going
-    /// forward, or its last going back, once its body has painted.
     private func arrive(at message: Int64) {
         let backwards = arriving.map { !$0 } ?? false
         arriving = nil
@@ -652,8 +508,6 @@ public final class MessageWindowModel {
             })
     }
 
-    /// The body again, for the message on screen; a step still on its way
-    /// is read again whole.
     private func loadDocument(keepingScroll: Bool) {
         guard let message = shown else { return }
         guard displayed == message else {
@@ -687,9 +541,7 @@ public final class MessageWindowModel {
                 let text = await Task.detached { () -> String in
                     do {
                         let bytes = try source.rawSource(message)
-                        // As GTK's source view: bytes the server sent are not
-                        // promised to be UTF-8, and a lossy view of them is
-                        // still the source.
+                        // Server bytes are not promised UTF-8; a lossy view is still the source.
                         return String(decoding: bytes, as: UTF8.self)
                     } catch let error as SessionError {
                         return Self.sentence(error)
@@ -702,7 +554,6 @@ public final class MessageWindowModel {
             })
     }
 
-    /// The boundary's sentence for `error`.
     nonisolated static func sentence(_ error: SessionError) -> String {
         switch error {
         case let .StoreUnavailable(message), let .KeyringLocked(message),

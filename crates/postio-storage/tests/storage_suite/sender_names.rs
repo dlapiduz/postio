@@ -1,11 +1,5 @@
-//! The name the user gave a person is the name their mail carries
-//! (specs/005-contacts FR-032, research R7).
-//!
-//! Keyed by address, never by the header's words: mail from any of a named
-//! person's addresses shows that name in the list and in a conversation's
-//! participants, while mail from an address nobody owns keeps whatever its
-//! header said -- which is what stops a forged display name borrowing a
-//! trusted one. A person the user deleted lends their name to nothing.
+//! Keyed by address, never by the header's words, so a forged display name cannot borrow a trusted
+//! one; a deleted person lends their name to nothing.
 
 use chrono::{TimeZone, Utc};
 
@@ -54,8 +48,6 @@ struct Mail {
     ada: ContactId,
 }
 
-/// Ada writes from two addresses under two header names, and a stranger
-/// writes claiming to be her; the user names Ada.
 async fn mail() -> Mail {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
@@ -117,7 +109,6 @@ async fn mail() -> Mail {
     }
 }
 
-/// Sender name by address, as the message list draws it.
 async fn list_names(mail: &Mail) -> Vec<(String, Option<String>)> {
     let mut rows: Vec<(String, Option<String>)> = MessageRepository::new(&mail.connection)
         .page(&ListQuery {
@@ -200,8 +191,6 @@ async fn the_reader_can_ask_for_the_users_names_by_address() {
         "nobody owns the stranger's address, so there is no name to lend"
     );
 
-    // The message itself stays what the mail said: it is written back by
-    // other paths, and the header is the record.
     let stored = MessageRepository::new(&mail.connection)
         .page(&ListQuery {
             scope: ListScope::Mailbox(mail.inbox),
@@ -250,7 +239,6 @@ async fn a_deleted_person_lends_their_name_to_nothing() {
     );
 }
 
-/// Gives ada a name in parts and a style to show it in.
 async fn style(mail: &Mail, show_as: &str, given: Option<&str>, family: Option<&str>) {
     postio_storage::sql::execute(
         &mail.connection,
@@ -279,7 +267,6 @@ async fn the_style_a_person_chose_is_how_every_place_shows_their_name() {
             Some("Lovelace"),
             "Countess of Lovelace",
         ),
-        // A style that needs a part she lacks falls back, as the model does.
         ("first", None, Some("Lovelace"), "Countess of Lovelace"),
         ("last_first", None, Some("Lovelace"), "Lovelace"),
     ];

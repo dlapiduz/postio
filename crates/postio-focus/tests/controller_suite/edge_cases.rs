@@ -1,9 +1,3 @@
-//! The edge cases of spec 013 that no story owns (T085): a thread merged
-//! under an expansion, a child with no body, an unsent reply opened from its
-//! child, a list that lets go of its pages for a moment, the thread bar's
-//! chips, a window whose thread cannot be walked, and a sync pass that
-//! changes many threads.
-
 use crate::search_support::{asks, shown};
 use crate::threads::{
     List, answer, cursor_of, expanded, focus, member_id, read_asked, run, splice_of, unspliced,
@@ -22,31 +16,21 @@ fn changed(thread: i64, added: &[i64]) -> Input {
     })
 }
 
-// ---- A merge while expanded -------------------------------------------------
-
-/// Harbor (thread 500, anchor message 100) is expanded when a late parent,
-/// message 9001, links it to thread 501: 501 survives, and the one row that
-/// stands for both is now message 9001's.
 #[test]
 fn a_merge_while_expanded_keeps_the_expansion_around_the_merged_thread() {
     let (mut focus, rows) = expanded(&[6, 4, 1, 3]);
     let survivor = ThreadId::new(501);
 
-    // Only the survivor is announced. Whether Harbor is still its own
-    // thread is a question for the store.
     let effects = focus.handle_on(changed(501, &[9001]), &rows);
     let (asked_ticket, _) = asks(&effects)
         .into_iter()
         .find(|(_, request)| *request == Request::ThreadOf(MessageId::new(100)))
         .expect("the anchor's thread is asked");
 
-    // The list lands before the answer: the row the expansion hung from is
-    // gone, and the merged row is at its place. Nothing folds yet.
     let merged = rows.with_row(0, MessageId::new(9001), survivor, 11);
     let effects = focus.landed(&merged, false);
     assert!(unspliced(&effects).is_empty(), "{effects:?}");
 
-    // It is in 501 now: that thread is read.
     let effects = focus.handle_on(
         Input::Reply(
             asked_ticket,
@@ -60,7 +44,6 @@ fn a_merge_while_expanded_keeps_the_expansion_around_the_merged_thread() {
     let (ticket, asked) = read_asked(&effects).expect("the merged thread is read");
     assert_eq!(asked, survivor);
 
-    // Eleven messages, the newest the late parent, and the unsent reply.
     let mut whole = view(survivor, 11, 1, true);
     whole.members[10].id = MessageId::new(9001);
     let effects = answer(&mut focus, ticket, whole, &merged);
@@ -68,8 +51,6 @@ fn a_merge_while_expanded_keeps_the_expansion_around_the_merged_thread() {
     assert_eq!((anchor, children.len()), (0, 12));
     assert!(unspliced(&effects).is_empty(), "{effects:?}");
 
-    // And it is the expansion still: j walks into it, and a change to the
-    // merged thread reads it again.
     let effects = run(&mut focus, CommandId::NextMessage, &merged);
     assert_eq!(cursor_of(&effects), Some(1), "the first child");
     let effects = focus.handle_on(changed(501, &[9002]), &merged);
@@ -79,10 +60,6 @@ fn a_merge_while_expanded_keeps_the_expansion_around_the_merged_thread() {
     );
 }
 
-// ---- A child whose body is not here ----------------------------------------
-
-/// A guard, green on arrival: a member the store has only a preview of (or
-/// nothing) is a quiet placeholder, and the controller asks for no body.
 #[test]
 fn a_child_whose_body_is_not_local_shows_a_placeholder_and_asks_for_nothing() {
     let rows = List::of(&[6, 4]);
@@ -102,19 +79,15 @@ fn a_child_whose_body_is_not_local_shows_a_placeholder_and_asks_for_nothing() {
     assert!(!children[1].placeholder, "its neighbours say their words");
     assert!(asks(&effects).is_empty(), "no fetch: {effects:?}");
 
-    // Standing on it fetches nothing either.
     for _ in 0..3 {
         let effects = run(&mut focus, CommandId::NextMessage, &rows);
         assert!(asks(&effects).is_empty(), "{effects:?}");
     }
 }
 
-// ---- (a) Return on the draft child -----------------------------------------
-
 #[test]
 fn return_on_the_draft_child_opens_that_draft_in_the_composer() {
     let (mut focus, rows) = expanded(&[6, 4]);
-    // Six members, then the unsent reply: display 7.
     for _ in 0..7 {
         let _ = run(&mut focus, CommandId::NextMessage, &rows);
     }
@@ -138,18 +111,14 @@ fn return_on_the_draft_child_opens_that_draft_in_the_composer() {
     );
 }
 
-// ---- (b) A refresh that empties the landed pages ---------------------------
-
 #[test]
 fn an_expansion_survives_a_refresh_that_briefly_lets_go_of_the_landed_pages() {
     let (mut focus, rows) = expanded(&[6, 4, 1, 3]);
-    // The refresh drops every page before it reads them again.
     let effects = focus.landed(&List::of(&[]), false);
     assert!(
         unspliced(&effects).is_empty(),
         "an absent page is not a page that lost the row: {effects:?}"
     );
-    // The pages come back as they were: still expanded.
     let effects = focus.landed(&rows, false);
     assert!(unspliced(&effects).is_empty(), "{effects:?}");
     let effects = run(&mut focus, CommandId::NextMessage, &rows);
@@ -164,8 +133,6 @@ fn a_page_that_is_there_and_does_not_hold_the_row_folds_it() {
     assert_eq!(unspliced(&effects), vec![0], "{effects:?}");
 }
 
-// ---- (d) A click on a chip -------------------------------------------------
-
 #[test]
 fn a_click_on_a_chip_shows_that_message() {
     let (mut focus, rows, _) = crate::threads::window_on_harbor(2);
@@ -179,7 +146,6 @@ fn a_click_on_a_chip_shows_that_message() {
         "it was read"
     );
 
-    // An unread one is shown, not marked: the dwell does that.
     let effects = focus.handle_on(Input::ThreadBarChipClicked(5), &rows);
     assert_eq!(window_of(&effects).shown, Some(member_id(thread, 5)));
     assert!(
@@ -187,7 +153,6 @@ fn a_click_on_a_chip_shows_that_message() {
         "{effects:?}"
     );
 
-    // The one on screen, or one that is not there, does nothing.
     let effects = focus.handle_on(Input::ThreadBarChipClicked(5), &rows);
     assert!(shown(&effects).is_empty(), "{effects:?}");
     let effects = focus.handle_on(Input::ThreadBarChipClicked(40), &rows);
@@ -221,9 +186,6 @@ fn a_click_on_the_more_chip_opens_the_outline_on_the_first_message_it_stands_for
     );
 }
 
-// ---- (e) A walk that cannot begin leaves no bar behind ----------------------
-
-/// A window on Harbor (row 0 of `counts`), opened with Return.
 fn window_over(counts: &[u32]) -> (postio_focus::FocusController, List) {
     let rows = List::of(counts);
     let mut focus = focus();
@@ -272,7 +234,6 @@ fn a_thread_read_that_cannot_begin_the_walk_takes_the_old_bar_away() {
     let (mut focus, rows) = window_over(&[6, 4]);
     let effects = run(&mut focus, CommandId::NextMessage, &rows);
     let (ticket, thread) = read_asked(&effects).expect("the new window reads its thread");
-    // The thread the store gave does not hold the message on screen.
     let mut other = view(thread, 4, 0, false);
     for member in &mut other.members {
         member.id = MessageId::new(member.id.get() + 7_000);
@@ -280,7 +241,6 @@ fn a_thread_read_that_cannot_begin_the_walk_takes_the_old_bar_away() {
     let effects = answer(&mut focus, ticket, other, &rows);
     assert!(cleared(&effects), "{effects:?}");
 
-    // And a read that failed.
     let (mut focus, rows) = window_over(&[6, 4]);
     let effects = run(&mut focus, CommandId::NextMessage, &rows);
     let (ticket, thread) = read_asked(&effects).expect("a read");
@@ -310,8 +270,6 @@ fn a_bar_is_cleared_once_and_never_for_a_window_that_drew_none() {
         "nothing is up to clear: {effects:?}"
     );
 }
-
-// ---- (f) A sync pass that changes many threads -----------------------------
 
 fn refreshes(effects: &[Effect]) -> usize {
     shown(effects)
@@ -349,15 +307,11 @@ fn a_sync_pass_that_changes_many_threads_repaints_the_list_once() {
     assert_eq!(repainted, 0, "none of fifty repaints at once");
     assert_eq!(armed.len(), 1, "one wait covers them all: {armed:?}");
 
-    // The quiet period passes (the controller has no clock; the frontend
-    // calls back): one repaint.
     let effects = focus.handle_on(Input::Timer(armed[0]), &rows);
     assert_eq!(refreshes(&effects), 1, "{effects:?}");
-    // And the same timer firing again repaints nothing.
     let effects = focus.handle_on(Input::Timer(armed[0]), &rows);
     assert_eq!(refreshes(&effects), 0, "{effects:?}");
 
-    // The next change begins a new wait.
     let effects = focus.handle_on(changed(601, &[1]), &rows);
     assert_eq!((refreshes(&effects), timers(&effects).len()), (0, 1));
 }
@@ -370,8 +324,6 @@ fn a_change_to_the_expanded_thread_is_still_read_at_once() {
     let _ = ToastKind::Notice;
 }
 
-/// A reply is the thread's newest message, so the row it stands for is
-/// another message's after the list lands: the expansion follows it.
 #[test]
 fn a_reply_to_the_expanded_thread_moves_its_row_and_the_expansion_follows() {
     let (mut focus, rows) = expanded(&[6, 4, 1, 3]);
@@ -379,7 +331,6 @@ fn a_reply_to_the_expanded_thread_moves_its_row_and_the_expansion_follows() {
     let effects = focus.handle_on(changed(500, &[9001]), &rows);
     let (ticket, _) = read_asked(&effects).expect("the thread is read again");
 
-    // The list lands first, with the reply standing for the thread.
     let replied = rows.with_row(0, MessageId::new(9001), thread, 7);
     let effects = focus.landed(&replied, false);
     assert!(unspliced(&effects).is_empty(), "{effects:?}");
@@ -392,8 +343,6 @@ fn a_reply_to_the_expanded_thread_moves_its_row_and_the_expansion_follows() {
     assert!(unspliced(&effects).is_empty(), "{effects:?}");
 }
 
-/// Fifty other threads changing ask where the anchor is once, then once
-/// more if any changed while the question was out.
 #[test]
 fn a_burst_of_other_threads_asks_where_the_anchor_is_once_at_a_time() {
     let (mut focus, rows) = expanded(&[6, 4, 1, 3]);

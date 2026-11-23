@@ -695,6 +695,9 @@ fn unchanged(case: &Case, prep: &str) -> Outcome {
     outcome(case, prep, |_| Vec::new())
 }
 
+/// POSTIO-MEASUREMENT: a sweep of every control on every surface, which
+/// grows with the registry (spec 014 added eighteen commands) and crossed
+/// the merge path's 10 s on CI; it runs on the nightly timer.
 #[test]
 fn every_control_takes_a_click_that_does_what_its_key_does() {
     let mut problems = Vec::new();

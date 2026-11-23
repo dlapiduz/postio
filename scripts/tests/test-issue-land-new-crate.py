@@ -43,8 +43,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -52,11 +50,6 @@ import patience  # noqa: E402  -- enabled by the sys.path line above
 HERE = Path(__file__).resolve().parent.parent
 REPO_ROOT = HERE.parent
 ISSUE_LAND = HERE / "issue-land.sh"
-# Sandboxes go under `target/`, which git ignores: inside the worktree because
-# the shared-tree guard only lifts its refusals for worktree paths, and not in
-# its root because a killed run leaves the sandbox behind and `git add -A` in a
-# worktree will commit it. `scripts/checks/check-test-sandboxes.py` says what
-# that cost (#1225).
 SANDBOXES = REPO_ROOT / "target" / "tmp"
 SANDBOXES.mkdir(parents=True, exist_ok=True)
 
@@ -139,9 +132,6 @@ def world(base: Path, *, adds_a_crate: bool) -> tuple[Path, Path]:
     (stub_dir / "bin").mkdir(parents=True)
     (root / "scripts" / "checks").mkdir(parents=True)
 
-    # The repository's own pin, copied rather than written out: a literal
-    # here went stale at the 1.99 bump, and on a runner that has only the
-    # pinned toolchain the sandbox then had no rustfmt to run.
     (root / "rust-toolchain.toml").write_text(
         (REPO_ROOT / "rust-toolchain.toml").read_text(encoding="utf-8"), encoding="utf-8"
     )
@@ -177,8 +167,6 @@ def world(base: Path, *, adds_a_crate: bool) -> tuple[Path, Path]:
     (stub_dir / "calls").write_text("", encoding="utf-8")
 
     git("init", "-q", "-b", "main", cwd=root)
-    # A lockfile, because the gates `git add -A` before running and one
-    # written mid-gates would otherwise land as an untracked stray.
     (root / "Cargo.lock").write_text("# stub\n", encoding="utf-8")
     git("add", "-A", cwd=root)
     git("commit", "-q", "-m", "init", cwd=root)
@@ -189,8 +177,6 @@ def world(base: Path, *, adds_a_crate: bool) -> tuple[Path, Path]:
 
     git("checkout", "-q", "-b", "issue-1-new-crate", cwd=root)
     if adds_a_crate:
-        # The shape of #585: a new member, and nothing at all touching the
-        # crates that enumerate the workspace.
         (root / "crates" / "postio-ffi" / "src").mkdir(parents=True)
         (root / "crates" / "postio-ffi" / "src" / "lib.rs").write_text(
             "// a brand new crate\n", encoding="utf-8"
@@ -237,12 +223,6 @@ def workspace_tests(calls: str) -> list[str]:
         if line.startswith("cargo ")
         and " test " in f" {line} "
         and "--workspace" in line
-        # Not the sanity tier. Since #847 every landing runs `cargo test
-        # --workspace --lib`, so "a workspace test ran" no longer
-        # distinguishes this gate from the default -- and `--lib` would not
-        # catch what this gate is for anyway. The thing that broke in #566
-        # and #571 was a test that enumerates the workspace, and the next one
-        # of those may well be an integration test.
         and "--lib" not in line
     ]
 
@@ -251,7 +231,6 @@ def main() -> int:
     with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
         base = Path(directory)
 
-        # ── 1. a branch that adds a member runs the workspace tests ───────
         root, stub_dir = world(base / "adds", adds_a_crate=True)
         result = land(root, stub_dir)
         calls = (stub_dir / "calls").read_text(encoding="utf-8")
@@ -264,11 +243,6 @@ def main() -> int:
             f"postio-session:\n{calls}\n{result.stdout[-2000:]}",
         )
 
-        # ── 2. an ordinary branch is unchanged ───────────────────────────
-        #
-        # The other half of the acceptance, and the one that keeps this from
-        # quietly becoming "test the whole workspace every time" -- which is
-        # the thing the per-crate gate exists to avoid.
         root, stub_dir = world(base / "ordinary", adds_a_crate=False)
         result = land(root, stub_dir)
         calls = (stub_dir / "calls").read_text(encoding="utf-8")

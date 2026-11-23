@@ -41,8 +41,6 @@ FIXTURE_ISSUES = [
         "labels": [{"name": "ready"}, {"name": "p2"}],
         "assignees": [],
     }
-    # One per reuse the cases below perform: a claim moves the tree to the
-    # *next* issue's name, so each step needs an issue to move to.
     for number in (4242, 4243, 4245, 4247)
 ]
 
@@ -91,9 +89,6 @@ def world(base: Path) -> tuple[Path, Path]:
 
     git("init", "-q", "-b", "main", cwd=repo)
     (repo / "README.md").write_text("fixture repo\n", encoding="utf-8")
-    # As the real repo does. Without it the build cache this feature exists
-    # to keep would itself read as uncommitted work, and the clean check
-    # would refuse every reuse.
     (repo / ".gitignore").write_text("target/\n.build/\n", encoding="utf-8")
     git("add", "-A", cwd=repo)
     git("commit", "-q", "-m", "init", cwd=repo)
@@ -112,8 +107,6 @@ def claim(repo: Path, base: Path, stub_dir: Path, *args: str, cwd: Path | None =
     environment["POSTIO_CLAIMS"] = str(base / "claims")
     environment["GIT_CONFIG_GLOBAL"] = "/dev/null"
     environment["GIT_CONFIG_SYSTEM"] = "/dev/null"
-    # By absolute path: the caller's cwd is the worktree under test, and the
-    # script resolves REPO_ROOT from its own location rather than from cwd.
     return subprocess.run(
         ["bash", str(repo / "scripts" / "issue-claim.sh"), *args],
         cwd=cwd or repo,
@@ -136,24 +129,14 @@ def main() -> int:
         repo, stub_dir = world(base)
         worktrees = base / "worktrees"
 
-        # A worktree to reuse, as a landed session leaves one: on its own
-        # branch, clean, with nothing that is not on main. A file under
-        # `target/` stands in for the build cache the whole feature exists
-        # to keep.
         first = worktrees / "issue-1"
         worktrees.mkdir(parents=True, exist_ok=True)
         git("worktree", "add", "--quiet", "-b", "issue-1-done", str(first), "main", cwd=repo)
         (first / "target").mkdir()
         (first / "target" / "warm").write_text("a compiled artifact\n", encoding="utf-8")
-        # SwiftPM's module cache bakes the tree's absolute path into every
-        # `.pcm` it writes, and a moved tree carries them to a path that no
-        # longer matches (#1208). Unlike `target/`, none of it can be kept:
-        # the first `swift build` afterwards fails on `missing required
-        # module 'SwiftShims'`, which reads as a broken toolchain.
         (first / "macos" / ".build").mkdir(parents=True)
         (first / "macos" / ".build" / "stale.pcm").write_text("old path\n", encoding="utf-8")
 
-        # ── it reuses, renames, and keeps target/ ────────────────────────
         result = claim(repo, base, stub_dir, "--reuse", "4242", cwd=first)
         moved = worktrees / "issue-4242"
         if result.returncode != 0:
@@ -178,14 +161,11 @@ def main() -> int:
             if "reused, already warm" not in result.stdout:
                 fail("reuse", "it did not say the target was reused", result)
 
-        # Everything below reuses the moved tree, so a failure above makes
-        # them meaningless rather than merely red.
         if FAILURES:
             for failure in FAILURES:
                 print(failure, file=sys.stderr)
             return 1
 
-        # ── a dirty tree is refused, and left exactly as it was ──────────
         (moved / "scratch.txt").write_text("uncommitted\n", encoding="utf-8")
         result = claim(repo, base, stub_dir, "--reuse", "4242", cwd=moved)
         if result.returncode == 0:
@@ -196,7 +176,6 @@ def main() -> int:
             fail("dirty", "the refusal ate the uncommitted file", result)
         (moved / "scratch.txt").unlink()
 
-        # ── unlanded commits are refused rather than stranded ────────────
         (moved / "work.txt").write_text("landed nowhere\n", encoding="utf-8")
         git("add", "-A", cwd=moved)
         git("commit", "-q", "-m", "feat: not landed", cwd=moved)
@@ -209,18 +188,10 @@ def main() -> int:
         elif git("rev-parse", "HEAD", cwd=moved).stdout.strip() != head:
             fail("unlanded", "the refusal moved HEAD", result)
 
-        # ── a rebase-merge is not unlanded work (#1054) ──────────────────
-        #
-        # `issue-land.sh` merges by rebase, so the commit that lands on the
-        # base has a different sha from the local one even though the patch
-        # is identical. A sha-based ahead-count therefore calls the tree
-        # unlanded the moment its work lands -- which is exactly when
-        # `/issue` says to reuse it.
         landed = git("rev-parse", "HEAD", cwd=moved).stdout.strip()
         git("checkout", "-q", "main", cwd=repo)
         (repo / "work.txt").write_text("landed nowhere\n", encoding="utf-8")
         git("add", "-A", cwd=repo)
-        # A different sha for the same patch, which is what a rebase leaves.
         git("commit", "-q", "-m", "feat: the same patch, rebased", cwd=repo)
         git("push", "-q", "origin", "main", cwd=repo)
         result = claim(repo, base, stub_dir, "--reuse", "4243", cwd=moved)
@@ -245,12 +216,6 @@ def main() -> int:
                 print(failure, file=sys.stderr)
             return 1
 
-        # ── an initiative worktree compares against *its* base (#1054) ────
-        #
-        # `--base feature/x` is recorded in the worktree and read back by
-        # `issue-land.sh`. `--reuse` compared against `main` regardless, so
-        # every initiative tree read as holding unlanded work -- for ever,
-        # since its commits are on the initiative branch by construction.
         git("checkout", "-q", "-b", "feature/rules", "main", cwd=repo)
         (repo / "initiative.txt").write_text("on the feature branch\n", encoding="utf-8")
         git("add", "-A", cwd=repo)
@@ -282,7 +247,6 @@ def main() -> int:
         elif not (worktrees / "issue-4245" / "target" / "warm").is_file():
             fail("initiative", "target/ did not come along", result)
 
-        # ── a base that has gone from origin refuses rather than guessing ─
         gone = worktrees / "issue-4246"
         git("worktree", "add", "--quiet", "-b", "issue-4246-x", str(gone), "main", cwd=repo)
         git_dir = git("rev-parse", "--git-dir", cwd=gone).stdout.strip()
@@ -300,7 +264,6 @@ def main() -> int:
         elif "feature/merged-and-deleted" not in result.stderr:
             fail("missing base", "refused without naming the base it looked for", result)
 
-        # ── the shared checkout is never reused ──────────────────────────
         result = claim(repo, base, stub_dir, "--reuse", "4242", cwd=repo)
         if result.returncode == 0:
             fail("shared", "reused the shared checkout, where other work lives", result)

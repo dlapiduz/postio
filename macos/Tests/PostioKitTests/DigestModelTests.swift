@@ -4,15 +4,6 @@ import Testing
 
 @testable import PostioKit
 
-/// The digest's window, as the controller's intents leave it
-/// (specs/009-focus-macos T114, screens 22 and 23).
-///
-/// The controller (`crates/postio-focus/src/digest.rs`) keeps the page, the
-/// focused reference and row, which email is open in place, and what each
-/// key does. The Mac opens the window on `FocusOpenDigest`, draws every
-/// `FocusDigest` whole, reads the open email's header and body when
-/// `view.email` names a new one, and hands back the pointer and a close
-/// the toolkit made.
 @MainActor
 struct DigestModelTests {
     final class Engine: DigestEngine {
@@ -131,12 +122,10 @@ struct DigestModelTests {
         #expect(source.documents.first?.2 == 1440)
         #expect(model.highlight == "three libraries")
 
-        // The same email redrawn (a toast, a focus) is not read again.
         model.apply(.focusDigest(view: Self.view(page: .email, focused: 1, email: email)))
         await model.settled()
         #expect(source.views.count == 1)
 
-        // Back to the summary forgets it.
         model.apply(.focusDigest(view: Self.view()))
         #expect(model.emailView == nil)
         #expect(model.emailDocument == nil)

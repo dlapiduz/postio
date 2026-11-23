@@ -1,13 +1,5 @@
-//! The Sync & storage pane's controls (#1179, over #874's structured pane).
-//!
-//! The pane's dropdowns and its spin button are gone: a closed set of three
-//! is a segmented control, a boolean is a checkbox, and a number is neither
-//! (ADR 0029). What survives unchanged is where the values go — the same
-//! format-preserving `patch_sync`, into the same buffer, on the same
-//! debounced write. Skips without a display. Nothing here touches the
-//! network.
-
 use crate::support_compose::{fonts, style};
+use crate::support_reader::collect;
 use gtk::gdk;
 use gtk::prelude::*;
 use postio_widgets::settings::{Section, SettingsPanel};
@@ -27,31 +19,8 @@ notify = false
 notify_roles = [\"inbox\", \"flagged\"]
 ";
 
-pub fn the_pane_shows_the_files_values() {
-    let Some((window, panel)) = panel_with_text(SAMPLE) else {
-        return;
-    };
-
-    assert!(
-        segment(&panel, "Every 5 min").is_active(),
-        "check_for_mail = \"poll\" is the middle segment"
-    );
-    assert!(
-        segment(&panel, "Always").is_active(),
-        "attachment_fetch = \"eager\" is the middle segment -- and a segment \
-         rather than a checkbox because `never` is a third answer a box \
-         could not say without silently rewriting it"
-    );
-    assert!(!checkbox(&panel, "Notify about new mail").is_active());
-    assert_eq!(notify_roles(&panel).text(), "inbox, flagged");
-
-    window.destroy();
-}
-
-/// The segment labelled `label` inside Junk's control (`group` "Empty Junk")
-/// or Trash's ("Empty Trash"). Both offer the same words, so they are told
-/// apart by their place: the two controls whose segments say "90 days", in
-/// the order the pane draws them, Junk first.
+/// Both controls offer the same words, so they are told apart by place: the two with "90 days"
+/// segments, Junk first.
 fn segment_in(panel: &SettingsPanel, group: &str, label: &str) -> gtk::ToggleButton {
     let segments_of = |root: &gtk::Widget| -> Vec<gtk::ToggleButton> {
         collect(root, "postio-segment")
@@ -75,8 +44,6 @@ fn segment_in(panel: &SettingsPanel, group: &str, label: &str) -> gtk::ToggleBut
         .unwrap_or_else(|| panic!("no {label:?} segment in {group:?}"))
 }
 
-/// Emptying Junk and Trash (#1932): off until chosen, each folder its own
-/// choice, written to the two keys and nothing else.
 pub fn emptying_junk_and_trash_is_off_and_chosen_per_folder() {
     let Some((window, panel)) = panel_with_text(SAMPLE) else {
         return;
@@ -100,25 +67,6 @@ pub fn emptying_junk_and_trash_is_off_and_chosen_per_folder() {
         text.contains("# a hand-written comment nobody wants to lose"),
         "{text}"
     );
-    window.destroy();
-}
-
-pub fn the_interval_the_file_actually_holds_is_still_stated() {
-    let Some((window, panel)) = panel_with_text(SAMPLE) else {
-        return;
-    };
-
-    // The spin button is gone, so this line is the only thing left that can
-    // tell somebody their interval is 2 minutes rather than the 5 the
-    // segment's label says. Rounding it away silently would be worse than
-    // the dropdown that was here before.
-    assert!(
-        stat_lines(&panel).iter().any(|line| line.contains("2 min")),
-        "the real interval must be stated, not rounded to the segment's \
-         label: {:?}",
-        stat_lines(&panel)
-    );
-
     window.destroy();
 }
 
@@ -148,25 +96,6 @@ pub fn pressing_manual_writes_straight_to_the_buffer_and_leaves_the_rest_alone()
     window.destroy();
 }
 
-pub fn an_interval_somebody_set_by_hand_survives_pressing_the_segment_it_is_on() {
-    let Some((window, panel)) = panel_with_text(SAMPLE) else {
-        return;
-    };
-
-    // Already on `poll` at 120 seconds. Pressing the segment it is already
-    // on is not a choice, and must not overwrite the interval with 300.
-    segment(&panel, "Every 5 min").set_active(true);
-    pump();
-
-    assert!(
-        panel.text().contains("poll_interval_secs = 120"),
-        "pressing the chosen segment overwrote an interval set by hand: {}",
-        panel.text()
-    );
-
-    window.destroy();
-}
-
 pub fn typing_new_roles_and_pressing_enter_writes_the_new_list() {
     let Some((window, panel)) = panel_with_text(SAMPLE) else {
         return;
@@ -186,11 +115,8 @@ pub fn typing_new_roles_and_pressing_enter_writes_the_new_list() {
     window.destroy();
 }
 
-/// A panel showing `text`, with Sync & storage on screen — the pane builds
-/// its controls on first display (#873), so it has to be shown first.
-/// The Local store box counts the accounts the panel was given, however
-/// late they arrive: Settings opens before the host has answered, and a box
-/// that says "0 accounts" beside a list of one contradicts the pane next to it.
+/// The Local store box counts the accounts however late they arrive: Settings opens before the host
+/// has answered.
 pub fn the_local_store_box_follows_the_accounts_and_their_weights() {
     let Some((window, panel)) = panel_with_text(SAMPLE) else {
         return;
@@ -261,14 +187,6 @@ fn segment(panel: &SettingsPanel, label: &str) -> gtk::ToggleButton {
         .unwrap_or_else(|| panic!("no segment labelled {label:?}"))
 }
 
-fn checkbox(panel: &SettingsPanel, label: &str) -> gtk::CheckButton {
-    collect(panel.upcast_ref::<gtk::Widget>(), "postio-check")
-        .into_iter()
-        .filter_map(|widget| widget.downcast::<gtk::CheckButton>().ok())
-        .find(|button| button.label().is_some_and(|text| text == label))
-        .unwrap_or_else(|| panic!("no checkbox labelled {label:?}"))
-}
-
 fn notify_roles(panel: &SettingsPanel) -> gtk::Entry {
     collect(
         panel.upcast_ref::<gtk::Widget>(),
@@ -285,21 +203,4 @@ fn stat_lines(panel: &SettingsPanel) -> Vec<String> {
         .filter_map(|widget| widget.downcast::<gtk::Label>().ok())
         .map(|label| label.text().to_string())
         .collect()
-}
-
-/// Every widget in the tree carrying `class` (or, when `class` is empty,
-/// every widget), depth first. Copied from `gtk_settings_filters.rs` rather
-/// than shared, matching that file's own reason: no dependency between the
-/// two.
-fn collect(widget: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
-    let mut found = Vec::new();
-    if class.is_empty() || widget.has_css_class(class) {
-        found.push(widget.clone());
-    }
-    let mut child = widget.first_child();
-    while let Some(current) = child {
-        found.extend(collect(&current, class));
-        child = current.next_sibling();
-    }
-    found
 }

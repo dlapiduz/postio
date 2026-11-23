@@ -43,8 +43,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -55,11 +53,6 @@ REPO_ROOT = HERE.parent
 ISSUE_LAND = HERE / "issue-land.sh"
 WAIT_FOR_CHECKS = HERE / "wait-for-checks.sh"
 CI_EXPECTED_WORKFLOWS = HERE / "checks" / "ci-expected-workflows.py"
-# Sandboxes go under `target/`, which git ignores: inside the worktree because
-# the shared-tree guard only lifts its refusals for worktree paths, and not in
-# its root because a killed run leaves the sandbox behind and `git add -A` in a
-# worktree will commit it. `scripts/checks/check-test-sandboxes.py` says what
-# that cost (#1225).
 SANDBOXES = REPO_ROOT / "target" / "tmp"
 SANDBOXES.mkdir(parents=True, exist_ok=True)
 
@@ -76,9 +69,6 @@ FAILURES: list[str] = []
 
 FIXTURE_CI_YML = "name: CI\non:\n  workflow_dispatch:\n"
 
-# The merge succeeds and the PR reports MERGED; the ref shows up well after
-# the first deadline. `disown` so the push outlives the `gh` process, the way
-# GitHub's replication outlives the API call.
 GH_STUB_LATE = """#!/usr/bin/env bash
 if [ "$1" = "--version" ]; then echo "gh version 2.98.0 (2026-01-01)"; exit 0; fi
 printf '%s\\n' "$*" >> "$STUB_DIR/calls"
@@ -98,16 +88,6 @@ fi
 exit 0
 """
 
-# Never pushes to the local origin at all, so the local ref NEVER catches up
-# -- but GitHub's own compare says the merge commit is contained in the base
-# branch. This is the shape that cost four landings on 2026-09-02: the work is
-# on `main`, and only this clone cannot see it.
-#
-# The distinction from the #312 stub below is exactly the one that matters:
-# both say MERGED and neither pushes, and they differ only in what GitHub
-# answers when asked whether the base branch actually contains the merge.
-# That is the question the script has to ask, because it is the one a local
-# ref cannot answer.
 GH_STUB_REMOTE_HAS_IT = """#!/usr/bin/env bash
 if [ "$1" = "--version" ]; then echo "gh version 2.98.0 (2026-01-01)"; exit 0; fi
 printf '%s\\n' "$*" >> "$STUB_DIR/calls"
@@ -127,21 +107,10 @@ fi
 exit 0
 """
 
-# As GH_STUB_LATE, and it marks the merge so the git shim below knows the
-# landing has reached its wait for the base branch.
 GH_STUB_LATE_MARKED = GH_STUB_LATE.replace(
     'echo "Merged"\n    exit 0', 'touch "$STUB_DIR/merged"\n    echo "Merged"\n    exit 0'
 )
 
-# Every worktree on a machine shares `refs/remotes/origin/*`, so a fetch in
-# the landing's wait can lose a ref lock to another session's fetch:
-#
-#     error: cannot lock ref 'refs/remotes/origin/main': is at 9d4f067…
-#     but expected cf60fb6…
-#
-# It did, in this very test on main's CI (#2029): the stub's delayed push and
-# the loop's fetch moved the ref at once, and `set -e` ended the landing.
-# This shim makes that lose exactly once, deterministically, after the merge.
 GIT_SHIM_ONE_LOCK_FAILURE = """#!/usr/bin/env bash
 if [ "$1" = "fetch" ] && [ -e "$STUB_DIR/merged" ] && [ ! -e "$STUB_DIR/lost-a-lock" ]; then
     touch "$STUB_DIR/lost-a-lock"
@@ -151,7 +120,6 @@ fi
 exec REAL_GIT "$@"
 """
 
-# Says MERGED and never pushes: the #312 shape, which must still fail.
 GH_STUB_NEVER = GH_STUB_LATE.replace(
     '( sleep "$PUSH_DELAY"; git push -q "$ORIGIN" "HEAD:refs/heads/main" ) >/dev/null 2>&1 &\n    disown\n',
     "",
@@ -245,8 +213,6 @@ def run_landing(
     environment["PUSH_DELAY"] = push_delay
     environment["POSTIO_CHECKS_GRACE"] = "1"
     environment["POSTIO_CHECKS_POLL"] = "1"
-    # A first window far too short to catch the push, so the extended wait is
-    # what the outcome depends on rather than luck.
     environment["POSTIO_LANDED_TIMEOUT"] = "1"
     environment["POSTIO_LANDED_POLL"] = "1"
     environment["POSTIO_MERGED_TIMEOUT"] = merged_timeout
@@ -268,7 +234,6 @@ def main() -> int:
     with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
         base = Path(directory)
 
-        # ── 1. late, but it does arrive ──────────────────────────────────
         result = run_landing(base, "late", GH_STUB_LATE, "8", "90")
         if result.returncode != 0:
             FAILURES.append(
@@ -284,19 +249,6 @@ def main() -> int:
         if "merged." not in result.stdout:
             FAILURES.append(f"the landing never reported success:\n{result.stdout}")
 
-        # ── 1b. the local ref never catches up, but the remote has it ─────
-        #
-        # Four landings on 2026-09-02 (#818, #830, #833) exited 1 saying
-        # MERGE DID NOT LAND for work that was on `main`. The subject
-        # matching was verified correct by hand against the real commits, and
-        # `git reflog` had `origin/main` moving to the merge commit one second
-        # after the PR's own `mergedAt` -- so neither the comparison nor
-        # replication explains it, and a bigger timeout did not fix it
-        # (120s -> 300s, same failure).
-        #
-        # Rather than keep guessing at a deadline, ask the side that knows.
-        # No local ref is involved in the answer, so there is no race left to
-        # lose.
         result = run_landing(base, "remote-has-it", GH_STUB_REMOTE_HAS_IT, "0", "5")
         if result.returncode != 0:
             FAILURES.append(
@@ -310,11 +262,6 @@ def main() -> int:
                 f"GitHub confirms is on the base branch:\n{result.stderr}"
             )
 
-        # ── 1c. a fetch in the wait loses a ref lock once ───────────────
-        #
-        # Another session's fetch, in another worktree, moving the shared
-        # remote-tracking ref at the same moment. The wait polls; one failed
-        # poll is a reason to poll again, not to abandon a merge that landed.
         result = run_landing(
             base, "lost-lock", GH_STUB_LATE_MARKED, "2", "90", git_shim=GIT_SHIM_ONE_LOCK_FAILURE
         )
@@ -326,11 +273,6 @@ def main() -> int:
                 f"landing of a merge that happened:\n{result.stdout}\n{result.stderr}"
             )
 
-        # ── 2. MERGED but the commits never appear: still a failure ───────
-        #
-        # The patience above must not become trust. This is #312's shape --
-        # `gh` reporting a merge that put nothing anywhere -- and it has to
-        # keep failing, or the guard is gone.
         result = run_landing(base, "never", GH_STUB_NEVER, "0", "5")
         if result.returncode == 0:
             FAILURES.append(

@@ -1,8 +1,3 @@
-//! Focus's filing rules on a corpus with known answers (spec 007 T122, US9,
-//! SC-006): mail arrives through an incremental pass, the built-in
-//! classifier decides by structure and headers, and the pass carries the
-//! decision out. Every message's fate is written down before the pass runs.
-
 use postio_account::backend::{AppendMessage, MailBackend, MockBackend, MockMailbox, MockMessage};
 use postio_account::cancel::CancelToken;
 use postio_model::{EmailAddress, Flag, FlagSet, Identity, MailboxRole, MessageId, UidValidity};
@@ -16,22 +11,18 @@ use postio_sync::{FocusFiling, Outcome, resync_mailbox_filing, sync_mailbox};
 const INBOX: &str = "INBOX";
 const VALIDITY: u32 = 1_707_000_000;
 
-/// What should become of one message: filed away with a reason, from a
-/// layer, naming a source -- or left in the inbox.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Fate {
     Inbox,
     Filtered(FilterReason, FilterLayer, &'static str),
 }
 
-/// One message of the corpus.
 struct Case {
     subject: &'static str,
     from: &'static str,
     headers: &'static str,
     junk: bool,
     fate: Fate,
-    /// A guard covers it: SC-006 counts these.
     guarded: bool,
 }
 
@@ -59,14 +50,12 @@ fn corpus() -> Vec<Case> {
     use FilterLayer::{Header, Senders, Server};
     use FilterReason::{Notification, Promotion, Receipt, Shipping, Spam};
     vec![
-        // US9 scenario 1: an automated sender the user never wrote to.
         case(
             "Build 2231 passed",
             "Forge <notifications@forge.example>",
             MACHINE,
             Filtered(Notification, Senders, "Forge"),
         ),
-        // US9 scenario 2: a promotion from an address the user wrote to.
         Case {
             guarded: true,
             ..case(
@@ -76,8 +65,6 @@ fn corpus() -> Vec<Case> {
                 Inbox,
             )
         },
-        // US9 scenario 3: a conversation the user took part in, whatever
-        // its headers say.
         Case {
             guarded: true,
             ..case(
@@ -88,7 +75,6 @@ fn corpus() -> Vec<Case> {
                 Inbox,
             )
         },
-        // US9 scenario 6: uncertain, so the inbox.
         case("Lunch on Thursday?", "Tove <tove@example.org>", "", Inbox),
         case(
             "[harbour-dev] tide tables",
@@ -97,7 +83,6 @@ fn corpus() -> Vec<Case> {
              List-Unsubscribe: <mailto:leave@lists.example.org>\r\nPrecedence: list\r\n",
             Inbox,
         ),
-        // The other guards: the user's own domain, and a pinned domain.
         Case {
             guarded: true,
             ..case(
@@ -116,7 +101,6 @@ fn corpus() -> Vec<Case> {
                 Inbox,
             )
         },
-        // Each kind of evidence, each kind of reason.
         Case {
             junk: true,
             ..case(
@@ -184,8 +168,6 @@ async fn the_known_answer_corpus_is_filed_as_written_down_and_no_guarded_mail_is
         .await
         .expect("the first sync");
 
-    // What the guards stand on: the user wrote to the shop's deals address,
-    // wrote the letter the Ledger replies to, and has an identity at a firm.
     for (to, message_id) in [
         ("deals@shop.example", "<to-deals@example.com>"),
         ("letters@ledger.example", "<mine@example.com>"),
@@ -220,7 +202,6 @@ async fn the_known_answer_corpus_is_filed_as_written_down_and_no_guarded_mail_is
         .create(&mut work)
         .await
         .expect("an identity");
-    // And the user pinned a whole domain.
     let config =
         postio_config::Config::from_toml_str("[focus.filter]\nnever = [\"@pinned.example\"]\n")
             .expect("a config");
@@ -290,7 +271,6 @@ async fn the_known_answer_corpus_is_filed_as_written_down_and_no_guarded_mail_is
             ));
         }
         if case.guarded {
-            // SC-006: zero messages a guard covers are filtered.
             assert_eq!(
                 (role, decision.is_none()),
                 (MailboxRole::Inbox, true),
@@ -303,8 +283,6 @@ async fn the_known_answer_corpus_is_filed_as_written_down_and_no_guarded_mail_is
     assert_eq!(archive.role, MailboxRole::Archive);
 }
 
-/// The corpus's own spelling of `source`, so a `Fate` can hold a
-/// `&'static str`.
 fn corpus_source(corpus: &[Case], source: &str) -> Option<&'static str> {
     corpus.iter().find_map(|case| match case.fate {
         Fate::Filtered(_, _, named) if named == source => Some(named),
@@ -312,10 +290,6 @@ fn corpus_source(corpus: &[Case], source: &str) -> Option<&'static str> {
     })
 }
 
-// --- Digests: holding at filing (T133, US10) ------------------------------------------
-
-/// An invitation from the Ledger, in the Ledger's bulk-mail clothes, with
-/// the calendar part a server's `BODYSTRUCTURE` would report.
 fn invitation() -> MockMessage {
     use postio_account::backend::{BodyStructure, PartNode};
     MockMessage::new(
@@ -339,10 +313,6 @@ fn invitation() -> MockMessage {
 
 #[tokio::test]
 async fn a_digest_rule_holds_its_sender_s_mail_and_never_an_invitation() {
-    // US10 scenarios 1 and 2, at filing: the rule's sender's mail skips
-    // Focus's inbox -- held, not filtered, and still filed in the inbox,
-    // where the other apps see it (FR-121) -- and the same sender's
-    // invitation comes straight to the inbox.
     const STAGING: &str = "Staging";
     let backend = MockBackend::builder()
         .mailbox(
@@ -371,7 +341,6 @@ async fn a_digest_rule_holds_its_sender_s_mail_and_never_an_invitation() {
     let inboxes = [(account.id, inbox.id)];
     let before = threads.focus_count(&inboxes).await.expect("a count");
 
-    // Wednesday: the newsletter, a letter, and the invitation.
     backend
         .append(
             INBOX,

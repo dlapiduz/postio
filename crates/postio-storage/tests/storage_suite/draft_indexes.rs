@@ -1,29 +1,6 @@
-//! A draft's own rows are found through an index (#381).
-//!
-//! `recipients` and `attachments` each hold two disjoint populations: rows
-//! that belong to a stored message, and rows that belong to a draft, with a
-//! `CHECK` making it exactly one of the two. On any real store the second
-//! population is a rounding error — measured on the reference store, 378,819
-//! recipient rows of which **zero** had a `draft_id`.
-//!
-//! So these two indexes used to be partial, and this file used to assert that
-//! they were: `... WHERE draft_id IS NOT NULL` turned `idx_recipients_draft`
-//! from 6 MB — 3.9% of a 163 MB database — into an empty index, and the
-//! planner still read through it because `draft_id = ?` proves the query
-//! cannot want the rows the predicate left out.
-//!
-//! **Turso's planner does not read through a partial index at all**, so that
-//! predicate now buys nothing and costs the read: the draft load scans
-//! `recipients` instead. The predicates are gone and the indexes are whole.
-//! `docs/notes/2026-09-12-a-partial-index-the-planner-will-not-read.md` has
-//! the measurement and the rule it leaves; the engine behaviour itself is
-//! pinned in `tests/turso_capabilities.rs`, so if a later release starts
-//! reading through them, something fails and says so.
-//!
-//! What this file asserts is therefore the half that survived and is the half
-//! that matters to a person: a draft's recipients and attachments are reached
-//! by a seek and not by a scan. The rows come back either way — that is what
-//! makes the plan the thing to assert on.
+//! Asserts a draft's recipients and attachments are reached by a seek, not a scan. This engine's
+//! planner does not read through a partial index, so the indexes are whole
+//! (docs/notes/2026-09-12-a-partial-index-the-planner-will-not-read.md).
 
 use postio_storage::Connection;
 use postio_storage::bind;
@@ -34,7 +11,6 @@ async fn migrated() -> (postio_storage::Store, postio_storage::Checkout) {
     (store, connection)
 }
 
-/// The `CREATE INDEX` statement the database is actually carrying.
 async fn definition(connection: &Connection, index: &str) -> String {
     postio_storage::sql::one(
         connection,
@@ -46,7 +22,6 @@ async fn definition(connection: &Connection, index: &str) -> String {
     .unwrap_or_else(|error| panic!("no index named {index}: {error}"))
 }
 
-/// How SQLite says it would answer `query`.
 async fn plan(connection: &Connection, query: &str) -> String {
     postio_storage::test_support::plan(connection, query).await
 }
@@ -72,9 +47,7 @@ async fn the_draft_indexes_carry_no_predicate_the_planner_would_refuse() {
 async fn a_drafts_own_rows_are_still_found_through_them() {
     let (_store, connection) = migrated().await;
 
-    // The two reads `DraftRepository::fill` makes, verbatim. Asserting on the
-    // plan rather than on the rows, because the rows come back either way --
-    // by a full table scan, which is the regression this is guarding against.
+    // Asserts the plan, not the rows: they come back either way, by a full scan.
     let recipients = plan(
         &connection,
         "SELECT r.kind, r.name, a.address FROM recipients r

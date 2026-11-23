@@ -1,13 +1,3 @@
-//! Capture, and `postio://` links, from the controller's side
-//! (specs/009-focus-macos T108; spec 007 US15, screen 25).
-//!
-//! What GTK's `capture.rs` and the window's `open_capture` and `open_link`
-//! did, asserted here so the Mac's capture window behaves the same: `t` and
-//! `n` open it only when a vault is configured, and say how to name one
-//! otherwise (C9); the text is the marker's sentence or the subject, and
-//! `⌥S` swaps the subject in; the preview is the exact line written, with
-//! the message's `postio://` link before the date (C21).
-
 use crate::search_support::{asks, shown};
 use chrono::{NaiveDate, TimeZone, Utc};
 use postio_client::protocol::VaultPicture;
@@ -23,7 +13,6 @@ use postio_model::{EmailAddress, MessageId, ThreadId};
 use postio_ui::focus_list::FocusRow;
 use postio_ui::keymap::KeyContext;
 
-/// One conversation from Ada, asking for the slides by Friday.
 struct List;
 
 const ASK: &str = "Could you send the slides by Friday?";
@@ -102,7 +91,6 @@ fn mac() -> FocusController {
     focus
 }
 
-/// `[focus]` with a vault when `vault`.
 fn config(vault: bool) -> FocusConfig {
     let text = if vault {
         "[focus.vault]\npath = \"/vault.example\"\n"
@@ -126,7 +114,6 @@ fn drawn(effects: &[Effect]) -> Option<CaptureView> {
         })
 }
 
-/// The cursor on the row, `[focus]` as `config`.
 fn ready(config: FocusConfig) -> FocusController {
     let mut focus = mac();
     let _ = focus.handle(Input::Config(config));
@@ -183,7 +170,6 @@ fn with_a_vault_t_opens_capture_on_the_markers_sentence_and_its_day() {
         request,
         Request::Vault { subject, .. } if subject == "Quarterly review"
     )));
-    // `n` from the list opens it as a note.
     let mut focus = ready(config(true));
     let view = drawn(&run(&mut focus, CommandId::CaptureNote)).expect("capture opens");
     assert_eq!(view.mode, CaptureMode::Note);

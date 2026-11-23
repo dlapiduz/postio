@@ -1,18 +1,11 @@
 import Foundation
 import PostioFFI
 
-/// New mail that arrived, as `UiEvent.newMail` reports it.
-///
-/// Ids and nothing else, which is the boundary's choice and the right one: a
-/// notification is a log the lock screen reads out, and `PRODUCT.md`'s rule
-/// that logs carry ids, counts and outcomes only applies here more than
-/// anywhere. There is deliberately no lookup from here to a subject line.
+/// Ids and nothing else: a notification is a log the lock screen reads out, so there is
+/// deliberately no lookup from here to a subject line.
 public struct MailArrival: Equatable, Sendable {
-    /// The account it arrived at.
     public let account: Int64
-    /// The folder it landed in.
     public let mailbox: Int64
-    /// The newly delivered messages.
     public let messages: [Int64]
 
     public init(account: Int64, mailbox: Int64, messages: [Int64]) {
@@ -22,63 +15,37 @@ public struct MailArrival: Equatable, Sendable {
     }
 }
 
-/// Why an arrival did not become a notification.
 public enum Suppressed: Equatable, Sendable {
-    /// The event carried no new messages.
     case nothingArrived
-    /// It landed in the folder the user is looking at, right now.
     case alreadyOnScreen
-    /// `[sync] notify_roles` does not list this folder's role.
     case notWatched
-    /// `[sync] notify = false`: the person turned new-mail notifications off.
     case turnedOff
 }
 
-/// What to do about an arrival.
 public enum NotificationDecision: Equatable, Sendable {
     case suppress(Suppressed)
     case deliver(MailNotification)
 }
 
-/// One notification, ready to hand `UNUserNotificationCenter`.
 public struct MailNotification: Equatable, Sendable {
-    /// Stable per folder, so a second batch **replaces** the one on screen
-    /// rather than stacking beside it. Several `IDLE` wake-ups in a row have
-    /// to settle into one notification saying the current total.
+    /// Stable per folder, so a second batch replaces the one on screen: several IDLE wake-ups in a
+    /// row settle into one notification saying the current total.
     public let identifier: String
     /// What it says. Counts and a folder name — never message content.
     public let title: String
     public let body: String
-    /// Where a click should land.
     public let mailbox: Int64
-    /// The one message a single arrival is about, if it is one.
     public let message: Int64?
-    /// Notification Center's group: one per account (`thread(account:)`).
     public let thread: String
 }
 
-/// Deciding whether new mail is worth interrupting somebody for.
-///
-/// The decision is the engine's — `postio_ui::notify`, reached through the
-/// boundary's `decideNotification` — so this and the classic app could not drift on
-/// when to suppress, what id coalesces, or where a click lands. This is a
-/// shim that speaks the boundary's records in this module's vocabulary;
-/// delivery is `MailNotifications`, a thin wrapper over it, because
-/// `UNUserNotificationCenter` needs an authorised bundle and a test should
-/// not.
+/// The decision is the engine's (`postio_ui::notify`), so this and the classic app cannot drift on
+/// when to suppress or where a click lands.
+/// Delivery is `MailNotifications`, because `UNUserNotificationCenter` needs an authorised bundle.
 public enum MailNotifier {
-    /// Whether `arrival` becomes a notification, and what it says.
-    ///
-    /// `showing` is the folder the list currently has open and `isActive` is
-    /// whether Postio is the frontmost application. **Both** are required to
-    /// suppress: a folder left open behind another application is not one the
-    /// user is watching, and treating "this is the open mailbox" as sufficient
-    /// is the version of this check that silently swallows the notification
-    /// somebody actually needed.
-    ///
-    /// `enabled` is `[sync] notify`, the switch in Settings. `role` is the
-    /// folder's role and `notifyRoles` is `[sync] notify_roles`: a folder
-    /// whose role is not listed does not notify.
+    /// Both `showing` and `isActive` are required to suppress: a folder left open behind another
+    /// application is not one the user is watching, and treating the open mailbox as sufficient
+    /// swallows a notification somebody needed.
     public static func decide(
         _ arrival: MailArrival,
         showing: Int64?,

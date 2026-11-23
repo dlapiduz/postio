@@ -1,30 +1,16 @@
-//! Focus's corrections reach the engine (the commands lane's verbs):
-//! dismissing a sender's question three times turns that marker off for the
-//! sender, kept on the person they are (ADR 0048).
-
 use postio_core::{Command, MessageTarget};
 
 use crate::support::{self, Fixture};
 
 pub fn three_dismissals_write_a_stop_marker_to_focus_s_config() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let directory = tempfile::tempdir().expect("a config directory");
         let path = directory.path().join("config.toml");
         std::fs::write(&path, "").expect("an empty config");
         let fixture = Fixture::empty().await;
         let mut asked = Vec::new();
         for (subject, minutes) in [("One", 10), ("Two", 20), ("Three", 30)] {
-            let (message, _) = fixture
-                .file(
-                    ("Ada Moreno", "ada@example.com"),
-                    subject,
-                    "A question.",
-                    minutes,
-                )
-                .await;
+            let (message, _) = fixture.file_from_ada(subject, "A question.", minutes).await;
             fixture.ask(message, "Can you approve it?").await;
             asked.push(message);
         }
@@ -46,8 +32,6 @@ pub fn three_dismissals_write_a_stop_marker_to_focus_s_config() {
                 .await
                 .expect("the host takes it");
         }
-        // The correction is the person's (ADR 0048): the engine reads it, and
-        // the file is not written.
         let ada = postio_model::EmailAddress::new(None::<String>, "ada@example.com");
         let stopped = || {
             session

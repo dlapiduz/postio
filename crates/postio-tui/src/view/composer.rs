@@ -287,6 +287,33 @@ pub fn draw(
             theme.style(Role::Dim),
         ));
     }
+    // The remote images the body names, not yet attached (spec 014 US8):
+    // the same row the desktop draws, from the same words.
+    let key = postio_ui::terminal::deliverable_binding(
+        postio_core::Keymap::defaults(),
+        postio_core::CommandId::AttachRemoteImage,
+        false,
+    )
+    .unwrap_or_default();
+    let remote = composer.remote_rows(&key);
+    if !remote.is_empty() {
+        listed.push(Line::styled(
+            postio_ui::compose::NOT_ATTACHED_YET,
+            theme.style(Role::Dim),
+        ));
+    }
+    for (alt, words) in remote {
+        let alt = SafeText::new(if alt.is_empty() { "image" } else { &alt });
+        listed.push(Line::from(vec![
+            Span::styled("\u{1f5bc} ", theme.style(Role::Dim)),
+            Span::styled(alt.as_str().to_owned(), theme.style(Role::Text)),
+            Span::styled(format!("  {words}"), theme.style(Role::Dim)),
+            Span::styled(
+                format!("  {} {key}", postio_ui::compose::DOWNLOAD_AND_ATTACH),
+                theme.style(Role::Dim),
+            ),
+        ]));
+    }
     let needed = u16::try_from(listed.len()).unwrap_or(u16::MAX);
     if needed > 0 && height > needed {
         height -= needed;

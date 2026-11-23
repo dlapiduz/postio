@@ -38,8 +38,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -47,8 +45,6 @@ import patience  # noqa: E402  -- enabled by the sys.path line above
 HERE = Path(__file__).resolve().parent.parent
 WRAPPER = HERE / "rustc-wrapper.sh"
 
-# Both stubs answer the same question -- "what TMPDIR did you get?" -- so the
-# sccache path and the no-sccache path are compared on equal terms.
 REPORT_TMPDIR = """#!/usr/bin/env bash
 printf '%s' "${TMPDIR:-<unset>}"
 """
@@ -66,17 +62,11 @@ def run(
 ) -> subprocess.CompletedProcess[str]:
     """Run the wrapper and hand back what the stub it exec'd reported."""
     environment = dict(os.environ)
-    # The stub directory comes first and the real toolchain directories are
-    # dropped, so a real sccache on this machine cannot make a case pass that
-    # would fail on a box without one. /usr/bin and /bin stay because the
-    # wrapper is a bash script that needs a shell and `command`.
     environment["PATH"] = f"{stub_dir}:/usr/bin:/bin"
     environment["TMPDIR"] = tmpdir
     environment.pop("SCCACHE_DIR", None)
     if sccache_dir is not None:
         environment["SCCACHE_DIR"] = sccache_dir
-    # "a box without sccache" is spelled by taking the stub away, which is
-    # what `command -v sccache` is actually asking about.
     if with_sccache:
         (stub_dir / "sccache").write_text(REPORT_TMPDIR)
         (stub_dir / "sccache").chmod(0o755)
@@ -104,26 +94,20 @@ def main() -> int:
         stub_dir = base / "stubs"
         stub_dir.mkdir()
 
-        # Stand in for the shared daemon: report the TMPDIR handed to us.
         sccache = stub_dir / "sccache"
         sccache.write_text(REPORT_TMPDIR)
         sccache.chmod(0o755)
 
-        # Stand in for rustc, for the no-sccache path.
         rustc = stub_dir / "rustc"
         rustc.write_text(REPORT_TMPDIR)
         rustc.chmod(0o755)
 
-        # A worktree's own `target/tmp`, exactly as cargo's `[env]` sets it,
-        # and exactly what `issue-release.sh` will delete out from under the
-        # daemon when the issue lands.
         worktree_tmp = base / "worktrees" / "issue-999" / "target" / "tmp"
         worktree_tmp.mkdir(parents=True)
 
         cache_dir = base / "cache" / "sccache"
         stable_tmp = cache_dir / "tmp"
 
-        # ── the daemon must not be pinned to a worktree ──────────────────
         result = run(
             stub_dir,
             tmpdir=str(worktree_tmp),
@@ -149,7 +133,6 @@ def main() -> int:
             f"{stable_tmp} does not exist, so the first compile still fails",
         )
 
-        # ── it defaults somewhere stable with no SCCACHE_DIR set ─────────
         home = base / "home"
         home.mkdir()
         environment_home = dict(os.environ)
@@ -175,9 +158,6 @@ def main() -> int:
             f"got {defaulted!r}",
         )
 
-        # ── a box without sccache is left exactly as it was ──────────────
-        # There the per-worktree TMPDIR is the only thing keeping rustc's
-        # scratch off the tmpfs, so the wrapper must not touch it.
         plain = run(
             stub_dir,
             tmpdir=str(worktree_tmp),
@@ -191,9 +171,6 @@ def main() -> int:
             f"expected the worktree's own tmp, got {plain.stdout!r}",
         )
 
-        # ── and it fails open, like the rest of this wrapper ─────────────
-        # A temp directory that cannot be created is not a reason to refuse
-        # to compile; `~/.cache` unwritable must cost the cache, not the build.
         sccache.write_text(REPORT_TMPDIR)
         sccache.chmod(0o755)
         blocker = base / "blocker"

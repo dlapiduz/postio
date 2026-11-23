@@ -1,5 +1,3 @@
-//! Drafts: messages being composed.
-
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -9,24 +7,16 @@ use crate::attachment::Attachment;
 use crate::ids::{AccountId, DraftId, IdentityId, LabelId, MessageId, RfcMessageId, ThreadId};
 use crate::message::{MessageBody, ServerIdentifiers};
 
-/// What the user was doing when the draft was started.
-///
-/// Determines quoting, subject prefixing and how recipients were seeded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum DraftKind {
-    /// A new message.
     #[default]
     New,
-    /// A reply to the sender only. Bound to `e` in the keymap.
     Reply,
-    /// A reply to everyone.
     ReplyAll,
-    /// A forward.
     Forward,
 }
 
 impl DraftKind {
-    /// A stable lowercase identifier, for storage.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::New => "new",
@@ -36,7 +26,6 @@ impl DraftKind {
         }
     }
 
-    /// The inverse of [`DraftKind::as_str`].
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
             "new" => Some(Self::New),
@@ -48,47 +37,28 @@ impl DraftKind {
     }
 }
 
-/// Where a draft is in its life cycle.
-///
-/// Sending is local-first like everything else: the draft goes to
-/// [`DraftState::Queued`] immediately and the UI never waits for SMTP.
+/// Sending is local-first: the draft goes to `Queued` at once and the UI never waits for SMTP.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum DraftState {
-    /// Being edited, autosaved locally.
     #[default]
     Editing,
-    /// Handed to the operation queue for sending.
     Queued,
-    /// Currently being submitted.
     Sending,
-    /// Accepted by the submission server.
     Sent,
-    /// Submission failed; the draft is editable again.
-    ///
-    /// Honest about what it claims: every failure that reaches here is on the
-    /// safe side of the boundary — auth, a rejected sender or recipient, a
-    /// rejected message, configuration, or retries exhausted *before* the
-    /// payload went — so "nothing was delivered" is true rather than hopeful.
-    /// The indeterminate case is [`DraftState::Unconfirmed`].
+    /// Failed before the payload went (auth, rejected sender/recipient/message, config, retries
+    /// exhausted), so "nothing was delivered" is true; the draft is editable again. The
+    /// indeterminate case is `Unconfirmed`.
     Failed,
-    /// The connection died mid-submission; whether it arrived is unknowable.
-    ///
-    /// ADR 0021 Decision 3, #674. Once the payload has begun going out, a
-    /// dropped session leaves no way to tell delivery from failure — the
-    /// server may have accepted and been unable to say so. Retrying would
-    /// deliver a duplicate to somebody else's inbox, which cannot be
-    /// recalled; calling it `Failed` would claim more than is known.
-    ///
-    /// So it stops, and says so somewhere that persists. "Unconfirmed"
-    /// rather than "uncertain" or "maybe sent" because it names what is
-    /// missing, and stays true the moment the confirmation arrives — the
-    /// next sync of Sent finding the draft's reserved `Message-ID` (#461)
-    /// resolves it to [`DraftState::Sent`] with nothing asked of the user.
+    /// The connection died after the payload began going out, so delivery cannot be told from
+    /// failure. Retrying could duplicate mail that cannot be recalled; `Failed` would claim too
+    /// much (ADR 0021 Decision 3,
+    /// #674).
+    /// The next sync of Sent finding the draft's reserved `Message-ID` resolves it to `Sent`
+    /// (#461).
     Unconfirmed,
 }
 
 impl DraftState {
-    /// A stable lowercase identifier, for storage.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Editing => "editing",
@@ -100,7 +70,6 @@ impl DraftState {
         }
     }
 
-    /// The inverse of [`DraftState::as_str`].
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
             "editing" => Some(Self::Editing),
@@ -114,126 +83,60 @@ impl DraftState {
     }
 }
 
-/// A message being composed.
-///
-/// Autosaved locally on every change and appended to the account's Drafts
-/// mailbox by the sync engine, which is when `server` becomes populated.
+/// Autosaved locally on every change; the sync engine appends it to the Drafts mailbox, which
+/// populates `server`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Draft {
-    /// Local id.
     pub id: DraftId,
-    /// Account this will be sent from.
     pub account_id: AccountId,
-    /// Identity to send as; `None` means the account default.
     pub identity_id: Option<IdentityId>,
-    /// What kind of composition this is.
     pub kind: DraftKind,
-    /// The local message being replied to, when there is one.
     pub in_reply_to: Option<MessageId>,
-    /// The local message a forward was made from, when this is one.
-    ///
-    /// Not [`Self::in_reply_to`], which a forward leaves empty on purpose: it
-    /// decides the threading headers, and a forward starts a new
-    /// conversation. This exists for the attachments a forward carries.
-    /// Their bytes may never have been downloaded — the payload axis leaves
-    /// them on the server until somebody asks (ADR 0017) — and the carry
-    /// resets the ids that would have said where they came from, so this and
-    /// each attachment's `part_id` are what lets the sender fetch a missing
-    /// part from the original rather than refusing to send (#1686).
+    /// Not `in_reply_to`, which a forward leaves empty: it drives threading headers, and a forward
+    /// starts a new conversation. This lets the sender fetch an attachment's missing bytes from the
+    /// original via `part_id` rather than refuse to send (#1686).
     #[serde(default)]
     pub forwarded_from: Option<MessageId>,
-    /// The thread this draft belongs to, so it can be shown inline.
     pub thread_id: Option<ThreadId>,
-    /// `To` recipients.
     pub to: Vec<EmailAddress>,
-    /// `Cc` recipients.
     pub cc: Vec<EmailAddress>,
-    /// `Bcc` recipients.
     pub bcc: Vec<EmailAddress>,
-    /// Subject as typed.
     pub subject: String,
-    /// Body being composed.
     pub body: MessageBody,
-    /// Whether this is being written as rich text (#1271).
-    ///
-    /// Stored rather than derived from `body.html`. The composer's rule is
-    /// that the switch is on the *document*: turning it off changes what
-    /// will be built and does not throw the marks away, in case it is turned
-    /// back on. A flag derived from "has an HTML part" cannot say "has
-    /// marks, sending plain" -- keeping the marks would turn the switch back
-    /// on by itself.
-    ///
-    /// It decides what leaves: `text/html` plus a `text/plain` alternative
-    /// **always**, against `text/plain` alone, wrapped and flowed.
+    /// Stored, not derived from `body.html`: turning rich off keeps the marks in case it is turned
+    /// back on, which "has an HTML part" cannot express (#1271). Decides what leaves: `text/html`
+    /// plus a `text/plain` alternative always, or `text/plain` alone, wrapped and flowed.
     pub rich: bool,
-    /// The Markdown the user typed, when the draft was written in the
-    /// terminal composer; `None` when a frontend that does not author
-    /// Markdown saved it last.
-    ///
-    /// `body` still carries what is sent -- this Markdown as the text part and
-    /// its rendering as the HTML part. This is kept beside it so the terminal
-    /// reopens exactly what was typed rather than a translation back from the
-    /// HTML, and so the text part is sent `format=fixed` (see
-    /// [`outgoing::build`](crate::outgoing::build)).
+    /// The Markdown typed in the terminal composer, `None` if another frontend saved last. Kept
+    /// beside `body` so the terminal reopens exactly what was typed and the text part is sent
+    /// `format=fixed` (see [`outgoing::build`](crate::outgoing::build)).
     #[serde(default)]
     pub body_markdown: Option<String>,
-    /// The labels chosen for the message (spec 007 US3): applied to its
-    /// conversation when it is sent, so it and the mail it answers carry
-    /// them. A reply starts with its conversation's own.
-    ///
-    /// Defaults on the way in, so a draft from a side that never heard of
-    /// them has none.
+    /// Applied to its conversation when sent; a reply starts with its conversation's own.
     #[serde(default)]
     pub labels: Vec<LabelId>,
-    /// The iCalendar answer this draft carries, when it is the reply to an
-    /// invitation (spec 007 FR-102): a `METHOD:REPLY` object, as
-    /// `postio-calendar` writes it, which
-    /// [`outgoing::build`](crate::outgoing::build) places beside the text as
-    /// the `text/calendar` alternative. `None` for everything a person
-    /// writes.
+    /// A `METHOD:REPLY` object as `postio-calendar` writes it, which `outgoing::build` places as
+    /// the `text/calendar` alternative. `None` for everything a person writes.
     #[serde(default)]
     pub calendar_reply: Option<String>,
-    /// "Remind if no reply" (spec 007 US3 scenario 5, FR-044): when set,
-    /// sending the message sets a reminder on its conversation, due then.
-    /// If nobody but the person has written in it by that time, the
-    /// conversation comes back to the top of Focus's inbox, marked "No
-    /// reply since". `None` for a draft that asks for no reminder.
+    /// When set, sending sets a reminder on the conversation, due then; if nobody else has written
+    /// by then it returns to the top of the Focus inbox as "No reply since".
     #[serde(default)]
     pub remind_at: Option<DateTime<Utc>>,
-    /// Attachments added so far. These carry
-    /// [`MessageId::UNASSIGNED`](crate::MessageId::UNASSIGNED) as their owner
-    /// until the draft becomes a sent message.
+    /// Owned by `MessageId::UNASSIGNED` until the draft becomes a sent message.
     pub attachments: Vec<Attachment>,
-    /// Life-cycle state.
     pub state: DraftState,
-    /// The `Message-ID` reserved for this send attempt series, once one has
-    /// been reserved (ADR 0021).
-    ///
-    /// `None` while the draft is being edited. `DraftRepository::queue_send`
-    /// mints one in the same write that enqueues `Operation::Send`, and
-    /// [`outgoing::build`](crate::outgoing::build) uses it instead of
-    /// generating one — so every attempt at a queued draft is the *same*
-    /// message rather than a fresh one that happens to say the same thing.
-    ///
-    /// # Why it is cleared when the draft returns to `Editing`
-    ///
-    /// A person told a send could not be confirmed, who then opens the draft,
-    /// changes it and sends again, is composing a **different** message. A
-    /// receiver that deduplicates on `Message-ID` would drop the corrected
-    /// version in favour of the one that may already have arrived, which is
-    /// worse than having no id at all. The id belongs to one attempt series
-    /// at one piece of text, not to the row.
+    /// Reserved by `DraftRepository::queue_send` in the write that enqueues `Operation::Send`, so
+    /// every attempt is the same message (ADR 0021). Cleared on return to `Editing`: an edited
+    /// resend is a different message, and a receiver deduplicating on `Message-ID` would drop the
+    /// correction.
     pub rfc_message_id: Option<RfcMessageId>,
-    /// Server identifiers, once the draft has been appended remotely.
     pub server: ServerIdentifiers,
-    /// When composition started.
     pub created_at: DateTime<Utc>,
-    /// When the draft was last autosaved.
     pub updated_at: DateTime<Utc>,
 }
 
 impl Draft {
-    /// Builds an empty draft for `account_id`.
     pub fn new(account_id: AccountId) -> Self {
         let now = crate::clock::now().with_timezone(&Utc);
         Self {
@@ -249,8 +152,8 @@ impl Draft {
             bcc: Vec::new(),
             subject: String::new(),
             body: MessageBody::default(),
-            // Plain by default, on both frontends. A composer that opened
-            // rich would decide for the person what shape their mail takes.
+            // Plain by default: a composer that opened rich would decide the shape of the person's
+            // mail.
             rich: false,
             body_markdown: None,
             labels: Vec::new(),
@@ -265,42 +168,17 @@ impl Draft {
         }
     }
 
-    /// Sends this draft as `identity`. Does not touch the body.
-    ///
-    /// Changing who a draft is from is a header change, and that is all it is
-    /// (FR-031). This used to re-run [`signature::apply`], which meant
-    /// switching the `From` picker rewrote prose the user had already edited:
-    /// [`signature::split`] finds the RFC 3676 separator, not intent, so a
-    /// signature someone had rewritten looked exactly like one they had not
-    /// and was replaced wholesale. There is no version of that heuristic that
-    /// never destroys work, so the body is simply left alone.
-    ///
-    /// The signature is instead something a draft *starts* with — see
-    /// [`Self::start_as`], which is the only place one is inserted, and which
-    /// is why there is never a second copy to stack.
-    ///
-    /// [`signature::apply`]: crate::signature::apply
-    /// [`signature::split`]: crate::signature::split
+    /// A header change only; the body is left alone. Re-running `signature::apply` rewrote prose
+    /// the user had edited, since `split` finds the RFC 3676 separator, not intent, so no heuristic
+    /// avoids destroying work. The signature is inserted only by `start_as`.
     pub fn use_identity(&mut self, identity: &Identity) {
         self.identity_id = Some(identity.id);
     }
 
-    /// Starts this draft as `identity`: records it and signs the body.
-    ///
-    /// For the moment a draft comes into existence — a new message, a reply, a
-    /// forward — and not for a later change of mind, which is
-    /// [`Self::use_identity`]. Signing is safe *here* precisely because
-    /// nothing has been typed yet: there is no prose to protect, so an
-    /// unchanged wrong signature would be the worse outcome.
-    ///
-    /// Replaces rather than appends — [`signature::apply`] splits the body at
-    /// the RFC 3676 separator first — so calling it twice, as resuming a draft
-    /// can, does not stack a second copy on the first (FR-032).
-    ///
-    /// Plain text only in v1. An identity's HTML signature waits for the
-    /// composer to have an HTML body to put it in (`postio-z3b.3`).
-    ///
-    /// [`signature::apply`]: crate::signature::apply
+    /// For the moment a draft comes into existence, not a later change of mind (`use_identity`):
+    /// nothing is typed yet. Replaces rather than appends, so resuming a draft does not stack a
+    /// second copy. Plain text only: an HTML signature waits for an HTML composer body
+    /// (`postio-z3b.3`).
     pub fn start_as(&mut self, identity: &Identity) {
         self.use_identity(identity);
         let signature = identity
@@ -312,46 +190,30 @@ impl Draft {
         self.body.text = (!body.is_empty()).then_some(body);
     }
 
-    /// Whether the draft has at least one recipient anywhere.
     pub fn has_recipients(&self) -> bool {
         !self.to.is_empty() || !self.cc.is_empty() || !self.bcc.is_empty()
     }
 
-    /// Whether the draft could be sent as it stands.
     pub fn is_sendable(&self) -> bool {
         self.has_recipients() && matches!(self.state, DraftState::Editing | DraftState::Failed)
     }
 
-    /// Every recipient across `To`, `Cc` and `Bcc`.
     pub fn all_recipients(&self) -> impl Iterator<Item = &EmailAddress> {
         self.to.iter().chain(&self.cc).chain(&self.bcc)
     }
 }
 
-/// What closing the composer does with the draft in it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Closing {
-    /// Keep it: reopening compose comes back to it.
     Keep,
-    /// Nothing was written, so there is nothing to keep.
     Drop,
 }
 
-/// Whether closing the composer has anything to keep.
-///
-/// The acceptance criterion "`Esc` never silently discards content" is this
-/// function: anything the user typed — a recipient, a subject, a word of body —
-/// makes the draft worth keeping. Only a composition that is still exactly as
-/// it opened is dropped, and dropping *that* discards nothing.
-///
-/// Neither whitespace nor the signature counts as content. A body holding
-/// only what the composer put there would make every abandoned composer
-/// permanent, which is how a "we kept your draft" message stops meaning
-/// anything.
+/// Anything the user typed makes the draft worth keeping (`Esc` never silently discards content).
+/// Neither whitespace nor the composer's own signature counts, or every abandoned composer would
+/// persist.
 pub fn closing(draft: &Draft) -> Closing {
     let body = draft.body.text.as_deref().unwrap_or_default();
-    // The signature is the composer's own doing, not something the user
-    // wrote, so a body holding nothing else is still an untouched composer.
     let written = crate::signature::split(body).0;
     if draft.has_recipients() || !draft.subject.trim().is_empty() || !written.trim().is_empty() {
         Closing::Keep
@@ -360,16 +222,9 @@ pub fn closing(draft: &Draft) -> Closing {
     }
 }
 
-/// [`closing`] for a composition that began as `opened`.
-///
-/// A reply opens with a recipient, a subject, an attribution and a quote --
-/// all the app's doing -- so [`closing`] alone would keep every reply ever
-/// opened. A reply or forward still exactly as it opened (same recipients,
-/// same subject, same body bar whitespace and signature) has nothing the
-/// person wrote, and is dropped like an untouched new message. Only a
-/// composition the app built counts: a new message opened with content in
-/// it came from somewhere (a link, an undone send) and is kept, and so is
-/// a draft resumed from the Drafts folder, which the person wrote.
+/// A reply or forward still exactly as it opened has nothing the person wrote and is dropped. Only
+/// app-built compositions count: a new message opened with content (a link, an undone send) or a
+/// resumed draft is kept.
 pub fn closing_since(draft: &Draft, opened: &Draft) -> Closing {
     if closing(draft) == Closing::Drop {
         return Closing::Drop;
@@ -444,8 +299,7 @@ mod tests {
 
     #[test]
     fn a_new_draft_is_dated_by_the_clock_seam() {
-        // A reply queued during a storyboard was dated with the real day,
-        // months after the frozen one, and differed between two runs.
+        // The queued reply is dated by the frozen clock, not the real day.
         let _turn = crate::clock::TURN.lock().unwrap_or_else(|e| e.into_inner());
         let frozen = chrono::Local::now();
         crate::clock::freeze(frozen);
@@ -484,7 +338,6 @@ mod tests {
             Some("Looking now.\n\n-- \nAda\n")
         );
 
-        // Resuming a draft can run this again, and must not stack.
         draft.start_as(&ada);
         assert_eq!(
             draft.body.text.as_deref(),
@@ -494,13 +347,6 @@ mod tests {
 
     #[test]
     fn changing_identity_never_touches_the_body() {
-        // FR-031, and the spec's third clarification. `use_identity` used to
-        // re-run `signature::apply` on every call, so switching the From
-        // picker rewrote prose the user had already edited. There is no
-        // reliable way to tell a signature the user has rewritten from one
-        // they have not -- `split` finds the `-- ` separator, not intent --
-        // so the only rule that never destroys work is to leave the body
-        // alone and let the signature be a thing the draft *started* with.
         let mut draft = Draft::new(AccountId::UNASSIGNED);
         draft.start_as(&identity("ada@example.com", Some("Ada")));
         assert_eq!(
@@ -509,7 +355,6 @@ mod tests {
             "a draft still opens carrying its identity's signature (FR-030)"
         );
 
-        // The user writes, and edits the signature the draft came with.
         draft.body.text = Some("Looking now.\n\n-- \nAda, from the boat\n".to_owned());
         let before = draft.body.text.clone();
 
@@ -529,8 +374,6 @@ mod tests {
 
     #[test]
     fn a_draft_never_carries_two_signatures() {
-        // FR-032. `start_as` is the one place a signature is inserted, and
-        // calling it twice -- which resuming a draft can do -- must not stack.
         let mut draft = Draft::new(AccountId::UNASSIGNED);
         let ada = identity("ada@example.com", Some("Ada"));
         draft.start_as(&ada);
@@ -547,9 +390,6 @@ mod tests {
             "two separators means the recipient sees the signature twice"
         );
 
-        // And switching before anything is typed re-signs rather than stacks,
-        // because until the user has written a word there is no prose to
-        // protect and an unchanged wrong signature would be worse.
         let mut fresh = Draft::new(AccountId::UNASSIGNED);
         fresh.start_as(&ada);
         fresh.start_as(&identity("grace@example.net", Some("Grace")));

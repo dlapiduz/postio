@@ -1,76 +1,9 @@
-//! The content-addressed blob store.
-//!
-//! A message's raw RFC 5322 source and its attachment payloads are written to
-//! a file named after the BLAKE3 digest of its content, and the database keeps
-//! only the digest. That is what keeps the database small enough to meet the
-//! `<100 ms` search and `<16 ms` interaction budgets in CLAUDE.md — the message
-//! list pages through rows of a few hundred bytes, not through inboxes of PDFs.
-//!
-//! **Message bodies are not here.** They are compressed columns on the
-//! `messages` row (ADR 0020): the median body is 325 bytes, identical bodies
-//! are rare, and a file per body would leak its size and its mtime whatever
-//! the contents were encrypted with. Everything below is about attachments and
-//! raw messages, which are none of those things.
-//!
-//! # Why content addressing
-//!
-//! The same attachment forwarded around a team, the same newsletter delivered to
-//! two accounts, the same message copied into Archive: all of them write the
-//! same bytes, and all of them cost one file. Deduplication is not a feature
-//! layered on top, it is what naming a file after its content means.
-//!
-//! # The guarantees
-//!
-//! * **A blob is never partially visible.** Writes go to a temporary file and
-//!   are renamed into place only once every byte is on disk, so a crash or a
-//!   dropped connection leaves a stray temp file (cleaned by
-//!   [`BlobStore::purge_temporary`]) and never a truncated blob under a digest
-//!   that promises otherwise.
-//! * **Reads stream.** [`BlobStore::reader`] hands back a file, not a buffer;
-//!   a 30 MiB attachment is never held in memory just to be handed to a viewer.
-//! * **Blobs are immutable.** Nothing ever rewrites one; the only mutation is
-//!   removal.
-//!
-//! # Garbage rather than reference counts
-//!
-//! Nothing tracks how many rows point at a blob. A reference count would have to
-//! be updated in the same transaction as every message write, delete, expunge
-//! and move — an invariant that has to hold forever, across every future
-//! repository, or blobs leak silently. Instead [`BlobStore::collect_garbage`]
-//! asks the database which digests are still referenced and deletes the rest.
-//! It is a sweep rather than an accounting, and a sweep cannot drift out of
-//! sync with the data.
-//!
-//! The one hazard is the window where bytes are written but the row that
-//! references them is not committed yet, so collection ignores blobs younger
-//! than [`GarbageCollection::min_age`].
-//!
-//! ```no_run
-//! # async fn demo() -> Result<(), postio_storage::Error> {
-//! use postio_storage::blob::{BlobStore, GarbageCollection};
-//! use postio_storage::key::{BlobKeys, Purpose, StoreKey};
-//!
-//! # let store_key = StoreKey::generate();
-//! let blobs = BlobStore::open(
-//!     "~/.local/share/postio/blobs",
-//!     &BlobKeys::derive(&store_key),
-//! )?;
-//! let id = blobs.put(b"raw message bytes")?;
-//! assert_eq!(blobs.get(&id)?, b"raw message bytes");
-//!
-//! # let key = store_key.derive(Purpose::Database);
-//! let store = postio_storage::Store::open("postio.db", &key).await?;
-//! let connection = store.connect().await?;
-//! let report = blobs
-//!     .collect_garbage(&connection, GarbageCollection::default())
-//!     .await?;
-//! eprintln!("reclaimed {} bytes", report.bytes_reclaimed);
-//! # Ok(())
-//! # }
-//! ```
+//! Content-addressed store for raw messages and attachments: files named by BLAKE3 digest, the
+//! database keeps the digest. Bodies are not here (ADR 0020). No reference counts:
+//! `collect_garbage` sweeps, skipping blobs younger than `min_age` because bytes land before their
+//! row commits.
 
 mod format;
-/// The zstd level every stored body and blob is compressed at.
 pub(crate) use format::LEVEL as format_level;
 mod seal;
 
@@ -88,36 +21,20 @@ use postio_model::BlobId;
 use crate::error::{Error, Result};
 use crate::key::BlobKeys;
 
-/// How many hex characters of the digest name each shard directory.
-///
-/// Two levels of two characters: 256 directories holding 256 directories, so a
-/// mailbox of a million attachments averages 16 files per directory. Flat would
-/// put a million entries in one directory, which several filesystems handle
-/// badly and every `ls` handles worse.
+/// Two levels of two hex characters; a flat directory is slow on several filesystems.
 const SHARD_WIDTH: usize = 2;
 
-/// The number of shard levels.
 const SHARD_LEVELS: usize = 2;
 
-/// Length of a BLAKE3 digest in hex characters.
 const DIGEST_CHARS: usize = 64;
 
-/// Name of the directory holding in-progress writes.
-///
-/// Not a valid shard name (`tmp` is not hex), so it can never collide with one.
+/// Not hex, so it never collides with a shard.
 const TEMPORARY: &str = "tmp";
 
-/// How much is read from a source at a time while streaming a blob in.
-///
-/// The same 64 KiB the sealing layer works in, so a blob passes through one
-/// chunk-sized buffer rather than two of different sizes.
 const CHUNK: usize = seal::CHUNK;
 
-/// A directory of content-addressed blobs.
-///
-/// Cheap to clone; it is a path and nothing else. Blobs are immutable, so
-/// concurrent readers and writers need no coordination beyond the atomic rename
-/// that publishes each one.
+/// Cheap to clone. Blobs are immutable; the atomic rename that publishes each one is the only
+/// coordination.
 #[derive(Debug, Clone)]
 pub struct BlobStore {
     root: PathBuf,
@@ -126,22 +43,11 @@ pub struct BlobStore {
 }
 
 impl BlobStore {
-    /// Opens (or creates) a blob store rooted at `root`.
-    ///
-    /// `root` is created (or repaired) `0700`, same as `temporary` below it —
-    /// this holds raw messages and attachments, so it gets the same
-    /// treatment `Store::open` gives the database file beside it. See
-    /// [`crate::perm`].
-    ///
-    /// # Errors
-    ///
-    /// [`crate::error::Error::Io`] if the directory tree cannot be created.
+    /// `root` is created or repaired `0700` (see [`crate::perm`]); it holds raw mail.
     pub fn open(root: impl Into<PathBuf>, keys: &BlobKeys) -> Result<Self> {
         let root = root.into();
-        // Named explicitly rather than left to `create_dir_all(&temporary)`
-        // creating it as an ancestor: an ancestor is only tightened when
-        // this call is the one that creates it, and a store from before this
-        // existed already has `root` sitting there at the umask.
+        // Explicit: an ancestor is only tightened by the call that creates it, and older stores
+        // have `root` at the umask.
         crate::perm::ensure_private_dir(&root)?;
         let temporary = root.join(TEMPORARY);
         create_dir_all(&temporary)?;
@@ -152,37 +58,25 @@ impl BlobStore {
         })
     }
 
-    /// The directory the blobs live under.
     pub fn root(&self) -> &Path {
         &self.root
     }
 
-    /// The directory in-progress writes go to.
-    ///
-    /// Nothing in here is a blob, whatever it holds; see
-    /// [`BlobStore::purge_temporary`].
     pub fn temporary_directory(&self) -> &Path {
         &self.temporary
     }
 
-    /// Stores `content` and returns its digest.
-    ///
-    /// Writing content that is already stored is a no-op that returns the same
-    /// id: this is the deduplication the whole design rests on.
+    /// Writing content already stored is a no-op returning the same id.
     pub fn put(&self, content: &[u8]) -> Result<BlobId> {
         self.put_reader(content)
     }
 
-    /// Stores everything `source` yields, without buffering it whole.
-    ///
-    /// The digest is computed as the bytes stream past, so a 30 MiB attachment
-    /// costs one 64 KiB buffer rather than 30 MiB of memory.
+    /// Streams: the digest is computed as bytes pass, with one 64 KiB buffer.
     ///
     /// # Errors
     ///
-    /// [`Error::Io`] if the source fails or the bytes cannot be written. In
-    /// either case nothing is published: the partial file is deleted and no
-    /// digest is returned.
+    /// [`Error::Io`] on a source or write failure; nothing is published and the partial file is
+    /// deleted.
     pub fn put_reader(&self, mut source: impl Read) -> Result<BlobId> {
         let mut writer = self.writer()?;
         let mut buffer = vec![0u8; CHUNK];
@@ -201,19 +95,11 @@ impl BlobStore {
         writer.finish()
     }
 
-    /// Begins a blob whose bytes will be pushed in, a chunk at a time.
+    /// Push form of [`BlobStore::put_reader`] for bytes arriving from elsewhere (a `FETCH`
+    /// response), so the caller need not buffer a whole message (ADR 0017).
     ///
-    /// The push counterpart of [`BlobStore::put_reader`], for the caller that
-    /// cannot hand over a [`Read`] because the bytes are arriving from
-    /// somewhere else — a socket delivering a `FETCH` response, above all.
-    /// Without it such a caller has to buffer the whole thing first, which for
-    /// a message is the forty megabytes ADR 0017's second axis is about.
-    ///
-    /// Nothing is visible until [`BlobWriter::finish`]. A writer dropped
-    /// before then — a cancelled fetch, a dead connection, a panic — leaves a
-    /// file in the temp directory for [`BlobStore::purge_temporary`] and no
-    /// blob at all, so the store's "never partially visible" guarantee holds
-    /// for this form exactly as it does for the others.
+    /// Nothing is visible until [`BlobWriter::finish`]; a dropped writer leaves a temp file for
+    /// [`BlobStore::purge_temporary`] and no blob.
     ///
     /// # Errors
     ///
@@ -223,9 +109,8 @@ impl BlobStore {
         Ok(BlobWriter {
             root: self.root.clone(),
             path: temporary.path.clone(),
-            // Keyed, so the same bytes are named differently in another
-            // installation's store (ADR 0014 Q2). Dedup is untouched: same
-            // content and same key still give the same name.
+            // Keyed, so the same bytes get a different name per installation (ADR 0014 Q2); dedup
+            // is unaffected.
             hasher: blake3::Hasher::new_keyed(self.keys.id().expose()),
             keys: self.keys.clone(),
             state: State::Deciding(temporary),
@@ -233,11 +118,8 @@ impl BlobStore {
         })
     }
 
-    /// Reads a whole blob into memory.
-    ///
-    /// For a raw message the parser needs whole. Use [`BlobStore::reader`] for
-    /// anything that might be an attachment — a 30 MiB payload must never
-    /// exist whole in memory just to be handed to a viewer.
+    /// Reads a whole blob into memory; use [`BlobStore::reader`] for anything that might be an
+    /// attachment.
     pub fn get(&self, id: &BlobId) -> Result<Vec<u8>> {
         let mut content = Vec::new();
         self.reader(id)?
@@ -246,13 +128,7 @@ impl BlobStore {
         Ok(content)
     }
 
-    /// Opens a blob for streaming.
-    ///
-    /// Decompresses as it goes, so a 30 MiB attachment still never exists
-    /// whole in memory — which is the promise this method has always made and
-    /// the reason compression could not simply be bolted onto [`get`].
-    ///
-    /// [`get`]: BlobStore::get
+    /// Decompresses as it streams, so an attachment never exists whole in memory.
     pub fn reader(&self, id: &BlobId) -> Result<Box<dyn Read + Send>> {
         let path = self.path_of(id)?;
         let mut file =
@@ -272,9 +148,7 @@ impl BlobStore {
             format::Framing::Container(container) => container,
         };
 
-        // `read_up_to` filled a version 2 header's worth; a version 1
-        // container's payload started earlier, so hand those bytes back before
-        // the file's own.
+        // A version 1 payload started earlier: hand those bytes back before the file's own.
         let payload_at = container.payload_at();
         let carried = start[payload_at..read].to_vec();
         let payload = std::io::Cursor::new(carried).chain(file);
@@ -297,20 +171,11 @@ impl BlobStore {
         }
     }
 
-    /// Whether the blob is stored.
     pub fn contains(&self, id: &BlobId) -> bool {
         self.path_of(id).is_ok_and(|path| path.is_file())
     }
 
-    /// How many bytes the blob occupies on disk.
-    ///
-    /// The *stored* size, after compression and after the container header —
-    /// which is what a disk budget (#382) and a garbage-collection report care
-    /// about, since it is the space actually taken and actually reclaimed.
-    ///
-    /// It is **not** the length of the content. Nothing can answer that
-    /// without decompressing, and a caller that wants the content's length
-    /// wants the content.
+    /// Stored size (compressed, with header), not the content length.
     pub fn len_of(&self, id: &BlobId) -> Result<u64> {
         let path = self.path_of(id)?;
         std::fs::metadata(&path)
@@ -318,11 +183,7 @@ impl BlobStore {
             .map_err(|source| self.read_error(id, path, source))
     }
 
-    /// Deletes a blob, returning whether it was there.
-    ///
-    /// Prefer [`BlobStore::collect_garbage`]: a caller that deletes by hand has
-    /// to know that nothing else references the content, and content addressing
-    /// means something else very well might.
+    /// Prefer [`BlobStore::collect_garbage`]: something else may reference the same content.
     pub fn remove(&self, id: &BlobId) -> Result<bool> {
         let path = self.path_of(id)?;
         match std::fs::remove_file(&path) {
@@ -332,22 +193,15 @@ impl BlobStore {
         }
     }
 
-    /// Where a blob is, or would be, stored.
-    ///
     /// # Errors
     ///
-    /// [`Error::InvalidBlobId`] unless the id is a digest of exactly the right
-    /// shape. Ids reach this crate from the database and from other processes'
-    /// data, so this is also what stops `../../` in an id from resolving to a
-    /// path outside the store.
+    /// [`Error::InvalidBlobId`] unless the id is a well-formed digest, which also stops `../../` in
+    /// a database-supplied id escaping the store.
     pub fn path_of(&self, id: &BlobId) -> Result<PathBuf> {
         path_of(&self.root, id)
     }
 
-    /// Deletes every leftover temporary file, returning how many there were.
-    ///
-    /// Worth calling on start: a power cut during a fetch leaves a `.part` file
-    /// that nothing will ever finish.
+    /// Call on start: a power cut during a fetch leaves a `.part` file nothing finishes.
     pub fn purge_temporary(&self) -> Result<usize> {
         let entries = read_dir(&self.temporary)?;
         let mut purged = 0;
@@ -360,60 +214,16 @@ impl BlobStore {
         Ok(purged)
     }
 
-    /// Deletes every stored blob the database no longer references.
+    /// Deletes refetchable blobs, oldest mail first, until the store fits in `budget` bytes.
     ///
-    /// The reference set is read from the columns that hold a blob key:
-    /// `messages.raw_blob_id`, `attachments.blob_id` and
-    /// `cross_account_moves.raw_blob_id`. Message bodies are not among them —
-    /// they are columns on the row now, not files (ADR 0020). A blob younger
-    /// than `options.min_age` is left alone even if unreferenced — see the
-    /// [module docs](self).
-    ///
-    /// Files under the root that are not named like a digest are ignored
-    /// rather than deleted: this directory belongs to the user, and a sweep
-    /// that removes things it does not understand is a sweep nobody should run.
-    /// Deletes refetchable blobs, oldest mail first, until the store fits in
-    /// `budget` bytes.
-    ///
-    /// # What may go, and in what order
-    ///
-    /// The local store is a cache of the server — ADR 0014 says so plainly,
-    /// and everything except drafts and the operation queue can be re-synced.
-    /// So it can have a ceiling. What eviction is allowed to take, in order:
-    ///
-    /// 1. **Raw message source.** The cheapest loss: nothing reads it except
-    ///    "view source" and forward-as-`message/rfc822`, both rare and both
-    ///    refetchable.
-    /// 2. **Attachment payloads.** Something the user asked for once, and can
-    ///    ask for again.
-    ///
-    /// **Never message text**, which since ADR 0020 is structural rather than
-    /// a rule this pass has to remember: bodies are compressed columns on the
-    /// `messages` row, so there is no blob here for eviction to take. That
-    /// matters because text is the corpus search is made of, and losing it
-    /// would shrink search silently — `body_state` would still say the body is
-    /// local, so not even #352's honesty surface could report the gap. Drafts
-    /// and the queue are not blobs and are never in scope either.
-    ///
-    /// # Oldest mail first, not least-recently-used
-    ///
-    /// There is no access time to sort by. Blobs are immutable, so a file's
-    /// mtime is when it was written rather than when it was read, and atime is
-    /// unusable under `relatime`/`noatime` — while adding a column touched on
-    /// every read would mean a write on every read.
-    ///
-    /// The message's own `received_at` is a better key anyway: it is already
-    /// indexed, it needs no bookkeeping, and it is the exact mirror of the
-    /// backfill, which fetches newest first. Fetch newest first, evict oldest
-    /// first.
+    /// Order: raw message source, then attachment payloads. Never message text: bodies are
+    /// `messages` columns (ADR 0020), and losing text would shrink search silently.
+    /// Oldest first by `received_at`, not LRU: blobs are immutable and atime is unusable.
     ///
     /// # Errors
     ///
-    /// [`Error::Io`] if a blob cannot be deleted, or a database error if the
-    /// rows that reference them cannot be updated. A pass that fails partway
-    /// has still freed whatever it freed; nothing is left inconsistent,
-    /// because each blob's row is cleared in the same statement batch that
-    /// deletes it.
+    /// [`Error::Io`] if a blob cannot be deleted, or a database error. A partial pass keeps what it
+    /// freed.
     pub async fn evict_to_fit(
         &self,
         connection: &Connection,
@@ -440,9 +250,8 @@ impl BlobStore {
             let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
             match std::fs::remove_file(&path) {
                 Ok(()) => {}
-                // Already gone -- a concurrent collection, or a store somebody
-                // tidied by hand. The row still points at it, so carry on and
-                // clear that.
+                // Already gone (concurrent collection or a manual tidy): carry on and clear the
+                // row.
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(source) => return Err(Error::Io { path, source }),
             }
@@ -456,22 +265,10 @@ impl BlobStore {
         Ok(report)
     }
 
-    /// Deletes every stored blob the database no longer references.
+    /// Deletes every stored blob no row references, skipping those younger than `options.min_age`.
     ///
-    /// The reference set is read from the columns that hold a blob key:
-    /// `messages.raw_blob_id`, `attachments.blob_id` and
-    /// `cross_account_moves.raw_blob_id`. Message bodies are not among them —
-    /// they are columns on the row now, not files (ADR 0020). A blob younger
-    /// than `options.min_age` is left alone even if unreferenced — see the
-    /// [module docs](self).
-    ///
-    /// Files under the root that are not named like a digest are ignored
-    /// rather than deleted: this directory belongs to the user, and a sweep
-    /// that removes things it does not understand is a sweep nobody should run.
-    ///
-    /// Distinct from [`evict_to_fit`](Self::evict_to_fit): this removes blobs
-    /// nothing points at any more, and is always safe. Eviction removes blobs
-    /// something *does* point at, on purpose, and pays for it with a refetch.
+    /// Files not named like a digest are left alone: this directory belongs to the user.
+    /// Unlike [`evict_to_fit`](Self::evict_to_fit), this is always safe.
     pub async fn collect_garbage(
         &self,
         connection: &Connection,
@@ -503,7 +300,6 @@ impl BlobStore {
         Ok(report)
     }
 
-    /// Every blob in the store, as `(id, path)`.
     pub(crate) fn stored_blobs(&self) -> Result<Vec<(BlobId, PathBuf)>> {
         let mut blobs = Vec::new();
         for first in read_dir(&self.root)? {
@@ -554,15 +350,10 @@ impl BlobStore {
     }
 }
 
-/// How [`BlobStore::collect_garbage`] should behave.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GarbageCollection {
-    /// How old an unreferenced blob must be before it is deleted.
-    ///
-    /// The bytes of a message are written before the row that references them
-    /// is committed, so a sweep with no grace period races every fetch in
-    /// flight. An hour is far longer than any single write and short enough
-    /// that space comes back the same session.
+    /// Grace period: bytes are written before the row that references them commits, so a sweep
+    /// without one races in-flight fetches.
     pub min_age: Duration,
 }
 
@@ -575,54 +366,39 @@ impl Default for GarbageCollection {
 }
 
 impl GarbageCollection {
-    /// Collects every unreferenced blob regardless of age.
-    ///
-    /// Safe only when nothing else is writing — a test, or a maintenance pass
-    /// with sync stopped.
+    /// Safe only when nothing else is writing (a test, or sync stopped).
     pub fn immediate() -> Self {
         Self {
             min_age: Duration::ZERO,
         }
     }
 
-    /// Collects unreferenced blobs older than `min_age`.
     pub fn after(min_age: Duration) -> Self {
         Self { min_age }
     }
 }
 
-/// What one garbage collection pass did.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct GarbageReport {
-    /// How many blobs were considered.
     pub scanned: usize,
-    /// How many were deleted.
     pub removed: usize,
-    /// How much disk space came back.
     pub bytes_reclaimed: u64,
-    /// How many unreferenced blobs were spared for being too young.
     pub skipped_too_young: usize,
 }
 
-/// Every blob key the database currently points at.
-/// One blob eviction may take, and the row that points at it.
 #[derive(Debug)]
 struct Evictable {
     blob: BlobId,
-    /// Which kind of reference to clear once the bytes are gone.
     reference: Reference,
 }
 
 #[derive(Debug, Clone, Copy)]
 enum Reference {
-    /// Raw RFC source referenced under this physical blob key.
     RawSource,
-    /// Payload bytes referenced under this physical blob key.
     Payload,
 }
 
 impl Evictable {
-    /// Stops the database claiming bytes that are no longer on disk.
     async fn forget(&self, connection: &Connection) -> Result<()> {
         match self.reference {
             Reference::RawSource => {
@@ -677,10 +453,6 @@ impl Evictable {
     }
 }
 
-/// Everything eviction may take, in the order it may take it.
-///
-/// Raw source before payloads, and within each, oldest mail first. See
-/// [`BlobStore::evict_to_fit`] for why that is the ordering.
 async fn evictable(connection: &Connection) -> Result<Vec<Evictable>> {
     let mut out = sql::all(
         connection,
@@ -718,29 +490,17 @@ async fn evictable(connection: &Connection) -> Result<Vec<Evictable>> {
     Ok(out)
 }
 
-/// What one eviction pass did.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct EvictionReport {
-    /// Blobs deleted.
     pub removed: u64,
-    /// Bytes returned to the filesystem.
     pub bytes_reclaimed: u64,
-    /// Bytes still occupied after the pass.
-    ///
-    /// Above the budget means eviction ran out of things it was allowed to
-    /// take — the store is full of text, which is never evicted. The caller
-    /// (the backfill) is expected to stop rather than keep fetching into a
-    /// store that cannot make room.
+    /// Above the budget means nothing left was allowed to evict (only text remains); the backfill
+    /// should stop fetching.
     pub bytes_remaining: u64,
 }
 
-/// Every column that holds a blob key, and the table it is on.
-///
-/// It lived in `encrypt.rs` while a plaintext-to-encrypted migration had to
-/// rewrite these columns. That migration went with the engine and this is the
-/// surviving half. Named once, because a fourth reference added to the schema
-/// and not to this list is mail the sweep deletes while a row still points at
-/// it.
+/// A reference added to the schema and not to this list is mail the sweep deletes while a row still
+/// points at it.
 pub(crate) const BLOB_REFERENCES: [(&str, &str); 5] = [
     ("messages", "raw_blob_id"),
     ("message_contents", "raw_blob_id"),
@@ -762,13 +522,8 @@ async fn referenced_blobs(connection: &Connection) -> Result<HashSet<String>> {
         .collect())
 }
 
-/// A blob being written: a temporary file that deletes itself unless published.
-/// Where a blob is, or would be, stored under `root`.
-///
-/// A free function rather than a method because [`BlobWriter`] needs it too and
-/// holds a root rather than a store. See [`BlobStore::path_of`] for the id
-/// validation, which is also what stops `../../` in an id — ids arrive from the
-/// database and from other processes' data — resolving outside the store.
+/// Free function because [`BlobWriter`] needs it with only a root. See [`BlobStore::path_of`] for
+/// id validation.
 fn path_of(root: &Path, id: &BlobId) -> Result<PathBuf> {
     let digest = id.as_str();
     if digest.len() != DIGEST_CHARS || !digest.chars().all(|c| c.is_ascii_hexdigit()) {
@@ -785,50 +540,27 @@ fn path_of(root: &Path, id: &BlobId) -> Result<PathBuf> {
     Ok(path)
 }
 
-/// A blob being written, a chunk at a time.
-///
-/// Obtained from [`BlobStore::writer`]. The digest is computed as the bytes go
-/// past, so the writer holds one caller-sized chunk and never the blob: the
-/// file on disk is the buffer.
-///
-/// Publishing is [`BlobWriter::finish`] and nothing else. Dropping without it
-/// discards the write — which is what makes a cancelled fetch safe, and is why
-/// there is no `abort`: the absence of `finish` already means abandon, the
-/// same way [`crate::backend`-style sinks](BlobStore::writer) treat a missing
-/// completion call.
+/// Obtained from [`BlobStore::writer`]. Publishing is [`BlobWriter::finish`] only: dropping
+/// discards the write, so a cancelled fetch is safe and there is no `abort`.
 #[derive(Debug)]
 pub struct BlobWriter {
     root: PathBuf,
-    /// The temporary file's path, kept beside the state because the encoder
-    /// owns the file once compression starts.
+    /// Kept beside the state because the encoder owns the file once compression starts.
     path: PathBuf,
     hasher: blake3::Hasher,
     keys: BlobKeys,
     state: State,
-    /// The opening bytes, held only until the codec is chosen.
-    ///
-    /// Bounded by [`PROBE_BYTES`], so this is not the buffering the streaming
-    /// writer exists to avoid.
     probe: Vec<u8>,
 }
 
-/// Where a [`BlobWriter`]'s bytes are going.
-///
-/// The header has to say which codec the payload uses, and that cannot be
-/// known until enough bytes have been seen to tell whether the payload is
-/// worth compressing — hence a state that begins undecided.
+/// The header names the codec, which cannot be chosen until enough bytes show whether the payload
+/// compresses; hence it begins undecided.
 enum State {
-    /// Still sampling. Nothing has been written to the file yet, not even the
-    /// header.
     Deciding(TemporaryBlob),
-    /// Straight into the seal, for a payload already compressed by whoever
-    /// made it.
     Plain(seal::Sealer<TemporaryBlob>),
-    /// Through a zstd stream and then the seal — the `id, then compress, then
-    /// encrypt` ordering ADR 0017 pinned.
+    /// Through zstd then the seal: id, compress, encrypt (ADR 0017).
     Zstd(Box<zstd::stream::write::Encoder<'static, seal::Sealer<TemporaryBlob>>>),
-    /// Momentarily empty, while one of the above is being swapped for another.
-    /// Never observable outside a single method.
+    /// Momentarily empty while swapping states; never observable outside one method.
     Taken,
 }
 
@@ -843,26 +575,17 @@ impl std::fmt::Debug for State {
     }
 }
 
-/// How many opening bytes are sampled before choosing a codec.
-///
-/// One 64 KiB chunk: the size the transport hands over anyway, so in practice
-/// the decision is made on the first `write` and nothing is held twice.
 const PROBE_BYTES: usize = CHUNK;
 
 impl BlobWriter {
-    /// Appends `bytes` to the blob.
-    ///
-    /// Chunk boundaries carry no meaning: the digest is over the concatenation,
-    /// so the same content split differently is the same blob.
+    /// Chunk boundaries do not matter: the digest is over the concatenation.
     ///
     /// # Errors
     ///
-    /// [`Error::Io`] if the bytes cannot be written. The writer should be
-    /// dropped after an error rather than reused; nothing has been published.
+    /// [`Error::Io`] if the bytes cannot be written; drop the writer after an error.
     pub fn write(&mut self, bytes: &[u8]) -> Result<()> {
-        // The digest is always over the plaintext, whatever the payload ends
-        // up encoded as. ADR 0014 depends on this: the id is taken before
-        // compression and before encryption, so dedup survives both.
+        // Digest over the plaintext, before compression and encryption, so dedup survives both (ADR
+        // 0014).
         self.hasher.update(bytes);
 
         if let State::Deciding(_) = self.state {
@@ -875,22 +598,14 @@ impl BlobWriter {
         self.write_payload(bytes)
     }
 
-    /// The temporary file's path, for error reporting.
     pub fn path(&self) -> &Path {
         &self.path
     }
 
-    /// Publishes the blob and returns its digest.
-    ///
-    /// Consumes the writer, so "finished" is not a state anything has to check.
-    ///
     /// # Errors
     ///
-    /// [`Error::Io`] if the bytes cannot be flushed or the file cannot be
-    /// renamed into place. Nothing is published in either case.
+    /// [`Error::Io`] if the bytes cannot be flushed or renamed into place; nothing is published.
     pub fn finish(mut self) -> Result<BlobId> {
-        // A blob shorter than the probe never decided; decide now, on
-        // everything there is.
         if let State::Deciding(_) = self.state {
             self.decide_and_flush()?;
         }
@@ -913,8 +628,7 @@ impl BlobWriter {
         let id = BlobId::new(self.hasher.finalize().to_hex().to_string());
         let destination = path_of(&self.root, &id)?;
 
-        // Already stored. The bytes are identical by construction, so the
-        // cheapest correct thing is to drop what we just wrote.
+        // Already stored, and identical by construction: drop what was just written.
         if destination.exists() {
             return Ok(id);
         }
@@ -926,8 +640,6 @@ impl BlobWriter {
         Ok(id)
     }
 
-    /// Chooses a codec from the sampled bytes, writes the header, and pushes
-    /// the sample through.
     fn decide_and_flush(&mut self) -> Result<()> {
         let State::Deciding(mut temporary) = std::mem::replace(&mut self.state, State::Taken)
         else {
@@ -939,9 +651,8 @@ impl BlobWriter {
         } else {
             format::Codec::None
         };
-        // The header goes in before the sealer takes the file, because it is the
-        // one part of a blob that is not ciphertext -- it has to be, since it
-        // says which nonce the ciphertext is under.
+        // The header goes in before the sealer takes the file: it is the one non-ciphertext part,
+        // since it names the nonce.
         let nonce = seal::fresh_nonce_prefix();
         temporary.write(&format::header(codec, format::NO_DICTIONARY, &nonce))?;
         let sealer = seal::Sealer::with_prefix(temporary, self.keys.content(), nonce);
@@ -963,7 +674,6 @@ impl BlobWriter {
         self.write_payload(&sample)
     }
 
-    /// Writes `bytes` through whichever payload encoder was chosen.
     fn write_payload(&mut self, bytes: &[u8]) -> Result<()> {
         match &mut self.state {
             State::Plain(sealer) => sealer.write_all(bytes).map_err(|source| Error::Io {
@@ -995,10 +705,8 @@ impl TemporaryBlob {
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
-        // `private_file_options` rather than `File::create`: the temporary
-        // file is renamed into place as the published blob (`publish`,
-        // below), which does not change its mode, so whatever this creates
-        // it with is what the blob ends up at.
+        // `publish` renames this file and keeps its mode, so the published blob gets the mode it is
+        // created with here.
         let file = crate::perm::private_file_options()
             .write(true)
             .create(true)
@@ -1025,8 +733,6 @@ impl TemporaryBlob {
             })
     }
 
-    /// Flushes to disk and renames into place. After this the blob exists and
-    /// the temporary file does not.
     fn publish(&mut self, destination: &Path) -> Result<()> {
         let file = self
             .file
@@ -1047,20 +753,15 @@ impl TemporaryBlob {
     }
 }
 
-/// A blob that would not decode, named so the sentence reads.
-///
-/// Every path into it is an authentication failure or a corrupt payload, so
-/// the io error's own words -- which say which -- are the whole message.
+/// Every path here is an authentication failure or a corrupt payload; the io error's words say
+/// which.
 fn unreadable(id: &BlobId, source: io::Error) -> Error {
     Error::UnreadableBlob {
         reason: format!("blob {}: {source}", id.as_str()),
     }
 }
 
-/// Fills as much of `buffer` as the file has, returning how much that was.
-///
-/// `Read::read` may stop short for reasons of its own, and a header split
-/// across two reads would otherwise look like a legacy blob.
+/// `Read::read` may stop short; a header split across two reads would look like a legacy blob.
 fn read_up_to(file: &mut File, buffer: &mut [u8]) -> io::Result<usize> {
     let mut filled = 0;
     while filled < buffer.len() {
@@ -1073,11 +774,8 @@ fn read_up_to(file: &mut File, buffer: &mut [u8]) -> io::Result<usize> {
 }
 
 impl Write for TemporaryBlob {
-    /// So a compressing encoder can own the file directly.
-    ///
-    /// `write_all` rather than a partial write: the encoder deals in whole
-    /// frames, and a short write it had to retry would interleave badly with
-    /// the digest, which is taken over the plaintext elsewhere entirely.
+    /// `write_all`, not a partial write: a retried short write would interleave badly with the
+    /// digest.
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         self.file
             .as_mut()
@@ -1104,10 +802,8 @@ impl Drop for TemporaryBlob {
     }
 }
 
-/// Whether the file has not been modified for at least `age`.
-///
-/// A file whose timestamp is in the future — clock skew, a restored backup — is
-/// treated as too young: refusing to delete is always the recoverable mistake.
+/// A timestamp in the future (clock skew, restored backup) counts as too young: refusing to delete
+/// is recoverable.
 fn is_older_than(path: &Path, age: Duration) -> bool {
     if age.is_zero() {
         return true;

@@ -1,23 +1,9 @@
-//! The documents a reply and a forward start from: issue #340.
-//!
-//! ADR 0003 hardening requirement 6, in the direction that matters most: a
-//! reply re-emits quoted markup into the world, so the quote is built from
-//! the parsed [`Document`] — where a script or a tracking pixel has no
-//! representation — never from the source's markup. Both directions are
-//! checked against the hostile corpus fixture, through the real MIME parser,
-//! exactly as `outgoing.rs` does for the hand-assembled shape.
-
 use postio_body::document::{Block, Document, Inline};
 use postio_body::{Placement, apply_signature, forwarded, quoted_reply};
 use postio_model::account::Signature;
 
-/// See `outgoing.rs`: every remote-reference trick at once.
 const HOSTILE: &str = "html-tracking-pixel-remote-images.eml";
 
-/// The same fixture as a quote, which is the production path for a reply now
-/// (ADR 0033): the reply carries the reader's sanitised rendering, so what
-/// these tests check is that `quote_of`'s gate holds, not that a reduction
-/// happened to lose the beacon on the way.
 fn hostile_quote() -> postio_body::Quoted {
     let fixture = postio_model::test_corpus::get(HOSTILE)
         .unwrap_or_else(|| panic!("{HOSTILE} is not in the corpus"));
@@ -41,10 +27,6 @@ fn text(text: &str) -> Inline {
     Inline::Text(text.to_owned())
 }
 
-// ---------------------------------------------------------------------------
-// Shape
-// ---------------------------------------------------------------------------
-
 #[test]
 fn a_quoted_reply_is_a_caret_line_an_attribution_and_the_source_as_a_quote() {
     let source = postio_body::quote_of(
@@ -56,9 +38,6 @@ fn a_quoted_reply_is_a_caret_line_an_attribution_and_the_source_as_a_quote() {
     assert_eq!(
         reply.blocks,
         vec![
-            // A blank line, not an empty paragraph: the caret needs a place
-            // to sit above the quote, and parse narrows a truly empty
-            // paragraph away on the first round trip.
             Block::Paragraph(vec![Inline::Break]),
             Block::Paragraph(vec![text("On 2026-08-26, Ada Lovelace wrote:")]),
             Block::Quoted(source),
@@ -104,11 +83,8 @@ fn a_forward_carries_the_header_block_and_the_source_unquoted() {
     ];
     let forward = forwarded(&source, &header);
 
-    // The source arrives as itself — a forward presents the whole message,
-    // not an answer to a fragment of it — so nothing marks it as quoted.
-    // Since #1483 it is carried rather than flattened, which changed *what*
-    // arrives and deliberately not *how it is shown*: the rendering is a
-    // plain `div`, never a `<blockquote>`.
+    // Since #1483 a forward carries the source rather than flattening it, but is still not shown as
+    // a quote: a plain `div`, never a `<blockquote>`.
     assert!(
         !forward
             .blocks
@@ -126,8 +102,6 @@ fn a_forward_carries_the_header_block_and_the_source_unquoted() {
         assert!(rendered.contains(line.as_str()), "{rendered}");
     }
     assert!(rendered.contains("Original words."), "{rendered}");
-    // The header block is one paragraph of five lines, matching the text
-    // convention every mail client emits.
     assert!(
         forward.blocks.iter().any(|block| matches!(
             block,
@@ -138,12 +112,6 @@ fn a_forward_carries_the_header_block_and_the_source_unquoted() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// The hostile corpus, both directions
-// ---------------------------------------------------------------------------
-
-/// Everything that fires on render with no action from anybody — the same
-/// list `outgoing.rs` pins for the hand-assembled reply.
 const LOADS: [&str; 7] = [
     "cdn.tracker.example.org",
     "pixel.tracker.example.org",
@@ -154,15 +122,8 @@ const LOADS: [&str; 7] = [
     "lamp-brass-441",
 ];
 
-/// What may never be re-emitted, whatever else a quote carries.
-///
-/// `style=` used to be on this list and is deliberately off it (ADR 0033): an
-/// inline declaration is how a quote carries the sender's styling now that the
-/// quote is the reader's rendering rather than a rebuild, and the sanitiser
-/// admits it on the reading path for the same reason. `<style` stays — the
-/// sender's own element never survives; what is emitted is CSS Postio parsed
-/// and rewrote, in `Quoted::styles`. The rest are what makes a mail client run
-/// something it was not asked to.
+/// `style=` is deliberately off the list (ADR 0033): inline declarations carry a quote's styling.
+/// `<style` stays, since what is emitted is CSS Postio parsed and rewrote in `Quoted::styles`.
 const EXECUTES: [&str; 4] = ["<script", "<style", "<iframe", "onload"];
 
 #[test]
@@ -177,15 +138,12 @@ fn a_reply_built_by_the_production_path_carries_no_load_and_no_script() {
     for leak in EXECUTES {
         assert!(!rendered_html.contains(leak), "{leak}:\n{rendered_html}");
     }
-    // And no image element at all, which was #1484: under ADR 0033 a remote
-    // `<img>` kept its element and lost its `src`, so the recipient of the
-    // reply got a broken icon with no banner to explain it. It is the
-    // sender's `alt` now, or nothing.
+    // #1484: no image element at all; a remote `<img>` kept its element and lost its `src`, leaving
+    // the recipient a broken icon. It is the sender's `alt` now, or nothing.
     assert!(
         !rendered_html.contains("<img"),
         "a broken image element reached the reply: {rendered_html}"
     );
-    // Still a quote of the message the human read.
     assert!(rendered_html.contains("has shipped"), "{rendered_html}");
     assert!(
         rendered_html.contains("<blockquote"),
@@ -210,10 +168,6 @@ fn a_forward_built_by_the_production_path_carries_no_load_and_no_script() {
     assert!(rendered_html.contains("has shipped"), "{rendered_html}");
 }
 
-// ---------------------------------------------------------------------------
-// Signatures at the document level
-// ---------------------------------------------------------------------------
-
 #[test]
 fn a_signature_lands_after_the_quote_and_swaps_idempotently() {
     let reply = quoted_reply(
@@ -236,7 +190,6 @@ fn a_signature_lands_after_the_quote_and_swaps_idempotently() {
         "the signature goes at the end: {rendered}"
     );
 
-    // Applying again changes nothing; switching identities swaps cleanly.
     assert_eq!(
         apply_signature(
             &signed,
@@ -254,7 +207,6 @@ fn a_signature_lands_after_the_quote_and_swaps_idempotently() {
     assert!(rendered.contains("Ada Lovelace"), "{rendered}");
     assert!(!rendered.contains("Grace Hopper"), "{rendered}");
 
-    // And taking the signature away leaves the written part alone.
     let bare = apply_signature(&swapped, None, Placement::BelowQuote);
     assert!(!bare.to_text().contains("Ada Lovelace"));
     assert!(bare.to_text().contains("> original words"));
@@ -262,10 +214,6 @@ fn a_signature_lands_after_the_quote_and_swaps_idempotently() {
 
 #[test]
 fn a_separator_inside_the_quote_is_not_this_drafts_signature() {
-    // The quoted message's own signature arrives inside the Quote block, so
-    // replacing "the signature" must never reach into it — mirroring
-    // `postio_model::signature::split`, where a separator followed by quoted
-    // lines is somebody else's.
     let source = postio_body::quote_of(None, "their words\n\n-- \nTheir Signature", "q1");
     let reply = quoted_reply(&source, "On 2026-08-26, Ada wrote:");
     let signed = apply_signature(
@@ -290,9 +238,8 @@ fn a_separator_inside_the_quote_is_not_this_drafts_signature() {
 
 #[test]
 fn rich_structure_survives_a_signature_swap() {
-    // The regression this API exists to prevent: the composer used to apply
-    // signatures by flattening the whole body to text and reloading it,
-    // which would have turned a rich quote into angle-bracket lines.
+    // The composer used to apply signatures by flattening the body to text and reloading it,
+    // turning a rich quote into angle-bracket lines.
     let source = postio_body::quote_of(Some("<p><strong>bold</strong></p>"), "bold", "q1");
     let reply = quoted_reply(&source, "On 2026-08-26, Ada wrote:");
     let signed = apply_signature(
@@ -315,10 +262,6 @@ fn rich_structure_survives_a_signature_swap() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// #12: the rich variant, and where the signature sits
-// ---------------------------------------------------------------------------
-
 fn signature(text: &str, html: Option<&str>) -> Signature {
     Signature {
         id: Default::default(),
@@ -330,9 +273,6 @@ fn signature(text: &str, html: Option<&str>) -> Signature {
 
 #[test]
 fn a_rich_signature_keeps_its_structure_instead_of_being_flattened() {
-    // The HTML variant has been in the model (and the schema) since the
-    // beginning with nothing to put it in; the composer has a rich body now.
-    // A signature with markup must arrive as markup, not as its text form.
     let reply = quoted_reply(
         &postio_body::quote_of(None, "their words", "q1"),
         "On 2026-08-26, Ada wrote:",
@@ -354,8 +294,6 @@ fn a_rich_signature_keeps_its_structure_instead_of_being_flattened() {
         )),
         "the rich variant was flattened: {signed:?}"
     );
-    // And the plain rendering of that same document is still the text form a
-    // text-only recipient reads.
     let rendered = signed.to_text();
     assert!(rendered.contains("Grace Hopper"), "{rendered}");
     assert!(rendered.contains("-- "), "{rendered}");
@@ -377,8 +315,6 @@ fn a_signature_with_no_rich_variant_falls_back_to_its_text() {
 
 #[test]
 fn placement_puts_the_signature_above_the_quote_when_asked() {
-    // Top-posting: the signature belongs under what was written and above the
-    // quoted message, which is where every client that top-posts puts it.
     let reply = quoted_reply(
         &postio_body::quote_of(None, "their words", "q1"),
         "On 2026-08-26, Ada wrote:",
@@ -396,7 +332,6 @@ fn placement_puts_the_signature_above_the_quote_when_asked() {
         sig_at < quote_at,
         "the signature should sit above the quote:\n{rendered}"
     );
-    // The quote is still whole, and still a quote.
     assert!(
         signed
             .blocks
@@ -422,7 +357,6 @@ fn swapping_placement_moves_the_signature_rather_than_adding_one() {
         "moving a signature must not leave the old one behind:\n{}",
         above.to_text()
     );
-    // And back again, idempotently.
     let back = apply_signature(&above, Some(&sig), Placement::BelowQuote);
     assert_eq!(back, below);
 }
@@ -451,9 +385,8 @@ fn a_signature_above_the_quote_is_still_replaced_not_stacked() {
 
 #[test]
 fn the_separator_sits_on_the_line_directly_above_the_signature() {
-    // RFC 3676: the line other clients fold on is exactly `-- ` immediately
-    // before the signature. A separator in a paragraph of its own renders
-    // with a blank line under it, and then nothing recognises it.
+    // RFC 3676: other clients fold on `-- ` immediately before the signature; a separate paragraph
+    // renders a blank line under it.
     let signed = apply_signature(
         &Document::from_text("Looking now."),
         Some(&signature("Lena", None)),
@@ -464,15 +397,12 @@ fn the_separator_sits_on_the_line_directly_above_the_signature() {
         rendered.contains("-- \nLena"),
         "the separator must be adjacent to the signature:\n{rendered:?}"
     );
-    // And in the rich rendering the two are one paragraph, one line apart.
     let html = signed.to_html();
     assert!(html.contains("-- <br>Lena"), "{html}");
 }
 
 #[test]
 fn a_paragraph_that_merely_starts_with_two_hyphens_is_not_a_separator() {
-    // "--fast is the flag you want" opens with the same two characters and is
-    // somebody's sentence, not the end of their message.
     let written = Document::from_text("--fast is the flag you want\n\nMore below.");
     let signed = apply_signature(
         &written,
@@ -487,8 +417,6 @@ fn a_paragraph_that_merely_starts_with_two_hyphens_is_not_a_separator() {
 
 #[test]
 fn a_signature_on_an_empty_draft_leaves_somewhere_to_type() {
-    // Without a line above it the caret opens inside the separator paragraph,
-    // and the first word typed lands in front of the `-- `.
     let signed = apply_signature(
         &Document::new(),
         Some(&signature("Lena", None)),
@@ -499,30 +427,11 @@ fn a_signature_on_an_empty_draft_leaves_somewhere_to_type() {
             if !matches!(inlines.first(), Some(Inline::Text(text)) if text.starts_with("--"))),
         "the draft should open on a line of its own: {signed:?}"
     );
-    // One blank line then the separator — the spelling the plain-text
-    // pipeline has always put on the wire.
     assert_eq!(signed.to_text(), "\n\n-- \nLena");
 }
 
-// ---------------------------------------------------------------------------
-// FR-044: the quote is the original as the reader renders it
-//
-// ADR 0033 reverses ADR 0003 Q3's *representation* while keeping its argument.
-// The old rule was that a quote is rebuilt from the closed `Document`, so a
-// script has no representation rather than being stripped on the way out. The
-// new rule is that a quote carries the reader's own sanitised rendering — and
-// the type is still the gate, because `Quoted` can only be made by a
-// constructor that sanitises. What changed is what survives sanitising: a
-// table, a colour, a class. What did not change is what does not.
-// ---------------------------------------------------------------------------
-
-/// A source with structure and styling the closed `Document` cannot hold.
-///
-/// Both carriers the reader actually admits: a `<style>` block, which is
-/// parsed and scoped, and inline `style`, which is the one attribute
-/// `add_generic_attributes` allows. Deliberately *not* `class` -- the
-/// sanitiser drops it, so the reader drops it, so the quote must too. FR-045
-/// says the quote is what the reader renders, which cuts both ways.
+/// Both carriers the reader admits: a `<style>` block (parsed and scoped) and inline `style`.
+/// Deliberately not `class`, which the sanitiser drops, so the quote must too.
 const RICH: &str = "\
 <style>td { padding: 4px } p { color: #b00 }</style>\
 <table><tr><td>Gate</td><td>Interlock</td></tr>\
@@ -531,8 +440,6 @@ const RICH: &str = "\
 
 #[test]
 fn an_html_originals_structure_and_styling_survive_into_the_quote() {
-    // FR-044. Under the old rule every one of these assertions failed: a
-    // `<table>` has no `Block`, and a class has nowhere to live at all.
     let quoted = postio_body::quote_of(Some(RICH), "Do not reset.", "q1");
 
     assert!(
@@ -559,9 +466,8 @@ fn an_html_originals_structure_and_styling_survive_into_the_quote() {
 
 #[test]
 fn a_quotes_styles_are_scoped_so_they_cannot_reach_the_users_own_text() {
-    // FR-078, and the reason `styles.rs` exists: admitting one unscoped
-    // sheet would let a message restyle Postio's chrome, the reply being
-    // written above it, or an earlier quote nested inside it.
+    // An unscoped sheet would let a message restyle Postio's chrome, the reply being written, or an
+    // earlier quote.
     let quoted = postio_body::quote_of(Some(RICH), "Do not reset.", "q1");
 
     for rule in quoted.styles().split('}').filter(|rule| rule.contains('{')) {
@@ -580,8 +486,8 @@ fn a_quotes_styles_are_scoped_so_they_cannot_reach_the_users_own_text() {
 
 #[test]
 fn a_plain_text_only_original_falls_back_rather_than_quoting_nothing() {
-    // FR-045. The failure this guards against is silent: a reply to a
-    // text/plain message opening with an attribution and an empty box.
+    // The silent failure: a reply to a text/plain message opening with an attribution and an empty
+    // box.
     let quoted = postio_body::quote_of(None, "Tide gate interlock is armed.", "q1");
 
     assert!(
@@ -597,8 +503,6 @@ fn a_plain_text_only_original_falls_back_rather_than_quoting_nothing() {
 
 #[test]
 fn an_html_original_that_sanitises_to_nothing_still_falls_back_to_its_text() {
-    // The case between the two above, and the one a naive `is_some` check
-    // gets wrong: there *is* an HTML part, and nothing in it survives.
     let quoted = postio_body::quote_of(
         Some("<script>steal()</script>"),
         "Tide gate interlock is armed.",
@@ -615,11 +519,8 @@ fn an_html_original_that_sanitises_to_nothing_still_falls_back_to_its_text() {
 
 #[test]
 fn a_quote_blocks_remote_images_even_where_the_reader_was_allowed_to_show_them() {
-    // ADR 0033 Q2, and the one rule in this file that is about someone other
-    // than the user. Allowing a sender's remote images is a decision the
-    // reader makes on this machine, about this mailbox. Re-emitting them in a
-    // reply would carry that decision to every recipient -- and hand the
-    // sender a beacon that now fires in other people's clients.
+    // ADR 0033 Q2: allowing images is a local decision; re-emitting them would fire a beacon in
+    // every recipient's client.
     let with_beacon = "<p>Morning.</p><img src=\"https://pixel.tracker.example.org/x.gif\">";
     let quoted = postio_body::quote_of(Some(with_beacon), "Morning.", "q1");
 
@@ -637,10 +538,8 @@ fn a_quote_blocks_remote_images_even_where_the_reader_was_allowed_to_show_them()
 
 #[test]
 fn no_quote_of_any_corpus_message_re_emits_a_script_or_a_remote_reference() {
-    // FR-047 as a security test rather than a rendering nicety: rendering
-    // happens on one machine, re-emission puts markup in front of everyone
-    // who receives the reply. Corpus-wide, and it counts what it checked so
-    // it cannot quietly pass over an empty set.
+    // Re-emission puts markup in front of everyone who receives the reply. Counts what it checked
+    // so it cannot pass over an empty set.
     let mut checked = 0;
     for fixture in postio_model::test_corpus::all() {
         let message = fixture.parse();
@@ -651,11 +550,8 @@ fn no_quote_of_any_corpus_message_re_emits_a_script_or_a_remote_reference() {
         let quoted = postio_body::quote_of(Some(html), &text, "q1");
         let emitted = format!("{} {}", quoted.html(), quoted.styles());
 
-        // Loading, not linking. An `<a href="https://...">` fetches nothing
-        // until someone clicks it and the reader keeps it, so banning every
-        // `https://` would ban ordinary correspondence. What may never be
-        // re-emitted is anything the recipient's client would fetch on its
-        // own -- which is what a tracking pixel *is*.
+        // Loading, not linking: an `<a href>` fetches nothing until clicked, so banning every
+        // `https://` would ban ordinary correspondence.
         for forbidden in [
             "<script",
             "<iframe",
@@ -670,7 +566,6 @@ fn no_quote_of_any_corpus_message_re_emits_a_script_or_a_remote_reference() {
             "url(\"http",
             "url('http",
             "background=\"http",
-            // #1484: not one broken image icon, across the whole corpus.
             "<img",
         ] {
             assert!(
@@ -690,11 +585,8 @@ fn no_quote_of_any_corpus_message_re_emits_a_script_or_a_remote_reference() {
 
 #[test]
 fn a_quote_survives_the_round_trip_through_the_editor_intact() {
-    // FR-046: what is in the editor is what is sent. The editor holds HTML
-    // and hands it back, so every keystroke costs a `to_html` and a `parse`.
-    // Under the old rule the rich quote would have survived exactly until the
-    // user typed a character and then collapsed to the authoring subset --
-    // fidelity that lasts until first use is not fidelity.
+    // What is in the editor is what is sent; every keystroke costs a `to_html` and a `parse`, so
+    // the rich quote must survive that round trip.
     let quoted = postio_body::quote_of(Some(RICH), "Do not reset.", "q1");
     let document = postio_body::Document {
         blocks: vec![
@@ -725,10 +617,6 @@ fn a_quote_survives_the_round_trip_through_the_editor_intact() {
         "the inline declaration did not survive the round trip: {}",
         after.html()
     );
-    // The text alternative is re-derived from the markup rather than
-    // remembered, so it reflects whatever the user did to the quote. It is
-    // narrowed on the way, which is right: `text/plain` is a reduction
-    // already, and the cells must at least come apart.
     let text = round_tripped.to_text();
     assert!(
         text.contains("> Do not reset before the tide turns."),
@@ -740,9 +628,6 @@ fn a_quote_survives_the_round_trip_through_the_editor_intact() {
             || line.starts_with("Acknowledged")),
         "a quoted line escaped its markers: {text:?}"
     );
-    // And the cells come apart, which they did not when this was written --
-    // `parse` narrowed a table to loose inlines with no separator at all, so
-    // the text half read `GateInterlock`. #1482, fixed.
     assert!(
         !text.contains("GateInterlock"),
         "the table's cells ran together in the plain half: {text:?}"
@@ -751,12 +636,8 @@ fn a_quote_survives_the_round_trip_through_the_editor_intact() {
 
 #[test]
 fn a_script_smuggled_into_the_editors_quote_does_not_come_back_out() {
-    // The reason `parse` rebuilds through `quote_of` instead of trusting what
-    // it finds. The content was sanitised when the quote was made, but it has
-    // been through a `contenteditable` DOM since -- paste handlers, an
-    // extension, a bug in this crate -- and "it was safe when we put it
-    // there" is the assumption worth not making, because what is on the other
-    // side of this one is everyone who receives the reply.
+    // `parse` rebuilds through `quote_of` instead of trusting what it finds: the content has been
+    // through a `contenteditable` DOM (paste handlers, extensions, bugs) since it was sanitised.
     let smuggled = "<blockquote data-postio-quoted=\"1\">\
 <p>Morning.</p><script>steal()</script>\
 <img src=\"https://pixel.tracker.example.org/x.gif\"></blockquote>";
@@ -780,16 +661,9 @@ fn a_script_smuggled_into_the_editors_quote_does_not_come_back_out() {
 
 #[test]
 fn an_image_in_a_quote_becomes_what_the_sender_called_it() {
-    // #1484. The reader blocks a remote image by stripping its `src` and
-    // keeping the element, which is right *there*: it sits beside a banner
-    // saying images were blocked and offering to load them. A sent reply has
-    // neither, so the recipient got a broken-image icon with no explanation
-    // and no way to resolve it -- and a reply to an image-heavy newsletter
-    // quoted a column of them.
-    //
-    // A reply carries none of the original's parts, so every image in a quote
-    // is broken by construction. What the sender *called* it is not, and that
-    // is the one thing worth keeping.
+    // #1484: the reader blocks an image by stripping its `src`, which suits its banner; a sent
+    // reply has none, so every quote image is broken by construction. The sender's `alt` is the one
+    // thing worth keeping.
     let quoted = postio_body::quote_of(
         Some(
             "<p>Morning.</p>\
@@ -820,9 +694,8 @@ fn an_image_in_a_quote_becomes_what_the_sender_called_it() {
 
 #[test]
 fn an_image_with_nothing_to_say_leaves_nothing_behind() {
-    // The tracking pixel's carcass is the case that matters: a 1x1 with no
-    // `alt`, which under the rule above has nothing to contribute and goes.
-    // A caption of `[]` would be worse than the broken icon it replaced.
+    // A 1x1 tracking pixel with no `alt` has nothing to contribute and goes; a caption of `[]`
+    // would be worse than the broken icon.
     let quoted = postio_body::quote_of(
         Some("<p>Morning.</p><img src=\"https://pixel.tracker.example.org/x.gif\" alt=\"\">"),
         "Morning.",
@@ -840,16 +713,8 @@ fn an_image_with_nothing_to_say_leaves_nothing_behind() {
 
 #[test]
 fn a_forward_carries_the_originals_structure_the_way_a_reply_does() {
-    // #1483. A reply stopped flattening when ADR 0033 landed; a forward kept
-    // doing it, so forwarding a table-based newsletter reduced it to a column
-    // of text while replying to the same message preserved it. There was no
-    // reason for the asymmetry beyond which one the ADR happened to be about.
-    //
-    // The concern that kept it open was that `Block::Quoted` is opaque and a
-    // forward must stay editable -- people trim forwards constantly. That
-    // turns out to be false: `parse` rebuilds a `Quoted` from whatever is in
-    // the DOM, so deleting half of one survives the round trip. It is carried
-    // content, not frozen content.
+    // #1483: a forward used to flatten while a reply preserved. `Block::Quoted` stays editable
+    // because `parse` rebuilds it from the DOM, so trimming half of a forward survives.
     let source = postio_body::quote_of(Some(RICH), "Do not reset.", "q1");
     let forwarded = postio_body::forwarded(
         &source,
@@ -884,15 +749,8 @@ fn a_forward_carries_the_originals_structure_the_way_a_reply_does() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// A source whose body has not arrived
-// ---------------------------------------------------------------------------
-
-/// A reply to a message whose body is still on the server must not carry an
-/// attribution that introduces nothing: "On 2026-05-29, Ada wrote:" above an
-/// empty quote reads as a quote that failed to load, and sent as it stands
-/// says something the sender never said. The composer says the original is
-/// still downloading; the body is left for the person to write.
+/// An attribution above an empty quote reads as a quote that failed to load; the composer says the
+/// original is still downloading.
 #[test]
 fn a_reply_to_a_message_with_no_body_yet_has_no_attribution() {
     let fixture = postio_model::test_corpus::get(HOSTILE)
@@ -919,10 +777,6 @@ fn a_reply_to_a_message_with_no_body_yet_has_no_attribution() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Reply to latest: the quote changes, the person's words do not (spec 013 FR-022)
-// ---------------------------------------------------------------------------
-
 mod requoting {
     use postio_body::{Block, Inline, quote_of, quoted_reply, requote};
     use postio_model::MessageBody;
@@ -934,8 +788,6 @@ mod requoting {
         quote_of(None, "six says hello\nand goodbye", "q6")
     }
 
-    /// A reply to message 4 as the rich composer saves it, `typed` written
-    /// in the caret paragraph.
     fn rich_reply_with(typed: &str) -> MessageBody {
         let four = quote_of(None, "four says hello", "q4");
         let mut document = quoted_reply(&four, FOUR);

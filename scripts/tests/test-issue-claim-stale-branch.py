@@ -33,8 +33,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -103,13 +101,10 @@ def world(base: Path, landed: bool) -> tuple[Path, Path]:
     git("checkout", "-q", "main", cwd=repo)
 
     if landed:
-        # The same patch under a different sha, which is what a rebase-merge
-        # leaves and what a sha comparison cannot see.
         (repo / "work.txt").write_text("the work\n", encoding="utf-8")
         git("add", "-A", cwd=repo)
         git("commit", "-q", "-m", "the work, rebased", cwd=repo)
         git("push", "-q", "origin", "main", cwd=repo)
-    # The branch must not be checked out anywhere, or the claim cannot use it.
     git("branch", "-D", "issue-4242-x", cwd=repo)
     return repo, stub_dir
 

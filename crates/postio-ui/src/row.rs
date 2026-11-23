@@ -1,45 +1,25 @@
-//! Canvas 1b's row geometry, per density.
-//!
-//! Plain numbers in logical pixels, keyed off `postio_config::Density`. They
-//! live here rather than in either frontend because "compact" has to mean the
-//! same thing in both: a row that is 26px on one platform and 34 on the other
-//! is not a shared setting, it is two settings with one name in the file.
-//!
-//! Type and colour are not here — those come from each toolkit's cascade.
-//! This is only the layout the row arranges them in.
+//! Row geometry per density, in logical pixels, shared so "compact" means the same on both
+//! platforms.
 
 use chrono::{DateTime, Datelike, Local, Utc};
 use postio_config::Density;
 use postio_core::CommandId;
 use postio_model::EmailAddress;
 
-/// Canvas 1b's row geometry for one density, in logical pixels.
-///
-/// Type and colour come from the cascade — the classic app's own private
-/// `row::Palette` reads them off the style context, which is why there is
-/// nothing to link to from here. This is the layout the snapshot arranges
-/// them in, which a hand-drawn widget owns the way a `GtkBox` owns its
-/// spacing. The airy numbers are measured straight off the canvas; the other
-/// two tighten the same anatomy rather than changing it.
+/// In logical pixels. The airy numbers are measured off the canvas; the others tighten the same
+/// anatomy.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Metrics {
-    /// Space above and below the row's content.
     pub pad_y: f32,
-    /// How far in the content starts, accent edge included, so a row does
-    /// not shift sideways when the selection lands on it.
+    /// Includes the accent edge, so a row does not shift sideways when selected.
     pub inset: f32,
-    /// The avatar chip, square.
     pub avatar: f32,
-    /// Between the avatar and the text column.
     pub gap: f32,
-    /// Between the sender line and the subject.
     pub subject_gap: f32,
-    /// Whether the snippet line is drawn at all.
     pub snippet: bool,
 }
 
 impl Metrics {
-    /// The geometry `density` asks for.
     pub fn for_density(density: Density) -> Self {
         match density {
             Density::Airy => Metrics {
@@ -58,9 +38,6 @@ impl Metrics {
                 subject_gap: 2.0,
                 snippet: true,
             },
-            // The tightest setting is for triage, where the question is how
-            // many subjects fit on screen. The snippet is the line that
-            // costs the most and answers it least.
             Density::Compact => Metrics {
                 pad_y: 5.0,
                 inset: 15.0,
@@ -73,12 +50,7 @@ impl Metrics {
     }
 }
 
-/// The initials the avatar chip shows for `from`.
-///
-/// Two letters: the initials of the first two words of a display name, or
-/// the first two letters of a single word. With no display name the local
-/// part stands in, which is what makes a mailing list read as `LK` rather
-/// than as a shrug.
+/// With no display name the local part stands in, so a mailing list reads `LK`.
 pub fn initials(from: Option<&EmailAddress>) -> String {
     let Some(from) = from else {
         return "?".to_string();
@@ -103,11 +75,7 @@ pub fn initials(from: Option<&EmailAddress>) -> String {
     letters.to_uppercase()
 }
 
-/// The timestamp column: relative for today, absolute beyond.
-///
-/// Canvas 1b draws `09:14` and `Thu`. Past the week it becomes a date, and
-/// past the year it carries the year, because "12 Aug" two years ago is a
-/// lie the eye believes.
+/// Past the year it carries the year: "12 Aug" two years ago would mislead.
 pub fn timestamp(received: DateTime<Utc>, now: DateTime<Local>) -> String {
     let local = received.with_timezone(&now.timezone());
     let days = (now.date_naive() - local.date_naive()).num_days();
@@ -119,27 +87,17 @@ pub fn timestamp(received: DateTime<Utc>, now: DateTime<Local>) -> String {
     }
 }
 
-/// What the row offers under the pointer, in the order they are drawn.
-///
-/// The three verbs triage is made of, and the same three the bulk bar
-/// carries — one row or twenty, the mouse says the same thing. Each is a
-/// registry command, never a local implementation: `a`, `s` and `d` mean
-/// exactly this.
+/// The three triage verbs, the same as the bulk bar; always registry commands (`a`, `s`, `d`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RowAction {
-    /// Archive this message — `a`.
     Archive,
-    /// Flag or unflag it — `s`.
     Flag,
-    /// Move it to the trash — `d`.
     Delete,
 }
 
 impl RowAction {
-    /// Every action, left to right.
     pub const ALL: [RowAction; 3] = [RowAction::Archive, RowAction::Flag, RowAction::Delete];
 
-    /// What a screen reader would call it, for whoever offers it another way.
     pub fn title(self) -> &'static str {
         match self {
             RowAction::Archive => "Archive",
@@ -148,11 +106,6 @@ impl RowAction {
         }
     }
 
-    /// Which registry command it runs.
-    ///
-    /// Never a local implementation: `a`, `s` and `d` mean exactly this, and a
-    /// hover action that did its own thing would be a fourth way to archive
-    /// that undo did not know about.
     pub fn command(self) -> CommandId {
         match self {
             RowAction::Archive => CommandId::Archive,
@@ -162,36 +115,18 @@ impl RowAction {
     }
 }
 
-/// What a row says about a draft's send state, in one word or two.
-///
-/// Here rather than in a widget for the reason `initials` and `timestamp` are:
-/// what a mail client calls a state is answered once, and two frontends
-/// wording it apart is the drift these moves exist to stop.
-///
-/// # Why not just "Draft"
-///
-/// It was "Draft" for all five, which is #1491's third open question. Drafts
-/// holds what you are writing, what failed and what cannot be confirmed, and
-/// the Outbox holds what is on its way -- and a row that says only "Draft"
-/// makes a message that *needs you* look like one you simply have not
-/// finished. The words are the user's, not the state machine's: nobody is
-/// looking for an "unconfirmed draft", they are looking for the one that did
-/// not go.
+/// Words for the user, not the state machine: a row saying only "Draft" made a message that needs
+/// you look unfinished (#1491).
 pub fn send_state_word(state: postio_model::DraftState) -> &'static str {
     use postio_model::DraftState;
     match state {
         DraftState::Editing => "Draft",
         DraftState::Queued => "Waiting to send",
         DraftState::Sending => "Sending",
-        // Not "Failed": what matters to the reader is that it did not go, and
-        // the reason is on the draft itself when they open it (#1487).
+        // "Not sent", not "Failed": the reason is on the draft itself (#1487).
         DraftState::Failed => "Not sent",
-        // ADR 0021 Decision 3: nobody can say whether it arrived. The word has
-        // to carry that rather than claim either.
+        // ADR 0021: nobody can say whether it arrived, so the word claims neither.
         DraftState::Unconfirmed => "Not confirmed",
-        // The moment between the server accepting and the row being deleted.
-        // It has a word because the column can hold it, not because a person
-        // is expected to read it.
         DraftState::Sent => "Sent",
     }
 }
@@ -225,14 +160,8 @@ mod tests {
 
     #[test]
     fn a_time_reads_as_the_clock_today_the_day_this_week_and_a_date_beyond() {
-        // Canvas 1b draws `09:14` and `Thu`. The year appears only once the
-        // message is not from this one, because "12 Aug" two years ago is a
-        // lie the eye believes.
-        //
-        // Every instant is built in the *local* zone and converted to UTC, not
-        // the other way round: written the obvious way this asserted "09:14"
-        // against a machine four hours off UTC and got "05:14". The function
-        // renders in the reader's zone, so the test has to think in it too.
+        // Instants are built in the local zone: the function renders in the reader's zone, so UTC
+        // fixtures fail on offset machines.
         let now = Local.with_ymd_and_hms(2026, 9, 6, 18, 0, 0).unwrap();
         let at = |y, m, d, h, mi| {
             Local
@@ -242,7 +171,6 @@ mod tests {
         };
 
         assert_eq!(timestamp(at(2026, 9, 6, 9, 14), now), "09:14");
-        // Three days back is a weekday name, not a clock and not a date.
         let recent = timestamp(at(2026, 9, 3, 9, 14), now);
         assert_eq!(recent.len(), 3, "{recent}");
         assert!(!recent.contains(':'), "{recent}");

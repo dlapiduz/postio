@@ -1,6 +1,3 @@
-//! The snapshot a render hands the UI (research R7): message, link and
-//! fold boxes the widget can act on without asking the engine anything.
-
 use std::sync::Arc;
 
 use postio_body::RemoteImages;
@@ -185,7 +182,6 @@ fn the_low_resolution_copy_is_a_quarter_scale() {
     assert!(doc.low_res.rgba.len() <= 16 * 1024 * 1024);
 }
 
-/// A fragment link names an element the snapshot knows the place of.
 #[test]
 fn a_fragment_link_has_a_place_to_go() {
     let doc = snapshot();
@@ -202,7 +198,6 @@ fn a_fragment_link_has_a_place_to_go() {
         .iter()
         .find(|(anchor, _)| *anchor == id)
         .expect("the element it names is in the snapshot's anchors");
-    // The heading, not the link's own "Jump to the budget": find folds case.
     let heading = doc.text.rects(
         doc.text
             .find("Budget")
@@ -217,8 +212,6 @@ fn a_fragment_link_has_a_place_to_go() {
     );
 }
 
-/// Every snapshot alive is counted, and a dropped one stops being: what the
-/// reader's "memory does not grow with messages viewed" rests on (SC-006).
 #[test]
 fn a_snapshot_is_counted_while_it_lives() {
     let before = postio_render::live_documents();

@@ -50,17 +50,9 @@ sys.path.insert(0, str(HERE / "lib"))
 
 import fixture_toolchain  # noqa: E402  -- enabled by the sys.path line above
 ISSUE_LAND = HERE / "issue-land.sh"
-# Sandboxes go under `target/`, which git ignores: inside the worktree because
-# the shared-tree guard only lifts its refusals for worktree paths, and not in
-# its root because a killed run leaves the sandbox behind and `git add -A` in a
-# worktree will commit it. `scripts/checks/check-test-sandboxes.py` says what
-# that cost (#1225).
 SANDBOXES = REPO_ROOT / "target" / "tmp"
 SANDBOXES.mkdir(parents=True, exist_ok=True)
 
-# The six invariant checks `issue-land.sh` runs unconditionally. Stubbed here
-# because this test is about the target directory, not about them -- they are
-# exercised by their own self-tests.
 STUB_CHECKS = [
     "check-crate-boundaries.py",
     "check-no-personal-data.py",
@@ -133,8 +125,6 @@ def make_repo(base: Path) -> Path:
     git("push", "-q", "origin", "main", cwd=root)
 
     git("checkout", "-q", "-b", "issue-1-target-dir-test", cwd=root)
-    # A committed change under `crates/` is what makes `issue-land.sh` run
-    # clippy and test, which is what makes a target directory appear.
     (root / "crates" / "dummy" / "src" / "lib.rs").write_text(
         "pub fn x() {}\npub fn y() {}\n", encoding="utf-8"
     )

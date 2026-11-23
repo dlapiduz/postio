@@ -1,19 +1,3 @@
-//! Two accounts syncing at once, without one waiting on the other.
-//!
-//! ADR 0005 Q3, and #1's first acceptance criterion (#183). `Engine` was
-//! already keyed to one account with its own connection and its own queue;
-//! nothing in it assumed it was alone. What was missing was any proof of
-//! that, and a composition root willing to start a second one.
-//!
-//! The shape ADR 0005 asks for: two `MailBackend` mocks with different
-//! latencies, and the fast account's pass finishing while the slow account's
-//! is still in flight. A test that merely started two engines and waited for
-//! both would pass just as well against a global lock, which is the thing
-//! this exists to rule out.
-//!
-//! Both mocks are in-memory and no SMTP connector is ever dialled. Nothing
-//! here touches the network.
-
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -28,15 +12,8 @@ use crate::harness;
 
 use harness::BlobDir;
 
-/// How long every call to the slow account's server takes.
-///
-/// The assertion below is on *ordering*, not on elapsed time, so this only has
-/// to make the slow account reliably slower than the fast one — not to fit
-/// inside any particular budget. An earlier version asserted the fast pass
-/// finished within this bound and failed on the land gate at 2.2s: the whole
-/// machine was busy compiling, and an absolute wall-clock bound measures the
-/// load as much as the code. A test that fails when the box is busy is worse
-/// than no test.
+/// The assertion is on ordering, not elapsed time: an absolute wall-clock bound measured machine
+/// load.
 const SLOW: Duration = Duration::from_millis(400);
 
 fn a_message() -> Vec<u8> {
@@ -51,8 +28,6 @@ fn a_message() -> Vec<u8> {
         .into_bytes()
 }
 
-/// One folder holding one message, so a pass is short and the latency is what
-/// dominates it.
 fn server() -> MockBackend {
     MockBackend::builder()
         .mailbox(MockMailbox::new("INBOX").message(MockMessage::new(a_message())))
@@ -95,7 +70,6 @@ fn engine_for(
     (engine, directory)
 }
 
-/// The ADR's own test: a slow account must not hold up a fast one.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_slow_account_does_not_hold_up_a_fast_one() {
     let database = test_support::memory().await;
@@ -136,16 +110,12 @@ async fn a_slow_account_does_not_hold_up_a_fast_one() {
     let (slow_engine, _slow_directory) = engine_for(&database, slow.0, Arc::clone(&slow_backend));
     let (fast_engine, _fast_directory) = engine_for(&database, fast.0, Arc::clone(&fast_backend));
 
-    // The slow pass starts first, so anything serializing the two would have
-    // to finish it before the fast one could begin.
     let slow_pass = tokio::spawn(async move {
         let outcome = slow_engine.sync(slow.1).await;
         (outcome, Instant::now())
     });
 
-    // Let the slow account get genuinely in flight rather than merely spawned;
-    // otherwise "the fast one finished first" could be true because the slow
-    // one had not started.
+    // Get the slow account genuinely in flight, or finishing first could mean it had not started.
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     fast_engine
@@ -157,18 +127,14 @@ async fn a_slow_account_does_not_hold_up_a_fast_one() {
     let (slow_outcome, slow_finished) = slow_pass.await.expect("the slow task");
     slow_outcome.expect("the slow account syncs too, eventually");
 
-    // Ordering, not duration. Anything that serializes the two makes the slow
-    // pass hold what it holds until it is done, so the fast pass cannot finish
-    // first. Under real concurrency the fast one does, because the slow one
-    // waits out `SLOW` on every call — and that stays true however loaded the
-    // machine is, since both accounts are loaded equally.
+    // Ordering, not duration: anything serializing the two makes the fast pass wait, and both
+    // accounts are loaded equally.
     assert!(
         fast_finished < slow_finished,
         "the fast account did not finish until after the slow one — it waited \
          for it, so something is serializing the two"
     );
 
-    // ── and each row reflects only its own pass ──────────────────────────
     let connection = database.connect().await.expect("a connection");
     let sync_state = SyncStateRepository::new(&connection);
     let mailboxes = MailboxRepository::new(&connection);

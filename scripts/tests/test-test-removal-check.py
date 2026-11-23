@@ -28,8 +28,6 @@ CAUGHT_ONLY_WITH = "crates/postio-config/src/change.rs:71:13: replace || with &&
 ALREADY_SURVIVES = "crates/postio-config/src/compose.rs:45:9: replace SignaturePlacement::as_str -> &'static str with \"\""
 MISSED_EITHER_WAY = "crates/postio-config/src/change.rs:80:5: replace ConfigChanged::none -> bool with true"
 
-# The stub records its arguments and writes the scenario's mutants.out for the pass it recognises:
-# Pass A writes to `<work>/a` and Pass B to `<work>/b`.
 STUB = r'''#!/usr/bin/env python3
 import os, sys, pathlib
 args = sys.argv[1:]

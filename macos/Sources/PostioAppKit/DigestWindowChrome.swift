@@ -2,14 +2,6 @@ import AppKit
 import PostioKit
 import SwiftUI
 
-/// The digest window's title area (specs/009-focus-macos T114, screens 22
-/// and 23): a unified toolbar, as the message window's
-/// (`MessageWindowChrome`), so the title bar is 52pt with the traffic
-/// lights centred in it. "‹ Summary" on the left while an email is open,
-/// the title and its line in the centre, and on the right "Archive all"
-/// or, on an email, the `k j` cap and the previous/next pair. The views are
-/// SwiftUI's (`DigestBack`, `DigestTitle`, `DigestTrailing`), reading the
-/// model, so a new view redraws them.
 @MainActor
 public final class DigestWindowChrome: NSObject, NSToolbarDelegate {
     static let back = NSToolbarItem.Identifier("postio.digest.back")
@@ -28,7 +20,6 @@ public final class DigestWindowChrome: NSObject, NSToolbarDelegate {
         toolbar.centeredItemIdentifiers = [Self.title]
     }
 
-    /// Put the title area on `window`.
     public func install(on window: NSWindow) {
         window.titleVisibility = .hidden
         window.toolbarStyle = .unified

@@ -1,8 +1,5 @@
-//! The pure half's command line, which `scripts/storyboards.sh` drives.
-//! Subcommands are in `specs/008-storyboards/contracts/runner.md`.
-//!
-//! Exit codes follow the script's: 0 clean, 1 something failed, 2 the
-//! command could not run (a bad argument, an unreadable file).
+//! The pure half's command line, which `scripts/storyboards.sh` drives. Exit codes follow the
+//! script's: 0 clean, 1 something failed, 2 the command could not run.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -39,7 +36,6 @@ fn main() -> ExitCode {
     }
 }
 
-/// The value after `--name`, if given.
 fn flag(args: &[String], name: &str) -> Option<String> {
     args.iter()
         .position(|arg| arg == name)
@@ -47,7 +43,6 @@ fn flag(args: &[String], name: &str) -> Option<String> {
         .cloned()
 }
 
-/// Every value after `--name`, for a flag that may repeat.
 fn flags(args: &[String], name: &str) -> Vec<String> {
     args.iter()
         .enumerate()
@@ -80,8 +75,6 @@ fn bundle_command(args: &[String]) -> ExitCode {
         design_dirs: &design_dirs,
         out: &PathBuf::from(&out),
     };
-    // Against a base, only what the branch changed is put to the reviewer;
-    // without one, every run is new (research R8).
     let comparisons = match &base {
         Some(base) => match compare::compare_trees(base, &PathBuf::from(&runs)) {
             Ok(comparisons) => comparisons,
@@ -140,7 +133,6 @@ fn prompt_command(args: &[String]) -> ExitCode {
         println!("{}", prompt::count(&manifest));
         return ExitCode::SUCCESS;
     }
-    // One batch needs no number; several must say which.
     let n = match flag(args, "--batch") {
         Some(n) => n.parse::<usize>().ok(),
         None if prompt::count(&manifest) == 1 => Some(1),
@@ -235,8 +227,6 @@ fn page_command(args: &[String]) -> ExitCode {
     let out_path = PathBuf::from(&out);
     let reviewed = match flag(args, "--bundle") {
         Some(bundle_dir) => {
-            // The page links frames through the bundle, so it needs to know
-            // where the bundle is from the page.
             let bundle_path = PathBuf::from(&bundle_dir);
             let prefix = flag(args, "--bundle-prefix").unwrap_or_else(|| {
                 let from = out_path.parent().unwrap_or(std::path::Path::new(""));
@@ -277,8 +267,6 @@ fn page_command(args: &[String]) -> ExitCode {
         (Some(reviewed), None) => page::render_reviewed(&header, &strips, reviewed),
         (None, None) => page::render(&header, &strips),
     };
-    // Across the apps, when the runs cover more than one (spec US3). Needs the
-    // catalogue, because an override is what makes a difference legitimate.
     let html = match flag(args, "--catalogue") {
         Some(catalogue) => {
             let runs: Vec<_> = strips.iter().map(|strip| strip.run.clone()).collect();
@@ -350,8 +338,6 @@ fn compare_command(args: &[String]) -> ExitCode {
     }
 }
 
-/// Every storyboard under `root`, by name; ones that do not load are left out
-/// (the lint is what reports them).
 fn load_catalogue(
     root: &std::path::Path,
 ) -> std::collections::BTreeMap<String, format::Storyboard> {
@@ -375,7 +361,6 @@ fn load_catalogue(
     found
 }
 
-/// `to` relative to the directory `from`, with `/` separators.
 fn relative(from: &std::path::Path, to: &std::path::Path) -> String {
     let (from, to) = (
         from.canonicalize().unwrap_or_else(|_| from.to_path_buf()),
@@ -397,9 +382,8 @@ fn relative(from: &std::path::Path, to: &std::path::Path) -> String {
         .join("/")
 }
 
-/// The screen sweep's contact sheet (FR-030). Exits 1, naming them, if any
-/// screen failed to render: a sweep that half worked and said nothing is how
-/// a blank pane gets reviewed as though it were a design decision.
+/// Exits 1, naming them, if any screen failed to render: a sweep that half worked and said nothing
+/// is how a blank pane gets reviewed as a design decision.
 fn sheet_command(args: &[String]) -> ExitCode {
     let (Some(runs), Some(catalogue), Some(design_dir), Some(out)) = (
         flag(args, "--runs"),

@@ -1,31 +1,8 @@
-//! `postio-diag`: what a store holds, what it costs, and what the background
-//! lanes still owe -- counts, sizes, ids and header tokens, never mail.
+//! `postio-diag`: what a store holds, what it costs, and what the background lanes still owe --
+//! counts, sizes and ids, never mail.
 //!
-//! Every diagnosis this project has needed against a real store began with a
-//! one-off example: a census of the tables, a census of the bodies carrying
-//! the decode caveat, the shape of the messages table, a search timed on a
-//! warm connection. Each answered its question and then sat in an
-//! `examples/` directory waiting for the next person to rediscover it. This
-//! is those examples as one command, built with the application, so the
-//! next question starts from `postio-diag` rather than from a blank file.
-//!
-//! ```text
-//! postio-diag census                      # opens the live store
-//! postio-diag --store /path/to/copy.db pending
-//! POSTIO_STORE_KEY=<hex> postio-diag --store copy.db encoding
-//! ```
-//!
-//! **With Postio running, the live store is refused.** One process at a time
-//! has the store (ADR 0041), so close Postio first, or point `--store` at a
-//! copy.
-//!
-//! **Read-only by promise, not by mode.** The engine has no read-only open
-//! (ADR 0038), so every subcommand issues `SELECT` and `PRAGMA` and nothing
-//! else; what a copy protects against is the engine's own recovery on open.
-//!
-//! The key comes from the keyring, the way the application and
-//! `postio-provision` read it, or from `POSTIO_STORE_KEY` for a copy whose
-//! keyring is somewhere else. The key is never printed.
+//! With Postio running the live store is refused (ADR 0041); every subcommand issues only `SELECT`
+//! and `PRAGMA`. The key never prints.
 
 use std::process::ExitCode;
 
@@ -57,7 +34,6 @@ async fn main() -> ExitCode {
                 println!("{USAGE}");
                 return ExitCode::SUCCESS;
             }
-            // `search` takes the rest of the line as its words.
             "search" if command.is_none() => {
                 let words: Vec<String> = arguments.by_ref().collect();
                 command = Some(format!("search {}", words.join(" ")));

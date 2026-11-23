@@ -1,15 +1,9 @@
-//! The long-newsletter seed refiles one demo conversation as a newsletter:
-//! its row must describe the newsletter, not the message it was made from.
-
 use gtk::prelude::*;
 
 use crate::support;
 
 pub fn the_newsletters_row_says_nothing_of_the_message_it_was_made_from() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (database, _) = postio_gtk::demo::seeded(postio_gtk::demo::Seed::LongNewsletter).await;
         let blobs = tempfile::tempdir().expect("a blob directory");
         let store = postio_storage::BlobStore::open(

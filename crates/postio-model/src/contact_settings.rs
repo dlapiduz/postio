@@ -1,26 +1,18 @@
-//! What the user has decided about one correspondent (specs/011-focus-contacts
-//! S3): where their mail arrives, which markers are off for them, and how
-//! their mail is drawn.
-//!
-//! These were once kept per address in `config.toml` and a file beside it.
-//! They are the person's now, so a second address joined to them is covered
-//! by what they already chose (ADR 0048).
+//! What the user decided about one correspondent: where mail arrives, which markers are off, how it
+//! is drawn.
+//! Kept per person, so a second joined address is covered by what they already chose (ADR 0048).
 
 use serde::{Deserialize, Serialize};
 
-/// Where a correspondent's mail arrives. `None` is "by the default rules".
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ContactArrival {
     /// In the inbox, and never filtered away: a pinned sender.
     Inbox,
-    /// Held for the digest the contact's settings name.
     Digest,
-    /// Filed away as Filtered.
     Filtered,
 }
 
 impl ContactArrival {
-    /// A stable lowercase identifier, for storage.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Inbox => "inbox",
@@ -29,7 +21,6 @@ impl ContactArrival {
         }
     }
 
-    /// The inverse of [`ContactArrival::as_str`]; `None` for anything else.
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
             "inbox" => Some(Self::Inbox),
@@ -40,14 +31,10 @@ impl ContactArrival {
     }
 }
 
-/// The digest a correspondent's mail is held for: the rule a
-/// `[[focus.digests]]` entry with one `from:` query would have been.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DigestSetting {
-    /// What the digest is called. Kept from the rule it came from, because
-    /// the mail it holds and the deliveries it made are filed under it.
+    /// Kept from the rule it came from: the mail held and the deliveries made are filed under it.
     pub name: String,
-    /// `daily`, `weekly` or `monthly`.
     pub cadence: String,
     /// A weekday, or a day of the month, as the rule wrote it.
     pub day: Option<String>,
@@ -55,20 +42,15 @@ pub struct DigestSetting {
     pub at: String,
 }
 
-/// A marker kind that can be turned off for one correspondent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum StoppedMarker {
-    /// Questions asked of the user.
     Question,
-    /// To-dos the mail gives them.
     Todo,
 }
 
 impl StoppedMarker {
-    /// Both kinds.
     pub const ALL: [Self; 2] = [Self::Question, Self::Todo];
 
-    /// The word `[focus.filter] stop_markers` and the store use.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Question => "question",
@@ -76,7 +58,6 @@ impl StoppedMarker {
         }
     }
 
-    /// The kind a word names, in any case.
     pub fn from_name(name: &str) -> Option<Self> {
         match name.trim().to_ascii_lowercase().as_str() {
             "question" => Some(Self::Question),
@@ -85,7 +66,6 @@ impl StoppedMarker {
         }
     }
 
-    /// This kind's bit in `contact_settings.stop_markers`.
     pub fn bit(self) -> u8 {
         match self {
             Self::Question => 1,
@@ -94,27 +74,18 @@ impl StoppedMarker {
     }
 }
 
-/// A switch on a contact's card: one thing the user decides about them with
-/// a click (specs/011-focus-contacts S8).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CardSwitch {
-    /// A message from them notifies.
     Notify,
-    /// Their HTML mail is always drawn as sent.
     HtmlAsSent,
-    /// Remind after a few days without a reply, from the start.
     Remind,
-    /// Archive their newsletters after a month.
     Archive,
 }
 
 impl CardSwitch {
-    /// How many days "remind by default" waits.
     pub const REMIND_DAYS: u32 = 3;
-    /// How many days "archive issues" keeps them in the inbox.
     pub const ARCHIVE_DAYS: u32 = 30;
 
-    /// Whether `settings` have this switch on.
     pub fn is_on(self, settings: &ContactSettings) -> bool {
         match self {
             Self::Notify => settings.notify,
@@ -124,7 +95,6 @@ impl CardSwitch {
         }
     }
 
-    /// Turns this switch on or off in `settings`.
     pub fn set(self, settings: &mut ContactSettings, on: bool) {
         match self {
             Self::Notify => settings.notify = on,
@@ -135,23 +105,16 @@ impl CardSwitch {
     }
 }
 
-/// One of the four Suggestions switches in Settings > Contacts
-/// (specs/011-focus-contacts D7): each decides whether a piece of work is
-/// done at all, not whether its result is shown.
+/// Each switch decides whether a piece of work is done at all, not whether its result is shown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Suggestion {
-    /// People the user writes to are saved without being asked.
     SaveAutomatically,
-    /// Lists, newsletters and automated senders are told apart from people.
     RecogniseKinds,
-    /// Signatures are read for a title, a company and phone numbers.
     ReadSignatures,
-    /// Records that look like one person are looked for.
     SuggestMerges,
 }
 
 impl Suggestion {
-    /// All four, in the order the pane lists them.
     pub const ALL: [Self; 4] = [
         Self::SaveAutomatically,
         Self::RecogniseKinds,
@@ -159,7 +122,6 @@ impl Suggestion {
         Self::SuggestMerges,
     ];
 
-    /// The stable name the store keeps.
     pub fn name(self) -> &'static str {
         match self {
             Self::SaveAutomatically => "save_automatically",
@@ -169,19 +131,16 @@ impl Suggestion {
         }
     }
 
-    /// The inverse of [`Suggestion::name`]; `None` for anything else.
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|one| one.name() == name)
     }
 
-    /// Whether it is on until the person says otherwise: saving people
-    /// automatically is the one that is not.
+    /// Saving people automatically is the one that is off by default.
     pub fn default_on(self) -> bool {
         !matches!(self, Self::SaveAutomatically)
     }
 }
 
-/// Which Suggestions switches are on. The default is each switch's own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContactSuggestions {
     on: [bool; 4],
@@ -196,12 +155,10 @@ impl Default for ContactSuggestions {
 }
 
 impl ContactSuggestions {
-    /// Whether `which` is on.
     pub fn is_on(&self, which: Suggestion) -> bool {
         self.on[Self::slot(which)]
     }
 
-    /// These switches with `which` turned on or off.
     #[must_use]
     pub fn with(mut self, which: Suggestion, on: bool) -> Self {
         self.on[Self::slot(which)] = on;
@@ -220,37 +177,26 @@ impl ContactSuggestions {
 /// a correspondent with nothing decided has no row.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct ContactSettings {
-    /// Where their mail arrives.
     pub arrival: Option<ContactArrival>,
-    /// Their digest, when [`ContactSettings::arrival`] is `Digest`.
     pub digest: Option<DigestSetting>,
-    /// Bits of [`StoppedMarker::bit`] for the marker kinds that are off.
     pub stop_markers: u8,
-    /// Whether a message from them notifies.
     pub notify: bool,
-    /// How their HTML mail is always drawn: `app` or `paper`.
     pub html_treatment: Option<String>,
-    /// Remind after this many days without a reply.
     pub remind_days: Option<u32>,
-    /// Archive their newsletters after this many days.
     pub archive_after_days: Option<u32>,
-    /// "Ignore sender": the new-sender popover is never offered for them
-    /// again (specs/011-focus-contacts S9).
+    /// "Ignore sender": the new-sender popover is never offered for them again.
     pub ignored: bool,
 }
 
 impl ContactSettings {
-    /// Whether nothing is decided, so that no row is kept.
     pub fn is_default(&self) -> bool {
         *self == Self::default()
     }
 
-    /// Whether `kind` markers are off for them.
     pub fn stops(&self, kind: StoppedMarker) -> bool {
         self.stop_markers & kind.bit() != 0
     }
 
-    /// Turns `kind` markers off or back on.
     pub fn set_stop(&mut self, kind: StoppedMarker, off: bool) {
         if off {
             self.stop_markers |= kind.bit();
@@ -259,12 +205,9 @@ impl ContactSettings {
         }
     }
 
-    /// Takes what `other` decided where this one decided nothing -- a merge
-    /// keeps the kept person's word and fills its gaps from the absorbed
-    /// (specs/011-focus-contacts Q8), so a pin or a digest is never silently
-    /// dropped. Where both decided, this one stands: an `inbox` pin is not
-    /// replaced by a digest, and a digest comes with the arrival it belongs
-    /// to. A marker kind is a gap per kind.
+    /// Takes what `other` decided where this one decided nothing, so a pin or digest is never
+    /// silently dropped by a merge. Where both decided, this one stands. A marker kind is a gap per
+    /// kind.
     pub fn absorb(&mut self, other: &ContactSettings) {
         if self.arrival.is_none() && other.arrival.is_some() {
             self.arrival = other.arrival;
@@ -279,7 +222,6 @@ impl ContactSettings {
         self.archive_after_days = self.archive_after_days.or(other.archive_after_days);
     }
 
-    /// The marker kinds that are off, in a fixed order.
     pub fn stopped(&self) -> Vec<StoppedMarker> {
         StoppedMarker::ALL
             .into_iter()

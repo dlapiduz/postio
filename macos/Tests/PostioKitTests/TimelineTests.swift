@@ -4,33 +4,19 @@ import Testing
 
 @testable import PostioKit
 
-/// The timeline's drag and the filter popovers' model (specs/010-focus-search
-/// T082; design §3.3, §3.6, screens 08 and 09).
-///
-/// What months a range means, and what the query becomes, are the
-/// controller's (`crates/postio-focus/src/results.rs`). The Mac reports a
-/// drag as the bars it began and ended over -- once, when the pointer lets
-/// go, so a drag is one search and not one per bar it crosses -- and what
-/// happened in a popover, by the token of the row it happened to.
 @MainActor
 struct TimelineTests {
-    /// Twelve bars across 120 points: ten points a bar.
     static let width = 120.0
 
-    /// A month past the walk's cap says its count is a floor, as the
-    /// controller words it (D30), not the bare number it counted to.
     @Test func aMonthSaysItsCountAsTheControllerWordsIt() {
         let month = MonthBarFfi(
             label: "Jul", conversations: 5_000, height: 1, selected: false, count: "5,000+")
         #expect(MonthChart.spoken(month) == "Jul, 5,000+")
     }
 
-    /// The hint is two lines broken at its middle dot, as screen 06 draws
-    /// it, never a wrap that leaves "to narrow" alone on the second line.
     @Test func theHintBreaksAtItsMiddleDot() {
         #expect(TimelineView.hintLines("Matches by month \u{b7} drag across months to narrow")
             == "Matches by month\ndrag across months to narrow")
-        // A range's hint keeps the rest together on the second line.
         #expect(TimelineView.hintLines("Sep \u{2013} Oct \u{b7} drag again \u{b7} x")
             == "Sep \u{2013} Oct\ndrag again \u{b7} x")
         #expect(TimelineView.hintLines("One line") == "One line")
@@ -78,8 +64,6 @@ struct TimelineTests {
         #expect(reports == [[0, 11]])
     }
 
-    // MARK: the popover's model
-
     final class Engine: FilterPopoverEngine {
         var calls: [String] = []
         func focusSearchPopover(_ kind: FilterKindFfi) { calls.append("open \(kind)") }
@@ -116,7 +100,6 @@ struct TimelineTests {
 
         #expect(model.apply(.focusPopover(view: nil)) == .close)
         #expect(model.view == nil)
-        // A close the controller made is not reported back.
         model.closedByToolkit()
         #expect(engine.calls.isEmpty)
     }

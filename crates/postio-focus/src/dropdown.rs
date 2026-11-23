@@ -1,18 +1,6 @@
-//! The search dropdown: the bar's search half (spec 010 step 2, screens 01
-//! and 03).
-//!
-//! Empty, it lists the searches run lately, the pinned saved searches with
-//! their counts, and the cheat sheet with one plain-English example lowered
-//! live. With words, it lists the top four conversations with their
-//! passages, the "Narrow to" pills a facet offers, and "Show all N
-//! results", focused. Step 8 adds the typing states (screens 02, 04, 05):
-//! a short prefix's ghost and suggestions, an operator's people, labels or
-//! folders, and the tiles plain English was understood as. The state is the bar's (`bar.rs`); this is what it is
-//! drawn as, and the words are `postio_ui::search_view`'s.
-//!
-//! Tokens are given when the data arrives -- a recent search when the list
-//! is read, a hit when its search lands -- and kept while it stays, so a
-//! redraw (the passages landing) leaves the arrows where they were.
+//! The search dropdown: the bar's search half. The state is the bar's (`bar.rs`); this is what it
+//! is drawn as. Tokens are given when data arrives and kept while it stays, so a redraw (passages
+//! landing) leaves the arrows where they were.
 
 use chrono::{DateTime, Local};
 use postio_client::protocol::RecentSearch;
@@ -27,58 +15,35 @@ use postio_search::suggest::Completion;
 use postio_ui::hints::Hint;
 use postio_ui::search_view as words;
 
-/// Which of the design's states the dropdown is in (§2's table). `>`
-/// keeps spec 009's lines.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DropdownState {
-    /// Nothing typed: recent, saved, the cheat sheet (screen 01).
     Empty,
-    /// Words: top hits, Narrow to, Show all (screen 03).
     Words,
-    /// One to three letters: the ghost, suggestions, top hits so far,
-    /// Show all (screen 02).
     Prefix,
-    /// An operator's value being typed: `from:`/`to:` list people,
-    /// `label:` labels, `in:` folders (screen 04).
     Operator,
-    /// A sentence lowered into operators: "Understood as", the results,
-    /// Show all (screen 05).
     PlainEnglish,
 }
 
-/// One tile of the "Understood as" bar: a term the sentence became, and
-/// the words it came from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnderstoodTile {
-    /// The operator with its colon, tertiary ("from:"), or empty for a word.
     pub op: String,
-    /// What it is set to ("2026-08-01"), or the word.
     pub value: String,
-    /// "from ‘last month’", the sentence's own words.
     pub origin: String,
 }
 
-/// How a run of a row's words is set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RunStyle {
-    /// The row's own face.
     #[default]
     Plain,
-    /// Bold: the example sentence, the Show all count.
     Strong,
-    /// Monospaced: a query, an operator.
     Mono,
 }
 
-/// A stretch of a row's words.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Run {
-    /// The words.
     pub text: String,
-    /// The engine found the query's words here: the find highlight.
     pub highlighted: bool,
-    /// How it is set.
     pub style: RunStyle,
 }
 
@@ -96,79 +61,48 @@ impl Run {
     }
 }
 
-/// What a dropdown row is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DropdownRowKind {
-    /// A search run lately: ↩ runs it again, ⌥⌫ forgets it.
     Recent,
-    /// A conversation: ↩ opens its best message.
     Hit,
-    /// "Show all N results".
     ShowAll,
-    /// An operator and what it is for; runs nothing.
     CheatSheet,
-    /// The plain-English example and what it becomes; runs nothing.
     Example,
-    /// A completed word: ↩ (or Tab) puts it in the field.
     Word,
-    /// A label: ↩ makes its chip, ⌥↩ in the operator state its exclusion.
     Label,
-    /// A mailing list: ↩ makes its chip.
     List,
-    /// Files whose names match: ↩ makes a `filename:` chip.
     File,
-    /// A person: ↩ makes the `from:`/`to:` chip, ⌥↩ its exclusion.
     Person,
-    /// A folder: ↩ makes the `in:` chip, ⌥↩ its exclusion.
     Folder,
 }
 
-/// One row of the dropdown.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DropdownRow {
-    /// What [`Input::BarRun`](crate::Input::BarRun) hands back to run it.
     pub token: u64,
-    /// What it is.
     pub kind: DropdownRowKind,
-    /// Its title: a query, "Sender · Subject".
     pub title: Vec<Run>,
-    /// After the title: a count, a passage, a hint.
     pub detail: Vec<Run>,
-    /// The folder column: `in:Inbox`.
     pub folder: Option<String>,
-    /// The right column: a date, "yesterday".
     pub right: Option<String>,
-    /// The key that runs it, as the keymap spells it.
     pub key: Option<String>,
-    /// Whether the arrows may rest on it.
     pub selectable: bool,
-    /// A person's initials, for the round avatar.
     pub initials: Option<String>,
-    /// What the row's right says while the arrows rest on it: "↩ adds"
-    /// on a person, label or folder while an operator is typed.
     pub highlighted: Option<Hint>,
 }
 
-/// A pill: a saved search, or a filter to narrow to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DropdownPill {
-    /// What [`Input::BarRun`](crate::Input::BarRun) hands back to run it.
     pub token: u64,
-    /// The operator, drawn tertiary and monospaced: `from:`.
     pub op: Option<String>,
-    /// The name, or the value.
     pub label: String,
-    /// How many it holds.
     pub count: Option<String>,
-    /// A saved search that notifies: its quiet badge, "3 new", while mail
-    /// has matched since it was last viewed (D15).
+    /// A saved search that notifies: its "3 new" badge, while mail has matched since it was last
+    /// viewed.
     pub fresh: Option<String>,
-    /// The key that runs it (`alt+1`), as the keymap spells it.
     pub key: Option<String>,
 }
 
-/// A saved search's pill, as the empty dropdown is drawn from.
 pub(crate) struct SavedPill {
     pub(crate) token: u64,
     pub(crate) name: String,
@@ -176,112 +110,64 @@ pub(crate) struct SavedPill {
     pub(crate) fresh: Option<Counted>,
 }
 
-/// One section: its title, its note, and its rows or pills.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DropdownSection {
-    /// The bold secondary title; empty for the Show all row's.
     pub title: String,
-    /// The tertiary note on the right.
     pub note: Option<String>,
-    /// The key the note names first: `alt+BackSpace` before "forgets one".
     pub note_key: Option<String>,
-    /// Its rows.
     pub rows: Vec<DropdownRow>,
-    /// Its pills, drawn in a line after the title.
     pub pills: Vec<DropdownPill>,
 }
 
-/// The dropdown, whole: what [`Intent::Dropdown`](crate::Intent::Dropdown)
-/// draws.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DropdownView {
-    /// Which state it is in.
     pub state: DropdownState,
-    /// The rest of the best word, drawn tertiary after the caret ("las"
-    /// after "at"): Tab takes it.
     pub ghost: Option<String>,
-    /// In the field before Escape's cap while there is a ghost: "Tab
-    /// completes".
     pub ghost_hint: Option<Hint>,
-    /// The operator being typed, as the field shows it ("from:"): drawn
-    /// tertiary before its value, which is primary (screen 04).
     pub operator: Option<String>,
-    /// The "Understood as" bar's tiles, in plain English.
     pub understood: Vec<UnderstoodTile>,
-    /// Top to bottom.
     pub sections: Vec<DropdownSection>,
-    /// The row focused by default: kept by the toolkit while the row it
-    /// has highlighted is still drawn, taken when it is not.
+    /// Kept by the toolkit while the row it has highlighted is still drawn, taken when it is not.
     pub highlight: Option<u64>,
     /// A run moved the highlight here: taken whatever is highlighted.
     pub select: Option<u64>,
-    /// The footer's keys.
     pub hints: Vec<Hint>,
-    /// The footer's right side: "48 matches · 38 ms".
     pub count: Option<String>,
 }
 
-/// A search lane: requests of one lane supersede each other, so a frontend
-/// may abort the one before when the next is asked (spec 010 D8).
+/// Requests of one lane supersede each other, so a frontend may abort the one before.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Lane {
-    /// The conversation search the panel is drawn from.
     Conversations,
-    /// The passages of the hits on screen.
     Passages,
-    /// The matches of the conversation Quick Look shows: j supersedes them.
     Matches,
-    /// The counts of a search that found nothing's ways out: slow, and
-    /// waste once the query changes.
     Relaxations,
-    /// The facets a filter popover lists when its own field is applied: a
-    /// newer popover, or a closed one, supersedes them.
     Facets,
-    /// What a prefix could become: each keystroke supersedes the last.
     Suggest,
-    /// The latest from the person the arrows rest on: a move supersedes it.
     Latest,
-    /// The Files tab's cards: a newer query supersedes them.
     Files,
-    /// The People tab's rows: a newer query supersedes them.
     People,
 }
 
-/// The dropdown's top hits.
 pub(crate) const TOP_HITS: u32 = 4;
-/// The short-prefix state's top hits so far (screen 02).
 pub(crate) const HITS_SO_FAR: u32 = 3;
-/// The plain-English state's results (screen 05).
 pub(crate) const PLAIN_RESULTS: u32 = 3;
-/// "Latest from" the focused person (screen 04).
 pub(crate) const LATEST: u32 = 2;
-/// Recent searches the empty dropdown lists.
 const RECENTS: usize = 3;
-/// "Narrow to" pills, at most.
 const PILLS: usize = 4;
 
-/// What a dropdown token runs.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Action {
-    /// Put this query in the field.
     Recent(String),
-    /// Open this message.
     Hit(MessageId),
-    /// Show every result.
     ShowAll,
-    /// Add this clause to the query.
     Narrow(Clause),
-    /// Run the saved search at this index.
     Saved(usize),
-    /// Put this in place of what is being typed: a word, or a query.
     Replace(String),
-    /// Make this operator's chip in place of what is being typed: ↩, or
-    /// ⌥↩ for its exclusion.
     Pick(Filter),
 }
 
-/// A conversation on screen, with its token.
 #[derive(Debug, Clone)]
 pub(crate) struct Shown {
     pub(crate) token: u64,
@@ -289,7 +175,6 @@ pub(crate) struct Shown {
 }
 
 impl Shown {
-    /// The thread the hit walks within, when it is one.
     pub(crate) fn thread(&self) -> Option<ThreadId> {
         match self.hit.key {
             ConversationKey::Thread(thread) => Some(thread),
@@ -298,7 +183,6 @@ impl Shown {
     }
 }
 
-/// What the words found, with the tokens it is drawn under.
 #[derive(Debug, Clone)]
 pub(crate) struct Landed {
     pub(crate) hits: Vec<Shown>,
@@ -310,21 +194,14 @@ pub(crate) struct Landed {
     pub(crate) wheres: Wheres,
 }
 
-/// Where an answer's hits are, for their folder column.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Wheres {
-    /// Every folder's name.
     pub(crate) folders: Vec<(postio_model::MailboxId, String)>,
-    /// What a digest holds: [`postio_search::results::FacetNames::held`].
     pub(crate) held: Vec<(postio_model::MessageId, String, bool)>,
-    /// Each folder's account, where there are several
-    /// ([`crate::PlacesRead::owners`]).
     pub(crate) owners: Vec<(postio_model::MailboxId, String)>,
 }
 
 impl Wheres {
-    /// What the folder column says of the best message `message`, filed
-    /// in `mailbox` ([`words::hit_place`]).
     pub(crate) fn place(
         &self,
         message: postio_model::MessageId,
@@ -343,7 +220,6 @@ impl Wheres {
     }
 }
 
-/// `mailbox`'s entry in `names`.
 fn named(
     names: &[(postio_model::MailboxId, String)],
     mailbox: postio_model::MailboxId,
@@ -354,9 +230,6 @@ fn named(
         .map(|(_, name)| name.as_str())
 }
 
-/// The pills a search's facets offer: the top senders but you,
-/// attachments, the top label, each only when it would keep fewer than all
-/// (it narrows), four at most.
 pub(crate) fn narrow_pills(results: &ConversationResults) -> Vec<(words::NarrowPill, Clause)> {
     let facets = &results.facets;
     let narrows = |count: u64| count > 0 && count < results.total;
@@ -414,7 +287,6 @@ pub(crate) fn narrow_pills(results: &ConversationResults) -> Vec<(words::NarrowP
     pills
 }
 
-/// `text` as runs, the stretches `ranges` names highlighted.
 pub(crate) fn marked(text: &str, ranges: &[std::ops::Range<usize>]) -> Vec<Run> {
     let mut runs = Vec::new();
     let mut at = 0;
@@ -439,7 +311,6 @@ pub(crate) fn marked(text: &str, ranges: &[std::ops::Range<usize>]) -> Vec<Run> 
     runs
 }
 
-/// A passage as runs, with its ellipses.
 pub(crate) fn passage(passage: &Passage) -> Vec<Run> {
     let mut runs = Vec::new();
     if passage.elided_start {
@@ -452,14 +323,11 @@ pub(crate) fn passage(passage: &Passage) -> Vec<Run> {
     runs
 }
 
-/// The most of a hit's passage the dropdown keeps before its first match,
-/// in characters (screen 03: "charged to the Atlas budget line").
+/// In characters, before the first match of a hit's passage.
 pub(crate) const HIT_LEAD: usize = 16;
 
-/// `cut` with at most [`HIT_LEAD`] characters before its first match,
-/// starting on a word: the dropdown's row has room for about 45 characters
-/// after "Sender · Subject", where a window cut for the results' row would
-/// draw only the words before the match.
+/// The row has room for about 45 characters after "Sender · Subject", where a window cut for the
+/// results' row would draw only the words before the match.
 pub(crate) fn led(cut: &Passage) -> Passage {
     let Some(first) = cut.ranges.first().map(|range| range.start) else {
         return cut.clone();
@@ -473,8 +341,6 @@ pub(crate) fn led(cut: &Passage) -> Passage {
         .rev()
         .nth(HIT_LEAD - 1)
         .map_or(0, |(at, _)| at);
-    // Onto a word's start: forward to the next space's end, never past the
-    // match.
     if !text[..start].ends_with(char::is_whitespace) {
         start = text[start..first]
             .find(char::is_whitespace)
@@ -494,7 +360,6 @@ pub(crate) fn led(cut: &Passage) -> Passage {
     }
 }
 
-/// A query as a recent row draws it: words as words, a query as one.
 fn query_runs(query: &str) -> Vec<Run> {
     let operators = query
         .split_whitespace()
@@ -507,19 +372,16 @@ fn query_runs(query: &str) -> Vec<Run> {
     vec![Run::styled(query, style)]
 }
 
-/// What the empty dropdown is drawn from.
 pub(crate) struct EmptyParts<'a> {
     pub(crate) recents: &'a [(u64, RecentSearch)],
     pub(crate) saved: &'a [SavedPill],
     pub(crate) sheet: &'a [u64],
     pub(crate) example: String,
-    /// The messages the index holds, once the places are read.
     pub(crate) messages: Option<u64>,
     pub(crate) keymap: &'a Keymap,
     pub(crate) now: DateTime<Local>,
 }
 
-/// The empty dropdown (screen 01).
 pub(crate) fn empty(parts: EmptyParts<'_>) -> DropdownView {
     let mut sections = Vec::new();
     let recents: Vec<DropdownRow> = parts
@@ -638,8 +500,6 @@ pub(crate) fn empty(parts: EmptyParts<'_>) -> DropdownView {
     }
 }
 
-/// The words dropdown (screen 03), from what the words found, `terms`
-/// being the query's words for the highlight.
 pub(crate) fn words(
     landed: Option<&Landed>,
     terms: &[String],
@@ -706,8 +566,6 @@ pub(crate) fn words(
     if landed.total > 0 {
         sections.push(show_all_section(landed, None, keymap));
     } else {
-        // No dead end (US6): the way to the looser searches the results'
-        // no-results page offers, in its words.
         let terms = query.map_or(1, |query| {
             query.filters().count() + query.text_terms().count()
         });
@@ -735,8 +593,6 @@ pub(crate) fn words(
     }
 }
 
-/// A conversation's row: "Sender · Subject" with `marks` highlighted, its
-/// passage, where it is and its date.
 pub(crate) fn hit_row(
     shown: &Shown,
     wheres: &Wheres,
@@ -771,8 +627,6 @@ pub(crate) fn hit_row(
     }
 }
 
-/// The "Show all N results" row's section, `typed` naming what while a
-/// short prefix is typed ("for “at”").
 fn show_all_section(landed: &Landed, typed: Option<&str>, keymap: &Keymap) -> DropdownSection {
     DropdownSection {
         title: String::new(),
@@ -797,8 +651,6 @@ fn show_all_section(landed: &Landed, typed: Option<&str>, keymap: &Keymap) -> Dr
     }
 }
 
-/// Where in `text` a word begins with `prefix`, case aside: the find
-/// highlight while a word is half typed ("\[At\]las").
 pub(crate) fn prefix_marks(text: &str, prefix: &str) -> Vec<std::ops::Range<usize>> {
     let prefix: Vec<char> = prefix.chars().flat_map(char::to_lowercase).collect();
     if prefix.is_empty() {
@@ -832,25 +684,17 @@ pub(crate) fn prefix_marks(text: &str, prefix: &str) -> Vec<std::ops::Range<usiz
     marks
 }
 
-/// What a suggestion row is, as the answer gave it.
 #[derive(Debug, Clone)]
 pub(crate) enum Offer {
-    /// A word that completes the prefix.
     Word(Completion),
-    /// A label.
     Label(postio_search::suggest::Completion),
-    /// A mailing list.
     List(postio_search::suggest::Completion),
-    /// The files whose names begin a word so, as one row.
     Files(Vec<postio_search::suggest::Completion>),
-    /// A person, for `from:` or `to:`.
     Person(postio_search::suggest::Person),
-    /// A folder, for `in:`.
     Folder(postio_search::suggest::Completion),
 }
 
 impl Offer {
-    /// What ↩ on it does, `field` being the operator typed.
     pub(crate) fn action(&self, field: Option<postio_search::query::Field>) -> Option<Action> {
         use postio_search::query::Field;
         Some(match (self, field) {
@@ -870,7 +714,6 @@ impl Offer {
         })
     }
 
-    /// The filter ⌥↩ excludes: a person's, a label's or a folder's.
     pub(crate) fn excluded(&self, field: Option<postio_search::query::Field>) -> Option<Filter> {
         use postio_search::query::Field;
         match (self, field) {
@@ -882,7 +725,6 @@ impl Offer {
         }
     }
 
-    /// Its row, `typed` being what is highlighted in it.
     fn row<Tz: chrono::TimeZone>(
         &self,
         token: u64,
@@ -891,7 +733,6 @@ impl Offer {
         first: bool,
         operator: bool,
     ) -> DropdownRow {
-        // Grouped, and a floor past the completion cap (D29).
         let count = |found: &Completion| Some(words::suggestion_count(found.count, found.capped));
         let base = DropdownRow {
             token,
@@ -910,11 +751,9 @@ impl Offer {
                 title: marked(&word.text, &prefix_marks(&word.text, typed)),
                 detail: vec![Run::plain(words::AS_A_WORD)],
                 right: count(word),
-                // Tab takes the first word: the ghost's.
                 key: first.then(|| "Tab".to_owned()),
                 ..base
             },
-            // `label:` typed: the names alone, the operator being in the field.
             Offer::Label(label) if operator => DropdownRow {
                 kind: DropdownRowKind::Label,
                 title: marked(&label.text, &prefix_marks(&label.text, typed)),
@@ -993,8 +832,6 @@ impl Offer {
     }
 }
 
-/// `op` and `value` in mono, `typed` highlighted where a word of the value
-/// begins with it: `label:[At]las`.
 fn mono_marked(op: &str, value: &str, typed: &str) -> Vec<Run> {
     let mut runs = vec![Run::styled(op, RunStyle::Mono)];
     runs.extend(
@@ -1008,9 +845,6 @@ fn mono_marked(op: &str, value: &str, typed: &str) -> Vec<Run> {
     runs
 }
 
-/// The offers a suggestion answer is drawn as, in the design's order: the
-/// word, the labels, the lists, the files (as one row), the folders, the
-/// people.
 pub(crate) fn offers(found: &postio_search::suggest::Suggestions) -> Vec<Offer> {
     let mut offers: Vec<Offer> = found.words.iter().cloned().map(Offer::Word).collect();
     offers.extend(found.labels.iter().cloned().map(Offer::Label));
@@ -1023,7 +857,6 @@ pub(crate) fn offers(found: &postio_search::suggest::Suggestions) -> Vec<Offer> 
     offers
 }
 
-/// What the short-prefix dropdown is drawn from.
 pub(crate) struct PrefixParts<'a> {
     pub(crate) typed: &'a str,
     pub(crate) ghost: Option<String>,
@@ -1033,7 +866,6 @@ pub(crate) struct PrefixParts<'a> {
     pub(crate) now: DateTime<Local>,
 }
 
-/// The short-prefix dropdown (screen 02).
 pub(crate) fn prefix(parts: PrefixParts<'_>) -> DropdownView {
     let mut sections = Vec::new();
     let rows: Vec<DropdownRow> = parts
@@ -1100,7 +932,6 @@ pub(crate) fn prefix(parts: PrefixParts<'_>) -> DropdownView {
     }
 }
 
-/// The latest from the focused person, as it landed.
 #[derive(Debug, Clone)]
 pub(crate) struct Latest {
     pub(crate) name: String,
@@ -1108,20 +939,16 @@ pub(crate) struct Latest {
     pub(crate) wheres: Wheres,
 }
 
-/// What the operator dropdown is drawn from.
 pub(crate) struct OperatorParts<'a> {
     pub(crate) keyword: &'a str,
     pub(crate) value: &'a str,
     pub(crate) offers: &'a [(u64, Offer)],
     pub(crate) latest: Option<&'a Latest>,
-    /// The suggestions for `value` landed: no rows is nobody.
     pub(crate) answered: bool,
     pub(crate) keymap: &'a Keymap,
     pub(crate) now: DateTime<Local>,
 }
 
-/// The operator dropdown (screen 04): people, labels or folders, and the
-/// latest from the focused person.
 pub(crate) fn operator(parts: OperatorParts<'_>) -> DropdownView {
     let (noun, note) = match parts.keyword {
         "label" => ("Labels", None),
@@ -1132,13 +959,11 @@ pub(crate) fn operator(parts: OperatorParts<'_>) -> DropdownView {
         .offers
         .iter()
         .map(|(token, offer)| DropdownRow {
-            // ↩ makes the chip of whichever the arrows rest on.
             highlighted: Some(words::adds_hint()),
             ..offer.row(*token, parts.value, parts.now, false, true)
         })
         .collect();
     let highlight = rows.first().map(|row| row.token);
-    // Read, and nobody: said, rather than a heading over nothing.
     let nobody = parts.answered && rows.is_empty();
     let note = if nobody {
         Some(words::nobody_matches(noun).to_owned())
@@ -1186,7 +1011,6 @@ pub(crate) fn operator(parts: OperatorParts<'_>) -> DropdownView {
     }
 }
 
-/// What the plain-English dropdown is drawn from.
 pub(crate) struct PlainParts<'a> {
     pub(crate) tiles: Vec<UnderstoodTile>,
     pub(crate) landed: Option<&'a Landed>,
@@ -1196,8 +1020,6 @@ pub(crate) struct PlainParts<'a> {
     pub(crate) now: DateTime<Local>,
 }
 
-/// The plain-English dropdown (screen 05): what it understood, then the
-/// results and Show all.
 pub(crate) fn plain(parts: PlainParts<'_>) -> DropdownView {
     let mut sections = Vec::new();
     let mut highlight = None;

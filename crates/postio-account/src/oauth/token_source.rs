@@ -1,17 +1,7 @@
-//! [`TokenSource`] for the flow this module builds.
-//!
-//! ADR 0006 Q1/Q5: one instance per account, refreshing on demand. The
-//! refresh token lives in the keyring behind the same [`SecretStore`] a
-//! password does — under a distinct [`AccountKey`] so an OAuth account and
-//! a password account never collide — and the access token stays a
-//! [`Password`] in memory, cached until shortly before it expires.
-//!
-//! Concurrent callers finding the same token stale share one refresh
-//! ([`SingleFlight`], ADR 0006 Q5): on a provider that rotates its refresh
-//! token on every use, the second and third simultaneous refresh present a
-//! token the server has already burned. `invalidate` drops the cached access
-//! token so the *next* call refreshes; routing a rejection to the user is the
-//! session layer's job, at the layer that saw the server say no.
+//! ADR 0006 Q1/Q5: one per account. The refresh token lives in the keyring under a distinct
+//! `AccountKey`; the access token stays in memory until shortly before expiry. Concurrent stale
+//! callers share one refresh (`SingleFlight`) because a rotating provider burns the token the
+//! second refresh presents.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -26,71 +16,35 @@ use crate::cancel::CancelToken;
 use crate::secret::{AccountKey, Password, SecretError, SecretStore};
 use crate::single_flight::SingleFlight;
 
-/// How much earlier than its stated expiry a cached access token is treated
-/// as stale. A refresh takes a round trip; starting it before the token is
-/// actually rejected is what keeps a caller from ever presenting one that
-/// expired between the cache check and the request reaching the server.
+/// Refreshing early keeps a caller from presenting a token that expired between the cache check and
+/// the request reaching the server.
 const EXPIRY_MARGIN: Duration = Duration::from_secs(60);
 
-/// The keyring holds one secret per [`AccountKey`] ([`SecretStore`]'s own
-/// contract), and an account's password and its OAuth refresh token are two
-/// different secrets — so the refresh token is stored under a derived key
-/// rather than the account's own, which stays free for
-/// [`crate::auth::StoredPasswordSource`] to mean what it already means.
+/// The keyring holds one secret per `AccountKey`, and the refresh token is a different secret from
+/// the password.
 fn refresh_token_key(account: &AccountKey) -> AccountKey {
     AccountKey::new(format!("{}#oauth-refresh", account.account()))
 }
 
-/// Where an account's own OAuth client secret lives, when its provider
-/// issued one — Google's "Desktop app" clients do, and require it at the
-/// token endpoint even with PKCE. Same derived-key discipline as the
-/// refresh token: a distinct secret under a distinct key.
+/// Google's "Desktop app" clients issue one and require it at the token endpoint even with PKCE.
 fn client_secret_key(account: &AccountKey) -> AccountKey {
     AccountKey::new(format!("{}#oauth-client-secret", account.account()))
 }
 
-/// Where an account's access-token expiry lives, alongside its refresh
-/// token — the settings redesign's own account row (#878) wants to show
-/// "token valid 41d" / "token expired", which needs this to survive past
-/// the process that minted it, and `CachedAccessToken::expires_at`'s
-/// [`Instant`] does not: a monotonic clock has no fixed epoch, so it
-/// cannot be written down and read back after a restart.
-///
-/// Alongside the credential in the keyring, not in `config.toml` (#870,
-/// per the maintainer): `crates/postio-config/src/secrets.rs` already
-/// strips anything password/token/secret-shaped out of that file on the
-/// way in and out, and an expiry timestamp naming exactly when a token
-/// (and, by the same shape, the account) is good for is the kind of thing
-/// that rule exists to keep off disk in plain text next to everything
-/// else config.toml holds.
-///
-/// Not a real secret — a timestamp is not sensitive the way a token is —
-/// but the keyring is where every other derived fact about this
-/// credential already lives, and a second storage mechanism for one
-/// string would be a second thing to keep working, not a smaller one.
+/// Persisted so the account row can show "token valid 41d" after a restart, which a monotonic
+/// `Instant` cannot survive (#870, #878). In the keyring, not `config.toml`, which strips
+/// token-shaped keys.
 fn oauth_expiry_key(account: &AccountKey) -> AccountKey {
     AccountKey::new(format!("{}#oauth-expiry", account.account()))
 }
 
-/// Where the **refresh** grant's own deadline is kept.
-///
-/// Beside the access token's expiry and for the same reasons — the keyring
-/// is where every derived fact about this credential already lives, and
-/// `config.toml` strips anything token-shaped on the way through.
 fn refresh_deadline_key(account: &AccountKey) -> AccountKey {
     AccountKey::new(format!("{}#oauth-refresh-deadline", account.account()))
 }
 
-/// Records when `account`'s refresh grant dies, or clears the record when
-/// the provider states no lifetime.
-///
-/// Called at every point the grant is renewed — the mint and every refresh —
-/// because a sliding window resets on use, and a deadline written only once
-/// would retire an account that is working perfectly (#954).
-///
-/// Best-effort, exactly like [`persist_expiry`]: losing this costs the early
-/// warning, never the token. The reactive path still catches a dead grant
-/// the way it always did.
+/// Called at every renewal, because a sliding window resets on use and a deadline written once
+/// would retire a working account (#954). Best-effort: losing it costs the early warning, never the
+/// token.
 async fn persist_refresh_deadline(
     store: &dyn SecretStore,
     account: &AccountKey,
@@ -98,9 +52,7 @@ async fn persist_refresh_deadline(
 ) {
     let key = refresh_deadline_key(account);
     let Some(lifetime) = lifetime else {
-        // No stated lifetime clears rather than leaves: a provider row that
-        // drops the field must stop retiring accounts, not keep acting on a
-        // deadline nobody stands behind any more.
+        // No stated lifetime clears: a row that drops the field must stop retiring accounts.
         let _ = store.delete(&key).await;
         return;
     };
@@ -119,11 +71,7 @@ async fn persist_refresh_deadline(
     }
 }
 
-/// When `account`'s refresh grant dies, if its provider states a lifetime.
-///
-/// `None` means there is nothing to act on — no OAuth account, no grant yet,
-/// or a provider that states no lifetime — and every one of those must behave
-/// as Postio did before this existed.
+/// `None` means nothing to act on: no OAuth account, no grant yet, or no stated lifetime.
 pub async fn stored_refresh_deadline(
     store: &dyn SecretStore,
     account: &AccountKey,
@@ -133,16 +81,8 @@ pub async fn stored_refresh_deadline(
     Some(UNIX_EPOCH + Duration::from_secs(seconds))
 }
 
-/// Persists `expires_at` for `account`, or clears whatever was there when
-/// there is nothing to persist — a provider that stops saying `expires_in`
-/// must not leave a stale timestamp behind for the account row to read as
-/// current.
-///
-/// Best-effort: a store this fails on already logged why through `store`'s
-/// own error path when the refresh token next needs it, and losing the
-/// expiry costs a wrong "valid for" line in a settings pane, not a broken
-/// login — worth a warning, not worth failing the refresh that got a
-/// caller a working token.
+/// Clears when there is nothing to persist, so a provider that stops saying `expires_in` leaves no
+/// stale timestamp. Best-effort: a failure costs a wrong "valid for" line, not a broken login.
 async fn persist_expiry(
     store: &dyn SecretStore,
     account: &AccountKey,
@@ -151,10 +91,8 @@ async fn persist_expiry(
     let key = oauth_expiry_key(account);
     match expires_at {
         Some(at) => {
-            // `Instant` has no fixed epoch; the wall-clock instant this
-            // many seconds from now, on the other hand, is exactly what a
-            // later, possibly-restarted process needs to compare itself
-            // against.
+            // `Instant` has no fixed epoch; the wall-clock time is what a restarted process can
+            // compare against.
             let wall_clock = SystemTime::now() + at.saturating_duration_since(Instant::now());
             let Ok(since_epoch) = wall_clock.duration_since(UNIX_EPOCH) else {
                 return;
@@ -170,48 +108,25 @@ async fn persist_expiry(
                 );
             }
         }
-        // Best-effort, and silently so: a provider that never sends
-        // `expires_in` clears nothing on every single refresh, which
-        // would otherwise warn on every one of them for having nothing to
-        // clear — `SecretStore::delete` has no "there was nothing there"
-        // variant distinct from a real failure to tell those apart by.
+        // Silently best-effort: a provider that never sends `expires_in` would otherwise warn on
+        // every refresh, and `SecretStore::delete` cannot tell "nothing there" from failure.
         None => {
             let _ = store.delete(&key).await;
         }
     }
 }
 
-/// The persisted expiry for `account`'s OAuth access token, if
-/// [`OwnClientTokenSource`] has ever recorded one — what an account row
-/// reads to show "token valid 41d" without holding a live token source of
-/// its own (#870, #878).
-///
-/// `None` covers every reason there is nothing to show: no OAuth account
-/// under this key, no token minted yet, a provider that never said
-/// `expires_in`, or a keyring this call cannot open — the caller's answer
-/// is the same either way, since there is nothing here to act on it (a
-/// genuinely locked keyring is loud enough elsewhere, on the read that
-/// actually needs the credential).
+/// `None` covers no OAuth account, no token minted, no `expires_in`, or an unopenable keyring; the
+/// caller's answer is the same (#870, #878).
 pub async fn stored_expiry(store: &dyn SecretStore, account: &AccountKey) -> Option<SystemTime> {
     let raw = store.retrieve(&oauth_expiry_key(account)).await.ok()?;
     let seconds: u64 = raw.expose().parse().ok()?;
     Some(UNIX_EPOCH + Duration::from_secs(seconds))
 }
 
-/// The client secret `account` signed in with, when its provider issued
-/// one — Google's "Desktop app" clients do, and require it at the token
-/// endpoint even with PKCE.
-///
-/// Read back rather than only written because a *reconnect* has to present
-/// the same client the first sign-in did, and there is nobody to ask for it:
-/// the add-account sheet has a person in front of it who can type a client
-/// id and secret, and an account row that has gone bad does not. Asking
-/// again there would be asking somebody to go and find a credential they
-/// registered months ago, in order to fix an account that used to work.
-///
-/// `None` is the ordinary public-client case and every failure besides —
-/// the caller's answer is the same either way, exactly as it is for
-/// [`stored_expiry`].
+/// Read back because a reconnect must present the same client as the first sign-in, and nobody is
+/// there to ask for a credential registered months ago. `None` is the ordinary public-client case
+/// and every failure besides.
 pub async fn stored_client_secret(
     store: &dyn SecretStore,
     account: &AccountKey,
@@ -221,9 +136,7 @@ pub async fn stored_client_secret(
 
 struct CachedAccessToken {
     token: Password,
-    /// `None` means "the server did not say", treated as never stale on
-    /// its own — a caller only learns such a token is bad by
-    /// [`TokenSource::invalidate`], same as [`crate::auth::StoredPasswordSource`].
+    /// `None` means the server did not say: never stale on its own.
     expires_at: Option<Instant>,
 }
 
@@ -236,40 +149,24 @@ impl CachedAccessToken {
     }
 }
 
-/// The user's own OAuth client, refreshing against a token endpoint.
-///
-/// ADR 0006 Q1 — `OwnClientTokenSource`: the user's own `client_id` (and,
-/// rarely, `client_secret`) from their own cloud project. No verification
-/// burden, because it is the user's own project rather than Postio's.
 pub struct OwnClientTokenSource {
     store: Arc<dyn SecretStore>,
     token_url: Url,
     client_id: String,
     client_secret: Option<String>,
-    /// Look the client secret up in the keyring per account instead of
-    /// carrying it: the shape the engine rebuilds at every launch, where
-    /// nothing may hold a secret in a struct that lives for the process.
+    /// Looked up per account instead of carried, since nothing may hold a secret in a struct that
+    /// lives for the process.
     stored_client_secret: bool,
-    /// How long this provider says its refresh grant lives, when it says.
-    ///
-    /// Provider data, carried here from the account row so a refresh can
-    /// renew the deadline without a lookup — and `None` everywhere the
-    /// provider states nothing, which is the case that must behave exactly
-    /// as Postio did before #954.
+    /// Carried from the account row so a refresh can renew the deadline without a lookup (#954).
     refresh_lifetime: Option<Duration>,
     cache: Mutex<HashMap<AccountKey, CachedAccessToken>>,
-    /// One refresh per account at a time, its result shared.
-    ///
-    /// An OAuth provider's tokens expire together, so the pool's sessions and
-    /// the SMTP path all find the cache stale at once — the stampede is the
-    /// normal case here, not the edge (ADR 0006 Q5).
+    /// A provider's tokens expire together, so a pool's sessions and the SMTP path find the cache
+    /// stale at once: the stampede is the normal case (ADR 0006 Q5).
     refreshing: SingleFlight<AccountKey, Result<Password, SecretError>>,
 }
 
 impl std::fmt::Debug for OwnClientTokenSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Never the client secret, and never a cached access token — same
-        // discipline `BrokerTokenSource`'s `Debug` follows.
         f.debug_struct("OwnClientTokenSource")
             .field("token_url", &self.token_url.as_str())
             .field("client_id", &self.client_id)
@@ -278,8 +175,6 @@ impl std::fmt::Debug for OwnClientTokenSource {
 }
 
 impl OwnClientTokenSource {
-    /// Builds a source refreshing against `token_url` for `client_id`,
-    /// storing and reading refresh tokens through `store`.
     pub fn new(
         store: Arc<dyn SecretStore>,
         token_url: Url,
@@ -299,10 +194,8 @@ impl OwnClientTokenSource {
         }
     }
 
-    /// The engine's constructor (#534): the client id and endpoint come
-    /// from the account row, and the client secret — when the provider
-    /// issued one at sign-in — is read from the keyring per refresh,
-    /// under its own derived key.
+    /// The engine's constructor (#534): the client secret, when issued, is read from the keyring
+    /// per refresh.
     pub fn with_stored_secret(
         store: Arc<dyn SecretStore>,
         token_url: Url,
@@ -314,9 +207,6 @@ impl OwnClientTokenSource {
         source
     }
 
-    /// Stores the client secret the sign-in flow was given, so
-    /// [`with_stored_secret`](Self::with_stored_secret) finds it at every
-    /// later launch.
     pub async fn store_client_secret(
         &self,
         account: &AccountKey,
@@ -325,22 +215,13 @@ impl OwnClientTokenSource {
         self.store.store(&client_secret_key(account), secret).await
     }
 
-    /// The cached access token for `account`, if there is one and it is not
-    /// about to expire.
     fn cached(&self, account: &AccountKey) -> Option<Password> {
         let cache = self.cache.lock().expect("token cache mutex");
         let cached = cache.get(account)?;
         cached.is_fresh().then(|| cached.token.clone())
     }
 
-    /// Records the tokens a completed [`super::authorize`] attempt
-    /// produced: the refresh token goes to the keyring, the access token
-    /// primes the in-memory cache so the very next call does not refresh a
-    /// token that was just minted.
-    ///
-    /// A response with no refresh token (a provider that issues
-    /// access-token-only grants, or a refresh already on file) leaves
-    /// whatever the keyring already holds untouched.
+    /// A response with no refresh token leaves whatever the keyring already holds untouched.
     pub async fn seed(
         &self,
         account: &AccountKey,
@@ -367,15 +248,9 @@ impl OwnClientTokenSource {
     async fn refresh(&self, account: &AccountKey) -> Result<Password, SecretError> {
         let refresh_token = self.store.retrieve(&refresh_token_key(account)).await?;
 
-        // `TokenSource::access_token` carries no `CancelToken` — refreshing
-        // is an implementation detail of "give me a valid credential", not
-        // a user-visible wait with a Cancel button, so this request runs to
-        // completion or to `REQUEST_IO_TIMEOUT`'s own bound rather than a
-        // caller-supplied one.
-        // The static secret when construction carried one; the keyring's
-        // when the engine asked for the stored shape; a missing keyring
-        // entry is simply "this client has no secret", which is the
-        // ordinary public-client case.
+        // `access_token` carries no `CancelToken`: refresh is part of "give me a valid credential",
+        // so it runs to `REQUEST_IO_TIMEOUT`.
+        // A missing keyring entry means this client has no secret, the ordinary public-client case.
         let stored_secret = if self.stored_client_secret {
             self.store.retrieve(&client_secret_key(account)).await.ok()
         } else {
@@ -402,10 +277,8 @@ impl OwnClientTokenSource {
             reason: err.to_string(),
         })?;
 
-        // Some providers rotate the refresh token on every use and
-        // invalidate the previous one — persist whatever they handed back
-        // before returning, or the *next* refresh would present a token
-        // the server already burned.
+        // Some providers rotate the refresh token on every use: persist it before returning, or the
+        // next refresh presents a burned one.
         if let Some(rotated) = &response.refresh_token {
             self.store
                 .store(&refresh_token_key(account), rotated)
@@ -415,9 +288,8 @@ impl OwnClientTokenSource {
         let access_token = response.access_token.clone();
         let expires_at = response.expires_in.map(|d| Instant::now() + d);
         persist_expiry(self.store.as_ref(), account, expires_at).await;
-        // Unconditionally, and not only when the provider rotated the token:
-        // a sliding window resets on *use*, so the account that keeps
-        // refreshing is exactly the one that must never reach its deadline.
+        // Unconditionally: a sliding window resets on use, so an account that keeps refreshing must
+        // never reach its deadline.
         persist_refresh_deadline(self.store.as_ref(), account, self.refresh_lifetime).await;
         self.cache.lock().expect("token cache mutex").insert(
             account.clone(),
@@ -436,11 +308,8 @@ impl TokenSource for OwnClientTokenSource {
         if let Some(token) = self.cached(account) {
             return Ok(token);
         }
-        // Before the round trip, not after it. The deadline is known here,
-        // so an account whose grant has died says so without the user first
-        // watching a sync fail (#954). A cached access token is still served
-        // above: it works until it expires, and refusing it early would
-        // interrupt a session for a deadline that has not cost anything yet.
+        // Before the round trip, so a dead grant says so without the user watching a sync fail
+        // (#954). A cached access token is still served: it works until it expires.
         if let Some(deadline) = stored_refresh_deadline(self.store.as_ref(), account).await
             && SystemTime::now() >= deadline
         {
@@ -450,11 +319,8 @@ impl TokenSource for OwnClientTokenSource {
         }
         self.refreshing
             .run(account, async {
-                // Checked again inside the flight. A caller that arrived in
-                // the moment the previous refresh landed leads a flight of
-                // its own, and it should take the token that refresh just
-                // produced rather than spend a second round trip finding out
-                // it exists.
+                // Checked again inside the flight: a caller arriving as the previous refresh lands
+                // takes its token.
                 if let Some(token) = self.cached(account) {
                     return Ok(token);
                 }
@@ -485,15 +351,10 @@ mod tests {
         AccountKey::new("ada@example.com")
     }
 
-    /// A token endpoint that answers every request the same way, on a
-    /// background thread, for as many requests as the test needs.
     pub(super) fn mock_refresh_endpoint(body: &'static str) -> Url {
         mock_refresh_endpoint_counting(body).0
     }
 
-    /// As [`mock_refresh_endpoint`], handing back the count of requests it has
-    /// served — which is the only place "how many refreshes happened" can
-    /// honestly be observed.
     pub(super) fn mock_refresh_endpoint_counting(
         body: &'static str,
     ) -> (Url, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
@@ -543,8 +404,6 @@ mod tests {
 
     #[tokio::test]
     async fn a_seeded_access_token_is_returned_without_a_refresh() {
-        // No server is even started: if this reaches the network the test
-        // hangs or errors, proving the cache was actually consulted.
         let store = Arc::new(MemorySecretStore::new());
         let source = OwnClientTokenSource::new(
             store,
@@ -664,14 +523,6 @@ mod tests {
         assert_eq!(stored.expose(), "rotated");
     }
 
-    // -----------------------------------------------------------------------
-    // The stampede — ADR 0006 Q5, #194
-    // -----------------------------------------------------------------------
-
-    /// The acceptance criterion, stated where it can be counted: a provider's
-    /// access tokens expire together, so a pool's sessions and the SMTP path
-    /// all find the cache stale within the same second. The token endpoint
-    /// must see one request.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn concurrent_callers_during_expiry_cause_exactly_one_refresh() {
         let (url, served) =
@@ -715,9 +566,6 @@ mod tests {
         );
     }
 
-    /// The half a mutex would get wrong. A revoked grant answers every waiter
-    /// from the one attempt rather than letting each take its turn at an
-    /// endpoint that is already saying no.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn a_refresh_that_fails_is_also_only_attempted_once() {
         let (url, served) = mock_refresh_endpoint_counting(r#"{"not":"a token response"}"#);
@@ -758,8 +606,6 @@ mod tests {
         );
     }
 
-    // -- Acceptance: the expiry survives past the process that minted it (#870) --
-
     #[tokio::test]
     async fn seeding_with_an_expiry_makes_it_readable_afterwards() {
         let store = Arc::new(MemorySecretStore::new());
@@ -791,8 +637,6 @@ mod tests {
         let elapsed = expiry
             .duration_since(before)
             .expect("the stored expiry is not before the call that produced it");
-        // 3600s from `before`, give or take the time this test itself took
-        // and the second the stored value is truncated to.
         assert!(
             (3595..=3605).contains(&elapsed.as_secs()),
             "expected roughly 3600s out, got {}s",
@@ -912,10 +756,8 @@ mod tests {
 
     #[tokio::test]
     async fn the_expiry_survives_a_fresh_token_source_over_the_same_store() {
-        // The property this whole issue is about: `Instant` cannot cross a
-        // process restart, so a second `OwnClientTokenSource` -- standing in
-        // for a fresh launch -- must still be able to read what the first
-        // one wrote.
+        // `Instant` cannot cross a restart, so a second source standing in for a fresh launch must
+        // read what the first wrote.
         let store = Arc::new(MemorySecretStore::new());
         let first = OwnClientTokenSource::new(
             store.clone(),
@@ -955,7 +797,6 @@ mod refresh_deadline_tests {
     use super::tests::{account, mock_refresh_endpoint, mock_refresh_endpoint_counting};
     use super::*;
 
-    /// A grant that was just minted, for a provider that states `lifetime`.
     async fn seeded(
         lifetime: Option<Duration>,
         url: Url,
@@ -968,7 +809,6 @@ mod refresh_deadline_tests {
                 TokenResponse {
                     access_token: Password::new("stale"),
                     refresh_token: Some(Password::new("the-refresh-token")),
-                    // Already stale, so the next call has to refresh.
                     expires_in: Some(Duration::from_secs(0)),
                     token_type: "Bearer".to_string(),
                     scope: None,
@@ -1010,9 +850,7 @@ mod refresh_deadline_tests {
 
     #[tokio::test]
     async fn every_refresh_pushes_the_deadline_out() {
-        // Microsoft's ninety days slide: they reset on each use, so an
-        // account in continuous use must never reach its deadline. Persisting
-        // only at mint is what would mark a healthy account stale.
+        // Sliding windows reset on use: persisting only at mint would mark a healthy account stale.
         let url = mock_refresh_endpoint(r#"{"access_token":"refreshed","expires_in":0}"#);
         let (store, source) = seeded(Some(Duration::from_secs(90 * 86_400)), url).await;
         assert!(
@@ -1022,10 +860,8 @@ mod refresh_deadline_tests {
             "the mint recorded one to begin with"
         );
 
-        // Cleared, so what is found afterwards can only have been written by
-        // the refresh. Comparing timestamps instead would prove nothing: both
-        // writes land in the same second, so a refresh that never wrote leaves
-        // the mint's deadline behind and every `>=` still holds.
+        // Cleared, so what is found can only have been written by the refresh: both writes land in
+        // the same second.
         store
             .delete(&refresh_deadline_key(&account()))
             .await
@@ -1047,8 +883,6 @@ mod refresh_deadline_tests {
 
     #[tokio::test]
     async fn a_grant_past_its_deadline_is_refused_without_asking_the_server() {
-        // The whole point: the user learns before a sync is attempted, and
-        // the server is never troubled for a grant that cannot work.
         let (url, served) =
             mock_refresh_endpoint_counting(r#"{"access_token":"refreshed","expires_in":60}"#);
         let (_store, source) = seeded(Some(Duration::from_secs(0)), url).await;

@@ -39,9 +39,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 
-# Where shipped XML lives. Not a whole-tree walk: `target/` alone holds
-# thousands of XML files belonging to dependencies, and none of them are ours
-# to keep well-formed.
+# Not a whole-tree walk: `target/` holds thousands of dependency XML files.
 SHIPPED = ("crates/*/data/**/*.xml", "flatpak/**/*.xml")
 
 

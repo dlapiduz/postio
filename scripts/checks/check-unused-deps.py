@@ -46,14 +46,8 @@ def main() -> int:
             "  a dependency nothing uses goes unnoticed on this machine."
         )
         return 0
-    # Every directory but `vendor/`: those are upstream crates carried with
-    # a patch queue (`patches/`), their manifests are upstream's, and
-    # machete does not read the workspace's `exclude`.
-    #
-    # And every crate but the workspace-hack, whose dependencies are all
-    # unused by design: it names them for their features (ADR 0047). The
-    # other members' own line naming it is excused once, in the root
-    # manifest's `[workspace.metadata.cargo-machete]`.
+    # Not `vendor/` (upstream crates with a patch queue; machete ignores the workspace `exclude`),
+    # and not the workspace-hack, whose dependencies are unused by design (ADR 0047).
     paths = sorted(
         p.name
         for p in root.iterdir()

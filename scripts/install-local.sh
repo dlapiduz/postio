@@ -1,18 +1,14 @@
 #!/usr/bin/env bash
-# Build Postio from this checkout and install it for the current user:
-# the binary on $PATH, the desktop entry in the app grid, the icons in the
-# hicolor theme. No root, no packaging — the counterpart for people who just
-# built from source and want to launch it like any other app.
+# Build Postio from this checkout and install it for the current user: the binary on $PATH, the
+# desktop entry, the icons in the hicolor theme.
+# No root; everything lands under ~/.local (or $XDG_DATA_HOME/$PREFIX). For the sandboxed route see
+# flatpak/README.md.
 #
 #   scripts/install-local.sh              # build --release and install
 #   scripts/install-local.sh --uninstall  # remove exactly what was installed
 #
-# It checks the build dependencies before starting the compile and names every
-# missing one at once; POSTIO_SKIP_DEP_CHECK=1 goes ahead regardless.
-#
-# Everything lands under ~/.local (or $XDG_DATA_HOME/$PREFIX if set), which
-# every desktop following the XDG spec already searches. For the sandboxed
-# route, see flatpak/README.md instead.
+# It names every missing build dependency before compiling; POSTIO_SKIP_DEP_CHECK=1 goes ahead
+# regardless.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")/.." && pwd)"
@@ -23,25 +19,14 @@ bin="$prefix/bin/postio"
 desktop="$data_home/applications/dev.postio.Postio.desktop"
 icon_svg="$data_home/icons/hicolor/scalable/apps/dev.postio.Postio.svg"
 icon_symbolic="$data_home/icons/hicolor/scalable/apps/dev.postio.Postio-symbolic.svg"
-# The raster sizes, and only the ones that earn a file. 16 and 32 are drawn
-# rather than scaled -- the mark's slash is thickened as it shrinks and its
-# dot is dropped below 24px, which no downscale of the master can do -- and
-# 128 exists because Flatpak's export validation reads a PNG (flatpak/README).
-# Every other size is better served by the scalable SVG above, so shipping a
-# raster for it would only override something sharper.
+# Only the sizes that earn a file: 16 and 32 are drawn (the mark thickens as it shrinks), 128
+# satisfies Flatpak's export validation; the scalable SVG serves the rest.
 icon_sizes=(16 32 128)
 metainfo="$data_home/metainfo/dev.postio.Postio.metainfo.xml"
 
 refresh_caches() {
-    # Best-effort: the spec says these caches are optional, and a desktop
-    # without the tools still picks the files up on next login.
-    #
-    # `-f`/`--force` matters: without it, gtk-update-icon-cache treats an
-    # already-present icon-theme.cache as done rather than rebuilding it, so
-    # a cache left over from an earlier run (or another app sharing this
-    # user's hicolor theme) went on serving whatever it indexed before
-    # Postio's icon existed there (#427). `-t` still skips demanding an
-    # index.theme in this directory, which a user theme override never has.
+    # Best-effort. `-f` matters: without it gtk-update-icon-cache keeps a stale icon-theme.cache
+    # (#427).
     command -v update-desktop-database >/dev/null &&
         update-desktop-database "$data_home/applications" 2>/dev/null || true
     command -v gtk-update-icon-cache >/dev/null &&
@@ -95,32 +80,26 @@ check_build_dependencies() {
     exit 1
 }
 
-# The three top-level libraries the app links. Each names glib, pango and
-# gdk-pixbuf in its own `Requires:`, so pkg-config resolves those transitively
-# — listing them here would only add names a distribution might spell
-# differently. There is deliberately nothing else: the store engine is pure
-# Rust, so no system sqlite3, no OpenSSL and none of the perl modules #646
-# used to probe for are involved in a build.
+# The three top-level libraries the app links; each names glib, pango and gdk-pixbuf in its
+# `Requires:`, so pkg-config resolves those transitively. Nothing else: the store engine is pure
+# Rust, so no system sqlite3 or OpenSSL is involved (#646).
 PKG_CONFIG_LIBS=(gtk4 libadwaita-1 webkitgtk-6.0)
 
 if [ -z "${POSTIO_SKIP_DEP_CHECK:-}" ]; then
     check_build_dependencies
 fi
 
-# The linker and C compiler .cargo/config.toml names are bare program names
-# (postio-linker, postio-cc) so one compile cache serves every worktree
-# (#1101). A fresh clone has neither on PATH, and the first thing a person
-# following the README would see is "linker `postio-linker` not found".
+# `.cargo/config.toml` names `postio-linker` and `postio-cc` as bare programs (#1101); a fresh clone
+# has neither on PATH.
 "$here/scripts/install-shims.sh"
 
 echo "Building postio (release) — the first build takes a while..."
-# About says the commit beside the version when the build is told it
-# (postio-gtk's app::COMMIT); a copy without .git builds without one.
+# About says the commit beside the version when told it (postio-gtk's app::COMMIT); a copy without
+# .git builds without one.
 POSTIO_COMMIT="$(git -C "$here" rev-parse --short=9 HEAD 2>/dev/null || true)" \
 cargo build --release --package postio-gtk --bin postio \
     --manifest-path "$here/Cargo.toml"
 
-# Respect a redirected target dir; cargo names the default one otherwise.
 target="${CARGO_TARGET_DIR:-$here/target}"
 
 install -Dm755 "$target/release/postio" "$bin"

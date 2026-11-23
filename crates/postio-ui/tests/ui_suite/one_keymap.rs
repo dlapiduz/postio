@@ -1,23 +1,8 @@
-//! One keymap for every app (specs/007-postio-focus US7 scenarios 3 and 5,
-//! T061): the one default keymap, enumerated through each app's own
-//! resolver.
-//!
-//! Each app builds its resolver from the shared keymap with
-//! `Resolver::from_commands_for`, which keeps only the commands that app
-//! offers and adds that app's own binding problems. Every default key must
-//! bind cleanly there and run its command in each app that offers it.
-//!
-//! This ran in the GTK binary until spec 012 (ADR 0049). It needs no display
-//! and calls nothing of GTK's, so this is the cheapest layer that can see it.
-//! Scenario 2 still needs a window and stays in
-//! `crates/postio-gtk/tests/focus_suite/one_keymap.rs`.
-
 use std::time::Instant;
 
 use postio_core::{ContextSet, Frontend, Keymap, registry};
 use postio_ui::keymap::{Chord, KeyContext, Outcome, Resolver};
 
-/// Press `binding` -- a chord, or a sequence of them -- in `context`.
 fn press(resolver: &mut Resolver, binding: &str, context: KeyContext) -> Outcome {
     let mut outcome = Outcome::Unhandled;
     for chord in binding.split(' ') {
@@ -29,8 +14,6 @@ fn press(resolver: &mut Resolver, binding: &str, context: KeyContext) -> Outcome
     outcome
 }
 
-/// Where a command's key is pressed: its first context, or the list for a
-/// command that works everywhere.
 fn context_of(contexts: ContextSet) -> KeyContext {
     if contexts == ContextSet::ANY {
         return KeyContext::List;

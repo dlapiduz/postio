@@ -60,7 +60,6 @@ def tree(root: Path, *, workspace: str, pin: str, newest: str, plist: str | None
         "  </releases>\n</component>\n",
         encoding="utf-8",
     )
-    # The macOS bundle's versions (#1714); by default they agree.
     plist = plist or workspace
     info = root / "macos" / "Resources" / "Info.plist"
     info.parent.mkdir(parents=True, exist_ok=True)
@@ -103,8 +102,6 @@ def main() -> int:
         r = run(root)
         case("a workspace behind its own changelog fails", r.returncode != 0, "passed with Cargo.toml behind the metainfo")
 
-        # Info.plist said 0.1.0 through three releases; the macOS bundle
-        # is a release asset now, so it has to say what it was released as.
         tree(root, workspace="0.3.0", pin="0.3.0", newest="0.3.0", plist="0.1.0")
         r = run(root)
         case("a macOS bundle version that lags fails", r.returncode != 0, "passed with Info.plist at 0.1.0")

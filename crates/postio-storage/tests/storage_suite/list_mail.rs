@@ -1,7 +1,3 @@
-//! What a list has sent, read for "delete what the list sent" (#1931): one
-//! account's messages from a `List-Id` or a sender, outside the folders that
-//! are already the end of the road, and never a Flagged one.
-
 use chrono::{TimeZone, Utc};
 use postio_model::{EmailAddress, MailboxRole, Message, MessageId};
 use postio_storage::Connection;

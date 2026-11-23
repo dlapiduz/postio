@@ -6,10 +6,6 @@ import Testing
 @MainActor
 @Suite struct ViewTreeFocusTests {
     @Test func findsTheFieldInsideItsOwnToolbarItemFirst() {
-        // The shape that matters: the searcher sits in the field's own
-        // background, siblings under one hosting view, while another text
-        // field exists elsewhere in the window. Nearest must mean "this
-        // item's field".
         let window = NSView()
         let item = NSView()
         let leaf = NSView()
@@ -26,9 +22,8 @@ import Testing
     }
 
     @Test func aLabelIsNotSomewhereToTypeInto() {
-        // `labelWithString` fields are NSTextFields too — every caption in
-        // the toolbar is one. Focusing a label would swallow the keyboard
-        // into something that cannot take it.
+        // `labelWithString` fields are NSTextFields too; focusing a label would swallow the
+        // keyboard.
         let item = NSView()
         let leaf = NSView()
         let label = NSTextField(labelWithString: "Search mail")
@@ -41,9 +36,8 @@ import Testing
     }
 
     @Test func theClimbIsBounded() {
-        // Past the toolbar item, "nearest" stops meaning anything. A chain
-        // longer than the limit must answer nothing rather than reach the
-        // window and hand back whichever field it holds.
+        // Past the toolbar item "nearest" means nothing: a chain longer than the limit answers
+        // nothing.
         var top = NSView()
         let field = NSTextField()
         top.addSubview(field)

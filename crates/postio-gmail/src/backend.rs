@@ -1,5 +1,3 @@
-//! The [`MailBackend`] implementation.
-
 use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
@@ -23,7 +21,6 @@ use postio_model::{Flag, FlagSet, Generation, ModSeq, RemoteId, Uid, UidValidity
 use crate::connection::GmailConnection;
 use crate::convert;
 
-/// A [`MailBackend`] speaking the Gmail REST API v1.
 pub struct GmailBackend {
     connection: GmailConnection,
 }
@@ -59,21 +56,18 @@ fn gmail_error(context: &str, error: GmailClientStdError) -> BackendError {
 }
 
 impl GmailBackend {
-    /// A backend authenticating with a fixed bearer. Tests, mostly.
     pub fn new(token: &str) -> Self {
         Self {
             connection: GmailConnection::new(token),
         }
     }
 
-    /// A backend whose bearer comes from the account's token source.
     pub fn with_token_source(key: AccountKey, tokens: Arc<dyn TokenSource>) -> Self {
         Self {
             connection: GmailConnection::with_token_source(key, tokens),
         }
     }
 
-    /// Point every request at a scripted server on loopback.
     pub fn with_loopback_endpoint(mut self, host: &str, port: u16) -> Self {
         self.connection = self.connection.with_loopback_endpoint(host, port);
         self
@@ -90,7 +84,6 @@ impl GmailBackend {
             .await
     }
 
-    /// The label id `path` names, or the archive's `None`.
     async fn resolve(&self, path: &str) -> BackendResult<Option<String>> {
         if path == convert::ARCHIVE_PATH {
             return Ok(None);
@@ -103,7 +96,6 @@ impl GmailBackend {
             })
     }
 
-    /// One page of ids for `path`, newest first.
     async fn list_ids(
         &self,
         path: &str,
@@ -204,12 +196,8 @@ impl MailBackend for GmailBackend {
     }
 
     async fn create_mailbox(&self, path: &str) -> BackendResult<()> {
-        // Not yet. Gmail can create a folder, but this adapter has no reason
-        // to until it is a backend someone runs (v1 is IMAP and SMTP), and a
-        // stub that silently succeeded would tell discovery a folder exists
-        // when none does. Reported as a refusal so the caller records it and
-        // stops asking, which is exactly the behaviour a server that will
-        // never allow it should get.
+        // Unsupported: a stub that succeeded would tell discovery a folder exists.
+        // Reported as a refusal so the caller records it and stops asking.
         let _ = path;
         Err(BackendError::Rejected {
             command: "CREATE".to_owned(),
@@ -385,7 +373,6 @@ impl MailBackend for GmailBackend {
         let (adds, removes) = convert::label_changes(change);
         let touched = self.modify(raw_ids, adds, removes).await?;
 
-        // Report what the labels say now, per the trait's contract.
         let mut updates = Vec::new();
         for id in touched {
             let message = self.get(id.clone(), GmailMessageFormat::Minimal).await?;
@@ -421,10 +408,8 @@ impl MailBackend for GmailBackend {
         _mailbox: &str,
         ids: Option<&[RemoteId]>,
     ) -> BackendResult<Vec<RemoteId>> {
-        // Only ever targeted: an untargeted expunge would need "everything
-        // in the trash", and permanently deleting mail this adapter was
-        // not handed by id is exactly the overreach the seam's UID EXPUNGE
-        // rule exists to prevent.
+        // Only ever targeted: permanently deleting mail not handed by id is
+        // the overreach the seam's UID EXPUNGE rule prevents.
         let Some(ids) = ids else {
             return Ok(Vec::new());
         };
@@ -499,8 +484,7 @@ impl MailBackend for GmailBackend {
         _mailbox: &str,
         message_id: &str,
     ) -> BackendResult<Option<RemoteId>> {
-        // Gmail's search speaks the header natively. The mailbox is not
-        // part of the question: any copy proves arrival, per the trait.
+        // The mailbox is not part of the question: any copy proves arrival.
         let query = format!("rfc822msgid:{}", message_id.trim_matches(['<', '>']));
         self.connection
             .run(&CancelToken::new(), move |client| {
@@ -529,8 +513,7 @@ impl MailBackend for GmailBackend {
         timeout: Duration,
         cancel: &CancelToken,
     ) -> BackendResult<Vec<MailboxEvent>> {
-        // No IDLE claim; the watcher polls `status`. The history-poll
-        // coroutine is the native delta seam's job (ADR 0018 Q3).
+        // No IDLE claim; the watcher polls `status`.
         let deadline = tokio::time::Instant::now() + timeout;
         while tokio::time::Instant::now() < deadline {
             if cancel.is_cancelled() {

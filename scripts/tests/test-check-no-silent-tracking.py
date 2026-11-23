@@ -49,8 +49,6 @@ def build_swift_repo(root: Path, source: str, *, at: str) -> None:
     swift = root / "macos" / "Sources" / at
     swift.parent.mkdir(parents=True, exist_ok=True)
     swift.write_text(source, encoding="utf-8")
-    # A crate too, so the repository looks like the real one and the Rust
-    # scan is exercised alongside rather than replaced.
     crate = root / "crates" / "postio-thing" / "src"
     crate.mkdir(parents=True, exist_ok=True)
     (crate / "lib.rs").write_text("pub fn ordinary() {}\n", encoding="utf-8")
@@ -197,7 +195,6 @@ def main() -> int:
         should_fail=False,
     )
 
-    # Header names are case-insensitive and so is a patch author.
     case(
         "a lower-case spelling does not slip past",
         'let header = "disposition-notification-to";\n',
@@ -212,8 +209,6 @@ def main() -> int:
         expect_text="src/lib.rs:2",
     )
 
-    # The whole point: the mechanism is allowed once somebody has written down
-    # how the user asks for it.
     case(
         "a recorded consent path passes",
         "// POSTIO-CONSENT: only from the reader's `Send receipt` button,\n"
@@ -221,12 +216,6 @@ def main() -> int:
         'const HEADER: &str = "Disposition-Notification-To";\n',
         should_fail=False,
     )
-
-    # ---------------------------------------------------------------- Swift --
-    #
-    # The macOS frontend is Swift, and a guard that only reads Rust would leave
-    # half the application outside it -- the half whose whole privacy claim is
-    # that its web view has no network. ADR 0019 Q6, #625.
 
     swift_case(
         "an ordinary Swift file passes",
@@ -269,8 +258,6 @@ def main() -> int:
         expect_text="Deep.swift",
     )
 
-    # `git ls-files` is the input, so the check is about the repository rather
-    # than about whatever happens to be in somebody's working tree.
     case(
         "an untracked experiment is not the repository's problem",
         'const HEADER: &str = "Disposition-Notification-To";\n',

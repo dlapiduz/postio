@@ -1,17 +1,13 @@
-//! What a render hands the UI besides pixels (research R7): the boxes the
-//! widget acts on -- messages, links, folds -- read from the laid-out
-//! document once, on the render thread, so no gesture ever asks the engine.
+//! The boxes the widget acts on (messages, links, folds), read from the laid-out document once on
+//! the render thread, so no gesture ever asks the engine.
 
 use blitz_dom::{BaseDocument, LocalName, Node, NodeId, local_name};
 use parley::layout::PositionedLayoutItem;
 
 use crate::{FoldBox, LinkBox, LinkTarget, MessageBox, Presentation, Rect, Verb};
 
-/// The attribute a message container in a conversation carries: its scope.
 const MESSAGE_ATTRIBUTE: &str = postio_body::sanitize::MESSAGE_ATTRIBUTE;
 
-/// The reader's own verbs, as `postio-ui`'s thread document writes them
-/// (`reader::thread::*_SCHEME`): followed by the message's scope.
 const VERBS: &[(&str, Verb)] = &[
     ("postio-allow:", Verb::Allow),
     ("postio-reply:", Verb::Reply),
@@ -19,7 +15,6 @@ const VERBS: &[(&str, Verb)] = &[
     ("postio-continue:", Verb::Continue),
 ];
 
-/// The border box of a laid-out node, in document CSS pixels.
 fn border_box(node: &Node) -> Rect {
     let origin = node.absolute_position(0.0, 0.0);
     let size = node.final_layout().size;
@@ -37,26 +32,21 @@ fn elements<'a>(doc: &'a BaseDocument, selector: &str) -> Vec<&'a Node> {
         .unwrap_or_default()
 }
 
-/// Every message container, in document order. The single-message reader
-/// names none, and its one container has the empty scope.
+/// The single-message reader names none, and its one container has the empty scope.
 pub(crate) fn messages(doc: &BaseDocument) -> Vec<MessageBox> {
     elements(doc, &format!("div.{}", postio_body::sanitize::BODY_CLASS))
         .into_iter()
-        .map(|node| {
-            MessageBox {
-                scope: node
-                    .attr(LocalName::from(MESSAGE_ATTRIBUTE))
-                    .unwrap_or_default()
-                    .to_owned(),
-                rect: border_box(node),
-                // The theme rule (research R10) sets this when it runs.
-                presentation: Presentation::Styled,
-            }
+        .map(|node| MessageBox {
+            scope: node
+                .attr(LocalName::from(MESSAGE_ATTRIBUTE))
+                .unwrap_or_default()
+                .to_owned(),
+            rect: border_box(node),
+            presentation: Presentation::Styled,
         })
         .collect()
 }
 
-/// Every fold the thread document stamped, with its summary's box.
 pub(crate) fn folds(doc: &BaseDocument) -> Vec<FoldBox> {
     elements(doc, &format!("details[{}]", crate::FOLD_ATTRIBUTE))
         .into_iter()
@@ -76,8 +66,6 @@ pub(crate) fn folds(doc: &BaseDocument) -> Vec<FoldBox> {
         .collect()
 }
 
-/// Every element with an `id`, and where it starts: what a fragment link
-/// scrolls to.
 pub(crate) fn anchors(doc: &BaseDocument) -> Vec<(String, f64)> {
     elements(doc, "[id]")
         .into_iter()
@@ -88,9 +76,6 @@ pub(crate) fn anchors(doc: &BaseDocument) -> Vec<(String, f64)> {
         .collect()
 }
 
-/// Every link a reader may follow, one box per line it occupies: its text
-/// runs, grouped under the `<a>` they belong to, and the box of any link
-/// that lays out as a block of its own.
 pub(crate) fn links(doc: &BaseDocument) -> Vec<LinkBox> {
     let mut out = Vec::new();
     for anchor in elements(doc, "a[href]") {
@@ -122,8 +107,7 @@ pub(crate) fn links(doc: &BaseDocument) -> Vec<LinkBox> {
     out
 }
 
-/// Where following `anchor` goes, or `None` if it is not a link a reader
-/// follows: `javascript:`, `data:`, a part URI or anything else unknown.
+/// `None` for anything a reader does not follow: `javascript:`, `data:`, a part URI.
 fn target(doc: &BaseDocument, anchor: &Node) -> Option<LinkTarget> {
     let href = anchor.attr(local_name!("href"))?.trim();
     if let Some(id) = href.strip_prefix('#') {
@@ -149,7 +133,6 @@ fn target(doc: &BaseDocument, anchor: &Node) -> Option<LinkTarget> {
     matches!(url.scheme(), "http" | "https" | "mailto").then_some(LinkTarget::External(url))
 }
 
-/// The nearest node from `id` upward, itself included, that `want`s.
 fn ancestor(doc: &BaseDocument, id: NodeId, want: impl Fn(&Node) -> bool) -> Option<&Node> {
     let mut at = doc.get_node(id);
     while let Some(node) = at {
@@ -161,7 +144,6 @@ fn ancestor(doc: &BaseDocument, id: NodeId, want: impl Fn(&Node) -> bool) -> Opt
     None
 }
 
-/// Every positioned text run: the node its style came from, and its box.
 pub(crate) fn text_runs(doc: &BaseDocument, id: NodeId, out: &mut Vec<(NodeId, Rect)>) {
     let Some(node) = doc.get_node(id) else {
         return;

@@ -1,12 +1,3 @@
-//! Live-reload tests: what the watcher does when the file changes underneath.
-//!
-//! Written before the implementation, per the TDD rule in `CLAUDE.md`.
-//!
-//! These are the only tests in this crate that touch real file events, so they
-//! are written to wait for an outcome rather than to sleep for a fixed time:
-//! every wait is a `recv_timeout` that either gets its event or fails the test.
-//! The debounce logic itself is pure and unit-tested with an injected clock.
-
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::time::Duration;
@@ -15,28 +6,9 @@ use postio_config::live::{LiveConfig, Reload};
 use postio_config::watch::{ConfigWatcher, WatchOptions};
 use postio_config::{Checked, Density};
 
-/// Long enough to coalesce a burst, short enough to keep the suite quick.
-///
-/// 60ms was too short and failed intermittently on CI (#781), always in the
-/// coverage job: `a_burst_of_writes_is_coalesced_into_one_reload` writes the
-/// file five times and expects one reload, which only holds while the whole
-/// burst lands inside one debounce window. Instrumented binaries on a shared
-/// runner do not write five files in 60ms reliably, the window closed
-/// mid-burst, and the second reload failed an assertion about coalescing that
-/// the watcher had actually honoured.
-///
-/// The property under test is "a burst becomes one reload", not any
-/// particular number of milliseconds, so the window is sized to hold a burst
-/// on the slowest machine that runs this rather than the fastest.
-///
-/// 300ms was the second try, and it failed the same way twice more on CI
-/// (#1529): five `open`/`write`/`close` cycles on a runner sharing its box
-/// with a full workspace test run straddled the window, the debounce closed
-/// mid-burst, and a second reload landed inside the quiet period. A second is
-/// longer than any burst a loaded runner has produced, and the suite pays it
-/// once, in this file.
+/// A second: shorter windows straddled a five-write burst on loaded CI runners and closed mid-burst
+/// (#781, #1529).
 const DEBOUNCE: Duration = Duration::from_millis(1000);
-/// Generous: a loaded CI box can take a while to deliver an inotify event.
 const EXPECT: Duration = Duration::from_secs(5);
 /// How long "and nothing else happened" is worth waiting for. Longer than
 /// DEBOUNCE, or it could not observe a second window opening at all.
@@ -104,7 +76,6 @@ fn a_save_triggers_exactly_one_reload() {
 
 #[test]
 fn a_burst_of_writes_is_coalesced_into_one_reload() {
-    // What an editor actually does: truncate, write, flush, chmod, ...
     let dir = TempDir::new("burst");
     let path = dir.path("config.toml");
     std::fs::write(&path, GOOD).unwrap();
@@ -123,8 +94,6 @@ fn a_burst_of_writes_is_coalesced_into_one_reload() {
 
 #[test]
 fn an_atomic_rename_over_the_file_is_detected() {
-    // The write-then-rename dance that `$EDITOR` and every careful writer does.
-    // A watcher registered on the file's inode would never see this.
     let dir = TempDir::new("rename");
     let path = dir.path("config.toml");
     std::fs::write(&path, GOOD).unwrap();
@@ -143,7 +112,6 @@ fn an_atomic_rename_over_the_file_is_detected() {
 
 #[test]
 fn a_second_rename_is_still_seen() {
-    // Naive watchers survive exactly one replacement and then go deaf.
     let dir = TempDir::new("rename-twice");
     let path = dir.path("config.toml");
     std::fs::write(&path, GOOD).unwrap();
@@ -160,7 +128,6 @@ fn a_second_rename_is_still_seen() {
 
 #[test]
 fn a_file_created_after_the_watcher_started_is_picked_up() {
-    // First run: the directory exists but the file does not.
     let dir = TempDir::new("create");
     let path = dir.path("config.toml");
     let (_watcher, rx) = watch(&path);
@@ -230,8 +197,6 @@ fn a_fixed_file_is_applied_again() {
 
 #[test]
 fn an_editors_scratch_file_is_ignored() {
-    // vim writes `4913`, `.config.toml.swp` and `config.toml~` in the same
-    // directory. None of them is our file.
     let dir = TempDir::new("scratch");
     let path = dir.path("config.toml");
     std::fs::write(&path, GOOD).unwrap();
@@ -257,8 +222,6 @@ fn dropping_the_watcher_stops_the_reloads() {
 
     std::fs::write(&path, ALSO_GOOD).unwrap();
 
-    // Dropping the watcher drops the callback too, so the channel is closed as
-    // well as quiet; either way, no reload may arrive.
     assert!(
         rx.recv_timeout(QUIET).is_err(),
         "a dropped watcher must not keep reloading"

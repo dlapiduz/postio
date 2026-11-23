@@ -1,7 +1,3 @@
-//! The key map (US7, T058; screen 20): `?` opens it, `?` or `Escape` closes
-//! it, and every key it shows is the key the keymap resolves -- pressed
-//! through Focus's own resolver, not compared with the table that drew it.
-
 use std::time::Instant;
 
 use postio_core::{Keymap, registry};
@@ -10,12 +6,10 @@ use postio_ui::keymap_sheet::KEY_MAP_CONTEXTS;
 
 use crate::support;
 
-/// Press `?`: shift and the question mark.
 fn question(window: &postio_gtk::window::FocusWindow) {
     support::press(window, "question", gtk::gdk::ModifierType::SHIFT_MASK);
 }
 
-/// The rows the open key map shows: each command's title and its keys.
 fn rows_shown(window: &postio_gtk::window::FocusWindow) -> Vec<(String, Vec<String>)> {
     let Some(dialog) = window.key_map() else {
         return Vec::new();
@@ -35,9 +29,6 @@ fn rows_shown(window: &postio_gtk::window::FocusWindow) -> Vec<(String, Vec<Stri
 
 pub fn every_key_the_key_map_shows_runs_its_command() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_fixture, window) = support::three_in_the_inbox().await;
         question(&window);
         assert!(
@@ -53,9 +44,8 @@ pub fn every_key_the_key_map_shows_runs_its_command() {
         let (mut resolver, _) = postio_gtk::keys::resolver(Keymap::defaults());
         let mut checked = 0;
         for (title, keys) in &rows {
-            // Two commands can share a title -- Back is Escape's way out
-            // and ⌘['s history -- so a row's key runs one of the commands of
-            // its title, in that command's own place.
+            // Two commands can share a title (Back is Escape's way out and ⌘['s history), so a
+            // row's key runs one of them in its own place.
             let specs: Vec<_> = registry::all().filter(|spec| spec.title == title).collect();
             assert!(!specs.is_empty(), "{title:?} is not a registered title");
             assert!(!keys.is_empty(), "{title} shows no key");
@@ -86,7 +76,6 @@ pub fn every_key_the_key_map_shows_runs_its_command() {
             }
         }
         assert!(checked > 30, "only {checked} keys were checked");
-        // `e`, then the menu chord the second keyboard layer gave it.
         let chord =
             postio_config::keys::expand_mod("mod+shift+a", postio_config::paths::Platform::host());
         assert!(
@@ -101,7 +90,6 @@ pub fn every_key_the_key_map_shows_runs_its_command() {
             said.contains("[keys]") && said.contains("config.toml"),
             "the footer names where to rebind: {said}"
         );
-        // `j` behind the dialog is the dialog's, not the list's.
         let cursor = window.cursor_row().map(|row| row.id());
         support::keys(&window, &["j"]);
         crate::settle();

@@ -1,15 +1,7 @@
 import PostioFFI
 import SwiftUI
 
-/// What the page an empty list shows says (specs/009-focus-macos T099,
-/// screen 16): the controller's `EmptyPageFfi`, laid out.
-///
-/// The heading, the lines under it and the shortcuts are the controller's
-/// (`postio_ui::focus_state::EmptyInbox`), and it offers only shortcuts that
-/// lead somewhere: Filtered while Focus files mail away, Archive once a
-/// pass has finished, Compose always. Here they become keycaps.
 public struct EmptyInboxWords: Equatable, Sendable {
-    /// One shortcut: its keycap, its words, the command a click runs.
     public struct Shortcut: Equatable, Sendable {
         public let cap: String?
         public let words: String
@@ -17,7 +9,6 @@ public struct EmptyInboxWords: Equatable, Sendable {
     }
 
     public let heading: String
-    /// The detail, then the next digest, each when there is one.
     public let lines: [String]
     public let shortcuts: [Shortcut]
 
@@ -30,9 +21,6 @@ public struct EmptyInboxWords: Equatable, Sendable {
     }
 }
 
-/// The empty page, drawn in the list's place: a quiet centred message with
-/// the tray symbol, the lines, and the shortcuts as keycaps before their
-/// words (screen 16). A click runs the shortcut's command.
 public struct EmptyInbox: View {
     let words: EmptyInboxWords
     let run: (String) -> Void

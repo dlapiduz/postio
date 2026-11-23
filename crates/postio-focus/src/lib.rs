@@ -1,15 +1,6 @@
-//! Focus's behaviour, decided once (ADR 0045, `specs/009-focus-macos`).
-//!
-//! A frontend turns what happens to it — a key, an engine event, a client's
-//! reply, a fact about its own window — into an [`Input`], hands it to the
-//! [`FocusController`], and does what the returned [`Effect`]s say: draw an
-//! [`Intent`], run a [`Request`] through [`perform()`] and feed the [`Reply`]
-//! back, or set a timer. The controller does no I/O and never awaits, so the
-//! GTK app can drive it from glib's main loop and the FFI from tokio, and
-//! every rule in it is a unit test that runs on either host (research R1).
-//!
-//! Rules arrive here a slice at a time, moved out of `postio-gtk`'s window
-//! (research R2); each slice brings its inputs, intents and requests with it.
+//! Focus's behaviour, decided once (ADR 0045). A frontend turns what happens to it into an
+//! `Input`, hands it to the `FocusController`, and does what the returned `Effect`s say. The
+//! controller does no I/O and never awaits, so GTK and the FFI can both drive it.
 
 use std::time::Duration;
 
@@ -84,32 +75,20 @@ pub use surfaces::{Host, ReaderVerb, Route, SurfaceKind};
 pub use thread_menu::OutlineInput;
 pub use verbs::{Aimed, Everything, ToastKind};
 
-/// What differs between platforms, as policy rather than as a fork
-/// (ADR 0045 rule 4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Policy {
-    /// Which platform's layout and conventions apply.
     pub platform: Platform,
-    /// What this frontend can draw.
     pub caps: Capabilities,
 }
 
-/// What a frontend can draw that another cannot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Capabilities {
-    /// A message can be read beside the list (spec 007 FR-038). Linux has
-    /// it; the Mac comes to it after parity (spec 009 M4).
     pub reading_pane: bool,
-    /// Secondary surfaces stack over each other: Linux's dialogs do, the
-    /// Mac's windows replace each other (spec 009 M4).
     pub stacking: bool,
-    /// The Contacts view, a mode of the main window (specs/011-focus-contacts
-    /// S7). Both platforms have it (Linux's came at S13).
     pub contacts_view: bool,
 }
 
 impl Policy {
-    /// The policy each platform's Focus app runs with.
     pub const fn for_platform(platform: Platform) -> Self {
         let linux = matches!(platform, Platform::Freedesktop);
         Policy {
@@ -123,359 +102,184 @@ impl Policy {
     }
 }
 
-/// One request in flight. The generation is the controller's when it asked;
-/// a reply carrying an older one changes nothing (contract invariant 8).
+/// A reply carrying an older generation than the controller's changes nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Ticket {
-    /// Unique among this controller's requests.
     pub id: u64,
-    /// The controller's generation when it asked.
     pub generation: u64,
 }
 
-/// Something that happened, told to the controller.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum Input {
-    /// A command, from a key, a button, the bar or a menu.
     Command(CommandId),
-    /// The answer to an earlier [`Effect::Ask`].
     Reply(Ticket, Reply),
-    /// Something the engine said, from the client's one event stream.
     Event(Event),
-    /// The accounts Focus's inbox is made of: what "select everything"
-    /// reaches.
     Accounts(Vec<AccountId>),
-    /// Whether the list stands scrolled to its very top: where it goes back
-    /// to after an undo brings rows in above.
+    /// Where the list goes back to after an undo brings rows in above.
     AtTop(bool),
-    /// The pointer put the cursor on this row: a plain click.
     Point(u32),
-    /// A modified click on this row: Shift's `range` takes every row from
-    /// the anchor to it, the platform's toggle modifier takes it in or out.
     Pick {
-        /// The row clicked.
         position: u32,
-        /// Shift was held.
         range: bool,
     },
-    /// The frontend showed a surface over the list.
     SurfaceOpened(SurfaceKind),
-    /// A surface over the list closed, however it was closed.
     SurfaceClosed(SurfaceKind),
-    /// The open message's More menu and find, as they are now: what Back
-    /// closes first.
+    /// The open message's More menu and find: what Back closes first.
     ReaderState {
-        /// The More menu is up.
         more_open: bool,
-        /// Find is up.
         finding: bool,
     },
-    /// The cursor is on another row than the open message shows: the
-    /// message follows it. A click beside the reading pane, an undo that
-    /// brought a conversation back, a key the frontend moved the list with
-    /// under a message it opened itself (a hit, a digest's email). Nothing
+    /// The cursor is on another row than the open message shows: the message follows it. Nothing
     /// happens with no message open, or when it shows the cursor's row.
     Follow,
-    /// The message window's width allows this many thread-bar chips (sent
-    /// when it opens and on resize): the bar is composed again.
     BarRoom(u32),
-    /// The message window opened from a search has no more of its own find
-    /// matches in this direction (spec 013 US6): the controller goes on to
-    /// the next matched message, or says it is the last. Sent after
-    /// [`ReaderVerb::NextMatch`] / [`ReaderVerb::PrevMatch`] ran out.
+    /// The message window opened from a search has no more find matches this way: the controller
+    /// goes on to the next matched message, or says it is the last.
     MatchEdge {
-        /// Whether it was the next match (`false`: the previous).
         forward: bool,
     },
-    /// A Thread ▾ menu entry was chosen by a click: it runs (spec 013 US5).
     ThreadMenuPick(CommandId),
-    /// A chooser card was clicked (spec 013 FR-023): as `1` `2` `3`.
     ForwardFormClicked(postio_model::ForwardForm),
-    /// The composer's draft, as it is now: the answer to
-    /// [`Intent::ComposerDraftWanted`].
     ComposerDraft(DraftEdit, Box<postio_model::Draft>),
-    /// The outline's field, chips, arrows and Return (spec 013 US5).
     Outline(thread_menu::OutlineInput),
-    /// A click on the thread bar's chip for the member at this index (a
-    /// [`postio_ui::thread_bar::Chip::Message`]'s `index`): that message is
-    /// shown, as `]` and `[` would have shown it (spec 013 US3).
     ThreadBarChipClicked(u32),
-    /// A click on the thread bar's "... N more" chip, which stands for the
-    /// members from `from`: the outline opens with the ring on the first of
-    /// them (spec 013 US3).
     ThreadBarMoreClicked {
-        /// The first member the chip stands for
-        /// ([`postio_ui::thread_bar::Chip::More`]'s `from`).
         from: u32,
     },
-    /// The bar's words, as they are now.
     Typed {
-        /// The field's text.
         text: String,
     },
-    /// Run the bar's line with this token: Return on it, or a click.
     BarRun(u64),
-    /// `Tab` in the bar: into the chips, and on from chip to chip. Nothing
-    /// comes back when there is no chip to step into.
+    /// Nothing comes back when there is no chip to step into.
     BarTab,
-    /// The dropdown's arrows rest on the row with this token now: what
-    /// `ForgetRecent` forgets.
     SearchHighlighted(u64),
-    /// `alt+BackSpace` on the dropdown's recent search with this token:
-    /// forget it.
     SearchForget(u64),
-    /// `alt+Return` on the dropdown's person, label or folder with this
-    /// token: its chip, excluded (spec 010 US7).
     SearchExclude(u64),
-    /// A filter button, a chip's ✕, a popover's check or the timeline
-    /// changed the results' query (spec 010 step 3).
     SearchEdit(TermEdit),
-    /// A filter button with a popover was pressed: open it (spec 010 step
-    /// 4, FR-027). A toggle button's kind opens nothing.
+    /// A toggle button's kind opens nothing.
     SearchPopover(postio_ui::search_view::FilterKind),
-    /// A check on the open popover's row `token`: Space or a click
-    /// toggles it, ⌥-click (`exclude`) excludes it.
     PopoverToggle {
-        /// The row's [`PopoverRow::token`].
         token: u64,
-        /// ⌥ was held.
         exclude: bool,
     },
-    /// The popover's own search field holds this now.
     PopoverFilter(String),
-    /// The Date popover's plain-words field holds this now.
     DateWords(String),
-    /// The Date popover's preset with this
-    /// [`token`](DatePresetView::token) was picked.
     DatePreset(u64),
-    /// ↩ (`apply`), or Esc and a click away: the popover closes.
     PopoverDone {
-        /// Keep what it previewed.
         apply: bool,
     },
-    /// A results tab was picked: ⌘1-3, or a click.
     ResultsTab(postio_search::results::ResultsTab),
-    /// The Sort menu.
     ResultsOrder(postio_search::results::ConversationOrder),
-    /// A click put the focus ring on this result.
     ResultsPoint(u64),
-    /// The system's Quick Look on a file, or its save panel, is gone: the
-    /// copy it was handed can go too (FR-053).
+    /// The copy it was handed can go too.
     FileCopyDone,
-    /// Go to the folders popover's place with this token
-    /// ([`FocusController::places`]).
     OpenPlace(u64),
-    /// The folders popover is up, or has gone: while it is up, mail that
-    /// changes has its places read again, so its counts follow (#2153).
+    /// While it is up, changing mail has its places read again so the counts follow (#2153).
     PlacesShown(bool),
-    /// The pinned saved searches, in order.
     SavedSearches(Vec<postio_ui::saved_search::SavedSearch>),
-    /// What became of an [`Intent::SaveSearch`]: the saved searches now and
-    /// the key of the one saved, or the sentence saying why it was not.
     SearchSaved(Result<SearchesSaved, String>),
-    /// Save ↩ in the Save popover (spec 010 FR-029): the results' query,
-    /// under this name, pinned, notifying and its dates rolling or not.
     SaveSearchAs {
-        /// The Name field.
         name: String,
-        /// Pin to saved searches.
         pin: bool,
-        /// Notify when new mail matches.
         notify: bool,
-        /// Keep the date rolling.
         rolling: bool,
     },
-    /// The bindings in force: what the bar's keycaps say.
     Keymap(postio_core::Keymap),
-    /// Whether Focus files mail away: the places list Filtered while it does.
     Filtering(bool),
-    /// The clock stopped at this instant, or running again with `None`:
-    /// what a picker's presets and a typed date count from. Unset, it is
-    /// `postio_ui::clock::now()`.
+    /// Unset, it is `postio_ui::clock::now()`.
     Clock(Option<chrono::DateTime<chrono::Local>>),
-    /// The picker's field holds `text` now: the date typed, or the filter.
     PickerTyped {
-        /// The field's text.
         text: String,
     },
-    /// The picker's row with this token was chosen: a click, or Return on
-    /// the row highlighted.
     PickerChoose(u64),
-    /// `Space` on the picker's row with this token: a label on or off.
     PickerToggle(u64),
-    /// A draft was queued to send, now or at `at`: the toast says so, and
-    /// its Undo cancels the send.
     SendQueued {
-        /// The draft.
         draft: postio_model::DraftId,
-        /// When it leaves, when not at once.
         at: Option<chrono::DateTime<chrono::Utc>>,
     },
-    /// `[focus]` as it stands: the digests an empty inbox names, and
-    /// whether Focus files mail away.
     Config(postio_config::FocusConfig),
-    /// The message the frontend's open-message surface shows now, or `None`
-    /// when it shows none. A message opened from a search hit, or from a
-    /// digest, is on no cursor row, and a verb in it is about it alone.
+    /// A message opened from a search hit or a digest is on no cursor row, and a verb in it is
+    /// about it alone.
     Shown(Option<MessageId>),
-    /// A click on Filtered's row at this index: the keyboard goes to it.
     FilteredPoint(u32),
-    /// A modified click on Filtered's row at `position`: with the
-    /// platform's toggle modifier the row goes in or out of the selection,
-    /// with Shift (`range`) every row from the anchor to it goes in. The
-    /// same gesture as [`Input::Pick`] on the list.
     FilteredPick {
-        /// The row clicked.
         position: u32,
-        /// Whether Shift was held.
         range: bool,
     },
-    /// Filtered was scrolled to its end: read its next page, when there
-    /// may be one.
     FilteredMore,
-    /// A click on the digest's list row at this index.
     DigestPoint(u32),
-    /// A click on the summary's reference at this index, in reading order.
     DigestReference(u32),
-    /// The person said yes to the [`Intent::Confirm`] with this token. A
-    /// no is nothing: the question is forgotten when the next is asked.
+    /// A no is nothing: the question is forgotten when the next is asked.
     Confirmed(u64),
-    /// The rule dialog's query entry holds `text` now.
     RuleQuery {
-        /// The entry's text: queries, comma-separated.
         text: String,
     },
-    /// "Match a list or a search instead…": the query entry, empty.
     RuleMatchInstead,
-    /// "Digest mail like this": ask the person's model for a rule.
     RuleLikeThis,
-    /// The rule dialog's cadence, day and time, as its controls hold them.
     RuleSchedule(postio_ui::digest::Schedule),
-    /// Create (or Save): write the rule.
     RuleCreate,
-    /// The capture field holds `text` now.
     CaptureTyped {
-        /// The field's text.
         text: String,
     },
-    /// A due day was picked for the capture, or none.
     CaptureDue(Option<chrono::NaiveDate>),
-    /// The capture's project filter holds `text` now.
     CaptureFilter {
-        /// The filter's text.
         text: String,
     },
-    /// The capture's project row with this token was chosen.
     CaptureProject(u64),
-    /// Open the message a `postio://` link names, or say why not.
     OpenLink(String),
-    /// A click on a sender's name: the known-sender popover for this address
-    /// (specs/011-focus-contacts S6). The same as `i` on the name's row.
     ContactPopoverAt(String),
-    /// A click on a segment of the popover's arrival control: the same as
-    /// the arrow that lands there.
     ContactArrival(postio_model::ContactArrival),
-    /// A kind tab was clicked in the Contacts view.
     ContactsTab(postio_model::ContactTab),
-    /// The Contacts filter holds this now.
     ContactsFilterTyped(String),
-    /// A click on the Contacts row at this index.
     ContactsPoint(u32),
-    /// "Split" on the card's address: it becomes a person of its own.
     ContactSplit(String),
-    /// The merge sheet's record at this index chosen to keep its name.
     ContactMergeKeep(u32),
-    /// A change to the open Edit contact form.
     ContactEditChange(contact_edit::EditChange),
-    /// A click on the card's switch at this index.
     ContactCardSwitch(u32),
-    /// Settings > Contacts appeared: which Suggestions switches are on?
     ContactsSettingsOpened,
-    /// A click on the Suggestions switch at this index.
     ContactsSuggestion(u32),
-    /// An import ran: the people it made, and everyone it touched.
     ContactsImported {
-        /// New people, in file order.
         made: Vec<postio_model::ContactId>,
-        /// Everyone made or matched, for the review.
         touched: Vec<postio_model::ContactId>,
     },
-    /// Something was written in the open composer: a recipient, the
-    /// subject, a word of the body. What its autosave waits out.
     ComposerEdited,
-    /// What became of an [`Intent::SaveDraft`]: the draft was kept
-    /// (`Ok(true)`), there was nothing in it worth keeping (`Ok(false)`),
-    /// or the sentence saying why it could not be saved.
+    /// `Ok(false)`: there was nothing in it worth keeping.
     DraftSaved {
-        /// The composition the save was asked for.
         composition: u64,
-        /// What became of it.
         saved: Result<bool, String>,
     },
-    /// A timer the controller set ([`Effect::Timer`]) has run out.
     Timer(u64),
-    /// A verb a menu or picker chose, for the controller to aim as a key
-    /// would: at the selection, else the cursor's row, remembering what an
-    /// archive or delete takes out for the undo.
     Verb(Command),
-    /// A command to send as it is, aimed at nothing in the list: the open
-    /// message's, a picker's own, an answer to an invitation.
     Post(Command),
-    /// Archive the digest with this delivery from the frontend's own
-    /// window for it: one undo, and the undo brings its row back.
     ArchiveDigest(postio_model::DeliveryId),
 }
 
-/// What the frontend does next.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum Effect {
-    /// Draw this.
     Show(Intent),
-    /// Run this through [`perform()`] and hand the answer back as
-    /// [`Input::Reply`] with the same ticket.
     Ask(Ticket, Request),
-    /// Call back with [`Input::Timer`]`(token)` once `after` has passed:
-    /// the composer's autosave (slice 7).
-    Timer {
-        /// Handed back when the timer fires.
-        token: u64,
-        /// How long to wait.
-        after: Duration,
-    },
+    Timer { token: u64, after: Duration },
 }
 
-/// A save the frontend writes to `config.toml` (`postio_ui::saved_search`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SaveSearch {
-    /// The query, as the field holds it.
     pub query: String,
-    /// The name it shows under; `None` shows its key.
     pub name: Option<String>,
-    /// Pin to saved searches: the next free place and ⌥ number.
     pub pin: bool,
-    /// A quiet badge with new matches (D15).
     pub notify: bool,
-    /// How its dates keep (D14).
     pub dates: postio_ui::saved_search::Dates,
 }
 
-/// What a save left: every pinned saved search, and the key of the one
-/// saved (`None` when nothing was).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchesSaved {
-    /// The pinned saved searches now, in order.
     pub searches: Vec<postio_ui::saved_search::SavedSearch>,
-    /// The key the save was written under.
     pub key: Option<String>,
 }
 
-/// Keep `save` in the `config.toml` at `path`, as
-/// `postio_ui::saved_search` writes one -- `[saved_searches]` alone, the
-/// rest of the file as it was -- and say what to answer the controller with
-/// ([`Input::SearchSaved`]): the pinned searches now, or the sentence the
-/// toast says instead. `None` is a window with no file to write to.
+/// Rewrites `[saved_searches]` alone, the rest of the file as it was. `None` is a window with no
+/// file to write to.
 pub fn save_search(
     path: Option<&std::path::Path>,
     save: &SaveSearch,
@@ -503,792 +307,411 @@ pub fn save_search(
         })
 }
 
-/// What the frontend draws. Each one is drawable without asking the
-/// controller anything else.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum Intent {
-    /// The header strip's counts changed.
     Counts(FocusCounts),
-    /// Insert `children` after the row at `anchor` (a row position, not a
-    /// display position). When that row already has children, they are
-    /// replaced. No animation under reduced motion.
+    /// `anchor` is a row position, not a display position. Existing children are replaced. No
+    /// animation under reduced motion.
     Splice {
-        /// The expanded row's position among the rows.
         anchor: u32,
-        /// One per member, oldest first, then the unsent reply.
         children: Vec<postio_ui::thread_list::ChildRowView>,
     },
-    /// The footer under the list, redrawn: the scope of the row or child the
-    /// cursor is on, the keys that matter there, and what acts on what.
     Footer(postio_ui::scope::FooterView),
-    /// Remove the children after the row at `anchor`.
     Unsplice {
-        /// The collapsed row's position among the rows.
         anchor: u32,
     },
-    /// The cursor is on `position`: draw it there and bring it into view.
     Cursor {
-        /// The row.
         position: u32,
-        /// Whether the list scrolls back to its very top: the first row.
         to_top: bool,
     },
-    /// The selection changed: redraw the rows' boxes, and the bar's words.
     Selection {
-        /// What is selected now.
         selection: Selection,
-        /// "3 selected", or nothing with nothing selected.
         summary: Option<String>,
     },
-    /// The list's one heading, while `!` narrows it ("Has action · 7"), or
-    /// back to the day headings with `None`.
     SingleHeading(Option<String>),
-    /// Scroll the list back to its very top.
     ListToTop,
-    /// Say something in the toast.
     Toast {
-        /// What to say: the host's words.
         text: String,
-        /// How to draw it, and how long it stays.
         kind: ToastKind,
     },
-    /// The place opened has been counted: the list changes over to it,
-    /// keeping the rows on screen until its first page lands, and asks for
-    /// that page ([`FocusController::page_wanted`]).
     ReplaceSource {
         /// How many rows the new place draws.
         total: u32,
     },
-    /// A page has been asked for under the list's `stamp`.
     PagePending {
-        /// The list's own stamp, echoed.
         stamp: u64,
-        /// Which page.
         page: u32,
     },
-    /// A page's rows, for the list to take if `stamp` is still its own.
     DeliverPage {
-        /// The stamp the page was asked under.
         stamp: u64,
-        /// Which page.
         page: u32,
-        /// How many rows the place draws now.
         total: u32,
-        /// The rows, conversations and surfaced rows in list order.
         rows: Vec<FocusRow>,
     },
-    /// A page could not be read and is being asked for again.
     AbandonPage {
-        /// The stamp it was asked under.
         stamp: u64,
-        /// Which page.
         page: u32,
     },
-    /// A page could not be read and will not be asked for again.
     GiveUp {
-        /// The stamp it was asked under.
         stamp: u64,
-        /// Which page.
         page: u32,
     },
-    /// Re-read the pages on screen, keeping the scroll position.
     RefreshList,
-    /// Rows landed: a first page, or a re-read.
     Filled,
-    /// Show `message` in the message surface -- opening it, or in place of
-    /// the one it shows -- at `index` of `total` in the list it came from.
     OpenMessage {
-        /// The message.
         message: MessageId,
-        /// Its row's place in the list.
         index: u32,
-        /// How many rows the list draws.
         total: u32,
-        /// Where it is shown: its own surface, or the digest's window.
         host: Host,
     },
-    /// A digest's row opens its window: the row is named by its delivery,
-    /// negated, as [`RowFacts::id`] names it.
+    /// The row is named by its delivery, negated, as `RowFacts::id` names it.
     OpenDigest {
-        /// The row.
         row: MessageId,
     },
-    /// Open the composer -- or, while it is open, put this composition in
-    /// it in place of the one it held -- writing `kind`, answering
-    /// `message`: a new message (no message), a reply, a reply to all, a
-    /// forward, or the draft behind a row, to go on writing. The controller
-    /// has put the composer on the stack.
     Composer {
-        /// What is being written.
         kind: ComposerKind,
-        /// The message it answers, or the draft's own message.
         message: Option<MessageId>,
     },
-    /// Save what the composer holds for `composition` now, and say how it
-    /// went with [`Input::DraftSaved`]: its autosave's quiet period has
-    /// passed, or the composition is ending.
     SaveDraft {
-        /// The composition: the one open, or the one just closed.
         composition: u64,
     },
-    /// Close this surface; the frontend says [`Input::SurfaceClosed`] when
-    /// it has.
     CloseSurface(SurfaceKind),
-    /// The open message does this.
     Reader(ReaderVerb),
-    /// Draw the message window's thread bar: the label column, the chips and
-    /// the Thread menu button. Said on every message the window shows, with
-    /// no chips for a thread of one (spec 013 US3).
+    /// Said on every message the window shows, with no chips for a thread of one.
     ThreadBar(postio_ui::thread_bar::ThreadBarView),
-    /// Draw the kicker above the subject ("Message 4 of 6 · ] newer · [
-    /// older"); empty for a thread of one.
     Kicker(String),
-    /// Draw the older-message banner, or take it away.
     OlderBanner(Option<postio_ui::thread_bar::BannerView>),
-    /// Draw the new-reply banner, or take it away: a reply arrived while
-    /// the window was on another message, which stays on screen (FR-018).
+    /// A reply arrived while the window was on another message, which stays on screen.
     NewReply(Option<postio_ui::thread_bar::BannerView>),
-    /// Draw the sender block's Reply to row, or take it away.
     ReplyTo(Option<String>),
-    /// Nothing is over the list any more: the keyboard goes back to it, on
-    /// the cursor's row.
     KeyboardHome,
-    /// Leave the app.
     Quit,
-    /// Show the bar, opened `mode`'s way, its field holding `text` -- with
-    /// `select` (a range of characters) selected, or the caret at the end.
     /// Said again while it is up, it is only new words for the field.
     OpenBar {
-        /// How it was opened.
         mode: BarMode,
-        /// The field's words.
         text: String,
-        /// What of them is selected: the chip being edited.
         select: Option<(u32, u32)>,
     },
-    /// Draw the bar's lines, whole.
     BarLines(BarView),
-    /// Draw the search dropdown, whole, in place of the bar's lines.
     Dropdown(DropdownView),
-    /// The main window shows a search's results: this frame, whole; its
-    /// rows are read with [`FocusController::result_row`] (spec 010 D17).
     ShowResults(Box<ResultsView>),
-    /// Results rows `first..first + count` changed: read them again.
     ResultsPage {
-        /// The first row.
         first: u64,
-        /// How many.
         count: u64,
     },
-    /// The focus ring is on this result: draw it there and bring it into
-    /// view.
     ResultsCursor(u64),
-    /// The results' expanded result: its matching messages and the lines
-    /// for the runs between them, drawn after its row; `None` takes them
-    /// away (spec 013 US6).
     ResultSplice(Option<Box<ResultSplice>>),
-    /// The focus ring is on this child of the expanded result (an index into
-    /// [`ResultSplice::children`]), or back on the result's own row.
     ResultChildFocus(Option<u32>),
-    /// Draw the match banner of a window opened from a search, or take it
-    /// away (spec 013 US6).
     MatchBanner(Option<postio_ui::thread_bar::MatchBannerView>),
-    /// The field's chips and words and the filter bar's buttons.
     Query(QueryView),
-    /// Draw the filter popover, whole, hung from its button; `None` closes
-    /// it.
     Popover(Option<Box<PopoverView>>),
-    /// Draw Quick Look over the results, whole, in place of the one
-    /// showing; `None` closes it (spec 010 US4).
     QuickLook(Option<Box<QuickLookView>>),
-    /// The results found nothing: draw this page, whole, in the rows'
-    /// place; `None` takes it away (spec 010 US6, design §3.10).
     Relaxations(Option<Box<NoResultsView>>),
-    /// Hand the system this copy of a file: its Quick Look on it, or a
-    /// save panel to put it somewhere (spec 010 US8, FR-053); `None`
-    /// closes the Quick Look panel. The frontend says
-    /// [`Input::FileCopyDone`] when the panel is gone.
+    /// `None` closes the Quick Look panel. The frontend says `Input::FileCopyDone` when the panel
+    /// is gone.
     FileCopy(Option<FileCopy>),
-    /// The main window shows the inbox again; its cursor and selection
-    /// follow.
     LeaveResults,
-    /// The list shows this place now: what the header strip names.
     Place {
-        /// "Inbox", "Receipts".
         name: String,
     },
-    /// Show the folders popover; [`FocusController::places`] is what it
-    /// lists.
     OpenPlaces,
-    /// The places were read again: the popover lists them anew.
     PlacesChanged,
-    /// Show Filtered, the view of what Focus filed away.
     ShowFiltered,
-    /// Keep a query as a saved search, as [`SaveSearch`] says, and say how
-    /// that went with [`Input::SearchSaved`].
     SaveSearch(SaveSearch),
-    /// Show the Save popover from the toolbar's Save search button (spec
-    /// 010 §3.9), or take it down with `None`.
     SavePopover(Option<Box<SaveView>>),
-    /// Run this command as the frontend's own: a line of the bar that is
-    /// not the controller's to answer.
     Run(CommandId),
-    /// Show this picker, hung from its anchor.
     OpenPicker(PickerView),
-    /// Redraw the picker that is up, whole.
     PickerRows(PickerView),
-    /// Put the keyboard in the picker's date field (`Tab`).
     PickerField,
-    /// The banner under the header strip, or none.
     Banner(Option<BannerView>),
-    /// What the sync label says now.
     SyncLabel(postio_ui::focus_state::SyncLabel),
-    /// The page an empty list shows in its place, or the list again with
-    /// `None`.
     Empty(Option<postio_ui::focus_state::EmptyInbox>),
-    /// Show the key map (`?`). The controller has put it on the stack; it
-    /// closes with [`Intent::CloseSurface`]`(KeyMap)`, which takes it off
-    /// again (no [`Input::SurfaceClosed`] follows).
+    /// Closes with `Intent::CloseSurface(KeyMap)`, which takes it off again (no
+    /// `Input::SurfaceClosed` follows).
     OpenKeyMap,
-    /// Draw Filtered, whole: its tabs, its rows, the row with the keyboard.
     Filtered(Box<FilteredView>),
-    /// The keyboard is on Filtered's row at this index now.
     FilteredFocus(Option<u32>),
-    /// Insert `children` after Filtered's row at `anchor` (an index into
-    /// its rows), replacing any it has: the list's [`Intent::Splice`] for
-    /// the Filtered view's own table.
     FilteredSplice {
-        /// The expanded row.
         anchor: u32,
-        /// One per member, oldest first, then the unsent reply.
         children: Vec<postio_ui::thread_list::ChildRowView>,
     },
-    /// Remove the children after Filtered's row at `anchor`.
     FilteredUnsplice {
-        /// The collapsed row.
         anchor: u32,
     },
-    /// Filtered's selection changed: draw the boxes of `selected`, and the
-    /// bar (or take it down with `None`).
     FilteredSelection {
-        /// The rows selected, by message.
         selected: Vec<MessageId>,
-        /// The selection bar, while anything is selected.
         bar: Option<FilteredBar>,
     },
-    /// Draw the digest's window, whole.
     Digest(Box<DigestView>),
-    /// Ask before doing something no undo takes back whole; say
-    /// [`Input::Confirmed`] with its token on yes.
     Confirm(Confirm),
-    /// Show the digest rule dialog. The controller has put it on the stack
-    /// as a [`SurfaceKind::Dialog`].
     OpenRule(Box<RuleView>),
-    /// Redraw the rule dialog, whole.
     Rule(Box<RuleView>),
-    /// Show the capture window. The controller has put it on the stack.
     OpenCapture(Box<CaptureView>),
-    /// Redraw the capture window, whole.
     Capture(Box<CaptureView>),
-    /// Show the known-sender popover, or redraw it, whole. The controller has
-    /// put it on the stack as a [`SurfaceKind::ContactPopover`]; the frontend
-    /// anchors it to the sender's name.
     ContactPopover(Box<postio_ui::contact_popover::PopoverView>),
-    /// Open Thread ▾'s menu, over the window (a 340-point popover). The
-    /// controller has put it on the stack as a [`SurfaceKind::ThreadMenu`].
     ThreadMenu(Box<postio_ui::thread_outline::ThreadMenuView>),
-    /// Open the thread outline, or redraw it, whole (a 440-point popover).
-    /// The controller has put it on the stack as a [`SurfaceKind::Outline`].
     Outline(Box<postio_ui::thread_outline::OutlineView>),
-    /// Put the keyboard in the outline's filter field.
     OutlineFocusFilter,
-    /// Open a composer to this address, as a `mailto:` link would.
     WriteTo(String),
-    /// Draw the Contacts view's frame, whole. The controller has put it on
-    /// the stack as a [`SurfaceKind::Contacts`].
     Contacts(Box<contacts::ContactsView>),
-    /// Rows of the Contacts list landed or the list started over: draw
-    /// `count` rows from `first`, or all of them with a count of 0.
     ContactsRows {
-        /// The first row.
         first: u32,
-        /// How many; 0 for the whole list.
         count: u32,
     },
-    /// The Contacts cursor is on this row now.
     ContactsCursor(Option<u32>),
-    /// The card beside the list, whole; `None` while it is being read.
     ContactsCard(Option<Box<postio_ui::contacts_view::CardView>>),
-    /// Draw the merge sheet over the Contacts view, or put it away.
     ContactMerge(Option<Box<postio_ui::contact_merge::MergeSheetView>>),
-    /// Draw the Edit contact form over the card, or put it away.
     ContactEdit(Option<Box<postio_ui::contact_edit::EditView>>),
-    /// Draw Settings > Contacts' Suggestions section.
     ContactsSettings(Box<postio_ui::contacts_settings::SuggestionsView>),
-    /// Put the keyboard in the Contacts filter.
     ContactsFocusFilter,
-    /// Draw the *What to forward* chooser above To, or redraw it with the
-    /// chosen card (spec 013 FR-023). Said after the [`Intent::Composer`]
-    /// of a forward in a thread of two or more; keys `1` `2` `3` are
-    /// [`postio_core::Context::ForwardChooser`]'s while it holds the keyboard.
+    /// Keys `1` `2` `3` are `Context::ForwardChooser`'s while it holds the keyboard.
     ForwardChooser(Box<postio_ui::compose::ChooserView>),
-    /// Draw the bar under the composer's title on a reply to a message that
-    /// is not the latest, or take it away (spec 013 FR-022).
     OlderReply(Option<Box<postio_ui::compose::OlderReplyView>>),
-    /// Show the messages newer than the one the reply answers, read-only,
-    /// in the composer, or hide them: `Some` with their ids, oldest first.
     NewerMessages(Option<Vec<MessageId>>),
-    /// Draw the quoted messages as their collapsed rows (`false`), or
-    /// expanded (`true`).
     QuotedExpanded(bool),
-    /// The controller needs the composer's draft as it is now, typed text
-    /// included, to change it: answer with [`Input::ComposerDraft`].
+    /// Answer with `Input::ComposerDraft`.
     ComposerDraftWanted(DraftEdit),
-    /// Put this draft in the composer in place of the one it holds: the
-    /// subject, the body, the attachments, the recipients. What was typed
-    /// above the quote is in it already.
+    /// What was typed above the quote is in it already.
     ComposerDraft(Box<postio_model::Draft>),
 }
 
-/// A change to the composer's draft that the engine makes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DraftEdit {
-    /// The forward carries this form (a chooser card).
     ForwardForm(postio_model::ForwardForm),
-    /// The reply answers the thread's latest received message.
     ReplyToLatest,
 }
 
-/// What the controller needs from the engine. [`perform()`] is the one place
-/// each becomes a client call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Request {
-    /// The header strip's counts.
     FocusCounts,
-    /// Open a place: which folders are inboxes, how many rows it holds, and
-    /// -- when it `splices` -- what Focus surfaces among them.
     OpenScope {
-        /// The place.
         scope: ListScope,
-        /// Whether to read the surfaced rows too.
         splices: bool,
     },
-    /// One page of the place in view, with its label pills.
     Page {
-        /// Which page of the list.
         page: u32,
-        /// The list's stamp, echoed in the answer.
         stamp: u64,
-        /// The page's first position, in the list's terms.
         start: u32,
-        /// How many positions the page spans.
         count: u32,
-        /// The run of conversations to read, in the store's terms.
         wanted: PageRequest,
     },
-    /// What Focus surfaces in its inbox, read again.
     Surfaced,
-    /// Send a verb, aimed: at each of `aims` in turn, or -- with
-    /// `everything` -- at a whole-view selection the host resolves.
     Send {
-        /// The verb.
         command: Command,
-        /// Where it goes, in the order to send it.
         aims: Vec<MessageTarget>,
-        /// A whole-view selection, instead of `aims`.
         everything: Option<Everything>,
     },
-    /// Send a command as it is: one that aims at nothing (`Undo`).
     Post(Command),
-    /// Bring the place on screen in line with the server. Aimed at no mail,
-    /// but at a view: which mailboxes to sync is the host's to work out from
-    /// it, and with none the host has nothing to refresh.
+    /// Aimed at a view, not mail: which mailboxes to sync is the host's to work out, and with none
+    /// the host has nothing to refresh.
     Refresh {
-        /// The place on screen, as a view; `None` before one is open.
         viewing: Option<postio_core::state::ViewScope>,
     },
-    /// Mail left `mailbox`: said to the store before the list re-reads.
     NoteRemoved {
-        /// The folder it left.
         mailbox: MailboxId,
-        /// What left.
         messages: Vec<MessageId>,
     },
-    /// Every place there is to go: one read, however many accounts.
     Places,
-    /// Search this machine's index for conversations: the dropdown's top
-    /// hits and the facets it narrows by (spec 010).
     Conversations {
-        /// The words, lowered.
         query: postio_search::ParsedQuery,
-        /// Which order they come in.
         order: postio_search::results::ConversationOrder,
-        /// How many hits.
         limit: u32,
-        /// The bar's words' stamp, echoed in the answer.
         stamp: u64,
     },
-    /// The passages of hits on screen, each where it matched.
     Passages {
-        /// The query whose words the passages are cut around.
         query: postio_search::ParsedQuery,
-        /// Each hit's best message, and where it matched.
         hits: Vec<(MessageId, Vec<postio_search::results::Source>)>,
-        /// The bar's words' stamp, echoed in the answer.
         stamp: u64,
     },
-    /// A page of the results view's conversations: its Top hits (Best
-    /// match), or its month groups' rows (Newest).
     ResultsPage {
-        /// The query, lowered.
         query: postio_search::ParsedQuery,
-        /// Which order.
         order: postio_search::results::ConversationOrder,
-        /// The first conversation.
         offset: u32,
-        /// How many.
         limit: u32,
-        /// The results' stamp, echoed in the answer.
         stamp: u64,
     },
-    /// The passages of a page of results.
     ResultsPassages {
-        /// The query whose words the passages are cut around.
         query: postio_search::ParsedQuery,
-        /// Each hit's best message, and where it matched.
         hits: Vec<(MessageId, Vec<postio_search::results::Source>)>,
-        /// The results' stamp, echoed in the answer.
         stamp: u64,
     },
-    /// The Files tab's cards (spec 010 US8).
     Files {
-        /// The results' query.
         query: postio_search::ParsedQuery,
-        /// The results' stamp, echoed in the answer.
         stamp: u64,
     },
-    /// The People tab's rows (spec 010 US9).
     People {
-        /// The results' query.
         query: postio_search::ParsedQuery,
-        /// The results' stamp, echoed in the answer.
         stamp: u64,
     },
-    /// Copy a file's bytes, when they are on this machine, into
-    /// [`file_copies`]: for the system's Quick Look or a save.
     AttachmentCopy {
-        /// Which file.
         attachment: postio_model::AttachmentId,
-        /// What the copy is for.
         purpose: FilePurpose,
-        /// The copy's stamp, echoed in the answer.
         stamp: u64,
     },
-    /// A copy handed to the system is done with: remove it, when it is
-    /// one of [`file_copies`]'s and nothing else.
     RemoveCopy(std::path::PathBuf),
-    /// Every match in the conversation Quick Look shows.
     QuickLookMatches {
-        /// The results' query.
         query: postio_search::ParsedQuery,
-        /// Which conversation.
         key: postio_search::results::ConversationKey,
-        /// Quick Look's stamp, echoed in the answer.
         stamp: u64,
     },
-    /// The ways out of a search that found nothing: each looser search
-    /// and how many conversations it finds (spec 010 US6, FR-043).
     Relaxations {
-        /// The search that found nothing, lowered.
         query: postio_search::ParsedQuery,
-        /// The day its relative dates are counted from.
         today: chrono::NaiveDate,
-        /// The results' stamp, echoed in the answer.
         stamp: u64,
     },
-    /// The facets of a query, and nothing else: what a filter popover lists
-    /// when its own field is already in the query (spec 010 D27).
     Facets {
-        /// The query without the popover's field, lowered.
         query: postio_search::ParsedQuery,
-        /// The popover's stamp, echoed in the answer.
         stamp: u64,
     },
-    /// What the prefix typed could become: words, labels, lists and files,
-    /// or the operator `field`'s values (spec 010 US7).
     Suggest {
-        /// The word, or the operator's value so far.
         prefix: String,
-        /// The operator being typed, when one is.
         field: Option<postio_search::query::Field>,
-        /// The bar's words' stamp, echoed in the answer.
         stamp: u64,
     },
-    /// The latest two conversations from `address`: the operator state's
-    /// "Latest from" the focused person (spec 010 US7).
     LatestFrom {
-        /// Whose.
         address: String,
-        /// The bar's words' stamp, echoed in the answer.
         stamp: u64,
     },
-    /// A thread's members and unsent reply: an expansion, or opening a
-    /// thread row.
     ReadThread(ThreadId),
-    /// The composer's forward, changed to carry `form`
-    /// (`Client::set_forward_form`); answered with [`Reply::Forwarded`].
     SetForwardForm {
-        /// The draft, as the composer holds it.
         draft: Box<postio_model::Draft>,
-        /// What it should carry.
         form: postio_model::ForwardForm,
     },
-    /// A forward of the whole of `thread` in `form`, built from the store
-    /// (`Client::forward_thread`); answered with [`Reply::Forwarded`].
     ForwardThread {
-        /// The thread.
         thread: ThreadId,
-        /// What it should carry.
         form: postio_model::ForwardForm,
     },
-    /// The composer's reply, changed to answer the thread's latest received
-    /// message (`Client::reply_to_latest`); answered with
-    /// [`Reply::RepliedToLatest`].
     ReplyToLatest {
-        /// The draft, as the composer holds it.
         draft: Box<postio_model::Draft>,
     },
-    /// The searches run lately, newest first.
     RecentSearches,
-    /// Keep `query` among the searches run, with what it matched; answered
-    /// with the recent searches as they then are.
     RememberSearch {
-        /// The query, as run.
         query: String,
-        /// Conversations it matched.
+        /// The search stopped at its walk's cap: `hits` is a floor.
         hits: u64,
-        /// The search stopped at its walk's cap: `hits` is a floor (D30).
         capped: bool,
     },
-    /// Forget a recent search; answered with the recent searches left.
     ForgetSearch {
-        /// The query.
         query: String,
     },
-    /// The saved search under `key` was viewed: its badge counts from now
-    /// (D15).
     MarkSeen {
-        /// The `[saved_searches.<key>]` identity.
         key: String,
     },
-    /// How many each saved search matches.
     SavedCounts {
-        /// Every saved search, as `(key, query)`.
         searches: Vec<(String, String)>,
-        /// The day relative dates are read against.
         today: chrono::NaiveDate,
     },
-    /// The folder of `role` in the account Focus writes from: the first
-    /// enabled account with one.
     RoleFolder(MailboxRole),
-    /// What the label picker lists: the labels of `message`'s account (or
-    /// of `account`, or the first enabled one), how many conversations
-    /// carry each, and which of them `threads` carry.
     Labels {
-        /// The message the picker opened on, whose account it is.
         message: Option<MessageId>,
-        /// The account to read when no message says.
         account: Option<AccountId>,
-        /// The conversations the picker acts on.
         threads: Vec<postio_model::ThreadId>,
-        /// The picker's stamp, echoed in the answer.
         stamp: u64,
     },
-    /// Make a label called `name` in `account`.
     CreateLabel {
-        /// The account.
         account: AccountId,
-        /// Its name, trimmed.
         name: String,
-        /// The picker's stamp, echoed in the answer.
         stamp: u64,
     },
-    /// What the move picker lists: every enabled account's destinations,
-    /// and the last few moved to.
     Folders {
-        /// The picker's stamp, echoed in the answer.
         stamp: u64,
     },
-    /// Keep `mailbox` among the recent destinations.
     NoteMove(MailboxId),
-    /// Who every enabled account is -- where it signs in, as whom -- and
-    /// when mail last synced before this run: what a banner names.
     Accounts,
-    /// Filtered's tabs: each reason, with how many it keeps.
     FilteredTabs,
-    /// A page of Filtered: of `reason`, or of every reason.
     Filtered {
-        /// The reason, as the store spells it; `None` for All.
         reason: Option<String>,
-        /// The page's first row.
         offset: u32,
-        /// The view's stamp, echoed in the answer.
         stamp: u64,
     },
-    /// How many messages a sweep of the inbox would file away now.
     SweepPreview,
     /// What a digest's delivery holds, and -- with `summary` -- its summary.
     DigestRead {
-        /// The delivery.
         delivery: postio_model::DeliveryId,
-        /// Whether to read the summary: only with a model (C6).
         summary: bool,
-        /// The window's stamp, echoed in the answer.
         stamp: u64,
     },
-    /// Leave the list `message` came from.
     Unsubscribe(MessageId),
-    /// What a digest rule matching `queries` would have caught since
-    /// `since`.
     DigestPreview {
-        /// The rule's queries.
         queries: Vec<String>,
-        /// How far back.
         since: chrono::DateTime<chrono::Utc>,
-        /// The dialog's stamp, echoed in the answer.
         stamp: u64,
     },
-    /// The rule the person's model proposes for mail like `message`.
     DigestLikeThis {
-        /// The message.
         message: MessageId,
-        /// The dialog's stamp, echoed in the answer.
         stamp: u64,
     },
-    /// Write a digest rule to `config.toml`.
     SaveDigestRule {
-        /// The rule it replaces, when editing.
         replacing: Option<String>,
-        /// The rule.
         draft: postio_client::protocol::DigestRuleDraft,
-        /// The dialog's stamp, echoed in the answer.
         stamp: u64,
     },
-    /// What capture needs of the vault for a message with `subject`.
     Vault {
-        /// The message's subject.
         subject: String,
-        /// The capture's stamp, echoed in the answer.
         stamp: u64,
     },
-    /// Append a task to the vault.
     CaptureTask {
         /// Its project; `None` for the tasks note.
         project: Option<postio_vault::Project>,
-        /// The task.
         task: postio_vault::Task,
-        /// The capture's stamp, echoed in the answer.
         stamp: u64,
     },
-    /// Append a note entry to the vault.
     CaptureNote {
-        /// The note, relative to the vault.
         note: std::path::PathBuf,
-        /// The entry.
         entry: postio_vault::NoteEntry,
-        /// The capture's stamp, echoed in the answer.
         stamp: u64,
     },
-    /// The strip's counts and the review queue.
     ContactsOverview,
-    /// A page of the Contacts list for a tab.
     ContactsPage {
-        /// The tab.
         tab: postio_model::ContactTab,
-        /// Past this row.
         after: Option<(String, postio_model::ContactId)>,
-        /// Then this many rows.
         skip: u32,
-        /// At most this many.
         limit: u32,
-        /// The list's generation, echoed in the answer.
         stamp: u64,
-        /// The page number, echoed in the answer.
         page: u32,
     },
-    /// The people in a tab matching what was typed.
     ContactsFiltered {
-        /// The tab.
         tab: postio_model::ContactTab,
-        /// What was typed.
         text: String,
-        /// At most this many.
         cap: u32,
-        /// The filter's stamp, echoed in the answer.
         stamp: u64,
     },
-    /// The groups of records that look like one person; those holding any
-    /// of `first` lead.
     ContactReview {
-        /// Who an import just found.
         first: Vec<postio_model::ContactId>,
     },
-    /// Where a person is in a tab's list.
     ContactPosition {
-        /// Who.
         person: postio_model::ContactId,
-        /// Which tab's list.
         tab: postio_model::ContactTab,
     },
-    /// The group these records make, whatever evidence there is.
     ContactMergeOf(Vec<postio_model::ContactId>),
-    /// The name of every contact group.
     ContactGroups,
-    /// What the mail says about a person that the Edit form can keep.
     ContactSeen(postio_model::ContactId),
-    /// Which Suggestions switches are on.
     ContactSuggestions,
-    /// Turn a Suggestions switch on or off.
     ContactSuggestionSet {
-        /// Which.
         which: postio_model::Suggestion,
-        /// To what.
         on: bool,
     },
-    /// A person's card.
     ContactCard {
-        /// Whose.
         person: postio_model::ContactId,
-        /// The card's stamp, echoed in the answer.
         stamp: u64,
     },
-    /// The person at `address`, at a glance, for the popover.
     ContactGlance {
-        /// The address clicked or aimed at.
         address: String,
-        /// The popover's stamp, echoed in the answer.
         stamp: u64,
     },
-    /// Whether this store holds `message`, and its row: what a link opens.
     FindMessage(MessageId),
-    /// The thread `message` is in now, for a window whose thread no longer
-    /// holds the message it shows (a split moved it; a delete removed it).
     ThreadOf(MessageId),
-    /// The draft behind `message`, for the send verb `command` to settle.
     DraftBehind {
-        /// The message aimed at.
         message: MessageId,
-        /// Cancel, retry or mark sent.
         command: CommandId,
     },
 }
 
 impl Request {
-    /// What a request for passages does with a message's first line (D7):
-    /// `None` for any other request.
+    /// `None` for any request but the passages ones.
     pub fn first_line(&self) -> Option<postio_search::passage::FirstLine> {
         match self {
             // Neither the dropdown's hits (screen 03) nor the results' rows
@@ -1301,8 +724,7 @@ impl Request {
         }
     }
 
-    /// The search lane this request is on, when it is one: a newer request
-    /// of the same lane makes the one before it waste (spec 010 D8).
+    /// A newer request of the same lane makes the one before it waste.
     pub fn lane(&self) -> Option<Lane> {
         match self {
             Request::Conversations { .. } => Some(Lane::Conversations),
@@ -1319,103 +741,62 @@ impl Request {
     }
 }
 
-/// The engine's answer to a [`Request`]. A failure is carried as its
-/// sentence: the controller decides what to show, not how to recover.
+/// A failure is carried as its sentence: the controller decides what to show, not how to
+/// recover.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum Reply {
-    /// The answer to [`Request::FocusCounts`].
     FocusCounts(Result<FocusCounts, String>),
-    /// The answer to [`Request::OpenScope`].
     Opened(Opened),
-    /// The answer to [`Request::Page`], with the request's own terms.
     Page {
-        /// Which page.
         page: u32,
-        /// The stamp it was asked under.
         stamp: u64,
-        /// The page's first position.
         start: u32,
-        /// How many positions it spans.
         count: u32,
-        /// The rows, or why there are none.
         answer: Result<PageAnswer, String>,
     },
-    /// The answer to [`Request::Surfaced`].
     Surfaced(Result<Vec<Surfaced>, String>),
-    /// A post was made; nothing to answer.
     Noted,
-    /// A command was sent, or why it could not be.
     Sent(Result<(), String>),
-    /// The answer to [`Request::Places`].
     Places(Result<PlacesRead, String>),
-    /// The answer to [`Request::Conversations`].
     Conversations {
-        /// The stamp it was asked under.
         stamp: u64,
-        /// What it found, boxed: it is the largest answer by far.
         answer: Result<Box<postio_search::results::ConversationResults>, String>,
     },
-    /// The answer to [`Request::Passages`].
     Passages {
-        /// The stamp it was asked under.
         stamp: u64,
-        /// Each hit's matches, with their passages.
         answer: Result<Vec<(MessageId, Vec<postio_search::results::Match>)>, String>,
     },
-    /// The answer to [`Request::ResultsPage`].
     ResultsPage {
-        /// The stamp it was asked under.
         stamp: u64,
-        /// The order asked.
         order: postio_search::results::ConversationOrder,
-        /// The offset asked.
         offset: u32,
-        /// What it found, boxed: it is the largest answer by far.
         answer: Result<Box<postio_search::results::ConversationResults>, String>,
     },
-    /// The answer to [`Request::ResultsPassages`].
     ResultsPassages {
-        /// The stamp it was asked under.
         stamp: u64,
-        /// Each hit's matches, with their passages.
         answer: Result<Vec<(MessageId, Vec<postio_search::results::Match>)>, String>,
     },
-    /// The answer to [`Request::Files`].
     Files {
-        /// The stamp it was asked under.
         stamp: u64,
-        /// The cards, newest first.
         answer: Result<Vec<postio_search::results::FileHit>, String>,
     },
-    /// The answer to [`Request::People`].
     People {
-        /// The stamp it was asked under.
         stamp: u64,
-        /// The rows, most messages first.
         answer: Result<Vec<postio_search::suggest::Person>, String>,
     },
-    /// The answer to [`Request::AttachmentCopy`].
     AttachmentCopy {
-        /// The stamp it was asked under.
         stamp: u64,
         /// What the copy was for.
         purpose: FilePurpose,
-        /// Where the copy is, or nothing when the bytes are not here.
         answer: Result<Option<std::path::PathBuf>, String>,
     },
-    /// The answer to [`Request::QuickLookMatches`].
     QuickLookMatches {
-        /// The stamp it was asked under.
         stamp: u64,
-        /// The conversation's matches, oldest first.
         answer: Result<Vec<postio_search::results::ConversationMatch>, String>,
     },
-    /// The answer to [`Request::Relaxations`].
     Relaxations {
-        /// The stamp it was asked under.
         stamp: u64,
-        /// Each looser search with its count.
         answer: Result<
             Vec<(
                 postio_search::relax::Relaxation,
@@ -1424,214 +805,128 @@ pub enum Reply {
             String,
         >,
     },
-    /// The answer to [`Request::Facets`]: the facets alone, in the
-    /// results' shape.
     Facets {
-        /// The stamp it was asked under.
         stamp: u64,
-        /// What the query finds, hits left out.
         answer: Result<Box<postio_search::results::ConversationResults>, String>,
     },
-    /// The answer to [`Request::Suggest`].
     Suggest {
-        /// The stamp it was asked under.
         stamp: u64,
-        /// What the prefix could become.
         answer: Result<Box<postio_search::suggest::Suggestions>, String>,
     },
-    /// The answer to [`Request::LatestFrom`].
     LatestFrom {
-        /// The stamp it was asked under.
         stamp: u64,
-        /// Whose they are.
         address: String,
-        /// Their latest conversations.
         answer: Result<Box<postio_search::results::ConversationResults>, String>,
     },
-    /// The answer to [`Request::ReadThread`].
     ThreadRead {
         /// The thread asked for.
         thread: ThreadId,
-        /// Its view, `None` when it is gone, or why it could not be read.
         view: Result<Option<ThreadView>, String>,
     },
-    /// The answer to [`Request::SetForwardForm`].
     Forwarded {
-        /// The form asked for.
         form: postio_model::ForwardForm,
-        /// The draft in that form, or the messages that are not here.
         answer: Result<postio_model::Forwarded, String>,
     },
-    /// The answer to [`Request::ReplyToLatest`].
     RepliedToLatest(Result<Box<postio_model::Draft>, String>),
-    /// The answer to [`Request::RecentSearches`],
-    /// [`Request::RememberSearch`] and [`Request::ForgetSearch`].
     RecentSearches(Result<Vec<postio_client::protocol::RecentSearch>, String>),
-    /// The answer to [`Request::SavedCounts`].
     SavedCounts(Result<Vec<postio_client::protocol::SavedCount>, String>),
-    /// The answer to [`Request::RoleFolder`]: the folder and its name.
     RoleFolder(Option<(MailboxId, String)>),
-    /// The answer to [`Request::Labels`].
     Labels {
-        /// The stamp it was asked under.
         stamp: u64,
-        /// What was read.
         answer: Result<LabelsRead, String>,
     },
-    /// The answer to [`Request::CreateLabel`].
     LabelCreated {
-        /// The stamp it was asked under.
         stamp: u64,
-        /// The label made.
         answer: Result<postio_model::Label, String>,
     },
-    /// The answer to [`Request::Folders`].
     Folders {
-        /// The stamp it was asked under.
         stamp: u64,
-        /// What was read.
         answer: Result<FoldersRead, String>,
     },
-    /// The answer to [`Request::Accounts`].
     Accounts(Result<AccountsRead, String>),
-    /// The answer to [`Request::FilteredTabs`].
     FilteredTabs(Result<Vec<(String, u32)>, String>),
-    /// The answer to [`Request::Filtered`].
     Filtered {
-        /// The stamp it was asked under.
         stamp: u64,
-        /// The page's first row.
         offset: u32,
-        /// The rows, newest first.
         answer: Result<Vec<postio_client::protocol::FilteredRow>, String>,
     },
-    /// The answer to [`Request::SweepPreview`].
     SweepPreview(Result<u32, String>),
-    /// The answer to [`Request::DigestRead`].
     DigestRead {
-        /// The stamp it was asked under.
         stamp: u64,
-        /// What the delivery holds, newest first.
         rows: Result<Vec<postio_model::listing::MessageSummary>, String>,
-        /// Its summary, when one was asked for and one is written.
         summary: Option<postio_model::summary::DigestSummary>,
     },
-    /// The answer to [`Request::Unsubscribe`]: the list's name.
     Unsubscribed(Result<String, String>),
-    /// The answer to [`Request::DigestPreview`].
     DigestPreview {
-        /// The stamp it was asked under.
         stamp: u64,
-        /// What the rule would have caught.
         answer: Result<postio_client::protocol::DigestPreview, String>,
     },
-    /// The answer to [`Request::DigestLikeThis`]: the queries proposed, or
-    /// none.
     LikeThis {
-        /// The stamp it was asked under.
         stamp: u64,
-        /// The rule's queries, when the model found one.
         answer: Result<Option<Vec<String>>, String>,
     },
-    /// The answer to [`Request::SaveDigestRule`].
     RuleSaved {
-        /// The stamp it was asked under.
         stamp: u64,
-        /// Whether it was written, or the sentence saying why not.
         answer: Result<(), String>,
     },
-    /// The answer to [`Request::Vault`].
     Vault {
-        /// The stamp it was asked under.
         stamp: u64,
-        /// The vault's projects, the suggestion and the tasks.
         answer: Result<postio_client::protocol::VaultPicture, String>,
     },
-    /// The answer to [`Request::CaptureTask`] and [`Request::CaptureNote`].
     Captured {
-        /// The stamp it was asked under.
         stamp: u64,
-        /// Whether it was written, or the sentence saying why not.
         answer: Result<(), String>,
     },
-    /// The answer to [`Request::ContactsOverview`].
     ContactsOverview(Result<postio_model::ContactsOverview, String>),
-    /// The answer to [`Request::ContactsPage`].
     ContactsPage {
-        /// The stamp it was asked under.
         stamp: u64,
-        /// The page.
         page: u32,
-        /// The rows, or why not.
         answer: Result<postio_model::ContactsPageRead, String>,
     },
-    /// The answer to [`Request::ContactsFiltered`].
     ContactsFiltered {
-        /// The stamp it was asked under.
         stamp: u64,
-        /// The people, or why not.
         answer: Result<Vec<postio_model::ContactListRow>, String>,
     },
-    /// The answer to [`Request::ContactPosition`].
     ContactPosition {
         /// Who was asked about.
         person: postio_model::ContactId,
-        /// Their place, or `None` when they are not in the list.
         at: Option<u32>,
     },
-    /// The answer to [`Request::ContactReview`].
     ContactReview(Vec<postio_model::MergeGroup>),
-    /// The answer to [`Request::ContactMergeOf`].
     ContactMergeOf(Option<Box<postio_model::MergeGroup>>),
-    /// The answer to [`Request::ContactGroups`].
     ContactGroups(Result<Vec<String>, String>),
-    /// The answer to [`Request::ContactSeen`].
     ContactSeen(Vec<postio_model::SeenItem>),
-    /// The answer to [`Request::ContactSuggestions`] and
-    /// [`Request::ContactSuggestionSet`]: all four, or why not.
     ContactSuggestions(Result<postio_model::ContactSuggestions, String>),
-    /// The answer to [`Request::ContactCard`].
     ContactCard {
         /// The stamp it was asked under.
         stamp: u64,
-        /// The card, `None` for someone gone, or why not.
         answer: Result<Option<Box<postio_model::ContactCardRead>>, String>,
     },
     /// The answer to [`Request::ContactGlance`]: the person, or `None` for an
     /// address the store never saw.
     ContactGlance {
-        /// The stamp it was asked under.
         stamp: u64,
-        /// What the popover shows.
         glance: Result<Option<Box<postio_model::ContactGlance>>, String>,
     },
-    /// The answer to [`Request::FindMessage`]: its row, when it is here.
     FoundMessage {
         /// The message asked about.
         message: MessageId,
-        /// Its row, or `None` when the store does not hold it.
         row: Option<postio_model::listing::MessageSummary>,
     },
-    /// The answer to [`Request::ThreadOf`].
     ThreadOf {
         /// The message asked about.
         message: MessageId,
-        /// Its thread, `None` when the store no longer holds it.
         thread: Option<ThreadId>,
     },
-    /// The answer to [`Request::DraftBehind`].
     DraftBehind {
-        /// The message asked about.
         message: MessageId,
         /// The send verb that asked.
         command: CommandId,
-        /// The draft behind it, or `None` when it is no draft.
         draft: Option<postio_model::DraftId>,
     },
 }
 
-/// Focus's behaviour for one window. `Send`, and plain data: no toolkit
-/// object, no executor, no client.
+/// `Send`, and plain data: no toolkit object, no executor, no client.
 #[derive(Debug)]
 pub struct FocusController {
     policy: Policy,
@@ -1643,12 +938,10 @@ pub struct FocusController {
     surfaces: surfaces::Surfaces,
     bar: bar::Bar,
     pickers: pickers::Pickers,
-    /// The draft the toast showing can take back: a queued send's own Undo,
-    /// which Undo runs before the stack's, until a newer toast replaces it.
+    /// A queued send's own Undo, which Undo runs before the stack's, until a newer toast replaces
+    /// it.
     toast_undo: Option<postio_model::DraftId>,
-    /// What the frontend says its open message shows (`Input::Shown`).
     shown: Option<MessageId>,
-    /// The strip's counts, as the host last said.
     counts: Option<FocusCounts>,
     states: states::States,
     keys: keys::Keys,
@@ -1658,49 +951,28 @@ pub struct FocusController {
     capture: Option<capture::Capture>,
     contact_popover: Option<contact_popover::ContactPopover>,
     contacts: Option<contacts::Contacts>,
-    /// Settings > Contacts' Suggestions switches, once the pane has asked.
     contacts_settings: Option<contacts_settings::Settings>,
-    /// Who the last import made or matched: the review's first look.
     import_found: Vec<postio_model::ContactId>,
-    /// The first person the last import made, until the cursor has gone to
-    /// them.
     import_cursor: Option<postio_model::ContactId>,
     confirm: Option<confirm::Asked>,
-    /// The composer, and the composition in it.
     compose: compose::Compose,
-    /// Stamps the surfaces' reads, so an answer for one since moved on is
-    /// dropped.
     stamps: u64,
-    /// The main window's results, while it shows them (spec 010 D17).
     results: Option<results::Results>,
-    /// What the main window showed before, and after (spec 010 R9).
     history: history::History,
-    /// The thread expanded in place, when one is (spec 013 US1).
     expansion: Option<thread_expand::Expansion>,
-    /// A thread read that something waits on.
     pending: Option<thread_expand::Pending>,
-    /// A thread row and the message opening it opened: the row is not
-    /// opened again for showing a message other than its own.
+    /// The row is not opened again for showing a message other than its own.
     opened_from: Option<(MessageId, MessageId)>,
-    /// The thread of the message on screen, while a window is up (spec 013
-    /// US3).
     walk: Option<walk::Walk>,
-    /// A window opened whose thread read has not come back.
     walk_asked: Option<walk::Opening>,
-    /// The thread a read in hand gave to the message just opened, so its
-    /// walk begins without a second read.
     walk_seed: Option<ThreadView>,
-    /// The window has a thread bar up, which something must take away when
-    /// no walk is left to own it.
+    /// Something must take the thread bar away when no walk is left to own it.
     bar_up: bool,
-    /// How many thread-bar chips the window has room for.
     bar_room: u32,
-    /// The thread menu and outline over the window (spec 013 US5).
     thread_ui: thread_menu::ThreadUi,
 }
 
 impl FocusController {
-    /// A controller for one window, under its platform's policy.
     pub fn new(policy: Policy) -> Self {
         FocusController {
             policy,
@@ -1743,38 +1015,30 @@ impl FocusController {
         }
     }
 
-    /// The policy this controller was made with.
     pub fn policy(&self) -> Policy {
         self.policy
     }
 
-    /// Tell the controller what happened; get back what to do. For inputs
-    /// that need no rows; [`handle_on`](Self::handle_on) for the rest.
     pub fn handle(&mut self, input: Input) -> Vec<Effect> {
         self.handle_on(input, &NoRows)
     }
 
-    /// Tell the controller what happened, over the list as the frontend
-    /// holds it; get back what to do.
     pub fn handle_on(&mut self, input: Input, rows: &dyn Rows) -> Vec<Effect> {
         // A message a hit opened, closed however it was: the bar comes back
         // on its words.
         let reading = self.surfaces.has(SurfaceKind::Message);
-        // An expanded thread's children are rows to everything below.
         let raw = rows;
         let through = self.through(raw);
         let rows: &dyn Rows = through.as_ref().map_or(raw, |through| through);
         let mut stepped = self.filtered_thread_input(&input);
-        if stepped.is_none() || Self::also_for_the_rest(&input) {
-            // A change to a thread is news to both lists' expansions.
-            if let Some(steps) = self.thread_input(&input, raw, rows) {
-                stepped.get_or_insert_with(Vec::new).extend(steps);
-            }
+        if (stepped.is_none() || Self::also_for_the_rest(&input))
+            && let Some(steps) = self.thread_input(&input, raw, rows)
+        {
+            stepped.get_or_insert_with(Vec::new).extend(steps);
         }
         let mut effects = match stepped {
             Some(steps) => {
                 let mut effects = self.effects(steps);
-                // A thread change is also news to the rest of the list.
                 if Self::also_for_the_rest(&input) {
                     effects.extend(self.handle_input(input, rows));
                 }
@@ -1786,12 +1050,9 @@ impl FocusController {
             let steps = self.hit_closed(rows);
             effects.extend(self.effects(steps));
         }
-        // A message put up in the window begins its thread's walk.
         let was_walking = self.walk.is_some();
         let steps = self.walk_after(&effects, rows);
         effects.extend(self.effects(steps));
-        // The window closed: the footer behind it was the window's, and is
-        // the cursor's row's again.
         if was_walking
             && self.walk.is_none()
             && let Some(position) = self.cursor.position()
@@ -1800,15 +1061,9 @@ impl FocusController {
         {
             effects.push(Effect::Show(Intent::Footer(footer)));
         }
-        // The composer gone however it went -- its window's close button,
-        // another window in its place (M4) -- ends its composition, saved.
         let steps = self.composer_gone();
         effects.extend(self.effects(steps));
-        // The cursor moved: the footer says what its row or child is, and
-        // what the keys reach from there.
         let footer = self.footer_after(&effects, raw).or_else(|| {
-            // An expansion opened or folded under the cursor: the row's
-            // footer offers the other of Right and Left now.
             let respliced = effects.iter().any(|effect| {
                 matches!(
                     effect,
@@ -1827,9 +1082,6 @@ impl FocusController {
         effects
     }
 
-    /// An input a thread surface takes part in and the rest of the controller
-    /// hears as well: an event, and the answer to "where is this message's
-    /// thread", which a window's walk asks as well.
     fn also_for_the_rest(input: &Input) -> bool {
         matches!(
             input,
@@ -1838,14 +1090,11 @@ impl FocusController {
     }
 
     fn handle_input(&mut self, input: Input, rows: &dyn Rows) -> Vec<Effect> {
-        // A picker's keys are its own while it is up.
         if let Input::Command(id) = &input
             && let Some(steps) = self.picker_command(*id)
         {
             return self.effects(steps);
         }
-        // The results are the main window's while they are up: their keys
-        // are theirs, and a verb acts on the focused result.
         if let Input::Command(id) = &input
             && self.surfaces.top().is_none()
             && let Some(steps) = self.results_command(*id)
@@ -1988,7 +1237,6 @@ impl FocusController {
                 let steps = self.surface_reply(reply, rows);
                 self.effects(steps)
             }
-            // So do the results'.
             Input::Reply(
                 _,
                 reply @ (Reply::ResultsPage { .. }
@@ -2042,7 +1290,6 @@ impl FocusController {
                 self.rereading(&steps, rows);
                 self.effects(steps)
             }
-            // Read by `thread_input` before it gets here.
             Input::Reply(_, Reply::ThreadRead { .. }) => Vec::new(),
             Input::Reply(_, Reply::Noted) => Vec::new(),
             Input::Reply(_, Reply::Sent(result)) => {
@@ -2296,20 +1543,11 @@ impl FocusController {
         }
     }
 
-    /// The folders popover's places whose names hold `filter`, case aside,
-    /// in the order it lists them, each with the token [`Input::OpenPlace`]
-    /// goes to it by.
     pub fn places(&self, filter: &str) -> Vec<(u64, postio_ui::places::Entry)> {
         self.listed_places(filter)
     }
 
-    /// The list has landed or moved (the frontend's "filled"), `opened` when
-    /// this is the first landing of a place just opened: the cursor goes to
-    /// the first row, or back to the message `!` kept, and the strip's
-    /// counts are asked for again.
     pub fn landed(&mut self, rows: &dyn Rows, opened: bool) -> Vec<Effect> {
-        // An expanded row that left the list folds first, and the cursor
-        // settles on the rows as they now are.
         let raw = rows;
         let mut steps = self.expansion_followed(rows);
         let through = self.through(rows);
@@ -2325,12 +1563,9 @@ impl FocusController {
                 steps.push(feed::Step::Show(Intent::CloseSurface(SurfaceKind::Message)));
                 steps.push(feed::Step::Show(Intent::KeyboardHome));
             }
-            // A place just opened with nothing in it: the message open over
-            // the list came from the place left, and is not in this one. It
-            // closes, or its verbs would act on mail no longer in view
-            // (#1757: `e` in an empty Snoozed archived the inbox's message).
-            // The thread's walk goes with it, so the footer is no longer
-            // the window's.
+            // A place just opened with nothing in it: the message open over the list came from the
+            // place left, and its verbs would act on mail no longer in view (#1757). The thread's
+            // walk goes with it.
             None if opened && rows.is_empty() && self.surfaces.reading().is_some() => {
                 steps.extend(self.walk_close());
             }
@@ -2338,20 +1573,16 @@ impl FocusController {
         }
         steps.extend(self.show_empty());
         let mut effects = self.effects(steps);
-        // The cursor went to a row as the list landed: the footer says what
-        // it is. A landing that did not move it may still be the first with
-        // its row read (the page arrived after the cursor did), so the
-        // footer is said again from where it is, unless a message window
-        // owns the footer.
+        // A landing that did not move the cursor may still be the first with its row read, so the
+        // footer is said again from where it is, unless a message window owns it.
         let footer = self
             .footer_after(&effects, raw)
             .or_else(|| {
                 let position = self.cursor.position().filter(|_| self.walk.is_none())?;
                 thread_expand::footer_at(self.expansion.as_ref(), position, raw, self.keymap())
             })
-            // A list that landed with no rows has no row to name: the
-            // footer of the place left behind would offer verbs on a
-            // message that is not here (#2195).
+            // No row to name: the footer of the place left behind would offer verbs on a message
+            // that is not here (#2195).
             .or_else(|| {
                 (rows.is_empty() && self.walk.is_none()).then(postio_ui::scope::FooterView::default)
             });
@@ -2362,23 +1593,18 @@ impl FocusController {
         effects
     }
 
-    /// Whether any surface the frontend reported is over the list.
     pub fn has_surface(&self) -> bool {
         self.surfaces.top().is_some()
     }
 
-    /// The surface on top of the stack, when one is.
     pub fn top_surface(&self) -> Option<SurfaceKind> {
         self.surfaces.top()
     }
 
-    /// Who runs `id` with the surfaces now over the list: the table a
-    /// frontend that keeps some surfaces' widgets itself reads.
     pub fn route(&self, id: CommandId) -> Route {
         self.surfaces.route(id)
     }
 
-    /// The key context in force: the top surface's, or the list's.
     pub fn key_context(&self) -> postio_ui::keymap::KeyContext {
         if self.surfaces.top().is_none() && self.results.is_some() {
             return postio_ui::keymap::KeyContext::Results;
@@ -2386,13 +1612,10 @@ impl FocusController {
         self.surfaces.key_context()
     }
 
-    /// The message the open message surface shows, while it is on top.
     pub fn reading(&self) -> Option<MessageId> {
         self.surfaces.reading()
     }
 
-    /// The open message, when the frontend shows one that is not the
-    /// cursor's row.
     fn shown_apart(&self, rows: &dyn Rows) -> Option<MessageId> {
         let shown = self.shown?;
         (self.surfaces.top() == Some(SurfaceKind::Message)
@@ -2400,8 +1623,6 @@ impl FocusController {
         .then_some(shown)
     }
 
-    /// What a verb needs to know of `shown`: its row's facts when the list
-    /// holds it, else the message alone.
     fn shown_facts(&self, shown: MessageId, rows: &dyn Rows) -> RowFacts {
         rows.position_of(shown)
             .and_then(|at| rows.facts(at))
@@ -2414,8 +1635,6 @@ impl FocusController {
             })
     }
 
-    /// Whether `id` sends the message it is about out of the list being
-    /// read: Archive and Delete, and Unsnooze from the Snoozed list.
     fn leaves_the_list(&self, id: CommandId) -> bool {
         match id {
             CommandId::Archive | CommandId::Delete => true,
@@ -2427,14 +1646,11 @@ impl FocusController {
         }
     }
 
-    /// A command on the list, by the cursor's and the verbs' rules.
     fn list_command(&mut self, id: CommandId, rows: &dyn Rows) -> Vec<Effect> {
         let steps = self.list_steps(id, rows);
         self.effects(steps)
     }
 
-    /// What a command on the list does: the bar's and the places', the
-    /// cursor's, then the verbs'.
     fn list_steps(&mut self, id: CommandId, rows: &dyn Rows) -> Vec<feed::Step> {
         // A toast with an Undo of its own -- a send, queued -- is the last
         // thing said, so Undo takes that back first (#1752).
@@ -2468,8 +1684,6 @@ impl FocusController {
                 steps.extend(self.contacts_go_to_import());
                 return steps;
             }
-            // `g w` from anywhere: Contacts, and the queue read once its
-            // counts are asked for.
             CommandId::ContactsSuggestions if self.policy.caps.contacts_view => {
                 let mut steps = self.open_contacts();
                 steps.extend(self.contacts_review_ask());
@@ -2478,16 +1692,13 @@ impl FocusController {
             }
             _ => {}
         }
-        // A message open that is on no cursor row -- a search hit, a digest's
-        // email -- is what a verb is about, not the row the cursor was left
-        // on.
+        // A message open that is on no cursor row (a search hit, a digest's email) is what a verb
+        // is about.
         if let Some(shown) = self.shown_apart(rows) {
             if pickers::opens_picker(id) {
                 return self.picker_on_message(id, shown, rows).unwrap_or_default();
             }
             if let Some(mut steps) = self.verbs.command_on(id, &self.shown_facts(shown, rows)) {
-                // No row of the cursor's is going to leave for a step past
-                // to wait on: the message goes with the verb.
                 if self.leaves_the_list(id) {
                     self.surfaces.dismiss(SurfaceKind::Message);
                     steps.push(feed::Step::Show(Intent::CloseSurface(SurfaceKind::Message)));
@@ -2526,7 +1737,6 @@ impl FocusController {
             .unwrap_or_default()
     }
 
-    /// The delivery of the digest the cursor is on, when it is on one.
     fn digest_at_cursor(&self, rows: &dyn Rows) -> Option<postio_model::DeliveryId> {
         let row = self.cursor.row(rows).filter(|row| row.digest)?;
         let position = self.cursor.position()?;
@@ -2536,36 +1746,26 @@ impl FocusController {
         }
     }
 
-    /// Where a verb would go now: the selection when there is one, the
-    /// cursor's row otherwise. The whole-thread aim, which is what the
-    /// thread verbs (archive and the like) reach; a message verb on a row
-    /// is aimed by its own command (spec 013 D2).
+    /// The whole-thread aim, which is what the thread verbs reach; a message verb on a row is aimed
+    /// by its own command.
     pub fn aim(&self, rows: &dyn Rows) -> Aimed {
         self.aim_for(rows, CommandId::Archive)
     }
 
-    /// Where `action` would go now: a child is its own message for a reply
-    /// or a forward, and its thread for an archive.
     pub fn aim_for(&self, rows: &dyn Rows, action: CommandId) -> Aimed {
         let through = self.through(rows);
         let rows: &dyn Rows = through.as_ref().map_or(rows, |through| through);
         verbs::Verbs::aimed(&self.cursor, rows, action)
     }
 
-    /// Whether an undo is waiting for the rows it brings back to be in the
-    /// list.
     pub fn restoring(&self) -> bool {
         self.verbs.restoring()
     }
 
-    /// Whether a landing put the cursor on a row an undo brought back, since
-    /// this was last asked: true once per undo.
     pub fn take_restored(&mut self) -> bool {
         self.verbs.take_restored()
     }
 
-    /// Open the row at `position`: a message to read, a draft to write, a
-    /// digest's window.
     fn open_at(&mut self, position: u32, rows: &dyn Rows) -> Vec<feed::Step> {
         let Some(row) = rows.facts(position) else {
             return Vec::new();
@@ -2573,7 +1773,6 @@ impl FocusController {
         if row.digest {
             return self.open_digest(row.id, position, rows);
         }
-        // A draft not yet on its way opens to be written (spec 007 US11).
         if row.writes {
             return self.write(ComposerKind::Draft, Some(row.id));
         }
@@ -2582,17 +1781,12 @@ impl FocusController {
             .open(&row, index, total, self.policy.caps.stacking)
     }
 
-    /// A command while a surface is over the list, or `None` when the
-    /// surface has no say and the list's rules apply (contract invariant 5).
     fn surface_command(&mut self, id: CommandId, rows: &dyn Rows) -> Option<Vec<feed::Step>> {
-        // Back on the bar takes it off the stack here, as running a line
-        // does, rather than waiting for the frontend's `SurfaceClosed`: the
-        // controller puts the bar up and takes it down itself (slice 8).
+        // Back on the bar takes it off the stack here rather than waiting for the frontend's
+        // `SurfaceClosed`.
         if self.surfaces.top() == Some(SurfaceKind::Bar) && id == CommandId::Back {
             return Some(self.dismiss_bar(false));
         }
-        // The composer takes its own keys; Esc and the writing verbs are
-        // the controller's.
         if self.surfaces.top() == Some(SurfaceKind::Composer) {
             return Some(self.composer_command(id, rows));
         }
@@ -2624,11 +1818,8 @@ impl FocusController {
         }
         if self.surfaces.top() != Some(SurfaceKind::Message) {
             let closed = self.surfaces.close_top(id);
-            // A dialog closed there takes what it held with it.
             self.forget_closed();
             return closed.or_else(|| {
-                // The key map and a dialog take the keyboard: what does not
-                // close them does nothing (GTK's dialog close rule).
                 (self.surfaces.takes_keyboard() && keys::key_map_takes(id)).then(Vec::new)
             });
         }
@@ -2647,18 +1838,14 @@ impl FocusController {
         }
         let position = rows.position_of(reading);
         match id {
-            // A message the bar opened walks the bar's hits.
             CommandId::NextMessage | CommandId::PrevMessage
                 if self.hit_facts(reading).is_some() =>
             {
                 let by = if id == CommandId::NextMessage { 1 } else { -1 };
                 let mut steps = self.step_hit(reading, by)?;
-                // A message a result opened: the focus ring follows it.
                 steps.extend(self.results_follow(self.surfaces.reading()));
                 Some(steps)
             }
-            // `j`/`k` step the list behind the message, and the message
-            // follows the cursor; nothing closes.
             CommandId::NextMessage | CommandId::PrevMessage => {
                 let by = if id == CommandId::NextMessage { 1 } else { -1 };
                 let (mut steps, moved) = self.cursor.step(by, rows);
@@ -2667,8 +1854,6 @@ impl FocusController {
                 }
                 Some(steps)
             }
-            // `g g` and `G` go to the first and the last, and the message
-            // shows that one, as `j` shows the next.
             CommandId::FirstMessage | CommandId::LastMessage => {
                 let has_action = self.counts.map(|counts| counts.has_action);
                 let total = self.feed.total();
@@ -2683,26 +1868,20 @@ impl FocusController {
                 }
                 Some(steps)
             }
-            // `i` on the message on screen: who it is from, at a glance.
             CommandId::ContactPopover => Some(self.open_contact_popover(None, rows)),
-            // `-` takes the marker off the message on screen alone.
             CommandId::DismissMarker => Some(self.verbs.post(Command::DismissMarker {
                 target: MessageTarget::Messages(vec![reading]),
                 dismissed: true,
             })),
-            // `Return` on the message on screen: Edit, on a draft on its
-            // way or stopped; else it is open already.
             CommandId::OpenMessage => Some(self.edit_open_draft(rows).unwrap_or_default()),
-            // A picker hangs from the message, aimed at it alone.
             _ if pickers::opens_picker(id) => self.picker_on_message(id, reading, rows),
             _ => {
                 let row = position
                     .and_then(|at| rows.facts(at))
                     .or_else(|| self.hit_facts(reading))?;
                 let mut steps = self.verbs.command_on(id, &row)?;
-                // The message goes away, and the one that takes its place
-                // shows once the list lets it go (T190); so does waking one
-                // from the Snoozed list it is leaving (T238).
+                // The message goes away, and the one that takes its place shows once the list lets
+                // it go.
                 if self.leaves_the_list(id)
                     && let Some(at) = position
                 {
@@ -2713,9 +1892,6 @@ impl FocusController {
         }
     }
 
-    /// The cursor is on a row the open message does not show: show it, or,
-    /// for a draft or a digest, which are not read in place, put the message
-    /// away.
     fn follow_cursor(&mut self, rows: &dyn Rows) -> Vec<feed::Step> {
         if self.surfaces.top() != Some(SurfaceKind::Message) {
             return Vec::new();
@@ -2742,9 +1918,6 @@ impl FocusController {
         self.open_at(at, rows)
     }
 
-    /// Whether `id` is one of the controller's own commands: the cursor's,
-    /// the selection's, `!`, and the verbs on the list. A frontend sends the
-    /// rest -- a surface's commands, the composer's -- where it always did.
     pub fn answers(&self, id: CommandId) -> bool {
         if self.surfaces.top() == Some(SurfaceKind::Bar) && bar::bar_key(id) {
             return true;
@@ -2827,49 +2000,37 @@ impl FocusController {
             || postio_ui::focus_target::dispatch(id).is_some()
     }
 
-    /// The cursor's row, if it has one.
     pub fn cursor(&self) -> Option<u32> {
         self.cursor.position()
     }
 
-    /// What is selected: what `a` would act on.
     pub fn selection(&self) -> Selection {
         self.cursor.selection()
     }
 
-    /// The conversations each selected row stands for, kept from when it
-    /// was selected: a row scrolled out of the window is still aimed at in
-    /// full (spec 007 T161). Empty with nothing selected.
+    /// Kept from when it was selected, so a row scrolled out of the window is still aimed at in
+    /// full. Empty with nothing selected.
     pub fn selection_reach(
         &self,
     ) -> &std::collections::HashMap<MessageId, Vec<postio_model::ThreadId>> {
         self.cursor.reach()
     }
 
-    /// Whether the list is narrowed to the rows with a marker (`!`).
     pub fn has_action(&self) -> bool {
         self.cursor.has_action()
     }
 
-    /// The frontend's own list view put the cursor on `position` -- a click,
-    /// a row archived from under it -- or took it off the list (`None`).
-    /// The controller notes where it is, so the next `j` walks on from
-    /// there, and draws nothing: the cursor is already in place.
+    /// The controller notes where it is, so the next `j` walks on from there, and draws nothing.
     pub fn cursor_is(&mut self, position: Option<u32>) {
         self.cursor.moved_to(position);
     }
 
-    /// Drop the selection, as Back's last rung does; the cursor and `!`
-    /// stay. For a frontend whose own action ends a selection (a picker
-    /// closed, a row's menu for a row outside it).
     pub fn clear_selection(&mut self) -> Vec<Effect> {
         let steps = self.cursor.clear(self.feed.total());
         self.effects(steps)
     }
 
-    /// The frontend takes the list to a place it opens itself: the
-    /// selection goes, `!` is off, a heading a day comes back. The caller
-    /// opens the place and names it ([`Self::note_place`]).
+    /// The caller opens the place and names it with `note_place`.
     pub fn leave_list(&mut self) -> Vec<Effect> {
         self.expansion = None;
         let mut steps = self.cursor.leave(self.feed.total());
@@ -2877,18 +2038,14 @@ impl FocusController {
         self.effects(steps)
     }
 
-    /// The bindings in force: what every keycap the controller spells
-    /// says, and what [`press`](Self::press) resolves.
     pub fn keymap(&self) -> &postio_core::Keymap {
         self.bar.keymap()
     }
 
-    /// The strip's counts, as the host last said.
     pub fn counts(&self) -> Option<FocusCounts> {
         self.counts
     }
 
-    /// Show `scope` in the list: counted first, then the list changes over.
     pub fn open(&mut self, scope: ListScope) -> Vec<Effect> {
         self.expansion = None;
         self.cursor.opening();
@@ -2896,52 +2053,41 @@ impl FocusController {
         vec![Effect::Ask(self.ticket(), request)]
     }
 
-    /// The list wants `page`, under its own `stamp` (GTK's model generation,
-    /// the Mac's window generation): every answer for it carries the stamp
-    /// back for the list to check.
+    /// The stamp is the list's own (GTK's model generation, the Mac's window generation), echoed in
+    /// every answer.
     pub fn page_wanted(&mut self, page: u32, stamp: u64) -> Vec<Effect> {
         let steps = self.feed.wanted(page, stamp);
         self.effects(steps)
     }
 
-    /// The place in view, once one is open.
     pub fn scope(&self) -> Option<ListScope> {
         self.feed.scope()
     }
 
-    /// How many rows the place in view draws, as the store last said.
     pub fn list_total(&self) -> u32 {
         self.feed.total()
     }
 
-    /// Every page asked of the store, in order.
     pub fn pages_asked(&self) -> &[u32] {
         self.feed.pages_asked()
     }
 
-    /// Whether the first page of the place in view has landed.
     pub fn has_landed(&self) -> bool {
         self.feed.has_landed()
     }
 
-    /// True once per opening, after its first page lands.
     pub fn take_opened(&mut self) -> bool {
         self.feed.take_opened()
     }
 
-    /// Whether `mailbox` is one of the inboxes Focus's inbox is made of.
     pub fn is_inbox(&self, mailbox: MailboxId) -> bool {
         self.feed.is_inbox(mailbox)
     }
 
-    /// The cursor's `index` among the messages of a list of `total` rows,
-    /// and how many messages it holds, digests not counted.
     pub fn message_place(&self, index: u32, total: u32) -> (u32, u32) {
         self.feed.message_place(index, total)
     }
 
-    /// When `steps` read the list again, the cursor notes the thread its
-    /// row stands for, to follow it wherever the re-read puts it (#2107).
     fn rereading(&mut self, steps: &[feed::Step], rows: &dyn Rows) {
         if steps
             .iter()
@@ -2956,7 +2102,6 @@ impl FocusController {
             .into_iter()
             .map(|step| match step {
                 feed::Step::Show(intent) => {
-                    // Every toast replaces the one showing, and its Undo.
                     if matches!(intent, Intent::Toast { .. }) {
                         self.toast_undo = None;
                     }
@@ -2965,9 +2110,8 @@ impl FocusController {
                     }
                     Effect::Show(intent)
                 }
-                // Refresh is posted from the key, the bar, a banner's Retry
-                // and a search's results alike, and only here is the place
-                // on screen known to all of them.
+                // Refresh is posted from many places; only here is the place on screen known to all
+                // of them.
                 feed::Step::Ask(Request::Post(Command::Refresh)) => {
                     let viewing = self.viewing();
                     Effect::Ask(self.ticket(), Request::Refresh { viewing })
@@ -2984,8 +2128,7 @@ impl FocusController {
             .collect()
     }
 
-    /// The place on screen as the host's view of it. Every filter of
-    /// Focus's inbox draws from the same inboxes, so each refreshes them all.
+    /// Every filter of Focus's inbox draws from the same inboxes, so each refreshes them all.
     fn viewing(&self) -> Option<postio_core::state::ViewScope> {
         let accounts = self.cursor.accounts();
         match self.feed.scope()? {
@@ -2997,22 +2140,17 @@ impl FocusController {
         }
     }
 
-    /// Ask for the header strip's counts.
     pub fn refresh_counts(&mut self) -> Effect {
         Effect::Ask(self.ticket(), Request::FocusCounts)
     }
 
-    /// Forget every request in flight: their replies, when they come, change
-    /// nothing. Called when what they were for is gone, a place left or a
-    /// list replaced.
+    /// Called when what they were for is gone: a place left or a list replaced.
     pub fn invalidate(&mut self) {
         self.generation += 1;
         self.pending = None;
         self.bar.places_forgotten();
     }
 
-    /// What a surface no longer on the stack held is forgotten: the Mac's
-    /// one secondary window replaced, a window closed by its own button.
     fn forget_closed(&mut self) {
         if !self.surfaces.has(SurfaceKind::Filtered) {
             self.filtered = None;
@@ -3035,7 +2173,6 @@ impl FocusController {
         self.forget_thread_surfaces();
     }
 
-    /// An answer for one of the surfaces over the list.
     fn surface_reply(&mut self, reply: Reply, rows: &dyn Rows) -> Vec<feed::Step> {
         match reply {
             reply @ (Reply::FilteredTabs(_) | Reply::Filtered { .. } | Reply::SweepPreview(_)) => {
@@ -3066,8 +2203,6 @@ impl FocusController {
         }
     }
 
-    /// A command on a message opened from Filtered or a digest's list: `j`/
-    /// `k` walk that list, and a verb reads its conversation from it.
     fn elsewhere_command(
         &mut self,
         id: CommandId,
@@ -3107,8 +2242,6 @@ impl FocusController {
         }
     }
 
-    /// The facts of the open message where no list row holds them: a hit, a
-    /// filtered message, a digest's.
     pub(crate) fn elsewhere_facts(&self, reading: MessageId) -> Option<RowFacts> {
         if let Some(found) = self.hit_facts(reading) {
             return Some(found);
@@ -3122,7 +2255,6 @@ impl FocusController {
         window.facts(window.index_of(reading)?)
     }
 
-    /// A stamp for a surface's read, never used before.
     pub(crate) fn stamp(&mut self) -> u64 {
         self.stamps += 1;
         self.stamps
@@ -3141,9 +2273,6 @@ impl FocusController {
 mod tests {
     use super::*;
 
-    /// The search requests name their lanes, so a driver can abort the one
-    /// a newer request of the same lane makes waste (spec 010 D8); nothing
-    /// else is on a lane, writes least of all.
     #[test]
     fn the_search_requests_name_their_lanes_and_nothing_else_does() {
         let query = postio_search::ParsedQuery::default();
@@ -3185,8 +2314,6 @@ mod tests {
         }
     }
 
-    /// An inbox of ten conversations, `has_action` of them marked: one
-    /// with mail in it, so no empty page follows the counts.
     fn counts(has_action: u32) -> FocusCounts {
         FocusCounts {
             conversations: 10,

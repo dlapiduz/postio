@@ -1,8 +1,5 @@
-//! The thread menu and the outline (spec 013 US5, FR-019).
-//!
-//! Thread ▾ opens a menu in two groups, and `alt+t` an outline of every
-//! message. Both are composed here, from the live keymap, so the Mac and GTK
-//! say the same words and show the keys the person has.
+//! The thread menu and the outline (spec 013 US5), composed from the live keymap so both frontends
+//! show the person's keys.
 
 use chrono::{DateTime, Local};
 use postio_core::{CommandId, Keymap};
@@ -12,49 +9,30 @@ use postio_model::thread_view::ThreadView;
 use crate::hints;
 use crate::thread_list::ChildRowView;
 
-/// One message of the outline.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutlineRow {
-    /// Its place among the thread's members, from 0.
     pub index: usize,
-    /// Its number as the person counts: `index + 1`.
     pub number: u32,
-    /// The message.
     pub message: MessageId,
-    /// The avatar's letters.
     pub initials: String,
-    /// Who wrote it: "You" for the account's own.
     pub name: String,
-    /// Drawn bold: not read yet.
     pub bold: bool,
-    /// Its first line.
     pub line: String,
-    /// When, as every row says it.
     pub date: String,
-    /// The unread dot.
     pub unread: bool,
-    /// The message on screen: ringed.
     pub current: bool,
 }
 
-/// Everything the outline popover draws.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct OutlineView {
-    /// The rows the filter leaves, in thread order.
     pub rows: Vec<OutlineRow>,
-    /// Person chips with their counts, over the whole thread.
     pub people: Vec<(String, u32)>,
-    /// The field's text.
     pub filter: String,
-    /// The chip chosen, if one is.
     pub person: Option<String>,
-    /// The row the keyboard is on, among `rows`.
     pub cursor: usize,
-    /// The footer's `u` keycap, as the keymap has it.
     pub first_unread_key: Option<String>,
 }
 
-/// Every message of `view` as an outline row, `current` the one on screen.
 pub fn rows_of(
     view: &ThreadView,
     current: usize,
@@ -81,8 +59,6 @@ pub fn rows_of(
         .collect()
 }
 
-/// The rows whose name or first line holds `text` (case and accents
-/// ignored) and, when `person` is given, that person's.
 pub fn filter_rows(rows: &[OutlineRow], text: &str, person: Option<&str>) -> Vec<OutlineRow> {
     let needle = postio_model::fold::fold(text.trim());
     rows.iter()
@@ -96,8 +72,6 @@ pub fn filter_rows(rows: &[OutlineRow], text: &str, person: Option<&str>) -> Vec
         .collect()
 }
 
-/// The names in `rows` with how many messages each wrote, in order of first
-/// appearance.
 pub fn people(rows: &[OutlineRow]) -> Vec<(String, u32)> {
     let mut people: Vec<(String, u32)> = Vec::new();
     for row in rows {
@@ -109,12 +83,10 @@ pub fn people(rows: &[OutlineRow]) -> Vec<(String, u32)> {
     people
 }
 
-/// The position, among `rows`, of the first unread message.
 pub fn first_unread(rows: &[OutlineRow]) -> Option<usize> {
     rows.iter().position(|row| row.unread)
 }
 
-/// The outline over `all` the rows, narrowed by `filter` and `person`.
 pub fn outline(
     all: &[OutlineRow],
     filter: &str,
@@ -133,7 +105,6 @@ pub fn outline(
     }
 }
 
-/// What a muted thread's row says: "muted", and the replies since.
 pub fn muted_badge(count: u32) -> String {
     match count {
         0 => "muted".to_owned(),
@@ -141,39 +112,26 @@ pub fn muted_badge(count: u32) -> String {
     }
 }
 
-/// One entry of the thread menu.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MenuEntry {
-    /// The command it runs.
     pub command: CommandId,
-    /// What it says.
     pub title: String,
-    /// The key, from the keymap: "alt+t", "f, 2".
     pub keycap: Option<String>,
-    /// One line under it.
     pub note: Option<String>,
-    /// Whether it can be chosen now.
     pub enabled: bool,
 }
 
-/// A group of entries under a heading.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MenuGroup {
-    /// "Whole thread" or "This message only".
     pub title: String,
-    /// Its entries, top to bottom.
     pub entries: Vec<MenuEntry>,
 }
 
-/// The thread menu.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ThreadMenuView {
-    /// Two groups.
     pub groups: Vec<MenuGroup>,
 }
 
-/// The menu for a thread that is `muted` or not, with `can_split` false when
-/// the message shown is the thread's first.
 pub fn menu(keymap: &Keymap, muted: bool, can_split: bool) -> ThreadMenuView {
     let entry = |command, title: &str, note: Option<&str>| MenuEntry {
         command,
@@ -187,7 +145,6 @@ pub fn menu(keymap: &Keymap, muted: bool, can_split: bool) -> ThreadMenuView {
         "Forward the whole thread",
         Some("As one message, or as attachments"),
     );
-    // `f` then `2` on the chooser: both keys are the keymap's.
     forward.keycap = match (
         hints::key(keymap, CommandId::Forward),
         hints::key(keymap, CommandId::ForwardWhat2),
@@ -366,7 +323,6 @@ mod tests {
     #[test]
     fn the_menu_has_two_groups_with_the_keymaps_keys() {
         let keymap = Keymap::defaults();
-        // The one key that differs by platform: the keymap's own.
         let delete_this = keymap
             .binding(CommandId::DeleteThisMessage)
             .map(str::to_owned);

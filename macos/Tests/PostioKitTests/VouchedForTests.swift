@@ -18,9 +18,8 @@ import Testing
     }
 
     @Test func offlineVouchesForNothing() {
-        // The "showing local mail" banner is drawn from the same signal. A
-        // selection claiming more than the banner does would be the
-        // application contradicting itself on one screen.
+        // The "showing local mail" banner uses the same signal; a selection claiming more would
+        // contradict it.
         #expect(VouchedFor.accounts([account(1), account(2)], offline: true).isEmpty)
     }
 
@@ -29,8 +28,8 @@ import Testing
     }
 
     @Test func aDisabledAccountIsNotVouchedFor() {
-        // It is configured, not current: nothing has been syncing it, so
-        // what is on screen for it is whatever was last pulled down.
+        // A disabled account is configured, not current: what is on screen for it is whatever was
+        // last pulled down.
         let accounts = [account(1), account(2, enabled: false), account(3)]
         #expect(VouchedFor.accounts(accounts, offline: false) == [1, 3])
     }

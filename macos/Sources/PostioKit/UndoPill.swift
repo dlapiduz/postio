@@ -2,17 +2,10 @@ import Foundation
 import PostioFFI
 import SwiftUI
 
-/// What the undo pill says (specs/009-focus-macos T093, screen 15): the
-/// controller's words for what a verb did, and Undo with the key that does
-/// the same while the stack can take it back.
 public struct UndoPillWords: Equatable {
-    /// "Archived 3 messages": the controller's, never composed here.
     public let text: String
-    /// "Undo", while the toast is an undoable completion.
     public let undo: String?
-    /// The keycap beside Undo: the binding in force for `undo` (⌘Z).
     public let cap: String?
-    /// What VoiceOver reads for the pill as a whole.
     public let accessibility: String
 
     public init(toast: FocusIntents.Toast, undoCap: String?) {
@@ -29,21 +22,9 @@ public struct UndoPillWords: Equatable {
     }
 }
 
-/// The undo pill (specs/009-focus-macos T093; screen 15;
-/// contracts/mac-surfaces.md "Undo pill"): a capsule at the bottom centre
-/// of the main window saying what a verb did, with an Undo button and its
-/// ⌘Z keycap while the engine's stack can take it back.
-///
-/// Driven by the controller's `FocusToast`: a new toast replaces the one
-/// showing (`FocusIntents.toastToken` changes, so the timer starts again),
-/// and it goes after the toast's seconds -- the controller's eight, or an
-/// answer's own window. ⌘Z keeps working after it has gone: the pill is a
-/// reminder, the stack is the undo (FR-041).
-///
-/// Drawn as the pack's default buttons are, filled with the primary label
-/// colour and lettered in the background's (the Mac SPEC's "Colour"):
-/// semantic, so light, dark and increased contrast all follow. Its fade is
-/// the window's (`Motion.current`: ≤ 100 ms, none under Reduce Motion).
+/// Driven by the controller's `FocusToast`: a new toast replaces the showing one and restarts the
+/// timer. ⌘Z keeps working after the pill goes: the pill is a reminder, the stack is the undo. Fade
+/// follows `Motion.current` (≤ 100 ms, none under Reduce Motion).
 public struct UndoPill: View {
     let toast: FocusIntents.Toast
     let token: Int
@@ -63,7 +44,6 @@ public struct UndoPill: View {
     }
 
     public static let height: CGFloat = 46
-    /// Between the pill and the window's (or the action bar's) bottom.
     public static let margin: CGFloat = 20
 
     public var body: some View {
@@ -110,8 +90,6 @@ public struct UndoPill: View {
     }
 }
 
-/// A keycap on the pill's inverted fill: `KeyCap`'s geometry, its colours
-/// turned over with the pill's.
 private struct InvertedKeyCap: View {
     let text: String
 

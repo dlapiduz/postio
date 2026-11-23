@@ -1,19 +1,6 @@
-//! Focus's due timer (spec 007 T135, `contracts/engine.md`, "Focus mode in
-//! the host"): on the engine's tick, every digest whose time has come is
-//! delivered.
-//!
-//! A rule's next delivery is the first time its cadence names after the
-//! oldest mail it holds that no delivery has taken
-//! (`postio_ui::schedule::next_due`, on calendar days, safe across a change
-//! of the clocks). When that time has passed, everything the rule holds is
-//! delivered as one digest (FR-123):
-//!
-//! - **as of the latest due time that has passed**, so a digest that came
-//!   due several times while Focus was closed arrives once, holding
-//!   everything since the last delivery, and nothing is lost or doubled;
-//! - **never empty**: a rule holding nothing makes no row (US10 scenario 6);
-//! - **at start**: the timer's first tick is at once, so what came due while
-//!   Focus was closed is there when it opens (US10 scenario 3).
+//! Focus's due timer: on the engine's tick, every digest whose time has come is delivered.
+//! A rule delivers as of the latest due time passed, so several missed deliveries arrive once,
+//! never empty; the first tick is at once.
 
 use chrono::{DateTime, TimeZone, Utc};
 use postio_config::FocusConfig;
@@ -24,12 +11,8 @@ use postio_storage::repository::{
 use postio_storage::{Store, WritePriority};
 use postio_ui::schedule::next_due;
 
-/// Why the timer could not read or deliver.
 type Failure = postio_storage::Error;
 
-/// Deliver every applicable rule in `config` that has come due by `now`, in
-/// `now`'s zone, the one a rule's time is read in. Answers how many digests
-/// it delivered.
 pub(crate) async fn deliver_due<Tz>(
     database: &Store,
     config: &FocusConfig,
@@ -59,7 +42,6 @@ where
         if due_at > *now {
             continue;
         }
-        // The latest time it came due: one digest for all of them.
         while let Some(next) = next_due(&due, &due_at).filter(|next| next <= now) {
             due_at = next;
         }
@@ -75,19 +57,9 @@ where
     Ok(delivered)
 }
 
-/// Fire every reminder that has come due by `now` with no reply (spec 007
-/// US5): each surfaces at the top of Focus's inbox, marked "No reply
-/// since" the day it was set. Answers how many fired.
-///
-/// - **At start too**: the timer's first tick is at once, so a reminder that
-///   came due while Focus was closed surfaces as it opens (FR-045). It needs
-///   nothing but the store, so it fires offline as well.
-/// - **Never over a reply** (FR-044): Focus's filing pass cancels a reminder
-///   as a reply from somebody else is filed, but a reply can reach the store
-///   by a way that pass never sees -- a folder another app synced, a first
-///   sync. So before firing, the timer asks who has written in the
-///   conversation since the reminder was set, and one who is not the person
-///   cancels it instead.
+/// A reminder due while Focus was closed fires at the first tick, offline too. It is never fired
+/// over a reply: a reply can reach the store by a way the filing pass never sees (another app's
+/// folder, a first sync), so the timer checks who has written since and cancels instead.
 pub(crate) async fn fire_reminders(database: &Store, now: DateTime<Utc>) -> Result<usize, Failure> {
     let due = {
         let reader = database.read().await?;
@@ -124,16 +96,9 @@ pub(crate) async fn fire_reminders(database: &Store, now: DateTime<Utc>) -> Resu
     Ok(fired)
 }
 
-/// Settle every surfaced reminder somebody has written in since it fired
-/// (T095), and answer how many: the person's own reply as much as anyone
-/// else's.
-///
-/// The filing pass settles one as another participant's reply is filed,
-/// but the person's own reply is filed in Sent, which that pass does not
-/// read -- and a reply of anyone's can reach the store by a folder another
-/// app synced. So the timer asks, each tick, who has written in each
-/// surfaced conversation since its reminder fired: one seek for the
-/// surfaced reminders, and one a surfaced reminder -- a few, at most.
+/// The person's own reply is filed in Sent, which the filing pass does not read, and another app's
+/// folder can bring any reply; so each tick checks the surfaced conversations (one seek each, a few
+/// at most).
 pub(crate) async fn settle_replied(database: &Store, now: DateTime<Utc>) -> Result<usize, Failure> {
     let surfaced = {
         let reader = database.read().await?;
@@ -174,8 +139,6 @@ pub(crate) async fn settle_replied(database: &Store, now: DateTime<Utc>) -> Resu
     Ok(settled)
 }
 
-/// Make final every answer whose window has closed by `now` (spec 007
-/// research R9): `accepting` becomes `accepted`, `declining` `declined`.
 /// Answers each message it settled, with its account.
 pub(crate) async fn settle_answers(
     database: &Store,

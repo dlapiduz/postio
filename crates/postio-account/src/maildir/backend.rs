@@ -1,21 +1,7 @@
-//! A maildir behind [`MailBackend`].
-//!
-//! Everything above the seam — threading, the windowed list, incremental
-//! passes, the operation queue's replay — is written against this trait, so a
-//! maildir that implements it needs no code of its own anywhere else. What
-//! this module does is translate: folders on disk to mailboxes, filenames to
-//! identities, info letters to flags, and the seam's IMAP-shaped questions
-//! into filesystem answers.
-//!
-//! # What it says it cannot do
-//!
-//! There is no CONDSTORE and no QRESYNC here, and no pretending otherwise: a
-//! maildir has no modification sequence, so [`MailboxStatus::highest_mod_seq`]
-//! is `None`, every [`FetchedMessage::mod_seq`] is `None`, and the sync engine
-//! falls back to comparing listings — which for a local tree is a directory
-//! read, not a round trip. [`MailBackend::existing_uids`] *is* implemented,
-//! because a listing is the cheapest thing a maildir does and it saves the
-//! engine walking a UID range full of holes.
+//! Translates folders to mailboxes, filenames to identities and info letters to flags. No CONDSTORE
+//! or QRESYNC: `highest_mod_seq` and every `mod_seq` are `None`, so the sync engine compares
+//! listings, which for a local tree is a directory read. `existing_uids` is implemented to spare it
+//! a UID range full of holes.
 
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -32,44 +18,27 @@ use crate::backend::{
 };
 use crate::cancel::CancelToken;
 
-/// A [`MailBackend`] over a maildir on this machine.
 #[derive(Debug)]
 pub struct MaildirBackend {
     store: LocalStore,
-    /// The UIDVALIDITY handed to a folder that has never been numbered.
-    ///
-    /// One per backend rather than one per folder, and drawn once at
-    /// construction: two folders numbered in the same session belong to the
-    /// same generation, and a folder that already has a list keeps the
-    /// generation written in it.
+    /// One per backend, drawn once at construction: folders numbered in the same session share a
+    /// generation; a folder with a list keeps its own.
     fresh_validity: u32,
-    /// Whether [`MailBackend::connect`] has been called.
-    ///
-    /// A maildir has no session, but the seam's contract does: a command
-    /// before a connect is [`BackendError::NotConnected`], and callers rely
-    /// on that being true of every backend.
+    /// A command before `connect` is `NotConnected`, which callers rely on for every backend.
     connected: Mutex<bool>,
 }
 
 impl MaildirBackend {
-    /// A backend over the maildir at `root`.
-    ///
-    /// Fails when `root` is not a maildir, with the message a person reads in
-    /// the Add Account sheet — checking here rather than at the first sync is
-    /// the difference between "that is not a maildir" and an account that
-    /// appears to have no mail in it.
+    /// Fails when `root` is not a maildir, so the Add Account sheet says so rather than showing an
+    /// account with no mail.
     pub fn open(root: impl Into<PathBuf>) -> Result<Self, String> {
         let root = root.into();
         LocalStore::looks_like_a_maildir(&root)?;
         Ok(Self::at(root))
     }
 
-    /// A backend over `root`, whatever is there.
-    ///
-    /// What a stored account gets at startup. The tree is not checked here on
-    /// purpose: a launch must not be the moment a moved directory becomes a
-    /// hard error, and [`MailBackend::connect`] is where the seam already
-    /// says "this account cannot be reached" — with the directory named.
+    /// What a stored account gets at startup: the tree is not checked, so a moved directory is not
+    /// a hard error at launch; `connect` reports it.
     pub fn at(root: impl Into<PathBuf>) -> Self {
         Self {
             store: LocalStore::at(root),
@@ -78,17 +47,12 @@ impl MaildirBackend {
         }
     }
 
-    /// The tree this reads.
     pub fn root(&self) -> &std::path::Path {
         self.store.root()
     }
 
-    /// What a maildir can do, in the seam's vocabulary.
-    ///
-    /// `UIDPLUS` and `MOVE` are simply true of a filesystem — a stored message
-    /// is at a path this backend just chose, and a move is one rename — and
-    /// claiming them is what stops the engine paying for the searches that
-    /// stand in for them. Nothing else is claimed.
+    /// `UIDPLUS` and `MOVE` are true of a filesystem, and claiming them spares the engine the
+    /// searches that stand in for them.
     fn advertised() -> Capabilities {
         Capabilities::from_names([
             Capability::UidPlus.as_str(),
@@ -111,18 +75,14 @@ impl MaildirBackend {
         }
     }
 
-    /// The folder at `path`, and everything in it.
     fn look(&self, path: &str) -> BackendResult<(Folder, Snapshot)> {
         let folder = self.store.folder(path)?;
         let snapshot = self.store.snapshot(&folder, self.fresh_validity)?;
         Ok((folder, snapshot))
     }
 
-    /// The entry a [`RemoteId`] names, refusing one from another generation.
-    ///
-    /// A stale id is [`BackendError::NoSuchMessage`] rather than a wrong
-    /// message: the numbers were reassigned, and acting on whatever now holds
-    /// that number would flag or delete mail nobody asked about.
+    /// A stale id is `NoSuchMessage`, not a wrong message: acting on whatever now holds the number
+    /// would flag or delete mail nobody asked about.
     fn resolve<'a>(
         &self,
         snapshot: &'a Snapshot,
@@ -164,7 +124,6 @@ impl MaildirBackend {
                     .filter(|entry| !entry.flags.contains(&Flag::Seen))
                     .count() as u32,
             ),
-            // No modification sequence exists on disk to report.
             highest_mod_seq: None,
             permanent_flags: FlagSet::from_iter([
                 Flag::Seen,
@@ -180,14 +139,8 @@ impl MaildirBackend {
         })
     }
 
-    /// Moves or copies `ids` from one folder to another.
-    ///
-    /// One message at a time, and the destination is read back after each:
-    /// a maildir mints a *new* unique name when a message arrives in a
-    /// folder — that is what makes the name unique, and what a delivery to
-    /// that folder would have done — so the landing place cannot be
-    /// predicted from the source name. Claiming `UIDPLUS` means answering
-    /// this exactly, and looking is the only way to be exact.
+    /// One message at a time, read back after each: a maildir mints a new unique name on arrival,
+    /// so the landing place cannot be predicted, and claiming `UIDPLUS` means answering exactly.
     fn transfer(
         &self,
         from: &str,
@@ -227,11 +180,8 @@ impl MaildirBackend {
                 .iter()
                 .find(|candidate| entry_id(candidate).is_some_and(|name| !known.contains(&name)));
             let Some(arrival) = arrival else {
-                // The message is in the target — the move did not fail — but
-                // its new name could not be picked out. Saying nothing is the
-                // seam's "this backend cannot tell you where it went", which
-                // the caller already handles; inventing a mapping would not
-                // be.
+                // The move did not fail, but the new name could not be picked out: saying nothing
+                // is the seam's "cannot tell where it went"; inventing a mapping would not be.
                 continue;
             };
             if let Some(name) = entry_id(arrival) {
@@ -256,9 +206,8 @@ impl MailBackend for MaildirBackend {
     }
 
     async fn connect(&self) -> BackendResult<Capabilities> {
-        // Not a handshake — a check that the tree is still there. A maildir
-        // on a disk that has been unplugged must fail here, where the caller
-        // shows "could not connect", rather than reading as an empty account.
+        // A check the tree is still there: an unplugged disk must fail here as "could not connect",
+        // not read as an empty account.
         LocalStore::looks_like_a_maildir(self.store.root()).map_err(|reason| BackendError::Io {
             context: format!("opening the maildir at {}", self.store.root().display()),
             reason,
@@ -299,9 +248,6 @@ impl MailBackend for MaildirBackend {
                 } else {
                     "\\HasNoChildren".to_owned()
                 }];
-                // A maildir does not name its own special folders, so the
-                // role is resolved from the path — the same rule that keeps
-                // provider knowledge out of the code.
                 if folder.path == "INBOX" {
                     attributes.push("\\Inbox".to_owned());
                 }
@@ -312,10 +258,8 @@ impl MailBackend for MaildirBackend {
 
     async fn create_mailbox(&self, path: &str) -> BackendResult<()> {
         self.require_session("CREATE")?;
-        // No server to ask and nothing to race with a remote: a maildir
-        // folder is three directories, and making one that is already there
-        // is the same call. So the "ask whether it exists after a refusal"
-        // dance IMAP needs has no counterpart here.
+        // Creating a folder that exists is the same call, so IMAP's "ask whether it exists after a
+        // refusal" has no counterpart.
         self.store.create(path)?;
         Ok(())
     }
@@ -337,12 +281,8 @@ impl MailBackend for MaildirBackend {
         _changed_since: Option<ModSeq>,
         cancel: &CancelToken,
     ) -> BackendResult<Vec<FetchedMessage>> {
-        // `changed_since` is deliberately ignored rather than honoured
-        // approximately: with no modification sequence on disk there is no
-        // answer to "changed since", and returning fewer messages than were
-        // asked for would silently drop changes. Reporting all of them costs
-        // a reparse and is always correct. The engine does not ask, because
-        // `highest_mod_seq` is `None`.
+        // `changed_since` is ignored, not approximated: with no modification sequence, returning
+        // fewer messages would silently drop changes, and returning all is always correct.
         self.require_session("FETCH")?;
         let (_folder, snapshot) = self.look(mailbox)?;
         let validity = UidValidity::new(snapshot.validity);
@@ -369,9 +309,8 @@ impl MailBackend for MaildirBackend {
                 size: raw.len() as u64,
                 envelope: Some(envelope_of(&parsed)),
                 structure: None,
-                // The whole message is on disk and its headers already
-                // parsed, so the filing pass's fields cost nothing to read
-                // (spec 007, research R8) -- whichever fetch asked.
+                // The headers are already parsed, so the filing pass's fields cost nothing (spec
+                // 007, R8).
                 promoted: Some(postio_model::promoted::PromotedHeaders::from_headers(
                     &parsed.headers,
                 )),
@@ -402,11 +341,8 @@ impl MailBackend for MaildirBackend {
             BodyPart::Whole => raw.as_slice(),
             BodyPart::Headers => header_block(&raw),
             BodyPart::Text => body_block(&raw),
-            // A section specifier addresses the MIME tree, and this backend
-            // reports no BODYSTRUCTURE for anything to address. The whole
-            // message is right here, so the caller loses nothing by taking
-            // it and parsing locally — which is what it does when a backend
-            // says it cannot decode server-side.
+            // No BODYSTRUCTURE is reported, so a section cannot be addressed; the caller takes the
+            // whole message and parses locally.
             BodyPart::Section(_) => {
                 return Err(BackendError::Unsupported {
                     capability: Capability::Binary,
@@ -446,8 +382,6 @@ impl MailBackend for MaildirBackend {
             let now: FlagSet = change.apply(&entry.flags.iter().cloned().collect());
             self.store
                 .set_flags(&folder, &name, &now.iter().cloned().collect::<Vec<_>>())?;
-            // Read back rather than report what was asked for: the filename
-            // is the record, and this is what the next listing will see.
             updates.push(FlagUpdate {
                 remote_id: id.clone(),
                 flags: self.store.flags(&folder, &name)?.into_iter().collect(),
@@ -485,10 +419,8 @@ impl MailBackend for MaildirBackend {
         self.require_session("EXPUNGE")?;
         let (folder, snapshot) = self.look(mailbox)?;
 
-        // Untargeted means every message marked `\Deleted`, which on a shared
-        // tree includes ones another client marked. That is exactly what the
-        // seam's UID EXPUNGE rule exists to prevent, and a maildir can always
-        // be targeted, so decline instead of widening.
+        // Untargeted would expunge every `\Deleted` message, another client's included; a maildir
+        // can always be targeted, so decline instead of widening.
         let Some(ids) = ids else {
             return Err(BackendError::Rejected {
                 command: "EXPUNGE".to_owned(),
@@ -511,8 +443,6 @@ impl MailBackend for MaildirBackend {
             self.store.delete(&folder, &name)?;
             gone.push(id.clone());
         }
-        // Unlike an IMAP server, this one knows exactly which messages went:
-        // it removed them by name.
         Ok(gone)
     }
 
@@ -553,8 +483,6 @@ impl MailBackend for MaildirBackend {
         let wanted = message_id.trim().trim_matches(['<', '>']);
         let validity = UidValidity::new(snapshot.validity);
 
-        // Newest first, because any copy proves arrival and the trait asks
-        // for the newest when there is more than one.
         for entry in snapshot.entries.iter().rev() {
             let raw = self.store.read(&entry.file)?;
             let parsed = postio_model::mime::parse_headers(&raw);
@@ -594,11 +522,8 @@ impl MailBackend for MaildirBackend {
         timeout: Duration,
         cancel: &CancelToken,
     ) -> BackendResult<Vec<MailboxEvent>> {
-        // No push: a filesystem can be watched, but not through this call's
-        // shape, and a watcher that returned immediately with nothing would
-        // turn the engine's wait into a spin. Waiting out the timeout is what
-        // "nothing happened" looks like, and the engine polls `status`
-        // afterwards — which for a local tree is a directory read.
+        // No push: a watcher returning immediately would turn the engine's wait into a spin, so
+        // wait out the timeout; the engine then polls `status`, a directory read.
         self.require_session("IDLE")?;
         let deadline = tokio::time::Instant::now() + timeout;
         while tokio::time::Instant::now() < deadline {
@@ -611,7 +536,6 @@ impl MailBackend for MaildirBackend {
     }
 }
 
-/// The name every maildir operation keys on: the filename without its flags.
 fn entry_id(entry: &Entry) -> Option<String> {
     let name = entry.file.file_name()?.to_str()?;
     Some(match name.rsplit_once(":2,") {
@@ -620,13 +544,8 @@ fn entry_id(entry: &Entry) -> Option<String> {
     })
 }
 
-/// When the message was delivered here.
-///
-/// The file's modification time is the maildir's `INTERNALDATE`: it is when
-/// this machine received the message, which is what the list sorts on, and it
-/// survives the `Date` header being absent or a lie. The header is the
-/// fallback, and the epoch the last resort — never `now`, which would make
-/// every message in an old archive look like it arrived today.
+/// File mtime is the `INTERNALDATE`, then the `Date` header, then the epoch, never `now`, which
+/// would make an old archive look like it arrived today.
 fn delivered_at(
     file: &std::path::Path,
     parsed: &postio_model::mime::ParsedMessage,
@@ -639,7 +558,6 @@ fn delivered_at(
         .unwrap_or_default()
 }
 
-/// The addressing headers, in the shape the seam expects from a server.
 fn envelope_of(parsed: &postio_model::mime::ParsedMessage) -> crate::backend::Envelope {
     crate::backend::Envelope {
         date: parsed.date,
@@ -657,7 +575,6 @@ fn envelope_of(parsed: &postio_model::mime::ParsedMessage) -> crate::backend::En
     }
 }
 
-/// Where the header block ends: the first blank line, either line ending.
 fn split_at_blank_line(raw: &[u8]) -> usize {
     raw.windows(4)
         .position(|window| window == b"\r\n\r\n")
@@ -678,10 +595,6 @@ fn body_block(raw: &[u8]) -> &[u8] {
     &raw[split_at_blank_line(raw)..]
 }
 
-/// An IMAP `LIST` pattern, applied to one path.
-///
-/// `*` crosses the hierarchy delimiter and `%` does not — the distinction the
-/// engine relies on to list one level at a time.
 fn matches_pattern(pattern: &str, path: &str) -> bool {
     fn walk(pattern: &[u8], path: &[u8]) -> bool {
         match pattern.first() {
@@ -696,11 +609,7 @@ fn matches_pattern(pattern: &str, path: &str) -> bool {
     pattern.is_empty() || walk(pattern.as_bytes(), path.as_bytes())
 }
 
-/// A UIDVALIDITY for a folder that has never been numbered.
-///
-/// The clock, as every maildir-aware client uses: it only has to be larger
-/// than the last one this tree saw, and a folder that already has a list
-/// keeps what is written in it rather than taking this.
+/// The clock: it only has to exceed the last one this tree saw; a folder with a list keeps its own.
 fn fresh_validity() -> u32 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()

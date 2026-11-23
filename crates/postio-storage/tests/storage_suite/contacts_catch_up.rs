@@ -1,7 +1,3 @@
-//! People for the mail that was here before contacts were: made on demand,
-//! and by a background catch-up that never blocks anything
-//! (specs/011-focus-contacts, plan section 4.2).
-
 use chrono::{DateTime, TimeZone, Utc};
 
 use postio_model::{
@@ -20,8 +16,6 @@ fn who(name: Option<&str>, address: &str) -> EmailAddress {
     EmailAddress::new(name, address)
 }
 
-/// Stores a message the way mail that predates contacts was stored: its
-/// recipients and addresses are there, and nobody was made of them.
 async fn stored(
     connection: &Connection,
     account: &Account,
@@ -355,7 +349,6 @@ async fn new_mail_from_an_address_the_catch_up_has_not_reached_keeps_its_history
     )
     .await;
     test_support::mark_contacts_history(&connection).await;
-    // The fourth arrives live: stored first, then recorded, as sync does.
     let mut live = Message::new(account.id, inbox, at(9));
     live.from = vec![who(Some("Ada"), "ada@example.org")];
     live.to = vec![me.clone()];
@@ -389,7 +382,6 @@ async fn new_mail_from_an_address_the_catch_up_has_not_reached_keeps_its_history
         "and the catch-up has nothing left of them"
     );
 
-    // Recording the same kind of message again is the ordinary one-read path.
     let mut next = Message::new(account.id, inbox, at(10));
     next.from = vec![who(Some("Ada"), "ada@example.org")];
     next.to = vec![me];

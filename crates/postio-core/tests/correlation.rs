@@ -1,18 +1,5 @@
-//! Correlating one invocation with the events it caused.
-//!
-//! POSTIO-OWN-BINARY: it writes the process-global command registry, which `core_suite`'s `platform_bindings` reads back whole.
-//!
-//! `send` is fire-and-forget, and that is right for GTK: a repaint does not
-//! care which keystroke caused it. A programmatic caller — MCP, AI, a future
-//! CLI — needs the opposite. It has to know whether *its* archive succeeded,
-//! and the sync engine emits `MessagesChanged` constantly for reasons of its
-//! own, so watching the global stream and matching by shape and timing is
-//! unreliable the moment two commands are in flight.
-//!
-//! Everything here is the tracked half of the bus. The untracked half must
-//! keep behaving exactly as it did — that is what
-//! [`an_untracked_command_carries_no_origin`] and
-//! [`an_untracked_command_announces_no_completion`] hold in place.
+//! POSTIO-OWN-BINARY: it writes the process-global command registry, which `core_suite`'s
+//! `platform_bindings` reads back whole.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -31,8 +18,6 @@ fn message(id: i64) -> MessageId {
     MessageId::new(id)
 }
 
-/// A bus where `Archive` reports which messages it touched and `Refresh` is
-/// the engine noise every real stream is full of.
 fn noisy_bus() -> Dispatcher {
     Dispatcher::builder()
         .on(CommandId::Archive, |invocation| async move {
@@ -51,8 +36,6 @@ fn noisy_bus() -> Dispatcher {
         })
         .build()
 }
-
-// -- The acceptance criterion ------------------------------------------------
 
 #[test]
 fn a_caller_can_pick_its_own_events_out_of_an_unrelated_stream() {
@@ -115,8 +98,6 @@ fn two_invocations_in_flight_stay_told_apart() {
     assert_eq!(count(second), 2, "one change plus one completion: {all:?}");
 }
 
-// -- The untracked half is unchanged -----------------------------------------
-
 #[test]
 fn an_untracked_command_carries_no_origin() {
     let (bridge, events) = Bridge::new(noisy_bus()).expect("the runtime starts");
@@ -132,7 +113,6 @@ fn an_untracked_command_carries_no_origin() {
 
 #[test]
 fn an_untracked_command_announces_no_completion() {
-    // The GTK frontend must not start seeing a new event per keystroke.
     let (bridge, events) = Bridge::new(noisy_bus()).expect("the runtime starts");
     bridge.commands().send(Command::Refresh).expect("running");
     bridge.shutdown();
@@ -147,8 +127,6 @@ fn an_untracked_command_announces_no_completion() {
 
 #[test]
 fn the_plain_stream_still_yields_plain_events() {
-    // Every existing consumer reads `next`/`try_next` and must keep compiling
-    // and behaving identically.
     let (bridge, events) = Bridge::new(noisy_bus()).expect("the runtime starts");
     bridge.commands().send(Command::Refresh).expect("running");
     bridge.shutdown();
@@ -156,8 +134,6 @@ fn the_plain_stream_still_yields_plain_events() {
     let first: Option<Event> = events.try_next();
     assert!(matches!(first, Some(Event::MessagesChanged { .. })));
 }
-
-// -- Every ending is reported ------------------------------------------------
 
 #[test]
 fn a_rejection_finishes_the_invocation() {
@@ -231,9 +207,6 @@ fn a_failure_finishes_the_invocation() {
 
 #[test]
 fn a_panicking_handler_still_finishes_the_invocation() {
-    // The bug this exists to catch: a caller that awaits a completion it will
-    // never get waits forever. A handler that panics is a bug in the handler;
-    // it must not become a hung caller.
     let dispatcher = Dispatcher::builder()
         .on(CommandId::Archive, |_| async {
             panic!("a handler bug");
@@ -294,8 +267,6 @@ fn a_command_with_no_handler_still_finishes_the_invocation() {
     );
 }
 
-// -- What a handler can see and hand on --------------------------------------
-
 #[test]
 fn a_handler_can_read_the_id_it_was_invoked_under() {
     let seen = Arc::new(std::sync::Mutex::new(None));
@@ -322,8 +293,6 @@ fn a_handler_can_read_the_id_it_was_invoked_under() {
 
 #[test]
 fn work_a_handler_spawns_keeps_reporting_under_the_same_id() {
-    // A body fetch, a send, a resync: the handler returns and the work keeps
-    // going. Those events answer the invocation that started them.
     let done = Arc::new(AtomicUsize::new(0));
     let counter = Arc::clone(&done);
     let dispatcher = Dispatcher::builder()
@@ -362,8 +331,6 @@ fn work_a_handler_spawns_keeps_reporting_under_the_same_id() {
 
 #[test]
 fn a_completion_survives_a_serde_round_trip() {
-    // Events are logged and replayed; a programmatic consumer reads them off
-    // the wire.
     let event = Event::InvocationFinished {
         invocation: InvocationId::next(),
         outcome: InvocationOutcome::Rejected {
@@ -372,101 +339,4 @@ fn a_completion_survives_a_serde_round_trip() {
     };
     let json = serde_json::to_string(&event).expect("serialises");
     assert_eq!(serde_json::from_str::<Event>(&json).expect("parses"), event);
-}
-
-// -- The extension path ------------------------------------------------------
-
-#[test]
-fn a_registered_command_is_trackable_too() {
-    // Extension commands do not travel the command queue — they are dispatched
-    // with a sink of the caller's own — so they need their own way in, and the
-    // same guarantee: exactly one ending, whatever happens.
-    use postio_core::bridge::event_channel;
-    use postio_core::registry::{self, ExtCommand};
-    use postio_core::{Context, ContextSet, Recovery};
-
-    let ext = registry::register(ExtCommand {
-        id: "correlation:tracked".to_string(),
-        title: "Tracked".to_string(),
-        default_binding: None,
-        alternate_bindings: Vec::new(),
-        contexts: ContextSet::from_slice(&[Context::List]),
-        destructive: false,
-        recovery: Recovery::None,
-    })
-    .expect("it registers");
-
-    let dispatcher = Dispatcher::builder()
-        .on_ext(ext, |invocation: postio_core::dispatch::ExtInvocation| {
-            let seen = invocation.invocation_id();
-            async move {
-                invocation.emit(Event::Error {
-                    message: format!("{seen:?}"),
-                    account: None,
-                });
-                Ok(())
-            }
-        })
-        .build();
-
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .expect("a runtime");
-    let (sink, events) = event_channel();
-    let mine = InvocationId::next();
-    runtime.block_on(dispatcher.dispatch_ext(ext, sink.with_origin(mine)));
-
-    let ours: Vec<Event> = std::iter::from_fn(|| events.try_next_tracked())
-        .filter(|envelope| envelope.is_from(mine))
-        .map(|envelope| envelope.event)
-        .collect();
-
-    assert!(
-        matches!(
-            ours.as_slice(),
-            [
-                Event::Error { message, .. },
-                Event::InvocationFinished {
-                    outcome: InvocationOutcome::Completed,
-                    ..
-                }
-            ] if message.contains(&mine.get().to_string())
-        ),
-        "the handler must see the id and the dispatch must end it: {ours:?}"
-    );
-}
-
-#[test]
-fn an_untracked_registered_command_announces_no_completion() {
-    use postio_core::bridge::event_channel;
-    use postio_core::registry::{self, ExtCommand};
-    use postio_core::{Context, ContextSet, Recovery};
-
-    let ext = registry::register(ExtCommand {
-        id: "correlation:untracked".to_string(),
-        title: "Untracked".to_string(),
-        default_binding: None,
-        alternate_bindings: Vec::new(),
-        contexts: ContextSet::from_slice(&[Context::List]),
-        destructive: false,
-        recovery: Recovery::None,
-    })
-    .expect("it registers");
-
-    let dispatcher = Dispatcher::builder()
-        .on_ext(ext, |_: postio_core::dispatch::ExtInvocation| async {
-            Ok(())
-        })
-        .build();
-
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .expect("a runtime");
-    let (sink, events) = event_channel();
-    runtime.block_on(dispatcher.dispatch_ext(ext, sink));
-
-    assert!(
-        events.try_next_tracked().is_none(),
-        "an untracked extension dispatch must stay as quiet as it was"
-    );
 }

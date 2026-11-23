@@ -1,14 +1,3 @@
-//! The first-run wizard, across the boundary (canvas 09).
-//!
-//! An address goes in and the servers come back -- found, or not, and said
-//! so -- and `Connect` signs in before anything is written. The looking-up
-//! and the proof are the shared onboarding's (`postio_session::onboarding`),
-//! the same steps the desktop's first run takes; what is tested here is that
-//! the Mac reaches them, and that a refused login leaves nothing behind.
-//!
-//! Nothing here dials: discovery goes through a network that answers
-//! nothing, and the proof signs in to a `MockBackend`.
-
 use std::sync::Arc;
 
 use postio_account::backend::{Fault, MockBackend};
@@ -20,8 +9,6 @@ use postio_ffi::{NewAccountFfi, SecurityFfi, ServerFfi, Session, SessionOptions}
 use postio_storage::repository::AccountRepository;
 use postio_storage::test_support;
 
-/// A network where nothing answers. What is found is the preset table's,
-/// which is data shipped with Postio and reaches no server.
 struct Silent;
 
 #[async_trait::async_trait]
@@ -51,7 +38,6 @@ impl DiscoveryTransport for Silent {
     }
 }
 
-/// A session whose onboarding reaches no network, signing in to `server`.
 async fn a_session(server: MockBackend) -> (Arc<Session>, postio_storage::Store) {
     let database = test_support::memory().await;
     let secrets = Arc::new(postio_account::secret::MemorySecretStore::default());
@@ -70,9 +56,8 @@ async fn a_session(server: MockBackend) -> (Arc<Session>, postio_storage::Store)
     (session, database)
 }
 
-/// An address at whichever provider the preset table ships first -- read out
-/// of the table, because a test naming a provider is the mistake the code is
-/// forbidden to make.
+/// Read from the preset table: a test naming a provider is the mistake the code is forbidden to
+/// make.
 fn an_address_at_a_known_provider() -> (String, String) {
     let preset = postio_account::discovery::presets()
         .first()
@@ -137,10 +122,6 @@ async fn a_known_provider_is_found_and_the_card_says_where_it_connects() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_address_nothing_answers_for_is_a_guess_to_check_never_a_finding() {
-    // A custom domain publishing nothing is the ordinary case. The desktop
-    // prefills the common names rather than five empty boxes (postio-69),
-    // and may, because of what it presents them *as*: a guess, in an open
-    // form, never the "Found settings" card.
     let (session, _) = a_session(MockBackend::new()).await;
 
     let found = session
@@ -179,8 +160,7 @@ async fn connect_signs_in_and_only_then_writes_the_account() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_refused_login_says_so_and_leaves_no_account_behind() {
-    // The whole reason Connect proves first: an account written before the
-    // server said no is one that fails at every sync from then on.
+    // Connect proves first: an account written before the server said no fails at every later sync.
     let refusing = MockBackend::new();
     refusing.fail_all(Fault::AuthFailed);
     let (session, database) = a_session(refusing).await;

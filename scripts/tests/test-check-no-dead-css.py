@@ -115,8 +115,6 @@ expect(
     ".postio-meta",
 )
 
-# The desktop app carries stylesheets, and the shared crate carries the widget
-# rules it draws with (ADR 0043; specs/007-postio-focus R1).
 expect(
     "a dead rule planted in postio-widgets' stylesheet fails",
     run_root({"crates/postio-widgets/data/widgets.css": ".postio-row {}\n.postio-gone {}"}),

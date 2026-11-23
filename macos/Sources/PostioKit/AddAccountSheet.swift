@@ -2,24 +2,14 @@ import PostioFFI
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Adding an account: a sheet dropping from the Settings window's title bar
-/// (#1279, canvas screen 27).
-///
-/// A sheet rather than a window, because it is a thing you are doing *to*
-/// the settings window and cannot meaningfully leave half-done in the
-/// background. Three steps, counted in the corner, `Cancel` and `Continue`
-/// bottom right — `Esc` cancels and `⏎` continues, which is what a Mac user
-/// will try before reading anything.
 public struct AddAccountSheet: View {
     private let session: PostioSession?
     @Bindable private var model: AddAccountModel
-    /// Called when the sheet is finished with, saying whether an account was
-    /// actually added — Cancel and a successful add both close it, and the
-    /// difference decides whether anything needs starting (#1299).
+    /// Cancel and a successful add both close the sheet; the difference decides whether anything
+    /// needs starting (#1299).
     private let done: (Bool) -> Void
 
     @FocusState private var focusedAddress: Bool
-    /// Whether the folder picker for the store path is open.
     @State private var choosingStore = false
 
     public init(
@@ -69,8 +59,6 @@ public struct AddAccountSheet: View {
         }
     }
 
-    // -- step 1: who you are, and how to reach them --------------------------
-
     private var address: some View {
         VStack(alignment: .leading, spacing: PostioTokens.space4) {
             labelled("Email address") {
@@ -79,8 +67,7 @@ public struct AddAccountSheet: View {
                     .focused($focusedAddress)
                     .accessibilityLabel("Email address")
             }
-            // The verdict, from the preset table rather than from a branch
-            // per provider: Postio is not built for any one of them.
+            // From the preset table, not a branch per provider.
             Label(model.verdict, systemImage: "checkmark.circle")
                 .font(.callout)
                 .padding(PostioTokens.space3)
@@ -101,9 +88,8 @@ public struct AddAccountSheet: View {
         }
     }
 
-    /// What the selected route does with what you give it. One sentence per
-    /// route: the OAuth paragraph under "Existing local store" described a
-    /// browser sign-in that route never makes.
+    /// One sentence per route: the OAuth paragraph under "Existing local store" described a sign-in
+    /// that route never makes.
     private var routeNote: String {
         switch model.route {
         case .outlook, .gmail:
@@ -151,8 +137,6 @@ public struct AddAccountSheet: View {
         .buttonStyle(.plain)
         .accessibilityAddTraits(model.route == value ? [.isSelected] : [])
     }
-
-    // -- step 2: the credential ---------------------------------------------
 
     @ViewBuilder
     private var credentials: some View {
@@ -205,9 +189,8 @@ public struct AddAccountSheet: View {
                 )
                 .foregroundStyle(.secondary)
 
-                // What is asked for, and — as plainly — what is not. A
-                // provider's consent screen lists what an application *may*
-                // do; only Postio can say what it deliberately left out.
+                // What is asked for and what is not: only Postio can say what it deliberately left
+                // out.
                 let scopes = signInScopes(address: model.address)
                 VStack(alignment: .leading, spacing: PostioTokens.space2) {
                     Label(scopes.askedFor, systemImage: "checkmark.circle")
@@ -254,8 +237,6 @@ public struct AddAccountSheet: View {
         }
     }
 
-    // -- step 3: where the mail lands ---------------------------------------
-
     private var store: some View {
         VStack(alignment: .leading, spacing: PostioTokens.space4) {
             labelled("Store path") {
@@ -263,8 +244,6 @@ public struct AddAccountSheet: View {
                     HStack(spacing: PostioTokens.space2) {
                         TextField("~/mail", text: $model.storePath)
                             .textFieldStyle(.roundedBorder)
-                        // The platform's own folder picker: a path typed by
-                        // hand is the one thing nobody on a Mac expects to do.
                         Button("Choose…") { choosingStore = true }
                             .fileImporter(
                                 isPresented: $choosingStore,
@@ -275,9 +254,8 @@ public struct AddAccountSheet: View {
                                 }
                             }
                     }
-                    // Said where the field is, as it is typed: a directory
-                    // picked by mistake must not become an account that looks
-                    // empty (#1278).
+                    // Said where the field is: a directory picked by mistake must not become an
+                    // account that looks empty (#1278).
                     if let problem = model.storeProblem(through: session) {
                         Text(problem)
                             .font(.callout)
@@ -286,9 +264,8 @@ public struct AddAccountSheet: View {
                 }
             }
             labelled("Format") {
-                // Stated, not offered. Postio opens maildir stores; a
-                // segmented control listing two more it cannot open reads as
-                // a choice until you make it (#1296).
+                // Stated, not offered: a control listing formats Postio cannot open reads as a
+                // choice until you make it (#1296).
                 Text("Maildir")
                     .font(.callout)
                     .foregroundStyle(.secondary)
@@ -310,8 +287,6 @@ public struct AddAccountSheet: View {
             }
         }
     }
-
-    // -- the frame ----------------------------------------------------------
 
     private var buttons: some View {
         HStack {
@@ -339,8 +314,6 @@ public struct AddAccountSheet: View {
         }
     }
 
-    /// Whether pressing the button starts a browser sign-in rather than
-    /// moving on: the OAuth routes have nothing further to fill in.
     private var signsInHere: Bool {
         model.step == .credentials && (model.route == .outlook || model.route == .gmail)
     }

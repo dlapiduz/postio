@@ -1,14 +1,5 @@
-//! Capture: a task or a note written to the vault from a message, and the
-//! `postio://` links that bring Postio back to it (research R2, slice 12;
-//! spec 007 US15, screen 25).
-//!
-//! Moved from `postio-gtk`'s `capture.rs` (what the sheet holds, its keys,
-//! the exact line it previews and writes) and the window's `open_capture`,
-//! `capture_source` and `open_link`. The words are `postio_ui::capture`'s
-//! and `postio_ui::links`'; the line is `postio_vault`'s own, so the
-//! preview is the line written, byte for byte, with the message's link
-//! before the date (C21). Capture opens only when a vault is configured,
-//! and says how to name one otherwise (C9).
+//! Capture: a task or note written to the vault from a message, and the `postio://` links back.
+//! Capture opens only when a vault is configured, and says how to name one otherwise.
 
 use chrono::NaiveDate;
 use postio_client::protocol::VaultPicture;
@@ -22,71 +13,43 @@ use crate::cursor::{RowFacts, Rows};
 use crate::feed::Step;
 use crate::{FocusController, Intent, Reply, Request, SurfaceKind, ToastKind};
 
-/// The capture window, drawable as it is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CaptureView {
-    /// A task or a note.
     pub mode: Mode,
-    /// "From Ada · Quarterly review · Mon".
     pub from: String,
-    /// The field's title: "Task", "Note".
     pub field: String,
     /// The field's text: set the field from it only when it differs.
     pub text: String,
-    /// `⌥S`'s hint: the key that puts the subject in.
     pub subject_key: Option<String>,
-    /// Whether the due row shows: only for a task.
     pub has_due: bool,
-    /// The due day chosen.
     pub due: Option<NaiveDate>,
-    /// It, written out: "Friday, 2 October 2026", "No due date".
     pub due_label: String,
-    /// The quick picks, in day order, then "None".
     pub picks: Vec<Pick>,
-    /// "Project · suggested: the subject names Review", or "Project".
     pub project_title: String,
-    /// The project chosen: its name, or "Inbox".
     pub project: String,
-    /// Its note, relative to the vault.
     pub project_note: String,
-    /// The key that opens the project list.
     pub project_key: Option<String>,
-    /// Whether the project list is open, with its filter.
     pub projects_open: bool,
-    /// The filter's text.
     pub filter: String,
-    /// The projects the filter lets through, then the Inbox.
     pub projects: Vec<CaptureProject>,
-    /// "This exact line will be appended".
     pub preview_title: String,
-    /// The exact line, or lines, written.
     pub preview: String,
-    /// Where it goes, and when it is due.
     pub footnote: String,
-    /// "Add task", "Add note".
     pub button: String,
-    /// Its key.
     pub button_key: Option<String>,
-    /// Why the vault could not be read, or the capture not written.
     pub error: Option<String>,
 }
 
-/// One project the capture can go to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CaptureProject {
     /// What [`crate::Input::CaptureProject`] names it by. Never reused.
     pub token: u64,
-    /// Its name, or "Inbox".
     pub name: String,
-    /// Its note.
     pub note: String,
-    /// "3 open".
     pub open: String,
-    /// Whether it is the one chosen.
     pub chosen: bool,
 }
 
-/// What the controller keeps of the capture window.
 #[derive(Debug)]
 pub(crate) struct Capture {
     mode: Mode,
@@ -95,11 +58,9 @@ pub(crate) struct Capture {
     due: Option<NaiveDate>,
     picture: Option<VaultPicture>,
     project: Option<Project>,
-    /// Whether the project chosen is the vault's suggestion.
     suggested: bool,
     projects_open: bool,
     filter: String,
-    /// The project rows on screen, each with its token: `None` the Inbox.
     listed: Vec<(u64, Option<Project>)>,
     error: Option<String>,
     stamp: u64,
@@ -137,8 +98,6 @@ impl Capture {
 }
 
 impl FocusController {
-    /// `t` or `n` on the list or the open message: capture, as a task or a
-    /// note, from the message aimed at; or, with no vault, how to name one.
     pub(crate) fn open_capture(&mut self, mode: Mode, rows: &dyn Rows) -> Vec<Step> {
         if self.states.config.vault.is_none() {
             return vec![Step::Show(Intent::Toast {
@@ -178,8 +137,6 @@ impl FocusController {
         steps
     }
 
-    /// What a capture is made from: the message open over the list when one
-    /// is, the cursor's row otherwise, with its marker's sentence and day.
     fn capture_source(&self, rows: &dyn Rows) -> Option<Source> {
         let reading = self.surfaces.reading();
         let message = match reading {
@@ -194,8 +151,6 @@ impl FocusController {
         words::source(message, row.as_ref(), &title, self.now())
     }
 
-    /// The subject of `message` where the controller holds it: a filtered
-    /// message, a digest's.
     fn reading_subject(&self, message: MessageId) -> Option<String> {
         if let Some(filtered) = &self.filtered
             && let Some(at) = filtered.index_of(message)
@@ -210,7 +165,6 @@ impl FocusController {
         None
     }
 
-    /// Whether `id` is capture's own while it is on top.
     pub(crate) fn capture_answers(id: CommandId) -> bool {
         matches!(
             id,
@@ -222,8 +176,8 @@ impl FocusController {
         )
     }
 
-    /// A command while capture is on top. It holds the keyboard: what is not
-    /// its own does nothing, but the key map and Quit.
+    /// While capture is on top it holds the keyboard: what is not its own does nothing, but the key
+    /// map and Quit.
     pub(crate) fn capture_command(&mut self, id: CommandId) -> Option<Vec<Step>> {
         let capture = self.capture.as_mut()?;
         match id {
@@ -239,7 +193,6 @@ impl FocusController {
         Some(self.draw_capture())
     }
 
-    /// Capture goes, writing nothing more.
     fn close_capture(&mut self) -> Vec<Step> {
         self.capture = None;
         self.surfaces.dismiss(SurfaceKind::Capture);
@@ -250,7 +203,6 @@ impl FocusController {
         steps
     }
 
-    /// `mod+Return`: append what the window shows to the vault.
     fn write_capture(&mut self) -> Vec<Step> {
         let Some(capture) = self.capture.as_ref() else {
             return Vec::new();
@@ -274,7 +226,6 @@ impl FocusController {
         vec![Step::Ask(request)]
     }
 
-    /// Something the person did in the capture window.
     pub(crate) fn capture_input(&mut self, input: crate::Input) -> Vec<Step> {
         use crate::Input;
         let Some(capture) = self.capture.as_mut() else {
@@ -316,7 +267,6 @@ impl FocusController {
         self.draw_capture()
     }
 
-    /// An answer for the capture window.
     pub(crate) fn capture_reply(&mut self, reply: Reply) -> Vec<Step> {
         match reply {
             Reply::Vault { stamp, answer } => {
@@ -374,8 +324,6 @@ impl FocusController {
             .unwrap_or_default()
     }
 
-    /// The capture window in words, as it stands; the project rows on
-    /// screen get their tokens here.
     pub(crate) fn capture_view(&mut self) -> Option<CaptureView> {
         let today = self.now().date_naive();
         let keymap = self.keymap().clone();
@@ -400,8 +348,6 @@ impl FocusController {
                 words::inbox_note(&tasks_note.display().to_string()),
             ),
         };
-        // The projects the filter lets through, and the Inbox, each with a
-        // token never used before.
         let mut listed: Vec<(u64, Option<Project>)> = Vec::new();
         let mut projects = Vec::new();
         if let Some(picture) = &capture.picture {
@@ -476,7 +422,6 @@ impl FocusController {
         Some(view)
     }
 
-    /// A `postio://` link: look its message up, or say why not.
     pub(crate) fn open_link(&mut self, uri: &str) -> Vec<Step> {
         match postio_ui::links::message(uri) {
             Some(message) => vec![Step::Ask(Request::FindMessage(message))],
@@ -487,8 +432,6 @@ impl FocusController {
         }
     }
 
-    /// The linked message, looked up: opened as the open message, or the
-    /// sentence saying it is not on this computer.
     pub(crate) fn link_found(
         &mut self,
         message: MessageId,

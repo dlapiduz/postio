@@ -1,9 +1,5 @@
-//! The local store, read directly off the database engine.
-//!
-//! The half of [`super`] that owns a database. Behind the `runtime` feature
-//! because the view layer depends on `postio-core` and must not have the engine
-//! anywhere in its dependency graph; whatever assembles the running
-//! application turns the feature on, and the view layer never does.
+//! The local store read directly off the database engine, behind the `runtime` feature so the view
+//! layer's graph never has the engine.
 
 use postio_model::ids::{AccountId, MailboxId, MessageId};
 use postio_model::mailbox::Mailbox;
@@ -25,91 +21,46 @@ use crate::store::{
     StoreError, ThreadPage, ThreadSummary,
 };
 
-/// Removals told to the store and not yet settled by a read: which folder,
-/// which messages. See [`MailStore::note_removed`].
 type Removals = Mutex<Vec<(MailboxId, Vec<MessageId>)>>;
 
-/// The local store, read directly.
 #[derive(Debug, Clone)]
 pub struct LocalStore {
     store: Store,
-    /// Where each page boundary starts, so a page does not have to be
-    /// counted to from the top of the folder every time. See [`Marks`].
     marks: Arc<Mutex<Marks<ListCursor>>>,
-    /// The same, for the threaded list. Its own, because a folder that
-    /// threads and the same folder listed by message are different windows
-    /// with different row counts -- one set of marks would have each read
-    /// clearing the other's.
+    /// Its own: a threaded and a flat window of one folder have different row counts, and shared
+    /// marks would clear each other's.
     thread_marks: Arc<Mutex<Marks<ThreadCursor>>>,
-    /// The same again, for the unified list. Its own for the reason the
-    /// threaded marks have their own: the unified window folds conversations
-    /// across accounts, so it is a different list in a different order from
-    /// any one account's, and two windows sharing marks would each clear the
-    /// other's -- or, where their totals happened to match, seek with one.
+    /// Its own: the unified window folds conversations across accounts, and shared marks would
+    /// clear or wrongly seek with each other.
     unified_marks: Arc<Mutex<Marks<ThreadCursor>>>,
-    /// The unified list's length, and what the store looked like when it
-    /// was counted -- see [`unified_total`].
     unified_count: Arc<Mutex<Option<(UnifiedWitness, u32)>>>,
-    /// The same bargain for Focus's inbox (spec 007): its own marks, since
-    /// it is its own list, and its inboxes and length against the same
-    /// witness -- see [`focus_inbox`].
     focus_marks: Arc<Mutex<Marks<ThreadCursor>>>,
     focus_count: Arc<Mutex<Option<FocusCounted>>>,
-    /// The last threaded count of a folder, and the cheap number it was taken
-    /// against. See [`CountedFolder`].
     folder_counts: Arc<Mutex<HashMap<MailboxId, CountedFolder>>>,
-    /// Removals the app has told us about and no read has settled yet:
-    /// which folder, which messages. Drained by [`counted_total`] before it
-    /// compares its witness, so the count it holds is adjusted rather than
-    /// discarded (#1607). See [`MailStore::note_removed`].
+    /// Drained by `counted_total` before it compares its witness, so the held count is adjusted
+    /// rather than discarded (#1607).
     removals: Arc<Removals>,
 }
 
-/// A folder's thread count, and how to tell whether it still holds.
-///
-/// The count itself is expensive — a correlated subquery, one indexed probe
-/// per message, 786 ms on a real 60,907-message Archive. `witness` is the
-/// trigger-maintained `mailboxes.total_count` for the same folder: a column
-/// lookup, and the number the expensive one follows. When the cheap number is
-/// unchanged the expensive one is reused.
-///
-/// **What this trades, stated plainly.** Messages arriving and being removed
-/// between two reads can leave `total_count` equal while the thread count has
-/// moved — the same window [`Marks`] already documents itself as having, for
-/// the same reason, and with a smaller consequence: a row count briefly off
-/// by one, corrected by the next change to the folder. Against that: without
-/// it, every page of a large folder pays the full count, which is what made
-/// such a folder impossible to open at all (#1534).
+/// The count is a correlated subquery (786 ms on a 60,907-message Archive); `witness` is the cheap
+/// trigger-maintained column it follows. An arrival plus a removal between two reads can leave
+/// `total_count` equal while the thread count moved: a row count briefly off by one, against every
+/// page paying the full count (#1534).
 #[derive(Debug, Clone, Copy)]
 struct CountedFolder {
-    /// What the folder looked like when the count was taken — see
-    /// [`witness_of`].
     witness: Witness,
-    /// What counting the threads answered then.
     threads: u32,
 }
 
-/// The cheap facts a folder's thread count is allowed to outlive.
-///
-/// **Both, and the second one is the lesson.** `total_count` alone misses a
-/// sync that re-threads without changing how many messages are in the folder:
-/// the count would be stale, and — worse — [`Marks::check`] would see an
-/// unchanged total and keep seek marks that no longer point where they say.
-/// A mark that is wrong seeks past the end and the page comes back **empty**,
-/// which is a list showing nothing on a folder that has 36,000 rows.
-///
-/// `highest_mod_seq` moves on any server-side change to the folder, which is
-/// when threading changes. Together they are strictly stronger than the
-/// recomputed total this replaced, rather than merely cheaper than it.
+/// Both facts, because `total_count` alone misses a sync that re-threads without changing the
+/// count: stale marks would seek past the end and return an empty page. `highest_mod_seq` moves on
+/// any server-side change, which is when threading changes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Witness {
-    /// `mailboxes.total_count`, maintained by the counting triggers.
     messages: u32,
-    /// How far the folder has been synced.
     mod_seq: Option<u64>,
 }
 
-/// What a folder looks like cheaply: one row, no scan.
 fn witness_of(mailbox: &Mailbox) -> Witness {
     Witness {
         messages: mailbox.counts.total,
@@ -117,32 +68,16 @@ fn witness_of(mailbox: &Mailbox) -> Witness {
     }
 }
 
-/// How many times this process has counted a threaded folder.
-///
-/// A folder's thread count is not a column lookup — it is a correlated
-/// subquery, one indexed probe per message — and on a real 60,907-message
-/// Archive it measured **786 ms** against a 100 ms interaction budget. What
-/// made that fatal rather than merely slow was paying it on *every page*, so
-/// the number that matters is not how long a count takes but how many are
-/// issued for one folder (#1534).
-///
-/// An atomic rather than the thread-local `postio_storage` counting uses:
-/// these reads happen on the blocking pool, so a thread-local incremented
-/// there and read from a test would answer zero.
+/// A thread count is a correlated subquery (786 ms on a 60,907-message Archive), so what matters is
+/// how many are issued per folder (#1534). An atomic, not `postio_storage`'s thread-local: these
+/// reads run on the blocking pool.
 static FOLDERS_COUNTED: AtomicU64 = AtomicU64::new(0);
 
-/// How many threaded-folder counts this process has issued. For tests.
-///
-/// See [`FOLDERS_COUNTED`]. Opening and paging one folder should add one.
 #[doc(hidden)]
 pub fn folders_counted() -> u64 {
     FOLDERS_COUNTED.load(Ordering::Relaxed)
 }
 
-/// How many times this process has counted the unified list. For tests.
-///
-/// The sibling of [`folders_counted`], for the count #1610 found paid on
-/// every page of the unified view.
 #[doc(hidden)]
 pub fn unified_counted() -> u64 {
     UNIFIED_COUNTED.load(Ordering::Relaxed)
@@ -150,9 +85,6 @@ pub fn unified_counted() -> u64 {
 
 static UNIFIED_COUNTED: AtomicU64 = AtomicU64::new(0);
 
-/// How many times this process has counted Focus's inbox. For tests: the
-/// sibling of [`unified_counted`], for the same promise -- counted once and
-/// kept while nothing it is made of moves.
 #[doc(hidden)]
 pub fn focus_counted() -> u64 {
     FOCUS_COUNTED.load(Ordering::Relaxed)
@@ -160,8 +92,6 @@ pub fn focus_counted() -> u64 {
 
 static FOCUS_COUNTED: AtomicU64 = AtomicU64::new(0);
 
-/// Focus's inbox as last read: the inboxes it is made of, how many rows it
-/// has, and the witness both were read against.
 #[derive(Debug, Clone)]
 struct FocusCounted {
     witness: UnifiedWitness,
@@ -169,8 +99,6 @@ struct FocusCounted {
     total: u32,
 }
 
-/// Each inbox in view, its message total and how far it has synced: one
-/// row per inbox, no scan of mail.
 async fn inbox_witness(connection: &Checkout) -> Result<UnifiedWitness, postio_storage::Error> {
     postio_storage::sql::all(
         connection,
@@ -189,18 +117,9 @@ async fn inbox_witness(connection: &Checkout) -> Result<UnifiedWitness, postio_s
     .await
 }
 
-/// What Focus's inbox count is allowed to outlive: the unified list's
-/// witness, and what Focus holds back. One statement, the inboxes' rows and
-/// one more.
-///
-/// The extra row is there because holding mail moves no folder: a digest
-/// rule's hold, its release, and an archived delivery each change which
-/// messages are Focus's rows while every inbox's counts and sync state stay
-/// where they were, and a count kept against those alone would outlive the
-/// rows it counted -- and so would the seek marks checked against it (spec
-/// 007, T134). The digest tables are counted whole, which is a walk of each:
-/// they hold digest mail only, a small fraction of any mailbox, and never
-/// the mail itself.
+/// The unified witness plus one row for what Focus holds back: holding mail moves no folder, so a
+/// count kept against folder state alone would outlive the rows it counted, and the seek marks with
+/// it (spec 007).
 async fn focus_witness(connection: &Checkout) -> Result<UnifiedWitness, postio_storage::Error> {
     postio_storage::sql::all(
         connection,
@@ -222,10 +141,6 @@ async fn focus_witness(connection: &Checkout) -> Result<UnifiedWitness, postio_s
     .await
 }
 
-/// Focus's inbox: which inboxes it is made of and how many rows it has, from
-/// the cache while its witness ([`focus_witness`]) has not moved. A page in
-/// the steady state is then the witness, the window, its participants and
-/// its markers.
 async fn focus_inbox(
     connection: &Checkout,
     cache: &Mutex<Option<FocusCounted>>,
@@ -248,24 +163,10 @@ async fn focus_inbox(
     Ok((inboxes, total))
 }
 
-/// The cheap facts the unified count is allowed to outlive: each inbox in
-/// view, its message total and how far it has synced. The unified list's
-/// `Witness`, for the same trade and the same reasons (#1610).
-///
-/// Per inbox, because the list is the inboxes (#1692): an archive moves a
-/// message from an inbox to the Archive, which leaves every folder's totals
-/// *summed* where they were -- a witness over the sum held a count that
-/// still included the row it had just lost. The inboxes themselves are part
-/// of it too: turning an account off takes its inbox out of the list and
-/// moves no folder at all.
+/// Per inbox, because the list is the inboxes (#1692): an archive moves a message out of an inbox
+/// and leaves the summed totals unchanged, and turning an account off moves no folder at all.
 type UnifiedWitness = Vec<(i64, i64, i64)>;
 
-/// The unified list's length, from the cache while nothing it is made of has
-/// moved.
-///
-/// The count reads every inbox's conversations and, with more than one
-/// account, looks for the ones folded across accounts, and the unified view
-/// paid it in front of every page.
 async fn unified_total(
     connection: &Checkout,
     cache: &Mutex<Option<(UnifiedWitness, u32)>>,
@@ -283,8 +184,8 @@ async fn unified_total(
     Ok(total)
 }
 
-/// How many rows the last threaded page read skipped with `OFFSET` after
-/// its seek. For tests: a scrollbar jump should skip under a page (#1610).
+/// For tests: rows skipped with `OFFSET` after the seek; a scrollbar jump should skip under a page
+/// (#1610).
 #[doc(hidden)]
 pub fn last_thread_skip() -> u64 {
     LAST_THREAD_SKIP.load(Ordering::Relaxed)
@@ -292,11 +193,8 @@ pub fn last_thread_skip() -> u64 {
 
 static LAST_THREAD_SKIP: AtomicU64 = AtomicU64::new(0);
 
-/// A folder's thread count, from the cache when the folder has not moved.
-///
-/// Only for a folder scope. An account-wide or unified count has no single
-/// mailbox row to witness it, and is left to be counted as before — those
-/// windows are not the ones that cost 786 ms.
+/// Only for a folder scope: an account-wide or unified count has no single mailbox row to witness
+/// it.
 async fn counted_total(
     connection: &Checkout,
     cache: &Mutex<HashMap<MailboxId, CountedFolder>>,
@@ -309,19 +207,14 @@ async fn counted_total(
         FOLDERS_COUNTED.fetch_add(1, Ordering::Relaxed);
         return threads.count_of(query).await;
     };
-    // The cheap facts, read first: one row, no scan.
     let witness = MailboxRepository::new(connection)
         .get(mailbox)
         .await?
         .as_ref()
         .map(witness_of);
 
-    // What the app said left this folder since the count was taken. An
-    // archive moved the witness, and the count would be paid again in
-    // front of the first row; instead the rows that left are subtracted
-    // -- the conversations with no member left here, and the lone messages
-    // -- and the held count moves to the new witness (#1607). Taken out of
-    // the queue before any await, and the lock never held across one.
+    // Subtract what the app said left this folder (an archive moved the witness) instead of paying
+    // the count again (#1607); taken out of the queue before any await.
     let pending: Vec<Vec<MessageId>> = {
         let mut removals = removals.lock().expect("not poisoned");
         let (ours, others): (Vec<_>, Vec<_>) = removals
@@ -364,35 +257,13 @@ async fn counted_total(
     Ok(counted)
 }
 
-/// Remembered page boundaries for one scope.
-///
-/// `page_at` is an `OFFSET` query and SQLite walks the rows it skips, so a
-/// page halfway down a 100,000-message folder costs 24ms against a 16ms
-/// budget — measured, in `benches/store_reads.rs`. The fix is to seek instead
-/// of skip: `MessageRepository::page` takes a [`ListCursor`] and its where
-/// clause is a row value, which SQLite turns into a range constraint.
-///
-/// The frontend's windowed model asks for *page N*, which a cursor cannot
-/// answer on its own — so the store remembers where each page it has already
-/// read began. Scrolling is sequential, so the next page's start is nearly
-/// always known and the read seeks straight to it. A jump to a page nobody
-/// has visited falls back to the nearest mark below it and skips the
-/// remainder, which is at worst what it costs today.
-///
-/// # When they are wrong
-///
-/// New mail shifts every row down, and a mark then points one row off. The
-/// total is checked on every read — it is a column lookup now, not a count —
-/// and a change drops every mark. That misses the case where one message
-/// arrives and another is deleted between two reads, leaving the total equal
-/// and the order shifted; the consequence is one page off by a row, which is
-/// exactly what a plain `OFFSET` does in the same situation and what
-/// `page_at`'s own documentation warns about.
+/// `OFFSET` walks the rows it skips (24 ms halfway down 100,000 messages), so the store remembers
+/// where each read page began and seeks. A jump to an unvisited page falls back to the nearest mark
+/// below it. The total is checked on every read and a change drops every mark; one arrival plus one
+/// deletion leaves it equal and a page off by a row, as plain `OFFSET` would.
 #[derive(Debug)]
 struct Marks<C> {
-    /// The row count the marks were taken against.
     total: Option<u32>,
-    /// Offset of a page boundary, and the cursor the row before it left.
     at: BTreeMap<u32, C>,
 }
 
@@ -408,15 +279,10 @@ impl<C> Default for Marks<C> {
 }
 
 impl<C: Copy> Marks<C> {
-    /// Forget every mark, keeping the length they were taken against.
-    ///
-    /// For a caller that has learnt a mark was wrong by using it, rather than
-    /// by noticing the list changed length.
     fn forget(&mut self) {
         self.at.clear();
     }
 
-    /// Forget everything if the list is not the length it was.
     fn check(&mut self, total: u32) {
         if self.total != Some(total) {
             self.at.clear();
@@ -424,7 +290,6 @@ impl<C: Copy> Marks<C> {
         }
     }
 
-    /// The nearest remembered boundary at or before `offset`.
     fn nearest(&self, offset: u32) -> Option<(u32, C)> {
         self.at
             .range(..=offset)
@@ -434,18 +299,12 @@ impl<C: Copy> Marks<C> {
 
     /// Remember where the page after `offset` begins.
     fn remember(&mut self, offset: u32, cursor: C) {
-        // Bounded: a folder read end to end at 50 a page leaves 2,000 marks
-        // for 100,000 messages, and each is two integers. Worth the memory to
-        // never walk the folder again.
+        // Bounded: 2,000 marks for 100,000 messages at 50 a page, two integers each.
         self.at.insert(offset, cursor);
     }
 }
 
 impl LocalStore {
-    /// Read `store`.
-    ///
-    /// Cloning a [`LocalStore`] is cheap and gives another handle to the same
-    /// store, which is how each read gets a connection of its own.
     pub fn new(store: &Store) -> Self {
         LocalStore {
             store: store.clone(),
@@ -469,12 +328,9 @@ impl LocalStore {
                 limit: request.limit,
                 after: None,
             };
-            // Both from one connection and one moment, so the rows and the
-            // number of them cannot disagree.
+            // One connection and one moment, so the rows and their count cannot disagree.
             let total = count(&connection, request.scope, &query).await?;
 
-            // Seek to the nearest boundary anybody has already read, and skip
-            // only what is left. For sequential scrolling that is nothing.
             let start = {
                 let mut marks = marks.lock().expect("not poisoned");
                 marks.check(total);
@@ -490,7 +346,6 @@ impl LocalStore {
             };
             let rows = messages.page_at(&query, skip).await?;
 
-            // And remember where the next page begins, so it can seek too.
             if let Some(last) = rows.last() {
                 marks
                     .lock()
@@ -519,19 +374,11 @@ impl LocalStore {
         .await
     }
 
-    /// Whether `scope` lists conversations, which only the store can answer.
-    ///
-    /// Folders thread and query views list messages (ADR 0015) — with one
-    /// exception the ADR did not have to name because it was writing about
-    /// reading mail: **Drafts does not thread.** A draft is a document you
-    /// are writing, not a conversation you are triaging, and two drafts
-    /// answering the same thread would collapse into one row with no way to
-    /// open the other. Sent does thread, because a sent message really is
-    /// part of the conversation it belongs to.
+    /// Drafts does not thread: a draft is a document being written, and two drafts answering one
+    /// thread would collapse into one row (ADR 0015).
     async fn lists_conversations(&self, scope: ListScope) -> Result<bool, StoreError> {
         let ListScope::Mailbox(mailbox) = scope else {
             return Ok(match scope {
-                // Messages, like the per-account views they span.
                 ListScope::Focus(FocusScope::Snoozed | FocusScope::Flagged) => false,
                 _ => matches!(
                     scope,
@@ -565,12 +412,6 @@ impl LocalStore {
         }
     }
 
-    /// One page of the threaded list.
-    ///
-    /// The same shape as [`LocalStore::read_page`], over the thread window
-    /// instead of the message one: count and rows from one connection and one
-    /// moment, seek to the nearest boundary anybody has already read, and
-    /// remember where this page ended so the next one can seek too.
     async fn read_thread_page(&self, request: PageRequest) -> Result<ThreadPage, StoreError> {
         if matches!(request.scope, ListScope::Unified) {
             return self.read_unified_page(request).await;
@@ -603,12 +444,9 @@ impl LocalStore {
                 Some((at, cursor)) => (Some(cursor), request.offset - at),
                 None => (None, request.offset),
             };
-            // A jump further than a page from any mark -- a scrollbar dragged
-            // deep into a folder -- would be an `OFFSET` walk over the
-            // window's correlated predicate, linear in the depth: 638 ms to
-            // the bottom of 17,804 conversations. One pass over the folder's
-            // index finds where every page begins for a tenth of that, and
-            // then this and every later jump seeks (#1610).
+            // A scrollbar jump deep into a folder would be a linear `OFFSET` walk over the
+            // correlated window (638 ms for
+            // 17,804 conversations); one pass over the index finds every page start (#1610).
             let stride = request.limit.max(1);
             if skip > stride && matches!(request.scope, ListScope::Mailbox(_)) {
                 let boundaries = threads.boundaries(&query, stride).await?;
@@ -633,19 +471,8 @@ impl LocalStore {
                 )
                 .await?;
 
-            // An empty page inside a list that says it has rows means the
-            // mark we seeked from lied: it claimed a cursor stood at some
-            // offset, the rows moved under it, and the seek landed past the
-            // end. The page comes back empty and the list shows **nothing**
-            // on a folder holding tens of thousands of messages -- which is
-            // what "I click into another folder and it just shows empty"
-            // turned out to be (#1534).
-            //
-            // Marks are an optimisation, so the honest response to one that
-            // cannot be trusted is to stop trusting all of them and read the
-            // way we would have without any. Costly -- this is the deep
-            // `OFFSET` the marks exist to avoid -- and it happens once,
-            // because the marks are gone afterwards.
+            // An empty page in a list that says it has rows means the seek mark lied (#1534); marks
+            // are only an optimisation, so stop trusting all of them and read without them, once.
             if rows.is_empty() && seek.is_some() && request.offset < total {
                 marks.lock().expect("not poisoned").forget();
                 rows = threads.page_at(&query, request.offset).await?;
@@ -667,16 +494,8 @@ impl LocalStore {
         .await
     }
 
-    /// One page of the unified list: every enabled account's inbox at once,
-    /// conversations grouped across them (#1692).
-    ///
-    /// The same seek-mark bargain the account-scoped page makes, and for the
-    /// same reason -- the frontend asks for a row offset and the walk can
-    /// only resume from a cursor. Absorption is what makes the marks worth
-    /// more here than anywhere else: a group is not a fixed number of
-    /// threads, so `unified_page_at` has to re-walk from the cursor to find
-    /// where row *n* begins, and a remembered mark is what keeps that walk
-    /// short.
+    /// A group is not a fixed number of threads, so `unified_page_at` re-walks from the cursor and
+    /// a remembered mark keeps that short (#1692).
     async fn read_unified_page(&self, request: PageRequest) -> Result<ThreadPage, StoreError> {
         let marks = self.unified_marks.clone();
         let cache = self.unified_count.clone();
@@ -702,9 +521,7 @@ impl LocalStore {
                     skip,
                 )
                 .await?;
-            // A mark the rows moved under -- the folder page's #1534, which
-            // an inbox that is triaged from here is the likeliest list to
-            // meet: stop trusting the marks and read from the top once.
+            // A mark the rows moved under (#1534): read from the top once.
             if groups.is_empty() && seek.is_some() && request.offset < total {
                 marks.lock().expect("not poisoned").forget();
                 groups = threads
@@ -733,14 +550,6 @@ impl LocalStore {
         .await
     }
 
-    /// One page of Focus's inbox (spec 007): every enabled account's inbox,
-    /// one row per conversation, over [`ThreadRepository::focus_page_at`].
-    ///
-    /// The unified page's bargain -- seek to the nearest mark, skip the rest,
-    /// stop trusting the marks when a seek lands past the end -- with its
-    /// own marks and a count kept against [`focus_witness`], so a
-    /// one-account page in the steady state is four statements: the
-    /// witness, the window, its participants and its markers.
     async fn read_focus_page(
         &self,
         scope: FocusScope,
@@ -770,8 +579,6 @@ impl LocalStore {
                 after: seek,
             };
             let mut groups = threads.focus_page_at(&query, skip).await?;
-            // A mark the rows moved under: read from the top once, as the
-            // unified page does (#1534).
             if groups.is_empty() && seek.is_some() && request.offset < total {
                 marks.lock().expect("not poisoned").forget();
                 groups = threads
@@ -800,11 +607,7 @@ impl LocalStore {
         .await
     }
 
-    /// One page of the has-action filter (spec 007 T048): the inbox's rows
-    /// that draw a marker, read from the markers -- which conversations
-    /// carry one, then those conversations' rows -- rather than by walking
-    /// the inbox. Five statements: the inboxes, the marked, the window, its
-    /// participants and its markers.
+    /// Read from the markers, not by walking the inbox (spec 007).
     async fn read_has_action_page(&self, request: PageRequest) -> Result<ThreadPage, StoreError> {
         self.read(move |connection| async move {
             let threads = ThreadRepository::new(&connection);
@@ -860,14 +663,8 @@ impl LocalStore {
         .await
     }
 
-    /// No seek marks and no count: an explicit id list is not a window into
-    /// anything, so there is no position to remember and nothing to be
-    /// consistent with.
-    /// [`MailStore::rows_in`]: the same scope decision a page makes, then
-    /// the same query, with the ids in place of a window. A unified list
-    /// pages every account through its own query and has no by-id read
-    /// yet; it answers with an error and the list re-reads the page, as it
-    /// always did.
+    /// An explicit id list is no window, so no seek marks and no count. A unified list has no by-id
+    /// read yet and answers with an error.
     async fn read_rows_in(
         &self,
         scope: ListScope,
@@ -927,24 +724,13 @@ impl LocalStore {
         .await
     }
 
-    /// Run `read` with a connection of its own.
-    ///
-    /// # There is no blocking thread any more
-    ///
-    /// There was: `spawn_blocking`, because `rusqlite` blocked and a blocked
-    /// tokio worker is a worker not running everything else. The engine is
-    /// async to the bottom now, so the read simply awaits -- no thread pool,
-    /// no `T: Send + 'static` on every closure, and no "the read did not
-    /// finish" arm for a panic that crossed a thread boundary.
     async fn read<T, F, Fut>(&self, read: F) -> Result<T, StoreError>
     where
         F: FnOnce(Checkout) -> Fut,
         Fut: Future<Output = Result<T, StoreError>>,
     {
-        // A turn on a warm reader, not a connection of this read's own: the
-        // engine keeps one page cache per connection, so a read that opened
-        // its own paid a cold cache and the pragmas every time, and a list
-        // page did so twice (#1602). The turn lasts until the read is done.
+        // A turn on a warm reader: the engine keeps one page cache per connection, so a read with
+        // its own paid a cold cache every time (#1602).
         let reader = self.store.read().await.map_err(StoreError::from)?;
         let answer = read(reader.checkout()).await;
         drop(reader);
@@ -952,36 +738,10 @@ impl LocalStore {
     }
 }
 
-/// How many rows the list would show.
-///
-/// A single mailbox answers from its own cached count rather than by
-/// counting: `count(*)` over a folder is linear in its size, and the message
-/// list asks for the total with *every page* — so a 100,000-message mailbox
-/// paid 12ms per scroll for a number it already had written down. The
-/// `mailboxes.total` column is maintained by triggers on `messages` against
-/// `deleted_locally = 0`, which is exactly the list query's own predicate, so
-/// the two cannot mean different things.
-///
-/// Flagged and Snoozed are the same numbers summed over folders: each
-/// folder's `flagged_count` and `snoozed_count` keep the list query's own
-/// predicates. They counted, once, on the belief they were off the
-/// hot path; every page read paid it, and `flagged` is in no index, so
-/// Flagged read the row of every message in the account (#1614).
-///
-/// # Why zero is not taken at its word
-///
-/// This number is the list model's `n_items`, and a `GtkListView` over a model
-/// of length zero asks for no pages at all — so a cached count that is wrong
-/// *low* does not show a wrong number, it shows an empty mailbox. That is
-/// `postio-qhz.7`: a live account with 81,716 messages, every cached count
-/// still at its `DEFAULT 0` because nothing maintained the column, and a store
-/// handing the list fifty real rows and a total of zero in the same read.
-///
-/// The column has an owner now, so this should never fire. It is here because
-/// the two failure modes are not comparable: counting an empty folder is free,
-/// counting a full one costs milliseconds off the UI thread, and getting it
-/// wrong the other way costs the user their mail with nothing on screen to say
-/// so. Any future drift degrades to slow rather than to invisible.
+/// A single mailbox answers from its trigger-maintained count, not `count(*)`, which is linear and
+/// was paid on every page; Flagged and Snoozed sum per-folder counts (#1614). Zero is not taken at
+/// its word: a `GtkListView` over a model of length zero asks for no pages, so a count wrong low
+/// shows an empty mailbox. Counting an empty folder is free; being wrong shows nothing on screen.
 async fn count(
     connection: &Checkout,
     scope: ListScope,
@@ -992,9 +752,8 @@ async fn count(
         ListScope::Mailbox(mailbox) => folders.counts(mailbox).await?.map(|counts| counts.total),
         ListScope::Flagged(account) => Some(folders.account_counts(account).await?.flagged),
         ListScope::Snoozed(account) => Some(folders.account_counts(account).await?.snoozed),
-        // The account and unified views list conversations, and their count
-        // is a thread count, not this one. The Outbox is a predicate over
-        // Drafts, and a thread drill-in is one conversation: no column.
+        // Account and unified views list conversations; the Outbox is a predicate over Drafts and a
+        // thread drill-in is one conversation: no column.
         ListScope::Account(_)
         | ListScope::Unified
         | ListScope::Outbox(_)
@@ -1007,18 +766,9 @@ async fn count(
     Ok(MessageRepository::new(connection).count(query).await?)
 }
 
-/// Add the thread count a row's badge needs.
-///
-/// One lookup per distinct thread on the page — at most a page's worth of
-/// indexed point reads, off the UI thread. Counting them in the list query
-/// itself would be faster still, and belongs in `postio-storage` when the
-/// badge is worth a join.
-/// The thread query a scope asks for, or why it cannot have one.
-///
-/// Folders thread; query views list messages (ADR 0015). Flagged and a thread
-/// drill-in are not folders, and answering them with conversations would be
-/// the wrong answer rather than a missing one — so this refuses instead of
-/// quietly picking a scope.
+/// The thread query a scope asks for, or why it cannot have one. Folders thread, query views list
+/// messages (ADR 0015);
+/// answering Flagged or a drill-in with conversations would be wrong, so this refuses.
 async fn thread_query(
     connection: &Checkout,
     scope: ListScope,
@@ -1026,10 +776,8 @@ async fn thread_query(
 ) -> Result<ThreadListQuery, StoreError> {
     match scope {
         ListScope::Mailbox(mailbox) => {
-            // One row read to learn whose folder it is. The account is not
-            // decoration: `threads.account_id` is the leading column of
-            // `idx_threads_account_last_at`, so without it the window has no
-            // index to seek and the whole flat-paging argument collapses.
+            // The account leads `idx_threads_account_last_at`; without it the window has no index
+            // to seek.
             let account = MailboxRepository::new(connection)
                 .get(mailbox)
                 .await?
@@ -1038,33 +786,25 @@ async fn thread_query(
             Ok(ThreadListQuery::in_mailbox(account, mailbox).limit(limit))
         }
         ListScope::Account(account) => Ok(ThreadListQuery::account(account).limit(limit)),
-        // The Outbox lists messages, not conversations, like the two views
-        // beside it: what is on its way is a set of individual sends, and
-        // grouping them into threads would hide two messages going to the
-        // same conversation behind one row.
+        // The Outbox lists individual sends; threading them would hide two messages to one
+        // conversation behind one row.
         ListScope::Flagged(_)
         | ListScope::Snoozed(_)
         | ListScope::Outbox(_)
         | ListScope::Thread(_) => Err(StoreError::new(
             "That view lists messages rather than threads",
         )),
-        // Never reached: `read_thread_page` and `read_thread_count` take the
-        // unified branch before they get here. It is spelled out rather than
-        // left to a catch-all so that a future scope cannot land in this arm
-        // by accident.
+        // Never reached (`read_thread_page` takes the unified branch first); spelled out so a
+        // future scope cannot land here by accident.
         ListScope::Unified => Err(StoreError::new(
             "The unified list is not scoped to one account",
         )),
-        // Never reached either: Focus's lists take their own branch.
         ListScope::Focus(_) => Err(StoreError::new(
             "Focus's lists are not scoped to one account",
         )),
     }
 }
 
-/// One row of a list that folds a conversation across accounts, as the
-/// frontend needs it: the head's row, naming the other copies an action on
-/// it must reach.
 fn summarise_group(group: ThreadGroup) -> Result<ThreadSummary, StoreError> {
     let head = group.row.id;
     let mut summary = summarise_thread(group.row)?;
@@ -1077,12 +817,8 @@ fn summarise_group(group: ThreadGroup) -> Result<ThreadSummary, StoreError> {
     Ok(summary)
 }
 
-/// One thread row, as the frontend needs it.
 fn summarise_thread(row: ThreadListRow) -> Result<ThreadSummary, StoreError> {
-    // A thread with no visible message in scope cannot be drawn, and the
-    // query does not produce one -- the representative is what makes the row
-    // exist. Reported rather than unwrapped, because "cannot happen" is how
-    // panics get shipped.
+    // The query never yields a thread with no visible message; reported rather than unwrapped.
     let latest = row
         .latest
         .ok_or_else(|| StoreError::new("A thread in this folder has no message to show for it"))?;
@@ -1095,8 +831,6 @@ fn summarise_thread(row: ThreadListRow) -> Result<ThreadSummary, StoreError> {
         flagged: row.is_flagged,
         has_attachments: row.has_attachments,
         last_at: row.last_at,
-        // Only Focus's page reads markers; every other list's rows have
-        // none to draw.
         marker: row.marker,
         copies: Vec::new(),
         muted: row.muted,
@@ -1139,36 +873,23 @@ fn summarise(row: MessageListRow) -> MessageSummary {
     }
 }
 
-/// The two windows underneath [`MailStore::list_page`], for callers that
-/// mean one of them specifically.
-///
-/// Not part of [`MailStore`]: a frontend asks for "the list, however this
-/// scope lists itself" and never chooses a window, so putting these on the
-/// trait made every fake implement two reads nothing would call. The tests
-/// and benches that measure one window reach the concrete store.
+/// Not on `MailStore`: a frontend never chooses a window, and putting these on the trait made every
+/// fake implement two reads.
 impl LocalStore {
-    /// One page of the flat message list, with the count that page was read
-    /// against.
     pub fn message_page(&self, request: PageRequest) -> Read<'_, MessagePage> {
         Box::pin(self.read_page(request))
     }
 
-    /// How many rows the flat list would show, without reading any of them.
     pub fn message_count(&self, scope: ListScope) -> Read<'_, u32> {
         Box::pin(self.read_count(scope))
     }
 
-    /// One page of the *threaded* list, with the count it was read against.
-    ///
-    /// A real folder threads and a query view does not (ADR 0015), so this
-    /// answers only [`ListScope::Mailbox`] and [`ListScope::Account`];
-    /// anything else is a caller asking the wrong question and comes back as
-    /// an error rather than as message rows wearing a hat.
+    /// Answers only `Mailbox` and `Account` scopes (ADR 0015); anything else is an error, not
+    /// message rows.
     pub fn thread_page(&self, request: PageRequest) -> Read<'_, ThreadPage> {
         Box::pin(self.read_thread_page(request))
     }
 
-    /// How many conversations the threaded list would show.
     pub fn thread_count(&self, scope: ListScope) -> Read<'_, u32> {
         Box::pin(self.read_thread_count(scope))
     }

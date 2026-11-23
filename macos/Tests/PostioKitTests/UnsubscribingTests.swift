@@ -1,7 +1,6 @@
 import Testing
 @testable import PostioKit
 
-/// The unsubscribe banner's state, held where a command can reach it (#1706).
 @Suite struct UnsubscribingTests {
     @Test func aMessageNobodyHasActedOnIsOffered() {
         let unsubscribing = Unsubscribing()
@@ -9,8 +8,6 @@ import Testing
     }
 
     @Test func startingSaysSoAndOnlyForThatMessage() {
-        // A conversation can hold eight messages from four lists; leaving one
-        // says nothing about the others.
         var unsubscribing = Unsubscribing()
         let began = unsubscribing.begin(7)
         #expect(began)
@@ -19,8 +16,8 @@ import Testing
     }
 
     @Test func aSecondPressWhileTheFirstIsInFlightDoesNotRecordTwice() {
-        // `X` held down, or the key and the button in quick succession: one
-        // activation, because the log is the user's record of what they left.
+        // `X` held down, or the key and the button in quick succession: one activation, because the
+        // log is the user's record of what they left.
         var unsubscribing = Unsubscribing()
         let first = unsubscribing.begin(7)
         #expect(first)
@@ -29,7 +26,6 @@ import Testing
     }
 
     @Test func aRecordedActivationTakesTheBannerAway() {
-        // The banner disappearing *is* the success; there is no tick.
         var unsubscribing = Unsubscribing()
         _ = unsubscribing.begin(7)
         unsubscribing.finish(7, complaint: nil)
@@ -48,7 +44,6 @@ import Testing
     }
 
     @Test func aPressOnAMessageWithNothingToLeaveLeavesNoTrace() {
-        // GTK's rule for the key: where there is no banner, nothing happens.
         var unsubscribing = Unsubscribing()
         _ = unsubscribing.begin(7)
         unsubscribing.withdraw(7)
@@ -56,8 +51,6 @@ import Testing
     }
 
     @Test func aLeftListThatLeftMailOffersToClearItAndAnAnswerSettlesIt() {
-        // #1952: the banner stays with the one action until it is pressed or
-        // dismissed; nothing is offered for a list that was not left.
         var unsubscribing = Unsubscribing()
         let sweep = Unsubscribing.Sweep(
             summary: "Unsubscribed from news.example.org. 14 messages from it are still here",

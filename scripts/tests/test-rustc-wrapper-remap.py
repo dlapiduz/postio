@@ -42,8 +42,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -61,9 +59,6 @@ FAILURES: list[str] = []
 def run(stub_dir: Path, out_dir: Path | None) -> list[str]:
     """Run the wrapper with `OUT_DIR` set as cargo would, report the argv."""
     environment = dict(os.environ)
-    # The stub directory first and the real toolchain dropped, so a real
-    # sccache on this machine cannot make a case pass that would fail without
-    # one. /usr/bin and /bin stay because the wrapper is a bash script.
     environment["PATH"] = f"{stub_dir}:/usr/bin:/bin"
     environment.pop("OUT_DIR", None)
     if out_dir is not None:
@@ -98,7 +93,6 @@ def main() -> int:
         sccache.write_text(REPORT_ARGV)
         sccache.chmod(0o755)
 
-        # A build script that generated source the crate includes -- serde_core.
         generating = base / "worktrees" / "issue-999" / "target" / "debug" / "build"
         generating = generating / "serde_core-abc123" / "out"
         generating.mkdir(parents=True)
@@ -130,8 +124,6 @@ def main() -> int:
             f"the wrapper must pass the invocation through; got {argv!r}",
         )
 
-        # A build script that only emitted cfgs -- proc-macro2, num_traits.
-        # These already hit across worktrees, and the flag would cost that.
         cfg_only = base / "worktrees" / "issue-999" / "target" / "debug" / "build"
         cfg_only = cfg_only / "num_traits-def456" / "out"
         cfg_only.mkdir(parents=True)

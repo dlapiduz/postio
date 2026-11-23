@@ -1,7 +1,3 @@
-//! Focus's digests, as the store keeps them (spec 007, data-model.md
-//! "`digest_deliveries` and `digest_holds`"): mail a rule holds until its
-//! time comes, then delivered together as one row.
-
 use chrono::{DateTime, TimeZone, Utc};
 use postio_model::{DeliveryId, Message, MessageId};
 use postio_storage::Connection;
@@ -12,7 +8,6 @@ fn at(day: u32, hour: u32) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 9, day, hour, 0, 0).unwrap()
 }
 
-/// `count` messages in one inbox.
 async fn messages(connection: &Connection, count: u32) -> Vec<MessageId> {
     let (account, inbox) = test_support::account_with_inbox(connection).await;
     let mut ids = Vec::new();
@@ -27,8 +22,6 @@ async fn messages(connection: &Connection, count: u32) -> Vec<MessageId> {
     ids
 }
 
-/// Where `message`'s hold stands: absent, waiting (no delivery yet), or in
-/// a delivery.
 async fn hold_of(connection: &Connection, message: MessageId) -> Option<Option<DeliveryId>> {
     postio_storage::sql::first(
         connection,
@@ -74,7 +67,6 @@ async fn a_rule_s_held_mail_is_delivered_together_and_nothing_is_delivered_empty
     );
     assert_eq!(hold_of(&connection, ids[0]).await, Some(None), "waiting");
 
-    // Sunday 09:00: the weekly rule comes due and takes everything it holds.
     let delivery = digests
         .deliver("Newsletters", at(27, 9), at(27, 9))
         .await
@@ -88,7 +80,6 @@ async fn a_rule_s_held_mail_is_delivered_together_and_nothing_is_delivered_empty
         "another rule's mail waits for its own"
     );
 
-    // Due again with nothing new held: no delivery, and no row.
     assert_eq!(
         digests
             .deliver("Newsletters", at(28, 9), at(28, 9))
@@ -116,7 +107,6 @@ async fn a_release_or_an_archived_delivery_lets_the_mail_go() {
             .expect("held");
     }
 
-    // Stopping a sender releases one message; removing the rule, the rest.
     assert!(digests.release(ids[0]).await.expect("released"));
     assert_eq!(hold_of(&connection, ids[0]).await, None);
     assert!(!digests.release(ids[0]).await.expect("already gone"));
@@ -126,7 +116,6 @@ async fn a_release_or_an_archived_delivery_lets_the_mail_go() {
     );
     assert_eq!(hold_of(&connection, ids[1]).await, None);
 
-    // `⇧A` archives a delivery; its holds stay, marked by the delivery.
     digests
         .hold(ids[2], "Receipts", at(24, 9))
         .await
@@ -155,9 +144,6 @@ async fn a_release_or_an_archived_delivery_lets_the_mail_go() {
 
 #[tokio::test]
 async fn letting_go_of_what_waits_leaves_delivered_mail_in_its_digest() {
-    // FR-122: a message whose body shows a question or a to-do is let go of
-    // while it waits for its digest. Once delivered it is in a digest row
-    // the person can already see, and stays there.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let ids = messages(&connection, 2).await;
@@ -190,9 +176,6 @@ async fn letting_go_of_what_waits_leaves_delivered_mail_in_its_digest() {
 
 #[tokio::test]
 async fn a_rule_waits_since_its_oldest_undelivered_hold_in_one_seek() {
-    // The due timer's question (T135): since when has a rule held mail
-    // nobody has been given yet? Its next delivery is the first due time
-    // after that; with nothing waiting there is none (US10 scenario 6).
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let ids = messages(&connection, 4).await;
@@ -242,10 +225,6 @@ async fn a_rule_waits_since_its_oldest_undelivered_hold_in_one_seek() {
 
 #[tokio::test]
 async fn a_delivery_keeps_its_summary_and_its_row_reads_it_in_the_same_statement() {
-    // Spec 007 T154, data-model.md: `summary` and `summary_written_at` on the
-    // delivery. The digest row's line comes from it, so the open deliveries
-    // read it with no statement more; what still waits for a summary is one
-    // seek on the open deliveries.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let ids = messages(&connection, 2).await;
@@ -272,7 +251,6 @@ async fn a_delivery_keeps_its_summary_and_its_row_reads_it_in_the_same_statement
     assert_eq!(waiting, [second, first], "newest first");
     assert_eq!(counts.statements, 1, "{counts:?}");
 
-    // One `UPDATE`; the counting seam counts reads, not writes.
     assert!(
         digests
             .set_summary(first, r#"{"statements":[]}"#, at(24, 11))
@@ -311,9 +289,6 @@ async fn a_delivery_keeps_its_summary_and_its_row_reads_it_in_the_same_statement
 
 #[tokio::test]
 async fn each_rule_counts_what_it_holds_now_in_one_statement() {
-    // The `g d` list (T139): each rule with how many messages it holds now,
-    // waiting for its next delivery -- not what it already delivered. One
-    // statement for every rule, each count a seek on idx_digest_holds_rule.
     use postio_storage::test_support::counting::{counted_async, scans};
 
     let database = test_support::memory().await;
@@ -364,9 +339,6 @@ async fn each_rule_counts_what_it_holds_now_in_one_statement() {
 
 #[tokio::test]
 async fn which_messages_a_digest_holds_is_one_statement_by_key() {
-    // US10 scenario 7 (T140): a search result says where held mail waits.
-    // Of the messages asked about: which a rule holds, waiting or
-    // delivered; not one whose digest was archived; not one never held.
     use postio_storage::test_support::counting::{counted_async, scans};
 
     let database = test_support::memory().await;
@@ -424,7 +396,6 @@ async fn which_messages_a_digest_holds_is_one_statement_by_key() {
     );
 }
 
-/// `senders.len()` messages in one inbox, each from the sender at its index.
 async fn messages_from(connection: &Connection, senders: &[(&str, &str)]) -> Vec<MessageId> {
     let (account, inbox) = test_support::account_with_inbox(connection).await;
     let mut ids = Vec::new();
@@ -466,7 +437,6 @@ async fn stopping_a_sender_releases_only_what_the_rule_still_waits_on() {
         .hold(ids[3], "Receipts", at(23, 9))
         .await
         .expect("held");
-    // Ada's first message is already in a delivery; it stays there.
     let delivered = digests
         .deliver("Newsletters", at(24, 9), at(24, 9))
         .await

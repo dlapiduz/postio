@@ -1,71 +1,13 @@
-//! The composer: canvas 2a, taking over the reading pane.
-//!
-//! # Why it is not a window
-//!
-//! The original brief implied a separate compose window; canvas 2a is explicit
-//! that it is not, and docs/PRODUCT.md §10 records that as settled. The composer
-//! replaces the *reader* and nothing else, so the message list stays exactly
-//! where it was — same scroll offset, same selection, same widths. Half of
-//! writing a reply is looking at what you are replying to and at what else is
-//! waiting, and a window that covers the list takes both away.
-//!
-//! # It is a mode, so it says so
-//!
-//! Modes are expensive: the user has to know which one they are in and how to
-//! get out. This one is announced four ways, none of which is a dialog:
-//!
-//! * The reading pane is *entirely* the composer — there is no half state.
-//! * Its heading names the composition (`Compose`, `Reply`, `Forward`).
-//! * The sidebar and the list dim while it is open, the canvas' own signal
-//!   that the keyboard belongs somewhere else. High contrast is exempt; see
-//!   `shell.css`.
-//! * The footer says `Esc keeps the draft` — the exit, and what it costs.
-//!
-//! # Escape never discards
-//!
-//! `Esc` closes the composer and the draft stays in it, so reopening compose
-//! puts the user back in front of what they were writing. Discarding is a
-//! separate verb (`ctrl+d`, [`CommandId::DiscardDraft`]), it is the only one
-//! the registry marks destructive, and it asks first when there is anything to
-//! lose. [`closing`] is the rule, and it is unit-tested rather than trusted.
-//!
-//! One composition at a time: there is one reading pane, so there is one
-//! composer. Opening compose while a started draft is retained reopens *that*
-//! draft rather than replacing it, and says so on the status line. Several
-//! drafts at once wants the Drafts mailbox to be real first (`postio-own`).
-//!
-//! # What this bead does not build
-//!
-//! The composer edits a [`Draft`] and hands it back; it does not construct a
-//! message, queue it, or save it.
-//!
-//! * MIME construction is `postio-es9`, reached from a [`connect_send`] handler
-//!   with the [`Draft`] this widget produces.
-//! * Sending through the operation queue is `postio-pzy`, and reply seeding
-//!   and quoting is `postio-p8q` — which builds the [`Draft`] that
-//!   [`Composer::open`] takes.
-//! * Autosave (`postio-own`), attachments (`postio-tws`) and recipient
-//!   completion (`postio-agd`) each end at a seam this widget owns —
-//!   [`connect_save`], [`connect_attach`] and
-//!   [`connect_recipient_suggestions`] — and stop there. What debounces a
-//!   save, draws an attachment row, or shows a completion popover lives here;
-//!   writing any of it to disk is `postio-storage`'s job, reached through
-//!   whoever wires the seam.
-//!
-//! Until a handler is connected the composer says so instead of pretending:
-//! [`CommandId::Send`] with nothing listening leaves the draft in place and
-//! names the missing piece on the status line, because a composer that empties
-//! itself into a seam that is not connected yet has silently lost the mail.
-//! [`CommandId::AttachFile`] and a drop with no [`connect_attach`] handler do
-//! the same.
-//!
-//! [`connect_send`]: Composer::connect_send
-//! [`connect_save`]: Composer::connect_save
-//! [`connect_attach`]: Composer::connect_attach
-//! [`connect_recipient_suggestions`]: Composer::connect_recipient_suggestions
+//! The composer: canvas 2a, taking over the reading pane rather than opening a window
+//! (docs/PRODUCT.md §10), so the list keeps its scroll and selection.
+//! `Esc` closes the composer and the draft stays in it; discarding is a separate destructive verb
+//! that asks first (`closing` is the rule).
+//! Until a handler is connected the composer leaves the draft in place and says so on the status
+//! line, rather than lose the mail into an unconnected seam.
 
 pub mod editor;
 pub mod scheme;
+pub mod source_view;
 pub mod web_process;
 
 use std::cell::{Cell, RefCell};
@@ -86,38 +28,19 @@ use postio_model::{
 use crate::widgets::keyhint;
 use postio_ui::hints;
 
-/// A field of the composer the keyboard can be in.
-///
-/// Two rules decide where it *lands* when the composer opens, from the bead: a
-/// reply focuses the body, because the recipients and the subject are already
-/// decided; new mail focuses `To`, because nothing is.
-///
-/// The rest of the fields are here so the focus *order* can be asserted rather
-/// than looked at (FR-003). With only `To` and `Body`, "focus moves between
-/// recipient, subject and body in a defined, reversible order" was a claim
-/// about widgets nothing could name — a test could watch the keyboard leave
-/// `To` and had no way to say where it went.
+/// A reply focuses the body (recipients and subject are decided); new mail focuses `To`.
+/// The other fields exist so the focus order can be asserted (FR-003).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Field {
-    /// The `To` field.
     To,
-    /// The `Cc` field, when it is showing.
     Cc,
-    /// The `Bcc` field, when it is showing.
     Bcc,
-    /// The subject.
     Subject,
-    /// The body.
     Body,
 }
 
-/// Where the keyboard goes when a composition of this kind opens.
-///
-/// Reply and reply-all come from `reply_draft` with the original sender or
-/// recipients already filled into `to`, so the keyboard can go straight to
-/// the body. Forward has no recipient at all -- there is nobody to forward
-/// to until the user picks one -- so it belongs with `New`, not with the
-/// replies (#690).
+/// Forward has no recipient until the user picks one, so it belongs with `New`, not the replies
+/// (#690).
 pub fn first_field(kind: DraftKind) -> Field {
     match kind {
         DraftKind::New | DraftKind::Forward => Field::To,
@@ -125,10 +48,6 @@ pub fn first_field(kind: DraftKind) -> Field {
     }
 }
 
-/// Where the keyboard goes when `draft` is put in front of a person: where
-/// writing continues. A draft whose recipient and subject are already
-/// written goes to the body, as a reply does; an empty To still gets the
-/// keyboard first.
 pub fn starting_field(draft: &Draft) -> Field {
     let addressed = !draft.to.is_empty() && !draft.subject.trim().is_empty();
     if addressed {
@@ -138,9 +57,7 @@ pub fn starting_field(draft: &Draft) -> Field {
     }
 }
 
-/// What the composer's heading says it is.
-///
-/// The vocabulary is the app's: **Compose**, never "New" or "Write".
+/// The app's vocabulary: Compose, never "New" or "Write".
 pub fn heading(kind: DraftKind) -> &'static str {
     match kind {
         DraftKind::New => "Compose",
@@ -152,56 +69,21 @@ pub fn heading(kind: DraftKind) -> &'static str {
 
 pub use postio_model::draft::{Closing, closing, closing_since};
 
-/// Which draft [`Composer::open`] puts on screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Opening {
-    /// Show the draft that was asked for.
     Fill,
-    /// Leave the kept draft where it is and come back to it.
     Restore,
 }
 
-/// Which draft wins when the composer is asked to open one.
-///
-/// **The one that was asked for, always.** A reply opens the reply, a
-/// `mailto:` opens the `mailto:`, and `c` opens a blank message — which is
-/// what "compose" means to everyone who has not read this file (#1196).
-///
-/// # What used to happen, and why it stopped
-///
-/// A bare `c` came back to whatever the composer was holding. That was the
-/// one-composition-at-a-time rule, and it existed to make `Esc` safe:
-/// escape out of a half-written mail, press `c`, and there it is again.
-///
-/// Two things ended it. The smaller is #691: the rule was originally
-/// applied to *every* request, so a reply asked for after escaping a draft
-/// was silently discarded and the user landed back in the old draft — which
-/// is why "deliberate" requests had to be carved out of it. The larger is
-/// that the safety no longer depends on the rule at all. Since #166 a kept
-/// draft is autosaved and *is* a row in the Drafts folder by the time this
-/// is asked, so starting fresh loses nothing: the previous draft is exactly
-/// where anybody would look for a previous draft, and
-/// [`Composer::resume`] opens it by name.
-///
-/// What survives is the part that was always about the keyboard rather than
-/// about the draft: `c` while the composer is *already open* is still a
-/// no-op that returns focus, in [`Composer::open`]'s own first branch. One
-/// composition at a time, still — but "show me the one I have open", not
-/// "show me the one I closed".
-///
-/// Kept as a named function, and still called, because the decision has a
-/// reason and a caller reading `if opening(..) == Opening::Restore` is owed
-/// somewhere to find out why it never is. It is also the seam a "restore my
-/// draft" preference would reopen, should anyone want one.
+/// The draft asked for always wins (#1196, #691). A kept draft is autosaved into Drafts, so
+/// starting fresh loses nothing;
+/// `Composer::resume` opens it by name. Still called so a reader of `opening(..) == Restore` can
+/// find why it never is.
 pub fn opening(_kept: &Draft, _asked: &Draft) -> Opening {
     Opening::Fill
 }
 
-/// What to say about recipients that will not survive contact with a server.
-///
-/// A warning, never a refusal: the text stays in the field, and the count is
-/// the only thing that changes. Refusing the keystroke would lose what was
-/// typed and explain nothing.
+/// A warning, never a refusal: refusing the keystroke would lose what was typed.
 pub fn recipient_warning(draft: &Draft) -> Option<String> {
     let wrong: Vec<String> = fields(draft)
         .into_iter()
@@ -216,10 +98,8 @@ pub fn recipient_warning(draft: &Draft) -> Option<String> {
 
     match wrong.len() {
         0 => None,
-        // Named, not counted (FR-024). A count alone tells somebody with nine
-        // recipients across three fields that one of them is wrong and leaves
-        // them to find it, which is exactly the work the message exists to
-        // do.
+        // Named, not counted (FR-024): a count alone leaves the user to find the wrong one among
+        // nine.
         _ => {
             let shown: Vec<&str> = wrong
                 .iter()
@@ -230,7 +110,6 @@ pub fn recipient_warning(draft: &Draft) -> Option<String> {
             if wrong.len() <= NAMED_ADDRESSES {
                 Some(format!("{listed} does not look like an address"))
             } else {
-                // Past a few this stops being a sentence and becomes a wall.
                 Some(format!(
                     "{listed} and {} more do not look like addresses ({} in all)",
                     wrong.len() - shown.len(),
@@ -241,27 +120,13 @@ pub fn recipient_warning(draft: &Draft) -> Option<String> {
     }
 }
 
-/// How many wrong addresses a warning names before it starts counting.
 const NAMED_ADDRESSES: usize = 3;
 
-/// How many recipients this message has, and on which field.
-///
-/// FR-023, and the surprise it exists to prevent: a reply-to-all to a large
-/// list looks exactly like a reply until it is sent. The count says *which
-/// field* because "42 recipients" reads very differently from "1 To, 41 Cc".
-///
-/// `None` for the ordinary case, deliberately. A banner that is always there
-/// is a banner nobody reads, so this says nothing until there is more than
-/// one person on the message.
+/// `None` for the ordinary case: a banner that is always there is one nobody reads.
 pub fn recipient_summary(draft: &Draft) -> Option<String> {
-    // The wording and the threshold are `postio_ui::compose`'s. They were
-    // here, which is why the macOS composer had no such banner -- and it had
-    // no Bcc field either, so a reply-all there showed one address and
-    // silently addressed everybody else.
     postio_ui::compose::recipient_summary(draft.to.len(), draft.cc.len(), draft.bcc.len())
 }
 
-/// The three recipient fields, in the order they appear on screen.
 fn fields(draft: &Draft) -> [(&'static str, &[EmailAddress]); 3] {
     [
         ("To", draft.to.as_slice()),
@@ -270,25 +135,15 @@ fn fields(draft: &Draft) -> [(&'static str, &[EmailAddress]); 3] {
     ]
 }
 
-/// Whether `host` belongs to a different organisation than `sender_domain`.
-///
-/// Exact match or a subdomain of it counts as the same: a company's own
-/// `click.shop.example.org` linking out from `shop.example.org` is not what
-/// [`quoted_tracking_domains`] exists to flag, only a host with no
-/// relationship to the sender's domain at all.
+/// A subdomain counts as the same organisation: `click.shop.example.org` linking from
+/// `shop.example.org` is not what `quoted_tracking_domains` flags.
 fn differs_from_sender(host: &str, sender_domain: &str) -> bool {
     let host = host.to_ascii_lowercase();
     let sender_domain = sender_domain.to_ascii_lowercase();
     host != sender_domain && !host.ends_with(&format!(".{sender_domain}"))
 }
 
-/// What the composer says when a reply's quoted text links to one or more
-/// domains other than the message being replied to came from.
-///
-/// `None` for nothing to say — this is issue #116's whole shape: no link is
-/// ever stripped or rewritten by anything upstream (a link is not a load,
-/// `postio-body/tests/outgoing.rs::a_quoted_link_keeps_its_href_because_a_link_is_not_a_load`),
-/// this only decides whether to say something about one.
+/// Purely a notice: no link is stripped or rewritten upstream (a link is not a load) (#116).
 fn tracking_link_notice(domains: &[String]) -> Option<String> {
     match domains {
         [] => None,
@@ -303,21 +158,10 @@ fn tracking_link_notice(domains: &[String]) -> Option<String> {
     }
 }
 
-/// Hosts a reply's quoted text would link to that differ from `source`'s own
-/// sender.
-///
-/// A reply reaches people the original message did not, and a tracking
-/// redirect's query string usually encodes the *first* recipient's id — so a
-/// reply-all's other readers would click through under that id, not their
-/// own, without anyone having decided to send their identifier anywhere.
-/// Purely informational (issue #116's maintainer verdict): `postio-body`
-/// still represents exactly what the message said, and nothing here changes
-/// what ends up in the draft.
-///
-/// Scans exactly what the quote will contain, by construction: the same
-/// [`source_document`] the reply is built from (#340). A message whose only
-/// links live in a part that is not quoted — plain text carries no `<a>` —
-/// produces nothing to warn about.
+/// A reply reaches people the original did not, and a tracking redirect usually encodes the first
+/// recipient's id.
+/// Informational only (#116). Scans what the quote will contain, via the same `source_document` the
+/// reply is built from (#340).
 fn quoted_tracking_domains(source: &Message) -> Vec<String> {
     let Some(sender_domain) = source.primary_from().and_then(|from| from.domain()) else {
         return Vec::new();
@@ -329,237 +173,130 @@ fn quoted_tracking_domains(source: &Message) -> Vec<String> {
         .collect()
 }
 
-/// What the status line says before anything has happened to the draft.
-/// What the body field announces itself as. One constant because the scroll
-/// region around it is a separate tab stop and must say the same thing.
+/// One constant because the scroll region around it is a separate tab stop and must say the same
+/// thing.
 const BODY_NAME: &str = "Message body";
 
 const UNSAVED: &str = postio_ui::compose::NOT_SAVED;
 
-/// What the status line says when opening compose came back to a kept draft.
 const RETAINED: &str = "still holding the draft Esc kept";
 
-/// What the status line says when [`CommandId::Send`] has nowhere to go.
-///
-/// Reachable only with no account configured at all: the composition root
-/// connects [`Composer::connect_send`] whenever it has one. Before #423 it
-/// connected it never, so this was what sending did — always, on every
-/// account — and the wording was plausible enough to read as a setting
-/// somebody had missed rather than as a seam nobody had wired.
+/// Reachable only with no account configured: the composition root connects `connect_send` whenever
+/// it has one (#423).
 const NO_SEND_PATH: &str = "not sent — no outgoing account is connected yet";
 
-/// What the status line says when Reply/Reply All/Forward is pressed while
-/// the composer already has a draft open.
-///
-/// #426: `open` already refuses to replace a *retained* draft (the
-/// `Closing::Keep` branch, `RETAINED`'s own case) — typed prose with nowhere
-/// else to go is not something a second keystroke should be able to lose.
-/// The same refusal has to hold for a draft still in progress, and it has to
-/// say so: the bug this fixes was not the refusal, which is right, but that
-/// refusing looked identical to the key doing nothing at all.
+/// `open` refuses to replace a draft in progress, as it does a retained one; the refusal must say
+/// so, since silence looked like the key doing nothing (#426).
 const REPLY_BLOCKED: &str = "not opened — finish or close the current draft first";
 
-/// What the status line says when a file was chosen or dropped but nothing
-/// is listening on [`Composer::connect_attach`] to turn it into an attachment.
 const NO_ATTACH_PATH: &str = "not attached — no attachment handler is connected yet";
 
-/// What the status line says when an image was pasted but nothing is
-/// listening on [`Composer::connect_inline_image`] to store its bytes.
 /// What the picker's first entry says: sign the way this identity signs.
 const SIGNATURE_FROM_IDENTITY: &str = "Identity signature";
 
 const NO_INLINE_PATH: &str = "not inserted — no inline-image handler is connected yet";
 
-/// Above this, an attachment's row calls out its size.
-///
-/// The bead asks for a *configurable* threshold; that means reading
-/// `postio-config`, which this crate does not touch. A fixed default earns
-/// its keep until that wiring exists rather than silently warning never.
+/// A fixed default until the configurable threshold is wired through `postio-config`.
 const LARGE_ATTACHMENT_BYTES: u64 = 25 * 1024 * 1024;
 
-/// How long an edit waits before [`Composer::save`] runs again on its own.
-///
-/// Long enough that a burst of keystrokes coalesces into one save rather than
-/// one per character — the acceptance criterion is that autosave never
-/// blocks typing, and firing on every keystroke would eventually compete with
-/// it even if each save were fast. Short enough that a crash loses at most
-/// this much of a sentence.
+/// Long enough that a burst of keystrokes coalesces into one save, short enough that a crash loses
+/// little.
 const AUTOSAVE_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(1500);
 
-/// What a composer needs from whatever holds it (specs/007-postio-focus
-/// T023): Focus's compose dialog.
-///
-/// Everything the composer asks its app for goes through
-/// here -- where it is drawn, the pane and the keyboard context it takes and
-/// gives back, the keymap its keys resolve against, the command broadcast,
-/// the parent of its file dialogs -- so the composer names no app, and a
-/// second host is a second implementation of this, not a second composer.
+/// Everything the composer asks its app for goes through here, so the composer names no app and a
+/// second host is a second implementation.
 pub trait ComposerHost {
-    /// The window a file dialog, and a detached composer's own window, are
-    /// transient for.
     fn parent(&self) -> Option<gtk::Window>;
-    /// Put `composer` where the host draws it, hidden until it takes the pane.
-    /// Called once, by [`Composer::mount_on`].
     fn install(&self, composer: &Composer);
-    /// Put `composer` back where the host draws it, after it was detached.
     fn restore(&self, composer: &Composer);
-    /// Take `composer` out of where the host draws it, to detach it into a
-    /// window of its own. A host that frames the composer takes the frame
-    /// out with it: see [`frame`](Self::frame).
     fn remove(&self, composer: &Composer);
-    /// What the detached window shows instead of the composer alone, when
-    /// the host draws the composer inside a frame -- a title, the verbs --
-    /// that a person writing in a window of their own needs as much as one
-    /// writing in the pane. The frame holds the composer, so detaching it is
-    /// still the same widgets reparented, nothing rebuilt. `None` for a host
-    /// with no frame.
+    /// `None` for a host with no frame. Detaching reparents the same widgets, nothing rebuilt.
     fn frame(&self) -> Option<gtk::Widget> {
         None
     }
-    /// The composer takes the pane and the keyboard. The host remembers what
-    /// it had, to give it back.
     fn take_pane(&self);
-    /// The composer gives the pane back, as the host remembered it.
     fn release_pane(&self);
-    /// The command `key` runs in [`Context::Composer`](postio_core::Context::Composer) as pressed in `window`,
-    /// resolved against the host's keymap.
     fn command_for_key(
         &self,
         key: gtk::gdk::Key,
         state: gtk::gdk::ModifierType,
         window: &gtk::Window,
     ) -> Option<CommandId>;
-    /// What the host does with a key, pressed in `window`, that no composer
-    /// command claimed.
     fn handle_key(
         &self,
         key: gtk::gdk::Key,
         state: gtk::gdk::ModifierType,
         window: &gtk::Window,
     ) -> glib::Propagation;
-    /// Offer `action` where the host's own controls reach it: a header's
-    /// Compose button reaches `win.compose`.
     fn add_action(&self, action: &gio::SimpleAction);
-    /// Call `handler` with every command the host dispatches.
     fn connect_command(&self, handler: Box<dyn Fn(CommandId)>);
-    /// The keymap in force.
     fn keymap(&self) -> Keymap;
 }
 
-/// How big the detached composer opens, in logical pixels.
-///
-/// Deliberately narrower than the main window: it is one message being
-/// written, not a mail client, and a pop-out that opens the size of the
-/// window it came out of reads as a second application. Tall enough that the
-/// header rows and a paragraph of body are both visible without scrolling,
-/// which is the state most replies are finished in.
+/// Narrower than the main window: one message being written, not a mail client.
 const DETACHED_SIZE: (i32, i32) = (620, 560);
 
-/// What to call with the draft when the user sends or saves.
 type DraftHandler = Box<dyn Fn(&Draft)>;
 
-/// What to call with the draft when the user schedules it to send later.
-///
-/// Carries the chosen time because, unlike an ordinary send, there is no
-/// other way for the handler to learn it — the picker is entirely inside the
-/// composer and nothing downstream can ask it again once the draft is handed
-/// off and the fields are cleared.
+/// Carries the chosen time: nothing downstream can ask the picker again once the draft is handed
+/// off.
 type SendLaterHandler = Box<dyn Fn(&Draft, DateTime<Utc>)>;
 
-/// What to call with the draft when the user asks it to be saved.
-///
-/// `&mut`, unlike [`DraftHandler`]: the storage-backed handler assigns a
-/// [`DraftId`](postio_model::DraftId) the first time it persists a draft, and
-/// has nowhere else to put it back — the composer never constructs its own
-/// repository row. [`Composer::save`] writes the id back onto its own draft
-/// afterward, which is what makes every save after the first an update to the
-/// same row instead of a fresh insert.
+/// `&mut` because the storage handler assigns a `DraftId` on first save; `Composer::save` writes it
+/// back so later saves update the same row.
 type SaveHandler = Box<dyn Fn(&mut Draft)>;
 
-/// What to call when the composer closes, with what became of the draft.
 type ClosedHandler = Box<dyn Fn(Closing)>;
 
-/// What to call when the composer takes over the reading pane.
 type OpenedHandler = Box<dyn Fn()>;
 
 pub use postio_model::contact_group::RecipientCandidate;
 
-/// Answers "what does `prefix` complete to" for recipient completion —
-/// contacts, previous correspondents and contact groups, ranked by frequency
-/// and recency, are [`Composer::connect_recipient_suggestions`]'s job to
-/// supply; the composer only shows what it is given, in the order it is
-/// given.
 type RecipientSuggestions = Box<dyn Fn(&str) -> Vec<RecipientCandidate>>;
 
-/// Answers "what message is `e`/`E`/`f` about" — the composer has no notion
-/// of a reading pane or a selection of its own. `None` means there is nothing
-/// to reply to right now (nothing open, or nothing to send as), in which case
-/// the keystroke does nothing rather than opening a broken composer.
-///
-/// The answer comes through a callback rather than a return value (#1608):
-/// finding the message and its body is a store read, and the composer must
-/// not wait for one on the thread that draws. A provider that has the answer
-/// in hand may call it at once.
+/// `None` means nothing to reply to, and the keystroke does nothing. Answered through a callback
+/// (#1608): the lookup is a store read and must not block drawing.
 type ReplySourceProvider = Box<dyn Fn(ReplyAnswer)>;
 
-/// How a [`ReplySourceProvider`] hands back its answer, exactly once.
 pub type ReplyAnswer = Box<dyn FnOnce(Option<(Message, Account)>)>;
 
-/// Answers "what should a brand-new draft sign with, before the identity's
-/// own?" (#394) — the composer has no notion of which mailbox the sidebar has
-/// selected, so whatever tracks that resolves the precedence and hands back
-/// only the answer. `None` means neither the mailbox nor the account has an
-/// opinion, and the picker stays on the identity's own signature.
-///
-/// Answered through a callback, like [`ReplySourceProvider`] and for the same
-/// reason (#1608).
+/// `None` means neither the mailbox nor the account has an opinion. Answered through a callback, as
+/// `ReplySourceProvider` is (#1608).
 type SignatureDefaultProvider = Box<dyn Fn(SignatureAnswer)>;
 
-/// How a [`SignatureDefaultProvider`] hands back its answer, exactly once.
 pub type SignatureAnswer = Box<dyn FnOnce(Option<SignatureId>)>;
 
-/// What [`Composer::connect_attach`] hands its result to, exactly once:
-/// `Some` with the finished attachment, `None` to reject the file (unreadable,
-/// say). Calling this is what actually adds the row — synchronously, for a
-/// handler that already has the answer, or from a spawned task's own
-/// callback, for one that had to go read the file first. `pub` because it
-/// appears in `connect_attach`'s public signature, not because anything
-/// outside this module constructs one.
+/// Calling this adds the row, synchronously or from a spawned task's callback. `pub` because it
+/// appears in `connect_attach`'s signature.
 pub type AttachReady = Box<dyn FnOnce(Option<Attachment>)>;
 
-/// What [`Composer::connect_inline_image`] hands its result to, exactly
-/// once: `Some` with the finished attachment — carrying a `Content-ID` and
-/// `Disposition::Inline` — or `None` to reject the paste. `pub` because it
-/// appears in the public signature, like [`AttachReady`].
 pub type InlineImageReady = Box<dyn FnOnce(Option<Attachment>)>;
 
-/// Turns pasted image bytes into an inline attachment: writes them to the
-/// blob store, mints a `Content-ID`, and calls [`InlineImageReady`] whenever
-/// it is ready — the same non-blocking contract as [`AttachHandler`].
+/// Calls `InlineImageReady` whenever ready: the same non-blocking contract as `AttachHandler`.
 type InlineImageHandler = Box<dyn Fn(Vec<u8>, String, InlineImageReady)>;
 
-/// The slot `build()` fills with the draft-aware `postio-cid:` lookup; the
-/// editor's blob source redirects through it for the composer's whole life.
+pub type RemoteImageReady = Box<dyn FnOnce(Result<Attachment, postio_ui::compose::RemoteRefusal>)>;
+
+type RemoteImageHandler =
+    Box<dyn Fn(postio_model::DraftId, postio_body::WebHref, RemoteImageReady)>;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum RemoteState {
+    Downloading,
+    Refused(String),
+}
+
 type BlobLookup = Rc<RefCell<Option<Box<dyn Fn(&str) -> Option<(Vec<u8>, String)>>>>>;
 
-/// Reads an attachment's bytes back, for the editing surface's
-/// `postio-cid:` requests. Synchronous and local, like
-/// [`crate::reader::BlobSource`], because that is what a scheme
-/// handler can await.
+/// Synchronous and local, like `crate::reader::BlobSource`, because that is what a scheme handler
+/// can await.
 type AttachmentBytes = Box<dyn Fn(&Attachment) -> Option<Vec<u8>>>;
 
-/// Turns a chosen or dropped file into attachment metadata, calling
-/// [`AttachReady`] with the result whenever it is ready. A handler that
-/// blocks here to read a large file blocks the composer along with it; slow
-/// work belongs on a thread or task the handler spawns itself, calling back
-/// once it finishes — `add_file` never waits on this closure to return.
+/// A handler that blocks reading a large file blocks the composer: slow work belongs on a task the
+/// handler spawns, calling `AttachReady` when done.
 type AttachHandler = Box<dyn Fn(std::path::PathBuf, AttachReady)>;
 
-/// Which of [`postio_model::reply`]'s three functions a command asks for.
-///
-/// [`CommandId::Reply`], [`CommandId::ReplyAll`] and [`CommandId::Forward`]
-/// are the only commands this maps, and only when the composer is not
-/// already open — replying to a reply in progress is not a thing.
+/// Only when the composer is not already open: replying to a reply in progress is not a thing.
 fn reply_draft(id: CommandId, source: &Message, account: &Account) -> Option<Draft> {
     let kind = match id {
         CommandId::Reply => ReplyKind::Reply,
@@ -583,10 +320,7 @@ mod imp {
         pub heading: gtk::Label,
         pub status: gtk::Label,
         pub to: gtk::Entry,
-        /// The account's send-size ceiling, when it has one.
-        ///
-        /// `None` is not "unknown", it is "no limit configured", and it means
-        /// nothing is checked -- see `postio_model::size::check`.
+        /// `None` is "no limit configured", not "unknown": nothing is checked.
         pub size_limit: Cell<Option<u64>>,
         pub cc: gtk::Entry,
         pub bcc: gtk::Entry,
@@ -594,85 +328,51 @@ mod imp {
         pub cc_row: gtk::Box,
         pub bcc_row: gtk::Box,
         pub more: gtk::Button,
-        /// The pointer's way to the same command the keyboard and the palette
-        /// reach. Its label flips, because one control that says which way it
-        /// goes beats two that are each wrong half the time.
+        /// Its label flips: one control that says which way it goes beats two that are each wrong
+        /// half the time.
         pub detach: gtk::Button,
-        /// The window the composition is in when it is not in the pane.
-        ///
-        /// `Some` is the whole of "detached" — there is no flag to disagree
-        /// with it, because a flag and a window can drift apart and a window
-        /// that is not there cannot.
+        /// `Some` is the whole of "detached": a separate flag could drift from the window.
         pub detached: RefCell<Option<adw::Window>>,
         pub identity_row: gtk::Box,
-        /// The account's named signatures, and the picker over them (#12).
-        /// Entry 0 is the identity's own; the rest are the account's set, so
-        /// a draft can sign differently without changing who it is from.
+        /// Entry 0 is the identity's own; the rest are the account's set (#12).
         pub signatures: RefCell<Vec<Signature>>,
         pub signature: gtk::DropDown,
         pub identity: gtk::DropDown,
         pub identity_only: gtk::Label,
-        /// The editing surface: ADR 0003's WebView, adopted for every
-        /// draft (ADR 0004 Q6 as amended, #347). The `Editor` owns the
-        /// document, the edit history and the typing-run coalescing — the
-        /// composer holds a view over its record, exactly as ADR 0004
-        /// always demanded of the surface.
+        /// The `Editor` owns the document, edit history and typing-run coalescing; the composer
+        /// holds a view over its record (ADR 0004 Q6, #347).
         pub body: editor::Editor,
-        /// The formatting toolbar's five toggles, in registry order: bold,
-        /// italic, bullet list, numbered list, quote block. Toggles because
-        /// each reflects the caret — active when the selection already sits
-        /// inside what the button would apply.
+        pub source: source_view::SourceView,
+        pub source_toggle: gtk::ToggleButton,
+        pub source_notice: gtk::Box,
+        pub source_notice_label: gtk::Label,
+        pub source_notice_undo: gtk::Button,
+        pub source_typed: RefCell<Option<String>>,
         pub format_toggles: [gtk::ToggleButton; 6],
-        /// The link button: a plain button, because a link is a dialog to
-        /// fill in, not a state the caret can be in or out of.
         pub link_button: gtk::Button,
         pub image_button: gtk::Button,
-        /// The paperclip. Held like `link_button` rather than built inline,
-        /// so a test can press the control a person presses.
         pub attach_button: gtk::Button,
         pub send: gtk::Button,
-        /// Opens the [`CommandId::ScheduleSend`] picker beside `send`. Its
-        /// popover content is rebuilt fresh from [`schedule_presets`] every
-        /// time it opens — see `set_create_popup_func` in `build_actions` —
-        /// because the presets are relative to whatever moment the picker
-        /// opens, not to when the composer itself was built.
+        /// The popover is rebuilt each time it opens: the presets are relative to the moment it
+        /// opens.
         pub schedule_send: gtk::MenuButton,
         pub save: gtk::Button,
-        /// "Esc keeps the draft", trailing the action row. The least
-        /// essential of the four (#692): it ellipsizes under a narrow
-        /// allocation rather than the row overflowing the window with a
-        /// bare edge-clip, or a button's own label losing a word.
+        /// The least essential of the four (#692): it ellipsizes under a narrow allocation.
         pub escape: gtk::Label,
-        /// `Attach another ctrl+shift+a`, over the attachment list. A box
-        /// so `set_keymap` can redraw what is in it.
         pub attach_hint: gtk::Box,
         pub warning: gtk::Label,
-        /// Issue #116: "this reply quotes a link to a domain other than the
-        /// sender's own" — purely informational, next to `warning` but a
-        /// separate label, since the two can be true at once and are about
-        /// unrelated things.
+        /// A separate label from `warning`: the two can be true at once and are about unrelated
+        /// things (#116).
         pub tracking_notice: gtk::Label,
-        /// The attachment list's own row, hidden entirely while there is
-        /// nothing to show — a bare "no attachments" line is clutter the Cc
-        /// row already taught this composer not to add.
         pub attachments_box: gtk::Box,
-        /// Under the body and above the attachments: what a host has to say
-        /// about the text, as the folded messages of a forwarded thread.
         pub below_body: gtk::Box,
         pub attachments_list: gtk::ListBox,
-        /// The carried parts, by MIME path, being fetched from the message
-        /// this draft forwards: drawn downloading until their bytes land
-        /// (#1690). Not part of the draft -- it is what the fetch is doing,
-        /// and a new composition starts with none.
+        /// Not part of the draft: it is what the fetch is doing, and a new composition starts with
+        /// none (#1690).
         pub downloading: RefCell<std::collections::BTreeSet<String>>,
-        /// Everything about the draft that is not in a field: its id, account,
-        /// kind, attachments, and what it is a reply to.
         pub draft: RefCell<Draft>,
-        /// The account a *fresh* composition starts from -- what
-        /// [`Composer::set_account`](super::Composer::set_account) was told, kept apart from the draft
-        /// cell. Reading it off the cell meant a reply, which fills the cell
-        /// with the answered message's account, quietly became where the next
-        /// new message came from too (#960's fence, #1161).
+        /// Kept apart from the draft cell: reading it off the cell made a reply's account become
+        /// where the next new message came from (#960, #1161).
         pub composing_from: Cell<AccountId>,
         pub identities: RefCell<Vec<Identity>>,
         pub sent: RefCell<Vec<DraftHandler>>,
@@ -680,72 +380,39 @@ mod imp {
         pub saved: RefCell<Vec<SaveHandler>>,
         pub changed: RefCell<Vec<DraftHandler>>,
         pub closed: RefCell<Vec<ClosedHandler>>,
-        /// Called when a fresh `open()` actually takes the pane — not on the
-        /// no-op path where the composer was already open. What the header's
-        /// `Compose` button listens to, alongside `closed`, to say `Composing`
-        /// only while that is true.
         pub opened: RefCell<Vec<OpenedHandler>>,
-        /// Where `e`/`E`/`f` get the message and account to reply to. One
-        /// slot, last registration wins: there is exactly one reading pane.
+        /// One slot, last registration wins: there is exactly one reading pane.
         pub reply_source: RefCell<Option<ReplySourceProvider>>,
-        /// What a brand-new draft should sign with, before the identity's own
-        /// (#394) — read at the moment `c` starts one, since which mailbox is
-        /// selected changes far more often than the account itself does.
+        /// Read when `c` starts a draft, since the selected mailbox changes more often than the
+        /// account (#394).
         pub signature_default: RefCell<Option<SignatureDefaultProvider>>,
-        /// Where recipient completion gets its candidates. One slot: the
-        /// same search serves `To`, `Cc` and `Bcc` alike.
         pub recipient_suggestions: RefCell<Option<RecipientSuggestions>>,
-        /// Where the signature sits on a reply and on a forward (#12), from
-        /// `[compose]`. New mail has no quote, so placement cannot mean
-        /// anything there.
         pub signature_placement: Cell<(Placement, Placement)>,
-        /// Where a chosen or dropped file becomes attachment metadata. One
-        /// slot: the same handler serves the file chooser and drag-and-drop.
         pub attach: RefCell<Option<AttachHandler>>,
-        /// Where pasted image bytes become an inline attachment (#341).
         pub inline_image: RefCell<Option<InlineImageHandler>>,
-        /// Where an inline attachment's bytes come back from for display.
+        pub(super) remote_image: RefCell<Option<super::RemoteImageHandler>>,
+        pub(super) remote_state: RefCell<std::collections::HashMap<String, super::RemoteState>>,
+        pub remote_box: gtk::Box,
+        pub remote_list: gtk::ListBox,
+        pub(super) remote_drawn: RefCell<Vec<(String, String, Option<super::RemoteState>)>>,
+        pub remote_warning: gtk::Label,
         pub attachment_bytes: RefCell<Option<AttachmentBytes>>,
-        /// What the body's `postio-cid:` requests resolve through — filled
-        /// by `build()` with a draft-aware lookup, held here because the
-        /// editor is constructed before the composer object exists.
+        /// Held here because the editor is constructed before the composer object exists.
         pub blob_lookup: BlobLookup,
-        /// What holds the composer, once mounted: see [`super::ComposerHost`].
         pub host: RefCell<Option<Rc<dyn super::ComposerHost>>>,
-        /// Set while `open` is filling the fields, so the widgets' own
-        /// `changed` signals do not report the fill as the user typing.
-        /// Which composition this is: bumped every time the fields are
-        /// filled with a draft. An answer that arrives after the composer
-        /// moved on to another draft names an older one, and is ignored
-        /// (#1608). See [`super::Composer::adopt_id`].
+        /// Bumped every time the fields are filled with a draft; an answer arriving for an older
+        /// one is ignored (#1608). See `Composer::adopt_id`.
         pub generation: Cell<u64>,
-        /// The composition the fields held before the last fill -- the one a
-        /// close or a send just finished, since both refill the composer
-        /// before the closed handlers run.
+        /// The composition before the last fill: a close or send just finished it, since both
+        /// refill before the closed handlers run.
         pub previous_generation: Cell<u64>,
         pub filling: Cell<bool>,
-        /// The forwarded messages folded out of the editor: what the body
-        /// still holds, below what is typed, until they are shown again.
         pub held: RefCell<Vec<postio_body::Block>>,
-        /// The composition as the last fill left it, once signed and
-        /// quoted: what "untouched" is measured against on closing.
         pub began_as: RefCell<Option<Draft>>,
-        /// The pending debounced autosave, if an edit is waiting out the
-        /// quiet period before [`Composer::save`] runs again.
         pub autosave_source: Cell<Option<glib::SourceId>>,
-        /// Recipient completion for `To`. Kept here (rather than relying on
-        /// the entry's signal connections to be the only thing keeping it
-        /// alive) so tests can reach it; see `test_accept_recipient_suggestion`.
         pub(crate) to_completion: RefCell<Option<Rc<Completion>>>,
-        /// The field rows, which a host may add a row of its own to
-        /// ([`super::Composer::add_field_row`]: Focus's Labels).
         pub fields: gtk::Box,
-        /// The heading row and the action row: the composer's own chrome,
-        /// which a host that draws a frame of its own hides
-        /// ([`super::Composer::set_framed`]).
         pub chrome: RefCell<Vec<gtk::Widget>>,
-        /// `To`, `Cc` and `Bcc` drawn as chips, once a host asks for them
-        /// ([`super::Composer::set_recipient_chips`]).
         pub chips: RefCell<Option<[Rc<crate::widgets::recipients::RecipientChips>; 3]>>,
     }
 
@@ -780,6 +447,15 @@ mod imp {
                             .and_then(|lookup| lookup(content_id))
                     }))
                 },
+                source: source_view::SourceView::new(),
+                source_toggle: gtk::ToggleButton::new(),
+                source_notice: gtk::Box::new(
+                    gtk::Orientation::Horizontal,
+                    crate::widgets::space::S2,
+                ),
+                source_notice_label: gtk::Label::new(None),
+                source_notice_undo: gtk::Button::with_label("Undo"),
+                source_typed: RefCell::new(None),
                 format_toggles: std::array::from_fn(|_| gtk::ToggleButton::new()),
                 link_button: gtk::Button::new(),
                 image_button: gtk::Button::new(),
@@ -810,6 +486,12 @@ mod imp {
                 signature_placement: Cell::new((Placement::AboveQuote, Placement::AboveQuote)),
                 attach: RefCell::new(None),
                 inline_image: RefCell::new(None),
+                remote_image: RefCell::new(None),
+                remote_state: RefCell::default(),
+                remote_box: gtk::Box::new(gtk::Orientation::Vertical, crate::widgets::space::S2),
+                remote_list: gtk::ListBox::new(),
+                remote_drawn: RefCell::default(),
+                remote_warning: gtk::Label::new(None),
                 attachment_bytes: RefCell::new(None),
                 blob_lookup,
                 host: RefCell::new(None),
@@ -846,7 +528,6 @@ mod imp {
 }
 
 glib::wrapper! {
-    /// The composer, filling the reading pane.
     pub struct Composer(ObjectSubclass<imp::Composer>)
         @extends adw::Bin, gtk::Widget,
         @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget;
@@ -859,50 +540,25 @@ impl Default for Composer {
 }
 
 impl Composer {
-    /// A composer holding an empty draft, not yet on screen.
     pub fn new() -> Self {
         Self::default()
     }
 
-    // -- Opening and closing -------------------------------------------------
-
-    /// Puts `draft` in the composer and takes over the reading pane.
-    ///
-    /// Instant: `set_visible` on widgets that are already built, no transition,
-    /// nothing rebuilt. The list is not touched at all, which is what keeps its
-    /// scroll offset and its selection where the user left them.
-    ///
-    /// A draft the composer kept wins over a *blank* `draft` — `c` twice
-    /// means "show me what I kept", which is the one-composition-at-a-time
-    /// rule and what makes `Esc` safe. A `draft` that arrives with something
-    /// in it is a specific request about a specific message and wins
-    /// instead; see [`opening`] for why, and for the #691 it cost.
-    /// Start the editing surface before anybody asks to compose.
-    ///
-    /// The composer's surface is ADR 0003's `WebView`, and its first load
-    /// starts a WebKit web process — tens of milliseconds that would otherwise
-    /// all land on the first composition somebody writes (#1216). Called on an
-    /// idle turn once the window is up, so it is paid when nobody is waiting.
-    ///
-    /// Not an open: the pane stays where it is and the keyboard does not move.
-    /// Safe to call more than once, and a no-op once anything has been loaded,
-    /// so it cannot discard a draft.
+    /// Safe to call more than once and a no-op once anything has been loaded, so it cannot discard
+    /// a draft.
+    /// The first load starts a WebKit web process, so call it on an idle turn once the window is up
+    /// (#1216).
     pub fn warm(&self) {
         self.imp().body.warm();
     }
 
-    /// Whether the editing surface has been started. See [`warm`](Self::warm).
     pub fn is_warm(&self) -> bool {
         self.imp().body.is_warm()
     }
 
-    /// Opens `draft` in the composer, taking the host's pane.
     pub fn open(&self, draft: Draft) {
-        // Already composing: `c` a second time is a no-op that puts the
-        // keyboard back, never a reset of what is being typed. Detached, the
-        // keyboard is in another window, so put *that* in front instead —
-        // there is one composition either way, and asking for it again means
-        // "show me it", not "start another".
+        // Already composing: `c` again is a no-op that puts the keyboard back (in the detached
+        // window if detached), never a reset.
         if self.is_open() {
             if let Some(host) = self.detached_window() {
                 host.present();
@@ -911,8 +567,6 @@ impl Composer {
             return;
         }
 
-        // Decided before anything is filled, so the borrow is dropped by the
-        // time `fill` wants the cell mutably.
         let decision = opening(&self.imp().draft.borrow(), &draft);
         if decision == Opening::Restore {
             self.set_status(RETAINED);
@@ -930,29 +584,13 @@ impl Composer {
         }
     }
 
-    /// Put *this* draft in the composer, replacing whatever it was holding.
-    ///
-    /// [`open`](Self::open) deliberately refuses to replace a retained draft —
-    /// `c` a second time means "show me the draft", never "start another",
-    /// which is the one-composition-at-a-time rule. Resuming is a different
-    /// request: a draft the user named, picked out of the Drafts folder. It
-    /// has to replace, and it may, because a retained draft is autosaved and
-    /// — since #166 — is itself a row in that folder. Swapping to another
-    /// draft and back loses nothing.
-    ///
-    /// Whatever was pending is flushed first. The autosave is debounced, so a
-    /// draft swapped away from a moment after an edit has that edit sitting in
-    /// a timer, and the timer would otherwise fire against the draft that
-    /// replaced it — writing one draft's words onto another's row.
-    ///
-    /// Asking for the draft already in the composer is a no-op that puts the
-    /// keyboard back, exactly as [`open`](Self::open) is.
+    /// Unlike `open`, this replaces a retained draft: it is autosaved into Drafts since #166, so
+    /// swapping loses nothing.
+    /// Pending autosave is flushed first: the timer would otherwise write one draft's words onto
+    /// another's row.
     pub fn resume(&self, draft: Draft) {
-        // `is_assigned` and not just equality: every *unsaved* draft carries
-        // `DraftId::UNASSIGNED`, so comparing ids alone made two different
-        // unsaved drafts compare equal and this decline to swap, silently
-        // (#1240). An absent identity is not evidence that two things are
-        // the same one.
+        // `is_assigned`, not just equality: every unsaved draft carries `DraftId::UNASSIGNED`
+        // (#1240).
         if self.is_open() && draft.id.is_assigned() && self.imp().draft.borrow().id == draft.id {
             if let Some(host) = self.detached_window() {
                 host.present();
@@ -960,8 +598,8 @@ impl Composer {
             self.focus_first();
             return;
         }
-        // Before `fill`, which cancels the timer: a pending edit belongs to
-        // the draft on its way out.
+        // Before `fill`, which cancels the timer: a pending edit belongs to the draft on its way
+        // out.
         if self.is_open() {
             self.save();
         }
@@ -970,9 +608,6 @@ impl Composer {
         self.set_status(&status);
         self.take_pane();
         self.set_visible(true);
-        // Writing continues where it stopped: a draft that is already
-        // addressed takes the keyboard to the end of its body, not the top
-        // where a fresh message starts.
         let continuing = starting_field(&self.imp().draft.borrow()) == Field::Body;
         if continuing {
             self.imp().body.place_caret_end();
@@ -984,24 +619,16 @@ impl Composer {
         }
     }
 
-    /// Whether the composer is on screen.
     pub fn is_open(&self) -> bool {
         self.is_visible()
     }
 
-    /// Which field has the keyboard, when one of them does.
-    ///
-    /// The focus rules are an acceptance criterion — a reply starts in the
-    /// body, new mail starts in `To` — so they are worth being able to assert
-    /// on rather than to look at.
     pub fn focused_field(&self) -> Option<Field> {
         let window = self.root().and_downcast::<gtk::Window>()?;
         let focus = gtk::prelude::GtkWindowExt::focus(&window)?;
         let imp = self.imp();
-        // An entry hands the keyboard to the `GtkText` inside it, so the
-        // focused widget is a descendant of the field rather than the field.
-        // Order matters only for readability here: the fields are siblings, so
-        // no widget is inside another and at most one arm can match.
+        // An entry hands the keyboard to the `GtkText` inside it, so the focused widget is a
+        // descendant of the field.
         if holds(&focus, imp.to.upcast_ref()) {
             Some(Field::To)
         } else if holds(&focus, imp.cc.upcast_ref()) {
@@ -1010,23 +637,19 @@ impl Composer {
             Some(Field::Bcc)
         } else if holds(&focus, imp.subject.upcast_ref()) {
             Some(Field::Subject)
-        } else if holds(&focus, imp.body.widget().upcast_ref()) {
+        } else if holds(&focus, imp.body.widget().upcast_ref())
+            || holds(&focus, imp.source.text_view().upcast_ref())
+        {
             Some(Field::Body)
         } else {
             None
         }
     }
 
-    /// Closes the composer, keeping whatever was written.
-    ///
-    /// Returns what happened to the draft, which is what the caller reports:
-    /// [`Closing::Keep`] means it is still here, [`Closing::Drop`] that there
-    /// was nothing in it. Never destroys typed content — that is
-    /// [`Composer::discard`], and it asks first.
+    /// Never destroys typed content; that is `Composer::discard`, and it asks first.
     pub fn close(&self) -> Closing {
-        // The pending autosave belongs to the composition being closed, so it
-        // runs before the fields are refilled -- after, it saved the empty
-        // draft that replaced it (#1608).
+        // The pending autosave belongs to the composition being closed: after the refill it saved
+        // the empty draft (#1608).
         self.flush_autosave();
         let draft = self.draft();
         let outcome = self.closing_now();
@@ -1040,19 +663,10 @@ impl Composer {
         outcome
     }
 
-    /// Takes the composer off screen and tells everyone what became of it.
     fn shut(&self, outcome: Closing) {
-        // A debounced save still waiting out its quiet period must not be
-        // left ticking against a composer nobody can see: flush it now, so
-        // an edit made just before closing is on the same footing as one made
-        // a second earlier that the timer already caught.
         self.flush_autosave();
-        // Closing a detached composition closes the window it is in — and it
-        // comes back to the pane on the way, so the next `c` finds the
-        // composer where it always is rather than in a window that is gone.
-        // Reparented before hiding, never after: a widget with no parent has
-        // no root, and `focused_field` and the pane restore below both ask
-        // the root what it is doing.
+        // Reparented before hiding, never after: a widget with no parent has no root, and
+        // `focused_field` and the pane restore ask the root.
         self.reclaim();
         self.set_visible(false);
         self.release_pane();
@@ -1061,23 +675,16 @@ impl Composer {
         }
     }
 
-    /// Throws the draft away and closes. What `ctrl+d` does once confirmed.
     pub fn discard(&self) {
-        // The configured account, not the discarded draft's: a discarded
-        // reply must not leave its account behind for the next `c`.
+        // The configured account, not the discarded draft's: a discarded reply must not leave its
+        // account for the next `c`.
         let account = self.account();
         self.fill(Draft::new(account));
         self.close();
     }
 
-    /// Asks before discarding, when there is anything to lose.
-    ///
-    /// The registry marks `discard_draft` [`Recovery::Confirm`][r] — the one
-    /// composer verb that does, because typed prose exists nowhere else and
-    /// the undo stack cannot bring it back. An empty draft is discarded
-    /// without a question, since there is nothing to protect.
-    ///
-    /// [r]: postio_core::Recovery
+    /// The one composer verb the registry marks `Recovery::Confirm`: typed prose exists nowhere
+    /// else. An empty draft is discarded without asking.
     pub fn request_discard(&self) {
         if self.closing_now() == Closing::Drop {
             self.discard();
@@ -1107,9 +714,6 @@ impl Composer {
         dialog.present(Some(self));
     }
 
-    // -- The draft ------------------------------------------------------------
-
-    /// The draft as it stands, fields included.
     pub fn draft(&self) -> Draft {
         let imp = self.imp();
         let mut draft = imp.draft.borrow().clone();
@@ -1127,94 +731,66 @@ impl Composer {
         }
         draft.subject = imp.subject.text().to_string();
         draft.body = self.body();
-        // This composer writes HTML, not Markdown: once it holds the body, any
-        // Markdown the terminal left describes a message that no longer
-        // exists, and the terminal reopening from it would undo this edit.
-        draft.body_markdown = None;
+        // The rich view writes HTML, so Markdown left on the draft would describe a message that no
+        // longer exists; the Markdown view keeps the person's own spelling (FR-028).
+        draft.body_markdown = imp
+            .source
+            .is_shown()
+            .then(|| postio_ui::editor::source::markdown_of(&imp.source.text()));
         draft
     }
 
-    /// The body as the wire wants it, rendered from the document.
-    ///
-    /// `text` always; `html` only when the document carries structure that
-    /// `to_text` would lose. A message somebody typed as plain text is sent
-    /// as plain text: a `multipart/alternative` whose HTML half says exactly
-    /// what its text half says is bytes nobody asked for, a second thing to
-    /// get wrong, and the thing mailing lists ask people not to send.
-    ///
-    /// Note `html` is *regenerated*, never carried over. Before this it was
-    /// passed through from whatever the draft was opened with, so editing the
-    /// text of a reply left an HTML half describing the text before the edit.
-    ///
-    /// `text` is [`Document::to_flowed_text`](postio_body::Document::to_flowed_text),
-    /// not `to_text` — RFC 3676
-    /// `format=flowed` (#333), soft-wrapped at 72 columns. This is the one
-    /// place that matters: the `MessageBody` built here is what a draft is
-    /// filed as *and* what actually gets sent, so wrapping happens exactly
-    /// once, before either.
-    ///
-    /// [`source_document`] undoes exactly this wrapping when it reads a
-    /// message back — including one this composer sent — through
-    /// `Message::text_is_flowed`, the fact `#333` could not check yet and
-    /// `#456` added.
+    /// `html` only when the document carries structure `to_text` would lose; always regenerated,
+    /// never carried over from the opened draft.
+    /// `text` is `to_flowed_text` (#333): wrapping happens once, here, before filing and sending.
+    /// `source_document` undoes it on read via `Message::text_is_flowed` (#456).
     fn body(&self) -> MessageBody {
-        let document = self.document();
-        // `html`'s half of `render` costs a real `to_html` and a `harden`
-        // pass; keeping it behind `is_plain_text()`'s check, as before,
-        // means a plain-text draft never pays for HTML it is about to
-        // throw away.
-        let text = document.to_flowed_text();
-        MessageBody {
-            text: (!text.is_empty()).then_some(text),
-            html: (!document.is_plain_text()).then(|| postio_body::render(&document).1),
-        }
+        postio_body::message_body(&self.document())
     }
 
-    /// An absorbed edit: the [`Editor`](editor::Editor) has already
-    /// recorded it on the document's history and coalesced the typing run;
-    /// what is left is the composer's own reactions to the body moving.
     fn body_edited(&self) {
-        // Filling the fields is not an edit. The Editor's own load path
-        // never reports one, but programmatic fills flow through here too.
         if self.imp().filling.get() {
             return;
+        }
+        // A "for now" answer lasts until the next edit; a narrowing notice, which has an Undo,
+        // until the next switch.
+        let imp = self.imp();
+        if imp.source_notice.is_visible() && !imp.source_notice_undo.is_visible() {
+            imp.source_notice.set_visible(false);
         }
         self.refresh();
     }
 
-    /// Step the body back one typing run. Swallowed at the floor rather
-    /// than propagated: Ctrl+Z at the start of the history must not fall
-    /// through to whatever else in the window would answer it.
+    /// Swallowed at the floor: Ctrl+Z at the start of the history must not fall through to
+    /// something else in the window.
     fn undo_edit(&self) -> glib::Propagation {
         self.imp().body.undo();
         self.refresh();
         glib::Propagation::Stop
     }
 
-    /// Step it forward again.
     fn redo_edit(&self) -> glib::Propagation {
         self.imp().body.redo();
         self.refresh();
         glib::Propagation::Stop
     }
 
-    /// The body as it stands: the Editor's record. The surface is a copy of
-    /// this, never the other way round — ADR 0004, unchanged by the surface
-    /// swap that retired the `GtkTextView` (#347).
+    /// The Editor's record; the surface is a copy of it, never the reverse (ADR 0004).
     pub fn document(&self) -> postio_body::Document {
-        let mut document = self.imp().body.document();
-        // What is folded away is still the message: it is sent, saved and
-        // measured with the rest.
+        let imp = self.imp();
+        let mut document = if imp.source.is_shown() {
+            postio_ui::editor::source::close(&imp.source.text(), &imp.source.quotes(), None)
+                .document
+        } else {
+            imp.body.document()
+        };
         document
             .blocks
             .extend(self.imp().held.borrow().iter().cloned());
         document
     }
 
-    /// Fold the forwarded thread under what is typed into one row a message
-    /// (spec 013 FR-023, `mod+shift+q` unfolds it), answering the rows; empty
-    /// when the body forwards no thread. The folded messages stay part of
-    /// the draft.
+    /// Empty when the body forwards no thread. The folded messages stay part of the draft.
     pub fn fold_forwarded(&self) -> Vec<postio_body::forward::ForwardedRow> {
         let imp = self.imp();
         if imp.held.borrow().is_empty() {
@@ -1231,14 +807,10 @@ impl Composer {
         postio_body::forward::thread_rows(&imp.held.borrow())
     }
 
-    /// The place under the body, above the attachments, for what a host
-    /// has to say about the text: the forwarded thread's folded rows sit
-    /// here, so they read as the text being forwarded.
     pub fn below_body(&self) -> gtk::Box {
         self.imp().below_body.clone()
     }
 
-    /// Show the folded forwarded messages in the body again.
     pub fn unfold_forwarded(&self) {
         let imp = self.imp();
         let held = imp.held.take();
@@ -1252,25 +824,13 @@ impl Composer {
         imp.filling.set(was);
     }
 
-    /// Whether the forwarded messages are folded away.
-    pub fn forwarded_folded(&self) -> bool {
-        !self.imp().held.borrow().is_empty()
-    }
-
-    /// What the composer will send from, once identities are set.
     pub fn identity(&self) -> Option<Identity> {
         let selected = self.imp().identity.selected() as usize;
         self.imp().identities.borrow().get(selected).cloned()
     }
 
-    /// The addresses this account can send from.
-    ///
-    /// One identity is not a choice, so it is drawn as a line of text rather
-    /// than as a picker with nothing else in it.
-    ///
-    /// The account's default is selected, and its signature goes into the body
-    /// straight away — the composer opens showing what will be sent, not a
-    /// body that grows a signature at some later moment.
+    /// One identity is not a choice, so it is a line of text, not a picker. The default is selected
+    /// and its signature goes in straight away.
     pub fn set_identities(&self, identities: Vec<Identity>) {
         let imp = self.imp();
         let names: Vec<String> = identities.iter().map(identity_label).collect();
@@ -1293,12 +853,8 @@ impl Composer {
         self.apply_signature();
     }
 
-    /// Sends this draft as the identity with `id`, if the account has it.
-    ///
-    /// The override is the *draft's*: it is recorded on the draft, so closing
-    /// the composer and coming back to it sends from the same address, and a
-    /// later reply picks its own identity again rather than inheriting this
-    /// one.
+    /// The override is the draft's: recorded on it, so reopening sends from the same address, and a
+    /// later reply picks its own identity.
     pub fn select_identity(&self, id: IdentityId) -> bool {
         let Some(index) = self
             .imp()
@@ -1315,30 +871,19 @@ impl Composer {
         true
     }
 
-    /// The largest message this account may send, in bytes.
-    ///
-    /// `None` when the account carries no configured limit, and then nothing
-    /// is checked: a guessed ceiling refuses mail the provider would have
-    /// taken, and the person cannot tell Postio's opinion from their
-    /// provider's rule.
+    /// `None` means no configured limit and nothing is checked: a guessed ceiling refuses mail the
+    /// provider would have taken.
     pub fn set_size_limit(&self, limit: Option<u64>) {
         self.imp().size_limit.set(limit);
     }
 
-    /// The refusal this draft would earn, if any.
-    ///
-    /// Checked here rather than left to the server, which is the whole point
-    /// of FR-056: a server's rejection arrives after the composer has closed,
-    /// and what the person is left holding is a `Failed` draft and the job of
-    /// working out which of six attachments to remove.
+    /// Checked here rather than left to the server (FR-056): a rejection arrives after the composer
+    /// has closed.
     fn too_large(&self) -> Option<postio_model::size::TooLarge> {
         postio_model::size::check(&self.draft(), self.imp().size_limit.get())
     }
 
-    /// Offers `signatures` in the picker, alongside the identity's own.
-    ///
-    /// Hidden entirely when the account has none: a picker with one entry is
-    /// a control that can only ever say what is already true.
+    /// Hidden when the account has none: a picker with one entry says only what is already true.
     pub fn set_signatures(&self, signatures: Vec<Signature>) {
         let imp = self.imp();
         let mut labels = vec![SIGNATURE_FROM_IDENTITY.to_owned()];
@@ -1353,8 +898,6 @@ impl Composer {
         self.apply_signature();
     }
 
-    /// Whether the account's signatures, as this composer was last told
-    /// them, include `id`.
     pub fn has_signature(&self, id: SignatureId) -> bool {
         self.imp()
             .signatures
@@ -1363,9 +906,8 @@ impl Composer {
             .any(|signature| signature.id == id)
     }
 
-    /// Selects the named signature with `id` in the picker, if the account
-    /// has it. `false` when it does not — the caller falls back to the
-    /// identity's own rather than leaving a stale selection in place.
+    /// `false` when the account lacks it; the caller falls back to the identity's own rather than
+    /// leave a stale selection.
     fn select_signature(&self, id: SignatureId) -> bool {
         let Some(index) = self
             .imp()
@@ -1376,19 +918,12 @@ impl Composer {
         else {
             return false;
         };
-        // Entry 0 is always the identity's own; the account's signatures
-        // follow it, so the picker index is one past the account's own.
         self.imp().signature.set_selected((index + 1) as u32);
         true
     }
 
-    /// Opens a fresh, unaddressed draft — what `c` starts when nothing is
-    /// already open. Resolves what it signs with through
-    /// [`connect_signature_default`](Self::connect_signature_default) rather
-    /// than leaving whatever a previous compose left the picker on: a mailbox
-    /// override applies here, an account default here, and "neither has an
-    /// opinion" resets the picker to the identity's own rather than an older
-    /// draft's choice (#394).
+    /// "Neither has an opinion" resets the picker to the identity's own, not an older draft's
+    /// choice (#394).
     fn open_new_draft(&self) {
         self.open(Draft::new(self.account()));
         let generation = self.generation();
@@ -1397,8 +932,6 @@ impl Composer {
             let Some(composer) = weak.upgrade() else {
                 return;
             };
-            // For the composition it was asked for, and no other: an answer
-            // that arrives after the composer moved on names nothing here.
             if composer.generation() != generation {
                 return;
             }
@@ -1414,13 +947,10 @@ impl Composer {
         }
     }
 
-    /// The signature this draft signs with: whichever the picker names, or
-    /// the identity's own when it names none.
     fn chosen_signature(&self, identity: &Identity) -> Option<Signature> {
         let imp = self.imp();
-        // An empty picker reports `INVALID_LIST_POSITION`, not zero — so this
-        // cannot be a subtraction on a raw index: entry 0 *and* "no entries at
-        // all" both mean the identity's own signature.
+        // An empty picker reports `INVALID_LIST_POSITION`, not zero: entry 0 and "no entries" both
+        // mean the identity's own signature.
         let chosen = match imp.signature.selected() {
             gtk::INVALID_LIST_POSITION => None,
             selected => (selected as usize).checked_sub(1),
@@ -1431,35 +961,21 @@ impl Composer {
         }
     }
 
-    /// Sets where a signature goes on a reply and on a forward, from
-    /// `[compose]`. Live: the next identity or signature change uses it.
     pub fn set_signature_placement(&self, on_reply: Placement, on_forward: Placement) {
         self.imp().signature_placement.set((on_reply, on_forward));
     }
 
-    /// The placement this draft's kind asks for.
     fn signature_placement(&self) -> Placement {
         let (on_reply, on_forward) = self.imp().signature_placement.get();
         match self.imp().draft.borrow().kind {
             DraftKind::Reply | DraftKind::ReplyAll => on_reply,
             DraftKind::Forward => on_forward,
-            // Nothing is quoted, so both placements put it in the same place.
             DraftKind::New => Placement::BelowQuote,
         }
     }
 
-    /// Puts the selected identity into the draft. Does not touch the body.
-    ///
-    /// FR-031: changing who a draft is from is a header change and nothing
-    /// else. It used to swap the signature block too, which meant the `From`
-    /// dropdown rewrote a signature the user had edited by hand -- and
-    /// `postio_body::apply_signature` cannot tell an edited signature from an
-    /// untouched one, because it matches the separator, not intent.
-    ///
-    /// The body half is [`Self::apply_signature`], which the signature picker
-    /// owns and which a draft runs once when it opens. Two controls, two
-    /// jobs: `From` chooses an address, the signature picker chooses a
-    /// signature.
+    /// Does not touch the body (FR-031): the `From` dropdown must not rewrite a hand-edited
+    /// signature, which `apply_signature` cannot tell from an untouched one.
     fn apply_identity(&self) {
         let Some(identity) = self.identity() else {
             return;
@@ -1470,25 +986,16 @@ impl Composer {
         imp.draft.borrow_mut().identity_id = draft.identity_id;
     }
 
-    /// Puts the chosen signature into the body, replacing whatever block is
-    /// there.
-    ///
-    /// Run when a draft opens -- where signing is safe because nothing has
-    /// been typed yet -- and when the signature picker is used, which is the
-    /// user asking for exactly this. Never on an identity change: see
-    /// [`Self::apply_identity`].
+    /// Run when a draft opens and when the signature picker is used; never on an identity change
+    /// (see `apply_identity`).
     fn apply_signature(&self) {
         let Some(identity) = self.identity() else {
             return;
         };
         let imp = self.imp();
 
-        // At the block level for every draft, never through text: flattening
-        // a rich quote to `> ` lines to swap a signature would be the
-        // identity dropdown quietly destroying the reply (#340). The plain
-        // form is still exactly right — `to_text` renders the separator and
-        // the signature the way the wire wants them — so one path serves
-        // both, and placement (#12) means the same thing in each.
+        // At the block level for every draft, never through text: flattening a rich quote to `> `
+        // lines would destroy the reply (#340).
         let current = imp.body.document();
         let signature = self.chosen_signature(&identity);
         let wanted =
@@ -1497,12 +1004,8 @@ impl Composer {
             return;
         }
 
-        // The written part above the signature is untouched; the caret goes
-        // to the start of the body, which is where it lives in a reply
-        // anyway. Preserving the exact offset across an Editor reload needs
-        // a script round trip the identity switch has not yet earned — the
-        // GtkTextView used to keep it precisely, and a caret assertion is
-        // the test to bring back if that ever matters again.
+        // The caret goes to the start of the body; preserving the exact offset across an Editor
+        // reload needs a script round trip.
         let was_filling = imp.filling.replace(true);
         imp.body.load(wanted);
         imp.body.place_caret_start();
@@ -1510,44 +1013,19 @@ impl Composer {
         self.refresh();
     }
 
-    /// The status line under the heading.
     pub fn status(&self) -> String {
         self.imp().status.text().to_string()
     }
 
-    /// Says what just happened to the draft — saved, queued, or not yet.
-    ///
-    /// Set by whoever actually did it. The composer never claims a draft was
-    /// saved on its own behalf; it has nowhere to save it to.
+    /// Set by whoever did it: the composer has nowhere to save to and never claims it did.
     pub fn set_status(&self, status: &str) {
         self.imp().status.set_text(status);
     }
 
-    // -- The verbs ------------------------------------------------------------
-
-    /// Hands the draft to the send handlers and closes. What `ctrl+Enter` does.
-    ///
-    /// With nothing connected the draft stays exactly where it is and the
-    /// status line names what is missing, rather than the composer emptying
-    /// itself into a seam that does not exist yet.
-    ///
-    /// # Why the key checks what the button already checks
-    ///
-    /// [`refresh`](Self::refresh) greys the Send button out on
-    /// [`Draft::is_sendable`], so the pointer has never been able to send an
-    /// unaddressed or already-queued draft. `ctrl+Return` reaches this
-    /// directly and had no such guard, which cost nothing while the seam was
-    /// unwired — every send was a no-op. Now that it queues, the two ways of
-    /// asking for the same thing have to agree, and the two disagreements
-    /// both destroy something:
-    ///
-    /// * **No recipients.** The composer would clear and close, and the queued
-    ///   operation would drain as impossible — the words gone, and no message
-    ///   sent.
-    /// * **Already queued.** A draft resumed from the Drafts folder between
-    ///   the enqueue and the drain is still listed there, so it can be opened
-    ///   and sent a second time. That is a second `Operation::Send` against
-    ///   one draft, which is the recipient receiving the message twice.
+    /// With nothing connected the draft stays and the status line names what is missing.
+    /// Checks what the Send button's `is_sendable` checks, since `ctrl+Return` reaches this
+    /// directly: no recipients would empty the composer and drain as impossible, and an
+    /// already-queued draft resumed from Drafts would send twice.
     pub fn send(&self) {
         if self.imp().sent.borrow().is_empty() {
             self.set_status(NO_SEND_PATH);
@@ -1566,10 +1044,8 @@ impl Composer {
             self.set_status(&refusal.to_string());
             return;
         }
-        // Asked rather than refused (FR-018, FR-057): the person may well
-        // mean it -- a message can have no subject, and "attached to the
-        // bracket" is a sentence. One question for however many apply, so
-        // two odd things about one message do not become two dialogs.
+        // Asked rather than refused (FR-018, FR-057): a message can legitimately have no subject.
+        // One question for however many concerns apply.
         let concerns = send_concerns(&draft);
         if !concerns.is_empty() {
             self.ask_before_sending(&concerns);
@@ -1578,9 +1054,6 @@ impl Composer {
         self.hand_off(draft);
     }
 
-    /// Gives the draft to the send handlers and closes. The tail of
-    /// [`Self::send`], split out so the missing-attachment dialog can reach
-    /// it after the person says to go ahead.
     fn hand_off(&self, draft: Draft) {
         for handler in self.imp().sent.borrow().iter() {
             handler(&draft);
@@ -1590,17 +1063,8 @@ impl Composer {
         self.shut(Closing::Drop);
     }
 
-    /// Asks before sending, naming everything odd about the message.
-    ///
-    /// The second dialog in the composer, and it earns it the same way
-    /// `request_discard` does: what is on the other side is irreversible
-    /// enough to be worth an interruption, and there is no undo that would
-    /// serve instead -- the recipient has already read "please find attached"
-    /// and found nothing.
-    ///
-    /// One dialog for however many concerns there are. Two questions in a row
-    /// about one message is how somebody learns to answer the second without
-    /// reading it, which costs the first one its value too.
+    /// What is on the other side is irreversible and no undo serves. One dialog for all concerns,
+    /// so nobody learns to answer the second unread.
     fn ask_before_sending(&self, concerns: &[String]) {
         let body = format!("{}. Esc keeps the composer open.", join_with_and(concerns));
         let dialog = adw::AlertDialog::new(Some("Send it anyway?"), Some(&body));
@@ -1623,12 +1087,7 @@ impl Composer {
         dialog.present(Some(self));
     }
 
-    /// Hands the draft to the send-later handlers with `when`, and closes.
-    /// What choosing a time from the [`CommandId::ScheduleSend`] picker does.
-    ///
-    /// The same sendability checks [`send`](Self::send) makes, for the same
-    /// reasons: an unaddressed or already-queued draft must not be handed to
-    /// a handler here any more than to an immediate send.
+    /// The same sendability checks as `send`.
     pub fn send_later(&self, when: DateTime<Utc>) {
         if self.imp().sent_later.borrow().is_empty() {
             self.set_status(NO_SEND_PATH);
@@ -1643,9 +1102,7 @@ impl Composer {
             });
             return;
         }
-        // A scheduled send is still a send, and refusing it at the scheduled
-        // hour -- when nobody is watching the composer -- is strictly worse
-        // than refusing it now.
+        // Refusing at the scheduled hour, when nobody is watching, is worse than refusing now.
         if let Some(refusal) = self.too_large() {
             self.set_status(&refusal.to_string());
             return;
@@ -1658,21 +1115,12 @@ impl Composer {
         self.shut(Closing::Drop);
     }
 
-    /// Hands the draft to the save handlers. What `ctrl+s` does.
-    ///
-    /// A handler may assign the draft an id (its first persisted save); that
-    /// id is written back onto this composer's own draft afterward, so the
-    /// next save updates the same row rather than inserting a second one.
-    /// Nothing else a handler touches is kept — the fields are the widgets'
-    /// to own, not a save handler's.
+    /// A handler may assign the draft an id on its first persisted save; it is written back so the
+    /// next save updates the same row. Nothing else a handler touches is kept.
     pub fn save(&self) {
         let mut draft = self.draft();
-        // Nothing written and never saved: not worth a row. The editor
-        // reports its changes asynchronously, so an edit can re-arm the
-        // autosave after a close has refilled the fields with an empty
-        // draft, and that timer used to insert an empty `Editing` row for a
-        // composition nobody started -- the row `recover_empty_draft` has to
-        // step around at the next launch (#1608).
+        // Nothing written and never saved: not worth a row. The editor reports asynchronously, so
+        // an edit can re-arm the autosave after a close and insert an empty `Editing` row (#1608).
         if !draft.id.is_assigned() && self.closing_now() == Closing::Drop {
             return;
         }
@@ -1682,26 +1130,17 @@ impl Composer {
         self.imp().draft.borrow_mut().id = draft.id;
     }
 
-    /// Which composition is in the fields now; see [`Composer::adopt_id`].
     pub fn generation(&self) -> u64 {
         self.imp().generation.get()
     }
 
-    /// The composition the composer held before its last fill: the one a
-    /// closed handler is being told about, since `close` and `send` refill
-    /// the fields before the handlers run.
     pub fn previous_generation(&self) -> u64 {
         self.imp().previous_generation.get()
     }
 
-    /// A save the composer handed out for composition `generation` has
-    /// landed and assigned `id` (#1608).
-    ///
-    /// Saves are written off the main thread, so the id a first save assigns
-    /// arrives after [`Composer::save`] returned rather than inside it. It is
-    /// taken only while the same composition is in the fields and has no id
-    /// yet: a composer that moved on to another draft meanwhile must not
-    /// have that draft's next save update the previous one's row.
+    /// Saves are written off the main thread, so the id arrives after `save` returned. Taken only
+    /// while the same composition is in the fields and has no id: another draft's next save must
+    /// not update this row (#1608).
     pub fn adopt_id(&self, generation: u64, id: postio_model::ids::DraftId) {
         if self.generation() != generation {
             return;
@@ -1712,66 +1151,43 @@ impl Composer {
         }
     }
 
-    /// Called with the draft when the user sends it.
     pub fn connect_send(&self, handler: impl Fn(&Draft) + 'static) {
         self.imp().sent.borrow_mut().push(Box::new(handler));
     }
 
-    /// Called with the draft and the chosen time when the user schedules it
-    /// to send later.
     pub fn connect_send_later(&self, handler: impl Fn(&Draft, DateTime<Utc>) + 'static) {
         self.imp().sent_later.borrow_mut().push(Box::new(handler));
     }
 
-    /// Called with the draft when the user asks for it to be saved.
-    ///
-    /// `&mut Draft`: see [`SaveHandler`] for why a save handler is allowed to
-    /// write back the id it persisted under.
     pub fn connect_save(&self, handler: impl Fn(&mut Draft) + 'static) {
         self.imp().saved.borrow_mut().push(Box::new(handler));
     }
 
-    /// Called with the draft on every edit — the seam autosave hangs off.
     pub fn connect_changed(&self, handler: impl Fn(&Draft) + 'static) {
         self.imp().changed.borrow_mut().push(Box::new(handler));
     }
 
-    /// Called when the composer closes, with what became of the draft.
     pub fn connect_closed(&self, handler: impl Fn(Closing) + 'static) {
         self.imp().closed.borrow_mut().push(Box::new(handler));
     }
 
-    /// Called when the composer takes over the reading pane — not when `c`
-    /// (or the header button) finds it already open and just moves the
-    /// keyboard back to it.
+    /// Not when `c` finds it already open and moves the keyboard back.
     pub fn connect_opened(&self, handler: impl Fn() + 'static) {
         self.imp().opened.borrow_mut().push(Box::new(handler));
     }
 
-    /// Registers where `e`/`E`/`f` find the message and account to reply to.
-    ///
-    /// The composer holds no reading-pane state of its own; whatever tracks
-    /// the message currently on screen connects this once, at mount time.
     pub fn connect_reply_source(&self, provider: impl Fn(ReplyAnswer) + 'static) {
         *self.imp().reply_source.borrow_mut() = Some(Box::new(provider));
     }
 
-    /// Registers what a brand-new draft should sign with, before the
-    /// identity's own (#394) — called once, at the moment `c` starts one, so
-    /// it always answers for whichever mailbox is selected right then.
-    ///
-    /// `None` from the composer's own reads — nothing registered here, or the
-    /// provider itself answering `None` — leaves the picker on the identity's
-    /// own signature, exactly as it already was without this seam.
+    /// Called at the moment `c` starts a draft so it answers for the mailbox selected right then
+    /// (#394).
     pub fn connect_signature_default(&self, provider: impl Fn(SignatureAnswer) + 'static) {
         *self.imp().signature_default.borrow_mut() = Some(Box::new(provider));
     }
 
-    /// Registers what completes a recipient prefix — contacts, previous
-    /// correspondents and contact groups, ranked and searched however the
-    /// caller sees fit. The composer only shows what comes back, in that
-    /// order, and never touches the network itself: purely local completion
-    /// is the whole point.
+    /// The composer only shows what comes back, in that order, and never touches the network:
+    /// completion is local.
     pub fn connect_recipient_suggestions(
         &self,
         provider: impl Fn(&str) -> Vec<RecipientCandidate> + 'static,
@@ -1779,20 +1195,12 @@ impl Composer {
         *self.imp().recipient_suggestions.borrow_mut() = Some(Box::new(provider));
     }
 
-    /// Registers what turns a chosen or dropped file into attachment
-    /// metadata — and, however long it takes, into the blob store. The
-    /// composer only draws the row; storing the bytes is the caller's job.
-    ///
-    /// `handler` is given the path and a callback to invoke with the result;
-    /// it may call the callback immediately or hand it to a background task
-    /// and return right away. Either way `add_file` does not block on it.
+    /// `handler` may call the callback immediately or from a background task; `add_file` never
+    /// blocks on it.
     pub fn connect_attach(&self, handler: impl Fn(std::path::PathBuf, AttachReady) + 'static) {
         *self.imp().attach.borrow_mut() = Some(Box::new(handler));
     }
 
-    /// Wires the seam pasted image bytes go out through to become an inline
-    /// attachment — blob write and `Content-ID` minting live above this
-    /// crate. Same non-blocking contract as [`connect_attach`](Self::connect_attach).
     pub fn connect_inline_image(
         &self,
         handler: impl Fn(Vec<u8>, String, InlineImageReady) + 'static,
@@ -1800,9 +1208,13 @@ impl Composer {
         *self.imp().inline_image.borrow_mut() = Some(Box::new(handler));
     }
 
-    /// Wires where an attachment's bytes come back from, for the editing
-    /// surface to display inline images — this draft's pasted ones and a
-    /// resumed draft's alike. Synchronous and local, like a blob-store read.
+    pub fn connect_remote_image(
+        &self,
+        handler: impl Fn(postio_model::DraftId, postio_body::WebHref, RemoteImageReady) + 'static,
+    ) {
+        *self.imp().remote_image.borrow_mut() = Some(Box::new(handler));
+    }
+
     pub fn connect_attachment_bytes(
         &self,
         reader: impl Fn(&Attachment) -> Option<Vec<u8>> + 'static,
@@ -1810,27 +1222,16 @@ impl Composer {
         *self.imp().attachment_bytes.borrow_mut() = Some(Box::new(reader));
     }
 
-    // -- Detaching ------------------------------------------------------------
-
-    /// Whether the composition is in a window of its own rather than the pane.
     pub fn is_detached(&self) -> bool {
         self.imp().detached.borrow().is_some()
     }
 
-    /// The window the composition is in, while it is in one.
-    ///
-    /// Public because "is it modal, and does it belong to the main window"
-    /// are acceptance criteria rather than implementation, and because the
-    /// application root needs somewhere to hang a title on.
+    /// Public because modality and ownership by the main window are acceptance criteria.
     pub fn detached_window(&self) -> Option<adw::Window> {
         self.imp().detached.borrow().clone()
     }
 
-    /// Moves the composition between the reading pane and its own window.
-    ///
-    /// What `ctrl+shift+o`, the palette entry and the pop-out button all do.
-    /// A no-op when nothing is being composed: there is no empty composer to
-    /// detach, and offering one would be a second way to start writing.
+    /// A no-op when nothing is being composed: there is no empty composer to detach.
     pub fn toggle_detached(&self) {
         if !self.is_open() {
             return;
@@ -1842,14 +1243,8 @@ impl Composer {
         }
     }
 
-    /// Pops the composition out into a window, and gives the pane back.
-    ///
-    /// The same widget, reparented — which is the entire reason nothing is
-    /// lost. Every field, the identity override, the undo history and the
-    /// cursor are in widgets that are never rebuilt, so "detaching keeps
-    /// them" is a property of doing it this way rather than a list of things
-    /// to remember to copy. A second composer built from the draft would have
-    /// to copy each of them, and would be wrong about one of them eventually.
+    /// The same widget reparented, so every field, the identity override, undo history and cursor
+    /// survive without a list of things to copy.
     pub fn detach(&self) {
         if self.is_detached() || !self.is_open() {
             return;
@@ -1859,35 +1254,23 @@ impl Composer {
         };
         let field = self.focused_field();
 
-        // The main window goes all the way back first: the message returns to
-        // the reading pane and the keyboard context leaves `Composer`, so
-        // from here on the two windows are independent and the main one is as
-        // usable as it was before `c`.
+        // The main window goes all the way back first: the message returns to the reading pane and
+        // the keyboard context leaves `Composer`.
         self.release_pane();
 
         let host = adw::Window::builder()
             .title(self.window_title())
             .transient_for(&holder.parent().unwrap_or_default())
-            // Not modal, and this is the criterion rather than a default:
-            // the point of detaching is to read something else while you
-            // write, and a modal is precisely the thing that forbids it.
+            // Not modal: the point of detaching is to read something else while writing.
             .modal(false)
             .default_width(DETACHED_SIZE.0)
             .default_height(DETACHED_SIZE.1)
             .build();
 
-        // A real header bar, not a bare content window. `AdwWindow` draws no
-        // titlebar of its own, so `set_content(composer)` would give a window
-        // with no title, no close button and nothing to drag — and the pane
-        // it came from has a header, so the pop-out looking like a stray
-        // rectangle would read as a bug rather than a window. This is also
-        // what CLAUDE.md means by keeping real Adwaita chrome so Postio reads
-        // as a GNOME application.
+        // A real header bar: `AdwWindow` draws no titlebar, so the pop-out would have no title,
+        // close button or drag handle.
         holder.remove(self);
         match holder.frame() {
-            // The host's frame carries its own header, with the title and
-            // the close button, so the window is the frame and nothing more;
-            // the handle keeps it draggable by the header's empty space.
             Some(frame) => {
                 let handle = gtk::WindowHandle::new();
                 handle.set_child(Some(&frame));
@@ -1902,9 +1285,8 @@ impl Composer {
         }
         self.set_visible(true);
 
-        // Its keys are the same keys. The controller is a forwarder to the
-        // main window's resolver so that `[keys]` reaches both containers and
-        // there is only ever one keymap to keep in step.
+        // A forwarder to the main window's resolver, so `[keys]` reaches both containers and there
+        // is one keymap.
         let keys = gtk::EventControllerKey::new();
         keys.connect_key_pressed(glib::clone!(
             #[weak(rename_to = composer)]
@@ -1915,8 +1297,6 @@ impl Composer {
         ));
         host.add_controller(keys);
 
-        // The window's own close button means what `Esc` means: keep the
-        // draft. Discarding stays explicit and still asks first.
         host.connect_close_request(glib::clone!(
             #[weak(rename_to = composer)]
             self,
@@ -1924,9 +1304,8 @@ impl Composer {
             glib::Propagation::Proceed,
             move |_| {
                 composer.close();
-                // `close` has already reparented and destroyed the window;
-                // letting the default handler run as well would tear down a
-                // window that is no longer there.
+                // `close` has already destroyed the window; the default handler would tear down one
+                // that is gone.
                 glib::Propagation::Stop
             }
         ));
@@ -1937,14 +1316,8 @@ impl Composer {
         self.restore_focus(field);
     }
 
-    /// What a detached window calls itself (FR-014).
-    ///
-    /// The subject, because the requirement is that a detached window be
-    /// identifiable *without being focused* — and with several open, the
-    /// draft's kind is not identification: two replies would both say
-    /// "Reply" and the window list would offer no way to tell them apart.
-    /// The kind is the fallback for a draft that has no subject yet, which is
-    /// the one case where there is nothing better to say.
+    /// The subject: a detached window must be identifiable without focus, and two replies would
+    /// both say "Reply". The kind is the fallback with no subject.
     fn window_title(&self) -> String {
         let draft = self.imp().draft.borrow();
         let subject = draft.subject.trim();
@@ -1955,7 +1328,6 @@ impl Composer {
         }
     }
 
-    /// Puts the composition back in the reading pane, window and all.
     pub fn attach(&self) {
         let field = self.focused_field();
         if !self.reclaim() {
@@ -1966,13 +1338,8 @@ impl Composer {
         self.restore_focus(field);
     }
 
-    /// Puts the keyboard back in the field it was in before a reparent.
-    ///
-    /// Unparenting a widget drops the focus, so this is the one part of the
-    /// composition that moving it really does lose — the text, the cursor and
-    /// the history all ride along in widgets that were never rebuilt. Falls
-    /// back to the field a fresh composition would start in, which is only
-    /// reached when the keyboard was somewhere else entirely.
+    /// Unparenting drops focus, the one thing moving the composition loses. Falls back to where a
+    /// fresh composition starts.
     fn restore_focus(&self, field: Option<Field>) {
         match field {
             Some(field) => {
@@ -1982,19 +1349,13 @@ impl Composer {
         }
     }
 
-    /// Reparents the composer back into the reading pane and disposes of the
-    /// window, changing nothing else. `false` when it was not detached.
-    ///
-    /// Split out because closing a detached composer has to do this part and
-    /// must *not* do the rest: [`attach`](Self::attach) takes the pane over
-    /// again, which is the opposite of what closing wants.
+    /// Split out because closing a detached composer must not retake the pane, which `attach` does.
     fn reclaim(&self) -> bool {
         let Some(host) = self.imp().detached.take() else {
             return false;
         };
-        // Out of the toolbar view, not off the window: the composer is the
-        // layout's content, and unparenting it from anywhere else would leave
-        // GTK holding a child that is no longer there.
+        // Out of the toolbar view, not off the window: unparenting from elsewhere would leave GTK
+        // holding a missing child.
         if let Some(layout) = host.content().and_downcast::<adw::ToolbarView>() {
             layout.set_content(None::<&gtk::Widget>);
         }
@@ -2005,19 +1366,14 @@ impl Composer {
         if let Some(holder) = self.host() {
             holder.restore(self);
         }
-        // `destroy`, not `close`: `close` emits `close-request`, and this is
-        // reached from inside that handler.
+        // `destroy`, not `close`: `close` emits `close-request`, and this is reached from inside
+        // that handler.
         host.destroy();
         sync_detach_button(&self.imp().detach, false);
         true
     }
 
-    /// One key press from the detached window, resolved against the main
-    /// window's keymap.
-    ///
-    /// Public so a test can press keys: it is the whole
-    /// keyboard path in one call, and GTK4 gives no supported way to
-    /// synthesize a GDK event for a test to press instead.
+    /// Public so a test can press keys: GTK4 has no supported way to synthesize a GDK event.
     pub fn handle_key(
         &self,
         key: gtk::gdk::Key,
@@ -2030,11 +1386,8 @@ impl Composer {
             return glib::Propagation::Proceed;
         };
         let host: gtk::Window = host.upcast();
-        // Resolved by the host, dispatched by *this* composer. Going through
-        // the host's own key handling would broadcast to every subscriber,
-        // and once there are several composers open that means `Send` sends
-        // every open draft (ADR 0034). The keymap is still the host's, so
-        // `[keys]` reaches both containers.
+        // Dispatched by this composer, not the host's key handling, which broadcasts to every
+        // subscriber: with several composers open `Send` would send every draft (ADR 0034).
         match holder.command_for_key(key, state, &host) {
             Some(id) => {
                 self.dispatch(id);
@@ -2044,11 +1397,6 @@ impl Composer {
         }
     }
 
-    // -- Mounting -------------------------------------------------------------
-
-    /// Puts the composer in `host`, and wires its keys, its action and its
-    /// command broadcast through it (T023): Focus's composer dialog is the
-    /// host that mounts it.
     pub fn mount_on(&self, host: Rc<dyn ComposerHost>) {
         self.imp().host.replace(Some(Rc::clone(&host)));
         host.install(self);
@@ -2058,15 +1406,11 @@ impl Composer {
             #[weak(rename_to = composer)]
             self,
             move |_, _| {
-                // The header button reaches this action whether or not the
-                // composer is open; the keyboard's `c` reaches `dispatch`
-                // instead and stays a pure open (`open` is already a no-op
-                // once composing, so `e`/`c` mid-reply cannot clobber it).
-                // Only the button doubles as the close it now visibly is.
+                // The header button reaches this action whether or not the composer is open; `c`
+                // reaches `dispatch` and stays a pure open.
+                // Only the button doubles as the close.
                 if let Some(host) = composer.detached_window() {
-                    // Detached, the button is not the close it is in the
-                    // pane: the composition is in another window and the one
-                    // useful thing to do is put it in front.
+                    // Detached, the button puts the composition's window in front.
                     host.present();
                 } else if composer.is_open() {
                     composer.close();
@@ -2077,10 +1421,8 @@ impl Composer {
         ));
         host.add_action(&action);
 
-        // The broadcast belongs to whichever composer has the pane. A
-        // detached one hears its own keys through its own controller, above,
-        // and must not also hear this -- with two open, `Send` would
-        // otherwise send both drafts (ADR 0034).
+        // The broadcast belongs to whichever composer has the pane; a detached one hears its own
+        // keys, and with two open `Send` would send both drafts (ADR 0034).
         host.connect_command(Box::new(glib::clone!(
             #[weak(rename_to = composer)]
             self,
@@ -2093,23 +1435,17 @@ impl Composer {
         )));
     }
 
-    /// Let go of the host. A host that keeps the composer's widget alive (a
-    /// dialog's slot) and is kept alive by the composer is a reference
-    /// cycle; whoever owns the host calls this when it is torn down, and the
-    /// composer is freed with it.
+    /// A host that keeps the composer's widget alive and is kept alive by it is a reference cycle;
+    /// whoever owns the host calls this on teardown.
     pub fn unmount(&self) {
         self.imp().host.take();
     }
 
-    /// What holds this composer, once mounted.
     fn host(&self) -> Option<Rc<dyn ComposerHost>> {
         self.imp().host.borrow().clone()
     }
 
-    /// Acts on the commands the composer owns, and ignores the rest.
-    ///
-    /// Public so a host that resolves its own keys can hand the composer the
-    /// command they ran (T023): the same verbs, whichever app holds it.
+    /// Public so a host that resolves its own keys can hand the composer the command they ran.
     pub fn dispatch(&self, id: CommandId) {
         match id {
             CommandId::Compose => self.open_new_draft(),
@@ -2127,15 +1463,22 @@ impl Composer {
             CommandId::Reply | CommandId::ReplyAll | CommandId::Forward if !self.is_open() => {
                 self.open_reply(id);
             }
-            // #426: replacing an in-progress draft with a fresh reply would
-            // be the one composer verb that loses typed prose with no
-            // confirmation at all -- `request_discard` asks first for
-            // exactly this reason. Falling through to silence was the bug;
-            // the fix keeps the refusal and gives it a status line, the way
-            // `send()` explains a missing send path instead of doing
-            // nothing.
+            // #426: replacing an in-progress draft with a fresh reply would lose typed prose with
+            // no confirmation; the refusal gets a status line instead of silence.
             CommandId::Reply | CommandId::ReplyAll | CommandId::Forward => {
                 self.set_status(REPLY_BLOCKED);
+            }
+            CommandId::ToggleMarkdownSource if self.is_open() => self.toggle_markdown_source(),
+            CommandId::AttachRemoteImage if self.is_open() => self.attach_remote(None),
+            id if self.is_open() && self.imp().source.is_shown() && self.edit_source(id) => {}
+            id if self.is_open() && WAITS_FOR_MARKDOWN.contains(&id) => {
+                let keymap = self.keymap_now();
+                let key = hints::key(&keymap, CommandId::ToggleMarkdownSource).unwrap_or_default();
+                let words = postio_ui::compose::in_markdown_view_for_now(
+                    postio_core::registry::get(id).title,
+                    &key,
+                );
+                self.say_under_editor(&words);
             }
             CommandId::Bold if self.is_open() => {
                 self.imp().body.format(editor::Format::Bold);
@@ -2160,11 +1503,443 @@ impl Composer {
         }
     }
 
-    /// Ask for an address, then link the selection to it.
-    ///
-    /// The one formatting command that needs an argument, so the one that
-    /// opens a dialog — entry-first and Enter-to-confirm, since the hands
-    /// are on the keyboard by construction.
+    fn build_remote_rows(&self) -> gtk::Box {
+        let imp = self.imp();
+        let title = gtk::Label::new(Some(postio_ui::compose::NOT_ATTACHED_YET));
+        title.add_css_class("postio-compose-label");
+        title.set_xalign(0.0);
+        imp.remote_box.append(&title);
+        imp.remote_list.add_css_class("postio-compose-attachments");
+        imp.remote_list.set_selection_mode(gtk::SelectionMode::None);
+        imp.remote_box.append(&imp.remote_list);
+        imp.remote_box.set_visible(false);
+        imp.remote_box.clone()
+    }
+
+    fn render_remote_rows(&self) {
+        let imp = self.imp();
+        let images = self.document().remote_images();
+        let states = imp.remote_state.borrow().clone();
+        let drawn: Vec<_> = images
+            .iter()
+            .map(|(href, alt)| {
+                (
+                    href.as_str().to_owned(),
+                    alt.clone(),
+                    states.get(href.as_str()).cloned(),
+                )
+            })
+            .collect();
+        let key = hints::key(&self.keymap_now(), CommandId::AttachRemoteImage).unwrap_or_default();
+        let waiting = images
+            .iter()
+            .filter(|(href, _)| states.get(href.as_str()) != Some(&RemoteState::Downloading))
+            .count();
+        match postio_ui::compose::remote_images_warning(waiting, &key) {
+            Some(words) => {
+                imp.remote_warning.set_label(&words);
+                imp.remote_warning.set_visible(true);
+            }
+            None => imp.remote_warning.set_visible(false),
+        }
+        if *imp.remote_drawn.borrow() == drawn {
+            return;
+        }
+        while let Some(row) = imp.remote_list.row_at_index(0) {
+            imp.remote_list.remove(&row);
+        }
+        for (href, alt, state) in &drawn {
+            imp.remote_list
+                .append(&self.build_remote_row(href, alt, state.as_ref(), &key));
+        }
+        imp.remote_box.set_visible(!drawn.is_empty());
+        imp.remote_drawn.replace(drawn);
+    }
+
+    fn build_remote_row(
+        &self,
+        href: &str,
+        alt: &str,
+        state: Option<&RemoteState>,
+        key: &str,
+    ) -> gtk::Widget {
+        let host = postio_ui::compose::remote_host(href);
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, crate::widgets::space::S3);
+        row.set_margin_top(crate::widgets::space::S1);
+        row.set_margin_bottom(crate::widgets::space::S1);
+        let words = if alt.is_empty() { "image" } else { alt };
+        row.update_property(&[gtk::accessible::Property::Label(&format!(
+            "Image not attached: {words}, from {host}"
+        ))]);
+        let name = gtk::Label::new(Some(words));
+        name.set_xalign(0.0);
+        name.set_ellipsize(pango::EllipsizeMode::End);
+        let meta = gtk::Label::new(Some(&match state {
+            Some(RemoteState::Downloading) => postio_ui::compose::DOWNLOADING.to_owned(),
+            Some(RemoteState::Refused(words)) => words.clone(),
+            None => host.clone(),
+        }));
+        meta.add_css_class("postio-compose-label");
+        meta.add_css_class("dim-label");
+        meta.set_hexpand(true);
+        meta.set_xalign(0.0);
+        meta.set_wrap(true);
+        let download = gtk::Button::new();
+        download.set_child(Some(&keyhint::labelled(
+            postio_ui::compose::DOWNLOAD_AND_ATTACH,
+            (!key.is_empty()).then_some(key),
+        )));
+        download.add_css_class("postio-compose-remote-download");
+        download.set_sensitive(state != Some(&RemoteState::Downloading));
+        let target = postio_body::WebHref::parse(href);
+        download.connect_clicked(glib::clone!(
+            #[weak(rename_to = composer)]
+            self,
+            #[strong]
+            target,
+            move |_| composer.attach_remote(target.clone())
+        ));
+        let remove =
+            crate::widgets::icon_button("edit-delete-symbolic", &format!("Send {words} as a link"));
+        remove.connect_clicked(glib::clone!(
+            #[weak(rename_to = composer)]
+            self,
+            #[strong]
+            target,
+            move |_| {
+                if let Some(target) = target.as_ref() {
+                    composer.unlink_remote(target);
+                }
+            }
+        ));
+        row.append(&name);
+        row.append(&meta);
+        row.append(&download);
+        row.append(&remove);
+        row.upcast()
+    }
+
+    fn attach_remote(&self, href: Option<postio_body::WebHref>) {
+        let imp = self.imp();
+        let images = self.document().remote_images();
+        let target = href.or_else(|| {
+            images.iter().map(|(href, _)| href.clone()).find(|href| {
+                imp.remote_state.borrow().get(href.as_str()) != Some(&RemoteState::Downloading)
+            })
+        });
+        let Some(target) = target else {
+            self.say_under_editor(postio_ui::compose::NO_REMOTE_IMAGE);
+            return;
+        };
+        let handler = imp.remote_image.borrow();
+        let Some(handler) = handler.as_ref() else {
+            self.say_under_editor("Downloading images is not available here.");
+            return;
+        };
+        imp.remote_state
+            .borrow_mut()
+            .insert(target.as_str().to_owned(), RemoteState::Downloading);
+        self.render_remote_rows();
+        let draft = imp.draft.borrow().id;
+        let weak = self.downgrade();
+        let href = target.clone();
+        handler(
+            draft,
+            target,
+            Box::new(move |outcome| {
+                if let Some(composer) = weak.upgrade() {
+                    composer.remote_settled(&href, outcome);
+                }
+            }),
+        );
+    }
+
+    fn remote_settled(
+        &self,
+        href: &postio_body::WebHref,
+        outcome: Result<Attachment, postio_ui::compose::RemoteRefusal>,
+    ) {
+        let imp = self.imp();
+        match outcome {
+            Ok(attachment) => {
+                imp.remote_state.borrow_mut().remove(href.as_str());
+                let Some(content_id) = attachment
+                    .content_id
+                    .as_deref()
+                    .and_then(postio_body::ContentId::parse)
+                else {
+                    return;
+                };
+                if imp.source.is_shown() {
+                    let text = imp.source.text();
+                    let from = format!("]({})", href.as_str());
+                    if let Some(at) = text.find(&from) {
+                        let to = format!("](cid:{})", content_id.as_str());
+                        let mut edited = text.clone();
+                        edited.replace_range(at..at + from.len(), &to);
+                        let caret = imp.source.selection();
+                        imp.source.apply(postio_ui::editor::markdown_edit::Edit {
+                            text: edited,
+                            selection: caret,
+                        });
+                    }
+                } else {
+                    let mut document = imp.body.document();
+                    if document.attach_remote(href, &content_id) {
+                        imp.body.show_at(document, None);
+                    }
+                }
+                imp.draft.borrow_mut().attachments.push(attachment);
+                self.render_attachments();
+            }
+            Err(refusal) => {
+                let key = hints::key(&self.keymap_now(), CommandId::AttachRemoteImage)
+                    .unwrap_or_default();
+                let words = postio_ui::compose::remote_refusal(
+                    &refusal,
+                    &postio_ui::compose::remote_host(href.as_str()),
+                    &key,
+                );
+                imp.remote_state
+                    .borrow_mut()
+                    .insert(href.as_str().to_owned(), RemoteState::Refused(words));
+            }
+        }
+        self.refresh();
+    }
+
+    fn unlink_remote(&self, href: &postio_body::WebHref) {
+        let imp = self.imp();
+        imp.remote_state.borrow_mut().remove(href.as_str());
+        if imp.source.is_shown() {
+            let text = imp.source.text();
+            let from = format!("]({})", href.as_str());
+            if let Some(at) = text.find(&from)
+                && let Some(bang) = text[..at].rfind("![")
+            {
+                let mut edited = text.clone();
+                edited.remove(bang);
+                let caret = imp.source.selection();
+                imp.source.apply(postio_ui::editor::markdown_edit::Edit {
+                    text: edited,
+                    selection: caret.start.min(text.len() - 1)..caret.end.min(text.len() - 1),
+                });
+            }
+        } else {
+            let mut document = imp.body.document();
+            if document.unlink_remote(href) {
+                imp.body.show_at(document, None);
+            }
+        }
+        self.refresh();
+    }
+
+    pub fn not_attached(&self) -> usize {
+        self.document().remote_images().len()
+    }
+
+    #[doc(hidden)]
+    pub fn test_remote_rows(&self) -> Vec<(String, String)> {
+        let imp = self.imp();
+        let states = imp.remote_state.borrow();
+        self.document()
+            .remote_images()
+            .into_iter()
+            .map(|(href, alt)| {
+                let words = match states.get(href.as_str()) {
+                    Some(RemoteState::Downloading) => postio_ui::compose::DOWNLOADING.to_owned(),
+                    Some(RemoteState::Refused(words)) => words.clone(),
+                    None => postio_ui::compose::remote_host(href.as_str()),
+                };
+                (alt, words)
+            })
+            .collect()
+    }
+
+    #[doc(hidden)]
+    pub fn test_remote_warning(&self) -> Option<String> {
+        let label = &self.imp().remote_warning;
+        label.is_visible().then(|| label.label().to_string())
+    }
+
+    #[doc(hidden)]
+    pub fn test_unlink_remote(&self, nth: usize) {
+        if let Some((href, _)) = self.document().remote_images().get(nth) {
+            self.unlink_remote(href);
+        }
+    }
+
+    pub fn source_text(&self) -> Option<String> {
+        let source = &self.imp().source;
+        source.is_shown().then(|| source.text())
+    }
+
+    fn keymap_now(&self) -> Keymap {
+        self.host()
+            .map_or_else(|| Keymap::defaults().clone(), |host| host.keymap())
+    }
+
+    fn toggle_markdown_source(&self) {
+        if self.imp().source.is_shown() {
+            self.close_source();
+            return;
+        }
+        // The caret first: the rich view says where it is asynchronously.
+        let weak = self.downgrade();
+        self.imp().body.caret(move |caret| {
+            if let Some(composer) = weak.upgrade()
+                && !composer.imp().source.is_shown()
+            {
+                let opened = postio_ui::editor::source::open(
+                    &composer.imp().body.document(),
+                    caret.as_ref(),
+                );
+                composer.show_source(&opened.text, opened.quotes, opened.caret);
+            }
+        });
+    }
+
+    fn show_source(&self, text: &str, quotes: Vec<postio_body::Block>, caret: Option<usize>) {
+        let imp = self.imp();
+        let keymap = self.keymap_now();
+        let key = hints::key(&keymap, CommandId::ToggleMarkdownSource).unwrap_or_default();
+        let narrow = self.width() > 0 && self.width() < NARROW_SOURCE;
+        imp.source.show(
+            text,
+            quotes,
+            caret,
+            &postio_ui::compose::source_strip(&key, narrow),
+        );
+        imp.body.widget().set_visible(false);
+        imp.source_toggle.set_active(true);
+        self.hide_source_notice();
+        imp.source.text_view().grab_focus();
+    }
+
+    fn close_source(&self) {
+        let imp = self.imp();
+        let text = imp.source.text();
+        let caret = imp.source.selection().end;
+        let returned = postio_ui::editor::source::close(&text, &imp.source.quotes(), Some(caret));
+        self.hide_source();
+        // A document the view only rewrote is the same document (FR-024).
+        let before = imp.body.document();
+        let room = postio_ui::editor::source::typing_room(&before);
+        let unroomed = postio_body::Document {
+            blocks: before.blocks[room..].to_vec(),
+        };
+        let document = if postio_body::markdown::normalize(unroomed) == returned.document {
+            before
+        } else {
+            returned.document
+        };
+        imp.body.show_at(document, returned.caret.as_ref());
+        match postio_ui::compose::narrowed_notice(returned.lost) {
+            Some(words) => {
+                imp.source_notice_label.set_label(&words);
+                imp.source_notice_undo.set_visible(true);
+                imp.source_notice.set_visible(true);
+                imp.source_typed.replace(Some(text));
+            }
+            None => self.hide_source_notice(),
+        }
+        imp.body.widget().grab_focus();
+        self.refresh();
+    }
+
+    /// Also on the line under the editor, since a framed host hides the status. Lasts until the
+    /// next edit.
+    fn say_under_editor(&self, words: &str) {
+        self.set_status(words);
+        let imp = self.imp();
+        imp.source_typed.take();
+        imp.source_notice_label.set_label(words);
+        imp.source_notice_undo.set_visible(false);
+        imp.source_notice.set_visible(true);
+    }
+
+    fn hide_source(&self) {
+        let imp = self.imp();
+        imp.source.hide();
+        imp.body.widget().set_visible(true);
+        imp.source_toggle.set_active(false);
+    }
+
+    fn hide_source_notice(&self) {
+        let imp = self.imp();
+        imp.source_notice.set_visible(false);
+        imp.source_typed.take();
+    }
+
+    fn undo_narrowing(&self) {
+        let imp = self.imp();
+        let Some(typed) = imp.source_typed.take() else {
+            return;
+        };
+        imp.body.undo();
+        let quotes = postio_ui::editor::source::open(&imp.body.document(), None).quotes;
+        self.show_source(&typed, quotes, Some(typed.len()));
+        self.refresh();
+    }
+
+    fn build_source_notice(&self) -> gtk::Box {
+        let imp = self.imp();
+        imp.source_notice
+            .add_css_class("postio-compose-source-notice");
+        imp.source_notice.set_visible(false);
+        imp.source_notice_label.set_xalign(0.0);
+        imp.source_notice_label.set_wrap(true);
+        imp.source_notice_label.set_hexpand(true);
+        imp.source_notice
+            .set_accessible_role(gtk::AccessibleRole::Status);
+        imp.source_notice.append(&imp.source_notice_label);
+        imp.source_notice_undo.add_css_class("flat");
+        imp.source_notice_undo.connect_clicked(glib::clone!(
+            #[weak(rename_to = composer)]
+            self,
+            move |_| composer.undo_narrowing()
+        ));
+        imp.source_notice.append(&imp.source_notice_undo);
+        imp.source_notice.clone()
+    }
+
+    fn edit_source(&self, id: CommandId) -> bool {
+        use postio_ui::editor::markdown_edit as edit;
+        let imp = self.imp();
+        let text = imp.source.text();
+        let at = imp.source.selection();
+        let heading = |level: u8| edit::heading(&text, at.clone(), level);
+        let result = match id {
+            CommandId::Bold => edit::wrap(&text, at, "**", "**"),
+            CommandId::Italic => edit::wrap(&text, at, "*", "*"),
+            CommandId::Strikethrough => edit::strikethrough(&text, at),
+            CommandId::InlineCode => edit::inline_code(&text, at),
+            CommandId::InsertLink => edit::link(&text, at),
+            CommandId::Heading1 => heading(1),
+            CommandId::Heading2 => heading(2),
+            CommandId::Heading3 => heading(3),
+            CommandId::Heading4 => heading(4),
+            CommandId::Heading5 => heading(5),
+            CommandId::Heading6 => heading(6),
+            CommandId::NormalText => edit::normal_text(&text, at),
+            CommandId::BulletList => edit::toggle_prefix(&text, at, "- "),
+            CommandId::NumberedList => edit::toggle_prefix(&text, at, "1. "),
+            CommandId::QuoteBlock => edit::toggle_prefix(&text, at, "> "),
+            CommandId::CodeBlock => edit::code_block(&text, at),
+            CommandId::TaskList => edit::task_list(&text, at),
+            CommandId::ToggleTask => edit::toggle_task(&text, at),
+            CommandId::Indent => edit::indent(&text, at),
+            CommandId::Outdent => edit::outdent(&text, at),
+            CommandId::Divider => edit::divider(&text, at),
+            CommandId::Table => edit::table(&text, at),
+            CommandId::ClearFormatting => edit::clear_formatting(&text, at),
+            _ => return false,
+        };
+        imp.source.apply(result);
+        true
+    }
+
+    /// Entry-first and Enter-to-confirm: the hands are on the keyboard by construction.
     fn request_link(&self) {
         let dialog = adw::AlertDialog::new(
             Some("Link to…"),
@@ -2205,11 +1980,8 @@ impl Composer {
         dialog.present(Some(self));
     }
 
-    /// Opens a reply, reply-all or forward for whatever
-    /// [`connect_reply_source`](Self::connect_reply_source) says is on
-    /// screen. Silently does nothing without a source connected, or when the
-    /// source has nothing to offer — `e` with no message open is not an
-    /// error, it is nothing to reply to.
+    /// Does nothing without a source or when it has nothing to offer: `e` with no message open is
+    /// not an error.
     fn open_reply(&self, id: CommandId) {
         let weak = self.downgrade();
         let answer: ReplyAnswer = Box::new(move |found| {
@@ -2223,31 +1995,22 @@ impl Composer {
         }
     }
 
-    /// [`open_reply`](Self::open_reply)'s second half, once the source has
-    /// answered.
     fn reply_with(&self, id: CommandId, found: Option<(Message, Account)>) {
         let Some((source, account)) = found else {
             return;
         };
-        // The picker has to speak for *this* account before `open` fills the
-        // draft: `fill` resolves the draft's `identity_id` against whatever
-        // `imp.identities` already holds, and that was last set for the
-        // window's own default account -- never refreshed for a reply to a
-        // message that arrived somewhere else (#189). Without this, a reply
-        // to account B silently sent as account A's identity.
+        // The picker must speak for this account before `open` fills the draft: `fill` resolves
+        // `identity_id` against whatever was last set, so a reply to account B sent as account A's
+        // identity (#189).
         self.set_identities(account.identities.clone());
         self.set_signatures(account.signatures.clone());
         if let Some(draft) = reply_draft(id, &source, &account) {
-            // After, not before: `open` calls `fill`, which clears the
-            // notice for every fresh composition — a reply's own domains
-            // must win by running last, not be immediately wiped by it.
+            // After `open`, which clears the notice for every fresh composition.
             self.open(draft);
             self.set_tracking_domains(&quoted_tracking_domains(&source));
         }
     }
 
-    /// Show or hide issue #116's "this quotes a link to another domain"
-    /// notice.
     fn set_tracking_domains(&self, domains: &[String]) {
         let notice = &self.imp().tracking_notice;
         match tracking_link_notice(domains) {
@@ -2259,13 +2022,8 @@ impl Composer {
         }
     }
 
-    /// The account a fresh composition starts from.
-    ///
-    /// The one [`set_account`](Self::set_account) named, when it has been
-    /// called; the draft cell's otherwise, which is what a composer built
-    /// without an account has to answer. Not the cell's first: a reply fills
-    /// the cell with the answered message's account, and reading that back
-    /// here made one reply change where every later new message came from.
+    /// Not the draft cell's first: a reply fills the cell with the answered message's account,
+    /// which changed where every later new message came from.
     fn account(&self) -> AccountId {
         let configured = self.imp().composing_from.get();
         if configured == AccountId::UNASSIGNED {
@@ -2275,25 +2033,13 @@ impl Composer {
         }
     }
 
-    /// Sets which account a fresh `Compose` starts from.
-    ///
-    /// For whoever assembles the application: the composer is built with no
-    /// account at all ([`AccountId::UNASSIGNED`]), and nothing in
-    /// `composer.rs` ever learns of one on its own. Meant to be called once,
-    /// before the first composition — it writes straight onto the current
-    /// draft, so calling it mid-compose would reassign whatever is already
-    /// being written.
+    /// Meant to be called once before the first composition: it writes onto the current draft, so
+    /// mid-compose it would reassign what is being written.
     pub fn set_account(&self, account_id: AccountId) {
         self.imp().composing_from.set(account_id);
         self.imp().draft.borrow_mut().account_id = account_id;
     }
 
-    // -- A host's frame (spec 007 T078) ---------------------------------------
-
-    /// Draw `To`, `Cc` and `Bcc` as recipient chips (T079, FR-052): each
-    /// finished recipient a chip with its name, its address and a ×, and the
-    /// address being typed after them. Opt-in, for the composer's life:
-    /// Focus asks for it; the fields are otherwise the plain text they were.
     pub fn set_recipient_chips(&self, on: bool) {
         let imp = self.imp();
         if !on || imp.chips.borrow().is_some() {
@@ -2311,17 +2057,9 @@ impl Composer {
         imp.chips.replace(Some(chips));
     }
 
-    /// Hide the composer's own heading row and action row, for a host that
-    /// draws a frame of its own around it: Focus's compose dialog carries the
-    /// heading, Send and Send later in its header (screens 05 and 06). The
-    /// verbs are the same ones -- the frame's controls call
-    /// [`send`](Self::send), [`send_later`](Self::send_later) and
-    /// [`dispatch`](Self::dispatch) -- so nothing about what a composition
-    /// does changes with where its buttons are drawn.
-    ///
-    /// The toolbar's paperclip and the attachments' "Attach another" hint go
-    /// with them: the frame draws Attach as a verb with its key on it
-    /// (T221), and one control for one verb is the rule.
+    /// The frame's controls call `send`, `send_later` and `dispatch`, so nothing about a
+    /// composition changes with where buttons are drawn.
+    /// The paperclip and "Attach another" hint go too: one control for one verb.
     pub fn set_framed(&self, framed: bool) {
         let imp = self.imp();
         for widget in imp.chrome.borrow().iter() {
@@ -2331,14 +2069,8 @@ impl Composer {
         imp.attach_hint.set_visible(!framed);
     }
 
-    /// Draw the body in the host's column (specs/007-postio-focus T221), as
-    /// Focus's open message draws a body (T203, T211): on the column's
-    /// ground, in its ink, accent and hairlines, from its edge. Each colour
-    /// is read from a probe that wears a `.postio-flow-*` class -- the
-    /// reader's own -- whose `color` the host's stylesheet sets to its
-    /// token, so no colour is written in Rust and the body follows the
-    /// host's light and dark. A host that does not call this keeps the
-    /// generated palette and its inset.
+    /// Colours are read from probes wearing the reader's `.postio-flow-*` classes, so none is
+    /// written in Rust and the body follows the host's light and dark.
     pub fn flow_in_column(&self) {
         let Some(column) = self.child().and_downcast::<gtk::Box>() else {
             return;
@@ -2356,42 +2088,30 @@ impl Composer {
         self.imp().body.flow_in(probes);
     }
 
-    /// Add `row` under the composer's own fields, above the body: a field a
-    /// host offers that the composer does not draw itself, as Focus's Labels
-    /// row is (screen 05).
     pub fn add_field_row(&self, row: &impl IsA<gtk::Widget>) {
         self.imp().fields.append(row);
     }
 
-    /// The labels the draft carries (spec 007 FR-053): applied to its
-    /// conversation once it is sent.
     pub fn labels(&self) -> Vec<postio_model::LabelId> {
         self.imp().draft.borrow().labels.clone()
     }
 
-    /// Put `labels` on the draft, as the person choosing them: an edit, which
-    /// autosaves like any other.
     pub fn set_labels(&self, labels: Vec<postio_model::LabelId>) {
         self.imp().draft.borrow_mut().labels = labels;
         self.refresh();
     }
 
-    /// When the draft asks to be reminded if nobody replies (spec 007 US3
-    /// scenario 5): sending it sets that reminder on its conversation.
     pub fn remind_at(&self) -> Option<chrono::DateTime<chrono::Utc>> {
         self.imp().draft.borrow().remind_at
     }
 
-    /// Ask for a reminder at `at` if nobody replies, or for none: an edit,
-    /// which autosaves like any other.
     pub fn set_remind_at(&self, at: Option<chrono::DateTime<chrono::Utc>>) {
         self.imp().draft.borrow_mut().remind_at = at;
         self.refresh();
     }
 
-    /// Start the composition just opened with `labels`, as a reply starts
-    /// with its conversation's (FR-053): part of what it opened with, not an
-    /// edit, so nothing is saved for it until the person writes something.
+    /// Part of what it opened with, not an edit: nothing is saved until the person writes
+    /// something.
     pub fn start_with_labels(&self, labels: Vec<postio_model::LabelId>) {
         let imp = self.imp();
         imp.draft.borrow_mut().labels = labels;
@@ -2400,30 +2120,15 @@ impl Composer {
         imp.filling.set(was_filling);
     }
 
-    // -- Attachments ------------------------------------------------------
-
-    /// Opens the platform file chooser for `ctrl+shift+a` and the "attach
-    /// another" hint. `GtkFileDialog` goes through the XDG desktop portal on
-    /// its own, which is what makes this work unmodified under Flatpak.
-    /// Chooses a picture and puts it in the body, at the caret.
-    ///
-    /// Deliberately a different verb from [`Self::open_file_chooser`], and
-    /// the difference is the one FR-049 asks the composer to keep visible: a
-    /// file chosen here ends up *inside* the message where it was written, and
-    /// one chosen there ends up beside it. They reach different code and they
-    /// are different things to a recipient.
-    ///
-    /// The bytes go down the same path as a paste or a drop, so an image has
-    /// one representation however it arrived.
+    /// A different verb from `open_file_chooser` (FR-049): a file chosen here ends up inside the
+    /// message, one chosen there beside it.
+    /// The bytes take the same path as a paste or drop.
     fn open_image_chooser(&self) {
         let Some(window) = self.host().and_then(|host| host.parent()) else {
             return;
         };
-        // Unnamed on purpose. `FileFilter::set_name` would give the chooser's
-        // dropdown a label, and `check-uncalled-pub-fn` matches by bare name
-        // -- calling it here claims an unrelated `set_name` in
-        // `postio-storage` is reachable when it is not. One filter with no
-        // label reads fine; a check made to lie does not.
+        // Unnamed on purpose: `FileFilter::set_name` would make `check-uncalled-pub-fn` match an
+        // unrelated `set_name` in `postio-storage`.
         let filter = gtk::FileFilter::new();
         filter.add_mime_type("image/*");
         let filters = gio::ListStore::new::<gtk::FileFilter>();
@@ -2449,7 +2154,6 @@ impl Composer {
         );
     }
 
-    /// Reads `file` and inlines it, or says why not.
     fn insert_image_file(&self, file: &gio::File) {
         let bytes = match file.load_contents(gio::Cancellable::NONE) {
             Ok((bytes, _)) => bytes,
@@ -2458,9 +2162,8 @@ impl Composer {
                 return;
             }
         };
-        // From the file rather than guessed from the extension: a `.png` that
-        // is a JPEG would otherwise reach the recipient declared wrongly, and
-        // the declaration is the only thing their client has to go on.
+        // From the file, not the extension: a `.png` that is a JPEG would be declared wrongly to
+        // the recipient.
         let mime = gio::content_type_guess(file.basename().as_deref(), Some(bytes.as_ref()))
             .0
             .to_string();
@@ -2496,8 +2199,6 @@ impl Composer {
         );
     }
 
-    /// Wires dropping files anywhere on the composer to the same path as the
-    /// file chooser.
     fn install_drop_target(&self) {
         let target = gtk::DropTarget::new(gdk::FileList::static_type(), gdk::DragAction::COPY);
         target.connect_drop(glib::clone!(
@@ -2518,10 +2219,6 @@ impl Composer {
         self.add_controller(target);
     }
 
-    /// Turns a chosen or dropped file into an attachment via whatever
-    /// [`connect_attach`](Self::connect_attach) is wired to, and says so on
-    /// the status line when nothing is, rather than the file silently going
-    /// nowhere.
     fn add_file(&self, file: &gio::File) {
         let Some(path) = file.path() else {
             return;
@@ -2542,17 +2239,13 @@ impl Composer {
         );
     }
 
-    /// Adds `attachment` to the draft and redraws the list. Counts as an
-    /// edit: autosave and the `changed` handlers see it exactly like a typed
-    /// word, which is what makes the debounce in `postio-own` cover it too.
+    /// Counts as an edit, so autosave and `changed` handlers see it like a typed word.
     fn add_attachment(&self, attachment: Attachment) {
         self.imp().draft.borrow_mut().attachments.push(attachment);
         self.render_attachments();
         self.refresh();
     }
 
-    /// Intercept `Ctrl+V` when the clipboard holds pixels; text falls
-    /// through to WebKit's own paste. Returns whether the paste was taken.
     fn paste_image(&self) -> bool {
         let clipboard = self.imp().body.widget().clipboard();
         if !clipboard
@@ -2571,9 +2264,6 @@ impl Composer {
         true
     }
 
-    /// The tail of a paste or drop of raw image bytes: out through
-    /// [`connect_inline_image`](Self::connect_inline_image) to become an
-    /// inline attachment, then into the draft and the body at the caret.
     fn add_inline_image(&self, bytes: Vec<u8>, mime_type: &str) {
         let handler = self.imp().inline_image.borrow();
         let Some(handler) = handler.as_ref() else {
@@ -2592,9 +2282,6 @@ impl Composer {
         );
     }
 
-    /// Records the inline attachment and puts its image at the caret. The
-    /// insertion crosses the bridge like any edit, so the document, undo and
-    /// autosave all see it.
     fn add_inline_attachment(&self, attachment: Attachment) {
         let Some(content_id) = attachment
             .content_id
@@ -2612,9 +2299,6 @@ impl Composer {
         self.imp().body.insert_image(&content_id, &alt);
     }
 
-    /// Removes the attachment at `index`. What removing a row before send
-    /// does — the acceptance criterion "removing before send cleans up" is
-    /// this and [`Composer::draft`] never seeing it again.
     fn remove_attachment(&self, index: usize) {
         let imp = self.imp();
         if index < imp.draft.borrow().attachments.len() {
@@ -2624,10 +2308,6 @@ impl Composer {
         self.refresh();
     }
 
-    /// Draws the carried parts named by `parts` as downloading from the
-    /// message this draft forwards, and every other part as not: what a
-    /// host says once it has asked for them (#1690). Empty says nothing is
-    /// on its way.
     pub fn set_downloading(&self, parts: impl IntoIterator<Item = String>) {
         let parts: std::collections::BTreeSet<String> = parts.into_iter().collect();
         if *self.imp().downloading.borrow() == parts {
@@ -2637,10 +2317,8 @@ impl Composer {
         self.render_attachments();
     }
 
-    /// A fetch of `message`'s `sections` ended, landed or refused: if this
-    /// draft forwards that message, the parts it held stop being drawn
-    /// downloading. A refused part is fetched again when the forward is sent
-    /// (the drain's carry stage), so it reads as an ordinary attachment.
+    /// A refused part is fetched again when the forward is sent, so it reads as an ordinary
+    /// attachment.
     pub fn fetch_settled(
         &self,
         message: postio_model::MessageId,
@@ -2659,9 +2337,7 @@ impl Composer {
         }
     }
 
-    /// Rebuilds the attachment rows from the draft's own list, which stays
-    /// the single source of truth — never the widgets, matching how `to`,
-    /// `cc` and `bcc` work the other way around.
+    /// The draft's list is the single source of truth, never the widgets.
     fn render_attachments(&self) {
         let imp = self.imp();
         while let Some(row) = imp.attachments_list.row_at_index(0) {
@@ -2675,9 +2351,6 @@ impl Composer {
         imp.attachments_box.set_visible(!attachments.is_empty());
     }
 
-    /// One row: name, size (flagging one past [`LARGE_ATTACHMENT_BYTES`],
-    /// and a carried part still downloading), and a button to remove it
-    /// before send.
     fn build_attachment_row(&self, index: usize, attachment: &Attachment) -> gtk::Widget {
         let downloading = attachment
             .part_id
@@ -2722,9 +2395,6 @@ impl Composer {
         row.upcast()
     }
 
-    /// The attachment list's own row: a header naming attach's key per
-    /// canvas 2a, and the rows themselves — hidden entirely until
-    /// there is something to show.
     fn build_attachments(&self) -> gtk::Box {
         let imp = self.imp();
         let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -2748,29 +2418,25 @@ impl Composer {
         imp.attachments_box.clone()
     }
 
-    /// Takes the host's pane and keyboard; the host remembers the way back.
     fn take_pane(&self) {
         if let Some(host) = self.host() {
             host.take_pane();
         }
     }
 
-    /// Gives the host's pane back, as it remembered it.
     fn release_pane(&self) {
         if let Some(host) = self.host() {
             host.release_pane();
         }
     }
 
-    /// Loads a draft into the fields without reporting it as an edit.
     fn fill(&self, draft: Draft) {
         let imp = self.imp();
         imp.previous_generation.set(imp.generation.get());
         imp.generation.set(imp.generation.get() + 1);
         imp.filling.set(true);
-        // Whatever this draft is replacing, filling the fields is not itself
-        // an edit worth autosaving, and a timer armed for the *previous*
-        // content must not fire against this one.
+        // Filling is not an edit worth autosaving, and a timer armed for the previous content must
+        // not fire against this one.
         self.cancel_autosave();
 
         let chips = imp.chips.borrow().clone();
@@ -2787,28 +2453,31 @@ impl Composer {
             }
         }
         imp.subject.set_text(&draft.subject);
-        // The document first, then the view over it. An HTML body is parsed
-        // rather than shown raw -- which is what makes a reply to an
-        // HTML-only message editable at all.
         let document = document_of(&draft.body);
-        // A different draft is a different history: `load` clears the
-        // Editor's, so undoing across the swap cannot put one message's
-        // words into another's.
+        // A different draft is a different history: `load` clears the Editor's so undo cannot cross
+        // the swap.
         imp.held.take();
+        imp.remote_state.borrow_mut().clear();
+        let quotes = postio_ui::editor::source::open(&document, None).quotes;
         imp.body.load(document);
+        self.hide_source_notice();
+        match draft.body_markdown.as_deref() {
+            Some(typed) => {
+                let mut text = typed.to_owned();
+                for _ in &quotes {
+                    text.push_str("\n\n");
+                    text.push_str(&postio_ui::editor::source::quote_line());
+                }
+                self.show_source(&text, quotes, Some(typed.len()));
+            }
+            None => self.hide_source(),
+        }
         imp.heading.set_text(heading(draft.kind));
 
-        // Cc and Bcc stay out of the way until there is something in them, or
-        // until the user asks for them. A composer that shows five empty
-        // fields makes the common case — one recipient — look complicated.
         imp.cc_row.set_visible(!draft.cc.is_empty());
         imp.bcc_row.set_visible(!draft.bcc.is_empty());
         self.sync_more();
-        // Ephemeral to this one reply action, not a property of the draft
-        // itself: `open_reply` sets it right after this call returns, for a
-        // fresh reply. Anything else that opens the composer — a new
-        // message, resuming a saved draft — has no reply source to have
-        // scanned, so there is nothing left to say about.
+        // Ephemeral to one reply action: `open_reply` sets it right after this returns.
         self.set_tracking_domains(&[]);
 
         let identity = draft.identity_id;
@@ -2817,22 +2486,16 @@ impl Composer {
         imp.filling.set(false);
         self.render_attachments();
 
-        // The draft's own identity wins over the account default: an override
-        // made before it was closed is still this draft's.
         if !identity.is_some_and(|id| self.select_identity(id)) {
             self.apply_identity();
             self.apply_signature();
         }
 
-        // Above the quote and above the signature, which is where a reply is
-        // written and where a new message starts.
         imp.body.place_caret_start();
         *imp.began_as.borrow_mut() = Some(self.draft());
         self.refresh();
     }
 
-    /// [`closing`] for the composition in the fields, measured against how
-    /// it opened: a reply nobody wrote in has nothing to keep.
     fn closing_now(&self) -> Closing {
         let draft = self.draft();
         match self.imp().began_as.borrow().as_ref() {
@@ -2841,20 +2504,9 @@ impl Composer {
         }
     }
 
-    /// Puts the keyboard where this kind of composition starts.
-    ///
-    /// A widget that is not mapped yet cannot take focus, and on the frame the
-    /// composer opens it is not — so a failed grab is retried once the layout
-    /// has run. Not a delay the user can see: it is the same frame the
-    /// composer first paints in.
-    ///
-    /// The retry is a tick callback, not an idle: `idle_add_local_once` is not
-    /// ordered against the frame clock that drives the layout pass doing the
-    /// mapping, so the retry can lose that race and leave the keyboard
-    /// nowhere (`postio-43`, the same shape `postio-1ff` turned out to be —
-    /// see `8daa510`). A tick callback runs on the frame clock, so waiting
-    /// two ticks puts the retry strictly after the layout pass; the first
-    /// tick can be the one the mapping happens in.
+    /// A widget not yet mapped cannot take focus, so a failed grab retries after two tick
+    /// callbacks: `idle_add_local_once` is not ordered against the frame clock that does the
+    /// mapping and could lose the race (`postio-43`).
     fn focus_first(&self) {
         let imp = self.imp();
         let field: gtk::Widget = self.widget_for(starting_field(&imp.draft.borrow()));
@@ -2871,7 +2523,6 @@ impl Composer {
         }
     }
 
-    /// Shows the Cc and Bcc rows. What the `+ Cc` button does.
     pub fn show_copy_fields(&self) {
         let imp = self.imp();
         imp.cc_row.set_visible(true);
@@ -2880,17 +2531,9 @@ impl Composer {
         imp.cc.grab_focus();
     }
 
-    /// Raises Cc and Bcc, or puts them away again — [`CommandId::CopyFields`].
-    ///
-    /// Asymmetric on purpose. Raising always works; putting away only works
-    /// while both fields are empty, because `resume` already holds the rule
-    /// that these rows are visible *because* there is something in them. A
-    /// hidden row that still held addresses would keep those recipients on the
-    /// draft and still send to them, under a sender who could no longer see
-    /// them — worse than the dead end this replaces.
-    ///
-    /// When it will not put them away it takes the keyboard to `Cc` instead.
-    /// A refusal that does nothing visible is indistinguishable from a bug.
+    /// Raising always works; putting away only while both fields are empty, since a hidden row
+    /// holding addresses would still send to them. When refused it takes the keyboard to `Cc` so
+    /// the refusal is visible.
     pub fn toggle_copy_fields(&self) {
         let imp = self.imp();
         if !imp.cc_row.is_visible() || !imp.bcc_row.is_visible() {
@@ -2902,8 +2545,7 @@ impl Composer {
             imp.cc_row.set_visible(false);
             imp.bcc_row.set_visible(false);
             self.sync_more();
-            // The keyboard cannot be left in a row that is no longer on
-            // screen, or Tab resumes from somewhere invisible.
+            // The keyboard cannot be left in a hidden row, or Tab resumes from somewhere invisible.
             imp.to.grab_focus();
         } else {
             imp.cc.grab_focus();
@@ -2916,16 +2558,13 @@ impl Composer {
             .set_visible(!(imp.cc_row.is_visible() && imp.bcc_row.is_visible()));
     }
 
-    /// Redraws everything that follows from what is in the fields.
     fn refresh(&self) {
         let imp = self.imp();
         let draft = self.draft();
+        self.render_remote_rows();
 
-        // A problem outranks a count: an address that will bounce is worth
-        // more of this one line than a tally of how many people are on the
-        // message. When there is no problem the line carries the tally
-        // instead (FR-023), which is what keeps a reply-to-all to a large
-        // list from looking exactly like a reply until it is sent.
+        // A problem outranks a count; with no problem the line carries the recipient tally
+        // (FR-023).
         match recipient_warning(&draft).or_else(|| recipient_summary(&draft)) {
             Some(text) => {
                 imp.warning.set_text(&text);
@@ -2935,9 +2574,8 @@ impl Composer {
         }
         imp.send.set_sensitive(draft.is_sendable());
 
-        // A detached window's title is how it is told apart in the window
-        // list, and the subject is usually typed after it was detached
-        // (FR-014).
+        // The subject is usually typed after detaching, and the title tells windows apart in the
+        // list (FR-014).
         if let Some(host) = self.detached_window() {
             let title = self.window_title();
             if host.title().as_deref() != Some(title.as_str()) {
@@ -2954,16 +2592,10 @@ impl Composer {
         self.schedule_autosave();
     }
 
-    /// Arms (or re-arms) the debounced autosave: [`Composer::save`] runs
-    /// again once [`AUTOSAVE_DEBOUNCE`] passes with no further edit.
-    ///
-    /// A source id is not `Clone`, so re-arming always cancels whatever was
-    /// pending first — there is only ever one edit's worth of waiting to do.
+    /// Re-arming cancels the pending source: a source id is not `Clone`.
     fn schedule_autosave(&self) {
-        // Not mounted yet: this is `build()`'s own initial layout — setting
-        // the placeholder identity, for instance — not a user editing
-        // anything, and there is nowhere for a save to go yet regardless.
-        // Mounted means on a host, whichever app's (T023).
+        // Not mounted yet: this is `build()`'s own initial layout, not a user edit, and a save has
+        // nowhere to go.
         if self.host().is_none() {
             return;
         }
@@ -2982,17 +2614,12 @@ impl Composer {
         self.imp().autosave_source.set(Some(source));
     }
 
-    /// Drops any pending debounced autosave without running it — for content
-    /// that is about to stop existing (a fresh draft loaded, a discard, a
-    /// send), where firing it later would save the wrong thing.
     fn cancel_autosave(&self) {
         if let Some(source) = self.imp().autosave_source.take() {
             source.remove();
         }
     }
 
-    /// Runs a pending debounced autosave immediately instead of letting it
-    /// lapse, and cancels the timer that would otherwise fire it again later.
     fn flush_autosave(&self) {
         if let Some(source) = self.imp().autosave_source.take() {
             source.remove();
@@ -3014,9 +2641,7 @@ impl Composer {
 
         imp.status.add_css_class("postio-compose-status");
         imp.status.set_xalign(0.0);
-        // `Status` is a live region: a screen reader announces it when it
-        // changes, without moving the focus. "draft saved" is feedback, and
-        // feedback only sighted users get is feedback half the users do not.
+        // `Status` is a live region: a screen reader announces changes without moving focus.
         imp.status.set_accessible_role(gtk::AccessibleRole::Status);
 
         crate::widgets::button::style(
@@ -3035,10 +2660,6 @@ impl Composer {
         title.add_css_class("postio-compose-title");
         title.append(&imp.heading);
         title.append(&imp.status);
-        // Pushed to the trailing edge: the heading says what this is, the
-        // status says what has happened to it, and the one control up here is
-        // the one that moves the whole thing somewhere else. Send and Save
-        // stay at the bottom with the rest of the verbs.
         imp.status.set_hexpand(true);
         title.append(&imp.detach);
 
@@ -3057,23 +2678,24 @@ impl Composer {
         imp.bcc_row.set_visible(false);
 
         imp.body.widget().add_css_class("postio-compose-body");
-        // The editing surface is ADR 0003's WebView, adopted for every
-        // draft (ADR 0004 Q6 as amended, #347). The Editor owns the
-        // document, its EditHistory and the typing-run coalescing — the
-        // two-undo-stacks separation ADR 0004 Q5 draws still stands
-        // (editing undo is the document's; the mail undo is `u`), it is
-        // simply enforced in one place now, inside the Editor.
+        // Editing undo is the document's and mail undo is `u`: the two-stacks separation of ADR
+        // 0004 Q5, enforced inside the Editor.
         imp.body.connect_changed(glib::clone!(
             #[weak(rename_to = composer)]
             self,
             move |_| composer.body_edited()
         ));
+        imp.source
+            .text_view()
+            .buffer()
+            .connect_changed(glib::clone!(
+                #[weak(rename_to = composer)]
+                self,
+                move |_| composer.body_edited()
+            ));
 
-        // Ctrl+Z / Ctrl+Shift+Z, on the body only — and at CAPTURE phase,
-        // which is load-bearing: WebKit keeps an editing undo of its own on
-        // a contenteditable surface, and letting the keystroke through
-        // would run two histories against one document. The composer's
-        // handler wins; the document's history is the only one.
+        // At CAPTURE phase on purpose: WebKit keeps its own undo on a contenteditable surface, and
+        // letting the keystroke through would run two histories against one document.
         let editing = gtk::EventControllerKey::new();
         editing.set_propagation_phase(gtk::PropagationPhase::Capture);
         editing.connect_key_pressed(glib::clone!(
@@ -3090,10 +2712,8 @@ impl Composer {
                     gdk::Key::z if !shift => composer.undo_edit(),
                     gdk::Key::z | gdk::Key::Z if shift => composer.redo_edit(),
                     gdk::Key::y => composer.redo_edit(),
-                    // A paste whose clipboard holds pixels is ours: WebKit
-                    // would write an unresolvable fake URL into the DOM,
-                    // and the whole point of #341 is that image bytes go to
-                    // the blob store instead. Text pastes proceed to WebKit.
+                    // A paste whose clipboard holds pixels is ours: WebKit would write an
+                    // unresolvable fake URL into the DOM (#341).
                     gdk::Key::v if !shift => {
                         if composer.paste_image() {
                             glib::Propagation::Stop
@@ -3107,9 +2727,6 @@ impl Composer {
         ));
         imp.body.widget().add_controller(editing);
 
-        // The body's postio-cid: requests resolve against this draft's
-        // attachments, through whatever connect_attachment_bytes wired in —
-        // the same path a resumed draft's images take.
         *imp.blob_lookup.borrow_mut() = Some(Box::new(glib::clone!(
             #[weak(rename_to = composer)]
             self,
@@ -3135,16 +2752,10 @@ impl Composer {
                 Some((bytes, attachment.mime_type.clone()))
             }
         )));
-        // The WebView scrolls its own document, so there is no
-        // ScrolledWindow around the body any more — one scroll surface, its
-        // own tab stop, announcing the same name the TextView did.
         imp.body
             .widget()
             .update_property(&[gtk::accessible::Property::Label(BODY_NAME)]);
 
-        // An image dropped on the body goes inline, exactly like a paste;
-        // anything else falls through to the composer-wide target and
-        // becomes an ordinary attachment.
         let body_drop = gtk::DropTarget::new(gdk::FileList::static_type(), gdk::DragAction::COPY);
         body_drop.connect_drop(glib::clone!(
             #[weak(rename_to = composer)]
@@ -3189,9 +2800,19 @@ impl Composer {
         column.append(&imp.tracking_notice);
         column.append(&self.build_toolbar());
         column.append(imp.body.widget());
+        column.append(imp.source.widget());
+        column.append(&self.build_source_notice());
         column.append(&imp.below_body);
         column.append(&imp.warning);
+        column.append(&self.build_remote_rows());
         column.append(&self.build_attachments());
+        imp.remote_warning.add_css_class("postio-compose-warning");
+        imp.remote_warning.set_xalign(0.0);
+        imp.remote_warning.set_wrap(true);
+        imp.remote_warning.set_visible(false);
+        imp.remote_warning
+            .set_accessible_role(gtk::AccessibleRole::Status);
+        column.append(&imp.remote_warning);
         let actions = self.build_actions();
         column.append(&actions);
         imp.chrome
@@ -3206,10 +2827,7 @@ impl Composer {
                 move |_| composer.refresh()
             ));
         }
-        // (The body's refresh rides body_edited, wired above.)
 
-        // Recipient completion, on every field it makes sense for — not
-        // `Subject`, which is not an address.
         *imp.to_completion.borrow_mut() = Some(Completion::install(self, &imp.to));
         Completion::install(self, &imp.cc);
         Completion::install(self, &imp.bcc);
@@ -3218,14 +2836,8 @@ impl Composer {
         self.refresh();
     }
 
-    /// The formatting toolbar: the visible half of #338's commands.
-    ///
-    /// Every button dispatches the registry command the keyboard reaches —
-    /// the same `dispatch` arm, so a click and `Ctrl+B` are one code path —
-    /// and each toggle reflects the caret through the editor's format-state
-    /// channel. Buttons keep their hands off the focus (`focus_on_click`
-    /// false): the click's target is the selection in the editor, and
-    /// stealing the caret would destroy the thing the command acts on.
+    /// Buttons keep their hands off the focus (`focus_on_click` false): stealing the caret would
+    /// destroy what the command acts on.
     fn build_toolbar(&self) -> gtk::Box {
         let imp = self.imp();
         let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 2);
@@ -3256,12 +2868,7 @@ impl Composer {
         ));
         toolbar.append(&imp.link_button);
 
-        // The third outcome, and until now the one with nothing on screen at
-        // all: an image in the body was reachable by pasting or dropping and
-        // by nothing else, so it was absent from the palette and the `?`
-        // sheet and out of reach for anyone who does neither. Next to the
-        // link button rather than the attach one, because what these two
-        // share is that they put something *into* the text (FR-049).
+        // Next to the link button: both put something into the text (FR-049).
         style_toolbar_button(
             &imp.image_button,
             CommandId::InsertImage,
@@ -3276,22 +2883,16 @@ impl Composer {
         ));
         toolbar.append(&imp.image_button);
 
-        // Attaching a file had a command, a keybinding, a file chooser, a
-        // drop target and a whole blob-store path behind it — and nothing on
-        // screen that said so, so the honest answer to "how do I attach a
-        // file" was `mod+shift+a`, if you already knew (#1197). Through
-        // `dispatch`, like every other button here, so the control and the
-        // key cannot come to mean different things.
+        // Through `dispatch` like every other button, so the control and the key cannot mean
+        // different things (#1197).
         style_toolbar_button(
             &imp.attach_button,
             CommandId::AttachFile,
             "mail-attachment-symbolic",
             "postio-toolbar-attach",
         );
-        // Unlike the formatting buttons, this one does not act on the
-        // selection, so there is nothing to protect by refusing the focus —
-        // and a control the keyboard cannot reach is the same discoverability
-        // problem one step further on.
+        // Unlike the formatting buttons it does not act on the selection, so it takes focus and
+        // stays keyboard-reachable.
         imp.attach_button.set_focus_on_click(true);
         imp.attach_button.connect_clicked(glib::clone!(
             #[weak(rename_to = composer)]
@@ -3300,8 +2901,23 @@ impl Composer {
         ));
         toolbar.append(&imp.attach_button);
 
-        // Reflection: the caret's formatting drives the toggles. Programmatic
-        // `set_active` emits `toggled`, not `clicked`, so nothing loops.
+        let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        spacer.set_hexpand(true);
+        toolbar.append(&spacer);
+        style_toolbar_button(
+            imp.source_toggle.upcast_ref(),
+            CommandId::ToggleMarkdownSource,
+            "text-x-generic-symbolic",
+            "postio-toolbar-markdown",
+        );
+        imp.source_toggle.connect_clicked(glib::clone!(
+            #[weak(rename_to = composer)]
+            self,
+            move |_| composer.dispatch(CommandId::ToggleMarkdownSource)
+        ));
+        toolbar.append(&imp.source_toggle);
+
+        // Programmatic `set_active` emits `toggled`, not `clicked`, so nothing loops.
         let toggles = imp.format_toggles.clone();
         imp.body.connect_format_state(move |state| {
             let states = [
@@ -3320,7 +2936,6 @@ impl Composer {
         toolbar
     }
 
-    /// The `To` row, which also carries the button that reveals Cc and Bcc.
     fn build_to_row(&self) -> gtk::Box {
         let imp = self.imp();
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 14);
@@ -3330,11 +2945,8 @@ impl Composer {
         imp.more.add_css_class("postio-compose-more");
         imp.more
             .update_property(&[gtk::accessible::Property::Label("Show Cc and Bcc")]);
-        // The same verb the keyboard and the palette reach, not a second
-        // implementation of it. `more` is only on screen while the rows are
-        // down, so the toggle can only mean "show" from here -- but wiring it
-        // to `show_copy_fields` instead would be two paths that have to be
-        // kept in step, which is what the registry exists to prevent.
+        // The same verb the keyboard and palette reach, not a second implementation to keep in
+        // step.
         imp.more.connect_clicked(glib::clone!(
             #[weak(rename_to = composer)]
             self,
@@ -3346,7 +2958,6 @@ impl Composer {
         row
     }
 
-    /// The `From` row: the identity this draft sends as.
     fn build_identity_row(&self) -> gtk::Box {
         let imp = self.imp();
         let row = &imp.identity_row;
@@ -3354,9 +2965,6 @@ impl Composer {
         row.append(&field_label("From"));
 
         imp.identity.add_css_class("postio-compose-identity");
-        // Flat: the row is the control. A filled pill in the middle of four
-        // hairline rows reads as the one thing on the form worth pressing,
-        // which is the Send button's job.
         imp.identity.add_css_class("flat");
         imp.identity.set_hexpand(true);
         imp.identity.set_halign(gtk::Align::Start);
@@ -3374,10 +2982,8 @@ impl Composer {
         row.append(&imp.identity);
         row.append(&imp.identity_only);
 
-        // The signature picker sits on the From row because that is where the
-        // question "who is this from, and how does it sign" is answered, but
-        // it is a separate control on purpose: choosing a signature must not
-        // change the sending address, which is the whole point of #12.
+        // A separate control on purpose: choosing a signature must not change the sending address
+        // (#12).
         imp.signature.add_css_class("postio-compose-identity");
         imp.signature.add_css_class("flat");
         imp.signature.set_halign(gtk::Align::End);
@@ -3393,7 +2999,6 @@ impl Composer {
         row.clone()
     }
 
-    /// One labelled field row, hairline-separated like the canvas draws them.
     fn build_row(&self, row: &gtk::Box, label: &str, entry: &gtk::Entry) -> gtk::Box {
         row.add_css_class("postio-compose-row");
         entry.set_hexpand(true);
@@ -3404,12 +3009,8 @@ impl Composer {
         row.clone()
     }
 
-    /// `Send` and `Save draft`, and the reminder of what `Esc` costs.
-    ///
-    /// Discard is deliberately *not* here. It is the one destructive verb in
-    /// the composer, and a one-click destructive button beside Send is a
-    /// misclick waiting to happen; `ctrl+d` and the palette reach it, and both
-    /// ask first.
+    /// Discard is deliberately not here: a one-click destructive button beside Send is a misclick;
+    /// `ctrl+d` and the palette reach it and both ask first.
     fn build_actions(&self) -> gtk::Box {
         let imp = self.imp();
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
@@ -3435,9 +3036,7 @@ impl Composer {
         );
         imp.schedule_send
             .update_property(&[gtk::accessible::Property::Label("Schedule send")]);
-        // Rebuilt every time the picker opens rather than once here: the
-        // presets are relative to whatever moment it opens, and a composer
-        // can sit unsent for a while before anyone reaches for this.
+        // Rebuilt every time the picker opens: the presets are relative to the moment it opens.
         imp.schedule_send.set_create_popup_func(|button| {
             let menu = gio::Menu::new();
             for (label, when) in schedule_presets(Local::now()) {
@@ -3485,40 +3084,23 @@ impl Composer {
         imp.escape.add_css_class("postio-compose-escape");
         imp.escape.set_hexpand(true);
         imp.escape.set_xalign(1.0);
-        // #692: the least essential of the four, so it is the one that
-        // gives way under a narrow allocation. Without this, nothing here
-        // can shrink below its natural width, and the whole row overflows
-        // the window instead -- clipping this label against the window's
-        // own edge rather than showing anything legible.
+        // #692: the least essential of the four, so it gives way under a narrow allocation instead
+        // of the row overflowing the window.
         imp.escape.set_ellipsize(gtk::pango::EllipsizeMode::End);
 
         row.append(&imp.send);
         row.append(&imp.schedule_send);
         row.append(&imp.save);
         row.append(&imp.escape);
-        // The registry's own keys until `Window` hands over the keymap in
-        // force, so the row is never drawn without its hints.
         self.set_keymap(Keymap::defaults());
         row
     }
 
-    /// Relabel the action row's key hints from the live keymap.
-    ///
-    /// Until #828 these were the literals `C-Ret`, `C-⇧-Ret` and `C-s`: a
-    /// notation nothing else in the application uses, and — worse — one that
-    /// went on saying the same thing after the user rebound the command in
-    /// `[keys]`. A hint that lies is worse than no hint, and the reading
-    /// pane's own bar had solved this already
-    /// ([`crate::widgets::action_bar::ActionBar::set_keymap`]).
-    ///
-    /// A command whose binding the user cleared entirely loses its hint
-    /// rather than showing a blank, which is the same rule that bar follows.
+    /// A command whose binding the user cleared loses its hint rather than showing a blank. A hint
+    /// that lies is worse than none (#828).
     pub fn set_keymap(&self, keymap: &Keymap) {
         let imp = self.imp();
-        // Set one at a time rather than over an array: `schedule_send` is a
-        // `MenuButton` and the other two are `Button`s, so there is no one
-        // element type to iterate. `action_hints` still carries the order,
-        // which is the part worth testing.
+        // One at a time: `schedule_send` is a `MenuButton` and the other two are `Button`s.
         let hints = action_hints(keymap);
         let child = |index: usize| -> gtk::Widget {
             let (_, text) = ACTION_BUTTONS[index];
@@ -3536,49 +3118,26 @@ impl Composer {
             hints::key(keymap, CommandId::AttachFile).as_deref(),
         ));
 
-        // `Back` is what `Esc` runs here: it closes the composer and keeps
-        // the draft, so the reminder names whatever key `Back` has.
         let escape = hints::hint(keymap, CommandId::Back, "keeps the draft");
         imp.escape.set_label(&hints::line(escape.iter()));
         imp.escape.set_visible(escape.is_some());
     }
 
-    // -- Test support -----------------------------------------------------
-
-    /// Sets the subject field as if the user had typed it, firing the
-    /// entry's own `changed` signal.
-    ///
-    /// This crate's GTK integration tests are a separate compilation unit
-    /// from `src/composer.rs`'s own `#[cfg(test)]` module (GTK needs one
-    /// process per display, so each lives in its own file — see
-    /// `tests/gtk_composer.rs`) and so cannot reach a private field to
-    /// exercise what a keystroke triggers. Not meant for anything but tests.
     #[doc(hidden)]
     pub fn test_set_subject(&self, text: &str) {
         self.imp().subject.set_text(text);
     }
 
-    /// What the subject field is showing. Not meant for anything but tests.
     #[doc(hidden)]
     pub fn test_subject(&self) -> String {
         self.imp().subject.text().to_string()
     }
 
-    /// Puts the keyboard in `field`, as clicking into it would.
-    ///
-    /// Detaching claims to keep the focus where it was, and a test cannot
-    /// state that without first putting it somewhere other than where a fresh
-    /// composition would have left it. Not meant for anything but tests.
     #[doc(hidden)]
     pub fn test_focus_field(&self, field: Field) -> bool {
         self.widget_for(field).grab_focus()
     }
 
-    /// The widget a [`Field`] names.
-    ///
-    /// One mapping, so the three callers that need it cannot come to disagree
-    /// about which widget `Field::Subject` is — and so adding a field is one
-    /// edit rather than three the compiler finds one at a time.
     fn widget_for(&self, field: Field) -> gtk::Widget {
         let imp = self.imp();
         match field {
@@ -3590,29 +3149,90 @@ impl Composer {
         }
     }
 
-    /// The "Schedule send…" button, so a test can assert the keyboard's way
-    /// into the picker (`CommandId::ScheduleSend`) is the same one the
-    /// pointer has.
     #[doc(hidden)]
     pub fn test_schedule_send_button(&self) -> gtk::MenuButton {
         self.imp().schedule_send.clone()
     }
 
-    /// Types `text` into the body, the way a keystroke reaches the buffer.
     #[doc(hidden)]
     pub fn test_set_body(&self, text: &str) {
         self.imp().body.test_type(text);
     }
 
-    /// Feeds image bytes into the paste path without a clipboard, which a
-    /// headless test cannot reliably own.
     #[doc(hidden)]
     pub fn test_paste_image_bytes(&self, bytes: Vec<u8>) {
         self.add_inline_image(bytes, "image/png");
     }
 
-    /// The formatting the toolbar shows lit, by registry id, left to right:
-    /// what a person reads off it about where the caret is.
+    #[doc(hidden)]
+    pub fn test_source_text(&self) -> Option<String> {
+        self.source_text()
+    }
+
+    #[doc(hidden)]
+    pub fn test_source_caret(&self) -> usize {
+        self.imp().source.selection().end
+    }
+
+    #[doc(hidden)]
+    pub fn test_source_select(&self, from: usize, to: usize) {
+        self.imp().source.select(from..to);
+    }
+
+    #[doc(hidden)]
+    pub fn test_source_key(&self, key: gdk::Key) {
+        self.imp().source.test_key(key);
+    }
+
+    #[doc(hidden)]
+    pub fn test_source_undo(&self) {
+        self.imp().source.undo();
+    }
+
+    #[doc(hidden)]
+    pub fn test_source_paste(&self, text: &str) {
+        self.imp().source.paste(text);
+    }
+
+    #[doc(hidden)]
+    pub fn test_source_set(&self, text: &str) {
+        self.imp().source.set_text(text);
+    }
+
+    #[doc(hidden)]
+    pub fn test_source_strip(&self) -> Option<String> {
+        let source = &self.imp().source;
+        source.is_shown().then(|| source.strip())
+    }
+
+    #[doc(hidden)]
+    pub fn test_source_notice(&self) -> Option<String> {
+        let imp = self.imp();
+        imp.source_notice
+            .is_visible()
+            .then(|| imp.source_notice_label.label().to_string())
+    }
+
+    #[doc(hidden)]
+    pub fn test_press_source_notice_undo(&self) {
+        self.imp().source_notice_undo.emit_clicked();
+    }
+
+    #[doc(hidden)]
+    pub fn test_caret(&self) -> Option<postio_body::markdown::DocPosition> {
+        self.imp().body.test_caret()
+    }
+
+    #[doc(hidden)]
+    pub fn test_can_undo(&self) -> bool {
+        self.imp().body.can_undo()
+    }
+
+    #[doc(hidden)]
+    pub fn test_undo(&self) {
+        self.undo_edit();
+    }
+
     pub fn marks_lit(&self) -> Vec<&'static str> {
         self.imp()
             .format_toggles
@@ -3623,36 +3243,27 @@ impl Composer {
             .collect()
     }
 
-    /// Script against the body's document, for assertions about what the
-    /// surface actually rendered.
     #[doc(hidden)]
     pub fn test_body_eval(&self, script: &str) -> String {
         self.imp().body.test_eval(script)
     }
 
-    /// Select a range of the body's `nth` text node, as a hand would before
-    /// reaching for a formatting button.
     #[doc(hidden)]
     pub fn test_select_body(&self, nth: u32, from: u32, to: u32) {
         self.imp().body.test_select(nth, from, to);
     }
 
-    /// The draft `Reply` would open for `source`, without a window to press
-    /// a key in. Public so the quoting path can be driven directly.
     #[doc(hidden)]
     pub fn test_reply_draft(&self, source: &Message) -> Option<Draft> {
         let account = Account::new("Test", EmailAddress::new(None::<String>, "you@example.net"));
         reply_draft(CommandId::Reply, source, &account)
     }
 
-    /// Types `text` into `To`, firing recipient completion the same way the
-    /// entry's own `changed` signal does for a real keystroke.
     #[doc(hidden)]
     pub fn test_set_to(&self, text: &str) {
         self.imp().to.set_text(text);
     }
 
-    /// Whether `To`'s completion popover is currently showing suggestions.
     #[doc(hidden)]
     pub fn test_recipient_popover_visible(&self) -> bool {
         self.imp()
@@ -3662,9 +3273,6 @@ impl Composer {
             .is_some_and(|completion| completion.popover.is_visible())
     }
 
-    /// Accepts `To`'s currently-selected suggestion, exactly as `Enter` would
-    /// — without synthesizing a real key event, which a test cannot easily do
-    /// for a specific widget's own key controller.
     #[doc(hidden)]
     pub fn test_accept_recipient_suggestion(&self) -> bool {
         let imp = self.imp();
@@ -3674,10 +3282,6 @@ impl Composer {
         completion.accept(&imp.to)
     }
 
-    /// Activates the `index`th suggestion the way a mouse click does, by
-    /// emitting the `row-activated` that `GtkListBox` emits for a click on a
-    /// row. Nothing about the button press is simulated — this is the signal
-    /// the click produces, so anything listening for the click hears this.
     #[doc(hidden)]
     pub fn test_click_recipient_suggestion(&self, index: usize) -> bool {
         let Some(completion) = self.imp().to_completion.borrow().clone() else {
@@ -3691,14 +3295,6 @@ impl Composer {
         true
     }
 
-    /// Delivers `key` to the completion's key handling, and reports whether it
-    /// was consumed.
-    ///
-    /// This calls the handler the entry's key controller calls; it does not
-    /// synthesize a GDK event, which GTK4 gives a test no way to do for a
-    /// particular widget. So it covers what the handler does with a key and
-    /// *not* whether a real keystroke reaches the handler at all — the
-    /// propagation phase decides that, and only running the app shows it.
     #[doc(hidden)]
     pub fn test_press_recipient_key(&self, key: gdk::Key) -> bool {
         let imp = self.imp();
@@ -3708,7 +3304,6 @@ impl Composer {
         completion.handle_key(&imp.to, key) == glib::Propagation::Stop
     }
 
-    /// How many suggestions `To` is currently offering.
     #[doc(hidden)]
     pub fn test_recipient_suggestion_count(&self) -> usize {
         self.imp()
@@ -3718,49 +3313,32 @@ impl Composer {
             .map_or(0, |completion| completion.candidates.borrow().len())
     }
 
-    /// Attaches `path` exactly as [`CommandId::AttachFile`] or a drop would,
-    /// without going through `GtkFileDialog` or GTK's drag machinery — a
-    /// headless test can drive neither. Both real paths converge on the same
-    /// `add_file`, so this exercises what they exercise.
     #[doc(hidden)]
     pub fn test_attach_path(&self, path: &std::path::Path) {
         self.add_file(&gio::File::for_path(path));
     }
 
-    /// How many attachments the draft currently carries.
     #[doc(hidden)]
     pub fn test_attachment_count(&self) -> usize {
         self.imp().draft.borrow().attachments.len()
     }
 
-    /// Whether the attachment list is showing at all.
     #[doc(hidden)]
     pub fn test_attachments_visible(&self) -> bool {
         self.imp().attachments_box.is_visible()
     }
 
-    /// Whether the Cc and Bcc rows are on screen.
     #[doc(hidden)]
     pub fn test_copy_fields_visible(&self) -> bool {
         let imp = self.imp();
         imp.cc_row.is_visible() && imp.bcc_row.is_visible()
     }
 
-    /// Whether the `+ Cc` control that raises those rows is on screen.
     #[doc(hidden)]
     pub fn test_more_button_visible(&self) -> bool {
         self.imp().more.is_visible()
     }
 
-    /// The `GType`s each of the composer's drop targets accepts, as
-    /// `(where, type name)`.
-    ///
-    /// A drag cannot be synthesised in this suite and the `drop` signal will
-    /// not take a boxed `GValue` through `emit_by_name`, so the handler's body
-    /// is out of reach. What is *not* out of reach is whether the controllers
-    /// are installed at all, on the widgets they are meant to be on, accepting
-    /// the type they are meant to accept — which is what actually goes wrong
-    /// when somebody reorganises a widget tree.
     #[doc(hidden)]
     pub fn test_drop_targets(&self) -> Vec<(&'static str, String)> {
         let mut found = Vec::new();
@@ -3780,43 +3358,50 @@ impl Composer {
         found
     }
 
-    /// Pastes from the clipboard, as `ctrl+v` on the body does.
-    ///
-    /// One step nearer the gesture than [`Self::test_paste_image_bytes`],
-    /// which hands the bytes straight to `add_inline_image` and so skips the
-    /// half that reads the clipboard and decodes a texture. Answers what the
-    /// key controller answers: whether this paste was ours.
     #[doc(hidden)]
     pub fn test_paste(&self) -> bool {
         self.paste_image()
     }
 
-    /// Inlines `path`, as choosing it from the image chooser would.
-    ///
-    /// `gtk::FileDialog` does not open headlessly, so this is the seam the
-    /// chooser's callback lands on — everything after "a file was chosen",
-    /// which is where the sniffing and the refusal live.
     #[doc(hidden)]
     pub fn test_insert_image_file(&self, path: &std::path::Path) {
         self.insert_image_file(&gio::File::for_path(path));
     }
 
-    /// Types `text` into `Cc`, as [`Self::test_set_to`] does for `To`.
     #[doc(hidden)]
     pub fn test_set_cc(&self, text: &str) {
         self.imp().cc.set_text(text);
     }
 
-    /// Removes the attachment at `index`, as its row's own button would.
     #[doc(hidden)]
     pub fn test_remove_attachment(&self, index: usize) {
         self.remove_attachment(index);
     }
 }
 
-/// The toolbar's formatting toggles, left to right: the command each runs,
-/// its icon and its style class. One list, so the toolbar and what it is
-/// observed to show cannot come to disagree about which toggle is which.
+/// The formatting commands only the Markdown view makes for now: in the rich view each says where
+/// it is, never nothing (FR-029).
+const WAITS_FOR_MARKDOWN: [CommandId; 16] = [
+    CommandId::Heading2,
+    CommandId::Heading3,
+    CommandId::Heading4,
+    CommandId::Heading5,
+    CommandId::Heading6,
+    CommandId::NormalText,
+    CommandId::Strikethrough,
+    CommandId::InlineCode,
+    CommandId::CodeBlock,
+    CommandId::TaskList,
+    CommandId::ToggleTask,
+    CommandId::Indent,
+    CommandId::Outdent,
+    CommandId::Divider,
+    CommandId::Table,
+    CommandId::ClearFormatting,
+];
+
+const NARROW_SOURCE: i32 = 760;
+
 const FORMAT_TOGGLES: [(CommandId, &str, &str); 6] = [
     (
         CommandId::Bold,
@@ -3830,8 +3415,6 @@ const FORMAT_TOGGLES: [(CommandId, &str, &str); 6] = [
     ),
     (
         CommandId::Heading1,
-        // Adwaita has no heading icon; Postio draws its own to the
-        // symbolic contract, as it did the archive box.
         "postio-heading-symbolic",
         "postio-toolbar-heading",
     ),
@@ -3852,34 +3435,27 @@ const FORMAT_TOGGLES: [(CommandId, &str, &str); 6] = [
     ),
 ];
 
-/// The other children of the reading pane — what the composer takes over from.
-/// Whether `focus` is `widget` or something inside it.
-/// Dress one toolbar button: icon, identity, and a tooltip that teaches the
-/// key — title and binding both read from the registry, so the toolbar can
-/// never drift from what the palette and the cheat sheet say.
+/// Title and binding both read from the registry, so the toolbar cannot drift from the palette and
+/// cheat sheet.
 fn style_toolbar_button(button: &gtk::Button, id: CommandId, icon: &str, class: &str) {
     let spec = postio_core::registry::get(id);
     button.set_icon_name(icon);
-    // The shared icon button: its look, and its own size (T202).
     crate::widgets::button::dress_icon(button, spec.title);
     button.add_css_class(class);
     button.set_tooltip_text(Some(&format!(
         "{} ({})",
         spec.title,
-        // Expanded first: the registry stores `mod+shift+8` since #669, and a
-        // tooltip reading "Mod+Shift+8" would be nonsense on either platform.
+        // Expanded first: the registry stores `mod+shift+8`, which a tooltip cannot show.
         pretty_binding(&postio_config::keys::expand_mod(
             spec.default_binding,
             postio_config::paths::Platform::host(),
         ))
     )));
     button.update_property(&[gtk::accessible::Property::Label(spec.title)]);
-    // The click acts on the editor's selection; taking the focus would
-    // collapse the very thing the command is for.
+    // The click acts on the editor's selection; taking focus would collapse it.
     button.set_focus_on_click(false);
 }
 
-/// `ctrl+shift+8` the way a tooltip says it: `Ctrl+Shift+8`.
 fn pretty_binding(binding: &str) -> String {
     binding
         .split('+')
@@ -3894,12 +3470,8 @@ fn pretty_binding(binding: &str) -> String {
         .join("+")
 }
 
-/// `file`'s bytes and MIME type when it is an image small enough to inline,
-/// `None` to send it down the ordinary attachment path instead.
-///
-/// The type comes from the shared-mime-info sniff, not the extension; the
-/// size cap keeps a stray drop of a camera RAW from ballooning the message —
-/// past it, the file is still attached, just not inlined.
+/// The type comes from the shared-mime-info sniff, not the extension; past the size cap the file is
+/// attached, not inlined.
 fn dropped_image(file: &gio::File) -> Option<(Vec<u8>, String)> {
     const INLINE_CAP: u64 = 10 * 1024 * 1024;
     let info = file
@@ -3922,7 +3494,6 @@ fn holds(focus: &gtk::Widget, widget: &gtk::Widget) -> bool {
     focus == widget || focus.is_ancestor(widget)
 }
 
-/// How an identity reads in the `From` row: the name, then the address.
 fn identity_label(identity: &Identity) -> String {
     if identity.display_name.trim().is_empty() || identity.display_name == identity.address.address
     {
@@ -3932,34 +3503,21 @@ fn identity_label(identity: &Identity) -> String {
     }
 }
 
-/// A field's name, in the mono face the canvas sets metadata in.
 fn field_label(text: &str) -> gtk::Label {
     let label = gtk::Label::new(Some(text));
     label.add_css_class("postio-compose-label");
     label.set_xalign(0.0);
     label.set_width_chars(8);
-    // The entry it labels already carries the same name.
     label.set_accessible_role(gtk::AccessibleRole::Presentation);
     label
 }
 
-/// The three buttons the action row draws, in the order it draws them, with
-/// the command each one stands for.
-///
-/// `Discard` is deliberately absent — see [`Composer::build_actions`] for
-/// why. The footer's `Esc` reminder is `Back`'s key, redrawn beside these.
 const ACTION_BUTTONS: &[(CommandId, &str)] = &[
     (CommandId::Send, "Send"),
     (CommandId::ScheduleSend, "Schedule…"),
     (CommandId::SaveDraft, "Save draft"),
 ];
 
-/// Each action button's command paired with the key `keymap` currently gives
-/// it — `None` when the user has cleared the binding rather than changed it.
-///
-/// A free function, decoupled from the widgets [`Composer::set_keymap`]
-/// updates from it, so a rebind reaching the row is testable without a
-/// display (#828).
 fn action_hints(keymap: &Keymap) -> Vec<(CommandId, Option<String>)> {
     ACTION_BUTTONS
         .iter()
@@ -3967,11 +3525,8 @@ fn action_hints(keymap: &Keymap) -> Vec<(CommandId, Option<String>)> {
         .collect()
 }
 
-/// Keeps the pop-out button saying which way it goes.
-///
-/// One control rather than two, for the same reason the header's Compose
-/// button doubles as Close: a button that is only correct while the composer
-/// is in one of its two places is a button that lies half the time.
+/// One control rather than two: a button correct only while the composer is in one of its two
+/// places lies half the time.
 fn sync_detach_button(button: &gtk::Button, detached: bool) {
     let (icon, tooltip) = if detached {
         (
@@ -3988,42 +3543,26 @@ fn sync_detach_button(button: &gtk::Button, detached: bool) {
     crate::widgets::button::dress_icon(button, tooltip);
 }
 
-/// Recipient completion attached to one entry: a popover of suggestions from
-/// [`Composer::connect_recipient_suggestions`], keyboard-navigable and
-/// accepted without ever reaching for the mouse.
-///
-/// One per entry (`To`, `Cc`, `Bcc`) rather than one shared instance, because
-/// a `Popover` is parented to the one widget it points at.
+/// One per entry because a `Popover` is parented to the one widget it points at.
 pub(crate) struct Completion {
     popover: gtk::Popover,
     list: gtk::ListBox,
-    /// What `list`'s rows currently show, in the same order, so accepting a
-    /// selected row can look up what it stands for.
     candidates: RefCell<Vec<RecipientCandidate>>,
-    /// A hide waiting for the main loop to come round, so that a change
-    /// the next one undoes -- `set_text`'s empty-then-filled, a paste,
-    /// typing over a selection -- leaves the popover up rather than taking
-    /// it down and putting it up again. On Wayland that is a new popup each
-    /// time, and one repositioned before it has drawn waits on a reply the
-    /// compositor does not send: GTK blocks the main loop there.
+    /// A hide waits for the main loop so a change the next one undoes (`set_text`'s
+    /// empty-then-filled, a paste) leaves the popover up:
+    /// on Wayland a repositioned-before-drawn popup waits on a reply the compositor never sends,
+    /// and GTK blocks.
     hiding: Rc<RefCell<Option<glib::SourceId>>>,
-    /// When the popover last closed. A popup shown again a frame after it
-    /// hid reuses its surface while the renderer can still have a frame in
-    /// flight on it, and the compositor drops the client for that ("already
-    /// has a buffer committed") -- or GTK waits for it for ever. Typing and
-    /// backspacing across the four-character threshold does exactly that.
+    /// A popup shown a frame after it hid reuses its surface while the renderer may still have a
+    /// frame in flight;
+    /// the compositor drops the client ("already has a buffer committed") or GTK waits forever.
     hidden_at: Rc<Cell<Option<std::time::Instant>>>,
-    /// A show waiting for [`REAPPEAR_AFTER`] to pass since the last close.
     showing: Rc<RefCell<Option<glib::SourceId>>>,
 }
 
-/// How long a closed suggestions popover waits before it shows again: a few
-/// frames, so the last one drawn on its surface is done with.
 const REAPPEAR_AFTER: std::time::Duration = std::time::Duration::from_millis(150);
 
 impl Completion {
-    /// Wires completion onto `entry`. The returned value is not meant to be
-    /// kept: `entry`'s signal connections hold it until the field is destroyed.
     fn install(composer: &Composer, entry: &gtk::Entry) -> Rc<Self> {
         let list = gtk::ListBox::new();
         list.set_selection_mode(gtk::SelectionMode::Browse);
@@ -4031,18 +3570,15 @@ impl Completion {
         list.set_accessible_role(gtk::AccessibleRole::ListBox);
 
         let popover = gtk::Popover::new();
-        // Autohide would take the grab away from the entry the moment the
-        // popover opens, and a completion list that steals the keyboard from
-        // what is still being typed into is worse than no completion at all.
+        // Autohide would take the grab from the entry still being typed into.
         popover.set_autohide(false);
         popover.set_has_arrow(false);
         popover.set_position(gtk::PositionType::Bottom);
         popover.add_css_class("postio-recipient-completion");
         popover.set_child(Some(&list));
         popover.set_parent(entry);
-        // This is a custom child, not an entry-owned widget. GTK requires us
-        // to unparent it before the entry is finalized; otherwise it warns
-        // and leaves the popover and its list alive after the composer goes.
+        // A custom child: GTK requires unparenting before the entry is finalized, or the popover
+        // and list outlive the composer.
         entry.connect_destroy({
             let popover = popover.downgrade();
             move |_| {
@@ -4073,13 +3609,9 @@ impl Completion {
             move |entry| this.update(&composer, entry)
         ));
 
-        // A click commits the row it landed on. Without this the list looked
-        // interactive and was not: clicking moved GTK's own selection and
-        // nothing ever acted on it, so the only way to take a suggestion was
-        // the keyboard (#424).
+        // A click commits the row it landed on (#424).
         this.list.connect_row_activated({
-            // The list belongs to Completion. A strong clone here makes its
-            // own row handler keep the popover and list alive after the
+            // The list belongs to Completion: a strong clone would keep the popover alive after the
             // composer is destroyed.
             let this = Rc::downgrade(&this);
             let entry = entry.downgrade();
@@ -4091,21 +3623,9 @@ impl Completion {
         });
 
         let keys = gtk::EventControllerKey::new();
-        // Capture, not the default bubble.
-        //
-        // The widget that actually holds the focus is the `GtkText` inside
-        // the entry, and `GtkText` binds Return to its `activate` keybinding,
-        // which consumes the event. A bubble-phase controller on the entry
-        // runs *after* the focus widget has had it, so Return never arrived
-        // here: the popover could be walked with the arrow keys and then not
-        // accepted with the keyboard, which is what #424 reported. Capturing
-        // takes the key on the way down, before the text widget's own
-        // bindings run, and `handle_key` still declines everything it does
-        // not want and every key at all while the popover is closed.
-        //
-        // The same reasoning, and the same setting, as every other key
-        // controller in this app: `window.rs`, `finder.rs`, `cheatsheet.rs`,
-        // `settings.rs`.
+        // Capture phase: the focused `GtkText` binds Return to `activate` and consumes it before a
+        // bubble-phase controller sees it (#424).
+        // `handle_key` declines every key while the popover is closed.
         keys.set_propagation_phase(gtk::PropagationPhase::Capture);
         keys.connect_key_pressed(glib::clone!(
             #[strong]
@@ -4121,17 +3641,11 @@ impl Completion {
         this
     }
 
-    /// Re-searches for whatever is now being typed, and shows or hides the
-    /// popover to match.
     fn update(&self, composer: &Composer, entry: &gtk::Entry) {
         let text = entry.text();
         let (_, token) = current_entry(&text);
-        // Below the threshold nothing is offered *and* nothing is looked up:
-        // the provider is a database query, and running one per keystroke to
-        // rank half the address book on one letter costs something and tells
-        // the user nothing. Counted in `chars`, because a threshold measured
-        // in bytes would ask more of a name written in one script than
-        // another.
+        // Below the threshold nothing is looked up: the provider is a database query. Counted in
+        // `chars`, since bytes would ask more of one script than another.
         if token.chars().count() < MIN_COMPLETION_PREFIX {
             self.hide_soon();
             return;
@@ -4169,8 +3683,6 @@ impl Completion {
         }
     }
 
-    /// Show the popover -- now, or once [`REAPPEAR_AFTER`] has passed since
-    /// it last closed. See `hidden_at`.
     fn show_settled(&self) {
         if self.popover.is_visible() || self.showing.borrow().is_some() {
             return;
@@ -4198,11 +3710,7 @@ impl Completion {
         self.showing.replace(Some(source));
     }
 
-    /// Hide the popover once the main loop comes round, unless something
-    /// shows it again first. See `hiding`.
     fn hide_soon(&self) {
-        // A show still waiting to happen is called off: there is nothing to
-        // offer now.
         if let Some(showing) = self.showing.take() {
             showing.remove();
         }
@@ -4212,7 +3720,6 @@ impl Completion {
         let popover = self.popover.downgrade();
         let hiding = Rc::clone(&self.hiding);
         let source = glib::idle_add_local_once(move || {
-            // Run, so no longer pending: nothing may remove it now.
             hiding.take();
             if let Some(popover) = popover.upgrade() {
                 popover.popdown();
@@ -4221,8 +3728,6 @@ impl Completion {
         self.hiding.replace(Some(source));
     }
 
-    /// Handles the keys that only mean something while the popover is open;
-    /// everything else falls through to the entry as normal.
     fn handle_key(&self, entry: &gtk::Entry, key: gdk::Key) -> glib::Propagation {
         if !self.popover.is_visible() {
             return glib::Propagation::Proceed;
@@ -4263,9 +3768,6 @@ impl Completion {
         }
     }
 
-    /// Replaces the token being typed with the selected suggestion, leaving
-    /// every address typed before it untouched, and leaves a `, ` in place
-    /// for whatever the user types next.
     fn accept(&self, entry: &gtk::Entry) -> bool {
         let Some(row) = self.list.selected_row() else {
             return false;
@@ -4273,11 +3775,8 @@ impl Completion {
         self.accept_row(entry, &row)
     }
 
-    /// Commits one specific row, whether the keyboard selected it or a click
-    /// landed on it. A click carries the row it hit, so this takes the row
-    /// rather than re-reading the selection — the two agree today, and a
-    /// click that committed something other than what was under the pointer
-    /// would be the worst possible way for them ever to disagree.
+    /// Takes the row the click hit rather than re-reading the selection, so a click can never
+    /// commit something other than what was under the pointer.
     fn accept_row(&self, entry: &gtk::Entry, row: &gtk::ListBoxRow) -> bool {
         let Some(candidate) = self.candidates.borrow().get(row.index() as usize).cloned() else {
             return false;
@@ -4291,12 +3790,8 @@ impl Completion {
     }
 }
 
-/// The document a draft's stored body means.
-///
-/// HTML is the record (ADR 0004 Q3), so a draft that has one is parsed from
-/// it: the typed form is derived, never stored. Falling back to the text half
-/// matters for every draft written before this existed, and for the plain
-/// messages that never grow an HTML half at all.
+/// HTML is the record (ADR 0004 Q3), so a draft that has one is parsed from it; the text half
+/// covers older drafts and plain messages.
 fn document_of(body: &MessageBody) -> postio_body::Document {
     match (&body.html, &body.text) {
         (Some(html), _) => postio_body::parse(html),
@@ -4385,8 +3880,6 @@ mod tests {
         );
     }
 
-    /// A draft with something in it, as `started()` builds one in
-    /// `gtk_composer.rs`: a recipient, a subject and a word of body.
     fn written() -> Draft {
         let mut draft = draft();
         draft.to = vec![EmailAddress::new(None::<String>, "ada@example.com")];
@@ -4400,24 +3893,13 @@ mod tests {
 
     #[test]
     fn compose_starts_a_blank_message_even_when_a_draft_was_kept() {
-        // `c` means a new message (#1196). It used to come back to whatever
-        // was kept, which read as "compose opens my last draft" — and the
-        // safety that rule was protecting does not depend on it: closing
-        // flushes the autosave, so the kept draft is a row in Drafts before
-        // this is ever asked.
         assert_eq!(opening(&written(), &draft()), Opening::Fill);
     }
 
     #[test]
     fn every_request_opens_what_it_asked_for() {
-        // One rule now, so one test. These used to be three — a reply wins,
-        // an empty forward wins, a composer holding nothing shows what it is
-        // handed — each carving an exception out of "come back to the kept
-        // draft". There are no exceptions left to carve, and asserting
-        // `Fill` against a function that returns nothing else proves
-        // nothing, so the *behaviour* those three protected (#691: a reply
-        // asked for after escaping a draft opens the reply) is asserted
-        // where it can still fail, on the widget:
+        // Asserting `Fill` against a function that returns nothing else proves nothing; the
+        // behaviour (#691) is asserted on the widget in
         // `gtk_composer_resume::composing_after_a_kept_draft_starts_blank`.
         let mut reply = draft();
         reply.kind = DraftKind::Reply;
@@ -4443,9 +3925,6 @@ mod tests {
 
     #[test]
     fn a_message_with_nothing_odd_about_it_is_not_questioned() {
-        // The case that has to stay silent, because a dialog people see on
-        // every send is a dialog they stop reading -- and the two below are
-        // worth reading.
         let mut ordinary = draft();
         ordinary.subject = "the tide gate".to_owned();
         ordinary.body.text = Some("Armed and holding.".to_owned());
@@ -4454,9 +3933,6 @@ mod tests {
 
     #[test]
     fn an_empty_subject_is_asked_about_and_never_refused() {
-        // FR-018. A message with no subject is an ordinary thing to send on
-        // purpose; refusing it would be the app having an opinion about
-        // somebody else's correspondence.
         let mut bare = draft();
         bare.subject = String::new();
         bare.body.text = Some("Armed and holding.".to_owned());
@@ -4465,15 +3941,12 @@ mod tests {
         assert_eq!(concerns.len(), 1, "{concerns:?}");
         assert!(concerns[0].contains("subject"), "{concerns:?}");
 
-        // Whitespace is not a subject.
         bare.subject = "   ".to_owned();
         assert_eq!(send_concerns(&bare).len(), 1);
     }
 
     #[test]
     fn two_odd_things_about_one_message_are_one_question() {
-        // Two dialogs in a row is how somebody learns to answer the second
-        // without reading it, which costs the first one its value as well.
         let mut both = draft();
         both.subject = String::new();
         both.body.text = Some("Please find attached.".to_owned());
@@ -4495,11 +3968,6 @@ mod tests {
 
     #[test]
     fn implausible_recipients_are_named_not_just_counted() {
-        // FR-024: the report names *the address and the field it is in*. A
-        // count alone -- which is what this said before -- tells somebody
-        // with nine recipients across three fields that one of them is wrong
-        // and leaves them to find it, which is the work the message was
-        // supposed to do.
         let mut one = draft();
         one.to = vec![
             EmailAddress::new(None::<String>, "ada@example.com"),
@@ -4528,9 +3996,6 @@ mod tests {
 
     #[test]
     fn a_long_list_of_wrong_addresses_is_summarised_rather_than_recited() {
-        // Naming them is right up to a point. Past it the warning stops being
-        // a sentence and becomes a wall, so it names the first few and counts
-        // the rest -- the same shape the size refusal uses.
         let mut many = draft();
         many.to = (0..9)
             .map(|n| EmailAddress::new(None::<String>, format!("wrong{n}")))
@@ -4545,9 +4010,6 @@ mod tests {
 
     #[test]
     fn the_recipient_count_is_reported_per_field_before_sending() {
-        // FR-023, so a reply-to-all to a large list is not a surprise. The
-        // count has to say *which field*, because "42 recipients" reads very
-        // differently from "1 To, 41 Cc".
         let mut wide = draft();
         wide.to = vec![EmailAddress::new(None::<String>, "ada@example.com")];
         wide.cc = (0..41)
@@ -4560,8 +4022,6 @@ mod tests {
         assert!(said.contains("Cc"), "the field is not named: {said}");
         assert!(said.contains("Bcc"), "Bcc is not counted: {said}");
 
-        // One recipient is the ordinary case and needs no announcement --
-        // a banner that is always there is a banner nobody reads.
         let mut narrow = draft();
         narrow.to = vec![EmailAddress::new(None::<String>, "ada@example.com")];
         assert_eq!(recipient_summary(&narrow), None);
@@ -4613,8 +4073,6 @@ mod tests {
         assert!(reply_draft(CommandId::Archive, &source, &account).is_none());
     }
 
-    // ── issue #116: the quoted-tracking-link banner ────────────────────────
-
     #[test]
     fn a_subdomain_of_the_sender_is_not_flagged_but_an_unrelated_host_is() {
         assert!(!differs_from_sender("shop.example.org", "shop.example.org"));
@@ -4627,8 +4085,6 @@ mod tests {
             "click.tracker.example.org",
             "shop.example.org"
         ));
-        // Not a suffix match on the bare string: "notshop.example.org" is a
-        // different domain than "shop.example.org", not a subdomain of it.
         assert!(differs_from_sender(
             "notshop.example.org",
             "shop.example.org"
@@ -4655,9 +4111,6 @@ mod tests {
         );
     }
 
-    /// The `.eml` corpus fixture #116 itself points at: an HTML-only message
-    /// from `orders@shop.example.org` linking out to
-    /// `click.tracker.example.org`.
     fn html_only_source_with_a_tracking_link() -> Message {
         let mut message = Message::new(
             AccountId::new(1),
@@ -4698,9 +4151,6 @@ mod tests {
 
     #[test]
     fn a_reply_to_a_rich_message_quotes_its_structure_not_flattened_text() {
-        // #340: the quote is the parsed document, so the editor opens on a
-        // real Quote block with the source's structure inside it — and the
-        // text half still reads as the `> ` convention.
         let mut source = html_only_source_with_a_tracking_link();
         source.body = MessageBody {
             text: Some("The lamp has shipped".to_owned()),
@@ -4730,11 +4180,8 @@ mod tests {
 
     #[test]
     fn replying_to_your_own_flowed_plain_text_message_unwraps_the_soft_breaks() {
-        // #456: a message this app sent as plain text only, format=flowed,
-        // whose sentence happened to wrap across three physical lines --
-        // exactly `plain-text-flowed-reply.eml`'s shape. Quoting it must
-        // read as the one sentence the sender wrote, not three lines they
-        // never typed.
+        // #456: a message sent as plain text format=flowed whose sentence wraps across three lines
+        // must quote as the one sentence.
         let mut source = Message::new(
             AccountId::new(1),
             postio_model::ids::MailboxId::new(1),
@@ -4781,10 +4228,8 @@ mod tests {
 
     #[test]
     fn replying_to_an_ordinary_senders_short_lines_leaves_them_as_typed() {
-        // The other half of #456's acceptance: a message from someone else
-        // that merely has short lines, and no format=flowed parameter at
-        // all, must not be reflowed -- real intentional line breaks would
-        // get eaten.
+        // A message with short lines and no format=flowed must not be reflowed: intentional breaks
+        // would be eaten.
         let mut source = Message::new(
             AccountId::new(1),
             postio_model::ids::MailboxId::new(1),
@@ -4827,9 +4272,6 @@ mod tests {
 
     #[test]
     fn a_forward_of_a_hostile_message_carries_no_load_and_no_script() {
-        // ADR 0003 hardening requirement 6, at the wiring level: the draft a
-        // forward opens with is built from the closed document type, so the
-        // pixel and the script have no representation in either half.
         let mut source = html_only_source_with_a_tracking_link();
         source.subject = Some("Your order".to_owned());
         source.body.html = Some(
@@ -4865,10 +4307,6 @@ mod tests {
 
     #[test]
     fn a_message_with_both_parts_is_scanned_because_the_html_is_what_gets_quoted() {
-        // Before #340, a text part meant the reply quoted that text and the
-        // HTML's links were never in it. The rich quote is built from the
-        // markup the reader showed, so its links are exactly what the reply
-        // re-sends — and what the notice must name.
         let mut source = html_only_source_with_a_tracking_link();
         source.body.text = Some("Shop now: see the HTML version".to_owned());
         assert_eq!(
@@ -4883,8 +4321,6 @@ mod tests {
         source.body.html = None;
         assert!(quoted_tracking_domains(&source).is_empty());
     }
-
-    // -- Schedule send presets ---------------------------------------------
 
     fn local_at(year: i32, month: u32, day: u32, hour: u32, minute: u32) -> DateTime<Local> {
         Local
@@ -4903,7 +4339,6 @@ mod tests {
 
     #[test]
     fn an_ordinary_morning_offers_the_same_evening_and_tomorrow() {
-        // 2024-01-01 is a Monday.
         let now = local_at(2024, 1, 1, 9, 0);
         let presets = schedule_presets(now);
 
@@ -4938,7 +4373,6 @@ mod tests {
 
     #[test]
     fn monday_morning_is_the_nearest_monday_still_ahead() {
-        // 2024-01-03 is a Wednesday.
         let now = local_at(2024, 1, 3, 8, 0);
         let presets = schedule_presets(now);
 
@@ -4960,7 +4394,6 @@ mod tests {
             }
         }
     }
-    // -- the action row's key hints (#828) ---------------------------------
 
     fn keys_of(keymap: &Keymap) -> Vec<Option<String>> {
         action_hints(keymap)
@@ -4971,16 +4404,9 @@ mod tests {
 
     #[test]
     fn the_action_row_takes_its_keys_from_the_registry() {
-        // They used to be the literals `C-Ret`, `C-⇧-Ret` and `C-s` -- a
-        // notation nothing else in the application writes. What the registry
-        // says is what the palette, the cheat sheet and `keybindings.md`
-        // already show, and on macOS it is what makes `mod` mean Command
-        // rather than Control.
         assert_eq!(
             keys_of(Keymap::defaults()),
             vec![
-                // A hint shows the *primary*, which is what a person is
-                // being taught.
                 Some("ctrl+Return".to_string()),
                 Some("ctrl+shift+Return".to_string()),
                 Some("ctrl+s".to_string()),
@@ -4991,8 +4417,6 @@ mod tests {
 
     #[test]
     fn a_rebind_in_keys_reaches_the_action_row() {
-        // The bug this issue is actually about: a literal goes on naming the
-        // default key forever, so the button lies to whoever rebound it.
         let mut overrides = postio_config::KeyBindings::default();
         overrides
             .overrides_mut()
@@ -5012,19 +4436,9 @@ mod tests {
 
     #[test]
     fn a_command_with_no_key_left_shows_no_hint_rather_than_a_blank_one() {
-        // Taking a command's only key leaves it with nothing to show, and it
-        // must drop the hint rather than render an empty one — the rule
-        // `reader::actions` follows too.
-        //
-        // It has to be `save_draft` that loses it, and that is the point of
-        // the fixture: since the second keyboard layer landed, most verbs
-        // carry an alternate and *cannot* be left with nothing. Send keeps
-        // `alt+s` when `mod+Return` is taken from it, which is the honest
-        // answer and no longer this case. `save_draft` has one key and no
-        // alternate, so it is the one that can still be emptied.
-        //
-        // An explicit `[keys]` entry outranks a default, so `send` wins the
-        // contested key and `save_draft` is what loses it.
+        // It has to be `save_draft` that loses the key: most verbs carry an alternate and cannot be
+        // emptied, but `save_draft` has one key.
+        // An explicit `[keys]` entry outranks a default.
         let mut overrides = postio_config::KeyBindings::default();
         overrides
             .overrides_mut()

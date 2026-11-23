@@ -1,9 +1,3 @@
-//! The content-addressed blob store.
-//!
-//! Written before the store existed. The bead's acceptance criteria are "the
-//! same content written twice occupies one blob", "an interrupted write leaves
-//! no partial blob visible" and "orphan collection is tested".
-
 use postio_storage::Connection;
 use postio_storage::sql::bind;
 use std::io::{self, Read};
@@ -22,7 +16,6 @@ fn store() -> (tempfile::TempDir, BlobStore) {
     (directory, store)
 }
 
-/// Every regular file under the store's root, excluding its temp directory.
 fn blob_files(store: &BlobStore) -> Vec<std::path::PathBuf> {
     fn walk(directory: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
         let Ok(entries) = std::fs::read_dir(directory) else {
@@ -55,10 +48,6 @@ fn blob_files(store: &BlobStore) -> Vec<std::path::PathBuf> {
     out.sort();
     out
 }
-
-// ---------------------------------------------------------------------------
-// Acceptance: the same content written twice occupies one blob
-// ---------------------------------------------------------------------------
 
 #[test]
 fn the_same_content_written_twice_is_one_blob() {
@@ -95,9 +84,7 @@ fn a_blob_round_trips_byte_for_byte() {
 
     assert_eq!(store.get(&id).expect("get"), content);
     assert!(store.contains(&id));
-    // `len_of` is the size on disk, not the size of the content: this
-    // particular content is a repeating byte cycle, so compression takes it
-    // to a fraction of itself (ADR 0017).
+    // `len_of` is the size on disk; this content repeats, so compression shrinks it (ADR 0017).
     assert!(store.len_of(&id).expect("len") < content.len() as u64);
 }
 
@@ -161,10 +148,6 @@ fn reading_a_blob_that_is_not_there_is_an_error_not_a_panic() {
     assert!(store.reader(&absent).is_err());
 }
 
-// ---------------------------------------------------------------------------
-// Streaming, in both directions
-// ---------------------------------------------------------------------------
-
 #[test]
 fn a_blob_can_be_written_from_a_reader_without_buffering_it_whole() {
     let (_directory, store) = store();
@@ -202,12 +185,6 @@ fn a_blob_can_be_read_as_a_stream() {
     assert_eq!(read_back, content);
 }
 
-// ---------------------------------------------------------------------------
-// Acceptance: an interrupted write leaves no partial blob visible
-// ---------------------------------------------------------------------------
-
-/// A reader that hands over some bytes and then fails, the way a dropped
-/// connection does mid-fetch.
 struct FailsHalfway {
     remaining: usize,
 }
@@ -269,11 +246,6 @@ fn a_temporary_file_left_by_a_crash_is_purged_and_never_served() {
     assert!(!orphan.exists());
 }
 
-// ---------------------------------------------------------------------------
-// Acceptance: orphan collection
-// ---------------------------------------------------------------------------
-
-/// A database with one account, one mailbox, and the ids to hang rows off.
 async fn database() -> postio_storage::test_support::TempStore {
     let database = postio_storage::test_support::temp().await;
     let connection = database.connect().await.expect("checkout");
@@ -292,11 +264,7 @@ async fn database() -> postio_storage::test_support::TempStore {
     database
 }
 
-/// A message holding the raw `.eml` blob, if it has one.
-///
-/// There is no body parameter: since ADR 0020 a body is a compressed column on
-/// this row, not a file, so it is not something the blob store can reference,
-/// collect or evict.
+/// No body parameter: a body is a compressed column on the row, not a blob (ADR 0020).
 async fn insert_message(connection: &Connection, raw: Option<&BlobId>) -> i64 {
     connection
         .execute(
@@ -319,9 +287,8 @@ async fn garbage_collection_keeps_referenced_blobs_and_removes_orphans() {
     let attached = store.put(b"an attachment").expect("put");
     let also_attached = store.put(b"a second attachment").expect("put");
     let orphan = store.put(b"nothing points at this").expect("put");
-    // What the orphan actually occupies, which is what collecting it frees.
-    // Not the length of its content: blobs are compressed and carry a
-    // container header (ADR 0017), so the two differ.
+    // On-disk size, not content length: blobs are compressed and carry a container header (ADR
+    // 0017).
     let orphan_bytes = store.len_of(&orphan).expect("the orphan's size on disk");
 
     let message = insert_message(&connection, Some(&raw)).await;
@@ -390,8 +357,7 @@ async fn a_blob_younger_than_the_grace_period_is_never_collected() {
     let database = database().await;
     let connection = database.connect().await.expect("checkout");
 
-    // The window every real caller lives in: the bytes are on disk, the row
-    // that will reference them is not written yet.
+    // Bytes on disk, the referencing row not yet written: the window every real caller lives in.
     let in_flight = store.put(b"written, not yet referenced").expect("put");
 
     let report = store
@@ -435,10 +401,6 @@ fn removing_a_blob_by_hand_is_idempotent() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Against the corpus
-// ---------------------------------------------------------------------------
-
 #[test]
 fn every_fixture_in_the_corpus_survives_a_round_trip() {
     let (_directory, store) = store();
@@ -478,10 +440,6 @@ fn a_large_attachment_streams_rather_than_being_held_whole() {
         "the head of the blob is readable without reading the tail"
     );
 }
-
-// ---------------------------------------------------------------------------
-// This is the user's mail: the root, its shards and its blobs are private
-// ---------------------------------------------------------------------------
 
 #[cfg(unix)]
 mod private_by_default {
@@ -538,16 +496,8 @@ mod private_by_default {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Writing without holding the bytes — ADR 0017, axis 2
-// ---------------------------------------------------------------------------
-
 #[test]
 fn a_streamed_write_yields_the_same_id_as_the_same_bytes_at_once() {
-    // The whole point of the streaming writer is that it is not a different
-    // store: content addressing has to survive being fed in pieces, or a blob
-    // written by the fetch path and the same blob written by the compose path
-    // would be two files.
     let (_directory, store) = store();
 
     let whole = store
@@ -566,9 +516,6 @@ fn a_streamed_write_yields_the_same_id_as_the_same_bytes_at_once() {
 
 #[test]
 fn a_writer_dropped_before_finishing_publishes_nothing() {
-    // The guarantee the store already makes for `put`, extended to the push
-    // form: a fetch that is cancelled or dies mid-flight leaves debris in the
-    // temp directory, never a blob under a digest that promises otherwise.
     let (_directory, store) = store();
 
     let mut writer = store.writer().expect("a writer");
@@ -583,14 +530,8 @@ fn a_writer_dropped_before_finishing_publishes_nothing() {
 
 #[test]
 fn a_streamed_write_never_holds_more_than_one_chunk() {
-    // The assertion ADR 0017's axis 2 actually cares about. `VecSink` grows a
-    // `Vec` by doubling, so a 40 MB message peaks well above 40 MB and copies
-    // itself a dozen times on the way; the writer holds one chunk at a time
-    // and the file holds the rest.
-    //
-    // Asserted structurally rather than by measuring the allocator: the
-    // writer is handed far more bytes than any buffer it could own, and what
-    // is checked is that the bytes all arrived correctly anyway.
+    // Asserted structurally: far more bytes than any buffer the writer could own all arrive
+    // correctly. A doubling `VecSink` would peak well above a 40 MB message (ADR 0017).
     let (_directory, store) = store();
     let chunk = vec![b'x'; 64 * 1024];
     let chunks = 64; // 4 MiB in 64 KiB pieces
@@ -615,11 +556,6 @@ fn a_streamed_write_never_holds_more_than_one_chunk() {
     assert_eq!(counted, chunk.len() * chunks);
 }
 
-// ---------------------------------------------------------------------------
-// Compression under a versioned header — ADR 0017, axis 3
-// ---------------------------------------------------------------------------
-
-/// Text that compresses the way mail compresses: repetitive, quoted, signed.
 fn mail_shaped_text() -> Vec<u8> {
     let mut text = String::new();
     for n in 0..200 {
@@ -637,8 +573,6 @@ fn mail_shaped_text() -> Vec<u8> {
 
 #[test]
 fn a_compressed_blob_reads_back_byte_for_byte() {
-    // The only assertion that ultimately matters: compression is invisible
-    // above the store. Everything else here is about how much smaller it got.
     let (_directory, store) = store();
     let content = mail_shaped_text();
 
@@ -649,19 +583,15 @@ fn a_compressed_blob_reads_back_byte_for_byte() {
 
 #[test]
 fn the_id_is_the_digest_of_the_plaintext_not_of_what_is_on_disk() {
-    // Load-bearing for ADR 0014: the id is taken before compression and
-    // before encryption, so dedup is unaffected by either and the keyed-hash
-    // decision that ADR keeps working. If the id ever became a digest of the
-    // stored form, the same message compressed under two dictionary versions
-    // would be two blobs.
+    // The id is taken before compression and encryption, so dedup is unaffected by either (ADR
+    // 0014).
     let (_directory, store) = store();
     let content = mail_shaped_text();
 
     let id = store.put(&content).expect("put");
 
-    // Keyed since #301, so this recomputes it the way the store does rather
-    // than the way anybody holding the file could. That the id is *not* the
-    // plain digest is `blob_encryption.rs`'s to assert.
+    // Keyed since #301: recompute it as the store does. That it is not the plain digest is
+    // `blob_encryption.rs`'s to assert.
     let keys = postio_storage::test_support::blob_keys();
     let mut hasher = blake3::Hasher::new_keyed(keys.id().expose());
     hasher.update(&content);
@@ -670,9 +600,6 @@ fn the_id_is_the_digest_of_the_plaintext_not_of_what_is_on_disk() {
 
 #[test]
 fn mail_shaped_text_actually_gets_smaller() {
-    // The point of the exercise. If this ratio is ever not worth having, the
-    // failure should be a number in a test rather than a discovery on a
-    // user's disk.
     let (_directory, store) = store();
     let content = mail_shaped_text();
 
@@ -689,13 +616,9 @@ fn mail_shaped_text_actually_gets_smaller() {
 
 #[test]
 fn already_compressed_bytes_are_not_compressed_again() {
-    // 8.9 GB of the reference account's payloads are JPEG, PNG, PDF and ZIP.
-    // Running them through zstd costs CPU on every read and write to make
-    // them very slightly larger, so the store must decline -- and must say so
-    // in the header rather than leaving a reader to guess.
+    // JPEG, PNG, PDF and ZIP are incompressible: zstd would cost CPU to make them larger, so the
+    // store declines and says so in the header.
     let (_directory, store) = store();
-    // Incompressible by construction: a counter run through a hash is as
-    // close to random as a test can be without a dependency on an RNG.
     let mut content = Vec::new();
     for n in 0u32..8_000 {
         content.extend_from_slice(blake3::hash(&n.to_le_bytes()).as_bytes());
@@ -705,10 +628,7 @@ fn already_compressed_bytes_are_not_compressed_again() {
     let on_disk = store.len_of(&id).expect("stored length");
 
     assert_eq!(store.get(&id).expect("get"), content);
-    // What encryption costs on disk, spelled out rather than allowed for: the
-    // 31-byte header, and one 16-byte Poly1305 tag per 64 KiB chunk. Pinned
-    // here so growing it is a decision somebody makes rather than a number
-    // that drifts.
+    // Encryption overhead, pinned: a 31-byte header and one 16-byte Poly1305 tag per 64 KiB chunk.
     let chunks = (content.len() as u64).div_ceil(64 * 1024);
     let overhead = 31 + 16 * chunks;
     assert!(
@@ -721,14 +641,10 @@ fn already_compressed_bytes_are_not_compressed_again() {
 
 #[test]
 fn a_blob_written_before_the_format_existed_still_reads() {
-    // Existing stores hold bare plaintext files with no header. They are
-    // still every message a user has downloaded, and rewriting them all is a
-    // migration nobody needs: a file that does not start with the magic is
-    // read verbatim, for ever.
+    // Existing stores hold headerless plaintext files; a file without the magic is read verbatim.
     let (_directory, store) = store();
     let content = b"Subject: written by an older Postio\r\n\r\nplain, headerless bytes";
 
-    // Write it the way the old store did: the plaintext, at the sharded path.
     let id = BlobId::new(blake3::hash(content).to_hex().to_string());
     let path = store.path_of(&id).expect("path");
     std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
@@ -739,8 +655,7 @@ fn a_blob_written_before_the_format_existed_still_reads() {
 
 #[test]
 fn a_compressed_blob_streams_without_being_read_whole() {
-    // `reader` is what keeps a 30 MiB attachment out of memory on the way to
-    // a viewer, and compression must not quietly turn it into a `get`.
+    // `reader` keeps a large attachment out of memory; compression must not turn it into a `get`.
     let (_directory, store) = store();
     let content = mail_shaped_text();
     let id = store.put(&content).expect("put");
@@ -759,11 +674,6 @@ fn a_compressed_blob_streams_without_being_read_whole() {
     assert_eq!(round_tripped, content);
 }
 
-// ---------------------------------------------------------------------------
-// A budget, and evicting what can be refetched — ADR 0017, axis 3
-// ---------------------------------------------------------------------------
-
-/// A message received `received_at`, holding the raw `.eml` blob if it has one.
 async fn insert_message_at(connection: &Connection, received_at: i64, raw: Option<&BlobId>) -> i64 {
     connection
         .execute(
@@ -789,10 +699,8 @@ async fn attach(connection: &Connection, message: i64, blob: &BlobId, size: i64)
 
 #[tokio::test]
 async fn eviction_takes_raw_source_before_it_takes_a_payload() {
-    // The order ADR 0017 fixes. Raw source is the cheapest thing to lose: it
-    // is a cache of bytes nothing reads except view-source and
-    // forward-as-message/rfc822, both refetchable and both rare. An
-    // attachment somebody downloaded is a thing they asked for.
+    // ADR 0017's order: raw source goes first, being refetchable; a downloaded attachment was asked
+    // for.
     let (_directory, store) = store();
     let database = database().await;
     let connection = database.connect().await.expect("checkout");
@@ -802,7 +710,6 @@ async fn eviction_takes_raw_source_before_it_takes_a_payload() {
     let message = insert_message_at(&connection, 1_000, Some(&raw)).await;
     attach(&connection, message, &payload, 40_000).await;
 
-    // A budget that only one of the two big blobs can fit under.
     let budget = store.len_of(&payload).expect("len") + 16;
     let report = store
         .evict_to_fit(&connection, budget)
@@ -816,16 +723,8 @@ async fn eviction_takes_raw_source_before_it_takes_a_payload() {
 
 #[tokio::test]
 async fn eviction_cannot_reach_the_text_that_search_is_made_of() {
-    // Message text is the one class that is not refetchable in any meaningful
-    // sense: losing it silently shrinks search, and #352's honesty surface
-    // could not even report the gap because `body_state` would still say the
-    // body is local.
-    //
-    // Since ADR 0020 that is structural rather than a rule eviction has to
-    // remember: bodies are compressed columns on the row, so there is no blob
-    // for a pass over the blob store to take. This test drives a budget of
-    // nothing at all across a message whose body is stored, and asserts the
-    // words are still readable afterwards.
+    // Message text is not refetchable in any meaningful sense, and bodies are columns on the row
+    // (ADR 0020), so no pass over the blob store can evict them.
     let (_directory, store) = store();
     let database = database().await;
     let connection = database.connect().await.expect("checkout");
@@ -853,7 +752,6 @@ async fn eviction_cannot_reach_the_text_that_search_is_made_of() {
         .await
         .expect("store a body");
 
-    // A budget of nothing at all: even then, the words stay.
     let report = store.evict_to_fit(&connection, 0).await.expect("evict");
     assert_eq!(report.removed, 0);
 
@@ -871,13 +769,8 @@ async fn eviction_cannot_reach_the_text_that_search_is_made_of() {
 
 #[tokio::test]
 async fn eviction_takes_the_oldest_mail_first() {
-    // Recency without an access-time column. Blobs are immutable, so their
-    // mtime is when they were written and not when they were read, and
-    // `relatime`/`noatime` make atime unusable -- but the *message* already
-    // carries the only recency that matters, and it is already indexed.
-    //
-    // It is also the exact mirror of the backfill: bodies are fetched newest
-    // first, so they are evicted oldest first. Symmetry worth having.
+    // Recency comes from the message, not blob mtime or atime (immutable, `noatime`). Oldest is
+    // evicted first, the mirror of the backfill.
     let (_directory, store) = store();
     let database = database().await;
     let connection = database.connect().await.expect("checkout");
@@ -899,9 +792,8 @@ async fn eviction_takes_the_oldest_mail_first() {
 
 #[tokio::test]
 async fn an_evicted_payload_puts_its_message_back_to_partial() {
-    // Or the UI would lie: `full` means every part is local, and the
-    // attachment chip would offer "open" for bytes that are no longer here.
-    // #352's incomplete-corpus reporting reads the same column.
+    // `full` means every part is local; the attachment chip would offer "open" for bytes no longer
+    // here.
     let (_directory, store) = store();
     let database = database().await;
     let connection = database.connect().await.expect("checkout");

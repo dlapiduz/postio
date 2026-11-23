@@ -1,24 +1,9 @@
-//! Keystrokes, resolved by the core rather than by the frontend.
-//!
-//! ADR 0019 Q4: *the core owns the keyboard; Swift owns no keymap.* A frontend
-//! reduces its own key event to three things every toolkit can supply — the
-//! character the key would type, the key's name when it types none, and the
-//! modifiers held — and asks. Everything a keymap decides happens on this side
-//! of the boundary, which is what keeps `[keys]` meaning the same thing on
-//! both platforms.
-//!
-//! These assert the seam from the *frontend's* side: what a reduced event
-//! produces, not what `postio_ui::keymap` does with a chord it was handed.
-//! `postio-ui`'s own suite covers the second, and covering only that is how a
-//! resolver stays green while nothing reaches it.
-
 use postio_ffi::{KeyOutcomeFfi, ModifiersFfi, Session, SessionOptions, UiContext};
 
 fn session() -> std::sync::Arc<Session> {
     Session::open(SessionOptions::in_memory()).expect("an in-memory session")
 }
 
-/// No modifiers held, which is most presses.
 const NONE: ModifiersFfi = ModifiersFfi {
     control: false,
     option: false,
@@ -26,14 +11,8 @@ const NONE: ModifiersFfi = ModifiersFfi {
     command: false,
 };
 
-/// The primary accelerator, as the Mac's keyboard delivers it.
-///
-/// `mod` in `[keys]`, expanded when the keymap is built: ⌘ on Apple, which
-/// is the boundary's platform on every host (`postio_ffi::PLATFORM`). It
-/// once read the host's instead, so the Linux gate only ever pressed
-/// Control and never saw the Mac's composition -- the mistake
-/// `docs/notes/2026-09-05-the-gate-that-runs-cannot-see-the-platform-that-does-not.md`
-/// is about.
+/// `mod` expands to ⌘ on Apple, the boundary's platform on every host (`postio_ffi::PLATFORM`);
+/// reading the host's let the Linux gate press only Control.
 const PRIMARY: ModifiersFfi = ModifiersFfi {
     control: false,
     option: false,
@@ -41,7 +20,6 @@ const PRIMARY: ModifiersFfi = ModifiersFfi {
     command: true,
 };
 
-/// A press of a key that types `character`.
 fn typed(
     session: &Session,
     character: &str,
@@ -54,8 +32,6 @@ fn typed(
 #[test]
 fn a_bound_key_answers_the_command_it_is_bound_to() {
     let session = session();
-    // The registry's own defaults, not a keymap this test built: the point of
-    // the boundary is that the frontend gets *these*.
     assert_eq!(
         typed(&session, "e", UiContext::List, false),
         KeyOutcomeFfi::Command {
@@ -70,8 +46,6 @@ fn a_bound_key_answers_the_command_it_is_bound_to() {
         },
         "`z` in the list is Gmail's undo"
     );
-    // And the primary accelerator's `z` beside it: ⌘Z here as everywhere
-    // else on a Mac.
     assert_eq!(
         session.key(Some("z"), None, PRIMARY, UiContext::List, false),
         KeyOutcomeFfi::Command {
@@ -84,10 +58,8 @@ fn a_bound_key_answers_the_command_it_is_bound_to() {
 #[test]
 fn a_sequence_is_pending_until_its_last_chord() {
     let session = session();
-    // `g` alone must not fire whatever `g g` is bound to, and it must not be
-    // reported as unhandled either -- the frontend swallows a pending chord so
-    // its first key does not also reach the widget underneath, and shows the
-    // description so a half-typed sequence is never invisible.
+    // `g` alone must neither fire nor be unhandled: the frontend swallows a pending chord so its
+    // first key does not reach the widget.
     let first = typed(&session, "g", UiContext::List, false);
     assert_eq!(
         first,
@@ -109,15 +81,13 @@ fn a_sequence_is_pending_until_its_last_chord() {
 #[test]
 fn typing_wins_over_a_bare_character_binding() {
     let session = session();
-    // The rule that decides whether the application feels broken: a search
-    // field with focus takes `a`, and the list must not archive on it.
+    // A focused search field takes `a`; the list must not archive on it.
     assert_eq!(
         typed(&session, "a", UiContext::Search, true),
         KeyOutcomeFfi::Unhandled,
         "`a` archived mail while somebody was typing the word"
     );
-    // ...and a chord carrying a modifier still fires, or a text field would
-    // swallow every shortcut on the machine.
+    // A chord with a modifier still fires, or a text field would swallow every shortcut.
     assert_eq!(
         session.key(Some("k"), None, PRIMARY, UiContext::Search, true),
         KeyOutcomeFfi::Command {
@@ -131,11 +101,8 @@ fn typing_wins_over_a_bare_character_binding() {
 #[test]
 fn the_primary_modifier_is_this_platform_s() {
     let session = session();
-    // `mod+k` in `[keys]`, ⌘K on a Mac and Ctrl+K on Linux -- resolved when
-    // the keymap is built, so this asserts the *host's* answer and reads the
-    // same on both. What it guards is that the expansion and the resolver
-    // agree, which they did not: every `mod+…` default was unparseable on
-    // Apple until #656.
+    // Every `mod+…` default was unparseable on Apple until #656; this guards that the expansion and
+    // the resolver agree.
     assert_eq!(
         session.key(Some("k"), None, PRIMARY, UiContext::List, false),
         KeyOutcomeFfi::Command {
@@ -149,9 +116,8 @@ fn the_primary_modifier_is_this_platform_s() {
 #[test]
 fn a_named_key_is_named_rather_than_charactered() {
     let session = session();
-    // The other half of the reduction: a key that types nothing useful sends
-    // its name. AppKit spells Escape as U+001B and GDK as `\u{1b}` plus
-    // "Escape"; both frontends send the name, and the resolver has one table.
+    // AppKit spells Escape as U+001B and GDK as `\u{1b}` plus "Escape"; both send the name, and the
+    // resolver has one table.
     assert_eq!(
         session.key(None, Some("Escape"), NONE, UiContext::Search, true),
         KeyOutcomeFfi::Command {
@@ -165,8 +131,7 @@ fn a_named_key_is_named_rather_than_charactered() {
 #[test]
 fn a_key_with_neither_a_character_nor_a_name_is_unhandled() {
     let session = session();
-    // A dead key mid-composition. It must propagate, or every non-Latin
-    // keyboard loses its composition to a monitor that swallowed it.
+    // A dead key mid-composition must propagate, or non-Latin keyboards lose their composition.
     assert_eq!(
         session.key(None, None, NONE, UiContext::List, false),
         KeyOutcomeFfi::Unhandled
@@ -176,11 +141,8 @@ fn a_key_with_neither_a_character_nor_a_name_is_unhandled() {
 
 #[test]
 fn slash_opens_search_from_the_list() {
-    // Reported not working on macOS. `/` is the whole of `search`'s primary
-    // binding (`golden/linux-bindings.txt` line 31), and it is a bare
-    // character with no name of its own, so the frontend reduces it to
-    // `character: "/"` and nothing else. If this resolves, the fault is on
-    // the Swift side of the seam rather than here.
+    // `/` is a bare character with no name, so the frontend sends `character: "/"` and nothing
+    // else.
     let session = session();
     assert!(
         matches!(
@@ -194,10 +156,8 @@ fn slash_opens_search_from_the_list() {
 
 #[test]
 fn slash_is_refused_while_a_field_has_the_keyboard() {
-    // The other half, and the reason the bug is easy to mistake for a dead
-    // key: typing `/` into the search field must type a slash rather than
-    // re-opening search. `in_text_entry` is the caller's answer, and getting
-    // it wrong is the most visible bug this boundary can have.
+    // Typing `/` into the search field must type a slash, not reopen search; `in_text_entry` is the
+    // caller's answer.
     let session = session();
     assert!(
         matches!(
@@ -210,11 +170,9 @@ fn slash_is_refused_while_a_field_has_the_keyboard() {
 
 #[test]
 fn asking_for_a_buttons_key_does_not_resolve_the_keymap_again() {
-    // Found by sampling the running app while stepping through mail: every
-    // move re-rendered the reader's buttons and the toolbar, each asked for
-    // its key for a tooltip, and each ask resolved the whole keymap from the
-    // registry -- about 50 ms of the main thread per move, in a 100 ms
-    // budget. The bindings do not change while a session is open.
+    // Every move re-rendered the reader's buttons and toolbar, each resolving the whole keymap for
+    // a tooltip:
+    // about 50 ms of a 100 ms budget. Bindings do not change while a session is open.
     let session = session();
     let _ = session.bindings_for("reply".to_owned());
     let before = postio_core::test_support::keymap_resolutions();
@@ -230,8 +188,6 @@ fn asking_for_a_buttons_key_does_not_resolve_the_keymap_again() {
     );
 }
 
-/// The Mac app is Focus (specs/009-focus-macos FR-001): it answers Focus's
-/// keys and none of the three-pane app's.
 #[test]
 fn the_mac_answers_focus_keys_and_not_the_three_pane_apps() {
     let session = session();
@@ -250,10 +206,8 @@ fn the_mac_answers_focus_keys_and_not_the_three_pane_apps() {
     session.shutdown();
 }
 
-/// Focus's whole keymap resolves, as the Mac's frontend, on both platforms:
-/// asserted for each from either host, because a gate that runs one platform
-/// cannot see the other's answer (31 bindings once died that way, the note
-/// `docs/notes/2026-09-05-the-gate-that-runs-cannot-see-the-platform-that-does-not.md`).
+/// Asserted for each platform from either host: a gate that runs one platform cannot see the
+/// other's answer (31 bindings once died that way).
 #[test]
 fn focus_s_keymap_resolves_on_both_platforms() {
     use postio_config::paths::Platform;
@@ -270,9 +224,6 @@ fn focus_s_keymap_resolves_on_both_platforms() {
     }
 }
 
-/// `[keys]` edited while the app runs rebinds at once (FR-031): the Mac
-/// watches `config.toml`, rebuilds the resolver, and tells the frontend so
-/// its menus and keycaps follow.
 #[tokio::test(flavor = "multi_thread")]
 async fn editing_keys_rebinds_while_the_app_runs() {
     let directory = tempfile::tempdir().expect("a directory");

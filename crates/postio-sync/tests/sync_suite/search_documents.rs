@@ -1,15 +1,3 @@
-//! A synced message is indexed for search once, not once per address (#1587).
-//!
-//! Every write to a message's `search_documents` row is an operation on the
-//! full-text index over it -- ~2.3 ms apiece, measured, and the cost is per
-//! operation rather than per statement. The triggers that keep the row in
-//! step wrote it once for the message and again for every address and
-//! attachment, so a first sync paid most of its header write in index
-//! operations. Sampled live, 65% of it.
-//!
-//! What this counts is the writes themselves: a trigger the test installs
-//! logs every insert and update of a `search_documents` row.
-
 use chrono::{TimeZone, Utc};
 use postio_account::backend::{MailBackend, MockBackend, MockMailbox, MockMessage};
 use postio_account::cancel::CancelToken;
@@ -68,10 +56,8 @@ async fn a_first_sync_writes_each_search_document_once() {
         .expect("the first sync");
     let issued = counting::recorded();
 
-    // The one statement that writes the documents names its messages through
-    // `json_each`; a plan that walked `messages` to find them would be
-    // #1707's scan again, one per write unit. `scan_audit` cannot see it:
-    // its store has no search schema, so the statement never runs there.
+    // A plan walking `messages` to find the documents would be #1707's scan again; `scan_audit`
+    // cannot see it (no search schema there).
     let mut scanned = Vec::new();
     for sql in issued.keys().filter(|sql| sql.contains("search_documents")) {
         let steps = counting::unbounded(&connection, sql, counting::GROWING_TABLES).await;
@@ -106,7 +92,6 @@ async fn a_first_sync_writes_each_search_document_once() {
         "twelve messages of six addresses each wrote their search documents {writes} times"
     );
 
-    // And what was written is the whole document, searchable.
     let found: i64 = sql::one(
         &connection,
         "SELECT count(*) FROM search_documents

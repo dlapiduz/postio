@@ -2,7 +2,6 @@ import Testing
 
 @testable import PostioAppKit
 
-/// Shift+Tab in the composer (#2083): back up the same list Tab walks down.
 @Suite struct ComposeFieldOrderTests {
     @Test func shiftTabFromTheBodyGoesToTheSubject() {
         #expect(ComposeField.body.previous(showingCopyFields: false) == .subject)

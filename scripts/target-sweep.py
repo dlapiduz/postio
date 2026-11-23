@@ -48,30 +48,22 @@ import subprocess
 import sys
 from pathlib import Path
 
-# What this tree is built with. `--workspace` everywhere: with the
-# workspace-hack (ADR 0047) a `-p` build uses the same units, so these cover
-# `test-fast.sh`'s per-crate builds as well.
+# What this tree is built with. `--workspace` everywhere: with the workspace-hack (ADR 0047) a `-p`
+# build uses the same units.
 COMMANDS = [
     ["check", "--workspace", "--all-targets"],
     ["clippy", "--workspace", "--all-targets"],
     ["test", "--workspace", "--no-run"],
 ]
 
-# `<name>-<16 hex>` with an optional extension: how cargo names every unit's
-# files, fingerprints, build-script dirs and incremental sessions.
 HASHED = re.compile(r"^(?P<stem>.+?)-(?P<hash>[0-9a-f]{16})(?:[.].*)?$")
 
-# Cargo 1.100's build directory: each unit in `build/<package>/<hash>/`,
-# its fingerprint and its outputs inside, where cargo up to 1.99 spread one
-# unit over `deps/`, `.fingerprint/` and `build/` by `<name>-<hash>`. Both
-# are swept, because a seeded or reused tree can hold either.
+# Cargo 1.100 puts each unit in `build/<package>/<hash>/`; up to 1.99 it spread one over `deps/`,
+# `.fingerprint/` and `build/`. Both are swept, since a seeded or reused tree can hold either.
 UNIT_DIR = re.compile(r"^[0-9a-f]{16}$")
-# Not `incremental/`: rustc names a session directory after the crate's
-# stable id (13 base-36 characters), not the unit hash cargo reports, so
-# nothing here can tell a live one from a dead one -- and deleting a live one
-# costs a full recompile of that crate on the next edit, which the
-# verification cannot see. Only workspace crates have sessions, their hashes
-# survive source edits, and rustc prunes old sessions inside each directory.
+# Not `incremental/`: rustc names a session by the crate's stable id, not the unit hash, so a live
+# one cannot be told from a dead one, and deleting it costs a full recompile the verification cannot
+# see.
 SWEPT_DIRS = ("deps", "build", ".fingerprint", "examples")
 
 
@@ -136,8 +128,6 @@ def uplifted_hashes(debug: Path, uplifted: list[Path]) -> set[str]:
     hashes: set[str] = set()
     found: set[str] = set()
     by_name: dict[str, set[str]] = {}
-    # 1.100 names the original after its target, unhashed, inside the
-    # unit's own directory: the directory's name is the hash.
     for unit in unit_dirs(debug):
         out = unit / "out"
         if not out.is_dir():

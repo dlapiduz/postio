@@ -1,13 +1,6 @@
-//! Emit the design tokens for a frontend that cannot be handed Rust.
-//!
-//! The GTK frontends get theirs through `postio-widgets/build.rs`, which can
-//! call the emitter directly. Swift cannot, so this writes the file that
-//! `scripts/macos-build.sh` puts into the package.
-//!
-//! Both come from one parsed `Tokens` and one set of required names, so
-//! retuning the design system moves both frontends or fails the build for
-//! both — which is the whole reason the values are generated rather than
-//! typed twice.
+//! Emit the design tokens for Swift, which cannot be handed Rust; GTK gets them via
+//! `postio-widgets/build.rs`.
+//! Both come from one parsed `Tokens`, so retuning moves both frontends or fails both builds.
 
 use std::path::PathBuf;
 

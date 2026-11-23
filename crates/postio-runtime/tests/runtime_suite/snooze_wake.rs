@@ -1,18 +1,5 @@
-//! A snooze whose time has come wakes on its own while the app is open.
-//!
-//! #493: `MessageRepository::wake_due` clears a due snooze and says which
-//! mailbox to repaint, but nothing calls it — visibility is self-healing
-//! against wall-clock time on every list query regardless, so nothing failed
-//! loudly when it went unwired. This drives the actual sync engine, the same
-//! one every account gets, and proves its `POLL_INTERVAL` tick is what
-//! reaches into the store and tells the list. Without that wiring, a message
-//! due while the app is sitting open only reappears the next time something
-//! else happens to touch the row.
-//!
-//! `NetworkSource::Ignored` and a `MockBackend` with nothing in it: nothing
-//! here is about syncing, so the engine's own connect-and-poll loop is left
-//! to do as little as it can while the ticker this test is about still runs
-//! on the same loop.
+//! The `POLL_INTERVAL` tick wakes a due snooze and tells the list (#493); visibility is
+//! self-healing, so nothing fails loudly when it goes unwired.
 
 use std::sync::Arc;
 use std::time::Duration;

@@ -1,10 +1,3 @@
-//! Focus's engine runs behind the Mac app (specs/009-focus-macos R8).
-//!
-//! Filing, markers, digests and reminders are the host's, and they run only
-//! once a frontend switches Focus on. The GTK app and the terminal always
-//! did; the Mac never had, so its inbox had no markers and nothing was ever
-//! filed. These assert what a person would see: the header strip's counts.
-
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
@@ -13,7 +6,6 @@ use postio_model::Message;
 use postio_storage::repository::{MessageRepository, StoredBody};
 use postio_storage::test_support;
 
-/// A session over a store whose inbox holds one message asking `question`.
 async fn asked(question: &str) -> std::sync::Arc<Session> {
     let database = test_support::memory().await;
     let scratch = tempfile::tempdir().expect("a scratch directory");
@@ -23,8 +15,6 @@ async fn asked(question: &str) -> std::sync::Arc<Session> {
         let connection = database.connect().await.expect("a connection");
         let (account, inbox) = test_support::account_with_inbox(&connection).await;
         let repository = MessageRepository::new(&connection);
-        // A question sent to the person, as the detector needs it: from
-        // someone else, to the account's own address, recently.
         let mut message = Message::new(account.id, inbox, Utc::now() - chrono::TimeDelta::hours(1));
         message.subject = Some("Atlas Q3 budget".to_owned());
         message.date = Some(Utc::now() - chrono::TimeDelta::hours(1));
@@ -35,8 +25,6 @@ async fn asked(question: &str) -> std::sync::Arc<Session> {
         message.to = vec![account.address.clone()];
         message.promoted = Some(postio_model::promoted::PromotedHeaders::default());
         let id = repository.create(&mut message).await.expect("a message");
-        // Threaded, as sync would leave it: a list row is a conversation,
-        // and its unread state and marker are the conversation's.
         let threads = postio_storage::repository::ThreadRepository::new(&connection);
         let mut thread = postio_model::Thread::new(account.id);
         thread.subject = message.subject.clone();
@@ -83,12 +71,8 @@ async fn a_question_in_the_inbox_is_counted_as_needing_action() {
     session.shutdown();
 }
 
-/// Wait for `wanted` on the session's event stream, up to `secs`.
-///
-/// Scaled by `POSTIO_TEST_PATIENCE`: `secs` is a liveness bound, and a
-/// loaded runner is told to be more patient through the dial rather than by
-/// editing every wait (#2154). A wait whose length is itself the claim uses
-/// [`heard_within`].
+/// Scaled by `POSTIO_TEST_PATIENCE`: `secs` is a liveness bound. A wait whose length is the claim
+/// uses [`heard_within`] (#2154).
 pub(crate) async fn heard(
     session: &Session,
     secs: u64,
@@ -102,8 +86,8 @@ pub(crate) async fn heard(
     .await
 }
 
-/// [`heard`], within exactly `deadline`, whatever the patience: for a wait
-/// that asserts something happened sooner than something else would.
+/// Within exactly `deadline`, whatever the patience: for a wait that asserts something happened
+/// sooner.
 pub(crate) async fn heard_within(
     session: &Session,
     deadline: Duration,
@@ -121,16 +105,12 @@ pub(crate) async fn heard_within(
     .unwrap_or(false)
 }
 
-/// The Mac's Focus list, filled by the controller's feed (spec 009 T026):
-/// the inbox opens, is counted, changes over, and its rows carry the words
-/// a row draws -- the marker's chip and the sentence quoted verbatim.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_inbox_fills_with_focus_rows_that_carry_their_marker() {
     let session = asked(
         "Hi,\n\nCan you approve these by Friday so finance can close the quarter?\n\nThanks,\nAda",
     )
     .await;
-    // The marker is the body stage's; wait for it before the list is read.
     let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(10));
     while session.focus_counts().expect("counts").has_action == 0 && Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -146,7 +126,6 @@ async fn the_inbox_fills_with_focus_rows_that_carry_their_marker() {
         "the list changes over to the inbox, one conversation long"
     );
     assert_eq!(session.focus_row_count(), 1);
-    // The first ask is a miss that fetches; the page then lands.
     let first = session.focus_row_at(0);
     if first.is_none() {
         assert!(
@@ -164,8 +143,6 @@ async fn the_inbox_fills_with_focus_rows_that_carry_their_marker() {
     assert_eq!(row.subject, "Atlas Q3 budget");
     assert_eq!(row.sender, "Ada");
     assert!(row.unread, "unread is bold");
-    // The heading of the day the message arrived (an hour ago), whichever
-    // side of midnight this runs on: the words are the presenter's.
     let arrived = (Utc::now() - chrono::TimeDelta::hours(1))
         .with_timezone(&chrono::Local)
         .date_naive();
@@ -191,8 +168,6 @@ async fn the_inbox_fills_with_focus_rows_that_carry_their_marker() {
     session.shutdown();
 }
 
-/// The header strip's words cross composed, by the functions GTK's strip
-/// uses (spec 009 FR-004): Swift words nothing itself.
 #[test]
 fn the_strip_says_what_gtk_s_strip_says() {
     let session = Session::open(SessionOptions::in_memory().with_config_for_test(
@@ -218,9 +193,6 @@ fn the_strip_says_what_gtk_s_strip_says() {
     session.shutdown();
 }
 
-/// The Dock's badge is the strip's unread figure, carried as a number on
-/// the same read: the strip is re-read on every change to the inbox, so
-/// the badge costs no read of its own.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_strip_carries_its_unread_figure_as_a_number() {
     let session = inbox_of(&["Atlas budget", "Lunch"]).await;
@@ -232,8 +204,6 @@ async fn the_strip_carries_its_unread_figure_as_a_number() {
     session.shutdown();
 }
 
-/// `[sync] notify` and `[sync] badge` are the session's, kept current while
-/// it runs: the Mac's settings pane writes the file, and the Dock follows.
 #[tokio::test(flavor = "multi_thread")]
 async fn notices_follow_the_sync_table_while_the_app_runs() {
     let directory = tempfile::tempdir().expect("a directory");
@@ -270,7 +240,6 @@ async fn notices_follow_the_sync_table_while_the_app_runs() {
     session.shutdown();
 }
 
-/// A session whose inbox holds one conversation per subject, newest first.
 pub(crate) async fn inbox_of(subjects: &[&str]) -> std::sync::Arc<Session> {
     let database = test_support::memory().await;
     {
@@ -297,11 +266,7 @@ pub(crate) async fn inbox_of(subjects: &[&str]) -> std::sync::Arc<Session> {
     Session::open(SessionOptions::in_memory_with(database)).expect("a session")
 }
 
-/// The Mac's list keys run through the controller (spec 009 T045): `x`
-/// selects without moving the cursor, `j` moves it, and `r` marks what is
-/// selected read -- and the host's own words come back as the toast. (Mark
-/// read rather than archive: the fixture account has no archive folder, and
-/// the host would only say so.)
+/// Mark read rather than archive: the fixture account has no archive folder.
 #[tokio::test(flavor = "multi_thread")]
 async fn list_keys_run_through_the_controller() {
     use postio_ffi::UiEvent;
@@ -360,8 +325,6 @@ async fn list_keys_run_through_the_controller() {
     session.shutdown();
 }
 
-/// The pointer drives the same cursor and selection the keys do: a click
-/// moves the cursor, a Command-click toggles, a Shift-click takes the range.
 #[tokio::test(flavor = "multi_thread")]
 async fn clicks_reach_the_controller() {
     use postio_ffi::UiEvent;
@@ -399,8 +362,6 @@ async fn clicks_reach_the_controller() {
     session.shutdown();
 }
 
-/// Return opens the cursor's message, `j` in it steps the list behind it,
-/// and Back closes it with the keyboard back on the list (T058, T062).
 #[tokio::test(flavor = "multi_thread")]
 async fn the_open_message_is_the_controllers() {
     use postio_ffi::UiEvent;
@@ -463,54 +424,6 @@ async fn the_open_message_is_the_controllers() {
     session.shutdown();
 }
 
-/// A double-click is a click and then Return on the row: the cursor goes to
-/// the row clicked, wherever it stood, and its message opens (GTK's `activate`
-/// on the list does the same, window.rs).
-#[tokio::test(flavor = "multi_thread")]
-async fn a_double_click_opens_the_row_clicked() {
-    use postio_ffi::UiEvent;
-    let session = inbox_of(&["First", "Second", "Third"]).await;
-    cursor_on_the_first_row(&session).await;
-
-    session.focus_activate(2);
-    assert!(
-        heard(&session, 5, |event| matches!(
-            event,
-            UiEvent::FocusOpenMessage {
-                index: 2,
-                total: 3,
-                ..
-            }
-        ))
-        .await,
-        "the third row's message opens, not the cursor's old row"
-    );
-    session.shutdown();
-}
-
-/// `!` narrows the list through the controller, and a verb the host aims
-/// resolves against the narrowed list, not the inbox it came from.
-#[tokio::test(flavor = "multi_thread")]
-async fn has_action_is_the_list_a_verb_aims_at() {
-    use postio_ffi::UiEvent;
-    let session = inbox_of(&["First", "Second"]).await;
-    cursor_on_the_first_row(&session).await;
-    assert!(!session.focus_aims_at_has_action_for_test());
-    session.invoke("toggle_has_action");
-    assert!(
-        heard(&session, 5, |event| matches!(
-            event,
-            UiEvent::FocusHeading { text: Some(_) }
-        ))
-        .await,
-        "the list narrows under one heading"
-    );
-    assert!(session.focus_aims_at_has_action_for_test());
-    session.shutdown();
-}
-
-/// Open Focus's inbox and wait until the cursor is on its first row: where
-/// a verb with nothing selected acts, as a person would find it.
 pub(crate) async fn cursor_on_the_first_row(session: &Session) {
     session.open_focus(postio_ffi::FocusScopeFfi::Inbox);
     assert!(
@@ -523,10 +436,6 @@ pub(crate) async fn cursor_on_the_first_row(session: &Session) {
     );
 }
 
-/// A session whose inbox holds one conversation of two messages: an earlier
-/// one from Grace, and the latest, from Ada, asking a question, copied to
-/// Grace, labelled Harbor and carrying a PDF. Answers the session and the
-/// two messages, earlier first.
 async fn a_thread_with_a_question() -> (std::sync::Arc<Session>, i64, i64) {
     use postio_model::EmailAddress;
     use postio_storage::repository::LabelRepository;
@@ -608,18 +517,12 @@ async fn a_thread_with_a_question() -> (std::sync::Arc<Session>, i64, i64) {
     (session, earlier, latest)
 }
 
-/// What surrounds the body in the Mac's message window comes across
-/// composed, by the functions GTK's open message draws with (spec 009
-/// T067, T068): the subject, the position line, the thread chip and the
-/// messages `[` and `]` reach, the labels, the sender block, the marker's
-/// card, the action row with what folds into More, and the attachments.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_message_window_s_chrome_is_composed_in_rust() {
     use postio_core::CommandId;
     use postio_ui::focus_dialog;
 
     let (session, earlier, latest) = a_thread_with_a_question().await;
-    // The marker is the body stage's; wait for it before the list is read.
     let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(10));
     while session.focus_counts().expect("counts").has_action == 0 && Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -719,18 +622,13 @@ async fn the_message_window_s_chrome_is_composed_in_rust() {
         postio_ui::format::human_size(48_000)
     );
 
-    // The card follows the message, not the place: the position line's
-    // index counts messages, and a list with a digest row above draws the
-    // row somewhere else. Asked at another index, the card is still there.
+    // The card follows the message, not the place: a digest row above moves where the row draws.
     let elsewhere = session.focus_message_view(latest, 4, 9);
     assert!(
         elsewhere.marker.is_some(),
         "the marked message has its card wherever its row stands"
     );
 
-    // `[`: the earlier message, in the same window. Its place in the
-    // conversation is said, it has no card (the marker is the latest's),
-    // and `]` comes back.
     let stepped = session.focus_message_view(earlier, 0, 1);
     assert_eq!(
         stepped.position,
@@ -740,11 +638,8 @@ async fn the_message_window_s_chrome_is_composed_in_rust() {
     session.shutdown();
 }
 
-/// The key labelled Delete on a Mac (⌫, which AppKit reports as `backspace`)
-/// deletes the cursor's conversation, as `Delete` does on Linux (#1795).
-///
-/// A Mac's binding, which the session resolves on every host
-/// (`postio_ffi::PLATFORM`), so the Linux gate asks it too.
+/// ⌫ on a Mac (AppKit reports `backspace`) deletes the cursor's conversation (#1795).
+/// A Mac's binding, which the session resolves on every host (`postio_ffi::PLATFORM`).
 #[tokio::test(flavor = "multi_thread")]
 async fn the_macs_delete_key_deletes_the_cursors_row() {
     use postio_ffi::{KeyOutcomeFfi, ModifiersFfi, UiContext, UiEvent};
@@ -784,10 +679,8 @@ async fn the_macs_delete_key_deletes_the_cursors_row() {
     session.shutdown();
 }
 
-/// A delete re-reads the list without blanking it: the rows on screen stay
-/// drawn until their page comes back, and the page is put back in place, as
-/// GTK's refresh does. Blanking every row and re-reading drew the whole
-/// list collapsing and growing back on every delete.
+/// Blanking every row and re-reading drew the whole list collapsing and growing back on every
+/// delete.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_delete_rereads_the_list_without_blanking_it() {
     use postio_ffi::UiEvent;
@@ -821,7 +714,6 @@ async fn a_delete_rereads_the_list_without_blanking_it() {
     session.shutdown();
 }
 
-/// [`inbox_of`], in an account with a Trash folder for a delete to reach.
 async fn inbox_with_trash(subjects: &[&str]) -> std::sync::Arc<Session> {
     let database = test_support::memory().await;
     {

@@ -4,14 +4,6 @@ import Testing
 
 @testable import PostioKit
 
-/// `postio://message/<id>`, the link a captured task carries back to its
-/// message (specs/009-focus-macos T117, C21).
-///
-/// The reading is the boundary's (`parse_message_link`, over
-/// `postio_ui::links`), so a link reads here exactly as the line capture
-/// wrote it. What this decides is where each one goes: a message link to
-/// the controller, which opens it or says it is gone; anything else of
-/// Postio's straight to the pill, in the boundary's words.
 @MainActor
 @Suite struct LinkRoutingTests {
     @Test func aMessageLinkGoesToTheControllerAsWritten() throws {
@@ -20,7 +12,6 @@ import Testing
     }
 
     @Test func theLinkCaptureWritesComesBackToItsMessage() throws {
-        // The round trip: what a captured line carries is what opens.
         let url = try #require(URL(string: messageLink(message: 1_234)))
         #expect(PostioLink.route(url) == .open(uri: messageLink(message: 1_234), message: 1_234))
     }
@@ -38,8 +29,8 @@ import Testing
     }
 
     @Test func theUnknownSentenceIsThePillsAsTheControllerWouldSayIt() {
-        // Said by the Mac without a round trip, so it must be what the
-        // controller's own refusal is: the same words, a notice, no Undo.
+        // Said by the Mac without a round trip, so it must match the controller's own refusal: same
+        // words, a notice, no Undo.
         let event = PostioLink.toast(linkUnknown())
         let focus = FocusIntents()
         #expect(focus.apply(event) == .toast)
@@ -49,8 +40,8 @@ import Testing
     }
 
     @Test func linksThatArriveBeforeTheStoreOpensWaitForIt() throws {
-        // Clicking a captured line launches Postio cold: the link arrives
-        // before the session does, and opening it then would open nothing.
+        // Clicking a captured line launches Postio cold: the link arrives before the session, and
+        // opening it then would open nothing.
         var waiting = PostioLink.Waiting()
         let first = try #require(URL(string: "postio://message/7"))
         let second = try #require(URL(string: "postio://message/8"))

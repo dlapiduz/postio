@@ -1,24 +1,13 @@
-//! What an app looks like to a storyboard: one shape for every frontend.
-//!
-//! A storyboard step ends by asking the app what a person would be able to
-//! tell about it — where the keyboard is, what the cursor is on, what is
-//! covering the list. The answer is an [`Observation`], the same struct for
-//! every app (spec 008, FR-010), so that one storyboard can be checked
-//! against all of them and the fields compared. How each app fills it is
-//! `specs/008-storyboards/contracts/observation.md`.
-//!
-//! A field an app cannot observe is `None`, never a guess. Checks on it are
-//! then "not applicable" rather than a pass.
+//! What an app looks like to a storyboard: one `Observation` shape for every frontend (spec 008),
+//! so one storyboard checks them all. A field an app cannot observe is `None`, never a guess.
 
 // Every variant and field is documented once, in data-model.md's table; a
 // second doc line on each would be two homes for one fact.
-#![allow(missing_docs)]
 
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-/// Whether the window is still there; quitting closes it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Window {
@@ -26,7 +15,6 @@ pub enum Window {
     Closed,
 }
 
-/// The surface the person is looking at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum View {
@@ -42,7 +30,6 @@ pub enum View {
     Filtered,
 }
 
-/// The part of the window that holds the keyboard.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Region {
@@ -52,7 +39,6 @@ pub enum Region {
     Conversation,
     Composer,
     Search,
-    /// A search's results, in the list's place (spec 010 D17).
     Results,
     Palette,
     Picker,
@@ -65,7 +51,6 @@ pub enum Region {
     Other,
 }
 
-/// The topmost thing that takes the keyboard over the main window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Overlay {
@@ -80,8 +65,7 @@ pub enum Overlay {
     Popover,
 }
 
-/// How a notice should read; recorded when it is shown, not inferred from
-/// its label.
+/// Recorded when shown, not inferred from the label.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Tone {
@@ -94,22 +78,17 @@ pub enum Tone {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Keyboard {
     pub region: Region,
-    /// Within the region: a composer field, or the search field.
     pub field: Option<String>,
-    /// The resolver's own `typing` flag: the keyboard is on text entry.
     pub typing: bool,
-    /// The focused widget is mapped, inside this toplevel and not under a
-    /// modal.
     pub reachable: bool,
-    /// The widget path. Informative only: it names a toolkit's internals, so
-    /// it is left out of [`Observation::shared_eq`] and checks may not use it.
+    /// Informative only: it names a toolkit's internals, so `Observation::shared_eq` leaves it out
+    /// and checks may not use it.
     pub widget: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Cursor {
     pub index: Option<u32>,
-    /// The message or thread id under the cursor; stable for a seed.
     pub id: Option<String>,
     pub subject: Option<String>,
 }
@@ -122,14 +101,12 @@ pub struct Rows {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Selection {
-    /// Explicitly selected rows; 0 when the cursor alone aims.
     pub count: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OverlayState {
     pub kind: Overlay,
-    /// The finder mode, the picker kind, or the dialog name.
     pub mode: Option<String>,
 }
 
@@ -137,17 +114,14 @@ pub struct OverlayState {
 pub struct Notice {
     pub text: Option<String>,
     pub tone: Option<Tone>,
-    /// It offers undo.
     pub undo: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Banner {
-    /// A persistent banner: offline, or sync failed.
     pub title: Option<String>,
 }
 
-/// Vertical position of the reading surface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Scroll {
     pub offset: u32,
@@ -157,7 +131,6 @@ pub struct Scroll {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Reading {
     pub id: Option<String>,
-    /// The focused message's index within a conversation.
     pub focused: Option<u32>,
     pub scroll: Option<Scroll>,
 }
@@ -172,7 +145,6 @@ pub struct Composer {
 pub struct Observation {
     pub window: Window,
     pub view: View,
-    /// The mailbox, the unified view or a saved search, by display name.
     pub scope: Option<String>,
     pub keyboard: Keyboard,
     pub cursor: Cursor,
@@ -183,18 +155,14 @@ pub struct Observation {
     pub banner: Banner,
     pub reading: Reading,
     pub composer: Composer,
-    /// `None` where the app has no back stack.
     pub back_depth: Option<u32>,
-    /// Namespaced app-specific fields (`classic.pane`, `focus.bulk`).
-    /// Shared storyboards may not check them, so they do not compare.
+    /// Namespaced app-specific fields (`classic.pane`); shared storyboards may not check them, so
+    /// they do not compare.
     #[serde(default)]
     pub app: BTreeMap<String, serde_json::Value>,
 }
 
 impl Observation {
-    /// Field-wise equality over what every app reports, which is how two
-    /// apps' answers to one storyboard are compared. `keyboard.widget` and
-    /// `app.*` name one toolkit's internals and are left out.
     pub fn shared_eq(&self, other: &Self) -> bool {
         let mut a = self.clone();
         let mut b = other.clone();

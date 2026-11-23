@@ -28,8 +28,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -39,9 +37,6 @@ SCRIPT = HERE / "ci-anything-new.sh"
 
 FAILURES: list[str] = []
 
-# Prints whatever `$STUB_DIR/reply` holds, after recording its arguments so
-# a case can check which workflow was asked about. An absent reply file is
-# the API failing.
 GH_STUB = """#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$STUB_DIR/args"
 if [ ! -f "$STUB_DIR/reply" ]; then
@@ -100,8 +95,6 @@ def case(
             f"  stdout: {proc.stdout.strip()}\n  stderr: {proc.stderr.strip()}"
         )
         return
-    # stdout is exactly what a workflow appends to $GITHUB_OUTPUT, so it has
-    # to be the one line and nothing else -- prose goes to stderr.
     if proc.stdout != f"run={expect}\n":
         FAILURES.append(
             f"{label}: expected stdout 'run={expect}', got {proc.stdout!r}\n"
@@ -125,9 +118,6 @@ def main() -> int:
         expect="false",
         expect_asked="workflows/mutants.yml/runs",
     )
-    # Only `main`'s runs count. A full suite run on a feature branch -- an
-    # agent asking for one before landing -- must not become "the last run"
-    # a scheduled one compares against (2026-10-01).
     case(
         "the last run is looked up on the branch being run, not any branch",
         reply=f"success\t{HEAD}",
@@ -144,14 +134,11 @@ def main() -> int:
         reply=f"skipped\t{HEAD}",
         expect="false",
     )
-    # The reason for the flag: nothing reads mutants' conclusion, so saying
-    # "red" again over the same tree is pure cost.
     case(
         "a red run over an unchanged tree is skipped by default",
         reply=f"failure\t{HEAD}",
         expect="false",
     )
-    # ...and the reason the nightly passes it.
     case(
         "with --rerun-failed, a red run over an unchanged tree runs again",
         reply=f"failure\t{HEAD}",
@@ -171,8 +158,6 @@ def main() -> int:
         args=["nightly.yml", "--rerun-failed"],
         expect="false",
     )
-    # Only the timer is ever skipped: a dispatch is somebody asking now, and
-    # a workflow_call is a pull request proving it fixed something.
     for event in ("workflow_dispatch", "workflow_call", "pull_request"):
         case(
             f"a {event} always runs",
@@ -180,7 +165,6 @@ def main() -> int:
             reply=f"success\t{HEAD}",
             expect="true",
         )
-    # Fail towards running: no answer is not "nothing changed".
     case("an API failure runs", reply=None, expect="true")
     case("no completed run yet runs", reply="", expect="true")
     case("a null answer runs", reply="null", expect="true")

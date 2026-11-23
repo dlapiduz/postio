@@ -27,8 +27,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -36,8 +34,6 @@ import patience  # noqa: E402  -- enabled by the sys.path line above
 HERE = Path(__file__).resolve().parent.parent
 ISSUE_RELEASE = HERE / "issue-release.sh"
 
-# `issue view` reports the issue open, claimed by nobody visible: no
-# in-progress label, which is exactly the state the orphan branch fires on.
 GH_STUB = """#!/usr/bin/env bash
 if [ "$1" = "--version" ]; then echo "gh version 2.98.0 (2026-01-01)"; exit 0; fi
 if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
@@ -89,8 +85,6 @@ def main() -> int:
         gh.write_text(GH_STUB, encoding="utf-8")
         gh.chmod(0o755)
 
-        # A repo with a local bare origin carrying no issue branches, so the
-        # remote-branch backstop finds nothing.
         subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
         (repo / "README.md").write_text("fixture\n", encoding="utf-8")
         subprocess.run(
@@ -113,14 +107,12 @@ def main() -> int:
             ["git", "-C", str(repo), "push", "-q", "origin", "main"], check=True
         )
 
-        # Case 1: the label is gone but the worktree is alive.
         live_lock = base / "claims" / "issue-41"
         live_lock.mkdir(parents=True)
         live_tree = base / "worktrees" / "issue-41"
         live_tree.mkdir(parents=True)
         (live_tree / "half-done.rs").write_text("// mid-work\n", encoding="utf-8")
 
-        # Case 2: same label state, but the worktree is genuinely gone.
         dead_lock = base / "claims" / "issue-42"
         dead_lock.mkdir(parents=True)
 

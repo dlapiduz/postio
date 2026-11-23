@@ -1,14 +1,7 @@
-//! The theme rule applied to a laid-out document (research R10): each
-//! message classified, its presentation's backgrounds set, and every text
-//! run's colour repaired to the floor against what is actually behind it.
-//!
-//! The result is a plan for a second layout: one user-agent stylesheet of
-//! `!important` rules -- which outrank any author rule, a sender's own
-//! `!important` included -- keyed by an attribute set on just the nodes it
-//! touches. A `DocumentMutator` style change does not restyle in Blitz
-//! 0.3.0-beta.2, so the document is laid out afresh with the sheet. The
-//! same markup parses to the same node ids, which is what lets the marks be
-//! placed by id.
+//! The theme rule applied to a laid-out document: each message classified, its
+//! backgrounds set, every text run's colour repaired against what is behind it.
+//! The result is one `!important` stylesheet for a second layout, since a
+//! `DocumentMutator` style change does not restyle in Blitz 0.3.0-beta.2.
 
 use std::collections::HashMap;
 
@@ -17,24 +10,15 @@ use blitz_dom::{BaseDocument, LocalName, Node, NodeId, local_name};
 use crate::theme::{self, MessageFacts, Presentation, Rgb};
 use crate::{RenderRequest, Scope};
 
-/// The attribute the second layout's overrides select on.
 pub(crate) const MARK: &str = "data-postio-n";
 
-/// What the second layout needs, and what the first one decided.
 #[derive(Default)]
 pub(crate) struct Plan {
-    /// The overrides, as a user-agent stylesheet.
     pub(crate) css: String,
-    /// The nodes the stylesheet names, and the mark each gets.
     pub(crate) marks: Vec<(NodeId, usize)>,
-    /// How each message was presented, by scope.
     pub(crate) presentations: HashMap<Scope, Presentation>,
-    /// Text runs whose colour was changed.
     pub(crate) repaired: u32,
-    /// Messages where high contrast cannot reach its floor on paper: they
-    /// open in Reader view instead (FR-013b).
     pub(crate) unreachable: Vec<Scope>,
-    /// How many nodes the first layout had, to check the second matches.
     pub(crate) nodes: usize,
 }
 
@@ -80,7 +64,6 @@ pub(crate) fn srgb(colour: &style::color::AbsoluteColor) -> (Rgb, f32) {
     )
 }
 
-/// A node's own background colour, and its alpha.
 fn background(node: &Node) -> Option<(Rgb, f32)> {
     let styles = node.primary_styles()?;
     let current = styles.clone_color();
@@ -92,7 +75,6 @@ fn background(node: &Node) -> Option<(Rgb, f32)> {
     ))
 }
 
-/// The mean colour of a node's first decoded background image, if any.
 fn image_ground(node: &Node) -> Option<Rgb> {
     let element = node.element_data()?;
     for image in element.background_images.iter().flatten() {
@@ -137,10 +119,6 @@ fn element_of(doc: &BaseDocument, id: NodeId) -> Option<&Node> {
     }
 }
 
-/// The colour painted behind `id` (research R10): its ancestors'
-/// backgrounds composited, nearest last, over the first opaque one --
-/// with `overrides` standing in for what the presentation changed, and an
-/// image's mean colour for a ground that is a picture.
 fn ground(doc: &BaseDocument, id: NodeId, overrides: &HashMap<NodeId, Option<Rgb>>) -> Rgb {
     let mut layers: Vec<(Rgb, f64)> = Vec::new();
     let mut base = Rgb::from_u8(255, 255, 255);
@@ -184,8 +162,6 @@ fn descendants(doc: &BaseDocument, root: NodeId) -> Vec<NodeId> {
     out
 }
 
-/// What the stylesheets in the document say about dark support for the
-/// message scoped `scope`.
 fn styles_declare_dark(sheets: &str, scope: &str) -> bool {
     let selector = if scope.is_empty() {
         String::new()
@@ -239,9 +215,8 @@ fn facts(
     )
 }
 
-/// The senders' stylesheets: every `<style>` outside the `<head>`, which is
-/// where `postio-ui` puts them. Postio's own sheets are in the head, and
-/// their dark-mode rules say nothing about the sender.
+/// Every `<style>` outside the `<head>`: Postio's own sheets are in the head, and their dark-mode
+/// rules say nothing about the sender.
 fn sheets(doc: &BaseDocument) -> String {
     let mut out = String::new();
     for id in doc.query_selector_all("body style").unwrap_or_default() {
@@ -257,14 +232,9 @@ fn sheets(doc: &BaseDocument) -> String {
     out
 }
 
-/// The app-colours treatment's half of the theme rule (T211): the sender's
-/// colours are gone from the markup already, and what is left -- the app's
-/// ink and accent, and a colour the sender set on purpose -- is held to the
-/// floor against what is painted behind it, a colour that misses it drawn
-/// in the container's ink instead ([`theme::guard`]). No background is
-/// changed. The white canvas an image keeps behind it in dark (FR-015) is
-/// the treatment's stylesheet's (`postio-ui`'s `treatment.css`): a mark per
-/// image here made every newsletter in dark lay out twice (T218).
+/// The app-colours treatment's half of the theme rule: a colour that misses the
+/// floor against what is behind it is drawn in the container's ink. No background
+/// is changed: a mark per image made every newsletter in dark lay out twice.
 fn guard_app_colours(
     doc: &BaseDocument,
     container: &Node,
@@ -302,7 +272,6 @@ fn guard_app_colours(
     }
 }
 
-/// Decide, from the first layout, what the second must change.
 pub(crate) fn plan(doc: &BaseDocument, request: &RenderRequest) -> Plan {
     let theme = request.theme;
     let floor = theme::floor(theme);
@@ -323,9 +292,8 @@ pub(crate) fn plan(doc: &BaseDocument, request: &RenderRequest) -> Plan {
             .attr(LocalName::from(postio_body::sanitize::MESSAGE_ATTRIBUTE))
             .unwrap_or_default()
             .to_owned();
-        // A body drawn under a treatment (specs/007-postio-focus T211,
-        // T212) has had its rule applied already: paper is never touched,
-        // and app colours is held to the contrast guard alone.
+        // A body under a treatment has had its rule applied: paper is never touched, app colours
+        // gets the contrast guard alone.
         match container
             .attr(LocalName::from(postio_body::treatment::TREATMENT_ATTRIBUTE))
             .and_then(postio_body::treatment::Treatment::from_attribute)
@@ -402,11 +370,9 @@ pub(crate) fn plan(doc: &BaseDocument, request: &RenderRequest) -> Plan {
             }
             Presentation::Styled | Presentation::SenderDark => {}
         }
-        // An image keeps its intended canvas behind it (FR-015): a
-        // transparent logo is never composited over the dark ground. Only
-        // an image that paints: a held-back one has no source and is the
-        // reader's placeholder, which white turned into a white box with
-        // its alt text unreadable on it.
+        // An image keeps its intended canvas, so a transparent logo is never composited
+        // over the dark ground. Only an image that paints: white behind a held-back
+        // placeholder made its alt text unreadable.
         if matches!(presentation, Presentation::Adapted | Presentation::Darkened) {
             for id in &all {
                 if doc
@@ -426,8 +392,6 @@ pub(crate) fn plan(doc: &BaseDocument, request: &RenderRequest) -> Plan {
                 None => rules.add(*id, "background-color: transparent !important".to_owned()),
             }
         }
-        // Every run, repaired against its ground as the second layout will
-        // paint it.
         let mut runs = Vec::new();
         crate::snapshot::text_runs(doc, container_id, &mut runs);
         let mut seen = std::collections::HashSet::new();

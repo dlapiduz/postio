@@ -92,6 +92,7 @@ thiserror = { version = "2" }
 tinystr = { version = "0.8", default-features = false, features = ["alloc", "zerovec"] }
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "test-util", "tracing"] }
 toml_datetime = { version = "1", features = ["serde"] }
+toml_edit = { version = "0.25" }
 toml_parser = { version = "1" }
 toml_writer = { version = "1" }
 tracing = { version = "0.1" }
@@ -190,6 +191,7 @@ thiserror = { version = "2" }
 tinystr = { version = "0.8", default-features = false, features = ["alloc", "zerovec"] }
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "test-util", "tracing"] }
 toml_datetime = { version = "1", features = ["serde"] }
+toml_edit = { version = "0.25" }
 toml_parser = { version = "1" }
 toml_writer = { version = "1" }
 tracing = { version = "0.1" }

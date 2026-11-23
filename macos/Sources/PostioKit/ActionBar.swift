@@ -2,33 +2,21 @@ import Foundation
 import PostioFFI
 import SwiftUI
 
-/// What the action bar says while anything is selected
-/// (specs/009-focus-macos T052, screen 01): the controller's count on the
-/// left, the verbs with the user's keys, and the selection's own keys on
-/// the right.
-///
-/// The verbs are `postio_ui::focus_dialog::BULK`'s, which GTK's bulk bar
-/// draws, less Delete, which screen 01 does not offer; the boundary does not
-/// export that table, so this is its one Swift copy, in its order. Task is
-/// there only with a vault (C9). The words for the count are the
-/// controller's (`FocusSelection.summary`), never composed here.
+/// The verbs are `postio_ui::focus_dialog::BULK`'s less Delete; the boundary does not export that
+/// table, so this is its one Swift copy. Task appears only with a vault (C9).
 public struct ActionBarWords: Equatable, Sendable {
-    /// One verb: the command a press runs, its words and its keycap.
     public struct Action: Equatable, Sendable {
         public let command: String
         public let label: String
         public let cap: String?
-        /// Drawn on the raised fill: the verb a selection is usually for.
         public let isDefault: Bool
     }
 
-    /// One of the selection's keys on the right: "x toggle".
     public struct Hint: Equatable, Sendable {
         public let caps: [String]
         public let label: String
     }
 
-    /// The registry's ids for what the bar offers and hints at.
     public enum Command {
         public static let archive = "archive"
         public static let snooze = "snooze"
@@ -47,17 +35,12 @@ public struct ActionBarWords: Equatable, Sendable {
     public let actions: [Action]
     public let hints: [Hint]
 
-    /// A bar whose words are all given: Filtered's, whose verbs and hints
-    /// are the controller's (`FilteredBarFfi`), not the list's table.
     public init(summary: String, actions: [Action], hints: [Hint]) {
         self.summary = summary
         self.actions = actions
         self.hints = hints
     }
 
-    /// The bar for a selection the controller summarised as `summary`, or
-    /// `nil` while nothing is selected. `vault` says whether capture can
-    /// write anywhere (C9).
     public init?(
         summary: String?, hasSelection: Bool, vault: Bool, binding: (String) -> String?
     ) {
@@ -76,7 +59,6 @@ public struct ActionBarWords: Equatable, Sendable {
                 command: command, label: label, cap: KeyCapSpelling.cap(binding(command)),
                 isDefault: command == Command.archive)
         }
-        // GTK's bulk bar's hints, in its words (`postio-gtk` bulk.rs).
         let said: [([String], String)] = [
             ([Command.toggle], "toggle"),
             ([Command.extendDown, Command.extendUp], "extend"),
@@ -89,9 +71,6 @@ public struct ActionBarWords: Equatable, Sendable {
     }
 }
 
-/// The action bar, drawn: SwiftUI over `ActionBarWords`, at the bottom of
-/// the main window while anything is selected. A press runs the verb's
-/// command id through the path its key takes.
 public struct ActionBar: View {
     let words: ActionBarWords
     let run: (String) -> Void

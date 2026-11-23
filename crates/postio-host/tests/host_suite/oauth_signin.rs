@@ -1,26 +1,3 @@
-//! The browser sign-in, end to end, through the host (#534).
-//!
-//! Everything runs on loopback and in memory: the provider is a user-overlay
-//! preset row, the IdP is a scripted HTTP server on a thread, the person's
-//! browser is played by a plain GET to the redirect the host announced, the
-//! IMAP server is the in-crate `TestServer` speaking XOAUTH2, and the keyring
-//! is a `MemorySecretStore`. What this proves, from a client's side:
-//!
-//! 1. A preset-known OAuth provider is added **without a password** -- the
-//!    client begins the sign-in, gets the consent URL, and finishes off the
-//!    redirect.
-//! 2. The exchange really carried PKCE and the authorization code.
-//! 3. The access token authenticated a real IMAP session before the account
-//!    was saved -- the connection proof ran XOAUTH2, never PLAIN or LOGIN.
-//! 4. The account row lands with `auth = xoauth2` and the composition data;
-//!    the refresh token reaches the keyring under its derived key and never
-//!    the database.
-//!
-//! Its own binary, run again as a child: the overlay is found through
-//! `XDG_CONFIG_HOME`, this crate forbids the `unsafe` that setting it
-//! in-process takes, and the provider table is computed once per process
-//! from the environment (`tests/oauth.rs`, #973).
-
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
@@ -44,10 +21,8 @@ const ADDRESS: &str = "ada@example.test";
 const ACCESS_TOKEN: &str = "access-token-from-the-idp";
 const REFRESH_TOKEN: &str = "refresh-token-from-the-idp";
 
-/// Set in the child that does the work.
 const INNER: &str = "POSTIO_OAUTH_SIGNIN_INNER";
 
-/// Fails every step: the preset row answers first, so the probe never asks.
 struct DeadTransport;
 
 #[async_trait::async_trait]
@@ -77,8 +52,6 @@ impl DiscoveryTransport for DeadTransport {
     }
 }
 
-/// A one-shot token endpoint: answers one POST with the token JSON and keeps
-/// the request it answered, so the test can assert on what the exchange sent.
 struct MockIdp {
     url: String,
     handle: thread::JoinHandle<Vec<u8>>,
@@ -134,8 +107,6 @@ impl MockIdp {
     }
 }
 
-/// Plays the user's part: reads the redirect URI and state off the consent
-/// URL and delivers the code the way a browser would.
 fn play_the_browser(authorize_url: &Url, code: &str) {
     let pairs: std::collections::HashMap<_, _> = authorize_url.query_pairs().into_owned().collect();
     let mut callback: Url = pairs["redirect_uri"].parse().expect("a redirect URI");
@@ -190,7 +161,6 @@ fn a_preset_oauth_provider_signs_in_through_the_host_end_to_end() {
     );
 }
 
-/// The test itself, with `XDG_CONFIG_HOME` pointing somewhere of its own.
 fn signs_in() {
     let config = std::path::PathBuf::from(std::env::var_os("XDG_CONFIG_HOME").expect("set"));
     std::fs::create_dir_all(config.join("postio")).unwrap();
@@ -253,7 +223,6 @@ sources = ["own-client"]
     .expect("a host");
     let client = host.connect(ClientKind::Tui);
 
-    // The person's three actions: address, client id, one click.
     let found = rt
         .block_on(client.discover(ADDRESS.into()))
         .expect("discovery");
@@ -294,13 +263,11 @@ sources = ["own-client"]
         "nothing is saved before the sign-in finishes"
     );
 
-    // The browser's part, then the host finishes the sign-in.
     let authorize_url: Url = consent.authorize_url.parse().expect("a consent URL");
     play_the_browser(&authorize_url, "the-code");
     rt.block_on(client.finish_oauth(ADDRESS.into()))
         .expect("the sign-in finished");
 
-    // What must be true afterwards.
     let commands = imap.commands();
     assert!(
         commands

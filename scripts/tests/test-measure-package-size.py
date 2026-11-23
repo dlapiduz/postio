@@ -60,8 +60,6 @@ def sized(path: Path, size: int) -> Path:
 with tempfile.TemporaryDirectory() as scratch:
     root = Path(scratch)
 
-    # Plain files are not ELF, so they have no libraries: the sizes are the
-    # files' own.
     tui = sized(root / "bin" / "postio-tui", 2000)
     desktop = sized(root / "bin" / "postio", 5000)
     under = run("binaries", str(tui), "--", str(desktop))
@@ -75,14 +73,11 @@ with tempfile.TemporaryDirectory() as scratch:
     over = run("binaries", str(heavy), "--", str(desktop))
     case("binaries at half or more fail", over.returncode == 1, over.stdout + over.stderr)
 
-    # A stub `flatpak` answering `info --show-location` and `--show-runtime`
-    # from a table, over directories of known size.
     for directory, size in [
         ("apps/tui", 100),
         ("apps/desktop", 300),
         ("runtimes/freedesktop", 1000),
         ("runtimes/gnome", 4000),
-        # Terminal packages at 58% and 70% of the desktop's 4300.
         ("runtimes/freedesktop-58", 2394),
         ("runtimes/freedesktop-70", 2910),
     ]:
@@ -111,17 +106,12 @@ esac
     (stub / "flatpak").chmod(0o755)
     env = dict(os.environ, PATH=f"{stub}:{os.environ['PATH']}")
     flat = run("flatpak", "dev.postio.PostioTui", "dev.postio.Postio", env=env)
-    # 1100 against 4300: the runtimes are counted, or it would be 100 against
-    # 300 and still pass for the wrong reason -- so the sizes are asserted.
     case(
         "a flatpak is measured with its runtime",
         flat.returncode == 0 and "1100" in flat.stdout and "4300" in flat.stdout,
         flat.stdout + flat.stderr,
     )
 
-    # The Flatpak bar is two-thirds, not half (maintainer, 2026-10-01): the
-    # smallest Flathub runtime is most of the terminal package, and the first
-    # release dry run measured 58%. The binaries stay at half.
     fifty_eight = run("flatpak", "dev.test.FiftyEight", "dev.postio.Postio", env=env)
     case(
         "a terminal flatpak at 58% of the desktop passes -- under two-thirds",
@@ -138,11 +128,6 @@ esac
     missing = run("flatpak", "dev.postio.Nothing", "dev.postio.Postio", env=env)
     case("an app flatpak cannot find is an error", missing.returncode == 2, missing.stdout + missing.stderr)
 
-    # macOS's `du` has no `-b`, and CI runs this on macOS: the sizes must not
-    # depend on GNU's tools. A `du` that refuses `-b` and a `stat` that only
-    # speaks BSD's dialect stand in for macOS's here, so Linux sees it too.
-    # On macOS the real tools are the BSD ones already; elsewhere they are
-    # stood in for.
     bsd_env = dict(os.environ)
     if sys.platform.startswith("linux"):
         bsd = root / "bsd"
@@ -156,7 +141,6 @@ esac
     """
         )
         (bsd / "du").chmod(0o755)
-        # And a `stat` in BSD's dialect: no `-c`, `-f` with `%z` for the size.
         (bsd / "stat").write_text(
             """#!/usr/bin/env bash
     [ "$1" = -f ] || { echo "stat: illegal option -- ${1#-}" >&2; exit 1; }
@@ -174,8 +158,6 @@ esac
         portable.stdout + portable.stderr,
     )
 
-    # A file reached twice -- a hard link, which is how a Flatpak's store
-    # shares files between installs -- is on disk once.
     linked = root / "linked"
     linked.mkdir()
     original = sized(linked / "a", 700)

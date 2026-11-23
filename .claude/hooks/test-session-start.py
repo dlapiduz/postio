@@ -68,7 +68,6 @@ with tempfile.TemporaryDirectory() as scratch:
     commit(lander, "landed-elsewhere")
     git(lander, "push", "-q", "origin", "main")
 
-    # --- the private worktree: told, never moved ---------------------------
     head = git(private, "rev-parse", "HEAD")
     result = run(private, env_file)
     check("a private worktree is told it is behind origin/main",
@@ -77,7 +76,6 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the toolchain override is cleared for the session",
           Path(env_file).read_text().count("unset RUSTUP_TOOLCHAIN") == 1, result)
 
-    # --- the shared checkout: fast-forwarded when that is safe -------------
     result = run(shared, env_file)
     check("the shared checkout fast-forwards to origin/main",
           result.returncode == 0
@@ -86,7 +84,6 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the env file is written once, however many sessions start",
           Path(env_file).read_text().count("unset RUSTUP_TOOLCHAIN") == 1, result)
 
-    # --- the shared checkout with a tracked edit: left alone ---------------
     commit(lander, "landed-again")
     git(lander, "push", "-q", "origin", "main")
     Path(shared, "first").write_text("someone's edit\n")
@@ -98,7 +95,6 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the edit survives", Path(shared, "first").read_text() == "someone's edit\n", result)
     Path(shared, "first").write_text("first\n")
 
-    # --- the shared checkout on another branch: left alone -----------------
     git(shared, "checkout", "-q", "-b", "elsewhere")
     head = git(shared, "rev-parse", "HEAD")
     result = run(shared, env_file)
@@ -106,13 +102,11 @@ with tempfile.TemporaryDirectory() as scratch:
           result.returncode == 0 and git(shared, "rev-parse", "HEAD") == head, result)
     git(shared, "checkout", "-q", "main")
 
-    # --- up to date: nothing to say beyond that ----------------------------
     git(shared, "merge", "-q", "--ff-only", "origin/main")
     result = run(shared, env_file)
     check("an up-to-date tree says so",
           result.returncode == 0 and "up to date with origin/main" in result.stdout, result)
 
-    # --- failures never fail the session -----------------------------------
     git(private, "remote", "set-url", "origin", os.path.join(scratch, "gone.git"))
     result = run(private, env_file)
     check("a fetch that fails is reported, not fatal",

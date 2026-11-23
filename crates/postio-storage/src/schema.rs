@@ -1,101 +1,24 @@
-//! The schema, at head, as one constant -- and the steps that bring an
-//! earlier build's store up to it.
-//!
-//! # A new store, and an old one
-//!
-//! [`HEAD`] is the whole schema, and a new store is written from it in one
-//! batch. A store an earlier build wrote is stamped with what *that* build's
-//! `HEAD` hashed to ([`FINGERPRINT`]), and [`MIGRATIONS`] is how a stamp this
-//! build recognises is carried forward in place: snoozes, reminders, drafts,
-//! the operation queue and everything else that exists only in this file
-//! survive it. A stamp no migration leads from is refused
-//! (`Error::SchemaFromAnotherBuild`), and the way forward from there is a
-//! fresh store -- `postio_session::start_over` -- rather than a retry, which
-//! would meet the same file.
-//!
-//! # Changing the schema
-//!
-//! Edit [`HEAD`], and in the same commit:
-//!
-//! 1. copy the `HEAD` you are replacing, verbatim, to
-//!    `tests/schemas/<its fingerprint as eight hex digits>.sql`;
-//! 2. append a [`Migration`] from that fingerprint to the new one, whose
-//!    statements turn a store at the old schema into one at the new.
-//!
-//! `schema::tests::a_schema_change_comes_with_the_migration_that_reaches_it`
-//! fails until the second is done, and the storage suite's `migrations`
-//! case proves every recorded schema migrates to a store shaped exactly as a
-//! fresh one. Forward only, no down migration, and a step is never edited
-//! once a store may have run it.
-//!
-//! A store's steps and its new stamp run in one transaction, so a store cut
-//! off part-way is left at its old schema and stamp and runs them again on
-//! its next open. A step may therefore add and drop columns and copy rows,
-//! none of which can be guarded to run twice.
-//!
-//! A change no statement can express -- a column whose meaning changed, a
-//! constraint tightened under rows that break it -- does not get a step. It
-//! leaves the earlier stamp unreachable, and that store starts over. CLAUDE.md
-//! allows that ("no backwards compatibility") and still asks for the
-//! migration wherever one can be written; `docs/notes/2026-10-01-store-
-//! migrations-and-starting-over.md` has the reasoning.
-//!
-//! # What this is not the same as
-//!
-//! Four things differ from the schema the old engine held, and each is forced
-//! rather than chosen:
-//!
-//! 1. **`body_dictionaries` is gone.** Bodies were plain `TEXT` for a while,
-//!    because an index cannot tokenise compressed bytes and the body index
-//!    sat on the body column; once it moved to its own folded table (point
-//!    2), the column was free to be small again, and `crate::body_codec`
-//!    packs it per row — zstd when that is smaller, no shared dictionary.
-//! 2. **`body_search` is a sibling table** (`message_search_bodies`), not a
-//!    column: the body folded for search. The engine's
-//!    tokenizer does not remove diacritics and offers no option to, so the
-//!    fold FTS5 did inside its index is done by `postio_model::fold` before
-//!    the write.
-//! 3. **No table is `WITHOUT ROWID`.** Four were. Turso puts that behind an
-//!    experimental flag and will not build a secondary index on such a table,
-//!    which `idx_message_labels_label` and `idx_thread_links_thread` need. The
-//!    cost is one rowid per row on four narrow tables; the alternative was
-//!    losing two indexes that queries depend on.
-//! 4. **The two FTS5 virtual tables are not here.** They are indexes now, and
-//!    they live with the rest of the search schema in `postio-index`.
-//!
-//! Everything else is the schema the SQLCipher store held, transcribed by
-//! applying its twenty migrations and dumping the result rather than by
-//! retyping it. Those migrations went with that engine: a SQLCipher store
-//! cannot be read by Turso at all, so there was nothing for them to carry.
+//! The schema at head as one constant, and the steps that bring an earlier build's store up to it.
+//! A new store is written from [`HEAD`]; an older one is stamped with that build's [`FINGERPRINT`]
+//! and carried forward in place by [`MIGRATIONS`]. A stamp no step leads from is refused
+//! (`Error::SchemaFromAnotherBuild`) and the way forward is `postio_session::start_over`.
+//! To change the schema, edit [`HEAD`] and in the same commit copy the old `HEAD` to
+//! `tests/schemas/<fingerprint as eight hex digits>.sql` and append a [`Migration`];
+//! `a_schema_change_comes_with_the_migration_that_reaches_it` fails until then. Forward only; never
+//! edit a step a store may have run. Steps and stamp run in one transaction, so a step needs no
+//! re-run guard.
+//! A change no statement can express starts over rather than getting a step
+//! (`docs/notes/2026-10-01-store-migrations-and-starting-over.md`). No table is `WITHOUT ROWID`
+//! (Turso builds no secondary index on one); the FTS tables live in `postio-index`; `body_search`
+//! is a sibling table folded by `postio_model::fold` since the engine's tokenizer keeps diacritics.
 
-/// What this schema hashes to, for `PRAGMA user_version`.
-///
-/// # Why a hash rather than a number someone maintains
-///
-/// A hand-kept version integer has to be remembered, and the failure it
-/// guards against is exactly the one where somebody did not: a column was
-/// added to [`HEAD`] and nothing else changed, so an older store went on
-/// opening and failing one statement at a time. Hashing the schema text
-/// cannot be forgotten — edit `HEAD` at all and the stamp moves with it.
-///
-/// It is deliberately *not* a version. Nothing is ordered, nothing is
-/// comparable, and there is no "newer": two builds either agree or they do
-/// not. What orders them is [`MIGRATIONS`], which names each stamp it starts
-/// from and the one it leaves.
-///
-/// FNV-1a, 32 bits, which is what `user_version` has room for. A collision
-/// would let a mismatched store through — the failure this started from
-/// rather than a new one — and 32 bits against the handful of schemas a
-/// single-user alpha sees is not worth a hashing dependency.
+/// A hash, not a hand-kept number: editing [`HEAD`] at all moves the stamp, so it cannot be
+/// forgotten. Not ordered or comparable; [`MIGRATIONS`] orders them. FNV-1a 32 bits, which is what
+/// `user_version` has room for; a collision is not worth a hashing dependency.
 pub const FINGERPRINT: i64 = fingerprint(HEAD);
 
-/// FNV-1a over the schema text, at compile time: what a store written from
-/// `schema` is stamped with.
-///
-/// Folded through `i32` because that is what `user_version` is: a signed
-/// 32-bit field. Hashing to `u32` and widening instead makes every hash above
-/// `i32::MAX` read back negative, so the stamp never equals itself and every
-/// store demands a resync on its second open.
+/// Folded through `i32` because `user_version` is signed: widening a `u32` makes hashes above
+/// `i32::MAX` read back negative, so the stamp never equals itself.
 pub const fn fingerprint(schema: &str) -> i64 {
     let bytes = schema.as_bytes();
     let mut hash: u32 = 0x811c_9dc5;
@@ -108,30 +31,20 @@ pub const fn fingerprint(schema: &str) -> i64 {
     hash as i32 as i64
 }
 
-/// One step from a schema an earlier build stamped toward this one's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Migration {
-    /// The stamp of the schema this step starts from: that build's
-    /// [`FINGERPRINT`].
     pub from: i64,
-    /// The stamp of the schema it leaves.
     pub to: i64,
-    /// The statements, run in one transaction with the stamp (see the
-    /// module docs).
     pub statements: &'static str,
 }
 
-/// A stamp written as the eight hex digits `tests/schemas/` names it by.
 const fn stamp(hex: u32) -> i64 {
     hex as i32 as i64
 }
 
-/// Every step this build can take, oldest first. The last one's `to` is
-/// [`FINGERPRINT`]; a test holds it there.
+/// The last one's `to` is [`FINGERPRINT`]; a test holds it there.
 pub const MIGRATIONS: &[Migration] = &[
-    // `feature/postio-focus` at 355ac0cd, before its rebase onto `main`
-    // brought the three indexes below: the backfill's top-up and the
-    // reparse sweep seeking by `sort_at`, and the queue read by state.
+    // The backfill top-up and reparse sweep seek by `sort_at`, and the queue is read by state.
     Migration {
         from: stamp(0x3f95_ddb1),
         to: stamp(0xd8c1_e5df),
@@ -145,14 +58,9 @@ CREATE INDEX IF NOT EXISTS idx_messages_body_problems
 CREATE INDEX IF NOT EXISTS idx_operation_queue_state ON operation_queue (state, op_type);
 ",
     },
-    // `feature/postio-focus` at 33641f8e, before `main`'s macOS frontend was
-    // merged in: an account's backend location is one column whatever the
-    // backend (#1278, the Maildir backend), and a draft records whether it is
-    // being written as rich text (#1271).
-    //
-    // Neither a rename nor a new column can be guarded by `IF NOT EXISTS`;
-    // the transaction the steps run in is what keeps a store from meeting
-    // them twice.
+    // An account's backend location is one column whatever the backend (#1278), and a draft records
+    // whether it is rich text (#1271). Neither a rename nor a new column can be guarded by `IF NOT
+    // EXISTS`; the transaction keeps a store from meeting them twice.
     Migration {
         from: stamp(0xd8c1_e5df),
         to: stamp(0x8151_85a3),
@@ -162,16 +70,9 @@ ALTER TABLE accounts RENAME COLUMN jmap_session_url TO backend_location;
 ALTER TABLE drafts ADD COLUMN rich INTEGER NOT NULL DEFAULT 0;
 ",
     },
-    // Content ownership (#1780, ADR 0046): a message's immutable payload --
-    // decoded body, header block, MIME parts and their blobs, the search
-    // documents -- moves from the mailbox occurrence to an account-scoped
-    // `message_contents` row. Every existing message gets content of its
-    // own; nothing already stored is taken as evidence that two occurrences
-    // share bytes. A backend's native identity establishes sharing on the
-    // next resync.
-    //
-    // It adds and drops columns and copies rows; the transaction the steps
-    // run in is what makes that safe to cut off.
+    // Content ownership (#1780, ADR 0046): a message's immutable payload moves to an account-scoped
+    // `message_contents` row. Every message gets content of its own; only a backend's native
+    // identity establishes sharing, on the next resync.
     Migration {
         from: stamp(0x8151_85a3),
         to: stamp(0xdcb8_490f),
@@ -182,8 +83,6 @@ ALTER TABLE drafts ADD COLUMN rich INTEGER NOT NULL DEFAULT 0;
             include_str!("schema/content-projection.sql"),
         ),
     },
-    // Spec 010, search for Focus: what the search bar remembers. Both tables
-    // are new, so a store gains them empty and nothing is backfilled.
     Migration {
         from: stamp(0xdcb8_490f),
         to: stamp(0x3235_e866),
@@ -200,11 +99,8 @@ CREATE TABLE IF NOT EXISTS saved_search_seen (
 );
 ",
     },
-    // Spec 010 D30: the search walk's people, labels and attachment count
-    // as columns on `messages`, kept by triggers, so a broad search reads
-    // three columns where it ran three lookups per matched message. Filled
-    // here from the rows the store already holds, once, in the step's
-    // transaction.
+    // The search walk's people, labels and attachment count become columns on `messages` kept by
+    // triggers, filled here once from existing rows.
     Migration {
         from: stamp(0x3235_e866),
         to: stamp(0x72d3_2a05),
@@ -230,9 +126,6 @@ UPDATE messages SET
             include_str!("schema/walk-columns.sql"),
         ),
     },
-    // Spec 010 D30: a recent search remembers whether its count stopped at
-    // the walk's cap. A row from before is taken as exact, which is what
-    // its Recent row already said.
     Migration {
         from: stamp(0x72d3_2a05),
         to: stamp(0x804e_6e62),
@@ -240,10 +133,8 @@ UPDATE messages SET
 ALTER TABLE recent_searches ADD COLUMN capped INTEGER NOT NULL DEFAULT 0;
 ",
     },
-    // #1508: an account's weight and its read-receipt figure are a row kept
-    // by triggers, not aggregates over its mail. Each message's attachment
-    // bytes are filled from its rows, then each account's row from its
-    // messages, once, before the triggers that keep both from here on.
+    // #1508: an account's weight and read-receipt figure are a trigger-kept row, filled once here
+    // from the messages.
     Migration {
         from: stamp(0x804e_6e62),
         to: stamp(0xd154_aa70),
@@ -282,9 +173,8 @@ SELECT a.id,
 ",
         ),
     },
-    // #1915: how many resync passes have run since a mailbox's flags were
-    // last read in full, so a server whose change feed cannot be believed is
-    // swept every Nth pass. A store gains it at zero.
+    // #1915: resync passes since flags were last read in full, so a server whose change feed cannot
+    // be believed is swept every Nth pass.
     Migration {
         from: stamp(0xd154_aa70),
         to: stamp(0x069c_72b3),
@@ -292,8 +182,6 @@ SELECT a.id,
 ALTER TABLE sync_state ADD COLUMN passes_since_flag_sweep INTEGER NOT NULL DEFAULT 0;
 ",
     },
-    // A message whose body the server would not give up is remembered (#1918).
-    // A new table, so a store gains it empty and nothing is backfilled.
     Migration {
         from: stamp(0x069c_72b3),
         to: stamp(0x84e7_72c0),
@@ -305,16 +193,9 @@ CREATE TABLE IF NOT EXISTS body_failures (
 );
 ",
     },
-    // `feature/contacts-mac`: a contact is a person who owns addresses
-    // (specs/005-contacts), not one row per address. The old rows become
-    // people -- one per address, keeping the name the user set, where it came
-    // from, whether it was deleted (`suppressed`) and its vCard `uid` -- and
-    // the mail's evidence moves to the address. Addresses the old table never
-    // held get no person here: a person is made for them when one is first
-    // needed, so this step copies a row per contact and never one per message.
-    //
-    // The old `vcard_extra` is not carried: no path of any build wrote it, and
-    // the new `vcard` column holds a whole imported card, which it is not.
+    // A contact is a person who owns addresses (specs/005-contacts): old rows become people, one
+    // per address, and the mail's evidence moves to the address. No person is made for addresses
+    // the old table never held. The old `vcard_extra` is not carried: no path wrote it.
     Migration {
         from: stamp(0x84e7_72c0),
         to: stamp(0xd831_3529),
@@ -574,12 +455,8 @@ DROP TABLE contact_groups_rows;
 DROP TABLE contacts_rows;
 "#,
     },
-    // `feature/focus-contacts`: Contacts for Focus (specs/011-focus-contacts S1).
-    // A contact gains a kind, a saved mark, a name's parts and style, and the
-    // fields the card edits; an address gains a label and a bounce. Columns
-    // with defaults and two indexes, so it copies no row. The one backfill is
-    // `saved_at`: a person the user made or imported was asked for (005 FR-005),
-    // saved from when they were created.
+    // Columns with defaults and two indexes, so no row is copied; the one backfill is `saved_at`,
+    // set from creation for a person the user made or imported.
     Migration {
         from: stamp(0xd831_3529),
         to: stamp(0xaed8_856a),
@@ -604,10 +481,8 @@ CREATE INDEX idx_contacts_saved ON contacts (saved_at, kind, written);
 CREATE INDEX idx_contacts_kind_pending ON contacts (state, kind_source, kind_version);
 "#,
     },
-    // `feature/focus-contacts`: what the user decided about a correspondent
-    // moves onto the correspondent (specs/011-focus-contacts S3). A new
-    // table, empty: the host moves the address-keyed entries of `config.toml`
-    // and the sender treatments into it once, on its first run after this.
+    // A new table, empty: the host moves the address-keyed `config.toml` entries and sender
+    // treatments into it once.
     Migration {
         from: stamp(0xaed8_856a),
         to: stamp(0x7c07_02d9),
@@ -627,12 +502,8 @@ CREATE TABLE contact_settings (
 );
 "#,
     },
-    // `feature/focus-contacts`: the stats a card reads (specs/011-focus-contacts
-    // S5): a read count on the sighting, a per-month count and a ring of the
-    // newest fifty messages per address, and the Contacts tabs' counts. New
-    // tables, empty; the counts are filled from the people the store holds.
-    // What is already stored is not walked here -- the history fold writes it
-    // for the mail that predates contacts, and recording writes it from now.
+    // New tables, empty. What is already stored is not walked here: the history fold writes it for
+    // mail that predates contacts.
     Migration {
         from: stamp(0x7c07_02d9),
         to: stamp(0x81b8_027c),
@@ -699,9 +570,6 @@ BEGIN
 END;
 "#,
     },
-    // `feature/focus-contacts`: what is open between the user and a person is
-    // read over the ring of an address's newest messages, and a reminder is
-    // found by the message it hangs on (specs/011-focus-contacts S6).
     Migration {
         from: stamp(0x81b8_027c),
         to: stamp(0xb926_0dd0),
@@ -709,9 +577,6 @@ END;
 CREATE INDEX idx_reminders_anchor ON reminders (anchor_message_id);
 "#,
     },
-    // `feature/focus-contacts`: "Ignore sender" is a mark on the person's
-    // settings, and the phones and websites a person keeps (or was offered
-    // and refused) have a table (specs/011-focus-contacts S9).
     Migration {
         from: stamp(0xb926_0dd0),
         to: stamp(0x06ab_fba2),
@@ -727,8 +592,6 @@ CREATE TABLE contact_details (
 );
 "#,
     },
-    // `feature/focus-contacts`: what the body stage noticed about a sender,
-    // for the review to find records that look like one person.
     Migration {
         from: stamp(0x06ab_fba2),
         to: stamp(0x9fae_5a6c),
@@ -743,8 +606,6 @@ CREATE TABLE contact_evidence (
 CREATE INDEX idx_contact_evidence_value ON contact_evidence (kind, value);
 "#,
     },
-    // `feature/focus-contacts`: the four Suggestions switches in Settings >
-    // Contacts (specs/011-focus-contacts D7).
     Migration {
         from: stamp(0x9fae_5a6c),
         to: stamp(0x5689_ec6b),
@@ -756,8 +617,6 @@ CREATE TABLE contact_suggestions (
 );
 "#,
     },
-    // `fix/contacts-sync-bring-in`: the links sync keeps between a saved person
-    // and an address-book record, with the fields as of the last sync.
     Migration {
         from: stamp(0x5689_ec6b),
         to: stamp(0xf0d2_3b2a),
@@ -774,18 +633,10 @@ CREATE TABLE contact_sync_links (
 );
 "#,
     },
-    // `feature/focus-threads`: spec 013 (specs/013-focus-threads), the whole of
-    // it in this one step. A store at the previous stamp has never met spec
-    // 013, so every change the spec makes to the schema belongs here and not
-    // in a step of its own: add them to this statement list and to `HEAD`,
-    // and leave `from` alone.
-    //
-    // - `idx_threads_subject_recent`: the bounded subject fallback of
-    //   research R2 (`last_at >= ? ORDER BY last_at DESC LIMIT 1`).
-    // - `messages.own_line`: the sender's own words, cut to a line (R5).
-    // - `thread_mutes` and `thread_splits`: the person's mute and split of a
-    //   thread, keyed by a claimed `Message-ID` so they survive a merge and a
-    //   renumbering (R3).
+    // Spec 013 in one step: a store at the previous stamp never met it, so every schema change the
+    // spec makes goes here and in `HEAD`, leaving `from` alone. `idx_threads_subject_recent` bounds
+    // the subject fallback; `messages.own_line`; `thread_mutes` and `thread_splits`, keyed by a
+    // claimed `Message-ID` so they survive a merge and renumbering.
     Migration {
         from: stamp(0xf0d2_3b2a),
         to: FINGERPRINT,
@@ -816,33 +667,21 @@ CREATE TABLE thread_splits (
     },
 ];
 
-/// A mailbox's `bodies_owed` less the messages in it the server has refused
-/// (`body_failures`, still matching their `MODSEQ`): what is actually still
-/// to come (#1918). For a statement over `mailboxes`.
-///
-/// Written to be driven from `body_failures` and to reach `messages` only by
-/// primary key (`CROSS JOIN`, and the unary `+` that keeps the planner off
-/// the mailbox's message index): the other order walks every message in the
-/// folder, which is the scan #1612 removed.
-///
-/// Subtracted at read rather than kept by triggers: a refusal is rare, so the
-/// subquery walks a table that is nearly always empty, where a trigger would
-/// have to follow a message moving, being deleted or changing `MODSEQ`.
+/// Driven from `body_failures` and reaching `messages` only by primary key (`CROSS JOIN`, and the
+/// unary `+` keeping the planner off the mailbox's message index): the other order walks every
+/// message in the folder (#1612).
+/// Subtracted at read, not trigger-kept: a refusal is rare, and a trigger would have to follow a
+/// message moving, being deleted or changing `MODSEQ`.
 pub const BODIES_STILL_OWED: &str = "(mailboxes.bodies_owed - (SELECT count(*) FROM body_failures f \
     CROSS JOIN messages m ON m.id = f.message_id \
     WHERE +m.mailbox_id = mailboxes.id AND m.deleted_locally = 0 \
     AND m.body_state IN ('not_fetched', 'headers_only') AND f.mod_seq IS m.mod_seq))";
 
-/// The steps that carry a store stamped `found` to [`FINGERPRINT`], in the
-/// order they run: none for a store already there, and `None` when no
-/// recorded step leads from `found` -- a schema this build cannot carry
-/// forward, whether it is older than the first step or from a build that
-/// is not this one's ancestor.
+/// `None` when no recorded step leads from `found`: a schema this build cannot carry forward.
 pub fn migrations_from(found: i64) -> Option<Vec<&'static Migration>> {
     let mut at = found;
     let mut path = Vec::new();
     while at != FINGERPRINT {
-        // A cycle would be a list that names a stamp twice: never a path.
         if path.len() >= MIGRATIONS.len() {
             return None;
         }
@@ -853,12 +692,8 @@ pub fn migrations_from(found: i64) -> Option<Vec<&'static Migration>> {
     Some(path)
 }
 
-/// Every table, index and trigger the store needs, in one batch.
-///
-/// Creation order is tables, then indexes, then triggers, and tables are in
-/// alphabetical order rather than dependency order — a foreign key may be
-/// declared before the table it names, which is why [`crate::store`] runs this
-/// with foreign keys off and turns them on afterwards.
+/// Tables are alphabetical, not in dependency order, so a foreign key may name a later table;
+/// [`crate::store`] runs this with foreign keys off and enables them afterwards.
 pub const HEAD: &str = concat!(
     include_str!("schema/contents.sql"),
     r#"
@@ -2312,11 +2147,6 @@ END;
     include_str!("schema/footprint.sql")
 );
 
-/// What the schema declares, as names, without an engine.
-///
-/// A crude parse on purpose: it reads [`HEAD`] the way a reader does rather
-/// than the way an engine does, so the test below can run at the `--lib` tier
-/// in microseconds instead of opening a database.
 #[cfg(test)]
 fn declared() -> std::collections::BTreeSet<&'static str> {
     HEAD.lines()
@@ -2337,16 +2167,7 @@ mod tests {
 
     use super::*;
 
-    /// Every object the twenty migrations built, minus the ones this engine
-    /// deliberately does without.
-    ///
-    /// Generated by applying `src/migrations/*.sql` in order and reading
-    /// `sqlite_master`, so it describes the schema as it actually was rather
-    /// than as anyone remembers it. Transcription is the risk this test
-    /// exists for: `HEAD` was assembled from a dump, and a dump that lost an
-    /// index would still be a working schema and a slow one.
     const OLD_SCHEMA: &[&str] = &[
-        // 26 tables
         "accounts",
         "addresses",
         "attachments",
@@ -2373,7 +2194,6 @@ mod tests {
         "thread_links",
         "threads",
         "unsubscribe_activations",
-        // 55 indexes
         "idx_addresses_normalized",
         "idx_attachments_blob",
         "idx_attachments_draft",
@@ -2426,19 +2246,13 @@ mod tests {
         "idx_threads_subject",
         "idx_threads_subject_recent",
         "idx_unsubscribe_activations_account",
-        // 4 triggers
         "messages_bodies_owed_update",
         "messages_count_delete",
         "messages_count_insert",
         "messages_count_update",
     ];
 
-    /// Gone on purpose, each with the reason it is gone.
-    ///
-    /// The list that makes this test a record rather than a rubber stamp: an
-    /// object may only leave the schema by being named here, so "we dropped
-    /// it deliberately" has to be written down at the moment it stops being
-    /// true that nothing was lost.
+    /// An object may only leave the schema by being named here, with its reason.
     const DELIBERATELY_ABSENT: &[(&str, &str)] = &[
         (
             "body_dictionaries",
@@ -2503,10 +2317,6 @@ mod tests {
         );
     }
 
-    /// A schema change without its migration is caught here, before any
-    /// store meets it: editing `HEAD` moves [`FINGERPRINT`], and until a
-    /// step names the new stamp as its `to`, every store the previous build
-    /// wrote would be refused and have to start over.
     #[test]
     fn a_schema_change_comes_with_the_migration_that_reaches_it() {
         let last = MIGRATIONS.last().expect("at least one migration");

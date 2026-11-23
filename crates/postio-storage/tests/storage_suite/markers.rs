@@ -1,7 +1,3 @@
-//! Focus's markers, as the store keeps them (spec 007, data-model.md
-//! "`markers`"): at most one per message, written once, replaced by an
-//! invitation update, and a dismissal that stands.
-
 use chrono::{DateTime, TimeDelta, TimeZone, Utc};
 use postio_model::listing::{InviteAnswer, MarkerKind};
 use postio_model::{Message, MessageId};
@@ -15,7 +11,6 @@ fn at(hour: i64) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 9, 29, 0, 0, 0).unwrap() + TimeDelta::hours(hour)
 }
 
-/// `count` messages in one inbox, oldest first.
 async fn messages(connection: &Connection, count: i64) -> Vec<MessageId> {
     let (account, inbox) = test_support::account_with_inbox(connection).await;
     let mut ids = Vec::new();
@@ -35,8 +30,6 @@ async fn message(connection: &Connection) -> MessageId {
     messages(connection, 1).await[0]
 }
 
-/// An invitation to an event from 10:00 to 10:45 on the day, as its first
-/// `SEQUENCE` would put it.
 fn invitation(message: MessageId) -> Marker {
     Marker {
         message,
@@ -90,8 +83,6 @@ async fn a_marker_is_written_once_per_message_and_reads_back_whole() {
         "every field round-trips"
     );
 
-    // A second classification of the same message writes nothing: the
-    // marker it has stands, whatever the person has done with it.
     assert!(
         !markers
             .insert(&invitation(message))
@@ -117,8 +108,6 @@ async fn an_invitation_update_replaces_its_marker_and_a_dismissal_stands() {
     accepted.answer = Some(InviteAnswer::Accepted);
     markers.insert(&accepted).await.expect("written");
 
-    // SEQUENCE 1 moves the event an hour later: the marker takes the new
-    // time, and the answer given to the old time no longer holds.
     let mut moved = invitation(message);
     moved.starts_at = Some(at(11));
     moved.ends_at = Some(at(11) + TimeDelta::minutes(45));
@@ -130,8 +119,6 @@ async fn an_invitation_update_replaces_its_marker_and_a_dismissal_stands() {
     assert!(markers.replace(&moved).await.expect("replaced"));
     assert_eq!(markers.get(message).await.expect("a read"), Some(moved));
 
-    // A dismissed marker stays dismissed through a replacement: the
-    // cancellation's new state is kept, and the marker never returns.
     markers
         .dismiss(message, Some(at(3)))
         .await
@@ -147,7 +134,6 @@ async fn an_invitation_update_replaces_its_marker_and_a_dismissal_stands() {
     assert_eq!(read.invite_state, Some(InviteState::Cancelled));
     assert_eq!(read.dismissed_at, Some(at(3)), "the dismissal stands");
 
-    // With no marker to replace, a replacement writes nothing.
     assert!(
         !markers
             .replace(&invitation(other))
@@ -237,8 +223,6 @@ async fn the_store_refuses_a_marker_it_has_no_word_for() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let message = message(&connection).await;
-    // The words it has are stored: without this the refusals below would
-    // pass against a store with no table at all.
     for (kind, source) in [
         ("invite", "calendar"),
         ("question", "detector"),
@@ -382,7 +366,6 @@ async fn an_answer_waits_out_its_window_and_is_then_made_final() {
             .is_empty()
     );
 
-    // Undo inside the window takes the answer back, window and all.
     markers
         .answer(accepting, Some(InviteAnswer::Declining), Some(at(20)))
         .await

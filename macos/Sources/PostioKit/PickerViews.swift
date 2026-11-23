@@ -2,23 +2,13 @@ import Foundation
 import PostioFFI
 import SwiftUI
 
-/// A picker at the row (specs/009-focus-macos T092; screens 11 to 14): the
-/// title and what it acts on, the filter above the rows or the date field
-/// under them, the rows by section -- each with its dot, its detail and
-/// its number key -- and the footnote saying what happens next.
-///
-/// The field is AppKit's (`PickerPopover` owns it and hands it in as
-/// `field`), because it has to take and give up the keyboard when the
-/// controller says (`FocusPickerField`) and hand ↑/↓ and Return to
-/// `PickerModel`; this draws the model around it and runs a click. Rows
-/// have fixed heights, so the list's height is arithmetic and scrolls past
-/// a cap.
+/// The field is AppKit's (`PickerPopover`): it must take and give up the keyboard when the
+/// controller says (`FocusPickerField`) and hand arrows and Return to `PickerModel`. Fixed row
+/// heights make the list height arithmetic, scrolling past a cap.
 public struct PickerView<Field: View>: View {
     let model: PickerModel
     let field: (PickerFieldFfi) -> Field
 
-    /// `field` is the AppKit field for the kind asked for: the filter, or
-    /// the date field.
     public init(model: PickerModel, @ViewBuilder field: @escaping (PickerFieldFfi) -> Field) {
         self.model = model
         self.field = field
@@ -51,8 +41,6 @@ public struct PickerView<Field: View>: View {
         .accessibilityLabel(model.title)
     }
 
-    /// "Snooze until" on the left, what it acts on on the right; either
-    /// wraps rather than being cut.
     private var header: some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             Text(model.title)
@@ -111,15 +99,11 @@ public struct PickerView<Field: View>: View {
         }
     }
 
-    /// What an empty list says under words typed into the filter.
     private var nothing: String {
         let thing = model.kind == .move ? "folder" : "label"
         return "No \(thing) matches \u{201c}\(model.typed)\u{201d}"
     }
 
-    /// The typed date: the field, and under it the controller's line --
-    /// "Tab to type" until it has the keyboard, then the date the words
-    /// make, or what it wants.
     private var dateField: some View {
         VStack(alignment: .leading, spacing: 2) {
             field(.date).frame(height: 22)
@@ -145,22 +129,15 @@ public struct PickerView<Field: View>: View {
     }
 }
 
-/// The picker's fixed metrics: the width and the rows' heights, so the
-/// popover's size is arithmetic where it can be.
 public enum PickerMetrics {
-    /// The pack's 380.
     public static let width: CGFloat = 380
     public static let row: CGFloat = 34
     public static let section: CGFloat = 24
-    /// The most the rows take before they scroll: a move picker lists
-    /// every folder.
+    /// A move picker lists every folder, so rows scroll past this.
     public static let rowsCap: CGFloat = 340
-    /// The field's own height, in its band.
     public static let field: CGFloat = 28
-    /// The leading room before a row's name, where a label's dot goes.
     public static let dotColumn: CGFloat = 26
 
-    /// The rows' height for what `model` holds, before the cap.
     @MainActor
     public static func rowsHeight(for model: PickerModel) -> CGFloat {
         if model.rows.isEmpty { return model.typed.isEmpty ? 0 : row }
@@ -170,8 +147,6 @@ public enum PickerMetrics {
     }
 }
 
-/// One row: a label's dot, the name in bold, the detail on the right and
-/// the number key's cap.
 private struct PickerRowView: View {
     let row: PickerModel.Row
     let highlighted: Bool

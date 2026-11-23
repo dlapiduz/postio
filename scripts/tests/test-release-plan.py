@@ -27,8 +27,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -38,8 +36,6 @@ SCRIPT = HERE / "release-plan.sh"
 
 FAILURES: list[str] = []
 
-# Answers "how many successful nightly runs at this SHA" from a file, and
-# records what it was asked. No file: the API failed.
 GH_STUB = """#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$STUB_DIR/gh-args"
 [ -f "$STUB_DIR/nightly-count" ] || { echo "HTTP 502" >&2; exit 1; }
@@ -75,14 +71,9 @@ def repo(base: Path, *, version: str, tags: list[str]) -> Path:
     git(root, "commit", "-q", "-m", "a commit")
     for tag in tags:
         git(root, "tag", tag)
-    # The release commit itself, after the tags.
     (root / "README.md").write_text("x\n", encoding="utf-8")
     git(root, "add", "README.md")
     git(root, "commit", "-q", "-m", "the commit being pushed")
-    # What the workflow actually runs in: `actions/checkout` at depth 1,
-    # which has no tags locally whatever `fetch-tags` says. The first
-    # release.yml run on main (2026-10-01) saw "newest tag: none" there and
-    # planned to re-release v0.4.2 over the published one.
     origin = base / "origin.git"
     git(base, "clone", "-q", "--bare", str(root), str(origin))
     checkout = base / "checkout"
@@ -135,7 +126,6 @@ def main() -> int:
         print(f"missing {SCRIPT}", file=sys.stderr)
         return 1
 
-    # ── the ordinary push: nothing to release ─────────────────────────
     with tempfile.TemporaryDirectory() as d:
         out, proc = plan(Path(d), version="0.4.2", tags=["v0.4.1", "v0.4.2"])
         case(
@@ -144,8 +134,6 @@ def main() -> int:
             f"{out} / {proc.stderr}",
         )
 
-    # main said 0.3.0 while v0.4.2 existed; the version it names is already
-    # out, and it is not the newest either.
     with tempfile.TemporaryDirectory() as d:
         out, proc = plan(Path(d), version="0.3.0", tags=["v0.3.0", "v0.4.2"])
         case("a push behind the newest tag builds nothing", out.get("build") == "false", f"{out} / {proc.stderr}")
@@ -158,8 +146,6 @@ def main() -> int:
             f"{out} / {proc.stderr}",
         )
 
-    # Not knowing what is released must never read as "nothing is": the
-    # answer that publishes is the one that has to be proven.
     with tempfile.TemporaryDirectory() as d:
         out, proc = plan(Path(d), version="0.4.2", tags=["v0.4.2"], no_origin=True)
         case(
@@ -168,7 +154,6 @@ def main() -> int:
             f"exit {proc.returncode}: {out} / {proc.stderr}",
         )
 
-    # ── the release PR's merge ───────────────────────────────────────
     with tempfile.TemporaryDirectory() as d:
         out, proc = plan(Path(d), version="0.5.0", tags=["v0.4.2"])
         case(
@@ -185,7 +170,6 @@ def main() -> int:
         out, proc = plan(Path(d), version="1.0.0", tags=["v0.4.2"])
         case("a 1.x is not a pre-release", out.get("prerelease") == "false", str(out))
 
-    # Tags compare as versions, not strings: v0.10.0 is newer than v0.9.0.
     with tempfile.TemporaryDirectory() as d:
         out, proc = plan(Path(d), version="0.10.0", tags=["v0.9.0"])
         case("0.10.0 is newer than v0.9.0", out.get("publish") == "true", f"{out} / {proc.stderr}")
@@ -194,7 +178,6 @@ def main() -> int:
         out, proc = plan(Path(d), version="0.5.0", tags=[])
         case("a first release with no tags at all is a release", out.get("publish") == "true", f"{out} / {proc.stderr}")
 
-    # ── the suite ────────────────────────────────────────────────────
     with tempfile.TemporaryDirectory() as d:
         out, proc = plan(Path(d), version="0.5.0", tags=["v0.4.2"], nightly="1")
         case("a green nightly on this exact commit skips the suite", out.get("suite") == "skip", f"{out} / {proc.stderr}")
@@ -208,7 +191,6 @@ def main() -> int:
         out, proc = plan(Path(d), version="0.5.0", tags=["v0.4.2"], nightly=None)
         case("no answer about the nightly runs the suite", out.get("suite") == "run", f"{out} / {proc.stderr}")
 
-    # ── by hand ─────────────────────────────────────────────────────
     with tempfile.TemporaryDirectory() as d:
         out, proc = plan(Path(d), version="0.4.2", tags=["v0.4.2"], event="workflow_dispatch")
         case(

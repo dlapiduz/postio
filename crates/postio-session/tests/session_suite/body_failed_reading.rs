@@ -1,6 +1,3 @@
-//! A message whose body will not download says so, instead of promising it
-//! for ever (#1918).
-
 use chrono::Utc;
 use postio_model::{BodyState, EmailAddress, Message};
 use postio_session::reading::{Body, load_with_row};

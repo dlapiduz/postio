@@ -1,4 +1,3 @@
-//! Search chooses an occurrence after applying mailbox and flag constraints.
 use chrono::Utc;
 use postio_index::executor::facets;
 use postio_index::{SearchRequest, index, search};
@@ -196,8 +195,6 @@ async fn body_and_header_indexes_are_owned_once_and_repair_invalidates_them() {
                 .unwrap();
         assert_eq!(count, 1, "{table}");
     }
-    // A parser repair can change decoded text/header interpretation while
-    // the backend's underlying byte identity remains immutable.
     repo.set_body(
         second.id,
         &StoredBody {

@@ -4,12 +4,6 @@ import Testing
 
 @testable import PostioKit
 
-/// The dropdown is never wider than its panel (specs/010-focus-search).
-///
-/// The panel takes the search field's width, which is less than the design's
-/// 860 in a smaller window. A row that asks for more than that widens the
-/// whole dropdown, and SwiftUI centres the wider content in the panel: every
-/// line loses its start and its end, the hits and the footer included.
 @MainActor
 struct DropdownWidthTests {
     private func pills(_ count: Int) -> [DropdownModel.Pill] {
@@ -29,7 +23,6 @@ struct DropdownWidthTests {
     }
 
     @Test func theFirstPillsAreTheOnesShown() {
-        // Tab adds the first filter, so the first pill has to be on screen.
         let shown = PillsRow.fitting(widths: [200, 200, 200], spacing: 8, room: 420)
         #expect(shown == 2)
     }

@@ -1,21 +1,6 @@
-//! Newtype identifiers for every entity in the domain model.
-//!
-//! # Invariants
-//!
-//! * **Ids are opaque.** Nothing outside the storage layer may construct a
-//!   meaningful id, derive an ordering with semantic meaning from one, or parse
-//!   structure out of it. They exist to be compared and passed around.
-//! * **Ids are local.** A local id is unique within the database that issued it
-//!   and is meaningless anywhere else. It is *not* a server identifier — see
-//!   [`crate::ServerIdentifiers`] for those.
-//! * **Every entity type gets its own id type.** A `MailboxId` can never be
-//!   passed where a `MessageId` is expected; the compiler enforces it.
-//! * **`0` means "not yet assigned".** A value built in memory but not yet
-//!   written to the database carries `Self::UNASSIGNED`; storage replaces it
-//!   with the assigned row id on insert. Assigned ids are always `> 0`. Use
-//!   `is_assigned()` rather than comparing against a literal.
-//! * **Ids serialize transparently** as their inner scalar, so a serialized
-//!   entity looks the same as its database row.
+//! Ids are opaque and local: only storage constructs meaningful ones, and a local id means nothing
+//! outside its database (server ids are `ServerIdentifiers`). `0` is `UNASSIGNED`; assigned ids are
+//! always `> 0`, so use `is_assigned()`.
 
 use std::fmt;
 
@@ -24,15 +9,11 @@ use serde::{Deserialize, Serialize};
 macro_rules! local_id {
     ($(#[$doc:meta])* $name:ident) => {
         $(#[$doc])*
-        ///
-        /// A local database identifier. See the [module docs](self) for the
-        /// invariants that apply to every id type.
         #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
         #[serde(transparent)]
         pub struct $name(i64);
 
         impl $name {
-            /// The id of an entity that has not been persisted yet.
             pub const UNASSIGNED: Self = Self(0);
 
             /// Wraps a raw row id. Only the storage layer should call this with
@@ -41,12 +22,10 @@ macro_rules! local_id {
                 Self(value)
             }
 
-            /// The raw row id.
             pub const fn get(self) -> i64 {
                 self.0
             }
 
-            /// Whether this id refers to a persisted row (`> 0`).
             pub const fn is_assigned(self) -> bool {
                 self.0 > 0
             }
@@ -78,91 +57,38 @@ macro_rules! local_id {
     };
 }
 
+local_id!(AccountId);
+local_id!(IdentityId);
+local_id!(SignatureId);
+local_id!(MailboxId);
 local_id!(
-    /// Identifies a configured [`Account`](crate::Account).
-    AccountId
-);
-local_id!(
-    /// Identifies a sending [`Identity`](crate::Identity).
-    IdentityId
-);
-local_id!(
-    /// Identifies a named [`Signature`](crate::Signature).
-    SignatureId
-);
-local_id!(
-    /// Identifies a [`Mailbox`](crate::Mailbox).
-    MailboxId
-);
-local_id!(
-    /// Identifies a [`Message`](crate::Message).
-    ///
-    /// This is Postio's own id, *not* the RFC 5322 `Message-ID` header — that is
-    /// [`RfcMessageId`].
+    /// Postio's own id, not the RFC 5322 `Message-ID` (`RfcMessageId`).
     MessageId
 );
+local_id!(ThreadId);
+local_id!(AttachmentId);
+local_id!(ContactId);
+local_id!(LabelId);
 local_id!(
-    /// Identifies a [`Thread`](crate::Thread).
-    ThreadId
-);
-local_id!(
-    /// Identifies an [`Attachment`](crate::Attachment).
-    AttachmentId
-);
-local_id!(
-    /// Identifies a [`Contact`](crate::Contact).
-    ContactId
-);
-local_id!(
-    /// Identifies a [`Label`](crate::Label).
-    LabelId
-);
-local_id!(
-    /// Identifies a row of the store's `addresses` table: one address,
-    /// however many messages name it. What search facets count people by
-    /// (spec 010), so a count names a person once whatever display names
-    /// their mail arrived under.
-    ///
-    /// A [`Contact`](crate::Contact) owns one or more of these, and an
-    /// address belongs to at most one contact (specs/005-contacts R1).
+    /// A row of `addresses`: one address however many messages name it, so search facets count a
+    /// person once.
     AddressId
 );
+local_id!(ContactGroupId);
+local_id!(DraftId);
 local_id!(
-    /// Identifies a [`ContactGroup`](crate::ContactGroup).
-    ContactGroupId
-);
-local_id!(
-    /// Identifies a [`Draft`](crate::Draft).
-    DraftId
-);
-local_id!(
-    /// Identifies a cross-account move saga (#188, ADR 0005 Q9) — the
-    /// three-phase copy/confirm/remove that stands in for the transaction
-    /// two per-account queues cannot share.
+    /// A cross-account move saga: the three-phase copy/confirm/remove standing in for a transaction
+    /// two queues cannot share (#188, ADR 0005 Q9).
     CrossAccountMoveId
 );
 local_id!(
-    /// Identifies a row in the local-first mutation queue.
-    ///
-    /// Ordering *is* meaningful for this one, and only this one: the queue
-    /// drains by ascending id, which is what makes it survive a restart in the
-    /// order the user performed the actions.
+    /// Ordering is meaningful for this id only: the queue drains by ascending id, so it survives a
+    /// restart in the order the user acted.
     OperationId
 );
-local_id!(
-    /// Identifies a row in the one-click-unsubscribe activation log (#971).
-    UnsubscribeActivationId
-);
-local_id!(
-    /// Identifies one delivery of a Focus digest (spec 007): what a rule held
-    /// until it came due, surfaced as one row of the inbox.
-    DeliveryId
-);
-local_id!(
-    /// Identifies a Focus reminder (spec 007 US5): a conversation that comes
-    /// back to the top of the inbox if nobody has replied by a time.
-    ReminderId
-);
+local_id!(UnsubscribeActivationId);
+local_id!(DeliveryId);
+local_id!(ReminderId);
 
 macro_rules! scalar_id {
     ($(#[$doc:meta])* $name:ident, $inner:ty) => {
@@ -172,12 +98,10 @@ macro_rules! scalar_id {
         pub struct $name($inner);
 
         impl $name {
-            /// Wraps a raw server-side value.
             pub const fn new(value: $inner) -> Self {
                 Self(value)
             }
 
-            /// The raw server-side value.
             pub const fn get(self) -> $inner {
                 self.0
             }
@@ -204,57 +128,36 @@ macro_rules! scalar_id {
 }
 
 scalar_id!(
-    /// A server-assigned message number within a mailbox.
-    ///
-    /// Only meaningful together with the [`UidValidity`] it was observed under:
-    /// when the server changes `UIDVALIDITY`, every `Uid` for that mailbox is
-    /// stale and the mailbox must be resynchronized from scratch.
+    /// Only meaningful with the `UidValidity` it was observed under: when that changes, every `Uid`
+    /// for the mailbox is stale.
     Uid,
     u32
 );
+scalar_id!(UidValidity, u32);
 scalar_id!(
-    /// The generation counter for a mailbox's [`Uid`] space.
-    UidValidity,
-    u32
-);
-scalar_id!(
-    /// A mailbox's naming generation, as the engine tracks it (#543).
-    ///
-    /// Opaque above the backend seam: the only operations that mean anything
-    /// are equality — "has the server renumbered since I looked?" — and
-    /// persistence. For IMAP it carries the `UIDVALIDITY` counter; a backend
-    /// whose ids never invalidate reports none at all. Nothing above an
-    /// adapter derives, compares magnitudes, or does arithmetic on one.
+    /// Opaque above the backend seam: only equality (has the server renumbered?) and persistence
+    /// mean anything.
+    /// For IMAP it carries `UIDVALIDITY`; nothing above an adapter does arithmetic on it (#543).
     Generation,
     u32
 );
 scalar_id!(
-    /// A monotonically increasing per-mailbox modification sequence.
-    ///
-    /// Used for incremental resynchronization; larger means newer.
+    /// Larger means newer; used for incremental resynchronization.
     ModSeq,
     u64
 );
 
-/// The server's own name for a message, whatever the protocol (#543,
-/// ADR 0018 Q2).
-///
-/// Opaque above the backend seam: a JMAP `Email` id or a Gmail message id
-/// is a server-wide string with no structure worth knowing. The IMAP
-/// adapter packs its generation-and-uid pair into one and derives its wire
-/// `Uid` back out; nothing outside that adapter reads structure into a
-/// `RemoteId`, and nothing outside a backend adapter constructs one.
+/// The server's own name for a message (#543, ADR 0018 Q2). Opaque above the backend seam: the IMAP
+/// adapter packs generation and uid into one; nothing else reads structure into it.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct RemoteId(String);
 
 impl RemoteId {
-    /// Wraps a server-assigned message identity.
     pub fn new(value: impl Into<String>) -> Self {
         Self(value.into())
     }
 
-    /// The identity, as the text a database column or wire call carries.
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -266,20 +169,15 @@ impl fmt::Display for RemoteId {
     }
 }
 
-/// The key of a blob in the content-addressed blob store.
-///
-/// Opaque to the domain model: it is produced and resolved by the storage layer.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct BlobId(String);
 
 impl BlobId {
-    /// Wraps a blob store key.
     pub fn new(value: impl Into<String>) -> Self {
         Self(value.into())
     }
 
-    /// The blob store key.
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -291,55 +189,31 @@ impl fmt::Display for BlobId {
     }
 }
 
-/// An RFC 5322 `Message-ID`, as it appears in `Message-ID`, `In-Reply-To` and
-/// `References` headers.
-///
-/// # Invariants
-///
-/// * The stored value is trimmed and **always** wrapped in angle brackets, so
-///   `a@b` and `<a@b>` are the same value. Construction normalizes; there is no
-///   way to build an unnormalized one, including through `Deserialize`.
-/// * Original case is preserved for round-tripping, but equality, ordering and
-///   hashing are **case-insensitive** — this is what makes JWZ threading match
-///   messages whose headers were rewritten in transit.
-/// * This is a *header* value and is not unique in any local database. The local
-///   identity of a message is [`MessageId`].
+/// Stored trimmed and always in angle brackets, so `a@b` and `<a@b>` are equal; construction,
+/// including `Deserialize`, normalizes. Equality, ordering and hashing are case-insensitive so JWZ
+/// threading matches headers rewritten in transit; the case is kept. Not unique locally: the local
+/// identity is `MessageId`.
 #[derive(Debug, Clone)]
 pub struct RfcMessageId(String);
 
 impl RfcMessageId {
-    /// Normalizes and wraps a `Message-ID` header value.
     pub fn new(value: impl AsRef<str>) -> Self {
         let trimmed = value.as_ref().trim();
         let inner = trimmed.trim_start_matches('<').trim_end_matches('>').trim();
         Self(format!("<{inner}>"))
     }
 
-    /// The normalized value, angle brackets included.
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
-    /// The value without its angle brackets.
     pub fn without_brackets(&self) -> &str {
         self.0.trim_start_matches('<').trim_end_matches('>')
     }
 
-    /// The case-insensitive identity, materialized: lowercased, brackets
-    /// included.
-    ///
-    /// What `thread_links` stores and looks up by (#1587). This type's
-    /// equality has always been case-insensitive — that is what makes JWZ
-    /// threading match headers rewritten in transit — but expressing that in
-    /// SQL as `COLLATE NOCASE` forced a collated index, and Turso's planner
-    /// will not bind an equality through a collated index column: every
-    /// per-message parent lookup walked the account's whole link table, which
-    /// is the linear write-cost curve the issue measured. Folding the *key*
-    /// lets a plain binary index serve the same identity.
-    ///
-    /// Only the lookup key: [`as_str`](Self::as_str) keeps the original case,
-    /// because a `References` header we emit must quote the parent's id
-    /// byte-for-byte.
+    /// Lowercased lookup key for `thread_links` (#1587): `COLLATE NOCASE` forced a collated index,
+    /// which Turso's planner will not bind an equality through. Only the key: `as_str` keeps the
+    /// case, because an emitted `References` must quote the parent byte-for-byte.
     pub fn folded(&self) -> String {
         self.0.to_ascii_lowercase()
     }
@@ -387,7 +261,6 @@ impl Serialize for RfcMessageId {
 
 impl<'de> Deserialize<'de> for RfcMessageId {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        // Goes through `new` so a deserialized value obeys the same invariants.
         Ok(Self::new(String::deserialize(deserializer)?))
     }
 }
@@ -396,14 +269,8 @@ impl<'de> Deserialize<'de> for RfcMessageId {
 mod tests {
     use super::*;
 
-    // `RfcMessageId`'s `PartialEq` is case-insensitive by design (see the
-    // type's own doc comment: it is what lets JWZ threading match a header
-    // rewritten in transit), which means `Ord` and `Hash` are *hand-written*
-    // rather than derived -- `derive`d versions would compare the original,
-    // case-preserved bytes and silently disagree with `Eq` about which
-    // values are the same one. That disagreement is exactly the kind of bug
-    // that breaks a `HashSet` without ever panicking: a lookup that should
-    // hit misses, and two "equal" values both end up stored.
+    // `Ord` and `Hash` are hand-written: derived ones compare case-preserved bytes and would
+    // disagree with the case-insensitive `Eq`, silently breaking a `HashSet`.
     #[test]
     fn case_variants_of_the_same_id_order_as_equal() {
         let lower = RfcMessageId::new("<abc123@example.com>");
@@ -430,9 +297,6 @@ mod tests {
 
     #[test]
     fn ordering_still_distinguishes_genuinely_different_ids() {
-        // The point above is that case does not matter, not that nothing
-        // does -- a hand-written `Ord` that always returned `Equal` would
-        // pass both tests above and be useless for anything sorted.
         let a = RfcMessageId::new("<a@example.com>");
         let b = RfcMessageId::new("<b@example.com>");
 

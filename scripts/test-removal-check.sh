@@ -1,52 +1,24 @@
 #!/usr/bin/env bash
-# If these test cases went, would any mutant they catch go uncaught?
-#
-# Spec 012's third question (specs/012-test-suite-value, US3), and the only
-# licence to remove a test under it (FR-007). Coverage can say two cases run
-# the same code; it cannot say they assert the same things. Mutation can:
-# a case is redundant exactly when every mutant it catches, something else
-# catches too.
-#
-# Two passes over the named source files (research R4):
-#
-#   A. cargo-mutants with the suite *without* the cases -- a nextest `-E`
-#      filter through `--cargo-test-arg`, which is how cargo-mutants passes
-#      arguments to the test tool;
-#   B. only the mutants A missed that docs/mutants-baseline.txt does not
-#      already list, re-run *with* the cases.
-#
-# A mutant B catches is one only these cases catch: a new survivor if they
-# go. None, and the verdict is "safe". B costs what A missed, not a second
-# full run. The baseline diff is `comm` over sorted lines, as
-# scripts/mutants.sh does it.
-#
-# Mutation is slow and heavy -- a rebuild and a test run per mutant -- and
-# scripts/mutants.sh records what it did to a shared workstation. So this
-# refuses to run where CI is unset, unless POSTIO_ALLOW_MUTANTS_HERE=1 says
-# this machine is yours. On CI, `.github/workflows/test-audit.yml` runs it.
+# If these test cases went, would any mutant they catch go uncaught? Spec 012's third question
+# (US3), the only licence to remove a test under it (FR-007):
+# a case is redundant exactly when every mutant it catches, something else catches too.
+# Two passes over the named source files (research R4): A) cargo-mutants with the suite without the
+# cases (a nextest `-E` filter through `--cargo-test-arg`);
+# B) only the mutants A missed that docs/mutants-baseline.txt does not list, re-run with the cases.
+# A mutant B catches is one only these cases catch.
+# Slow and heavy, so it refuses to run where CI is unset unless POSTIO_ALLOW_MUTANTS_HERE=1; on CI,
+# `.github/workflows/test-audit.yml` runs it.
 #
 #   scripts/test-removal-check.sh [--scope <filterset>] [--package <crate>] [--re <regex>]...
 #                                 [--test-package <crate>]...
 #                                 <source file>... -- '<binary id> <test name>'...
 #
-# --scope runs both passes over only the tests that filterset selects -- a
-# parity cluster's own suites, say, instead of all of postio-gtk's at ~4.6 s
-# a case, which no CI job could finish per mutant. It errs one way only: a
-# mutant that only a test outside the scope would catch can make the cases
-# look unique, never make them look removable.
-#
-# --package and --re narrow which mutants are made: cargo-mutants' own
-# package and name filters, for a glue file with hundreds of mutants of
-# which a candidate reaches a handful (postio-ffi's session.rs has 533).
-# `-f` alone finds nothing in a crate cargo-mutants was not pointed at, so
-# a check on another crate's files names it with --package. A mutant left
-# out by --re is not judged at all, so name every function the cases call.
-#
-# --test-package names a crate whose tests must run against each mutant.
-# cargo-mutants runs only the mutated package's tests by default, so a case
-# in another crate -- a Mac bridge case exercising postio-config, say --
-# would otherwise never run in either pass, and removing it would read as
-# safe for a reason that has nothing to do with redundancy.
+# --scope limits both passes to the tests a filterset selects; it errs one way only (a mutant only
+# an outside test catches can make the cases look unique, never removable).
+# --package and --re narrow which mutants are made (cargo-mutants' own filters); a mutant left out
+# by --re is not judged, so name every function the cases call.
+# --test-package names a crate whose tests must run against each mutant: cargo-mutants runs only the
+# mutated package's tests.
 #
 # Writes target/test-audit/verdict.json. Exit status: 0 safe; 1 not safe;
 # 2 bad arguments, a missing tool, or refused to run here.
@@ -108,7 +80,6 @@ if ! command -v cargo >/dev/null 2>&1; then
     exit 2
 fi
 
-# `not ((binary_id(=a) & test(=x)) | (binary_id(=b) & test(=y)))`
 filter=
 for case in "${CASES[@]}"; do
     binary=${case%% *}
@@ -125,8 +96,8 @@ fi
 
 FILE_ARGS=()
 [ -n "$PACKAGE" ] && FILE_ARGS+=(-p "$PACKAGE")
-# cargo-mutants runs the mutated package's tests and no others; cases that
-# live in another crate are only judged if that crate is named here.
+# cargo-mutants runs the mutated package's tests only; cases in another crate are judged only if the
+# crate is named here.
 for package in ${TEST_PACKAGES[@]+"${TEST_PACKAGES[@]}"}; do
     FILE_ARGS+=(--test-package "$package")
 done
@@ -142,7 +113,6 @@ WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$OUT"
 
-# --no-shuffle and --jobs 1 for the reasons scripts/mutants.sh gives.
 env -u RUSTUP_TOOLCHAIN cargo mutants --test-tool=nextest --no-shuffle --jobs 1 "${FILE_ARGS[@]}" \
     --output "$WORK/a" ${A_RES[@]+"${A_RES[@]}"} --cargo-test-arg=-E "--cargo-test-arg=$filter" || true
 if [ ! -f "$WORK/a/mutants.out/missed.txt" ]; then

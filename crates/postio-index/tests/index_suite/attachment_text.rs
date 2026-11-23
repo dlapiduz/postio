@@ -1,14 +1,3 @@
-//! The `attachments` half of the index: located text from attachments
-//! already on this machine (spec 010 D10, T122).
-//!
-//! Keyed by content, not by the attachment row. A message's attachment rows
-//! are a projection a refetch replaces (`set_attachment_blob` says why the
-//! row id does not survive one), and since #1805 the immutable payload is a
-//! `message_contents` row that every occurrence of the same message shares.
-//! The text of an attachment is a fact about that payload: keyed by
-//! `(content_id, position)` it survives a refetch, is extracted once however
-//! many folders hold the message, and goes when the last occurrence goes.
-
 use chrono::Utc;
 use postio_extract::{EXTRACTOR_VERSION, Extracted, Limit, Location, Outcome, Unit};
 use postio_index::index;
@@ -20,7 +9,6 @@ use postio_storage::repository::MessageRepository;
 use postio_storage::sql::{self, RowExt as _};
 use postio_storage::test_support;
 
-/// One message carrying `parts`: (file name, MIME type, blob on disk?).
 async fn message_with(
     connection: &Checkout,
     account: AccountId,
@@ -53,7 +41,6 @@ async fn message_with(
     (message.id, ids)
 }
 
-/// How an attachment's extraction went, read straight from its record.
 #[derive(Debug, PartialEq, Eq)]
 struct Extraction {
     version: u32,
@@ -177,7 +164,6 @@ async fn one_row_per_unit_as_extracted_and_folded_for_the_index() {
         ],
         "the text as written, in order, each with where it was"
     );
-    // Folded on the way in, as bodies are: "cafe" meets "Café".
     let matched = count(
         &connection,
         "SELECT count(*) FROM attachment_passages WHERE fts_match(text_search, 'cafe')",
@@ -185,7 +171,6 @@ async fn one_row_per_unit_as_extracted_and_folded_for_the_index() {
     .await;
     assert_eq!(matched, 1);
 
-    // Indexing again replaces rather than adds.
     assert!(
         index::index_attachment_text(&connection, ids[0], &extracted)
             .await
@@ -339,7 +324,6 @@ async fn a_second_occurrence_of_the_same_content_shares_one_extraction() {
         "the other occurrence reads the same text"
     );
 
-    // Removing one occurrence keeps the text for the other.
     MessageRepository::new(&connection)
         .delete(&[first])
         .await
@@ -387,7 +371,6 @@ async fn the_queue_is_attachments_on_disk_with_no_current_row() {
     assert_eq!(missing.mime_type, "application/pdf");
     assert_eq!(missing.name.as_deref(), Some("here.pdf"));
 
-    // The event path asks about named messages only.
     assert_eq!(
         index::attachments_missing_text_of(&connection, &[message])
             .await
@@ -402,7 +385,6 @@ async fn the_queue_is_attachments_on_disk_with_no_current_row() {
             .is_empty()
     );
 
-    // A row made by an older extractor is missing again.
     sql::execute(
         &connection,
         "UPDATE attachment_extraction SET version = version - 1",
@@ -551,9 +533,6 @@ async fn named_units_are_read_back_by_where_they_are_whatever_a_sheet_is_called(
     );
 }
 
-/// The parts the search still owes a reading, as the index keeps them for
-/// it (`attachment_text_owed`), beside what the indexer's queue would say
-/// from scratch: every downloaded part with no row from this extractor.
 async fn owed_and_queued(connection: &Checkout) -> (Vec<(i64, i64)>, Vec<(i64, i64)>) {
     let pairs = |row: &turso::Row| Ok((row.col(0)?, row.col(1)?));
     let owed = sql::all(
@@ -600,10 +579,6 @@ fn read(text: &str) -> Extracted {
     }
 }
 
-/// The search asks "is any downloaded attachment still unread?" on every
-/// query, so it cannot ask the queue -- a walk of every attachment when the
-/// answer is no. The index keeps the answer as a set the writes maintain,
-/// and every write that moves the queue must move the set the same way.
 #[tokio::test]
 async fn what_the_search_is_owed_follows_the_queue_through_every_write() {
     let (_store, connection, account, inbox) = world().await;
@@ -633,7 +608,6 @@ async fn what_the_search_is_owed_follows_the_queue_through_every_write() {
         .expect("downloaded");
     assert_owed_is_queued(&connection, "downloading the second part", 1).await;
 
-    // A second occurrence of one payload owes one reading, not two.
     let identity = Some(ContentIdentity::new("jmap-email", "email-9"));
     let parts = [("budget.txt", "text/plain", true)];
     let (shared, shared_ids) =
@@ -641,7 +615,6 @@ async fn what_the_search_is_owed_follows_the_queue_through_every_write() {
     let (_, other_ids) = message_with(&connection, account, inbox, identity, &parts).await;
     assert_owed_is_queued(&connection, "two occurrences of one payload", 2).await;
 
-    // Evicting one occurrence's bytes leaves the other's to read.
     sql::execute(
         &connection,
         "UPDATE attachments SET blob_id = NULL WHERE id = ?1",
@@ -675,8 +648,6 @@ async fn what_the_search_is_owed_follows_the_queue_through_every_write() {
         .expect("indexed");
     assert_owed_is_queued(&connection, "reading everything", 0).await;
 
-    // A row from an older extractor is owed again, and reading it again
-    // settles it.
     sql::execute(
         &connection,
         "UPDATE attachment_extraction SET version = version - 1",
@@ -690,8 +661,6 @@ async fn what_the_search_is_owed_follows_the_queue_through_every_write() {
         .expect("indexed");
     assert_owed_is_queued(&connection, "reading one of them again", 2).await;
 
-    // A message going takes what it owed, unless another occurrence still
-    // holds the bytes.
     sql::execute(
         &connection,
         "UPDATE attachments SET blob_id = 'blob-budget.txt' WHERE id = ?1",
@@ -711,7 +680,6 @@ async fn what_the_search_is_owed_follows_the_queue_through_every_write() {
         .expect("delete");
     assert_owed_is_queued(&connection, "deleting the first message", 1).await;
 
-    // A half rebuilt from nothing owes everything on disk.
     sql::execute(
         &connection,
         "UPDATE search_schema SET version = 0 WHERE half = 'attachments'",
@@ -724,7 +692,6 @@ async fn what_the_search_is_owed_follows_the_queue_through_every_write() {
         .expect("schema again");
     assert_owed_is_queued(&connection, "rebuilding the half", 1).await;
 
-    // And a store last opened by another extractor is counted again.
     sql::execute(
         &connection,
         "UPDATE search_schema SET version = 0 WHERE half = 'extractor'",
@@ -741,9 +708,6 @@ async fn what_the_search_is_owed_follows_the_queue_through_every_write() {
     assert_owed_is_queued(&connection, "a new extractor", 1).await;
 }
 
-/// A part skipped for want of the helper is recorded apart from one skipped
-/// for good, and putting it back puts it back in what the search is owed
-/// too.
 #[tokio::test]
 async fn a_skip_for_want_of_the_helper_can_be_put_back_in_the_queue() {
     let (_store, connection, account, inbox) = world().await;

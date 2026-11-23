@@ -1,56 +1,8 @@
-//! The resolver/HTTP layer the probe runs on.
-//!
-//! The probe never opens a socket itself. It asks a [`DiscoveryTransport`]
-//! for an autoconfig document or an SRV report and does the rest — ordering,
-//! timeouts, cancellation, mapping — in pure code. That is what lets the
-//! whole default test suite run with a mocked transport and no network.
-//!
-//! [`PimalayaTransport`] is the real one. It delegates to `io-pim-discovery`,
-//! which already implements Mozilla autoconfig (all three endpoints) and
-//! RFC 6186 SRV lookups; the only thing it adds is moving those blocking
-//! clients onto the blocking pool so an async caller is never stalled.
-//!
-//! # Cancelling a blocking call you cannot abort
-//!
-//! Moving a blocking call onto [`tokio::task::spawn_blocking`] keeps the
-//! *caller's* runtime responsive; it does not make the call itself
-//! cancellable. [`blocking`] awaits the spawned task's `JoinHandle`, and
-//! [`Probe::attempt`](super::Probe::attempt) races that await against a
-//! timeout and the caller's [`CancelToken`] — so
-//! when either wins, this function's own future is dropped, but the
-//! `JoinHandle` being dropped only *detaches* the spawned task. Nothing can
-//! abort it; tokio has no way to interrupt a thread mid-`read`.
-//!
-//! So the socket is cancelled instead of the task. `io-pim-discovery` owns
-//! the protocol but not the stream: both of its std clients take a
-//! [`with_factory`](io_pim_discovery::autoconfig::client::DiscoveryAutoconfigClientStd::with_factory)
-//! hook, and `DiscoveryStream` is nothing more than `Read + Write`. This
-//! module therefore hands them a [`Cancellable`] stream of its own, which
-//! checks the probe's token before every read and every write and fails the
-//! exchange the moment it is set. The detached task then unwinds through
-//! `io-pim-discovery`'s own error path and drops its socket, rather than
-//! running to whatever that client decides is done.
-//!
-//! Two bounds rather than one, because a check between reads does nothing
-//! while a read is parked:
-//!
-//! * **Cancellation** ends the request at its next I/O boundary — for an
-//!   autoconfig fetch, essentially immediately.
-//! * **[`DISCOVERY_IO_TIMEOUT`]** ends it anyway if the peer accepted the
-//!   connection and then went silent. Before this, that case had no bound at
-//!   all: `pimalaya-stream`'s default `Retry` budget is a minute *per
-//!   read*, and the DNS path armed no socket deadline whatsoever.
-//!
-//! `Stream::connect_tcp`/`connect_tls` take no connect deadline, so the
-//! HTTP and HTTPS paths first call [`reach`]: resolve, then
-//! [`TcpStream::connect_timeout`] per address, then drop that socket. A
-//! peer that accepts nothing fails there within [`DISCOVERY_IO_TIMEOUT`]
-//! instead of parking the thread on the OS default (a couple of minutes).
-//! Only a host that stops accepting between `reach` and the real connect can
-//! still hang, and `pimalaya-stream` offers no way to hand it a socket we
-//! connected ourselves. See #57, #281.
-//!
-//! `postio-iigq` is the audit that found the original defect.
+//! The probe never opens a socket itself; a mocked `DiscoveryTransport` runs the default suite with
+//! no network.
+//! Cancellation reaches the socket through `Cancellable`, since a dropped `spawn_blocking` handle
+//! only detaches the task; `DISCOVERY_IO_TIMEOUT` bounds a peer that accepts and goes silent (#57,
+//! #281).
 
 use std::io::{self, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -65,10 +17,6 @@ pub use io_pim_discovery::rfc6186::service::{DiscoverySrvReport, DiscoverySrvSer
 
 use crate::discovery::ProbeStep;
 
-/// Whatever went wrong reaching a discovery endpoint.
-///
-/// Intentionally opaque: the probe treats every transport failure the same
-/// way (move on to the next step) and only keeps the message for the report.
 #[derive(Clone, Debug, thiserror::Error)]
 #[error("{message}")]
 pub struct TransportError {
@@ -76,47 +24,32 @@ pub struct TransportError {
 }
 
 impl TransportError {
-    /// Builds a transport error from a message.
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
         }
     }
 
-    /// The underlying message.
     pub fn message(&self) -> &str {
         &self.message
     }
 }
 
-/// Which autoconfig URL to fetch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AutoconfigEndpoint<'a> {
-    /// `https://<domain>/.well-known/autoconfig/mail/config-v1.1.xml`, served
-    /// by the domain itself.
     WellKnown {
-        /// The domain part of the address.
         domain: &'a str,
     },
-    /// `https://autoconfig.<domain>/mail/config-v1.1.xml?emailaddress=...`,
-    /// the ISP-hosted variant. Needs the local part, which some providers use
-    /// to return per-user settings.
     Subdomain {
-        /// The local part of the address.
         local_part: &'a str,
-        /// The domain part of the address.
         domain: &'a str,
     },
-    /// `https://autoconfig.thunderbird.net/v1.1/<domain>`, the community
-    /// database.
     Ispdb {
-        /// The domain part of the address.
         domain: &'a str,
     },
 }
 
 impl AutoconfigEndpoint<'_> {
-    /// The probe step this endpoint belongs to.
     pub fn step(&self) -> ProbeStep {
         match self {
             Self::WellKnown { .. } => ProbeStep::WellKnown,
@@ -125,7 +58,6 @@ impl AutoconfigEndpoint<'_> {
         }
     }
 
-    /// The domain being probed.
     pub fn domain(&self) -> &str {
         match self {
             Self::WellKnown { domain }
@@ -145,78 +77,40 @@ impl AutoconfigEndpoint<'_> {
     }
 }
 
-/// Owned mirror of [`AutoconfigEndpoint`], so the borrowed form can cross
-/// into a blocking task.
 enum OwnedEndpoint {
     WellKnown(String),
     Subdomain(String, String),
     Ispdb(String),
 }
 
-/// The network operations discovery needs.
-///
-/// Every method takes the caller's [`CancelToken`]. It is not decoration: a
-/// transport that cannot see the token cannot stop the request it started,
-/// and the probe abandoning its *await* leaves the socket open. #57.
+/// Every method takes the caller's `CancelToken`: a transport that cannot see it cannot stop the
+/// request it started (#57).
 #[async_trait]
 pub trait DiscoveryTransport: Send + Sync {
-    /// Fetches and parses one Mozilla autoconfig document.
     async fn autoconfig(
         &self,
         endpoint: AutoconfigEndpoint<'_>,
         cancel: &CancelToken,
     ) -> Result<DiscoveryAutoconfig, TransportError>;
 
-    /// Runs the RFC 6186 SRV lookups for `domain`.
     async fn srv(
         &self,
         domain: &str,
         cancel: &CancelToken,
     ) -> Result<DiscoverySrvReport, TransportError>;
 
-    /// Resolves `domain`'s MX records, best preference first (#94).
-    ///
-    /// The hostnames only. What turns one into IMAP/SMTP settings is the
-    /// preset table's `mx_suffixes`, which is a fact about a provider and so
-    /// is data rather than anything this layer knows.
-    ///
-    /// An empty list is a domain that publishes no MX, which is a *miss*
-    /// rather than a failure: plenty of domains do not, and the probe has
-    /// more steps after this one.
+    /// Hostnames only. An empty list is a domain with no MX: a miss, not a failure.
     async fn mx(&self, domain: &str, cancel: &CancelToken) -> Result<Vec<String>, TransportError>;
 }
 
-// ---------------------------------------------------------------------------
-// A stream that stops when the probe does
-// ---------------------------------------------------------------------------
-
-/// How long a discovery socket may make no progress before it is given up on.
-///
-/// This is the ceiling on an *abandoned* request's life, so it wants to be
-/// close to the probe's own per-step budget
-/// ([`ProbeOptions::step_timeout`](super::ProbeOptions::step_timeout), five
-/// seconds by default) rather than generous: past that point the probe has
-/// already stopped caring about the answer, and every further second is a
-/// socket held open for nobody. A healthy exchange never comes near it —
-/// each read and each write gets the budget afresh, so it bounds silence,
-/// not slowness.
+/// The ceiling on an abandoned request's life, close to the probe's per-step budget: it bounds
+/// silence, not slowness, since each read and write gets it afresh.
 pub const DISCOVERY_IO_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// What a cancelled read or write reports.
 const CANCELLED: &str = "the discovery probe was cancelled";
 
-/// Wraps a blocking stream so the probe's cancellation reaches the socket.
-///
-/// `io-pim-discovery`'s `DiscoveryStream` is `Read + Write` and nothing more,
-/// which is what makes this possible: the protocol stays theirs, the stream
-/// becomes ours.
-///
-/// The error kind is deliberately **not** [`io::ErrorKind::Interrupted`].
-/// `Interrupted` means "retry me" throughout `std` — `read_to_end` and
-/// friends loop on it — so a cancelled stream reporting it would spin
-/// forever instead of stopping, which is the exact opposite of the point.
-/// [`io::ErrorKind::ConnectionAborted`] says what happened and no layer
-/// retries it.
+/// The error kind is not `Interrupted`: `std` loops on it ("retry me"), so a cancelled stream would
+/// spin forever. `ConnectionAborted` is not retried by any layer.
 pub(crate) struct Cancellable<S> {
     inner: S,
     cancel: CancelToken,
@@ -254,29 +148,16 @@ impl<S: Write> Write for Cancellable<S> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// The real transport
-// ---------------------------------------------------------------------------
-
-/// [`DiscoveryTransport`] backed by `io-pim-discovery`.
 #[derive(Clone)]
 pub struct PimalayaTransport {
     resolver: url::Url,
-    /// Where every connection attempt is reported (#151), or nowhere.
-    /// Discovery probes servers for an account that does not exist yet, so
-    /// its events carry no account id; the wiring's sink records them as
-    /// pre-account traffic.
+    /// Discovery events carry no account id; the sink records them as pre-account traffic (#151).
     egress: Option<std::sync::Arc<dyn postio_model::egress::EgressSink>>,
 }
 
-/// Fallback resolver when the host has none we can read (a Flatpak sandbox
-/// without `/etc/resolv.conf`, say).
 const FALLBACK_RESOLVER: &str = "tcp://1.1.1.1:53";
 
 impl PimalayaTransport {
-    /// Builds a transport using the host's own resolver where one can be
-    /// found, so split-horizon and corporate DNS resolve the way every other
-    /// program on the machine resolves.
     pub fn new() -> Self {
         let resolver = io_pim_discovery::shared::dns::system_resolver().unwrap_or_else(|| {
             FALLBACK_RESOLVER
@@ -287,7 +168,6 @@ impl PimalayaTransport {
         Self::with_resolver(resolver)
     }
 
-    /// Builds a transport against a specific DNS-over-TCP resolver.
     pub fn with_resolver(resolver: url::Url) -> Self {
         Self {
             resolver,
@@ -295,8 +175,6 @@ impl PimalayaTransport {
         }
     }
 
-    /// Report every connection attempt to `sink` — the egress log's seam
-    /// (#151), the same contract as the IMAP and SMTP connectors.
     pub fn with_egress(
         mut self,
         sink: std::sync::Arc<dyn postio_model::egress::EgressSink>,
@@ -305,7 +183,6 @@ impl PimalayaTransport {
         self
     }
 
-    /// The autoconfig endpoints speak plain HTTP/1.1 over TLS.
     pub(crate) fn tls() -> pimalaya_stream::tls::Tls {
         pimalaya_stream::tls::Tls {
             rustls: pimalaya_stream::tls::Rustls {
@@ -317,12 +194,8 @@ impl PimalayaTransport {
     }
 }
 
-/// The connect options the HTTP factories use.
-///
-/// `Retry::Until` is what arms the socket's own read deadline as well as
-/// bounding the retry loop above it — connecting with the default would
-/// leave a minute per read, which for an abandoned request is a minute of
-/// socket held for nobody.
+/// `Retry::Until` arms the socket's read deadline too; the default leaves a minute per read for an
+/// abandoned request.
 pub(crate) fn connect_options() -> pimalaya_stream::stream::TcpConnectOptions {
     pimalaya_stream::stream::TcpConnectOptions {
         retry: pimalaya_stream::retry::Retry::Until(DISCOVERY_IO_TIMEOUT),
@@ -330,11 +203,8 @@ pub(crate) fn connect_options() -> pimalaya_stream::stream::TcpConnectOptions {
     }
 }
 
-/// Proves `host:port` accepts a connection within `timeout`, then lets go.
-///
-/// `pimalaya-stream` connects with no deadline and cannot be given a socket,
-/// so the deadline is spent here first: a peer that accepts nothing fails in
-/// `timeout` rather than the OS default.
+/// `pimalaya-stream` connects with no deadline and cannot be given a socket, so the deadline is
+/// spent here first.
 pub(crate) fn reach(
     host: &str,
     port: u16,
@@ -357,8 +227,6 @@ pub(crate) fn reach(
     })
 }
 
-/// Opens a TLS stream to `host:port` for the autoconfig fetch, with the
-/// connect bounded by [`reach`] and every read by `timeout`.
 pub(crate) fn connect_https(
     host: &str,
     port: u16,
@@ -375,12 +243,8 @@ pub(crate) fn connect_https(
     Ok(Cancellable::new(stream, cancel.clone()))
 }
 
-/// Opens a plain TCP stream to `url`, bounded and cancellable.
-///
-/// This is the DNS path. Written out rather than delegating to
-/// `pimalaya-stream` so it keeps `io-pim-discovery`'s own semantics for the
-/// `tcp` scheme exactly — a direct connection, no proxy — while gaining a
-/// connect deadline and read/write deadlines it never had.
+/// The DNS path, written out to keep `io-pim-discovery`'s `tcp` semantics (direct, no proxy) while
+/// adding connect, read and write deadlines.
 pub(crate) fn connect_tcp(
     url: &url::Url,
     cancel: &CancelToken,
@@ -392,9 +256,7 @@ pub(crate) fn connect_tcp(
         .port_or_known_default()
         .ok_or_else(|| anyhow::anyhow!("TCP URL `{url}` has no port"))?;
 
-    // `TcpStream::connect` tries every resolved address with no deadline, so
-    // a host that accepts nothing parks the blocking thread on the OS
-    // default. Resolving first is what makes a deadline expressible.
+    // `TcpStream::connect` has no deadline; resolving first makes one expressible.
     let mut last: Option<io::Error> = None;
     for address in (host, port).to_socket_addrs()? {
         if cancel.is_cancelled() {
@@ -424,7 +286,6 @@ impl std::fmt::Debug for PimalayaTransport {
     }
 }
 
-/// Report one discovery connection attempt, if a sink is listening.
 fn report_egress(
     egress: &Option<std::sync::Arc<dyn postio_model::egress::EgressSink>>,
     host: &str,
@@ -468,13 +329,8 @@ impl DiscoveryTransport for PimalayaTransport {
         let cancel = cancel.clone();
         let egress = self.egress.clone();
 
-        // `io-pim-discovery`'s std clients block. Parking them on the
-        // blocking pool is what keeps the caller's runtime — and therefore
-        // the UI — responsive while a probe is in flight. The probe races
-        // this future against its own timeout and the cancel token, and a
-        // straggling blocking task is abandoned rather than awaited — which
-        // is why every stream below carries the token: abandoning the await
-        // has to end the request, not merely stop listening for its answer.
+        // The blocking pool keeps the UI responsive; abandoned tasks are not awaited, so every
+        // stream carries the token to end the request.
         blocking(move || {
             let http = {
                 let cancel = cancel.clone();
@@ -516,9 +372,8 @@ impl DiscoveryTransport for PimalayaTransport {
                 }
             };
 
-            // Registered after `new`, which installs the plain defaults, so
-            // these replace them. The autoconfig flow can reach DNS too (the
-            // `mailconf` TXT redirect), hence the `tcp` factory here as well.
+            // Registered after `new`, which installs the plain defaults; the `mailconf` TXT
+            // redirect can reach DNS too.
             let mut client = DiscoveryAutoconfigClientStd::new(resolver)
                 .with_factory("tcp", tcp)
                 .with_factory("http", http)
@@ -593,15 +448,8 @@ impl DiscoveryTransport for PimalayaTransport {
     }
 }
 
-/// One MX query, driven the way `DiscoverySrvClientStd::discover` drives its
-/// own (#94).
-///
-/// `io-pim-discovery` publishes the DNS *exchange* and the stream pool but no
-/// MX lookup, so this builds the query with the same `domain` crate the
-/// family's own TXT and SRV queries are built with, and hands it to
-/// `DiscoveryDnsExchange`. That is the family's extension point rather than a
-/// second DNS stack: one resolver, one transport, one set of sockets the
-/// egress log already sees.
+/// `io-pim-discovery` has no MX lookup, so the query goes through its `DiscoveryDnsExchange`
+/// extension point: one resolver, one set of sockets the egress log sees (#94).
 fn mx_lookup<F, S>(domain_name: &str, resolver: url::Url, factory: F) -> Result<Vec<String>, String>
 where
     F: FnMut(&url::Url) -> anyhow::Result<S> + 'static,
@@ -691,20 +539,11 @@ where
         .collect())
 }
 
-/// The `domain` crate needs a buffer to build into; 4 KiB is what
-/// `io-pim-discovery` uses for its own queries.
 const QUERY_BUF_SIZE: usize = 4 * 1024;
 
-/// Matches `DiscoverySrvClientStd`'s own read buffer.
 const MX_READ_BUFFER_SIZE: usize = 8 * 1024;
 
-/// Turns a client failure into a [`TransportError`], saying so when the
-/// reason was this probe stopping rather than the network.
-///
-/// The distinction never reaches the user — [`crate::discovery::Probe::run`] has already
-/// returned `Cancelled` by the time this lands — but it is the difference
-/// between a log that reads "the domain has no autoconfig" and one that reads
-/// "we stopped asking", and only one of those is true.
+/// A cancellation is reported as such so the log does not say "the domain has no autoconfig".
 fn transport_error(cancel: &CancelToken, err: impl std::fmt::Display) -> TransportError {
     if cancel.is_cancelled() {
         return TransportError::new(CANCELLED);
@@ -712,7 +551,6 @@ fn transport_error(cancel: &CancelToken, err: impl std::fmt::Display) -> Transpo
     TransportError::new(err.to_string())
 }
 
-/// Runs a blocking discovery call on the blocking pool.
 async fn blocking<T, F>(op: F) -> Result<T, TransportError>
 where
     F: FnOnce() -> Result<T, TransportError> + Send + 'static,
@@ -761,10 +599,6 @@ mod tests {
         assert!(FALLBACK_RESOLVER.parse::<url::Url>().is_ok());
     }
 
-    // -- Cancellation reaching the socket (#57) ---------------------------
-
-    /// A stream that would happily serve bytes forever, so the only thing
-    /// that can stop a read is the token.
     struct Endless;
 
     impl Read for Endless {
@@ -818,10 +652,8 @@ mod tests {
 
     #[test]
     fn a_cancelled_stream_never_reports_interrupted() {
-        // `Interrupted` means "retry me" throughout std -- `read_to_end` and
-        // friends loop on it -- so reporting it would spin a cancelled
-        // stream forever instead of stopping it. This is the one wrong
-        // answer that looks right.
+        // `Interrupted` means "retry me" throughout std, so reporting it would spin a cancelled
+        // stream forever.
         let cancel = CancelToken::new();
         cancel.cancel();
         let mut stream = Cancellable::new(Endless, cancel);
@@ -848,13 +680,9 @@ mod tests {
 
     #[test]
     fn the_io_timeout_covers_a_default_probe_step() {
-        // The bound only means anything if it outlasts the step budget the
-        // probe itself uses -- otherwise the socket deadline would cut
-        // healthy requests short instead of bounding abandoned ones.
+        // Must outlast the step budget, or the socket deadline would cut healthy requests short.
         assert!(DISCOVERY_IO_TIMEOUT >= super::super::ProbeOptions::default().step_timeout);
     }
-
-    // -- The connect deadline (#281) --------------------------------------
 
     use std::net::TcpListener;
     use std::time::Instant;
@@ -893,8 +721,6 @@ mod tests {
 
     #[test]
     fn https_to_a_host_that_never_handshakes_gives_up_in_time() {
-        // Accepts the connection and then says nothing: the handshake read
-        // is what must end, inside the deadline plus slack.
         let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let port = listener.local_addr().unwrap().port();
         let held = std::thread::spawn(move || {

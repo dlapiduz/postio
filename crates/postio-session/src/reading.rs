@@ -1,21 +1,8 @@
-//! Reading a message's body, and resolving the parts it references.
-//!
-//! Moved here from the classic app (#608). Both halves are the *reading* side of
-//! the reader path, and neither is glue: they are judgement earned from bugs,
-//! and a second copy on the macOS side would reproduce the bugs rather than
-//! the behaviour -- which is what ADR 0019 Q6 exists to prevent.
-//!
-//! [`load_body_or_reason`] tells apart situations that look identical in the
-//! columns: a local draft, another client's draft, not-fetched against
-//! offline, and genuinely-empty against a body that will not decode. Issue
-//! #70 Cause A was all of them rendering as one blank column.
-//!
-//! [`resolve_cid`] carries a security property in a few lines: a
-//! `Content-ID` resolves only within the message that declares it, so one
-//! sender cannot address another sender's parts.
-//!
-//! Toolkit-free, like the rest of this crate: the absent states come from
-//! `postio_ui::reader`, the frontend-independent half of the reader.
+//! Reading a message's body, and resolving the parts it references (#608). `load_body_or_reason`
+//! tells apart situations that look identical in the columns (draft, another client's draft, not
+//! fetched, empty, undecodable; #70).
+//! `resolve_cid` resolves a `Content-ID` only within its own message, so one sender cannot address
+//! another's parts.
 
 use postio_core::Event;
 use postio_core::bridge::{EventSink, EventStream};
@@ -28,12 +15,7 @@ use postio_storage::{BlobStore, Store};
 use postio_ui::reader::document::Absent;
 use postio_ui::reader::parts::{self, Node};
 
-/// A message's text and HTML, if they have been downloaded.
-///
-/// Absent rather than an error for a message still `Partial` — headers synced,
-/// body not yet — which is the ordinary state of a mailbox mid-backfill, not
-/// a fault. Replying to one just quotes nothing, the same way any degraded
-/// state here should: fewer words in the draft, never a broken one.
+/// A message's text and HTML, if downloaded; absent, not an error, for a `Partial` message.
 pub async fn load_body(connection: &postio_storage::Checkout, id: MessageId) -> MessageBody {
     let Ok(Some(stored)) = MessageRepository::new(connection).body(id).await else {
         return MessageBody::default();
@@ -44,63 +26,23 @@ pub async fn load_body(connection: &postio_storage::Checkout, id: MessageId) -> 
     }
 }
 
-/// A message's body, or which kind of "no body" this is.
-///
-/// [`load_body`] answers `MessageBody::default()` for four situations that
-/// are not the same situation, and the reading pane used to render all four
-/// as a blank column (issue #70, Cause A). Replying does not care — quoting
-/// nothing is the right degraded behaviour either way — so `load_body` keeps
-/// its shape and this sits beside it for the caller that has to *show*
-/// something.
 pub enum Body {
-    /// Bytes are on this machine, and these are them.
     Ready {
-        /// The words.
         body: postio_model::MessageBody,
-        /// Whether those words are a guess rather than what was sent.
-        ///
-        /// Carried here rather than dropped at this boundary, which is where
-        /// it used to go: `StoredBody` knows, `MessageBody` has nowhere to
-        /// put it, and the reading pane is the only place that can say so.
-        /// That is the same loss this enum already exists to prevent one
-        /// level up — four kinds of "no body" rendered as one blank column
-        /// (#70) — applied to "a body, but not the sender's" (#901).
+        /// Whether those words are a guess rather than what was sent (#901).
         encoding_problems: bool,
-        /// The header block the body was stored with, unparsed: what
-        /// [`sender_warning`] reads, carried from the one body read so
+        /// The header block the body was stored with, unparsed: what `sender_warning` reads, so
         /// judging the sender costs no second decompression (#1928).
         headers: Option<String>,
     },
-    /// There are none, for this reason.
     Absent(Absent),
 }
 
-/// As [`load_body`], but distinguishing the ways a body can be missing.
+/// As `load_body`, but distinguishing the ways a body can be missing.
 ///
-/// The message's own [`BodyState`] is what says whether a body was ever
-/// fetched, and it has to be: `body` answers a row holding no parts for
-/// a message nobody has downloaded *and* for one that was downloaded and had
-/// no body in it. Those two look identical in the columns and are opposite
-/// things to a reader — one is worth waiting for and one is finished.
-///
-/// So:
-///
-/// * **not fetched** (`NotFetched`, `HeadersOnly`) — the backfill has not
-///   been here. The ordinary state of a mailbox that has just been added,
-///   and not a fault.
-/// * **fetched, holding no parts** — the message really has neither a text
-///   nor an HTML part.
-/// * **fetched, holding parts that will not decode** — the row and this build
-///   disagree about what is in the column. Rare, and a genuine fault.
-///
-/// `is_offline` is what tells [`Absent::Offline`] from [`Absent::Partial`]
-/// for a body that has not been fetched: both are "nothing here yet", but
-/// only one of them is worth promising a backfill for. The caller reads it
-/// off the engine's `ConnectionState` (`reading.rs`), because this module
-/// has no seam of its own onto the sync engine.
-///
-/// [`BodyState`]: postio_model::message::BodyState
-/// [`Absent::Offline`]: Absent::Offline
+/// The message's `BodyState` says whether a body was ever fetched: an empty row means both "not
+/// downloaded" and "downloaded, no body". `is_offline` tells `Absent::Offline` from
+/// `Absent::Partial`; the caller reads it off the engine's `ConnectionState`.
 pub async fn load_body_or_reason(
     connection: &postio_storage::Checkout,
     id: MessageId,
@@ -109,12 +51,7 @@ pub async fn load_body_or_reason(
     load_with_row(connection, id, is_offline).await.0
 }
 
-/// [`load_body_or_reason`], and the message row it read to decide.
-///
-/// For a caller that wants the row too -- the reading pane draws its header
-/// and parts tree from it -- and used to read it a second time: the row,
-/// its recipients, its attachments and its labels, twice per message opened.
-/// `None` for a draft this machine owns, whose row was never read.
+/// `load_body_or_reason`, and the message row it read; `None` for a draft this machine owns.
 pub async fn load_with_row(
     connection: &postio_storage::Checkout,
     id: MessageId,
@@ -122,14 +59,9 @@ pub async fn load_with_row(
 ) -> (Body, Option<postio_model::Message>) {
     use Absent;
 
-    // A draft's body is not in `messages` and never will be: the composer's
-    // buffer is `drafts.body_text`, inline and uncompressed, deliberately,
-    // because autosave writes it on a keystroke. Reading the message row
-    // would say "still downloading" about words the user is looking at in
-    // another pane. #166.
+    // A draft's body is in `drafts.body_text`, inline and uncompressed for autosave, not in
+    // `messages`; reading the row would say "still downloading" (#166).
     if let Ok(Some(draft)) = DraftRepository::new(connection).by_message(id).await {
-        // A draft is the user's own text in Postio's own buffer: nothing
-        // decoded it from anything, so there is nothing to caveat.
         return (
             Body::Ready {
                 body: draft.body,
@@ -144,27 +76,18 @@ pub async fn load_with_row(
 
     // Has anything been downloaded for this message at all?
     let row = match repository.get(id).await {
-        // `\Draft` is set, but the `by_message` lookup above found no local
-        // buffer: this row belongs to another client's draft. Its body may
-        // well be stored already, but showing it as an ordinary, readable
-        // message would be exactly the dead end #175
-        // exists to close -- there is nothing here this machine can edit,
-        // whatever state the body is in.
+        // `\Draft` with no local buffer is another client's draft: nothing here this machine can
+        // edit (#175).
         Ok(Some(message)) if message.flags.is_draft() => {
             return (Body::Absent(Absent::ForeignDraft), Some(message));
         }
         Ok(Some(message)) if !message.sync.body_state.has_body() => {
-            // Asked only here, on the way to "not yet": a message with a body
-            // costs the read it always did. A server's refusal outranks
-            // `Offline` because it is the fact, and offline merely the
-            // moment (#1918).
+            // Asked only on the way to "not yet": a server's refusal outranks `Offline` (#1918).
             let failed = repository.body_failed(id).await.unwrap_or(false);
             let reason = postio_ui::reader::document::unfetched(failed, is_offline);
             return (Body::Absent(reason), Some(message));
         }
         Ok(Some(message)) => message,
-        // The row is gone, or unreadable. Either way there is nothing to
-        // wait for, so do not tell the user to wait.
         Ok(None) => return (Body::Absent(Absent::Missing), None),
         Err(error) => {
             tracing::warn!(message = id.get(), %error, "cannot read a message row");
@@ -177,19 +100,13 @@ pub async fn load_with_row(
         // The row went between the two reads above and here.
         Ok(None) => return (Body::Absent(Absent::Missing), Some(row)),
         Err(error) => {
-            // Either the row will not read, or a stored part will not
-            // decompress. Both are faults, and both leave the pane empty --
-            // what the user needs is to be told it is empty because something
-            // is wrong, not because they should wait.
             tracing::warn!(message = id.get(), %error, "cannot read a message's body");
             return (Body::Absent(Absent::Missing), Some(row));
         }
     };
 
-    // "No body" only when the parse says nothing went wrong. A structure the
-    // parser had to guess at can come back with no text or HTML part, and
-    // "that is the whole message" would be untrue of it; the decode caveat
-    // over an empty pane is what is true (#287).
+    // "No body" only when the parse says nothing went wrong: a guessed structure can come back with
+    // no text part (#287).
     if stored.text.is_none() && stored.html.is_none() && !stored.encoding_problems {
         return (Body::Absent(Absent::Empty), Some(row));
     }
@@ -207,15 +124,9 @@ pub async fn load_with_row(
     )
 }
 
-/// The one line a reading says about who the sender really is, or `None`
-/// (#1928).
-///
-/// `headers` is the stored header block of the body that was read. The rule
-/// is [`postio_ui::reader::authenticity::warning`]; what this adds is which
-/// servers to believe, which is the account's provider (`authserv_ids` in
-/// the preset table, found by the IMAP host the account talks to). The
-/// account is read only when the block has an `Authentication-Results` to
-/// judge, and mail the user sent is never judged.
+/// The one line a reading says about who the sender really is, or `None` (#1928). `headers` is the
+/// stored header block; which servers to believe comes from the account's provider
+/// (`authserv_ids`). Mail the user sent is never judged.
 pub async fn sender_warning(
     connection: &postio_storage::Checkout,
     row: &postio_model::Message,
@@ -225,8 +136,6 @@ pub async fn sender_warning(
     let wants_account = headers
         .as_ref()
         .is_some_and(|headers| headers.contains("Authentication-Results"));
-    // Ordinary mail without a header to judge or a name to doubt costs no
-    // read at all.
     if !wants_account && postio_ui::reader::authenticity::impersonation(&row.from).is_none() {
         return None;
     }
@@ -251,25 +160,10 @@ pub async fn sender_warning(
     postio_ui::reader::authenticity::warning(&headers.unwrap_or_default(), &row.from, trusted)
 }
 
-/// One inline part of `message`, by its `Content-ID`.
+/// One inline part of `message`, by its `Content-ID`, scoped to that message so a sender cannot
+/// address another's parts.
 ///
-/// A plain call rather than an `Rc<dyn BlobSource>` -- because a frontend
-/// across an FFI cannot hold one, and a second
-/// implementation of these six lines would be a second chance to get the
-/// scoping wrong.
-///
-/// # Scoped to `message`, and that is the whole point
-///
-/// A `Content-ID` is only meaningful inside the message that declares it, so
-/// resolving one globally would let a sender address another sender's parts.
-/// The message is a parameter rather than something read from ambient state,
-/// so a caller cannot forget to supply it.
-///
-/// # A part that is not here does not draw
-///
-/// `None` when the bytes are not already on this machine. That is the privacy
-/// commitment working rather than a gap to fill in later: fetching here would
-/// be the tracking pixel the reader spends so much effort blocking, arriving
+/// `None` when the bytes are not already on this machine: fetching here would be a tracking pixel
 /// through the back door.
 pub async fn resolve_cid(
     database: &Store,
@@ -289,53 +183,24 @@ pub async fn resolve_cid(
     Some((bytes, part.mime_type))
 }
 
-// ---------------------------------------------------------------------------
-// A message's parts, and getting one part's bytes out of the store
-// ---------------------------------------------------------------------------
-
-/// How long a save waits for a part it had to ask for.
-///
-/// Long enough for a slow server on a bad link, short enough that a save that
-/// is never going to work says so while the user is still looking at it.
 pub const BODY_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 
-/// Where one part's bytes are, when they are on this machine at all.
 pub enum PartSource {
-    /// The part's own blob — what ADR 0017's payload axis writes into
-    /// `attachments.blob_id` when somebody opens an attachment.
     Payload(postio_model::ids::BlobId),
-    /// The whole raw message, from which the part is cut.
-    ///
-    /// Two rows still land here: one fetched before the payload axis existed,
-    /// and one whose `BODYSTRUCTURE` was never recorded, so no section could
-    /// be named and every byte was the only answer.
+    /// The whole raw message, from which the part is cut: rows fetched before the payload axis, or
+    /// with no recorded `BODYSTRUCTURE`.
     Raw(postio_model::ids::BlobId),
 }
 
-/// A message's MIME tree, ready to draw.
-///
-/// The root and the nodes travel together because neither means anything
-/// alone: the nodes hang off a root the message itself declares, and
-/// [`postio_ui::reader::parts::summary`] reads the root node for the header
-/// line. Two calls would let a frontend draw one message's parts under
-/// another message's type.
+/// A message's MIME tree, ready to draw; root and nodes travel together so a frontend cannot draw
+/// one message's parts under another's type.
 pub struct MessageParts {
-    /// The message's own content type — `multipart/mixed`.
     pub root: String,
-    /// Every node, flattened in walk order; the first is the message itself.
     pub nodes: Vec<Node>,
 }
 
-/// What a message is made of, read from the store and from nothing else.
-///
-/// **This fetches nothing and cannot.** It reads the attachment rows a sync
-/// already wrote from `BODYSTRUCTURE`, which the server returns without
-/// transferring a byte of any part — so the answer is complete and correct
-/// for a message whose attachments are all still on the server, and
-/// `Node::downloaded` is what says which of them are here. That is the shape
-/// "nothing downloads until the user asks" takes at this layer: the call that
-/// lists the parts has no route to the bytes at all, and the call that gets
-/// them ([`part_bytes_at`]) is a separate, deliberate one.
+/// What a message is made of, read from the store and from nothing else: it fetches nothing, and
+/// `Node::downloaded` says which parts are here.
 pub async fn message_parts(database: &Store, message: MessageId) -> Result<MessageParts, String> {
     let connection = database
         .connect()
@@ -353,43 +218,11 @@ pub async fn message_parts(database: &Store, message: MessageId) -> Result<Messa
     Ok(MessageParts { root, nodes })
 }
 
-/// One part's bytes, fetched first if they are not on this machine yet.
+/// One part's bytes, fetched first if they are not on this machine yet (ADR 0017).
 ///
-/// # Why this is the seam
-///
-/// A frontend runs its own file dialog and hands back the file the user
-/// chose, so the only part worth sharing is what happens next — and that half
-/// is nothing to do with any toolkit. Keeping it here, taking store handles
-/// and returning bytes, makes "saves a part that was never downloaded,
-/// fetching it first" an ordinary async test over a mock server instead of
-/// something that needs a display and a file chooser. It is also the reason
-/// there is one of it: the judgement below is worth more than the ten lines
-/// it takes, and a second copy behind the macOS boundary would have
-/// reproduced the bugs rather than the behaviour (ADR 0019).
-///
-/// # Where a received part's bytes are
-///
-/// In `Attachment::blob_id`, once somebody has opened it. That column was
-/// filled only on the way *out* for the whole life of this project — a
-/// composer attaching a file — and the receive path stored the whole raw
-/// message instead, so a part had to be cut back out of it with `mime::parse`
-/// on every open. ADR 0017 ended that: the text axis stores no raw source at
-/// all, and the payload axis fetches `BODY.PEEK[<part_id>]` on demand.
-///
-/// So the fetch to wait for is the *part's*, and asking twice costs nothing:
-/// the second open reads the blob and never reaches the network.
-///
-/// # This is allowed to reach the network, and almost nothing else is
-///
-/// The reading pane reaches only for the words of the message a person
-/// opened (`postio-host`'s `AskedBodies`, #1788), never for a part. This
-/// does, and only because the user named these bytes: they pressed
-/// save, or dragged this part, or chose "Open with…" on it. That is the
-/// difference `ARCHITECTURE.md` §11 turns on, and it is why the *listing*
-/// call above cannot do this and this one is never called speculatively.
-///
-/// Returns `Err` rather than an empty file when the bytes cannot be had. A
-/// zero-byte attachment on disk looks like a saved file and is not one.
+/// This may reach the network because the user named these bytes (save, drag, "Open with…"); the
+/// reading pane reaches only for the words of the message opened (#1788). Returns `Err`, not an
+/// empty file, when the bytes cannot be had.
 pub async fn part_bytes_at(
     database: &Store,
     blobs: &BlobStore,
@@ -400,20 +233,13 @@ pub async fn part_bytes_at(
 ) -> Result<Vec<u8>, String> {
     let source = match locate_part(database, message, part_id).await? {
         Some(source) => source,
-        // Never downloaded. Only because the user asked for these bytes by
-        // name; see the section above.
         None => {
             let engine =
                 engine.ok_or("This account is not syncing, so that part cannot be fetched")?;
-            // Subscribed before the ask, so a refusal that comes back
-            // faster than the next line cannot be missed (#1987). A sink
-            // with no hub has no news to hear, and the wait then runs on
-            // its deadline alone.
+            // Subscribed before the ask so a fast refusal is not missed (#1987).
             let failures = events.and_then(|events| events.subscribe("part wait"));
-            // `request_payloads` puts the section at the front of the backfill
-            // and returns as soon as it is queued -- `true` means "there was
-            // something to fetch", not "here it is". The bytes land when the
-            // engine's own loop claims the job, so the wait is ours.
+            // `request_payloads` returns once queued; `true` means there was something to fetch,
+            // not that it landed.
             let asked = engine
                 .request_payloads(message, vec![part_id.to_owned()])
                 .await
@@ -427,14 +253,8 @@ pub async fn part_bytes_at(
                 PayloadAsk::Queued => {
                     wait_for_part(database, message, part_id, failures.as_ref(), BODY_WAIT).await?
                 }
-                // "Here already" may be the background lane having fetched
-                // this very message between the look above and the queue's
-                // answer -- ADR 0016 backfills every mailbox, so both lanes
-                // chase the same messages, and the open that races the
-                // backfill is an ordinary open, not a corner (#109; a5735a3
-                // is the same race in the runtime's own test). One re-read
-                // settles it: the committed write that made the answer is
-                // visible to this read, so no wait is needed.
+                // "Here already" may be the background lane having fetched it between the look and
+                // the answer (#109); one re-read settles it.
                 PayloadAsk::Local => locate_part(database, message, part_id)
                     .await?
                     .ok_or("There is nothing to fetch for that part")?,
@@ -457,18 +277,9 @@ pub async fn part_bytes_at(
     }
 }
 
-/// [`part_bytes_at`], for a caller holding an attachment row rather than a
-/// MIME path.
-///
-/// The id is turned into a path here, before anything is fetched, and
-/// deliberately. A whole-message fetch REPLACES the message's attachment rows
-/// — the parser re-reads the structure and `MessageRepository::update` writes
-/// the new set — so the `AttachmentId` a panel is holding does not survive
-/// it. The MIME path does: `2` is `2` in every parse of the same bytes.
-///
-/// Which is also why the FFI boundary names a part by its path and never by
-/// its row id: an id that stops meaning anything mid-operation is not
-/// something to hand another process.
+/// `part_bytes_at`, for a caller holding an attachment row. The id becomes a MIME path before
+/// anything is fetched, because a whole-message fetch replaces the attachment rows and the id would
+/// not survive it.
 pub async fn part_bytes(
     database: &Store,
     blobs: &BlobStore,
@@ -483,12 +294,8 @@ pub async fn part_bytes(
     part_bytes_at(database, blobs, engine, events, message, &part_id).await
 }
 
-/// Put one part's bytes at exactly `path`.
-///
-/// For the save where the *user* named the file — a save dialog has already
-/// run and this is what happens next. Replaces rather than appends: the
-/// dialog asked about overwriting, and a save that appended to an existing
-/// file would corrupt it silently.
+/// Put one part's bytes at exactly `path`. Replaces rather than appends: the save dialog asked
+/// about overwriting.
 pub async fn save_part(
     database: &Store,
     blobs: &BlobStore,
@@ -500,32 +307,18 @@ pub async fn save_part(
 ) -> Result<(), String> {
     let bytes = part_bytes_at(database, blobs, engine, events, message, part_id).await?;
     std::fs::write(path, &bytes).map_err(|error| format!("Could not save that part: {error}"))?;
-    // Ids, counts and outcomes. Not the filename: the sender chose it, and it
-    // is as much the user's mail as the body is.
+    // Not the filename: the sender chose it.
     tracing::debug!(message = %message, part = part_id, bytes = bytes.len(), "part saved");
     Ok(())
 }
 
-/// How a "save every part" went.
 pub struct SavedParts {
-    /// How many landed on disk.
     pub saved: usize,
-    /// How many could not be had. Never abandons the rest of the batch: a
-    /// message where one attachment is still on an unreachable server should
-    /// still give the user the other four.
     pub failed: usize,
 }
 
-/// Write every part that holds bytes into `directory`.
-///
-/// A directory rather than a filename, because there is more than one file,
-/// and [`postio_ui::reader::parts::save_names`] gives each part the name it
-/// goes in under — including the suffix that stops two parts both calling
-/// themselves `invoice.pdf` from becoming one file.
-///
-/// Containers are skipped rather than failed: a `multipart/alternative` has
-/// no bytes of its own, and counting it as a failure would report a complete
-/// save as a partial one on every ordinary message.
+/// Write every part that holds bytes into `directory`, named by `save_names` (which suffixes
+/// duplicates). Containers are skipped, not failed; one failing part does not abandon the rest.
 pub async fn save_all_parts(
     database: &Store,
     blobs: &BlobStore,
@@ -576,9 +369,6 @@ pub async fn save_all_parts(
     Ok(outcome)
 }
 
-/// What a person is told when the engine would not queue a part's fetch, by
-/// its reason (#1987, #1996). [`PayloadAsk::Queued`] and
-/// [`PayloadAsk::Local`] are answered by bytes, not by a sentence.
 pub fn not_fetched(asked: PayloadAsk) -> &'static str {
     match asked {
         PayloadAsk::Unreachable => {
@@ -600,24 +390,12 @@ pub fn not_fetched(asked: PayloadAsk) -> &'static str {
     }
 }
 
-/// Wait for a queued part to land, or give up saying so.
+/// Wait for a queued part to land, or give up saying so. Polls for either shape the bytes arrive in
+/// (the part's blob, or the raw message).
 ///
-/// Polling, with an ear out for refusals. It
-/// watches for either shape the bytes can arrive in: the part's own blob,
-/// which is what a payload fetch writes, and the raw message, which is what
-/// the whole-message fallback writes for a row whose section could not be
-/// named.
-///
-/// `failures` is a subscription made *before* the fetch was queued. A fetch
-/// the server refuses leaves nothing in the store to poll for, only a
-/// `BodyFailed` on the event stream, so without listening the wait could not
-/// tell "slow" from "refused" and said "still downloading" for the whole of
-/// `wait` either way. The part is looked for first, so bytes that landed
-/// win over a failure heard in the same breath. The failure is matched on the
-/// part: a refused fetch of the same message's text says nothing about this
-/// part, and does not end the wait (#1996).
-///
-/// `wait` is [`BODY_WAIT`] outside tests.
+/// `failures` is subscribed before the fetch was queued: a refused fetch leaves nothing to poll
+/// for, only a `BodyFailed`, matched on the part (#1996). Landed bytes win over a failure heard in
+/// the same breath. `wait` is `BODY_WAIT` outside tests.
 pub async fn wait_for_part(
     database: &Store,
     message: MessageId,
@@ -628,9 +406,7 @@ pub async fn wait_for_part(
     let started = std::time::Instant::now();
     let deadline = started + wait;
     loop {
-        // A read that fails here is usually the writer we are waiting for
-        // holding the table, so contention is a reason to look again rather
-        // than to give up. Only the deadline ends this.
+        // A failed read is usually the writer we are waiting for; only the deadline ends this.
         match locate_part(database, message, part_id).await {
             Ok(Some(source)) => {
                 tracing::debug!(
@@ -665,8 +441,6 @@ pub async fn wait_for_part(
     }
 }
 
-/// Whether `events` holds a `BodyFailed` for `part_id` of `message`, taking
-/// everything queued so far.
 fn fetch_failed(events: &EventStream, message: MessageId, part_id: &str) -> bool {
     let mut failed = false;
     while let Some(event) = events.try_next() {
@@ -679,8 +453,6 @@ fn fetch_failed(events: &EventStream, message: MessageId, part_id: &str) -> bool
     failed
 }
 
-/// The MIME path of one attachment row, while the row id still means
-/// something.
 async fn part_path(
     database: &Store,
     message: MessageId,
@@ -694,10 +466,8 @@ async fn part_path(
         .and_then(|part| part.part_id.clone()))
 }
 
-/// Whether `part_id`'s bytes are on this machine, and in which shape.
-///
-/// The part's own blob first: it is the exact bytes, and reading it costs a
-/// file open where the raw message costs a parse of the whole thing.
+/// Whether `part_id`'s bytes are on this machine, and in which shape; the part's own blob first, as
+/// the exact bytes.
 pub async fn locate_part(
     database: &Store,
     message: MessageId,
@@ -715,7 +485,6 @@ pub async fn locate_part(
     Ok(row.raw_blob_id.map(PartSource::Raw))
 }
 
-/// One message row, or the sentence for its absence.
 async fn read_message(
     database: &Store,
     message: MessageId,
@@ -741,7 +510,6 @@ mod wait_tests {
     use postio_storage::test_support;
     use std::time::{Duration, Instant};
 
-    /// A message with one attachment, `2`, whose bytes were never fetched.
     async fn message_with_an_unfetched_part() -> (Store, MessageId, postio_model::AccountId) {
         let store = test_support::memory().await;
         let connection = store.connect().await.expect("a connection");
@@ -816,8 +584,6 @@ mod wait_tests {
 
     #[tokio::test]
     async fn a_refused_text_fetch_of_the_same_message_does_not_end_a_part_wait() {
-        // #1996: the news names its section, so a part wait hears only its
-        // own part's refusal, or a whole-message one, which holds the part.
         let (store, message, account) = message_with_an_unfetched_part().await;
         let hub = EventHub::new();
         let failures = hub.subscribe("test");
@@ -840,7 +606,6 @@ mod wait_tests {
         .expect("nothing arrived");
         assert!(said.contains("still downloading"), "{said}");
 
-        // The positive control: a whole-message refusal holds part 2.
         hub.sink().emit(Event::BodyFailed {
             account,
             message,
@@ -861,7 +626,6 @@ mod wait_tests {
 
     #[test]
     fn each_reason_a_part_was_not_queued_is_its_own_sentence() {
-        // #1987's second point: the person is told why.
         let reasons = [
             PayloadAsk::Unreachable,
             PayloadAsk::NotOnServer,
@@ -885,8 +649,6 @@ mod wait_tests {
 
     #[tokio::test]
     async fn a_link_that_returns_does_not_say_the_server_refused() {
-        // #1986: the pane's re-read on the link's return must not read as a
-        // refusal to an attachment wait on the same message.
         let (store, message, account) = message_with_an_unfetched_part().await;
         let hub = EventHub::new();
         let failures = hub.subscribe("test");

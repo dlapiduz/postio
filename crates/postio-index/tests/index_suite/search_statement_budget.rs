@@ -1,60 +1,5 @@
-//! Local search costs the same number of queries whatever it matches.
-//!
-//! `docs/PRODUCT.md` §18 budgets local search at 100ms, and `CLAUDE.md` calls
-//! that "enforced by benches in CI". It is not: `bench.yml` compiles the bench
-//! targets and deliberately times nothing, because a shared runner cannot
-//! defend a millisecond budget. That decision is right, and it leaves the
-//! budget as documentation (#100).
-//!
-//! So count the budget's cause. Search stays under 100ms because the work it
-//! does is bounded by the *page*: `executor.rs` caps ranking at
-//! `RANK_BY_RELEVANCE_LIMIT` matches and hydrates one candidate pool sized
-//! from `limit`. That reasoning is written out at length in its comments and
-//! nothing tests it. A change that fetched each hit's details in a query of
-//! its own would return byte-identical results and pass every other test in
-//! this workspace, while turning a common word into a slow search.
-//!
-//! **Statements, not rows.** The obvious measure for "does not read the whole
-//! match set" is rows produced, and it is the right one on plain SQL — see
-//! `postio-storage`'s `list_statement_count.rs`. It does not survive contact
-//! with FTS5, whose cursor runs lookups of its own between two rows of the
-//! statement being stepped. That leaves a row count dependent on how those
-//! nested lookups are attributed: this same page measured 1,467 rows when
-//! they were credited to the statement that was running and 51 when they were
-//! not, and the count in between moves with how the index happens to be
-//! segmented. `test_support::counting` takes the second reading and says so;
-//! either way it is not a number to hang a budget on.
-//!
-//! The count of application statements does not move. It is four here — for a
-//! query matching one message, for one matching 2,500, and for a page four
-//! times wider.
-//!
-//! # It costs ~55s and stays on the merge path anyway
-//!
-//! Worth saying, because it is the slowest thing in this crate's suite and
-//! the obvious reaction is to move it to the nightly tier beside
-//! `total_hits_cap` (2026-09-19, when the landing gate gained a four-minute
-//! budget and this was 53% of a 103s run).
-//!
-//! Do not. `total_hits_cap` is expensive for its *fixture* and asserts
-//! something a nightly can catch a day later. This is the gate `CLAUDE.md`
-//! asks for by name on a read path — the cause of a budget, counted — and the
-//! change it exists to catch is one that returns byte-identical results and
-//! passes everything else. A day is a long time to be shipping a search that
-//! got slower with the size of the mailbox, and the cost is the 2,500
-//! messages it needs to prove the count is flat, which is the test.
-//!
-//! `header:` is measured separately and against itself, because it is the one
-//! operator that is not an FTS `MATCH`: ADR 0025 Q2 compiles it to a
-//! correlated `EXISTS` over `message_headers`, which is a different *plan*
-//! from every other operator and therefore not comparable to one. What has to
-//! hold is the same property — that a `header:` matching the whole mailbox
-//! costs no more statements than one matching a single message, and that a
-//! wider page costs no more either.
-//!
-//! POSTIO-MEASUREMENT: each case indexes a corpus large enough for a non-flat
-//! statement count to show, 83 s and 106 s, so they run on the nightly timer
-//! with `total_hits_cap`.
+//! POSTIO-MEASUREMENT: each case indexes a corpus large enough for a non-flat statement count to
+//! show (83 s and 106 s), so they run on the nightly timer with `total_hits_cap`.
 
 use chrono::{TimeZone, Utc};
 use postio_index::{SearchRequest, search};
@@ -66,8 +11,6 @@ use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
 use postio_storage::test_support::counting::{Counts, counted_async, install};
 
-/// Comfortably past `executor.rs`'s `RANK_BY_RELEVANCE_LIMIT` of 2,000, so the
-/// broad query takes the too-many-to-rank path the budget is most at risk on.
 const MATCHES: usize = 2_500;
 
 async fn today() -> chrono::NaiveDate {
@@ -83,9 +26,6 @@ async fn a_search_costs_the_same_queries_however_much_it_matches() {
         .expect("schema");
     let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
-    // Every message carries "quarterly"; each also carries its own number, so
-    // one corpus answers both a query matching everything and one matching a
-    // single message.
     let messages = MessageRepository::new(&connection);
     for nth in 0..MATCHES {
         let received = Utc.with_ymd_and_hms(2026, 8, 20, 9, 0, 0).unwrap()
@@ -94,9 +34,6 @@ async fn a_search_costs_the_same_queries_however_much_it_matches() {
         message.from = vec![EmailAddress::new(Some("ada"), "ada@example.com")];
         message.subject = Some(format!("quarterly report {nth}"));
         messages.create(&mut message).await.expect("create message");
-        // One header block per message, the same shape: `X-Mailer` on all of
-        // them so `header:x-mailer=mutt` matches everything, and the number
-        // in the value so one query can pick out a single message.
         let headers: postio_model::Headers = [("X-Mailer", format!("Mutt 1.5.24 build {nth}"))]
             .into_iter()
             .collect();
@@ -149,10 +86,6 @@ async fn a_search_costs_the_same_queries_however_much_it_matches() {
         broad.statements, narrow.statements
     );
 
-    // The control, and the reason the equalities above are known to have
-    // teeth: one extra query inside the counted block moves the number. #100
-    // asks that each counted budget fail when the invariant it guards is
-    // deliberately broken, and an N+1 is exactly this, once per hit.
     let with_one_more = counted_async(async || {
         let request = SearchRequest {
             account: AccountScope::Account(account.id),
@@ -178,12 +111,6 @@ async fn a_search_costs_the_same_queries_however_much_it_matches() {
          equalities either side of this are not measuring what they claim"
     );
 
-    // ADR 0025's new join. `header:` narrows on `message_headers.name` inside
-    // a correlated `EXISTS`, which is a plan no other operator produces — so
-    // it gets its own pair rather than being compared against the FTS ones.
-    // A `header:` that matches the whole mailbox must cost what one matching
-    // a single message costs; anything else is a per-match read on a path
-    // that returns identical results either way.
     let header_broad_query = parse("header:x-mailer=mutt", today().await);
     let header_narrow_query = parse(
         &format!("header:x-mailer=\"build {}\"", MATCHES - 1),
@@ -218,8 +145,6 @@ async fn a_search_costs_the_same_queries_however_much_it_matches() {
         header_wide.statements, header_broad.statements
     );
 
-    // The other shape an N+1 takes: per *hit* rather than per match. A wider
-    // page must not cost more queries either — the pool is hydrated in one.
     let (wide, wide_hits) = run(&broad_query, 100).await;
     assert_eq!(wide_hits, 100, "a page of 100 should come back full");
     assert_eq!(
@@ -233,11 +158,6 @@ async fn a_search_costs_the_same_queries_however_much_it_matches() {
 
 #[tokio::test]
 async fn the_facets_walk_the_match_once_per_scope() {
-    // #1612: facets walked the match set five times -- three scope counts,
-    // then the flag refinements and the folder refinements, each its own
-    // capped walk of the same match in the same scope. The two refinements
-    // and the current scope's count are one walk grouped by folder; only
-    // the scopes the user is *not* in need walks of their own.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     postio_index::index::ensure_schema(&connection)
@@ -311,12 +231,6 @@ async fn the_facets_walk_the_match_once_per_scope() {
     );
 }
 
-/// A corpus of `size` messages for the conversation search's budget: every
-/// one says "update" (the common word), one in five "budget", four senders
-/// take turns, three messages make a thread, one in four carries the
-/// Atlas label, and one in ten a spreadsheet whose text, read, says
-/// "kestrel" and nothing in the mail does (step 9). Loaded with the metadata index deferred and written once,
-/// which is what keeps two thousand messages to a second or two.
 async fn conversation_corpus(size: usize) -> (postio_storage::Store, postio_storage::Checkout) {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
@@ -434,7 +348,6 @@ async fn a_conversation_search_costs_the_same_statements_whatever_the_corpus() {
         "update",
         "label:atlas budget",
         "budget -sender2",
-        // Only in attachments: the page's file matches are read (step 9).
         "kestrel",
         "kestrel from:sender0",
     ];

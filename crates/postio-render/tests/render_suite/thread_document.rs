@@ -1,10 +1,3 @@
-//! The conversation document's own CSS, asked of the renderer that draws it.
-//!
-//! These were `gtk_reader_styles` cases asked of WebKit through a probe
-//! view (`webkit_probe`): each is a claim about what the cascade and layout
-//! *mean*, which no markup test can see. The reader draws with this crate
-//! now, so this crate answers them -- in pixels and text geometry, headless.
-
 use std::collections::HashMap;
 
 use crate::support::{LIGHT, render, request_for};
@@ -44,7 +37,6 @@ fn pixel(raster: &Raster, x: u32, y: u32) -> [u8; 3] {
     [raster.rgba[at], raster.rgba[at + 1], raster.rgba[at + 2]]
 }
 
-/// Every colour in `rect`, with how many pixels wear it.
 fn colours(raster: &Raster, rect: postio_render::Rect) -> HashMap<[u8; 3], usize> {
     let mut seen = HashMap::new();
     let clamp = |v: f64, max: u32| (v.max(0.0) as u32).min(max);
@@ -56,7 +48,6 @@ fn colours(raster: &Raster, rect: postio_render::Rect) -> HashMap<[u8; 3], usize
     seen
 }
 
-/// The box the first match of `text` is drawn in.
 fn rect_of(doc: &RenderedDocument, text: &str) -> postio_render::Rect {
     let range = doc
         .text
@@ -67,13 +58,9 @@ fn rect_of(doc: &RenderedDocument, text: &str) -> postio_render::Rect {
     doc.text.rects(range)[0]
 }
 
-/// Can one message's `<style>` block restyle another message? (#1326)
-///
-/// The question ADR 0032 turns on: a conversation is one document, and the
-/// containment rests on `postio_body::styles` rewriting every selector under
-/// its own message's container. That is a claim about a parser whose tests
-/// can only read the text it emits; whether the text means what it should
-/// is a question for the engine.
+/// A conversation is one document and containment rests on `postio_body::styles`
+/// rewriting every selector under its message's container; only the engine can say the text means
+/// what it should (#1326).
 #[test]
 fn one_senders_stylesheet_cannot_restyle_another_message() {
     let red = [200, 0, 0];
@@ -100,9 +87,7 @@ fn one_senders_stylesheet_cannot_restyle_another_message() {
             .map(|(_, n)| n)
             .sum::<usize>()
     };
-    // The control, first: without it everything below passes when the
-    // stylesheet is simply dropped, and FR-019 says a message renders as
-    // its sender built it.
+    // The control, first: without it everything below passes when the stylesheet is simply dropped.
     assert!(
         red_in("first first") > 0,
         "the sender's own rule did not reach their own message"
@@ -114,9 +99,6 @@ fn one_senders_stylesheet_cannot_restyle_another_message() {
     );
 }
 
-/// The user's own message wears a mark a person can see (#1241): folded,
-/// in the head's square; open, in its fill. Both differ from a
-/// correspondent's.
 #[test]
 fn the_users_own_message_is_marked_in_the_document() {
     let entries = [(true, false), (false, false), (true, true), (false, true)];
@@ -131,8 +113,6 @@ fn the_users_own_message_is_marked_in_the_document() {
         .collect();
     let (doc, raster) = draw(&entries);
     let ground = pixel(&raster, raster.width - 1, 0);
-    // The mark sits before each head's "From": the strip from the page's
-    // left edge to the label, as tall as the label's line.
     let marks: Vec<Vec<[u8; 3]>> = doc
         .text
         .find("From")
@@ -167,7 +147,6 @@ fn the_users_own_message_is_marked_in_the_document() {
     );
 }
 
-/// `From`, `To` and `Cc` line up, and so do their values (#1437).
 #[test]
 fn from_to_and_cc_share_a_column() {
     let (doc, _) = draw(&[Entry {
@@ -201,8 +180,6 @@ fn from_to_and_cc_share_a_column() {
     );
 }
 
-/// Each message's accent edge is its own segment (#1688): three open
-/// messages laid end to end must not read as one line down the page.
 #[test]
 fn each_messages_accent_breaks_before_the_next() {
     let (_, raster) = draw(&[
@@ -212,7 +189,6 @@ fn each_messages_accent_breaks_before_the_next() {
     ]);
     let ground = pixel(&raster, raster.width - 1, 0);
     let painted = |x: u32, y: u32| pixel(&raster, x, y) != ground;
-    // The accent is the most painted column at the left edge.
     let column = (0..60.min(raster.width))
         .max_by_key(|&x| (0..raster.height).filter(|&y| painted(x, y)).count())
         .expect("a raster");
@@ -242,14 +218,9 @@ fn each_messages_accent_breaks_before_the_next() {
     }
 }
 
-/// Can one message's inline styling paint over another message? (#1346)
-///
-/// Inheritance cannot carry a declaration into a sibling, but painting and
-/// layout can: a `transform` paints outside its box without moving layout,
-/// and a negative margin pulls what follows up under it. Asked as a person
-/// experiences it -- what is drawn where the next message's words are --
-/// through the path mail takes (sanitized, then contained), against the raw
-/// markup as the control that proves each payload is hostile at all.
+/// A `transform` paints outside its box without moving layout, and a negative margin
+/// pulls what follows up under it; the raw markup is the control that proves each payload hostile
+/// (#1346).
 #[test]
 fn one_senders_styling_cannot_paint_over_another_message() {
     const SECOND: &str = r#"<p>second probe</p>"#;

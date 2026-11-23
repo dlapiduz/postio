@@ -1,36 +1,15 @@
-//! What a paste is: files to attach, or text to insert.
-//!
-//! A terminal hands a dropped file to the program as its path, pasted --
-//! `'/home/ada/My Report.pdf'`, `/home/ada/My\ Report.pdf`, or a
-//! `file:///home/ada/My%20Report.pdf` URI -- and a paste of copied files
-//! arrives the same way. That is the whole of drag and drop in a terminal
-//! (research R7). So a paste is read as files only when **every** word in it
-//! is a path; a sentence that happens to mention one is a sentence.
-//!
-//! Of the paths, a readable regular file is attached. One that clearly names
-//! a file and cannot be had -- a folder, no permission, a `file://` that
-//! points nowhere -- is said, by name, and nothing else changes. A bare path
-//! to nothing is text: a person can type a path into a message.
+//! What a paste is: files to attach, or text to insert. A terminal hands a dropped file over as its
+//! path pasted (quoted, escaped or `file://`); a paste is files only when every word is a path.
 
 use std::path::{Path, PathBuf};
 
-/// One part of a paste.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PasteItem {
-    /// A file to attach.
     File(PathBuf),
-    /// A file that was named and cannot be attached, and why.
-    Unreadable {
-        /// Which.
-        path: PathBuf,
-        /// Why, as a sentence.
-        reason: String,
-    },
-    /// Words to insert.
+    Unreadable { path: PathBuf, reason: String },
     Text(String),
 }
 
-/// What `pasted` is.
 pub fn classify(pasted: &str) -> Vec<PasteItem> {
     let text = || vec![PasteItem::Text(pasted.to_owned())];
     let Some(words) = words(pasted) else {
@@ -49,7 +28,6 @@ pub fn classify(pasted: &str) -> Vec<PasteItem> {
                     Some(home) => (Path::new(&home).join(rest), false),
                     None => return text(),
                 },
-                // Not a path, so the paste is words.
                 None => return text(),
             },
         };
@@ -72,8 +50,8 @@ pub fn classify(pasted: &str) -> Vec<PasteItem> {
                 reason: format!("{} is not a file", path.display()),
                 path,
             }),
-            // A `file://` names a file on purpose; a bare path to nothing may
-            // be someone typing a path into a message.
+            // A `file://` names a file on purpose; a bare path to nothing may be someone typing a
+            // path.
             Err(error) if from_uri => items.push(PasteItem::Unreadable {
                 reason: format!("{} is not there: {error}", path.display()),
                 path,
@@ -84,9 +62,7 @@ pub fn classify(pasted: &str) -> Vec<PasteItem> {
     items
 }
 
-/// `pasted` split into words the way a shell would, quotes and backslash
-/// escapes and all -- how a terminal writes a dropped path with a space in
-/// it. `None` for a paste with an unclosed quote, which is words.
+/// `None` for a paste with an unclosed quote, which is words.
 fn words(pasted: &str) -> Option<Vec<String>> {
     let mut words = Vec::new();
     let mut word = String::new();
@@ -135,7 +111,6 @@ fn words(pasted: &str) -> Option<Vec<String>> {
     Some(words)
 }
 
-/// `%20` and friends, as a `file://` URI spells them.
 fn percent_decode(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());

@@ -1,27 +1,5 @@
-//! The status line hears about a sync *while* it is running.
-//!
-//! `postio-qhz.5`: watching the first live sync, nothing in the application
-//! said it was working. It had connected, listed fifteen folders and was
-//! writing tens of thousands of messages, and the sidebar looked exactly like
-//! an idle account.
-//!
-//! Everything needed was already built. `postio_sync::StatusTracker` shapes a
-//! committed batch's [`Progress`] into a status and throttles it to 250 ms;
-//! the sidebar renders `syncing 30% · imap` from
-//! [`Event::SyncProgress`]. The engine collected every batch's progress into a
-//! `Vec` and folded it into the tracker *after the pass returned*, with one
-//! `Utc::now()` shared by the whole loop — so the tracker's own throttle threw
-//! all but the first away, and that one arrived at the end of a sync that
-//! takes minutes. The user watching it learned nothing until it was over.
-//!
-//! # Why the assertion is about the server rather than the clock
-//!
-//! "During the pass" cannot be tested by whether `sync()` has returned: the
-//! old code emitted its progress inside `sync()` too, just at the end of it.
-//! What actually distinguishes the two is whether the status line moved while
-//! the server was still being asked for mail. `MockBackend::calls` counts
-//! that, so the test asserts the thing the bug was about: progress reached the
-//! UI with fetching still to do.
+//! The status line hears about a sync while it runs: the assertion is on what the server had left
+//! to do when progress arrived, not on `sync()` returning.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -32,13 +10,10 @@ use postio_core::bridge::{EventStream, event_channel};
 use postio_runtime::engine::{Engine, EngineParts, NetworkSource, SystemClock};
 use postio_storage::{BlobStore, test_support};
 
-/// Five batches of `postio_sync::initial::DEFAULT_BATCH_SIZE`.
 const MESSAGES: u32 = 1_000;
 
-/// Enough that the pass outlives the tracker's 250 ms throttle several times
-/// over, so a fix that reports as it goes is visibly different from one that
-/// reports at the end. Applies to every backend call, so a pass is roughly a
-/// second — slow for a unit test and the point of this one.
+/// Long enough that the pass outlives the tracker's 250 ms throttle several times, so reporting as
+/// it goes differs from reporting at the end.
 const LATENCY: Duration = Duration::from_millis(120);
 
 fn server() -> MockBackend {
@@ -63,7 +38,6 @@ fn server() -> MockBackend {
 
 fn progress(event: &Event) -> Option<(u32, u32)> {
     match event {
-        // `(0, 0)` is a finished pass saying so (T220), not a batch.
         Event::SyncProgress { done, total, .. } if *total > 0 => Some((*done, *total)),
         _ => None,
     }
@@ -123,8 +97,6 @@ async fn a_long_sync_reports_progress_while_it_still_has_mail_to_fetch() {
         tokio::spawn(async move { engine.sync(mailbox).await })
     };
 
-    // Watch the stream and the server together. What matters is not when the
-    // report arrived but what the server had left to do when it did.
     let mut reports: Vec<(u32, u32)> = Vec::new();
     let mut calls_at_first_report: Option<u64> = None;
     while !pass.is_finished() {
@@ -163,9 +135,8 @@ async fn a_long_sync_reports_progress_while_it_still_has_mail_to_fetch() {
         reports.len() > 1,
         "one report is a status line that moved once: {reports:?}"
     );
-    // The tracker throttles to 250ms and the pass takes about a second, so a
-    // handful. Anything approaching one per batch means the throttle stopped
-    // being applied.
+    // The tracker throttles to 250 ms; anything near one per batch means the throttle stopped
+    // applying.
     assert!(
         reports.len() <= 5,
         "{} reports for five batches is close enough to per-batch that the \

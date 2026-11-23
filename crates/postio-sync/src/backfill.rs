@@ -1,45 +1,8 @@
-//! Backfilling message bodies: newest first, out of the user's way, and never
-//! in front of the message they just opened.
-//!
-//! # Two lanes and one rule
-//!
-//! Offline reading needs every body local; a first run that downloaded every
-//! body before showing anything would be unusable. So headers land first
-//! ([`crate::initial`]) and bodies follow behind — but "behind" must never mean
-//! "behind the user". A message being opened is not speculative work, and it is
-//! the only fetch anybody is watching a spinner for.
-//!
-//! Hence two lanes, and the rule that decides every question below: **the
-//! interactive lane always wins.** It ignores the size cap, ignores a metered
-//! connection, ignores the pause switches and jumps whatever the backlog holds.
-//! The longest a user can ever wait behind the backfill is the one body already
-//! on the wire when they clicked, which is what
-//! [`Backfill::next_body`] being one-at-a-time is for.
-//!
-//! # Newest first
-//!
-//! Same reason as [`crate::initial`]: nobody opens a mail client to read the
-//! oldest message in it. The backlog is a max-heap on the delivery time, so a
-//! backfill interrupted after ten minutes has made the ten minutes of mail the
-//! user is most likely to open available offline, not the ten minutes they read
-//! years ago.
-//!
-//! # What holds the backlog
-//!
-//! Nothing here persists a queue, and there is deliberately no "to backfill"
-//! table: `body_state` on the message row already *is* the durable record of
-//! which messages have no body, and a second list of the same fact is a second
-//! list to keep in step. This type is the in-memory *scheduler* over that fact
-//! — the caller enqueues what it has just written headers for, and repopulates
-//! the backlog from storage at startup.
-//!
-//! # No runtime
-//!
-//! Like [`Supervisor`](crate::connect::Supervisor) and
-//! [`Watcher`](crate::watch::Watcher), this owns no task and no timer:
-//! [`Backfill::next_body`] hands out one claim, [`fetch_body`] performs it, and
-//! [`Backfill::finished`] settles it. A caller that wants the interactive lane
-//! to run alongside a background fetch simply drives two.
+//! Body backfill scheduler: newest first, in the background, never ahead of a message the user
+//! opened.
+//! The interactive lane always wins: it ignores the size cap, metered and pause switches.
+//! No persisted queue: `body_state` on the message row is the durable record; no task or timer
+//! here.
 
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
@@ -58,133 +21,45 @@ use postio_storage::{Checkout, Connection, WritePriority};
 use crate::blob_sink::BlobSink;
 use crate::drain::SyncError;
 
-/// This module's result type.
 pub type Result<T> = std::result::Result<T, SyncError>;
 
-// ---------------------------------------------------------------------------
-// Policy
-// ---------------------------------------------------------------------------
-
-/// How eagerly bodies are pulled ahead of being asked for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BackfillPolicy {
-    /// Whether the background lane runs at all — `[sync] body_fetch` in
-    /// `config.toml`.
-    ///
-    /// Turning it off does not turn off reading: a message the user opens is
-    /// still fetched. It only stops Postio pulling bodies nobody asked for.
+    /// A message the user opens is still fetched when this is off.
     pub background: bool,
-    /// The largest body the background lane will pull, if any.
-    ///
-    /// The interactive lane ignores this: the user asked for that message and
-    /// is looking at a spinner, so a cap that refused them would be a bug
-    /// wearing a policy's clothes.
+    /// The interactive lane ignores this cap.
     pub max_body_bytes: Option<u64>,
-    /// Whether a metered connection pauses the background lane.
     pub pause_on_metered: bool,
-    /// Whether the user interacting pauses the background lane.
     pub pause_when_active: bool,
-    /// How many bodies one [`seed`] queues for one mailbox.
-    ///
-    /// A batch, not a horizon. The engine re-seeds whenever the queue drains,
-    /// so a mailbox is covered by however many batches it takes; this only
-    /// bounds how much of it is held in memory, and in front of an
-    /// interactive fetch, at any one moment.
-    ///
-    /// It was a private constant in the engine, and the queue was seeded once
-    /// per folder at startup and never again — so the cap read as a horizon,
-    /// and everything below the newest `seed_batch` messages of a folder was
-    /// never fetched until somebody opened it (#318).
+    /// A batch, not a horizon: the engine re-seeds whenever the queue drains.
     pub seed_batch: u32,
-    /// The most background requests held in memory at once, across every
-    /// mailbox.
-    ///
-    /// The backlog is a `BinaryHeap` of requests, each carrying an owned
-    /// mailbox path. `seed_batch` bounds one folder's contribution, and
-    /// nothing bounded the sum — fine at 200 across forty folders, and not
-    /// fine the first time something re-seeds a whole folder. ADR 0017's
-    /// second axis: no mailbox is ever resident in this process.
-    ///
-    /// Overflow is *refused*, not evicted. The heap is newest-first, so
-    /// evicting would drop the mail most likely to be opened, and there is
-    /// nothing to lose by refusing: `body_state` is the durable record of what
-    /// still needs fetching, and [`seed`] re-reads it whenever the queue
-    /// drains. The heap is a window onto that record, never a second copy of
+    /// Most background requests held in memory across all mailboxes (ADR 0017).
+    /// Overflow is refused, not evicted: `body_state` is the durable record and a re-seed re-reads
     /// it.
-    ///
-    /// It bounds the *background* lane only. The interactive lane is subject
-    /// to none of the policy, this included.
     pub max_backlog: usize,
-    /// The largest *inline* part the text axis will carry with the body.
-    ///
-    /// ADR 0017's "inline parts ride with the text": `disposition = 'inline'`
-    /// is 2.64 GB of the reference account, almost all of it the CID images
-    /// an HTML message references from its own body. A message whose inline
-    /// images are missing renders as broken boxes, and the reader blocks
-    /// *remote* images by default — so CID parts are the images that are
-    /// supposed to appear. Under this cap a part is text; over it, a payload,
-    /// so HTML mail reads correctly offline without pulling the forty-megabyte
-    /// video somebody embedded.
-    ///
-    /// `None` turns the rule off and leaves every inline part on the payload
-    /// axis, which is what the reader looked like before #751.
+    /// Largest inline part carried with the text axis, so CID images render offline.
+    /// `None` leaves every inline part on the payload axis.
     pub max_inline_bytes: Option<u64>,
-    /// What to do about attachment payloads — the *other* axis, governed
-    /// separately from everything above it.
     pub attachments: AttachmentPolicy,
-    /// The most attachment bytes fetched unasked for one message that has
-    /// just arrived, or `None` for no limit.
-    ///
-    /// New mail is the mail a person is about to open, so its attachments
-    /// follow its text down rather than waiting for a click (maintainer,
-    /// 2026-10-14): a part is on the machine by the time anybody reaches for
-    /// it. Parts are taken in order while they fit. Only arrivals, never the
-    /// archive -- that is [`AttachmentPolicy::Eager`]'s question -- and never
-    /// under [`AttachmentPolicy::Never`] or on a metered connection that
-    /// pauses the background lane.
+    /// Attachment bytes fetched unasked for a just-arrived message; `None` is no limit.
+    /// Not applied under `AttachmentPolicy::Never` or when a metered connection pauses the
+    /// background lane.
     pub fresh_payload_bytes: Option<u64>,
 }
 
-/// When an attachment's bytes are downloaded — ADR 0017's payload axis.
-///
-/// The fields above this one govern the **text** axis: headers and every
-/// `text/*` part, for every message, to completion, because that is the corpus
-/// search answers from and the corpus offline reading needs. Payloads are a
-/// different question with a different answer. On the reference account they
-/// are 11.00 GB of a 12.43 GB mailbox — 88.5% of the weight, and none of it
-/// anything FTS5 can index. A PDF contributes its filename to search and
-/// nothing else.
-///
-/// So this is a real choice rather than a tuning knob: it is the difference
-/// between ~1.4 GB on disk and ~12.4 GB.
+/// When an attachment's bytes are downloaded (ADR 0017's payload axis).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AttachmentPolicy {
-    /// Fetch a payload when the user opens or saves it, and never before.
-    ///
-    /// The default, and the one ADR 0016 stays affordable under. Metadata is
-    /// still synced for every part, so `has:attachment` and `filename:`
-    /// answer completely without a byte having moved.
+    /// The default. Part metadata is still synced, so `has:attachment` and `filename:` search work.
     #[default]
     OnOpen,
-    /// Backfill payloads behind the text, for a genuinely complete offline
-    /// archive on a machine with the disk for one.
     Eager,
-    /// Never fetch a payload, not even when the user opens it.
-    ///
-    /// Filename search and nothing more. An explicit refusal rather than a
-    /// silent failure: the reader says the bytes are not here and were not
-    /// asked for, which is a sentence a person can act on.
+    /// The reader says the bytes are not here, rather than failing silently.
     Never,
 }
 
 impl Default for BackfillPolicy {
-    /// Backfill, up to five megabytes a message, out of the way of both the
-    /// user and their data plan.
-    ///
-    /// Five megabytes covers essentially every message that is text and
-    /// images, and stops the background lane speculatively pulling the
-    /// forty-megabyte attachment nobody may ever open — which would be paid
-    /// for twice on a phone tether, once in time and once in money.
+    /// Backfill up to five megabytes a message, so the background lane skips huge attachments.
     fn default() -> Self {
         Self {
             background: true,
@@ -192,77 +67,41 @@ impl Default for BackfillPolicy {
             pause_on_metered: true,
             pause_when_active: true,
             seed_batch: 200,
-            // Twenty batches in flight: enough that a drained queue is
-            // re-seeded rather than starved, small enough that the heap and
-            // its owned paths stay a rounding error beside one message's
-            // bytes.
             max_backlog: 4_000,
-            // 256 KiB, ADR 0017's number: comfortably above a signature logo
-            // or a screenshot and far below anything a person would call a
-            // download.
             max_inline_bytes: Some(256 * 1024),
             attachments: AttachmentPolicy::default(),
-            // Twenty-five megabytes: the attachment limit of the large mail
-            // providers, so whatever was sent as an attachment at all fits.
+            // 25 MB: the large providers' attachment limit.
             fresh_payload_bytes: Some(25 * 1024 * 1024),
         }
     }
 }
 
-// ---------------------------------------------------------------------------
-// Work
-// ---------------------------------------------------------------------------
-
-/// Which lane a fetch is in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Priority {
-    /// The user is waiting for this one.
     Interactive,
-    /// It has just arrived, and is the mail most likely to be opened next.
     Fresh,
-    /// Nobody has asked; it is being fetched so that they can read it offline
-    /// later.
     Background,
 }
 
-/// Section bytes fetched ahead of the messages that want them (#1551).
-///
-/// A body fetch is almost all round trip, so fetching one message per command
-/// makes a first sync one wait per message — tens of thousands of them, end
-/// to end, however fast the link. IMAP will answer a whole set in one command
-/// *if every message in it wants the same section*, and the text axis obliges:
-/// most mail's words are at `1` or `1.1`.
-///
-/// So this is a cache, filled by [`prefetch_text_sections`] and consulted by
-/// [`fetch_body`]. A miss is not an error — the per-message path fetches it
-/// the old way — which is what keeps the batch an optimisation rather than a
-/// second code path that can be wrong on its own.
+/// Section bytes fetched in one batched command ahead of the messages that want them (#1551).
+/// A miss is not an error: the per-message path fetches it.
 #[derive(Debug, Default)]
 pub struct Prefetched {
     sections: HashMap<(postio_model::RemoteId, String), Vec<u8>>,
-    /// `BODY[HEADER]` for the same messages, fetched as a set too: every
-    /// text fetch stores the header block, and one command per message for it
-    /// was most of the round trips a batch of sections had saved.
     headers: HashMap<postio_model::RemoteId, Vec<u8>>,
 }
 
 impl Prefetched {
-    /// The bytes of `section` for `id`, if the batch fetched them.
     fn take(&mut self, id: &postio_model::RemoteId, section: &str) -> Option<Vec<u8>> {
         self.sections.remove(&(id.clone(), section.to_owned()))
     }
 
-    /// The header block fetched for `id`, if the batch fetched it.
     fn take_headers(&mut self, id: &postio_model::RemoteId) -> Option<Vec<u8>> {
         self.headers.remove(id)
     }
 
-    /// Everything fetched for `id`, moved out into a cache of its own.
-    ///
-    /// **Taken before the fetch, not during it.** The window's fetches run
-    /// concurrently over one shared cache, so a borrow held across an await
-    /// would be a second borrow waiting to panic. Each message lifts out what
-    /// is its own and carries it, which needs no sharing at all once taken.
+    /// Taken before the fetch: the window's fetches share one cache concurrently, and a borrow held
+    /// across an await would panic.
     pub fn split_for(&mut self, id: &postio_model::RemoteId) -> Prefetched {
         let mine: Vec<_> = self
             .sections
@@ -282,54 +121,30 @@ impl Prefetched {
         split
     }
 
-    /// How many text sections it holds. Test support and logging.
     pub fn len(&self) -> usize {
         self.sections.len()
     }
 
-    /// Whether it holds nothing.
     pub fn is_empty(&self) -> bool {
         self.sections.is_empty() && self.headers.is_empty()
     }
 }
 
-/// How many bytes of fetched-ahead sections may be held at once.
-///
-/// A batch does not stream: every answer is in memory together, which is the
-/// trade it makes for the round trips. Bounded against
-/// [`BodyRequest::text_size`] -- the whole message less the attachment parts
-/// the header sync recorded -- so a short note carrying a large PDF is not
-/// priced as the PDF.
+/// Bytes of fetched-ahead sections held at once; a batch is in memory whole.
+/// Measured against `BodyRequest::text_size`, so a short note with a big PDF is not priced as the
+/// PDF.
 const PREFETCH_BUDGET: u64 = 8 * 1024 * 1024;
 
-/// How many messages may be named in one `UID FETCH`, whatever their size.
-///
-/// A set is a command line, and a command line has a length; grouping fifty
-/// uids is already most of the win, and ten thousand would be a request no
-/// server thanks you for.
+/// A set is a command line, and a command line has a length limit.
 const PREFETCH_BATCH: usize = 50;
 
-/// How many bodies one batch holds at most. See [`Backfill::next_batch`].
 pub const BATCH_LEN: usize = PREFETCH_BATCH;
 
-/// How many bytes of text one batch holds before it is full, give or take the
-/// one message that crossed the line. Half of [`PREFETCH_BUDGET`], so the
-/// batch being written and the one being fetched together stay inside it.
+/// Half of `PREFETCH_BUDGET`, so the batch being written and the one being fetched fit together.
 pub const BATCH_BYTES: u64 = PREFETCH_BUDGET / 2;
 
-/// Fetch the text sections of `requests` in as few commands as their section
-/// paths allow.
-///
-/// Grouped by `(path, section)`, because that is what IMAP can answer at
-/// once: `UID FETCH 1,5,9 BODY.PEEK[1]` is one round trip for as many
-/// messages as share section `1`.
-///
-/// Bounded twice — by [`PREFETCH_BUDGET`] and [`PREFETCH_BATCH`] — and
-/// best-effort throughout: a message whose row cannot be read, whose sections
-/// are unknown, or whose fetch fails is simply not in the answer, and
-/// [`fetch_body`] fetches it the old way. That is the whole safety argument
-/// for this being an optimisation: every miss degrades to the path that
-/// already worked.
+/// Fetches text sections grouped by `(path, section)`, one `UID FETCH` per group.
+/// Best-effort: any miss falls back to the per-message path in `fetch_body`.
 pub async fn prefetch_text_sections(
     connection: &Checkout,
     backend: &dyn MailBackend,
@@ -338,13 +153,10 @@ pub async fn prefetch_text_sections(
 ) -> Prefetched {
     let mut prefetched = Prefetched::default();
     if requests.len() < 2 {
-        // One message is not a batch, and asking for a set of one costs a
-        // round trip to save none.
         return prefetched;
     }
 
     let messages = MessageRepository::new(connection);
-    // (path, section) -> the ids wanting it, and what they will cost.
     let mut groups: HashMap<(String, String), Vec<postio_model::RemoteId>> = HashMap::new();
     let mut contents = HashSet::new();
     let mut budget = PREFETCH_BUDGET;
@@ -394,17 +206,15 @@ pub async fn prefetch_text_sections(
                     prefetched.sections.insert((id, section.clone()), bytes);
                 }
             }
-            // Best-effort: the per-message path is still there, and a batch
-            // that failed must not fail the bodies it was trying to help.
+            // Best-effort: a failed batch must not fail the bodies it was helping.
             Err(error) => {
                 tracing::debug!(%path, %section, %error, "a batched section fetch failed");
             }
         }
     }
 
-    // The header blocks of the same messages, one command per mailbox. Without
-    // this the text fetch asks for each message's block on its own, which is
-    // one round trip per message however well the sections batched.
+    // Header blocks of the same messages, one command per mailbox; otherwise one round trip per
+    // message.
     let mut by_path: HashMap<&str, Vec<postio_model::RemoteId>> = HashMap::new();
     for request in requests {
         if named.remove(&request.remote_id) {
@@ -431,86 +241,40 @@ pub async fn prefetch_text_sections(
     prefetched
 }
 
-/// One body worth fetching.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BodyRequest {
-    /// The local row the bytes belong to.
     pub message: MessageId,
-    /// The mailbox it is in.
     pub mailbox: MailboxId,
-    /// That mailbox's path on the server.
     pub path: String,
-    /// The server's identifier for the message.
     pub uid: Uid,
-    /// The backend's own identity — what the fetch is addressed by (#543).
     pub remote_id: postio_model::RemoteId,
-    /// `RFC822.SIZE`, as the header fetch reported it.
     pub size: u64,
-    /// What fetching its text alone costs: `size` less the attachment parts
-    /// [`Want::Text`] leaves on the server. What the cap is measured against
-    /// for a text request; see `BackfillCandidate::text_size`.
+    /// Bytes fetching its text costs: `size` less the attachment parts. The cap is measured against
+    /// this for a text request.
     pub text_size: u64,
-    /// Where this body's mailbox sits in the sync queue, from
-    /// [`crate::order::sync_priority`]. **Lower is fetched sooner**, and it
-    /// outranks [`received_at`](Self::received_at) entirely.
-    ///
-    /// Seeding already walks mailboxes in this order — `top_up_backfill`
-    /// sorts by it and so does `queue_every_mailbox` — but seeding order is
-    /// not delivery order. The backlog is one `BinaryHeap` across every
-    /// mailbox, so whatever it holds is re-sorted on the way out; ranked by
-    /// date alone it hands back the newest body *anywhere*. On a real account
-    /// that meant a 60,934-message Archive outranking the inbox it had been
-    /// seeded behind, and the inbox stayed unreadable while the archive
-    /// filled.
+    /// Mailbox position in the sync queue (`order::sync_priority`); lower is fetched sooner and
+    /// outranks `received_at`.
+    /// The backlog is one heap across mailboxes, so date alone would let a huge archive outrank the
+    /// inbox.
     pub rank: u8,
-    /// When the server received it. The backlog's sort key *within* a rank.
     pub received_at: DateTime<Utc>,
-    /// Which bytes of it to ask the server for.
     pub want: Want,
 }
 
-/// Which bytes of a message one request is after — ADR 0017's two axes, plus
-/// the fallback for a row that predates them.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Want {
-    /// The sections holding the message's own words: the text axis, and what
-    /// every background request asks for.
-    ///
-    /// Pulling payloads nobody asked for is exactly what the split exists to
-    /// stop, so this is the default and the other two are opted into.
     #[default]
     Text,
-    /// Named payload sections, by the `BODYSTRUCTURE` path
-    /// `Attachment::part_id` holds — `2`, `2.1`.
-    ///
-    /// The payload axis. Interactive when the user opened one of them, and
-    /// background when [`AttachmentPolicy::Eager`] is draining the backlog.
     Payloads(Vec<String>),
-    /// Every byte, headers included.
-    ///
-    /// Two rows still need this: one whose `BODYSTRUCTURE` was never recorded,
-    /// so no section can be named; and one whose payload has no
-    /// `Attachment::part_headers`, so a fetched section could not be decoded.
-    /// Slower and fatter, and the only answer that is not a guess.
+    /// Used when `BODYSTRUCTURE` was never recorded or a payload has no `part_headers`.
     Whole,
-    /// The header block alone, for a row that has one nowhere else.
-    ///
-    /// The repair lane #884 needs, and the only one of these that fetches
-    /// nothing a person is waiting for. A store in use since before blocks
-    /// were stored holds messages whose body is local and whose raw source was
-    /// never kept — the text axis never keeps one — so their block cannot be
-    /// rebuilt from disk however long anybody waits. `BODY[HEADER]` is the
-    /// smallest thing that answers it.
-    ///
-    /// Not to be confused with fetching headers at *sync* time, which ADR 0025
-    /// Q4 refuses: that charges every user's every sync forever. This is a
-    /// one-off over mail that is already here, and it stops finding work.
+    /// Repair lane (#884): fetches `BODY[HEADER]` for rows whose local body has no stored header
+    /// block.
+    /// Not done at sync time (ADR 0025 Q4).
     HeaderBlock,
 }
 
 impl BodyRequest {
-    /// Roughly how many bytes fetching it moves: its text for
-    /// [`Want::Text`], every byte otherwise.
     pub fn fetched_bytes(&self) -> u64 {
         match self.want {
             Want::Text => self.text_size,
@@ -520,8 +284,6 @@ impl BodyRequest {
 }
 
 impl Want {
-    /// What a fetch for this want brings, as the news of it names it: the
-    /// part a waiter listens for (#1996).
     pub fn sections(&self) -> Sections {
         match self {
             Want::Text => Sections::Text,
@@ -531,12 +293,7 @@ impl Want {
         }
     }
 
-    /// Folds another request for the same message into this one.
-    ///
-    /// Two payload requests union their parts: one round trip, both parts.
-    /// Anything else has no smaller answer than every byte — a text request
-    /// and a payload request together are the whole message, and a
-    /// whole-message fallback on either side already was.
+    /// Payload requests union their parts; anything else widens to the whole message.
     fn absorb(&mut self, other: &Want) {
         if self == other {
             return;
@@ -566,95 +323,62 @@ impl From<BackfillCandidate> for BodyRequest {
             text_size: candidate.text_size,
             rank: crate::order::sync_priority(candidate.mailbox_role),
             received_at: candidate.received_at,
-            // The text axis is the default; the payload axis opts in.
             want: Want::Text,
         }
     }
 }
 
-/// A [`BodyRequest`] the queue has handed out.
-///
-/// Outstanding until it is reported through [`Backfill::finished`], which is
-/// what stops the same body being put on the wire twice.
+/// Outstanding until reported through `Backfill::finished`, so the same body is not put on the wire
+/// twice.
 #[derive(Debug, Clone)]
 pub struct Claim {
-    /// What to fetch.
     pub request: BodyRequest,
-    /// Which lane it came from.
     pub priority: Priority,
-    /// Fired by [`Backfill::cancel`]. Pass it to [`fetch_body`].
     pub cancel: CancelToken,
 }
 
-/// The first wait before an [interrupted](Outcome::Interrupted) body is
-/// offered again, doubling with each failure in a row.
+/// First backoff before an interrupted body is offered again; doubles per failure up to
+/// `RETRY_CAP`.
 const RETRY_BASE: std::time::Duration = std::time::Duration::from_secs(5);
 
-/// The longest that wait grows to.
 const RETRY_CAP: std::time::Duration = std::time::Duration::from_secs(300);
 
-/// What became of one body.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
-    /// The bytes are local now.
     Stored {
-        /// How many bytes arrived.
         bytes: u64,
     },
-    /// There is no local row to attach a body to any more — the message was
-    /// deleted, or its mailbox was wiped by a `UIDVALIDITY` reset, while the
-    /// request sat in the queue. Settled, not failed: nothing went wrong.
+    /// Settled, not failed: the message or its mailbox (`UIDVALIDITY` reset) is gone.
     Gone,
-    /// The fetch failed, and the message is why.
     Failed {
-        /// Why, for the user or a bug report.
         reason: String,
     },
-    /// The fetch stopped short for a reason that is not about the message: a
-    /// dropped link, a timeout, a cancel, a mailbox whose `UIDVALIDITY`
-    /// moved (#1985). Nothing says the bytes cannot come, so the message is
-    /// offered again after a backoff, and at once on the next reconnection.
+    /// Not about the message (dropped link, timeout, cancel, `UIDVALIDITY` moved): offered again
+    /// after a backoff, and at once on reconnect (#1985).
     Interrupted {
-        /// Why, for the user or a bug report.
         reason: String,
     },
 }
 
-/// What the backfill has done and has left to do.
-///
-/// Every message that has ever entered the queue is in exactly one of these
-/// counts, which is what makes a progress display add up rather than drift.
+/// Every message ever queued is in exactly one count.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct BackfillProgress {
-    /// Queued and not yet started.
     pub pending: usize,
-    /// Handed out and not yet reported.
     pub in_flight: usize,
-    /// Fetched and written.
     pub stored: usize,
-    /// Refused by the size cap without ever being attempted.
     pub skipped: usize,
-    /// No longer had a local row.
     pub gone: usize,
-    /// Attempted and failed.
     pub failed: usize,
-    /// Bytes written by this backfill.
     pub bytes: u64,
 }
 
 impl BackfillProgress {
-    /// How many messages the queue has finished with, one way or another.
     pub fn settled(&self) -> usize {
         self.stored + self.skipped + self.gone + self.failed
     }
 }
 
-// ---------------------------------------------------------------------------
-// The queue
-// ---------------------------------------------------------------------------
-
-/// Where a message sits right now. Also the lazy-deletion marker: a heap entry
-/// whose message is no longer `Background` is stale and skipped on the way out.
+/// Also the lazy-deletion marker: a heap entry whose message is no longer `Background` is skipped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Lane {
     Background,
@@ -663,22 +387,13 @@ enum Lane {
     InFlight,
 }
 
-/// A backlog entry, ordered newest first.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Entry(BodyRequest);
 
 impl Ord for Entry {
     fn cmp(&self, other: &Self) -> Ordering {
-        // `BinaryHeap` is a max-heap, so "greater" must mean "fetch sooner":
-        // the most recently received message, ties broken by the higher UID so
-        // the order is total and a test can assert it.
-        //
-        // Rank comes first, and reversed, because a *lower* `sync_priority`
-        // means sooner. Without it this ordering is by date alone across every
-        // mailbox at once, which is not what seeding intended: the inbox is
-        // seeded first and then immediately outranked by anything newer in a
-        // folder behind it. A person whose archive holds this month's mail
-        // watches it fill while their inbox stays unreadable.
+        // Max-heap: greater means fetch sooner. Rank is reversed (lower `sync_priority` is sooner)
+        // and first, or newer mail in an archive outranks the inbox.
         other
             .0
             .rank
@@ -695,20 +410,13 @@ impl PartialOrd for Entry {
     }
 }
 
-/// Decides which body to fetch next, and gets out of the user's way.
 #[derive(Debug)]
 pub struct Backfill {
     policy: BackfillPolicy,
-    /// The user's clicks, in the order they made them.
     interactive: VecDeque<BodyRequest>,
-    /// Mail that has just arrived, in the order it did: behind a click and
-    /// ahead of everything else. See [`Backfill::arrived`].
     fresh: VecDeque<BodyRequest>,
-    /// An arrival's attachments, queued on [`fresh`](Self::fresh) once its
-    /// text is stored -- the words first, because they are what the list and
-    /// the reader show.
+    /// Attachment follow-ups, queued on `fresh` once the text is stored.
     followups: HashMap<MessageId, BodyRequest>,
-    /// Everything else, newest first.
     background: BinaryHeap<Entry>,
     lanes: HashMap<MessageId, Lane>,
     progress: BackfillProgress,
@@ -717,43 +425,20 @@ pub struct Backfill {
     user_active: bool,
     cancel: CancelToken,
     cancelled: bool,
-    /// Messages this session has offered and will not offer again.
-    ///
-    /// Two kinds: one over [`BackfillPolicy::max_body_bytes`], and one whose
-    /// fetch failed or found nothing there. Both stay `body_state <> 'full'`
-    /// in the store for ever, so without this every re-seed would offer them
-    /// again — re-counting the skip, or re-queueing a failing fetch in a tight
-    /// loop against the server. It holds failures and oversized mail only,
-    /// never the whole mailbox: a body that lands leaves `needing_backfill`
-    /// by becoming `full`.
-    ///
-    /// In memory, like the rest of the queue, so a restart offers them once
-    /// more. A fetch that merely stopped short is not here at all: see
-    /// [`interrupted`](Self::interrupted).
+    /// Messages not to be offered again this session: over the size cap, or failed.
+    /// They stay `body_state <> 'full'`, so every re-seed would offer them again.
     set_aside: HashSet<MessageId>,
-    /// Messages whose fetch was [interrupted](Outcome::Interrupted): how many
-    /// times in a row, and the earliest they may be offered again.
-    ///
-    /// Held apart from `set_aside` because that one lasts the session. These
-    /// wait out a backoff and are forgiven altogether by
-    /// [`reconnected`](Self::reconnected); without the wait, a link that
-    /// fails every fetch fast would be re-seeded and re-failed at the speed
-    /// of the engine's own loop.
+    /// Interrupted messages: failures in a row, and the earliest they may be offered again.
+    /// Kept apart from `set_aside` (session-long): these wait out a backoff, and `reconnected`
+    /// forgives them.
     interrupted: HashMap<MessageId, (u32, std::time::Instant)>,
-    /// Requests that arrived while the same message was already on the wire,
-    /// re-offered the moment it settles.
-    ///
-    /// Two attachment chips clicked in quick succession. A fetch already on
-    /// the wire cannot grow a part, and the second request has nowhere to go —
-    /// [`Backfill`] tracks one lane per message, deliberately, because that is
-    /// what bounds how long anything can be stuck behind the backfill. Dropping
-    /// it silently would leave the second spinner turning until the reading
-    /// pane's own deadline gave up on bytes nobody was fetching.
+    /// Requests that arrived while the same message was on the wire, re-offered when it settles.
+    /// One lane per message bounds how long anything waits behind the backfill; dropping the
+    /// request would leave a spinner turning.
     deferred: HashMap<MessageId, BodyRequest>,
 }
 
 impl Backfill {
-    /// An empty backfill.
     pub fn new(policy: BackfillPolicy) -> Self {
         Self {
             policy,
@@ -774,79 +459,51 @@ impl Backfill {
         }
     }
 
-    /// The policy in force.
     pub fn policy(&self) -> BackfillPolicy {
         self.policy
     }
 
-    /// What has happened so far.
     pub fn progress(&self) -> BackfillProgress {
         self.progress
     }
 
-    /// Whether there is nothing queued and nothing on the wire.
     pub fn is_idle(&self) -> bool {
         self.progress.pending == 0 && self.progress.in_flight == 0
     }
 
-    /// Whether [`cancel`](Self::cancel) has been called.
     pub fn is_cancelled(&self) -> bool {
         self.cancelled
     }
 
-    /// Tells the backfill the connection now costs money.
     pub fn set_metered(&mut self, metered: bool) {
         self.metered = metered;
     }
 
-    /// Tells the backfill the user is doing something.
     pub fn set_user_active(&mut self, active: bool) {
         self.user_active = active;
     }
 
-    /// Tells the backfill the store is at its disk ceiling.
-    ///
-    /// Set from `[storage] max_bytes` against what the blob store actually
-    /// occupies. Unlike the other pauses this one is not about politeness: a
-    /// full store with the lane still running is backfill fetching, eviction
-    /// freeing, and backfill fetching the same bytes again — a loop that burns
-    /// a data plan to stay exactly as full as it was.
-    ///
-    /// Like the other pauses, it does not apply to the interactive lane. That
-    /// is also the only way out: opening mail is what proves which blobs are
-    /// worth keeping, and a client that stopped serving reads when its cache
-    /// filled would be a client that had stopped working.
+    /// A full store with the lane running would loop: backfill fetches, eviction frees, backfill
+    /// fetches again.
+    /// The interactive lane is exempt; opening mail is how the store learns which blobs to keep.
     pub fn set_disk_full(&mut self, full: bool) {
         self.disk_full = full;
     }
 
-    /// Whether the background lane is held back right now, for any reason.
-    ///
-    /// What a status surface reports (#352): "not fetching" and "nothing left
-    /// to fetch" look identical from the outside and mean opposite things.
+    /// Whether the background lane is held back for any reason (#352): "not fetching" and "nothing
+    /// left" differ.
     pub fn is_paused(&self) -> bool {
         !self.background_runs()
     }
 
-    /// Queues a body to fetch when there is nothing better to do. Answers
-    /// whether it actually joined the queue.
-    ///
-    /// A body over [`BackfillPolicy::max_body_bytes`] is counted as skipped and
-    /// not queued — it stays on the server until somebody actually wants it, at
-    /// which point [`request_now`](Self::request_now) fetches it regardless.
-    /// A message already known to the queue is ignored rather than duplicated,
-    /// and so is one already [set aside](Self::set_aside).
-    ///
-    /// The answer is what lets a caller tell "there was more to do" from
-    /// "there were more rows, and none of them are worth offering again" —
-    /// which is what stops the engine's top-up looping (#318). It is also why
-    /// the size skip is counted once rather than on every re-seed.
+    /// Queues a body for background fetch; answers whether it joined the queue.
+    /// A body over the size cap is counted as skipped once and not queued. A known or set-aside
+    /// message is ignored.
+    /// The answer lets the engine's top-up stop looping (#318).
     pub fn enqueue(&mut self, request: BodyRequest) -> bool {
         self.enqueue_at(request, std::time::Instant::now())
     }
 
-    /// [`enqueue`](Self::enqueue) at a given moment, which is what a message
-    /// waiting out its backoff is measured against.
     pub fn enqueue_at(&mut self, request: BodyRequest, now: std::time::Instant) -> bool {
         if self.cancelled
             || self.lanes.contains_key(&request.message)
@@ -867,16 +524,11 @@ impl Backfill {
             self.set_aside.insert(request.message);
             return false;
         }
-        // Full. Not `set_aside`: this message is perfectly fetchable and will
-        // be offered again by the next `seed`, unlike one refused for its
-        // size. Recording it as skipped would misreport the backlog as
-        // permanently shorter than the work remaining.
+        // Full, not `set_aside`: the message is fetchable and the next `seed` offers it again.
         if self.background.len() >= self.policy.max_backlog {
             return false;
         }
-        // Same reasoning for a store at its ceiling: nothing is wrong with
-        // this message, there is simply nowhere to put it yet. Queueing it
-        // would mean fetching bytes that eviction must immediately free.
+        // At the disk ceiling: queueing would fetch bytes that eviction must immediately free.
         if !self.background_runs() && self.disk_full {
             return false;
         }
@@ -886,25 +538,15 @@ impl Backfill {
         true
     }
 
-    /// Asks for a body now, because the user is looking at it.
-    ///
-    /// Jumps the whole backlog, and is subject to none of the policy: the size
-    /// cap, the metered pause and the active-user pause all exist to keep
-    /// speculative work out of the way, and this is not speculative.
-    ///
-    /// A message already in the backlog is *promoted* rather than queued twice.
-    /// One already queued in front absorbs this request's
-    /// [`Want`](Want::absorb) rather than dropping it, and one already on the
-    /// wire holds it until that fetch settles — a second attachment clicked
-    /// while the first is downloading is a part to fetch next, not a part to
-    /// forget.
+    /// Asks for a body now, because the user is looking at it; subject to none of the policy.
+    /// A queued message is promoted, a queued interactive one absorbs this request's `Want`,
+    /// and one on the wire holds it until that fetch settles.
     pub fn request_now(&mut self, request: BodyRequest) {
         if self.cancelled {
             return;
         }
         match self.lanes.get(&request.message) {
-            // On the wire. Nothing can be added to a fetch already running, so
-            // this waits for it: `finished` offers it again.
+            // On the wire: a running fetch cannot grow a part, so wait; `finished` offers it again.
             Some(Lane::InFlight) => {
                 match self.deferred.entry(request.message) {
                     std::collections::hash_map::Entry::Occupied(mut held) => {
@@ -916,8 +558,6 @@ impl Backfill {
                 }
                 return;
             }
-            // Queued in front already. One round trip can answer both, so the
-            // request that will run absorbs this one's want.
             Some(Lane::Interactive) => {
                 for queued in self
                     .interactive
@@ -929,8 +569,7 @@ impl Backfill {
                 return;
             }
             Some(Lane::Background | Lane::Fresh) => {
-                // The stale entry is skipped on its way out; the count does
-                // not move, because the message did not leave the queue.
+                // The stale entry is skipped on its way out; the count does not move.
                 self.lanes.insert(request.message, Lane::Interactive);
             }
             None => {
@@ -941,17 +580,10 @@ impl Backfill {
         self.interactive.push_back(request);
     }
 
-    /// Queues what a message that has just arrived needs: its text, then
-    /// its attachments once the text is stored. Answers whether anything
-    /// joined the queue.
-    ///
-    /// Behind a click and ahead of the backlog, and none of the pauses for
-    /// being in the user's way apply: the user being active is exactly when
-    /// new mail is wanted. What does apply is what the user said about
-    /// downloading at all -- `background` off means on-open only -- and a
-    /// store at its disk ceiling. The text is exempt from the size cap,
-    /// measured as it is against the words alone; a whole-message fallback
-    /// is not. Attachments wait out a metered connection in the queue.
+    /// Queues a just-arrived message: its text, then its attachments once the text is stored.
+    /// Skips the user-active pauses (new mail is wanted then) but honours `background` off and a
+    /// full disk.
+    /// The text is exempt from the size cap; a whole-message fallback is not.
     pub fn arrived(&mut self, text: Option<BodyRequest>, payloads: Option<BodyRequest>) -> bool {
         if self.cancelled || !self.policy.background || self.disk_full {
             return false;
@@ -970,14 +602,10 @@ impl Backfill {
                     .max_body_bytes
                     .is_some_and(|cap| request.fetched_bytes() > cap)
         });
-        // The words are already here, or never will be by this lane: the
-        // attachments go straight on.
         let Some(text) = text else {
             return payloads.is_some_and(|payloads| self.queue_fresh(payloads));
         };
         match self.lanes.get(&message) {
-            // Already on its way, or the user beat the arrival to it: the
-            // attachments follow whatever fetch is running.
             Some(Lane::InFlight | Lane::Interactive | Lane::Fresh) => {
                 if let Some(payloads) = payloads {
                     self.followups.insert(message, payloads);
@@ -995,11 +623,9 @@ impl Backfill {
         }
     }
 
-    /// Puts `request` on the fresh lane, promoting it out of the backlog.
     fn queue_fresh(&mut self, request: BodyRequest) -> bool {
         match self.lanes.get(&request.message) {
             Some(Lane::InFlight | Lane::Interactive | Lane::Fresh) => return false,
-            // The stale heap entry is skipped on its way out.
             Some(Lane::Background) => {}
             None => self.progress.pending += 1,
         }
@@ -1008,12 +634,8 @@ impl Backfill {
         true
     }
 
-    /// Hands out the next body to fetch, or `None` when there is nothing to do
-    /// right now.
-    ///
-    /// One at a time, and outstanding until [`finished`](Self::finished)
-    /// reports it. That is what bounds how long the user can wait behind the
-    /// backfill: one body, the one already on the wire.
+    /// One at a time, outstanding until `finished`: the user never waits behind more than the body
+    /// already on the wire.
     pub fn next_body(&mut self) -> Option<Claim> {
         if self.cancelled {
             return None;
@@ -1029,20 +651,9 @@ impl Backfill {
         Some(self.claim(request, Priority::Background))
     }
 
-    /// A claim for a message **the user is waiting on**, or `None`.
-    ///
-    /// [`next_body`](Self::next_body) already prefers the interactive lane,
-    /// so this exists for one caller and one reason: the engine keeps a small
-    /// window of background fetches on the wire (#1551), and a window that
-    /// only refills when it has fully drained would make an opened message
-    /// wait for every fetch in it. Topping up with this instead means an
-    /// interactive request starts at the next free slot — one body's wait,
-    /// which is the bound the serial loop used to give — without the window
-    /// pulling more background work into a call that is supposed to return.
-    ///
-    /// Mail that has just arrived comes next, by the same reasoning: it is
-    /// what the person is about to open, and it must not wait for a window
-    /// of background fetches to drain either.
+    /// A claim for a message the user is waiting on (then fresh mail), or `None`.
+    /// The engine tops up its background window with this so an opened message starts at the next
+    /// free slot (#1551).
     pub fn next_interactive_body(&mut self) -> Option<Claim> {
         if self.cancelled {
             return None;
@@ -1054,19 +665,10 @@ impl Backfill {
         Some(self.claim(request, Priority::Fresh))
     }
 
-    /// The next batch of bodies to put on the wire together (#1941).
-    ///
-    /// **A batch is one kind of work.** If anything is waiting on the
-    /// interactive or fresh lanes, the batch is exactly that and no
-    /// background body rides along: the batch's prefetch is one command, and
-    /// a message the user opened must not wait behind forty-nine they did not.
-    /// Otherwise it is background bodies, in queue order, until it holds
-    /// [`BATCH_LEN`] of them or their [`BodyRequest::fetched_bytes`] reach
-    /// [`BATCH_BYTES`] -- and always at least one, so a message larger than the
-    /// whole budget still goes, alone.
-    ///
-    /// Empty when there is nothing to do right now, for the reasons
-    /// [`next_body`](Self::next_body) gives.
+    /// The next batch to put on the wire together (#1941).
+    /// A batch is one kind of work: if the interactive or fresh lanes have anything, only that, so
+    /// an opened message does not wait behind background bodies.
+    /// Otherwise background bodies until `BATCH_LEN` or `BATCH_BYTES`, and always at least one.
     pub fn next_batch(&mut self) -> Vec<Claim> {
         let mut batch = Vec::new();
         while batch.len() < BATCH_LEN
@@ -1088,12 +690,8 @@ impl Backfill {
         batch
     }
 
-    /// Hands a claim back unfetched, to the front of the line it came from.
-    ///
-    /// For a claim taken ahead of need that the engine then decided not to
-    /// start -- a job arrived, the slice ended -- so that "outstanding" keeps
-    /// meaning "on the wire or about to be". Interactive claims return to the
-    /// interactive lane, everything else to the backlog.
+    /// Hands a claim back unfetched, to the front of its lane, so "outstanding" keeps meaning "on
+    /// the wire or about to be".
     pub fn release(&mut self, claim: Claim) {
         let message = claim.request.message;
         if self.lanes.get(&message) != Some(&Lane::InFlight) {
@@ -1122,12 +720,10 @@ impl Backfill {
         }
     }
 
-    /// Records what became of a claim.
     pub fn finished(&mut self, message: MessageId, outcome: Outcome) {
         self.finished_at(message, outcome, std::time::Instant::now());
     }
 
-    /// [`finished`](Self::finished) at a given moment.
     pub fn finished_at(&mut self, message: MessageId, outcome: Outcome, now: std::time::Instant) {
         if self.lanes.remove(&message) != Some(Lane::InFlight) {
             return;
@@ -1142,15 +738,8 @@ impl Backfill {
                     self.queue_fresh(payloads);
                 }
             }
-            // Set aside, both of them. The row stays `body_state <> 'full'`
-            // either way, so it comes back from `needing_backfill` on every
-            // re-seed for ever: without this, a message the server has no
-            // copy of, or one whose fetch keeps failing, would be re-queued
-            // the instant the queue drained and fetched again immediately —
-            // a retry loop at the speed of the engine's own loop. They are
-            // offered once more on the next start. A fetch that stopped
-            // short ([`Outcome::Interrupted`]) is the one that earns more:
-            // see below.
+            // Set aside: the row stays `body_state <> 'full'`, so without this every re-seed would
+            // re-queue it in a tight retry loop.
             Outcome::Gone => {
                 self.followups.remove(&message);
                 self.progress.gone += 1;
@@ -1161,8 +750,6 @@ impl Backfill {
                 self.progress.failed += 1;
                 self.set_aside.insert(message);
             }
-            // Not set aside: waits out a backoff that doubles from
-            // `RETRY_BASE` to `RETRY_CAP`, and a reconnection ends the wait.
             Outcome::Interrupted { .. } => {
                 self.followups.remove(&message);
                 self.progress.failed += 1;
@@ -1174,20 +761,14 @@ impl Backfill {
                 self.interrupted.insert(message, (tries + 1, now + wait));
             }
         }
-        // Whatever was asked for while this was on the wire. Offered even
-        // after a failure: it is the user asking a second time, and a request
-        // they made by hand earns the attempt a speculative one would not.
+        // Offered even after a failure: a request made by hand earns an attempt a speculative one
+        // would not.
         if let Some(held) = self.deferred.remove(&message) {
             self.request_now(held);
         }
     }
 
-    /// Stops the backfill and everything it has on the wire.
-    ///
-    /// The queue is emptied rather than parked: what is worth fetching is
-    /// re-derivable from `body_state` at any time, so keeping a stale backlog
-    /// across a shutdown buys nothing and risks acting on a mailbox that has
-    /// moved.
+    /// The queue is emptied, not parked: it is re-derivable from `body_state`.
     pub fn cancel(&mut self) {
         self.cancelled = true;
         self.cancel.cancel();
@@ -1201,24 +782,17 @@ impl Backfill {
         self.progress.in_flight = 0;
     }
 
-    /// The link has just come up: every message whose fetch was
-    /// [interrupted](Outcome::Interrupted) is worth offering again now,
-    /// whatever is left of its backoff. Those the server refused, or does not
-    /// have, stay [set aside](Self::set_aside).
+    /// Link is up: interrupted messages are offered again now, whatever is left of their backoff.
     pub fn reconnected(&mut self) {
         self.interrupted.clear();
     }
 
-    /// Makes a cancelled backfill usable again, with a fresh token.
-    ///
-    /// The counts are kept: they describe what this session has downloaded, and
-    /// a reconnection does not undo that.
+    /// The counts are kept.
     pub fn restart(&mut self) {
         self.cancelled = false;
         self.cancel = CancelToken::new();
     }
 
-    /// Whether the background lane may run right now.
     fn background_runs(&self) -> bool {
         self.policy.background
             && !self.disk_full
@@ -1235,16 +809,14 @@ impl Backfill {
         None
     }
 
-    /// The next arrival, oldest first. Attachments stay queued while a
-    /// metered connection pauses the background lane, and go once it does
-    /// not; text goes regardless, being small and the point.
+    /// Attachments stay queued while a metered connection pauses the background lane; text goes
+    /// regardless.
     fn take_fresh(&mut self) -> Option<BodyRequest> {
         let held_back = self.policy.pause_on_metered && self.metered;
         let position = self.fresh.iter().position(|request| {
             self.lanes.get(&request.message) == Some(&Lane::Fresh)
                 && !(held_back && matches!(request.want, Want::Payloads(_)))
         })?;
-        // Stale entries in front of it are dropped on the way.
         let request = self.fresh.remove(position)?;
         self.fresh
             .retain(|queued| self.lanes.get(&queued.message) == Some(&Lane::Fresh));
@@ -1272,34 +844,12 @@ impl Backfill {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Filling the queue from storage
-// ---------------------------------------------------------------------------
-
-/// Queues everything in `mailbox_id` still missing a body, newest first.
-///
-/// `Backfill` is deliberately in-memory (see the [module docs](self)): nothing
-/// here persists a backlog, because `body_state` on the message row already is
-/// the durable record of what is missing. This is what turns that record back
-/// into a backlog — at startup, so a cold start does not sit at zero forever,
-/// and again after a mailbox finishes an initial sync or a resync, so whatever
-/// it just wrote headers for gets backfilled too.
-///
-/// Returns how many requests actually **joined** the queue — not how many
-/// candidate rows were read.
-///
-/// The difference matters to the engine's top-up (#318), which repeats this
-/// until it stops producing work: a folder whose remaining candidates are all
-/// over the size cap, or all set aside after failing this session, answers
-/// rows for ever and must answer zero here, or the top-up would never stop.
-/// Not an error for there to be none.
-///
-/// Queues nothing at all for a folder marked
-/// [`backfill_excluded`](postio_storage::repository::MailboxRepository::backfill_excluded)
-/// (ADR 0016, #350) — the background lane only. [`request_body`] and
-/// [`request_whole`] answer an interactive, on-open fetch exactly as they
-/// would for any other folder; only the unattended top-up this feeds skips
-/// an excluded one.
+/// Queues what in `mailbox_id` still lacks a body, newest first, rebuilding the in-memory backlog
+/// from `body_state`.
+/// Returns how many requests joined the queue, not how many rows were read: the engine's top-up
+/// repeats until it gets zero (#318).
+/// Queues nothing for a folder excluded from backfill (ADR 0016, #350); on-open fetches still work
+/// there.
 pub async fn seed(
     connection: &Connection,
     backfill: &mut Backfill,
@@ -1323,12 +873,8 @@ pub async fn seed(
             .into_iter()
             .filter(|candidate| backfill.enqueue(candidate.clone().into()))
             .count();
-        // A batch that queued nothing was a batch of messages the scheduler
-        // cannot use — over the size cap, or set aside after failing this
-        // session — and those stay `body_state <> 'full'` for ever. Walking
-        // past them is what lets the backfill reach the older mail behind
-        // them; without it a folder whose newest `limit` messages are all
-        // oversized would never be covered at all (#318).
+        // A batch that queued nothing (over the cap, or set aside) stays `body_state <> 'full'`;
+        // walk past it to reach older mail (#318).
         if queued > 0 || read < limit as usize {
             return Ok(queued);
         }
@@ -1336,12 +882,7 @@ pub async fn seed(
     }
 }
 
-/// Asks the backfill for one message right now, looking up what it needs from
-/// storage so the caller only has to know the message it just opened.
-///
-/// Returns `false` when there is nothing to fetch — the message has no local
-/// row any more, has no `UID` yet, or already has its full body — in which
-/// case the reading pane already has everything it is going to get from this.
+/// Asks the backfill for one message right now. Returns `false` when there is nothing to fetch.
 pub async fn request_body(
     connection: &Connection,
     backfill: &mut Backfill,
@@ -1357,20 +898,11 @@ pub async fn request_body(
     Ok(true)
 }
 
-/// As [`request_body`], but asks for every byte of the message.
-///
-/// Not the way an attachment is opened — that is [`request_payloads`], which
-/// asks for the one section somebody clicked. This is for the callers that
-/// genuinely need the *original bytes*: dragging a message out as
-/// `message/rfc822`, "view source", and eventually verifying a signature over
-/// the bytes it was made across.
-///
-/// Under ADR 0017 the text axis stores no raw source, so those bytes are not
-/// on this machine for any message the background lane fetched, and there is
-/// nowhere to get them but the server. So the question is whether the raw
-/// blob is stored, not what `body_state` says: a text-only message is `full`
-/// without one (#1984). Returns `false` only when it is stored, or the
-/// message is gone or has no `UID`.
+/// As `request_body`, but asks for every byte, for callers needing the original bytes (drag out,
+/// view source).
+/// The text axis stores no raw source (ADR 0017), so whether the raw blob is stored decides, not
+/// `body_state` (#1984).
+/// Returns `false` only when it is stored, or the message is gone or has no `UID`.
 pub async fn request_whole(
     connection: &Connection,
     backfill: &mut Backfill,
@@ -1388,26 +920,12 @@ pub async fn request_whole(
     Ok(true)
 }
 
-/// Asks for named payload parts of one message, now, because the user opened
-/// one of them.
-///
-/// The interactive half of ADR 0017's payload axis. The background lane
-/// fetches text and leaves payloads on the server, so this is the only thing
-/// that ever asks for them on demand — and it asks by section, not by
-/// message: `BODY.PEEK[2]` for the part somebody clicked, not `BODY.PEEK[]`
-/// for the forty megabytes it happens to sit beside.
-///
-/// Answers [`PayloadAsk::Queued`] when something joined the queue, and
-/// otherwise why nothing did, because each is a different sentence the
-/// person who asked is told (#1996): attachments are never downloaded, the
-/// bytes are already here, the message or part is gone, or the message has
-/// no `UID` to fetch by yet. Whether the account can reach its server is the
-/// engine's to add; this knows only the store.
-///
-/// A part whose [`Attachment::part_headers`](postio_model::Attachment) were
-/// never recorded escalates the request to [`Want::Whole`]: `BODY[2]` comes
-/// back encoded with nothing to say how, and storing base64 as though it were
-/// a PDF is worse than the extra bandwidth.
+/// Asks for named payload parts of one message now, by section, because the user opened one (ADR
+/// 0017).
+/// The answer says why nothing was queued, because each reason is a different sentence for the user
+/// (#1996).
+/// A part without recorded `part_headers` escalates to `Want::Whole`: a section without them cannot
+/// be decoded.
 pub async fn request_payloads(
     connection: &Connection,
     backfill: &mut Backfill,
@@ -1452,9 +970,6 @@ pub async fn request_payloads(
         return Ok(PayloadAsk::Local);
     }
     let Some(candidate) = messages.backfill_candidate(message_id).await? else {
-        // Here, with a part whose bytes are not: either the server has not
-        // given the message an address yet, or its body is `full`, and the
-        // raw source holds the part.
         return Ok(
             if message.server.uid.is_none() || message.server.remote_id.is_none() {
                 PayloadAsk::NotOnServer
@@ -1474,15 +989,10 @@ pub async fn request_payloads(
     Ok(PayloadAsk::Queued)
 }
 
-/// Queues what a message that has just arrived needs, on the fresh lane:
-/// its text, and then whichever of its attachments fit
-/// [`BackfillPolicy::fresh_payload_bytes`]. Answers whether anything joined
-/// the queue.
-///
-/// Called for the messages an incremental pass announces as new mail -- not
-/// for a first sync's backlog, which is the background lane's. A folder
-/// excluded from backfill is excluded here too: this is still Postio
-/// fetching what nobody has asked for yet.
+/// Queues a just-arrived message on the fresh lane: its text, then the attachments that fit
+/// `fresh_payload_bytes`.
+/// For incremental-pass arrivals, not a first sync's backlog. An excluded folder is excluded here
+/// too.
 pub async fn request_arrived(
     connection: &Connection,
     backfill: &mut Backfill,
@@ -1515,8 +1025,8 @@ pub async fn request_arrived(
             if attachment.blob_id.is_some() || attachment.part_headers.is_none() {
                 continue;
             }
-            // An inline part under the cap rides with the text (ADR 0017),
-            // so asking for it again would fetch it twice.
+            // An inline part under the cap rides with the text (ADR 0017); asking again would fetch
+            // it twice.
             let rides_with_text = !text_local
                 && attachment.disposition == postio_model::Disposition::Inline
                 && policy
@@ -1539,7 +1049,6 @@ pub async fn request_arrived(
     }
     let text = (!text_local).then(|| {
         let mut request = BodyRequest::from(candidate);
-        // A row whose structure was never recorded has no sections to name.
         if message.content_type.is_none() {
             request.want = Want::Whole;
         }
@@ -1548,20 +1057,9 @@ pub async fn request_arrived(
     Ok(backfill.arrived(text, payloads))
 }
 
-/// Queue a header-block fetch for every row in `mailbox_id` that can get one
-/// no other way. Answers how many joined the queue.
-///
-/// The third row of #884's repair table. `postio_session::repair_header_blocks`
-/// handles the rows whose raw source is still on disk, locally and with no
-/// network at all; these are the remainder — the `partial` state, which never
-/// keeps a raw blob, and rows whose raw source eviction has taken (PRODUCT.md
-/// §6 takes it first).
-///
-/// Background priority, under the policy already in force, in the lane that
-/// already exists: nobody is waiting for one of these, and a repair that
-/// competed with the mail somebody is reading would be the wrong trade. It
-/// stops finding work once the blocks are stored, which is what keeps it from
-/// being a permanent tax on every sync.
+/// Queues a header-block fetch for rows that can get one no other way: `partial` rows and rows
+/// whose raw source was evicted (#884).
+/// Background priority; it stops finding work once the blocks are stored.
 pub async fn seed_header_blocks(
     connection: &Connection,
     backfill: &mut Backfill,
@@ -1589,19 +1087,9 @@ pub async fn seed_header_blocks(
     Ok(queued)
 }
 
-/// Queues the payloads of up to `limit` text-backfilled messages in
-/// `mailbox_id`, and answers how many requests joined the queue.
-///
-/// The background half of the payload axis, and only ever called under
-/// [`AttachmentPolicy::Eager`]: for someone who wants a genuinely complete
-/// offline archive and has the disk for it. On the reference account that is
-/// the difference between ~1.4 GB and ~12.4 GB, which is why it is a choice
-/// and not a default.
-///
-/// Walks past a batch it cannot use for the same reason [`seed`] does (#318):
-/// a message set aside after a failed fetch stays `partial` for ever, so a
-/// folder whose newest batch is all such messages would answer the same rows
-/// on every seed and never reach the mail behind them.
+/// Queues payloads for up to `limit` text-backfilled messages; only called under
+/// `AttachmentPolicy::Eager`.
+/// Walks past an unusable batch as `seed` does (#318).
 pub async fn seed_payloads(
     connection: &Connection,
     backfill: &mut Backfill,
@@ -1644,13 +1132,8 @@ pub async fn seed_payloads(
     }
 }
 
-/// The sections of `message` whose bytes are not on this machine yet.
-///
-/// A part with no `part_id` is not one of them: there is no section to name in
-/// a `FETCH`, so nothing can be asked for. Neither is one with no
-/// `part_headers` — see [`request_payloads`] for why a headerless section
-/// cannot be decoded — which the eager lane skips rather than escalating to a
-/// whole-message fetch, because nobody is waiting for it.
+/// Sections whose bytes are not local. A part with no `part_id` or no `part_headers` is skipped,
+/// not escalated: nobody waits for it.
 fn pending_payloads(message: &postio_model::Message) -> Vec<String> {
     message
         .attachments
@@ -1660,57 +1143,14 @@ fn pending_payloads(message: &postio_model::Message) -> Vec<String> {
         .collect()
 }
 
-// ---------------------------------------------------------------------------
-// Doing one
-// ---------------------------------------------------------------------------
-
-/// Fetches one message's body and writes it where the reader will look.
-///
-/// # What lands where
-///
-/// The raw RFC 5322 bytes go to the blob store verbatim, and the decoded
-/// `text/plain` and `text/html` forms go beside them. Keeping the raw bytes is
-/// not redundancy: it is what lets a later parser fix — a charset guess, an
-/// encoded word nobody handled — be applied to mail already downloaded, without
-/// going back to a server that may no longer have it.
-///
-/// # Why the writes are in this order
-///
-/// `body_state` is what everything else reads to decide whether a body is
-/// local, so it is written *last*, by
-/// [`set_body`](MessageRepository::set_body). A crash anywhere
-/// before that leaves orphaned blobs — which the blob store's garbage
-/// collection sweeps — and a message that still says it has no body, so the
-/// next pass simply fetches it again. The opposite order would leave a message
-/// that claims a body it does not have, which nothing can detect and nothing
-/// can repair.
-///
-/// # Two axes, and why this fetches sections rather than the message
-///
-/// ADR 0017. `BODY.PEEK[]` pulls the whole message, attachments included: on
-/// the reference account that is 12.43 GB fetched to index the 1.43 GB of it
-/// that is words, because ~90% of a mailbox by weight is payloads FTS5 cannot
-/// index. So when the header sync recorded where the text lives
-/// ([`Message::text_part_id`](postio_model::Message::text_part_id)), this
-/// fetches exactly those sections and leaves
-/// the payloads on the server until somebody opens one.
-///
-/// A row whose sections are unknown — synced before migration 0008, or from a
-/// server that reported no `BODYSTRUCTURE` — falls back to the whole-message
-/// fetch. Slower and fatter, but a body that silently never arrives would be a
-/// hole in search, and guessing section `1` would be wrong for every multipart
-/// message.
-///
-/// # A refusal about the message is written down (#1918)
-///
-/// When the server answers that it has no such message, refuses the `FETCH`,
-/// or sends something unreadable, the message is marked
-/// ([`MessageRepository::mark_body_failed`]) and the outcome is
-/// [`Outcome::Failed`]. The seeds then leave it alone across restarts until
-/// the server reports a new `MODSEQ`; opening it asks again regardless.
-/// A dropped connection, a timeout or a cancel is not about the message and
-/// is returned as the error it is, unmarked: bytes that stop short say
-/// nothing about whether the rest would have come.
+/// Fetches one message's body and stores it (ADR 0017).
+/// Raw bytes go to the blob store verbatim so a later parser fix applies to mail already
+/// downloaded.
+/// `body_state` is written last: a crash earlier leaves orphan blobs (swept) and a message that is
+/// fetched again.
+/// Fetches text sections when the header sync recorded them, else the whole message.
+/// A refusal about the message marks it failed (#1918) and returns `Outcome::Failed`;
+/// a dropped link, timeout or cancel is returned as an error, unmarked.
 pub async fn fetch_body(
     connection: &Checkout,
     blobs: &BlobStore,
@@ -1727,8 +1167,8 @@ pub async fn fetch_body(
     let Err(SyncError::Backend(error)) = &fetched else {
         return fetched;
     };
-    // The body is what failed; a payload or a header block that would not
-    // come leaves a perfectly good body behind it.
+    // The body is what failed; a payload or header block that would not come leaves a good body
+    // behind.
     if !matches!(request.want, Want::Text | Want::Whole) || !refusal_about_the_message(error) {
         return fetched;
     }
@@ -1749,9 +1189,7 @@ pub async fn fetch_body(
     Ok(Outcome::Failed { reason })
 }
 
-/// Whether `error` is the server answering about *this message* -- as
-/// opposed to the link, the login or the caller's own cancel, none of which
-/// say anything about whether the message can be fetched.
+/// Whether the server is answering about this message, not the link, login or a cancel.
 fn refusal_about_the_message(error: &BackendError) -> bool {
     matches!(
         error,
@@ -1772,8 +1210,8 @@ async fn fetch_body_unmarked(
 ) -> Result<Outcome> {
     let messages = MessageRepository::new(connection);
     let Some(message) = messages.get(request.message).await? else {
-        // Deleted, or wiped by a UIDVALIDITY reset, while this sat in the
-        // queue. Checked before the fetch so a stale queue costs no bandwidth.
+        // Deleted or wiped by a UIDVALIDITY reset while queued; checked first so a stale queue
+        // costs no bandwidth.
         return Ok(Outcome::Gone);
     };
 
@@ -1790,9 +1228,8 @@ async fn fetch_body_unmarked(
     }
 
     match &request.want {
-        // Native whole-source adapters have immutable identity but no section
-        // map. A parsed MIME path is useful to the reader, but does not imply
-        // the backend can fetch that path independently.
+        // Native whole-source adapters have no section map, so a parsed MIME path cannot be fetched
+        // on its own.
         Want::Payloads(parts)
             if message.server.content_identity.is_some() && message.content_type.is_none() =>
         {
@@ -1802,9 +1239,7 @@ async fn fetch_body_unmarked(
             if !missing {
                 return Ok(Outcome::Stored { bytes: 0 });
             }
-            // Restore the requested payload from the whole source below.
         }
-        // The payload axis: named sections, nothing around them.
         Want::Payloads(parts) => {
             let parts = parts.clone();
             return fetch_payloads(
@@ -1812,32 +1247,25 @@ async fn fetch_body_unmarked(
             )
             .await;
         }
-        // The text axis, when the header sync left us a map of where the words
-        // are. `content_type` is what says a `BODYSTRUCTURE` was parsed at all —
-        // a message that is nothing but an attachment has no text sections and
-        // must still take this path, or the fallback would fetch the payload this
-        // exists to avoid.
+        // `content_type` says a `BODYSTRUCTURE` was parsed; a message that is only an attachment
+        // must still take this path.
         Want::Text if message.content_type.is_some() => {
             return fetch_text_parts(
                 connection, blobs, backend, request, message, inline_cap, prefetched, cancel,
             )
             .await;
         }
-        // The block and nothing else, for a row that can get one no other
-        // way. Deliberately does not touch the body: the words are already on
-        // this machine and re-storing them would risk them for no reason.
+        // Does not touch the body: re-storing the words would risk them for nothing.
         Want::HeaderBlock => {
             let block = fetch_header_block(backend, request, cancel).await;
             let Some(block) = block else {
-                // The server would not give it up. Set aside like any other
-                // failed fetch rather than written as an empty block, which
-                // would be a claim that the message has no such header.
+                // Set aside like any failed fetch; an empty block would claim the message has no
+                // such header.
                 return Ok(Outcome::Failed {
                     reason: "the header block could not be fetched".to_owned(),
                 });
             };
             let bytes = block.text.len() as u64;
-            // The gate, now that the wire is done with. See `writing` below.
             let _permit = connection
                 .write_gate()
                 .acquire(WritePriority::Background)
@@ -1846,41 +1274,28 @@ async fn fetch_body_unmarked(
             index_the_header_block(connection, request.message, Some(&block)).await;
             return Ok(Outcome::Stored { bytes });
         }
-        // Every byte: asked for, or the only answer left for a row whose
-        // structure was never recorded.
         Want::Text | Want::Whole => {}
     }
 
-    // Straight to disk as it arrives, rather than into a `Vec` that doubles
-    // its way up to the message's size (ADR 0017, axis 2). This is the path
-    // the interactive lane takes for an oversized message, and the
-    // interactive lane ignores `max_body_bytes` by design -- so it is exactly
-    // the path where the buffer would have been worst.
+    // Straight to disk, not a doubling `Vec` (ADR 0017): the interactive lane ignores
+    // `max_body_bytes`, so this path sees the oversized messages.
     let mut sink = BlobSink::new(blobs)?;
     backend
         .fetch_body(&request.path, &request.remote_id, &mut sink, cancel)
         .await?;
     let Some(blob) = sink.finished_blob() else {
-        // The sink contract: without `finish` the bytes are a fragment, and a
-        // fragment stored as a message is worse than no message. Nothing was
-        // published, so there is nothing to undo.
+        // Without `finish` the bytes are a fragment, and a fragment stored as a message is worse
+        // than none.
         return Err(SyncError::Backend(BackendError::Cancelled));
     };
     let bytes = sink.bytes();
 
-    // Read back to parse. The parser needs the message whole, so this is one
-    // exact-size allocation -- against the `Vec`'s doubling-and-copying, and
-    // against a second full pass to `put` it afterwards. The bytes are also
-    // durable before anything looks at them, so a parse that dies takes
-    // nothing with it.
+    // Read back to parse: one exact-size allocation, and the bytes are durable before the parser
+    // sees them.
     let raw = blobs.get(&blob)?;
-    // The ingest boundary of #277. `mime::parse` contains the panic itself, so
-    // this is not what keeps sync alive -- it is what keeps the failure
-    // visible. Without it a message whose bytes defeat the parser stores no
-    // body and is indistinguishable, in a log, from one that genuinely had
-    // none.
-    //
-    // Ids and sizes only: the bytes that caused this are somebody's mail.
+    // The ingest boundary (#277): without it a message that defeats the parser stores no body and
+    // looks like one that had none.
+    // Ids and sizes only: the bytes are somebody's mail.
     let parsed = mime::try_parse(&raw).unwrap_or_else(|_| {
         tracing::warn!(
             message = request.message.get(),
@@ -1890,16 +1305,8 @@ async fn fetch_body_unmarked(
         mime::parse(&raw)
     });
 
-    // The block, from the bytes already in hand. This used to pass `None`,
-    // with the reason at the call site: "the header block has no reader of its
-    // own yet ... a copy nobody reads is a copy that can go stale." `header:`
-    // is the reader that retires it (ADR 0025, #884).
-    //
-    // Not read back off `raw_blob_id` at query time, though it is recoverable
-    // from there: PRODUCT.md §6 evicts raw source *first* when the store hits
-    // its ceiling, so a `header:` answered from the blob would silently stop
-    // working on the oldest mail -- which is the mail somebody is most likely
-    // to be searching for.
+    // Not read back off `raw_blob_id` at query time: eviction takes raw source first (PRODUCT.md
+    // §6), which would silently break `header:` on old mail.
     let block = postio_model::headers::block_of(&raw);
     let stored = StoredBody {
         text: stored_text(parsed.body.text.as_deref()),
@@ -1909,27 +1316,23 @@ async fn fetch_body_unmarked(
         encoding_problems: parsed.encoding_problems,
     };
 
-    // Everything below this line writes, and nothing below it touches the
-    // wire, so this is where the gate belongs: taken after the fetch and held
-    // to the end. See `writing` for why a backfill takes one at all.
+    // Everything below writes and nothing touches the wire, so the gate is taken after the fetch
+    // and held to the end.
     let _permit = connection
         .write_gate()
         .acquire(WritePriority::Background)
         .await;
 
-    // Native adapters may supply immutable identity without BODYSTRUCTURE.
-    // Preserve the parsed part map so every membership can resolve CID and
-    // attachment bytes, including one that arrives after this row is removed.
-    // Read current location state under the gate: flags may have changed while
-    // the body was on the wire.
+    // Native adapters may give an immutable identity without BODYSTRUCTURE: keep the parsed part
+    // map.
+    // Read current location state under the gate; flags may have changed while the body was on the
+    // wire.
     if message.server.content_identity.is_some() && message.content_type.is_none() {
         let Some(mut current) = messages.get(request.message).await? else {
             return Ok(Outcome::Gone);
         };
-        // `content_type` marks a complete text section map, not merely a
-        // top-level MIME header. Keep it absent so an evicted inline part
-        // falls back to the whole source instead of replacing the cached
-        // words with an empty section fetch.
+        // `content_type` marks a complete text section map; keep it absent so an evicted inline
+        // part falls back to the whole source.
         current.text_is_flowed = parsed.text_is_flowed;
         current.read_receipt_requested = parsed.read_receipt_requested;
         current.attachments = parsed
@@ -1940,20 +1343,13 @@ async fn fetch_body_unmarked(
         messages.update(&mut current).await?;
     }
 
-    // Two columns, not the row: see `set_fetched`.
     messages
         .set_fetched(request.message, parsed.preview.as_deref(), Some(&blob))
         .await?;
 
-    // Every payload arrived with the message, so record where each one landed
-    // — the same content-addressed blob the payload axis would have written,
-    // because `ParsedPart::content` is decoded and `BlobStore::put` names a
-    // blob after its plaintext. A part fetched here and the same part fetched
-    // by section are one blob, not two.
-    //
-    // Matched by MIME path rather than by position: the attachment rows came
-    // from `BODYSTRUCTURE` at header-sync time and this parse is a second,
-    // independent reading of the same message.
+    // Record where each payload landed, matched by MIME path: the attachment rows came from
+    // `BODYSTRUCTURE`, this parse is an independent reading.
+    // The blob is content-addressed, so the same part fetched by section is the same blob.
     for part in &parsed.parts {
         let Some(part_id) = part.attachment.part_id.as_deref() else {
             continue;
@@ -1964,51 +1360,28 @@ async fn fetch_body_unmarked(
             .await?;
     }
 
-    // The commit point. `Full` unconditionally, and honestly: whatever the
-    // parse could not match to a row is still in the raw blob, which is what
-    // the host's part reader falls back to.
+    // The commit point. `Full` unconditionally: parts not matched to a row are still in the raw
+    // blob.
     messages
         .set_body(request.message, &stored, BodyState::Full)
         .await?;
 
-    // Not into the search index: a stored body with no
-    // `message_search_bodies` row *is* the indexer's queue
-    // (`messages_missing_body_text`), and `postio_session::
-    // spawn_body_indexer` drains it in batches of hundreds under one write,
-    // woken by the `BodyLoaded` this fetch emits. This lane used to write the
-    // row itself, one body at a time, after the commit point -- which put a
-    // tantivy segment merge on the sync lane every few hundred bodies, for
-    // seconds, and every folder queued behind it waited (#327 is why the
-    // call was here at all; the indexer is what it lacked).
+    // Not indexed here: a body without a `message_search_bodies` row is the indexer's queue, and
+    // `spawn_body_indexer` drains it in batches.
+    // Indexing per body put a segment merge on the sync lane (#327).
     index_the_header_block(connection, request.message, block.as_ref()).await;
     Ok(Outcome::Stored { bytes })
 }
 
-/// A stored header block into `message_headers`, after the commit point.
-///
-/// The counterpart of `index_body_of` two lines above every one of its call
-/// sites, and here for exactly the reason that one is: this is where blocks
-/// arrive, and a scheduler that indexed them would see only some of them.
-/// `postio_session::index_local_headers` catches up whatever an unavailable
-/// index misses, but it runs once per start — so without this, `header:`
-/// would answer for mail that was already here and not for mail that arrived
-/// while the application was open, which reads as the feature being broken
-/// rather than as an index catching up.
-///
-/// After the commit point, and never fatal, for the two reasons `index_body_of`
-/// gives at length: rows for a block that is not stored yet would let search
-/// answer for a corpus the store does not have, and a store whose search
-/// schema was never created is a real state that must not cost a fetched
-/// message.
+/// Indexes a stored header block into `message_headers`, after the commit point and never fatally.
+/// This is where blocks arrive, so `header:` works for mail that arrives while the app is open.
 async fn index_the_header_block(
     connection: &Checkout,
     message: MessageId,
     block: Option<&postio_model::headers::Block>,
 ) {
     let Some(block) = block else {
-        // No block on the wire, so nothing to index -- and deliberately not
-        // an empty row set, which would be a claim that this message has no
-        // such header rather than that nobody has looked.
+        // No block fetched: an empty row set would claim the message has no such header.
         return;
     };
     let headers = postio_model::headers::parse_block(&block.text);
@@ -2023,32 +1396,10 @@ async fn index_the_header_block(
     }
 }
 
-/// Fetches only the sections holding a message's own text, and decodes them.
-///
-/// The other half of [`fetch_body`]; see its documentation for why this exists.
-///
-/// # Rebuilding an entity from a section
-///
-/// `BODY[1.1]` returns a part's *encoded* bytes and none of its headers, so
-/// nothing in the response says whether they are base64 or what charset they
-/// are in. Both were reported by `BODYSTRUCTURE` and kept on the row
-/// ([`Message::text_part_headers`](postio_model::Message::text_part_headers)),
-/// so prepending them turns the fetched
-/// section back into a self-contained entity the parser can decode — without
-/// spending a second round trip on `BODY[1.1.MIME]`.
-///
-/// # No blob store at all
-///
-/// There is no raw blob to keep — the whole message was never fetched, which
-/// is the point, and is what retires the 1.3x duplication of storing the raw
-/// bytes and their decoded forms side by side. "View source" and
-/// forward-as-`message/rfc822` refetch on demand. And since ADR 0020 the
-/// decoded text is a column rather than a file, so this path touches the blob
-/// store nowhere: it is text in, row out.
-// One over the limit, and the eighth is the prefetch cache (#1551). The seven
-// before it are each a distinct thing this needs and none of them travel
-// together anywhere else, so bundling them would invent a struct whose only
-// purpose is to satisfy a count.
+/// Fetches only the sections holding a message's own text, and decodes them. No raw blob is kept;
+/// the text is a column (ADR 0020).
+/// `BODY[1.1]` returns encoded bytes without headers, so the part headers kept on the row are
+/// prepended to rebuild a decodable entity.
 #[allow(clippy::too_many_arguments)]
 async fn fetch_text_parts(
     connection: &Checkout,
@@ -2074,18 +1425,13 @@ async fn fetch_text_parts(
 
     let mut body = postio_model::MessageBody::default();
     let mut preview = None;
-    // Accumulated across sections rather than read off the last one: each
-    // part is parsed on its own here, and a message is a guess if *any* of
-    // its parts was one (#901).
+    // Accumulated across sections: a message is a guess if any of its parts was (#901).
     let mut encoding_problems = false;
     let mut bytes = 0u64;
 
     for (section, headers) in wanted {
         let Some(section) = section else { continue };
-        // Fetched ahead with the rest of its batch, if it was (#1551). A miss
-        // is ordinary -- an unbatchable message, a batch that failed, a
-        // section nobody else wanted -- and costs only the round trip this
-        // always paid.
+        // Fetched ahead with its batch, if it was (#1551); a miss costs only the round trip.
         let batched = prefetched
             .as_mut()
             .and_then(|cache| cache.take(&request.remote_id, &section));
@@ -2103,9 +1449,7 @@ async fn fetch_text_parts(
                     )
                     .await?;
                 if !sink.is_finished() {
-                    // The sink contract, same as the whole-message path:
-                    // without `finish` the bytes are a fragment, and a
-                    // fragment stored as a body is worse than no body.
+                    // Without `finish` the bytes are a fragment.
                     return Err(SyncError::Backend(BackendError::Cancelled));
                 }
                 sink.into_inner()
@@ -2116,8 +1460,7 @@ async fn fetch_text_parts(
         let mut entity = headers.unwrap_or_default().into_bytes();
         entity.extend_from_slice(b"\r\n");
         entity.extend_from_slice(&raw);
-        // Same ingest boundary as the whole-message path (#277): ids and sizes
-        // only, because the bytes that defeated the parser are somebody's mail.
+        // Same ingest boundary as the whole-message path (#277): ids and sizes only.
         let parsed = mime::try_parse(&entity).unwrap_or_else(|_| {
             tracing::warn!(
                 message = request.message.get(),
@@ -2136,18 +1479,10 @@ async fn fetch_text_parts(
         encoding_problems |= parsed.encoding_problems;
     }
 
-    // ADR 0017's "inline parts ride with the text". A `cid:` image is not an
-    // attachment the reader offers to download, it is part of the sentence the
-    // message is making: without it the pane draws a broken box, and since the
-    // reader blocks remote images by default these are the images that are
-    // *supposed* to appear (#751). A small calendar part rides for the same
-    // reason: it is what an invitation's row reads its times from (T108).
-    //
-    // Before the commit point on purpose. `needing_backfill` stops at
-    // `partial`, so a message whose text landed is never offered again — and a
-    // half-finished inline pass committed as `partial` would leave those boxes
-    // broken for good. Failing here instead leaves the message `headers_only`,
-    // and the next seed fetches the whole text axis again, images included.
+    // Inline parts ride with the text (ADR 0017, #751): `cid:` images must appear since remote
+    // images are blocked; a small calendar part feeds the invitation row.
+    // Before the commit point: `needing_backfill` stops at `partial`, so a half-done inline pass
+    // committed there would leave broken boxes for good.
     for part_id in inline_with_the_text(&message, inline_cap)
         .into_iter()
         .chain(calendar_with_the_text(&message))
@@ -2168,8 +1503,6 @@ async fn fetch_text_parts(
         messages
             .set_attachment_blob(request.message, &part_id, &blob)
             .await?;
-        // Kept in step with the row, so `state_for` below reads the truth
-        // rather than the structure as the header sync left it.
         if let Some(attachment) = message
             .attachments
             .iter_mut()
@@ -2179,14 +1512,9 @@ async fn fetch_text_parts(
         }
     }
 
-    // One more section on a fetch that is already happening. This path never
-    // stores a raw blob -- it asked for sections and got sections -- so it is
-    // the one state where nothing else would ever bring the block, and
-    // `header:` would answer "no such mail" for mail that is right there.
-    //
-    // ADR 0025 Q4 refuses a header fetch at *header-sync* time, which charges
-    // every user's sync forever. This is body-fetch time, where the round trip
-    // is already being paid for.
+    // This path stores no raw blob, so nothing else would bring the block and `header:` would miss
+    // mail that is here.
+    // Body-fetch time, unlike header-sync time (ADR 0025 Q4), already pays the round trip.
     let block = match prefetched
         .as_mut()
         .and_then(|cache| cache.take_headers(&request.remote_id))
@@ -2202,65 +1530,31 @@ async fn fetch_text_parts(
         encoding_problems,
     };
 
-    // The text axis's write phase. The sections are fetched above; from
-    // here down it is all store, so the gate is taken once and held to the
-    // end rather than per statement.
+    // Write phase: all store from here, so the gate is taken once and held to the end.
     let _permit = connection
         .write_gate()
         .acquire(WritePriority::Background)
         .await;
 
-    // Two columns, not the row: see `set_fetched`.
     messages
         .set_fetched(request.message, preview.as_deref(), None)
         .await?;
 
-    // `partial` means text local, payloads not — the variant the schema
-    // declared and nothing had ever written until ADR 0017 gave it a meaning.
-    // It is what tells the reader to offer "download" rather than "open".
+    // `partial` means text local, payloads not; the reader offers "download" rather than "open".
     let state = state_for(&message.attachments);
 
-    // The commit point, after which the body is local as far as anything else
-    // is concerned. See `fetch_body` for why it is last.
     messages.set_body(request.message, &stored, state).await?;
 
-    // The search row is the indexer's, not this lane's -- see `fetch_body`.
     index_the_header_block(connection, request.message, block.as_ref()).await;
     Ok(Outcome::Stored { bytes })
 }
 
-/// Fetches one named MIME section and stores its decoded bytes.
-///
-/// The step both axes share since #751: the payload axis has always done this,
-/// and the text axis now does it too for the inline parts an HTML body
-/// references. Returns the blob and how many bytes crossed the wire, or `None`
-/// when there was nothing to store.
-///
-/// # Rebuilding an entity from a section
-///
-/// `BODY[2]` returns a part's *encoded* bytes and none of its headers, so
-/// nothing in the response says whether they are base64. `BODYSTRUCTURE` said
-/// so at header-sync time and `Attachment::part_headers` kept the answer, so
-/// prepending it makes a self-contained entity — no `[2.MIME]` round trip.
-///
-/// # Why the id is taken on the decoded bytes
-///
-/// Content addressing gives dedup for free, but only over a form two copies of
-/// the same file actually share. Base64 does not qualify: the same PDF wrapped
-/// at a different line length is different bytes. Decoded, it is the same file,
-/// and on the reference account 22,878 named parts collapse to 13,099 distinct
-/// — 10.96 GB to 7.69 GB.
-///
-/// It is also what makes an eager fetch and an on-open fetch land *identically*
-/// rather than giving one attachment two blob ids.
-/// The message's header block, straight from the server.
-///
-/// `BODY[HEADER]` — [`BodyPart::Headers`], which every backend already
-/// implements. Best-effort on purpose: a payload that arrived is worth
-/// storing whether or not the block came with it, and the repair pass will
-/// come back for a block that did not. Failing the whole fetch over it would
-/// trade an attachment the user asked for against an index entry nobody is
-/// waiting on.
+/// Fetches one named MIME section and stores its decoded bytes (shared by both axes, #751).
+/// Returns the blob and bytes on the wire, or `None` when there was nothing to store.
+/// `BODY[2]` returns encoded bytes with no headers, so the stored `part_headers` are prepended to
+/// make a decodable entity.
+/// The blob id is taken on the decoded bytes so the same file wrapped differently dedups, and eager
+/// and on-open fetches land identically.
 async fn fetch_header_block(
     backend: &dyn MailBackend,
     request: &BodyRequest,
@@ -2277,7 +1571,6 @@ async fn fetch_header_block(
         )
         .await;
     if let Err(error) = fetched {
-        // Ids and outcomes only: the bytes are somebody's mail.
         tracing::debug!(
             message = request.message.get(),
             %error,
@@ -2300,15 +1593,10 @@ pub(crate) async fn fetch_section(
     cancel: &CancelToken,
 ) -> Result<Option<(postio_model::BlobId, u64)>> {
     if attachment.blob_id.is_some() {
-        // It landed while this was queued — a second chip clicked on the same
-        // part, an eager pass that got there first, or the text axis having
-        // already carried an inline part down with the body. Not worth a round
-        // trip for bytes already on the disk.
+        // Already local: no round trip for bytes on disk.
         return Ok(None);
     }
     let Some(headers) = attachment.part_headers.clone() else {
-        // Refused rather than guessed. See `request_payloads`: this should
-        // have been escalated to a whole-message fetch before it got here.
         tracing::debug!(
             message = request.message.get(),
             "a part with no recorded encoding was not fetched"
@@ -2327,9 +1615,8 @@ pub(crate) async fn fetch_section(
         )
         .await?;
     if !sink.is_finished() {
-        // The sink contract, same as every other path here: without `finish`
-        // the bytes are a fragment, and half a file written to disk under a
-        // name that says it is whole is worse than no file.
+        // Without `finish` the bytes are a fragment, and half a file under a whole file's name is
+        // worse than none.
         return Err(SyncError::Backend(BackendError::Cancelled));
     }
     let raw = sink.into_inner();
@@ -2339,8 +1626,7 @@ pub(crate) async fn fetch_section(
     entity.extend_from_slice(b"\r\n");
     entity.extend_from_slice(&raw);
     let Some(decoded) = mime::decode_entity(&entity) else {
-        // The ingest boundary of #277 again: ids and sizes only, because the
-        // bytes that defeated the decoder are somebody's mail.
+        // Ingest boundary (#277): ids and sizes only.
         tracing::warn!(
             message = request.message.get(),
             bytes = entity.len(),
@@ -2352,38 +1638,9 @@ pub(crate) async fn fetch_section(
     Ok(Some((blobs.put(&decoded)?, bytes)))
 }
 
-/// Fetches named payload sections and records where each one landed.
-///
-/// The payload axis of ADR 0017, and the first thing in this codebase ever to
-/// write `attachments.blob_id` on the receive path. Before it that column was
-/// filled only on the way *out*, by a composer attaching a file, so
-/// `Attachment::is_downloaded` was false for every message that had ever
-/// arrived from a server and the part reader re-parsed the
-/// whole raw message to cut one part out of it.
-///
-/// # Rebuilding an entity from a section
-///
-/// The same trick [`fetch_text_parts`] uses, for the same reason: `BODY[2]`
-/// returns a part's *encoded* bytes and none of its headers, so nothing in the
-/// response says whether they are base64. `BODYSTRUCTURE` said so at
-/// header-sync time and `Attachment::part_headers` kept the answer, so
-/// prepending it makes a self-contained entity — no `[2.MIME]` round trip.
-///
-/// # Why the id is taken on the decoded bytes
-///
-/// Content addressing gives dedup for free, but only over a form two copies of
-/// the same file actually share. Base64 does not qualify: the same PDF wrapped
-/// at a different line length is different bytes. Decoded, it is the same file,
-/// and on the reference account 22,878 named parts collapse to 13,099 distinct
-/// — 10.96 GB to 7.69 GB.
-///
-/// It is also what makes an eager fetch and an on-open fetch land *identically*
-/// rather than giving one attachment two blob ids.
-///
-/// # No raw blob
-///
-/// Nothing to keep: the message around the part was never fetched. That is the
-/// point.
+/// Fetches named payload sections and records where each landed in `attachments.blob_id` (ADR
+/// 0017's payload axis).
+/// No raw blob is kept: the message around the part is never fetched.
 async fn fetch_payloads(
     connection: &Checkout,
     blobs: &BlobStore,
@@ -2402,8 +1659,7 @@ async fn fetch_payloads(
             .iter()
             .find(|attachment| attachment.part_id.as_deref() == Some(part_id.as_str()))
         else {
-            // The structure moved under the request while it sat in the queue.
-            // Settled rather than failed, as `Outcome::Gone` is for a message.
+            // The structure moved while queued: settled, not failed.
             continue;
         };
         let Some((blob, moved)) =
@@ -2428,9 +1684,8 @@ async fn fetch_payloads(
         .acquire(WritePriority::Background)
         .await;
 
-    // The commit point for this axis. Re-read rather than reasoned about: the
-    // rows above were written one at a time, and what matters here is whether
-    // *every* part is local now — including ones this request never asked for.
+    // Commit point for this axis: re-read, since what matters is whether every part is local,
+    // including ones not asked for.
     if let Some(settled) = messages.get(request.message).await? {
         let state = state_for(&settled.attachments);
         if settled.sync.body_state != state {
@@ -2441,20 +1696,9 @@ async fn fetch_payloads(
     Ok(Outcome::Stored { bytes })
 }
 
-/// The sections of `message` that ride down the text axis with its body.
-///
-/// ADR 0017's rule, and the whole of #751's first cause: an inline part under
-/// `cap` is text, a larger one is a payload. `None` disables the rule, leaving
-/// every part on the payload axis.
-///
-/// Inline *and* nothing else. A named attachment is a payload however little
-/// it weighs, or `attachment_fetch = "on_open"` would stop meaning anything;
-/// what qualifies here is a part the sender marked for display inside the
-/// body, which in practice is a `cid:` image the HTML points at.
-///
-/// The size is the server's declared one, taken from `BODYSTRUCTURE` at header
-/// sync — the only figure available before the bytes move, which is the whole
-/// point of having a cap.
+/// Sections that ride down the text axis: inline parts of at most `cap` bytes (declared
+/// `BODYSTRUCTURE` size); `None` disables.
+/// Named attachments are payloads however small.
 fn inline_with_the_text(message: &postio_model::Message, cap: Option<u64>) -> Vec<String> {
     let Some(cap) = cap else {
         return Vec::new();
@@ -2467,20 +1711,11 @@ fn inline_with_the_text(message: &postio_model::Message, cap: Option<u64>) -> Ve
         .collect()
 }
 
-/// The largest `text/calendar` part the text axis carries (spec 007, T108).
-///
-/// An invitation's part is a few kilobytes; one of a quarter of a mebibyte is
-/// an event with hundreds of attendees or a year of exceptions, and past that
-/// it is a payload like any other, fetched when somebody opens it.
+/// Largest `text/calendar` part the text axis carries; larger is a payload.
 pub(crate) const CALENDAR_PART_CAP: u64 = 256 * 1024;
 
-/// The `text/calendar` parts that ride with the text (spec 007, T108): every
-/// one not already local, up to [`CALENDAR_PART_CAP`].
-///
-/// With the text for the reason an inline image is: Focus answers an
-/// invitation from the row, and the times the row shows come from this part,
-/// so it has to be local the moment the body is -- without a fetch of its
-/// own, and without the network at all when the body stage reads it.
+/// `text/calendar` parts carried with the text, up to `CALENDAR_PART_CAP`: the invitation row reads
+/// its times from them with no network.
 fn calendar_with_the_text(message: &postio_model::Message) -> Vec<String> {
     message
         .attachments
@@ -2494,12 +1729,7 @@ fn calendar_with_the_text(message: &postio_model::Message) -> Vec<String> {
         .collect()
 }
 
-/// How much of a message is local, given what its parts have.
-///
-/// `full` means every byte; `partial` means the words are here and something
-/// hanging off them is not. That distinction is what #352 needs in order to
-/// tell the user when search is answering for an incomplete corpus, and what
-/// the attachment chip needs in order to say "download" rather than "open".
+/// `full` means every byte; `partial` means the words are here and some part is not (#352).
 pub(crate) fn state_for(attachments: &[postio_model::Attachment]) -> BodyState {
     if attachments.iter().all(|part| part.blob_id.is_some()) {
         BodyState::Full
@@ -2508,13 +1738,8 @@ pub(crate) fn state_for(attachments: &[postio_model::Attachment]) -> BodyState {
     }
 }
 
-/// One decoded body form as it goes into the row, folding an empty one to
-/// absent.
-///
-/// `Some("")` and `None` are different facts to `StoredBody`, and here they
-/// are not: a `text/plain`-only message parses to an HTML part of zero length,
-/// and storing that would tell the reading pane the message has an HTML
-/// alternative that renders to nothing.
+/// Folds an empty body form to absent: an empty HTML part would tell the reader there is an HTML
+/// alternative.
 pub(crate) fn stored_text(text: Option<&str>) -> Option<String> {
     match text {
         Some(text) if !text.is_empty() => Some(text.to_owned()),
@@ -2547,7 +1772,6 @@ mod tests {
         }
     }
 
-    /// The same request, but in a folder that syncs after the inbox.
     fn from_archive(uid: u32, received: i64) -> BodyRequest {
         let mut request = request(uid, 1);
         request.mailbox = MailboxId::new(2);
@@ -2559,12 +1783,8 @@ mod tests {
 
     #[test]
     fn an_inbox_body_is_fetched_before_a_newer_one_from_the_archive() {
-        // The failure this is about: seeding walks mailboxes in
-        // `sync_priority` order, but the backlog is one heap across all of
-        // them and re-sorts on the way out. Ordered by date alone, an archive
-        // holding this month's mail outranks the inbox entirely — measured on
-        // a real account as 204 inbox headers landing in four seconds and not
-        // one inbox *body* arriving while 60,934 archived messages went past.
+        // Seeding walks mailboxes in `sync_priority` order but the backlog is one heap: by date
+        // alone an archive outranks the inbox.
         let mut heap = BinaryHeap::new();
         heap.push(Entry(from_archive(9, 500))); // newer, but archived
         heap.push(Entry(request(1, 1))); // older, but in the inbox
@@ -2580,9 +1800,6 @@ mod tests {
 
     #[test]
     fn within_one_folder_the_newest_body_still_comes_first() {
-        // Rank is the *primary* key, not the only one: two bodies from the
-        // same mailbox must still come back newest first, which is what makes
-        // a list readable from the top as it fills.
         let mut heap = BinaryHeap::new();
         heap.push(Entry(from_archive(1, 100)));
         heap.push(Entry(from_archive(2, 900)));
@@ -2631,9 +1848,6 @@ mod tests {
 
     #[test]
     fn an_empty_body_form_is_stored_as_absent() {
-        // A `text/plain`-only message parses to an HTML part of zero length.
-        // Storing that would tell the reading pane there is an HTML
-        // alternative which renders to nothing.
         assert_eq!(stored_text(None), None);
         assert_eq!(stored_text(Some("")), None);
         assert_eq!(stored_text(Some("hello")).as_deref(), Some("hello"));
@@ -2659,10 +1873,6 @@ mod tests {
         assert!(backfill.next_body().is_none());
         assert_eq!(backfill.progress().pending, 0);
     }
-
-    // -----------------------------------------------------------------------
-    // Filling the queue from storage
-    // -----------------------------------------------------------------------
 
     fn headers_only(
         account: postio_model::AccountId,
@@ -2736,8 +1946,6 @@ mod tests {
             .await
             .expect("seed");
 
-        // The user opened the OLDER message; the interactive lane must still
-        // put it ahead of the newer one the background lane would fetch first.
         assert!(
             request_body(&connection, &mut backfill, older.id)
                 .await
@@ -2749,13 +1957,6 @@ mod tests {
         assert_eq!(claim.request.message, older.id);
     }
 
-    /// #1551: the engine's window tops up with interactive work only.
-    ///
-    /// `next_interactive_body` is what lets a window of background fetches
-    /// pick up a message the user just opened at the next free slot. It must
-    /// take an interactive claim when there is one and **nothing** when there
-    /// is not — a background claim here would make the engine's call
-    /// unbounded, since it tops up after every settled fetch.
     #[tokio::test]
     async fn an_interactive_top_up_takes_interactive_work_and_nothing_else() {
         let database = postio_storage::test_support::memory().await;
@@ -2775,14 +1976,11 @@ mod tests {
             .await
             .expect("seed");
 
-        // A queue full of background work, and nobody waiting: the top-up
-        // must decline it rather than pulling the archive in.
         assert!(
             backfill.next_interactive_body().is_none(),
             "a background queue is not interactive work"
         );
 
-        // Now the user opens the oldest one.
         assert!(
             request_body(&connection, &mut backfill, created[0])
                 .await
@@ -2794,7 +1992,6 @@ mod tests {
         assert_eq!(claim.priority, Priority::Interactive);
         assert_eq!(claim.request.message, created[0], "the one the user opened");
 
-        // And once it has been handed out, there is nothing interactive left.
         assert!(
             backfill.next_interactive_body().is_none(),
             "the same interactive claim must not be handed out twice"
@@ -2856,8 +2053,6 @@ mod tests {
 
     #[test]
     fn an_arrival_is_not_held_back_by_the_user_being_active() {
-        // The pauses keep speculation out of the way; new mail is what the
-        // person is waiting for.
         let mut backfill = Backfill::new(BackfillPolicy::default());
         backfill.set_user_active(true);
         backfill.arrived(Some(request(1, 10)), None);
@@ -2869,8 +2064,6 @@ mod tests {
 
     #[test]
     fn the_cap_is_measured_against_the_text_that_is_fetched() {
-        // A short note carrying six megabytes: over the cap whole, far under
-        // it in words.
         let mut note = request(1, 6_000_000);
         note.text_size = 2_000;
         let mut backfill = Backfill::new(BackfillPolicy::default());

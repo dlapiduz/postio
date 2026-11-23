@@ -1,21 +1,3 @@
-//! A store a host opened makes its mail findable.
-//!
-//! `postio-x4e`, the ninth instance of `postio-bl2`: `postio_index`'s schema,
-//! its triggers and its executor were all implemented and tested, and nothing
-//! created the index on a real store. So the assertions are not "the executor
-//! works" -- `postio-index` proves that -- but that mail already on this
-//! machine is searchable once the store is opened and the host's idle passes
-//! have run:
-//!
-//! - a store seeded before the index existed finds its mail by sender;
-//! - a store that predates body indexing catches up exactly once (#327);
-//! - header blocks already on disk answer `header:` without being asked for
-//!   (ADR 0025).
-//!
-//! Bodies already on disk becoming searchable through the host's own idle
-//! passes is `the_host_makes_bodies_already_on_disk_searchable_once_it_catches_up`
-//! in the host's unit tests.
-
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
@@ -39,12 +21,8 @@ fn runtime() -> tokio::runtime::Runtime {
         .expect("a test runtime")
 }
 
-/// Every message the seeded store put where All mail looks, newest first.
-///
-/// The seed files mail into Drafts, Trash and Junk too, and a search of All
-/// mail leaves those three out (#1523): a sample drawn from them would be
-/// absent from the results for a reason that has nothing to do with whether
-/// its body was indexed.
+/// The seed files mail into Drafts, Trash and Junk too, which a search of All mail leaves out
+/// (#1523); a sample drawn from them would be absent for a reason unrelated to indexing.
 async fn all_messages(database: &Store) -> Vec<MessageId> {
     let connection = database.connect().await.expect("a connection");
     let mut statement = connection
@@ -64,8 +42,6 @@ async fn all_messages(database: &Store) -> Vec<MessageId> {
     rows.into_iter().map(MessageId::new).collect()
 }
 
-/// Land a body (and header block) for `id`, the way a settled backfill leaves
-/// one, and leave the indexes alone.
 async fn give_body(
     database: &Store,
     id: MessageId,
@@ -112,8 +88,6 @@ async fn hits(database: &Store, account: AccountId, query: &str) -> Vec<MessageI
 #[test]
 fn a_store_seeded_before_the_index_existed_can_be_searched_once_opened() {
     let rt = runtime();
-    // Seeded first and indexed after, which is the order every existing
-    // account is in: the mail was there long before the index was.
     let database = rt.block_on(test_support::memory());
     let report = rt.block_on(seed_small(&database, 11));
     assert!(report.message_count > 0, "seeded nothing to find");
@@ -121,8 +95,6 @@ fn a_store_seeded_before_the_index_existed_can_be_searched_once_opened() {
     rt.block_on(ensure_search_index(&database))
         .expect("the index is part of opening the store");
 
-    // Searching for the sender rather than a subject also proves the
-    // recipients half of the backfill ran, not only the subject column.
     let found = rt.block_on(hits(&database, report.account.id, "example.com"));
     assert!(
         !found.is_empty(),
@@ -140,8 +112,7 @@ fn a_store_that_predates_body_indexing_catches_up_once() {
     let messages = rt.block_on(all_messages(&database));
     assert!(messages.len() > 2, "not enough seeded mail to tell apart");
 
-    // A word that appears in no subject, address or filename in the corpus,
-    // so a hit for it can only have come from a body.
+    // A word in no subject, address or filename, so a hit can only come from a body.
     let (plain, markup, never_fetched) = (messages[0], messages[1], messages[2]);
     rt.block_on(give_body(
         &database,
@@ -160,8 +131,6 @@ fn a_store_that_predates_body_indexing_catches_up_once() {
         ),
         None,
     ));
-    // `never_fetched` keeps its seeded `NotFetched` and gets no blob: its body
-    // is on the server, and the index must not claim to have read it.
 
     rt.block_on(ensure_search_index(&database))
         .expect("the index is part of opening the store");
@@ -193,8 +162,7 @@ fn a_store_that_predates_body_indexing_catches_up_once() {
         "a message whose body is still on the server was indexed anyway"
     );
 
-    // Markup and link targets are not the message: indexing them would make
-    // every HTML message a hit for `div`.
+    // Indexing markup and link targets would make every HTML message a hit for `div`.
     for markup_word in ["div", "href", "tracker.example"] {
         assert!(
             rt.block_on(hits(&database, report.account.id, markup_word))
@@ -203,8 +171,6 @@ fn a_store_that_predates_body_indexing_catches_up_once() {
         );
     }
 
-    // Idempotent: a second pass finds nothing left to do, and the first
-    // pass's rows are not duplicated.
     assert_eq!(
         rt.block_on(index_local_bodies(&database))
             .expect("a second pass"),
@@ -221,8 +187,6 @@ fn starting_the_idle_passes_indexes_the_header_blocks_already_on_disk() {
     let database = rt.block_on(test_support::memory());
     let report = rt.block_on(seed_small(&database, 37));
     let target = rt.block_on(all_messages(&database))[0];
-    // A field no envelope column carries and no fixture in the corpus has, so
-    // nothing but `message_headers` could answer for it.
     rt.block_on(give_body(
         &database,
         target,
@@ -252,7 +216,6 @@ fn starting_the_idle_passes_indexes_the_header_blocks_already_on_disk() {
     .expect("a host");
     let client = host.connect(ClientKind::Focus);
 
-    // Nobody calls `index_local_headers`: only the host's idle passes do.
     host.start_idle_passes();
 
     let ask = |query: &str| {
@@ -273,8 +236,6 @@ fn starting_the_idle_passes_indexes_the_header_blocks_already_on_disk() {
         );
         std::thread::sleep(Duration::from_millis(20));
     }
-    // Presence and value are two different questions, and both have to reach
-    // the running host.
     assert!(
         ask("header:x-mailer"),
         "presence is answerable too, not only a value match"

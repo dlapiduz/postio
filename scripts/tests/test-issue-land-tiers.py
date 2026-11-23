@@ -36,8 +36,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -45,11 +43,6 @@ import patience  # noqa: E402  -- enabled by the sys.path line above
 HERE = Path(__file__).resolve().parent.parent
 REPO_ROOT = HERE.parent
 ISSUE_LAND = HERE / "issue-land.sh"
-# Sandboxes go under `target/`, which git ignores: inside the worktree because
-# the shared-tree guard only lifts its refusals for worktree paths, and not in
-# its root because a killed run leaves the sandbox behind and `git add -A` in a
-# worktree will commit it. `scripts/checks/check-test-sandboxes.py` says what
-# that cost (#1225).
 SANDBOXES = REPO_ROOT / "target" / "tmp"
 SANDBOXES.mkdir(parents=True, exist_ok=True)
 
@@ -132,9 +125,6 @@ def world(base: Path) -> tuple[Path, Path]:
     (stub_dir / "bin").mkdir(parents=True)
     (root / "scripts" / "checks").mkdir(parents=True)
 
-    # The repository's own pin, copied rather than written out: a literal
-    # here went stale at the 1.99 bump, and on a runner that has only the
-    # pinned toolchain the sandbox then had no rustfmt to run.
     (root / "rust-toolchain.toml").write_text(
         (REPO_ROOT / "rust-toolchain.toml").read_text(encoding="utf-8"), encoding="utf-8"
     )
@@ -170,8 +160,6 @@ def world(base: Path) -> tuple[Path, Path]:
     (stub_dir / "calls").write_text("", encoding="utf-8")
 
     git("init", "-q", "-b", "main", cwd=root)
-    # A lockfile, because the gates `git add -A` before running and one
-    # written mid-gates would otherwise land as an untracked stray.
     (root / "Cargo.lock").write_text("# stub\n", encoding="utf-8")
     git("add", "-A", cwd=root)
     git("commit", "-q", "-m", "init", cwd=root)
@@ -253,7 +241,6 @@ def main() -> int:
     with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
         base = Path(directory)
 
-        # -- 1. the default tier: the changed crate's units, nothing wider --
         root, stub_dir = world(base / "default")
         land(root, stub_dir)
         calls = (stub_dir / "calls").read_text(encoding="utf-8")
@@ -281,22 +268,12 @@ def main() -> int:
             f"request's job since 2026-10-23:\n{workspace_runs(calls)}",
         )
 
-        # The doctests are in the default tier, and that is the whole of
-        # #1440: `--lib` does not run them and does not say so, so a doctest
-        # that stopped compiling reached `main` and was found by CI's nightly
-        # rather than by the landing that broke it. Asserting only "no
-        # integration suites" above would pass just as happily if the
-        # doctest run had never been added.
         case(
             "a default landing runs the doctests for a crate it changed",
             any("-p postio-core" in line for line in doctest_runs(calls)),
             f"no `cargo test --doc -p postio-core` in:\n{calls}",
         )
 
-        # -- 2. --full still runs the suites ---------------------------------
-        #
-        # The half that keeps the first half honest: a fast default that had
-        # also broken `--full` would pass every assertion above.
         root, stub_dir = world(base / "full")
         land(root, stub_dir, "--full")
         calls = (stub_dir / "calls").read_text(encoding="utf-8")

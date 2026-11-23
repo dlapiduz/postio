@@ -1,21 +1,11 @@
-//! What a window opens on: the account to read, or the first-run screen.
-//!
-//! The store's owner's question, since only it reads the store and the
-//! keyring (ADR 0041); moved here from the desktop app so every frontend is
-//! routed by the same rule.
+//! What a window opens on: the account to read, or the first-run screen, by the same rule for every
+//! frontend (ADR 0041).
 
 use postio_storage::Store;
 
-/// Deletes every account "Remove" (in the settings panel, #464) has marked
-/// but not yet actually removed, cascading to its mail.
-///
-/// Called once, at the top of [`route`], before anything decides
-/// which account to open or starts an engine for one — the boundary ADR
-/// 0005 Q6a chose specifically so a crash before the undo toast expires
-/// leaves the row exactly as marked, not half deleted. Failing to read or
-/// write is logged and otherwise ignored: a reap that cannot run this
-/// launch gets another chance next launch, and the account stays out of
-/// `list_enabled` either way.
+/// Called once at the top of [`route`], before anything picks an account or starts an engine (ADR
+/// 0005 Q6a), so a crash before the undo toast expires leaves the row as marked. A failed reap is
+/// logged and retried next launch.
 async fn reap_pending_accounts(database: &Store) {
     let Ok(connection) = database.connect().await else {
         return;
@@ -28,29 +18,16 @@ async fn reap_pending_accounts(database: &Store) {
     }
 }
 
-/// What a window opens on, as the store's owner decides it.
-///
-/// An account is something to open only when the store holds a row **and**
-/// the keyring gives up a password for it; otherwise the first-run screen,
-/// prefilled from the row when there is one.
+/// An account opens only when the store has a row and the keyring gives up its password.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StartupRoute {
-    /// Open it: there is a row, and a password to authenticate with.
     Ready(Box<postio_model::Account>),
-    /// Show the first-run screen; `Some` is a repair of this account.
     Onboard(Option<Box<postio_model::Account>>),
 }
 
-/// Decide which of the two startup does.
-///
-/// Async because reading the keyring is: `KeyringSecretStore` reaches the
-/// Secret Service over D-Bus and bounds the round trip with a timeout, so
-/// this must be polled on the engine runtime and answered over a channel —
-/// never awaited on a frontend's main loop.
-///
-/// A keyring that will not answer therefore costs the window a moment, not
-/// the session: the timeout inside `retrieve` turns silence into an error,
-/// and an error means onboarding rather than a window that never decides.
+/// Async because the keyring read reaches the Secret Service over D-Bus: poll it on the engine
+/// runtime, never on a frontend's main loop. The timeout inside `retrieve` turns silence into an
+/// error, which means onboarding.
 pub async fn route(
     database: &Store,
     secrets: &dyn postio_account::secret::SecretStore,
@@ -60,8 +37,7 @@ pub async fn route(
         return StartupRoute::Onboard(None);
     };
     let key = postio_account::secret::AccountKey::new(account.address.address.clone());
-    // The account's domain, never the local part, for the same reason
-    // the desktop app's `feed_the_window` logs only that.
+    // The account's domain, never the local part.
     let domain = account.address.domain().unwrap_or("unknown").to_owned();
     match secrets.retrieve(&key).await {
         Ok(password) if !password.is_empty() => StartupRoute::Ready(Box::new(account)),

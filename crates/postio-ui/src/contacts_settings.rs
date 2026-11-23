@@ -1,23 +1,14 @@
-//! Settings > Contacts, in words (specs/011-focus-contacts D7, handoff screen
-//! 08): the explainer, the "Sync with" section, "What syncs", the four
-//! Suggestions switches and the privacy footer. Which words, in which order,
-//! and which switch is on; a frontend draws them and sends a click.
-//!
-//! Sync is the Mac's until Linux has an address book to sync with: a pane
-//! made without it has no "Sync with" or "What syncs", and its footer does not
-//! mention sync accounts. No toolkit here.
+//! Settings > Contacts in words, with no toolkit. Sync is the Mac's until Linux has an
+//! address book: a pane made without it omits "Sync with" and "What syncs".
 
 use postio_model::{ContactSuggestions, Suggestion};
 
 use crate::contacts_sync::PlanView;
 use crate::contacts_sync::{AccountRow, ScopeChoice, ScopeOption, scope_note, scope_options};
 
-/// What this computer is called to the person.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Device {
-    /// "this Mac".
     Mac,
-    /// "this computer".
     Computer,
 }
 
@@ -30,43 +21,29 @@ impl Device {
     }
 }
 
-/// Settings > Contacts' section title.
 pub const TITLE: &str = "Contacts";
 
-/// What the section is for, under its title.
 pub const DESCRIPTION: &str =
     "Where your contacts live, what Postio works out about them, and whether they sync.";
 
-/// Where it is stored, for the footer a settings window shows.
 pub const STORED_IN: &str = "Stored in Postio's database, not config.toml";
 
-/// One of the four switches, in words.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SuggestionRow {
-    /// Which switch.
     pub which: Suggestion,
-    /// "Save people I write to, automatically".
     pub title: String,
-    /// What it does, in the state it is in.
     pub detail: String,
-    /// Whether it is on.
     pub on: bool,
 }
 
-/// The Suggestions section: its rows and the privacy line under them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SuggestionsView {
-    /// "Suggestions".
     pub heading: String,
-    /// The four, in order.
     pub rows: Vec<SuggestionRow>,
-    /// Where the work runs and what leaves.
     pub footer: String,
-    /// Why the last change did not happen, if it did not.
     pub error: Option<String>,
 }
 
-/// The four switches as words, for `switches`.
 pub fn suggestions(
     switches: &ContactSuggestions,
     device: Device,
@@ -127,17 +104,13 @@ pub fn suggestions(
     }
 }
 
-/// The paragraph at the top of the pane: its first clause is drawn bold.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Intro {
-    /// "Your contacts live in Postio,".
     pub lead: String,
-    /// The rest of the paragraph.
     pub rest: String,
 }
 
-/// The paragraph at the top of the pane; where there is nothing to sync with
-/// it says nothing of sync.
+/// Says nothing of sync where there is nothing to sync with.
 pub fn intro(device: Device, with_sync: bool) -> Intro {
     let sync = if with_sync {
         " Sync is optional and keeps other apps and your phone up to date."
@@ -153,62 +126,39 @@ pub fn intro(device: Device, with_sync: bool) -> Intro {
     }
 }
 
-/// How a sync would treat the two sides.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModeChoice {
-    /// Pull into Postio only.
     ReadOnly,
-    /// Both ways.
     TwoWay,
 }
 
-/// One of the account row's two modes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModeOption {
-    /// "Two-way" or "Read only".
     pub label: String,
-    /// Which.
     pub mode: ModeChoice,
-    /// Whether it is chosen.
     pub on: bool,
 }
 
-/// What the account row says about the last attempt.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SyncStatus {
-    /// Nothing asked of the Mac yet.
     NotOn,
-    /// A dry run was shown: its counts.
     Previewed(String),
-    /// The Mac said no.
     Declined,
-    /// People were brought into Postio: what was done, in words.
     BroughtIn(String),
 }
 
-/// "Sync with": the one account row, "What syncs", the preview button and
-/// the dry run under it once there is one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SyncSection {
-    /// "Sync with".
     pub heading: String,
-    /// "Contacts on this Mac (iCloud)" with its status line.
     pub account: AccountRow,
-    /// Two-way and Read only.
     pub modes: Vec<ModeOption>,
-    /// "What syncs".
     pub scopes_heading: String,
-    /// People, People and companies, Everything saved.
     pub scopes: Vec<ScopeOption>,
-    /// What the chosen scope means.
     pub scope_note: String,
-    /// "Turn on and preview", or "Preview again".
     pub preview: String,
-    /// The dry run, once there is one.
     pub plan: Option<PlanView>,
 }
 
-/// The sync section for the state the person has left it in.
 pub fn sync_section(
     scope: ScopeChoice,
     mode: ModeChoice,

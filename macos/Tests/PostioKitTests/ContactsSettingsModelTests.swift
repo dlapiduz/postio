@@ -4,12 +4,6 @@ import Testing
 
 @testable import PostioKit
 
-/// Settings > Contacts (specs/011-focus-contacts D7): the pane's model. Every
-/// book here is a fake in memory: no test constructs `AppleAddressBook`, and
-/// none can reach a person's real Contacts. The properties that matter are
-/// that nothing is asked of the Mac until the person turns sync on, that a
-/// refusal reads nothing, that a click on a switch only asks, and that there
-/// is no write at all.
 @MainActor
 struct ContactsSettingsModelTests {
     final class Engine: ContactsSettingsEngine {
@@ -178,9 +172,6 @@ struct ContactsSettingsModelTests {
         #expect(engine.brought.isEmpty)
     }
 
-    /// One store behind both the pane and the Contacts view, the way the
-    /// engine has one: bringing people in changes it and says the people
-    /// changed, and the view reads rows from it.
     final class Store: ContactsSettingsEngine {
         var people: [String] = ["Grace"]
         var pending: [UiEvent] = []
@@ -204,7 +195,6 @@ struct ContactsSettingsModelTests {
             _ records: [ExternalRecordFfi], _ scope: SyncScopeFfi, _ mode: SyncModeFfi, _ fingerprint: UInt64
         ) -> BringInResultFfi {
             people += records.map(\.given).filter { !people.contains($0) }
-            // What the engine's ContactsChanged makes the controller say.
             pending = [
                 .focusContacts(view: ContactsModelTests.frame(total: UInt32(people.count))),
                 .focusContactsRows(first: 0, count: 0),

@@ -1,40 +1,8 @@
-//! Watching one mailbox for change: `IDLE` where the server has it, `STATUS`
-//! polling where it does not.
-//!
-//! # What comes back
-//!
-//! Deliberately raw events. `IDLE` says *that* a mailbox changed, not what it
-//! now holds: `EXPUNGE` carries a sequence number rather than a UID, `FETCH`
-//! carries whichever items the server felt like volunteering, and none of it
-//! is a diff that can be applied. The answer to any of them is a resync pull.
-//! Returning them unchewed is what keeps that decision with the sync engine.
-//!
-//! # Re-arming belongs to the caller
-//!
-//! A server is entitled to drop an `IDLE` that has run too long -- RFC 2177
-//! §3 allows it after 29 minutes, and NAT middle-boxes are far less patient
-//! -- so a watcher has to wind `IDLE` down with a clean `DONE` and arm it
-//! again. How often is policy, and it has one home:
-//! `postio_sync::WatchPolicy::idle_refresh`, which the watcher hands to
-//! [`idle`] as `timeout`. This module waits for exactly that long and no
-//! longer, in one `IDLE` ... `DONE` round, so there is no second interval
-//! here for the two to disagree about.
-//!
-//! The same goes for a server without `IDLE`: the watcher polls it with
-//! `STATUS` on `WatchPolicy::poll_interval` and never calls [`idle`].
-//!
-//! # Gated on `CAPABILITY`, never on an echo
-//!
-//! Whether `IDLE` is used at all comes from the capability list read *after*
-//! authentication (ADR 0001, Q3), by way of [`WatchStrategy`]. It is never
-//! inferred from an `* ENABLED` echo — at least one mainstream provider omits
-//! that line entirely, and a client that reads its absence as "unsupported"
-//! quietly falls back to polling forever.
-//!
-//! `watch::ImapMailboxWatch` is not used here, on purpose: it seeds an
-//! in-memory shadow of the whole mailbox from a `FETCH 1:*` and holds it for
-//! the life of the watch, which is exactly the "never load a whole mailbox
-//! into memory" invariant this project is built on. ADR 0001, Q2 gap 4.
+//! Deliberately raw events: `IDLE` says that a mailbox changed, not what it holds; the answer is a
+//! resync pull. Re-arming is the caller's: it passes `WatchPolicy::idle_refresh` as `timeout`, so
+//! there is one interval.
+//! `IDLE` is gated on the post-auth `CAPABILITY` (ADR 0001 Q3), never an `* ENABLED` echo, which
+//! some providers omit. Not `watch::ImapMailboxWatch`: it shadows the whole mailbox in memory.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -54,14 +22,8 @@ use crate::cancel::CancelToken;
 use super::fetch::flag_from_wire;
 use super::{ConnectionPool, Dispatch, ImapSession, READ_BUFFER, WatchStrategy};
 
-/// Waits for the server to say something about `mailbox`.
-///
-/// Returns as soon as anything arrives, when `timeout` elapses, or when
-/// `cancel` fires — the last two with an empty vector, because "nothing
-/// happened" is not a failure.
-///
-/// Takes the pool's watch connection, so a wait of minutes never occupies a
-/// slot that interactive work needs.
+/// Takes the pool's watch connection, so a wait of minutes never occupies a slot interactive work
+/// needs. Returns on an event, on `timeout`, or on `cancel`; the last two with an empty vector.
 pub async fn idle(
     pool: &ConnectionPool,
     mailbox: &str,
@@ -75,9 +37,8 @@ pub async fn idle(
     let mailbox = mailbox.to_owned();
 
     pool.watch(async |session| {
-        // From this session's own capability list rather than a pool-level
-        // cache, so the very first watch of an account decides the same way
-        // as every later one.
+        // From this session's own capability list, not a pool cache, so the first watch decides
+        // like every later one.
         match Dispatch::new(session.capabilities().clone()).watch_strategy() {
             WatchStrategy::Idle => {
                 session.ensure_selected(&mailbox, false).await?;
@@ -93,11 +54,8 @@ pub async fn idle(
     .await
 }
 
-/// One `IDLE` … `DONE` round, at most `window` long.
-///
-/// Always winds down with `DONE` rather than dropping the connection: the
-/// session goes back to the pool usable, which is what makes re-arming cheap
-/// enough to do often.
+/// Winds down with `DONE` rather than dropping the connection, so the session returns to the pool
+/// usable.
 async fn round_of_idle(
     session: &mut ImapSession,
     window: Duration,
@@ -138,15 +96,11 @@ async fn round_of_idle(
             }
             ImapCoroutineState::Yielded(ImapIdleYield::Event(event)) => {
                 events.extend(translate(event));
-                // Something happened. Stop idling and hand it up: the answer
-                // is a resync pull, not another wait.
                 shutdown.store(true, Ordering::SeqCst);
                 winding_down = true;
             }
             ImapCoroutineState::Yielded(ImapIdleYield::WantsRead) => {
                 let read = if winding_down {
-                    // Waiting for the tagged response to `DONE`, which is an
-                    // ordinary command and bounded like one.
                     let timeout = session.command_timeout();
                     Some(
                         session
@@ -181,12 +135,8 @@ async fn round_of_idle(
     }
 }
 
-/// Turns one batch of untagged responses into events.
-///
-/// Anything not in [`MailboxEvent`]'s vocabulary is dropped rather than
-/// guessed at: `RECENT` is meaningless to a client that keeps its own state,
-/// and a `FETCH` with no flags in it says nothing a resync will not say
-/// better.
+/// Anything outside `MailboxEvent`'s vocabulary is dropped: `RECENT` is meaningless here and a
+/// flagless `FETCH` says nothing a resync will not.
 fn translate(event: ImapIdleEvent) -> Vec<MailboxEvent> {
     let mut events = Vec::new();
 
@@ -283,9 +233,7 @@ mod tests {
 
     #[test]
     fn an_expunge_keeps_its_sequence_number() {
-        // Not a UID, and not convertible into one without state the sync
-        // engine owns. Reporting it as what it is stops anybody applying it
-        // to the wrong message.
+        // Not a UID, and not convertible without state the sync engine owns.
         assert_eq!(
             batch(vec![Data::Expunge(seq(3))]),
             vec![MailboxEvent::Expunged { seq: 3 }]
@@ -329,8 +277,6 @@ mod tests {
 
     #[test]
     fn a_fetch_without_flags_says_nothing_worth_reporting() {
-        // A resync will say it better, and inventing an event here would put
-        // a change into the sync engine that the server never described.
         let events = batch(vec![Data::Fetch {
             seq: seq(1),
             items: Vec1::from(MessageDataItem::Uid(seq(9))),

@@ -1,55 +1,8 @@
-//! What moving between messages costs, counted rather than timed.
-//!
-//! The same idiom as [`postio_core::test_support::keymap_resolutions`] and
-//! `postio_storage::test_support::counting`: what gates a performance claim
-//! here is a *count*, not a duration. A shared machine cannot defend sixteen
-//! milliseconds, but "how many times did this happen" is the same number
-//! everywhere, and it is the cause the duration is an effect of.
-//!
-//! # Why the storage counter cannot answer this
-//!
-//! `postio_storage`'s counts come off SQLite's trace hook, and the defect
-//! this module exists for issues **no query at all**: #749 found that
-//! `Enter` on the row already under the cursor loaded the same message's
-//! document a second time, because the filler was wired to both
-//! `connect_cursor_moved` and `connect_activated` and only the first
-//! deduplicates. Two identical documents, one store read, every existing test
-//! green.
-//!
-//! # What is counted, and what each one catches
-//!
-//! * **documents built** and **bytes** — a document carrying bulk that is
-//!   identical between messages. #749 measured ~1.2 MB of `@font-face` data
-//!   URIs in *every* document, re-parsed by the engine on every switch; ADR
-//!   0023 moved the bytes behind a scheme, and `test_support::largest_document`
-//!   is what notices if anything like them comes back — behind `cfg(test)`, so
-//!   there is nothing to link to from a doc build.
-//! * **renders** — one gesture, at most one render, and none at all for
-//!   re-selecting what is already displayed.
-//! * **surfaces** — a rendering surface per message is what ADR 0032 measured
-//!   at thirty processes for a thirty-message thread. Held is created minus
-//!   released, so a conversation that never lets go shows up here even while
-//!   every individual render looks cheap.
-//!
-//! Counters are never reset. Tests read a `before`, act, and assert on the
-//! delta -- which is what lets them span an async boundary that a scoped
-//! closure could not.
-//!
-//! # Per thread, not per process (#1390)
-//!
-//! They were `AtomicU64` statics, and a delta assertion over a shared counter
-//! is only exact if nothing else is counting. libtest runs `#[test]`s on a
-//! thread pool, so a test asserting "assembling a document counts one"
-//! failed the moment another test in the same binary assembled one between
-//! its snapshot and its assertion. The exactness is not the problem -- "a
-//! frontend that grows a second path to the engine is invisible" is the
-//! whole point of it -- so the counters moved instead.
-//!
-//! Everything that counts here runs on the thread that owns the interface:
-//! documents are assembled on it, and a frontend's load choke point is on it
-//! because the toolkit has no other. A counter incremented on a worker and
-//! read on the main thread would read zero, which is worth knowing before
-//! adding one -- there is no such caller today.
+//! What moving between messages costs, counted rather than timed: a count is the same on every
+//! machine, a duration is not.
+//! Counters are per thread, not per process (#1390), so delta assertions are exact under libtest's
+//! thread pool.
+//! Read a `before`, act, and assert on the delta.
 
 use std::cell::Cell;
 use std::thread::LocalKey;
@@ -74,62 +27,42 @@ thread_local! {
     pub(crate) static DISPLAY_LIST_COMMANDS: Cell<u64> = const { Cell::new(0) };
 }
 
-/// What one snapshot from the reading renderer cost, counted (spec 006
-/// Principle V): the renderer's own `RenderCounts`, in this crate's terms
-/// because this crate does not link the renderer.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SnapshotCounts {
-    /// Style passes: 1, or 2 when colours were repaired.
     pub style_passes: u64,
-    /// DOM nodes laid out.
     pub nodes: u64,
-    /// Text runs whose colour was repaired to the floor.
     pub repaired_runs: u64,
-    /// Lookups the resource table could not answer.
     pub resources_unresolved: u64,
-    /// Images drawn as placeholders.
     pub images_placeholdered: u64,
-    /// Commands in the recorded display list.
     pub display_list_commands: u64,
 }
 
-/// Add to a counter.
 pub(crate) fn bump(counter: &'static LocalKey<Cell<u64>>, by: u64) {
     counter.with(|count| count.set(count.get().saturating_add(by)));
 }
 
-/// Raise a counter to `value` if it is higher — the high-water mark.
 fn raise(counter: &'static LocalKey<Cell<u64>>, value: u64) {
     counter.with(|count| count.set(count.get().max(value)));
 }
 
-/// Read a counter.
 pub(crate) fn read(counter: &'static LocalKey<Cell<u64>>) -> u64 {
     counter.with(Cell::get)
 }
 
-/// One document was assembled, of `bytes` bytes.
-///
-/// Called by the assembly itself rather than by a frontend, because the
-/// question "did this document carry bulk" is answered where the document is
-/// built and is the same answer for every frontend.
+/// Called by the assembly itself, so every frontend gets the same answer to "did this document
+/// carry bulk".
 pub(crate) fn note_document(bytes: usize) {
     bump(&DOCUMENTS, 1);
     bump(&DOCUMENT_BYTES, bytes as u64);
     raise(&LARGEST_DOCUMENT, bytes as u64);
 }
 
-/// A document was handed to a rendering surface.
-///
-/// Called by a frontend at its single load choke point. Every frontend has
-/// one; if a frontend grows a second path to the engine, this counter is what
-/// makes that visible instead of silently doubling the cost of a keystroke.
+/// Called at a frontend's single load choke point; a second path to the engine shows up here
+/// instead of silently doubling a keystroke's cost.
 pub fn note_render() {
     bump(&RENDERS, 1);
 }
 
-/// A snapshot from the reading renderer reached the screen, costing
-/// `counts`. Called by the reading surface as it shows each one.
 pub fn note_snapshot(counts: SnapshotCounts) {
     bump(&SNAPSHOTS, 1);
     bump(&STYLE_PASSES, counts.style_passes);
@@ -140,32 +73,18 @@ pub fn note_snapshot(counts: SnapshotCounts) {
     bump(&DISPLAY_LIST_COMMANDS, counts.display_list_commands);
 }
 
-/// A rendering surface was created.
 pub fn note_surface_created() {
     bump(&SURFACES_CREATED, 1);
 }
 
-/// A rendering surface was released.
-///
-/// Released rather than dropped, because what matters is whether the engine
-/// process behind it can go, not whether a Rust value went out of scope.
+/// Released rather than dropped: what matters is whether the engine process behind it can go.
 pub fn note_surface_released() {
     bump(&SURFACES_RELEASED, 1);
 }
 
-/// A page of the message list was asked for.
-///
-/// Counted for the same reason renders are, and it is the counter #1534 was
-/// missing: a folder of 36,000 rows kept **49 distinct pages in 20 seconds**
-/// moving through a cache that holds eight, one request starting as the last
-/// was answered, and never settling. Every one of those is a windowed SQL read
-/// on an encrypted store, so the cost of opening a folder is roughly linear in
-/// this — and nothing anywhere could see it, because a page request is a
-/// perfectly ordinary query and the storage counters count queries.
-///
-/// What makes it a *bound* rather than a measurement: opening a folder should
-/// cost the pages a screen needs, whatever the folder holds. A number that
-/// grows with the size of the mailbox is the bug.
+/// A bound, not a measurement: opening a folder should cost the pages a screen needs, whatever it
+/// holds (#1534 saw 49 distinct pages in 20 s through an eight-page cache). Storage counters cannot
+/// see it, each being an ordinary query.
 pub fn note_page_requested() {
     bump(&PAGES_REQUESTED, 1);
 }
@@ -174,20 +93,8 @@ pub fn note_page_requested() {
 mod tests {
     use super::*;
 
-    /// A counter another thread is also using stays exact here (#1390).
-    ///
-    /// This is the failure that started it, reproduced deliberately: a delta
-    /// assertion over a *shared* counter is only exact if nothing else is
-    /// counting, and libtest runs tests on a thread pool. So
-    /// `assembling_a_document_is_counted_with_its_size` failed with
-    /// `left: 2, right: 1` the moment another test in the binary assembled a
-    /// document between its snapshot and its assertion — which #1386's
-    /// anchor test did, and which any future test that builds a document
-    /// would do again.
-    ///
-    /// Against `AtomicU64` statics this fails. Against thread-local counters
-    /// the other thread's thousand documents are its own, and this one still
-    /// counts one.
+    /// The failure that started #1390: a shared counter's delta is exact only if nothing else is
+    /// counting, and libtest runs tests on a thread pool.
     #[test]
     fn a_neighbours_counting_does_not_reach_this_thread() {
         let before = read(&DOCUMENTS);
@@ -266,8 +173,6 @@ mod tests {
     }
 }
 
-/// The reading renderer's counters (spec 006) add up what each snapshot
-/// cost, and the two stall counters count what they say.
 #[cfg(test)]
 mod snapshot_tests {
     use super::*;

@@ -1,5 +1,3 @@
-//! What the read tools return: rows, and bodies as sanitised text.
-
 use serde_json::json;
 
 use crate::harness::{EVERY_FOLDER, INBOX_ONLY, World};
@@ -17,7 +15,6 @@ fn a_search_finds_mail_in_the_query_language() {
     assert_eq!(row["from"][0]["address"], "grace@example.org");
     assert_eq!(row["mailbox"], "INBOX");
     assert_eq!(row["account"], json!(world.ada.get()));
-    // The server's own block says how many, and nothing the mail said.
     assert!(result.notice().contains('1'), "{}", result.notice());
     assert!(!result.notice().contains("Atlas"), "{}", result.notice());
 }

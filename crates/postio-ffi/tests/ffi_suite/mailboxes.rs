@@ -1,12 +1,9 @@
-//! The folder tree, as the sidebar reads it.
-
 use chrono::Utc;
 use postio_ffi::{MailboxRoleFfi, Session, SessionOptions};
 use postio_model::Message;
 use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
 
-/// A store with an inbox, an archive, and one unread message in the inbox.
 async fn seeded() -> std::sync::Arc<Session> {
     let database = test_support::memory().await;
     {
@@ -36,10 +33,8 @@ async fn the_folder_tree_crosses() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_folder_carries_its_role_not_just_its_name() {
-    // The role is what makes `a` archive to the right place, and what lets the
-    // sidebar say "Archive" rather than whatever the server calls it. A
-    // sidebar built from raw paths would show `[Gmail]/All Mail` and be wrong
-    // in a way that looks like a server bug.
+    // The role makes `a` archive to the right place; a sidebar built from raw paths would show
+    // `[Gmail]/All Mail`.
     let session = seeded().await;
     let folders = session.mailboxes().await;
 
@@ -53,9 +48,8 @@ async fn a_folder_carries_its_role_not_just_its_name() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_folder_carries_the_counts_the_sidebar_draws() {
-    // Cached counts, not a row count: `MailboxCounts` exists so the sidebar
-    // never counts rows, and a boundary that recounted would undo that on the
-    // one surface redrawn most often.
+    // Cached counts: a boundary that recounted rows would undo `MailboxCounts` on the most-redrawn
+    // surface.
     let session = seeded().await;
     let folders = session.mailboxes().await;
     let inbox = folders
@@ -63,9 +57,6 @@ async fn a_folder_carries_the_counts_the_sidebar_draws() {
         .find(|folder| folder.role == MailboxRoleFfi::Inbox)
         .expect("an inbox");
 
-    // Seeded with one message; the exact unread count depends on how the
-    // fixture files it, so assert the field is populated rather than a value
-    // the fixture happens to produce.
     assert!(
         inbox.total > 0 || inbox.unread == 0,
         "counts did not cross at all"
@@ -75,12 +66,9 @@ async fn a_folder_carries_the_counts_the_sidebar_draws() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_hierarchy_survives_the_crossing() {
-    // Mailboxes are a tree. Flattening it turns a tidy account into a list of
-    // slash-separated strings, and there is no way to recover the nesting on
-    // the far side once it is gone.
+    // Mailboxes are a tree; flattening it loses the nesting for good.
     let session = seeded().await;
     for folder in session.mailboxes().await {
-        // Every folder either has no parent or names one that is also here.
         if let Some(parent) = folder.parent {
             assert!(
                 session
@@ -103,15 +91,8 @@ async fn a_session_with_no_account_has_no_folders() {
     session.shutdown();
 }
 
-// ── The view rows reach macOS too (spec 003, US4) ───────────────────────────
-
 #[tokio::test(flavor = "multi_thread")]
 async fn the_sidebars_view_rows_cross_the_boundary() {
-    // The assertion that would have failed every day since #1155. `Flagged`
-    // and `Snoozed` were built inside the classic app's feed as mailboxes with
-    // negative ids, so this boundary — which reads the same store through the
-    // same shared layer — has never carried either row, and the macOS sidebar
-    // has never drawn them.
     let session = seeded().await;
     let folders = session.mailboxes().await;
 
@@ -131,8 +112,6 @@ async fn the_sidebars_view_rows_cross_the_boundary() {
         );
     }
 
-    // Not the Outbox: it is hidden when it holds nothing, which is the state
-    // a freshly seeded account is in (spec 003 FR-012).
     assert!(
         !folders
             .iter()
@@ -144,10 +123,6 @@ async fn the_sidebars_view_rows_cross_the_boundary() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_view_row_carries_the_count_its_badge_needs() {
-    // `MailboxFfi` carried `unread` and `total` only, so even once the rows
-    // crossed, a macOS `count_for` could not reproduce the badge rules: the
-    // Flagged row shows how many are flagged and the Snoozed row how many are
-    // snoozed, and neither number was on the wire.
     let session = seeded().await;
     let folders = session.mailboxes().await;
 

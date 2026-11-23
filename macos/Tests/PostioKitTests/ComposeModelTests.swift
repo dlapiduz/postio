@@ -4,7 +4,6 @@ import Testing
 
 @testable import PostioKit
 
-/// Writing a message (#1272, canvas screen 26).
 @MainActor
 @Suite struct ComposeModelTests {
     private func draft(subject: String = "", rich: Bool = false) -> DraftFfi {
@@ -27,8 +26,6 @@ import Testing
     }
 
     @Test func anUnnamedDraftIsStillCalledSomething() {
-        // The canvas puts the subject in the title bar, and the Window menu
-        // is where two compose windows are told apart. "" is not a name.
         let model = ComposeModel(id: 1, draft: draft())
         #expect(model.title == "New message")
 
@@ -42,18 +39,11 @@ import Testing
     }
 
     @Test func theFooterSaysWhatWillActuallyLeave() {
-        // The switch is a control; the footer is a claim about the wire, and
-        // the two agreeing is not automatic. This asserted the footer stayed
-        // *plain* while the switch said Rich, because there was no rich
-        // document to send (#1271) — the invariant was never "always plain",
-        // it was "the footer follows what leaves". Rich composition exists
-        // now, so the same invariant has the other answer.
+        // The footer follows what leaves, not the switch.
         let rich = ComposeModel(id: 1, draft: draft(rich: true))
         #expect(rich.footer.hasSuffix("html + text/plain"))
         #expect(rich.sendsRich)
 
-        // And the half that is easy to lose and expensive to notice: rich
-        // still carries a plain alternative, so the footer names both.
         #expect(rich.footer.contains("text/plain"))
 
         let plain = ComposeModel(id: 1, draft: draft(rich: false))
@@ -62,8 +52,6 @@ import Testing
     }
 
     @Test func theFooterWritesTheHomeDirectoryTheWayAPersonDoes() {
-        // A footer is read at a glance, and `/Users/diego` is a prefix that
-        // tells somebody nothing they do not already know.
         let path = NSHomeDirectory() + "/Library/Application Support/Postio/postio.db"
         #expect(PostioPath.abbreviated(path).hasPrefix("~/Library/"))
         #expect(PostioPath.abbreviated("/var/tmp/elsewhere") == "/var/tmp/elsewhere")
@@ -80,8 +68,6 @@ import Testing
     }
 
     @Test func switchingToPlainKeepsTheWords() {
-        // The switch is on the document, not on the window: it changes what
-        // will be built, not what has been written.
         let model = ComposeModel(id: 1, draft: draft(rich: true))
         model.body = "Six is fine."
 
@@ -92,8 +78,6 @@ import Testing
     }
 
     @Test func attachingWithNoSessionChangesNothing() {
-        // The window cannot outlive its session, but the model can be asked
-        // anyway, and a crash is not an answer.
         let model = ComposeModel(id: 1, draft: draft())
         model.attach([URL(fileURLWithPath: "/tmp/gate.pdf")], through: nil)
 
@@ -110,13 +94,10 @@ import Testing
 
         #expect(model.attachments.count == 1)
         #expect(model.attachments[0].filename == "gate-plan.pdf")
-        // And the edit carries it, so saving does not drop the file.
         #expect(model.edited.attachments.count == 1)
     }
 
     @Test func aFileTypeNothingRecognisesStillGetsAName() {
-        // "Some bytes" beats refusing to attach a file because the type
-        // database had never heard of it.
         #expect(MimeType.of(URL(fileURLWithPath: "/tmp/thing.qqq")) == MimeType.fallback)
         #expect(MimeType.of(URL(fileURLWithPath: "/tmp/notes.txt")) == "text/plain")
     }
@@ -127,7 +108,6 @@ import Testing
     }
 
     @Test func handingOffWithNoSessionDoesNothingAndOpensNothing() async {
-        // The window cannot outlive its session, but the model can be asked.
         var opened: [URL] = []
         let model = ComposeModel(id: 1, draft: draft())
 
@@ -137,12 +117,7 @@ import Testing
         #expect(!model.isHandedOff)
     }
 
-    // -- which editor a draft goes to (#1288) -----------------------------
-
     @Test func nothingIsChosenUntilSomebodyChoosesIt() {
-        // Empty is the shipped state, and it means "whatever this Mac opens
-        // a text file with" rather than a named application that may not be
-        // installed.
         let model = ComposeModel(id: 1, draft: draft())
 
         #expect(model.editor.isEmpty)
@@ -150,8 +125,6 @@ import Testing
     }
 
     @Test func theButtonNamesTheEditorOnceOneIsChosen() {
-        // `Open in $EDITOR` is canvas 26's label; an application launched
-        // from Finder has no `$EDITOR`, so the button names the setting.
         let model = ComposeModel(id: 1, draft: draft())
         model.editor = "Some Editor"
 
@@ -159,8 +132,7 @@ import Testing
     }
 
     @Test func aDraftIsHandedBackWhenTheEditorCouldNotTakeIt() async {
-        // The window must never be left read-only waiting for an editor that
-        // never opened.
+        // The window must never be left read-only waiting for an editor that never opened.
         let model = ComposeModel(id: 1, draft: draft())
 
         await model.handOff(through: nil) { _ in "it would not open" }
@@ -169,18 +141,13 @@ import Testing
     }
 
     @Test func takingItBackWithNothingOutIsHarmless() {
-        // The window becoming active is what triggers this, and it becomes
-        // active all the time.
         let model = ComposeModel(id: 1, draft: draft())
         model.takeBack(through: nil)
 
         #expect(!model.isHandedOff)
         #expect(model.status == nil)
     }
-    // -- the recipients you cannot see (#1578) ----------------------------
 
-    /// A reply-all, as `postio_model::reply::reply_all` builds one: every
-    /// other original recipient goes in `cc`.
     private func replyAll() -> DraftFfi {
         var draft = self.draft(subject: "Re: Radon reduction")
         draft.to = "Ada Norwood <ada@example.com>"
@@ -190,11 +157,8 @@ import Testing
     }
 
     @Test func aBccTheWriterNeverSawIsStillSent() {
-        // `edited` copied the draft wholesale and overwrote to/cc/subject/
-        // body/rich — so a `bcc`, which nothing on screen showed and nothing
-        // could remove, rode straight through to the send. A `mailto:` link
-        // carries one (`Mailto` parses it), and so does anything that built
-        // the draft before the window opened.
+        // `edited` once copied the draft wholesale, so a `bcc` nothing on screen showed rode
+        // through to the send; a `mailto:` link carries one.
         let model = ComposeModel(id: 1, draft: replyAll())
         #expect(model.bcc == "Archive <archive@example.invalid>")
 
@@ -210,8 +174,7 @@ import Testing
     }
 
     @Test func editingBccMakesTheDraftDirty() {
-        // Autosave is driven by `isDirty`. A field the dirt check cannot see
-        // is a field whose edits are lost on the next save.
+        // Autosave is driven by `isDirty`: a field it cannot see loses its edits.
         let model = ComposeModel(id: 1, draft: replyAll())
         #expect(!model.isDirty)
         model.bcc = "someone@example.test"
@@ -219,8 +182,6 @@ import Testing
     }
 
     @Test func theCopyFieldsShowThemselvesWhenTheyHoldAddresses() {
-        // GTK's rule, and the reason for it: the rows refuse to hide while
-        // they hold addresses, so a reply-all cannot look like a reply.
         let plain = ComposeModel(id: 1, draft: draft())
         #expect(!plain.showsCopyFields, "an empty Cc and Bcc stay out of the way")
 
@@ -237,16 +198,12 @@ import Testing
     }
 
     @Test func theCopyFieldsWillNotHideOverAnAddress() {
-        // Hiding a field that holds somebody is how a recipient becomes
-        // invisible again — the bug this whole group is about.
         let model = ComposeModel(id: 1, draft: replyAll())
         model.toggleCopyFields()
         #expect(model.showsCopyFields, "they hold addresses, so they stay")
     }
 
     @Test func aReplyAllSaysHowManyPeopleAreOnIt() {
-        // The safeguard the fields exist for. One To address on screen and
-        // two more in Cc is exactly the shape that reads as a reply.
         let model = ComposeModel(id: 1, draft: replyAll())
         #expect(model.recipientSummary == "1 To, 2 Cc, 1 Bcc")
     }
@@ -258,9 +215,7 @@ import Testing
     }
 
     @Test func theSummaryFollowsWhatIsTypedRatherThanWhatWasSaved() {
-        // It reads `edited`, not `draft`: somebody who removes the Cc has
-        // removed it, and a banner still counting it would be telling them
-        // something untrue about what they are about to send.
+        // Reads `edited`, not `draft`: a banner counting a removed Cc would say something untrue.
         let model = ComposeModel(id: 1, draft: replyAll())
         model.cc = ""
         model.bcc = ""

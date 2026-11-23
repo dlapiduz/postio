@@ -4,8 +4,6 @@ import Testing
 
 @testable import PostioKit
 
-/// The undo pill's words (specs/009-focus-macos T093, screen 15): what a
-/// verb did, and Undo with its key while the stack can take it back.
 @MainActor
 struct UndoPillTests {
     static func toast(
@@ -42,16 +40,12 @@ struct UndoPillTests {
     }
 
     @Test func aQueuedSendIsUndoneLikeAnyVerb() {
-        // Its Undo is the ordinary `undo`: the controller cancels the send
-        // first (T089), so the pill needs nothing of its own.
         let words = UndoPillWords(toast: Self.toast("Message queued to send"), undoCap: "⌘Z")
         #expect(words.undo == "Undo")
     }
 
     @Test func aToastStaysForTheControllersSeconds() {
         #expect(Self.toast(seconds: 30).seconds == 30)
-        // Always said now; were it not, the controller's usual eight, never
-        // a number the Mac made up per kind.
         #expect(Self.toast(kind: .undone, undoable: false, seconds: nil).seconds == 8)
         #expect(Self.toast(kind: .notice, undoable: false, seconds: nil).seconds == 8)
     }
