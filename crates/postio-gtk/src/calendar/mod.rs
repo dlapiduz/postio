@@ -8,7 +8,6 @@ use gtk::prelude::*;
 use postio_core::CommandId;
 use postio_focus::{CalendarView, Input};
 use postio_ui::calendar::{AgendaRow, EventView, OccurrenceRow};
-use postio_widgets::widgets::keyhint::KeyLine;
 use postio_widgets::widgets::space::{S1, S2, S3};
 
 use crate::list::Feed;
@@ -28,7 +27,7 @@ pub struct AgendaView {
     filter: gtk::Entry,
     hint: gtk::Label,
     typing_echo: Cell<bool>,
-    footer: KeyLine,
+    footer: crate::scope_footer::ScopeFooter,
     card: gtk::Box,
     rows: RefCell<Vec<AgendaRow>>,
     open: RefCell<Option<EventView>>,
@@ -90,18 +89,14 @@ impl AgendaView {
         empty.set_vexpand(true);
         empty.set_visible(false);
 
-        let footer = KeyLine::new("focus-contacts-footer-hints");
-        let foot = gtk::Box::new(gtk::Orientation::Horizontal, S2);
-        foot.add_css_class("focus-contacts-footer");
-        footer.widget().set_hexpand(true);
-        foot.append(footer.widget());
+        let footer = crate::scope_footer::ScopeFooter::new();
 
         let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
         body.append(&strip);
         body.append(&hint);
         body.append(&scrolled);
         body.append(&empty);
-        body.append(&foot);
+        body.append(footer.widget());
 
         let card = gtk::Box::new(gtk::Orientation::Vertical, S2);
         card.add_css_class("focus-calendar-card");
@@ -236,6 +231,10 @@ impl AgendaView {
 
     pub fn focus_list(&self) {
         self.list.grab_focus();
+        if let Some(at) = self.cursor.get() {
+            self.list
+                .scroll_to(at as u32, gtk::ListScrollFlags::FOCUS, None);
+        }
     }
 
     pub fn focus_filter(&self) {
@@ -270,7 +269,15 @@ impl AgendaView {
         self.empty.set_visible(view.empty.is_some());
         self.empty
             .set_text(view.empty.as_deref().unwrap_or_default());
-        self.footer.set(&view.footer);
+        self.footer.set(&postio_ui::scope::FooterView {
+            title: "Calendar".to_owned(),
+            keys: view
+                .footer
+                .iter()
+                .map(|hint| (hint.key.clone(), hint.label.clone()))
+                .collect(),
+            note: None,
+        });
         self.open_keys.replace(view.open_keys.clone());
         while let Some(child) = self.search_key.first_child() {
             self.search_key.remove(&child);
@@ -311,14 +318,7 @@ impl AgendaView {
         }
         let Some(open) = open else {
             self.card.set_visible(false);
-            match self.cursor.get() {
-                Some(at) => self
-                    .list
-                    .scroll_to(at as u32, gtk::ListScrollFlags::FOCUS, None),
-                None => {
-                    self.list.grab_focus();
-                }
-            }
+            self.focus_list();
             return;
         };
         let title = gtk::Label::new(Some(&open.title));
@@ -354,10 +354,15 @@ impl AgendaView {
             notes.set_selectable(true);
             self.card.append(&notes);
         }
-        let keys = KeyLine::new("focus-contacts-footer-hints");
-        keys.set(self.open_keys.borrow().iter());
-        keys.widget().set_margin_top(S2);
-        self.card.append(keys.widget());
+        let keys = gtk::Box::new(gtk::Orientation::Horizontal, S2);
+        keys.set_margin_top(S2);
+        for hint in self.open_keys.borrow().iter() {
+            keys.append(&postio_widgets::widgets::keyhint::chip(
+                hint,
+                "focus-calendar-card-key",
+            ));
+        }
+        self.card.append(&keys);
         self.card.set_visible(true);
         self.card.set_focusable(true);
         self.card.grab_focus();
