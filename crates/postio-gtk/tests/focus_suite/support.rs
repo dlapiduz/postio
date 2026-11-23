@@ -587,6 +587,24 @@ impl Fixture {
         message
     }
 
+    pub async fn write_verdict(&self, message: MessageId, status: &str) {
+        let connection = self.database.connect().await.expect("a connection");
+        postio_storage::repository::KeyRepository::new(&connection)
+            .put_verdict(
+                message,
+                &postio_storage::repository::VerdictRow {
+                    format: "pgp_mime".to_owned(),
+                    scope: "whole".to_owned(),
+                    status: status.to_owned(),
+                    reason: None,
+                    fingerprint: Some("AAAA".to_owned()),
+                    checked_at: 1,
+                },
+            )
+            .await
+            .expect("a verdict");
+    }
+
     pub async fn write_raw(&self, message: MessageId, raw: &[u8]) {
         let blobs = BlobStore::open(self.blobs.path().to_path_buf(), &test_support::blob_keys())
             .expect("a blob store");

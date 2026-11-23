@@ -2681,3 +2681,11 @@ button.postio-button-ghost.focus-thread-menu-entry {
   border-radius: var(--postio-radius-md);
   background-color: var(--postio-raised-bg);
 }
+
+/* The Signed mark (spec 016): a quiet word beside the sender, neutral, never the accent. */
+button.focus-open-mark {
+  background: none;
+  border-color: var(--postio-hairline);
+  color: var(--postio-dim);
+  font-family: inherit;
+}

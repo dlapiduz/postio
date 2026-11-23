@@ -49,6 +49,7 @@ pub struct Member {
     /// Why the sender may not be who they say, once its body has been read
     /// (#1928). Ordinary mail has none.
     pub warning: Option<SafeText>,
+    pub mark: Option<postio_ui::reader::authenticity::Mark>,
 }
 
 impl Member {
@@ -83,6 +84,7 @@ impl Member {
             to: Vec::new(),
             cc: Vec::new(),
             warning: None,
+            mark: None,
         }
     }
 
@@ -105,6 +107,7 @@ impl Member {
             to: Vec::new(),
             cc: Vec::new(),
             warning: None,
+            mark: None,
         }
     }
 }
@@ -218,6 +221,7 @@ pub(crate) mod tests {
             to: Vec::new(),
             cc: Vec::new(),
             warning: None,
+            mark: None,
         }
     }
 

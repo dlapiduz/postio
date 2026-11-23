@@ -424,12 +424,17 @@ pub fn document(app: &App, theme: &Theme, width: u16, now: DateTime<Local>) -> D
         Some(address) => SafeText::new(address).as_str().to_owned(),
         None => member.from.as_str().to_owned(),
     };
-    let room = usize::from(width).saturating_sub(6 + date.width() + 2);
+    let mark = member
+        .mark
+        .map(|mark| format!("  {}", mark.label()))
+        .unwrap_or_default();
+    let room = usize::from(width).saturating_sub(6 + date.width() + mark.width() + 2);
     let from = fit(&from, room);
-    let gap = usize::from(width).saturating_sub(6 + from.width() + date.width());
+    let gap = usize::from(width).saturating_sub(6 + from.width() + mark.width() + date.width());
     rows.plain(Line::from(vec![
         label("From"),
         Span::styled(from, text),
+        Span::styled(mark, dim),
         Span::raw(" ".repeat(gap)),
         Span::styled(date, dim),
     ]));
@@ -1218,11 +1223,15 @@ mod tests {
 
     /// The first message opened, its thread of six read, its body here.
     fn opened(size: (u16, u16)) -> App {
-        opened_warning(size, None)
+        opened_warning(size, None, None)
     }
 
     /// [`opened`], its sender flagged by the host as `warning`.
-    fn opened_warning(size: (u16, u16), warning: Option<&str>) -> App {
+    fn opened_warning(
+        size: (u16, u16),
+        warning: Option<&str>,
+        mark: Option<postio_ui::reader::authenticity::Mark>,
+    ) -> App {
         let mut app = inbox(size);
         update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         let members = (1..=6)
@@ -1257,6 +1266,7 @@ mod tests {
                     "grace@example.com",
                 )],
                 warning: warning.map(str::to_owned),
+                mark,
             },
         );
         update(
@@ -1269,6 +1279,23 @@ mod tests {
     }
 
     #[test]
+    fn a_signed_message_says_signed_after_the_sender_as_a_quiet_word() {
+        use postio_ui::reader::authenticity::Mark;
+        let drawn = screen(
+            120,
+            36,
+            &opened_warning((120, 36), None, Some(Mark::SignedAccepted)),
+        );
+        let from = drawn
+            .lines()
+            .find(|line| line.contains("From"))
+            .unwrap_or_else(|| panic!("a From line:\n{drawn}"));
+        assert!(from.contains("Signed · accepted"), "{from}");
+        let plain = screen(120, 36, &opened_warning((120, 36), None, None));
+        assert!(!plain.contains("Signed"), "ordinary mail says nothing");
+    }
+
+    #[test]
     fn a_sender_warning_is_a_quiet_line_under_the_header_and_ordinary_mail_has_none() {
         let said = "This message failed sender verification: it may not be from example.org.";
         let ordinary = screen(120, 36, &opened((120, 36)));
@@ -1276,7 +1303,7 @@ mod tests {
             !ordinary.contains("sender verification"),
             "nothing to say, nothing said:\n{ordinary}"
         );
-        let drawn = screen(120, 36, &opened_warning((120, 36), Some(said)));
+        let drawn = screen(120, 36, &opened_warning((120, 36), Some(said), None));
         let lines = lines_of(&drawn);
         let at = lines
             .iter()
@@ -1293,7 +1320,7 @@ mod tests {
         );
 
         // Narrow: it wraps rather than being cut off mid-sentence.
-        let narrow = screen(60, 36, &opened_warning((60, 36), Some(said)));
+        let narrow = screen(60, 36, &opened_warning((60, 36), Some(said), None));
         assert!(narrow.contains("example.org."), "the end of it:\n{narrow}");
     }
 

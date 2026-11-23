@@ -78,6 +78,7 @@ pub enum Input {
         to: Vec<postio_model::EmailAddress>,
         cc: Vec<postio_model::EmailAddress>,
         warning: Option<String>,
+        mark: Option<postio_ui::reader::authenticity::Mark>,
     },
     Body {
         message: postio_model::MessageId,
@@ -3749,6 +3750,7 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             to,
             cc,
             warning,
+            mark,
         } => {
             let member = app.reading.as_mut().and_then(|reading| {
                 reading
@@ -3768,6 +3770,7 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
                     member.to = safe(&to);
                     member.cc = safe(&cc);
                     member.warning = warning.as_deref().map(postio_ui::terminal::SafeText::new);
+                    member.mark = mark;
                     vec![Effect::Redraw]
                 }
                 None => Vec::new(),

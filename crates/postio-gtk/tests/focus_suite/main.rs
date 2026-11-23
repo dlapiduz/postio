@@ -719,6 +719,7 @@ const CASES: &[(&str, fn())] = &[
         "view_source::save_as_eml_writes_the_bytes_the_store_holds",
         view_source::save_as_eml_writes_the_bytes_the_store_holds as fn(),
     ),
+    ("view_source::signed_mark", view_source::signed_mark as fn()),
     (
         "open_message::a_message_opens_at_its_top_every_time",
         open_message::a_message_opens_at_its_top_every_time as fn(),

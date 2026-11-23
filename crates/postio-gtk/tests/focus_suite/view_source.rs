@@ -144,3 +144,31 @@ pub fn save_as_eml_writes_the_bytes_the_store_holds() {
         );
     });
 }
+
+pub fn signed_mark() {
+    crate::gtk_case(async {
+        let fixture = Fixture::empty().await;
+        let (message, _) = fixture.file_from_ada("Budget", "The numbers.", 5).await;
+        fixture
+            .write_body(message, "The numbers are attached.")
+            .await;
+        fixture.write_raw(message, RAW).await;
+        fixture.write_verdict(message, "good").await;
+        let (window, _client) = fixture.open().await;
+        support::rows_shown(&window, 1).await;
+        support::keys(&window, &["j"]);
+        support::press(&window, "Return", gdk::ModifierType::empty());
+        assert!(
+            crate::settle_until(async || window
+                .reading()
+                .is_some_and(|reading| reading.mark_shown().as_deref() == Some("Signed")))
+            .await,
+            "a good signature over the whole message says Signed"
+        );
+        window.reading().expect("open").press_mark();
+        assert!(
+            crate::settle_until(async || on(&window, Tab::Verification)).await,
+            "the mark opens Verification"
+        );
+    });
+}

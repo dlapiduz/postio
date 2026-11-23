@@ -522,6 +522,14 @@ impl OpenMessage {
                 }
             }
         });
+        page.header_card.connect_mark({
+            let weak = weak.clone();
+            move || {
+                if let Some(page) = weak.upgrade() {
+                    page.run(CommandId::ViewSource);
+                }
+            }
+        });
         for (button, command) in [(up, CommandId::PrevMessage), (down, CommandId::NextMessage)] {
             let weak = weak.clone();
             button.connect_clicked(move |_| {
@@ -931,6 +939,14 @@ impl OpenMessage {
 
     pub fn connect_command(&self, handler: impl Fn(CommandId) + 'static) {
         self.handler.replace(Some(Rc::new(handler)));
+    }
+
+    pub fn mark_shown(&self) -> Option<String> {
+        self.header_card.mark_shown()
+    }
+
+    pub fn press_mark(&self) {
+        self.run(CommandId::ViewSource);
     }
 
     fn run(&self, command: CommandId) {
@@ -1451,6 +1467,14 @@ impl OpenMessage {
                 // A message is read once, and its warning rides the same reading as the header it
                 // belongs under (#1928).
                 header_card.set_warning(reading.authenticity.warning.as_deref());
+                header_card.set_mark(
+                    reading.authenticity.mark,
+                    reading
+                        .row
+                        .as_ref()
+                        .and_then(|row| row.from.first())
+                        .map_or("", |from| from.address.as_str()),
+                );
                 reader.set_sender_warning(reading.authenticity.warning.as_deref());
             }
             let sender = reading

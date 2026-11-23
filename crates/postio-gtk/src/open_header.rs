@@ -13,6 +13,7 @@ use postio_widgets::widgets::space::S1;
 pub struct HeaderCard {
     root: gtk::Grid,
     from: gtk::Box,
+    mark: gtk::Button,
     date: gtk::Label,
     to_label: gtk::Label,
     to: adw::WrapBox,
@@ -87,8 +88,17 @@ impl HeaderCard {
         let cc_label = field("Cc");
         cc_label.set_valign(gtk::Align::Start);
         let cc = recipient_line();
+        let mark = gtk::Button::new();
+        mark.add_css_class("flat");
+        mark.add_css_class("postio-chip-base");
+        mark.add_css_class("focus-open-mark");
+        mark.set_valign(gtk::Align::Center);
+        mark.set_visible(false);
+        let sender = gtk::Box::new(gtk::Orientation::Horizontal, S1);
+        sender.append(&from);
+        sender.append(&mark);
         root.attach(&from_label, 0, 0, 1, 1);
-        root.attach(&from, 1, 0, 1, 1);
+        root.attach(&sender, 1, 0, 1, 1);
         root.attach(&date, 2, 0, 1, 1);
         root.attach(&to_label, 0, 1, 1, 1);
         root.attach(&to, 1, 1, 2, 1);
@@ -119,6 +129,7 @@ impl HeaderCard {
         let card = HeaderCard {
             root,
             from,
+            mark,
             date,
             to_label,
             to,
@@ -184,6 +195,31 @@ impl HeaderCard {
         self.warning_row.set_visible(line.is_some());
     }
 
+    pub fn set_mark(&self, mark: Option<postio_ui::reader::authenticity::Mark>, address: &str) {
+        match mark {
+            Some(mark) => {
+                self.mark.set_label(mark.label());
+                self.mark
+                    .update_property(&[gtk::accessible::Property::Label(
+                        &mark.accessible_name(address),
+                    )]);
+                self.mark.set_visible(true);
+            }
+            None => self.mark.set_visible(false),
+        }
+    }
+
+    pub fn mark_shown(&self) -> Option<String> {
+        self.mark
+            .is_visible()
+            .then(|| self.mark.label().map(|label| label.to_string()))
+            .flatten()
+    }
+
+    pub fn connect_mark(&self, pressed: impl Fn() + 'static) {
+        self.mark.connect_clicked(move |_| pressed());
+    }
+
     pub fn set_reply_to(&self, text: Option<&str>) {
         self.reply.set_text(text.unwrap_or(""));
         self.reply.set_visible(text.is_some());
@@ -198,6 +234,7 @@ impl HeaderCard {
 
     pub fn clear(&self) {
         self.set_warning(None);
+        self.set_mark(None, "");
         clear(&self.from);
         self.date.set_text("");
         recipients(&self.to_label, &self.to, &[]);

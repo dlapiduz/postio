@@ -399,6 +399,7 @@ pub fn open_message(app: &mut App, message: MessageId, to: Vec<EmailAddress>, bo
             to,
             cc: Vec::new(),
             warning: None,
+            mark: None,
         },
     );
     update(

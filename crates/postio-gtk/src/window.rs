@@ -6129,6 +6129,9 @@ impl FocusWindow {
                 reading.body_text().trim().to_owned()
             };
             app.insert("focus.reading.body".to_owned(), serde_json::json!(body));
+            if let Some(mark) = reading.mark_shown() {
+                app.insert("focus.reading.mark".to_owned(), serde_json::json!(mark));
+            }
         }
         if let Some(reading) = reading.as_ref()
             && let Some(item) = reading.more_item_with_focus()

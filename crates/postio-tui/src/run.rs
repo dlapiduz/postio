@@ -1368,6 +1368,7 @@ fn perform(
                                         to: row.to,
                                         cc: row.cc,
                                         warning: reading.authenticity.warning,
+                                        mark: reading.authenticity.mark,
                                     })
                                     .await;
                             }
