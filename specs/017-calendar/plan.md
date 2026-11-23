@@ -196,6 +196,38 @@ Either way, one fewer crate holds chrono through a dependency.
   `CalendarBackend` trait, never `io-webdav` types, as for `MailBackend`
   (ARCHITECTURE §8).
 
+**S2 verdict (2026-11-23): go for `io-webdav` 0.13.0.** A scratch crate ran
+`WebdavClientStd` over a `pimalaya-stream` connection, the stream type
+`postio-jmap` already opens with the graph's TLS, against a minimal wire
+server. Each step worked:
+
+- `current_user_principal`, then `calendar_home_set`;
+- `list_calendars`, with display name, colour, components, the sync token and
+  the advertised reports. A VTODO-only collection is told apart by its
+  component set;
+- a time-ranged `calendar-query`, through `client.run(WebdavReport::new(..))`.
+  The client has no method for it, and needs none;
+- `multiget_items`, returning the object byte for byte with its ETag;
+- `sync_items` with no token, with a token (changed and vanished), and with
+  an expired token. The last surfaces as `InvalidSyncToken`, which leads to
+  the full resync;
+- `update_item` with `If-Match` answered 412, which surfaces as
+  `HttpStatus { status: 412 }`;
+- `create_item` with `If-None-Match: *`;
+- `delete_item` with `If-Match`.
+
+Three notes for slice C:
+
+- **Read-only calendars.** The listing carries no
+  `current-user-privilege-set`. Read-only is a raw PROPFIND through
+  `client.run`, as the query is.
+- **Async.** The client is blocking. It runs under `spawn_blocking` with a
+  cancellable stream, as `postio-jmap` does.
+- **A second io-http.** `io-webdav` 0.13 brings `io-http` 0.9 beside the
+  workspace's 0.8. Both stay until the other users move.
+
+The spike code is not merged.
+
 ### R4. Occurrences and paging
 
 - **Expansion** happens in `postio-calendar`: a pure function of the event

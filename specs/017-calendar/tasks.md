@@ -69,7 +69,7 @@ the plan's research section it settles. Spike code is not merged.
   - Compare instants (expansion over two years), Windows zone names, byte-faithful edits of an unmodelled property, and three-way merge.
   - **Go for `ical-rs`** if its instants match. With Windows names missing, it is still a go, with a CLDR `windowsZones` table. Otherwise calcard stays.
   - Record the choice in plan R2, with its effect on #2145.
-- [ ] T004 [P] **S2, CalDAV through `io-webdav` (gates Phase 8).** Against a minimal wire server in a scratch crate, run:
+- [x] T004 [P] **S2, CalDAV through `io-webdav` (gates Phase 8).** Against a minimal wire server in a scratch crate, run:
   - discovery (current-user-principal, then home set);
   - `calendar-query` and `calendar-multiget`;
   - `sync-collection` with a token, and an expired token;
