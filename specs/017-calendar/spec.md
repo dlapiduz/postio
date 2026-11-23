@@ -109,7 +109,7 @@ Contacts' `[` and `]` are.
 | Move to another time | `v`, a picker at the row with "Tomorrow", "+1 h", "Next week" and a typed time (spec 007's date picker) | Undo |
 | Accept, decline | `y`, `Y` (the existing ids, offered in Calendar too) | Undo briefly, as today |
 | Tentative | `alt+y` | Undo briefly |
-| Duplicate | `mod+d` | Undo |
+| Duplicate | `mod+shift+d` (not `mod+d`, which discards a draft in the composer) | Undo |
 
 `c` is the key for making a new thing on the surface the person is on. It is
 Compose in mail and New event in Calendar. Gmail and Google Calendar split it
