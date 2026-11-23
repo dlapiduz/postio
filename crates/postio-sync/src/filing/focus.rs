@@ -205,6 +205,21 @@ impl FocusFiling {
             .collect())
     }
 
+    /// What this pass decides for each of `filed`, writing nothing: what `postio-diag classify`
+    /// counts.
+    pub async fn outcomes(
+        &self,
+        connection: &Connection,
+        filed: &[FiledMessage<'_>],
+    ) -> Result<Vec<Outcome>, SyncError> {
+        let mut own = None;
+        let mut outcomes = Vec::with_capacity(filed.len());
+        for message in filed {
+            outcomes.push(self.decide(connection, message, &mut own).await?);
+        }
+        Ok(outcomes)
+    }
+
     pub async fn file_away(
         &self,
         transaction: &Connection,

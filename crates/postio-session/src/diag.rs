@@ -29,6 +29,10 @@ pub const COMMANDS: &[(&str, &str)] = &[
         "what the background lanes still owe: backfill, index, queue",
     ),
     (
+        "classify",
+        "the classifier over every inbox: filed, held, considered and marked, as counts and ids",
+    ),
+    (
         "search <words>",
         "the search box's own query, timed: hits, whether a spelling was offered",
     ),
@@ -504,4 +508,141 @@ fn bytes(n: u64) -> String {
         unit += 1;
     }
     format!("{value:.1} {}", UNITS[unit])
+}
+
+/// `postio-diag classify` (spec 007 T224): the classifier over every inbox in the store, a window
+/// at a time, through the filing stage and the needs-action guard and detector, printed by
+/// [`postio_classify::Tally`] as counts and ids. Writes nothing; asks no model, so what it measures
+/// is the built-in rules.
+pub async fn classify(
+    connection: postio_storage::Checkout,
+    focus: &postio_config::FocusConfig,
+) -> Result<String, String> {
+    classify_inner(&connection, focus)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+const CLASSIFY_WINDOW: u32 = 200;
+
+async fn classify_inner(
+    connection: &postio_storage::Checkout,
+    focus: &postio_config::FocusConfig,
+) -> Result<String, Box<dyn std::error::Error>> {
+    use postio_classify::{BodyMessage, OwnText, Tally};
+    use postio_model::{MailboxRole, MessageBody};
+    use postio_storage::repository::{AccountRepository, MessageRepository, ThreadRepository};
+    use postio_sync::{FiledMessage, FocusFiling};
+
+    let filing = FocusFiling::from_config(focus);
+    let rules = Corrections(focus.filter.clone());
+    let messages = MessageRepository::new(connection);
+    let mut tally = Tally::new();
+    let inboxes = ThreadRepository::new(connection).unified_inboxes().await?;
+    for (account, inbox) in inboxes {
+        let identities = match AccountRepository::new(connection).get(account).await? {
+            Some(account) => {
+                let mut identities = account.identities.clone();
+                if !identities
+                    .iter()
+                    .any(|identity| identity.address.same_address(&account.address))
+                {
+                    identities.push(postio_model::Identity::new(
+                        account.id,
+                        account.address.clone(),
+                    ));
+                }
+                identities
+            }
+            None => Vec::new(),
+        };
+        let mut after = None;
+        loop {
+            let window = messages
+                .focus_inbox_window(inbox, after, CLASSIFY_WINDOW)
+                .await?;
+            let Some(last) = window.last() else {
+                break;
+            };
+            after = Some((last.1, last.0));
+            let mut rows = Vec::with_capacity(window.len());
+            for (id, _) in &window {
+                if let Some(row) = messages.get(*id).await? {
+                    rows.push(row);
+                }
+            }
+            let filed: Vec<FiledMessage<'_>> = rows
+                .iter()
+                .map(|row| FiledMessage {
+                    message: row,
+                    thread: row.thread_id,
+                    role: MailboxRole::Inbox,
+                })
+                .collect();
+            let outcomes = filing.outcomes(connection, &filed).await?;
+            for (filed, outcome) in filed.iter().zip(&outcomes) {
+                tally.filing(filed.message.id, outcome);
+                let asked = BodyMessage {
+                    filed: *filed,
+                    identities: &identities,
+                };
+                if !postio_classify::considered(&asked, &rules) {
+                    tally.body(filed.message.id, false, None);
+                    continue;
+                }
+                let Some(stored) = messages.body(filed.message.id).await? else {
+                    tally.body(filed.message.id, true, None);
+                    continue;
+                };
+                let own = postio_body::own_text(&MessageBody {
+                    text: stored.text,
+                    html: stored.html,
+                });
+                let outcome =
+                    postio_classify::at_body(&asked, &OwnText::new(&own), &NoGuards, &rules);
+                tally.body(filed.message.id, true, Some(&outcome));
+            }
+        }
+    }
+    Ok(tally.render())
+}
+
+/// The person's stopped marker kinds, as the body stage reads them; the shipped senders table.
+struct Corrections(postio_config::FocusFilter);
+
+impl postio_classify::Rules for Corrections {
+    fn senders(&self) -> &postio_classify::Senders {
+        postio_classify::Senders::shipped()
+    }
+
+    fn stops(
+        &self,
+        sender: &postio_model::EmailAddress,
+        kind: postio_classify::MarkerKind,
+    ) -> bool {
+        let kind = match kind {
+            postio_classify::MarkerKind::Question => "question",
+            postio_classify::MarkerKind::Todo => "todo",
+            postio_classify::MarkerKind::Invite => return false,
+        };
+        self.0.stops(sender, kind)
+    }
+}
+
+/// The body stage asks nothing of the guards: it files and holds nothing.
+struct NoGuards;
+
+impl postio_classify::Facts for NoGuards {
+    fn wrote_to(&self, _: &postio_model::EmailAddress) -> bool {
+        true
+    }
+    fn took_part(&self, _: postio_model::ThreadId) -> bool {
+        true
+    }
+    fn own_domain(&self, _: &postio_model::EmailAddress) -> bool {
+        true
+    }
+    fn never_filter(&self, _: &postio_model::EmailAddress) -> bool {
+        true
+    }
 }

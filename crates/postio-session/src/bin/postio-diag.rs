@@ -17,6 +17,7 @@ usage: postio-diag [--store <postio.db>] <command>
   encoding  the bodies carrying the decode caveat, and what their parts declared
   shape     rows per page, with and without the body columns
   pending   what the background lanes still owe: backfill, index, queue
+  classify  the classifier over every inbox, with the config's rules: counts and ids
   search <words>  the search box's query, timed, as typed and quoted
 
 Reads only. Opens the live store -- close Postio first -- or the copy --store
@@ -84,7 +85,16 @@ async fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    match postio_session::diag::report(connection, file, &command).await {
+    let report = if command == "classify" {
+        // The person's own rules, so a hold is counted as the pass would make it.
+        let focus = postio_config::Config::load()
+            .map(|config| config.focus)
+            .unwrap_or_default();
+        postio_session::diag::classify(connection, &focus).await
+    } else {
+        postio_session::diag::report(connection, file, &command).await
+    };
+    match report {
         Ok(text) => {
             print!("{text}");
             ExitCode::SUCCESS
