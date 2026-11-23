@@ -218,6 +218,9 @@ fn reason_name(reason: Reason) -> String {
         Reason::Unsupported => "unsupported".to_owned(),
         Reason::Malformed => "malformed".to_owned(),
         Reason::Tampered => "tampered".to_owned(),
+        Reason::Untrusted => "untrusted".to_owned(),
+        Reason::NotForEmail => "not_for_email".to_owned(),
+        Reason::AddressMismatch => "address_mismatch".to_owned(),
     }
 }
 

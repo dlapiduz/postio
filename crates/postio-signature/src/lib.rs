@@ -6,6 +6,7 @@ pub mod gnupg;
 pub mod keys;
 pub mod policy;
 pub mod scope;
+pub mod smime;
 pub mod verify;
 
 pub use autocrypt::autocrypt;

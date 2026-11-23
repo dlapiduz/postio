@@ -1,1 +1,2 @@
+mod smime;
 mod sweeps;

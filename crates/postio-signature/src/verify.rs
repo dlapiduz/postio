@@ -15,6 +15,7 @@ use crate::scope::{Format, SignedScope, signed_scope};
 #[derive(Debug, Clone, Default)]
 pub struct KeySet {
     keys: Vec<SignedPublicKey>,
+    anchors: Vec<Vec<u8>>,
 }
 
 impl KeySet {
@@ -28,6 +29,14 @@ impl KeySet {
 
     pub fn keys(&self) -> &[SignedPublicKey] {
         &self.keys
+    }
+
+    pub fn push_anchor(&mut self, certificate: Vec<u8>) {
+        self.anchors.push(certificate);
+    }
+
+    pub fn anchors(&self) -> &[Vec<u8>] {
+        &self.anchors
     }
 }
 
@@ -56,12 +65,15 @@ pub fn verify(raw: &[u8], keys: &KeySet, policy: &Policy) -> Option<Verdict> {
         SignedScope::Encrypted => refused(Reason::Unsupported),
         SignedScope::WholeMessage {
             format: Format::Smime,
-            ..
+            part,
+            signature,
         }
         | SignedScope::Part {
             format: Format::Smime,
+            part,
+            signature,
             ..
-        } => refused(Reason::Unsupported),
+        } => crate::smime::check(&scope, raw, part.clone(), signature.clone(), keys),
         SignedScope::WholeMessage {
             part, signature, ..
         }
@@ -158,7 +170,6 @@ struct Found<'a> {
     revoked: bool,
 }
 
-/// The primary key or subkey the signature names, by fingerprint or else by key id.
 fn signer<'a>(signature: &Signature, keys: &'a KeySet) -> Option<Found<'a>> {
     let fingerprints = signature.issuer_fingerprint();
     let ids = signature.issuer_key_id();
@@ -205,7 +216,7 @@ fn signer<'a>(signature: &Signature, keys: &'a KeySet) -> Option<Found<'a>> {
 }
 
 /// RFC 3156 signs canonical text: bare LF becomes CRLF, and nothing else changes.
-fn crlf(bytes: &[u8]) -> Vec<u8> {
+pub(crate) fn crlf(bytes: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(bytes.len() + bytes.len() / 32);
     let mut previous = 0u8;
     for &byte in bytes {

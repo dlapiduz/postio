@@ -86,7 +86,11 @@ fn every_tampering_reads_as_tampered() {
 #[test]
 fn every_signature_fixture_has_a_verdict_and_ordinary_mail_has_none() {
     let all = subsets().pop().expect("the full set").1;
-    for fixture in test_corpus::by_category(Category::Pgp) {
+    for fixture in test_corpus::by_category(Category::Pgp).into_iter().chain(
+        test_corpus::by_category(Category::Signature)
+            .into_iter()
+            .filter(|fixture| fixture.name().starts_with("smime-")),
+    ) {
         assert!(
             verify(fixture.bytes(), &all, &Policy).is_some()
                 || fixture.name() == "pgp-key-attached",
@@ -96,7 +100,10 @@ fn every_signature_fixture_has_a_verdict_and_ordinary_mail_has_none() {
     }
     for fixture in test_corpus::by_category(Category::PlainText)
         .into_iter()
-        .filter(|fixture| !fixture.categories().contains(&Category::Pgp))
+        .filter(|fixture| {
+            !fixture.categories().contains(&Category::Pgp)
+                && !fixture.categories().contains(&Category::Signature)
+        })
     {
         assert_eq!(
             verify(fixture.bytes(), &all, &Policy),

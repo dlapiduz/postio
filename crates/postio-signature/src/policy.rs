@@ -23,7 +23,6 @@ pub enum KeyStrength {
     Other,
 }
 
-/// What a signature and the key that made it say, before any judgement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Facts {
     pub hash: Hash,
@@ -55,6 +54,9 @@ pub enum Reason {
     Unsupported,
     Malformed,
     Tampered,
+    Untrusted,
+    NotForEmail,
+    AddressMismatch,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
