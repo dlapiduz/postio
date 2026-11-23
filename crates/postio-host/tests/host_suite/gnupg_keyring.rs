@@ -250,3 +250,36 @@ fn turning_the_keyring_on_records_its_keys_and_off_forgets_the_ones_only_it_held
     );
     assert_eq!(held(), [both[0].clone()], "only the accepted key stays");
 }
+
+#[test]
+fn a_key_gnupg_trusts_ultimately_is_recorded_and_not_accepted() {
+    use postio_storage::repository::KeyRepository;
+    let home = home();
+    let mut bytes = keyblock("ada-a.asc");
+    bytes.extend([0xb0, 0x02, 0x06, 0x00]);
+    std::fs::write(home.path().join("pubring.gpg"), bytes).expect("a keyring");
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("a runtime");
+    let database = rt.block_on(postio_storage::test_support::memory());
+    let dir = tempfile::tempdir().expect("blobs");
+    let blobs = postio_storage::BlobStore::open(
+        dir.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
+    rt.block_on(gnupg::sync(&database, &blobs, Some(home.path()), true))
+        .expect("read");
+    let ada = postio_model::EmailAddress::new(None::<String>, "ada@example.com");
+    rt.block_on(async {
+        let connection = database.connect().await.expect("c");
+        let keys = KeyRepository::new(&connection);
+        assert_eq!(keys.for_address(&ada).await.expect("r").len(), 1);
+        assert_eq!(
+            keys.accepted(&ada).await.expect("r"),
+            None,
+            "GnuPG's ownertrust never accepts a key"
+        );
+    });
+}

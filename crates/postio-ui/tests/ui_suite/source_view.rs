@@ -663,18 +663,39 @@ fn every_other_verdict_says_why_and_never_good() {
 }
 
 #[test]
-fn a_key_from_the_gnupg_keyring_says_so() {
+fn a_key_from_the_gnupg_keyring_is_signed_until_accepted_whatever_gnupg_trusts() {
     let view = signed_view(source::SignatureInput {
         sources: vec!["gnupg".to_owned()],
         ..good()
     });
+    let signature = section(&view, SIGNATURE);
+    assert_eq!(
+        signature.intro.as_deref(),
+        Some("Good signature by a key from your GnuPG keyring, first seen 3 March 2026.")
+    );
     assert!(
-        section(&view, SIGNATURE)
-            .intro
-            .as_deref()
-            .is_some_and(|intro| intro.contains("from your GnuPG keyring")),
+        texts(signature).contains(&"Accept this key for ada@example.com"),
         "{:?}",
-        section(&view, SIGNATURE).intro
+        texts(signature)
+    );
+    let header = postio_ui::reader::authenticity::header(
+        &postio_model::Headers::default(),
+        &[postio_model::EmailAddress::new(
+            None::<String>,
+            "ada@example.com",
+        )],
+        &[] as &[&str],
+        Some(&postio_ui::reader::authenticity::Signature {
+            status: "good".to_owned(),
+            scope: "whole".to_owned(),
+            signer: good().fingerprint,
+            accepted: None,
+        }),
+    );
+    assert_eq!(
+        header.mark,
+        Some(postio_ui::reader::authenticity::Mark::Signed),
+        "never Signed · accepted by itself"
     );
 }
 
