@@ -25,6 +25,7 @@ mod contacts_settings;
 mod cursor;
 mod digest;
 mod dropdown;
+mod event_editor;
 mod feed;
 mod filtered;
 mod footer;
@@ -241,6 +242,11 @@ pub enum Input {
     CalendarPoint(usize),
     WindowFocused(Window),
     CalendarFilterTyped(String),
+    EventEditorTyped {
+        field: postio_ui::calendar::editor::EditorField,
+        text: String,
+    },
+    EventEditorScope(postio_model::calendar::EditScope),
     ContactSplit(String),
     ContactMergeKeep(u32),
     ContactEditChange(contact_edit::EditChange),
@@ -1367,6 +1373,7 @@ impl FocusController {
                 steps.extend(self.hear_sync(&event));
                 steps.extend(self.filtered_event(&event));
                 steps.extend(self.contacts_heard(&event));
+                steps.extend(self.calendar_heard(&event));
                 steps.extend(self.contact_popover_heard(&event));
                 self.rereading(&steps, rows);
                 self.effects(steps)
@@ -1505,6 +1512,14 @@ impl FocusController {
             }
             Input::CalendarFilterTyped(text) => {
                 let steps = self.calendar_filter_typed(text);
+                self.effects(steps)
+            }
+            Input::EventEditorTyped { field, text } => {
+                let steps = self.editor_typed(field, text);
+                self.effects(steps)
+            }
+            Input::EventEditorScope(scope) => {
+                let steps = self.editor_scope(scope);
                 self.effects(steps)
             }
             Input::WindowFocused(window) => {

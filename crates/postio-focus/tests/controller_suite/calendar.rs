@@ -6,9 +6,10 @@ use postio_focus::{
     CalendarView, Effect, FocusController, Input, Intent, NoRows, Placement, Policy, Reply,
     Request, SurfaceKind,
 };
-use postio_model::calendar::{AgendaAnchor, AgendaEntry, EventDetail, EventStatus};
+use postio_model::calendar::{AgendaAnchor, AgendaEntry, EditScope, EventDetail, EventStatus};
 use postio_model::ids::{CalendarId, EventId};
 use postio_ui::calendar::AgendaRow;
+use postio_ui::calendar::editor::EditorField;
 use postio_ui::keymap::KeyContext;
 
 fn local(day: u32, hour: u32) -> DateTime<Utc> {
@@ -388,4 +389,206 @@ fn close_window_in_a_detached_composer_closes_that_composer() {
 
     assert!(shown(&effects).contains(&Intent::CloseSurface(SurfaceKind::Composer)));
     assert!(!shown(&effects).contains(&Intent::Quit));
+}
+
+fn posted(effects: &[Effect]) -> Vec<postio_core::Command> {
+    asks(effects)
+        .into_iter()
+        .filter_map(|(_, request)| match request {
+            Request::Post(command) => Some(command),
+            _ => None,
+        })
+        .collect()
+}
+
+fn typed(focus: &mut FocusController, field: EditorField, text: &str) -> CalendarView {
+    let effects = focus.handle_on(
+        Input::EventEditorTyped {
+            field,
+            text: text.to_owned(),
+        },
+        &NoRows,
+    );
+    frame(&effects).expect("redrawn")
+}
+
+fn detail_of(item: AgendaEntry, repeat: bool) -> EventDetail {
+    EventDetail {
+        entry: item,
+        notes: "Bring the numbers.".to_owned(),
+        organiser: None,
+        attendees: Vec::new(),
+        zone: None,
+        repeat: repeat.then(|| postio_model::calendar::Repeat {
+            frequency: postio_model::calendar::Frequency::Weekly,
+            interval: 1,
+            weekdays: Vec::new(),
+            until: None,
+            count: None,
+        }),
+        minutes_before: Vec::new(),
+        writable: true,
+    }
+}
+
+fn opened_on(focus: &mut FocusController, detail: EventDetail) {
+    let asked = run(focus, CommandId::OpenMessage);
+    let [(ticket, Request::EventDetail { stamp, .. })] = asks(&asked)[..] else {
+        panic!("the event is read: {asked:?}");
+    };
+    focus.handle_on(
+        Input::Reply(
+            ticket,
+            Reply::EventDetail {
+                stamp,
+                answer: Ok(Some(Box::new(detail))),
+            },
+        ),
+        &NoRows,
+    );
+}
+
+#[test]
+fn c_opens_a_new_event_at_the_next_hour_and_save_posts_it_and_follows_it() {
+    let (mut focus, _) = opened();
+
+    let view = frame(&run(&mut focus, CommandId::NewEvent)).expect("redrawn");
+    let editor = view.editor.expect("the editor is open");
+    assert_eq!(editor.heading, "New event");
+    assert_eq!(
+        editor.when.as_deref(),
+        Ok("Tue 24 Nov, 13:00 \u{2013} 14:00")
+    );
+    assert_eq!(editor.scope, None);
+
+    let view = frame(&run(&mut focus, CommandId::SaveEvent)).expect("redrawn");
+    assert_eq!(
+        view.editor.and_then(|editor| editor.error).as_deref(),
+        Some("Give the event a title"),
+        "nothing is posted without a title"
+    );
+
+    typed(&mut focus, EditorField::Title, "Dentist");
+    let view = typed(&mut focus, EditorField::Ends, "until 2:30pm");
+    assert_eq!(
+        view.editor.expect("open").when.as_deref(),
+        Ok("Tue 24 Nov, 13:00 \u{2013} 14:30")
+    );
+    let effects = run(&mut focus, CommandId::SaveEvent);
+    let [
+        postio_core::Command::SaveEvent {
+            event: None,
+            fields: Some(fields),
+            scope: None,
+            ..
+        },
+    ] = &posted(&effects)[..]
+    else {
+        panic!("one save: {effects:?}");
+    };
+    assert_eq!(
+        (fields.title.as_str(), fields.start),
+        ("Dentist", local(24, 13))
+    );
+    assert_eq!(fields.end - fields.start, Duration::minutes(90));
+    assert!(frame(&effects).expect("redrawn").editor.is_none());
+
+    let heard = focus.handle_on(Input::Event(postio_core::Event::CalendarChanged), &NoRows);
+    let mut with_new = today();
+    with_new.insert(1, entry(9, local(24, 13), "Dentist"));
+    let view = frame(&answer(&mut focus, &heard, with_new)).expect("redrawn");
+    assert_eq!(ringed(&view), "Dentist", "the ring follows what was saved");
+}
+
+#[test]
+fn an_unreadable_start_says_so_and_escape_leaves_without_saving() {
+    let (mut focus, _) = opened();
+    run(&mut focus, CommandId::NewEvent);
+    typed(&mut focus, EditorField::Title, "Planning");
+
+    let view = typed(&mut focus, EditorField::Starts, "whenever");
+    assert_eq!(
+        view.editor.expect("open").when,
+        Err("Postio cannot read \u{201c}whenever\u{201d} as a start".to_owned())
+    );
+    let effects = run(&mut focus, CommandId::SaveEvent);
+    assert!(posted(&effects).is_empty());
+
+    let effects = run(&mut focus, CommandId::Back);
+    assert!(posted(&effects).is_empty());
+    let view = frame(&effects).expect("redrawn");
+    assert!(view.editor.is_none());
+    assert_eq!(ringed(&view), "Review", "the agenda is where it was");
+}
+
+#[test]
+fn mod_e_edits_the_open_event_keeping_its_time_and_a_series_asks_which() {
+    let (mut focus, _) = opened();
+    opened_on(
+        &mut focus,
+        detail_of(entry(2, local(24, 14), "Review"), true),
+    );
+
+    let view = frame(&run(&mut focus, CommandId::EditEvent)).expect("redrawn");
+    let editor = view.editor.expect("the editor is open");
+    assert_eq!(editor.heading, "Edit event");
+    assert_eq!(editor.scope, Some(EditScope::This));
+    assert_eq!(
+        editor.when.as_deref(),
+        Ok("Tue 24 Nov, 14:00 \u{2013} 14:30")
+    );
+
+    focus.handle_on(Input::EventEditorScope(EditScope::All), &NoRows);
+    typed(&mut focus, EditorField::Title, "Review (all hands)");
+    let effects = run(&mut focus, CommandId::SaveEvent);
+    let [
+        postio_core::Command::SaveEvent {
+            event: Some(target),
+            fields: Some(fields),
+            scope,
+            ..
+        },
+    ] = &posted(&effects)[..]
+    else {
+        panic!("one save: {effects:?}");
+    };
+    assert_eq!(target.occurrence.event, EventId::new(2));
+    assert_eq!(*scope, Some(EditScope::All));
+    assert_eq!(fields.title, "Review (all hands)");
+    assert_eq!(
+        (fields.start, fields.end),
+        (local(24, 14), local(24, 14) + Duration::minutes(30))
+    );
+}
+
+#[test]
+fn save_and_invite_is_offered_only_with_people() {
+    let (mut focus, _) = opened();
+    run(&mut focus, CommandId::NewEvent);
+    let view = typed(&mut focus, EditorField::Title, "Planning");
+    let labels = |view: &CalendarView| -> Vec<String> {
+        view.editor
+            .as_ref()
+            .expect("open")
+            .keys
+            .iter()
+            .map(|hint| hint.label.clone())
+            .collect()
+    };
+    assert_eq!(labels(&view), ["save", "cancel"]);
+    assert!(posted(&run(&mut focus, CommandId::SaveAndSendEvent)).is_empty());
+
+    let view = typed(&mut focus, EditorField::People, "Quinn <quinn@example.net>");
+    assert_eq!(labels(&view), ["save", "save and invite", "cancel"]);
+    let effects = run(&mut focus, CommandId::SaveAndSendEvent);
+    let [
+        postio_core::Command::SaveAndSendEvent {
+            fields: Some(fields),
+            ..
+        },
+    ] = &posted(&effects)[..]
+    else {
+        panic!("one save and send: {effects:?}");
+    };
+    assert_eq!(fields.attendees[0].address, "quinn@example.net");
 }

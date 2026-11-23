@@ -1,3 +1,5 @@
+pub mod editor;
+
 use chrono::{DateTime, Datelike, NaiveDate, TimeZone, Utc, Weekday};
 use postio_model::calendar::{
     AgendaCursor, AgendaEntry, EventDetail, EventStatus, Frequency, Participation, Repeat,
