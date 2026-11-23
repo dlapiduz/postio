@@ -76,7 +76,7 @@ throwaway code is not merged.
   - **Go** when every good fixture is `Good`, every tampered one is `Bad`, and the extracted bytes are identical to the wire bytes (CRLF-normalised).
   - Record which parser is chosen and why in plan R3.
   - Check that `pgp`'s resolved graph has no `-sys` crate (`cargo tree -e normal`).
-- [ ] T006 **S2, S/MIME path validation (gates Phase 8).**
+- [x] T006 **S2, S/MIME path validation (gates Phase 8).**
   - In a scratch crate, build test chains with `rcgen`: good, expired, wrong EKU, unknown anchor, address mismatch.
   - Verify a CMS SignedData over a test message with `cms` 0.2 and `x509-cert`.
   - Validate the path with `rustls-webpki`, requiring `id-kp-emailProtection`.

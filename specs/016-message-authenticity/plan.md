@@ -235,6 +235,25 @@ reads as a pass. No `dns` value joins `egress_log.subsystem`.
 - **Rejected**: `openssl` (C).
 - Revocation is never fetched (D8).
 
+**S2 verdict (2026-11-22): go.** Test chains were made with the `openssl`
+CLI (root, intermediate, five leaves) because `rcgen` pulls `ring`. A
+scratch crate verified `openssl cms -sign` output with `cms` 0.2.3 and
+`x509-cert` 0.2.5: the content digest against the signed `messageDigest`
+attribute, then the RSA signature over the DER `SET OF` signed attributes
+with the RustCrypto `rsa` crate. `rustls-webpki` 0.103 with default
+features off validated the path, given a RustCrypto-backed
+`SignatureVerificationAlgorithm`. All six outcomes were right: good,
+expired, wrong EKU, unknown anchor, address mismatch, and tampered content.
+No `ring`, `aws-lc` or `-sys` crate is in the graph. Two findings:
+
+- webpki checks the EKU at every level, and a CA certificate with no EKU
+  extension fails `KeyUsage::required`. The path takes
+  `required_if_present(id-kp-emailProtection)`, and Postio checks that the
+  leaf itself carries `emailProtection`;
+- webpki ships no crypto without `ring` or `aws-lc-rs`, so Postio supplies
+  the algorithms (RSA PKCS#1 and PSS with SHA-256/384/512, ECDSA P-256 and
+  P-384) from RustCrypto, one small impl each.
+
 ### R7. Keys
 
 - **Autocrypt** (Level 1): parse the `Autocrypt:` header (`addr`,
