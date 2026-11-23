@@ -150,6 +150,7 @@ postio-host    = { path = "crates/postio-host" }
 postio-widgets = { path = "crates/postio-widgets" }
 postio-classify = { path = "crates/postio-classify" }
 postio-calendar = { path = "crates/postio-calendar" }
+postio-signature = { path = "crates/postio-signature" }
 postio-ai      = { path = "crates/postio-ai" }
 postio-vault   = { path = "crates/postio-vault" }
 postio-storyboard = { path = "crates/postio-storyboard" }

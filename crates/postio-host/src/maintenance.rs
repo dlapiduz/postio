@@ -19,6 +19,12 @@ pub fn spawn_idle_passes(wiring: &Wiring) {
         wiring.events.subscribe("attachment-indexer"),
         &wiring.runtime,
     );
+    postio_session::signature::spawn_signature_checker(
+        wiring.database.clone(),
+        wiring.blobs.clone(),
+        wiring.events.subscribe("signature-checker"),
+        &wiring.runtime,
+    );
     repair_the_header_blocks(wiring);
     catch_up_the_header_index(wiring);
     build_contacts(wiring);

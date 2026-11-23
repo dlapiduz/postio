@@ -27,6 +27,7 @@ pub mod reachability;
 pub mod reading;
 pub mod refresh;
 pub mod search;
+pub mod signature;
 pub mod signin;
 pub mod start_over;
 pub mod thread_compose;

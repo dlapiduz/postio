@@ -5896,6 +5896,7 @@ dependencies = [
  "postio-model",
  "postio-runtime",
  "postio-search",
+ "postio-signature",
  "postio-smtp",
  "postio-storage",
  "postio-sync",

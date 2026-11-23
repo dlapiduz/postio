@@ -257,6 +257,22 @@ impl<'a> KeyRepository<'a> {
         .await
     }
 
+    pub async fn signed_messages_from(&self, address: &EmailAddress) -> Result<Vec<MessageId>> {
+        sql::all(
+            self.connection,
+            "SELECT v.message_id
+               FROM addresses a
+               JOIN recipients r ON r.address_id = a.id AND r.kind = 'from'
+               JOIN signature_verdicts v ON v.message_id = r.message_id
+              WHERE a.address_normalized = ?1
+              ORDER BY v.message_id
+              LIMIT 500",
+            bind![address.normalized()],
+            |row| Ok(MessageId::new(row.int(0)?)),
+        )
+        .await
+    }
+
     pub async fn put_verdict(&self, message: MessageId, row: &VerdictRow) -> Result<()> {
         sql::execute(
             self.connection,
