@@ -210,7 +210,6 @@ impl ComposerHost for DialogHost {
             } else {
                 self.dialog.present(Some(&window));
             }
-            // Otherwise the controller hears of it only at the next key (#2218).
             window.sync_surfaces();
         }
         crate::a11y::teach_shortcuts(&self.surface);

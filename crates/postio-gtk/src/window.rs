@@ -1332,7 +1332,6 @@ impl FocusWindow {
                     window.follow_toast();
                 }
             ));
-            // Otherwise the controller hears of it only at the next key (#2218).
             sheet.dialog().connect_closed(glib::clone!(
                 #[weak(rename_to = window)]
                 self,

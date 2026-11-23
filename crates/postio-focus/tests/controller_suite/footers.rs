@@ -175,7 +175,6 @@ fn settings_draws_no_footer() {
     let row = landed(&mut focus, &rows);
     let effects = focus.handle_on(Input::SurfaceOpened(SurfaceKind::Settings), &rows);
     assert_eq!(footer(&effects), Some(FooterView::default()), "no footer");
-    // A sync landing behind it does not put the list's footer back up.
     let effects = focus.landed(&rows, false);
     assert!(
         footer(&effects).is_none_or(|footer| footer.title.is_empty()),

@@ -12,7 +12,7 @@ postio-core 772
 postio-demo 57
 postio-extract 100
 postio-ffi 2477
-postio-focus 704
+postio-focus 702
 postio-gmail 43
 postio-gtk 1559
 postio-host 578

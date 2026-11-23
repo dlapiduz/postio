@@ -183,8 +183,6 @@ pub fn digest_footer(rule: &str, count: usize, keymap: &Keymap) -> FooterView {
     }
 }
 
-/// `verbs` is [`crate::focus_dialog::send_verbs`]'s answer, each drawn in
-/// the action row's words.
 pub fn outgoing(subject: &str, verbs: &[CommandId], keymap: &Keymap) -> FooterView {
     let keys = crate::focus_dialog::SEND_TOOLBAR
         .iter()

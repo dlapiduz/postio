@@ -1132,8 +1132,6 @@ fn native_of(widget: &gtk::Widget, window: &postio_gtk::window::FocusWindow) -> 
         .unwrap_or_else(|| window.clone().upcast())
 }
 
-/// The spring libadwaita opens a dialog on overshoots and settles exactly at
-/// size; half a pixel took its tail for rest (#2216).
 const DRAWN_AT_SIZE: f32 = 0.01;
 
 /// Waits for `widget` to stop moving on `native`: libadwaita opens a dialog by scaling it from 0.8

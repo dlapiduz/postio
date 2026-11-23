@@ -13,7 +13,6 @@ fn drawn(window: &postio_gtk::window::FocusWindow) -> Vec<(String, Vec<String>)>
                 .and_then(|title| title.downcast_ref::<gtk::Label>().map(|l| l.text()))
                 .map(|text| text.to_string())
                 .unwrap_or_default();
-            // The pairs are the second child: a keycap, then its words.
             let mut labels = Vec::new();
             let mut pair = footer
                 .first_child()

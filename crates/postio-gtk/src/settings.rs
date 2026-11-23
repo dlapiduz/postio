@@ -496,7 +496,6 @@ impl crate::window::FocusWindow {
             let keymap = self.keymap();
             let (_, problems) = crate::keys::resolver(&keymap);
             settings.set_keymap(&keymap, &problems);
-            // Otherwise the controller hears of it only at the next key (#2218).
             settings.dialog().connect_closed({
                 let window = self.downgrade();
                 move |_| {

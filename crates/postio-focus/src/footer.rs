@@ -1,6 +1,3 @@
-//! Whose footer is up: the surface that has the keyboard (#2218). Decided
-//! once at the end of every input, over whatever footer the list said.
-
 use postio_ui::scope::FooterView;
 
 use crate::cursor::Rows;
