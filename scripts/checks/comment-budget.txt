@@ -9,6 +9,7 @@ postio-client 121
 postio-config 338
 postio-contact-sync 41
 postio-core 772
+postio-dav 11
 postio-demo 57
 postio-extract 100
 postio-ffi 2477

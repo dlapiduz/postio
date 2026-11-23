@@ -4974,6 +4974,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "postio-dav"
+version = "0.6.2"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "postio-workspace-hack",
+ "thiserror",
+]
+
+[[package]]
 name = "postio-demo"
 version = "0.6.2"
 dependencies = [
