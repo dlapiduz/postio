@@ -370,3 +370,68 @@ async fn every_connection_is_a_caldav_row_in_the_egress_log() {
             .any(|row| row.outcome == EgressOutcome::Connected)
     );
 }
+
+#[tokio::test]
+async fn an_event_made_here_is_created_there_and_one_deleted_here_goes_there() {
+    let world = world().await;
+    sync(&world).await;
+    let work = calendar(&world, "work").await;
+    let ics = event("new@example.com", "Planning", "", now() + Duration::days(3));
+    {
+        let connection = world.database.connect().await.expect("checkout");
+        let made = postio_sync::calendar::store_object_on(
+            &connection,
+            postio_sync::calendar::NewObject {
+                calendar: work,
+                ics: &ics,
+                href: None,
+                etag: None,
+                my_partstat: None,
+                source_message: None,
+            },
+            &Utc,
+            now(),
+        )
+        .await
+        .expect("stored");
+        let calendars = CalendarRepository::new(&connection);
+        calendars
+            .record_change(Some(made), work, ChangeKind::Create, None, None, now())
+            .await
+            .expect("recorded");
+        let near = calendars
+            .held_at(work, "near.ics")
+            .await
+            .expect("read")
+            .expect("held");
+        calendars
+            .record_change(
+                Some(near.id),
+                work,
+                ChangeKind::Delete,
+                Some((&near.object, near.etag.as_deref())),
+                near.href.as_deref(),
+                now(),
+            )
+            .await
+            .expect("recorded");
+        calendars.delete_event(near.id).await.expect("deleted here");
+    }
+
+    let synced = sync(&world).await;
+
+    assert_eq!(synced.sent, 2);
+    let (_, there) = world
+        .fake
+        .object("work", "new@example.com.ics")
+        .expect("created on the server");
+    assert_eq!(title(&there).0, "Planning");
+    let here = held(&world, "new@example.com.ics")
+        .await
+        .expect("knows its href");
+    assert!(here.etag.is_some());
+    assert!(
+        world.fake.object("work", "near.ics").is_none(),
+        "gone there too"
+    );
+}
