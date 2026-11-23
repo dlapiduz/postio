@@ -22,6 +22,7 @@ pub enum Part {
     CaptureCancel,
     ThreadChip,
     ForwardCard,
+    CalendarRow,
 }
 
 #[derive(Debug, Default)]
@@ -32,4 +33,5 @@ pub struct Surfaces {
     pub rules: Option<crate::rules::Rules>,
     pub rule: Option<crate::rule_dialog::Form>,
     pub capture: Option<crate::capture::Sheet>,
+    pub calendar: Option<Box<postio_focus::CalendarView>>,
 }

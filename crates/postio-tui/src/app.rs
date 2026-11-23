@@ -9,6 +9,7 @@ use postio_ui::keymap::{KeyContext, Outcome};
 use postio_ui::list::ListWindow;
 
 mod bar;
+mod calendar;
 mod capture;
 mod compose;
 mod confirm;
@@ -469,6 +470,7 @@ pub enum Focus {
     Rules,
     RuleDialog,
     Capture,
+    Calendar,
 }
 
 impl std::fmt::Debug for App {
@@ -1552,6 +1554,7 @@ impl App {
             Focus::Rules => KeyContext::Filtered,
             Focus::RuleDialog => KeyContext::Picker,
             Focus::Capture => KeyContext::Capture,
+            Focus::Calendar => KeyContext::Calendar,
         }
     }
 
@@ -2048,6 +2051,11 @@ impl App {
                     self.first_run = Some(crate::first_run::FirstRun::repair(account));
                     self.focus = Focus::FirstRun;
                 }
+            }
+            "go_to_calendar" => {
+                return self.tell(postio_focus::Input::Command(
+                    postio_core::CommandId::GoToCalendar,
+                ));
             }
             "go_to_filtered" => {
                 return self.tell(postio_focus::Input::Command(
@@ -2604,6 +2612,7 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
         Input::Key(key) if app.focus == Focus::Palette => app.palette_key(&key),
         Input::Key(key) if app.focus == Focus::Filtered => app.filtered_key(&key),
         Input::Key(key) if app.focus == Focus::Digest => app.digest_key(&key),
+        Input::Key(key) if app.focus == Focus::Calendar => app.calendar_key(&key),
         Input::Key(key) if app.focus == Focus::Rules => app.rules_key(&key),
         Input::Key(key) if app.focus == Focus::RuleDialog => app.rule_key(&key),
         Input::Key(key) if app.focus == Focus::Capture => app.capture_key(&key),
