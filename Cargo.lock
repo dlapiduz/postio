@@ -3055,7 +3055,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5992425f089d8eb98b68d71f8264b1177ac188a8ad7dddd6485dbd58b00f8fc2"
 dependencies = [
  "base64-codec",
- "io-http",
+ "io-http 0.8.0",
  "log",
  "serde",
  "serde_json",
@@ -3074,6 +3074,20 @@ dependencies = [
  "httparse",
  "log",
  "pimalaya-stream",
+ "secrecy",
+ "thiserror",
+ "url",
+]
+
+[[package]]
+name = "io-http"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "80214cd8fd62f9ce721483416c1f4cf1b924c2a11f6fd9151f0d3dfa627856ed"
+dependencies = [
+ "base64-codec",
+ "httparse",
+ "log",
  "secrecy",
  "thiserror",
  "url",
@@ -3101,7 +3115,7 @@ version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0590fe7ab8e2bac4b3bcb219dc4f9a300505ad1bbf544163b9a05c36a2f6be8d"
 dependencies = [
- "io-http",
+ "io-http 0.8.0",
  "log",
  "secrecy",
  "serde",
@@ -3130,7 +3144,7 @@ checksum = "1a1e90de37723f2e56f2e91aaf42e6bf5c6980ae018de265eb6ad4fb4d88af41"
 dependencies = [
  "base64-codec",
  "getrandom 0.4.3",
- "io-http",
+ "io-http 0.8.0",
  "log",
  "secrecy",
  "serde",
@@ -3148,7 +3162,7 @@ checksum = "8cf9ed427711221b6a9235184408ac552811dfd0a473470c1415d273233acb6c"
 dependencies = [
  "anyhow",
  "domain",
- "io-http",
+ "io-http 0.8.0",
  "ipconfig",
  "log",
  "pimalaya-stream",
@@ -3210,6 +3224,22 @@ dependencies = [
  "bitflags",
  "cfg-if",
  "libc",
+]
+
+[[package]]
+name = "io-webdav"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4cf4e05eb97fb5c974f872beb03117c43a0dfc4519b4dc87f27ee86fa28ee876"
+dependencies = [
+ "anyhow",
+ "io-http 0.9.0",
+ "log",
+ "memchr",
+ "pimalaya-stream",
+ "serde",
+ "thiserror",
+ "url",
 ]
 
 [[package]]
@@ -4800,7 +4830,7 @@ dependencies = [
  "base64 0.23.1",
  "chrono",
  "domain",
- "io-http",
+ "io-http 0.8.0",
  "io-imap",
  "io-maildir",
  "io-oauth",
@@ -4833,7 +4863,7 @@ name = "postio-ai"
 version = "0.6.2"
 dependencies = [
  "chrono",
- "io-http",
+ "io-http 0.8.0",
  "postio-classify",
  "postio-config",
  "postio-model",
@@ -4979,8 +5009,12 @@ version = "0.6.2"
 dependencies = [
  "async-trait",
  "chrono",
+ "io-http 0.9.0",
+ "io-webdav",
  "postio-workspace-hack",
  "thiserror",
+ "tokio",
+ "url",
 ]
 
 [[package]]
@@ -5279,7 +5313,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "futures-util",
- "io-http",
+ "io-http 0.8.0",
  "mimalloc",
  "pimalaya-stream",
  "postio-account",
@@ -5602,7 +5636,7 @@ dependencies = [
  "idna",
  "inout 0.1.4",
  "inout 0.2.6",
- "io-http",
+ "io-http 0.8.0",
  "itertools 0.14.0",
  "libc",
  "linux-raw-sys 0.12.1",

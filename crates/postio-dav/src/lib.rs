@@ -2,6 +2,7 @@
 //! No library type crosses this crate's edge, and no store or toolkit comes in.
 
 mod fake;
+mod webdav;
 
 use std::fmt;
 
@@ -9,6 +10,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
 pub use fake::{FakeCalendars, Fault};
+pub use webdav::{Connection, Report, WebdavBackend};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DavCalendar {
@@ -63,7 +65,6 @@ impl DavError {
 
 pub type DavResult<T> = Result<T, DavError>;
 
-/// At most this many objects are fetched in one request.
 pub const FETCH_BATCH: usize = 100;
 
 /// `put` with `etag: None` creates and fails with [`DavError::Changed`] if the object exists; with

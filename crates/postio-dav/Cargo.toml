@@ -11,8 +11,16 @@ repository.workspace = true
 [dependencies]
 async-trait = { workspace = true }
 chrono = { workspace = true, features = ["std"] }
+# Pinned exactly: new, and behind this crate's trait (plan R3, spike S2).
+io-http = { version = "0.9", default-features = false }
+io-webdav = { version = "=0.13.0", default-features = false, features = ["std", "rustls-ring"] }
 thiserror = { workspace = true }
+tokio = { workspace = true, features = ["rt"] }
+url = { workspace = true }
 postio-workspace-hack.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }
 
 [lints]
 workspace = true

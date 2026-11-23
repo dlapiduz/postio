@@ -68,7 +68,7 @@ impl FakeCalendars {
             .insert(
                 href.to_owned(),
                 Held {
-                    etag: format!("\"v{version}\""),
+                    etag: format!("v{version}"),
                     ics: ics.to_vec(),
                     start,
                     version,
@@ -227,7 +227,7 @@ impl CalendarBackend for FakeCalendars {
         let start = held.and_then(|held| held.start);
         state.version += 1;
         let version = state.version;
-        let etag = format!("\"v{version}\"");
+        let etag = format!("v{version}");
         state
             .objects
             .entry(calendar.to_owned())
@@ -345,17 +345,14 @@ mod tests {
             Err(DavError::Changed)
         );
         assert_eq!(
-            block(fake.put("work", "c.ics", b"C", Some("\"x\""))),
+            block(fake.put("work", "c.ics", b"C", Some("x"))),
             Err(DavError::Changed)
         );
         assert_eq!(
             block(fake.put("holidays", "h.ics", b"H", None)),
             Err(DavError::Forbidden)
         );
-        assert_eq!(
-            block(fake.delete("work", "gone.ics", Some("\"x\""))),
-            Ok(())
-        );
+        assert_eq!(block(fake.delete("work", "gone.ics", Some("x"))), Ok(()));
     }
 
     #[test]
