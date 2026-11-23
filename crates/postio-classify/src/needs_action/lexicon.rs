@@ -106,7 +106,7 @@ pub(super) const NOT_NAMES: &[&str] = &[
     "please",
 ];
 
-pub(super) const REQUEST_OPENINGS: &[&str] = &["can you", "could you", "would you"];
+pub(super) const REQUEST_OPENINGS: &[&str] = &["can you", "could you", "would you", "if you could"];
 
 pub(super) const ASKS: &[&str] = &["let me know", "need you to"];
 
@@ -273,6 +273,55 @@ pub(super) const BOILERPLATE: &[&str] = &[
     "don't reply",
     "do not reply",
 ];
+
+/// A disclaimer, a notice or a footer: the message's own words end here, and nothing after is an
+/// ask of the reader (T226).
+pub(super) const FOOTERS: &[&str] = &[
+    "confidentiality notice",
+    "disclaimer:",
+    "intended recipient",
+    "intended only for",
+    "intended solely for",
+    "this email and any attachments",
+    "this message and any attachments",
+    "this communication is privileged",
+    "privileged and confidential",
+    "this email is confidential",
+    "this message is confidential",
+    "you are receiving this",
+    "you're receiving this",
+    "you received this email because",
+    "you received this message because",
+    "to unsubscribe",
+];
+
+/// "If you ..." that is still a request: everything else after "if you" is an instruction for
+/// should the reader want something (T226).
+pub(super) const CONDITIONAL_REQUESTS: &[&str] = &[
+    "if you could",
+    "if you can",
+    "if you would be",
+    "if you would send",
+    "if you get a chance",
+    "if you have a chance",
+    "if you have a minute",
+    "if you have time",
+    "if you don't mind",
+    "if you do not mind",
+];
+
+/// A clause that sends the reader somewhere to look, rather than asking them anything (T226).
+pub(super) const POINTER_PHRASES: &[&str] = &[
+    "click here",
+    "log in to your",
+    "log into your",
+    "sign in to your",
+    "online banking",
+];
+
+pub(super) const POINTER_VERBS: &[&str] = &["visit", "view", "review", "see"];
+
+pub(super) const POINTER_PLACES: &[&str] = &["portal", "website", "site"];
 
 /// An ask put to an assistant is never the reader's.
 pub(super) const ASSISTANT: &[&str] = &[

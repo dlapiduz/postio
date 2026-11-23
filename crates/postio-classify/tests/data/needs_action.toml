@@ -55,7 +55,13 @@
 #
 # Cases: question, todo, statement, boilerplate, pleasantry, rhetorical,
 # quoted, signature, list, copied, automated, instruction, other-addressee,
-# mixed.
+# mixed, footer, conditional, pointer (T226).
+#
+#  8. None: anything after a disclaimer, confidentiality notice or "you are
+#     receiving this" footer; a conditional instruction ("If you would
+#     like...", "If you set up..."), though "If you could..." is a request;
+#     a pointer to a statement, portal or page ("Please view your
+#     statement", "Please visit the ... page").
 
 sent = "2026-09-26"
 
@@ -2899,3 +2905,267 @@ Tove
 '''
 label = "question"
 quote = "One question: is slide 9 meant to show last year's numbers?"
+
+# T226: a disclaimer, a footer or a notice ends the message's own words;
+# whatever follows is the sender's template, not an ask of the reader.
+
+[[message]]
+id = "f-confidentiality-notice"
+case = "footer"
+addressing = "direct"
+text = '''
+Hi Ada,
+
+The signed lease is in the shared folder.
+
+Regards,
+Ines
+
+CONFIDENTIALITY NOTICE: This email and any attachments are confidential. If you are not the intended recipient, please notify the sender immediately and delete this message.
+'''
+label = "none"
+
+[[message]]
+id = "f-intended-recipient"
+case = "footer"
+addressing = "direct"
+text = '''
+Ada,
+
+Your appointment is confirmed for Tuesday at 10.
+
+Mira Okafor
+Harbor Clinic
+
+If you are not the intended recipient of this message, please contact us and destroy all copies.
+'''
+label = "none"
+
+[[message]]
+id = "f-disclaimer-then-ask"
+case = "footer"
+addressing = "direct"
+text = '''
+Hi Ada,
+
+Could you send me the floor plan before Thursday's walkthrough?
+
+Thanks,
+Rafael
+
+Disclaimer: This message may contain privileged information. Please do not forward it without permission. Can you confirm you are authorised to receive it?
+'''
+label = "question"
+quote = "Could you send me the floor plan before Thursday's walkthrough?"
+
+[[message]]
+id = "f-privileged-communication"
+case = "footer"
+addressing = "direct"
+text = '''
+Ada,
+
+Thanks for the draft. I have no changes.
+
+Dana Whitfield
+Whitfield & Moss LLP
+
+This communication is privileged and confidential. Please notify us by return email if you received it by mistake, and delete it.
+'''
+label = "none"
+
+[[message]]
+id = "f-you-are-receiving"
+case = "footer"
+addressing = "direct"
+text = '''
+Hi Ada,
+
+The workshop runs from nine to noon in room 4.
+
+Sol
+
+You are receiving this message because you registered for the workshop. Please update your preferences at any time.
+'''
+label = "none"
+
+[[message]]
+id = "f-environment-and-notice"
+case = "footer"
+addressing = "direct"
+text = '''
+Ada,
+
+The invoice was paid this morning.
+
+Leon
+
+The information in this email is intended only for the person to whom it is addressed. Please return it to the sender if you received it by mistake.
+'''
+label = "none"
+
+# T226: a conditional instruction tells the reader what to do should they
+# want something; it asks nothing of them. A polite request that starts
+# with "if you could" is still a request.
+
+[[message]]
+id = "c-if-you-set-up"
+case = "conditional"
+addressing = "direct"
+text = '''
+Hi Ada,
+
+Your new account is ready. If you set up two-step sign-in, please keep your recovery codes somewhere safe.
+
+The Front Desk team
+'''
+label = "none"
+
+[[message]]
+id = "c-if-you-would-like"
+case = "conditional"
+addressing = "direct"
+text = '''
+Ada,
+
+The minutes from Monday are in the folder. If you would like a printed copy, please ask at reception.
+
+Nadia
+'''
+label = "none"
+
+[[message]]
+id = "c-if-youd-prefer"
+case = "conditional"
+addressing = "direct"
+text = '''
+Hi Ada,
+
+We moved your session to room 12. If you'd prefer the afternoon slot, reply to this email and we will swap it.
+
+Jonas
+'''
+label = "none"
+
+[[message]]
+id = "c-if-you-want-to"
+case = "conditional"
+addressing = "direct"
+text = '''
+Ada,
+
+The garden plots open on Saturday. If you want to join the waiting list, please fill in the form at the library.
+
+Pia
+'''
+label = "none"
+
+[[message]]
+id = "c-if-you-have-not"
+case = "conditional"
+addressing = "direct"
+text = '''
+Hi Ada,
+
+Membership renewals are due next month. If you have already renewed, please ignore this note; otherwise, please renew online.
+
+Club secretary
+'''
+label = "none"
+
+[[message]]
+id = "c-if-you-could-is-an-ask"
+case = "conditional"
+addressing = "direct"
+text = '''
+Hi Ada,
+
+If you could send me the signed form by Friday, that would be a great help.
+
+Thanks,
+Omar
+'''
+label = "todo"
+quote = "If you could send me the signed form by Friday, that would be a great help."
+due = "2026-10-02"
+
+# T226: a pointer to a statement, a portal or a page is the sender's
+# routine; reading a statement is not an ask the reader has to answer.
+
+[[message]]
+id = "p-view-your-statement"
+case = "pointer"
+addressing = "direct"
+text = '''
+Dear Ada,
+
+Your September statement is ready. Please view your statement in online banking.
+
+Northgate Savings
+'''
+label = "none"
+
+[[message]]
+id = "p-visit-the-page"
+case = "pointer"
+addressing = "direct"
+text = '''
+Hi Ada,
+
+Your order has been dispatched. Please visit the order status page for tracking details.
+
+The Larkspur team
+'''
+label = "none"
+
+[[message]]
+id = "p-log-in-to-your-account"
+case = "pointer"
+addressing = "direct"
+text = '''
+Dear Ada,
+
+A new document is available. Please log in to your account to read it.
+
+Harbor Clinic
+'''
+label = "none"
+
+[[message]]
+id = "p-click-here"
+case = "pointer"
+addressing = "direct"
+text = '''
+Hi Ada,
+
+Your September bill is now available. Click here to view your bill.
+
+Riverside Water
+'''
+label = "none"
+
+[[message]]
+id = "p-visit-our-portal"
+case = "pointer"
+addressing = "direct"
+text = '''
+Ada,
+
+Your results from Tuesday are in. Please visit our patient portal to see them.
+
+Harbor Clinic
+'''
+label = "none"
+
+[[message]]
+id = "p-review-your-statement"
+case = "pointer"
+addressing = "direct"
+text = '''
+Dear Ada,
+
+Your annual pension statement has been published. Please review your statement on the members' site.
+
+Fernhill Pensions
+'''
+label = "none"

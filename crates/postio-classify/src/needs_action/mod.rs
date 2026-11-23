@@ -150,11 +150,21 @@ fn find<Tz: TimeZone>(own: &str, reader: &Reader, sent: &DateTime<Tz>) -> Option
         .map_or(Addressee::Reader, |first| salutation(&first.text, reader));
     let mut questions = Vec::new();
     let mut todos = Vec::new();
+    let mut conditional = false;
     for clause in &clauses {
         let text = straightened(&clause.text);
         let lower = text.to_lowercase();
         let body = without_openers(&text, reader);
-        if excluded(&lower, &body)
+        if lexicon::FOOTERS.iter().any(|marker| lower.contains(marker)) {
+            break;
+        }
+        // "...; otherwise, please renew" goes with the condition before it.
+        let follows_a_condition = conditional && starts_with_words(lower.trim_start(), "otherwise");
+        conditional = conditional_instruction(&body);
+        if follows_a_condition
+            || conditional
+            || pointer(&lower)
+            || excluded(&lower, &body)
             || addressee(clause, &text, reader, salutation) == Addressee::SomeoneElse
         {
             continue;
@@ -221,6 +231,29 @@ fn excluded(lower: &str, body: &str) -> bool {
         || lexicon::ASSISTANT
             .iter()
             .any(|word| contains_word(lower, word))
+}
+
+/// "If you would like a copy, please ask": what to do should the reader want something, not an ask.
+fn conditional_instruction(body: &str) -> bool {
+    let body = body.replace("you'd", "you would");
+    starts_with_words(&body, "if you")
+        && !lexicon::CONDITIONAL_REQUESTS
+            .iter()
+            .any(|request| starts_with_words(&body, request))
+}
+
+/// "Please view your statement online": where to look, not an ask to answer.
+fn pointer(lower: &str) -> bool {
+    lexicon::POINTER_PHRASES
+        .iter()
+        .any(|phrase| lower.contains(phrase))
+        || (lexicon::POINTER_VERBS
+            .iter()
+            .any(|verb| contains_word(lower, verb))
+            && lexicon::POINTER_PLACES
+                .iter()
+                .any(|place| contains_word(lower, place)))
+        || (contains_word(lower, "visit") && contains_word(lower, "page"))
 }
 
 fn small_talk(lower: &str, body: &str) -> bool {

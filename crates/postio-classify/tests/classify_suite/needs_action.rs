@@ -80,6 +80,9 @@ fn the_dataset_is_big_enough_and_covers_every_case_it_promises() {
         "copied",
         "automated",
         "instruction",
+        "footer",
+        "conditional",
+        "pointer",
     ] {
         assert!(
             cases.get(case).copied().unwrap_or(0) >= 5,
@@ -529,4 +532,31 @@ fn the_built_in_detector_is_right_nine_times_in_ten() {
         score.predicted,
         score.precision()
     );
+}
+
+/// T226: a footer, a conditional instruction and a pointer to a portal are the sender's template.
+/// The gate overall is nine in ten; on these it is none wrong, since each is a whole kind of mail
+/// that would otherwise be marked every time.
+#[test]
+fn the_sender_s_template_is_never_marked() {
+    let score = measure();
+    for case in ["footer", "conditional", "pointer"] {
+        let tally = &score.by_case[case];
+        let wrong: Vec<&String> = score
+            .errors
+            .iter()
+            .filter(|error| error.contains(&format!("[{case}]")))
+            .collect();
+        assert!(
+            tally.made == tally.right && wrong.is_empty(),
+            "`{case}`: {} of {} markers wrong\n{}",
+            tally.made - tally.right,
+            tally.made,
+            wrong
+                .iter()
+                .map(|e| e.as_str())
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
 }
