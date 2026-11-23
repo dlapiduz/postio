@@ -30,7 +30,7 @@ postio-storyboard 97
 postio-sync 994
 postio-test-support 106
 postio-transport 69
-postio-tui 498
+postio-tui 496
 postio-ui 1667
 postio-vault 16
 postio-vcard 12
