@@ -266,6 +266,47 @@ impl CalendarRepository<'_> {
         .await
     }
 
+    pub async fn answered(&self, uid: &str) -> Result<Option<(CalendarId, String, Vec<u8>)>> {
+        sql::first(
+            self.connection,
+            "SELECT calendar_id, my_partstat, object FROM events
+              WHERE uid = ?1 AND my_partstat IS NOT NULL ORDER BY id LIMIT 1",
+            [uid],
+            |row| Ok((CalendarId::new(row.col(0)?), row.col(1)?, row.col(2)?)),
+        )
+        .await
+    }
+
+    pub async fn cancel(&self, uid: &str) -> Result<u64> {
+        sql::execute(
+            self.connection,
+            "UPDATE events SET status = 'cancelled' WHERE uid = ?1 AND my_partstat IS NOT NULL",
+            [uid],
+        )
+        .await
+    }
+
+    pub async fn default_for(&self, account: AccountId) -> Result<Option<CalendarId>> {
+        sql::first(
+            self.connection,
+            "SELECT id FROM calendars WHERE account_id = ?1 AND writable = 1 AND shown = 1
+              ORDER BY id LIMIT 1",
+            [account.get()],
+            |row| Ok(CalendarId::new(row.col(0)?)),
+        )
+        .await
+    }
+
+    /// Only one the answer made: a synced copy is the server's to keep.
+    pub async fn remove_answered(&self, message: MessageId) -> Result<u64> {
+        sql::execute(
+            self.connection,
+            "DELETE FROM events WHERE source_message_id = ?1 AND href IS NULL",
+            [message.get()],
+        )
+        .await
+    }
+
     pub async fn recurring(&self) -> Result<Vec<(EventId, Vec<u8>)>> {
         sql::all_unbounded(
             self.connection,

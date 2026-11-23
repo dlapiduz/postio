@@ -2370,7 +2370,7 @@ impl Transport for Local {
     }
 }
 
-pub mod calendar;
+pub use postio_session::calendar;
 pub mod compose;
 pub mod contacts;
 pub mod export;
@@ -2384,6 +2384,8 @@ pub mod settings;
 pub mod startup;
 pub mod threads;
 
+#[cfg(test)]
+mod calendar_tests;
 #[cfg(test)]
 mod model_tests;
 #[cfg(test)]

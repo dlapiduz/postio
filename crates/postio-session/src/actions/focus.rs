@@ -170,9 +170,12 @@ impl Actions {
                 InviteAnswer::Declined => "You declined that invitation already",
             }));
         }
-        let invitation = invitation_of(&blobs, &row).await.ok_or_else(|| {
-            CommandError::rejected("Postio does not have that invitation's calendar yet")
-        })?;
+        let (invitation, object) = invitation_of(&blobs, &row)
+            .await
+            .filter(|(invitation, _)| invitation.method == Method::Request)
+            .ok_or_else(|| {
+                CommandError::rejected("Postio does not have that invitation's calendar yet")
+            })?;
         let account = AccountRepository::new(&connection)
             .get(row.account_id)
             .await
@@ -238,6 +241,7 @@ impl Actions {
             .await
             .map_err(store_failure)?;
         transaction.commit().await.map_err(store_failure)?;
+        self.put_answered(&account, row.id, &object, answer).await;
 
         Ok(Applied {
             contacts_changed: None,
@@ -280,7 +284,61 @@ impl Actions {
             .answer(invitation, None, None)
             .await
             .map_err(store_failure)?;
+        postio_storage::repository::CalendarRepository::new(connection)
+            .remove_answered(invitation)
+            .await
+            .map_err(store_failure)?;
         Ok(vec![invitation])
+    }
+
+    async fn put_answered(
+        &self,
+        account: &Account,
+        message: MessageId,
+        object: &[u8],
+        answer: Answer,
+    ) {
+        let partstat = match answer {
+            Answer::Accept => "ACCEPTED",
+            Answer::Decline => "DECLINED",
+        };
+        let placed = async {
+            let connection = self.database.connect().await?;
+            let calendars = postio_storage::repository::CalendarRepository::new(&connection);
+            let calendar = match calendars.default_for(account.id).await? {
+                Some(calendar) => calendar,
+                None => calendars.local().await?.id,
+            };
+            Ok::<_, postio_storage::Error>(calendar)
+        }
+        .await;
+        let Ok(calendar) = placed else {
+            tracing::warn!(
+                message = message.get(),
+                "no calendar for an answered invitation"
+            );
+            return;
+        };
+        let stored = crate::calendar::store_object(
+            &self.database,
+            crate::calendar::NewObject {
+                calendar,
+                ics: object,
+                href: None,
+                etag: None,
+                my_partstat: Some(partstat.to_owned()),
+                source_message: Some(message),
+            },
+            &chrono::Local,
+            Utc::now(),
+        )
+        .await;
+        if stored.is_err() {
+            tracing::warn!(
+                message = message.get(),
+                "an answered invitation's event was not stored"
+            );
+        }
     }
 }
 
@@ -945,7 +1003,10 @@ fn marker_kind(name: &str) -> MarkerKind {
 
 /// The invitation `row`'s calendar part carries, when the part is on this machine and is a request.
 /// Read off the async runtime's threads.
-async fn invitation_of(blobs: &postio_storage::BlobStore, row: &Message) -> Option<Invitation> {
+pub async fn invitation_of(
+    blobs: &postio_storage::BlobStore,
+    row: &Message,
+) -> Option<(Invitation, Vec<u8>)> {
     let parts: Vec<_> = row
         .attachments
         .iter()
@@ -961,7 +1022,8 @@ async fn invitation_of(blobs: &postio_storage::BlobStore, row: &Message) -> Opti
             let ics = blobs.get(part).ok()?;
             postio_calendar::parse(&ics)
                 .ok()
-                .filter(|invitation| invitation.method == Method::Request)
+                .filter(|invitation| matches!(invitation.method, Method::Request | Method::Cancel))
+                .map(|invitation| (invitation, ics))
         })
     })
     .await

@@ -387,6 +387,8 @@ mod tests {
             excerpt: None,
             answer: None,
             cancelled: false,
+            clash: None,
+            moved_from: None,
         }
     }
 
@@ -561,6 +563,8 @@ mod tests {
             excerpt: Some("Can you approve?".into()),
             answer: None,
             cancelled: false,
+            clash: None,
+            moved_from: None,
         });
         show_focus(&mut app, vec![FocusRow::conversation(ada)]);
         let drawn = screen(120, 36, &app);
@@ -650,6 +654,8 @@ mod tests {
             excerpt: Some("Can you\u{1b}[2J?".into()),
             answer: None,
             cancelled: false,
+            clash: None,
+            moved_from: None,
         });
         show_focus(&mut app, vec![FocusRow::conversation(summary)]);
         let drawn = screen(120, 36, &app);

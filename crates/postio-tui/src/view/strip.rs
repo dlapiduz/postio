@@ -288,6 +288,8 @@ mod tests {
             excerpt: Some("Can you?".into()),
             answer: None,
             cancelled: false,
+            clash: None,
+            moved_from: None,
         };
         let rows = (2..=3)
             .map(|id| {
@@ -329,6 +331,8 @@ mod tests {
                 excerpt: None,
                 answer: None,
                 cancelled: false,
+                clash: None,
+                moved_from: None,
             },
         ));
         show_scope(&mut app, FocusScope::HasAction, vec![marked_row]);

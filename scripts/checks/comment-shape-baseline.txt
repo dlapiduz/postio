@@ -351,7 +351,6 @@ crates/postio-storage/src/repository/filter_decisions.rs 1
 crates/postio-storage/src/repository/labels.rs 1
 crates/postio-storage/src/repository/mailbox_roles.rs 1
 crates/postio-storage/src/repository/mailboxes.rs 3
-crates/postio-storage/src/repository/markers.rs 1
 crates/postio-storage/src/repository/messages.rs 31
 crates/postio-storage/src/repository/mod.rs 2
 crates/postio-storage/src/repository/operations.rs 9

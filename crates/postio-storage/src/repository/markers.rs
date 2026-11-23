@@ -1,9 +1,6 @@
-//! Focus's markers: what a conversation's row calls out (an invitation, a question, a to-do), at
-//! most one per message. A page reads them in one batched statement, so drawing a row reads no
-//! body.
-//! A dismissal is for good: [`MarkerRepository::insert`] leaves an existing marker alone and
-//! [`MarkerRepository::replace`] keeps the dismissal; only [`MarkerRepository::dismiss`] with
-//! `None` (undo) lifts it.
+//! Focus's markers: what a conversation's row calls out, at most one per message, read with a
+//! page in one batched statement. A dismissal is for good: insert and replace keep it, and only
+//! `dismiss` with `None` (undo) lifts it.
 
 use chrono::{DateTime, Utc};
 use postio_model::ids::MessageId;
@@ -12,7 +9,7 @@ use postio_model::listing::{InviteAnswer, MarkerKind};
 use super::{from_millis, to_millis, unknown_enum};
 
 use crate::error::{Error, Result};
-use crate::sql::{self, RowExt as _};
+use crate::sql::{self, RowExt as _, bind};
 use crate::store::Connection;
 use turso::Row;
 
@@ -79,6 +76,16 @@ impl<'a> MarkerRepository<'a> {
         )
         .await?;
         Ok(written > 0)
+    }
+
+    pub async fn set_moved(&self, message: MessageId, from: Option<DateTime<Utc>>) -> Result<bool> {
+        let set = sql::execute(
+            self.connection,
+            "UPDATE markers SET moved_from = ?2 WHERE message_id = ?1",
+            bind![message.get(), from.map(to_millis)],
+        )
+        .await?;
+        Ok(set > 0)
     }
 
     /// For an invitation update: a later `SEQUENCE` moves or cancels the event. Whether it is newer

@@ -135,6 +135,8 @@ pub fn state(state: &str, width: u16, height: u16) -> (App, Colour) {
             excerpt: None,
             answer: None,
             cancelled: false,
+            clash: None,
+            moved_from: None,
         };
         let question = MarkerSummary {
             kind: MarkerKind::Question,
@@ -144,6 +146,8 @@ pub fn state(state: &str, width: u16, height: u16) -> (App, Colour) {
             ),
             answer: None,
             cancelled: false,
+            clash: None,
+            moved_from: None,
         };
         let mut atlas = crate::test_support::unread(crate::test_support::marked(
             crate::test_support::conversation(
@@ -416,6 +420,8 @@ pub fn state(state: &str, width: u16, height: u16) -> (App, Colour) {
                             excerpt: Some("Can you approve these by Friday?".into()),
                             answer: None,
                             cancelled: false,
+                            clash: None,
+                            moved_from: None,
                         },
                     ))
                 })
@@ -529,6 +535,8 @@ pub fn state(state: &str, width: u16, height: u16) -> (App, Colour) {
                 excerpt: Some("Please send the Atlas figures by Friday".into()),
                 answer: None,
                 cancelled: false,
+                clash: None,
+                moved_from: None,
             };
             crate::test_support::show_focus(
                 &mut app,

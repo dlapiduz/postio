@@ -509,7 +509,7 @@ fn the_person_s_own_reply_settles_a_surfaced_reminder() {
     assert_eq!(reminder_on(&world, thread), None, "it no longer stands");
 }
 
-fn sending(world: &World) {
+pub(crate) fn sending(world: &World) {
     world.rt.block_on(async {
         let connection = world.database().connect().await.expect("a connection");
         let account = postio_storage::repository::AccountRepository::new(&connection)
@@ -528,7 +528,7 @@ fn sending(world: &World) {
     });
 }
 
-fn invited(world: &World) -> MessageId {
+pub(crate) fn invited(world: &World) -> MessageId {
     let start = crate::tests::ahead();
     let request = crate::tests::invitation_mail(
         world,

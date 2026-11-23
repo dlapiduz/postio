@@ -13,15 +13,16 @@ use std::collections::HashMap;
 
 use chrono::{DateTime, Local, TimeDelta, TimeZone, Utc};
 use postio_ai::NeedsActionModel;
-use postio_calendar::{Invitation, Method};
+use postio_calendar::Invitation;
 use postio_classify::{
     BodyMessage, Facts, FiledMessage, MarkerCandidate, ModelLayer, OwnText, Rules, Senders,
 };
 use postio_config::{FocusConfig, FocusFilter};
-use postio_model::listing::MarkerKind;
+use postio_model::listing::{InviteAnswer, MarkerKind};
 use postio_model::{
     AccountId, EmailAddress, Identity, MailboxRole, Message, MessageBody, MessageId, ThreadId,
 };
+use postio_session::actions::invitation_of;
 use postio_storage::repository::{
     AccountRepository, DigestRepository, FocusClassifiedRepository, FocusStage, InviteIdentity,
     InviteState, Marker, MarkerRepository, MarkerSource, MessageRepository, ThreadRepository,
@@ -179,7 +180,7 @@ async fn landed_bodies(
 
 enum Found {
     /// An invitation's marker comes from the calendar, never from the words around it.
-    Invitation(Invitation),
+    Invitation(Invitation, Vec<u8>),
     Asks(Marker),
 }
 
@@ -232,7 +233,9 @@ async fn classify(
     }
     for &message in batch {
         match found_in(connection, blobs, message, &mut people, corrections).await {
-            Ok(Some(Found::Invitation(invitation))) => invited.push((message, invitation)),
+            Ok(Some(Found::Invitation(invitation, object))) => {
+                invited.push((message, invitation, object));
+            }
             Ok(Some(Found::Asks(marker))) => asks.push(marker),
             Ok(None) => {}
             // Recorded all the same so it is not taken again; logged by id and outcome, never
@@ -248,11 +251,12 @@ async fn classify(
         .write_gate()
         .acquire(WritePriority::Background)
         .await;
+    let invited = &invited;
     postio_storage::transaction(connection, |transaction| async move {
         let digests = DigestRepository::new(&transaction);
         // One at a time: an update read in this batch must see the marker its request was just
         // given.
-        for (message, invitation) in &invited {
+        for (message, invitation, _) in invited {
             mark_invitation(&transaction, blobs, *message, invitation, now).await?;
             // An invitation is never held; filing sees a calendar part only when the server
             // described the structure.
@@ -283,7 +287,61 @@ async fn classify(
             .record(batch, FocusStage::Body, version)
             .await
     })
-    .await
+    .await?;
+    for (message, invitation, object) in invited {
+        follow_answered(connection, *message, invitation, object, now).await;
+    }
+    Ok(())
+}
+
+/// An update or a cancellation reaches the calendar's copy of an event the person answered, so it
+/// moves or says cancelled there too. Logged by id when it cannot.
+async fn follow_answered(
+    connection: &Connection,
+    message: MessageId,
+    invitation: &Invitation,
+    object: &[u8],
+    now: DateTime<Utc>,
+) {
+    let calendars = postio_storage::repository::CalendarRepository::new(connection);
+    let Ok(Some((calendar, partstat, stored))) = calendars.answered(&invitation.uid).await else {
+        return;
+    };
+    if postio_calendar::parse(&stored)
+        .is_ok_and(|stored| !postio_calendar::supersedes(invitation, &stored))
+    {
+        return;
+    }
+    let followed = if invitation.method == postio_calendar::Method::Cancel {
+        calendars
+            .cancel(&invitation.uid)
+            .await
+            .map(|_| ())
+            .map_err(|_| ())
+    } else {
+        postio_session::calendar::store_object_on(
+            connection,
+            postio_session::calendar::NewObject {
+                calendar,
+                ics: object,
+                href: None,
+                etag: None,
+                my_partstat: Some(partstat),
+                source_message: Some(message),
+            },
+            &Local,
+            now,
+        )
+        .await
+        .map(|_| ())
+        .map_err(|_| ())
+    };
+    if followed.is_err() {
+        tracing::warn!(
+            message = message.get(),
+            "an answered event did not follow its update"
+        );
+    }
 }
 
 /// `None` when no body is here, which leaves the column NULL. Cutting parses and sanitises HTML, so
@@ -341,38 +399,12 @@ async fn found_in(
     let Some(row) = MessageRepository::new(connection).get(message).await? else {
         return Ok(None);
     };
-    if let Some(invitation) = invitation_of(blobs, &row).await {
-        return Ok(Some(Found::Invitation(invitation)));
+    if let Some((invitation, object)) = invitation_of(blobs, &row).await {
+        return Ok(Some(Found::Invitation(invitation, object)));
     }
     Ok(needs_action(connection, row, people, corrections)
         .await?
         .map(Found::Asks))
-}
-
-/// A part that does not parse, or answers nothing (a `PUBLISH`, somebody's `REPLY`), is no
-/// invitation and never an error.
-async fn invitation_of(blobs: &BlobStore, row: &Message) -> Option<Invitation> {
-    let parts: Vec<_> = row
-        .attachments
-        .iter()
-        .filter(|part| part.mime_type.eq_ignore_ascii_case("text/calendar"))
-        .filter_map(|part| part.blob_id.clone())
-        .collect();
-    if parts.is_empty() {
-        return None;
-    }
-    let blobs = blobs.clone();
-    tokio::task::spawn_blocking(move || {
-        parts.iter().find_map(|part| {
-            let ics = blobs.get(part).ok()?;
-            postio_calendar::parse(&ics)
-                .ok()
-                .filter(|invitation| matches!(invitation.method, Method::Request | Method::Cancel))
-        })
-    })
-    .await
-    .ok()
-    .flatten()
 }
 
 /// Marks every message carrying the same event (same `UID` and occurrence) with the newest word,
@@ -398,7 +430,7 @@ async fn mark_invitation(
         else {
             continue;
         };
-        if let Some(theirs) = invitation_of(blobs, &row).await
+        if let Some((theirs, _)) = invitation_of(blobs, &row).await
             && theirs.uid == invitation.uid
             && theirs.recurrence_id == invitation.recurrence_id
         {
@@ -416,6 +448,19 @@ async fn mark_invitation(
                     newest
                 }
             });
+    let mut moved_from = None;
+    for (member, _) in &event {
+        if let Some(held) = markers.get(*member).await?
+            && matches!(
+                held.answer,
+                Some(InviteAnswer::Accepted | InviteAnswer::Accepting)
+            )
+            && held.starts_at.is_some()
+            && held.starts_at != Some(newest.starts_at.instant_in(&Local))
+        {
+            moved_from = held.starts_at;
+        }
+    }
     for (member, _) in &event {
         let marker = invitation_marker(*member, newest, now, &Local);
         if markers.insert(&marker).await? {
@@ -426,6 +471,11 @@ async fn mark_invitation(
         });
         if !shows_it {
             markers.replace(&marker).await?;
+        }
+    }
+    if moved_from.is_some() {
+        for (member, _) in &event {
+            markers.set_moved(*member, moved_from).await?;
         }
     }
     Ok(())

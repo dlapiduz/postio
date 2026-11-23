@@ -119,7 +119,7 @@ the plan's research section it settles. Spike code is not merged.
 **Goal**: the Invite marker names clashes, and accepting writes the event.
 **Independent test**: US2 scenarios 1, 3, 4 and 5.
 
-- [ ] T018 [US2] Write failing cases in `crates/postio-host/tests/host_suite/calendar_invitations.rs`:
+- [x] T018 [US2] Write failing cases in `crates/postio-host/tests/host_suite/calendar_invitations.rs`:
   - a filed invitation overlapping a local occurrence gets `Clashes`;
   - `y` writes `my_partstat` and the event, and queues one REPLY, as today;
   - `mod+z` in the window sends nothing, and removes the event;

@@ -29,6 +29,7 @@ use postio_storage::repository::{
 use postio_storage::{Checkout, Store, WritePermit, WritePriority};
 
 mod focus;
+pub use focus::invitation_of;
 
 fn now() -> chrono::DateTime<Utc> {
     postio_ui::clock::now().with_timezone(&Utc)

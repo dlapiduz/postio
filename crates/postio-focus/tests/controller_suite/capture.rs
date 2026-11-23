@@ -69,6 +69,8 @@ impl Rows for List {
                     when: Some(MarkerWhen::Due(due)),
                     answer: None,
                     cancelled: false,
+                    clash: None,
+                    moved_from: None,
                 }),
                 copies: Vec::new(),
                 muted: None,

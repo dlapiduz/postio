@@ -104,6 +104,16 @@ pub async fn store_object<Z: TimeZone>(
     zone: &Z,
     now: DateTime<Utc>,
 ) -> Result<EventId, StoreError> {
+    let connection = database.connect().await.map_err(failed)?;
+    store_object_on(&connection, object, zone, now).await
+}
+
+pub async fn store_object_on<Z: TimeZone>(
+    connection: &Connection,
+    object: NewObject<'_>,
+    zone: &Z,
+    now: DateTime<Utc>,
+) -> Result<EventId, StoreError> {
     let events = postio_calendar::parse_object(object.ics).map_err(failed)?;
     let master = events
         .iter()
@@ -111,11 +121,10 @@ pub async fn store_object<Z: TimeZone>(
         .or_else(|| events.first())
         .ok_or_else(|| failed(postio_calendar::CalendarError::NoEvent))?
         .clone();
-    let connection = database.connect().await.map_err(failed)?;
-    postio_index::events::ensure(&connection)
+    postio_index::events::ensure(connection)
         .await
         .map_err(failed)?;
-    let window = expanded(&connection, now).await?;
+    let window = expanded(connection, now).await?;
     let rows = occurrences(object.ics, window.range(), zone).map_err(failed)?;
     let starts_at = rows.first().map_or(now, |row| row.start);
     let event = StoredEvent {
@@ -147,7 +156,7 @@ pub async fn store_object<Z: TimeZone>(
             .map(ToString::to_string)
             .collect(),
     };
-    let id = postio_storage::sql::in_scope(&connection, |scope| async move {
+    let id = postio_storage::sql::in_scope(connection, |scope| async move {
         let calendars = CalendarRepository::new(&scope);
         let id = calendars.put_event(&event).await?;
         calendars.set_occurrences(id, &rows).await?;

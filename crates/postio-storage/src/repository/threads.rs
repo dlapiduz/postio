@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
-use postio_model::listing::{MarkerSummary, MarkerWhen};
+use postio_model::listing::{MarkerKind, MarkerSummary, MarkerWhen};
 use postio_model::mime::preview;
 use postio_model::thread_view::before_attribution;
 use postio_model::{
@@ -22,7 +22,7 @@ use super::{from_millis, require_persisted, to_millis};
 
 use crate::error::{Error, Result};
 use crate::repository::MessageRepository;
-use crate::sql::{self, RowExt as _, bind};
+use crate::sql::{self, Bind as _, RowExt as _, bind};
 use crate::store::Connection;
 use turso::Row;
 
@@ -336,6 +336,8 @@ fn read_focus_row(row: &Row) -> Result<(AccountId, ThreadListRow)> {
         },
     ))
 }
+
+const WEEK: i64 = 7 * 24 * 60 * 60 * 1000;
 
 impl<'a> ThreadRepository<'a> {
     pub fn new(connection: &'a Connection) -> Self {
@@ -1236,8 +1238,8 @@ impl<'a> ThreadRepository<'a> {
     /// One account: two statements. The window is one statement: each inbox's folder window over
     /// `idx_messages_list`, merged by `(sort_at, id)` (total, as message ids are unique across
     /// accounts); the merge sorts at most inboxes times the page. The representative's list row
-    /// comes in the same row, leaving room for markers in the budget of three
-    /// (`contracts/engine.md`). Participants are the second.
+    /// comes in the same row (`contracts/engine.md`). Participants are the second, markers the
+    /// third, and a page with an invitation a fourth for its clashes.
     ///
     /// Several: a conversation received at two addresses is one row by the partner search of
     /// [`Self::folded_page`], and [`ThreadGroup::members`] names both copies. With one inbox the
@@ -1348,14 +1350,16 @@ impl<'a> ThreadRepository<'a> {
         arguments.extend(lone);
         let mut statement = sql::statement(self.connection, &sql).await?;
         let found = sql::mapped(&mut statement, arguments, |row| {
-            Ok((
-                row.col::<Option<i64>>(0)?,
-                row.col::<i64>(1)?,
-                read_marker_summary(row, 2)?,
-            ))
+            let mut marker = read_marker_summary(row, 2)?;
+            let uid = row.col::<Option<String>>(10)?;
+            Ok((row.col::<Option<i64>>(0)?, row.col::<i64>(1)?, {
+                marker.clash = uid;
+                marker
+            }))
         })
         .await?;
         drop(statement);
+        let found = self.clashes(found).await?;
 
         let mut by_thread: HashMap<ThreadId, MarkerSummary> = HashMap::new();
         let mut by_message: HashMap<MessageId, MarkerSummary> = HashMap::new();
@@ -1377,6 +1381,60 @@ impl<'a> ThreadRepository<'a> {
             };
         }
         Ok(())
+    }
+
+    async fn clashes(
+        &self,
+        mut found: Vec<(Option<i64>, i64, MarkerSummary)>,
+    ) -> Result<Vec<(Option<i64>, i64, MarkerSummary)>> {
+        let mut asked = Vec::new();
+        let mut arms = Vec::new();
+        let mut arguments: Vec<turso::Value> = Vec::new();
+        for (at, (_, _, marker)) in found.iter_mut().enumerate() {
+            let uid = marker.clash.take();
+            let (MarkerKind::Invite, Some(MarkerWhen::Event { starts_at, ends_at })) =
+                (marker.kind, marker.when.as_ref())
+            else {
+                continue;
+            };
+            if marker.cancelled {
+                continue;
+            }
+            let base = arguments.len();
+            arguments.extend([
+                to_millis(*starts_at).bind(),
+                to_millis(*ends_at).bind(),
+                uid.unwrap_or_default().bind(),
+            ]);
+            arms.push(format!(
+                "SELECT {at}, (SELECT e.title FROM event_occurrences o JOIN events e ON e.id = o.event_id
+                   WHERE o.start_utc >= ?{a} - {WEEK} AND o.start_utc < ?{b} AND o.end_utc > ?{a}
+                     AND o.all_day = 0 AND e.status <> 'cancelled'
+                     AND coalesce(e.my_partstat, '') <> 'DECLINED' AND e.uid <> ?{c}
+                   ORDER BY o.start_utc LIMIT 1)",
+                a = base + 1,
+                b = base + 2,
+                c = base + 3,
+            ));
+            asked.push(at);
+        }
+        if asked.is_empty() {
+            return Ok(found);
+        }
+        let titles: Vec<(i64, Option<String>)> = sql::all(
+            self.connection,
+            &arms.join("\n UNION ALL\n"),
+            arguments,
+            |row| Ok((row.col(0)?, row.col(1)?)),
+        )
+        .await?;
+        for (at, title) in titles {
+            if let Some((_, _, marker)) = usize::try_from(at).ok().and_then(|at| found.get_mut(at))
+            {
+                marker.clash = title;
+            }
+        }
+        Ok(found)
     }
 
     async fn focus_window(
@@ -1443,7 +1501,7 @@ impl<'a> ThreadRepository<'a> {
     /// [`Self::participants_for`] relies on with `min()`).
     pub fn explain_focus_markers(&self, inboxes: usize, threads: usize, lone: usize) -> String {
         let columns = "k.kind, k.starts_at, k.ends_at, k.due_at, k.excerpt, k.answer, \
-                       k.invite_state";
+                       k.invite_state, k.moved_from, k.invite_uid";
         let mut arms = Vec::new();
         if threads > 0 {
             arms.push(format!(
@@ -2786,6 +2844,8 @@ fn read_marker_summary(row: &Row, first: usize) -> Result<MarkerSummary> {
             .map(super::markers::answer_of)
             .transpose()?,
         cancelled: state == Some(super::InviteState::Cancelled),
+        clash: None,
+        moved_from: row.col::<Option<i64>>(first + 7)?.map(from_millis),
     })
 }
 

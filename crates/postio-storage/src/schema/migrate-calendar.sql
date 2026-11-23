@@ -1,3 +1,5 @@
+ALTER TABLE markers ADD COLUMN moved_from INTEGER;
+
 -- The calendar (spec 017): "On this computer" and each account's CalDAV
 -- calendars, their events as the iCalendar objects the server or Postio
 -- wrote, and the occurrences views page over.

@@ -1375,7 +1375,9 @@ CREATE TABLE markers (
     -- final. NULL otherwise.
     answer_until     INTEGER,
     -- When the person dismissed it. It never returns on this message.
-    dismissed_at     INTEGER
+    dismissed_at     INTEGER,
+    -- An update moved the event the person had answered: where it was.
+    moved_from       INTEGER
 );
 
 CREATE TABLE message_labels (

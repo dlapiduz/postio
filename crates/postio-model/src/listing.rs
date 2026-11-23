@@ -94,6 +94,10 @@ pub struct MarkerSummary {
     /// it ended.
     #[serde(default)]
     pub cancelled: bool,
+    #[serde(default)]
+    pub clash: Option<String>,
+    #[serde(default)]
+    pub moved_from: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -357,6 +361,8 @@ mod tests {
             excerpt: None,
             answer: Some(InviteAnswer::Accepting),
             cancelled: false,
+            clash: None,
+            moved_from: None,
         };
         let written = serde_json::to_string(&row(Some(marker.clone()))).expect("serialises");
         let read: ThreadSummary = serde_json::from_str(&written).expect("reads back");
