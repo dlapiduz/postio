@@ -2,6 +2,9 @@
 
 use std::ops::Range;
 
+use mime::tree::cst::MimeCst;
+use mime::tree::parse::MimeParseOptions;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Format {
     PgpMime,
@@ -46,9 +49,78 @@ impl SignedScope {
     }
 }
 
+const INLINE: &[u8] = b"-----BEGIN PGP SIGNED MESSAGE-----";
+
+/// `None` for mail with no signature Postio can find. Never panics: the bytes are a sender's.
 pub fn signed_scope(raw: &[u8]) -> Option<SignedScope> {
-    let _ = raw;
-    None
+    std::panic::catch_unwind(|| find(raw)).ok().flatten()
+}
+
+fn find(raw: &[u8]) -> Option<SignedScope> {
+    let mut cst = MimeCst::parse(raw);
+    // The parser's own limits on depth and entity count bound a hostile nesting.
+    cst.expand(MimeParseOptions::default());
+    let sections = cst.sections();
+    for section in &sections {
+        let kind = section.entity.content_type();
+        if kind.is("multipart", "encrypted") || kind.is("application", "pkcs7-mime") {
+            return Some(SignedScope::Encrypted);
+        }
+        if !kind.is("multipart", "signed") {
+            continue;
+        }
+        let Some(protocol) = kind.param("protocol") else {
+            continue;
+        };
+        let format = match protocol.to_ascii_lowercase().as_str() {
+            "application/pgp-signature" => Format::PgpMime,
+            "application/pkcs7-signature" | "application/x-pkcs7-signature" => Format::Smime,
+            _ => continue,
+        };
+        let child = |n: usize| {
+            let mut path = section.part.clone();
+            path.push(n);
+            sections.iter().find(|other| other.part == path)
+        };
+        let (Some(signed), Some(signature)) = (child(1), child(2)) else {
+            continue;
+        };
+        let (part, signature) = (signed.span.entity.clone(), signature.span.body.clone());
+        if part.end > raw.len() || signature.end > raw.len() {
+            continue;
+        }
+        return Some(if section.part.is_empty() {
+            SignedScope::WholeMessage {
+                format,
+                part,
+                signature,
+            }
+        } else {
+            SignedScope::Part {
+                format,
+                path: section.part.clone(),
+                part,
+                signature,
+            }
+        });
+    }
+    let root_is_text = sections
+        .first()
+        .is_some_and(|root| root.entity.content_type().is_top("text"));
+    sections.iter().find_map(|section| {
+        if !section.entity.content_type().is("text", "plain") {
+            return None;
+        }
+        let body = section.span.body.clone();
+        let at = raw
+            .get(body.clone())?
+            .windows(INLINE.len())
+            .position(|window| window == INLINE)?;
+        Some(SignedScope::Inline {
+            text: body.start + at..body.end,
+            whole: root_is_text,
+        })
+    })
 }
 
 #[cfg(test)]
