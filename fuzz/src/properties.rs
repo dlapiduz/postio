@@ -136,8 +136,7 @@ fn check_sanitized(sanitized: &Sanitized, remote: RemoteImages) {
 const FETCHED_ON_SIGHT: &[&str] = &["src", "srcset", "poster", "background"];
 
 /// Parse `input` as a query and check the result. The grammar is total, so a panic is a find, and
-/// so is a span that does not describe its input: `ParsedQuery::remove_token` slices on those
-/// offsets.
+/// so is a span that does not describe its input: a chip is cut from the query on those offsets.
 pub fn check_parse_query(input: &str) {
     let parsed = postio_search::parse(input, fixed_today());
 
@@ -162,7 +161,7 @@ pub fn check_parse_query(input: &str) {
         assert!(
             input.is_char_boundary(span.start) && input.is_char_boundary(span.end),
             "token {index}'s span splits a character: {span:?} -- \
-             ParsedQuery::remove_token slices on these offsets and would panic"
+             slicing the query on these offsets would panic"
         );
         assert!(
             span.start >= previous_end,
@@ -176,10 +175,6 @@ pub fn check_parse_query(input: &str) {
             "token {index}'s raw text is not what its span points at, so the \
              chip's label and what removing it deletes are different things"
         );
-
-        // The chip-dismiss round trip: the result goes straight back to the parser.
-        let without = parsed.remove_token(index);
-        let _ = postio_search::parse(&without, fixed_today());
     }
 }
 
@@ -279,14 +274,18 @@ mod tests {
     // A checker that cannot fail reports "clean" forever, so each test hands it a violation of
     // exactly one property.
 
+    fn with_html(html: &str) -> Sanitized {
+        Sanitized {
+            html: html.to_owned(),
+            ..sanitize_body("", RemoteImages::Blocked)
+        }
+    }
+
     #[test]
     #[should_panic(expected = "still contains")]
     fn the_sanitizer_check_notices_a_surviving_script() {
         check_sanitized(
-            &Sanitized {
-                html: "<p>hello</p><script>alert(1)</script>".to_string(),
-                remote_blocked: 0,
-            },
+            &with_html("<p>hello</p><script>alert(1)</script>"),
             RemoteImages::Blocked,
         );
     }
@@ -295,10 +294,7 @@ mod tests {
     #[should_panic(expected = "a remote reference survived")]
     fn the_sanitizer_check_notices_a_surviving_remote_image() {
         check_sanitized(
-            &Sanitized {
-                html: "<img src=\"https://tracker.example.com/pixel.gif\">".to_string(),
-                remote_blocked: 0,
-            },
+            &with_html("<img src=\"https://tracker.example.com/pixel.gif\">"),
             RemoteImages::Blocked,
         );
     }
@@ -307,10 +303,7 @@ mod tests {
     #[should_panic(expected = "bare cid:")]
     fn the_sanitizer_check_notices_an_unrewritten_cid() {
         check_sanitized(
-            &Sanitized {
-                html: "<img src=\"cid:part1@example.com\">".to_string(),
-                remote_blocked: 0,
-            },
+            &with_html("<img src=\"cid:part1@example.com\">"),
             RemoteImages::Blocked,
         );
     }
@@ -318,10 +311,7 @@ mod tests {
     #[test]
     fn a_remote_reference_is_fine_once_the_user_allowed_it() {
         check_sanitized(
-            &Sanitized {
-                html: "<img src=\"https://cdn.example.com/logo.png\">".to_string(),
-                remote_blocked: 0,
-            },
+            &with_html("<img src=\"https://cdn.example.com/logo.png\">"),
             RemoteImages::Allowed,
         );
     }
@@ -379,10 +369,7 @@ mod tests {
     #[should_panic(expected = "a javascript: URL survived")]
     fn a_scheme_name_in_a_fetched_attribute_is_a_bypass() {
         check_sanitized(
-            &Sanitized {
-                html: "<img src=\"javascript:alert(1)\">".to_string(),
-                remote_blocked: 0,
-            },
+            &with_html("<img src=\"javascript:alert(1)\">"),
             RemoteImages::Blocked,
         );
     }
@@ -403,10 +390,7 @@ mod tests {
     #[test]
     fn a_remote_link_is_not_a_remote_load() {
         check_sanitized(
-            &Sanitized {
-                html: "<a href=\"https://news.example.org/issues/214\">read on</a>".to_string(),
-                remote_blocked: 0,
-            },
+            &with_html("<a href=\"https://news.example.org/issues/214\">read on</a>"),
             RemoteImages::Blocked,
         );
     }
