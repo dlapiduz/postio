@@ -79,7 +79,7 @@ crates/postio-core/src/config.rs 1
 crates/postio-core/src/context.rs 1
 crates/postio-core/src/event.rs 1
 crates/postio-core/src/menu.rs 1
-crates/postio-core/src/registry.rs 5
+crates/postio-core/src/registry.rs 4
 crates/postio-core/src/state.rs 3
 crates/postio-core/src/undo.rs 1
 crates/postio-core/tests/core_suite/main.rs 1
