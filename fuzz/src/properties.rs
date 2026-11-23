@@ -230,6 +230,62 @@ fn is_remote(lowered: &str) -> bool {
         || lowered.starts_with("ftp://")
 }
 
+/// With no key and no anchor handed in, nothing is good, and every range a verdict's scope names
+/// lies inside the input it was cut from.
+pub fn check_verify_signature(raw: &[u8]) {
+    let keys = postio_signature::KeySet::new();
+    if let Some(verdict) = postio_signature::verify(raw, &keys, &postio_signature::Policy) {
+        check_verdict(raw.len(), &verdict);
+    }
+}
+
+fn check_verdict(len: usize, verdict: &postio_signature::Verdict) {
+    use postio_signature::{SignedScope, Status};
+    assert_ne!(
+        verdict.status,
+        Status::Good,
+        "good with no key and no anchor: {verdict:?}"
+    );
+    let ranges = match &verdict.scope {
+        SignedScope::WholeMessage {
+            part, signature, ..
+        }
+        | SignedScope::Part {
+            part, signature, ..
+        } => vec![part.clone(), signature.clone()],
+        SignedScope::Inline { text, .. } => vec![text.clone()],
+        SignedScope::Encrypted => Vec::new(),
+    };
+    for range in ranges {
+        assert!(
+            range.start <= range.end && range.end <= len,
+            "a scope range outside the input: {range:?} in {len} bytes"
+        );
+    }
+}
+
+/// Every key either reader returns has a fingerprint, and no reader returns more keys than the
+/// input has bytes to hold them.
+pub fn check_read_keyring(raw: &[u8]) {
+    for read in [
+        postio_signature::keyblocks_from_keybox(raw),
+        postio_signature::keyblocks_from_pubring_gpg(raw),
+    ] {
+        check_keys_read(raw.len(), &read);
+    }
+}
+
+fn check_keys_read(len: usize, read: &postio_signature::KeyRead) {
+    assert!(
+        read.blocks.len() <= len / 8 + 1,
+        "{} keys from {len} bytes",
+        read.blocks.len()
+    );
+    for key in &read.blocks {
+        assert!(!key.fingerprint.is_empty(), "a key with no fingerprint");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -252,6 +308,14 @@ mod tests {
     }
 
     #[test]
+    fn the_corpus_satisfies_the_signature_properties() {
+        for fixture in postio_model::test_corpus::all() {
+            check_verify_signature(fixture.bytes());
+            check_read_keyring(fixture.bytes());
+        }
+    }
+
+    #[test]
     fn the_edges_are_still_total() {
         for raw in [
             b"".as_slice(),
@@ -269,10 +333,68 @@ mod tests {
         for query in ["", " ", "\"", "-", ":", "from:", "\u{1f600}", "a\u{0301}b"] {
             check_parse_query(query);
         }
+        for raw in [
+            b"".as_slice(),
+            b"\x00\x00\x00\x20\x01",
+            b"\xc6\xff\xff\xff\xff\xff",
+            b"Content-Type: multipart/signed; protocol=\"application/pkcs7-signature\"; boundary=b\r\n\r\n--b\r\n\r\n--b\r\n\r\nMIIB\r\n--b--\r\n",
+        ] {
+            check_verify_signature(raw);
+            check_read_keyring(raw);
+        }
     }
 
     // A checker that cannot fail reports "clean" forever, so each test hands it a violation of
     // exactly one property.
+
+    #[test]
+    #[should_panic(expected = "good with no key")]
+    fn the_signature_check_notices_a_good_verdict_without_a_key() {
+        check_verdict(
+            10,
+            &postio_signature::Verdict {
+                status: postio_signature::Status::Good,
+                reason: None,
+                scope: postio_signature::SignedScope::Encrypted,
+                signer: None,
+                signed_at: None,
+            },
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "outside the input")]
+    fn the_signature_check_notices_a_range_past_the_input() {
+        check_verdict(
+            10,
+            &postio_signature::Verdict {
+                status: postio_signature::Status::Bad,
+                reason: None,
+                scope: postio_signature::SignedScope::Inline {
+                    text: 4..40,
+                    whole: true,
+                },
+                signer: None,
+                signed_at: None,
+            },
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "keys from")]
+    fn the_keyring_check_notices_more_keys_than_bytes() {
+        let key = postio_signature::keys_in(include_bytes!(
+            "../../crates/postio-model/tests/corpus/keys/ada-a.asc"
+        ))
+        .remove(0);
+        check_keys_read(
+            0,
+            &postio_signature::KeyRead {
+                blocks: vec![key.clone(), key],
+                skipped: 0,
+            },
+        );
+    }
 
     fn with_html(html: &str) -> Sanitized {
         Sanitized {
