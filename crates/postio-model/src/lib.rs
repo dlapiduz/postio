@@ -6,6 +6,7 @@
 pub mod account;
 pub mod address;
 pub mod attachment;
+pub mod calendar;
 pub mod card;
 pub mod clock;
 pub mod contact;

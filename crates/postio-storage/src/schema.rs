@@ -639,7 +639,7 @@ CREATE TABLE contact_sync_links (
     // claimed `Message-ID` so they survive a merge and renumbering.
     Migration {
         from: stamp(0xf0d2_3b2a),
-        to: FINGERPRINT,
+        to: stamp(0x4b4a_60f9),
         statements: r#"
 ALTER TABLE messages ADD COLUMN own_line TEXT;
 CREATE INDEX idx_threads_subject_recent ON threads (account_id, subject, last_at DESC, first_at);
@@ -664,6 +664,11 @@ CREATE TABLE thread_splits (
     PRIMARY KEY (account_id, rfc_message_id)
 );
 "#,
+    },
+    Migration {
+        from: stamp(0x4b4a_60f9),
+        to: FINGERPRINT,
+        statements: include_str!("schema/migrate-calendar.sql"),
     },
 ];
 
@@ -1205,7 +1210,7 @@ CREATE TABLE egress_log (
     at          INTEGER NOT NULL,
     -- 'model' is the person's own model runtime, on this computer (spec 007
     -- FR-168): every call Focus makes to it, by where and outcome.
-    subsystem   TEXT    NOT NULL CHECK (subsystem IN ('imap', 'smtp', 'discovery', 'model')),
+    subsystem   TEXT    NOT NULL CHECK (subsystem IN ('imap', 'smtp', 'discovery', 'model', 'caldav')),
     -- NULL before an account exists: discovery during onboarding probes
     -- servers for an account not yet created.
     account_id  INTEGER REFERENCES accounts(id) ON DELETE SET NULL,
@@ -2144,7 +2149,8 @@ END;
     include_str!("schema/content-locations.sql"),
     include_str!("schema/content-projection.sql"),
     include_str!("schema/walk-columns.sql"),
-    include_str!("schema/footprint.sql")
+    include_str!("schema/footprint.sql"),
+    include_str!("schema/calendar.sql")
 );
 
 #[cfg(test)]

@@ -87,7 +87,7 @@ the plan's research section it settles. Spike code is not merged.
   - `pop_out` and `pop_in` on one chord in different contexts.
   - `quit` on `mod+q` alone and `close_window` on `mod+w` in every context (Q5).
 - [x] T007 Add the contexts and commands to `crates/postio-core/src/context.rs`, `crates/postio-core/src/command.rs` and `crates/postio-core/src/registry.rs`. Regenerate `docs/keybindings.md` (`POSTIO_UPDATE_DOCS=1 cargo test -p postio-ui`) and `crates/postio-core/tests/golden/linux-bindings.txt`. Mark `pop_out` and `pop_in` not offered in the terminal (`registry::offered_on`). Drop `quit`'s `mod+w` alternate and add `close_window` on `mod+w`, with the Apple exception for `quit` on `mod+w` removed from `registry.rs` (Q5)
-- [ ] T008 Write failing schema cases in `crates/postio-storage/tests/storage_suite/`, then add `calendars`, `events`, `event_occurrences`, `event_changes`, `reminders`, `event_search` and the `caldav` value of `egress_log.subsystem` to `crates/postio-storage/src/schema.rs` (`data-model.md`). Add a new `crates/postio-storage/src/repository/calendar.rs`, and create "On this computer" at store creation.
+- [x] T008 Write failing schema cases in `crates/postio-storage/tests/storage_suite/`, then add `calendars`, `events`, `event_occurrences`, `event_changes`, `reminders`, `event_search` and the `caldav` value of `egress_log.subsystem` to `crates/postio-storage/src/schema.rs` (`data-model.md`). Add a new `crates/postio-storage/src/repository/calendar.rs`, and create "On this computer" at store creation.
 
 ## Phase 4: User Story 1, see what is coming up (P1) 🎯 first slice ⛔ S1
 

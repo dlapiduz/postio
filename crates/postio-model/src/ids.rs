@@ -89,6 +89,8 @@ local_id!(
 local_id!(UnsubscribeActivationId);
 local_id!(DeliveryId);
 local_id!(ReminderId);
+local_id!(CalendarId);
+local_id!(EventId);
 
 macro_rules! scalar_id {
     ($(#[$doc:meta])* $name:ident, $inner:ty) => {

@@ -14,6 +14,7 @@ pub enum EgressSubsystem {
     Smtp,
     Discovery,
     Model,
+    Caldav,
 }
 
 impl EgressSubsystem {
@@ -24,6 +25,7 @@ impl EgressSubsystem {
             Self::Smtp => "smtp",
             Self::Discovery => "discovery",
             Self::Model => "model",
+            Self::Caldav => "caldav",
         }
     }
 
@@ -33,6 +35,7 @@ impl EgressSubsystem {
             "smtp" => Some(Self::Smtp),
             "discovery" => Some(Self::Discovery),
             "model" => Some(Self::Model),
+            "caldav" => Some(Self::Caldav),
             _ => None,
         }
     }
