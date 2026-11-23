@@ -1,7 +1,9 @@
 use std::ops::Range;
 
 use chrono::{DateTime, Duration, TimeZone, Utc};
-use postio_model::calendar::{AgendaAnchor, AgendaEntry, EventStatus};
+use postio_model::calendar::{
+    AgendaAnchor, AgendaCursor, AgendaEntry, EventDetail, EventStatus, Participation,
+};
 use postio_model::ids::{CalendarId, EventId, MessageId};
 use postio_model::listing::StoreError;
 use postio_storage::Store;
@@ -163,6 +165,64 @@ pub async fn agenda_page<Z: TimeZone>(
         .agenda(anchor, limit)
         .await
         .map_err(failed)
+}
+
+pub async fn event_detail(
+    database: &Store,
+    cursor: AgendaCursor,
+) -> Result<Option<EventDetail>, StoreError> {
+    let connection = database.read().await.map_err(failed)?;
+    let calendars = CalendarRepository::new(&connection);
+    let Some(entry) = calendars.occurrence(cursor).await.map_err(failed)? else {
+        return Ok(None);
+    };
+    let Some((object, writable)) = calendars.object(cursor.event).await.map_err(failed)? else {
+        return Ok(None);
+    };
+    let events = postio_calendar::parse_object(&object).map_err(failed)?;
+    let master = events.iter().find(|event| event.recurrence_id.is_none());
+    let event = events
+        .iter()
+        .find(|event| event.recurrence_id.is_some() && event.recurrence_id == entry.recurrence_id)
+        .or(master)
+        .or_else(|| events.first());
+    let Some(event) = event else {
+        return Ok(None);
+    };
+    Ok(Some(EventDetail {
+        notes: event.notes.clone(),
+        organiser: event.organiser.clone(),
+        attendees: event
+            .attendees
+            .iter()
+            .map(|attendee| (attendee.address.clone(), participation(attendee.partstat)))
+            .collect(),
+        zone: event.zone.clone(),
+        repeat: master.and_then(|master| master.repeat.clone()),
+        minutes_before: event
+            .alarms
+            .iter()
+            .filter(|alarm| alarm.action != postio_calendar::AlarmAction::Email)
+            .filter_map(|alarm| match alarm.trigger {
+                postio_calendar::Trigger::SecondsBeforeStart(seconds) => Some(seconds / 60),
+                _ => None,
+            })
+            .collect(),
+        writable,
+        entry,
+    }))
+}
+
+fn participation(partstat: postio_calendar::PartStat) -> Participation {
+    match partstat {
+        postio_calendar::PartStat::Accepted => Participation::Accepted,
+        postio_calendar::PartStat::Declined => Participation::Declined,
+        postio_calendar::PartStat::Tentative => Participation::Tentative,
+        postio_calendar::PartStat::Delegated => Participation::Delegated,
+        postio_calendar::PartStat::NeedsAction | postio_calendar::PartStat::Other => {
+            Participation::NeedsAction
+        }
+    }
 }
 
 async fn widen<Z: TimeZone>(

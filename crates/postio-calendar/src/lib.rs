@@ -10,7 +10,7 @@ mod reply;
 #[cfg(test)]
 mod test_support;
 
-pub use event::{Event, Status, parse_object};
+pub use event::{Alarm, AlarmAction, Event, Status, Trigger, parse_object};
 pub use expand::{Occurrence, expand};
 pub use invitation::{Answer, Attendee, EventTime, Invitation, Method, PartStat, Zone, supersedes};
 pub use parse::{CalendarError, parse};

@@ -351,3 +351,29 @@ fn join_and(names: &[String]) -> String {
         [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
     }
 }
+
+pub fn footer(keymap: &postio_core::Keymap) -> Vec<crate::hints::Hint> {
+    use crate::hints::{hint, pair};
+    use postio_core::CommandId;
+    [
+        pair(
+            keymap,
+            CommandId::NextMessage,
+            CommandId::PrevMessage,
+            "move",
+        ),
+        hint(keymap, CommandId::OpenMessage, "open"),
+        pair(
+            keymap,
+            CommandId::CalendarPrevious,
+            CommandId::CalendarNext,
+            "week",
+        ),
+        hint(keymap, CommandId::CalendarToday, "today"),
+        hint(keymap, CommandId::NewEvent, "new event"),
+        hint(keymap, CommandId::PopOut, "own window"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}

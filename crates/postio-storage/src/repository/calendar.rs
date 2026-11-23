@@ -1,5 +1,7 @@
 use chrono::{DateTime, Utc};
-use postio_model::calendar::{AgendaAnchor, AgendaEntry, Calendar, EventStatus, NewCalendar};
+use postio_model::calendar::{
+    AgendaAnchor, AgendaCursor, AgendaEntry, Calendar, EventStatus, NewCalendar,
+};
 use postio_model::ids::{AccountId, CalendarId, EventId, MessageId};
 use turso::Row;
 
@@ -212,6 +214,27 @@ impl CalendarRepository<'_> {
             rows.reverse();
         }
         Ok(rows)
+    }
+
+    pub async fn occurrence(&self, cursor: AgendaCursor) -> Result<Option<AgendaEntry>> {
+        sql::first(
+            self.connection,
+            &format!("{AGENDA} WHERE o.event_id = ?1 AND o.start_utc = ?2"),
+            bind![cursor.event.get(), to_millis(cursor.start)],
+            read_entry,
+        )
+        .await
+    }
+
+    pub async fn object(&self, event: EventId) -> Result<Option<(Vec<u8>, bool)>> {
+        sql::first(
+            self.connection,
+            "SELECT e.object, c.writable FROM events e JOIN calendars c ON c.id = e.calendar_id
+              WHERE e.id = ?1",
+            [event.get()],
+            |row| Ok((row.col(0)?, row.col(1)?)),
+        )
+        .await
     }
 
     pub async fn recurring(&self) -> Result<Vec<(EventId, Vec<u8>)>> {

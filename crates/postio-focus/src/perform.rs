@@ -504,6 +504,26 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
                 .map(|_| ())
                 .map_err(|error| error.to_string()),
         },
+        Request::AgendaPage {
+            anchor,
+            limit,
+            stamp,
+            placement,
+        } => Reply::AgendaPage {
+            stamp,
+            placement,
+            answer: client
+                .agenda_page(anchor, limit)
+                .await
+                .map_err(|error| error.to_string()),
+        },
+        Request::EventDetail { cursor, stamp } => Reply::EventDetail {
+            stamp,
+            answer: client
+                .event_detail(cursor)
+                .await
+                .map_err(|error| error.to_string()),
+        },
         Request::ContactsOverview => Reply::ContactsOverview(
             client
                 .contacts_overview()

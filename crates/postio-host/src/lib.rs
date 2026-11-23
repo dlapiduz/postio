@@ -979,6 +979,12 @@ impl Inner {
                 Ok(page) => Resp::AgendaPage(page),
                 Err(error) => Resp::Failed(error),
             },
+            Req::EventDetail(cursor) => {
+                match calendar::event_detail(&self.wiring.database, cursor).await {
+                    Ok(detail) => Resp::EventDetail(detail.map(Box::new)),
+                    Err(error) => Resp::Failed(error),
+                }
+            }
             Req::ContactsFiltered { tab, text, cap } => {
                 match contacts::contacts_filtered(&self.wiring.database, tab, &text, cap).await {
                     Ok(rows) => Resp::ContactsFiltered(rows),

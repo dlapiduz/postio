@@ -24,6 +24,7 @@ pub enum SurfaceKind {
     Filtered,
     ContactPopover,
     Contacts,
+    Calendar,
     Picker,
     RowMenu,
     ThreadMenu,
@@ -52,6 +53,7 @@ impl SurfaceKind {
             SurfaceKind::Picker => KeyContext::Picker,
             SurfaceKind::ContactPopover => KeyContext::ContactPopover,
             SurfaceKind::Contacts => KeyContext::Contacts,
+            SurfaceKind::Calendar => KeyContext::Calendar,
             SurfaceKind::ThreadMenu => KeyContext::Reader,
             SurfaceKind::Outline => KeyContext::Outline,
             // Their keys are the list's context, and only the ones that
@@ -77,6 +79,7 @@ impl SurfaceKind {
                 | SurfaceKind::Filtered
                 | SurfaceKind::ContactPopover
                 | SurfaceKind::Contacts
+                | SurfaceKind::Calendar
                 | SurfaceKind::ThreadMenu
                 | SurfaceKind::Outline
         )
@@ -243,6 +246,7 @@ impl Surfaces {
             }
             SurfaceKind::ContactPopover
             | SurfaceKind::Contacts
+            | SurfaceKind::Calendar
             | SurfaceKind::ThreadMenu
             | SurfaceKind::Outline => Route::Controller,
             SurfaceKind::Digest

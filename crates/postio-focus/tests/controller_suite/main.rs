@@ -10,6 +10,7 @@
 //! it a file of its own in `tests/` and say why at its top.
 
 mod bar;
+mod calendar;
 mod capture;
 mod compose;
 mod contact_edit;

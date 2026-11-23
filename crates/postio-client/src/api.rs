@@ -114,6 +114,7 @@ impl Req {
             Req::ContactsOverview => "ContactsOverview",
             Req::ContactCard(_) => "ContactCard",
             Req::AgendaPage { .. } => "AgendaPage",
+            Req::EventDetail(_) => "EventDetail",
             Req::ContactGroups => "ContactGroups",
             Req::ContactsSyncBringIn { .. } => "ContactsSyncBringIn",
             Req::ContactsImport(_) => "ContactsImport",
@@ -669,6 +670,18 @@ impl Client {
             Req::AgendaPage { anchor, limit },
             "a page of the agenda",
             only!(Resp::AgendaPage),
+        )
+        .await
+    }
+
+    pub async fn event_detail(
+        &self,
+        cursor: postio_model::calendar::AgendaCursor,
+    ) -> Result<Option<Box<postio_model::calendar::EventDetail>>, StoreError> {
+        self.read(
+            Req::EventDetail(cursor),
+            "an event",
+            only!(Resp::EventDetail),
         )
         .await
     }
