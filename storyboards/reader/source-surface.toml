@@ -1,0 +1,70 @@
+# V opens one Source surface, on its Verification tab, over the list or over
+# the open message; 1, 2 and 3 switch its tabs; Esc closes it one rung at a
+# time, back to the same row with the cursor where it was (spec 016 US1, US2).
+#
+# The surface replaces the raw-source dialog: its tabs are Verification,
+# Headers and Raw, and the raw bytes become the Raw tab. Nothing in it is a
+# link and nothing is rendered.
+apps   = ["focus"]
+proof  = "open"
+source = { kind = "flow", ref = "specs/016-message-authenticity US1, US2" }
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+id      = "row"
+command = "next_message"
+check   = { keyboard.region = "list", cursor.index = 1 }
+
+[[step]]
+command = "next_message"
+check   = { keyboard.region = "list", cursor.index = 2 }
+
+[[step]]
+command = "view_source"
+settle  = { until = { app.focus.source.tab = "verification" } }
+check   = { overlay.kind = "dialog", overlay.name = "source", keyboard.region = "dialog", app.focus.source.tab = "verification", cursor.index = 2 }
+expect  = "The Source surface opens over the list on its Verification tab: what the provider checked, in words. The list's cursor stays on its row."
+
+[[step]]
+key     = "2"
+check   = { overlay.name = "source", app.focus.source.tab = "headers" }
+expect  = "2 shows the Headers tab: one header per row, the name in mono, with the trust boundary under the provider's header."
+
+[[step]]
+key     = "3"
+check   = { overlay.name = "source", app.focus.source.tab = "raw" }
+expect  = "3 shows the Raw tab: every byte as text, large parts folded to one line."
+
+[[step]]
+key     = "1"
+check   = { overlay.name = "source", app.focus.source.tab = "verification" }
+expect  = "1 goes back to Verification."
+
+[[step]]
+command = "back"
+check   = { overlay.kind = "none", keyboard.region = "list", cursor.index = 2 }
+expect  = "Esc closes the surface. The keyboard is back on the row it came from; nothing scrolled."
+
+[[step]]
+command = "open_message"
+settle  = { until = { view = "reader" } }
+check   = { view = "reader", keyboard.region = "reader" }
+expect  = "The same row's message opens."
+
+[[step]]
+command = "view_source"
+settle  = { until = { app.focus.source.tab = "verification" } }
+check   = { overlay.name = "source", keyboard.region = "dialog", app.focus.source.tab = "verification" }
+expect  = "V in the open message opens the Source surface over it, on Verification."
+
+[[step]]
+command = "back"
+check   = { view = "reader", keyboard.region = "reader" }
+expect  = "Esc takes one rung: the surface closes and the message is still open."
+
+[[step]]
+command = "back"
+check   = { view = "list", keyboard.region = "list", cursor.index = 2 }
+expect  = "A second Esc closes the message, back on the same row."

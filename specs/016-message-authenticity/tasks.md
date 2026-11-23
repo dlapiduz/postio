@@ -61,7 +61,7 @@ test that is green on arrival is a guard, and says so.
   - `pgp-key-attached.eml`.
 
   The keys are generated once by `crates/postio-model/tests/corpus/keys/generate.sh`, which is checked in. The README says the keys are test-only.
-- [ ] T003 [P] Write `storyboards/reader/source-surface.toml` from US1 and US2: `V` from the list, `2`, `3`, `Esc` to the same row; `V` from the open message, then `Esc` twice. See it red on `main` with `scripts/storyboards.sh`
+- [x] T003 [P] Write `storyboards/reader/source-surface.toml` from US1 and US2: `V` from the list, `2`, `3`, `Esc` to the same row; `V` from the open message, then `Esc` twice. See it red on `main` with `scripts/storyboards.sh`
 - [ ] T004 [P] Write `storyboards/reader/signed-mark.toml` from US3: open the good fixture and see "Signed", press it and see Verification, accept the key and see "Signed · accepted", then `z`. See it red on `main`
 
 ## Phase 2: Spikes (gating)
