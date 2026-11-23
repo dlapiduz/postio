@@ -128,7 +128,7 @@ throwaway code is not merged.
 - [x] T022 [P] [US2] GTK: `copy_source` and `save_source` (through `postio-host/src/export.rs`), with the case "the saved file equals `Client::raw_source`" in `crates/postio-gtk/tests/focus_suite/view_source.rs`
 - [x] T023 [P] [US1] Terminal: draw the three tabs as frames in `crates/postio-tui/src/view/open.rs`, replacing its single raw frame, with cases in `crates/postio-tui/tests/tui_suite/`
 - [ ] T024 [P] [US1] Mac: expose `SourceView` in `crates/postio-ffi/src/focus_reader.rs`, and draw it in `macos/Sources/PostioKit/MessageWindow.swift`, with `macos/Tests/PostioKitTests/MessageWindowModelTests.swift` cases. The FFI command sweep `crates/postio-ffi/tests/ffi_suite/command_coverage.rs` stays green
-- [ ] T025 [US1] Run `/ux-review` on T003's storyboard, and fix or contest its verdicts
+- [x] T025 [US1] Run `/ux-review` on T003's storyboard, and fix or contest its verdicts
 
 ## Phase 5: User Story 3, OpenPGP verification and the mark (P2) ⛔ S1
 
