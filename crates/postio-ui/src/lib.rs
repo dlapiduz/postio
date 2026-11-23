@@ -6,6 +6,7 @@ pub mod account;
 pub mod agent_access;
 pub mod allowlist;
 pub mod auto_empty;
+pub mod calendar;
 pub mod capture;
 pub mod cheatsheet;
 pub mod clock;

@@ -102,7 +102,7 @@ the plan's research section it settles. Spike code is not merged.
   - expansion past the window.
 
   Then implement the agenda read and the occurrence materialisation in a new `crates/postio-host/src/calendar/`, and `Req::AgendaPage` and `Resp::AgendaPage` in `crates/postio-client/src/protocol.rs` and `crates/postio-client/src/api.rs`.
-- [ ] T012 [P] [US1] Write failing cases in `crates/postio-ui/tests/ui_suite/calendar_agenda.rs` for `AgendaRow`, `EventView` and every state string in the spec's "Every state" table, then implement them in a new `crates/postio-ui/src/calendar/`
+- [x] T012 [P] [US1] Write failing cases in `crates/postio-ui/tests/ui_suite/calendar_agenda.rs` for `AgendaRow`, `EventView` and every state string in the spec's "Every state" table, then implement them in a new `crates/postio-ui/src/calendar/`
 - [ ] T013 [US1] Write failing behaviour cases in a new `crates/postio-focus/src/calendar.rs`:
   - `g e` opens on today, with the cursor on the next event that has not ended;
   - `j`, `k`, `[`, `]`, `t`, `Return`;

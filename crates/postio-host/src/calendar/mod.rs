@@ -1,6 +1,3 @@
-//! The calendar's reads and writes over the store: objects in, occurrences materialised in a
-//! window that widens as Agenda pages past it, pages out. Logs carry ids and counts only.
-
 use std::ops::Range;
 
 use chrono::{DateTime, Duration, TimeZone, Utc};
@@ -16,7 +13,6 @@ use postio_storage::store::Connection;
 const WINDOW_KEY: &str = "calendar.expanded";
 const BEHIND: Duration = Duration::days(365);
 const AHEAD: Duration = Duration::days(2 * 365);
-/// A page this close to the window's edge widens it first, so a walk never meets the edge.
 const MARGIN: Duration = Duration::days(60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -100,7 +96,6 @@ pub struct NewObject<'a> {
     pub source_message: Option<MessageId>,
 }
 
-/// Writes the object and its occurrences in the expanded window, in one transaction.
 pub async fn store_object<Z: TimeZone>(
     database: &Store,
     object: NewObject<'_>,
@@ -148,8 +143,6 @@ pub async fn store_object<Z: TimeZone>(
     Ok(id)
 }
 
-/// A page of the agenda. A fixed number of statements whatever the store holds, except when the
-/// page nears the window's edge and the recurring events are expanded further first.
 pub async fn agenda_page<Z: TimeZone>(
     database: &Store,
     anchor: AgendaAnchor,

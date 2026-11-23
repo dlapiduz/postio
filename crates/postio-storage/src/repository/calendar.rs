@@ -98,7 +98,6 @@ const AGENDA: &str = "SELECT o.event_id, e.calendar_id, c.name, c.colour, e.titl
    JOIN calendars c ON c.id = e.calendar_id";
 
 impl CalendarRepository<'_> {
-    /// One row per `(calendar, uid)`: storing the object again replaces it.
     pub async fn put_event(&self, event: &StoredEvent) -> Result<EventId> {
         sql::execute(
             self.connection,
@@ -151,7 +150,6 @@ impl CalendarRepository<'_> {
         self.add_occurrences(event, occurrences).await
     }
 
-    /// Ones already stored are kept, so expanding an overlapping window again adds nothing.
     pub async fn add_occurrences(
         &self,
         event: EventId,
@@ -184,7 +182,6 @@ impl CalendarRepository<'_> {
         Ok(())
     }
 
-    /// One statement whatever the store holds: a keyset walk of the start index, joined by key.
     pub async fn agenda(&self, anchor: AgendaAnchor, limit: u32) -> Result<Vec<AgendaEntry>> {
         let (condition, order, start, event) = match anchor {
             AgendaAnchor::From(at) => ("(o.start_utc, o.event_id) >= (?1, ?2)", "ASC", at, 0),
@@ -217,7 +214,6 @@ impl CalendarRepository<'_> {
         Ok(rows)
     }
 
-    /// The objects whose occurrences a wider window adds to.
     pub async fn recurring(&self) -> Result<Vec<(EventId, Vec<u8>)>> {
         sql::all_unbounded(
             self.connection,

@@ -32,7 +32,6 @@ pub struct AgendaCursor {
     pub event: EventId,
 }
 
-/// Where a page of the agenda starts: at a time, or either side of a row already shown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AgendaAnchor {
     From(DateTime<Utc>),
@@ -62,7 +61,6 @@ pub struct AgendaEntry {
     pub recurrence_id: Option<String>,
     pub status: EventStatus,
     pub my_partstat: Option<String>,
-    /// A change made here that the server has not taken yet.
     pub queued: bool,
 }
 
@@ -73,4 +71,42 @@ impl AgendaEntry {
             event: self.event,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Participation {
+    NeedsAction,
+    Accepted,
+    Declined,
+    Tentative,
+    Delegated,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Frequency {
+    Daily,
+    Weekly,
+    Monthly,
+    Yearly,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Repeat {
+    pub frequency: Frequency,
+    pub interval: u32,
+    pub weekdays: Vec<chrono::Weekday>,
+    pub until: Option<chrono::NaiveDate>,
+    pub count: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EventDetail {
+    pub entry: AgendaEntry,
+    pub notes: String,
+    pub organiser: Option<crate::EmailAddress>,
+    pub attendees: Vec<(crate::EmailAddress, Participation)>,
+    pub zone: Option<String>,
+    pub repeat: Option<Repeat>,
+    pub minutes_before: Vec<i64>,
+    pub writable: bool,
 }

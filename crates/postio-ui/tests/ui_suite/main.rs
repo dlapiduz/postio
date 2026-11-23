@@ -1,6 +1,7 @@
 //! A case that sets a process-global (`set_var`, crate attributes) does not belong in this binary:
 //! it would change what its neighbours see.
 
+mod calendar_agenda;
 mod hostile_mail;
 mod keybindings_doc;
 mod keymap_api;
