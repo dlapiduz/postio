@@ -967,6 +967,18 @@ impl Inner {
                     Err(error) => Resp::Failed(error),
                 }
             }
+            Req::AgendaPage { anchor, limit } => match calendar::agenda_page(
+                &self.wiring.database,
+                anchor,
+                limit,
+                &chrono::Local,
+                chrono::Utc::now(),
+            )
+            .await
+            {
+                Ok(page) => Resp::AgendaPage(page),
+                Err(error) => Resp::Failed(error),
+            },
             Req::ContactsFiltered { tab, text, cap } => {
                 match contacts::contacts_filtered(&self.wiring.database, tab, &text, cap).await {
                     Ok(rows) => Resp::ContactsFiltered(rows),
@@ -2337,6 +2349,7 @@ impl Transport for Local {
     }
 }
 
+pub mod calendar;
 pub mod compose;
 pub mod contacts;
 pub mod export;

@@ -36,7 +36,7 @@ mod threads;
 mod unsubscribe;
 
 pub use accounts::{AccountRepository, IdentityRepository, SignatureRepository};
-pub use calendar::CalendarRepository;
+pub use calendar::{CalendarRepository, StoredEvent, StoredOccurrence};
 pub use contact_groups::ContactGroupRepository;
 pub use contact_settings::{ContactSettingsRepository, DerivedSettings};
 pub use contact_suggestions::ContactSuggestionRepository;

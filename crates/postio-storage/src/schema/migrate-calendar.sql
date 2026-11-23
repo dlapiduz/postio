@@ -31,6 +31,7 @@ CREATE TABLE events (
     -- Kept whole, so an edit changes only what Postio models.
     object            BLOB    NOT NULL,
     title             TEXT    NOT NULL,
+    location          TEXT    NOT NULL DEFAULT '',
     -- The master's first instant, UTC ms, for ordering only.
     starts_at         INTEGER NOT NULL,
     recurs            INTEGER NOT NULL DEFAULT 0,
@@ -67,6 +68,7 @@ CREATE TABLE event_changes (
 );
 
 CREATE INDEX idx_event_changes_state ON event_changes (state, id);
+CREATE INDEX idx_event_changes_event ON event_changes (event_id, state);
 
 -- An alarm's due instant for one occurrence. Not `reminders`, which is
 -- mail's remind-if-no-reply.

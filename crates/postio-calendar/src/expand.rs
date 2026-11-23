@@ -1,11 +1,12 @@
 use std::ops::Range;
 
-use chrono::{DateTime, Datelike, Utc};
+use chrono::{DateTime, Datelike, TimeZone, Utc};
 use ical::prop::IcalPropKind;
 use ical::recur::IcalRecurDateTime;
 use ical::recur::instant::IcalRecurTimeline;
 use ical::recur::set::IcalRecurZone;
 
+use crate::invitation::local_instant;
 use crate::{CalendarError, MAX_OCCURRENCES, ics};
 
 /// An occurrence's times are UTC, except a floating or all-day one's, which are its wall clock
@@ -19,6 +20,16 @@ pub struct Occurrence {
     pub end: DateTime<Utc>,
     pub all_day: bool,
     pub floating: bool,
+}
+
+impl Occurrence {
+    /// Its times as instants: a floating or all-day one read on `zone`'s clock.
+    pub fn on<Z: TimeZone>(&self, zone: &Z) -> Range<DateTime<Utc>> {
+        if !(self.floating || self.all_day) {
+            return self.start..self.end;
+        }
+        local_instant(zone, self.start.naive_utc())..local_instant(zone, self.end.naive_utc())
+    }
 }
 
 /// Every occurrence of every event in `ics` that overlaps `window`, in start order. The same
@@ -241,6 +252,17 @@ mod tests {
         let occurrences = expand(&flood, autumn()).expect("expands");
 
         assert_eq!(occurrences.len(), crate::MAX_OCCURRENCES);
+    }
+
+    #[test]
+    fn a_floating_occurrence_is_read_on_the_reader_s_clock_and_a_zoned_one_is_not() {
+        let new_york: chrono::FixedOffset =
+            chrono::FixedOffset::west_opt(5 * 3600).expect("offset");
+        let floating = &expand(FLOATING, autumn()).expect("expands")[0];
+        let zoned = &expand(WINDOWS, autumn()).expect("expands")[0];
+
+        assert_eq!(floating.on(&new_york).start, utc("2026-12-03T12:00:00Z"));
+        assert_eq!(zoned.on(&new_york).start, utc("2026-10-30T16:00:00Z"));
     }
 
     #[test]

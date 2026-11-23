@@ -113,6 +113,7 @@ impl Req {
             Req::ContactsFiltered { .. } => "ContactsFiltered",
             Req::ContactsOverview => "ContactsOverview",
             Req::ContactCard(_) => "ContactCard",
+            Req::AgendaPage { .. } => "AgendaPage",
             Req::ContactGroups => "ContactGroups",
             Req::ContactsSyncBringIn { .. } => "ContactsSyncBringIn",
             Req::ContactsImport(_) => "ContactsImport",
@@ -655,6 +656,19 @@ impl Client {
             },
             "a page of contacts",
             only!(Resp::ContactsPage),
+        )
+        .await
+    }
+
+    pub async fn agenda_page(
+        &self,
+        anchor: postio_model::calendar::AgendaAnchor,
+        limit: u32,
+    ) -> Result<Vec<postio_model::calendar::AgendaEntry>, StoreError> {
+        self.read(
+            Req::AgendaPage { anchor, limit },
+            "a page of the agenda",
+            only!(Resp::AgendaPage),
         )
         .await
     }

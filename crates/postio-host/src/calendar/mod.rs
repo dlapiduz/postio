@@ -1,0 +1,208 @@
+//! The calendar's reads and writes over the store: objects in, occurrences materialised in a
+//! window that widens as Agenda pages past it, pages out. Logs carry ids and counts only.
+
+use std::ops::Range;
+
+use chrono::{DateTime, Duration, TimeZone, Utc};
+use postio_model::calendar::{AgendaAnchor, AgendaEntry, EventStatus};
+use postio_model::ids::{CalendarId, EventId, MessageId};
+use postio_model::listing::StoreError;
+use postio_storage::Store;
+use postio_storage::repository::{
+    CalendarRepository, SettingsRepository, StoredEvent, StoredOccurrence,
+};
+use postio_storage::store::Connection;
+
+const WINDOW_KEY: &str = "calendar.expanded";
+const BEHIND: Duration = Duration::days(365);
+const AHEAD: Duration = Duration::days(2 * 365);
+/// A page this close to the window's edge widens it first, so a walk never meets the edge.
+const MARGIN: Duration = Duration::days(60);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Expanded {
+    pub from: DateTime<Utc>,
+    pub until: DateTime<Utc>,
+}
+
+impl Expanded {
+    fn around(now: DateTime<Utc>) -> Self {
+        Expanded {
+            from: now - BEHIND,
+            until: now + AHEAD,
+        }
+    }
+
+    fn range(self) -> Range<DateTime<Utc>> {
+        self.from..self.until
+    }
+}
+
+fn failed(error: impl std::fmt::Display) -> StoreError {
+    tracing::warn!(%error, "calendar store read or write failed");
+    StoreError::new("Could not read the calendar")
+}
+
+async fn expanded(connection: &Connection, now: DateTime<Utc>) -> Result<Expanded, StoreError> {
+    let stored = SettingsRepository::new(connection)
+        .get(WINDOW_KEY)
+        .await
+        .map_err(failed)?;
+    let parsed = stored.and_then(|text| {
+        let (from, until) = text.split_once(' ')?;
+        Some(Expanded {
+            from: DateTime::from_timestamp_millis(from.parse().ok()?)?,
+            until: DateTime::from_timestamp_millis(until.parse().ok()?)?,
+        })
+    });
+    Ok(parsed.unwrap_or_else(|| Expanded::around(now)))
+}
+
+async fn set_expanded(connection: &Connection, window: Expanded) -> Result<(), StoreError> {
+    let value = format!(
+        "{} {}",
+        window.from.timestamp_millis(),
+        window.until.timestamp_millis()
+    );
+    SettingsRepository::new(connection)
+        .set(WINDOW_KEY, &value)
+        .await
+        .map_err(failed)
+}
+
+fn occurrences<Z: TimeZone>(
+    ics: &[u8],
+    window: Range<DateTime<Utc>>,
+    zone: &Z,
+) -> Result<Vec<StoredOccurrence>, postio_calendar::CalendarError> {
+    Ok(postio_calendar::expand(ics, window)?
+        .into_iter()
+        .map(|occurrence| {
+            let when = occurrence.on(zone);
+            StoredOccurrence {
+                start: when.start,
+                end: when.end,
+                all_day: occurrence.all_day,
+                floating: occurrence.floating,
+                recurrence_id: occurrence.recurrence_id,
+            }
+        })
+        .collect())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewObject<'a> {
+    pub calendar: CalendarId,
+    pub ics: &'a [u8],
+    pub href: Option<String>,
+    pub etag: Option<String>,
+    pub my_partstat: Option<String>,
+    pub source_message: Option<MessageId>,
+}
+
+/// Writes the object and its occurrences in the expanded window, in one transaction.
+pub async fn store_object<Z: TimeZone>(
+    database: &Store,
+    object: NewObject<'_>,
+    zone: &Z,
+    now: DateTime<Utc>,
+) -> Result<EventId, StoreError> {
+    let events = postio_calendar::parse_object(object.ics).map_err(failed)?;
+    let master = events
+        .iter()
+        .find(|event| event.recurrence_id.is_none())
+        .or_else(|| events.first())
+        .ok_or_else(|| failed(postio_calendar::CalendarError::NoEvent))?
+        .clone();
+    let connection = database.connect().await.map_err(failed)?;
+    let window = expanded(&connection, now).await?;
+    let rows = occurrences(object.ics, window.range(), zone).map_err(failed)?;
+    let starts_at = rows.first().map_or(now, |row| row.start);
+    let event = StoredEvent {
+        calendar: object.calendar,
+        uid: master.uid.clone(),
+        href: object.href,
+        etag: object.etag,
+        object: object.ics.to_vec(),
+        title: master.title.clone(),
+        location: master.location.clone(),
+        starts_at,
+        recurs: master.recurs || events.len() > 1,
+        status: match master.status {
+            postio_calendar::Status::Confirmed => EventStatus::Confirmed,
+            postio_calendar::Status::Tentative => EventStatus::Tentative,
+            postio_calendar::Status::Cancelled => EventStatus::Cancelled,
+        },
+        my_partstat: object.my_partstat,
+        source_message: object.source_message,
+    };
+    let id = postio_storage::sql::in_scope(&connection, |scope| async move {
+        let calendars = CalendarRepository::new(&scope);
+        let id = calendars.put_event(&event).await?;
+        calendars.set_occurrences(id, &rows).await?;
+        set_expanded(&scope, window).await?;
+        Ok::<_, StoreError>(id)
+    })
+    .await?;
+    tracing::info!(event = id.get(), "stored a calendar object");
+    Ok(id)
+}
+
+/// A page of the agenda. A fixed number of statements whatever the store holds, except when the
+/// page nears the window's edge and the recurring events are expanded further first.
+pub async fn agenda_page<Z: TimeZone>(
+    database: &Store,
+    anchor: AgendaAnchor,
+    limit: u32,
+    zone: &Z,
+    now: DateTime<Utc>,
+) -> Result<Vec<AgendaEntry>, StoreError> {
+    let connection = database.connect().await.map_err(failed)?;
+    let window = expanded(&connection, now).await?;
+    let at = match anchor {
+        AgendaAnchor::From(at) => at,
+        AgendaAnchor::After(cursor) | AgendaAnchor::Before(cursor) => cursor.start,
+    };
+    if at + MARGIN > window.until || at - MARGIN < window.from {
+        widen(&connection, window, at, zone).await?;
+    }
+    CalendarRepository::new(&connection)
+        .agenda(anchor, limit)
+        .await
+        .map_err(failed)
+}
+
+async fn widen<Z: TimeZone>(
+    connection: &Connection,
+    window: Expanded,
+    at: DateTime<Utc>,
+    zone: &Z,
+) -> Result<(), StoreError> {
+    let wider = Expanded {
+        from: window.from.min(at - BEHIND),
+        until: window.until.max(at + AHEAD),
+    };
+    let recurring = CalendarRepository::new(connection)
+        .recurring()
+        .await
+        .map_err(failed)?;
+    let count = recurring.len();
+    postio_storage::sql::in_scope(connection, |scope| async move {
+        let calendars = CalendarRepository::new(&scope);
+        for (event, ics) in &recurring {
+            let mut rows = Vec::new();
+            if wider.from < window.from {
+                rows.extend(occurrences(ics, wider.from..window.from, zone).unwrap_or_default());
+            }
+            if wider.until > window.until {
+                rows.extend(occurrences(ics, window.until..wider.until, zone).unwrap_or_default());
+            }
+            calendars.add_occurrences(*event, &rows).await?;
+        }
+        set_expanded(&scope, wider).await?;
+        Ok::<_, StoreError>(())
+    })
+    .await?;
+    tracing::info!(events = count, "widened the calendar window");
+    Ok(())
+}
