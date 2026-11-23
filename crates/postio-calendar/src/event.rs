@@ -5,8 +5,6 @@ use postio_model::EmailAddress;
 
 use crate::{Attendee, CalendarError, PartStat, ics};
 
-/// One `VEVENT`: a series' master, or an override naming the instance it replaces. When it
-/// happens is [`crate::expand`]'s to say.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Event {
     pub uid: String,
@@ -38,8 +36,6 @@ impl Status {
     }
 }
 
-/// Every event in the object, masters before their overrides as written. Tasks and journals are
-/// not events and are left in the object untouched.
 pub fn parse_object(ics: &[u8]) -> Result<Vec<Event>, CalendarError> {
     let cst = ics::parse(ics)?;
     let calendar = cst.decode();

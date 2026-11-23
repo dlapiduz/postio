@@ -14,7 +14,6 @@ use crate::{CalendarError, MAX_OCCURRENCES, ics};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Occurrence {
     pub uid: String,
-    /// The instance's identity as `RECURRENCE-ID` names it; `None` for an event that does not recur.
     pub recurrence_id: Option<String>,
     pub start: DateTime<Utc>,
     pub end: DateTime<Utc>,
@@ -23,7 +22,6 @@ pub struct Occurrence {
 }
 
 impl Occurrence {
-    /// Its times as instants: a floating or all-day one read on `zone`'s clock.
     pub fn on<Z: TimeZone>(&self, zone: &Z) -> Range<DateTime<Utc>> {
         if !(self.floating || self.all_day) {
             return self.start..self.end;
@@ -32,8 +30,6 @@ impl Occurrence {
     }
 }
 
-/// Every occurrence of every event in `ics` that overlaps `window`, in start order. The same
-/// window gives the same occurrences, so materialising twice, or in pieces, adds nothing new.
 pub fn expand(ics: &[u8], window: Range<DateTime<Utc>>) -> Result<Vec<Occurrence>, CalendarError> {
     let cst = ics::parse(ics)?;
     let calendar = cst.decode();

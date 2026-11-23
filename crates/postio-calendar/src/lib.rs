@@ -1,5 +1,5 @@
-//! Calendar invitations carried in mail: parses a `text/calendar` part and writes the
-//! `METHOD:REPLY` that answers one. A pure leaf; none of calcard's types cross its edge.
+//! Calendar objects and the invitations mail carries: read, expanded and answered. A pure leaf;
+//! no library type crosses its edge.
 
 mod event;
 mod expand;

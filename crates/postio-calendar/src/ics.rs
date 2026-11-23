@@ -10,7 +10,6 @@ use ical::value::IcalValue;
 
 use crate::CalendarError;
 
-/// A strict parse first; a calendar from the wild that only recovering reads is still read.
 pub(crate) fn parse(ics: &[u8]) -> Result<IcalCst<'_>, CalendarError> {
     if let Ok(cst) = IcalCst::parse(ics) {
         return Ok(cst);
@@ -35,7 +34,6 @@ pub(crate) fn events<'c, 'a>(
         .filter(|component| is_event(component))
 }
 
-/// In first-seen order, so a master and its overrides expand together.
 pub(crate) fn uids(calendar: &Ical<'_>) -> Vec<String> {
     let mut seen = BTreeSet::new();
     events(calendar)
@@ -44,7 +42,6 @@ pub(crate) fn uids(calendar: &Ical<'_>) -> Vec<String> {
         .collect()
 }
 
-/// The object's own zones, completed from the bundled database, Windows names included.
 pub(crate) fn zones(calendar: &Ical<'_>, through_year: i32) -> Vec<IcalTz> {
     ical::tzdb::zones(&calendar.components, through_year)
 }
@@ -98,7 +95,6 @@ pub(crate) fn param<'p>(
     prop.params.iter().find_map(pick)
 }
 
-/// A date or date-time as written, which is how `RECURRENCE-ID` names an instance.
 pub(crate) fn raw_value(prop: &IcalProp<'_>) -> String {
     match &prop.value {
         IcalValue::DateTime(at) => at.0.trim().to_owned(),
