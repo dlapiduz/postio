@@ -13,6 +13,8 @@ repository.workspace = true
 # off keeps JSCalendar and JSContact out.
 calcard = { version = "=0.3.14", default-features = false }
 chrono = { workspace = true, features = ["std"] }
+# Pinned exactly, as calcard was: new, and behind this crate's adapter (plan R2).
+ical-rs = { version = "=0.7.3", default-features = false, features = ["parser", "tzdb"] }
 postio-model = { workspace = true }
 thiserror = { workspace = true }
 postio-workspace-hack.workspace = true

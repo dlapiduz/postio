@@ -1,8 +1,12 @@
 use std::ops::Range;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Datelike, Utc};
+use ical::prop::IcalPropKind;
+use ical::recur::IcalRecurDateTime;
+use ical::recur::instant::IcalRecurTimeline;
+use ical::recur::set::IcalRecurZone;
 
-use crate::CalendarError;
+use crate::{CalendarError, MAX_OCCURRENCES, ics};
 
 /// An occurrence's times are UTC, except a floating or all-day one's, which are its wall clock
 /// read as UTC: resolved on the reader's clock when shown.
@@ -20,8 +24,54 @@ pub struct Occurrence {
 /// Every occurrence of every event in `ics` that overlaps `window`, in start order. The same
 /// window gives the same occurrences, so materialising twice, or in pieces, adds nothing new.
 pub fn expand(ics: &[u8], window: Range<DateTime<Utc>>) -> Result<Vec<Occurrence>, CalendarError> {
-    let _ = (ics, window);
-    Ok(Vec::new())
+    let cst = ics::parse(ics)?;
+    let calendar = cst.decode();
+    let events: Vec<_> = ics::events(&calendar).cloned().collect();
+    let zones = ics::zones(&calendar, window.end.year() + 1);
+    let (from, until) = (window.start.timestamp(), window.end.timestamp());
+    let mut occurrences = Vec::new();
+    for uid in ics::uids(&calendar) {
+        let recurs = events.iter().any(|event| {
+            ics::text(event, IcalPropKind::Uid).as_deref() == Some(uid.as_str())
+                && (ics::has(event, IcalPropKind::RRule)
+                    || ics::has(event, IcalPropKind::RDate)
+                    || ics::has(event, IcalPropKind::RecurrenceId))
+        });
+        let timeline = IcalRecurTimeline::of_uid(&events, &uid, &zones);
+        let utc = matches!(timeline.set().zone, IcalRecurZone::Utc);
+        let room = MAX_OCCURRENCES - occurrences.len();
+        occurrences.extend(
+            timeline
+                .expand(from, until)
+                .take(room)
+                .map(|instant| Occurrence {
+                    uid: uid.clone(),
+                    recurrence_id: recurs.then(|| identity(instant.id, instant.date, utc)),
+                    start: seconds(instant.start),
+                    end: seconds(instant.end),
+                    all_day: instant.date,
+                    floating: instant.floating && !instant.date,
+                }),
+        );
+        if occurrences.len() >= MAX_OCCURRENCES {
+            break;
+        }
+    }
+    occurrences.sort_by(|a, b| (a.start, &a.uid).cmp(&(b.start, &b.uid)));
+    Ok(occurrences)
+}
+
+fn identity(id: IcalRecurDateTime, date: bool, utc: bool) -> String {
+    let day = format!("{:04}{:02}{:02}", id.year, id.month, id.day);
+    if date {
+        return day;
+    }
+    let zone = if utc { "Z" } else { "" };
+    format!("{day}T{:02}{:02}{:02}{zone}", id.hour, id.minute, id.second)
+}
+
+fn seconds(at: i64) -> DateTime<Utc> {
+    DateTime::from_timestamp(at, 0).unwrap_or_default()
 }
 
 #[cfg(test)]

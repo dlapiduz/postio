@@ -1,13 +1,16 @@
 //! Calendar invitations carried in mail: parses a `text/calendar` part and writes the
 //! `METHOD:REPLY` that answers one. A pure leaf; none of calcard's types cross its edge.
 
+mod event;
 mod expand;
+mod ics;
 mod invitation;
 mod parse;
 mod reply;
 #[cfg(test)]
 mod test_support;
 
+pub use event::{Event, Status, parse_object};
 pub use expand::{Occurrence, expand};
 pub use invitation::{Answer, Attendee, EventTime, Invitation, Method, PartStat, Zone, supersedes};
 pub use parse::{CalendarError, parse};
