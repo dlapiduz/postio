@@ -312,3 +312,86 @@ fn a_source_fetched_from_the_server_arrives_and_shows_its_bytes() {
     );
     host.stop();
 }
+
+#[test]
+fn source_surface_makes_no_connection() {
+    use postio_model::test_corpus::Category;
+
+    let listener = postio_test_support::listener::Listener::start();
+    let rt = current_thread();
+    let scene = rt.block_on(async {
+        let scene = Scene::new().await;
+        let connection = scene.database.connect().await.expect("a connection");
+        let mut account = scene.account.clone();
+        account.incoming.host = "127.0.0.1".to_owned();
+        account.incoming.port = listener.port();
+        postio_storage::repository::AccountRepository::new(&connection)
+            .update(&mut account)
+            .await
+            .expect("the account points at the listener");
+        scene
+    });
+    let mut fixtures: Vec<&str> = test_corpus::by_category(Category::Hostile)
+        .into_iter()
+        .chain(test_corpus::by_category(Category::PromptInjection))
+        .map(|fixture| fixture.name())
+        .collect();
+    fixtures.sort_unstable();
+    fixtures.dedup();
+    assert!(
+        fixtures.len() >= 10,
+        "the hostile corpus is here: {fixtures:?}"
+    );
+    let host =
+        postio_host::Host::start(scene.database.clone(), scene.blobs.clone(), |wiring| wiring)
+            .expect("a host");
+    let client = host.connect(postio_client::protocol::ClientKind::Test);
+    for fixture in &fixtures {
+        let message = rt.block_on(scene.file(fixture, true));
+        let view = rt
+            .block_on(client.source_view(message, false))
+            .unwrap_or_else(|error| panic!("{fixture}: {error:?}"));
+        assert!(
+            !view.raw.segments.is_empty() && !view.headers.rows.is_empty(),
+            "{fixture}: every tab has its text"
+        );
+    }
+    host.stop();
+    listener.control();
+    assert_eq!(
+        listener.count(),
+        1,
+        "only the control's own connection: opening the surface reached the network"
+    );
+}
+
+#[test]
+fn the_source_surface_names_no_renderer() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let widgets = root.join("crates/postio-widgets/src/source");
+    let mut files = vec![root.join("crates/postio-ui/src/source.rs")];
+    files.extend(
+        std::fs::read_dir(&widgets)
+            .unwrap_or_else(|error| {
+                panic!("the surface's widgets in {}: {error}", widgets.display())
+            })
+            .map(|entry| entry.expect("a directory entry").path()),
+    );
+    for file in files {
+        let text = std::fs::read_to_string(&file).expect("readable source");
+        for refused in [
+            "postio_render",
+            "webkit",
+            "WebView",
+            "LinkButton",
+            "use_markup",
+            "set_markup",
+        ] {
+            assert!(
+                !text.contains(refused),
+                "{} names {refused}: the Source surface is text, never rendered or linked",
+                file.display()
+            );
+        }
+    }
+}
