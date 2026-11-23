@@ -11,4 +11,5 @@ mod one_keymap;
 mod reader_tokens;
 mod remote_blocked_document;
 mod sender_authenticity;
+mod source_view;
 mod tokens;

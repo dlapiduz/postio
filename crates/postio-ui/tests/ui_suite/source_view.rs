@@ -1,0 +1,265 @@
+use postio_model::test_corpus;
+use postio_model::{EmailAddress, headers};
+use postio_ui::source::{self, BodyState, Provider, RawState, Section, SourceInput, SourceView};
+
+const PROVIDER: Provider<'static> = Provider {
+    name: "Example Mail",
+    authserv_ids: &["mx.example.net"],
+};
+
+fn header_text(fixture: &str) -> String {
+    headers::block_of(test_corpus::load(fixture).bytes())
+        .expect("a header block")
+        .text
+}
+
+fn sender(fixture: &str) -> Vec<EmailAddress> {
+    test_corpus::load(fixture).parse().from
+}
+
+fn view_of(fixture: &str, provider: Option<Provider<'_>>) -> SourceView {
+    let text = header_text(fixture);
+    let from = sender(fixture);
+    source::view(&SourceInput {
+        subject: "Notes",
+        from: &from,
+        headers: Some(&text),
+        raw: Some(test_corpus::load(fixture).bytes()),
+        raw_state: RawState::Here,
+        body: BodyState::Here,
+        provider,
+        sent_by_you: false,
+        account: "Work",
+    })
+}
+
+fn section<'a>(view: &'a SourceView, title: &str) -> &'a Section {
+    view.verification
+        .sections
+        .iter()
+        .find(|section| section.title == title)
+        .unwrap_or_else(|| panic!("no {title:?} section in {:#?}", view.verification))
+}
+
+fn texts(section: &Section) -> Vec<&str> {
+    section
+        .lines
+        .iter()
+        .map(|line| line.text.as_str())
+        .collect()
+}
+
+const PROVIDER_CHECKED: &str = "What your provider checked";
+const NOT_BELIEVED: &str = "Headers Postio does not believe";
+const LOCAL: &str = "What Postio checked on this computer";
+const LIMITS: &str = "What this does not tell you";
+
+#[test]
+fn the_provider_is_named_and_each_result_says_its_domain() {
+    let view = view_of("auth-results-verified", Some(PROVIDER));
+    assert_eq!(view.title, "Source · Notes");
+    let provider = section(&view, PROVIDER_CHECKED);
+    assert_eq!(
+        provider.intro.as_deref(),
+        Some("Checked by Example Mail when the message arrived.")
+    );
+    assert_eq!(provider.mono.as_deref(), Some("mx.example.net"));
+    assert_eq!(
+        texts(provider),
+        [
+            "DKIM passed for example.org, which matches the From domain.",
+            "SPF passed for example.org, which is the From domain.",
+            "DMARC passed for example.org (policy: reject).",
+        ]
+    );
+}
+
+#[test]
+fn a_second_dkim_signature_and_a_sending_service_are_told_apart() {
+    let view = view_of("auth-results-two-dkim", Some(PROVIDER));
+    assert_eq!(
+        texts(section(&view, PROVIDER_CHECKED)),
+        [
+            "DKIM: 2 signatures. example.com passed and matches the From domain. esp.example passed and is not the From domain.",
+            "SPF passed for bounce.esp.example, which is not the From domain.",
+            "DMARC passed for example.com (policy: reject).",
+        ]
+    );
+}
+
+#[test]
+fn a_list_that_re_signed_names_its_domain_and_the_arc_chain() {
+    let view = view_of("auth-results-arc-list", Some(PROVIDER));
+    let provider = texts(section(&view, PROVIDER_CHECKED));
+    assert_eq!(
+        provider,
+        [
+            "DKIM: 2 signatures. lists.example.org passed and is not the From domain. example.com failed and matches the From domain.",
+            "SPF passed for lists.example.org, which is not the From domain.",
+            "DMARC failed for example.com (policy: none).",
+            "ARC: a forwarder, lists.example.org, sealed the results it saw. Your provider says the chain is intact.",
+        ]
+    );
+    let doubted = section(&view, NOT_BELIEVED);
+    assert!(doubted.quiet, "not-believed headers are drawn quieter");
+    assert_eq!(
+        doubted.intro.as_deref(),
+        Some("Written before your provider received the message. Anyone could have written these.")
+    );
+    assert_eq!(
+        doubted
+            .lines
+            .iter()
+            .map(|line| (line.text.as_str(), line.mono.as_deref()))
+            .collect::<Vec<_>>(),
+        [(
+            "ARC set 1: DKIM passed for example.com. SPF passed for example.com. DMARC passed for example.com.",
+            Some("mx.lists.example.org")
+        )]
+    );
+}
+
+#[test]
+fn a_forged_header_below_the_providers_is_listed_and_changes_nothing() {
+    let view = view_of("auth-results-forged-lower", Some(PROVIDER));
+    let provider = texts(section(&view, PROVIDER_CHECKED));
+    assert!(
+        provider.iter().any(|line| line.starts_with("DMARC failed")),
+        "{provider:?}"
+    );
+    assert!(
+        provider.iter().all(|line| !line.contains("passed")),
+        "{provider:?}"
+    );
+    let doubted = section(&view, NOT_BELIEVED);
+    assert_eq!(doubted.lines.len(), 1);
+    assert!(
+        doubted.lines[0].text.contains("DMARC passed"),
+        "{doubted:?}"
+    );
+}
+
+#[test]
+fn no_trusted_provider_header_says_so_and_doubts_every_header() {
+    let view = view_of("auth-results-verified", None);
+    let provider = section(&view, PROVIDER_CHECKED);
+    assert_eq!(
+        provider.intro.as_deref(),
+        Some("Your provider didn't add a result Postio can trust.")
+    );
+    assert!(provider.lines.is_empty());
+    assert_eq!(section(&view, NOT_BELIEVED).lines.len(), 1);
+}
+
+#[test]
+fn what_postio_checked_says_dkim_was_not_checked_here() {
+    let view = view_of("auth-results-verified", Some(PROVIDER));
+    assert_eq!(
+        texts(section(&view, LOCAL)),
+        [
+            "The display name is not another address or domain.",
+            "DKIM, SPF and DMARC were not checked on this computer. Your provider checked them when the mail arrived.",
+        ]
+    );
+    let impersonating = view_of("display-name-impersonation", Some(PROVIDER));
+    let local = texts(section(&impersonating, LOCAL));
+    assert!(local[0].starts_with("The name says "), "{local:?}");
+}
+
+#[test]
+fn the_fixed_line_closes_every_verification_tab() {
+    for fixture in [
+        "auth-results-verified",
+        "plain-text-simple",
+        "pgp-signed-good",
+    ] {
+        let view = view_of(fixture, Some(PROVIDER));
+        let last = view.verification.sections.last().expect("a section");
+        assert_eq!(last.title, LIMITS, "{fixture}");
+        assert_eq!(
+            texts(last),
+            [
+                "These checks are about the sending domain and the message's integrity. They don't tell you the person is who you think."
+            ]
+        );
+    }
+}
+
+#[test]
+fn a_message_without_its_body_says_the_checks_arrive_with_it() {
+    let from = sender("auth-results-verified");
+    let view = source::view(&SourceInput {
+        subject: "Notes",
+        from: &from,
+        headers: None,
+        raw: None,
+        raw_state: RawState::Offline,
+        body: BodyState::Partial,
+        provider: Some(PROVIDER),
+        sent_by_you: false,
+        account: "Work",
+    });
+    assert_eq!(
+        section(&view, PROVIDER_CHECKED).intro.as_deref(),
+        Some("The headers that carry these checks arrive with the message body.")
+    );
+    assert_eq!(
+        view.raw.state_line.as_deref(),
+        Some(
+            "This message isn't on this computer yet. Postio will show it when Work is back online."
+        )
+    );
+    assert_eq!(
+        view.headers.note.as_deref(),
+        Some("More headers arrive with the body.")
+    );
+}
+
+#[test]
+fn a_raw_fetch_in_flight_names_the_account() {
+    let from = sender("auth-results-verified");
+    let text = header_text("auth-results-verified");
+    let view = source::view(&SourceInput {
+        subject: "Notes",
+        from: &from,
+        headers: Some(&text),
+        raw: None,
+        raw_state: RawState::Fetching,
+        body: BodyState::Here,
+        provider: Some(PROVIDER),
+        sent_by_you: false,
+        account: "Work",
+    });
+    assert_eq!(
+        view.raw.state_line.as_deref(),
+        Some("Fetching the message from Work…")
+    );
+    assert!(
+        !section(&view, PROVIDER_CHECKED).lines.is_empty(),
+        "the stored headers still answer the Verification tab"
+    );
+}
+
+#[test]
+fn mail_the_person_sent_is_not_judged() {
+    let from = sender("auth-results-forged-lower");
+    let text = header_text("auth-results-forged-lower");
+    let view = source::view(&SourceInput {
+        subject: "Notes",
+        from: &from,
+        headers: Some(&text),
+        raw: None,
+        raw_state: RawState::Here,
+        body: BodyState::Here,
+        provider: Some(PROVIDER),
+        sent_by_you: true,
+        account: "Work",
+    });
+    let titles: Vec<&str> = view
+        .verification
+        .sections
+        .iter()
+        .map(|section| section.title.as_str())
+        .collect();
+    assert_eq!(titles, ["You sent this", LIMITS]);
+}

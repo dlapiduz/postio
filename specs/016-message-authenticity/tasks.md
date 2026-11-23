@@ -105,7 +105,7 @@ throwaway code is not merged.
 **Goal**: `V` opens Verification, Headers and Raw over what the store holds.
 **Independent test**: quickstart "Slice A".
 
-- [ ] T012 [P] [US1] Write failing cases in `crates/postio-ui/tests/ui_suite/source_view.rs`, one per row of the spec's "Every state" table and per Verification section:
+- [x] T012 [P] [US1] Write failing cases in `crates/postio-ui/tests/ui_suite/source_view.rs`, one per row of the spec's "Every state" table and per Verification section:
   - the provider named;
   - the not-believed headers listed;
   - "not checked on this computer";
