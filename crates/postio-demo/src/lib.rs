@@ -26,10 +26,11 @@ pub enum Seed {
     Search,
     Threads,
     Source,
+    Signed,
 }
 
 impl Seed {
-    pub const ALL: [Seed; 13] = [
+    pub const ALL: [Seed; 14] = [
         Seed::Small,
         Seed::Empty,
         Seed::LongNewsletter,
@@ -43,6 +44,7 @@ impl Seed {
         Seed::Search,
         Seed::Threads,
         Seed::Source,
+        Seed::Signed,
     ];
 
     pub fn id(self) -> &'static str {
@@ -60,6 +62,7 @@ impl Seed {
             Seed::Search => "search",
             Seed::Threads => "threads",
             Seed::Source => "source",
+            Seed::Signed => "signed",
         }
     }
 
@@ -98,11 +101,15 @@ pub async fn seeded(seed: Seed) -> (Store, AccountId) {
         | Seed::Outbox
         | Seed::DraftLeftOver
         | Seed::Backfilling
-        | Seed::Source => {
+        | Seed::Source
+        | Seed::Signed => {
             let (database, account) = demo().await;
             match seed {
                 Seed::LongNewsletter => treatment_demo(&database, account, "30").await,
-                Seed::Source => source_demo(&database, account).await,
+                Seed::Source => {
+                    source_demo(&database, account, SOURCE).await;
+                }
+                Seed::Signed => signed_demo(&database, account).await,
                 Seed::BareRecipients => {
                     let connection = database.connect().await.expect("a connection");
                     let messages = MessageRepository::new(&connection);
@@ -837,18 +844,57 @@ pub fn opened_parts() -> Vec<Attachment> {
 }
 
 const SOURCE: &[u8] = include_bytes!("../../postio-model/tests/corpus/auth-results-arc-list.eml");
+const SIGNED: &[u8] = include_bytes!("../../postio-model/tests/corpus/pgp-signed-good.eml");
+const SIGNED_KEY: &[u8] = include_bytes!("../../postio-model/tests/corpus/keys/ada-a.asc");
 
-fn source_bytes() -> &'static [u8] {
-    SOURCE
+pub fn store_source_blobs(blobs: &postio_storage::BlobStore) -> postio_storage::Result<()> {
+    blobs.put(SOURCE)?;
+    blobs.put(SIGNED)?;
+    Ok(())
 }
 
-pub fn store_source_blobs(
-    blobs: &postio_storage::BlobStore,
-) -> postio_storage::Result<postio_model::BlobId> {
-    blobs.put(source_bytes())
+pub async fn signed_demo(database: &Store, account: AccountId) {
+    let Some(message) = source_demo(database, account, SIGNED).await else {
+        return;
+    };
+    let connection = database.connect().await.expect("a connection");
+    let keys = postio_storage::repository::KeyRepository::new(&connection);
+    let ada = EmailAddress::new(None::<String>, "ada@example.com");
+    for key in postio_signature::keys_in(SIGNED_KEY) {
+        keys.record(&postio_storage::repository::NewKey {
+            fingerprint: &key.fingerprint,
+            kind: postio_storage::repository::KeyKind::OpenPgp,
+            keyblock: &key.keyblock,
+            primary_uid: key.primary_uid.as_deref(),
+            revoked: false,
+            addresses: std::slice::from_ref(&ada),
+            source: postio_storage::repository::KeySource::Autocrypt,
+            message: None,
+            at: 1_772_528_400,
+        })
+        .await
+        .expect("the signer's key");
+        keys.put_verdict(
+            message,
+            &postio_storage::repository::VerdictRow {
+                format: "pgp_mime".to_owned(),
+                scope: "whole".to_owned(),
+                status: "good".to_owned(),
+                reason: None,
+                fingerprint: Some(key.fingerprint.clone()),
+                checked_at: 1_772_701_200,
+            },
+        )
+        .await
+        .expect("its verdict");
+    }
 }
 
-pub async fn source_demo(database: &Store, account: AccountId) {
+pub async fn source_demo(
+    database: &Store,
+    account: AccountId,
+    source: &'static [u8],
+) -> Option<MessageId> {
     let connection = database.connect().await.expect("a connection");
     let messages = MessageRepository::new(&connection);
     let newest = RfcMessageId::new(format!(
@@ -862,7 +908,7 @@ pub async fn source_demo(database: &Store, account: AccountId) {
         .first()
         .copied()
     else {
-        return;
+        return None;
     };
     let scratch = tempfile::tempdir().expect("scratch for the blob");
     let blobs = postio_storage::BlobStore::open(
@@ -870,8 +916,8 @@ pub async fn source_demo(database: &Store, account: AccountId) {
         &postio_storage::test_support::blob_keys(),
     )
     .expect("a blob store");
-    let blob = store_source_blobs(&blobs).expect("the source");
-    let parsed = postio_model::mime::parse(source_bytes());
+    let blob = blobs.put(source).expect("the source");
+    let parsed = postio_model::mime::parse(source);
     if let Some(mut message) = messages.get(id).await.expect("a read") {
         let fixture = parsed
             .clone()
@@ -885,14 +931,9 @@ pub async fn source_demo(database: &Store, account: AccountId) {
             .set_body(
                 id,
                 &postio_storage::repository::StoredBody {
-                    text: Some(
-                        "The list rewrote the subject and added a footer, so Ada's own DKIM \
-                         signature broke on the way."
-                            .to_owned(),
-                    ),
+                    text: parsed.body.text.clone(),
                     html: None,
-                    headers: postio_model::headers::block_of(source_bytes())
-                        .map(|block| block.text),
+                    headers: postio_model::headers::block_of(source).map(|block| block.text),
                     headers_truncated: false,
                     encoding_problems: false,
                 },
@@ -901,6 +942,7 @@ pub async fn source_demo(database: &Store, account: AccountId) {
             .await
             .expect("its body");
     }
+    Some(id)
 }
 
 pub async fn treatment_demo(database: &Store, account: AccountId, screen: &str) {

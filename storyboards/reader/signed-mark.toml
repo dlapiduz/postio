@@ -3,8 +3,8 @@
 # key, and then it reads "Signed · accepted". Undo takes the acceptance back
 # (spec 016 US3, scenarios 1, 5 and 7).
 #
-# The `signed` seed files the corpus's good PGP/MIME message as the newest
-# inbox row, with its signer's key recorded from an Autocrypt header and the
+# The `signed` seed refiles the demo's fifth row as the corpus's good PGP/MIME
+# message, with its signer's key recorded from an Autocrypt header and the
 # verdict already checked. The mark is a word in the neutral chip style: no
 # lock, no tick, no accent.
 apps   = ["focus"]
@@ -14,6 +14,22 @@ source = { kind = "flow", ref = "specs/016-message-authenticity US3" }
 
 [[step]]
 wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+command = "next_message"
+check   = { keyboard.region = "list", cursor.index = 1 }
+
+[[step]]
+command = "next_message"
+check   = { keyboard.region = "list", cursor.index = 2 }
+
+[[step]]
+command = "next_message"
+check   = { keyboard.region = "list", cursor.index = 3 }
+
+[[step]]
+command = "next_message"
+check   = { keyboard.region = "list", cursor.index = 4 }
 
 [[step]]
 command = "open_message"

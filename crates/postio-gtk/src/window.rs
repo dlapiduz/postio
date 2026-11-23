@@ -3207,6 +3207,11 @@ impl FocusWindow {
                 if let Some(shown) = self.source_of().filter(|shown| messages.contains(shown)) {
                     self.refresh_source(shown);
                 }
+                if let Some(reading) = self.reading() {
+                    for message in messages {
+                        reading.header_changed(*message);
+                    }
+                }
             }
 
             _ => {}
@@ -5135,7 +5140,7 @@ impl FocusWindow {
         };
         let window = self.downgrade();
         glib::spawn_future_local(async move {
-            // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
+            // POSTIO-GLIB-SAFE: a client call is a oneshot receive (ADR 0041).
             let read = client.source_view(message, false).await;
             if let (Some(window), Ok(view)) = (window.upgrade(), read)
                 && let Some(dialog) = window
@@ -5163,7 +5168,7 @@ impl FocusWindow {
             },
             move |to| {
                 glib::spawn_future_local(async move {
-                    // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host answers on
+                    // POSTIO-GLIB-SAFE: a client call is a oneshot receive (ADR 0041).
                     let saved = client.export_messages(vec![(message, to)]).await;
                     let Some(window) = window.upgrade() else {
                         return;

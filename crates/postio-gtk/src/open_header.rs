@@ -189,7 +189,6 @@ impl HeaderCard {
         recipients(&self.cc_label, &self.cc, cc);
     }
 
-    /// The sentence is `postio_ui::reader::authenticity`'s (#1928).
     pub fn set_warning(&self, line: Option<&str>) {
         self.warning.set_text(line.unwrap_or(""));
         self.warning_row.set_visible(line.is_some());

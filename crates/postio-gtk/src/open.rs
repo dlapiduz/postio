@@ -1106,6 +1106,33 @@ impl OpenMessage {
 
     /// Only the open message is read, never the list. Same generation, nothing cleared first and
     /// the view left where it is, so "Downloading this message" goes straight to the body (#1788).
+    pub fn header_changed(&self, message: MessageId) {
+        if !self.is_open() || self.shown.get() != Some(message) {
+            return;
+        }
+        let client = self.client.clone();
+        let header_card = Rc::clone(&self.header_card);
+        let shown = Rc::clone(&self.shown);
+        glib::spawn_future_local(async move {
+            // POSTIO-GLIB-SAFE: a client call is a oneshot receive (ADR 0041).
+            let Ok(mut read) = client.readings(vec![message], false).await else {
+                return;
+            };
+            let Some(reading) = read.pop().filter(|_| shown.get() == Some(message)) else {
+                return;
+            };
+            header_card.set_warning(reading.authenticity.warning.as_deref());
+            header_card.set_mark(
+                reading.authenticity.mark,
+                reading
+                    .row
+                    .as_ref()
+                    .and_then(|row| row.from.first())
+                    .map_or("", |from| from.address.as_str()),
+            );
+        });
+    }
+
     pub fn body_landed(&self, message: MessageId) {
         if !self.is_open() || self.shown.get() != Some(message) || self.body.borrow().is_some() {
             return;

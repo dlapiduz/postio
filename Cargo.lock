@@ -5559,6 +5559,7 @@ dependencies = [
  "postio-index",
  "postio-model",
  "postio-search",
+ "postio-signature",
  "postio-storage",
  "postio-workspace-hack",
  "serde_json",
