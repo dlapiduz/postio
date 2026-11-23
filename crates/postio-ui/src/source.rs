@@ -110,6 +110,7 @@ pub struct Section {
 pub struct Line {
     pub text: String,
     pub mono: Option<String>,
+    pub action: Option<(postio_core::CommandId, String)>,
 }
 
 impl Line {
@@ -117,6 +118,7 @@ impl Line {
         Line {
             text: text.into(),
             mono: None,
+            action: None,
         }
     }
 }
@@ -640,6 +642,7 @@ fn doubted(report: &AuthReport) -> Line {
             None => said,
         },
         mono: Some(report.authserv_id.clone()),
+        action: None,
     }
 }
 
@@ -764,7 +767,13 @@ fn signature_section(signature: &SignatureInput) -> Section {
                 "You accepted this key for {address} on {}.",
                 at.format("%-d %B %Y")
             ))),
-            None => lines.push(Line::text(format!("Accept this key for {address}"))),
+            None => lines.push(Line {
+                action: Some((
+                    postio_core::CommandId::AcceptKey,
+                    format!("Accept this key for {address}"),
+                )),
+                ..Line::text("Not accepted yet.")
+            }),
         }
     }
     Section {
@@ -817,6 +826,9 @@ pub fn text(view: &SourceView, tab: Tab) -> String {
                     out.push_str(&format!("  {}\n", line.text));
                     if let Some(mono) = &line.mono {
                         out.push_str(&format!("    {mono}\n"));
+                    }
+                    if let Some((_, title)) = &line.action {
+                        out.push_str(&format!("    {title}\n"));
                     }
                 }
                 out.push('\n');

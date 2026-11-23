@@ -26,6 +26,9 @@ pub struct SourceDialog {
 
 struct Inner {
     dialog: adw::Dialog,
+    toasts: adw::ToastOverlay,
+    keymap: Keymap,
+    command: Rc<dyn Fn(CommandId)>,
     title: gtk::Label,
     tabs: Vec<gtk::Button>,
     stack: gtk::Stack,
@@ -130,10 +133,12 @@ impl SourceDialog {
         content.append(&strip);
         content.append(&find);
         content.append(&stack);
+        let toasts = adw::ToastOverlay::new();
+        toasts.set_child(Some(&content));
         let dialog = adw::Dialog::builder()
             .content_width(WIDTH)
             .content_height(HEIGHT)
-            .child(&content)
+            .child(&toasts)
             .build();
         dialog.set_widget_name(DIALOG_NAME);
         let back = Rc::clone(&command);
@@ -141,6 +146,9 @@ impl SourceDialog {
 
         let inner = Rc::new(Inner {
             dialog,
+            toasts,
+            keymap: keymap.clone(),
+            command: command.clone(),
             title,
             tabs,
             stack,
@@ -203,6 +211,10 @@ impl SourceDialog {
 
     pub fn dialog(&self) -> &adw::Dialog {
         &self.inner.dialog
+    }
+
+    pub fn toast_overlay(&self) -> adw::ToastOverlay {
+        self.inner.toasts.clone()
     }
 
     pub fn subject(&self) -> String {
@@ -308,7 +320,9 @@ impl SourceDialog {
             inner.verification.remove(&child);
         }
         for section in &view.verification.sections {
-            inner.verification.append(&section_widget(section));
+            inner
+                .verification
+                .append(&section_widget(section, &inner.keymap, &inner.command));
         }
         draw_headers(&inner.headers, &view);
         let folds = draw_raw(&inner.raw, &view);
@@ -372,7 +386,7 @@ fn plain(text: &str) -> gtk::Label {
     label
 }
 
-fn section_widget(section: &Section) -> gtk::Box {
+fn section_widget(section: &Section, keymap: &Keymap, command: &Rc<dyn Fn(CommandId)>) -> gtk::Box {
     let block = gtk::Box::new(gtk::Orientation::Vertical, space::S2);
     block.add_css_class("postio-source-section");
     let title = plain(&section.title);
@@ -395,6 +409,19 @@ fn section_widget(section: &Section) -> gtk::Box {
             code.add_css_class("monospace");
             code.add_css_class("dim-label");
             row.append(&code);
+        }
+        if let Some((id, title)) = &line.action {
+            let action = gtk::Button::new();
+            button::style(&action, Kind::Secondary, Size::Regular);
+            action.set_halign(gtk::Align::Start);
+            keyhint::dress(
+                &action,
+                title,
+                postio_ui::hints::key(keymap, *id).as_deref(),
+            );
+            let (run, id) = (Rc::clone(command), *id);
+            action.connect_clicked(move |_| run(id));
+            row.append(&action);
         }
         if section.quiet {
             row.add_css_class("dim-label");

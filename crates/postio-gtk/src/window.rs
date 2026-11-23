@@ -5134,6 +5134,12 @@ impl FocusWindow {
         dialog.dialog().connect_closed(move |_| {
             if let Some(window) = weak.upgrade() {
                 window.imp().source.replace(None);
+                window.imp().toast.set_over(
+                    window
+                        .reading()
+                        .filter(|reading| reading.is_open())
+                        .map(|reading| reading.toast_overlay()),
+                );
                 window.sync_surfaces();
                 if !window.reading().is_some_and(|reading| reading.is_open()) {
                     window.focus_cursor_soon();
@@ -5141,6 +5147,7 @@ impl FocusWindow {
             }
         });
         dialog.dialog().present(Some(self));
+        self.imp().toast.set_over(Some(dialog.toast_overlay()));
         dialog.show_tab(dialog.tab());
         self.imp().source.replace(Some((message, dialog)));
         self.sync_surfaces();

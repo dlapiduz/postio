@@ -253,6 +253,26 @@ pub fn only(root: &impl gtk::prelude::IsA<gtk::Widget>, class: &str) -> gtk::Wid
     found.remove(0)
 }
 
+pub fn buttons(widget: &impl gtk::prelude::IsA<gtk::Widget>) -> Vec<gtk::Button> {
+    use gtk::prelude::*;
+    let mut found = Vec::new();
+    let mut stack = vec![widget.as_ref().clone()];
+    while let Some(widget) = stack.pop() {
+        if !widget.is_mapped() {
+            continue;
+        }
+        if let Some(button) = widget.downcast_ref::<gtk::Button>() {
+            found.push(button.clone());
+        }
+        let mut child = widget.first_child();
+        while let Some(next) = child {
+            child = next.next_sibling();
+            stack.push(next);
+        }
+    }
+    found
+}
+
 pub fn texts(widget: &impl gtk::prelude::IsA<gtk::Widget>) -> Vec<String> {
     use gtk::prelude::*;
     let mut said = Vec::new();

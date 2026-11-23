@@ -214,3 +214,44 @@ pub fn import_key_with_none_attached_asks_for_a_file_and_says_what_it_kept() {
         assert_eq!(*asked.borrow(), [postio_gtk::chooser::SavePick::Key]);
     });
 }
+
+pub fn accepting_from_the_source_is_a_button_and_its_notice_shows_over_the_source() {
+    use gtk::prelude::*;
+    crate::gtk_case(async {
+        let fixture = Fixture::empty().await;
+        let (message, _) = fixture.file_from_ada("Budget", "The numbers.", 5).await;
+        fixture
+            .write_body(message, "The numbers are attached.")
+            .await;
+        fixture.write_raw(message, RAW).await;
+        fixture.write_verdict(message, "good").await;
+        let (window, _client) = fixture.open().await;
+        support::rows_shown(&window, 1).await;
+        support::keys(&window, &["j", "V"]);
+        assert!(crate::settle_until(async || on(&window, Tab::Verification)).await);
+        let source = window.source().expect("the source");
+        let accept = support::buttons(source.dialog())
+            .into_iter()
+            .find(|button| {
+                support::texts(button)
+                    .iter()
+                    .any(|text| text.starts_with("Accept this key"))
+            })
+            .expect("Accept is a button on the Verification tab");
+        assert!(
+            support::texts(&accept).iter().any(|text| text == "a"),
+            "it wears its key: {:?}",
+            support::texts(&accept)
+        );
+        accept.emit_clicked();
+        assert!(
+            crate::settle_until(async || window.toast_showing().is_some()).await,
+            "accepting says so"
+        );
+        assert_eq!(
+            window.toast_host(),
+            Some(source.toast_overlay()),
+            "the notice and its undo show over the Source, not behind it"
+        );
+    });
+}

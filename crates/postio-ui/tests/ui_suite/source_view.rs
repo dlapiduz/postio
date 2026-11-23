@@ -43,6 +43,15 @@ fn section<'a>(view: &'a SourceView, title: &str) -> &'a Section {
         .unwrap_or_else(|| panic!("no {title:?} section in {:#?}", view.verification))
 }
 
+fn actions(section: &Section) -> Vec<(postio_core::CommandId, &str)> {
+    section
+        .lines
+        .iter()
+        .filter_map(|line| line.action.as_ref())
+        .map(|(id, title)| (*id, title.as_str()))
+        .collect()
+}
+
 fn texts(section: &Section) -> Vec<&str> {
     section
         .lines
@@ -583,8 +592,16 @@ fn a_good_signature_says_whose_key_where_it_came_from_and_what_it_does_not_prove
         texts(signature),
         [
             "Signed means this message hasn't changed since this key signed it. It doesn't tell you who holds that key.",
-            "Accept this key for ada@example.com",
+            "Not accepted yet.",
         ]
+    );
+    assert_eq!(
+        actions(signature),
+        [(
+            postio_core::CommandId::AcceptKey,
+            "Accept this key for ada@example.com"
+        )],
+        "acceptance is a control, not a sentence"
     );
     let local = texts(section(&view, LOCAL));
     assert!(
@@ -676,7 +693,10 @@ fn a_key_from_the_gnupg_keyring_is_signed_until_accepted_whatever_gnupg_trusts()
         Some("Good signature by a key from your GnuPG keyring, first seen 3 March 2026.")
     );
     assert!(
-        texts(signature).contains(&"Accept this key for ada@example.com"),
+        actions(signature).contains(&(
+            postio_core::CommandId::AcceptKey,
+            "Accept this key for ada@example.com"
+        )),
         "{:?}",
         texts(signature)
     );
@@ -837,7 +857,7 @@ fn a_good_s_mime_signature_names_its_certificate_issuer_and_unchecked_revocation
         "{lines:?}"
     );
     assert!(
-        !lines.iter().any(|line| line.starts_with("Accept this key")),
+        actions(signature).is_empty(),
         "a certificate rests on its authority, not on an acceptance: {lines:?}"
     );
 }

@@ -725,6 +725,11 @@ const CASES: &[(&str, fn())] = &[
     ),
     ("view_source::signed_mark", view_source::signed_mark as fn()),
     (
+        "view_source::accepting_from_the_source_is_a_button_and_its_notice_shows_over_the_source",
+        view_source::accepting_from_the_source_is_a_button_and_its_notice_shows_over_the_source
+            as fn(),
+    ),
+    (
         "view_source::import_key_with_none_attached_asks_for_a_file_and_says_what_it_kept",
         view_source::import_key_with_none_attached_asks_for_a_file_and_says_what_it_kept as fn(),
     ),
