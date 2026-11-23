@@ -358,6 +358,44 @@ pub fn folders_arrive(
     }
 }
 
+/// The host answers the places read, as `perform` builds it: every folder as
+/// an entry, Snoozed and Flagged, `labels` with their counts, and the Outbox
+/// of each account with something waiting.
+pub fn places_arrive(
+    app: &mut App,
+    opened: &[Effect],
+    folders: &[Mailbox],
+    labels: &[(postio_model::Label, u32)],
+    outbox: &[(AccountId, u32)],
+) {
+    use postio_ui::places as rules;
+    for (ticket, request) in asked(opened) {
+        if request != postio_focus::Request::Places {
+            continue;
+        }
+        let mut read = postio_focus::PlacesRead::default();
+        for folder in folders {
+            read.folders.push((folder.id, rules::place_name(folder)));
+            read.places.push(rules::mailbox_place(folder));
+            read.entries.push(rules::mailbox_entry(folder));
+        }
+        for (account, waiting) in outbox.iter().filter(|(_, waiting)| *waiting > 0) {
+            read.entries.push(rules::outbox_entry(*account, *waiting));
+        }
+        for (label, held) in labels {
+            read.entries.push(rules::label_entry(label, Some(*held)));
+            read.places.push(rules::label_place(label));
+        }
+        for role in [MailboxRole::Snoozed, MailboxRole::Flagged] {
+            read.entries.push(rules::view_entry(role, None));
+        }
+        update(
+            app,
+            Input::FocusReply(ticket, postio_focus::Reply::Places(Ok(read))),
+        );
+    }
+}
+
 /// The host says `scope` has `total` rows.
 pub fn open_scope(app: &mut App, scope: ListScope, total: u32) {
     app.open_for_tests(scope, total);

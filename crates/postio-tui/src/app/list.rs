@@ -39,6 +39,8 @@ impl App {
     fn show_intent(&mut self, intent: Intent) -> Vec<Effect> {
         match intent {
             Intent::ReplaceSource { total } => {
+                self.scope = self.ctl.scope().or(self.scope);
+                self.account = self.scope.and_then(|scope| self.account_of(scope));
                 let stamp = self.list.reset(total);
                 self.cursor = 0;
                 self.top = 0;
@@ -112,7 +114,10 @@ impl App {
                 vec![Effect::Redraw]
             }
             Intent::Toast { text, kind } => self.toast(&text, &kind),
-            other => self.show_picker_intent(&other).unwrap_or_default(),
+            other => self
+                .show_picker_intent(&other)
+                .or_else(|| self.show_places_intent(&other))
+                .unwrap_or_default(),
         }
     }
 
@@ -226,7 +231,15 @@ impl App {
     }
 
     pub(crate) fn counts_for_tests(&mut self, counts: postio_client::protocol::FocusCounts) {
+        if let Said::Ask(ticket, _) = self.ctl.refresh_counts() {
+            let reply = postio_focus::Reply::FocusCounts(Ok(counts));
+            let _ = self.tell(postio_focus::Input::Reply(ticket, reply));
+        }
         self.counts = Some(counts);
+    }
+
+    pub(crate) fn folders_for_tests(&self) -> Vec<postio_model::mailbox::Mailbox> {
+        self.folders.clone()
     }
 
     /// Deliver every page of the list from `row_at`; how many pages.

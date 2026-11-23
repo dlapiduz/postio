@@ -327,24 +327,20 @@ pub fn state(state: &str, width: u16, height: u16) -> (App, Colour) {
             typed(&mut app, "ar");
         }
         "folders" => {
-            typed(&mut app, "gl");
+            let opened = crate::test_support::type_text(&mut app, "gl");
             let mut atlas = crate::test_support::label(7, "Atlas");
             atlas.color = Some("#3584e4".into());
-            update(
+            let folders = app.folders_for_tests();
+            crate::test_support::places_arrive(
                 &mut app,
-                Input::PlaceDetails(crate::places::PlaceDetails {
-                    labels: vec![
-                        atlas,
-                        crate::test_support::label(8, "Harbor"),
-                        crate::test_support::label(9, "Kitchen reno"),
-                    ],
-                    label_counts: vec![
-                        (postio_model::LabelId::new(7), 12),
-                        (postio_model::LabelId::new(8), 5),
-                    ],
-                    correspondents: Vec::new(),
-                    outbox: vec![(AccountId::new(1), 2)],
-                }),
+                &opened,
+                &folders,
+                &[
+                    (atlas, 12),
+                    (crate::test_support::label(8, "Harbor"), 5),
+                    (crate::test_support::label(9, "Kitchen reno"), 0),
+                ],
+                &[(AccountId::new(1), 2)],
             );
         }
         "snooze" => {

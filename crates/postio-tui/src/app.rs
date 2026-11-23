@@ -16,6 +16,7 @@ mod find;
 mod list;
 mod open;
 mod picker;
+mod places;
 mod rules;
 mod surface;
 
@@ -511,11 +512,13 @@ impl std::fmt::Debug for App {
 
 impl App {
     pub fn new(size: (u16, u16), keys: Keys) -> App {
+        let mut ctl = postio_focus::FocusController::new(crate::focus::policy());
+        ctl.handle(postio_focus::Input::Keymap(keys.keymap().clone()));
         App {
             size,
             keys,
             list: ListWindow::new(),
-            ctl: postio_focus::FocusController::new(crate::focus::policy()),
+            ctl,
             selection_words: None,
             cursor: 0,
             top: 0,
@@ -835,6 +838,7 @@ impl App {
 
     pub fn rekey(&mut self, keys: Keys) {
         self.keys = keys;
+        self.tell(postio_focus::Input::Keymap(self.keys.keymap().clone()));
     }
 
     pub fn settings(&self) -> Option<&crate::settings::Settings> {
@@ -1093,10 +1097,7 @@ impl App {
                 Pointer::Click { hit, .. } if !matches!(hit.target, Target::PlaceRow(_)) => {
                     return Vec::new();
                 }
-                Pointer::Wheel { down, .. } => {
-                    self.with_folders(|folders, _, reach| folders.wheel(down, reach));
-                    return vec![Effect::Redraw];
-                }
+                Pointer::Wheel { down, .. } => return self.folders_wheel(down),
                 Pointer::Click { .. } => {}
             }
         }
@@ -1541,9 +1542,6 @@ impl App {
             .map(postio_ui::places::label_place)
             .collect();
         let names = postio_ui::names::Names::new(&details.correspondents);
-        if let Some(folders) = self.places_box.as_mut() {
-            folders.learn(details.clone());
-        }
         let step = self.bar.as_mut().map(|bar| {
             bar.learn(labels, names);
             bar.places_known()
@@ -1554,94 +1552,11 @@ impl App {
         }
     }
 
-    pub fn folders(&self) -> Option<(&crate::folders::Folders, crate::folders::Reach<'_>)> {
-        Some((self.places_box.as_ref()?, self.folders_reach()))
-    }
-
     pub fn filtering(&self) -> (bool, Option<u32>) {
         (
             self.features.filtering,
             self.counts.map(|counts| counts.filtered_today),
         )
-    }
-
-    fn folders_reach(&self) -> crate::folders::Reach<'_> {
-        crate::folders::Reach {
-            folders: &self.folders,
-            filtered_today: self
-                .features
-                .filtering
-                .then(|| self.counts.map_or(0, |counts| counts.filtered_today)),
-        }
-    }
-
-    fn open_folders(&mut self) -> Vec<Effect> {
-        let from = match (&self.places_box, self.focus) {
-            (Some(open), _) => open.from(),
-            (None, Focus::Palette) => Focus::List,
-            (None, focus) => focus,
-        };
-        self.places_box = Some(crate::folders::Folders::open(from));
-        self.focus = Focus::Folders;
-        vec![Effect::ReadPlaceDetails, Effect::Redraw]
-    }
-
-    fn with_folders<T>(
-        &mut self,
-        f: impl FnOnce(&mut crate::folders::Folders, &mut Keys, &crate::folders::Reach<'_>) -> T,
-    ) -> Option<T> {
-        let mut open = self.places_box.take()?;
-        let reach = crate::folders::Reach {
-            folders: &self.folders,
-            filtered_today: self
-                .features
-                .filtering
-                .then(|| self.counts.map_or(0, |counts| counts.filtered_today)),
-        };
-        let out = f(&mut open, &mut self.keys, &reach);
-        self.places_box = Some(open);
-        Some(out)
-    }
-
-    fn folders_key(&mut self, key: &KeyEvent) -> Vec<Effect> {
-        match self.with_folders(|folders, keys, reach| folders.key(key, keys, reach)) {
-            Some(step) => self.folders_step(step),
-            None => Vec::new(),
-        }
-    }
-
-    fn folders_click(&mut self, index: usize) -> Vec<Effect> {
-        let step = self
-            .places_box
-            .as_ref()
-            .map(|open| open.go(index, &self.folders_reach()));
-        match step {
-            Some(step) => self.folders_step(step),
-            None => Vec::new(),
-        }
-    }
-
-    fn folders_step(&mut self, step: crate::folders::Step) -> Vec<Effect> {
-        use crate::folders::Step;
-        match step {
-            Step::Stay => vec![Effect::Redraw],
-            Step::Close => self.close_folders(),
-            Step::Go(destination, name) => {
-                self.close_folders();
-                self.go_destination(destination, &name)
-            }
-            Step::Run(command) => {
-                self.close_folders();
-                self.command(command.as_str())
-            }
-        }
-    }
-
-    fn close_folders(&mut self) -> Vec<Effect> {
-        if let Some(open) = self.places_box.take() {
-            self.focus = open.from();
-        }
-        vec![Effect::Redraw]
     }
 
     fn context_of(focus: Focus) -> postio_core::Context {
@@ -2926,6 +2841,7 @@ impl App {
             .map(|account| account.id)
             .collect();
         self.tell(postio_focus::Input::Accounts(reach));
+        let told = self.tell(postio_focus::Input::Config(self.features.focus()));
         if self.last_synced.is_none() {
             self.last_synced = contents
                 .folders
@@ -2961,6 +2877,7 @@ impl App {
             self.focus = Focus::List;
         }
         let mut effects = vec![Effect::Redraw];
+        effects.extend(told);
         if self.scope.is_none()
             && self.first_run.is_none()
             && contents

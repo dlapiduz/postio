@@ -168,12 +168,11 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
                 &mut hits,
             );
         }
-        if let Some((open, reach)) = app.folders() {
+        if let Some(open) = app.folders() {
             folders::draw(
                 frame,
                 area,
                 open,
-                &reach,
                 &|command| app.hint(command),
                 theme,
                 &mut hits,
