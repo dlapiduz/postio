@@ -184,7 +184,7 @@ scenario 5.
   - `egress_log` rows with `caldav`.
 
   Then implement the queue drain and the poll in `crates/postio-sync/src/`.
-- [ ] T035 [US4] Add the scheduling path to RSVP and invitations: with `calendars.schedules`, a PUT and no mail. Add the case to `crates/postio-host/tests/host_suite/calendar_invitations.rs`
+- [x] T035 [US4] Add the scheduling path to RSVP and invitations: with `calendars.schedules`, a PUT and no mail. Add the case to `crates/postio-host/tests/host_suite/calendar_invitations.rs`
 - [ ] T036 [US4] Settings: turn on an account's calendars, show or hide each, the default reminder, "Enter a calendar address". Do this in the settings model in `crates/postio-ui/src/` and each frontend, with cases. Show the conflict state with "Keep this one" for each version.
 
 ## Phase 9: User Story 5, reminders (P2)

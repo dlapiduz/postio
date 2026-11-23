@@ -564,6 +564,20 @@ impl CalendarRepository<'_> {
         }
     }
 
+    pub async fn held_uid(&self, calendar: CalendarId, uid: &str) -> Result<Option<HeldEvent>> {
+        let id: Option<i64> = sql::first(
+            self.connection,
+            "SELECT id FROM events WHERE calendar_id = ?1 AND uid = ?2",
+            bind![calendar.get(), uid.to_owned()],
+            |row| row.col(0),
+        )
+        .await?;
+        match id {
+            Some(id) => self.held(EventId::new(id)).await,
+            None => Ok(None),
+        }
+    }
+
     pub async fn unsettled(&self, event: EventId) -> Result<bool> {
         sql::one(
             self.connection,
