@@ -5716,6 +5716,7 @@ dependencies = [
  "postio-runtime",
  "postio-search",
  "postio-session",
+ "postio-signature",
  "postio-smtp",
  "postio-storage",
  "postio-sync",
@@ -5730,6 +5731,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "turso",
 ]
 
 [[package]]

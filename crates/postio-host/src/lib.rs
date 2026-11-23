@@ -2373,6 +2373,7 @@ pub mod compose;
 pub mod contacts;
 pub mod export;
 mod focus;
+pub mod gnupg;
 pub mod maintenance;
 pub mod notify;
 pub mod parts;

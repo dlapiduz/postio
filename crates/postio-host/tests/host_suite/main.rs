@@ -12,6 +12,7 @@
 mod auto_empty;
 mod backend_choice;
 mod e2e;
+mod gnupg_keyring;
 mod measurement;
 mod oauth;
 mod oauth_signin;

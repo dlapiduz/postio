@@ -188,8 +188,8 @@ throwaway code is not merged.
   - a blob whose stated length overruns.
 
   Implement `keyblocks_from_pubring_gpg` and `keyblocks_from_keybox` there. They are bounds-checked, and never panic.
-- [ ] T046 [US5] ⛔ S3 Read keyboxd's `public-keys.d/pubring.db` read-only in `crates/postio-host/src/gnupg.rs`, in the shape S3 recorded, with a case over a database the test builds
-- [ ] T047 [US5] Write failing cases in `crates/postio-host/tests/host_suite/gnupg_keyring.rs` over a temporary `GNUPGHOME`, one per format. Assert:
+- [x] T046 [US5] ⛔ S3 Read keyboxd's `public-keys.d/pubring.db` read-only in `crates/postio-host/src/gnupg.rs`, in the shape S3 recorded, with a case over a database the test builds
+- [x] T047 [US5] Write failing cases in `crates/postio-host/tests/host_suite/gnupg_keyring.rs` over a temporary `GNUPGHOME`, one per format. Assert:
   - every path opened, and never `private-keys-v1.d/`, `secring.gpg`, `trustdb.gpg` or a lock file;
   - no process spawned;
   - the switch off and on;
