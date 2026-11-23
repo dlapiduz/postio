@@ -523,7 +523,6 @@ fn save_and_send_queues_one_invitation_behind_the_window_and_undo_takes_both_bac
         None::<String>,
         "quinn@example.net",
     )];
-    let before = Utc::now();
 
     answer(
         &world,
@@ -563,9 +562,10 @@ fn save_and_send_queues_one_invitation_behind_the_window_and_undo_takes_both_bac
             .next_attempt_at
             .expect("held back")
     });
-    assert!(
-        not_before
-            >= before + chrono::Duration::from_std(postio_core::command::RSVP_WINDOW).unwrap()
+    assert_eq!(
+        (not_before - invitation.updated_at).num_seconds(),
+        postio_core::command::RSVP_WINDOW.as_secs() as i64,
+        "held back for exactly the undo window"
     );
     assert!(
         egress(&world).is_empty(),
