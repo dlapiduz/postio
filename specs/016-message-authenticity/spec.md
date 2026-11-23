@@ -681,8 +681,9 @@ and its undo.
   address (D4, D4a). The mark MUST open the Verification tab, and MUST NOT be
   a lock, a tick or any icon alone.
 - **FR-025a**: The reader's header MUST draw the warning line, and no mark,
-  for a bad signature, and for a valid signature by a key or certificate
-  other than the one the person accepted for that address. It MUST draw no
+  for a bad signature, for a signature by a revoked key, and for a valid
+  signature by a key or certificate other than the one the person accepted
+  for that address. It MUST draw no
   mark for a signature that cannot be checked, is not here yet, or covers
   only part of the message.
 - **FR-026**: S/MIME signatures MUST be verified on this computer against the
