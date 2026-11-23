@@ -436,12 +436,20 @@ impl Surfaces {
             self.stepping = Some(stepping);
             return None;
         }
-        if rows.is_empty() {
-            self.remove(SurfaceKind::Message);
-            return Some(Landing::Close);
+        // A digest's row is no message to read: the window goes on to the nearest message below,
+        // then above. A row not read yet is taken as one.
+        let reads = |at: &u32| rows.facts(*at).is_none_or(|row| !row.digest);
+        let from = stepping.index.min(rows.len().saturating_sub(1));
+        let next = (from..rows.len())
+            .find(reads)
+            .or_else(|| (0..from).rev().find(reads));
+        match next {
+            Some(index) => Some(Landing::Open(index)),
+            None => {
+                self.remove(SurfaceKind::Message);
+                Some(Landing::Close)
+            }
         }
-        let index = stepping.index.min(rows.len() - 1);
-        Some(Landing::Open(index))
     }
 }
 
