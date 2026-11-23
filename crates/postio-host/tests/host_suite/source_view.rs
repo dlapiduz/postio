@@ -104,9 +104,10 @@ fn a_local_source_opens_in_a_bounded_number_of_reads() {
                 .any(|segment| matches!(segment, RawSegment::Fold { .. })),
             "the large part is folded"
         );
-        assert!(
-            counts.statements <= 6,
-            "the message row, its body, its account: {counts:?}"
+        assert_eq!(
+            counts.statements, 8,
+            "keyed lookups only: the message row with its attachments, labels and recipients, \
+             its body, and its account with identities and signatures: {counts:?}"
         );
         assert!(counts.rows <= 8, "no mailbox scan: {counts:?}");
     });
@@ -125,16 +126,14 @@ fn absent_bytes_say_fetching_at_once_and_ask_for_the_fetch() {
             opened.view.raw.state_line.as_deref(),
             Some(format!("Fetching the message from {}…", scene.account.display_name).as_str())
         );
-        assert!(
-            opened
-                .view
-                .verification
-                .sections
-                .first()
-                .is_some_and(|section| !section.lines.is_empty()),
-            "the stored header block still answers Verification: {:#?}",
-            opened.view.verification
-        );
+        let doubted = opened
+            .view
+            .verification
+            .sections
+            .iter()
+            .find(|section| section.title == "Headers Postio does not believe")
+            .expect("the stored header block still answers Verification");
+        assert_eq!(doubted.lines.len(), 1, "{doubted:#?}");
     });
 }
 

@@ -375,6 +375,12 @@ pub enum Req {
     SweepPreview,
     /// Fetched from the server on this request when never downloaded.
     RawSource(MessageId),
+    /// Answered from the store at once; absent bytes start a fetch that ends in a whole-message
+    /// `BodyLoaded`.
+    SourceView {
+        message: MessageId,
+        offline: bool,
+    },
     Surfaced,
     /// Fails with a sentence when no `[focus.vault]` is configured.
     Vault {
@@ -581,6 +587,7 @@ pub enum Resp {
     DigestLikeThis(Option<LikeThisRule>),
     DigestSummary(Option<postio_model::summary::DigestSummary>),
     RawSource(Vec<u8>),
+    SourceView(Box<postio_ui::source::SourceView>),
     Vault(VaultPicture),
     Captured(postio_vault::Captured),
     /// The sentence is for the user.

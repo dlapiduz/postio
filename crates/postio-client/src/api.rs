@@ -190,6 +190,7 @@ impl Req {
             Req::SaveAccount { .. } => "SaveAccount",
             Req::SweepPreview => "SweepPreview",
             Req::RawSource(_) => "RawSource",
+            Req::SourceView { .. } => "SourceView",
             Req::Surfaced => "Surfaced",
             Req::DigestPreview { .. } => "DigestPreview",
             Req::DigestSummary(_) => "DigestSummary",
@@ -1616,6 +1617,22 @@ impl Client {
             only!(Resp::RawSource),
         )
         .await
+    }
+
+    /// Never waits on the network: bytes not here come back as a fetch in flight, and a
+    /// whole-message `Event::BodyLoaded` says when to ask again.
+    pub async fn source_view(
+        &self,
+        message: MessageId,
+        offline: bool,
+    ) -> Result<postio_ui::source::SourceView, StoreError> {
+        self.read(
+            Req::SourceView { message, offline },
+            "the message's source",
+            only!(Resp::SourceView),
+        )
+        .await
+        .map(|view| *view)
     }
 
     pub async fn surfaced(&self) -> Result<Vec<postio_model::listing::Surfaced>, StoreError> {

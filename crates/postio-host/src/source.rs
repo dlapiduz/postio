@@ -1,0 +1,86 @@
+//! The Source surface's read: one view over what the store holds, built without waiting on the
+//! network. Raw bytes not here are a fetch the caller starts, from the account's own server (D5).
+
+use postio_model::MessageId;
+use postio_storage::repository::{AccountRepository, MessageRepository};
+use postio_storage::{BlobStore, Store};
+use postio_ui::source::{BodyState, Provider, RawState, SourceInput, SourceView};
+
+pub struct Opened {
+    pub view: SourceView,
+    /// The bytes are not here and the account can be asked for them.
+    pub fetch: bool,
+}
+
+/// # Errors
+///
+/// A sentence for the person when the message is gone or the store cannot be read.
+pub async fn view(
+    database: &Store,
+    blobs: &BlobStore,
+    message: MessageId,
+    offline: bool,
+) -> Result<Opened, String> {
+    let connection = database.read().await.map_err(|error| error.to_string())?;
+    let repository = MessageRepository::new(&connection);
+    let row = repository
+        .get(message)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or("That message is no longer here")?;
+    let body = if row.sync.body_state.has_body() {
+        BodyState::Here
+    } else {
+        BodyState::Partial
+    };
+    let headers = match body {
+        BodyState::Here => repository
+            .body(message)
+            .await
+            .map_err(|error| error.to_string())?
+            .and_then(|stored| stored.headers),
+        BodyState::Partial => None,
+    };
+    let account = AccountRepository::new(&connection)
+        .get(row.account_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    drop(connection);
+    let raw = row
+        .raw_blob_id
+        .as_ref()
+        .and_then(|blob| blobs.get(blob).ok());
+    let preset = account.as_ref().and_then(|account| {
+        postio_account::discovery::preset_for_imap_host(&account.incoming.host)
+    });
+    let authserv_ids: Vec<&str> = preset
+        .map(|preset| preset.authserv_ids().iter().map(String::as_str).collect())
+        .unwrap_or_default();
+    let sent_by_you = account.as_ref().is_some_and(|account| {
+        std::iter::once(&account.address)
+            .chain(account.identities.iter().map(|identity| &identity.address))
+            .any(|own| row.from.iter().any(|from| from.same_address(own)))
+    });
+    let fetch = raw.is_none() && !offline;
+    let view = postio_ui::source::view(&SourceInput {
+        subject: row.subject.as_deref().unwrap_or("(no subject)"),
+        from: &row.from,
+        headers: headers.as_deref(),
+        raw: raw.as_deref(),
+        raw_state: match (&raw, fetch) {
+            (Some(_), _) => RawState::Here,
+            (None, true) => RawState::Fetching,
+            (None, false) => RawState::Offline,
+        },
+        body,
+        provider: preset.map(|preset| Provider {
+            name: preset.display_name(),
+            authserv_ids: &authserv_ids,
+        }),
+        sent_by_you,
+        account: account
+            .as_ref()
+            .map_or("your account", |account| account.display_name.as_str()),
+    });
+    Ok(Opened { view, fetch })
+}

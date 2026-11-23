@@ -120,7 +120,7 @@ throwaway code is not merged.
   - `Req::SourceView` with local bytes: a counted, bounded number of statements;
   - absent bytes: `Fetching` at once, then `SourceReady`;
   - offline: `Offline`.
-- [ ] T017 [US1] Implement `Req::SourceView` and `Resp::SourceView` in `crates/postio-client/src/protocol.rs` and `crates/postio-client/src/api.rs`, and the handler in `crates/postio-host/src/lib.rs` and a new `crates/postio-host/src/source.rs`, over `parts::raw_source` and `postio_session::reading`'s account lookup
+- [x] T017 [US1] Implement `Req::SourceView` and `Resp::SourceView` in `crates/postio-client/src/protocol.rs` and `crates/postio-client/src/api.rs`, and the handler in `crates/postio-host/src/lib.rs` and a new `crates/postio-host/src/source.rs`, over `parts::raw_source` and `postio_session::reading`'s account lookup
 - [ ] T018 [US1] Write a failing case `source_surface_makes_no_connection` in `crates/postio-host/tests/host_suite/source_view.rs`. It opens all three tabs for every corpus fixture in the `hostile` and `prompt-injection` categories, through the counting transport, and asserts zero connections. No renderer is reachable from the surface at all: `crates/postio-ui/src/source.rs` and the widgets dialog name no `postio_render` item, which a `check-crate-boundaries.py`-style source check asserts
 - [ ] T019 [US1] Write failing behaviour cases in `crates/postio-focus/src/` (a new `source.rs`, beside `filtered.rs`): `V` from the list and from the message, `1` to `3`, `Esc` one rung at a time, and the cursor and scroll kept
 - [ ] T020 [US1] Implement the Source surface's behaviour in `crates/postio-focus/src/source.rs`, and wire it in `crates/postio-focus/src/surfaces.rs`

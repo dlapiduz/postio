@@ -1603,6 +1603,39 @@ impl Inner {
                 Ok(bytes) => Resp::RawSource(bytes),
                 Err(reason) => Resp::Failed(postio_model::listing::StoreError::new(reason)),
             },
+            Req::SourceView { message, offline } => {
+                let engine = if offline {
+                    None
+                } else {
+                    self.engine_for_message(message).await
+                };
+                match source::view(
+                    &self.wiring.database,
+                    &self.wiring.blobs,
+                    message,
+                    offline || engine.is_none(),
+                )
+                .await
+                {
+                    Ok(opened) => {
+                        if opened.fetch
+                            && let Some(engine) = engine
+                        {
+                            tokio::spawn(async move {
+                                if let Err(error) = engine.request_whole_message(message).await {
+                                    tracing::warn!(
+                                        message = message.get(),
+                                        cause = %error.message(),
+                                        "the source fetch was not queued"
+                                    );
+                                }
+                            });
+                        }
+                        Resp::SourceView(Box::new(opened.view))
+                    }
+                    Err(reason) => Resp::Failed(postio_model::listing::StoreError::new(reason)),
+                }
+            }
             Req::DigestLikeThis(message) => focus::like_this(self, message)
                 .await
                 .map_or_else(Resp::Failed, Resp::DigestLikeThis),
@@ -2347,6 +2380,7 @@ pub mod parts;
 pub mod reading;
 pub mod search;
 pub mod settings;
+pub mod source;
 pub mod startup;
 pub mod threads;
 
