@@ -5,11 +5,11 @@
 **Input**: `specs/017-calendar/spec.md`; spec 007 US8, FR-100 to FR-103 and
 research R9; `origin/main` at `17fff8da`.
 
-This is a **roadmap plan**. It records the research, the slices and the crate
-placement, so the feature can be scheduled and built on its own branch. The
-Phase 1 artifacts (`data-model.md`, `contracts/`, `quickstart.md`) and
-`tasks.md` are written when the maintainer schedules it and answers Q1 to
-Q4.
+The maintainer answered Q1 to Q4 on 2026-11-22 (spec, Clarifications). The
+Phase 1 artifacts are [data-model.md](data-model.md),
+[contracts/](contracts) and [quickstart.md](quickstart.md), and the queue is
+[tasks.md](tasks.md). Phase 0's research is in this file (R1 to R9). The
+build is not yet scheduled.
 
 ## Summary
 
@@ -23,11 +23,12 @@ A calendar in the store, beside mail, with three parts:
 
 Invitations join it: the Invite marker names clashes, and an answer goes
 once, by server scheduling or by mail. Reminders are the events' own alarms,
-shown while an app holds the store. Running when no app is open is Q2.
+shown only while an app holds the store (Q2 = A). Calendar can **pop out** into
+its own window and back (D12).
 
 **The first slice (A)** is the store, the recurrence expansion and Agenda,
 over "On this computer" and the invitations already in mail. It needs no
-network and no new design (Q4 C), and it makes accepting an invitation put
+network and no new design (Q4 = C), and it makes accepting an invitation put
 the event somewhere.
 
 ## Technical Context
@@ -87,9 +88,9 @@ thousands of events); occurrences are expanded only in a window.
 | VI. Privacy | No free/busy, link or attachment fetch (FR-050). A `caldav` value joins `egress_log.subsystem`. Logs carry ids only. Reminders never send mail |
 | VII. Boundaries; providers are data; Pimalaya first | `postio-calendar` stays pure. CalDAV sits behind a `CalendarBackend` trait in a protocol crate, as IMAP sits behind `MailBackend`. Presets gain `[caldav]`. Pimalaya was surveyed first (R1) |
 
-**Gate result**: pass. Q2 B or C adds a background presence. Neither breaks a
-principle, but each changes what "one app holds the store" (ADR 0041) means
-in practice, so each needs an amendment to that ADR (R7).
+**Gate result**: pass. Q2 = A adds no background presence, so ADR 0041 is
+untouched. Pop out is a second window in the same process: one app still
+holds the store.
 
 ## Phase 0: Research
 
@@ -103,7 +104,7 @@ Surveyed 2026-11-22.
 | `io-calendar` 0.0.1 | Common types over `io-vdir` and `io-webdav`, using calcard and chrono | **Not adopted**: too young, and Postio needs its own model and store, not common types. Surveyed again before slice C |
 | **`ical-rs`** 0.7.3 (2026-11-20, a rewrite) | An iCalendar parser, validator, **byte-faithful editor**, recurrence expansion across zones with the **IANA database included**, a **three-way merge**, and iTIP rules. It is built on `jiff`, not chrono, and is no_std | **Strong candidate** for R2. Byte-faithful edits (FR-014) and three-way merge (FR-033) are two hard parts of this spec, already built |
 | `io-pim-discovery` 0.15 | CalDAV and CardDAV context-root discovery: DNS SRV, TXT and the well-known URI (RFC 6764) | **Adopted**: one feature on a crate already in `postio-account` |
-| `io-gcal` 0.6 | The Google Calendar REST API, with sync tokens and push channels | **Q3 C only.** A second backend |
+| `io-gcal` 0.6 | The Google Calendar REST API, with sync tokens and push channels | **Not adopted** (Q3 = A: Google over CalDAV, second) |
 | `io-msgraph` 0.10 | Microsoft Graph | Out of scope (Graph is unscheduled) |
 | `calendula`, `neverest`, `pimdir` | A CLI, a sync engine and a store format | **Prior art, not dependencies.** Postio has its own store and engine. Neverest's "a real conflict parked for a decision, never lost" matches FR-033 |
 
@@ -187,7 +188,7 @@ new recurrence fixtures.
   password, server scheduling.
 - **Fastmail**: `https://caldav.fastmail.com/`, the app password, server
   scheduling.
-- **Google** (Q3): `https://apidata.googleusercontent.com/caldav/v2/`.
+- **Google** (second, Q3 = A): `https://apidata.googleusercontent.com/caldav/v2/`.
   Google's guide (fetched 2026-11-22) says:
   - **OAuth is required**; Basic auth is refused;
   - a Cloud project with the CalDAV API enabled is required, so this means
@@ -209,23 +210,18 @@ new recurrence fixtures.
 "Move to", so "thu 3pm" means the same thing in a search and in an event.
 Durations ("1h", "until 4") join the same parser as new forms, with tests.
 
-### R7. Reminders and the one-app rule (Q2)
+### R7. Reminders, only while an app holds the store (Q2 = A)
 
-- **A**: the host schedules the next due reminder on the runtime's timer
-  while it holds the store. On start it reads reminders due in the last 12
-  hours that have not fired.
-- **B**: an autostart `.desktop` entry plus the Background portal's
-  `RequestBackground`, and a `--background` mode that holds the store with
-  no window. A second app's open then meets ADR 0041's "close the other",
-  which would have to learn to ask a background holder to hand over.
-- **C**: `postio-remind`, a binary with no toolkit. It keeps one timer for
-  the next due instant from a tiny file holding instants only, no titles.
-  When the timer fires it opens the store for one read, as `postio-mcp` does
-  when no app holds it, or asks the holder over its socket. It notifies
-  through the portal, then closes. On macOS, the app schedules
-  `UNUserNotificationCenter` requests ahead and no helper is needed.
-- B and C each need ADR 0041 amended in place, because the rule outlives
-  this feature.
+- The host keeps one timer, on the runtime, for the next due reminder. It is
+  re-armed when `reminders` changes (an edit, a sync, a snooze).
+- On start, the host reads reminders due in the last 12 hours that have not
+  fired, and shows them once as one notification: "While Postio was closed:
+  Standup at 09:30". They are then marked `missed`.
+- Notifications go through the existing notifier (`postio-host/src/notify.rs`
+  and each frontend's delivery). "Open" and "Snooze 5 min" are registry
+  commands.
+- There is no background mode, no autostart entry and no helper binary.
+  ADR 0041 is unchanged.
 
 ### R8. Search over events (D9)
 
@@ -241,23 +237,49 @@ AST over event fields:
 Operators with no event meaning return "not applicable" for the hint. The
 100 ms local search budget applies.
 
+### R9. Pop out (D12)
+
+- **Precedent**: ADR 0034 already runs composers in windows of their own in
+  the same process. Pop out reuses that window machinery, with a
+  `postio-focus` "surface host" that a mode can be moved into and back out
+  of, keeping its state (view, date, cursor, History).
+- **Contexts per window**: the keymap resolves against the focused window's
+  context stack. A window's controller owns its own History. `back` (`Esc`)
+  at a popped-out window's root is a no-op.
+- **Destination routing**: `go_to_*` commands look up which window shows the
+  destination, and present that window. GTK's `gtk::Window::present` passes
+  the key event's activation token (xdg-activation on Wayland), which GNOME
+  honours for the focused app. A compositor that refuses the token shows its
+  own "is ready" notice. That is a risk, not a failure.
+- **Remembered**: a `settings` row, `calendar.window`, holding `{ popped,
+  width, height }`. It is in the store, not `config.toml`, because it is
+  state rather than preference (ADR 0024). No position is stored. Wayland does not let a
+  client place its window, and on the Mac `NSWindow`'s frame autosave
+  remembers position as Mac windows do.
+- **General**: a surface declares `can_pop_out` in `postio-focus`. Calendar
+  sets it, and Contacts sets it when Linux adopts Contacts. Folding
+  `detach_composer` into `pop_out` is follow-up work, filed with
+  `scripts/issue-file.sh` when slice A2 lands, not done here.
+
 ## Phasing
 
 | Slice | What | Stories, FRs | Depends on |
 |---|---|---|---|
-| **S1 (spike)** | `ical-rs` against calcard over R9's corpus, new recurrence and zone fixtures, and byte-faithful edits (R2) | — | — |
-| **S2 (spike)** | `io-webdav` against an in-process CalDAV server: discovery, sync token, ETag 412 | — | — |
-| **S3 (spike, Google)** | Whether Google CalDAV writes send invitations | — | Q3 |
-| **A. Local calendar and Agenda** (first slice) | Schema; `postio-calendar` expansion; "On this computer"; Agenda and the open event; `g e`; accepting an invitation writes the event; clash on the marker; search (R8) | US1, US2 (non-scheduling path); FR-001 to FR-006, FR-020, FR-022 (local), FR-035, FR-051 | S1 |
+| **S1 (spike, gates A)** | `ical-rs` against calcard over R9's corpus, new recurrence and zone fixtures, and byte-faithful edits (R2) | — | — |
+| **S2 (spike, gates C)** | `io-webdav` against an in-process CalDAV server: discovery, sync token, ETag 412 | — | — |
+| **S3 (spike, gates G)** | Whether Google CalDAV writes send invitations | — | — |
+| **A. Local calendar and Agenda** (first) | Schema; `postio-calendar` expansion; "On this computer"; Agenda and the open event; `g e`; accepting an invitation writes the event; clash on the marker; search (R8) | US1, US2 (non-scheduling path); FR-001 to FR-006, FR-020, FR-022 (local), FR-035, FR-051 | S1 |
+| **A2. Pop out** | `pop_out` and `pop_in`; destination routing; per-window History; remembered state (R9) | US7; FR-007 to FR-009 | A |
 | **B. Management** | Create, edit, move, duplicate, delete with undo; recurring-scope picker; "Save and send" by iTIP mail; byte-faithful edits | US3 (local); FR-010 to FR-015 | A |
-| **C. CalDAV sync** | `postio-dav` backend; presets' `[caldav]`; discovery; sync; conflicts; scheduling path for RSVP and invitations; the `caldav` egress rows; Settings for calendars | US4, US2 (scheduling), US3 (synced); FR-021, FR-030 to FR-034, FR-052 | B, S2, Q3 |
-| **D. Reminders** | Alarms; notifications with Open and Snooze; missed-reminder catch-up; then Q2's answer | US5; FR-040 to FR-043 | A; Q2 for more than A |
-| **E. Week and Day** | The grids, and the narrow fallback | US6; FR-002 | Q4 |
-| **F. Month** | The month grid | FR-002 | E, Q4 |
-| **G. Google** | Its row, the scope, quirks | US4 | C, S3, Q3 |
+| **C. CalDAV sync** | `postio-dav` backend; presets' `[caldav]` for generic CalDAV, iCloud and Fastmail; discovery; sync; conflicts; the scheduling path for RSVP and invitations; `caldav` egress rows; Settings for calendars | US4, US2 (scheduling), US3 (synced); FR-021, FR-030 to FR-034, FR-052 | B, S2 |
+| **D. Reminders** | Alarms; notifications with Open and Snooze; the missed-reminder catch-up (R7) | US5; FR-040 to FR-043 | A |
+| **E. Week and Day** ⛔ handoff | The grids, and the narrow fallback | US6; FR-002 | the designer handoff |
+| **F. Month** ⛔ handoff | The month grid | FR-002 | E, the handoff |
+| **G. Google** | Its row, the scope, quirks | US4 | C, S3 |
 
-**The first slice is A.** It is useful alone: accepted invitations finally
-land somewhere visible, and clashes show in the inbox. It needs no network.
+**The first slice is A**, and **pop out is A2**, the next one. It needs only
+Agenda, and the maintainer asked for it with Q1, so it comes before
+management rather than waiting for the grids.
 
 ## Crate placement
 
@@ -271,12 +293,12 @@ land somewhere visible, and clashes show in the inbox. It needs no network.
 | `postio-index` | The event executor arm (R8) | — |
 | `postio-search` | Duration forms in the date grammar (R6) | pure leaf |
 | `postio-core` | The Calendar context and the commands | no GTK |
-| `postio-focus` | Calendar mode behaviour: views, cursor, `[`, `]`, `t`, History (ADR 0045) | — |
+| `postio-focus` | Calendar mode behaviour: views, cursor, `[`, `]`, `t`, History (ADR 0045). The surface host that pop out moves a mode into, and destination routing | — |
 | `postio-ui` | View models: agenda rows, the grid layout as pure functions, the open event, every state's strings | no GTK, no SQL |
 | `postio-host` / `postio-session` | Verbs; the reminder timer; RSVP routing (D6); the clash computation at filing | — |
 | `postio-client` | Req/Resp for pages and verbs | no toolkit, engine or protocol |
 | `postio-widgets`, `postio-gtk` | Agenda, the dialog, the editor; grids in slice E | as today |
-| `postio-tui`, `postio-ffi`, `macos/` | Agenda and the open event; the Mac's notification scheduling if Q2 = C | as today |
+| `postio-tui`, `postio-ffi`, `macos/` | Agenda and the open event. Pop out on the Mac, as an `NSWindow` with frame autosave. The terminal has no pop out | as today |
 
 ## Testing (ADR 0049)
 
@@ -299,9 +321,11 @@ land somewhere visible, and clashes show in the inbox. It needs no network.
 | Recurrence and zone bugs | Wrong times are the worst calendar bug | S1 against a reference over many fixtures; SC-003 at 100% |
 | Two replies to an organiser, or none | Social cost, lost meetings | D6's rule is one decision from the preset row; SC-005 asserted for both paths |
 | Data loss in a sync conflict | Trust | `event_changes` keeps the base; the three-way merge or both versions are kept; SC-004 |
-| Google's CalDAV quirks and OAuth | The provider with the most users lags | Q3 A schedules Google second; S3 settles scheduling |
-| Reminders that do not fire while Postio is closed | A missed meeting | D8's catch-up, and Q2 put to the maintainer early |
-| No design for the grids | UI churn | Q4 C: Agenda is list-shaped and needs no new design |
+| Google's CalDAV quirks and OAuth | The provider with the most users lags | Google is second (Q3 = A); S3 settles scheduling |
+| Reminders that do not fire while Postio is closed | A missed meeting | The maintainer chose this (Q2 = A). D8's catch-up shows what was missed, and Settings says reminders need Postio running |
+| No design for the grids | UI churn | Q4 = C: Agenda is list-shaped and needs no new design; the grid tasks are held |
+| A compositor refuses to raise the other window | `g e` seems to do nothing | The activation token from the key event; the compositor's own notice; a focus_suite case on the headless compositor |
+| Two windows desynchronise | Stale views | Both read the same store and subscribe to the same event hub (ADR 0013); no state is copied between windows |
 | `ical-rs` is new | Library churn | It stays behind `postio-calendar`'s adapter, and is pinned exactly as calcard is |
 
 ## Project Structure
@@ -312,8 +336,14 @@ land somewhere visible, and clashes show in the inbox. It needs no network.
 specs/017-calendar/
 ├── spec.md
 ├── plan.md
+├── data-model.md
+├── contracts/
+│   ├── calendar-mode.md     # keys, views, states, pop out
+│   ├── event-verbs.md       # create, edit, move, delete, RSVP, undo
+│   └── caldav-backend.md    # the CalendarBackend trait, presets, sync
+├── quickstart.md
 ├── checklists/requirements.md
-└── (when scheduled) data-model.md, contracts/, quickstart.md, tasks.md
+└── tasks.md
 ```
 
 ### Source Code (repository root)
