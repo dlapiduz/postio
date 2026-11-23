@@ -57,7 +57,6 @@ crates/postio-classify/src/digests.rs 1
 crates/postio-classify/src/facts.rs 1
 crates/postio-classify/src/guards.rs 1
 crates/postio-classify/src/lib.rs 1
-crates/postio-classify/src/pipeline.rs 2
 crates/postio-classify/src/rules.rs 1
 crates/postio-classify/tests/classify_suite/kind_corpus.rs 1
 crates/postio-classify/tests/classify_suite/main.rs 2
