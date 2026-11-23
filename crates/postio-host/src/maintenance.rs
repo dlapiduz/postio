@@ -66,9 +66,8 @@ pub fn remind(wiring: &Wiring) {
                 .map_or(WAKE_AT_LEAST_EVERY, |wait| wait.min(WAKE_AT_LEAST_EVERY));
             tokio::select! {
                 () = tokio::time::sleep(next) => {}
-                event = changed.next() => match event {
-                    None => return,
-                    Some(_) => {}
+                event = changed.next() => if event.is_none() {
+                    return;
                 },
             }
         }

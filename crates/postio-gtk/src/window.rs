@@ -51,6 +51,7 @@ pub type Notifier = Rc<
 >;
 
 type NotificationSink = Rc<dyn Fn(&postio_ui::notify::Notification)>;
+type ReminderSink = Rc<dyn Fn(&postio_ui::notify::ReminderNotice)>;
 
 const STOP_DIALOG: &str = "focus-stop-digesting";
 
@@ -145,7 +146,7 @@ mod imp {
         pub labels: RefCell<Option<Rc<crate::label_picker::LabelPicker>>>,
         pub notifier: RefCell<Option<super::Notifier>>,
         pub notification_sink: RefCell<Option<super::NotificationSink>>,
-        pub reminder_sink: RefCell<Option<Rc<dyn Fn(&postio_ui::notify::ReminderNotice)>>>,
+        pub reminder_sink: RefCell<Option<super::ReminderSink>>,
         pub config_path: RefCell<Option<std::path::PathBuf>>,
         pub timeline: RefCell<Option<postio_widgets::startup::Timeline>>,
         pub rules_view: RefCell<Option<Rc<crate::rules::RulesView>>>,

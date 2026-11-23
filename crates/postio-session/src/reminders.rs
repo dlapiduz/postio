@@ -34,7 +34,7 @@ pub async fn plan_reminders(
     let mut alarms: HashMap<EventId, Vec<postio_calendar::Alarm>> = HashMap::new();
     let mut planned = Vec::new();
     for occurrence in occurrences.iter().filter(|entry| entry.start < until) {
-        if !alarms.contains_key(&occurrence.event) {
+        if let std::collections::hash_map::Entry::Vacant(slot) = alarms.entry(occurrence.event) {
             let found = calendars
                 .object(occurrence.event)
                 .await
@@ -43,7 +43,7 @@ pub async fn plan_reminders(
                 .and_then(|events| events.into_iter().next())
                 .map(|event| event.alarms)
                 .unwrap_or_default();
-            alarms.insert(occurrence.event, found);
+            slot.insert(found);
         }
         for due in
             postio_calendar::due_times(&alarms[&occurrence.event], occurrence.start, occurrence.end)
