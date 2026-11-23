@@ -181,7 +181,7 @@ throwaway code is not merged.
 **Goal**: keys from `~/.gnupg`, read-only, when the person turns it on.
 **Independent test**: quickstart "Slice B2"; US5 scenarios 3 to 5.
 
-- [ ] T045 [P] [US5] Write failing cases in `crates/postio-signature/src/gnupg.rs` with byte fixtures built in the test:
+- [x] T045 [P] [US5] Write failing cases in `crates/postio-signature/src/gnupg.rs` with byte fixtures built in the test:
   - `pubring.gpg` with trust packets between keys;
   - a keybox with header, OpenPGP and X.509 blobs;
   - a truncated blob;
