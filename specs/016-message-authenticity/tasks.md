@@ -110,7 +110,7 @@ throwaway code is not merged.
   - the not-believed headers listed;
   - "not checked on this computer";
   - the fixed line.
-- [ ] T013 [US1] Implement `SourceView` and `VerificationView` and every string in a new `crates/postio-ui/src/source.rs`, registered in `crates/postio-ui/src/lib.rs`
+- [x] T013 [US1] Implement `SourceView` and `VerificationView` and every string in a new `crates/postio-ui/src/source.rs`, registered in `crates/postio-ui/src/lib.rs`
 - [ ] T014 [P] [US2] Write failing cases in `crates/postio-ui/tests/ui_suite/source_view.rs` for the Headers tab and the Raw tab:
   - Headers: unfolding, RFC 2047 decoding with the raw form kept, and `Received` hops with delays;
   - Headers: the boundary under the trusted header;

@@ -67,6 +67,7 @@ pub mod sender_treatments;
 pub mod sending;
 pub mod settings;
 pub mod sidebar;
+pub mod source;
 pub mod status;
 pub mod surfaced;
 pub mod terminal;
