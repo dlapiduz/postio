@@ -171,6 +171,10 @@ command = "quit"
 context = "composer"
 reason  = "the composer's dialog has no arm for it; Escape closes the dialog"
 [[gap]]
+command = "close_window"
+context = "composer"
+reason  = "as quit: the composer's dialog has no arm for it and Escape closes it; a detached composer's own window closes on it"
+[[gap]]
 command = "save_draft"
 context = "composer"
 reason  = "an empty draft has nothing to save -- and says nothing about it (flickers: one run of two in T265 saw an effect, the composer still settling, so a stale report here is noise)"
