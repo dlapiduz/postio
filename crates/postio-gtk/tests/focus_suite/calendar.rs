@@ -273,3 +273,81 @@ pub fn escape_leaves_the_editor_without_saving() {
         );
     });
 }
+
+async fn agenda_on(
+    window: &postio_gtk::window::FocusWindow,
+) -> std::rc::Rc<postio_gtk::calendar::AgendaView> {
+    support::keys(window, &["g", "e"]);
+    assert!(
+        crate::settle_until(async || window
+            .calendar()
+            .and_then(|view| view.ringed())
+            .is_some_and(|row| row.title == "Next up"))
+        .await
+    );
+    window.calendar().expect("the agenda")
+}
+
+pub fn v_moves_the_ringed_event_to_next_week() {
+    crate::gtk_case(async {
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(("Ada Moreno", "ada@example.test"), "Hello", "Hi.", 5)
+            .await;
+        with_events(&fixture).await;
+        let (window, _client) = fixture.open().await;
+        let view = agenda_on(&window).await;
+        let before = view.ringed().expect("ringed").time;
+
+        support::keys(&window, &["v"]);
+        let starts = view
+            .editor()
+            .entry(postio_ui::calendar::editor::EditorField::Starts)
+            .expect("the time field")
+            .clone();
+        assert!(
+            crate::settle_until(async || starts.has_focus() || starts.focus_child().is_some())
+                .await,
+            "v asks where to, with the keyboard in the one field"
+        );
+        starts.set_text("next week");
+        starts.emit_activate();
+
+        assert!(
+            crate::settle_until(async || !view.editor().is_open()
+                && view
+                    .ringed()
+                    .is_some_and(|row| row.title == "Next up" && row.time == before)
+                && view.titles().last().is_some_and(|title| title == "Next up"))
+            .await,
+            "Return moves it a week on at its own time, after the rest: {:?}",
+            view.titles()
+        );
+    });
+}
+
+pub fn hash_deletes_the_ringed_event_and_undo_brings_it_back() {
+    crate::gtk_case(async {
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(("Ada Moreno", "ada@example.test"), "Hello", "Hi.", 5)
+            .await;
+        with_events(&fixture).await;
+        let (window, _client) = fixture.open().await;
+        let view = agenda_on(&window).await;
+
+        support::keys(&window, &["numbersign"]);
+        assert!(
+            crate::settle_until(async || !view.titles().contains(&"Next up".to_owned())).await,
+            "# deletes it at once: {:?}",
+            view.titles()
+        );
+
+        support::keys(&window, &["z"]);
+        assert!(
+            crate::settle_until(async || view.titles().contains(&"Next up".to_owned())).await,
+            "undo brings it back: {:?}",
+            view.titles()
+        );
+    });
+}

@@ -175,6 +175,14 @@ const CASES: &[(&str, fn())] = &[
         calendar::escape_leaves_the_editor_without_saving as fn(),
     ),
     (
+        "calendar::v_moves_the_ringed_event_to_next_week",
+        calendar::v_moves_the_ringed_event_to_next_week as fn(),
+    ),
+    (
+        "calendar::hash_deletes_the_ringed_event_and_undo_brings_it_back",
+        calendar::hash_deletes_the_ringed_event_and_undo_brings_it_back as fn(),
+    ),
+    (
         "calendar::g_e_opens_agenda_on_the_next_event_and_return_and_escape_walk_back_home",
         calendar::g_e_opens_agenda_on_the_next_event_and_return_and_escape_walk_back_home as fn(),
     ),

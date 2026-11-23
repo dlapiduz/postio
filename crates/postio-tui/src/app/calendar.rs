@@ -53,9 +53,12 @@ impl App {
         use crossterm::event::{KeyCode, KeyModifiers};
         use postio_ui::calendar::editor::EditorField;
         let editor = self.calendar()?.editor.as_ref()?;
-        let stops = EditorField::ALL.len() + usize::from(editor.scope.is_some());
+        let stops = editor.fields.len() + usize::from(editor.scope.is_some());
+        if stops == 0 {
+            return None;
+        }
         let at = self.surfaces.editor_field.min(stops - 1);
-        let field = EditorField::ALL.get(at).copied();
+        let field = editor.fields.get(at).map(|(field, _)| *field);
         let plain = key.modifiers.difference(KeyModifiers::SHIFT).is_empty();
         let typed = |field: EditorField| {
             editor
@@ -102,14 +105,19 @@ impl App {
                 text.push('\n');
                 (EditorField::Notes, text)
             }
+            (KeyCode::Enter, Some(_)) if plain => {
+                return Some(self.tell(Told::Command(CommandId::SaveEvent)));
+            }
             _ => {
-                return Some(match self.keys.press(key, KeyContext::Calendar, true) {
-                    Outcome::Command(id) => match id.parse::<CommandId>() {
-                        Ok(command) => self.tell(Told::Command(command)),
-                        Err(_) => Vec::new(),
+                return Some(
+                    match self.keys.press(key, KeyContext::Calendar, field.is_some()) {
+                        Outcome::Command(id) => match id.parse::<CommandId>() {
+                            Ok(command) => self.tell(Told::Command(command)),
+                            Err(_) => Vec::new(),
+                        },
+                        _ => Vec::new(),
                     },
-                    _ => Vec::new(),
-                });
+                );
             }
         };
         Some(self.tell(Told::EventEditorTyped {

@@ -115,6 +115,13 @@ pub fn unread_end(typed: &str) -> String {
 
 pub const NO_TITLE: &str = "Give the event a title";
 
+pub fn verb_keys(keymap: &Keymap, confirm: CommandId, verb: &str) -> Vec<Hint> {
+    hint(keymap, confirm, verb)
+        .into_iter()
+        .chain(hint(keymap, CommandId::Back, "cancel"))
+        .collect()
+}
+
 pub fn keys(keymap: &Keymap, inviting: bool) -> Vec<Hint> {
     let mut keys: Vec<Hint> = hint(keymap, CommandId::SaveEvent, "save")
         .into_iter()

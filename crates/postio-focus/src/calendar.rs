@@ -151,6 +151,9 @@ impl FocusController {
                 | CommandId::Search
                 | CommandId::NewEvent
                 | CommandId::EditEvent
+                | CommandId::Delete
+                | CommandId::MoveEvent
+                | CommandId::DuplicateEvent
                 | CommandId::SaveEvent
                 | CommandId::SaveAndSendEvent
         )
@@ -160,11 +163,51 @@ impl FocusController {
         if self.calendar.as_ref()?.editor.is_some() {
             return self.editor_command(id);
         }
+        if id == CommandId::Undo {
+            return None;
+        }
         let now = self.now();
         let calendar = self.calendar.as_mut()?;
         if id == CommandId::NewEvent {
             calendar.editor = Some(crate::event_editor::Editor::new(now));
             return Some(self.draw_calendar());
+        }
+        let acted_on = match &calendar.open {
+            Some(detail) => Some(detail.entry.clone()),
+            None => calendar.current().cloned(),
+        };
+        match (id, acted_on) {
+            (CommandId::Delete, Some(entry)) if entry.recurrence_id.is_some() => {
+                calendar.editor = Some(crate::event_editor::Editor::deleting(&entry));
+                return Some(self.draw_calendar());
+            }
+            (CommandId::Delete, Some(entry)) => {
+                calendar.open = None;
+                let mut steps = self.verbs.post(postio_core::Command::DeleteEvent {
+                    event: postio_model::calendar::EventTarget {
+                        occurrence: entry.cursor(),
+                        recurrence_id: None,
+                    },
+                    scope: None,
+                });
+                steps.extend(self.draw_calendar());
+                return Some(steps);
+            }
+            (CommandId::MoveEvent, Some(entry)) => {
+                calendar.editor = Some(crate::event_editor::Editor::moving(&entry));
+                return Some(self.draw_calendar());
+            }
+            (CommandId::DuplicateEvent, Some(entry)) => {
+                calendar.follow = Some(entry.start);
+                return Some(
+                    self.verbs
+                        .post(postio_core::Command::DuplicateEventOf { event: entry.event }),
+                );
+            }
+            (CommandId::Delete | CommandId::MoveEvent | CommandId::DuplicateEvent, None) => {
+                return Some(Vec::new());
+            }
+            _ => {}
         }
         if id == CommandId::EditEvent {
             return Some(match &calendar.open {

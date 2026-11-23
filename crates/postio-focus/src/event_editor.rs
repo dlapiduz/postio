@@ -1,15 +1,23 @@
 use std::collections::HashMap;
 
-use chrono::{DateTime, Duration, Local, Timelike, Utc};
+use chrono::{DateTime, Duration, Local, NaiveTime, Timelike, Utc};
 use postio_core::{Command, CommandId};
-use postio_model::calendar::{EditScope, EventDetail, EventFields, EventTarget};
+use postio_model::calendar::{AgendaEntry, EditScope, EventDetail, EventFields, EventTarget};
 use postio_ui::calendar::editor::{self as words, EditorField, EditorView};
 
 use crate::FocusController;
 use crate::feed::Step;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    Edit,
+    Move { keep: NaiveTime, length: Duration },
+    Delete,
+}
+
 #[derive(Debug)]
 pub(crate) struct Editor {
+    mode: Mode,
     target: Option<EventTarget>,
     recurs: bool,
     texts: HashMap<EditorField, String>,
@@ -30,6 +38,7 @@ impl Editor {
         texts.insert(EditorField::Starts, words::start_text(start, &Local));
         texts.insert(EditorField::Ends, words::length_text(Duration::hours(1)));
         Editor {
+            mode: Mode::Edit,
             target: None,
             recurs: false,
             texts,
@@ -58,6 +67,7 @@ impl Editor {
             (EditorField::Notes, detail.notes.clone()),
         ]);
         Editor {
+            mode: Mode::Edit,
             target: Some(EventTarget {
                 occurrence: entry.cursor(),
                 recurrence_id: entry.recurrence_id.clone(),
@@ -68,6 +78,47 @@ impl Editor {
             scope: EditScope::This,
             error: None,
         }
+    }
+
+    fn on(entry: &AgendaEntry, mode: Mode) -> Self {
+        Editor {
+            mode,
+            target: Some(EventTarget {
+                occurrence: entry.cursor(),
+                recurrence_id: entry.recurrence_id.clone(),
+            }),
+            recurs: entry.recurrence_id.is_some(),
+            texts: HashMap::new(),
+            opened: None,
+            scope: EditScope::This,
+            error: None,
+        }
+    }
+
+    pub(crate) fn moving(entry: &AgendaEntry) -> Self {
+        let keep = entry.start.with_timezone(&Local).time();
+        Editor::on(
+            entry,
+            Mode::Move {
+                keep,
+                length: entry.end - entry.start,
+            },
+        )
+    }
+
+    pub(crate) fn deleting(entry: &AgendaEntry) -> Self {
+        Editor::on(entry, Mode::Delete)
+    }
+
+    fn moved_to(&self, now: DateTime<Local>) -> Result<(DateTime<Utc>, DateTime<Utc>), String> {
+        let Mode::Move { keep, length } = self.mode else {
+            return self.when(now);
+        };
+        let typed = self.text(EditorField::Starts);
+        let start = postio_search::date::parse_move(typed, now, keep)
+            .map(|at| at.to_utc())
+            .ok_or_else(|| words::unread_start(typed))?;
+        Ok((start, start + length))
     }
 
     fn text(&self, field: EditorField) -> &str {
@@ -119,18 +170,39 @@ impl FocusController {
     pub(crate) fn editor_view(&self) -> Option<EditorView> {
         let editor = self.calendar.as_ref()?.editor.as_ref()?;
         let now = self.now();
+        let keymap = self.bar.keymap();
+        let (heading, fields, keys): (String, Vec<EditorField>, _) = match editor.mode {
+            Mode::Edit => (
+                words::heading(editor.target.is_some()).to_owned(),
+                EditorField::ALL.to_vec(),
+                words::keys(keymap, editor.inviting()),
+            ),
+            Mode::Move { .. } => (
+                postio_core::registry::get(CommandId::MoveEvent)
+                    .title
+                    .to_owned(),
+                vec![EditorField::Starts],
+                words::verb_keys(keymap, CommandId::OpenMessage, "move"),
+            ),
+            Mode::Delete => (
+                postio_core::registry::title_in(CommandId::Delete, postio_core::Context::Calendar)
+                    .to_owned(),
+                Vec::new(),
+                words::verb_keys(keymap, CommandId::Delete, "delete"),
+            ),
+        };
         Some(EditorView {
-            heading: words::heading(editor.target.is_some()).to_owned(),
-            fields: EditorField::ALL
+            heading,
+            fields: fields
                 .iter()
                 .map(|field| (*field, editor.text(*field).to_owned()))
                 .collect(),
             when: editor
-                .when(now)
+                .moved_to(now)
                 .map(|(start, end)| words::when_line(start, end, &Local)),
             scope: editor.recurs.then_some(editor.scope),
             error: editor.error.clone(),
-            keys: words::keys(self.bar.keymap(), editor.inviting()),
+            keys,
         })
     }
 
@@ -163,6 +235,43 @@ impl FocusController {
         let now = self.now();
         let calendar = self.calendar.as_mut()?;
         let editor = calendar.editor.as_mut()?;
+        if editor.mode != Mode::Edit {
+            let confirm = matches!(
+                id,
+                CommandId::SaveEvent | CommandId::OpenMessage | CommandId::Delete
+            );
+            if id == CommandId::Back {
+                calendar.editor = None;
+                return Some(self.draw_calendar());
+            }
+            if !confirm {
+                return (id != CommandId::CheatSheet).then(Vec::new);
+            }
+            let event = editor.target.clone()?;
+            let scope = editor.recurs.then_some(editor.scope);
+            let command = match editor.mode {
+                Mode::Move { .. } => match editor.moved_to(now) {
+                    Ok((start, _)) => {
+                        calendar.follow = Some(start);
+                        Command::MoveEventTo {
+                            event,
+                            start,
+                            scope,
+                        }
+                    }
+                    Err(error) => {
+                        editor.error = Some(error);
+                        return Some(self.draw_calendar());
+                    }
+                },
+                _ => Command::DeleteEvent { event, scope },
+            };
+            calendar.editor = None;
+            calendar.open = None;
+            let mut steps = self.verbs.post(command);
+            steps.extend(self.draw_calendar());
+            return Some(steps);
+        }
         let send = match id {
             CommandId::Back => {
                 calendar.editor = None;

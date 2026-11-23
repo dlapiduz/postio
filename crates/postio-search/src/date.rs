@@ -359,6 +359,19 @@ impl When {
     }
 }
 
+pub fn parse_move<Tz: TimeZone>(
+    text: &str,
+    now: DateTime<Tz>,
+    keep: chrono::NaiveTime,
+) -> Option<DateTime<Tz>> {
+    let pieces = pieces(text)?;
+    let mut when = When::read(&pieces)?;
+    if when.time.is_none() && when.part.is_none() && when.span.is_none() {
+        when.time = Some(keep);
+    }
+    when.resolve(now)
+}
+
 pub fn parse_end<Tz: TimeZone>(text: &str, start: DateTime<Tz>) -> Option<DateTime<Tz>> {
     let pieces = pieces(text)?;
     let end = match pieces.first() {
@@ -968,5 +981,28 @@ mod end_tests {
         assert_eq!(end("1x"), None);
         assert_eq!(end("soon"), None);
         assert_eq!(end("30"), None, "a bare number names no unit");
+    }
+}
+
+#[cfg(test)]
+mod move_tests {
+    use chrono::{NaiveTime, TimeZone, Utc};
+
+    use super::parse_move;
+
+    fn moved(text: &str) -> Option<String> {
+        let now = Utc.with_ymd_and_hms(2026, 11, 24, 15, 0, 0).unwrap();
+        let keep = NaiveTime::from_hms_opt(9, 30, 0).unwrap();
+        parse_move(text, now, keep).map(|at| at.format("%a %-d %b %H:%M").to_string())
+    }
+
+    #[test]
+    fn a_day_alone_keeps_the_event_s_time_and_a_time_says_its_own() {
+        assert_eq!(moved("next week").as_deref(), Some("Tue 1 Dec 09:30"));
+        assert_eq!(moved("tomorrow").as_deref(), Some("Wed 25 Nov 09:30"));
+        assert_eq!(moved("fri").as_deref(), Some("Fri 27 Nov 09:30"));
+        assert_eq!(moved("thu 3pm").as_deref(), Some("Thu 26 Nov 15:00"));
+        assert_eq!(moved("in 2h").as_deref(), Some("Tue 24 Nov 17:00"));
+        assert_eq!(moved("whenever"), None);
     }
 }

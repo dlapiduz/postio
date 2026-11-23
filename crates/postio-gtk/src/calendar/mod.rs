@@ -266,6 +266,17 @@ impl AgendaView {
         self.cursor.get()
     }
 
+    pub fn titles(&self) -> Vec<String> {
+        self.rows
+            .borrow()
+            .iter()
+            .filter_map(|row| match row {
+                AgendaRow::Occurrence(row) => Some(row.title.clone()),
+                AgendaRow::Day { .. } => None,
+            })
+            .collect()
+    }
+
     pub fn ringed(&self) -> Option<OccurrenceRow> {
         match self.rows.borrow().get(self.cursor.get()?) {
             Some(AgendaRow::Occurrence(row)) => Some(row.clone()),

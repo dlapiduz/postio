@@ -17,6 +17,7 @@ pub struct EventEditor {
     card: gtk::Box,
     heading: gtk::Label,
     entries: HashMap<EditorField, gtk::Entry>,
+    labels: HashMap<EditorField, gtk::Widget>,
     notes: gtk::TextView,
     when: gtk::Label,
     error: gtk::Label,
@@ -54,6 +55,7 @@ impl EventEditor {
         grid.set_row_spacing(S2 as u32);
         grid.set_column_spacing(S3 as u32);
         let mut entries = HashMap::new();
+        let mut labels: HashMap<EditorField, gtk::Widget> = HashMap::new();
         let mut row = 0;
         for field in EditorField::ALL {
             let label = gtk::Label::new(Some(field.label()));
@@ -77,8 +79,11 @@ impl EventEditor {
                     });
                 }
             });
+            let confirm = Rc::clone(&act);
+            entry.connect_activate(move |_| confirm(CommandId::SaveEvent));
             grid.attach(&label, 0, row, 1, 1);
             grid.attach(&entry, 1, row, 1, 1);
+            labels.insert(field, label.upcast::<gtk::Widget>());
             entries.insert(field, entry);
             row += 1;
             if field == EditorField::Ends {
@@ -114,6 +119,7 @@ impl EventEditor {
                 }
             });
         }
+        labels.insert(EditorField::Notes, notes_label.clone().upcast());
         card.append(&notes_label);
         card.append(&notes);
 
@@ -184,6 +190,7 @@ impl EventEditor {
             card,
             heading,
             entries,
+            labels,
             notes,
             when,
             error,
@@ -225,6 +232,17 @@ impl EventEditor {
         self.heading.set_text(&view.heading);
         self.card
             .update_property(&[gtk::accessible::Property::Label(&view.heading)]);
+        let shown = |field: EditorField| view.fields.iter().any(|(each, _)| *each == field);
+        for field in EditorField::ALL {
+            if let Some(label) = self.labels.get(&field) {
+                label.set_visible(shown(field));
+            }
+            if let Some(entry) = self.entries.get(&field) {
+                entry.set_visible(shown(field));
+            }
+        }
+        self.notes.set_visible(shown(EditorField::Notes));
+        self.when.set_visible(shown(EditorField::Starts));
         for (field, text) in &view.fields {
             if *field == EditorField::Notes {
                 let buffer = self.notes.buffer();
@@ -269,8 +287,20 @@ impl EventEditor {
         }
         self.echo.set(false);
         self.card.set_visible(true);
-        if opening && let Some(title) = self.entries.get(&EditorField::Title) {
-            title.grab_focus();
+        if opening {
+            match view
+                .fields
+                .first()
+                .and_then(|(field, _)| self.entries.get(field))
+            {
+                Some(first) => {
+                    first.grab_focus();
+                }
+                None => {
+                    self.card.set_focusable(true);
+                    self.card.grab_focus();
+                }
+            }
         }
     }
 }

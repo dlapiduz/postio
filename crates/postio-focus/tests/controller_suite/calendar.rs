@@ -592,3 +592,86 @@ fn save_and_invite_is_offered_only_with_people() {
     };
     assert_eq!(fields.attendees[0].address, "quinn@example.net");
 }
+
+#[test]
+fn v_moves_the_ringed_event_to_next_week_at_its_own_time() {
+    let (mut focus, view) = opened();
+    assert_eq!(ringed(&view), "Review");
+
+    let view = frame(&run(&mut focus, CommandId::MoveEvent)).expect("redrawn");
+    let mover = view.editor.expect("the move prompt");
+    assert_eq!(mover.heading, "Move to\u{2026}");
+    assert_eq!(mover.fields.len(), 1);
+
+    let view = typed(&mut focus, EditorField::Starts, "next week");
+    assert_eq!(
+        view.editor.expect("open").when.as_deref(),
+        Ok("Tue 1 Dec, 14:00 \u{2013} 14:30")
+    );
+    let effects = run(&mut focus, CommandId::OpenMessage);
+    let [
+        postio_core::Command::MoveEventTo {
+            event,
+            start,
+            scope: None,
+        },
+    ] = &posted(&effects)[..]
+    else {
+        panic!("one move: {effects:?}");
+    };
+    assert_eq!(event.occurrence.event, EventId::new(2));
+    assert_eq!(*start, local(24, 14) + Duration::days(7));
+}
+
+#[test]
+fn hash_deletes_a_single_event_at_once_and_asks_which_for_a_series() {
+    let (mut focus, _) = opened();
+    let effects = run(&mut focus, CommandId::Delete);
+    let [postio_core::Command::DeleteEvent { event, scope: None }] = &posted(&effects)[..] else {
+        panic!("one delete: {effects:?}");
+    };
+    assert_eq!(event.occurrence.event, EventId::new(2));
+
+    let mut focus = linux();
+    let asked = run(&mut focus, CommandId::GoToCalendar);
+    let mut series = today();
+    series[1].recurrence_id = Some("20261124T140000".to_owned());
+    answer(&mut focus, &asked, series);
+    let effects = run(&mut focus, CommandId::Delete);
+    assert!(posted(&effects).is_empty(), "a series asks first");
+    let picker = frame(&effects)
+        .and_then(|view| view.editor)
+        .expect("the picker");
+    assert_eq!(picker.heading, "Delete event");
+    assert_eq!(picker.scope, Some(EditScope::This));
+
+    focus.handle_on(
+        Input::EventEditorScope(EditScope::ThisAndFollowing),
+        &NoRows,
+    );
+    let effects = run(&mut focus, CommandId::Delete);
+    let [postio_core::Command::DeleteEvent { event, scope }] = &posted(&effects)[..] else {
+        panic!("one delete: {effects:?}");
+    };
+    assert_eq!(event.recurrence_id.as_deref(), Some("20261124T140000"));
+    assert_eq!(*scope, Some(EditScope::ThisAndFollowing));
+}
+
+#[test]
+fn duplicate_posts_a_copy_of_the_ringed_event() {
+    let (mut focus, _) = opened();
+    let effects = run(&mut focus, CommandId::DuplicateEvent);
+    assert_eq!(
+        posted(&effects),
+        [postio_core::Command::DuplicateEventOf {
+            event: EventId::new(2)
+        }]
+    );
+}
+
+#[test]
+fn undo_in_calendar_reaches_the_undo_stack() {
+    let (mut focus, _) = opened();
+    let effects = run(&mut focus, CommandId::Undo);
+    assert_eq!(posted(&effects), [postio_core::Command::Undo]);
+}
