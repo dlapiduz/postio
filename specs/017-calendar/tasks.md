@@ -94,7 +94,7 @@ the plan's research section it settles. Spike code is not merged.
 **Goal**: `g e` opens Agenda over the local store.
 **Independent test**: quickstart "Slice A".
 
-- [ ] T009 [P] [US1] Write failing cases in `crates/postio-calendar/src/expand.rs` over T001's fixtures: instants across DST, exceptions, EXDATEs, all-day, floating, idempotence over a window
+- [x] T009 [P] [US1] Write failing cases in `crates/postio-calendar/src/expand.rs` over T001's fixtures: instants across DST, exceptions, EXDATEs, all-day, floating, idempotence over a window
 - [ ] T010 [US1] Implement `Event`, `parse_object` and `expand` in `crates/postio-calendar/src/` on S1's library, behind the crate's adapter. No library type crosses its edge.
 - [ ] T011 [US1] Write failing counted cases in `crates/postio-host/tests/host_suite/calendar_agenda.rs`:
   - a page is a fixed number of statements at 50,000 occurrences;
