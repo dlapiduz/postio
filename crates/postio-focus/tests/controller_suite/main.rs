@@ -30,6 +30,7 @@ mod pickers;
 mod results;
 mod search_support;
 mod search_threads;
+mod source;
 mod states;
 mod surfaces;
 mod thread_compose;

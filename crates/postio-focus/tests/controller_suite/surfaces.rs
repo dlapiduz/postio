@@ -240,7 +240,6 @@ fn the_message_owns_its_reader_verbs() {
         (CommandId::FindNext, ReaderVerb::FindNext),
         (CommandId::FindPrevious, ReaderVerb::FindPrevious),
         (CommandId::SwitchTreatment, ReaderVerb::SwitchTreatment),
-        (CommandId::ViewSource, ReaderVerb::ViewSource),
         (CommandId::MoreActions, ReaderVerb::ShowMore),
         (CommandId::NextInConversation, ReaderVerb::StepThread(1)),
         (CommandId::PrevInConversation, ReaderVerb::StepThread(-1)),
