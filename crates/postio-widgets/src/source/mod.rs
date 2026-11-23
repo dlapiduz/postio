@@ -88,6 +88,20 @@ impl SourceDialog {
                 tab_button
             })
             .collect();
+        let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        spacer.set_hexpand(true);
+        strip.append(&spacer);
+        for (title, id) in [
+            ("Copy all", CommandId::CopySource),
+            ("Save as .eml…", CommandId::SaveSource),
+        ] {
+            let action = gtk::Button::new();
+            button::style(&action, Kind::Ghost, Size::Regular);
+            keyhint::dress(&action, title, postio_ui::hints::key(keymap, id).as_deref());
+            let run = Rc::clone(&command);
+            action.connect_clicked(move |_| run(id));
+            strip.append(&action);
+        }
 
         let find = gtk::SearchEntry::new();
         find.set_placeholder_text(Some("Find in this tab"));

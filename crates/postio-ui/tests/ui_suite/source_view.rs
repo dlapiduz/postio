@@ -114,7 +114,7 @@ fn a_list_that_re_signed_names_its_domain_and_the_arc_chain() {
             .map(|line| (line.text.as_str(), line.mono.as_deref()))
             .collect::<Vec<_>>(),
         [(
-            "ARC set 1: DKIM passed for example.com. SPF passed for example.com. DMARC passed for example.com.",
+            "ARC set 1: DKIM passed for example.com, the From domain. SPF passed for example.com, the From domain. DMARC passed for example.com.",
             Some("mx.lists.example.org")
         )]
     );
@@ -149,7 +149,13 @@ fn no_trusted_provider_header_says_so_and_doubts_every_header() {
         Some("Your provider didn't add a result Postio can trust.")
     );
     assert!(provider.lines.is_empty());
-    assert_eq!(section(&view, NOT_BELIEVED).lines.len(), 1);
+    let doubted = section(&view, NOT_BELIEVED);
+    assert_eq!(doubted.lines.len(), 1);
+    assert_eq!(
+        doubted.intro.as_deref(),
+        Some("Postio can't tell which of these your provider wrote, so it believes none of them."),
+        "with no trusted header, no header is known to predate the provider"
+    );
 }
 
 #[test]
@@ -495,4 +501,27 @@ fn a_body_without_its_headers_on_an_account_that_is_not_syncing_says_so_on_every
             "This message isn't on this computer, and Work isn't syncing, so Postio can't fetch it."
         )
     );
+}
+
+#[test]
+fn the_footer_teaches_the_surfaces_own_keys() {
+    let footer = source::footer(postio_core::Keymap::defaults());
+    assert_eq!(footer.title, "Source and verification");
+    let labels: Vec<&str> = footer
+        .keys
+        .iter()
+        .map(|(_, label)| label.as_str())
+        .collect();
+    assert_eq!(
+        labels,
+        [
+            "verification",
+            "headers",
+            "raw",
+            "copy all",
+            "save as .eml",
+            "close"
+        ]
+    );
+    assert_eq!(footer.keys[0].0, "1");
 }

@@ -441,10 +441,13 @@ fn verification(
     if !report.not_believed.is_empty() {
         sections.push(Section {
             title: "Headers Postio does not believe".to_owned(),
-            intro: Some(
+            intro: Some(if report.provider.is_some() {
                 "Written before your provider received the message. Anyone could have written these."
-                    .to_owned(),
-            ),
+                    .to_owned()
+            } else {
+                "Postio can't tell which of these your provider wrote, so it believes none of them."
+                    .to_owned()
+            }),
             lines: report.not_believed.iter().map(doubted).collect(),
             quiet: true,
             ..Section::default()
@@ -606,8 +609,13 @@ fn doubted(report: &AuthReport) -> Line {
                 Method::Arc => "ARC".to_owned(),
                 Method::Other(name) => name.clone(),
             };
+            let aligned = match (&result.method, result.aligned) {
+                (Method::Dmarc | Method::Arc, _) | (_, Alignment::Unknown) => "",
+                (_, Alignment::Aligned) => ", the From domain",
+                (_, Alignment::NotAligned) => ", not the From domain",
+            };
             match &result.domain {
-                Some(domain) => format!("{name} {} for {domain}.", verb(&result.result)),
+                Some(domain) => format!("{name} {} for {domain}{aligned}.", verb(&result.result)),
                 None => format!("{name} {}.", verb(&result.result)),
             }
         })
@@ -712,4 +720,26 @@ pub fn text(view: &SourceView, tab: Tab) -> String {
         },
     }
     out
+}
+
+/// What the footer teaches while the surface holds the keyboard: its own keys, never the list's.
+pub fn footer(keymap: &postio_core::Keymap) -> crate::scope::FooterView {
+    use postio_core::CommandId;
+    let keys = [
+        (CommandId::SourceTabVerification, "verification"),
+        (CommandId::SourceTabHeaders, "headers"),
+        (CommandId::SourceTabRaw, "raw"),
+        (CommandId::CopySource, "copy all"),
+        (CommandId::SaveSource, "save as .eml"),
+        (CommandId::Back, "close"),
+    ]
+    .into_iter()
+    .filter_map(|(command, label)| crate::hints::hint(keymap, command, label))
+    .map(|hint| (crate::hints::short(&hint.key), hint.label))
+    .collect();
+    crate::scope::FooterView {
+        title: "Source and verification".to_owned(),
+        keys,
+        note: None,
+    }
 }
