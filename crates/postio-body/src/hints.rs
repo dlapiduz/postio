@@ -7,7 +7,7 @@ use html5ever::tendril::StrTendril;
 use html5ever::{Attribute, LocalName, QualName, ns};
 use markup5ever_rcdom::{Handle, NodeData};
 
-use crate::sanitize::{is_colour, is_remote};
+use crate::sanitize::{is_colour, is_remote, split_declarations};
 
 /// Pixel cap: a `cellpadding="99999"` is not a layout anyone meant.
 const MAX_PX: u32 = 200;
@@ -119,8 +119,7 @@ fn walk(node: &Handle, table: Option<Table>, changed: &mut bool) {
             }
         }
         if !hint.is_empty() {
-            prepend_style(&mut attrs.borrow_mut(), &hint.join("; "));
-            *changed = true;
+            *changed |= prepend_style(&mut attrs.borrow_mut(), &hint);
         }
     }
     for child in node.children.borrow().iter() {
@@ -128,23 +127,44 @@ fn walk(node: &Handle, table: Option<Table>, changed: &mut bool) {
     }
 }
 
-fn prepend_style(attrs: &mut Vec<Attribute>, hint: &str) {
-    if let Some(style) = attrs
+fn prepend_style(attrs: &mut Vec<Attribute>, hints: &[String]) -> bool {
+    let style = attrs
         .iter_mut()
-        .find(|attr| str::eq_ignore_ascii_case(&attr.name.local, "style"))
-    {
-        let own = style.value.trim().to_owned();
-        style.value = StrTendril::from(if own.is_empty() {
-            hint.to_owned()
-        } else {
-            format!("{hint}; {own}")
-        });
-        return;
+        .find(|attr| str::eq_ignore_ascii_case(&attr.name.local, "style"));
+    let own = style.as_ref().map_or("", |style| style.value.trim());
+    let declared: Vec<String> = split_declarations(own)
+        .into_iter()
+        .filter_map(property)
+        .collect();
+    // A property the style declares wins over its hint anyway; leaving the hint out means a second
+    // pass over hinted markup adds nothing.
+    let hint = hints
+        .iter()
+        .flat_map(|hint| hint.split("; "))
+        .filter(|declaration| property(declaration).is_some_and(|name| !declared.contains(&name)))
+        .collect::<Vec<_>>()
+        .join("; ");
+    if hint.is_empty() {
+        return false;
     }
-    attrs.push(Attribute {
-        name: QualName::new(None, ns!(), LocalName::from("style")),
-        value: StrTendril::from(hint),
-    });
+    let value = if own.is_empty() {
+        hint
+    } else {
+        format!("{hint}; {own}")
+    };
+    match style {
+        Some(style) => style.value = StrTendril::from(value),
+        None => attrs.push(Attribute {
+            name: QualName::new(None, ns!(), LocalName::from("style")),
+            value: StrTendril::from(value),
+        }),
+    }
+    true
+}
+
+fn property(declaration: &str) -> Option<String> {
+    let (name, _) = declaration.split_once(':')?;
+    Some(name.trim().to_ascii_lowercase())
 }
 
 fn plain_url(value: &str) -> bool {
@@ -327,14 +347,20 @@ mod tests {
     }
 
     #[test]
+    fn a_second_pass_adds_no_hint_twice() {
+        let once = clean(
+            r#"<table cellspacing="4" border="1"><tr><td valign="top"><img src="cid:a" width="2" height="1"></td></tr></table>"#,
+        );
+        assert!(once.contains("aspect-ratio: 2 / 1"), "{once}");
+        assert_eq!(clean(&once), once);
+    }
+
+    #[test]
     fn a_senders_own_style_outranks_the_hint() {
         let html = clean(
             r#"<table><tr><td valign="top" style="vertical-align: bottom">a</td></tr></table>"#,
         );
-        let hint = html.find("vertical-align: top").expect("the hint");
-        let own = html
-            .find("vertical-align: bottom")
-            .expect("the sender's own");
-        assert!(hint < own, "{html}");
+        assert!(html.contains("vertical-align: bottom"), "{html}");
+        assert!(!html.contains("vertical-align: top"), "{html}");
     }
 }

@@ -503,7 +503,9 @@ pub fn sanitize_body_in(html: &str, remote: RemoteImages, scope: Option<&str>) -
     ));
 
     Sanitized {
-        html: builder.clean(input).to_string(),
+        // A parser drops whitespace before the body's first node, so output led by it would not
+        // sanitize to itself.
+        html: builder.clean(input).to_string().trim_start().to_owned(),
         styles,
         remote_blocked: tally.blocked.load(Ordering::Relaxed),
         trackers: tracker_count.load(Ordering::Relaxed),
@@ -852,6 +854,11 @@ fn rewrite_attribute<'u>(
     }
     if attribute == "id" {
         let id = value.trim();
+        let prefix = sender_id_prefix(scope);
+        // An id this pass already prefixed is the sender's own, so output sanitizes to itself.
+        if id.len() > prefix.len() && id.starts_with(&prefix) {
+            return Some(Cow::Owned(id.to_owned()));
+        }
         if is_postio_name(id) {
             tally.refuse(Refused::Attribute(POSTIO_NAMES));
             return None;
@@ -859,7 +866,7 @@ fn rewrite_attribute<'u>(
         if id.is_empty() {
             return None;
         }
-        return Some(Cow::Owned(format!("{}{id}", sender_id_prefix(scope))));
+        return Some(Cow::Owned(format!("{prefix}{id}")));
     }
     if is_data_uri(value) {
         // An embedded image is the message's own; any other `data:` URI is not kept.
@@ -873,10 +880,11 @@ fn rewrite_attribute<'u>(
         && let Some(fragment) = value.trim().strip_prefix('#')
         && !fragment.is_empty()
     {
-        return Some(Cow::Owned(format!(
-            "#{}{fragment}",
-            sender_id_prefix(scope)
-        )));
+        let prefix = sender_id_prefix(scope);
+        if fragment.len() > prefix.len() && fragment.starts_with(&prefix) {
+            return Some(Cow::Owned(format!("#{fragment}")));
+        }
+        return Some(Cow::Owned(format!("#{prefix}{fragment}")));
     }
     if attribute != "src" {
         return Some(Cow::Borrowed(value));
@@ -1870,6 +1878,26 @@ mod conversation_scope_tests {
             assert_eq!(twice.html, once.html, "scope {scope:?}");
             assert!(twice.refusals.is_empty(), "{:?}", twice.refusals);
         }
+    }
+
+    #[test]
+    fn a_second_pass_keeps_the_ids_the_first_prefixed() {
+        let html = r##"<p id="masthead">t</p><a href="#masthead">top</a>"##;
+        for scope in [None, Some("42")] {
+            let once = sanitize_body_in(html, RemoteImages::Blocked, scope);
+            let twice = sanitize_body_in(&once.html, RemoteImages::Blocked, scope);
+            assert_eq!(twice.html, once.html, "scope {scope:?}");
+        }
+        let other = sanitize_body_in(
+            r##"<p id="postio-s7-masthead">t</p>"##,
+            RemoteImages::Blocked,
+            Some("42"),
+        );
+        assert!(
+            !other.html.contains("postio-s7-"),
+            "message 42 wore message 7's names: {}",
+            other.html
+        );
     }
 
     #[test]
