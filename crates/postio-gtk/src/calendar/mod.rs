@@ -1,6 +1,8 @@
 //! Calendar's Agenda in the list's language: day headings, one row per occurrence, the open event
 //! as a card over the dimmed agenda, and the footer of its keys. It draws what the controller says.
 
+pub mod editor;
+
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
@@ -29,6 +31,7 @@ pub struct AgendaView {
     typing_echo: Cell<bool>,
     footer: crate::scope_footer::ScopeFooter,
     card: gtk::Box,
+    editor: Rc<editor::EventEditor>,
     rows: RefCell<Vec<AgendaRow>>,
     open: RefCell<Option<EventView>>,
     open_keys: RefCell<Vec<postio_ui::hints::Hint>>,
@@ -123,11 +126,23 @@ impl AgendaView {
         root.set_widget_name("focus-calendar");
         root.append(&shell);
 
+        let act: Act = Rc::new(act);
+        let editor = editor::EventEditor::new(&feed, Rc::clone(&act));
+        let scrim_editor = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        scrim_editor.add_css_class("focus-calendar-scrim");
+        scrim_editor.set_can_target(false);
+        editor
+            .widget()
+            .bind_property("visible", &scrim_editor, "visible")
+            .sync_create()
+            .build();
+        shell.add_overlay(&scrim_editor);
+        shell.add_overlay(editor.widget());
         let view = Rc::new(AgendaView {
             root,
             shell,
             feed,
-            act: Rc::new(act),
+            act,
             model,
             selection,
             list,
@@ -137,6 +152,7 @@ impl AgendaView {
             typing_echo: Cell::new(false),
             footer,
             card,
+            editor,
             rows: RefCell::new(Vec::new()),
             open: RefCell::new(None),
             open_keys: RefCell::new(Vec::new()),
@@ -262,6 +278,7 @@ impl AgendaView {
     }
 
     pub fn show_frame(&self, view: &CalendarView) {
+        let had_keyboard_before_rows_replaced = self.list_has_keyboard();
         let before = self.rows.replace(view.rows.clone());
         if before != view.rows {
             self.model.set_total(view.rows.len() as u32);
@@ -299,13 +316,54 @@ impl AgendaView {
         match view.cursor {
             Some(at) => {
                 self.selection.set_selected(at as u32);
-                self.list
-                    .scroll_to(at as u32, gtk::ListScrollFlags::NONE, None);
+                if had_keyboard_before_rows_replaced {
+                    self.list.grab_focus();
+                    self.list
+                        .scroll_to(at as u32, gtk::ListScrollFlags::FOCUS, None);
+                } else {
+                    self.list
+                        .scroll_to(at as u32, gtk::ListScrollFlags::NONE, None);
+                }
             }
             None => self.selection.set_selected(gtk::INVALID_LIST_POSITION),
         }
         self.placing.set(false);
-        self.show_open(view.open.as_ref());
+        let editing = view.editor.is_some();
+        let closing = self.editor.is_open() && !editing;
+        self.editor.show(view.editor.as_ref());
+        self.show_open(view.open.as_ref().filter(|_| !editing));
+        if closing && view.open.is_none() {
+            self.focus_list();
+        }
+    }
+
+    pub fn list_has_keyboard(&self) -> bool {
+        self.list
+            .root()
+            .and_then(|root| root.focus())
+            .is_some_and(|focus| {
+                focus == *self.list.upcast_ref::<gtk::Widget>() || focus.is_ancestor(&self.list)
+            })
+    }
+
+    pub fn keyboard_row(&self) -> Option<String> {
+        let mut texts = Vec::new();
+        let mut stack = vec![self.list.focus_child()?];
+        while let Some(widget) = stack.pop() {
+            if let Some(label) = widget.downcast_ref::<gtk::Label>() {
+                texts.push(label.text().to_string());
+            }
+            let mut child = widget.last_child();
+            while let Some(each) = child {
+                child = each.prev_sibling();
+                stack.push(each);
+            }
+        }
+        Some(texts.join(" "))
+    }
+
+    pub fn editor(&self) -> &editor::EventEditor {
+        &self.editor
     }
 
     fn show_open(&self, open: Option<&EventView>) {

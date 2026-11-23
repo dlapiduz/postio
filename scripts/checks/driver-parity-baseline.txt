@@ -123,3 +123,5 @@ postio-tui Intent::SyncLabel
 postio-tui Intent::ThreadMenu
 postio-tui Intent::Unsplice
 postio-tui Intent::WriteTo
+postio-ffi Input::EventEditorTyped # the Mac's editor is PostioKit work (specs/017 T030), built on a Mac
+postio-ffi Input::EventEditorScope # the Mac's editor is PostioKit work (specs/017 T030), built on a Mac

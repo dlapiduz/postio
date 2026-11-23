@@ -6261,6 +6261,17 @@ impl FocusWindow {
                 "focus.calendar.open".to_owned(),
                 serde_json::json!(calendar.open_event().is_some()),
             );
+            let editor = calendar.editor().shown();
+            app.insert(
+                "focus.calendar.editor".to_owned(),
+                serde_json::json!(editor.as_ref().map(|editor| editor.heading.clone())),
+            );
+            if let Some(editor) = editor {
+                app.insert(
+                    "focus.calendar.editor.when".to_owned(),
+                    serde_json::json!(editor.when.unwrap_or_else(|why| why)),
+                );
+            }
             if let Some(row) = calendar.ringed() {
                 app.insert(
                     "focus.calendar.cursor".to_owned(),

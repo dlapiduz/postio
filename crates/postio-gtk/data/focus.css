@@ -2765,6 +2765,12 @@ button.postio-button-ghost.focus-thread-menu-entry {
   margin-top: var(--postio-space-3);
 }
 
+.focus-calendar-editor-notes {
+  padding: var(--postio-space-2);
+  border-radius: var(--postio-radius-sm);
+  border: 1px solid var(--postio-hairline);
+}
+
 .focus-calendar-scrim {
   background-color: color-mix(in srgb, var(--postio-ink) 18%, transparent);
 }

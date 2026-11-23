@@ -190,3 +190,86 @@ pub fn slash_searches_events_and_escape_brings_the_agenda_back() {
         );
     });
 }
+
+pub fn c_types_a_new_event_and_mod_s_puts_it_in_the_agenda() {
+    crate::gtk_case(async {
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(("Ada Moreno", "ada@example.test"), "Hello", "Hi.", 5)
+            .await;
+        with_events(&fixture).await;
+        let (window, _client) = fixture.open().await;
+        support::keys(&window, &["g", "e"]);
+        assert!(
+            crate::settle_until(async || window
+                .calendar()
+                .and_then(|view| view.ringed())
+                .is_some())
+            .await
+        );
+        let view = window.calendar().expect("the agenda");
+
+        support::keys(&window, &["c"]);
+        let title = view
+            .editor()
+            .entry(postio_ui::calendar::editor::EditorField::Title)
+            .expect("a title field")
+            .clone();
+        assert!(
+            crate::settle_until(async || title.has_focus() || title.focus_child().is_some()).await,
+            "c opens the editor with the keyboard in its title"
+        );
+        title.set_text("Dentist");
+        support::deliver_with(&window, "s", gtk::gdk::ModifierType::CONTROL_MASK);
+
+        assert!(
+            crate::settle_until(async || !view.editor().is_open()
+                && view.ringed().is_some_and(|row| row.title == "Dentist"))
+            .await,
+            "mod+s saves, closes the editor and rings the new event"
+        );
+        assert!(
+            crate::settle_until(async || view
+                .keyboard_row()
+                .is_some_and(|row| row.contains("Dentist")))
+            .await,
+            "the keyboard is on the ringed row, not another: {:?}",
+            view.keyboard_row()
+        );
+    });
+}
+
+pub fn escape_leaves_the_editor_without_saving() {
+    crate::gtk_case(async {
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(("Ada Moreno", "ada@example.test"), "Hello", "Hi.", 5)
+            .await;
+        with_events(&fixture).await;
+        let (window, _client) = fixture.open().await;
+        support::keys(&window, &["g", "e"]);
+        assert!(
+            crate::settle_until(async || window
+                .calendar()
+                .and_then(|view| view.ringed())
+                .is_some_and(|row| row.title == "Next up"))
+            .await
+        );
+        let view = window.calendar().expect("the agenda");
+        support::keys(&window, &["c"]);
+        assert!(crate::settle_until(async || view.editor().is_open()).await);
+        view.editor()
+            .entry(postio_ui::calendar::editor::EditorField::Title)
+            .expect("a title field")
+            .set_text("Not kept");
+
+        support::keys(&window, &["Escape"]);
+        assert!(
+            crate::settle_until(async || !view.editor().is_open()
+                && view.ringed().is_some_and(|row| row.title == "Next up")
+                && view.list_has_keyboard())
+            .await,
+            "Escape closes the editor and gives the keyboard back to the agenda's ring"
+        );
+    });
+}

@@ -499,7 +499,10 @@ impl FocusController {
                 .keymap()
                 .binding(CommandId::Search)
                 .map(str::to_owned),
-            open_keys: words::open_keys(self.bar.keymap()),
+            open_keys: words::open_keys(
+                self.bar.keymap(),
+                calendar.open.as_ref().is_some_and(|detail| detail.writable),
+            ),
             editor: self.editor_view(),
         })))]
     }

@@ -377,6 +377,7 @@ pub fn footer(keymap: &postio_core::Keymap) -> Vec<crate::hints::Hint> {
             "move",
         ),
         hint(keymap, CommandId::OpenMessage, "open"),
+        hint(keymap, CommandId::NewEvent, "new event"),
         hint(keymap, CommandId::Search, "search"),
         pair(
             keymap,
@@ -393,8 +394,15 @@ pub fn footer(keymap: &postio_core::Keymap) -> Vec<crate::hints::Hint> {
     .collect()
 }
 
-pub fn open_keys(keymap: &postio_core::Keymap) -> Vec<crate::hints::Hint> {
-    crate::hints::hint(keymap, postio_core::CommandId::Back, "close")
-        .into_iter()
+pub fn open_keys(keymap: &postio_core::Keymap, writable: bool) -> Vec<crate::hints::Hint> {
+    let edit = writable
+        .then(|| crate::hints::hint(keymap, postio_core::CommandId::EditEvent, "edit"))
+        .flatten();
+    edit.into_iter()
+        .chain(crate::hints::hint(
+            keymap,
+            postio_core::CommandId::Back,
+            "close",
+        ))
         .collect()
 }

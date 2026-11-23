@@ -1,5 +1,6 @@
 use postio_core::CommandId;
 use postio_focus::{CalendarView, Input as Told, Intent, SurfaceKind};
+use postio_model::calendar::EditScope;
 use postio_ui::keymap::{KeyContext, Outcome};
 
 use super::{App, Effect, Focus};
@@ -19,6 +20,9 @@ impl App {
     ) -> Result<Vec<Effect>, Box<Intent>> {
         match intent {
             Intent::Calendar(view) => {
+                if view.editor.is_none() {
+                    self.surfaces.editor_field = 0;
+                }
                 self.surfaces.calendar = Some(view);
                 self.focus = Focus::Calendar;
             }
@@ -41,8 +45,84 @@ impl App {
         Ok(vec![Effect::Redraw])
     }
 
+    pub fn editor_field(&self) -> usize {
+        self.surfaces.editor_field
+    }
+
+    fn editor_key(&mut self, key: &crossterm::event::KeyEvent) -> Option<Vec<Effect>> {
+        use crossterm::event::{KeyCode, KeyModifiers};
+        use postio_ui::calendar::editor::EditorField;
+        let editor = self.calendar()?.editor.as_ref()?;
+        let stops = EditorField::ALL.len() + usize::from(editor.scope.is_some());
+        let at = self.surfaces.editor_field.min(stops - 1);
+        let field = EditorField::ALL.get(at).copied();
+        let plain = key.modifiers.difference(KeyModifiers::SHIFT).is_empty();
+        let typed = |field: EditorField| {
+            editor
+                .fields
+                .iter()
+                .find(|(each, _)| *each == field)
+                .map(|(_, text)| text.clone())
+                .unwrap_or_default()
+        };
+        let edit = match (key.code, field) {
+            (KeyCode::Tab, _) => {
+                self.surfaces.editor_field = (at + 1) % stops;
+                return Some(vec![Effect::Redraw]);
+            }
+            (KeyCode::BackTab, _) => {
+                self.surfaces.editor_field = (at + stops - 1) % stops;
+                return Some(vec![Effect::Redraw]);
+            }
+            (KeyCode::Left | KeyCode::Right, None) => {
+                let scopes = [EditScope::This, EditScope::ThisAndFollowing, EditScope::All];
+                let now = scopes
+                    .iter()
+                    .position(|scope| Some(*scope) == editor.scope)
+                    .unwrap_or(0);
+                let next = if key.code == KeyCode::Right {
+                    (now + 1) % 3
+                } else {
+                    (now + 2) % 3
+                };
+                return Some(self.tell(Told::EventEditorScope(scopes[next])));
+            }
+            (KeyCode::Char(character), Some(field)) if plain => {
+                let mut text = typed(field);
+                text.push(character);
+                (field, text)
+            }
+            (KeyCode::Backspace, Some(field)) => {
+                let mut text = typed(field);
+                text.pop();
+                (field, text)
+            }
+            (KeyCode::Enter, Some(EditorField::Notes)) if plain => {
+                let mut text = typed(EditorField::Notes);
+                text.push('\n');
+                (EditorField::Notes, text)
+            }
+            _ => {
+                return Some(match self.keys.press(key, KeyContext::Calendar, true) {
+                    Outcome::Command(id) => match id.parse::<CommandId>() {
+                        Ok(command) => self.tell(Told::Command(command)),
+                        Err(_) => Vec::new(),
+                    },
+                    _ => Vec::new(),
+                });
+            }
+        };
+        Some(self.tell(Told::EventEditorTyped {
+            field: edit.0,
+            text: edit.1,
+        }))
+    }
+
     pub(super) fn calendar_key(&mut self, key: &crossterm::event::KeyEvent) -> Vec<Effect> {
         use crossterm::event::KeyCode;
+        if let Some(effects) = self.editor_key(key) {
+            return effects;
+        }
         if let Some(typed) = self.surfaces.calendar_typing.as_mut() {
             match key.code {
                 KeyCode::Char(character) => typed.push(character),
@@ -195,5 +275,44 @@ mod tests {
         let drawn = screen(100, 24, &app);
         assert!(drawn.contains("Review"), "the agenda is back:\n{drawn}");
         assert_eq!(app.focus(), Focus::Calendar);
+    }
+
+    #[test]
+    fn c_opens_the_editor_tab_moves_between_fields_and_ctrl_s_saves() {
+        let mut app = app((100, 24));
+        app.clock_for_tests(now());
+        agenda(&mut app);
+
+        update(&mut app, press('c'));
+        let drawn = screen(100, 24, &app);
+        assert!(drawn.contains("New event"), "{drawn}");
+        assert!(
+            drawn.contains("\u{25b8} Title"),
+            "the title takes the typing: {drawn}"
+        );
+
+        for letter in "Dentist".chars() {
+            update(&mut app, press(letter));
+        }
+        update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
+        let drawn = screen(100, 24, &app);
+        assert!(drawn.contains("  Title   Dentist"), "{drawn}");
+        assert!(drawn.contains("\u{25b8} Starts"), "{drawn}");
+
+        let effects = update(&mut app, key(KeyCode::Char('s'), KeyModifiers::CONTROL));
+        let saved = effects.iter().any(|effect| {
+            matches!(
+                effect,
+                crate::app::Effect::Focus {
+                    request: Request::Post(postio_core::Command::SaveEvent {
+                        fields: Some(fields),
+                        ..
+                    }),
+                    ..
+                } if fields.title == "Dentist"
+            )
+        });
+        assert!(saved, "{effects:?}");
+        assert!(!screen(100, 24, &app).contains("New event"));
     }
 }
