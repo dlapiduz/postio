@@ -164,7 +164,7 @@ throwaway code is not merged.
 
   Add one `focus_suite` case, `signed_mark`. T004 goes green.
 - [x] T039 [US3] Add the Verification tab's signature section (the source of the key, D10's lines, and "Accept this key for …") to `crates/postio-ui/src/source.rs`, with cases in `crates/postio-ui/tests/ui_suite/source_view.rs`
-- [ ] T040 [US3] Show the encrypted state ("This message is encrypted. Postio can't decrypt mail yet.") in `crates/postio-ui/src/reader/document.rs`, and drop the signature part from the attachment list in `crates/postio-ui/src/reader/parts.rs`, with cases in `crates/postio-ui/tests/ui_suite/`
+- [x] T040 [US3] Show the encrypted state ("This message is encrypted. Postio can't decrypt mail yet.") in `crates/postio-ui/src/reader/document.rs`, and drop the signature part from the attachment list in `crates/postio-ui/src/reader/parts.rs`, with cases in `crates/postio-ui/tests/ui_suite/`
 - [ ] T041 [US3] Add the refused mechanisms (`/.well-known/openpgpkey/`, `hkps://`, `_domainkey`, and spawning `gpg`) to `scripts/checks/check-no-silent-tracking.py`, with a self-test file showing each refused
 
 ## Phase 6: User Story 5, managing keys (P3)

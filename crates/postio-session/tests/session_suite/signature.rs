@@ -182,3 +182,18 @@ async fn the_reading_says_signed_and_signed_accepted_once_the_key_is_accepted() 
     keys.unaccept(&ada()).await.expect("taken back");
     assert_eq!(mark().await, Some(Mark::Signed));
 }
+
+#[tokio::test]
+async fn an_encrypted_message_opens_on_a_sentence_not_a_blank_body() {
+    let scene = Scene::new().await;
+    let encrypted = scene.arrive("pgp-encrypted", false).await;
+    let connection = scene.database.connect().await.expect("a connection");
+    let (body, _) = postio_session::reading::load_with_row(&connection, encrypted, false).await;
+    let postio_session::reading::Body::Ready { body, .. } = body else {
+        panic!("the encrypted message has a body to show");
+    };
+    assert_eq!(
+        body.text.as_deref(),
+        Some(postio_ui::reader::document::ENCRYPTED)
+    );
+}

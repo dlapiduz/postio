@@ -677,3 +677,35 @@ fn a_key_from_the_gnupg_keyring_says_so() {
         section(&view, SIGNATURE).intro
     );
 }
+
+#[test]
+fn an_encrypted_message_is_said_and_a_signature_part_is_no_attachment() {
+    use postio_ui::reader::{document, parts};
+    for kind in [
+        "multipart/encrypted",
+        "Multipart/Encrypted",
+        "application/pkcs7-mime",
+    ] {
+        assert!(document::is_encrypted(kind), "{kind}");
+    }
+    for kind in ["multipart/signed", "text/plain", "multipart/mixed"] {
+        assert!(!document::is_encrypted(kind), "{kind}");
+    }
+    assert_eq!(
+        document::ENCRYPTED,
+        "This message is encrypted. Postio can't decrypt mail yet."
+    );
+    for mime in [
+        "application/pgp-signature",
+        "application/pkcs7-signature",
+        "application/x-pkcs7-signature",
+        "application/pgp-encrypted",
+    ] {
+        assert!(!parts::listed_as_attachment(mime), "{mime}");
+    }
+    assert!(parts::listed_as_attachment("application/pdf"));
+    assert!(
+        parts::listed_as_attachment("application/pgp-keys"),
+        "a key is offered for import"
+    );
+}

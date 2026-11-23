@@ -105,6 +105,35 @@ pub async fn load_with_row(
         }
     };
 
+    let declared = row.content_type.clone().or_else(|| {
+        stored
+            .headers
+            .as_deref()
+            .map(postio_model::headers::parse_block)
+            .and_then(|headers| {
+                headers
+                    .get("Content-Type")
+                    .and_then(|value| value.split(';').next())
+                    .map(str::to_owned)
+            })
+    });
+    if declared
+        .as_deref()
+        .is_some_and(postio_ui::reader::document::is_encrypted)
+    {
+        return (
+            Body::Ready {
+                encoding_problems: false,
+                headers: stored.headers,
+                body: postio_model::MessageBody {
+                    text: Some(postio_ui::reader::document::ENCRYPTED.to_owned()),
+                    html: None,
+                },
+            },
+            Some(row),
+        );
+    }
+
     // "No body" only when the parse says nothing went wrong: a guessed structure can come back with
     // no text part (#287).
     if stored.text.is_none() && stored.html.is_none() && !stored.encoding_problems {
