@@ -50,6 +50,8 @@ pub struct DigestLine {
     pub subject: String,
     pub preview: Option<String>,
     pub time: String,
+    /// The message as the store has it, for a frontend that opens it for itself.
+    pub summary: MessageSummary,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -628,6 +630,7 @@ impl FocusController {
                     subject: row.subject.clone().unwrap_or_default(),
                     preview: row.preview.clone(),
                     time: postio_ui::row::timestamp(row.received_at, now),
+                    summary: row.clone(),
                 })
                 .collect(),
             focused: window.focused.map(|at| at as u32),
@@ -699,7 +702,7 @@ impl FocusController {
         self.open_rule()
     }
 
-    fn edit_rule(&mut self, name: &str) -> Vec<Step> {
+    pub(crate) fn edit_rule(&mut self, name: &str) -> Vec<Step> {
         let rule = self
             .states
             .config

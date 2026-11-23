@@ -546,3 +546,40 @@ fn the_footer_on_a_digest_row_names_the_digest_not_the_row_before() {
     let said: Vec<&str> = footer.keys.iter().map(|(_, l)| l.as_str()).collect();
     assert_eq!(said, ["move", "open", "archive digest"]);
 }
+
+#[test]
+fn a_rule_named_from_a_list_of_rules_opens_its_dialog_and_a_missing_one_says_so() {
+    let mut focus = mac();
+    let _ = focus.handle(Input::Config(config(false)));
+    let effects = focus.handle_on(
+        Input::EditRule {
+            name: "Newsletters".to_owned(),
+        },
+        &List,
+    );
+    let view = rule(&effects).expect("the dialog opens");
+    assert_eq!(
+        view.heading,
+        postio_ui::digest::edit_rule_heading("Newsletters")
+    );
+    assert_eq!(view.from.as_deref(), Some("from:news@ledger.example"));
+    assert!(
+        asks(&effects)
+            .iter()
+            .any(|(_, request)| matches!(request, Request::DigestPreview { .. })),
+        "{effects:?}"
+    );
+
+    let mut other = mac();
+    let effects = other.handle_on(
+        Input::EditRule {
+            name: "Gone".to_owned(),
+        },
+        &List,
+    );
+    assert!(rule(&effects).is_none());
+    assert!(shown(&effects).iter().any(|intent| matches!(
+        intent,
+        Intent::Toast { text, .. } if text == postio_ui::focus_target::RULE_MISSING
+    )));
+}

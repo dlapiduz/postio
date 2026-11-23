@@ -78,6 +78,8 @@ pub struct FilteredLine {
     pub heading: Option<String>,
     pub selected: bool,
     pub messages: u32,
+    /// The message as the store has it, for a frontend that opens it for itself.
+    pub summary: postio_model::listing::MessageSummary,
 }
 
 #[derive(Debug)]
@@ -734,6 +736,7 @@ impl FocusController {
                     heading,
                     selected: selection.contains(row.message.id),
                     messages: row.message.thread_count.max(1),
+                    summary: row.message.clone(),
                 })
                 .collect(),
             focused: filtered.focused().map(|at| at as u32),

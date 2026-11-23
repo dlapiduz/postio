@@ -212,6 +212,10 @@ pub enum Input {
     DigestReference(u32),
     /// A no is nothing: the question is forgotten when the next is asked.
     Confirmed(u64),
+    /// Opens the dialog on a rule of `config.toml`, by its name, from where the window lists them.
+    EditRule {
+        name: String,
+    },
     RuleQuery {
         text: String,
     },
@@ -1397,6 +1401,10 @@ impl FocusController {
             }
             Input::Confirmed(token) => {
                 let steps = self.confirmed(token);
+                self.effects(steps)
+            }
+            Input::EditRule { name } => {
+                let steps = self.edit_rule(&name);
                 self.effects(steps)
             }
             input @ (Input::RuleQuery { .. }
