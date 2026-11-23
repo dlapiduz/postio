@@ -2172,7 +2172,7 @@ impl FocusController {
     }
 
     fn open_source(&mut self, message: MessageId, over: Over) -> Vec<feed::Step> {
-        self.source = Some(source::Source::new());
+        self.source = Some(source::Source::new(message));
         let mut steps = self
             .surfaces
             .opened(SurfaceKind::Source, self.policy.caps.stacking);
@@ -2193,6 +2193,24 @@ impl FocusController {
                 steps.push(feed::Step::Show(Intent::KeyboardHome));
             }
             return steps;
+        }
+        if let Some(message) = self.source.as_ref().map(|source| source.message) {
+            let command = match id {
+                CommandId::AcceptKey => Some(Command::AcceptKey {
+                    message: Some(message),
+                    accepted: true,
+                    kept: None,
+                }),
+                CommandId::ForgetKey => Some(Command::ForgetKey {
+                    message: Some(message),
+                    forgotten: true,
+                    kept: None,
+                }),
+                _ => None,
+            };
+            if let Some(command) = command {
+                return vec![feed::Step::Ask(Request::Post(command))];
+            }
         }
         self.source
             .as_mut()

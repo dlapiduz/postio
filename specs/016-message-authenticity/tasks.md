@@ -172,7 +172,7 @@ throwaway code is not merged.
 **Goal**: import, accept and forget keys from the card and the tab.
 **Independent test**: US5 scenarios 1 and 2.
 
-- [ ] T042 [US5] Write failing registry and host cases, then add `import_key`, `accept_key` and `forget_key` (with `Recovery::Undo` for accept and forget) to `crates/postio-core/src/registry.rs`, and their verbs to `crates/postio-host/src/` against `contact_accepted_keys` and `public_keys`
+- [x] T042 [US5] Write failing registry and host cases, then add `import_key`, `accept_key` and `forget_key` (with `Recovery::Undo` for accept and forget) to `crates/postio-core/src/registry.rs`, and their verbs to `crates/postio-host/src/` against `contact_accepted_keys` and `public_keys`
 - [ ] T043 [P] [US5] Show a contact's keys, with their sources, on the card in `crates/postio-ui/src/` (the contact card view model) and its frontends, with one case per frontend
 - [ ] T044 [US5] Offer "Import key" for an `application/pgp-keys` part and for a `.asc` file in `crates/postio-gtk/src/` (the file chooser) and the terminal's command bar, with cases
 

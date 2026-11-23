@@ -56,6 +56,10 @@ pub enum UndoKind {
     Unmute,
     Split,
     Unsplit,
+    AcceptKey,
+    UnacceptKey,
+    ForgetKey,
+    RestoreKey,
 }
 
 impl UndoKind {
@@ -93,6 +97,10 @@ impl UndoKind {
             UndoKind::Unmute => "Unmuted the thread".to_owned(),
             UndoKind::Split => "Split into its own thread".to_owned(),
             UndoKind::Unsplit => "Joined the thread again".to_owned(),
+            UndoKind::AcceptKey => "Accepted the key".to_owned(),
+            UndoKind::UnacceptKey => "Took back accepting the key".to_owned(),
+            UndoKind::ForgetKey => "Forgot the key".to_owned(),
+            UndoKind::RestoreKey => "Brought the key back".to_owned(),
             UndoKind::Snooze => format!("Snoozed {count} {messages}"),
             UndoKind::Unsnooze => format!("Unsnoozed {count} {messages}"),
             // Counted in conversations: a reminder waits on a reply to the conversation.

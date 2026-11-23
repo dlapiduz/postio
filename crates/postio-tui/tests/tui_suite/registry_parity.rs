@@ -36,6 +36,9 @@ const NOT_YET: &[(&str, &str)] = &[
     ("copy_source", "specs/016-message-authenticity T023"),
     ("save_source", "specs/016-message-authenticity T023"),
     ("unfold_part", "specs/016-message-authenticity T023"),
+    ("accept_key", "specs/016-message-authenticity T042"),
+    ("forget_key", "specs/016-message-authenticity T042"),
+    ("import_key", "specs/016-message-authenticity T044"),
 ];
 
 /// `chord` as a terminal reports it.

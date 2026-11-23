@@ -249,6 +249,9 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         | C::CopySource
         | C::SaveSource
         | C::UnfoldPart
+        | C::AcceptKey
+        | C::ForgetKey
+        | C::ImportKey
         | C::SweepInbox
         | C::CaptureTask
         | C::CaptureNote

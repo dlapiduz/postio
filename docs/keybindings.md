@@ -219,6 +219,9 @@ command from inside a text field.
 | `ctrl+c` | Copy all | Source |  | `copy_source` |
 | `ctrl+s` | Save as .eml… | Source |  | `save_source` |
 | `Return` | Show | Source |  | `unfold_part` |
+| `a` | Accept this key | Source | Undoable | `accept_key` |
+| `x` | Forget this key | Source | Undoable | `forget_key` |
+| `i` | Import key… | Source |  | `import_key` |
 | `F` | Filter what is in the inbox… | List | Undoable | `sweep_inbox` |
 | `T` | Capture a task… | List, thread, reader, capture sheet |  | `capture_task` |
 | `N` | Capture a note… | List, thread, reader, capture sheet |  | `capture_note` |

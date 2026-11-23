@@ -1808,6 +1808,32 @@ static SPECS: &[CommandSpec] = &[
         ..BASE
     },
     CommandSpec {
+        id: CommandId::AcceptKey,
+        title: "Accept this key",
+        default_binding: "a",
+        contexts: Context::Source.as_set(),
+        recovery: Recovery::Undo,
+        requires: FOCUS_MAIL,
+        ..BASE
+    },
+    CommandSpec {
+        id: CommandId::ForgetKey,
+        title: "Forget this key",
+        default_binding: "x",
+        contexts: Context::Source.as_set(),
+        recovery: Recovery::Undo,
+        requires: FOCUS_MAIL,
+        ..BASE
+    },
+    CommandSpec {
+        id: CommandId::ImportKey,
+        title: "Import key…",
+        default_binding: "i",
+        contexts: Context::Source.as_set(),
+        requires: FOCUS_MAIL,
+        ..BASE
+    },
+    CommandSpec {
         id: CommandId::SweepInbox,
         title: "Filter what is in the inbox…",
         default_binding: "F",

@@ -29,7 +29,7 @@ pub enum KeySource {
 }
 
 impl KeySource {
-    fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             KeySource::Autocrypt => "autocrypt",
             KeySource::Attachment => "attachment",
@@ -38,7 +38,7 @@ impl KeySource {
         }
     }
 
-    fn parse(text: &str) -> Option<KeySource> {
+    pub fn parse(text: &str) -> Option<KeySource> {
         [
             KeySource::Autocrypt,
             KeySource::Attachment,
@@ -170,6 +170,38 @@ impl<'a> KeyRepository<'a> {
             },
         )
         .await
+    }
+
+    pub async fn key(&self, fingerprint: &str) -> Result<Option<(StoredKey, Vec<String>)>> {
+        let key = sql::first(
+            self.connection,
+            "SELECT fingerprint, keyblock, primary_uid, revoked, first_seen, last_seen
+               FROM public_keys WHERE fingerprint = ?1",
+            bind![fingerprint],
+            |row| {
+                Ok(StoredKey {
+                    fingerprint: row.text(0)?,
+                    keyblock: row.col(1)?,
+                    primary_uid: row.opt_text(2)?,
+                    revoked: row.flag(3)?,
+                    first_seen: row.int(4)?,
+                    last_seen: row.int(5)?,
+                })
+            },
+        )
+        .await?;
+        let Some(key) = key else {
+            return Ok(None);
+        };
+        let addresses = sql::all(
+            self.connection,
+            "SELECT a.address FROM public_key_addresses p JOIN addresses a ON a.id = p.address_id
+              WHERE p.fingerprint = ?1 ORDER BY a.address LIMIT 64",
+            bind![fingerprint],
+            |row| row.text(0),
+        )
+        .await?;
+        Ok(Some((key, addresses)))
     }
 
     pub async fn sources(&self, fingerprint: &str) -> Result<Vec<KeySource>> {

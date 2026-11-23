@@ -293,7 +293,10 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::SourceTabRaw
         | C::CopySource
         | C::SaveSource
-        | C::UnfoldPart => None,
+        | C::UnfoldPart
+        | C::AcceptKey
+        | C::ForgetKey
+        | C::ImportKey => None,
         C::ToggleAccountEnabled
         | C::RemoveAccount
         | C::UpdateCredential

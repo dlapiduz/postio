@@ -261,3 +261,41 @@ fn the_footer_speaks_for_the_source_while_it_is_open() {
         "closing gives the list its footer back: {closed:?}"
     );
 }
+
+#[test]
+fn a_and_x_post_the_key_verbs_for_the_surfaces_message() {
+    use postio_core::Command;
+    use postio_focus::Request;
+    let (mut focus, rows) = on_row_two();
+    let effects = run(&mut focus, CommandId::ViewSource, &rows);
+    follow(&mut focus, &effects, &rows);
+    let posted = |effects: &[Effect]| -> Vec<Command> {
+        effects
+            .iter()
+            .filter_map(|effect| match effect {
+                Effect::Ask(_, Request::Post(command)) => Some(command.clone()),
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(
+        posted(&run(&mut focus, CommandId::AcceptKey, &rows)),
+        [Command::AcceptKey {
+            message: Some(MessageId::new(102)),
+            accepted: true,
+            kept: None,
+        }]
+    );
+    assert_eq!(
+        posted(&run(&mut focus, CommandId::ForgetKey, &rows)),
+        [Command::ForgetKey {
+            message: Some(MessageId::new(102)),
+            forgotten: true,
+            kept: None,
+        }]
+    );
+    assert_eq!(
+        told(&run(&mut focus, CommandId::ImportKey, &rows)),
+        vec![Intent::Source(SourceVerb::Import)]
+    );
+}

@@ -124,6 +124,9 @@ const NOT_YET: &[&str] = &[
     "copy_source",
     "save_source",
     "unfold_part",
+    "accept_key",
+    "forget_key",
+    "import_key",
     // The capture sheet's own keys each have a control in the sheet; the command bar lists what the
     // list reaches.
     "capture_change_project",

@@ -24,6 +24,7 @@ const KNOWN_ORPHANS: &[(CommandId, &str)] = &[
     (CommandId::CopySource, "specs/016-message-authenticity T024"),
     (CommandId::SaveSource, "specs/016-message-authenticity T024"),
     (CommandId::UnfoldPart, "specs/016-message-authenticity T024"),
+    (CommandId::ImportKey, "specs/016-message-authenticity T024"),
     (CommandId::SwitchTreatment, "specs/009-focus-macos T070"),
     (CommandId::MoreActions, "specs/009-focus-macos T067"),
     (

@@ -172,6 +172,9 @@ source_tab_raw	3
 copy_source	ctrl+c
 save_source	ctrl+s
 unfold_part	Return
+accept_key	a
+forget_key	x
+import_key	i
 sweep_inbox	F
 capture_task	T
 capture_note	N

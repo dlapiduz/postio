@@ -3203,6 +3203,11 @@ impl FocusWindow {
                     reading.body_landed(*message);
                 }
             }
+            Event::MessagesChanged { messages, .. } => {
+                if let Some(shown) = self.source_of().filter(|shown| messages.contains(shown)) {
+                    self.refresh_source(shown);
+                }
+            }
 
             _ => {}
         }
@@ -5198,6 +5203,7 @@ impl FocusWindow {
                 dialog.unfold();
             }
             SourceVerb::Find => dialog.find(),
+            SourceVerb::Import => {}
             _ => {}
         }
     }

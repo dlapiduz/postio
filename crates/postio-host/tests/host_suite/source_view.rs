@@ -409,3 +409,77 @@ fn the_source_surface_names_no_renderer() {
         }
     }
 }
+
+#[test]
+fn accepting_and_forgetting_a_key_are_store_writes_undo_takes_back() {
+    use postio_core::Command;
+    use postio_storage::repository::KeyRepository;
+    let rt = current_thread();
+    let scene = rt.block_on(Scene::new());
+    let carrier = rt.block_on(scene.file("autocrypt-header", true));
+    let signed = rt.block_on(scene.file("pgp-signed-good", true));
+    rt.block_on(postio_session::signature::check_messages(
+        &scene.database,
+        &scene.blobs,
+        &[carrier, signed],
+    ))
+    .expect("checked");
+    let host =
+        postio_host::Host::start(scene.database.clone(), scene.blobs.clone(), |wiring| wiring)
+            .expect("a host");
+    let client = host.connect(postio_client::protocol::ClientKind::Test);
+    let ada = postio_model::EmailAddress::new(None::<String>, "ada@example.com");
+    let accepted = || {
+        rt.block_on(async {
+            let connection = scene.database.connect().await.expect("a connection");
+            KeyRepository::new(&connection)
+                .accepted(&ada)
+                .await
+                .expect("a read")
+        })
+    };
+    let status = || {
+        rt.block_on(async {
+            let connection = scene.database.connect().await.expect("a connection");
+            KeyRepository::new(&connection)
+                .verdict(signed)
+                .await
+                .expect("a read")
+                .map(|row| row.status)
+        })
+    };
+    let until = |what: &str, done: &dyn Fn() -> bool| {
+        let deadline = std::time::Instant::now() + patience();
+        while !done() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "never happened: {what}"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    };
+    rt.block_on(client.send(Command::AcceptKey {
+        message: Some(signed),
+        accepted: true,
+        kept: None,
+    }))
+    .expect("accepted");
+    until("the key is accepted", &|| accepted().is_some());
+    rt.block_on(client.send(Command::Undo)).expect("undone");
+    until("undo takes the acceptance back", &|| accepted().is_none());
+
+    rt.block_on(client.send(Command::ForgetKey {
+        message: Some(signed),
+        forgotten: true,
+        kept: None,
+    }))
+    .expect("forgotten");
+    until("with the key gone the signature can't be checked", &|| {
+        status().as_deref() == Some("cant_check")
+    });
+    rt.block_on(client.send(Command::Undo)).expect("undone");
+    until("undo brings the key back", &|| {
+        status().as_deref() == Some("good")
+    });
+    host.stop();
+}

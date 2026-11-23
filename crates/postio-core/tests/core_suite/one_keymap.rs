@@ -462,6 +462,9 @@ const CONTRACT: &[Row] = &[
     with("copy_source", "mod+c", &[], Focus, &[Context::Source]),
     with("save_source", "mod+s", &[], Focus, &[Context::Source]),
     with("unfold_part", "Return", &[], Focus, &[Context::Source]),
+    with("accept_key", "a", &[], Focus, &[Context::Source]),
+    with("forget_key", "x", &[], Focus, &[Context::Source]),
+    with("import_key", "i", &[], Focus, &[Context::Source]),
     with("next_reference", "]", &[], Focus, &[Context::Digest]),
     with("prev_reference", "[", &[], Focus, &[Context::Digest]),
     with(
@@ -876,7 +879,7 @@ fn the_source_surface_answers_its_own_keys_and_esc_closes_it() {
     );
     assert_eq!(
         linux.command_for(Context::Source, "a"),
-        None,
-        "a letter that archives in the list means nothing over the source"
+        Some(postio_core::ActionId::Builtin(CommandId::AcceptKey)),
+        "over the source, a accepts the signer's key rather than archiving the row behind"
     );
 }

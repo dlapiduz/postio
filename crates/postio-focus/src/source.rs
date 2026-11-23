@@ -15,16 +15,19 @@ pub enum SourceVerb {
     Save,
     Unfold,
     Find,
+    Import,
 }
 
 #[derive(Debug)]
 pub(crate) struct Source {
+    pub(crate) message: postio_model::MessageId,
     tab: Tab,
 }
 
 impl Source {
-    pub(crate) fn new() -> Source {
+    pub(crate) fn new(message: postio_model::MessageId) -> Source {
         Source {
+            message,
             tab: Tab::Verification,
         }
     }
@@ -39,6 +42,9 @@ impl Source {
                 | CommandId::SaveSource
                 | CommandId::UnfoldPart
                 | CommandId::FindInMessage
+                | CommandId::AcceptKey
+                | CommandId::ForgetKey
+                | CommandId::ImportKey
                 | CommandId::Back
         )
     }
@@ -50,6 +56,7 @@ impl Source {
             CommandId::SourceTabRaw => Tab::Raw,
             CommandId::CopySource => return Some(SourceVerb::Copy),
             CommandId::SaveSource => return Some(SourceVerb::Save),
+            CommandId::ImportKey => return Some(SourceVerb::Import),
             CommandId::UnfoldPart => return (self.tab == Tab::Raw).then_some(SourceVerb::Unfold),
             CommandId::FindInMessage => {
                 return (self.tab != Tab::Verification).then_some(SourceVerb::Find);
