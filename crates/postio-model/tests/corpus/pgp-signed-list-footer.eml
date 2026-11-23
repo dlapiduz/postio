@@ -1,0 +1,47 @@
+Message-ID: <pgp-signed-list-footer@example.com>
+Date: Thu, 05 Mar 2026 09:00:00 +0000
+From: Ada Moreno <ada@example.com>
+To: Grace Example <grace@example.net>
+Subject: [lock-keepers] Signed: lock-keeper rota, April
+List-Id: Lock keepers <lock-keepers.lists.example.org>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_list_wrap_19c"
+
+--=_list_wrap_19c
+Content-Type: multipart/signed; micalg=pgp-sha256;
+	protocol="application/pgp-signature"; boundary="=_sig_inner_b8f"
+
+This is an OpenPGP/MIME signed message (RFC 3156).
+--=_sig_inner_b8f
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+The lock-keeper rota for April, signed so it is on the record.
+
+  Week 1  Ada
+  Week 2  Grace
+  Week 3  Ada
+  Week 4  Lin
+
+Swaps go through me, not the shared sheet.
+
+Ada
+--=_sig_inner_b8f
+Content-Type: application/pgp-signature; name="signature.asc"
+Content-Description: OpenPGP digital signature
+Content-Disposition: attachment; filename="signature.asc"
+
+-----BEGIN PGP SIGNATURE-----
+
+iHUEABYIAB0WIQTo35mHUT7PR+hIegYZnBGUbTZwXQUCaalGEAAKCRAZnBGUbTZw
+XQssAP4h1MP0tUGJvazsALXHY203uxEDYjBChUxg9rRhejzNAgD/VLFnxQZN1ACc
+R56cUF7ZPAsPo/IXMOEMcY5Te9GS9gE=
+=UFGq
+-----END PGP SIGNATURE-----
+--=_sig_inner_b8f--
+--=_list_wrap_19c
+Content-Type: text/plain; charset=utf-8
+
+lock-keepers mailing list
+Unsubscribe: https://lists.example.org/lock-keepers
+--=_list_wrap_19c--

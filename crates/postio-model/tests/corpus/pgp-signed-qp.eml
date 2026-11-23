@@ -1,0 +1,34 @@
+Message-ID: <pgp-signed-qp@example.com>
+Date: Thu, 05 Mar 2026 09:00:00 +0000
+From: Ada Moreno <ada@example.com>
+To: Grace Example <grace@example.net>
+Subject: Signed: café order
+MIME-Version: 1.0
+Content-Type: multipart/signed; micalg=pgp-sha256;
+	protocol="application/pgp-signature"; boundary="=_sig_qp_51c"
+
+This is an OpenPGP/MIME signed message (RFC 3156).
+--=_sig_qp_51c
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+Caf=C3=A9 order for the lock-keepers' meeting, signed as agreed. Totals: 3=
+ flat whites =3D 9.60, 2 teas =3D 4.00.
+
+The line above is soft-broken on purpose: the signature covers the encoded
+form, so a client that decodes and re-encodes it breaks the signature.
+
+Ada
+--=_sig_qp_51c
+Content-Type: application/pgp-signature; name="signature.asc"
+Content-Description: OpenPGP digital signature
+Content-Disposition: attachment; filename="signature.asc"
+
+-----BEGIN PGP SIGNATURE-----
+
+iHUEABYIAB0WIQTo35mHUT7PR+hIegYZnBGUbTZwXQUCaalGEAAKCRAZnBGUbTZw
+XdHiAQDOjt3cYMqMZSj4U7Hhk2amyZxkqmHf5ONFzTElTSllRQEAlsKTEKrbfJ96
+ls9GZLKbeqBlFH5Dkaf5zCPkpY7kJQQ=
+=wB/E
+-----END PGP SIGNATURE-----
+--=_sig_qp_51c--

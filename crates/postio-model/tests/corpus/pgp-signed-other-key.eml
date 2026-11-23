@@ -1,0 +1,44 @@
+Message-ID: <pgp-signed-other-key@example.com>
+Date: Thu, 05 Mar 2026 09:00:00 +0000
+From: Ada Moreno <ada@example.com>
+To: Grace Example <grace@example.net>
+Subject: Signed: lock-keeper rota, with my other key
+MIME-Version: 1.0
+Content-Type: multipart/signed; micalg=pgp-sha512;
+	protocol="application/pgp-signature"; boundary="=_sig_other_c40"
+
+This is an OpenPGP/MIME signed message (RFC 3156).
+--=_sig_other_c40
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+The lock-keeper rota for April, signed so it is on the record.
+
+  Week 1  Ada
+  Week 2  Grace
+  Week 3  Ada
+  Week 4  Lin
+
+Swaps go through me, not the shared sheet.
+
+Ada
+--=_sig_other_c40
+Content-Type: application/pgp-signature; name="signature.asc"
+Content-Description: OpenPGP digital signature
+Content-Disposition: attachment; filename="signature.asc"
+
+-----BEGIN PGP SIGNATURE-----
+
+iQGzBAABCgAdFiEEVavzStRFccEfTNKviH3a4PgPBCEFAmmpRhAACgkQiH3a4PgP
+BCEOlQv8CN6FhHKkf3xJj2HqpY+5L8X4rlFsqrBYZPZnYGsxLHS+5/2MPQBNWoLp
+RaGneSrsbhz5QsDFovTFnaRKW6/EfQ+PAwFJCJe3RXpZBBBRw8LGRTJ4MXGdZhkH
+WvuhKa99vP7offy3xp4e3s5MuncBhi7JwH/tLbZT4cDFT0388IHG4ecfO23fjMYf
+yrWtegQJHUaUlzZsJsSgQAGk+guWHnMA0ba82vk4nc/NiJuT08y+4hH/vBhGYmTb
+6pQyp6svItBB0N16LOmsOawTjZBaEK+7uRaNirgMUCqGngnc127h45dxB0X1yPpC
+38N/ThtQNngbFBIO03aS9SDRtKtT3bF4woxKvY6FBskFw1InzAHIhBybiBQUl3uR
+QrC9603NlUwjKyY7yFx0jogfJDX0R0XhyEGpjzE02/R9KAMGmwTemVY1dwiM03kM
+sMux2xc0CrqRG2bDk4CWu3UiaW+/k1b4G1LWEKzdhkC3tMh5XFJSKws+qu30Vgam
+IaVoOyWR
+=9KtN
+-----END PGP SIGNATURE-----
+--=_sig_other_c40--

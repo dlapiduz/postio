@@ -1,0 +1,19 @@
+Authentication-Results: mx.example.net;
+ dkim=pass header.d=example.com header.s=s2026 header.b=b3du;
+ dkim=pass header.d=esp.example header.s=esp1 header.b=ZXNw;
+ spf=pass smtp.mailfrom=bounce-7731@bounce.esp.example;
+ dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=example.com
+Received: from out-7.esp.example (out-7.esp.example [192.0.2.71])
+ by mx.example.net with ESMTPS id e5p1x0
+ for <grace@example.net>; Thu, 05 Mar 2026 10:15:09 +0000
+From: Billing <billing@example.com>
+To: Grace Example <grace@example.net>
+Subject: Your March invoice
+Date: Thu, 05 Mar 2026 10:15:00 +0000
+Message-ID: <auth-results-two-dkim@example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Invoice 2026-03 is ready. This one went out through a sending service, so
+it carries two DKIM signatures: the sender's own, aligned with From, and
+the service's, which is not.

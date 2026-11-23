@@ -1,0 +1,29 @@
+Message-ID: <pgp-key-attached@example.com>
+Date: Thu, 05 Mar 2026 09:00:00 +0000
+From: Ada Moreno <ada@example.com>
+To: Grace Example <grace@example.net>
+Subject: My key, attached
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_key_att_6a0"
+
+--=_key_att_6a0
+Content-Type: text/plain; charset=utf-8
+
+My public key is attached, if you want to check what I sign.
+
+Ada
+--=_key_att_6a0
+Content-Type: application/pgp-keys; name="ada.asc"
+Content-Disposition: attachment; filename="ada.asc"
+
+-----BEGIN PGP PUBLIC KEY BLOCK-----
+
+mDMEaaajEBYJKwYBBAHaRw8BAQdAn6REzjXN0OXkjKi7tbKyb6P9I1KzmT/WhsRj
+DE33Y960K0FkYSBNb3Jlbm8gKGNvcnB1cyBrZXkgQSkgPGFkYUBleGFtcGxlLmNv
+bT6IkwQTFgoAOxYhBOjfmYdRPs9H6Eh6BhmcEZRtNnBdBQJppqMQAhsDBQsJCAcC
+AiICBhUKCQgLAgQWAgMBAh4HAheAAAoJEBmcEZRtNnBdFeoBAPfd9RN1UdxHY4yJ
+m8TcHFLc8PP7QZX10SdFOzGx2fmmAP9kdcLYg82TFqJh4b0sekYhVrBX/EGNRpcP
+supSiLAbAA==
+=KHUC
+-----END PGP PUBLIC KEY BLOCK-----
+--=_key_att_6a0--

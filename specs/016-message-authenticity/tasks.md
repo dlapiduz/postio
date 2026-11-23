@@ -46,7 +46,7 @@ test that is green on arrival is a guard, and says so.
 ## Phase 1: Setup
 
 - [x] T001 Update `docs/PRODUCT.md` §21 for the maintainer's decisions: the "Signed" mark, keys from this machine only, and no DKIM re-check
-- [ ] T002 [P] Add the corpus fixtures through `/add-fixture`, each a row in `crates/postio-model/tests/corpus/README.md` and `crates/postio-model/src/test_corpus.rs`, under a new `signature` category:
+- [x] T002 [P] Add the corpus fixtures through `/add-fixture`, each a row in `crates/postio-model/tests/corpus/README.md` and `crates/postio-model/src/test_corpus.rs`, under a new `signature` category:
   - `auth-results-arc-list.eml`: an ARC chain through a list;
   - `auth-results-two-dkim.eml`: one signature aligned with From, one not;
   - `pgp-signed-good.eml` and `pgp-signed-tampered-body.eml`;

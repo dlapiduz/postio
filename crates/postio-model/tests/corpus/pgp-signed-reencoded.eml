@@ -1,0 +1,29 @@
+Message-ID: <pgp-signed-reencoded@example.com>
+Date: Thu, 05 Mar 2026 09:00:00 +0000
+From: Ada Moreno <ada@example.com>
+To: Grace Example <grace@example.net>
+Subject: Re-encoded: café order
+MIME-Version: 1.0
+Content-Type: multipart/signed; micalg=pgp-sha256;
+	protocol="application/pgp-signature"; boundary="=_sig_reenc_90a"
+
+--=_sig_reenc_90a
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: base64
+
+Q2Fmw6kgb3JkZXIgZm9yIHRoZSBsb2NrLWtlZXBlcnMnIG1lZXRpbmcsIHNpZ25lZCBhcyBhZ3Jl
+ZWQuIFRvdGFsczogMyBmbGF0IHdoaXRlcyA9IDkuNjAsIDIgdGVhcyA9IDQuMDAuDQoNClRoZSBs
+aW5lIGFib3ZlIGlzIHNvZnQtYnJva2VuIG9uIHB1cnBvc2U6IHRoZSBzaWduYXR1cmUgY292ZXJz
+IHRoZSBlbmNvZGVkDQpmb3JtLCBzbyBhIGNsaWVudCB0aGF0IGRlY29kZXMgYW5kIHJlLWVuY29k
+ZXMgaXQgYnJlYWtzIHRoZSBzaWduYXR1cmUuDQoNCkFkYQ0K
+--=_sig_reenc_90a
+Content-Type: application/pgp-signature; name="signature.asc"
+
+-----BEGIN PGP SIGNATURE-----
+
+iHUEABYIAB0WIQTo35mHUT7PR+hIegYZnBGUbTZwXQUCaalGEAAKCRAZnBGUbTZw
+XdHiAQDOjt3cYMqMZSj4U7Hhk2amyZxkqmHf5ONFzTElTSllRQEAlsKTEKrbfJ96
+ls9GZLKbeqBlFH5Dkaf5zCPkpY7kJQQ=
+=wB/E
+-----END PGP SIGNATURE-----
+--=_sig_reenc_90a--

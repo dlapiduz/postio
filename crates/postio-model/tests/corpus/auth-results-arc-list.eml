@@ -1,0 +1,36 @@
+Authentication-Results: mx.example.net;
+ dkim=pass header.d=lists.example.org header.s=list2026 header.b=bGlzdA;
+ dkim=fail (body hash did not verify) header.d=example.com header.s=sel1 header.b=b3JpZw;
+ spf=pass smtp.mailfrom=bounces@lists.example.org;
+ dmarc=fail (p=NONE sp=NONE dis=NONE) header.from=example.com;
+ arc=pass (i=1 spf=pass dkim=pass dmarc=pass) header.oldest-pass=1 smtp.remote-ip=192.0.2.44
+ARC-Seal: i=1; a=rsa-sha256; t=1772701200; cv=none; d=lists.example.org; s=arc2026;
+ b=c2VhbA==
+ARC-Message-Signature: i=1; a=rsa-sha256; c=relaxed/relaxed; d=lists.example.org;
+ s=arc2026; h=from:to:subject:date:message-id; bh=Ym9keQ==; b=bXNn
+ARC-Authentication-Results: i=1; mx.lists.example.org;
+ dkim=pass header.d=example.com header.s=sel1;
+ spf=pass smtp.mailfrom=ada@example.com;
+ dmarc=pass header.from=example.com
+Received: from mail.lists.example.org (mail.lists.example.org [192.0.2.44])
+ by mx.example.net with ESMTPS id l1s7a2
+ for <grace@example.net>; Thu, 05 Mar 2026 09:00:12 +0000
+Received: from mail.example.com (mail.example.com [192.0.2.10])
+ by mx.lists.example.org with ESMTPS id q9w8e7
+ for <lock-keepers@lists.example.org>; Thu, 05 Mar 2026 09:00:03 +0000
+From: Ada Moreno <ada@example.com>
+To: Lock keepers <lock-keepers@lists.example.org>
+Subject: [lock-keepers] Winter moorings
+Date: Thu, 05 Mar 2026 09:00:00 +0000
+Message-ID: <auth-results-arc-list@example.com>
+List-Id: Lock keepers <lock-keepers.lists.example.org>
+Sender: lock-keepers-bounces@lists.example.org
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+The list rewrote the subject and added a footer, so Ada's own DKIM
+signature broke on the way. The list signed it again and sealed what it
+saw in an ARC set; the provider says that chain is intact.
+
+--
+lock-keepers mailing list

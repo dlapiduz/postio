@@ -89,6 +89,7 @@ Fixtures are tagged, not filed — most carry several tags.
 | `broken-references` | absent, malformed or dangling `References` |
 | `mailing-list` | RFC 2369 list headers, `List-Id` |
 | `pgp` | `multipart/signed` and `multipart/encrypted` |
+| `signature` | a signature to check against `keys/`, or a provider's record of DKIM and ARC |
 | `remote-content` | remote images, tracking pixels — the reader must block these |
 | `calendar` | `text/calendar` parts and `.ics` attachments |
 | `delivery-status` | bounces: `multipart/report` |
@@ -295,6 +296,30 @@ Load them together with `by_category(Category::ThreadingRules)`. Every address i
 |---|---|
 | `pgp-signed.eml` | PGP/MIME `multipart/signed; micalg=pgp-sha256`. The signed part must be preserved byte-exactly, headers and transfer encoding included — canonicalization mistakes here are the classic reason a good signature reports as broken. The armour is synthetic and will not verify. |
 | `pgp-encrypted.eml` | PGP/MIME `multipart/encrypted`: the `Version: 1` control part plus an armoured blob. Synthetic; it will not decrypt. |
+
+### Signatures to check
+
+These verify against test-only keys in `keys/`, made by `keys/generate.sh`
+in a throwaway GnuPG home whose secret keys are discarded. They are nobody's
+real keys. Rerunning the script regenerates every key and every fixture
+below except the two `auth-results-` ones, which are written by hand.
+
+| File | Exercises |
+|---|---|
+| `pgp-signed-good.eml` | PGP/MIME signed by key A (`keys/ada-a.asc`, Ed25519) over SHA-256: good. |
+| `pgp-signed-tampered-body.eml` | The good fixture with one body byte changed after signing: bad. |
+| `pgp-signed-tampered-header.eml` | The good fixture with the signed part's `Content-Transfer-Encoding` header changed: the signature covers the part's MIME headers, so this is bad. |
+| `pgp-signed-qp.eml` | A quoted-printable signed part with soft line breaks. The signature covers the encoded bytes, so decoding and re-encoding breaks it. |
+| `pgp-signed-reencoded.eml` | The quoted-printable fixture's signature over the same text re-encoded as base64: bad. |
+| `pgp-signed-no-key.eml` | Signed by a key that was never exported, from another sender: no key exists for it. |
+| `pgp-signed-other-key.eml` | The good fixture's text from the same address, signed by key B (`keys/ada-b.asc`, RSA 3072, SHA-512). Different-key warning once key A is accepted. |
+| `pgp-signed-sha1.eml` | Signed by key B over SHA-1: never good, because SHA-1 is no longer safe. |
+| `pgp-inline-signed.eml` | An inline cleartext signature by key A, with a dash-escaped line. |
+| `pgp-signed-list-footer.eml` | A list wrapped the good signed part in `multipart/mixed` with an unsigned footer: only part of the message is signed, so no mark. |
+| `autocrypt-header.eml` | Unsigned, with an `Autocrypt` header carrying key A for its `From` address. |
+| `pgp-key-attached.eml` | Key A attached as `application/pgp-keys`. |
+| `auth-results-arc-list.eml` | A list re-signed the mail: the provider's DKIM passes only for `lists.example.org`, the sender's own signature failed, and an ARC set by the list is intact. |
+| `auth-results-two-dkim.eml` | Two passing DKIM signatures, the sender's (aligned with `From`) and the sending service's (not). |
 
 ### Instructions aimed at an assistant
 
