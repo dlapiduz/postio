@@ -131,6 +131,30 @@ def case(name: str, source: str, *, should_fail: bool, expect_text: str = "", tr
 def main() -> int:
     print("check-no-silent-tracking self-test")
 
+    for name, source, said in [
+        (
+            "a WKD lookup is refused even with a consent line",
+            '// POSTIO-CONSENT: asked\nconst WKD: &str = "/.well-known/openpgpkey/hu/";\n',
+            "looks a key up over WKD",
+        ),
+        (
+            "a keyserver is refused",
+            'const SERVER: &str = "hkps://keys.example.com";\n',
+            "looks a key up on a keyserver",
+        ),
+        (
+            "a DKIM DNS lookup is refused",
+            'fn name(s: &str, d: &str) -> String { format!("{s}._domainkey.{d}") }\n',
+            "looks a DKIM key up in DNS",
+        ),
+        (
+            "running gpg is refused",
+            'fn export() { std::process::Command::new("gpg").arg("--export"); }\n',
+            "runs GnuPG",
+        ),
+    ]:
+        case(name, source, should_fail=True, expect_text=said)
+
     case(
         "an ordinary crate passes",
         "pub fn read_a_message() {}\n",

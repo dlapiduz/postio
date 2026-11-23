@@ -75,6 +75,16 @@ TRACKING: dict[str, str] = {
     "chat/completions": "calls a model runtime (OpenAI-compatible chat completions)",
 }
 
+# Refused outright, with or without a consent line: Postio never looks a key up and never checks
+# DKIM itself (spec 016 Q2, Q3), and reads the GnuPG keyring as files rather than running `gpg`,
+# which from the Flatpak would need a sandbox escape (spec 016 D12).
+REFUSED: dict[str, str] = {
+    "/.well-known/openpgpkey/": "looks a key up over WKD",
+    "hkps://": "looks a key up on a keyserver",
+    "_domainkey": "looks a DKIM key up in DNS",
+    'command::new("gpg': "runs GnuPG",
+}
+
 MARKER = "POSTIO-CONSENT:"
 
 # Deliberately tiny and per-file: a new occurrence has to be argued for, and a glob would accept the
@@ -136,12 +146,15 @@ def offences(path: Path) -> list[tuple[int, str, str]]:
     except (OSError, UnicodeDecodeError):
         return []
 
-    if MARKER in text:
-        return []
-
+    consented = MARKER in text
     found = []
     for number, line in enumerate(text.splitlines(), start=1):
         lowered = line.lower()
+        for mechanism, description in REFUSED.items():
+            if mechanism in lowered:
+                found.append((number, mechanism, f"{description}, which Postio never does"))
+        if consented:
+            continue
         for mechanism, description in TRACKING.items():
             if mechanism in lowered:
                 found.append((number, mechanism, description))
