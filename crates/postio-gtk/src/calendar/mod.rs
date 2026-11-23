@@ -32,6 +32,8 @@ pub struct AgendaView {
     card: gtk::Box,
     rows: RefCell<Vec<AgendaRow>>,
     open: RefCell<Option<EventView>>,
+    open_keys: RefCell<Vec<postio_ui::hints::Hint>>,
+    search_key: gtk::Box,
     cursor: Cell<Option<usize>>,
     placing: Cell<bool>,
     me: RefCell<Weak<AgendaView>>,
@@ -59,6 +61,9 @@ impl AgendaView {
         filter.set_width_chars(22);
         filter.set_valign(gtk::Align::Center);
         strip.append(&filter);
+        let search_key = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        search_key.set_valign(gtk::Align::Center);
+        strip.append(&search_key);
         let hint = gtk::Label::new(None);
         hint.add_css_class("dim-label");
         hint.set_xalign(0.0);
@@ -139,6 +144,8 @@ impl AgendaView {
             card,
             rows: RefCell::new(Vec::new()),
             open: RefCell::new(None),
+            open_keys: RefCell::new(Vec::new()),
+            search_key,
             cursor: Cell::new(None),
             placing: Cell::new(false),
             me: RefCell::new(Weak::new()),
@@ -264,6 +271,14 @@ impl AgendaView {
         self.empty
             .set_text(view.empty.as_deref().unwrap_or_default());
         self.footer.set(&view.footer);
+        self.open_keys.replace(view.open_keys.clone());
+        while let Some(child) = self.search_key.first_child() {
+            self.search_key.remove(&child);
+        }
+        if let Some(key) = &view.search_key {
+            self.search_key
+                .append(&postio_widgets::widgets::keyhint::cap(key));
+        }
         if self.filter.text().as_str() != view.filter {
             self.typing_echo.set(true);
             self.filter.set_text(&view.filter);
@@ -296,7 +311,14 @@ impl AgendaView {
         }
         let Some(open) = open else {
             self.card.set_visible(false);
-            self.list.grab_focus();
+            match self.cursor.get() {
+                Some(at) => self
+                    .list
+                    .scroll_to(at as u32, gtk::ListScrollFlags::FOCUS, None),
+                None => {
+                    self.list.grab_focus();
+                }
+            }
             return;
         };
         let title = gtk::Label::new(Some(&open.title));
@@ -324,6 +346,10 @@ impl AgendaView {
             notes.set_selectable(true);
             self.card.append(&notes);
         }
+        let keys = KeyLine::new("focus-contacts-footer-hints");
+        keys.set(self.open_keys.borrow().iter());
+        keys.widget().set_margin_top(S2);
+        self.card.append(keys.widget());
         self.card.set_visible(true);
     }
 }

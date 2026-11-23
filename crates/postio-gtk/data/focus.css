@@ -2749,7 +2749,7 @@ button.postio-button-ghost.focus-thread-menu-entry {
 
 .focus-calendar-card-title {
   font-weight: bold;
-  font-size: var(--postio-text-reading);
+  font-size: var(--postio-text-title);
 }
 
 .focus-calendar-card-notes {
