@@ -639,7 +639,7 @@ CREATE TABLE contact_sync_links (
     // claimed `Message-ID` so they survive a merge and renumbering.
     Migration {
         from: stamp(0xf0d2_3b2a),
-        to: FINGERPRINT,
+        to: stamp(0x4b4a_60f9),
         statements: r#"
 ALTER TABLE messages ADD COLUMN own_line TEXT;
 CREATE INDEX idx_threads_subject_recent ON threads (account_id, subject, last_at DESC, first_at);
@@ -664,6 +664,11 @@ CREATE TABLE thread_splits (
     PRIMARY KEY (account_id, rfc_message_id)
 );
 "#,
+    },
+    Migration {
+        from: stamp(0x4b4a_60f9),
+        to: FINGERPRINT,
+        statements: include_str!("schema/signatures.sql"),
     },
 ];
 
@@ -2144,7 +2149,8 @@ END;
     include_str!("schema/content-locations.sql"),
     include_str!("schema/content-projection.sql"),
     include_str!("schema/walk-columns.sql"),
-    include_str!("schema/footprint.sql")
+    include_str!("schema/footprint.sql"),
+    include_str!("schema/signatures.sql")
 );
 
 #[cfg(test)]
