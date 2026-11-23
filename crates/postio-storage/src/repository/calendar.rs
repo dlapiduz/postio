@@ -160,8 +160,9 @@ const OCCURRENCE_CHUNK: usize = 200;
 
 const AGENDA: &str = "SELECT o.event_id, e.calendar_id, c.name, c.colour, e.title, e.location,
         o.start_utc, o.end_utc, o.all_day, o.floating, o.recurrence_id, e.status, e.my_partstat,
-        EXISTS (SELECT 1 FROM event_changes x
-                 WHERE x.event_id = o.event_id AND x.state IN ('queued', 'conflict', 'failed'))
+        c.account_id IS NOT NULL
+        AND EXISTS (SELECT 1 FROM event_changes x
+                     WHERE x.event_id = o.event_id AND x.state IN ('queued', 'conflict', 'failed'))
    FROM event_occurrences o
    JOIN events e ON e.id = o.event_id
    JOIN calendars c ON c.id = e.calendar_id";
@@ -561,6 +562,17 @@ impl CalendarRepository<'_> {
             Some(id) => self.held(EventId::new(id)).await,
             None => Ok(None),
         }
+    }
+
+    pub async fn unsettled(&self, event: EventId) -> Result<bool> {
+        sql::one(
+            self.connection,
+            "SELECT EXISTS (SELECT 1 FROM event_changes
+                             WHERE event_id = ?1 AND state IN ('queued', 'conflict'))",
+            [event.get()],
+            |row| row.col(0),
+        )
+        .await
     }
 
     pub async fn set_remote(&self, event: EventId, href: &str, etag: &str) -> Result<()> {

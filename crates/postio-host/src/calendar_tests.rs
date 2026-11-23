@@ -380,7 +380,7 @@ fn a_new_event_is_stored_and_logged_with_no_connection_and_undo_removes_it() {
         (shown[0].title.as_str(), shown[0].start),
         ("Dentist", start)
     );
-    assert!(shown[0].queued, "a change waits to be sent");
+    assert!(!shown[0].queued, "On this computer waits on no server");
     assert_eq!(changes(&world), ["create"]);
     assert!(egress(&world).is_empty(), "{:?}", egress(&world));
 
