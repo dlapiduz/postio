@@ -200,6 +200,26 @@ impl FocusController {
         steps
     }
 
+    pub(crate) fn calendar_point(&mut self, row: usize) -> Vec<Step> {
+        let Some(calendar) = self.calendar.as_ref() else {
+            return Vec::new();
+        };
+        let rows = words::agenda_rows(&calendar.entries, self.now().to_utc(), &Local);
+        let Some(AgendaRow::Occurrence(picked)) = rows.get(row) else {
+            return self.draw_calendar();
+        };
+        let at = calendar
+            .entries
+            .iter()
+            .position(|entry| entry.cursor() == picked.cursor);
+        let from = calendar.cursor;
+        match (at, from) {
+            (Some(at), Some(from)) => self.calendar_step(at as i64 - from as i64),
+            (Some(at), None) => self.calendar_step(at as i64),
+            _ => Vec::new(),
+        }
+    }
+
     fn calendar_page_ahead(&mut self) -> Vec<Step> {
         let Some(calendar) = self.calendar.as_mut() else {
             return Vec::new();
@@ -313,7 +333,7 @@ impl FocusController {
         };
         let now = self.now();
         let today = now.date_naive();
-        let rows = words::agenda_rows(&calendar.entries, today, &Local);
+        let rows = words::agenda_rows(&calendar.entries, self.now().to_utc(), &Local);
         let cursor = calendar.cursor.and_then(|at| {
             let event = calendar.entries.get(at)?.cursor();
             rows.iter().position(|row| match row {

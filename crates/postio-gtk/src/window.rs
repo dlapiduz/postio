@@ -64,6 +64,7 @@ const FILTERED: &str = "filtered";
 const CONTACTS_IO_DIALOG: &str = "focus-contacts-io";
 
 const CONTACTS: &str = "contacts";
+const CALENDAR: &str = "calendar";
 const RESULTS: &str = "results";
 const MAIL: &str = "mail";
 const LIST: &str = "list";
@@ -151,6 +152,7 @@ mod imp {
         pub digest_window: RefCell<Option<Rc<crate::digest::DigestWindow>>>,
         pub filtered: RefCell<Option<Rc<crate::filtered::FilteredView>>>,
         pub contacts: RefCell<Option<Rc<crate::contacts::ContactsView>>>,
+        pub calendar: RefCell<Option<Rc<crate::calendar::AgendaView>>>,
         pub results: RefCell<Option<Rc<crate::results::ResultsPane>>>,
         pub contacts_io: RefCell<Option<postio_ui::contacts_io::IoSheetView>>,
         pub contact_popover:
@@ -243,6 +245,7 @@ mod imp {
                 warm: Cell::default(),
                 filtered: RefCell::default(),
                 contacts: RefCell::default(),
+                calendar: RefCell::default(),
                 results: RefCell::default(),
                 contacts_io: RefCell::default(),
                 contact_popover: RefCell::default(),
@@ -986,7 +989,8 @@ impl FocusWindow {
                 }
             }
             SurfaceKind::Filtered => self.hide_filtered(),
-            SurfaceKind::Contacts => self.leave_contacts(),
+            SurfaceKind::Contacts => self.show_mail(),
+            SurfaceKind::Calendar => self.show_mail(),
             SurfaceKind::ContactPopover => self.close_contact_popover(),
             SurfaceKind::ThreadMenu => {
                 if let Some(menu) = self.imp().thread_menu.borrow().as_ref() {
@@ -1759,6 +1763,12 @@ impl FocusWindow {
         {
             return self.run_in_controller(id);
         }
+        if self.calendar().is_some()
+            && let Some(pane) = self.pane()
+            && pane.feed().answers(id)
+        {
+            return self.run_in_controller(id);
+        }
         if self.rules().is_some() && self.rules_act(id) {
             return;
         }
@@ -1857,7 +1867,12 @@ impl FocusWindow {
             CommandId::ViewSource => self.view_source(),
             CommandId::OpenContacts
             | CommandId::ContactsSuggestions
-            | CommandId::ContactPopover => {
+            | CommandId::ContactPopover
+            | CommandId::GoToCalendar
+            | CommandId::CalendarAgenda
+            | CommandId::CalendarPrevious
+            | CommandId::CalendarNext
+            | CommandId::CalendarToday => {
                 self.run_in_controller(id);
             }
             CommandId::ContactOpenCard
@@ -2262,6 +2277,7 @@ impl FocusWindow {
                 }
             }
             Intent::Contacts(view) => self.show_contacts(view),
+            Intent::Calendar(view) => self.show_calendar(view),
             Intent::ContactsRows { .. } => {
                 if let Some(view) = self.contacts() {
                     view.show_rows();
@@ -3854,6 +3870,40 @@ impl FocusWindow {
         view.focus_list();
     }
 
+    pub fn calendar(&self) -> Option<Rc<crate::calendar::AgendaView>> {
+        let imp = self.imp();
+        if imp.body.visible_child_name().as_deref() != Some(CALENDAR) {
+            return None;
+        }
+        imp.calendar.borrow().clone()
+    }
+
+    fn show_calendar(&self, frame: &postio_focus::CalendarView) {
+        let imp = self.imp();
+        let Some(pane) = self.pane() else {
+            return;
+        };
+        let view = imp.calendar.borrow().clone();
+        let view = view.unwrap_or_else(|| {
+            let view = crate::calendar::AgendaView::new(
+                pane.feed().clone(),
+                glib::clone!(
+                    #[weak(rename_to = window)]
+                    self,
+                    move |command| window.press_command(command)
+                ),
+            );
+            imp.body.add_named(view.widget(), Some(CALENDAR));
+            imp.calendar.replace(Some(Rc::clone(&view)));
+            view
+        });
+        view.show_frame(frame);
+        if imp.body.visible_child_name().as_deref() != Some(CALENDAR) {
+            imp.body.set_visible_child_name(CALENDAR);
+            view.focus_list();
+        }
+    }
+
     pub fn contacts(&self) -> Option<Rc<crate::contacts::ContactsView>> {
         let imp = self.imp();
         if imp.body.visible_child_name().as_deref() != Some(CONTACTS) {
@@ -4164,7 +4214,7 @@ impl FocusWindow {
         }
     }
 
-    fn leave_contacts(&self) {
+    fn show_mail(&self) {
         self.imp().body.set_visible_child_name(MAIL);
         self.focus_list();
     }
@@ -5733,6 +5783,12 @@ impl FocusWindow {
             Region::Reader
         } else if digest.is_some() {
             Region::Dialog
+        } else if let Some(calendar) = self.calendar() {
+            if calendar.open_event().is_some() {
+                Region::Dialog
+            } else {
+                Region::Calendar
+            }
         } else if self.results().is_some() && self.key_context() == KeyContext::Results {
             Region::Results
         } else if focus.is_none() {
@@ -5894,6 +5950,8 @@ impl FocusWindow {
             View::Filtered
         } else if bar.is_some() {
             View::Search
+        } else if self.calendar().is_some() {
+            View::Calendar
         } else {
             View::List
         };
@@ -6002,6 +6060,26 @@ impl FocusWindow {
             .and(imp.empty.borrow().as_ref())
             .map(|page| page.heading());
         app.insert("focus.empty.heading".to_owned(), serde_json::json!(empty));
+        if let Some(calendar) = self.calendar() {
+            app.insert(
+                "focus.calendar.view".to_owned(),
+                serde_json::json!("agenda"),
+            );
+            app.insert(
+                "focus.calendar.window".to_owned(),
+                serde_json::json!("main"),
+            );
+            app.insert(
+                "focus.calendar.open".to_owned(),
+                serde_json::json!(calendar.open_event().is_some()),
+            );
+            if let Some(row) = calendar.ringed() {
+                app.insert(
+                    "focus.calendar.cursor".to_owned(),
+                    serde_json::json!(format!("{} {}", row.time, row.title)),
+                );
+            }
+        }
         if let Some(chrome) = self.chrome() {
             app.insert(
                 "focus.strip.counts".to_owned(),

@@ -126,7 +126,6 @@ crates/postio-gtk/examples/shot.rs 1
 crates/postio-gtk/examples/storyboard.rs 1
 crates/postio-gtk/src/bar.rs 2
 crates/postio-gtk/src/compose/seams.rs 1
-crates/postio-gtk/src/contacts/list.rs 1
 crates/postio-gtk/src/demo.rs 2
 crates/postio-gtk/src/demo/storyboard.rs 1
 crates/postio-gtk/src/digest.rs 1

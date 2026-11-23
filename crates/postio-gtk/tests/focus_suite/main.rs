@@ -11,6 +11,7 @@ mod archive_frames;
 mod bar;
 mod body_lands;
 mod buttons;
+mod calendar;
 mod capture;
 mod chrome;
 mod close_buttons;
@@ -142,6 +143,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gmail_keys::every_menu_key",
         gmail_keys::every_menu_key as fn(),
+    ),
+    (
+        "calendar::g_e_opens_agenda_on_the_next_event_and_return_and_escape_walk_back_home",
+        calendar::g_e_opens_agenda_on_the_next_event_and_return_and_escape_walk_back_home as fn(),
     ),
     (
         "contacts::g_c_opens_the_people_j_k_walk_them_the_card_follows_and_escape_goes_home",

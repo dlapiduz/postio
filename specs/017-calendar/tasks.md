@@ -109,7 +109,7 @@ the plan's research section it settles. Spike code is not merged.
   - `Esc` back to the same row.
 
   Then implement them, and wire them in `crates/postio-focus/src/surfaces.rs`.
-- [ ] T014 [US1] GTK: Agenda and the open event in a new `crates/postio-widgets/src/calendar/`, in the existing list language (`/gtk-design`, agent-designed per Q4 = C), with one `crates/postio-gtk/tests/focus_suite/calendar.rs` case per path. T002's `agenda-walk` goes green
+- [x] T014 [US1] GTK: Agenda and the open event in a new `crates/postio-widgets/src/calendar/`, in the existing list language (`/gtk-design`, agent-designed per Q4 = C), with one `crates/postio-gtk/tests/focus_suite/calendar.rs` case per path. T002's `agenda-walk` goes green
 - [ ] T015 [P] [US1] Terminal: Agenda and the open event in a new `crates/postio-tui/src/view/calendar.rs`, with cases in `crates/postio-tui/tests/tui_suite/`
 - [ ] T016 [P] [US1] Mac: Agenda through `crates/postio-ffi/src/` and `macos/Sources/PostioKit/`, with `macos/Tests/PostioKitTests/` cases. `crates/postio-ffi/tests/ffi_suite/command_coverage.rs` stays green
 - [ ] T017 [US1] Write failing cases in `crates/postio-index/` and `crates/postio-host/tests/host_suite/` for event search (plan R8): free text, `after:`, `before:`, `with:`, `in:`, and an operator with no event meaning giving the hint. Then implement the executor arm and `event_search`.

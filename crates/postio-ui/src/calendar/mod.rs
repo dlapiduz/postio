@@ -23,6 +23,7 @@ pub struct OccurrenceRow {
     pub colour: Option<String>,
     pub chip: Option<Chip>,
     pub queued: bool,
+    pub past: bool,
     pub accessible: String,
 }
 
@@ -92,9 +93,10 @@ fn local_day<Z: TimeZone>(at: DateTime<Utc>, zone: &Z) -> NaiveDate {
 
 pub fn agenda_rows<Z: TimeZone>(
     entries: &[AgendaEntry],
-    today: NaiveDate,
+    now: DateTime<Utc>,
     zone: &Z,
 ) -> Vec<AgendaRow> {
+    let today = local_day(now, zone);
     let mut rows = Vec::with_capacity(entries.len() + 4);
     let mut day = None;
     for entry in entries {
@@ -122,6 +124,7 @@ pub fn agenda_rows<Z: TimeZone>(
             colour: entry.colour.clone(),
             chip: Chip::of(entry),
             queued: entry.queued,
+            past: entry.end <= now,
             accessible: accessible.join(", "),
         }));
     }

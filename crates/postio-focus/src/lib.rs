@@ -236,6 +236,7 @@ pub enum Input {
     ContactsTab(postio_model::ContactTab),
     ContactsFilterTyped(String),
     ContactsPoint(u32),
+    CalendarPoint(usize),
     ContactSplit(String),
     ContactMergeKeep(u32),
     ContactEditChange(contact_edit::EditChange),
@@ -1465,6 +1466,10 @@ impl FocusController {
             }
             Input::ContactsFilterTyped(text) => {
                 let steps = self.contacts_filter_typed(text);
+                self.effects(steps)
+            }
+            Input::CalendarPoint(row) => {
+                let steps = self.calendar_point(row);
                 self.effects(steps)
             }
             Input::ContactsPoint(index) => {

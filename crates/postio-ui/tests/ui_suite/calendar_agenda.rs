@@ -14,6 +14,10 @@ fn at(day: u32, hour: u32, minute: u32) -> DateTime<Utc> {
         .unwrap()
 }
 
+fn noon() -> DateTime<Utc> {
+    at(24, 12, 0)
+}
+
 fn today() -> NaiveDate {
     NaiveDate::from_ymd_opt(2026, 11, 24).unwrap()
 }
@@ -56,7 +60,7 @@ fn occurrences_are_grouped_under_their_local_day() {
     ];
 
     assert_eq!(
-        occurrences(&agenda_rows(&entries, today(), &Utc)),
+        occurrences(&agenda_rows(&entries, noon(), &Utc)),
         [
             "# Today \u{b7} Tuesday 24 November",
             "09:30 Standup",
@@ -71,7 +75,7 @@ fn occurrences_are_grouped_under_their_local_day() {
 
 #[test]
 fn a_row_says_its_calendar_in_words_not_only_in_colour() {
-    let rows = agenda_rows(&[entry(1, at(24, 9, 30), 15, "Standup")], today(), &Utc);
+    let rows = agenda_rows(&[entry(1, at(24, 9, 30), 15, "Standup")], noon(), &Utc);
     let AgendaRow::Occurrence(row) = &rows[1] else {
         panic!("an occurrence row");
     };
@@ -85,7 +89,7 @@ fn an_all_day_event_says_all_day() {
     let mut offsite = entry(1, at(24, 0, 0), 3 * 24 * 60, "Offsite");
     offsite.all_day = true;
 
-    let rows = agenda_rows(&[offsite], today(), &Utc);
+    let rows = agenda_rows(&[offsite], noon(), &Utc);
 
     assert_eq!(occurrences(&rows)[1], "All day Offsite");
 }
@@ -104,7 +108,7 @@ fn the_answer_shows_as_a_chip_and_a_queued_change_as_a_mark() {
     waiting.queued = true;
 
     let chips: Vec<(Option<String>, bool)> =
-        agenda_rows(&[invited, maybe, no, cancelled, waiting], today(), &Utc)
+        agenda_rows(&[invited, maybe, no, cancelled, waiting], noon(), &Utc)
             .iter()
             .filter_map(|row| match row {
                 AgendaRow::Occurrence(row) => {
