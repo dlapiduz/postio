@@ -14,8 +14,6 @@ use crate::view::hit::{Hits, Target};
 
 const LABEL: u16 = 9;
 
-/// Three header rows (Detach, the title and close; what will be sent and what has happened to
-/// the draft; the verbs), a hairline, and under it the fields and the body.
 pub fn screen(
     frame: &mut Frame,
     area: Rect,

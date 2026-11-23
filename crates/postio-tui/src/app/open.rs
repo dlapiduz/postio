@@ -186,7 +186,6 @@ impl App {
         .map_or(crate::conversation::At::Nothing, |line| line.at.clone())
     }
 
-    /// A to-do offers Task only with a vault configured.
     pub fn captures(&self) -> bool {
         self.features.capture
     }

@@ -71,7 +71,6 @@ impl Rows<'_> {
         ));
     }
 
-    /// `words` as a click for `target` at the end of `spans`.
     fn click(
         spans: &mut Vec<Span<'static>>,
         segments: &mut Vec<Segment>,
@@ -92,7 +91,6 @@ fn width_of(spans: &[Span]) -> usize {
     spans.iter().map(|span| span.content.width()).sum()
 }
 
-/// The first few, and how many are left.
 fn names_line(names: &[SafeText]) -> String {
     use postio_ui::reader::header::RECIPIENTS_SHOWN;
     let shown: Vec<&str> = names
@@ -158,7 +156,6 @@ pub(super) fn locate(lines: &[Line<'static>], excerpt: &str) -> Vec<(usize, usiz
     ranges
 }
 
-/// Characters `from..to` drawn in `style` on top of what they were.
 pub(super) fn restyle(line: &Line<'static>, from: usize, to: usize, style: Style) -> Line<'static> {
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut at = 0;
@@ -193,7 +190,6 @@ pub(super) fn restyle(line: &Line<'static>, from: usize, to: usize, style: Style
     Line::from(spans).style(line.style)
 }
 
-/// The chip, the date and the quote in the accent, and on the right what answers it.
 fn card(
     rows: &mut Rows,
     row: &Row,
@@ -432,7 +428,6 @@ fn banner_rows(rows: &mut Rows, text: &str, actions: &[(&str, Option<&str>, Comm
     rows.push(Line::from(spans), At::Nothing, segments);
 }
 
-/// The column of the open message at `width` columns, as of `now`.
 pub fn document(app: &App, theme: &Theme, width: u16, now: DateTime<Local>) -> Document {
     let Some(member) = app.reading().map(|reading| &reading.shown) else {
         return Document::default();
@@ -670,7 +665,6 @@ fn verb(app: &App, theme: &Theme, command: CommandId, label: &str) -> (Vec<Span<
     (spans, width)
 }
 
-/// A received message's, or the ones that settle a draft's send.
 fn action_verbs(app: &App, folded: bool) -> Vec<focus_dialog::Verb> {
     let state = app.row_of_open().and_then(|row| row.send_state);
     match focus_dialog::send_verbs(state) {
