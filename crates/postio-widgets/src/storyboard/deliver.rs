@@ -45,9 +45,8 @@ pub enum Delivery {
 
 pub fn press(window: &gtk::Window, chord: &Chord) -> Result<Delivery, ChordError> {
     let (key, state) = chord_to_gdk(chord)?;
-    // A real key press turns the window's focus rings on, so a menu opened
-    // by it shows where the keyboard is; a synthesised one must say so too,
-    // or the film shows a keyboard nobody can see.
+    // A real key press turns the window's focus rings on, so a menu opened by it shows where the
+    // keyboard is; a synthesised one must too, or the film shows a keyboard nobody can see.
     window.set_focus_visible(true);
     let delivery = deliver(window, key, state);
     drain();
@@ -91,9 +90,8 @@ pub fn keyboard_target(window: &gtk::Window) -> gtk::Widget {
 pub fn deliver(window: &gtk::Window, key: gdk::Key, state: gdk::ModifierType) -> Delivery {
     let keyval = gtk::glib::translate::IntoGlib::into_glib(key);
     let target = keyboard_target(window);
-    // GTK's key path starts at the focus and climbs its parents. A focus
-    // that has left the window has none, so no key reaches anything: a
-    // person's keyboard is dead until a click.
+    // GTK's key path starts at the focus and climbs its parents. A focus that has left the window
+    // has none, so no key reaches anything: a person's keyboard is dead until a click.
     if target.root().is_none() || !target.is_mapped() {
         return Delivery::Dropped;
     }
