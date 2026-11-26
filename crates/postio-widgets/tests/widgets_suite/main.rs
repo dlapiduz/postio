@@ -117,6 +117,10 @@ const CASES: &[(&str, fn())] = &[
         storyboard_outline::the_plain_frame_is_untouched as fn(),
     ),
     (
+        "storyboard_outline::the_outline_sits_on_a_focused_widget_inside_a_popover",
+        storyboard_outline::the_outline_sits_on_a_focused_widget_inside_a_popover as fn(),
+    ),
+    (
         "storyboard_settle::a_static_window_settles",
         storyboard_settle::a_static_window_settles as fn(),
     ),

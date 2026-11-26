@@ -206,21 +206,26 @@ fn open_popovers(window: &gtk::Window) -> Vec<gtk::Popover> {
     found
 }
 
-/// Draws `popover` where the compositor shows it: its popup surface's offset from the window's,
-/// less where each widget sits within its own surface (shadow, margin).
-fn over(window: &gtk::Window, popover: &gtk::Popover, snapshot: &gtk::Snapshot) {
-    let Some(popup) = popover
-        .surface()
-        .and_then(|surface| surface.downcast::<gdk::Popup>().ok())
-    else {
-        return;
-    };
+/// Where the compositor shows `popover` in `window`'s frame, less where each widget sits within its
+/// own surface (shadow, margin); `None` without a popup surface.
+pub(crate) fn popover_origin(
+    window: &gtk::Window,
+    popover: &gtk::Popover,
+) -> Option<graphene::Point> {
+    let popup = popover.surface()?.downcast::<gdk::Popup>().ok()?;
     let (window_x, window_y) = window.surface_transform();
     let (popover_x, popover_y) = popover.surface_transform();
     let x = f64::from(popup.position_x()) + popover_x - window_x;
     let y = f64::from(popup.position_y()) + popover_y - window_y;
+    Some(graphene::Point::new(x as f32, y as f32))
+}
+
+fn over(window: &gtk::Window, popover: &gtk::Popover, snapshot: &gtk::Snapshot) {
+    let Some(origin) = popover_origin(window, popover) else {
+        return;
+    };
     snapshot.save();
-    snapshot.translate(&graphene::Point::new(x as f32, y as f32));
+    snapshot.translate(&origin);
     let mut child = popover.first_child();
     while let Some(next) = child {
         child = next.next_sibling();
