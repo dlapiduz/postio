@@ -92,16 +92,11 @@ fi
 BASE_RUNS="$REVIEW/base"
 
 # A compositor of this invocation's own: on the shared one a window that is not active is drawn in
-# GTK's backdrop style, so frames differed with who else was running. Stopped on the way out.
-HEADLESS_STARTED=0
+# GTK's backdrop style, so frames differed with who else was running. It ends with its runner.
 headless() {
     export POSTIO_TEST_DISPLAY="${POSTIO_STORYBOARD_DISPLAY:-postio-storyboard-$$}"
     export POSTIO_TEST_GEOMETRY="1920x1200"
-    if [ "$HEADLESS_STARTED" = 0 ]; then
-        HEADLESS_STARTED=1
-        trap 'scripts/test-headless.sh --stop >/dev/null 2>&1 || true' EXIT
-    fi
-    scripts/test-headless.sh "$@"
+    scripts/test-headless.sh --own "$@"
 }
 
 # <path> relative to <dir>, without resolving symlinks; Python, since BSD realpath has no
@@ -395,16 +390,33 @@ screens_command() {
     exit "$code"
 }
 
-case "$COMMAND" in
-    run)  run_command ;;
-    screens) screens_command ;;
-    coverage) coverage_command ;;
-    base) base_command ;;
-    bundle) bundle_command ;;
-    tool) bin=$(tool); "$bin" ${TOOL_ARGS[@]+"${TOOL_ARGS[@]}"}; exit $? ;;
-    key)  key_command ;;
-    lint) lint_command ;;
-    page) page_command ;;
-    -h|--help) usage ;;
-    *) echo "storyboards.sh: unknown command '$COMMAND' -- try --help" >&2; exit 2 ;;
-esac
+descendants() {
+    local child
+    for child in $(pgrep -P "$1"); do
+        descendants "$child"
+        echo "$child"
+    done
+}
+
+main() {
+    case "$COMMAND" in
+        run)  run_command ;;
+        screens) screens_command ;;
+        coverage) coverage_command ;;
+        base) base_command ;;
+        bundle) bundle_command ;;
+        tool) bin=$(tool); "$bin" ${TOOL_ARGS[@]+"${TOOL_ARGS[@]}"}; exit $? ;;
+        key)  key_command ;;
+        lint) lint_command ;;
+        page) page_command ;;
+        -h|--help) usage ;;
+        *) echo "storyboards.sh: unknown command '$COMMAND' -- try --help" >&2; exit 2 ;;
+    esac
+}
+
+# Bash defers a trap until the foreground command returns, so the work runs in the background and
+# this shell waits: stopped by Ctrl-C or a caller's time cap, it takes its runners with it.
+trap 'kill -TERM $(descendants $$) 2>/dev/null; exit 130' INT
+trap 'kill -TERM $(descendants $$) 2>/dev/null; exit 143' TERM HUP
+main <&0 &
+wait $!

@@ -45,12 +45,13 @@ pub fn two_processes_film_a_storyboard_identically() {
     let second = tempfile::tempdir().expect("a directory for the second run");
     let me = std::env::current_exe().expect("this binary");
     let headless = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/test-headless.sh");
-    let display = format!("postio-determinism-{}", std::process::id());
-    for out in [first.path(), second.path()] {
+    for (child, out) in [first.path(), second.path()].into_iter().enumerate() {
+        let display_of_its_own = format!("postio-determinism-{}-{child}", std::process::id());
         let status = Command::new(&headless)
+            .arg("--own")
             .arg(&me)
             .args([NAME, "--exact"])
-            .env("POSTIO_TEST_DISPLAY", &display)
+            .env("POSTIO_TEST_DISPLAY", &display_of_its_own)
             .env("POSTIO_TEST_GEOMETRY", "1920x1200")
             .env(CHILD, out)
             // The renderer the runner pins; the default one draws the same step two ways in two
@@ -66,10 +67,6 @@ pub fn two_processes_film_a_storyboard_identically() {
             .expect("the child starts");
         assert!(status.success(), "a child run failed: {status}");
     }
-    let _ = Command::new(&headless)
-        .arg("--stop")
-        .env("POSTIO_TEST_DISPLAY", &display)
-        .status();
     let (a, b) = (read(first.path()), read(second.path()));
     assert_eq!(a.status, Status::Passed, "{a:#?}");
     assert_eq!(a.steps.len(), 4, "the starting state and three steps");
