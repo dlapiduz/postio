@@ -51,6 +51,7 @@ pub type Notifier = Rc<
 >;
 
 type NotificationSink = Rc<dyn Fn(&postio_ui::notify::Notification)>;
+type ReminderSink = Rc<dyn Fn(&postio_ui::notify::ReminderNotice)>;
 
 const STOP_DIALOG: &str = "focus-stop-digesting";
 
@@ -64,6 +65,7 @@ const FILTERED: &str = "filtered";
 const CONTACTS_IO_DIALOG: &str = "focus-contacts-io";
 
 const CONTACTS: &str = "contacts";
+const CALENDAR: &str = "calendar";
 const RESULTS: &str = "results";
 const MAIL: &str = "mail";
 const LIST: &str = "list";
@@ -145,6 +147,7 @@ mod imp {
         pub labels: RefCell<Option<Rc<crate::label_picker::LabelPicker>>>,
         pub notifier: RefCell<Option<super::Notifier>>,
         pub notification_sink: RefCell<Option<super::NotificationSink>>,
+        pub reminder_sink: RefCell<Option<super::ReminderSink>>,
         pub config_path: RefCell<Option<std::path::PathBuf>>,
         pub timeline: RefCell<Option<postio_widgets::startup::Timeline>>,
         pub rules_view: RefCell<Option<Rc<crate::rules::RulesView>>>,
@@ -152,6 +155,9 @@ mod imp {
         pub digest_window: RefCell<Option<Rc<crate::digest::DigestWindow>>>,
         pub filtered: RefCell<Option<Rc<crate::filtered::FilteredView>>>,
         pub contacts: RefCell<Option<Rc<crate::contacts::ContactsView>>>,
+        pub calendar: RefCell<Option<Rc<crate::calendar::AgendaView>>>,
+        pub calendar_size: Cell<(i32, i32)>,
+        pub calendar_window: RefCell<Option<(adw::Window, Rc<crate::calendar::AgendaView>)>>,
         pub results: RefCell<Option<Rc<crate::results::ResultsPane>>>,
         pub contacts_io: RefCell<Option<postio_ui::contacts_io::IoSheetView>>,
         pub contact_popover:
@@ -245,6 +251,9 @@ mod imp {
                 warm: Cell::default(),
                 filtered: RefCell::default(),
                 contacts: RefCell::default(),
+                calendar: RefCell::default(),
+                calendar_size: Cell::new((900, 700)),
+                calendar_window: RefCell::default(),
                 results: RefCell::default(),
                 contacts_io: RefCell::default(),
                 contact_popover: RefCell::default(),
@@ -255,6 +264,7 @@ mod imp {
                 timeline: RefCell::default(),
                 notifier: RefCell::default(),
                 notification_sink: RefCell::default(),
+                reminder_sink: RefCell::default(),
                 capture: RefCell::default(),
                 surfaces: RefCell::default(),
                 told_shown: Cell::default(),
@@ -650,12 +660,17 @@ impl FocusWindow {
         self.imp().keymap.borrow().clone()
     }
 
-    /// Quit is all there is to do before there is an inbox; the rest are the page's own, its
+    /// Leaving is all there is to do before there is an inbox; the rest are the page's own, its
     /// button's Return among them.
     fn key_before_mail(&self, chord: &postio_ui::keymap::Chord) -> glib::Propagation {
         let (mut resolver, _) = crate::keys::resolver(&self.keymap());
         match resolver.press(chord, KeyContext::List, false, std::time::Instant::now()) {
-            Outcome::Command(id) if id.parse::<CommandId>() == Ok(CommandId::Quit) => {
+            Outcome::Command(id)
+                if matches!(
+                    id.parse::<CommandId>(),
+                    Ok(CommandId::Quit | CommandId::CloseWindow)
+                ) =>
+            {
                 self.act(CommandId::Quit);
                 glib::Propagation::Stop
             }
@@ -1004,7 +1019,8 @@ impl FocusWindow {
                 }
             }
             SurfaceKind::Filtered => self.hide_filtered(),
-            SurfaceKind::Contacts => self.leave_contacts(),
+            SurfaceKind::Contacts => self.show_mail(),
+            SurfaceKind::Calendar => self.show_mail(),
             SurfaceKind::ContactPopover => self.close_contact_popover(),
             SurfaceKind::ThreadMenu => {
                 if let Some(menu) = self.imp().thread_menu.borrow().as_ref() {
@@ -1463,7 +1479,8 @@ impl FocusWindow {
                 | CommandId::Forward
                 | CommandId::Compose
                 | CommandId::AcceptInvite
-                | CommandId::DeclineInvite),
+                | CommandId::DeclineInvite
+                | CommandId::TentativeInvite),
             ) => self.act(id),
             // The message on screen going away is the controller's: it aims at the message alone
             // and steps on to the row that takes its place once the list lets it go.
@@ -1779,6 +1796,12 @@ impl FocusWindow {
         {
             return self.run_in_controller(id);
         }
+        if (self.calendar().is_some() || self.imp().calendar_window.borrow().is_some())
+            && let Some(pane) = self.pane()
+            && pane.feed().answers(id)
+        {
+            return self.run_in_controller(id);
+        }
         if self.rules().is_some() && self.rules_act(id) {
             return;
         }
@@ -1850,7 +1873,7 @@ impl FocusWindow {
             | CommandId::Unsnooze
             | CommandId::Undo
             | CommandId::Refresh => self.cursor_command(id),
-            CommandId::Quit => self.close(),
+            CommandId::Quit | CommandId::CloseWindow => self.close(),
             CommandId::UpdateCredential => self.update_credential(),
             CommandId::CheatSheet => self.show_key_map(),
             CommandId::Settings => self.toggle_settings(),
@@ -1877,7 +1900,12 @@ impl FocusWindow {
             CommandId::ViewSource => self.run_in_controller(id),
             CommandId::OpenContacts
             | CommandId::ContactsSuggestions
-            | CommandId::ContactPopover => {
+            | CommandId::ContactPopover
+            | CommandId::GoToCalendar
+            | CommandId::CalendarAgenda
+            | CommandId::CalendarPrevious
+            | CommandId::CalendarNext
+            | CommandId::CalendarToday => {
                 self.run_in_controller(id);
             }
             CommandId::ContactOpenCard
@@ -1928,7 +1956,7 @@ impl FocusWindow {
             CommandId::RemindIfNoReply => self.open_when(When::Remind),
             CommandId::AddLabel => self.open_labels(),
             CommandId::Move => self.open_moves(),
-            CommandId::AcceptInvite | CommandId::DeclineInvite => {
+            CommandId::AcceptInvite | CommandId::DeclineInvite | CommandId::TentativeInvite => {
                 if let Some(message) = self.aimed_message() {
                     self.answer(message, id);
                 }
@@ -2284,6 +2312,24 @@ impl FocusWindow {
                 }
             }
             Intent::Contacts(view) => self.show_contacts(view),
+            Intent::Calendar(view) if view.popped => {
+                if let Some((_, agenda)) = self.imp().calendar_window.borrow().as_ref() {
+                    agenda.show_frame(view);
+                }
+            }
+            Intent::Calendar(view) => self.show_calendar(view),
+            Intent::CalendarWindow(open) => self.calendar_window(*open),
+            Intent::PresentWindow(postio_focus::Window::Calendar) => {
+                if let Some((host, _)) = self.imp().calendar_window.borrow().as_ref() {
+                    host.present();
+                }
+            }
+            Intent::PresentWindow(_) => self.present(),
+            Intent::CalendarFocusFilter => {
+                if let Some(view) = self.calendar() {
+                    view.focus_filter();
+                }
+            }
             Intent::ContactsRows { .. } => {
                 if let Some(view) = self.contacts() {
                     view.show_rows();
@@ -2916,6 +2962,33 @@ impl FocusWindow {
         self.place_reading();
         feed.open(ListScope::Focus(FocusScope::Inbox));
         self.focus_list();
+        let window = self.downgrade();
+        let reopen = client.clone();
+        let (sender, receiver) = async_channel::bounded(1);
+        if let Some(runtime) = imp.runtime.borrow().clone() {
+            runtime.spawn(async move {
+                let _ = sender.send(reopen.calendar_window().await).await;
+            });
+        }
+        glib::spawn_future_local(async move {
+            let Ok(Ok(state)) = receiver.recv().await else {
+                return;
+            };
+            let Some(window) = window.upgrade() else {
+                return;
+            };
+            if state.width > 0 && state.height > 0 {
+                let size = (
+                    i32::try_from(state.width).unwrap_or(900),
+                    i32::try_from(state.height).unwrap_or(700),
+                );
+                window.imp().calendar_size.set(size);
+            }
+            if state.popped {
+                window.press_command(CommandId::GoToCalendar);
+                window.press_command(CommandId::PopOut);
+            }
+        });
 
         // Exactly one reader of the client's events, on the main loop: clones of the receiver would
         // compete for them.
@@ -2968,10 +3041,9 @@ impl FocusWindow {
 
     fn answer(&self, message: MessageId, id: CommandId) {
         let message = Some(message);
-        self.post(match id {
-            CommandId::DeclineInvite => Command::DeclineInvite { message },
-            _ => Command::AcceptInvite { message },
-        });
+        if let Some(answer) = postio_core::command::answer_invite(id, message) {
+            self.post(answer);
+        }
     }
 
     /// With a message open over the list, an undo takes it back to the conversation it brought
@@ -3214,6 +3286,19 @@ impl FocusWindow {
                 }
             }
 
+            Event::ReminderDue {
+                event,
+                title,
+                starts,
+                missed,
+            } => self.remind(&postio_ui::notify::reminder(
+                event.get(),
+                title,
+                *starts,
+                postio_ui::clock::now().to_utc(),
+                *missed,
+                &chrono::Local,
+            )),
             _ => {}
         }
         self.hear_sync(event);
@@ -3232,6 +3317,37 @@ impl FocusWindow {
 
     pub fn set_notification_sink(&self, sink: impl Fn(&postio_ui::notify::Notification) + 'static) {
         self.imp().notification_sink.replace(Some(Rc::new(sink)));
+    }
+
+    pub fn set_reminder_sink(&self, sink: impl Fn(&postio_ui::notify::ReminderNotice) + 'static) {
+        self.imp().reminder_sink.replace(Some(Rc::new(sink)));
+    }
+
+    fn remind(&self, notice: &postio_ui::notify::ReminderNotice) {
+        let sink = self.imp().reminder_sink.borrow().clone();
+        if let Some(sink) = sink {
+            sink(notice);
+            return;
+        }
+        let Some(application) = gtk::prelude::GtkWindowExt::application(self) else {
+            return;
+        };
+        if application.lookup_action("open-calendar").is_none() {
+            let open = gio::SimpleAction::new("open-calendar", None);
+            open.connect_activate(glib::clone!(
+                #[weak(rename_to = window)]
+                self,
+                move |_, _| {
+                    window.present();
+                    window.act(CommandId::GoToCalendar);
+                }
+            ));
+            application.add_action(&open);
+        }
+        let built = gio::Notification::new(&notice.title);
+        built.set_body(Some(&notice.body));
+        built.add_button("Open", "app.open-calendar");
+        application.send_notification(Some(&notice.identifier), &built);
     }
 
     pub fn set_notifier(&self, notifier: Notifier) {
@@ -3679,6 +3795,7 @@ impl FocusWindow {
             | CommandId::Undo
             | CommandId::CheatSheet
             | CommandId::Quit
+            | CommandId::CloseWindow
             | CommandId::Search
             | CommandId::CommandPalette => return false,
             _ => {}
@@ -3889,6 +4006,40 @@ impl FocusWindow {
         });
         imp.pages.set_visible_child_name(FILTERED);
         view.focus_list();
+    }
+
+    pub fn calendar(&self) -> Option<Rc<crate::calendar::AgendaView>> {
+        let imp = self.imp();
+        if imp.body.visible_child_name().as_deref() != Some(CALENDAR) {
+            return None;
+        }
+        imp.calendar.borrow().clone()
+    }
+
+    fn show_calendar(&self, frame: &postio_focus::CalendarView) {
+        let imp = self.imp();
+        let Some(pane) = self.pane() else {
+            return;
+        };
+        let view = imp.calendar.borrow().clone();
+        let view = view.unwrap_or_else(|| {
+            let view = crate::calendar::AgendaView::new(
+                pane.feed().clone(),
+                glib::clone!(
+                    #[weak(rename_to = window)]
+                    self,
+                    move |command| window.press_command(command)
+                ),
+            );
+            imp.body.add_named(view.widget(), Some(CALENDAR));
+            imp.calendar.replace(Some(Rc::clone(&view)));
+            view
+        });
+        view.show_frame(frame);
+        if imp.body.visible_child_name().as_deref() != Some(CALENDAR) {
+            imp.body.set_visible_child_name(CALENDAR);
+            view.focus_list();
+        }
     }
 
     pub fn contacts(&self) -> Option<Rc<crate::contacts::ContactsView>> {
@@ -4201,7 +4352,7 @@ impl FocusWindow {
         }
     }
 
-    fn leave_contacts(&self) {
+    fn show_mail(&self) {
         self.imp().body.set_visible_child_name(MAIL);
         self.focus_list();
     }
@@ -5428,7 +5579,127 @@ impl FocusWindow {
 
     /// Public because a headless compositor grants no focus, so a test says what the notification
     /// would.
+    fn calendar_window(&self, open: bool) {
+        let imp = self.imp();
+        if !open {
+            if let Some((host, _)) = imp.calendar_window.take() {
+                self.remember_calendar_window(false, host.default_width(), host.default_height());
+                host.destroy();
+            }
+            return;
+        }
+        if imp.calendar_window.borrow().is_some() {
+            return;
+        }
+        let Some(pane) = self.pane() else {
+            return;
+        };
+        let agenda = crate::calendar::AgendaView::new(
+            pane.feed().clone(),
+            glib::clone!(
+                #[weak(rename_to = window)]
+                self,
+                move |command| window.press_command(command)
+            ),
+        );
+        let (width, height) = imp.calendar_size.get();
+        let host = adw::Window::builder()
+            .title("Calendar")
+            .default_width(width)
+            .default_height(height)
+            .build();
+        host.set_application(self.application().as_ref());
+        let layout = adw::ToolbarView::new();
+        layout.add_top_bar(&adw::HeaderBar::new());
+        layout.set_content(Some(agenda.widget()));
+        host.set_content(Some(&layout));
+        let keys = gtk::EventControllerKey::new();
+        keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+        keys.connect_key_pressed(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            #[weak]
+            agenda,
+            #[upgrade_or]
+            glib::Propagation::Proceed,
+            move |_, key, _, state| {
+                if (agenda.filter().has_focus() || agenda.filter().focus_child().is_some())
+                    && !matches!(key, gdk::Key::Escape)
+                {
+                    return glib::Propagation::Proceed;
+                }
+                window.handle_key(key, state)
+            }
+        ));
+        host.add_controller(keys);
+        host.connect_is_active_notify(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |host| {
+                if host.is_active()
+                    && let Some(pane) = window.pane()
+                {
+                    pane.feed().input(postio_focus::Input::WindowFocused(
+                        postio_focus::Window::Calendar,
+                    ));
+                }
+            }
+        ));
+        host.connect_close_request(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            #[upgrade_or]
+            glib::Propagation::Proceed,
+            move |_| {
+                window.run_in_controller(CommandId::PopIn);
+                glib::Propagation::Stop
+            }
+        ));
+        imp.calendar_window
+            .replace(Some((host.clone(), Rc::clone(&agenda))));
+        self.remember_calendar_window(true, width, height);
+        host.present();
+        agenda.focus_list();
+    }
+
+    fn remember_calendar_window(&self, popped: bool, width: i32, height: i32) {
+        self.imp().calendar_size.set((width, height));
+        let Some(client) = self.imp().client.borrow().clone() else {
+            return;
+        };
+        let state = postio_model::calendar::CalendarWindowState {
+            popped,
+            width: u32::try_from(width).unwrap_or(900),
+            height: u32::try_from(height).unwrap_or(700),
+        };
+        let Some(runtime) = self.imp().runtime.borrow().clone() else {
+            return;
+        };
+        runtime.spawn(async move {
+            if client.set_calendar_window(state).await.is_err() {
+                tracing::warn!("the calendar window's state was not saved");
+            }
+        });
+    }
+
+    pub fn calendar_window_open(&self) -> bool {
+        self.imp().calendar_window.borrow().is_some()
+    }
+
+    pub fn calendar_window_agenda(&self) -> Option<Rc<crate::calendar::AgendaView>> {
+        self.imp()
+            .calendar_window
+            .borrow()
+            .as_ref()
+            .map(|(_, agenda)| Rc::clone(agenda))
+    }
+
     pub fn focus_changed(&self, active: bool) {
+        if active && let Some(pane) = self.pane() {
+            pane.feed().input(postio_focus::Input::WindowFocused(
+                postio_focus::Window::Main,
+            ));
+        }
         if let Some(reading) = self.reading() {
             reading.set_window_active(active);
         }
@@ -5945,6 +6216,18 @@ impl FocusWindow {
             Region::Reader
         } else if digest.is_some() {
             Region::Dialog
+        } else if let Some(calendar) = self.calendar().or_else(|| {
+            self.calendar_window_agenda().filter(|_| {
+                self.pane().is_some_and(|pane| {
+                    pane.feed().focused_window() == postio_focus::Window::Calendar
+                })
+            })
+        }) {
+            if calendar.open_event().is_some() {
+                Region::Dialog
+            } else {
+                Region::Calendar
+            }
         } else if self.results().is_some() && self.key_context() == KeyContext::Results {
             Region::Results
         } else if focus.is_none() {
@@ -6106,6 +6389,8 @@ impl FocusWindow {
             View::Filtered
         } else if bar.is_some() {
             View::Search
+        } else if self.calendar().is_some() {
+            View::Calendar
         } else {
             View::List
         };
@@ -6223,6 +6508,46 @@ impl FocusWindow {
             .and(imp.empty.borrow().as_ref())
             .map(|page| page.heading());
         app.insert("focus.empty.heading".to_owned(), serde_json::json!(empty));
+        let popped = self.calendar_window_agenda();
+        let focused = match self.pane().map(|pane| pane.feed().focused_window()) {
+            Some(postio_focus::Window::Calendar) if popped.is_some() => "calendar",
+            _ => "main",
+        };
+        app.insert(
+            "focus.window.focused".to_owned(),
+            serde_json::json!(focused),
+        );
+        if let Some(calendar) = self.calendar().or_else(|| popped.clone()) {
+            app.insert(
+                "focus.calendar.view".to_owned(),
+                serde_json::json!("agenda"),
+            );
+            app.insert(
+                "focus.calendar.window".to_owned(),
+                serde_json::json!(if popped.is_some() { "own" } else { "main" }),
+            );
+            app.insert(
+                "focus.calendar.open".to_owned(),
+                serde_json::json!(calendar.open_event().is_some()),
+            );
+            let editor = calendar.editor().shown();
+            app.insert(
+                "focus.calendar.editor".to_owned(),
+                serde_json::json!(editor.as_ref().map(|editor| editor.heading.clone())),
+            );
+            if let Some(editor) = editor {
+                app.insert(
+                    "focus.calendar.editor.when".to_owned(),
+                    serde_json::json!(editor.when.unwrap_or_else(|why| why)),
+                );
+            }
+            if let Some(row) = calendar.ringed() {
+                app.insert(
+                    "focus.calendar.cursor".to_owned(),
+                    serde_json::json!(format!("{} {}", row.time, row.title)),
+                );
+            }
+        }
         if let Some(chrome) = self.chrome() {
             app.insert(
                 "focus.strip.counts".to_owned(),
@@ -6463,6 +6788,10 @@ impl FocusWindow {
                 app.insert(
                     "focus.outline.filtering".to_owned(),
                     serde_json::json!(outline.filtering()),
+                );
+                app.insert(
+                    "focus.outline.hint".to_owned(),
+                    serde_json::json!(outline.hint()),
                 );
             }
         }

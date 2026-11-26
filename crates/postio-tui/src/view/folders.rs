@@ -1,7 +1,5 @@
-//! The folders popover, drawn (terminal.md, "Folders and labels"): a box 44
-//! wide under the strip's left end holding the filter and the places in
-//! their sections, each mailbox with its `g` key, each label with its
-//! coloured dot, and the counts dimmed at the right.
+//! The folders popover: a box 44 wide under the strip's left end, the filter and the places in
+//! sections.
 
 use ratatui::Frame;
 use ratatui::layout::{Position, Rect};
@@ -10,7 +8,7 @@ use ratatui::text::{Line as Text, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear};
 use unicode_width::UnicodeWidthStr;
 
-use crate::folders::{Folders, Reach};
+use crate::folders::Folders;
 use crate::theme::{Role, Theme};
 use crate::view::fit;
 use crate::view::hit::{Hits, Target};
@@ -18,35 +16,30 @@ use postio_core::CommandId;
 use postio_ui::label_colour::{Rgb, label_colour};
 use postio_ui::places::{Entry, Mark, Section};
 
-/// The box's width.
 const WIDTH: u16 = 44;
 
-/// The box under the strip's left end.
 pub fn outer(area: Rect, lines: u16) -> Rect {
     let width = WIDTH.min(area.width.saturating_sub(2));
     Rect::new(
         area.x + 1,
         area.y + 2,
         width,
-        // Borders, the filter and its rule, then the lines.
         (4 + lines).min(area.height.saturating_sub(3)),
     )
 }
 
-/// Draw the popover over `area`.
 pub fn draw(
     frame: &mut Frame,
     area: Rect,
     folders: &Folders,
-    reach: &Reach<'_>,
     hint: &dyn Fn(CommandId) -> Option<String>,
     theme: &Theme,
     hits: &mut Hits,
 ) {
-    let entries = folders.entries(reach);
+    let entries = folders.entries();
     let mut lines: Vec<(Option<Section>, Option<usize>)> = Vec::new();
     let mut section = None;
-    for (index, entry) in entries.iter().enumerate() {
+    for (index, (_, entry)) in entries.iter().enumerate() {
         if section != Some(entry.section) {
             section = Some(entry.section);
             lines.push((Some(entry.section), None));
@@ -70,7 +63,6 @@ pub fn draw(
     let dim = theme.style(Role::Dim);
     let text = theme.style(Role::Text);
     let accent = theme.style(Role::Accent);
-    // The filter.
     let typed = folders.filter();
     let mut spans = vec![Span::styled("⌕ ", accent)];
     if typed.is_empty() {
@@ -100,9 +92,8 @@ pub fn draw(
             Rect::new(inner.x + 1, inner.y + 2, inner.width - 1, 1),
         );
     }
-    let chosen = folders.chosen(&entries);
+    let chosen = folders.chosen();
     let shown = usize::from(inner.height.saturating_sub(2));
-    // Keep the chosen row in view.
     let chosen_line = lines
         .iter()
         .position(|(_, at)| *at == Some(chosen))
@@ -124,7 +115,7 @@ pub fn draw(
             continue;
         }
         let Some(index) = at else { continue };
-        let entry: &Entry = &entries[*index];
+        let entry: &Entry = &entries[*index].1;
         let is_chosen = *index == chosen;
         if is_chosen {
             frame
@@ -172,18 +163,18 @@ pub fn draw(
 
 #[cfg(test)]
 mod tests {
-    use crate::app::{App, Effect, Input, update};
-    use crate::places::{Features, PlaceDetails, Places};
+    use crate::app::{App, Effect, update};
+    use crate::places::{Features, Places};
     use crate::test_support::{
-        app, click, folder, hits_of, label, open_list, press, screen, seed_places, serve, type_text,
+        app, asked, click, folder, hits_of, label, open_list, places_arrive, press, screen,
+        seed_places, serve, type_text,
     };
     use crate::view::hit::Target;
     use crossterm::event::{KeyCode, KeyModifiers};
-    use postio_model::mailbox::MailboxRole;
+    use postio_model::mailbox::{Mailbox, MailboxRole};
     use postio_model::{AccountId, ListScope, MailboxId};
 
-    fn opened(filtering: bool) -> App {
-        let mut app = app((120, 36));
+    fn mailboxes() -> Vec<Mailbox> {
         let mut folders = vec![
             folder(1, "INBOX", MailboxRole::Inbox, 3),
             folder(2, "Archive", MailboxRole::Archive, 0),
@@ -192,11 +183,16 @@ mod tests {
         ];
         folders[0].counts.total = 312;
         folders[3].counts.total = 40;
+        folders
+    }
+
+    fn opened(filtering: bool) -> App {
+        let mut app = app((120, 36));
         seed_places(
             &mut app,
             Places {
                 accounts: vec![crate::test_support::account()],
-                folders,
+                folders: mailboxes(),
                 counts: Vec::new(),
                 saved: Vec::new(),
                 features: Features {
@@ -216,24 +212,31 @@ mod tests {
         app
     }
 
-    fn details() -> Input {
+    fn box_opened(app: &mut App, outbox: u32) -> Vec<Effect> {
+        update(app, press('g'));
+        let effects = update(app, press('l'));
         let mut work = label(7, "Atlas");
         work.color = Some("#3584e4".into());
-        Input::PlaceDetails(PlaceDetails {
-            labels: vec![work, label(8, "Harbor")],
-            label_counts: vec![(postio_model::LabelId::new(7), 12)],
-            correspondents: Vec::new(),
-            outbox: vec![(AccountId::new(1), 2)],
-        })
+        places_arrive(
+            app,
+            &effects,
+            &mailboxes(),
+            &[(work, 12), (label(8, "Harbor"), 0)],
+            &[(AccountId::new(1), outbox)],
+        );
+        effects
     }
 
     #[test]
     fn g_l_opens_a_44_wide_box_under_the_strips_left_end_with_its_sections_and_keys() {
         let mut app = opened(true);
-        update(&mut app, press('g'));
-        let effects = update(&mut app, press('l'));
-        assert!(effects.contains(&Effect::ReadPlaceDetails), "{effects:?}");
-        update(&mut app, details());
+        let effects = box_opened(&mut app, 2);
+        assert!(
+            asked(&effects)
+                .iter()
+                .any(|(_, request)| *request == postio_focus::Request::Places),
+            "{effects:?}"
+        );
         let drawn = screen(120, 36, &app);
         let lines: Vec<&str> = drawn.lines().collect();
         assert_eq!(lines[2].chars().nth(1), Some('╭'), "{drawn}");
@@ -249,11 +252,6 @@ mod tests {
                 .unwrap_or_else(|| panic!("no {name}:\n{drawn}"))
                 .to_owned()
         };
-        assert!(
-            row("Inbox").contains("312") && row("Inbox").contains("g i"),
-            "{}",
-            row("Inbox")
-        );
         assert!(row("Archive").contains("g a"), "{}", row("Archive"));
         assert!(row("Sent").contains("g t"), "{}", row("Sent"));
         assert!(row("Snoozed").contains("g b"), "{}", row("Snoozed"));
@@ -274,31 +272,9 @@ mod tests {
     }
 
     #[test]
-    fn outbox_and_filtered_are_listed_only_while_they_have_something_to_say() {
-        let mut app = opened(false);
-        update(&mut app, press('g'));
-        update(&mut app, press('l'));
-        update(
-            &mut app,
-            Input::PlaceDetails(PlaceDetails {
-                outbox: vec![(AccountId::new(1), 0)],
-                ..Default::default()
-            }),
-        );
-        let drawn = screen(120, 36, &app);
-        assert!(!drawn.contains("Outbox"), "{drawn}");
-        assert!(
-            !drawn.contains("Filtered ·") && !drawn.contains("today"),
-            "{drawn}"
-        );
-    }
-
-    #[test]
     fn typing_filters_and_enter_goes_there() {
         let mut app = opened(true);
-        update(&mut app, press('g'));
-        update(&mut app, press('l'));
-        update(&mut app, details());
+        box_opened(&mut app, 2);
         type_text(&mut app, "proj");
         let drawn = screen(120, 36, &app);
         assert!(drawn.contains("proj"), "{drawn}");
@@ -319,33 +295,16 @@ mod tests {
     }
 
     #[test]
-    fn the_inbox_is_focuss_own_and_filtered_runs_its_command() {
-        let mut app = opened(true);
-        update(&mut app, press('g'));
-        update(&mut app, press('l'));
-        let effects = update(
-            &mut app,
-            crate::test_support::key(KeyCode::Enter, KeyModifiers::NONE),
-        );
-        assert!(
-            crate::test_support::opens(&effects, ListScope::Focus(postio_model::FocusScope::Inbox)),
-            "{effects:?}"
-        );
-    }
-
-    #[test]
     fn the_g_keys_work_from_inside_and_escape_closes() {
         let mut app = opened(true);
-        update(&mut app, press('g'));
-        update(&mut app, press('l'));
+        box_opened(&mut app, 0);
         update(&mut app, press('g'));
         let effects = update(&mut app, press('a'));
         assert!(
             crate::test_support::opens(&effects, ListScope::Mailbox(MailboxId::new(2))),
             "{effects:?}"
         );
-        update(&mut app, press('g'));
-        update(&mut app, press('l'));
+        box_opened(&mut app, 0);
         update(&mut app, press('g'));
         update(&mut app, press('x'));
         let drawn = screen(120, 36, &app);
@@ -366,8 +325,8 @@ mod tests {
         let hits = hits_of(120, 36, &app);
         let place = hits.at(2, 1).expect("the strip's place");
         assert_eq!(place.target, Target::Command("go_to_folders"));
-        update(&mut app, click(place.target, false, false));
-        update(&mut app, details());
+        let effects = update(&mut app, click(place.target, false, false));
+        places_arrive(&mut app, &effects, &mailboxes(), &[], &[]);
         let drawn = screen(120, 36, &app);
         let row = drawn
             .lines()

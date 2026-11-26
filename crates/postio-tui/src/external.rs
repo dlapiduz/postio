@@ -1,15 +1,9 @@
-//! Handing the draft's body to the person's own editor (FR-022).
-//!
-//! The Markdown goes into a file only this user can read, in a directory only
-//! this user can list, the editor runs on the real terminal, and whatever it
-//! saved comes back. The file is removed whatever happened: a draft is not
-//! left lying in a temporary directory.
+//! Hands the draft's body to the user's editor in a file only this user can read, then reads it
+//! back. The file is removed whatever happens.
 
 use std::io;
 use std::path::{Path, PathBuf};
 
-/// The editor to run: `$VISUAL`, else `$EDITOR`, else `vi`, as a shell
-/// command, so `code -w` works as well as `vim`.
 pub fn editor() -> String {
     ["VISUAL", "EDITOR"]
         .iter()
@@ -18,9 +12,7 @@ pub fn editor() -> String {
         .unwrap_or_else(|| "vi".to_owned())
 }
 
-/// Where the file goes: Postio's directory under `$XDG_RUNTIME_DIR`, which is
-/// this user's alone and cleared at logout; the system's temporary directory
-/// otherwise.
+/// `$XDG_RUNTIME_DIR`/postio, which is private and cleared at logout; else the system temp dir.
 pub fn directory() -> PathBuf {
     std::env::var_os("XDG_RUNTIME_DIR")
         .filter(|dir| !dir.is_empty())
@@ -28,8 +20,6 @@ pub fn directory() -> PathBuf {
         .join("postio")
 }
 
-/// Run `editor` on `markdown` in a private file under `directory`, and
-/// answer what it saved.
 pub fn edit(markdown: &str, directory: &Path, editor: &str) -> io::Result<String> {
     use std::io::Write;
     use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
@@ -54,9 +44,7 @@ pub fn edit(markdown: &str, directory: &Path, editor: &str) -> io::Result<String
         .and_then(|()| file.sync_all())
         .and_then(|()| {
             drop(file);
-            // Through the shell, so an editor named with its arguments
-            // (`code -w`) runs as the person would run it; the path is an
-            // argument, never part of the command text.
+            // Through the shell so `code -w` works; the path is an argument, never command text.
             let status = std::process::Command::new("sh")
                 .arg("-c")
                 .arg(format!("{editor} \"$1\""))
@@ -71,12 +59,10 @@ pub fn edit(markdown: &str, directory: &Path, editor: &str) -> io::Result<String
     let removed = std::fs::remove_file(&path);
     let edited = edited?;
     removed?;
-    // Editors end a file with a newline; a body does not need one.
     Ok(edited.trim_end_matches('\n').to_owned())
 }
 
-/// Run `editor` on the file at `path` itself -- `config.toml`, say -- at
-/// line `line` when there is one: `+N` is what vi, vim, nano and emacs take.
+/// `+N` is what vi, vim, nano and emacs take for a line.
 pub fn edit_in_place(path: &Path, line: Option<usize>, editor: &str) -> io::Result<()> {
     let at = line.map(|line| format!(" +{line}")).unwrap_or_default();
     let status = std::process::Command::new("sh")
@@ -98,7 +84,6 @@ mod tests {
 
     use super::*;
 
-    /// An editor that appends a line, and writes down the file's mode.
     fn fake_editor(dir: &Path) -> String {
         let script = dir.join("fake-editor");
         std::fs::write(
@@ -116,7 +101,6 @@ mod tests {
 
     #[test]
     fn the_editor_edits_and_the_file_is_gone_afterwards() {
-        // US3 scenario 6.
         let scratch = tempfile::tempdir().unwrap();
         let drafts = scratch.path().join("postio");
         let edited = edit("Half **written**\n", &drafts, &fake_editor(scratch.path())).unwrap();

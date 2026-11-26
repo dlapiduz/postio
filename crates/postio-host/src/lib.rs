@@ -971,6 +971,49 @@ impl Inner {
                     Err(error) => Resp::Failed(error),
                 }
             }
+            Req::AgendaPage { anchor, limit } => match calendar::agenda_page(
+                &self.wiring.database,
+                anchor,
+                limit,
+                &chrono::Local,
+                chrono::Utc::now(),
+            )
+            .await
+            {
+                Ok(page) => Resp::AgendaPage(page),
+                Err(error) => Resp::Failed(error),
+            },
+            Req::EventSearch { text, limit } => match calendar::search_events(
+                &self.wiring.database,
+                &text,
+                &chrono::Local,
+                chrono::Utc::now(),
+                limit,
+            )
+            .await
+            {
+                Ok(found) => Resp::EventSearch {
+                    entries: found.entries,
+                    ignored: found.ignored,
+                },
+                Err(error) => Resp::Failed(error),
+            },
+            Req::CalendarWindow => match calendar::calendar_window(&self.wiring.database).await {
+                Ok(state) => Resp::CalendarWindow(state),
+                Err(error) => Resp::Failed(error),
+            },
+            Req::SetCalendarWindow(state) => {
+                match calendar::set_calendar_window(&self.wiring.database, state).await {
+                    Ok(()) => Resp::Done,
+                    Err(error) => Resp::Failed(error),
+                }
+            }
+            Req::EventDetail(cursor) => {
+                match calendar::event_detail(&self.wiring.database, cursor).await {
+                    Ok(detail) => Resp::EventDetail(detail.map(Box::new)),
+                    Err(error) => Resp::Failed(error),
+                }
+            }
             Req::ContactsFiltered { tab, text, cap } => {
                 match contacts::contacts_filtered(&self.wiring.database, tab, &text, cap).await {
                     Ok(rows) => Resp::ContactsFiltered(rows),
@@ -2465,6 +2508,7 @@ impl Transport for Local {
 }
 
 pub mod anchors;
+pub use postio_session::calendar;
 pub mod compose;
 pub mod contacts;
 pub mod export;
@@ -2480,6 +2524,8 @@ pub mod source;
 pub mod startup;
 pub mod threads;
 
+#[cfg(test)]
+mod calendar_tests;
 #[cfg(test)]
 mod model_tests;
 #[cfg(test)]

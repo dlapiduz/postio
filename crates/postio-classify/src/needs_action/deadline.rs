@@ -14,7 +14,15 @@ const EVENT_WORDS: usize = 5;
 /// The first instant the clause's deadline can mean after `sent`; `None` when it names none or one
 /// already past. The first keyword that names a day wins.
 pub(super) fn deadline<Tz: TimeZone>(lower: &str, sent: &DateTime<Tz>) -> Option<DateTime<Tz>> {
-    let mut keywords: Vec<(usize, &str)> = DEADLINE_KEYWORDS
+    deadline_after(lower, sent, DEADLINE_KEYWORDS)
+}
+
+pub(super) fn deadline_after<Tz: TimeZone>(
+    lower: &str,
+    sent: &DateTime<Tz>,
+    keywords: &[&str],
+) -> Option<DateTime<Tz>> {
+    let mut keywords: Vec<(usize, &str)> = keywords
         .iter()
         .flat_map(|keyword| lower.match_indices(keyword))
         .filter(|(at, keyword)| {

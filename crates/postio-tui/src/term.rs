@@ -1,51 +1,30 @@
-//! Entering and leaving the terminal's modes, and always leaving them.
-//!
-//! A terminal left in raw mode with the mouse captured is broken for the
-//! person using it: no echo, clicks become escape sequences, the shell's own
-//! screen gone. So every mode entered is recorded as it is entered, and
-//! leaving undoes exactly those, in reverse order -- on quit, on a panic
-//! (a hook, which runs before `panic = "abort"` takes the process), and
-//! around `$EDITOR` (`contracts/tui-surface.md` §Terminal state). Not around
-//! `Ctrl+Z`: it arrives as a key and is undo, as in every Postio app, and
-//! nothing here suspends the process (specs/007-postio-focus T030).
-//!
-//! The modes go through [`Console`], so the order is testable against a
-//! recording instead of a real terminal.
+//! Entering and leaving the terminal's modes, and always leaving them: every mode entered is
+//! recorded, and leaving undoes exactly those in reverse order, on quit, on a panic and around
+//! `$EDITOR`. Modes go through `Console`, so the order is testable against a recording.
 
 use std::io;
 
-/// One mode a terminal can be put in, and taken out of.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
-    /// No line buffering, no echo: keys arrive one at a time.
     Raw,
-    /// The alternate screen, so the shell's own is still there afterwards.
     AlternateScreen,
-    /// Clicks, drags and the wheel arrive as events.
     Mouse,
-    /// Pasted text, and dropped files' paths, arrive as one event.
     BracketedPaste,
-    /// The kitty keyboard protocol, where the terminal speaks it.
     KeyboardEnhancement,
 }
 
-/// Something that can put a terminal into a mode and take it out.
 pub trait Console {
     /// Enter `mode` (`on`) or leave it.
     fn set(&mut self, mode: Mode, on: bool) -> io::Result<()>;
 }
 
-/// The modes a frontend is in, in the order it entered them.
 #[derive(Debug, Default)]
 pub struct Session {
     entered: Vec<Mode>,
 }
 
 impl Session {
-    /// Enter each of `modes`, in order, recording each as it succeeds.
-    ///
-    /// If one fails, the ones already entered are left again before the
-    /// failure is returned: the caller has no session to undo them with.
+    /// If one fails, the ones already entered are left again before the failure is returned.
     pub fn enter(console: &mut impl Console, modes: &[Mode]) -> io::Result<Session> {
         let mut session = Session::default();
         for mode in modes {
@@ -58,8 +37,7 @@ impl Session {
         Ok(session)
     }
 
-    /// Leave every mode entered, most recent first. Tries all of them even if
-    /// one fails, and reports the first failure.
+    /// Tries every mode even if one fails, and reports the first failure.
     pub fn leave(&mut self, console: &mut impl Console) -> io::Result<()> {
         let mut first = Ok(());
         while let Some(mode) = self.entered.pop() {
@@ -72,8 +50,6 @@ impl Session {
         first
     }
 
-    /// Hand the terminal over to `$EDITOR`, and take it back afterwards in the
-    /// same modes.
     pub fn suspended<T>(
         &mut self,
         console: &mut impl Console,
@@ -86,7 +62,6 @@ impl Session {
         Ok(result)
     }
 
-    /// What is entered now, oldest first.
     pub fn entered(&self) -> &[Mode] {
         &self.entered
     }
@@ -96,7 +71,6 @@ impl Session {
 mod tests {
     use super::*;
 
-    /// Records every change, in order.
     #[derive(Default)]
     struct Recording(Vec<(Mode, bool)>);
 
@@ -139,8 +113,6 @@ mod tests {
             }
         }
         let mut console = NoMouse(Recording::default());
-        // The failure is reported, and what did turn on is still recorded so
-        // it can be undone.
         let session = Session::enter(&mut console, &ALL);
         assert!(session.is_err());
         assert!(
@@ -168,7 +140,6 @@ mod tests {
     }
 }
 
-/// The real terminal, through crossterm, on standard output.
 #[derive(Debug, Default)]
 pub struct Stdout;
 
@@ -201,18 +172,15 @@ impl Console for Stdout {
     }
 }
 
-/// What is entered right now, for the panic hook, which has no session to
-/// ask.
+/// What is entered now, for the panic hook, which has no session.
 static ENTERED: std::sync::Mutex<Vec<Mode>> = std::sync::Mutex::new(Vec::new());
 
 impl Session {
-    /// Whether `mode` is entered.
     pub fn has(&self, mode: Mode) -> bool {
         self.entered.contains(&mode)
     }
 
-    /// Record what is entered where the panic hook can find it. Called after
-    /// every change of modes by the loop that owns the real terminal.
+    /// Called by the loop that owns the real terminal after every change of modes.
     pub fn publish(&self) {
         *ENTERED
             .lock()
@@ -220,9 +188,8 @@ impl Session {
     }
 }
 
-/// Restore the terminal before a panic's message is printed, so the message
-/// lands on a working screen -- and before `panic = "abort"` ends the
-/// process, which would otherwise leave the terminal raw.
+/// Restores the terminal before a panic's message prints, and before `panic = "abort"` ends the
+/// process with the terminal raw.
 pub fn install_panic_hook() {
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {

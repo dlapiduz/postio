@@ -1,21 +1,6 @@
-//! Render the terminal frontend with sample mail, as an SVG picture.
-//!
-//! For looking at the design, not for testing it: the screen is drawn by the
-//! real `update` and `draw` into a test backend, then each cell is written out
-//! with its colours, so a change to the look can be judged as a picture.
-//!
-//! ```bash
-//! cargo run -p postio-tui --example shot -- /tmp/tui.svg [width] [height] [state]
-//! magick /tmp/tui.svg /tmp/tui.png
-//! ```
-//!
-//! `state` is what is open over the mail (`find` is the find field over the open message; the states are `test_support::sample`'s; a `-nocolor` suffix draws it under `NO_COLOR`): `reading`, `open`, `pane` (from 128 columns) or `open-narrow` (the first message, in its frame; give `open-narrow` 76 columns), `bar`,
-//! `bar-commands`, `bar-folder`, `folders`, `snooze`, `remind`, `label`, `move`, `keys` (the key map), `compose`, `undo` or `toast` (an undo offer on the bottom line),
-//! `error`, `offline`, `first-sync`, `sign-in`, `empty`, `selected` or `bulk` (rows 2-4 marked, the cursor on row 3), or `nocolor`
-//! `capture` (the capture sheet over a to-do), `rules` and `rule` (the digest rules, and the rule dialog over them), `digest`, `digest-list` and `digest-email` (a digest's window on its summary, its list and an email from a reference), `filtered`, `filtered-nocolor` and `sweep` (Filtered, and the sweep's question over it),
-//! and `selected-nocolor`, `has-action` and `has-action-nocolor` (the same screens under `NO_COLOR`). Without one, the mail as it opens.
-//!
-//! Every name and address is fictional and on a reserved domain.
+//! Render the terminal frontend with sample mail as an SVG, to judge the look as a picture.
+//! `cargo run -p postio-tui --example shot -- /tmp/tui.svg [width] [height] [state]`;
+//! `state` names a `test_support::sample` screen, with an optional `-nocolor` suffix.
 
 use postio_tui::caps::Background;
 use postio_tui::test_support;
@@ -45,8 +30,6 @@ fn main() {
     eprintln!("wrote {out}");
 }
 
-// A dark terminal palette in the spirit of GNOME Console's default, so the
-// picture looks like a real terminal rather than raw ANSI primaries.
 const BG: &str = "#1e1e24";
 const FG: &str = "#deddda";
 

@@ -345,10 +345,13 @@ mod tests {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MarkerLine {
     pub chip: &'static str,
+    pub spoken: &'static str,
+    pub automated: bool,
     pub kind: postio_model::listing::MarkerKind,
     pub date: Option<String>,
     pub quote: Option<String>,
     pub status: Option<&'static str>,
+    pub note: Option<String>,
     pub actions: Vec<(postio_core::CommandId, &'static str)>,
 }
 
@@ -401,6 +404,7 @@ where
             let status = match marker.answer {
                 Some(InviteAnswer::Accepting | InviteAnswer::Accepted) => Some("Accepted"),
                 Some(InviteAnswer::Declining | InviteAnswer::Declined) => Some("Declined"),
+                Some(InviteAnswer::TentativePending | InviteAnswer::Tentative) => Some("Tentative"),
                 None if marker.cancelled => Some("Cancelled"),
                 None if over => Some("Past"),
                 None => None,
@@ -419,12 +423,32 @@ where
         MarkerKind::Todo => ("To-do", None, vec![(CommandId::Snooze, "Snooze")]),
         MarkerKind::NoReply => ("No reply", None, vec![(CommandId::Reply, "Reply")]),
     };
+    let open = matches!(status, None | Some("Accepted" | "Tentative"));
+    let note = match (&marker.when, marker.moved_from) {
+        _ if !open => None,
+        (Some(MarkerWhen::Event { starts_at, .. }), Some(_)) => Some(format!(
+            "Moved to {}",
+            starts_at.with_timezone(zone).format("%a %H:%M")
+        )),
+        _ => marker
+            .clash
+            .as_ref()
+            .map(|other| format!("Clashes with {other}")),
+    };
+    let automated = marker.notice && marker.kind == MarkerKind::Todo;
     MarkerLine {
         chip,
+        spoken: if automated {
+            "To-do from an automated sender"
+        } else {
+            chip
+        },
+        automated,
         kind: marker.kind,
         date,
         quote,
         status,
+        note,
         actions,
     }
 }
@@ -453,7 +477,32 @@ mod marker_tests {
             excerpt: None,
             answer: None,
             cancelled: false,
+            clash: None,
+            moved_from: None,
+            notice: false,
         }
+    }
+
+    #[test]
+    fn an_invitation_names_what_it_clashes_with_and_where_an_update_moved_it() {
+        let mut clashing = invite(at(29, 10, 0), at(29, 10, 45));
+        clashing.clash = Some("Standup".to_owned());
+        assert_eq!(
+            marker_line(&clashing, at(26, 14, 9), &Utc).note.as_deref(),
+            Some("Clashes with Standup")
+        );
+
+        let mut moved = invite(at(30, 10, 0), at(30, 10, 45));
+        moved.answer = Some(InviteAnswer::Accepted);
+        moved.moved_from = Some(at(29, 10, 0));
+        assert_eq!(
+            marker_line(&moved, at(26, 14, 9), &Utc).note.as_deref(),
+            Some("Moved to Wed 10:00")
+        );
+
+        let mut cancelled = clashing.clone();
+        cancelled.cancelled = true;
+        assert_eq!(marker_line(&cancelled, at(26, 14, 9), &Utc).note, None);
     }
 
     #[test]
@@ -525,6 +574,9 @@ mod marker_tests {
             excerpt: Some("Can you approve these by Friday?".into()),
             answer: None,
             cancelled: false,
+            clash: None,
+            moved_from: None,
+            notice: false,
         };
         let line = marker_line(&question, at(26, 14, 9), &Utc);
         assert_eq!(line.chip, "Question");
@@ -538,6 +590,33 @@ mod marker_tests {
     }
 
     #[test]
+    fn a_notice_s_to_do_reads_as_a_to_do_and_says_who_asks_it() {
+        let person = MarkerSummary {
+            kind: MarkerKind::Todo,
+            when: Some(MarkerWhen::Due(at(30, 12, 0))),
+            excerpt: Some("A payment of $142.18 is due by Wednesday.".into()),
+            answer: None,
+            cancelled: false,
+            clash: None,
+            moved_from: None,
+            notice: false,
+        };
+        let notice = MarkerSummary {
+            notice: true,
+            ..person.clone()
+        };
+
+        let asked = marker_line(&person, at(26, 14, 9), &Utc);
+        let noticed = marker_line(&notice, at(26, 14, 9), &Utc);
+
+        assert_eq!(noticed.chip, "To-do");
+        assert_eq!(noticed.actions, asked.actions);
+        assert!(noticed.automated && !asked.automated);
+        assert_eq!(asked.spoken, "To-do");
+        assert_eq!(noticed.spoken, "To-do from an automated sender");
+    }
+
+    #[test]
     fn a_to_do_names_its_day_and_offers_snooze_and_a_reminder_offers_reply() {
         let todo = MarkerSummary {
             kind: MarkerKind::Todo,
@@ -545,6 +624,9 @@ mod marker_tests {
             excerpt: Some("Please leave comments by Wednesday".into()),
             answer: None,
             cancelled: false,
+            clash: None,
+            moved_from: None,
+            notice: false,
         };
         let line = marker_line(&todo, at(26, 14, 9), &Utc);
         assert_eq!(line.chip, "To-do");
@@ -557,6 +639,9 @@ mod marker_tests {
             excerpt: None,
             answer: None,
             cancelled: false,
+            clash: None,
+            moved_from: None,
+            notice: false,
         };
         let line = marker_line(&reminder, at(28, 14, 9), &Utc);
         assert_eq!(line.chip, "No reply");
@@ -571,6 +656,9 @@ mod marker_tests {
             excerpt: Some("Please leave comments by Wednesday".into()),
             answer: None,
             cancelled: false,
+            clash: None,
+            moved_from: None,
+            notice: false,
         };
         let line = marker_line(&todo, at(26, 14, 9), &Utc).capturing(true);
         assert_eq!(
@@ -593,6 +681,9 @@ mod marker_tests {
             excerpt: Some("Can you approve these by Friday?".into()),
             answer: None,
             cancelled: false,
+            clash: None,
+            moved_from: None,
+            notice: false,
         };
         assert_eq!(
             marker_line(&question, at(26, 14, 9), &Utc)

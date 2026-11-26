@@ -421,3 +421,79 @@ async fn people_the_user_asked_for_are_saved_and_everyone_is_a_detected_person()
     .unwrap();
     assert_eq!(marked, 0, "no address starts labelled or bounced");
 }
+
+const HELD_MARKERS: &str = "
+INSERT INTO accounts (id, display_name, address, incoming_host, incoming_port,
+                      incoming_username, outgoing_host, outgoing_port,
+                      outgoing_username, created_at)
+     VALUES (1, 'Me', 'me@example.com', 'imap.example.com', 993,
+             'me@example.com', 'smtp.example.com', 587, 'me@example.com', 1);
+INSERT INTO mailboxes (id, account_id, name, path) VALUES (1, 1, 'INBOX', 'INBOX');
+INSERT INTO messages (id, account_id, mailbox_id, received_at, sort_at)
+     VALUES (1, 1, 1, 0, 0), (2, 1, 1, 0, 0), (3, 1, 1, 0, 0);
+INSERT INTO markers (message_id, kind, source, span_start, span_end, excerpt, dismissed_at)
+     VALUES (1, 'question', 'detector', 0, 12, 'Can you come?', 900),
+            (2, 'todo', 'model', 4, 20, 'Send the form.', NULL);
+";
+
+#[tokio::test]
+async fn the_markers_take_a_notice_and_keep_every_dismissal() {
+    let before = recorded()
+        .into_iter()
+        .find(|(file, _)| file == "4b4a60f9.sql")
+        .expect("the schema before a notice's to-do is recorded")
+        .1;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("postio.db");
+    Store::create_at_schema(&path, &test_support::key(), &before, HELD_MARKERS)
+        .await
+        .expect("a store at the earlier schema is written");
+    let store = Store::open(&path, &test_support::key())
+        .await
+        .expect("it migrates");
+    let connection = store.connect().await.expect("a connection");
+
+    let rows = sql::all_unbounded(
+        &connection,
+        "SELECT message_id, kind, source, excerpt, dismissed_at FROM markers ORDER BY message_id",
+        (),
+        |row| {
+            Ok((
+                row.int(0)?,
+                row.text(1)?,
+                row.text(2)?,
+                row.opt_text(3)?,
+                row.opt_int(4)?,
+            ))
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        [
+            (
+                1,
+                "question".to_owned(),
+                "detector".to_owned(),
+                Some("Can you come?".to_owned()),
+                Some(900)
+            ),
+            (
+                2,
+                "todo".to_owned(),
+                "model".to_owned(),
+                Some("Send the form.".to_owned()),
+                None
+            ),
+        ],
+        "a dismissal is for good, migration or not"
+    );
+    sql::execute(
+        &connection,
+        "INSERT INTO markers (message_id, kind, source, excerpt) VALUES (3, 'todo', 'notice', 'Pay by Friday.')",
+        (),
+    )
+    .await
+    .expect("a notice's to-do is a marker source");
+}

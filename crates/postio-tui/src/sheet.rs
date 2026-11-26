@@ -1,10 +1,5 @@
-//! The key map's state and layout (terminal.md, "Key map"): `?` opens
-//! `postio_ui::keymap_sheet::key_map` for the terminal over everything but
-//! the top bar, as columns 38 wide, as many as fit, scrolling when they do
-//! not.
-//!
-//! Every key shown is the keymap's, filtered to those this terminal can
-//! send; the groups, their order and the words are the shared ones.
+//! The key map's state and layout: columns 38 wide, as many as fit, scrolling when they do not.
+//! Every key shown is the keymap's, filtered to those this terminal can send.
 
 use crossterm::event::{KeyCode, KeyEvent};
 use postio_core::{Frontend, Keymap};
@@ -14,37 +9,22 @@ use postio_ui::keymap_sheet::{self, COLUMNS};
 use crate::app::Focus;
 use crate::input::Keys;
 
-/// How wide a column is.
 pub const COLUMN: u16 = 38;
-/// The gap between columns.
 pub const GAP: u16 = 2;
 
-/// What a key asks of the app.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Step {
-    /// Draw again.
     Stay,
-    /// Put the key map away.
     Close,
 }
 
-/// A line of a column.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Line {
-    /// A group's heading.
     Heading(&'static str),
-    /// A command and the keys that run it here.
-    Row {
-        /// What the registry calls it.
-        title: &'static str,
-        /// Its keys, as the keymap spells them.
-        keys: String,
-    },
-    /// A gap between groups.
+    Row { title: &'static str, keys: String },
     Blank,
 }
 
-/// The key map, open.
 #[derive(Debug)]
 pub struct Sheet {
     from: Focus,
@@ -52,28 +32,22 @@ pub struct Sheet {
 }
 
 impl Sheet {
-    /// A key map open over `from`.
     pub fn open(from: Focus) -> Sheet {
         Sheet { from, scroll: 0 }
     }
 
-    /// Where the keyboard was when it opened.
     pub fn from(&self) -> Focus {
         self.from
     }
 
-    /// How many lines down it is scrolled.
     pub fn scroll(&self) -> usize {
         self.scroll
     }
 
-    /// Scroll by `lines`, no further than `max`.
     pub fn scroll_by(&mut self, lines: isize, max: usize) {
         self.scroll = self.scroll.saturating_add_signed(lines).min(max);
     }
 
-    /// A key: `?` and `Esc` close it, the arrows scroll, and nothing else is
-    /// heard.
     pub fn key(&mut self, key: &KeyEvent, keys: &mut Keys, page: usize, max: usize) -> Step {
         if let Outcome::Command(id) = keys.press(key, KeyContext::List, false) {
             if id == "cheat_sheet" || id == "back" {
@@ -95,12 +69,10 @@ impl Sheet {
     }
 }
 
-/// How many columns fit in `width` cells, at most [`COLUMNS`].
 pub fn columns_in(width: u16) -> usize {
     usize::from((width + GAP) / (COLUMN + GAP)).clamp(1, COLUMNS)
 }
 
-/// The keys of a row this terminal can send, as the key map spells them.
 fn deliverable(keys: &[String], enhanced: bool) -> String {
     keys.iter()
         .filter(|binding| {
@@ -119,7 +91,6 @@ fn deliverable(keys: &[String], enhanced: bool) -> String {
         .join(" ")
 }
 
-/// The key map's columns for a sheet `width` cells wide.
 pub fn columns(keymap: &Keymap, enhanced: bool, width: u16) -> Vec<Vec<Line>> {
     let map = keymap_sheet::key_map(keymap, Frontend::Terminal);
     let sizes: Vec<usize> = map.iter().map(|(_, rows)| rows.len()).collect();
@@ -143,7 +114,6 @@ pub fn columns(keymap: &Keymap, enhanced: bool, width: u16) -> Vec<Vec<Line>> {
         .collect()
 }
 
-/// How many lines the longest column has.
 pub fn height(columns: &[Vec<Line>]) -> usize {
     columns.iter().map(Vec::len).max().unwrap_or(0)
 }

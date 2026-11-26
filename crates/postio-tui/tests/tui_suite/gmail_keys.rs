@@ -1,17 +1,3 @@
-//! Gmail's keyboard shortcuts reach the terminal's commands, key for key
-//! (specs/007-postio-focus contracts/keymap.md, amended 2026-10-14).
-//!
-//! The registry holds the keys; the terminal must take them from it. Every
-//! case here presses a key as crossterm delivers it -- a capital with and
-//! without SHIFT, `#` and `;` and `*` the same -- and asserts on what the
-//! app does: the effect it asks the host for, or the surface it opens.
-//!
-//! What a terminal cannot send is said where it comes up: `ctrl+Return`
-//! without the kitty keyboard protocol, `mod+z` as anything but `ctrl+z`
-//! (`undo_key.rs` has that one). Those bindings keep an alternate.
-//!
-//! Nothing here touches the network.
-
 use crossterm::event::{KeyCode, KeyModifiers};
 use postio_core::registry;
 use postio_model::{EmailAddress, MessageBody, MessageId};
@@ -19,9 +5,8 @@ use postio_tui::app::{App, Effect, Focus, Input, update};
 use postio_tui::test_support::{app, key, open_list, open_message, places, seed_places, serve};
 use postio_ui::keymap::{Binding, Chord, Key, Modifiers};
 
-/// `chord` as crossterm reports it, in each way a terminal may report it:
-/// legacy terminals set SHIFT on a capital and leave a shifted symbol bare;
-/// the kitty protocol sets SHIFT on both.
+/// Legacy terminals set SHIFT on a capital and leave a shifted symbol bare; the kitty protocol sets
+/// SHIFT on both.
 fn deliveries(chord: &Chord) -> Vec<Input> {
     let mut modifiers = KeyModifiers::NONE;
     for (keymap, terminal) in [
@@ -50,7 +35,6 @@ fn deliveries(chord: &Chord) -> Vec<Input> {
         && !character.is_ascii_lowercase()
         && !character.is_ascii_digit()
     {
-        // A capital or a symbol that is shifted on a keyboard.
         all.push(key(code, KeyModifiers::SHIFT));
     }
     if let KeyCode::Char(character) = code
@@ -62,7 +46,6 @@ fn deliveries(chord: &Chord) -> Vec<Input> {
     all
 }
 
-/// An app with a list of ten rows and the cursor on the first.
 fn in_list() -> App {
     let mut app = app((120, 30));
     seed_places(&mut app, places());
@@ -71,7 +54,6 @@ fn in_list() -> App {
     app
 }
 
-/// An app with the first message open and the keyboard in it.
 fn in_reader() -> App {
     let mut app = in_list();
     open_message(
@@ -83,12 +65,10 @@ fn in_reader() -> App {
             html: None,
         },
     );
-    update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
     assert_eq!(app.focus(), Focus::Reader, "the keyboard is in the message");
     app
 }
 
-/// Press `binding` as delivered; every effect of its chords.
 fn press_binding(app: &mut App, binding: &str, delivery: usize) -> Vec<Effect> {
     let parsed: Binding = binding.parse().expect("a binding");
     let mut effects = Vec::new();
@@ -113,7 +93,6 @@ fn how_many_deliveries(binding: &str) -> usize {
         .unwrap_or(1)
 }
 
-/// What a command does, as the effect it asks the host for.
 fn asks(effects: &[Effect], needle: &str) -> bool {
     effects.iter().any(|effect| {
         matches!(
@@ -139,7 +118,6 @@ fn opens(effects: &[Effect], needle: &str) -> bool {
     })
 }
 
-/// Each message verb: the command's id, and what the host is asked for.
 const VERBS: &[(&str, &str)] = &[
     ("archive", "Archive"),
     ("delete", "Delete"),
@@ -154,10 +132,8 @@ fn bindings_of(id: &str) -> Vec<&'static str> {
         .unwrap_or_else(|| panic!("no command {id}"))
         .bindings()
         .filter(|binding| {
-            // Plain keys only. The chorded alternates (`mod+z`, `alt+Down`,
-            // `mod+shift+a`) are what a terminal sends as ctrl or alt; the
-            // ctrl+z undo has its own test, undo_key.rs, and the rest are
-            // not Gmail's keys.
+            // Plain keys only: the chorded alternates (`mod+z`, `alt+Down`) are what a terminal
+            // sends as ctrl or alt, and undo has its own test.
             !binding.contains('+')
         })
         .collect()
@@ -187,14 +163,11 @@ fn every_message_verb_takes_gmails_key_and_its_alternates_in_the_list_and_the_me
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
-/// Where each go-to sequence takes the list: the view it opens, or the
-/// surface that takes the keyboard.
 fn goes(app: &App, effects: &[Effect], id: &str) -> bool {
     let opened = |needle: &str| opens(effects, needle);
     match id {
         "go_to_inbox" => opened("Focus(Inbox)"),
         "go_to_sent" | "go_to_drafts" | "go_to_archive" | "go_to_trash" => opened("Mailbox("),
-        // The sample account has no Junk folder, which the app says.
         "go_to_junk" => app.notice().is_some_and(|said| said.contains("Junk")),
         "go_to_flagged" => opened("Flagged("),
         "go_to_snoozed" => opened("Snoozed("),
@@ -202,7 +175,6 @@ fn goes(app: &App, effects: &[Effect], id: &str) -> bool {
         "go_to_filtered" => app.focus() == Focus::Filtered,
         "go_to_digest_rules" => app.focus() == Focus::Rules,
         "go_to_folders" => app.focus() == Focus::Folders,
-        // The cycle opens an inbox, or every account's.
         "next_scope" => opened("Mailbox(") || opened("Unified"),
         other => panic!("no expectation for {other}"),
     }
@@ -229,14 +201,12 @@ fn the_go_to_sequences_go_where_gmail_goes_from_the_list_the_message_and_the_fol
     let mut failures = Vec::new();
     for state in ["list", "open", "folders"] {
         for id in GO_TO {
-            // `g l` opens the folders; there, it is already open.
             if state == "folders" && *id == "go_to_folders" {
                 continue;
             }
-            // The registry offers the scope cycle in the sidebar and the
-            // list, not in `Context::Search`, which is what the terminal's
-            // folders popover resolves in. The popover is itself where the
-            // scope is chosen, so `g c` there is left to the registry.
+            // The registry offers the scope cycle in the sidebar and list, not in
+            // `Context::Search`,
+            // which is what the folders popover resolves in; there `g c` is left to the registry.
             if state == "folders" && *id == "next_scope" {
                 continue;
             }
@@ -274,14 +244,9 @@ fn g_i_goes_home_from_filtered_the_digest_and_the_rules() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
-// -- Every surface ----------------------------------------------------------
-
 use postio_core::{Availability, Context, Scope};
 use postio_tui::test_support::{sample, screen};
 
-/// The commands whose key Gmail chose, or this app chose where Gmail's was
-/// taken (docs/PRODUCT.md section 8). The registry decides where each is
-/// offered; this list only says which ones to press.
 const GMAIL: &[&str] = &[
     "archive",
     "reply",
@@ -322,10 +287,8 @@ const GMAIL: &[&str] = &[
     "next_scope",
 ];
 
-/// Each surface of the terminal as `sample::state` reaches it, with the
-/// registry contexts its keys resolve in, innermost first. Surfaces that
-/// are text entry (the bar, the composer, the capture sheet's text) take
-/// letters as letters and are not here.
+/// Each surface as `sample::state` reaches it, with the registry contexts its keys resolve in,
+/// innermost first. Text-entry surfaces take letters as letters and are not here.
 const SURFACES: &[(&str, &[Context])] = &[
     ("list", &[Context::List]),
     (
@@ -339,24 +302,17 @@ const SURFACES: &[(&str, &[Context])] = &[
     ("digest-email", &[Context::Digest]),
 ];
 
-/// Commands that have nothing to do on a surface for a reason that is not
-/// the key: the registry offers them there, and the app has nothing to act
-/// on. Each is covered where it can act.
+/// The registry offers these here but the app has nothing to act on; each is covered where it can
+/// act.
 fn no_effect_here(state: &str, id: &str) -> bool {
-    match (state, id) {
-        // They act on the open message; from the list the app has read
-        // none, whatever key reaches them.
-        ("list", "open_attachment_or_link" | "unsubscribe") => true,
-        // The message is already open.
-        ("open" | "digest-email", "open_message") => true,
-        // A single message has no thread to walk; `n_and_p_walk_the_open_
-        // conversation_as_delivered` opens a conversation.
-        ("open", "next_in_thread" | "prev_in_thread") => true,
-        _ => false,
-    }
+    matches!(
+        (state, id),
+        ("list", "open_attachment_or_link" | "unsubscribe")
+            | ("open" | "digest-email", "open_message")
+            | ("open", "next_in_thread" | "prev_in_thread")
+    )
 }
 
-/// Whether pressing did anything a person could see.
 fn did_something(before: &str, after: &str, effects: &[Effect]) -> bool {
     before != after
         || effects
@@ -387,9 +343,12 @@ fn every_gmail_key_does_its_command_on_every_surface_that_offers_it() {
                 for delivery in 0..how_many_deliveries(binding) {
                     let (mut app, _) = sample::state(state, 120, 30);
                     if *id == "prev_message" {
-                        // The cursor starts on the first row: step off it, so
-                        // that stepping back has somewhere to go.
-                        press_binding(&mut app, "j", 0);
+                        let off = if matches!(*state, "open" | "open-narrow" | "find" | "pane") {
+                            "G"
+                        } else {
+                            "j"
+                        };
+                        press_binding(&mut app, off, 0);
                     }
                     let before = screen(120, 30, &app);
                     let effects = press_binding(&mut app, binding, delivery);
@@ -408,39 +367,22 @@ fn every_gmail_key_does_its_command_on_every_surface_that_offers_it() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
-/// An app with a three-message conversation open, on its newest message.
 fn in_thread() -> App {
-    use postio_model::ThreadId;
-    use postio_tui::test_support::{held, row};
+    use postio_tui::test_support::{conversation, enter_thread, local, show_focus};
     let mut app = in_list();
-    let mut thread = row(0);
-    thread.thread = Some(ThreadId::new(9));
-    thread.is_thread = true;
-    thread.count = 3;
-    postio_tui::test_support::show_rows(&mut app, &[thread]);
-    let effects = app.open_reading(MessageId::new(1));
-    assert!(
-        effects.contains(&Effect::ReadConversation(ThreadId::new(9))),
-        "{effects:?}"
-    );
-    update(
+    let mut thread = conversation(1, "Ada", "Atlas", "", local(20, 9, 0));
+    thread.message_count = 3;
+    show_focus(
         &mut app,
-        Input::Conversation {
-            thread: ThreadId::new(9),
-            members: Ok(vec![
-                held(11, "Ada", "Atlas", "first"),
-                held(12, "Bea", "Atlas", "second"),
-                held(13, "Cy", "Atlas", "third"),
-            ]),
-        },
+        vec![postio_ui::focus_list::FocusRow::conversation(thread)],
     );
-    update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+    enter_thread(&mut app, &[11, 12, 13]);
     assert_eq!(app.focus(), Focus::Reader);
     app
 }
 
-fn shown(app: &App) -> usize {
-    app.reading().expect("a message is open").current
+fn shown(app: &App) -> i64 {
+    app.reading().expect("a message is open").shown.id.get() - 11
 }
 
 #[test]
@@ -450,7 +392,6 @@ fn n_and_p_walk_the_open_conversation_as_delivered() {
         for binding in bindings_of(id) {
             for delivery in 0..how_many_deliveries(binding) {
                 let mut app = in_thread();
-                // On the newest: `n` has nowhere to go, so go back first.
                 let start = if step > 0 {
                     press_binding(&mut app, "p", 0);
                     shown(&app)
@@ -489,10 +430,8 @@ fn u_and_left_go_back_from_the_open_message_to_the_list() {
 
 #[test]
 fn the_fold_key_names_the_keys_that_step_a_thread() {
-    // `Z` on a message that is one of a thread says how to walk the thread.
-    // It names the first keys the registry gives the walk: `]` and `[`
-    // since the threads design (specs/013-focus-threads D1), `n` and `p`
-    // being alternates.
+    // `Z` on a message of a thread names the first keys of the walk: `]` and `[` (`n` and `p` are
+    // alternates).
     let mut app = in_reader();
     press_binding(&mut app, "Z", 0);
     let said = app.notice().unwrap_or_default().to_owned();
@@ -503,7 +442,6 @@ fn the_fold_key_names_the_keys_that_step_a_thread() {
 fn t_and_n_open_the_capture_sheet_and_switch_it_where_a_letter_is_not_typed() {
     use postio_ui::capture::Mode;
     let mut failures = Vec::new();
-    // From a message: `T` opens a task, `N` a note.
     for (id, mode) in [("capture_task", Mode::Task), ("capture_note", Mode::Note)] {
         for binding in bindings_of(id) {
             for delivery in 0..how_many_deliveries(binding) {
@@ -521,7 +459,6 @@ fn t_and_n_open_the_capture_sheet_and_switch_it_where_a_letter_is_not_typed() {
             }
         }
     }
-    // In the sheet, off its text field, they switch it.
     for (id, mode) in [("capture_note", Mode::Note), ("capture_task", Mode::Task)] {
         for binding in bindings_of(id) {
             for delivery in 0..how_many_deliveries(binding) {
@@ -540,8 +477,6 @@ fn t_and_n_open_the_capture_sheet_and_switch_it_where_a_letter_is_not_typed() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
-/// The sample with a vault configured (the `capture` state has one), put
-/// back on the list, or on its first message open.
 fn sample_with_vault(state: &str) -> (App, postio_tui::caps::Colour) {
     let (mut app, colour) = sample::state("capture", 120, 30);
     if state != "capture" {
@@ -556,7 +491,7 @@ fn sample_with_vault(state: &str) -> (App, postio_tui::caps::Colour) {
 
 #[test]
 fn reply_reply_all_forward_and_the_pickers_are_what_their_gmail_keys_say() {
-    use postio_tui::pickers::Kind;
+    use postio_focus::PickerKind as Kind;
     let mut failures = Vec::new();
     for (id, kind) in [
         ("reply", "Reply"),
@@ -596,7 +531,7 @@ fn reply_reply_all_forward_and_the_pickers_are_what_their_gmail_keys_say() {
             ] {
                 let mut app = make();
                 press_binding(&mut app, binding, 0);
-                let opened = app.picker().map(|(picker, _)| picker.kind());
+                let opened = app.picker().map(|picker| picker.kind());
                 if opened != Some(kind) {
                     failures.push(format!(
                         "{id}: `{binding}` in the {surface} opened {opened:?}, not {kind:?}"
@@ -611,7 +546,6 @@ fn reply_reply_all_forward_and_the_pickers_are_what_their_gmail_keys_say() {
 #[test]
 fn the_verbs_filtered_and_the_rules_and_the_digest_offer_take_their_gmail_keys() {
     let mut failures = Vec::new();
-    // Filtered: the focused message is deleted, flagged, marked.
     for (id, effect) in [
         ("delete", "Delete"),
         ("flag", "Flag"),
@@ -629,7 +563,6 @@ fn the_verbs_filtered_and_the_rules_and_the_digest_offer_take_their_gmail_keys()
             }
         }
     }
-    // The digest: `e` archives the delivery, `M` unsubscribes from a row.
     for binding in bindings_of("archive") {
         for delivery in 0..how_many_deliveries(binding) {
             let (mut app, _) = sample::state("digest", 120, 30);
@@ -645,14 +578,21 @@ fn the_verbs_filtered_and_the_rules_and_the_digest_offer_take_their_gmail_keys()
         for delivery in 0..how_many_deliveries(binding) {
             let (mut app, _) = sample::state("digest-list", 120, 30);
             let effects = press_binding(&mut app, binding, delivery);
-            if !effects.iter().any(|e| matches!(e, Effect::Unsubscribe(_))) {
+            if !effects.iter().any(|e| {
+                matches!(
+                    e,
+                    Effect::Focus {
+                        request: postio_focus::Request::Unsubscribe(_),
+                        ..
+                    }
+                )
+            }) {
                 failures.push(format!(
                     "unsubscribe: `{binding}` (delivery {delivery}) in a digest's list: {effects:?}"
                 ));
             }
         }
     }
-    // The rules: `#` asks to remove the rule under the cursor.
     for binding in bindings_of("delete") {
         for delivery in 0..how_many_deliveries(binding) {
             let (mut app, _) = sample::state("rules", 120, 30);
@@ -669,10 +609,6 @@ fn the_verbs_filtered_and_the_rules_and_the_digest_offer_take_their_gmail_keys()
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
-// -- What the screens say ----------------------------------------------------
-
-/// Whether `line` shows `label` followed by `key` as its key: the label, up
-/// to a few spaces, then the key as a word of its own.
 fn shows(line: &str, label: &str, key: &str) -> bool {
     let mut from = 0;
     while let Some(at) = line[from..].find(label) {
@@ -693,8 +629,7 @@ fn shows(line: &str, label: &str, key: &str) -> bool {
     false
 }
 
-/// What each moved command was called on screen and the key it had before
-/// the Gmail keymap (docs/PRODUCT.md section 8, git show 4ed3a632).
+/// What each moved command was called on screen and its key before the Gmail keymap.
 const RETIRED: &[(&str, &str)] = &[
     ("Archive", "a"),
     ("Reply", "e"),
@@ -724,14 +659,13 @@ const RETIRED: &[(&str, &str)] = &[
 
 #[test]
 fn no_screen_the_terminal_draws_shows_a_key_that_moved() {
-    // `Filtered g f` is still right; it is here to prove the matcher finds a
-    // key at all, and is taken out below.
+    // `Filtered g f` is still right; it proves the matcher finds a key at all, and is taken out
+    // below.
     let mut screens: Vec<(String, String)> = Vec::new();
     for state in sample::STATES {
         let (app, _) = sample::state(state, 140, 36);
         screens.push(((*state).to_owned(), screen(140, 36, &app)));
     }
-    // The open message, which carries the thread hints.
     let mut app = in_thread();
     screens.push(("thread".into(), screen(140, 36, &app)));
     press_binding(&mut app, "Z", 0);
@@ -753,10 +687,8 @@ fn no_screen_the_terminal_draws_shows_a_key_that_moved() {
             }
         }
     }
-    // The matcher sees a key it is given.
     assert!(shows("Archive e   Reply r", "Archive", "e"));
     assert!(!shows("Archive e   Reply r", "Archive", "a"));
-    // And the screens do show Gmail's.
     let list = &screens[0].1;
     assert!(list.lines().any(|line| shows(line, "Reply", "r")), "{list}");
     assert!(failures.is_empty(), "{}", failures.join("\n"));

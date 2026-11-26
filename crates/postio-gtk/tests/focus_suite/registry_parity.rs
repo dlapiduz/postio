@@ -13,6 +13,22 @@ use postio_core::{
 use crate::support;
 
 const NOT_YET: &[&str] = &[
+    "go_to_calendar",
+    "calendar_agenda",
+    "calendar_previous",
+    "calendar_next",
+    "calendar_today",
+    "pop_out",
+    "pop_in",
+    "new_event",
+    "edit_event",
+    "move_event",
+    "duplicate_event",
+    "tentative_invite",
+    "save_event",
+    "save_and_send_event",
+    "email_attendees",
+    "close_window",
     "first_message",
     "last_message",
     "toggle_selection",
@@ -225,7 +241,7 @@ pub fn every_focus_command_has_a_key_a_bar_row_and_a_control() {
     });
 }
 
-const NOT_RUN: &[CommandId] = &[CommandId::Quit];
+const NOT_RUN: &[CommandId] = &[CommandId::Quit, CommandId::CloseWindow];
 
 /// A command with a key, bar row and control must also reach an arm of `FocusWindow::act`: `g s`
 /// once passed those checks while pressing it did nothing.

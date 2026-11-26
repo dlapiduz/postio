@@ -47,6 +47,8 @@ fn heading(context: Context) -> &'static str {
         Context::Outline => "Thread outline",
         Context::ForwardChooser => "Forward",
         Context::Source => "Source",
+        Context::Calendar => "Calendar",
+        Context::CalendarWindow => "Calendar window",
     }
 }
 

@@ -13,15 +13,13 @@ pub trait Rules {
     /// sender in it.
     fn senders(&self) -> &Senders;
 
-    /// In the file's order: the first that matches holds the message. None unless the rules say
-    /// otherwise.
+    /// In the file's order: the first that matches holds the message.
     fn digests(&self) -> &Digests {
         Digests::none()
     }
 
     /// The person's correction, made by dismissing them as wrong again and again (`[focus.filter]
-    /// stop_markers`); a detector's answer has to accept it. Nothing is stopped unless the rules
-    /// say otherwise.
+    /// stop_markers`); a detector's answer has to accept it.
     fn stops(&self, _sender: &EmailAddress, _kind: MarkerKind) -> bool {
         false
     }

@@ -281,6 +281,36 @@ RULES: dict[str, dict[str, object]] = {
             "sender chose, and needs no store, toolkit, runtime or network"
         ),
     },
+    "postio-dav": {
+        "banned": [
+            "turso",
+            "turso_core",
+            "rusqlite",
+            "libsqlite3-sys",
+            "gtk4",
+            "gtk4-sys",
+            "libadwaita",
+            "libadwaita-sys",
+            "postio-storage",
+            "postio-session",
+            "postio-sync",
+        ],
+        "why": (
+            "postio-dav speaks CalDAV and nothing else (specs/017-calendar "
+            "plan R3): sync calls its trait and writes the store itself, so a "
+            "database engine, the store or a toolkit arriving here would mean "
+            "a network adapter has grown reach into what it reports to"
+        ),
+    },
+    "postio-sync": {
+        "banned": [],
+        "direct": ["io-webdav", "io-http"],
+        "why": (
+            "postio-sync drives calendars through postio-dav's trait and its "
+            "own types (specs/017-calendar plan R3); naming the WebDAV library "
+            "here would let its types into sync and tie sync to one client"
+        ),
+    },
     "postio-ai": {
         "banned": [
             "postio-smtp",

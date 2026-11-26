@@ -27,7 +27,8 @@ pub struct Sender {
     name: String,
     local: Vec<Vec<String>>,
     domain: Vec<String>,
-    reason: ReasonKind,
+    // None: a machine's mail, often the one thing to act on, so it is not filed.
+    reason: Option<ReasonKind>,
     source: Option<SourceName>,
 }
 
@@ -52,7 +53,7 @@ impl Senders {
         let entries = rows
             .into_iter()
             .map(|row| Sender {
-                reason: reason(&row.reason),
+                reason: row.reason.as_deref().map(reason),
                 source: row.source.map(SourceName),
                 name: row.name,
                 local: row.local,
@@ -92,7 +93,7 @@ impl Sender {
         &self.name
     }
 
-    pub fn reason(&self) -> ReasonKind {
+    pub fn reason(&self) -> Option<ReasonKind> {
         self.reason
     }
 
@@ -173,7 +174,7 @@ mod tests {
             ))
             .expect("a notifier");
 
-        assert_eq!(sender.reason(), ReasonKind::Notification);
+        assert_eq!(sender.reason(), Some(ReasonKind::Notification));
         assert_eq!(sender.source(), None, "no shipped entry names a source");
     }
 
@@ -190,8 +191,32 @@ mod tests {
             .find(&EmailAddress::new(None::<&str>, "offers@shop.example"))
             .expect("a match");
         assert_eq!(sender.name(), "first");
-        assert_eq!(sender.reason(), ReasonKind::Promotion);
+        assert_eq!(sender.reason(), Some(ReasonKind::Promotion));
         assert_eq!(sender.source().map(SourceName::as_str), Some("Offers"));
+    }
+
+    #[test]
+    fn a_machine_that_writes_for_a_company_is_found_with_no_reason() {
+        for (address, entry) in [
+            ("statements@email.bank.example", "bulk-subdomain"),
+            ("hello@news.utility.example", "bulk-subdomain"),
+            ("billing@e.power.example", "bulk-subdomain"),
+            ("automated@utility.example", "machine"),
+        ] {
+            let sender = Senders::shipped()
+                .find(&EmailAddress::new(None::<&str>, address))
+                .unwrap_or_else(|| panic!("{address} is a machine"));
+            assert_eq!(sender.name(), entry, "{address}");
+            assert_eq!(sender.reason(), None, "{address} is filed by nothing here");
+        }
+        for person in [
+            "tove@mail.example.org",
+            "tove@email.example",
+            "emily@example.com",
+            "news.desk@paper.example",
+        ] {
+            assert_eq!(found(person), None, "{person}");
+        }
     }
 
     fn load_error(text: &str) -> String {
@@ -238,6 +263,10 @@ mod tests {
                 "[[sender]]\nname = \"ok\"\nlocal = [\"a\"]\nreason = \"spam\"\n\
                  [[sender]]\nlocal = [\"b\"]\nreason = \"spam\"\n",
                 "#2",
+            ),
+            (
+                "[[sender]]\nname = \"named\"\nlocal = [\"a\"]\nsource = \"A\"\n",
+                "`named`",
             ),
         ] {
             let error = load_error(text);
@@ -311,6 +340,8 @@ mod tests {
                     .map(|words| words.join("-"))
                     .chain(sender.domain.iter().cloned())
             })
+            // A verb the detector reads ("email me the form") is a word, not a provider.
+            .filter(|pattern| !crate::needs_action::IMPERATIVES.contains(&pattern.as_str()))
             .collect();
         assert!(!patterns.is_empty(), "the shipped table has patterns");
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");

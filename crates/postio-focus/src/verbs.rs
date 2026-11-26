@@ -122,15 +122,12 @@ impl Verbs {
         total: u32,
     ) -> Option<Vec<Step>> {
         let steps = match id {
-            CommandId::AcceptInvite | CommandId::DeclineInvite => {
+            CommandId::AcceptInvite | CommandId::DeclineInvite | CommandId::TentativeInvite => {
                 let Some(row) = cursor.row(rows).filter(|row| !row.digest) else {
                     return Some(Vec::new());
                 };
-                let message = Some(row.id);
-                self.post(match id {
-                    CommandId::DeclineInvite => Command::DeclineInvite { message },
-                    _ => Command::AcceptInvite { message },
-                })
+                let answer = postio_core::command::answer_invite(id, Some(row.id))?;
+                self.post(answer)
             }
             CommandId::DismissMarker => self.send(
                 Command::DismissMarker {
@@ -251,7 +248,9 @@ impl Verbs {
     pub(crate) fn post(&mut self, command: Command) -> Vec<Step> {
         if matches!(
             command,
-            Command::AcceptInvite { .. } | Command::DeclineInvite { .. }
+            Command::AcceptInvite { .. }
+                | Command::DeclineInvite { .. }
+                | Command::TentativeInvite { .. }
         ) {
             self.answering = true;
         }

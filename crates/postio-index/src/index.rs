@@ -31,6 +31,7 @@ pub async fn ensure_schema(connection: &Connection) -> Result<()> {
     // store created before it (#490):
     // the schema is versioned per half and a mismatched half is dropped and rebuilt, since the
     // index is derived data.
+    crate::events::ensure(connection).await?;
     let metadata = half_version(connection, "metadata").await?;
     let bodies = half_version(connection, "bodies").await?;
     let headers = half_version(connection, "headers").await?;
@@ -349,7 +350,7 @@ ON CONFLICT DO NOTHING;
 ";
 
 /// `0` when never recorded; a fresh store and a pre-versioning one both rebuild.
-async fn half_version(connection: &Connection, half: &str) -> Result<i64> {
+pub(crate) async fn half_version(connection: &Connection, half: &str) -> Result<i64> {
     let version = sql::first(
         connection,
         "SELECT version FROM search_schema WHERE half = ?1",
@@ -360,7 +361,11 @@ async fn half_version(connection: &Connection, half: &str) -> Result<i64> {
     Ok(version.unwrap_or(0))
 }
 
-async fn set_half_version(connection: &Connection, half: &str, version: i64) -> Result<()> {
+pub(crate) async fn set_half_version(
+    connection: &Connection,
+    half: &str,
+    version: i64,
+) -> Result<()> {
     connection
         .execute(
             "INSERT INTO search_schema (half, version) VALUES (?1, ?2)

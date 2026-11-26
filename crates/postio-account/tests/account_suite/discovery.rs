@@ -798,3 +798,32 @@ async fn an_mx_hit_prefills_the_manual_form_rather_than_claiming_a_discovery() {
          authoritative"
     );
 }
+
+#[test]
+fn icloud_and_fastmail_name_their_calendar_servers_and_others_leave_it_to_discovery() {
+    let caldav = |domain: &str| {
+        postio_account::discovery::preset_for_domain(domain)
+            .and_then(|preset| preset.caldav().cloned())
+    };
+    let icloud = caldav("icloud.com").expect("iCloud's row");
+    assert_eq!(icloud.url.as_deref(), Some("https://caldav.icloud.com/"));
+    assert!(icloud.schedules);
+    let fastmail = caldav("fastmail.com").expect("Fastmail's row");
+    assert_eq!(
+        fastmail.url.as_deref(),
+        Some("https://caldav.fastmail.com/")
+    );
+    assert!(
+        caldav("gmail.com").is_none(),
+        "Google's calendars wait on its own slice (spike S3)"
+    );
+    for preset in postio_account::discovery::presets() {
+        if let Some(row) = preset.caldav() {
+            assert!(
+                row.url
+                    .as_deref()
+                    .is_none_or(|url| url.starts_with("https://"))
+            );
+        }
+    }
+}

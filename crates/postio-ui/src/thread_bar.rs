@@ -191,8 +191,8 @@ pub fn gone_notice(newer: bool) -> &'static str {
 
 pub fn older_banner(keymap: &Keymap) -> BannerView {
     BannerView {
-        text: "This is an older message. Reply and forward act on it; archive, snooze, \
-               label and move act on the whole thread."
+        text: "This is an older message. Reply and forward act on it; archive, delete, \
+               snooze, label and move act on the whole thread."
             .to_owned(),
         action: "Latest".to_owned(),
         key: hints::key(keymap, CommandId::LatestInConversation),
@@ -208,11 +208,8 @@ pub fn no_more_matches(forward: bool) -> &'static str {
 }
 
 pub fn new_reply_banner(member: &ThreadMember, keymap: &Keymap) -> BannerView {
-    let who = match (&member.from, member.own) {
-        (_, true) => "You",
-        (Some(from), false) => focus_row::first_name(from),
-        (None, false) => "Someone",
-    };
+    let who = crate::author::Author::of(member);
+    let who = who.subject();
     let line = match &member.line {
         Line::Own(text) | Line::Preview(text) => text.trim(),
         Line::Quoted => "",
@@ -489,8 +486,8 @@ mod tests {
         let banner = older_banner(Keymap::defaults());
         assert_eq!(
             banner.text,
-            "This is an older message. Reply and forward act on it; archive, snooze, \
-             label and move act on the whole thread."
+            "This is an older message. Reply and forward act on it; archive, delete, \
+             snooze, label and move act on the whole thread."
         );
         assert_eq!(banner.action, "Latest");
         assert_eq!(banner.key.as_deref(), Some("}"));

@@ -1,9 +1,6 @@
-//! Wrapping a styled line to a width, for the reading pane.
-//!
-//! A message's lines are as wide as its paragraphs; the pane is as wide as
-//! the terminal leaves it. Each line is broken at the last space that fits,
-//! or mid-word when a word is wider than the pane, and a list item or a
-//! quote keeps its indent on the lines it continues onto.
+//! Wraps a styled line to a width for the reading pane: at the last space that fits, mid-word when
+//! a
+//! word is wider, and a list item or quote keeps its indent on continuation lines.
 
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
@@ -24,12 +21,10 @@ pub fn wrap(line: &Line<'static>, width: usize) -> Vec<Line<'static>> {
     let mut rows: Vec<Vec<(char, Style)>> = Vec::new();
     let mut row: Vec<(char, Style)> = Vec::new();
     let mut used = 0;
-    // Where in `row` the last space is, to break there.
     let mut space: Option<usize> = None;
     for &(c, style) in &cells {
         let w = c.width().unwrap_or(0);
         if used + w > width && !row.is_empty() {
-            // Breaking at this very space carries nothing over.
             let break_at = if c == ' ' { Some(row.len()) } else { space };
             if c == ' ' {
                 row.push((c, style));
@@ -80,8 +75,6 @@ pub fn wrap(line: &Line<'static>, width: usize) -> Vec<Line<'static>> {
         .collect()
 }
 
-/// How far a continuation is indented: past a list item's bullet or number,
-/// or a quote's marker, so the text lines up under itself.
 fn hang(cells: &[(char, Style)]) -> usize {
     let text: String = cells.iter().take(12).map(|(c, _)| *c).collect();
     let lead = text.len() - text.trim_start().len();

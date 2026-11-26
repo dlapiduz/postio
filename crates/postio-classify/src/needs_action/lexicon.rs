@@ -106,7 +106,7 @@ pub(super) const NOT_NAMES: &[&str] = &[
     "please",
 ];
 
-pub(super) const REQUEST_OPENINGS: &[&str] = &["can you", "could you", "would you"];
+pub(super) const REQUEST_OPENINGS: &[&str] = &["can you", "could you", "would you", "if you could"];
 
 pub(super) const ASKS: &[&str] = &["let me know", "need you to"];
 
@@ -123,15 +123,14 @@ pub(super) const NEEDS: &[&str] = &[
     "we will need",
 ];
 
-pub(super) const IMPERATIVES: &[&str] = &[
+pub(crate) const IMPERATIVES: &[&str] = &[
     "send", "review", "sign", "approve", "confirm", "fill", "complete", "submit", "update", "book",
     "bring", "check", "read", "add", "call", "reply", "forward", "upload", "share", "schedule",
     "return", "register", "rsvp", "pay", "renew", "finish", "prepare", "draft", "email", "ping",
     "pick", "leave", "move", "fix", "test", "look", "verify",
 ];
 
-/// The word after an imperative verb that shows it is one: "Send me", not "Book club is on
-/// Thursday".
+/// The word after an imperative that shows it is one: "Send me", not "Book club is on Thursday".
 pub(super) const OBJECTS: &[&str] = &[
     "the",
     "a",
@@ -274,6 +273,50 @@ pub(super) const BOILERPLATE: &[&str] = &[
     "do not reply",
 ];
 
+pub(super) const FOOTERS: &[&str] = &[
+    "confidentiality notice",
+    "disclaimer:",
+    "intended recipient",
+    "intended only for",
+    "intended solely for",
+    "this email and any attachments",
+    "this message and any attachments",
+    "this communication is privileged",
+    "privileged and confidential",
+    "this email is confidential",
+    "this message is confidential",
+    "you are receiving this",
+    "you're receiving this",
+    "you received this email because",
+    "you received this message because",
+    "to unsubscribe",
+];
+
+pub(super) const CONDITIONAL_REQUESTS: &[&str] = &[
+    "if you could",
+    "if you can",
+    "if you would be",
+    "if you would send",
+    "if you get a chance",
+    "if you have a chance",
+    "if you have a minute",
+    "if you have time",
+    "if you don't mind",
+    "if you do not mind",
+];
+
+pub(super) const POINTER_PHRASES: &[&str] = &[
+    "click here",
+    "log in to your",
+    "log into your",
+    "sign in to your",
+    "online banking",
+];
+
+pub(super) const POINTER_VERBS: &[&str] = &["visit", "view", "review", "see"];
+
+pub(super) const POINTER_PLACES: &[&str] = &["portal", "website", "site"];
+
 /// An ask put to an assistant is never the reader's.
 pub(super) const ASSISTANT: &[&str] = &[
     "assistant",
@@ -290,8 +333,7 @@ pub(super) const ASSISTANT: &[&str] = &[
 ];
 
 /// What only text aimed at a model says (ADR 0009 Q4); a message holding any of it is asked
-/// nothing.
-/// Nothing here is a word ordinary mail uses.
+/// nothing. Nothing here is a word ordinary mail uses.
 pub(super) const TO_A_MACHINE: &[&str] = &[
     "previous instructions",
     "prior instructions",
@@ -340,3 +382,27 @@ pub(super) const IDIOMS: &[(&[&str], Idiom)] = &[
 pub(super) const ABBREVIATIONS: &[&str] = &[
     "e.g", "i.e", "etc", "vs", "approx", "cf", "mr", "mrs", "ms", "dr",
 ];
+
+pub(super) const NOTICE_DAYS: &[&str] = &["by", "before", "no later than", "due", "due on", "on"];
+
+pub(super) const NOTICE_PAYMENT: &[&str] = &["due", "payment", "pay", "balance"];
+
+pub(super) const NOTICE_FORMS: &[&str] = &["complete your", "fill out your", "fill in your"];
+
+pub(super) const NOTICE_RENEWALS: &[&str] = &["update your", "renew your"];
+
+pub(super) const NOTICE_NO_ACTION: &[&str] = &[
+    "no action is needed",
+    "no action needed",
+    "no action is required",
+    "no action required",
+    "no further action",
+    "nothing you need to do",
+];
+
+pub(super) const NOTICE_SETTLED: &[&str] =
+    &["automatically", "autopay", "auto-pay", "paid", "received"];
+
+pub(super) const CURRENCY_SIGNS: &[char] = &['$', '€', '£', '¥'];
+
+pub(super) const CURRENCY_CODES: &[&str] = &["usd", "eur", "gbp", "cad", "aud", "chf"];

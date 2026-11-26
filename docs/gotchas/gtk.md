@@ -12,3 +12,4 @@ Read before touching widgets, CSS or key handling. `/gtk-design` has the rest.
 - **Changes the app makes for the user stay off the undo stack, with no toast** (`Recording::Incidental`).
 - **`GtkListView` builds about 205 rows ahead.** Use 1,000 or more test rows to tell recycling from none.
 - **An app-priority CSS provider resolves `prefers-color-scheme` against its own setting.** `postio_gtk::style::install` keeps it in step with `AdwStyleManager`.
+- **A second window's focus is `Feed::focused_window`, not `is_active`**, which lags headless. Storyboards film the main window only (#2242).

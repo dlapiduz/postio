@@ -635,7 +635,8 @@ async fn mark_ada_s(connection: &Connection) -> Vec<(&'static str, Option<Marker
         Some("Send the weir readings."),
     );
     todo.due_at = Some(due);
-    markers.insert(&todo).await.expect("a to-do");
+    todo.source = MarkerSource::Notice;
+    markers.insert(&todo).await.expect("a notice's to-do");
     let dismissed = id_of(connection, "<sluice@example.com>").await;
     markers
         .insert(&marker(dismissed, MarkerKind::Question, Some("Any news?")))
@@ -677,6 +678,9 @@ async fn mark_ada_s(connection: &Connection) -> Vec<(&'static str, Option<Marker
                 excerpt: Some(asked.to_owned()),
                 answer: None,
                 cancelled: false,
+                clash: None,
+                moved_from: None,
+                notice: false,
             }),
         ),
         (
@@ -687,6 +691,9 @@ async fn mark_ada_s(connection: &Connection) -> Vec<(&'static str, Option<Marker
                 excerpt: Some("Send the weir readings.".to_owned()),
                 answer: None,
                 cancelled: false,
+                clash: None,
+                moved_from: None,
+                notice: true,
             }),
         ),
         ("About <sluice@example.com>", None),
@@ -698,6 +705,9 @@ async fn mark_ada_s(connection: &Connection) -> Vec<(&'static str, Option<Marker
                 excerpt: None,
                 answer: Some(InviteAnswer::Accepted),
                 cancelled: true,
+                clash: None,
+                moved_from: None,
+                notice: false,
             }),
         ),
         ("About <tide@example.com>", None),
@@ -709,6 +719,9 @@ async fn mark_ada_s(connection: &Connection) -> Vec<(&'static str, Option<Marker
                 excerpt: Some("Book the survey boat.".to_owned()),
                 answer: None,
                 cancelled: false,
+                clash: None,
+                moved_from: None,
+                notice: false,
             }),
         ),
     ]

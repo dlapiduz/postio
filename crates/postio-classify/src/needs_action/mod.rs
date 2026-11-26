@@ -3,7 +3,13 @@
 
 mod deadline;
 mod lexicon;
+mod notice;
 mod sentences;
+
+pub(crate) use notice::notice;
+
+#[cfg(test)]
+pub(crate) use lexicon::IMPERATIVES;
 
 use std::ops::Range;
 
@@ -11,12 +17,18 @@ use chrono::{DateTime, Local, TimeZone, Utc};
 use postio_model::{EmailAddress, Flag, MailboxRole};
 
 use crate::input::{BodyMessage, OwnText};
-use crate::outcome::{MarkedBy, MarkerCandidate, MarkerKind};
+use crate::outcome::{MarkedBy, MarkerCandidate, MarkerKind, ReasonKind};
 use crate::rules::Rules;
+use postio_model::promoted::{PRECEDENCE_JUNK, PRECEDENCE_LIST};
 
-/// `messages.automation`'s bits: `Precedence` bulk, list, junk; `Auto-Submitted` auto-generated,
-/// auto-replied.
-const BULK_OR_AUTOMATED: u8 = 1 | 2 | 4 | 8 | 16;
+const BULK_OR_AUTOMATED: u8 = postio_model::promoted::PRECEDENCE
+    | postio_model::promoted::AUTO_SUBMITTED
+    | postio_model::promoted::BULK_SENDER;
+
+// An auto-reply says someone is away; it is not a bill.
+const NOTICE_SENDERS: u8 = postio_model::promoted::PRECEDENCE_BULK
+    | postio_model::promoted::AUTO_GENERATED
+    | postio_model::promoted::BULK_SENDER;
 
 /// Only mail sent directly to the user: their address in `To`, not from them; never mail they are
 /// only copied on, list or bulk, automated senders, junk, Sent or Drafts. A header not yet known is
@@ -24,31 +36,79 @@ const BULK_OR_AUTOMATED: u8 = 1 | 2 | 4 | 8 | 16;
 pub fn considered(message: &BodyMessage<'_>, rules: &dyn Rules) -> bool {
     let filed = &message.filed;
     let mail = filed.message;
-    let mine = |address: &EmailAddress| {
-        message
-            .identities
+    mail.to.iter().any(|to| mine(message, to))
+        && !mail.from.iter().any(|from| mine(message, from))
+        && mail.list_id.is_none()
+        && filed.unsubscribe_offered() != Some(true)
+        && filed.automation().unwrap_or(0) & BULK_OR_AUTOMATED == 0
+        && !mail.flags.contains(&Flag::Junk)
+        && !own_folder(filed.role)
+        && !mail
+            .from
             .iter()
-            .any(|identity| identity.address.same_address(address))
-    };
-    let own_folder = matches!(
-        filed.role,
+            .any(|from| rules.senders().find(from).is_some())
+}
+
+/// Headers only, so it is asked before a body is read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Asked {
+    Person,
+    Notice,
+    Neither,
+}
+
+pub fn asked(message: &BodyMessage<'_>, rules: &dyn Rules) -> Asked {
+    if considered(message, rules) {
+        Asked::Person
+    } else if noticed(message, rules) {
+        Asked::Notice
+    } else {
+        Asked::Neither
+    }
+}
+
+/// Automated mail the person guard leaves out; never list mail, junk or what a promotion offers.
+pub fn noticed(message: &BodyMessage<'_>, rules: &dyn Rules) -> bool {
+    let filed = &message.filed;
+    let mail = filed.message;
+    let entry = mail.from.iter().find_map(|from| rules.senders().find(from));
+    let automation = filed.automation().unwrap_or(0);
+    let machine = automation & NOTICE_SENDERS != 0 || entry.is_some();
+    let filed_away = entry
+        .and_then(|sender| sender.reason())
+        .is_some_and(|reason| {
+            matches!(
+                reason,
+                ReasonKind::Promotion | ReasonKind::Social | ReasonKind::Spam
+            )
+        });
+    machine
+        && !considered(message, rules)
+        && !mail.from.iter().any(|from| mine(message, from))
+        && mail.list_id.is_none()
+        && automation & (PRECEDENCE_LIST | PRECEDENCE_JUNK) == 0
+        && filed.unsubscribe_offered() != Some(true)
+        && !mail.flags.contains(&Flag::Junk)
+        && !own_folder(filed.role)
+        && !filed_away
+}
+
+fn mine(message: &BodyMessage<'_>, address: &EmailAddress) -> bool {
+    message
+        .identities
+        .iter()
+        .any(|identity| identity.address.same_address(address))
+}
+
+fn own_folder(role: MailboxRole) -> bool {
+    matches!(
+        role,
         MailboxRole::Junk
             | MailboxRole::Sent
             | MailboxRole::Drafts
             | MailboxRole::Outbox
             | MailboxRole::Trash
-    );
-    mail.to.iter().any(mine)
-        && !mail.from.iter().any(mine)
-        && mail.list_id.is_none()
-        && filed.unsubscribe_offered() != Some(true)
-        && filed.automation().unwrap_or(0) & BULK_OR_AUTOMATED == 0
-        && !mail.flags.contains(&Flag::Junk)
-        && !own_folder
-        && !mail
-            .from
-            .iter()
-            .any(|from| rules.senders().find(from).is_some())
+    )
 }
 
 /// Such a message is asked nothing by either detector: once it addresses an assistant, any ask in
@@ -64,8 +124,7 @@ pub(crate) fn speaks_to_a_machine(text: &OwnText<'_>) -> bool {
         .any(|phrase| contains_word(&lower, phrase))
 }
 
-/// A deadline is read from when the message was written, in this machine's zone: "by Friday" is the
-/// Friday after that, at the hour `parse_when` gives a day with no time.
+/// A deadline is read from when the message was written, in this machine's zone.
 pub(crate) fn detect(message: &BodyMessage<'_>, text: &OwnText<'_>) -> Option<MarkerCandidate> {
     let mail = message.filed.message;
     let sent = mail.date.unwrap_or(mail.received_at).with_timezone(&Local);
@@ -136,8 +195,7 @@ const LONGEST_CLAUSE: usize = 280;
 
 const VOCATIVE_WORDS: usize = 5;
 
-/// At most one per message: the first to-do with a deadline, else the first question, else the
-/// first to-do.
+/// The first to-do with a deadline, else the first question, else the first to-do.
 fn find<Tz: TimeZone>(own: &str, reader: &Reader, sent: &DateTime<Tz>) -> Option<Found<Tz>> {
     let clauses = sentences::clauses(own);
     let salutation = clauses
@@ -145,11 +203,21 @@ fn find<Tz: TimeZone>(own: &str, reader: &Reader, sent: &DateTime<Tz>) -> Option
         .map_or(Addressee::Reader, |first| salutation(&first.text, reader));
     let mut questions = Vec::new();
     let mut todos = Vec::new();
+    let mut conditional = false;
     for clause in &clauses {
         let text = straightened(&clause.text);
         let lower = text.to_lowercase();
         let body = without_openers(&text, reader);
-        if excluded(&lower, &body)
+        if lexicon::FOOTERS.iter().any(|marker| lower.contains(marker)) {
+            break;
+        }
+        // "...; otherwise, please renew" goes with the condition before it.
+        let follows_a_condition = conditional && starts_with_words(lower.trim_start(), "otherwise");
+        conditional = conditional_instruction(&body);
+        if follows_a_condition
+            || conditional
+            || pointer(&lower)
+            || excluded(&lower, &body)
             || addressee(clause, &text, reader, salutation) == Addressee::SomeoneElse
         {
             continue;
@@ -216,6 +284,27 @@ fn excluded(lower: &str, body: &str) -> bool {
         || lexicon::ASSISTANT
             .iter()
             .any(|word| contains_word(lower, word))
+}
+
+fn conditional_instruction(body: &str) -> bool {
+    let body = body.replace("you'd", "you would");
+    starts_with_words(&body, "if you")
+        && !lexicon::CONDITIONAL_REQUESTS
+            .iter()
+            .any(|request| starts_with_words(&body, request))
+}
+
+fn pointer(lower: &str) -> bool {
+    lexicon::POINTER_PHRASES
+        .iter()
+        .any(|phrase| lower.contains(phrase))
+        || (lexicon::POINTER_VERBS
+            .iter()
+            .any(|verb| contains_word(lower, verb))
+            && lexicon::POINTER_PLACES
+                .iter()
+                .any(|place| contains_word(lower, place)))
+        || (contains_word(lower, "visit") && contains_word(lower, "page"))
 }
 
 fn small_talk(lower: &str, body: &str) -> bool {
@@ -880,7 +969,7 @@ mod tests {
             automation: 0,
         }));
         assert!(!considered_with(&offered, |_| {}, &identities()));
-        for bit in [1, 2, 4, 8, 16] {
+        for bit in [1, 2, 4, 8, 16, 32] {
             let automated = saying(Some(PromotedHeaders {
                 unsubscribe_offered: false,
                 automation: bit,
@@ -916,6 +1005,37 @@ mod tests {
 
         assert!(!considered_by(&automated));
         assert!(considered_by(&direct()), "and a person is still read");
+    }
+
+    #[test]
+    fn transactional_mail_with_no_list_header_is_not() {
+        let identities = identities();
+        let shipped = |message: &Message| {
+            considered(
+                &BodyMessage {
+                    filed: filed(message),
+                    identities: &identities,
+                },
+                &Table(crate::senders::Senders::shipped().clone()),
+            )
+        };
+        let sent_in_bulk = saying(Some(PromotedHeaders {
+            unsubscribe_offered: false,
+            automation: postio_model::promoted::BULK_SENDER,
+        }));
+        assert!(!shipped(&sent_in_bulk), "a bulk sending service's header");
+        for address in [
+            "statements@email.bank.example",
+            "hello@news.utility.example",
+            "automated@utility.example",
+        ] {
+            let mut machine = direct();
+            machine.from = vec![EmailAddress::new(Some("Bank"), address)];
+            assert!(!shipped(&machine), "{address}");
+        }
+        let mut person = direct();
+        person.from = vec![EmailAddress::new(Some("Tove"), "tove@mail.example.org")];
+        assert!(shipped(&person), "a person on a mail host is still read");
     }
 
     #[test]

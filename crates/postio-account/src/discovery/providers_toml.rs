@@ -60,6 +60,19 @@ pub struct ProviderRow {
     /// against a look-alike another client created (#959, #501, #943).
     #[serde(default)]
     pub mailboxes: BTreeMap<String, String>,
+    #[serde(default)]
+    pub caldav: Option<CaldavRow>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct CaldavRow {
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub schedules: bool,
+    #[serde(default)]
+    pub oauth_scopes: Vec<String>,
 }
 
 fn default_condstore_reliable() -> bool {
@@ -191,6 +204,22 @@ fn validate(id: &str, row: &ProviderRow) -> Result<(), ProvidersError> {
         )));
     }
 
+    if let Some(caldav) = &row.caldav {
+        if caldav
+            .url
+            .as_deref()
+            .is_some_and(|url| !url.starts_with("https://"))
+        {
+            return Err(ProvidersError::Invalid(format!(
+                "provider `{id}`'s [caldav] url must be https: credentials go to it"
+            )));
+        }
+        if !caldav.oauth_scopes.is_empty() && !row.auth.iter().any(|method| method == OAUTH2) {
+            return Err(ProvidersError::Invalid(format!(
+                "provider `{id}`'s [caldav] names oauth_scopes but `auth` has no `oauth2`"
+            )));
+        }
+    }
     if !row.auth.iter().any(|method| method == OAUTH2) {
         return Ok(());
     }
@@ -241,6 +270,7 @@ mod tests {
             backend: default_backend(),
             jmap: None,
             mailboxes: BTreeMap::new(),
+            caldav: None,
         }
     }
 
@@ -437,6 +467,49 @@ mod tests {
             "#,
         )
         .expect("authorize + token alone should satisfy the rule");
+    }
+
+    fn with_caldav(table: &str) -> Result<Parsed, ProvidersError> {
+        parse(&format!(
+            r#"
+            [provider.test]
+            display_name = "Test"
+            domains = ["example.com"]
+            imap_host = "imap.example.com"
+            imap_port = 993
+            imap_security = "tls"
+            smtp_host = "smtp.example.com"
+            smtp_port = 465
+            smtp_security = "tls"
+            auth = ["app-password"]
+
+            [provider.test.caldav]
+            {table}
+            "#
+        ))
+    }
+
+    #[test]
+    fn a_caldav_table_reads_and_its_url_must_be_https() {
+        let parsed =
+            with_caldav("url = \"https://caldav.example.com/\"\nschedules = true").expect("valid");
+        let caldav = parsed.rows["test"].caldav.clone().expect("a table");
+        assert_eq!(caldav.url.as_deref(), Some("https://caldav.example.com/"));
+        assert!(caldav.schedules);
+
+        assert!(
+            with_caldav("").expect("discovery").rows["test"]
+                .caldav
+                .is_some()
+        );
+        let plain = with_caldav("url = \"http://caldav.example.com/\"").unwrap_err();
+        assert!(matches!(plain, ProvidersError::Invalid(_)), "{plain}");
+        let scopes = with_caldav("oauth_scopes = [\"calendar\"]").unwrap_err();
+        assert!(matches!(scopes, ProvidersError::Invalid(_)), "{scopes}");
+        assert!(
+            with_caldav("colour = \"red\"").is_err(),
+            "unknown keys are refused"
+        );
     }
 
     #[test]

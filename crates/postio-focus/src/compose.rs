@@ -6,6 +6,7 @@ use std::time::Duration;
 use postio_core::CommandId;
 use postio_model::thread_view::ThreadView;
 use postio_model::{DraftId, DraftState, ForwardForm, Forwarded, MessageId};
+use postio_ui::author::Author;
 use postio_ui::compose::{self as words, OlderReplyFacts};
 use postio_ui::focus_target;
 
@@ -48,7 +49,7 @@ struct Chooser {
     /// The composer opened on a form other than This and the engine has
     /// not built it yet: a refusal falls back to This.
     opening: bool,
-    of: Option<(String, chrono::DateTime<chrono::Utc>)>,
+    of: Option<(Author, chrono::DateTime<chrono::Utc>)>,
 }
 
 #[derive(Debug, Clone)]
@@ -296,7 +297,7 @@ impl FocusController {
                 view.members
                     .iter()
                     .find(|member| member.id == message)
-                    .map(|member| (words::member_name(member), member.at)),
+                    .map(|member| (Author::of(member), member.at)),
                 Some(view.thread),
             ),
             None => {
@@ -334,7 +335,7 @@ impl FocusController {
         words::forward_chooser(
             chooser.form,
             chooser.messages,
-            chooser.of.as_ref().map(|(who, at)| (who.as_str(), *at)),
+            chooser.of.as_ref().map(|(who, at)| (who, *at)),
             self.keymap(),
         )
     }
@@ -356,12 +357,12 @@ impl FocusController {
             facts: OlderReplyFacts {
                 number: at + 1,
                 total: view.members.len(),
-                who: words::member_name(answered),
+                who: Author::of(answered),
                 at: answered.at,
                 newer: newer
                     .iter()
                     .map(|member| words::NewerMessage {
-                        who: words::member_name(member),
+                        who: Author::of(member),
                         at: member.at,
                     })
                     .collect(),

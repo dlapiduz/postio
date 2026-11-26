@@ -290,7 +290,7 @@ fn contexts_round_trip_through_strings() {
         assert_eq!(context.as_str().parse::<Context>().unwrap(), *context);
     }
     // A count, so adding a context is a deliberate act.
-    assert_eq!(Context::ALL.len(), 20);
+    assert_eq!(Context::ALL.len(), 22);
 }
 
 #[test]
@@ -467,6 +467,7 @@ const WITHOUT_A_STORE: &[CommandId] = &[
     CommandId::Back,
     CommandId::EditConfig,
     CommandId::Quit,
+    CommandId::CloseWindow,
 ];
 
 #[test]

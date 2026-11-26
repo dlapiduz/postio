@@ -116,7 +116,7 @@ cheat_sheet	?
 settings	ctrl+comma | alt+comma
 add_account	ctrl+shift+n | alt+n
 edit_config	ctrl+e
-quit	ctrl+q | ctrl+w
+quit	ctrl+q
 show_images	alt+i
 always_show_images	alt+I
 unsubscribe	M
@@ -233,3 +233,19 @@ forward_what_2	2
 forward_what_3	3
 show_newer	ctrl+shift+Down
 expand_quoted	ctrl+shift+q
+go_to_calendar	g e
+calendar_agenda	1
+calendar_previous	[
+calendar_next	]
+calendar_today	t
+pop_out	ctrl+shift+o
+pop_in	ctrl+shift+o
+close_window	ctrl+w
+new_event	c
+edit_event	ctrl+e
+move_event	v
+duplicate_event	ctrl+shift+d | alt+D
+tentative_invite	alt+y
+save_event	ctrl+s
+save_and_send_event	ctrl+Return | alt+Return
+email_attendees	alt+e

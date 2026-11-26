@@ -1,0 +1,32 @@
+# A message opened again right after it closed has the keyboard (#2225).
+#
+# The defect: on the second open the keyboard rested on the dialog itself,
+# not on the message, so Space and the arrows did not read it and the focus ring
+# went around the whole window.
+apps   = ["focus"]
+source = { kind = "issue", ref = "#2225" }
+proof  = "base"
+
+[[step]]
+wait  = { until = { cursor.index = 0 } }
+check = { keyboard.region = "list" }
+
+[[step]]
+id      = "open"
+command = "open_message"
+settle  = { until = { view = "reader" } }
+check   = { view = "reader", keyboard.region = "reader", app.focus.keyboard.in_message = true }
+expect  = "The first message opens over the list with the keyboard in it."
+
+[[step]]
+id      = "close"
+key     = "Escape"
+check   = { view = "list", keyboard.region = "list", cursor.index = 0 }
+expect  = "Escape closes it onto the row it came from."
+
+[[step]]
+id      = "again"
+command = "open_message"
+settle  = { until = { view = "reader" } }
+check   = { view = "reader", keyboard.region = "reader", app.focus.keyboard.in_message = true }
+expect  = "The same message opens again, and the keyboard is in the message as on its first open: Space and the arrows read on in it, and no ring goes around the window."

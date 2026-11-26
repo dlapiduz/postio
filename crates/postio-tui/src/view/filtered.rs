@@ -1,14 +1,9 @@
-//! Filtered (terminal.md, "Filtered"): the strip, the tab line, the rows
-//! under their days, the footer, and the sweep's question.
-//!
-//! The strip is `‹ Inbox g i   Filtered · 186 today   Nothing here is
-//! deleted automatically      Sweep the inbox… F`. Under it the tabs, then
-//! each day's rows with the reason pill before the time. Every part is a
-//! click for the command its key runs.
+//! Filtered: the strip, the tab line, the rows under their days and the footer.
 
-use chrono::{DateTime, Local};
 use postio_core::CommandId;
+use postio_focus::FilteredLine;
 use postio_ui::filtered;
+use postio_ui::terminal::SafeText;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
@@ -16,23 +11,19 @@ use ratatui::text::{Line, Span};
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::App;
-use crate::filtered::{Item, Slot};
+use crate::filtered::Slot;
 use crate::surface::Part;
 use crate::theme::{Role, Theme};
 use crate::view::bottom::cap;
 use crate::view::fit;
 use crate::view::hit::{Hits, Target};
 
-/// The gap between two items of the strip.
 const GAP: usize = 3;
 
-/// Where the sender starts: the cursor, the mark and a space.
 const SENDER_X: usize = 3;
 
-/// The widest a pill is drawn.
 const PILL: usize = 30;
 
-/// One piece of a line: its spans and the click it is.
 struct Piece {
     spans: Vec<Span<'static>>,
     target: Option<Target>,
@@ -44,8 +35,6 @@ impl Piece {
     }
 }
 
-/// The strip's pieces: where this goes back to, what it is, the note and,
-/// on the right, the sweep.
 fn strip_pieces(app: &App, theme: &Theme) -> (Vec<Piece>, Piece) {
     let key = |command| {
         app.hint(command)
@@ -53,10 +42,11 @@ fn strip_pieces(app: &App, theme: &Theme) -> (Vec<Piece>, Piece) {
     };
     let mut back = vec![Span::styled("‹ Inbox", theme.style(Role::Text))];
     back.extend(key(CommandId::GoToInbox));
+    let view = app.filtered().map(|shown| shown.view());
     let today = app
         .focus_counts()
         .map(|counts| counts.filtered_today)
-        .or_else(|| app.filtered().map(|view| view.counts()[0]))
+        .or_else(|| view.and_then(|view| view.tabs.first().map(|tab| tab.count)))
         .unwrap_or(0);
     let title = vec![
         Span::styled(
@@ -70,7 +60,8 @@ fn strip_pieces(app: &App, theme: &Theme) -> (Vec<Piece>, Piece) {
     ];
     let note = filtered::NOTE.split(" · ").next().unwrap_or(filtered::NOTE);
     let mut sweep = vec![Span::styled(
-        filtered::SWEEP_BUTTON,
+        view.map_or(filtered::SWEEP_BUTTON, |view| view.sweep.as_str())
+            .to_owned(),
         theme.style(Role::Text),
     )];
     sweep.extend(key(CommandId::SweepInbox));
@@ -96,7 +87,6 @@ fn strip_pieces(app: &App, theme: &Theme) -> (Vec<Piece>, Piece) {
     )
 }
 
-/// The strip: it takes the inbox strip's row.
 pub fn strip(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut Hits) {
     if theme.style(Role::Surface).bg.is_some() {
         frame
@@ -131,15 +121,12 @@ pub fn strip(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut
     }
 }
 
-/// The tab line: `1 All 186  2 Promotions 90 …`, the tab on screen bold and
-/// underlined, and each a click.
 fn tabs(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut Hits) {
-    let Some(view) = app.filtered() else {
+    let Some(shown) = app.filtered() else {
         return;
     };
-    let counts = view.counts();
+    let tabs = &shown.view().tabs;
     let words = |index: usize, named: bool| {
-        let (_, name) = filtered::TABS[index];
         let key = app
             .hint(filtered::TAB_COMMANDS[index])
             .map(|key| cap(&key))
@@ -149,29 +136,30 @@ fn tabs(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut Hits
             if !said.is_empty() {
                 said.push(' ');
             }
-            said.push_str(name);
+            said.push_str(&tabs[index].name);
         }
         if !said.is_empty() {
             said.push(' ');
         }
-        said.push_str(&counts[index].to_string());
+        said.push_str(&tabs[index].count.to_string());
         said
     };
     let room = usize::from(area.width).saturating_sub(2);
-    let full: usize = (0..7)
+    let full: usize = (0..tabs.len())
         .map(|index| words(index, true).width())
         .sum::<usize>()
         + 2 * 6;
     // Too wide: only the tab on screen keeps its name.
     let named_all = full <= room;
     let mut x = area.x + 1;
-    for index in 0..7 {
-        let text = words(index, named_all || index == view.tab());
+    for (index, tab) in tabs.iter().enumerate() {
+        let on = tab.on;
+        let text = words(index, named_all || on);
         let w = u16::try_from(text.width()).unwrap_or(u16::MAX);
         if x + w > area.x + area.width {
             break;
         }
-        let style = if index == view.tab() {
+        let style = if on {
             theme
                 .style(Role::Text)
                 .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
@@ -187,45 +175,44 @@ fn tabs(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut Hits
     }
 }
 
-/// The sender's column in a body `width` cells wide.
 fn sender_width(width: usize) -> usize {
     if width >= 100 { 20 } else { 16 }
 }
 
-/// A row: the cursor, a mark, the sender, the subject and its first line,
-/// then the reason pill and the time.
-fn row_line(
-    item: &Item,
-    cursor: bool,
-    width: usize,
-    theme: &Theme,
-    now: DateTime<Local>,
-) -> Line<'static> {
-    let row = &item.row;
-    let emphasis = if row.unread {
+fn row_line(line: &FilteredLine, cursor: bool, width: usize, theme: &Theme) -> Line<'static> {
+    let unread = !line.summary.seen;
+    let emphasis = if unread {
         theme.style(Role::Unread)
     } else {
         theme.style(Role::Text)
     };
     let sender_room = sender_width(width);
-    let sender = fit(row.from.as_str(), sender_room - 1);
+    let sender = fit(SafeText::new(&line.sender).as_str(), sender_room - 1);
     let sender_pad = sender_room.saturating_sub(sender.width());
-    let pill = fit(item.pill.as_str(), PILL);
-    let time = format!("{:>5}", postio_ui::row::timestamp(row.when, now));
+    let pill = fit(SafeText::new(&line.pill).as_str(), PILL);
+    let time = format!("{:>5}", line.time);
     let trail = format!("{pill}  {time}");
     let room = width.saturating_sub(SENDER_X + sender_room + trail.width() + 2);
-    let subject = fit(row.subject.as_str(), room);
+    let subject = fit(SafeText::new(&line.subject).as_str(), room);
     let mut left = room.saturating_sub(subject.width());
+    let mark = if line.selected {
+        "✓"
+    } else if unread {
+        "●"
+    } else {
+        " "
+    };
     let mut spans = vec![
         Span::styled(if cursor { "▌" } else { " " }, theme.style(Role::Focus)),
-        Span::styled(if row.unread { "●" } else { " " }, theme.style(Role::Text)),
+        Span::styled(mark, theme.style(Role::Text)),
         Span::raw(" "),
         Span::styled(sender, emphasis),
         Span::raw(" ".repeat(sender_pad)),
         Span::styled(subject, emphasis),
     ];
-    if !row.preview.as_str().is_empty() && left >= 4 {
-        let first = format!(" {}", fit(row.preview.as_str(), left - 1));
+    let preview = SafeText::new(line.preview.as_deref().unwrap_or(""));
+    if !preview.as_str().is_empty() && left >= 4 {
+        let first = format!(" {}", fit(preview.as_str(), left - 1));
         left -= first.width();
         spans.push(Span::styled(first, theme.style(Role::Dim)));
     }
@@ -236,17 +223,29 @@ fn row_line(
     Line::from(spans)
 }
 
-/// The footer's pieces, each a click for its command.
 fn footer(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut Hits) {
+    let Some(shown) = app.filtered() else {
+        return;
+    };
+    let view = shown.view();
     let mut x = area.x + 1;
-    for hint in filtered::footer(app.keymap(), true) {
+    if let Some(bar) = &view.bar {
+        let said = SafeText::new(&bar.summary);
+        let w = u16::try_from(said.as_str().width()).unwrap_or(u16::MAX);
+        frame.render_widget(
+            Line::styled(said.as_str().to_owned(), theme.style(Role::Text)),
+            Rect::new(x, area.y, w.min(area.width), 1),
+        );
+        x += w + GAP as u16;
+    }
+    let hints = view.bar.as_ref().map_or(&view.footer, |bar| &bar.hints);
+    for hint in hints {
         let command = match hint.label.as_str() {
             "restore + never filter sender" => Some(CommandId::RestoreFiltered),
             "inbox" => Some(CommandId::GoToInbox),
             "open" => Some(CommandId::OpenMessage),
             _ => None,
         };
-        // The key as this terminal sends it, when the hint is one command's.
         let key = command
             .and_then(|command| app.hint(command))
             .map(|key| cap(&key))
@@ -274,16 +273,8 @@ fn footer(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut Hi
     }
 }
 
-/// Draw Filtered's body into `area`: the tab line, the rows, the footer.
-pub fn body(
-    frame: &mut Frame,
-    area: Rect,
-    app: &App,
-    theme: &Theme,
-    now: DateTime<Local>,
-    hits: &mut Hits,
-) {
-    let Some(view) = app.filtered() else {
+pub fn body(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut Hits) {
+    let Some(shown) = app.filtered() else {
         return;
     };
     if area.height < 3 {
@@ -305,11 +296,11 @@ pub fn body(
     );
     let rows = Rect::new(area.x, area.y + 1, area.width, area.height - 2);
     let width = usize::from(area.width);
-    let today = now.date_naive();
-    for (offset, slot) in view
+    let view = shown.view();
+    for (offset, slot) in shown
         .slots()
         .iter()
-        .skip(view.top())
+        .skip(shown.top())
         .take(usize::from(rows.height))
         .enumerate()
     {
@@ -317,11 +308,12 @@ pub fn body(
         let line = Rect::new(rows.x, y, rows.width, 1);
         match slot {
             Slot::Heading(first) => {
+                let heading = view.rows[*first].heading.as_deref().unwrap_or_default();
                 frame.render_widget(
                     Line::styled(
                         format!(
                             " {}",
-                            fit(&view.heading(*first, today), width.saturating_sub(1))
+                            fit(SafeText::new(heading).as_str(), width.saturating_sub(1))
                         ),
                         theme.style(Role::Text).add_modifier(Modifier::BOLD),
                     ),
@@ -329,86 +321,23 @@ pub fn body(
                 );
             }
             Slot::Item(index) => {
-                let item = &view.items()[*index];
                 frame.render_widget(
-                    row_line(item, *index == view.cursor(), width, theme, now),
+                    row_line(
+                        &view.rows[*index],
+                        Some(*index) == shown.cursor(),
+                        width,
+                        theme,
+                    ),
                     line,
                 );
                 hits.add(line, Target::Surface(Part::FilteredRow, *index));
             }
         }
     }
-    if view.items().is_empty() {
+    if let Some(empty) = &view.empty {
         frame.render_widget(
-            Line::styled(" Nothing filtered here", theme.style(Role::Dim)),
+            Line::styled(format!(" {empty}"), theme.style(Role::Dim)),
             Rect::new(rows.x, rows.y, rows.width, 1),
         );
-    }
-}
-
-/// The sweep's question over the window: how many would move, where, and
-/// how to take it back.
-pub fn sweep(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut Hits) {
-    let Some(count) = app.sweep() else {
-        return;
-    };
-    let undo = app.hint(CommandId::Undo);
-    let body = filtered::sweep_body(count, undo.as_deref());
-    let width = 76.min(area.width);
-    let text_width = usize::from(width).saturating_sub(4).max(1);
-    let lines = crate::view::wrap::wrap(&Line::styled(body, theme.style(Role::Text)), text_width);
-    let height = u16::try_from(lines.len())
-        .unwrap_or(u16::MAX)
-        .saturating_add(5);
-    let inside = crate::view::boxed::draw(
-        frame,
-        area,
-        width,
-        height,
-        filtered::SWEEP_HEADING,
-        theme,
-        hits,
-    );
-    for (offset, line) in lines.into_iter().enumerate() {
-        let y = inside.y + 1 + u16::try_from(offset).unwrap_or(0);
-        if y >= inside.y + inside.height {
-            break;
-        }
-        frame.render_widget(
-            line,
-            Rect::new(inside.x + 1, y, inside.width.saturating_sub(2), 1),
-        );
-    }
-    // The buttons: Cancel, and the sweep, each with its key.
-    let y = inside.y + inside.height.saturating_sub(1);
-    let button = |words: String, command: CommandId, primary: bool| {
-        let key = app.hint(command).map(|key| cap(&key)).unwrap_or_default();
-        let style = if primary {
-            theme.style(Role::Text).add_modifier(Modifier::BOLD)
-        } else {
-            theme.style(Role::Text)
-        };
-        (
-            vec![
-                Span::styled(format!("[ {words}"), style),
-                Span::styled(format!(" {key}"), theme.style(Role::Accent)),
-                Span::styled(" ]", style),
-            ],
-            words.width() + key.width() + 5,
-        )
-    };
-    let (cancel, cancel_width) = button("Cancel".to_owned(), CommandId::Back, false);
-    let (go, go_width) = button(filtered::sweep_action(count), CommandId::OpenMessage, true);
-    let total = cancel_width + 2 + go_width;
-    let mut x =
-        inside.x + u16::try_from(usize::from(inside.width).saturating_sub(total) / 2).unwrap_or(0);
-    for (spans, w, part) in [
-        (cancel, cancel_width, Part::SweepCancel),
-        (go, go_width, Part::SweepConfirm),
-    ] {
-        let w = u16::try_from(w).unwrap_or(0);
-        frame.render_widget(Line::from(spans), Rect::new(x, y, w, 1));
-        hits.add(Rect::new(x, y, w, 1), Target::Surface(part, 0));
-        x += w + 2;
     }
 }

@@ -75,6 +75,13 @@ auth = ["app-password"]
 #
 # A name below wins the tie only when the server declares nothing; the user's
 # own [mailboxes] mapping still outranks this.
+# A [caldav] table without `url` leaves the server to RFC 6764 discovery from
+# the address's domain; `oauth_scopes` are asked for only when the person
+# turns the account's calendars on.
+[provider.icloud.caldav]
+url = "https://caldav.icloud.com/"
+schedules = true
+
 [provider.icloud.mailboxes]
 sent = "Sent Messages"
 trash = "Deleted Messages"
@@ -176,3 +183,7 @@ auth = ["app-password"]
 
 [provider.fastmail.jmap]
 session_url = "https://api.fastmail.com/jmap/session/"
+
+[provider.fastmail.caldav]
+url = "https://caldav.fastmail.com/"
+schedules = true

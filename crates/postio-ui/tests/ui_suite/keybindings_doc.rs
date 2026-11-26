@@ -45,6 +45,8 @@ fn where_available(contexts: ContextSet) -> String {
             Context::Outline => "thread outline",
             Context::ForwardChooser => "forward chooser",
             Context::Source => "source",
+            Context::Calendar => "calendar",
+            Context::CalendarWindow => "calendar window",
         })
         .collect();
     let mut sentence = names.join(", ");

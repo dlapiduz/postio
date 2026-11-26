@@ -135,7 +135,7 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::PickerToggle
         | C::PickerConfirm => Some(G::Act),
 
-        C::AcceptInvite | C::DeclineInvite => Some(G::Invites),
+        C::AcceptInvite | C::DeclineInvite | C::TentativeInvite => Some(G::Invites),
 
         C::Search
         | C::CommandPalette
@@ -161,7 +161,9 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::Settings
         | C::AddAccount
         | C::EditConfig
-        | C::Quit => Some(G::GoAndFind),
+        | C::Quit
+        | C::CloseWindow
+        | C::GoToCalendar => Some(G::GoAndFind),
 
         C::SaveSearch
         | C::BackToWords
@@ -214,6 +216,20 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::CaptureChangeProject
         | C::CaptureUseSubject
         | C::CaptureWrite => Some(G::Obsidian),
+
+        C::CalendarAgenda
+        | C::CalendarPrevious
+        | C::CalendarNext
+        | C::CalendarToday
+        | C::PopOut
+        | C::PopIn
+        | C::NewEvent
+        | C::EditEvent
+        | C::MoveEvent
+        | C::DuplicateEvent
+        | C::SaveEvent
+        | C::SaveAndSendEvent
+        | C::EmailAttendees => None,
 
         // Contacts has a surface of its own still to be drawn; `OpenContacts` is in Go and find
         // above.

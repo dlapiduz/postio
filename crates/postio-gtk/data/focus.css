@@ -752,6 +752,15 @@ button.focus-open-fold-line {
   color: var(--postio-accent);
 }
 
+.focus-marker-card.automated .focus-marker-chip {
+  box-shadow: inset 0 0 0 1px var(--postio-ink-secondary);
+  color: var(--postio-ink-secondary);
+}
+
+.focus-marker-card.automated .focus-marker-date {
+  color: var(--postio-ink-secondary);
+}
+
 .focus-marker-quote {
   font-size: 0.9545rem;
   font-style: italic;
@@ -2572,6 +2581,7 @@ button.focus-filtered-tab.focus-filtered-tab-on {
 .focus-thread-menu > contents,
 .focus-outline > contents {
   font-family: var(--postio-font-body);
+  padding: 0;
 }
 
 /* The menu's entries are choices, in ink: a ghost button's chrome grey
@@ -2680,6 +2690,106 @@ button.postio-button-ghost.focus-thread-menu-entry {
   padding: 0 var(--postio-space-3);
   border-radius: var(--postio-radius-md);
   background-color: var(--postio-raised-bg);
+}
+
+/* ── Calendar: Agenda in the list's language (spec 017; agent-designed, Q4) ── */
+.focus-calendar-list {
+  background-color: var(--postio-surface);
+}
+
+.focus-calendar-list > row {
+  padding: 0;
+  border-bottom: 1px solid var(--postio-hairline);
+}
+
+.focus-calendar-list > row:selected {
+  background-color: var(--postio-selected-bg);
+  color: var(--postio-selected-fg);
+  box-shadow: inset 0 0 0 2px var(--postio-accent);
+}
+
+.focus-calendar-day {
+  min-height: 32px;
+  padding: 0 var(--postio-space-6);
+  background-color: var(--postio-ground);
+}
+
+.focus-calendar-row {
+  min-height: 40px;
+  padding-right: var(--postio-space-6);
+}
+
+/* The calendar's own colour is the server's; the name beside it carries it
+   in words, so the mark itself stays a neutral role. */
+.focus-calendar-mark {
+  min-width: 3px;
+  margin: var(--postio-space-2) var(--postio-space-3) var(--postio-space-2) 0;
+  background-color: var(--postio-ink-secondary);
+}
+
+.focus-calendar-time {
+  font-family: monospace;
+  min-width: 5em;
+  color: var(--postio-ink-secondary);
+}
+
+.focus-calendar-title {
+  font-weight: bold;
+}
+
+.focus-calendar-chip {
+  font-size: var(--postio-text-label);
+  padding: 0 var(--postio-space-2);
+  border-radius: var(--postio-radius-md);
+  background-color: var(--postio-raised-bg);
+}
+
+.focus-calendar-name {
+  font-size: var(--postio-text-label);
+}
+
+.focus-calendar-card {
+  min-width: 28em;
+  padding: var(--postio-space-6);
+  border-radius: var(--postio-radius-lg);
+  background-color: var(--postio-surface);
+  border: 1px solid var(--postio-hairline);
+  box-shadow: 0 8px 32px color-mix(in srgb, var(--postio-ink) 24%, transparent);
+}
+
+.focus-calendar-card-title {
+  font-weight: bold;
+  font-size: var(--postio-text-title);
+}
+
+.focus-calendar-card-notes {
+  margin-top: var(--postio-space-3);
+}
+
+.focus-calendar-editor-notes {
+  padding: var(--postio-space-2);
+  border-radius: var(--postio-radius-sm);
+  border: 1px solid var(--postio-hairline);
+}
+
+.focus-calendar-scrim {
+  background-color: color-mix(in srgb, var(--postio-ink) 18%, transparent);
+}
+
+.focus-calendar-past .focus-calendar-title,
+.focus-calendar-past .focus-calendar-time {
+  color: var(--postio-ink-secondary);
+  font-weight: normal;
+}
+
+.focus-calendar-scrim {
+  background-color: color-mix(in srgb, var(--postio-ink) 18%, transparent);
+}
+
+.focus-calendar-past .focus-calendar-title,
+.focus-calendar-past .focus-calendar-time {
+  color: var(--postio-ink-secondary);
+  font-weight: normal;
 }
 
 /* The Signed mark (spec 016): a quiet word beside the sender, neutral, never the accent. */

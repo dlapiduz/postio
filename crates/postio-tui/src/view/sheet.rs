@@ -1,6 +1,4 @@
-//! The key map, drawn (terminal.md, "Key map"): a framed sheet over
-//! everything but the top bar, its groups in columns 38 wide, as many as
-//! fit, scrolling when they do not.
+//! The key map: a framed sheet over everything but the top bar, groups in columns 38 wide.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -16,7 +14,6 @@ use crate::view::hit::{Hits, Target};
 use postio_core::CommandId;
 use postio_ui::keymap_sheet;
 
-/// The sheet's frame: the whole screen but the top bar.
 pub fn frame_of(area: Rect) -> Rect {
     Rect::new(
         area.x,
@@ -26,8 +23,6 @@ pub fn frame_of(area: Rect) -> Rect {
     )
 }
 
-/// Where the columns go: inside the frame and its padding, under the header
-/// and over the footer.
 pub fn body(area: Rect) -> Rect {
     let frame = frame_of(area);
     Rect::new(
@@ -38,7 +33,6 @@ pub fn body(area: Rect) -> Rect {
     )
 }
 
-/// Draw the sheet.
 pub fn draw(
     frame: &mut Frame,
     area: Rect,
@@ -70,7 +64,6 @@ pub fn draw(
         Text::styled(keymap_sheet::TITLE, text.add_modifier(Modifier::BOLD)),
         Rect::new(inner_x, outer.y + 1, inner_width, 1),
     );
-    // The keys that close it, then the close mark.
     let mut spans = Vec::new();
     for (index, command) in keymap_sheet::CLOSE_COMMANDS.into_iter().enumerate() {
         let Some(key) = hint(command) else { continue };
@@ -237,16 +230,16 @@ mod tests {
         let before = screen(60, 17, &app);
         assert!(before.contains("Move and select"), "{before}");
         assert!(!before.contains("Digests and filtering"), "{before}");
-        for _ in 0..80 {
+        for _ in 0..120 {
             update(&mut app, key(KeyCode::Down, KeyModifiers::NONE));
         }
         let after = screen(60, 17, &app);
         assert!(!after.contains("Move and select"), "{after}");
         assert!(
-            after.contains("Digests and filtering") || after.contains("In search"),
-            "{after}"
+            after.contains("Obsidian"),
+            "the last group is reached:\n{after}"
         );
-        for _ in 0..80 {
+        for _ in 0..120 {
             update(&mut app, wheel(Target::Overlay, false));
         }
         assert!(screen(60, 17, &app).contains("Move and select"));

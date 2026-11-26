@@ -78,6 +78,7 @@ pub struct FilteredLine {
     pub heading: Option<String>,
     pub selected: bool,
     pub messages: u32,
+    pub summary: postio_model::listing::MessageSummary,
 }
 
 #[derive(Debug)]
@@ -120,6 +121,12 @@ impl Rows for FilteredRows<'_> {
             .iter()
             .position(|row| row.message.id == message)
             .map(|at| at as u32)
+    }
+
+    fn said(&self, position: u32) -> Option<(String, String)> {
+        self.0
+            .get(position as usize)
+            .map(|row| crate::said_of(&row.message))
     }
 
     fn row(&self, position: u32) -> Option<FocusRow> {
@@ -189,6 +196,18 @@ impl Filtered {
         crate::thread_expand::footer_at(self.expansion.as_ref(), index, &raw, keymap)
     }
 
+    pub(crate) fn said(&self, index: usize) -> Option<(String, String)> {
+        let raw = FilteredRows(&self.rows, true);
+        match self
+            .expansion
+            .as_ref()
+            .and_then(|expansion| expansion.through(&raw, true))
+        {
+            Some(through) => through.said(index as u32),
+            None => raw.said(index as u32),
+        }
+    }
+
     pub(crate) fn index_of(&self, message: MessageId) -> Option<usize> {
         let raw = FilteredRows(&self.rows, true);
         let through = self
@@ -252,7 +271,6 @@ impl FocusController {
             filtered.tab = tab;
             filtered.more = false;
             filtered.stamp = stamp;
-            // Another place, as another folder is: what was selected is not shown any more.
             let _ = filtered.cursor.leave(0);
             filtered.cursor.moved_to(None);
             let reason = filtered.reason();
@@ -333,8 +351,6 @@ impl FocusController {
             | CommandId::SavedSearch3
             | CommandId::SavedSearch4
             | CommandId::GoToFolders => return None,
-            // Nobody can see the rows of a verb meant for the list behind; Filtered mail is
-            // archived already.
             _ => Vec::new(),
         };
         Some(steps)
@@ -407,8 +423,7 @@ impl FocusController {
         }
     }
 
-    /// One command, so one Undo takes them all back. The keyboard steps to the first row below
-    /// that stays.
+    /// One command, so one Undo takes them all back.
     fn restore_selected(&mut self) -> Vec<Step> {
         let Some(filtered) = self.filtered.as_mut() else {
             return Vec::new();
@@ -734,6 +749,7 @@ impl FocusController {
                     heading,
                     selected: selection.contains(row.message.id),
                     messages: row.message.thread_count.max(1),
+                    summary: row.message.clone(),
                 })
                 .collect(),
             focused: filtered.focused().map(|at| at as u32),

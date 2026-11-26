@@ -1,0 +1,57 @@
+# A person presses `c` in Calendar, types a title and "thu 3pm", and saves
+# with `mod+s`; the event is in the agenda at once (spec 017 US3, scenario 1).
+# The editor says what the typed time reads as before anything is saved, and
+# Escape on a second one leaves without saving.
+#
+# Keys rather than commands, so it loads, and is red, before the editor exists.
+apps   = ["focus"]
+source = { kind = "spec", ref = "specs/017-calendar US3" }
+seed   = "small"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+key     = "g"
+
+[[step]]
+key     = "e"
+check   = { view = "calendar", app.focus.calendar.view = "agenda" }
+
+[[step]]
+id      = "new"
+key     = "c"
+check   = { app.focus.calendar.editor = "New event", keyboard.typing = true }
+expect  = "A New event card opens over the dimmed agenda with the keyboard in its empty Title. Starts holds the next whole hour and Ends \"1h\", and the line under them says what those read as. Its keys are save and cancel; nothing invites anyone yet."
+
+[[step]]
+type    = "Dentist"
+check   = { app.focus.calendar.editor = "New event" }
+
+[[step]]
+key     = "Tab"
+
+[[step]]
+id      = "when"
+type    = "thu 3pm"
+check   = { app.focus.calendar.editor.when = "Thu 4 Jun, 15:00 – 16:00" }
+expect  = "Starts reads \"thu 3pm\", and the line under it says Thu 4 Jun, 15:00 to 16:00 before anything is saved."
+
+[[step]]
+id      = "saved"
+key     = "mod+s"
+check   = { app.focus.calendar.editor = { absent = true }, app.focus.calendar.cursor = "15:00 Dentist" }
+expect  = "The card is gone and Dentist is in the agenda under Thursday 4 June, at 15:00, ringed, with the keyboard back on the agenda. A toast says Event added, with Undo."
+
+[[step]]
+key     = "c"
+check   = { app.focus.calendar.editor = "New event" }
+
+[[step]]
+type    = "Not kept"
+
+[[step]]
+id      = "cancel"
+key     = "Escape"
+check   = { app.focus.calendar.editor = { absent = true }, app.focus.calendar.cursor = "15:00 Dentist" }
+expect  = "Escape closes the card without saving: no Not kept in the agenda, and the ring still on Dentist."

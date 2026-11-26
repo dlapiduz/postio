@@ -50,7 +50,7 @@ io-imap = { version = "0.11.2", default-features = false, features = ["client"],
 # `io-pim-discovery` publishes no MX lookup of its own.
 domain = { version = "0.12", default-features = false, features = ["alloc", "std", "unstable-new"] }
 io-oauth = { version = "0.7", default-features = false, features = ["client"] }
-io-pim-discovery = { version = "0.13", default-features = false, features = ["autoconfig", "rfc6186", "rfc8414", "rustls-ring"] }
+io-pim-discovery = { version = "0.13", default-features = false, features = ["autoconfig", "rfc6186", "rfc6764", "rfc8414", "rustls-ring"] }
 io-sasl = { workspace = true, optional = true }
 oo7 = "0.7.1"
 

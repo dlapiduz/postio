@@ -11,6 +11,9 @@
 
 mod auto_empty;
 mod backend_choice;
+mod calendar_agenda;
+mod calendar_privacy;
+mod calendar_reminders;
 mod e2e;
 mod gnupg_keyring;
 mod key_import;

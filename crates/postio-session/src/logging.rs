@@ -150,6 +150,7 @@ const OURS: &[&str] = &[
     "postio_bench",
     "postio_body",
     "postio_calendar",
+    "postio_dav",
     "postio_classify",
     "postio_client",
     "postio_config",

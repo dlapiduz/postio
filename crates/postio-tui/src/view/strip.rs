@@ -1,11 +1,6 @@
-//! The strip under the top bar: where the list is, how much is in it, and
-//! what narrows it (terminal.md, "The screen").
-//!
-//! From the left: the place's name with `▾` and the key that opens the
-//! places, the counts, the has-action toggle. From the right: the filtered
-//! count and the digest rules, each only while its feature is in use (C10).
-//! Narrowing drops the right side first, then the counts; the place and the
-//! toggle stay. Each item is a click target for the command its key runs.
+//! The strip under the top bar: the place, the counts and the has-action toggle on the left, the
+//! filtered
+//! count and digest rules on the right. Narrowing drops the right side first, then the counts.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -19,10 +14,8 @@ use crate::view::fit;
 use crate::view::hit::{Hits, Target};
 use postio_core::CommandId;
 
-/// The gap between two items.
 const GAP: usize = 3;
 
-/// One item of the strip: its pieces, and the command a click runs.
 struct Item<'a> {
     pieces: Vec<Span<'a>>,
     command: Option<&'static str>,
@@ -34,8 +27,6 @@ impl Item<'_> {
     }
 }
 
-/// A word and the key that runs it, as the strip words it: the key in the
-/// accent after the word.
 fn keyed<'a>(
     word: String,
     word_style: ratatui::style::Style,
@@ -49,7 +40,6 @@ fn keyed<'a>(
     pieces
 }
 
-/// The strip's items, left side then right side.
 fn items<'a>(app: &App, strip: &Strip, theme: &Theme) -> (Vec<Item<'a>>, Vec<Item<'a>>) {
     let mut place = vec![Span::styled(
         strip.place.as_str().to_owned(),
@@ -68,7 +58,6 @@ fn items<'a>(app: &App, strip: &Strip, theme: &Theme) -> (Vec<Item<'a>>, Vec<Ite
         command: None,
     });
     if let Some(toggle) = &strip.toggle {
-        // The accent while it is on, reversed where there is no colour.
         let style = if toggle.on {
             theme
                 .style(Role::Accent)
@@ -87,7 +76,6 @@ fn items<'a>(app: &App, strip: &Strip, theme: &Theme) -> (Vec<Item<'a>>, Vec<Ite
         if let Some(showing) = &strip.showing {
             left.push(Item {
                 pieces: vec![Span::styled(showing.clone(), theme.style(Role::Dim))],
-                // It names the toggle's key, so it is a click for it.
                 command: Some("toggle_has_action"),
             });
         }
@@ -118,12 +106,10 @@ fn items<'a>(app: &App, strip: &Strip, theme: &Theme) -> (Vec<Item<'a>>, Vec<Ite
     (left, right)
 }
 
-/// The width `items` take with a gap between each.
 fn span_of(items: &[Item]) -> usize {
     items.iter().map(Item::width).sum::<usize>() + GAP * items.len().saturating_sub(1)
 }
 
-/// Draw the strip into `area`, one row, on the surface background.
 pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut Hits) {
     // A ground of its own where there is colour to draw one; reversed video
     // is kept for the toggle, which would cancel against it.
@@ -135,8 +121,6 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut 
     let strip = app.strip();
     let (mut left, mut right) = items(app, &strip, theme);
     let width = usize::from(area.width).saturating_sub(2);
-    // Narrowing: the right side goes first, then the counts, and then what
-    // follows the toggle.
     if span_of(&left) + GAP + span_of(&right) > width {
         right.clear();
     }
@@ -146,7 +130,6 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut 
     if span_of(&left) > width
         && let Some(place) = left.first_mut()
     {
-        // The place's name gives way last, cut.
         let room = width.saturating_sub(4);
         if let Some(name) = place.pieces.first_mut() {
             *name = Span::styled(fit(&name.content, room), name.style);
@@ -185,7 +168,6 @@ mod tests {
     };
     use crate::view::hit::Target;
 
-    /// The inbox of the drawing, counted.
     fn counted(size: (u16, u16)) -> App {
         let mut app = app(size);
         seed_places(&mut app, places_with_features());
@@ -230,7 +212,6 @@ mod tests {
 
     #[test]
     fn a_count_shows_only_while_its_feature_is_in_use() {
-        // Filtering off and no rules: neither says anything.
         let mut app = app((120, 30));
         seed_places(&mut app, crate::test_support::places());
         show_focus(&mut app, Vec::new());
@@ -238,7 +219,6 @@ mod tests {
         let strip = strip_of(&app, (120, 30));
         assert!(!strip.contains("filtered"), "{strip}");
         assert!(!strip.contains("digest rule"), "{strip}");
-        // Filtering on, but nothing filed today.
         let mut quiet = counted((120, 30));
         quiet.counts_for_tests(postio_client::protocol::FocusCounts {
             filtered_today: 0,
@@ -302,13 +282,15 @@ mod tests {
             "{effects:?}"
         );
         assert!(app.selection().selection().is_empty(), "the selection goes");
-        // The narrowed list holds the second and third message.
         let marker = postio_model::listing::MarkerSummary {
             kind: postio_model::listing::MarkerKind::Question,
             when: None,
             excerpt: Some("Can you?".into()),
             answer: None,
             cancelled: false,
+            clash: None,
+            moved_from: None,
+            notice: false,
         };
         let rows = (2..=3)
             .map(|id| {
@@ -330,7 +312,6 @@ mod tests {
         assert!(lines[2].contains("Has action · 7"), "one heading: {drawn}");
         assert!(!lines[2].contains("Today"), "not a day's: {drawn}");
         assert_eq!(drawn.matches("Has action · 7").count(), 2, "{drawn}");
-        // Back again.
         let effects = update(&mut app, press('!'));
         assert!(
             crate::test_support::opens(&effects, postio_model::ListScope::Focus(FocusScope::Inbox)),
@@ -351,6 +332,9 @@ mod tests {
                 excerpt: None,
                 answer: None,
                 cancelled: false,
+                clash: None,
+                moved_from: None,
+                notice: false,
             },
         ));
         show_scope(&mut app, FocusScope::HasAction, vec![marked_row]);
@@ -384,7 +368,6 @@ mod tests {
                 "the rest of the strip is not reversed without colour"
             );
         }
-        // Off, it is plain.
         let off = counted((120, 30));
         let strip = strip_of(&off, (120, 30));
         assert!(strip.contains("⚑ Has action"));

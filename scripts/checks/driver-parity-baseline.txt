@@ -1,0 +1,127 @@
+# A gap without a why predates this check; a new one needs `# why`.
+postio-ffi Input::Accounts
+postio-ffi Input::ArchiveDigest
+postio-ffi Input::CalendarFilterTyped # the Mac's Agenda is PostioKit work (specs/017 T016), built on a Mac
+postio-ffi Input::CalendarPoint # the Mac's Agenda is PostioKit work (specs/017 T016), built on a Mac
+postio-ffi Input::Clock
+postio-ffi Input::EditRule
+postio-ffi Input::Follow
+postio-ffi Input::PlacesShown
+postio-ffi Input::Post
+postio-ffi Input::Shown
+postio-ffi Input::Verb
+postio-ffi Input::WindowFocused # the Mac's Calendar window is PostioKit work (specs/017 T024), built on a Mac
+postio-ffi Intent::Calendar # the Mac's Agenda is PostioKit work (specs/017 T016), built on a Mac
+postio-ffi Intent::CalendarFocusFilter # the Mac's Agenda is PostioKit work (specs/017 T016), built on a Mac
+postio-ffi Intent::CalendarWindow # the Mac's Calendar window is PostioKit work (specs/017 T024), built on a Mac
+postio-ffi Intent::Counts
+postio-ffi Intent::DraftReminder
+postio-ffi Intent::PresentWindow # the Mac's Calendar window is PostioKit work (specs/017 T024), built on a Mac
+postio-ffi Intent::Quit
+postio-gtk Input::CaptureDue
+postio-gtk Input::CaptureFilter
+postio-gtk Input::CaptureProject
+postio-gtk Input::CaptureTyped
+postio-gtk Input::Clock
+postio-gtk Input::ComposerEdited
+postio-gtk Input::Confirmed
+postio-gtk Input::ContactPopoverAt
+postio-gtk Input::DigestPoint
+postio-gtk Input::DigestReference
+postio-gtk Input::DraftSaved
+postio-gtk Input::EditRule
+postio-gtk Input::OpenLink
+postio-gtk Input::PickerToggle
+postio-gtk Input::RuleCreate
+postio-gtk Input::RuleLikeThis
+postio-gtk Input::RuleMatchInstead
+postio-gtk Input::RuleQuery
+postio-gtk Input::RuleSchedule
+postio-gtk Input::SearchExclude
+postio-gtk Input::SearchForget
+postio-gtk Input::SendQueued
+postio-gtk Intent::Banner
+postio-gtk Intent::Capture
+postio-gtk Intent::Confirm
+postio-gtk Intent::Digest
+postio-gtk Intent::DraftReminder
+postio-gtk Intent::KeyboardHome
+postio-gtk Intent::OpenCapture
+postio-gtk Intent::OpenKeyMap
+postio-gtk Intent::OpenRule
+postio-gtk Intent::PickerField
+postio-gtk Intent::Quit
+postio-gtk Intent::Rule
+postio-gtk Intent::SaveDraft
+postio-gtk Intent::SyncLabel
+postio-tui Input::Accounts
+postio-tui Input::ArchiveDigest
+postio-tui Input::AtTop
+postio-tui Input::BarRoom
+postio-tui Input::Config
+postio-tui Input::ContactArrival
+postio-tui Input::ContactCardSwitch
+postio-tui Input::ContactEditChange
+postio-tui Input::ContactMergeKeep
+postio-tui Input::ContactPopoverAt
+postio-tui Input::ContactSplit
+postio-tui Input::ContactsFilterTyped
+postio-tui Input::ContactsImported
+postio-tui Input::ContactsPoint
+postio-tui Input::ContactsSettingsOpened
+postio-tui Input::ContactsSuggestion
+postio-tui Input::ContactsTab
+postio-tui Input::DatePreset
+postio-tui Input::DateWords
+postio-tui Input::Event
+postio-tui Input::FileCopyDone
+postio-tui Input::FilteredPick
+postio-tui Input::OpenLink
+postio-tui Input::Outline
+postio-tui Input::Pick
+postio-tui Input::Point
+postio-tui Input::PopoverDone
+postio-tui Input::PopoverFilter
+postio-tui Input::PopoverToggle
+postio-tui Input::Post
+postio-tui Input::ResultsOrder
+postio-tui Input::SavedSearches
+postio-tui Input::SearchExclude
+postio-tui Input::SearchForget
+postio-tui Input::SearchPopover
+postio-tui Input::SearchSaved
+postio-tui Input::SendQueued
+postio-tui Input::ThreadBarMoreClicked
+postio-tui Input::ThreadMenuPick
+postio-tui Input::Timer
+postio-tui Input::Verb
+postio-tui Input::WindowFocused # the terminal has one screen, so Calendar never pops out of it (spec 017 D12)
+postio-tui Intent::Banner
+postio-tui Intent::CalendarWindow # the terminal has one screen, so Calendar never pops out of it (spec 017 D12)
+postio-tui Intent::ContactEdit
+postio-tui Intent::ContactMerge
+postio-tui Intent::ContactPopover
+postio-tui Intent::Contacts
+postio-tui Intent::ContactsCard
+postio-tui Intent::ContactsCursor
+postio-tui Intent::ContactsFocusFilter
+postio-tui Intent::ContactsRows
+postio-tui Intent::ContactsSettings
+postio-tui Intent::Empty
+postio-tui Intent::Footer
+postio-tui Intent::KeyboardHome
+postio-tui Intent::ListToTop
+postio-tui Intent::Outline
+postio-tui Intent::OutlineFocusFilter
+postio-tui Intent::Place
+postio-tui Intent::PresentWindow # the terminal has one screen, so Calendar never pops out of it (spec 017 D12)
+postio-tui Intent::Quit
+postio-tui Intent::Run
+postio-tui Intent::SingleHeading
+postio-tui Intent::Splice
+postio-tui Intent::SyncLabel
+postio-tui Intent::ThreadMenu
+postio-tui Intent::Unsplice
+postio-tui Intent::WriteTo
+postio-ffi Input::EventEditorTyped # the Mac's editor is PostioKit work (specs/017 T030), built on a Mac
+postio-ffi Input::EventEditorScope # the Mac's editor is PostioKit work (specs/017 T030), built on a Mac

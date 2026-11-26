@@ -1,10 +1,5 @@
-//! One row of the terminal's message list.
-//!
-//! Built once when its page arrives, from the store's row, with every string
-//! that came from mail already made [`SafeText`] -- so nothing the list draws
-//! can carry an escape sequence to the terminal (research R5). The list
-//! itself is `postio_ui::list::ListWindow`, the same window the desktop app
-//! and the macOS frontend page through.
+//! One row of the message list, built once when its page arrives. Every string that came from mail
+//! is already `SafeText`, so nothing drawn can carry an escape sequence to the terminal.
 
 use chrono::{DateTime, Utc};
 use postio_model::listing::{MarkerSummary, MessageSummary, ThreadSummary};
@@ -14,72 +9,46 @@ use postio_ui::label_colour::{Rgb, label_colour};
 use postio_ui::list::ListRow;
 use postio_ui::terminal::SafeText;
 
-/// What a row stands for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
-    /// A conversation, or a message listed on its own.
     Message,
-    /// A reminder that found no reply: a conversation, spliced where it
-    /// came due.
     Reminder,
-    /// A digest delivery, standing for many messages.
     Digest,
 }
 
-/// A label's pill: its name and the colour of its dot.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pill {
-    /// The label's name.
     pub name: SafeText,
-    /// The colour of the `●` before it.
     pub colour: Rgb,
 }
 
-/// One row: a message, or a conversation standing for its newest message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Row {
     /// The message this row opens. A digest's is its delivery's id negated,
     /// which no message's can be.
     pub id: MessageId,
-    /// Its conversation, when it has one.
     pub thread: Option<ThreadId>,
-    /// Whether the row stands for the whole conversation.
     pub is_thread: bool,
-    /// What the row stands for.
     pub kind: Kind,
-    /// Who it is from: a name, or else the address; a digest's cadence.
     pub from: SafeText,
-    /// The sender's address, for what is decided by sender: remote images.
     pub address: Option<String>,
-    /// The subject.
     pub subject: SafeText,
-    /// The snippet after the subject.
     pub preview: SafeText,
-    /// When it arrived, or the conversation last moved.
     pub when: DateTime<Utc>,
-    /// Whether anything in it is unread.
     pub unread: bool,
-    /// Whether it has an attachment.
     pub attachment: bool,
-    /// How many messages the conversation holds; one for a message.
     pub count: u32,
-    /// What the conversation is waiting on, with its sentence already safe
-    /// to draw.
     pub marker: Option<MarkerSummary>,
     /// Its labels, in the order they were made; the first two are pills.
     pub labels: Vec<Pill>,
-    /// A draft's sending state, in Drafts and the Outbox.
     pub send_state: Option<DraftState>,
 }
 
 impl Row {
-    /// The local day the row's mail arrived on: what its heading names.
     pub fn day(&self) -> chrono::NaiveDate {
         self.when.with_timezone(&chrono::Local).date_naive()
     }
 
-    /// Whether the row draws a second line: a conversation with a marker.
-    /// Its kind decides its height, never its content.
     pub fn two_lines(&self) -> bool {
         self.marker.is_some()
     }
@@ -123,7 +92,6 @@ impl From<ThreadSummary> for Row {
 }
 
 impl Row {
-    /// A conversation's row, with its labels.
     fn conversation(conversation: Conversation) -> Row {
         let Conversation { summary, labels } = conversation;
         let names: Vec<&str> = summary
@@ -164,7 +132,6 @@ impl Row {
             attachment: summary.has_attachments,
             count: summary.message_count.max(1),
             marker: summary.marker.map(|mut marker| {
-                // The quoted sentence is the sender's.
                 marker.excerpt = marker
                     .excerpt
                     .map(|excerpt| SafeText::new(&excerpt).as_str().to_owned());

@@ -44,6 +44,8 @@ TREE=$(git rev-parse --show-toplevel)
 cd "$TREE"
 [ -x scripts/install-shims.sh ] && scripts/install-shims.sh
 [ -x scripts/jobserver.sh ] && eval "$(scripts/jobserver.sh env 2>/dev/null || true)"
+# The XDG home nextest gives its runs, so a unit test cannot reach the person's config or store.
+eval "$(scripts/test-home.sh --export)"
 
 BASE=$(cat "$(git rev-parse --git-dir)/postio-base" 2>/dev/null || echo main)
 

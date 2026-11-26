@@ -1,10 +1,6 @@
-//! Find in the open message: the field at the bottom of the frame, its
-//! matches over the rendered lines, and stepping between them.
-//!
-//! Matches are never stored: they are computed from the lines the message
-//! draws (spec 006 FR-018, `postio_ui::find`), so they follow a fold opened,
-//! a resize and a step through the thread. What is kept is the query and
-//! which match the field is on.
+//! Find in the open message. Matches are found again in the lines the message draws, so they follow
+//! a
+//! fold, a resize and a step through the thread.
 
 use crossterm::event::{Event as TerminalEvent, KeyCode, KeyEvent, KeyModifiers};
 use postio_ui::find::{Match, count_label, first_from, matches, step};
@@ -14,7 +10,6 @@ use tui_input::backend::crossterm::EventHandler;
 use super::{App, Effect, Focus};
 use crate::view::open as draw;
 
-/// The find field and where it is.
 #[derive(Debug, Default)]
 pub struct Find {
     input: tui_input::Input,
@@ -22,40 +17,32 @@ pub struct Find {
 }
 
 impl Find {
-    /// What is typed.
     pub fn query(&self) -> &str {
         self.input.value()
     }
 
-    /// Which match the field is on, from 0.
     pub fn current(&self) -> Option<usize> {
         self.current
     }
 
-    /// Where the caret is, in characters.
     pub fn caret(&self) -> usize {
         self.input.visual_cursor()
     }
 
-    /// What the field says of `total` matches.
     pub fn says(&self, total: usize) -> String {
         count_label(self.query(), self.current, total)
     }
 }
 
 impl App {
-    /// The find field, while it is open over the message.
     pub fn find(&self) -> Option<&Find> {
         self.open.find.as_ref()
     }
 
-    /// The rows the find field takes from the message's column.
     pub fn find_rows(&self) -> u16 {
         u16::from(self.open.find.is_some())
     }
 
-    /// The rendered rows find looks through: the message's column, or its
-    /// source while that is shown.
     fn find_text(&self) -> Vec<String> {
         let (outer, inner, _) = self.open_geometry();
         match &self.open.raw {
@@ -78,7 +65,6 @@ impl App {
         }
     }
 
-    /// Every match of what is typed.
     fn find_matches(&self) -> Vec<Match> {
         match &self.open.find {
             Some(find) => matches(&self.find_text(), find.query()),
@@ -86,12 +72,10 @@ impl App {
         }
     }
 
-    /// How many matches there are, for the field to say.
     pub fn find_total(&self) -> usize {
         self.find_matches().len()
     }
 
-    /// `find_in_message`: the field opens, with what was typed kept.
     pub(super) fn open_find(&mut self) -> Vec<Effect> {
         if self.reading.is_none() || self.focus != Focus::Reader {
             return Vec::new();
@@ -101,13 +85,11 @@ impl App {
         vec![Effect::Redraw]
     }
 
-    /// Close the field and its marks.
     pub(super) fn close_find(&mut self) -> Vec<Effect> {
         self.open.find = None;
         vec![Effect::Redraw]
     }
 
-    /// `find_next` and `find_previous`: the field is opened when it is not.
     pub(super) fn find_step(&mut self, forward: bool) -> Vec<Effect> {
         if self.open.find.is_none() {
             return self.open_find();
@@ -120,8 +102,6 @@ impl App {
         vec![Effect::Redraw]
     }
 
-    /// The query changed: the match to show is the first from where the
-    /// person is reading.
     fn restart_find(&mut self) {
         let found = self.find_matches();
         let from = self.reader_top;
@@ -131,7 +111,6 @@ impl App {
         self.show_current();
     }
 
-    /// Scroll so the match the field is on is in view.
     fn show_current(&mut self) {
         let found = self.find_matches();
         let Some(at) = self
@@ -153,13 +132,48 @@ impl App {
         }
     }
 
-    /// A key while the field has the keyboard.
+    /// The controller says whether it steps this message's matches or a search's (ADR 0045); it
+    /// does not hold a message opened for itself.
+    fn find_command(&mut self, forward: bool) -> Vec<Effect> {
+        use postio_core::CommandId as C;
+        if self.own_aim().is_some() {
+            return self.find_step(forward);
+        }
+        self.tell_reader(if forward {
+            C::FindNext
+        } else {
+            C::FindPrevious
+        })
+    }
+
+    /// A search's matches in this message, which never wrap: past the last the controller goes
+    /// on to the next matched message.
+    pub(super) fn match_step(&mut self, forward: bool) -> Vec<Effect> {
+        let count = self.find_matches().len();
+        let at = self.open.find.as_ref().and_then(|find| find.current);
+        let next = match (at, forward) {
+            _ if count == 0 => None,
+            (None, true) => Some(0),
+            (None, false) => Some(count - 1),
+            (Some(at), true) => (at + 1 < count).then_some(at + 1),
+            (Some(at), false) => at.checked_sub(1),
+        };
+        let Some(next) = next else {
+            return self.tell(postio_focus::Input::MatchEdge { forward });
+        };
+        if let Some(find) = self.open.find.as_mut() {
+            find.current = Some(next);
+        }
+        self.show_current();
+        vec![Effect::Redraw]
+    }
+
     pub(super) fn find_key(&mut self, key: &KeyEvent) -> Vec<Effect> {
         let typing = true;
         match self.keys.press(key, self.key_context(), typing) {
             Outcome::Command(id) => match id.as_str() {
-                "find_next" => return self.find_step(true),
-                "find_previous" => return self.find_step(false),
+                "find_next" => return self.find_command(true),
+                "find_previous" => return self.find_command(false),
                 "back" => return self.close_find(),
                 _ => return Vec::new(),
             },
@@ -168,7 +182,9 @@ impl App {
         }
         match key.code {
             KeyCode::Esc => return self.close_find(),
-            KeyCode::Enter => return self.find_step(!key.modifiers.contains(KeyModifiers::SHIFT)),
+            KeyCode::Enter => {
+                return self.find_command(!key.modifiers.contains(KeyModifiers::SHIFT));
+            }
             _ => {}
         }
         let Some(find) = self.open.find.as_mut() else {
@@ -195,8 +211,6 @@ mod tests {
         seed_places, show_rows, type_text,
     };
 
-    /// A note of forty lines with the word three times, on lines 3, 12 and 33
-    /// of the body.
     fn long_note() -> String {
         (0..40)
             .map(|line| match line {
@@ -228,7 +242,6 @@ mod tests {
                 )),
             )],
         );
-        update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         open_message(
             &mut app,
             MessageId::new(1),
@@ -248,12 +261,10 @@ mod tests {
             .collect()
     }
 
-    /// The row the find field is on: the last inside the frame.
     fn field(app: &App, size: (u16, u16)) -> String {
         rows(app, size)[usize::from(size.1) - 3].clone()
     }
 
-    /// The columns of `word` on the screen row `y`, whose cells carry `modifier`.
     fn marked(app: &App, size: (u16, u16), word: &str, modifier: Modifier) -> Vec<(u16, u16)> {
         let drawn = buffer(size.0, size.1, app);
         let mut found = Vec::new();
@@ -302,8 +313,6 @@ mod tests {
             "{}",
             field(&app, FRAME)
         );
-        // Without colour a match is reversed, the one the field is on besides
-        // underlined; the body's own words are not marked.
         let reversed = marked(&app, FRAME, "Harbor", Modifier::REVERSED);
         assert_eq!(
             reversed.len(),
@@ -333,7 +342,6 @@ mod tests {
             1,
             "the current match moved"
         );
-        // ctrl+g and F3 go on; shift+F3 and shift+Enter go back.
         update(&mut app, ctrl('g'));
         assert!(field(&app, FRAME).contains("3 of 3"));
         assert!(screen(FRAME.0, FRAME.1, &app).contains("and HARBOR dues"));

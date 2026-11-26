@@ -200,6 +200,10 @@ impl Feed {
         self.inner.focus.borrow().top_surface()
     }
 
+    pub fn focused_window(&self) -> postio_focus::Window {
+        self.inner.focus.borrow().focused_window()
+    }
+
     pub fn answers(&self, id: CommandId) -> bool {
         self.inner.focus.borrow().answers(id)
     }

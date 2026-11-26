@@ -28,8 +28,10 @@ use postio_storage::repository::{
 };
 use postio_storage::{Checkout, Store, WritePermit, WritePriority};
 
+mod calendar;
 mod focus;
 mod keys;
+pub use focus::invitation_of;
 
 fn now() -> chrono::DateTime<Utc> {
     postio_ui::clock::now().with_timezone(&Utc)
@@ -79,6 +81,11 @@ pub const WIRED: &[CommandId] = &[
     CommandId::ContactGroupRemove,
     CommandId::MuteThread,
     CommandId::SplitThread,
+    CommandId::MoveEvent,
+    CommandId::DuplicateEvent,
+    CommandId::TentativeInvite,
+    CommandId::SaveEvent,
+    CommandId::SaveAndSendEvent,
 ];
 
 /// How long `Command::Snooze` hides a message when it names no time.
@@ -130,7 +137,7 @@ struct Applied {
     /// Empty for a bulk unit, which knows how many it touched and not which.
     messages: Vec<MessageId>,
     count: usize,
-    rows: Option<usize>,
+    rows: Option<Chosen>,
     removed: Vec<(MailboxId, Vec<MessageId>)>,
     /// The list showing it must reload, or an undone archive would not reappear until the next
     /// sync.
@@ -176,14 +183,23 @@ impl Applied {
     }
 }
 
-fn conversations<'a>(messages: impl Iterator<Item = &'a Message>) -> usize {
-    messages
+#[derive(Clone, Copy)]
+struct Chosen {
+    rows: usize,
+    holding: usize,
+}
+
+fn conversations<'a>(messages: impl Iterator<Item = &'a Message>) -> Chosen {
+    let mut holding = 0;
+    let rows = messages
+        .inspect(|_| holding += 1)
         .map(|message| match message.thread_id {
             Some(thread) => (Some(thread), None),
             None => (None, Some(message.id)),
         })
         .collect::<std::collections::BTreeSet<_>>()
-        .len()
+        .len();
+    Chosen { rows, holding }
 }
 
 #[derive(Clone)]
@@ -270,6 +286,14 @@ impl Actions {
         events: &EventSink,
         recording: Recording,
     ) -> Result<(), CommandError> {
+        if let Some(changed) = self.calendar_verb(command).await? {
+            events.emit(Event::CalendarChanged);
+            if recording.records().await {
+                let entry = UndoEntry::bulk(changed.kind, 1, changed.inverse);
+                self.record_undo(entry, changed.lasts, events).await;
+            }
+            return Ok(());
+        }
         let applied: Vec<Applied> = match command {
             Command::Archive { target } => {
                 self.relocate(
@@ -319,6 +343,12 @@ impl Actions {
             Command::AcceptInvite { message } => {
                 vec![
                     self.answer(*message, postio_calendar::Answer::Accept)
+                        .await?,
+                ]
+            }
+            Command::TentativeInvite { message } => {
+                vec![
+                    self.answer(*message, postio_calendar::Answer::Tentative)
                         .await?,
                 ]
             }
@@ -1560,10 +1590,19 @@ impl Actions {
             UndoEntry::bulk(applied.kind, applied.count, applied.inverse)
         };
         let entry = match applied.rows {
-            Some(rows) if !entry.is_bulk() => entry.acting_on(rows),
+            Some(rows) if !entry.is_bulk() => entry.acting_on(rows.rows, rows.holding),
             _ => entry,
         };
-        let entry = match applied.lasts {
+        self.record_undo(entry, applied.lasts, events).await;
+    }
+
+    async fn record_undo(
+        &self,
+        entry: UndoEntry,
+        lasts: Option<std::time::Duration>,
+        events: &EventSink,
+    ) {
+        let entry = match lasts {
             Some(window) => entry.lasting(window),
             None => entry,
         };
@@ -1573,6 +1612,62 @@ impl Actions {
             description,
             undoable: true,
         });
+    }
+
+    async fn calendar_verb(
+        &self,
+        command: &Command,
+    ) -> Result<Option<calendar::Changed>, CommandError> {
+        let save = |event, calendar, fields, scope, send| calendar::Save {
+            event,
+            calendar,
+            fields,
+            scope,
+            send,
+        };
+        Ok(Some(match command {
+            Command::SaveEvent {
+                event,
+                calendar,
+                fields,
+                scope,
+            } => {
+                self.save_event(save(
+                    event.as_ref(),
+                    *calendar,
+                    fields.as_ref(),
+                    *scope,
+                    false,
+                ))
+                .await?
+            }
+            Command::SaveAndSendEvent {
+                event,
+                calendar,
+                fields,
+                scope,
+            } => {
+                self.save_event(save(
+                    event.as_ref(),
+                    *calendar,
+                    fields.as_ref(),
+                    *scope,
+                    true,
+                ))
+                .await?
+            }
+            Command::DeleteEvent { event, scope } => self.delete_event(event, *scope).await?,
+            Command::MoveEventTo {
+                event,
+                start,
+                scope,
+            } => self.move_event(event, *start, *scope).await?,
+            Command::MoveEvent => return Err(CommandError::rejected("Pick when to move it to")),
+            Command::DuplicateEventOf { event } => self.duplicate_event(*event).await?,
+            Command::DuplicateEvent => return Err(CommandError::rejected("Pick an event first")),
+            Command::RevertEventChange { change } => self.revert_event_change(*change).await?,
+            _ => return Ok(None),
+        }))
     }
 
     async fn rows(
@@ -3330,6 +3425,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn deleting_a_thread_counts_the_thread_and_its_messages() {
+        let world = world().await;
+        let (_, thread) = threaded(&world, "d1", &[], 1).await;
+        let _ = threaded(&world, "d2", &["d1"], 2).await;
+        let _ = threaded(&world, "d3", &["d1", "d2"], 3).await;
+        world
+            .run(Command::Delete {
+                target: MessageTarget::Threads(vec![thread]),
+            })
+            .await
+            .expect("delete");
+        assert_eq!(
+            completion(&world.drained().await).await,
+            Some(("Deleted 1 thread (3 messages)", true)),
+        );
+    }
+
+    #[tokio::test]
     async fn a_multi_select_archive_is_one_coalesced_undo_entry() {
         let world = world().await;
         let mut messages: Vec<MessageId> = Vec::new();
@@ -3465,8 +3578,8 @@ mod tests {
         assert_eq!(world.queued().await.len(), 2);
         assert_eq!(
             completion(&world.drained().await).await,
-            Some(("Archived 1 message", true)),
-            "one conversation was archived, and the toast counts what was chosen"
+            Some(("Archived 1 thread (2 messages)", true)),
+            "one conversation was chosen, and both its messages went"
         );
 
         world.run(Command::Undo).await.expect("undo");
@@ -3479,7 +3592,7 @@ mod tests {
         }
         assert_eq!(
             undone(&world.drained().await),
-            Some("Archived 1 message, undone".to_owned()),
+            Some("Archived 1 thread (2 messages), undone".to_owned()),
             "and says it was undone, not that it was archived"
         );
     }

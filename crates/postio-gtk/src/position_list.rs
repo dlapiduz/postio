@@ -1,7 +1,5 @@
-//! The Contacts list's model: a position is a person, asked for only when the list view is about to
-//! draw it.
-//! The controller holds the pages; this holds only the row count, so a thousand-person address book
-//! costs what a dozen does.
+//! A list model of positions only: the controller holds the rows, and the view asks for one when it
+//! is about to draw it, so a long list costs what a short one does. Contacts and Agenda use it.
 
 use std::cell::Cell;
 
@@ -14,20 +12,20 @@ mod imp {
     use super::*;
 
     #[derive(Default)]
-    pub struct ContactsList {
+    pub struct PositionList {
         pub total: Cell<u32>,
     }
 
     #[glib::object_subclass]
-    impl ObjectSubclass for ContactsList {
-        const NAME: &'static str = "PostioContactsList";
-        type Type = super::ContactsList;
+    impl ObjectSubclass for PositionList {
+        const NAME: &'static str = "PostioPositionList";
+        type Type = super::PositionList;
         type Interfaces = (gio::ListModel,);
     }
 
-    impl ObjectImpl for ContactsList {}
+    impl ObjectImpl for PositionList {}
 
-    impl ListModelImpl for ContactsList {
+    impl ListModelImpl for PositionList {
         fn item_type(&self) -> glib::Type {
             gtk::StringObject::static_type()
         }
@@ -44,17 +42,17 @@ mod imp {
 }
 
 glib::wrapper! {
-    pub struct ContactsList(ObjectSubclass<imp::ContactsList>)
+    pub struct PositionList(ObjectSubclass<imp::PositionList>)
         @implements gio::ListModel;
 }
 
-impl Default for ContactsList {
+impl Default for PositionList {
     fn default() -> Self {
         glib::Object::new()
     }
 }
 
-impl ContactsList {
+impl PositionList {
     pub fn set_total(&self, total: u32) {
         let before = self.imp().total.replace(total);
         self.items_changed(0, before, total);

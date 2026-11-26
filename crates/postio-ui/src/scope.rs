@@ -184,17 +184,59 @@ pub fn digest_footer(rule: &str, count: usize, keymap: &Keymap) -> FooterView {
 }
 
 pub fn outgoing(subject: &str, verbs: &[CommandId], keymap: &Keymap) -> FooterView {
-    let keys = crate::focus_dialog::SEND_TOOLBAR
+    FooterView {
+        title: subject.to_owned(),
+        keys: settle_keys(verbs, keymap).collect(),
+        note: None,
+    }
+}
+
+pub fn unsent_row(
+    subject: &str,
+    state: Option<postio_model::DraftState>,
+    keymap: &Keymap,
+) -> Option<FooterView> {
+    let verbs = crate::focus_dialog::send_verbs(state)?;
+    let open = if crate::focus_dialog::opens_to_read(state) {
+        "open"
+    } else {
+        "edit"
+    };
+    let settle: Vec<CommandId> = verbs
+        .iter()
+        .copied()
+        .filter(|verb| *verb != CommandId::OpenMessage)
+        .collect();
+    let keys = [
+        hints::pair(
+            keymap,
+            CommandId::NextMessage,
+            CommandId::PrevMessage,
+            "move",
+        ),
+        hints::hint(keymap, CommandId::OpenMessage, open),
+    ]
+    .into_iter()
+    .flatten()
+    .map(|hint| (hints::short(&hint.key), hint.label))
+    .chain(settle_keys(&settle, keymap))
+    .collect();
+    Some(FooterView {
+        title: subject.to_owned(),
+        keys,
+        note: None,
+    })
+}
+
+fn settle_keys<'a>(
+    verbs: &'a [CommandId],
+    keymap: &'a Keymap,
+) -> impl Iterator<Item = (String, String)> + 'a {
+    crate::focus_dialog::SEND_TOOLBAR
         .iter()
         .filter(|verb| verbs.contains(&verb.command))
         .filter_map(|verb| hints::hint(keymap, verb.command, &verb.label.to_lowercase()))
         .map(|hint| (hints::short(&hint.key), hint.label))
-        .collect();
-    FooterView {
-        title: subject.to_owned(),
-        keys,
-        note: None,
-    }
 }
 
 /// Escape goes back to the results, so the footer says so rather than "back to inbox" (#2193).
@@ -208,6 +250,7 @@ pub fn over_results(mut view: FooterView, keymap: &Keymap) -> FooterView {
 fn thread_note(keymap: &Keymap) -> String {
     let keys: Vec<&str> = [
         CommandId::Archive,
+        CommandId::Delete,
         CommandId::Snooze,
         CommandId::AddLabel,
         CommandId::Move,
@@ -398,6 +441,24 @@ mod tests {
     }
 
     #[test]
+    fn the_note_names_every_verb_that_takes_the_thread_from_a_message() {
+        let keymap = Keymap::defaults();
+        let note = footer(window(), &about(6, 3), keymap)
+            .note
+            .expect("a note below a row");
+        for verb in [CommandId::Archive, CommandId::Delete, CommandId::Snooze] {
+            assert_eq!(target(window(), verb), Scope::Thread(T));
+            let key = keymap.binding(verb).expect("bound");
+            assert!(
+                note.split(" act on")
+                    .next()
+                    .is_some_and(|keys| keys.split(", ").any(|said| said == key)),
+                "{verb:?}'s {key} missing from {note}"
+            );
+        }
+    }
+
+    #[test]
     fn a_row_of_one_message_has_no_thread_wording() {
         let view = footer(row(), &about(1, 0), Keymap::defaults());
         assert_eq!(view.title, "Harbor API draft v3");
@@ -420,5 +481,32 @@ mod tests {
         assert_eq!(view.note, None);
         let one = digest_footer("Receipts", 1, Keymap::defaults());
         assert_eq!(one.title, "Receipts \u{b7} 1 message");
+    }
+
+    #[test]
+    fn a_row_of_unsent_mail_names_only_what_acts_on_it() {
+        use postio_model::DraftState;
+        let keymap = Keymap::defaults();
+        for (state, want) in [
+            (DraftState::Editing, &["move", "edit"][..]),
+            (DraftState::Queued, &["move", "open", "cancel send"][..]),
+            (DraftState::Sending, &["move", "open"][..]),
+            (DraftState::Failed, &["move", "open", "retry send"][..]),
+            (
+                DraftState::Unconfirmed,
+                &["move", "open", "retry send", "mark as sent"][..],
+            ),
+        ] {
+            let view = unsent_row("Notes", Some(state), keymap).expect("unsent");
+            let labels: Vec<_> = view.keys.iter().map(|(_, label)| label.as_str()).collect();
+            assert_eq!(labels, want, "{state:?}");
+            assert_eq!(view.title, "Notes");
+        }
+        assert_eq!(unsent_row("Notes", None, keymap), None, "received");
+        assert_eq!(
+            unsent_row("Notes", Some(DraftState::Sent), keymap),
+            None,
+            "the server took it"
+        );
     }
 }

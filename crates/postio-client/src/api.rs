@@ -113,6 +113,11 @@ impl Req {
             Req::ContactsFiltered { .. } => "ContactsFiltered",
             Req::ContactsOverview => "ContactsOverview",
             Req::ContactCard(_) => "ContactCard",
+            Req::AgendaPage { .. } => "AgendaPage",
+            Req::EventDetail(_) => "EventDetail",
+            Req::CalendarWindow => "CalendarWindow",
+            Req::SetCalendarWindow(_) => "SetCalendarWindow",
+            Req::EventSearch { .. } => "EventSearch",
             Req::ContactGroups => "ContactGroups",
             Req::ContactsSyncBringIn { .. } => "ContactsSyncBringIn",
             Req::ContactsImport(_) => "ContactsImport",
@@ -658,6 +663,73 @@ impl Client {
             },
             "a page of contacts",
             only!(Resp::ContactsPage),
+        )
+        .await
+    }
+
+    pub async fn agenda_page(
+        &self,
+        anchor: postio_model::calendar::AgendaAnchor,
+        limit: u32,
+    ) -> Result<Vec<postio_model::calendar::AgendaEntry>, StoreError> {
+        self.read(
+            Req::AgendaPage { anchor, limit },
+            "a page of the agenda",
+            only!(Resp::AgendaPage),
+        )
+        .await
+    }
+
+    pub async fn event_detail(
+        &self,
+        cursor: postio_model::calendar::AgendaCursor,
+    ) -> Result<Option<Box<postio_model::calendar::EventDetail>>, StoreError> {
+        self.read(
+            Req::EventDetail(cursor),
+            "an event",
+            only!(Resp::EventDetail),
+        )
+        .await
+    }
+
+    pub async fn event_search(
+        &self,
+        text: &str,
+        limit: u32,
+    ) -> Result<(Vec<postio_model::calendar::AgendaEntry>, Vec<String>), StoreError> {
+        self.read(
+            Req::EventSearch {
+                text: text.to_owned(),
+                limit,
+            },
+            "a calendar search",
+            |resp| match resp {
+                Resp::EventSearch { entries, ignored } => Some((entries, ignored)),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    pub async fn calendar_window(
+        &self,
+    ) -> Result<postio_model::calendar::CalendarWindowState, StoreError> {
+        self.read(
+            Req::CalendarWindow,
+            "the calendar window",
+            only!(Resp::CalendarWindow),
+        )
+        .await
+    }
+
+    pub async fn set_calendar_window(
+        &self,
+        state: postio_model::calendar::CalendarWindowState,
+    ) -> Result<(), StoreError> {
+        self.read(
+            Req::SetCalendarWindow(state),
+            "the calendar window",
+            |resp| matches!(resp, Resp::Done).then_some(()),
         )
         .await
     }

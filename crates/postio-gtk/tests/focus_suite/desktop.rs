@@ -105,9 +105,10 @@ pub fn a_postio_link_opens_its_message_and_an_unknown_one_is_refused() {
             .await,
             "the link did not open {subject:?}"
         );
-        // Reading for a second marks it read (read_on_dwell); this case asks only about the link,
-        // and on a slow runner the clock outran the checks below.
-        window.reading().expect("the open message").cancel_dwell();
+        window
+            .reading()
+            .expect("the read clock, which would outrun a slow runner, stopped")
+            .cancel_dwell();
         crate::settle_for(std::time::Duration::from_millis(300)).await;
         assert_eq!(
             crate::support::subjects(&window).len(),

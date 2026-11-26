@@ -44,12 +44,29 @@ pub struct CalendarPart<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CalendarMethod {
     Reply,
+    Request,
+    Cancel,
 }
 
 impl CalendarMethod {
     pub const fn as_str(self) -> &'static str {
         match self {
             CalendarMethod::Reply => "REPLY",
+            CalendarMethod::Request => "REQUEST",
+            CalendarMethod::Cancel => "CANCEL",
+        }
+    }
+
+    pub fn of(ics: &[u8]) -> CalendarMethod {
+        let text = String::from_utf8_lossy(ics);
+        let method = text
+            .lines()
+            .find_map(|line| line.strip_prefix("METHOD:"))
+            .map(str::trim);
+        match method {
+            Some(method) if method.eq_ignore_ascii_case("REQUEST") => CalendarMethod::Request,
+            Some(method) if method.eq_ignore_ascii_case("CANCEL") => CalendarMethod::Cancel,
+            _ => CalendarMethod::Reply,
         }
     }
 }
@@ -345,7 +362,11 @@ pub fn reserve_message_id(domain: Option<&str>) -> RfcMessageId {
 /// mail-builder's own `Message-ID` would carry: nothing leaves the machine that the user did not
 /// ask for.
 fn generate_message_id(domain: &str) -> RfcMessageId {
-    RfcMessageId::new(format!("{}@{domain}", make_boundary(".")))
+    RfcMessageId::new(unique_at(domain))
+}
+
+pub fn unique_at(domain: &str) -> String {
+    format!("{}@{domain}", make_boundary("."))
 }
 
 #[cfg(test)]

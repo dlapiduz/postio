@@ -45,6 +45,8 @@ pub enum UiContext {
     Outline,
     ForwardChooser,
     Source,
+    Calendar,
+    CalendarWindow,
 }
 
 impl From<postio_core::Context> for UiContext {
@@ -71,6 +73,8 @@ impl From<postio_core::Context> for UiContext {
             Context::Outline => UiContext::Outline,
             Context::ForwardChooser => UiContext::ForwardChooser,
             Context::Source => UiContext::Source,
+            Context::Calendar => UiContext::Calendar,
+            Context::CalendarWindow => UiContext::CalendarWindow,
         }
     }
 }
@@ -102,6 +106,8 @@ impl From<UiContext> for postio_core::Context {
             UiContext::Outline => Context::Outline,
             UiContext::ForwardChooser => Context::ForwardChooser,
             UiContext::Source => Context::Source,
+            UiContext::Calendar => Context::Calendar,
+            UiContext::CalendarWindow => Context::CalendarWindow,
         }
     }
 }

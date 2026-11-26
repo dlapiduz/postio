@@ -47,9 +47,10 @@ command = "open_message"
 settle  = { until = { view = "reader" } }
 [[step]]
 command = "delete"
-check   = { view = "reader", rows.count = 60, notice.undo = true }
+check   = { view = "reader", rows.count = 60, notice.undo = true, notice.text = "Deleted 1 thread (6 messages)", app.focus.footer.labels = "reply to this | forward this | archive thread" }
+expect  = "The conversation is deleted and the window goes on to the next message, with that message's window footer (#2227). The toast counts the thread and the six messages that went with it (#2232)."
 
 [[step]]
 command = "undo"
-check   = { rows.count = 61, reading.id = "90", cursor.id = "90", view = "reader", app.focus.reading.position = "Message 4 of 60 · thread of 6" }
-expect  = "Undo restores the conversation, as it does from the list, and takes the open message back to it: the cursor is on it, and the header's place is its own."
+check   = { rows.count = 61, reading.id = "90", cursor.id = "90", view = "reader", app.focus.reading.position = "Message 6 of 6" }
+expect  = "Undo restores the conversation, as it does from the list, and takes the open message back to it: the cursor is on it, and the header's place is its own in the thread, as when it was first opened."

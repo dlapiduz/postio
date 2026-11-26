@@ -4,14 +4,16 @@ use crate::cursor::Rows;
 use crate::surfaces::SurfaceKind;
 use crate::{Effect, FocusController, Intent, thread_expand};
 
-// The keyboard is in their fields, where the list's and the window's keys
-// type letters; their own keys are on their own controls.
-const OWN_KEYS: [SurfaceKind; 5] = [
+// The list's and the window's keys type letters in their fields or do
+// nothing there; their own keys are on their own controls.
+const OWN_KEYS: [SurfaceKind; 7] = [
     SurfaceKind::Composer,
     SurfaceKind::Settings,
     SurfaceKind::Capture,
     SurfaceKind::Bar,
     SurfaceKind::Picker,
+    SurfaceKind::Outline,
+    SurfaceKind::ThreadMenu,
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -44,7 +46,7 @@ impl FocusController {
                 Some(postio_ui::source::footer(self.keymap())),
             );
         }
-        if OWN_KEYS.iter().any(|kind| self.surfaces.has(*kind)) {
+        if OWN_KEYS.iter().any(|kind| self.surfaces.has(*kind)) || self.bar.places_shown() {
             return (Owner::Nobody, Some(FooterView::default()));
         }
         match self.window_footer() {

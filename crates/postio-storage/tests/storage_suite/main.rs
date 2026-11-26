@@ -10,6 +10,7 @@ mod blob;
 mod blob_encryption;
 mod body_failures;
 mod bulk;
+mod calendar;
 mod cold_jump_cost;
 mod concurrent_open;
 mod connections;

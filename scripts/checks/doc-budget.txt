@@ -19,10 +19,10 @@
 .specify/templates/spec-template.md 165
 .specify/templates/tasks-template.md 347
 CLAUDE.md 951
-docs/ARCHITECTURE.md 1157
+docs/ARCHITECTURE.md 1182
 docs/PERFORMANCE.md 840
-docs/PRODUCT.md 4192
-docs/config.md 2646
+docs/PRODUCT.md 4302
+docs/config.md 2650
 docs/decisions/0001-imap-library.md 304
 docs/decisions/0002-extensible-command-vocabulary.md 331
 docs/decisions/0003-rich-text-compose.md 373
@@ -75,7 +75,7 @@ docs/decisions/README.md 934
 docs/field-report.md 1717
 docs/gotchas.md 102
 docs/gotchas/build.md 589
-docs/gotchas/gtk.md 304
+docs/gotchas/gtk.md 323
 docs/gotchas/macos.md 339
 docs/gotchas/safety.md 247
 docs/gotchas/signatures.md 218

@@ -91,3 +91,34 @@ pub fn the_rows_repaint_in_dark_at_once_and_the_marker_keeps_the_accent() {
         );
     });
 }
+
+pub fn a_notice_s_to_do_is_drawn_in_the_secondary_ink_and_says_whose_it_is() {
+    crate::gtk_case(async {
+        let fixture = support::Fixture::empty().await;
+        let (bill, _) = fixture
+            .file_from_ada("Your statement", "Your statement is ready.", 5)
+            .await;
+        fixture
+            .notice(bill, "A payment of $142.18 is due by Friday.")
+            .await;
+        let (window, _client) = fixture.open().await;
+        let pane = window.pane().expect("the inbox");
+        let row = || pane.rows_on_screen()[0].clone();
+        assert!(
+            crate::settle_until(async || row().drawn().texts.iter().any(|text| text == "To-do"))
+                .await,
+            "the notice's row never drew its chip"
+        );
+
+        let drawn = row().drawn();
+        assert_eq!(
+            drawn.accent, None,
+            "no person waits on a bill, so nothing of it is in the accent"
+        );
+        assert!(
+            row().spoken().contains("To-do from an automated sender"),
+            "{}",
+            row().spoken()
+        );
+    });
+}

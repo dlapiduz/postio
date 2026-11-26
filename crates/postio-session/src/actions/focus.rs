@@ -163,16 +163,22 @@ impl Actions {
         }
         if let Some(given) = marker.answer {
             return Err(CommandError::rejected(match given {
-                InviteAnswer::Accepting | InviteAnswer::Declining => {
+                InviteAnswer::Accepting
+                | InviteAnswer::Declining
+                | InviteAnswer::TentativePending => {
                     "Your answer is on its way; undo takes it back while it waits"
                 }
                 InviteAnswer::Accepted => "You accepted that invitation already",
                 InviteAnswer::Declined => "You declined that invitation already",
+                InviteAnswer::Tentative => "You answered that invitation tentatively already",
             }));
         }
-        let invitation = invitation_of(&blobs, &row).await.ok_or_else(|| {
-            CommandError::rejected("Postio does not have that invitation's calendar yet")
-        })?;
+        let (invitation, object) = invitation_of(&blobs, &row)
+            .await
+            .filter(|(invitation, _)| invitation.method == Method::Request)
+            .ok_or_else(|| {
+                CommandError::rejected("Postio does not have that invitation's calendar yet")
+            })?;
         let account = AccountRepository::new(&connection)
             .get(row.account_id)
             .await
@@ -184,6 +190,19 @@ impl Actions {
                  nobody to answer as",
             ));
         };
+        if let Some(calendar) = scheduling_calendar(&connection, account.id).await? {
+            return self
+                .answer_by_server(
+                    &connection,
+                    &account,
+                    &row,
+                    &object,
+                    &attendee,
+                    answer,
+                    calendar,
+                )
+                .await;
+        }
         let organizer = invitation.organizer.clone().ok_or_else(|| {
             CommandError::rejected("That invitation names no organiser to answer")
         })?;
@@ -200,6 +219,12 @@ impl Actions {
                 InviteAnswer::Declining,
                 "Declined",
                 "declined",
+            ),
+            Answer::Tentative => (
+                UndoKind::Tentative,
+                InviteAnswer::TentativePending,
+                "Tentative",
+                "tentatively accepted",
             ),
         };
         let ics = postio_calendar::reply(&invitation, &attendee, answer);
@@ -238,6 +263,7 @@ impl Actions {
             .await
             .map_err(store_failure)?;
         transaction.commit().await.map_err(store_failure)?;
+        self.put_answered(&account, row.id, &object, answer).await;
 
         Ok(Applied {
             contacts_changed: None,
@@ -256,6 +282,89 @@ impl Actions {
             inverse: vec![Command::CancelSend {
                 draft: Some(draft.id),
             }],
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn answer_by_server(
+        &self,
+        connection: &postio_storage::Connection,
+        account: &Account,
+        row: &Message,
+        object: &[u8],
+        attendee: &EmailAddress,
+        answer: Answer,
+        calendar: postio_model::ids::CalendarId,
+    ) -> Result<Applied, CommandError> {
+        let (kind, given, partstat) = match answer {
+            Answer::Accept => (UndoKind::Accept, InviteAnswer::Accepted, "ACCEPTED"),
+            Answer::Decline => (UndoKind::Decline, InviteAnswer::Declined, "DECLINED"),
+            Answer::Tentative => (UndoKind::Tentative, InviteAnswer::Tentative, "TENTATIVE"),
+        };
+        let ics = postio_calendar::answered(object, &attendee.address, partstat)
+            .map_err(|_| CommandError::rejected("Postio could not write that answer"))?;
+        let uid = postio_calendar::parse_object(&ics)
+            .ok()
+            .and_then(|events| events.into_iter().next())
+            .map(|event| event.uid)
+            .ok_or_else(|| CommandError::rejected("That invitation names no event"))?;
+        let calendars = postio_storage::repository::CalendarRepository::new(connection);
+        let before = calendars
+            .held_uid(calendar, &uid)
+            .await
+            .map_err(store_failure)?;
+        let now = Utc::now();
+        let event = crate::calendar::store_object_on(
+            connection,
+            crate::calendar::NewObject {
+                calendar,
+                ics: &ics,
+                href: before.as_ref().and_then(|held| held.href.clone()),
+                etag: before.as_ref().and_then(|held| held.etag.clone()),
+                my_partstat: Some(partstat.to_owned()),
+                source_message: Some(row.id),
+            },
+            &chrono::Local,
+            now,
+        )
+        .await
+        .map_err(|error| CommandError::rejected(error.to_string()))?;
+        let change = calendars
+            .record_change(
+                Some(event),
+                calendar,
+                if before.is_some() {
+                    postio_storage::repository::ChangeKind::Update
+                } else {
+                    postio_storage::repository::ChangeKind::Create
+                },
+                before
+                    .as_ref()
+                    .map(|held| (held.object.as_slice(), held.etag.as_deref())),
+                before.as_ref().and_then(|held| held.href.as_deref()),
+                now,
+            )
+            .await
+            .map_err(store_failure)?;
+        MarkerRepository::new(connection)
+            .answer(row.id, Some(given), None)
+            .await
+            .map_err(store_failure)?;
+        Ok(Applied {
+            contacts_changed: None,
+            rows: None,
+            lasts: None,
+            surfaced: false,
+            account: account.id,
+            kind,
+            count: 1,
+            messages: vec![row.id],
+            removed: Vec::new(),
+            arrived: None,
+            reloaded: Vec::new(),
+            changed: vec![row.id],
+            mailboxes_changed: true,
+            inverse: vec![Command::RevertEventChange { change }],
         })
     }
 
@@ -280,7 +389,62 @@ impl Actions {
             .answer(invitation, None, None)
             .await
             .map_err(store_failure)?;
+        postio_storage::repository::CalendarRepository::new(connection)
+            .remove_answered(invitation)
+            .await
+            .map_err(store_failure)?;
         Ok(vec![invitation])
+    }
+
+    async fn put_answered(
+        &self,
+        account: &Account,
+        message: MessageId,
+        object: &[u8],
+        answer: Answer,
+    ) {
+        let partstat = match answer {
+            Answer::Accept => "ACCEPTED",
+            Answer::Decline => "DECLINED",
+            Answer::Tentative => "TENTATIVE",
+        };
+        let placed = async {
+            let connection = self.database.connect().await?;
+            let calendars = postio_storage::repository::CalendarRepository::new(&connection);
+            let calendar = match calendars.default_for(account.id).await? {
+                Some(calendar) => calendar,
+                None => calendars.local().await?.id,
+            };
+            Ok::<_, postio_storage::Error>(calendar)
+        }
+        .await;
+        let Ok(calendar) = placed else {
+            tracing::warn!(
+                message = message.get(),
+                "no calendar for an answered invitation"
+            );
+            return;
+        };
+        let stored = crate::calendar::store_object(
+            &self.database,
+            crate::calendar::NewObject {
+                calendar,
+                ics: object,
+                href: None,
+                etag: None,
+                my_partstat: Some(partstat.to_owned()),
+                source_message: Some(message),
+            },
+            &chrono::Local,
+            Utc::now(),
+        )
+        .await;
+        if stored.is_err() {
+            tracing::warn!(
+                message = message.get(),
+                "an answered invitation's event was not stored"
+            );
+        }
     }
 }
 
@@ -945,7 +1109,10 @@ fn marker_kind(name: &str) -> MarkerKind {
 
 /// The invitation `row`'s calendar part carries, when the part is on this machine and is a request.
 /// Read off the async runtime's threads.
-async fn invitation_of(blobs: &postio_storage::BlobStore, row: &Message) -> Option<Invitation> {
+pub async fn invitation_of(
+    blobs: &postio_storage::BlobStore,
+    row: &Message,
+) -> Option<(Invitation, Vec<u8>)> {
     let parts: Vec<_> = row
         .attachments
         .iter()
@@ -961,7 +1128,8 @@ async fn invitation_of(blobs: &postio_storage::BlobStore, row: &Message) -> Opti
             let ics = blobs.get(part).ok()?;
             postio_calendar::parse(&ics)
                 .ok()
-                .filter(|invitation| invitation.method == Method::Request)
+                .filter(|invitation| matches!(invitation.method, Method::Request | Method::Cancel))
+                .map(|invitation| (invitation, ics))
         })
     })
     .await
@@ -1157,4 +1325,21 @@ fn thread_applied(
         lasts: None,
         surfaced: false,
     }
+}
+
+async fn scheduling_calendar(
+    connection: &postio_storage::Connection,
+    account: postio_model::AccountId,
+) -> Result<Option<postio_model::ids::CalendarId>, CommandError> {
+    Ok(
+        postio_storage::repository::CalendarRepository::new(connection)
+            .list()
+            .await
+            .map_err(store_failure)?
+            .into_iter()
+            .find(|calendar| {
+                calendar.account == Some(account) && calendar.schedules && calendar.writable
+            })
+            .map(|calendar| calendar.id),
+    )
 }

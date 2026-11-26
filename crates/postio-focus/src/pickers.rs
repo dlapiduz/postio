@@ -1,8 +1,6 @@
 //! The pickers at the row (snooze, remind, labels, move) and the toast's policy. A picker acts on
-//! what a verb would aim at when it opened, wherever the cursor goes since. A label picker opened
-//! over the list lets the selection go when it closes; the others once they act. A toast replaces
-//! the one showing; a queued send's toast carries an Undo of its own, which Undo runs first
-//! (#1752).
+//! what a verb would aim at when it opened, wherever the cursor goes since. A queued send's toast
+//! carries an Undo of its own, which Undo runs first (#1752).
 
 use std::collections::{HashMap, HashSet};
 
@@ -59,7 +57,6 @@ pub struct PickerRow {
     pub detail: String,
     pub key: Option<String>,
     pub dot: bool,
-    /// `#rrggbb`; `None` for one the frontend picks from the name.
     pub color: Option<String>,
     pub applied: bool,
     pub create: bool,
@@ -74,7 +71,6 @@ pub struct PickerView {
     pub field: PickerField,
     pub placeholder: String,
     pub typed: String,
-    /// `None` for a filter.
     pub hint: Option<String>,
     pub rows: Vec<PickerRow>,
     pub footnote: String,
@@ -84,7 +80,6 @@ pub struct PickerView {
 pub struct LabelsRead {
     pub account: AccountId,
     pub labels: Vec<Label>,
-    /// A label nobody carries may be left out.
     pub counts: Vec<(LabelId, u32)>,
     pub carried: Vec<(ThreadId, Label)>,
 }
@@ -149,6 +144,7 @@ struct Open {
     pending: Option<(String, bool)>,
     folders: Vec<Mailbox>,
     recent: Vec<MailboxId>,
+    draft: bool,
 }
 
 #[derive(Debug, Default)]
@@ -447,7 +443,9 @@ impl FocusController {
         if aims.is_empty() {
             return Some(Vec::new());
         }
-        let said = position.and_then(|position| rows.said(position));
+        let said = position
+            .and_then(|position| rows.said(position))
+            .or_else(|| self.elsewhere_said(reading));
         let aimed = Aimed {
             aims,
             everything: None,
@@ -524,6 +522,21 @@ impl FocusController {
         )
     }
 
+    pub(crate) fn picker_for_draft(&mut self, target: String) -> Vec<Step> {
+        let aimed = Aimed {
+            aims: Vec::new(),
+            everything: None,
+            message: None,
+            from_list: false,
+            from_results: false,
+        };
+        let steps = self.open_picker(PickerKind::Remind, Anchor::OpenMessage, target, aimed);
+        if let Some(open) = self.pickers.open.as_mut() {
+            open.draft = true;
+        }
+        steps
+    }
+
     fn open_picker(
         &mut self,
         kind: PickerKind,
@@ -560,6 +573,7 @@ impl FocusController {
             pending: None,
             folders: Vec::new(),
             recent: Vec::new(),
+            draft: false,
         });
         let mut steps = self
             .surfaces
@@ -571,7 +585,6 @@ impl FocusController {
         steps
     }
 
-    /// Where a bare digit or space is the picker's key rather than typing.
     pub fn in_empty_filter(&self) -> bool {
         self.pickers.open.as_ref().is_some_and(|open| {
             matches!(open.kind, PickerKind::Label | PickerKind::Move) && open.typed.is_empty()
@@ -687,6 +700,14 @@ impl FocusController {
     }
 
     fn picker_act(&mut self, command: Command) -> Vec<Step> {
+        if self.pickers.open.as_ref().is_some_and(|open| open.draft) {
+            let Command::RemindIfNoReply { at: Some(at), .. } = command else {
+                return Vec::new();
+            };
+            let mut steps = self.close_picker(true);
+            steps.push(Step::Show(Intent::DraftReminder { at }));
+            return steps;
+        }
         let Some(aimed) = self.pickers.open.as_ref().map(|open| open.aimed.clone()) else {
             return Vec::new();
         };
@@ -728,8 +749,6 @@ impl FocusController {
         let Some(open) = self.pickers.open.as_mut() else {
             return Vec::new();
         };
-        // The labels are an account's: until they are read, the name waits
-        // for them -- it may be one of them.
         let Some(account) = open.account else {
             open.pending = Some((name, closing));
             return Vec::new();
@@ -796,8 +815,6 @@ impl FocusController {
                 let Some((name, closing)) = open.pending.take() else {
                     return self.redraw_picker();
                 };
-                // Asked for before the labels landed: put on when it is one
-                // of them, in any case, and made when it is not.
                 let wanted = name.to_lowercase();
                 let found = open
                     .labels

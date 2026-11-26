@@ -9,6 +9,7 @@
 mod settings;
 
 mod accounts;
+mod calendar;
 mod contact_groups;
 mod contact_settings;
 mod contact_suggestions;
@@ -36,6 +37,10 @@ mod threads;
 mod unsubscribe;
 
 pub use accounts::{AccountRepository, IdentityRepository, SignatureRepository};
+pub use calendar::{
+    CalendarRepository, ChangeKind, ChangeState, DueReminder, EventChange, HeldEvent,
+    PlannedReminder, ReminderState, RemoteCalendar, StoredEvent, StoredOccurrence,
+};
 pub use contact_groups::ContactGroupRepository;
 pub use contact_settings::{ContactSettingsRepository, DerivedSettings};
 pub use contact_suggestions::ContactSuggestionRepository;

@@ -1,6 +1,7 @@
 mod backfill;
 mod blob_sink;
 mod boundary;
+mod calendar;
 mod concurrent_writers;
 mod connect;
 mod correspondents;

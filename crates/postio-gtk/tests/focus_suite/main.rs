@@ -11,6 +11,8 @@ mod archive_frames;
 mod bar;
 mod body_lands;
 mod buttons;
+mod calendar;
+mod calendar_pop_out;
 mod capture;
 mod chrome;
 mod close_buttons;
@@ -146,6 +148,51 @@ const CASES: &[(&str, fn())] = &[
     (
         "contacts::the_card_lists_the_contacts_keys_and_where_each_came_from",
         contacts::the_card_lists_the_contacts_keys_and_where_each_came_from as fn(),
+    ),
+    (
+        "calendar_pop_out::mod_shift_o_moves_calendar_into_its_own_window_and_back_with_its_ring",
+        calendar_pop_out::mod_shift_o_moves_calendar_into_its_own_window_and_back_with_its_ring
+            as fn(),
+    ),
+    (
+        "calendar_pop_out::destinations_present_the_window_that_shows_them",
+        calendar_pop_out::destinations_present_the_window_that_shows_them as fn(),
+    ),
+    (
+        "calendar_pop_out::closing_the_calendar_window_or_mod_w_pops_calendar_back_in",
+        calendar_pop_out::closing_the_calendar_window_or_mod_w_pops_calendar_back_in as fn(),
+    ),
+    (
+        "calendar_pop_out::calendar_popped_out_at_quit_reopens_in_its_own_window",
+        calendar_pop_out::calendar_popped_out_at_quit_reopens_in_its_own_window as fn(),
+    ),
+    (
+        "calendar::slash_searches_events_and_escape_brings_the_agenda_back",
+        calendar::slash_searches_events_and_escape_brings_the_agenda_back as fn(),
+    ),
+    (
+        "calendar::c_types_a_new_event_and_mod_s_puts_it_in_the_agenda",
+        calendar::c_types_a_new_event_and_mod_s_puts_it_in_the_agenda as fn(),
+    ),
+    (
+        "calendar::escape_leaves_the_editor_without_saving",
+        calendar::escape_leaves_the_editor_without_saving as fn(),
+    ),
+    (
+        "calendar::a_due_reminder_becomes_a_notification_that_says_what_and_when",
+        calendar::a_due_reminder_becomes_a_notification_that_says_what_and_when as fn(),
+    ),
+    (
+        "calendar::v_moves_the_ringed_event_to_next_week",
+        calendar::v_moves_the_ringed_event_to_next_week as fn(),
+    ),
+    (
+        "calendar::hash_deletes_the_ringed_event_and_undo_brings_it_back",
+        calendar::hash_deletes_the_ringed_event_and_undo_brings_it_back as fn(),
+    ),
+    (
+        "calendar::g_e_opens_agenda_on_the_next_event_and_return_and_escape_walk_back_home",
+        calendar::g_e_opens_agenda_on_the_next_event_and_return_and_escape_walk_back_home as fn(),
     ),
     (
         "contacts::g_c_opens_the_people_j_k_walk_them_the_card_follows_and_escape_goes_home",
@@ -643,6 +690,10 @@ const CASES: &[(&str, fn())] = &[
         marker_card::the_highlight_starts_and_ends_on_the_sentences_own_words as fn(),
     ),
     (
+        "marker_card::a_notice_s_card_draws_its_chip_in_the_secondary_ink",
+        marker_card::a_notice_s_card_draws_its_chip_in_the_secondary_ink as fn(),
+    ),
+    (
         "marker_card::the_card_dismisses_its_marker",
         marker_card::the_card_dismisses_its_marker as fn(),
     ),
@@ -770,8 +821,8 @@ const CASES: &[(&str, fn())] = &[
         observe::the_window_says_where_the_keyboard_cursor_and_notices_are as fn(),
     ),
     (
-        "open_keys::the_keyboard_lands_on_the_message_not_a_button",
-        open_keys::the_keyboard_lands_on_the_message_not_a_button as fn(),
+        "open_keys::the_keyboard_lands_on_the_message_each_time_it_opens",
+        open_keys::the_keyboard_lands_on_the_message_each_time_it_opens as fn(),
     ),
     (
         "open_keys::a_toast_raised_under_the_open_message_is_drawn_over_it",
@@ -1012,6 +1063,10 @@ const CASES: &[(&str, fn())] = &[
         corrections::three_dismissals_write_a_stop_marker_to_focus_s_config as fn(),
     ),
     (
+        "invitations::an_invitation_overlapping_a_local_event_says_what_it_clashes_with",
+        invitations::an_invitation_overlapping_a_local_event_says_what_it_clashes_with as fn(),
+    ),
+    (
         "invitations::a_click_on_the_row_s_decline_declines",
         invitations::a_click_on_the_row_s_decline_declines as fn(),
     ),
@@ -1238,6 +1293,10 @@ const CASES: &[(&str, fn())] = &[
         threads::clicking_the_more_chip_opens_the_outline as fn(),
     ),
     (
+        "threads::the_outline_keeps_its_width_however_many_people_wrote",
+        threads::the_outline_keeps_its_width_however_many_people_wrote as fn(),
+    ),
+    (
         "threads::a_search_childs_row_says_who_wrote_it_and_when",
         threads::a_search_childs_row_says_who_wrote_it_and_when as fn(),
     ),
@@ -1265,6 +1324,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "colours::the_rows_repaint_in_dark_at_once_and_the_marker_keeps_the_accent",
         colours::the_rows_repaint_in_dark_at_once_and_the_marker_keeps_the_accent as fn(),
+    ),
+    (
+        "colours::a_notice_s_to_do_is_drawn_in_the_secondary_ink_and_says_whose_it_is",
+        colours::a_notice_s_to_do_is_drawn_in_the_secondary_ink_and_says_whose_it_is as fn(),
     ),
     (
         "marked_rows::a_marked_row_is_two_lines_whatever_its_state",
@@ -1450,6 +1513,18 @@ const CASES: &[(&str, fn())] = &[
     (
         "footers::the_capture_sheet_has_no_footer",
         footers::the_capture_sheet_has_no_footer as fn(),
+    ),
+    (
+        "footers::a_draft_row_offers_to_be_finished",
+        footers::a_draft_row_offers_to_be_finished as fn(),
+    ),
+    (
+        "footers::the_places_popover_has_no_footer",
+        footers::the_places_popover_has_no_footer as fn(),
+    ),
+    (
+        "footers::a_removal_in_the_window_has_the_next_messages_footer",
+        footers::a_removal_in_the_window_has_the_next_messages_footer as fn(),
     ),
 ];
 

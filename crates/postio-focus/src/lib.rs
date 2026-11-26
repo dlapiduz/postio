@@ -13,6 +13,7 @@ use postio_model::{AccountId, ListScope, MailboxId, MailboxRole, MessageId, Thre
 use postio_ui::focus_list::FocusRow;
 
 mod bar;
+mod calendar;
 mod capture;
 mod compose;
 mod confirm;
@@ -24,6 +25,7 @@ mod contacts_settings;
 mod cursor;
 mod digest;
 mod dropdown;
+mod event_editor;
 mod feed;
 mod filtered;
 mod footer;
@@ -34,6 +36,7 @@ mod pickers;
 mod results;
 mod source;
 mod states;
+mod surface_host;
 mod surfaces;
 mod thread_expand;
 mod thread_menu;
@@ -41,6 +44,7 @@ mod verbs;
 mod walk;
 
 pub use bar::{BarLine, BarLineKind, BarMode, BarView, PlacesRead};
+pub use calendar::{AGENDA_PAGE, CalendarView, Placement};
 pub use capture::{CaptureProject, CaptureView};
 pub use compose::{AUTOSAVE, ComposerKind};
 pub use confirm::Confirm;
@@ -74,6 +78,7 @@ pub use results::{
 };
 pub use source::{Over, SourceVerb};
 pub use states::{AccountsRead, BannerButton, BannerView};
+pub use surface_host::Window;
 pub use surfaces::{Host, ReaderVerb, Route, SurfaceKind};
 pub use thread_menu::OutlineInput;
 pub use verbs::{Aimed, Everything, ToastKind};
@@ -154,13 +159,11 @@ pub enum Input {
         text: String,
     },
     BarRun(u64),
-    /// Nothing comes back when there is no chip to step into.
     BarTab,
     SearchHighlighted(u64),
     SearchForget(u64),
     SearchExclude(u64),
     SearchEdit(TermEdit),
-    /// A toggle button's kind opens nothing.
     SearchPopover(postio_ui::search_view::FilterKind),
     PopoverToggle {
         token: u64,
@@ -175,7 +178,6 @@ pub enum Input {
     ResultsTab(postio_search::results::ResultsTab),
     ResultsOrder(postio_search::results::ConversationOrder),
     ResultsPoint(u64),
-    /// The copy it was handed can go too.
     FileCopyDone,
     OpenPlace(u64),
     /// While it is up, changing mail has its places read again so the counts follow (#2153).
@@ -215,6 +217,9 @@ pub enum Input {
     DigestReference(u32),
     /// A no is nothing: the question is forgotten when the next is asked.
     Confirmed(u64),
+    EditRule {
+        name: String,
+    },
     RuleQuery {
         text: String,
     },
@@ -236,6 +241,14 @@ pub enum Input {
     ContactsTab(postio_model::ContactTab),
     ContactsFilterTyped(String),
     ContactsPoint(u32),
+    CalendarPoint(usize),
+    WindowFocused(Window),
+    CalendarFilterTyped(String),
+    EventEditorTyped {
+        field: postio_ui::calendar::editor::EditorField,
+        text: String,
+    },
+    EventEditorScope(postio_model::calendar::EditScope),
     ContactSplit(String),
     ContactMergeKeep(u32),
     ContactEditChange(contact_edit::EditChange),
@@ -339,7 +352,6 @@ pub enum Intent {
         kind: ToastKind,
     },
     ReplaceSource {
-        /// How many rows the new place draws.
         total: u32,
     },
     PagePending {
@@ -368,7 +380,6 @@ pub enum Intent {
         total: u32,
         host: Host,
     },
-    /// The row is named by its delivery, negated, as `RowFacts::id` names it.
     OpenDigest {
         row: MessageId,
     },
@@ -433,6 +444,10 @@ pub enum Intent {
     OpenPicker(PickerView),
     PickerRows(PickerView),
     PickerField,
+    /// The remind picker opened for the draft chose this time; nothing was sent.
+    DraftReminder {
+        at: chrono::DateTime<chrono::Utc>,
+    },
     Banner(Option<BannerView>),
     SyncLabel(postio_ui::focus_state::SyncLabel),
     Empty(Option<postio_ui::focus_state::EmptyInbox>),
@@ -464,6 +479,10 @@ pub enum Intent {
     OutlineFocusFilter,
     WriteTo(String),
     Contacts(Box<contacts::ContactsView>),
+    Calendar(Box<calendar::CalendarView>),
+    CalendarWindow(bool),
+    PresentWindow(Window),
+    CalendarFocusFilter,
     ContactsRows {
         first: u32,
         count: u32,
@@ -474,14 +493,11 @@ pub enum Intent {
     ContactEdit(Option<Box<postio_ui::contact_edit::EditView>>),
     ContactsSettings(Box<postio_ui::contacts_settings::SuggestionsView>),
     ContactsFocusFilter,
-    /// Keys `1` `2` `3` are `Context::ForwardChooser`'s while it holds the keyboard.
     ForwardChooser(Box<postio_ui::compose::ChooserView>),
     OlderReply(Option<Box<postio_ui::compose::OlderReplyView>>),
     NewerMessages(Option<Vec<MessageId>>),
     QuotedExpanded(bool),
-    /// Answer with `Input::ComposerDraft`.
     ComposerDraftWanted(DraftEdit),
-    /// What was typed above the quote is in it already.
     ComposerDraft(Box<postio_model::Draft>),
 }
 
@@ -637,7 +653,6 @@ pub enum Request {
         stamp: u64,
     },
     SweepPreview,
-    /// What a digest's delivery holds, and -- with `summary` -- its summary.
     DigestRead {
         delivery: postio_model::DeliveryId,
         summary: bool,
@@ -674,6 +689,21 @@ pub enum Request {
         stamp: u64,
     },
     ContactsOverview,
+    AgendaPage {
+        anchor: postio_model::calendar::AgendaAnchor,
+        limit: u32,
+        stamp: u64,
+        placement: Placement,
+    },
+    EventDetail {
+        cursor: postio_model::calendar::AgendaCursor,
+        stamp: u64,
+    },
+    EventSearch {
+        text: String,
+        limit: u32,
+        stamp: u64,
+    },
     ContactsPage {
         tab: postio_model::ContactTab,
         after: Option<(String, postio_model::ContactId)>,
@@ -720,12 +750,10 @@ pub enum Request {
 }
 
 impl Request {
-    /// `None` for any request but the passages ones.
     pub fn first_line(&self) -> Option<postio_search::passage::FirstLine> {
         match self {
-            // Neither the dropdown's hits (screen 03) nor the results' rows
-            // (design §3.4) show a preview: a match after the first line,
-            // or the first line's own when it holds the only one.
+            // Neither the dropdown's hits nor the results' rows show a preview: a match after the
+            // first line, or the first line's own when it holds the only one.
             Request::Passages { .. } | Request::ResultsPassages { .. } => {
                 Some(postio_search::passage::FirstLine::Avoided)
             }
@@ -796,7 +824,6 @@ pub enum Reply {
     },
     AttachmentCopy {
         stamp: u64,
-        /// What the copy was for.
         purpose: FilePurpose,
         answer: Result<Option<std::path::PathBuf>, String>,
     },
@@ -828,7 +855,6 @@ pub enum Reply {
         answer: Result<Box<postio_search::results::ConversationResults>, String>,
     },
     ThreadRead {
-        /// The thread asked for.
         thread: ThreadId,
         view: Result<Option<ThreadView>, String>,
     },
@@ -887,6 +913,19 @@ pub enum Reply {
         answer: Result<(), String>,
     },
     ContactsOverview(Result<postio_model::ContactsOverview, String>),
+    AgendaPage {
+        stamp: u64,
+        placement: Placement,
+        answer: Result<Vec<postio_model::calendar::AgendaEntry>, String>,
+    },
+    EventDetail {
+        stamp: u64,
+        answer: Result<Option<Box<postio_model::calendar::EventDetail>>, String>,
+    },
+    EventSearch {
+        stamp: u64,
+        answer: Result<(Vec<postio_model::calendar::AgendaEntry>, Vec<String>), String>,
+    },
     ContactsPage {
         stamp: u64,
         page: u32,
@@ -897,7 +936,6 @@ pub enum Reply {
         answer: Result<Vec<postio_model::ContactListRow>, String>,
     },
     ContactPosition {
-        /// Who was asked about.
         person: postio_model::ContactId,
         at: Option<u32>,
     },
@@ -907,29 +945,24 @@ pub enum Reply {
     ContactSeen(Vec<postio_model::SeenItem>),
     ContactSuggestions(Result<postio_model::ContactSuggestions, String>),
     ContactCard {
-        /// The stamp it was asked under.
         stamp: u64,
         answer: Result<Option<Box<postio_model::ContactCardRead>>, String>,
     },
-    /// The answer to [`Request::ContactGlance`]: the person, or `None` for an
-    /// address the store never saw.
+    /// The person, or `None` for an address the store never saw.
     ContactGlance {
         stamp: u64,
         glance: Result<Option<Box<postio_model::ContactGlance>>, String>,
     },
     FoundMessage {
-        /// The message asked about.
         message: MessageId,
         row: Option<postio_model::listing::MessageSummary>,
     },
     ThreadOf {
-        /// The message asked about.
         message: MessageId,
         thread: Option<ThreadId>,
     },
     DraftBehind {
         message: MessageId,
-        /// The send verb that asked.
         command: CommandId,
         draft: Option<postio_model::DraftId>,
     },
@@ -961,6 +994,8 @@ pub struct FocusController {
     contact_popover: Option<contact_popover::ContactPopover>,
     contacts: Option<contacts::Contacts>,
     source: Option<source::Source>,
+    calendar: Option<calendar::Calendar>,
+    focused: Window,
     contacts_settings: Option<contacts_settings::Settings>,
     import_found: Vec<postio_model::ContactId>,
     import_cursor: Option<postio_model::ContactId>,
@@ -1007,6 +1042,8 @@ impl FocusController {
             contact_popover: None,
             contacts: None,
             source: None,
+            calendar: None,
+            focused: Window::Main,
             contacts_settings: None,
             import_found: Vec::new(),
             import_cursor: None,
@@ -1037,8 +1074,6 @@ impl FocusController {
     }
 
     pub fn handle_on(&mut self, input: Input, rows: &dyn Rows) -> Vec<Effect> {
-        // A message a hit opened, closed however it was: the bar comes back
-        // on its words.
         let reading = self.surfaces.has(SurfaceKind::Message);
         let raw = rows;
         let through = self.through(raw);
@@ -1108,6 +1143,24 @@ impl FocusController {
         }
         match input {
             Input::Command(CommandId::Quit) => vec![Effect::Show(Intent::Quit)],
+            Input::Command(CommandId::CloseWindow) => {
+                let steps = self.close_window(rows);
+                self.effects(steps)
+            }
+            Input::Command(id) if self.focused == Window::Calendar && self.calendar_popped() => {
+                let steps = self.calendar_window_command(id, rows);
+                self.effects(steps)
+            }
+            Input::Command(CommandId::GoToCalendar) if self.calendar_popped() => {
+                self.focused = Window::Calendar;
+                vec![Effect::Show(Intent::PresentWindow(Window::Calendar))]
+            }
+            Input::Command(CommandId::PopOut)
+                if self.surfaces.top() == Some(SurfaceKind::Calendar) =>
+            {
+                let steps = self.pop_out();
+                self.effects(steps)
+            }
             Input::Command(id @ (CommandId::HistoryBack | CommandId::HistoryForward))
                 if self.surfaces.top().is_none() =>
             {
@@ -1178,7 +1231,8 @@ impl FocusController {
                 self.effects(steps)
             }
             Input::Post(command) => {
-                let steps = self.verbs.post(command);
+                let mut steps: Vec<_> = self.step_past_posted(&command, rows).into_iter().collect();
+                steps.extend(self.verbs.post(command));
                 self.effects(steps)
             }
             Input::ArchiveDigest(delivery) => {
@@ -1224,6 +1278,9 @@ impl FocusController {
                 | Reply::Captured { .. }
                 | Reply::ContactGlance { .. }
                 | Reply::ContactsOverview(_)
+                | Reply::AgendaPage { .. }
+                | Reply::EventDetail { .. }
+                | Reply::EventSearch { .. }
                 | Reply::ContactsPage { .. }
                 | Reply::ContactsFiltered { .. }
                 | Reply::ContactCard { .. }
@@ -1327,6 +1384,7 @@ impl FocusController {
                 steps.extend(self.hear_sync(&event));
                 steps.extend(self.filtered_event(&event));
                 steps.extend(self.contacts_heard(&event));
+                steps.extend(self.calendar_heard(&event));
                 steps.extend(self.contact_popover_heard(&event));
                 self.rereading(&steps, rows);
                 self.effects(steps)
@@ -1404,6 +1462,10 @@ impl FocusController {
                 let steps = self.confirmed(token);
                 self.effects(steps)
             }
+            Input::EditRule { name } => {
+                let steps = self.edit_rule(&name);
+                self.effects(steps)
+            }
             input @ (Input::RuleQuery { .. }
             | Input::RuleMatchInstead
             | Input::RuleLikeThis
@@ -1457,6 +1519,26 @@ impl FocusController {
             }
             Input::ContactsFilterTyped(text) => {
                 let steps = self.contacts_filter_typed(text);
+                self.effects(steps)
+            }
+            Input::CalendarFilterTyped(text) => {
+                let steps = self.calendar_filter_typed(text);
+                self.effects(steps)
+            }
+            Input::EventEditorTyped { field, text } => {
+                let steps = self.editor_typed(field, text);
+                self.effects(steps)
+            }
+            Input::EventEditorScope(scope) => {
+                let steps = self.editor_scope(scope);
+                self.effects(steps)
+            }
+            Input::WindowFocused(window) => {
+                self.focused = window;
+                Vec::new()
+            }
+            Input::CalendarPoint(row) => {
+                let steps = self.calendar_point(row);
                 self.effects(steps)
             }
             Input::ContactsPoint(index) => {
@@ -1548,6 +1630,11 @@ impl FocusController {
         }
     }
 
+    pub fn open_draft_reminder(&mut self, target: &str) -> Vec<Effect> {
+        let steps = self.picker_for_draft(target.to_owned());
+        self.effects(steps)
+    }
+
     pub fn places(&self, filter: &str) -> Vec<(u64, postio_ui::places::Entry)> {
         self.listed_places(filter)
     }
@@ -1578,6 +1665,10 @@ impl FocusController {
         }
         steps.extend(self.show_empty());
         let mut effects = self.effects(steps);
+        if self.surfaces.has(SurfaceKind::Message) {
+            let steps = self.walk_after(&effects, rows);
+            effects.extend(self.effects(steps));
+        }
         // A landing that did not move the cursor may still be the first with its row read, so the
         // footer is said again from where it is, unless a message window owns it.
         let footer = self
@@ -1611,7 +1702,14 @@ impl FocusController {
         self.surfaces.route(id)
     }
 
+    pub fn focused_window(&self) -> Window {
+        self.focused
+    }
+
     pub fn key_context(&self) -> postio_ui::keymap::KeyContext {
+        if self.focused == Window::Calendar && self.calendar_popped() {
+            return postio_ui::keymap::KeyContext::CalendarWindow;
+        }
         if self.surfaces.top().is_none() && self.results.is_some() {
             return postio_ui::keymap::KeyContext::Results;
         }
@@ -1639,6 +1737,23 @@ impl FocusController {
                 threads: Vec::new(),
                 writes: false,
             })
+    }
+
+    fn step_past_posted(&mut self, command: &Command, rows: &dyn Rows) -> Option<feed::Step> {
+        let (Command::Archive {
+            target: MessageTarget::Messages(ids),
+        }
+        | Command::Delete {
+            target: MessageTarget::Messages(ids),
+        }) = command
+        else {
+            return None;
+        };
+        let reading = self.surfaces.reading()?;
+        let at = rows
+            .position_of(reading)
+            .filter(|_| ids.contains(&reading))?;
+        Some(self.surfaces.step_past(at, reading))
     }
 
     fn leaves_the_list(&self, id: CommandId) -> bool {
@@ -1692,6 +1807,7 @@ impl FocusController {
                 return self.thread_list_command(id, rows);
             }
             CommandId::ContactPopover => return self.open_contact_popover(None, rows),
+            CommandId::GoToCalendar => return self.open_calendar(),
             CommandId::OpenContacts => {
                 let mut steps = self.open_contacts();
                 steps.extend(self.contacts_go_to_import());
@@ -1705,8 +1821,6 @@ impl FocusController {
             }
             _ => {}
         }
-        // A message open that is on no cursor row (a search hit, a digest's email) is what a verb
-        // is about.
         if let Some(shown) = self.shown_apart(rows) {
             if pickers::opens_picker(id) {
                 return self.picker_on_message(id, shown, rows).unwrap_or_default();
@@ -1759,8 +1873,6 @@ impl FocusController {
         }
     }
 
-    /// The whole-thread aim, which is what the thread verbs reach; a message verb on a row is aimed
-    /// by its own command.
     pub fn aim(&self, rows: &dyn Rows) -> Aimed {
         self.aim_for(rows, CommandId::Archive)
     }
@@ -1795,8 +1907,6 @@ impl FocusController {
     }
 
     fn surface_command(&mut self, id: CommandId, rows: &dyn Rows) -> Option<Vec<feed::Step>> {
-        // Back on the bar takes it off the stack here rather than waiting for the frontend's
-        // `SurfaceClosed`.
         if self.surfaces.top() == Some(SurfaceKind::Bar) && id == CommandId::Back {
             return Some(self.dismiss_bar(false));
         }
@@ -1806,8 +1916,6 @@ impl FocusController {
         if let Some(steps) = self.compose_verb(id, rows) {
             return Some(steps);
         }
-        // The controller's own surfaces; one a frontend opened itself, with
-        // nothing held for it here, closes by the general rule below.
         match self.surfaces.top() {
             Some(SurfaceKind::Filtered) if self.filtered.is_some() => {
                 return self.filtered_command(id, rows);
@@ -1823,6 +1931,9 @@ impl FocusController {
             }
             Some(SurfaceKind::Contacts) if self.contacts.is_some() => {
                 return self.contacts_command(id, rows);
+            }
+            Some(SurfaceKind::Calendar) if self.calendar.is_some() => {
+                return self.calendar_command(id, rows);
             }
             Some(SurfaceKind::ThreadMenu | SurfaceKind::Outline) => {
                 return self.thread_surface_command(id, rows);
@@ -1899,8 +2010,6 @@ impl FocusController {
                     .and_then(|at| rows.facts(at))
                     .or_else(|| self.hit_facts(reading))?;
                 let mut steps = self.verbs.command_on(id, &row)?;
-                // The message goes away, and the one that takes its place shows once the list lets
-                // it go.
                 if self.leaves_the_list(id)
                     && let Some(at) = position
                 {
@@ -1938,6 +2047,9 @@ impl FocusController {
     }
 
     pub fn answers(&self, id: CommandId) -> bool {
+        if self.focused == Window::Calendar && self.calendar_popped() {
+            return true;
+        }
         if self.surfaces.top() == Some(SurfaceKind::Bar) && bar::bar_key(id) {
             return true;
         }
@@ -1948,8 +2060,7 @@ impl FocusController {
             if self.results.is_some() && results::results_key(id) {
                 return true;
             }
-            // ⌘⌫ clears the filters while nothing matches (D24), and is
-            // nobody's otherwise.
+            // ⌘⌫ clears the filters while nothing matches, and is nobody's otherwise.
             if id == CommandId::BackToWords
                 && self
                     .results
@@ -1971,6 +2082,7 @@ impl FocusController {
             Some(SurfaceKind::Capture) => Self::capture_answers(id),
             Some(SurfaceKind::ContactPopover) => Self::contact_popover_answers(id),
             Some(SurfaceKind::Contacts) => Self::contacts_answers(id),
+            Some(SurfaceKind::Calendar) => Self::calendar_answers(id),
             Some(SurfaceKind::ThreadMenu | SurfaceKind::Outline) => {
                 Self::thread_surface_answers(id)
             }
@@ -1996,6 +2108,7 @@ impl FocusController {
                 | CommandId::ToggleHasAction
                 | CommandId::Back
                 | CommandId::AcceptInvite
+                | CommandId::TentativeInvite
                 | CommandId::DeclineInvite
                 | CommandId::DismissMarker
                 | CommandId::OpenMessage
@@ -2013,6 +2126,7 @@ impl FocusController {
                 | CommandId::MoveThisMessage
                 | CommandId::DeleteThisMessage
                 | CommandId::OpenContacts
+                | CommandId::GoToCalendar
                 | CommandId::ContactsSuggestions
         ) || bar::goes(id)
             || compose::compose_key(id)
@@ -2040,7 +2154,6 @@ impl FocusController {
         self.cursor.has_action()
     }
 
-    /// The controller notes where it is, so the next `j` walks on from there, and draws nothing.
     pub fn cursor_is(&mut self, position: Option<u32>) {
         self.cursor.moved_to(position);
     }
@@ -2164,7 +2277,6 @@ impl FocusController {
         Effect::Ask(self.ticket(), Request::FocusCounts)
     }
 
-    /// Called when what they were for is gone: a place left or a list replaced.
     pub fn invalidate(&mut self) {
         self.generation += 1;
         self.pending = None;
@@ -2241,6 +2353,9 @@ impl FocusController {
         if !self.surfaces.has(SurfaceKind::Source) {
             self.source = None;
         }
+        if !self.surfaces.has(SurfaceKind::Calendar) && !self.calendar_popped() {
+            self.calendar = None;
+        }
         self.forget_thread_surfaces();
     }
 
@@ -2264,6 +2379,9 @@ impl FocusController {
             | Reply::ContactPosition { .. }
             | Reply::ContactMergeOf(_)
             | Reply::ContactSeen(_)) => self.contacts_reply(reply),
+            reply @ (Reply::AgendaPage { .. }
+            | Reply::EventDetail { .. }
+            | Reply::EventSearch { .. }) => self.calendar_reply(reply),
             Reply::ContactSuggestions(answer) => self.contacts_suggestions_read(answer),
             Reply::FoundMessage { message, row } => self.link_found(message, row, rows),
             Reply::ThreadOf { message, thread } => self.walk_followed(message, thread),
@@ -2326,6 +2444,16 @@ impl FocusController {
         window.facts(window.index_of(reading)?)
     }
 
+    pub(crate) fn elsewhere_said(&self, reading: MessageId) -> Option<(String, String)> {
+        if let Some(filtered) = &self.filtered
+            && let Some(at) = filtered.index_of(reading)
+        {
+            return filtered.said(at);
+        }
+        let window = self.digest.as_ref()?;
+        window.said(window.index_of(reading)?)
+    }
+
     pub(crate) fn stamp(&mut self) -> u64 {
         self.stamps += 1;
         self.stamps
@@ -2338,6 +2466,17 @@ impl FocusController {
             generation: self.generation,
         }
     }
+}
+
+pub(crate) fn said_of(message: &postio_model::listing::MessageSummary) -> (String, String) {
+    (
+        message
+            .from
+            .as_ref()
+            .map(|from| from.display().to_owned())
+            .unwrap_or_default(),
+        message.subject.clone().unwrap_or_default(),
+    )
 }
 
 #[cfg(test)]

@@ -396,6 +396,8 @@ pub enum KeyContext {
     Outline,
     ForwardChooser,
     Source,
+    Calendar,
+    CalendarWindow,
 }
 
 impl KeyContext {
@@ -441,6 +443,8 @@ impl KeyContext {
             Self::Outline => &[Self::Outline, Self::Global],
             Self::ForwardChooser => &[Self::ForwardChooser, Self::Composer, Self::Global],
             Self::Source => &[Self::Source, Self::Global],
+            Self::Calendar => &[Self::Calendar, Self::Global],
+            Self::CalendarWindow => &[Self::CalendarWindow, Self::Global],
         }
     }
 }
@@ -470,6 +474,8 @@ impl From<Context> for KeyContext {
             Context::Outline => Self::Outline,
             Context::ForwardChooser => Self::ForwardChooser,
             Context::Source => Self::Source,
+            Context::Calendar => Self::Calendar,
+            Context::CalendarWindow => Self::CalendarWindow,
         }
     }
 }

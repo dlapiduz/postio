@@ -166,6 +166,17 @@ pub enum Req {
     },
     ContactsOverview,
     ContactCard(postio_model::ContactId),
+    AgendaPage {
+        anchor: postio_model::calendar::AgendaAnchor,
+        limit: u32,
+    },
+    EventDetail(postio_model::calendar::AgendaCursor),
+    CalendarWindow,
+    SetCalendarWindow(postio_model::calendar::CalendarWindowState),
+    EventSearch {
+        text: String,
+        limit: u32,
+    },
     ContactGroups,
     /// A dry run: writes nothing anywhere.
     ContactsSyncPlan {
@@ -516,6 +527,13 @@ pub enum Resp {
     ContactFor(Option<Box<postio_model::Contact>>),
     ContactGlance(Option<Box<postio_model::ContactGlance>>),
     ContactsPage(postio_model::ContactsPageRead),
+    AgendaPage(Vec<postio_model::calendar::AgendaEntry>),
+    EventDetail(Option<Box<postio_model::calendar::EventDetail>>),
+    CalendarWindow(postio_model::calendar::CalendarWindowState),
+    EventSearch {
+        entries: Vec<postio_model::calendar::AgendaEntry>,
+        ignored: Vec<String>,
+    },
     ContactsFiltered(Vec<postio_model::ContactListRow>),
     ContactsOverview(postio_model::ContactsOverview),
     ContactCard(Option<Box<postio_model::ContactCardRead>>),
