@@ -852,12 +852,20 @@ impl FocusController {
             },
             Run::Action(BarAction::Go { destination, name }) => {
                 let mut steps = self.dismiss_bar(false);
+                steps.extend(self.leave_calendar());
                 steps.extend(self.go_to(destination, &name, rows));
                 steps
             }
             Run::Action(BarAction::Command(id)) => {
                 let aim = self.bar.aim;
                 let mut steps = self.dismiss_bar(false);
+                if self.surfaces.top() == Some(SurfaceKind::Calendar) {
+                    if Self::calendar_answers(id) {
+                        steps.extend(self.calendar_command(id, rows).unwrap_or_default());
+                        return steps;
+                    }
+                    steps.extend(self.leave_calendar());
+                }
                 if let Some(aim) = aim
                     && self.cursor.row(rows).map(|row| row.id) != Some(aim)
                     && let Some(at) = rows.position_of(aim)
@@ -888,6 +896,7 @@ impl FocusController {
             .collect();
         let typed = self.bar.typed.clone();
         let mut steps = self.dismiss_bar(true);
+        steps.extend(self.leave_calendar());
         self.bar.found = found;
         self.bar.held = Some((typed, message));
         steps.extend(self.show_hit(message));

@@ -128,6 +128,14 @@ impl Feed {
         self.inner.focus.borrow().result_person(position)
     }
 
+    pub fn result_event(&self, position: u64) -> Option<postio_focus::EventRow> {
+        self.inner.focus.borrow().result_event(position)
+    }
+
+    pub fn in_results(&self) -> bool {
+        self.inner.focus.borrow().in_results()
+    }
+
     /// `None` past the last, or before the cards are read.
     pub fn result_file(&self, position: u64) -> Option<postio_focus::FileCard> {
         self.inner.focus.borrow().result_file(position)

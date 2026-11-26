@@ -217,6 +217,14 @@ fn line_of(app: &App, position: u64) -> (String, String, bool) {
             ),
             None => ("…".to_owned(), String::new(), false),
         },
+        ResultsTab::Events => match app.result_event(position) {
+            Some(event) => (
+                postio_ui::terminal::SafeText::new(&event.title).to_string(),
+                postio_ui::terminal::SafeText::new(&event.when).to_string(),
+                false,
+            ),
+            None => ("…".to_owned(), String::new(), false),
+        },
     }
 }
 

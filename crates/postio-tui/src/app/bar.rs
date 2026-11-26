@@ -133,6 +133,10 @@ impl App {
         self.ctl.result_person(position)
     }
 
+    pub fn result_event(&self, position: u64) -> Option<postio_focus::EventRow> {
+        self.ctl.result_event(position)
+    }
+
     fn result_room(&self) -> u64 {
         let list = self.window().list;
         u64::from(list.height.saturating_sub(crate::view::results::HEADER + 1)).max(1)

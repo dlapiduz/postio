@@ -115,7 +115,7 @@ pub fn g_e_opens_agenda_on_the_next_event_and_return_and_escape_walk_back_home()
     });
 }
 
-pub fn slash_searches_events_and_escape_brings_the_agenda_back() {
+pub fn slash_in_calendar_finds_an_event_and_return_opens_it_there() {
     crate::gtk_case(async {
         let fixture = Fixture::empty().await;
         fixture
@@ -128,11 +128,11 @@ pub fn slash_searches_events_and_escape_brings_the_agenda_back() {
                 .await
                 .expect("index");
             let calendars = CalendarRepository::new(&connection);
-            for (n, title) in [
-                (0, "Earlier"),
-                (1, "Next up"),
-                (2, "After that"),
-                (3, "Tomorrow's"),
+            for (n, title, location) in [
+                (0, "Earlier", ""),
+                (1, "Next up", ""),
+                (2, "After that", "Harbour room"),
+                (3, "Tomorrow's", ""),
             ] {
                 let found = calendars
                     .agenda(
@@ -147,6 +147,7 @@ pub fn slash_searches_events_and_escape_brings_the_agenda_back() {
                     event,
                     &postio_index::events::EventDocument {
                         title: title.to_owned(),
+                        location: location.to_owned(),
                         ..Default::default()
                     },
                 )
@@ -163,30 +164,41 @@ pub fn slash_searches_events_and_escape_brings_the_agenda_back() {
                 .is_some())
             .await
         );
-        let view = window.calendar().expect("the agenda");
 
-        support::keys(&window, &["slash"]);
+        support::press(&window, "slash", gtk::gdk::ModifierType::empty());
+        let bar = window.bar().expect("/ opens the command bar over Calendar");
+        assert!(bar.is_open());
+        for typed in ["h", "ha", "har", "harb", "harbour"] {
+            bar.set_text(typed);
+            crate::settle();
+        }
+        support::press(&window, "Return", gtk::gdk::ModifierType::CONTROL_MASK);
         assert!(
-            crate::settle_until(
-                async || view.filter().has_focus() || view.filter().focus_child().is_some()
-            )
+            crate::settle_until(async || window.results().is_some_and(|results| {
+                results.showing_events() && results.events().titles() == ["After that"]
+            }))
             .await,
-            "/ puts the keyboard in the search field"
+            "the results show the matching event: {:?}",
+            window
+                .results()
+                .map(|results| (results.showing_events(), results.events().titles()))
         );
-        view.filter().set_text("after");
+
+        support::keys(&window, &["Return"]);
         assert!(
-            crate::settle_until(async || view
-                .ringed()
-                .is_some_and(|row| row.title == "After that"))
+            crate::settle_until(async || window
+                .calendar()
+                .and_then(|view| view.open_event())
+                .is_some_and(|open| open.notes == "Notes for After that"))
             .await,
-            "typing narrows Agenda to the matching event"
+            "Return opens the event in Calendar"
         );
 
         support::keys(&window, &["Escape"]);
+        support::keys(&window, &["Escape"]);
         assert!(
-            crate::settle_until(async || view.ringed().is_some_and(|row| row.title == "Next up"))
-                .await,
-            "Escape clears the words and the agenda is back"
+            crate::settle_until(async || window.results().is_some()).await,
+            "Escape climbs back to the results it was found in"
         );
     });
 }

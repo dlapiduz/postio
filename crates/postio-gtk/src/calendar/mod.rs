@@ -26,16 +26,12 @@ pub struct AgendaView {
     selection: gtk::SingleSelection,
     list: gtk::ListView,
     empty: gtk::Label,
-    filter: gtk::Entry,
-    hint: gtk::Label,
-    typing_echo: Cell<bool>,
     footer: crate::scope_footer::ScopeFooter,
     card: gtk::Box,
     editor: Rc<editor::EventEditor>,
     rows: RefCell<Vec<AgendaRow>>,
     open: RefCell<Option<EventView>>,
     open_keys: RefCell<Vec<postio_ui::hints::Hint>>,
-    search_key: gtk::Box,
     cursor: Cell<Option<usize>>,
     placing: Cell<bool>,
     me: RefCell<Weak<AgendaView>>,
@@ -53,23 +49,6 @@ impl AgendaView {
             label.set_valign(gtk::Align::Center);
             strip.append(label);
         }
-        let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        spacer.set_hexpand(true);
-        strip.append(&spacer);
-        let filter = gtk::Entry::new();
-        filter.add_css_class("focus-contacts-filter");
-        filter.set_primary_icon_name(Some("system-search-symbolic"));
-        filter.set_placeholder_text(Some("Search events"));
-        filter.set_width_chars(22);
-        filter.set_valign(gtk::Align::Center);
-        strip.append(&filter);
-        let search_key = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        search_key.set_valign(gtk::Align::Center);
-        strip.append(&search_key);
-        let hint = gtk::Label::new(None);
-        hint.add_css_class("dim-label");
-        hint.set_xalign(0.0);
-        hint.set_visible(false);
 
         let model = PositionList::default();
         let selection = gtk::SingleSelection::new(Some(model.clone()));
@@ -96,7 +75,6 @@ impl AgendaView {
 
         let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
         body.append(&strip);
-        body.append(&hint);
         body.append(&scrolled);
         body.append(&empty);
         body.append(footer.widget());
@@ -147,16 +125,12 @@ impl AgendaView {
             selection,
             list,
             empty,
-            filter,
-            hint,
-            typing_echo: Cell::new(false),
             footer,
             card,
             editor,
             rows: RefCell::new(Vec::new()),
             open: RefCell::new(None),
             open_keys: RefCell::new(Vec::new()),
-            search_key,
             cursor: Cell::new(None),
             placing: Cell::new(false),
             me: RefCell::new(Weak::new()),
@@ -207,26 +181,6 @@ impl AgendaView {
                 }
             }
         });
-        self.filter.connect_changed({
-            let weak = weak.clone();
-            move |entry| {
-                let Some(view) = weak.upgrade() else {
-                    return;
-                };
-                if !view.typing_echo.get() {
-                    view.feed
-                        .input(Input::CalendarFilterTyped(entry.text().to_string()));
-                }
-            }
-        });
-        self.filter.connect_activate({
-            let weak = weak.clone();
-            move |_| {
-                if let Some(view) = weak.upgrade() {
-                    view.list.grab_focus();
-                }
-            }
-        });
         self.list.connect_activate({
             let weak = weak.clone();
             move |_, _| {
@@ -251,15 +205,6 @@ impl AgendaView {
             self.list
                 .scroll_to(at as u32, gtk::ListScrollFlags::FOCUS, None);
         }
-    }
-
-    pub fn focus_filter(&self) {
-        self.filter.grab_focus();
-        self.filter.set_position(-1);
-    }
-
-    pub fn filter(&self) -> &gtk::Entry {
-        &self.filter
     }
 
     pub fn cursor(&self) -> Option<usize> {
@@ -307,21 +252,6 @@ impl AgendaView {
             note: None,
         });
         self.open_keys.replace(view.open_keys.clone());
-        while let Some(child) = self.search_key.first_child() {
-            self.search_key.remove(&child);
-        }
-        if let Some(key) = &view.search_key {
-            self.search_key
-                .append(&postio_widgets::widgets::keyhint::cap(key));
-        }
-        if self.filter.text().as_str() != view.filter {
-            self.typing_echo.set(true);
-            self.filter.set_text(&view.filter);
-            self.filter.set_position(-1);
-            self.typing_echo.set(false);
-        }
-        self.hint.set_visible(view.hint.is_some());
-        self.hint.set_text(view.hint.as_deref().unwrap_or_default());
         self.cursor.set(view.cursor);
         self.placing.set(true);
         match view.cursor {

@@ -191,6 +191,7 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         | C::ResultsConversations
         | C::ResultsFiles
         | C::ResultsPeople
+        | C::ResultsEvents
         | C::StepRangeBack
         | C::StepRangeForward
         | C::QuickLook

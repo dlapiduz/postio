@@ -22,7 +22,11 @@ use postio_ui::search_view::{self as words, FilterKind, ResultChild};
 use crate::dropdown::{self, Run};
 use crate::feed::Step;
 use crate::history::{Entry, Snapshot};
-use crate::{Effect, FocusController, Input, Intent, Reply, Request};
+use crate::{Effect, FocusController, Input, Intent, Reply, Request, SurfaceKind};
+
+mod events;
+
+pub use events::EventRow;
 
 const TOP_HITS: u32 = 3;
 pub(crate) const PAGE: u32 = 50;
@@ -519,6 +523,7 @@ pub(crate) struct Results {
     listed: Option<Vec<postio_search::suggest::Person>>,
     listed_asked: bool,
     person_cursor: Option<u64>,
+    events: events::Events,
     pub(crate) expansion: Option<ResultExpansion>,
     default_done: bool,
     pub(crate) opening: Option<crate::walk::ThreadMatches>,
@@ -571,6 +576,7 @@ impl Results {
             listed: None,
             listed_asked: false,
             person_cursor: None,
+            events: events::Events::default(),
             stale: false,
             expansion: None,
             default_done: false,
@@ -600,6 +606,7 @@ impl Results {
         steps.extend(self.ask_page(0));
         steps.extend(self.ask_files());
         steps.extend(self.ask_people());
+        steps.extend(self.ask_events());
         steps
     }
 
@@ -776,6 +783,7 @@ impl Results {
         self.files_asked = false;
         self.listed = None;
         self.listed_asked = false;
+        self.events.forget();
         self.default_done = false;
         self.stale = false;
         let mut steps = Vec::new();
@@ -929,6 +937,7 @@ impl Results {
             }
             (_, ResultsTab::Files) => self.files.as_ref().map_or(0, |files| files.len() as u64),
             (_, ResultsTab::People) => self.listed.as_ref().map_or(0, |people| people.len() as u64),
+            (_, ResultsTab::Events) => self.events.len(),
             _ => 0,
         }
     }
@@ -1357,6 +1366,7 @@ impl Results {
         match self.tab {
             ResultsTab::Files => &mut self.file_cursor,
             ResultsTab::People => &mut self.person_cursor,
+            ResultsTab::Events => &mut self.events.cursor,
             _ => &mut self.cursor,
         }
     }
@@ -1555,7 +1565,8 @@ impl Results {
             |files| files.len() as u64,
         );
         let on_files = self.tab == ResultsTab::Files;
-        let tabs = vec![
+        let on_events = self.tab == ResultsTab::Events;
+        let mut tabs = vec![
             tab(
                 ResultsTab::Conversations,
                 words::TABS[0],
@@ -1581,6 +1592,15 @@ impl Results {
                 CommandId::ResultsPeople,
             ),
         ];
+        if self.events.wanted {
+            tabs.push(tab(
+                ResultsTab::Events,
+                words::EVENTS_TAB,
+                self.events.len(),
+                self.events.capped(),
+                CommandId::ResultsEvents,
+            ));
+        }
         let months = self.month_bars();
         let today = with.now.date_naive();
         let range = self.range(today, false);
@@ -1608,31 +1628,41 @@ impl Results {
             } else {
                 self.order
             },
-            sortable: self.tab != ResultsTab::Files,
-            count_line: frame.map_or_else(String::new, |_| {
-                if on_files {
-                    words::files_count_line(files, capped)
-                } else {
-                    words::count_line(total, capped)
-                }
-            }),
-            sub_line: frame.map_or_else(String::new, |frame| {
-                let people = self
-                    .listed
-                    .as_ref()
-                    .map_or(frame.people, |people| people.len() as u64);
-                self.previewing(with).unwrap_or_else(|| {
-                    let name_of = |address: &str| self.name_of(address);
-                    words::narrowed_sub_line(
-                        &self.filters(),
-                        &name_of,
-                        today,
-                        files,
-                        people,
-                        frame.capped,
-                    )
+            sortable: !on_files && !on_events,
+            count_line: if on_events {
+                self.events.found.as_ref().map_or_else(String::new, |_| {
+                    words::events_count_line(self.events.len(), self.events.capped())
                 })
-            }),
+            } else {
+                frame.map_or_else(String::new, |_| {
+                    if on_files {
+                        words::files_count_line(files, capped)
+                    } else {
+                        words::count_line(total, capped)
+                    }
+                })
+            },
+            sub_line: if on_events {
+                postio_ui::calendar::ignored_hint(&self.events.ignored).unwrap_or_default()
+            } else {
+                frame.map_or_else(String::new, |frame| {
+                    let people = self
+                        .listed
+                        .as_ref()
+                        .map_or(frame.people, |people| people.len() as u64);
+                    self.previewing(with).unwrap_or_else(|| {
+                        let name_of = |address: &str| self.name_of(address);
+                        words::narrowed_sub_line(
+                            &self.filters(),
+                            &name_of,
+                            today,
+                            files,
+                            people,
+                            frame.capped,
+                        )
+                    })
+                })
+            },
             months,
             timeline_hint: range
                 .as_deref()
@@ -1645,9 +1675,12 @@ impl Results {
             cursor: match self.tab {
                 ResultsTab::Files => self.file_cursor,
                 ResultsTab::People => self.person_cursor,
+                ResultsTab::Events => self.events.cursor,
                 _ => self.cursor.filter(|_| self.ready()),
             },
-            hints: if self.found_nothing() {
+            hints: if on_events {
+                words::events_hints(with.keymap)
+            } else if self.found_nothing() {
                 words::no_results_hints(with.keymap, self.ways_out().len())
             } else if self.tab == ResultsTab::Files {
                 words::files_hints(with.keymap)
@@ -2645,10 +2678,16 @@ impl FocusController {
         let query = spelled(&parsed);
         let order = Results::default_order(&parsed);
         let remembered = self.bar.remember();
+        let from_calendar = self.policy.caps.calendar && self.surfaces.has(SurfaceKind::Calendar);
         let mut steps = self.dismiss_bar(true);
+        steps.extend(self.leave_calendar());
         steps.extend(self.open_results(Snapshot {
             query,
-            tab: ResultsTab::Conversations,
+            tab: if from_calendar {
+                ResultsTab::Events
+            } else {
+                ResultsTab::Conversations
+            },
             order,
             cursor: None,
             checked: Vec::new(),
@@ -2674,6 +2713,7 @@ impl FocusController {
         results.cursor = snapshot.cursor;
         results.checked = snapshot.checked;
         results.all = snapshot.all;
+        results.events.wanted = self.policy.caps.calendar;
         let asks = results.asks();
         self.results = Some(results);
         steps.extend(self.draw_results());
@@ -2721,6 +2761,9 @@ impl FocusController {
             return Some(steps);
         }
         if let Some(steps) = self.people_command(id) {
+            return Some(steps);
+        }
+        if let Some(steps) = self.events_command(id) {
             return Some(steps);
         }
         if let Some(steps) = self.quick_look_command(id) {
@@ -2799,6 +2842,9 @@ impl FocusController {
             CommandId::ResultsConversations => self.results_tab(ResultsTab::Conversations),
             CommandId::ResultsFiles => self.results_tab(ResultsTab::Files),
             CommandId::ResultsPeople => self.results_tab(ResultsTab::People),
+            CommandId::ResultsEvents if results.events.wanted => {
+                self.results_tab(ResultsTab::Events)
+            }
             CommandId::FilterFrom
             | CommandId::FilterTo
             | CommandId::FilterDate
@@ -3619,6 +3665,9 @@ impl FocusController {
                 answer,
             } => {
                 let landed = results.landed(stamp, order, offset, answer);
+                if landed.nothing {
+                    results.events_instead_of_nothing();
+                }
                 let query = results.query.clone();
                 let ways_out = landed.nothing.then(|| Request::Relaxations {
                     query: results.parsed.clone(),
@@ -3673,6 +3722,13 @@ impl FocusController {
             }
             Reply::People { stamp, answer } => {
                 if results.people_landed(stamp, answer) {
+                    self.draw_results()
+                } else {
+                    Vec::new()
+                }
+            }
+            Reply::EventSearch { stamp, answer } => {
+                if results.events_landed(stamp, answer) {
                     self.draw_results()
                 } else {
                     Vec::new()

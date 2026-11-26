@@ -1449,6 +1449,38 @@ pub fn person_accessible(name: &str, address: &str, messages: &str, last: &str) 
     said.join(", ")
 }
 
+pub const EVENTS_TAB: &str = "Events";
+
+pub fn events_count_line(events: u64, capped: bool) -> String {
+    plural(events, capped, "event", "events")
+}
+
+pub fn events_hints(keymap: &Keymap) -> Vec<Hint> {
+    let mut out = Vec::new();
+    out.extend(hints::pair(
+        keymap,
+        CommandId::NextMessage,
+        CommandId::PrevMessage,
+        "move",
+    ));
+    out.extend(hints::hint(
+        keymap,
+        CommandId::OpenMessage,
+        "open the event",
+    ));
+    out.extend(hints::run(
+        keymap,
+        &[
+            CommandId::ResultsConversations,
+            CommandId::ResultsFiles,
+            CommandId::ResultsPeople,
+            CommandId::ResultsEvents,
+        ],
+        "switch tab",
+    ));
+    out
+}
+
 pub fn people_hints(keymap: &Keymap) -> Vec<Hint> {
     let mut out = Vec::new();
     out.extend(hints::pair(

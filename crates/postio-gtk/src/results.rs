@@ -27,6 +27,7 @@ use crate::list::Feed;
 const ROWS: &str = "rows";
 const FILES: &str = "files";
 const PEOPLE: &str = "people";
+const EVENTS: &str = "events";
 const NOTHING: &str = "nothing";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -225,6 +226,7 @@ pub struct ResultsPane {
     body: gtk::Stack,
     files: Rc<crate::results_files::FilesGrid>,
     people: Rc<crate::results_files::PeopleList>,
+    events: Rc<crate::results_files::EventsList>,
     nothing: Rc<crate::results_files::NoResultsPage>,
     found_nothing: Cell<bool>,
     quick_look: Rc<crate::results_files::QuickLookPanel>,
@@ -352,6 +354,7 @@ impl ResultsPane {
         let files = crate::results_files::FilesGrid::new(feed.clone(), Rc::clone(&act));
         let quick_look = crate::results_files::QuickLookPanel::new(Rc::clone(&act));
         let people = crate::results_files::PeopleList::new(feed.clone(), Rc::clone(&act));
+        let events = crate::results_files::EventsList::new(feed.clone(), Rc::clone(&act));
         let nothing = crate::results_files::NoResultsPage::new(Rc::clone(&act));
         let nothing_scroller = gtk::ScrolledWindow::builder()
             .child(nothing.widget())
@@ -364,6 +367,7 @@ impl ResultsPane {
         body.add_named(&scrolled, Some(ROWS));
         body.add_named(files.widget(), Some(FILES));
         body.add_named(people.widget(), Some(PEOPLE));
+        body.add_named(events.widget(), Some(EVENTS));
         body.add_named(&nothing_scroller, Some(NOTHING));
         let over = gtk::Overlay::new();
         over.set_child(Some(&body));
@@ -408,6 +412,7 @@ impl ResultsPane {
             body,
             files,
             people,
+            events,
             nothing,
             found_nothing: Cell::new(false),
             quick_look,
@@ -562,10 +567,9 @@ impl ResultsPane {
             (Some(all), true) => self.footer.set_text(&format!("{} {}", all.key, all.label)),
             _ => self.footer.set_text(&view.footer),
         }
-        let people = view
-            .tabs
-            .iter()
-            .any(|tab| tab.selected && tab.tab == postio_search::results::ResultsTab::People);
+        let selected = |which| view.tabs.iter().any(|tab| tab.selected && tab.tab == which);
+        let people = selected(postio_search::results::ResultsTab::People);
+        let events = selected(postio_search::results::ResultsTab::Events);
         match &view.files {
             Some(header) => {
                 self.files.show(header, view.rows);
@@ -574,6 +578,10 @@ impl ResultsPane {
             None if people => {
                 self.people.show(view.rows);
                 self.switch_body(PEOPLE);
+            }
+            None if events => {
+                self.events.show(view.rows);
+                self.switch_body(EVENTS);
             }
             None if self.found_nothing.get() => self.switch_body(NOTHING),
             None => self.switch_body(ROWS),
@@ -602,6 +610,10 @@ impl ResultsPane {
         }
         if self.showing_people() {
             self.people.refresh();
+            return;
+        }
+        if self.showing_events() {
+            self.events.refresh();
             return;
         }
         {
@@ -677,6 +689,12 @@ impl ResultsPane {
             self.cursor.set(Some(position));
             self.people.refresh();
             self.people.reveal(position);
+            return;
+        }
+        if self.showing_events() {
+            self.cursor.set(Some(position));
+            self.events.refresh();
+            self.events.reveal(position);
             return;
         }
         let was = self.cursor.replace(Some(position));
@@ -787,7 +805,7 @@ impl ResultsPane {
             Some(view) => {
                 self.nothing.show(view);
                 self.found_nothing.set(true);
-                if !self.showing_files() && !self.showing_people() {
+                if !self.showing_files() && !self.showing_people() && !self.showing_events() {
                     self.switch_body(NOTHING);
                 }
             }
@@ -861,6 +879,14 @@ impl ResultsPane {
 
     pub fn people(&self) -> &crate::results_files::PeopleList {
         &self.people
+    }
+
+    pub fn showing_events(&self) -> bool {
+        self.body.visible_child_name().as_deref() == Some(EVENTS)
+    }
+
+    pub fn events(&self) -> &crate::results_files::EventsList {
+        &self.events
     }
 
     pub fn showing_files(&self) -> bool {
@@ -1430,6 +1456,10 @@ impl ResultsPane {
         }
         if self.showing_people() {
             self.people.focus();
+            return;
+        }
+        if self.showing_events() {
+            self.events.focus();
             return;
         }
         // On the ringed result, as the inbox's keyboard is on its cursor's row: the list's own

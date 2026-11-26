@@ -34,6 +34,5 @@ pub struct Surfaces {
     pub rule: Option<crate::rule_dialog::Form>,
     pub capture: Option<crate::capture::Sheet>,
     pub calendar: Option<Box<postio_focus::CalendarView>>,
-    pub calendar_typing: Option<String>,
     pub editor_field: usize,
 }

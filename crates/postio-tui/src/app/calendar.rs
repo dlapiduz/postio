@@ -10,10 +10,6 @@ impl App {
         self.surfaces.calendar.as_deref()
     }
 
-    pub fn calendar_typing(&self) -> bool {
-        self.surfaces.calendar_typing.is_some()
-    }
-
     pub(super) fn show_calendar_intent(
         &mut self,
         intent: Intent,
@@ -26,15 +22,7 @@ impl App {
                 self.surfaces.calendar = Some(view);
                 self.focus = Focus::Calendar;
             }
-            Intent::CalendarFocusFilter => {
-                let typed = self
-                    .calendar()
-                    .map(|view| view.filter.clone())
-                    .unwrap_or_default();
-                self.surfaces.calendar_typing = Some(typed);
-            }
             Intent::CloseSurface(SurfaceKind::Calendar) => {
-                self.surfaces.calendar_typing = None;
                 self.surfaces.calendar = None;
                 if self.focus == Focus::Calendar {
                     self.focus = Focus::List;
@@ -127,28 +115,8 @@ impl App {
     }
 
     pub(super) fn calendar_key(&mut self, key: &crossterm::event::KeyEvent) -> Vec<Effect> {
-        use crossterm::event::KeyCode;
         if let Some(effects) = self.editor_key(key) {
             return effects;
-        }
-        if let Some(typed) = self.surfaces.calendar_typing.as_mut() {
-            match key.code {
-                KeyCode::Char(character) => typed.push(character),
-                KeyCode::Backspace => {
-                    typed.pop();
-                }
-                KeyCode::Enter => {
-                    self.surfaces.calendar_typing = None;
-                    return vec![Effect::Redraw];
-                }
-                KeyCode::Esc => {
-                    self.surfaces.calendar_typing = None;
-                    return self.tell(Told::Command(CommandId::Back));
-                }
-                _ => return Vec::new(),
-            }
-            let text = typed.clone();
-            return self.tell(Told::CalendarFilterTyped(text));
         }
         match self.keys.press(key, KeyContext::Calendar, false) {
             Outcome::Command(id) => match id.parse::<CommandId>() {
@@ -252,16 +220,17 @@ mod tests {
     }
 
     #[test]
-    fn slash_types_a_search_that_narrows_agenda_and_escape_clears_it() {
+    fn slash_in_calendar_searches_and_return_on_an_event_opens_it_in_calendar() {
         let mut app = app((100, 24));
         app.clock_for_tests(now());
         agenda(&mut app);
 
         update(&mut app, press('/'));
-        let mut asked = Vec::new();
+        assert_eq!(app.focus(), Focus::Bar, "the one search box");
         for letter in "den".chars() {
-            asked = update(&mut app, press(letter));
+            update(&mut app, press(letter));
         }
+        let asked = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         serve_focus(&mut app, asked, |request| match request {
             Request::EventSearch { stamp, text, .. } => {
                 assert_eq!(text, "den");
@@ -273,16 +242,28 @@ mod tests {
             _ => None,
         });
         let drawn = screen(100, 24, &app);
-        assert!(drawn.contains("/ den"), "{drawn}");
-        assert!(
-            drawn.contains("Dentist") && !drawn.contains("Review"),
-            "{drawn}"
-        );
+        assert!(drawn.contains("Events"), "{drawn}");
+        assert!(drawn.contains("Dentist"), "{drawn}");
 
-        update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
-        let drawn = screen(100, 24, &app);
-        assert!(drawn.contains("Review"), "the agenda is back:\n{drawn}");
+        let asked = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
+        serve_focus(&mut app, asked, |request| match request {
+            Request::EventDetail { stamp, .. } => Some(Reply::EventDetail {
+                stamp: *stamp,
+                answer: Ok(Some(Box::new(EventDetail {
+                    entry: entry(3, 24, 10, "Dentist"),
+                    notes: "Bring the card.".to_owned(),
+                    organiser: None,
+                    attendees: Vec::new(),
+                    zone: None,
+                    repeat: None,
+                    minutes_before: Vec::new(),
+                    writable: true,
+                }))),
+            }),
+            _ => None,
+        });
         assert_eq!(app.focus(), Focus::Calendar);
+        assert!(screen(100, 24, &app).contains("Bring the card."));
     }
 
     #[test]

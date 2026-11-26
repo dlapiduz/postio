@@ -26,10 +26,7 @@ pub struct CalendarView {
     pub empty: Option<String>,
     pub footer: Vec<Hint>,
     pub open: Option<EventView>,
-    pub filter: String,
-    pub hint: Option<String>,
     pub popped: bool,
-    pub search_key: Option<String>,
     pub open_keys: Vec<Hint>,
     pub editor: Option<postio_ui::calendar::editor::EditorView>,
 }
@@ -47,10 +44,6 @@ pub(crate) struct Calendar {
     pending_cursor: Option<DateTime<chrono::Utc>>,
     pub(crate) open: Option<EventDetail>,
     detail_stamp: u64,
-    filter: String,
-    ignored: Vec<String>,
-    search_stamp: u64,
-    agenda: Option<(Vec<AgendaEntry>, Option<usize>)>,
     pub(crate) popped: bool,
     pub(crate) editor: Option<crate::event_editor::Editor>,
     edit_when_open: bool,
@@ -72,10 +65,6 @@ impl Calendar {
             pending_cursor: None,
             open: None,
             detail_stamp: 0,
-            filter: String::new(),
-            ignored: Vec::new(),
-            search_stamp: 0,
-            agenda: None,
             popped: false,
             editor: None,
             edit_when_open: false,
@@ -102,12 +91,37 @@ impl FocusController {
         if self.calendar.is_some() {
             return Vec::new();
         }
-        self.calendar = Some(Calendar::new());
-        let mut steps = self
-            .surfaces
-            .opened(SurfaceKind::Calendar, self.policy.caps.stacking);
+        let mut steps = self.calendar_up();
         let today = self.now().date_naive();
         steps.extend(self.calendar_go_to(today));
+        steps
+    }
+
+    fn calendar_up(&mut self) -> Vec<Step> {
+        if self.calendar_popped() {
+            self.focused = crate::Window::Calendar;
+            return vec![Step::Show(Intent::PresentWindow(crate::Window::Calendar))];
+        }
+        if self.calendar.is_some() {
+            return Vec::new();
+        }
+        self.calendar = Some(Calendar::new());
+        self.surfaces
+            .opened(SurfaceKind::Calendar, self.policy.caps.stacking)
+    }
+
+    pub(crate) fn calendar_show(&mut self, found: &AgendaEntry) -> Vec<Step> {
+        let mut steps = self.calendar_up();
+        steps.extend(self.calendar_go_to(found.start.with_timezone(&Local).date_naive()));
+        let Some(calendar) = self.calendar.as_mut() else {
+            return steps;
+        };
+        calendar.pending_cursor = Some(found.start);
+        calendar.detail_stamp += 1;
+        steps.push(Step::Ask(Request::EventDetail {
+            cursor: found.cursor(),
+            stamp: calendar.detail_stamp,
+        }));
         steps
     }
 
@@ -151,6 +165,7 @@ impl FocusController {
                 | CommandId::CalendarToday
                 | CommandId::GoToCalendar
                 | CommandId::Search
+                | CommandId::CommandPalette
                 | CommandId::NewEvent
                 | CommandId::EditEvent
                 | CommandId::Delete
@@ -164,6 +179,9 @@ impl FocusController {
     pub(crate) fn calendar_command(&mut self, id: CommandId, rows: &dyn Rows) -> Option<Vec<Step>> {
         if self.calendar.as_ref()?.editor.is_some() {
             return self.editor_command(id);
+        }
+        if matches!(id, CommandId::Search | CommandId::CommandPalette) {
+            return self.going(id, rows);
         }
         if id == CommandId::Undo {
             if let Some(calendar) = self.calendar.as_mut() {
@@ -247,11 +265,7 @@ impl FocusController {
                 entry.start.with_timezone(&Local).date_naive()
             });
         match id {
-            CommandId::Back if !calendar_filter(self).is_empty() => {
-                Some(self.calendar_filter_typed(String::new()))
-            }
             CommandId::Back => Some(self.close_calendar()),
-            CommandId::Search => Some(vec![Step::Show(Intent::CalendarFocusFilter)]),
             CommandId::NextMessage => Some(self.calendar_step(1)),
             CommandId::PrevMessage => Some(self.calendar_step(-1)),
             CommandId::FirstMessage => Some(self.calendar_step(i64::MIN / 2)),
@@ -274,13 +288,20 @@ impl FocusController {
     }
 
     pub(crate) fn close_calendar(&mut self) -> Vec<Step> {
-        self.calendar = None;
-        self.surfaces.dismiss(SurfaceKind::Calendar);
-        let mut steps = vec![Step::Show(Intent::CloseSurface(SurfaceKind::Calendar))];
+        let mut steps = self.leave_calendar();
         if !self.has_surface() {
             steps.push(Step::Show(Intent::KeyboardHome));
         }
         steps
+    }
+
+    pub(crate) fn leave_calendar(&mut self) -> Vec<Step> {
+        if self.calendar_popped() || !self.surfaces.has(SurfaceKind::Calendar) {
+            return Vec::new();
+        }
+        self.calendar = None;
+        self.surfaces.dismiss(SurfaceKind::Calendar);
+        vec![Step::Show(Intent::CloseSurface(SurfaceKind::Calendar))]
     }
 
     fn calendar_step(&mut self, by: i64) -> Vec<Step> {
@@ -325,43 +346,13 @@ impl FocusController {
     pub(crate) fn calendar_at_root(&self) -> bool {
         self.calendar
             .as_ref()
-            .is_none_or(|calendar| calendar.open.is_none() && calendar.filter.is_empty())
-    }
-
-    pub(crate) fn calendar_filter_typed(&mut self, text: String) -> Vec<Step> {
-        let Some(calendar) = self.calendar.as_mut() else {
-            return Vec::new();
-        };
-        if text.trim().is_empty() {
-            calendar.filter = text;
-            calendar.ignored.clear();
-            calendar.search_stamp += 1;
-            if let Some((entries, cursor)) = calendar.agenda.take() {
-                calendar.entries = entries;
-                calendar.cursor = cursor;
-            }
-            return self.draw_calendar();
-        }
-        if calendar.agenda.is_none() {
-            calendar.agenda = Some((std::mem::take(&mut calendar.entries), calendar.cursor));
-            calendar.cursor = None;
-        }
-        calendar.filter = text.clone();
-        calendar.search_stamp += 1;
-        vec![Step::Ask(Request::EventSearch {
-            text,
-            limit: AGENDA_PAGE,
-            stamp: calendar.search_stamp,
-        })]
+            .is_none_or(|calendar| calendar.open.is_none())
     }
 
     fn calendar_page_ahead(&mut self) -> Vec<Step> {
         let Some(calendar) = self.calendar.as_mut() else {
             return Vec::new();
         };
-        if calendar.agenda.is_some() {
-            return Vec::new();
-        }
         let Some(cursor) = calendar.cursor else {
             return Vec::new();
         };
@@ -455,13 +446,6 @@ impl FocusController {
                 steps.extend(self.calendar_page_ahead());
                 steps
             }
-            Reply::EventSearch { stamp, answer } if stamp == calendar.search_stamp => {
-                let (found, ignored) = answer.unwrap_or_default();
-                calendar.cursor = (!found.is_empty()).then_some(0);
-                calendar.entries = found;
-                calendar.ignored = ignored;
-                self.draw_calendar()
-            }
             Reply::EventDetail { stamp, answer } if stamp == calendar.detail_stamp => {
                 if let Ok(Some(detail)) = answer {
                     if std::mem::take(&mut calendar.edit_when_open) && detail.writable {
@@ -482,10 +466,6 @@ impl FocusController {
         let Some(calendar) = self.calendar.as_mut() else {
             return Vec::new();
         };
-        if !calendar.filter.is_empty() {
-            let filter = calendar.filter.clone();
-            return self.calendar_filter_typed(filter);
-        }
         let ringed = calendar.current().map(|entry| entry.start);
         let first = calendar.entries.first().map(|entry| entry.start);
         calendar.stamp += 1;
@@ -523,13 +503,8 @@ impl FocusController {
                 AgendaRow::Day { .. } => false,
             })
         });
-        let empty = (calendar.loaded && calendar.entries.is_empty()).then(|| {
-            if calendar.filter.is_empty() {
-                words::empty_line("these weeks")
-            } else {
-                words::nothing_found(&calendar.filter)
-            }
-        });
+        let empty = (calendar.loaded && calendar.entries.is_empty())
+            .then(|| words::empty_line("these weeks"));
         vec![Step::Show(Intent::Calendar(Box::new(CalendarView {
             rows,
             cursor,
@@ -540,14 +515,7 @@ impl FocusController {
                 .open
                 .as_ref()
                 .map(|detail| words::event_view(detail, &Local, today)),
-            filter: calendar.filter.clone(),
-            hint: words::ignored_hint(&calendar.ignored),
             popped: calendar.popped,
-            search_key: self
-                .bar
-                .keymap()
-                .binding(CommandId::Search)
-                .map(str::to_owned),
             open_keys: words::open_keys(
                 self.bar.keymap(),
                 calendar.open.as_ref().is_some_and(|detail| detail.writable),
@@ -555,13 +523,6 @@ impl FocusController {
             editor: self.editor_view(),
         })))]
     }
-}
-
-fn calendar_filter(focus: &FocusController) -> &str {
-    focus
-        .calendar
-        .as_ref()
-        .map_or("", |calendar| calendar.filter.as_str())
 }
 
 pub(crate) fn is_destination(id: CommandId) -> bool {

@@ -492,6 +492,144 @@ impl PeopleList {
     }
 }
 
+pub struct EventsList {
+    root: gtk::ScrolledWindow,
+    events: Positions,
+    list: gtk::ListView,
+    feed: Feed,
+}
+
+impl EventsList {
+    pub fn new(feed: Feed, act: Rc<dyn Fn(CommandId)>) -> Rc<Self> {
+        let events = Positions::default();
+        let factory = gtk::SignalListItemFactory::new();
+        let list = gtk::ListView::new(
+            Some(gtk::NoSelection::new(Some(events.clone()))),
+            Some(factory.clone()),
+        );
+        list.add_css_class("focus-results-list");
+        list.set_single_click_activate(false);
+        list.update_property(&[gtk::accessible::Property::Label(
+            postio_ui::search_view::EVENTS_TAB,
+        )]);
+        let root = gtk::ScrolledWindow::builder()
+            .child(&list)
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .vexpand(true)
+            .build();
+        let pane = Rc::new(EventsList {
+            root,
+            events,
+            list,
+            feed,
+        });
+        let weak = Rc::downgrade(&pane);
+        factory.connect_bind({
+            let weak = weak.clone();
+            move |_, item| {
+                let (Some(item), Some(pane)) =
+                    (item.downcast_ref::<gtk::ListItem>(), weak.upgrade())
+                else {
+                    return;
+                };
+                let row = item
+                    .item()
+                    .and_downcast::<gtk::StringObject>()
+                    .and_then(|object| object.string().parse::<u64>().ok())
+                    .and_then(|at| pane.feed.result_event(at).map(|row| (at, row)));
+                match row {
+                    Some((at, row)) => {
+                        item.set_accessible_label(&row.accessible);
+                        item.set_child(Some(&pane.row(at, &row)));
+                    }
+                    None => item.set_child(None::<&gtk::Widget>),
+                }
+            }
+        });
+        pane.list.connect_activate(move |_, at| {
+            if let Some(pane) = weak.upgrade() {
+                pane.feed.input(Input::ResultsPoint(u64::from(at)));
+                act(CommandId::OpenMessage);
+            }
+        });
+        pane
+    }
+
+    pub fn widget(&self) -> &gtk::ScrolledWindow {
+        &self.root
+    }
+
+    pub fn show(&self, count: u64) {
+        let count = u32::try_from(count).unwrap_or(u32::MAX);
+        if self.events.n_items() == count {
+            self.events.refresh();
+        } else {
+            self.events.set_total(count);
+        }
+    }
+
+    pub fn refresh(&self) {
+        self.events.refresh();
+    }
+
+    pub fn reveal(&self, at: u64) {
+        if let Ok(at) = u32::try_from(at)
+            && at < self.events.n_items()
+        {
+            self.list.scroll_to(at, gtk::ListScrollFlags::NONE, None);
+        }
+    }
+
+    pub fn focus(&self) {
+        self.list.grab_focus();
+    }
+
+    pub fn titles(&self) -> Vec<String> {
+        (0..u64::from(self.events.n_items()))
+            .filter_map(|at| self.feed.result_event(at))
+            .map(|row| row.title)
+            .collect()
+    }
+
+    fn row(&self, at: u64, row: &postio_focus::EventRow) -> gtk::Box {
+        let line = gtk::Box::new(gtk::Orientation::Horizontal, S3);
+        line.add_css_class("focus-results-row");
+        line.add_css_class("focus-calendar-row");
+        if row.focused {
+            line.add_css_class("focus-results-cursor");
+        }
+        let mark = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        mark.add_css_class("focus-calendar-mark");
+        mark.set_accessible_role(gtk::AccessibleRole::Presentation);
+        line.append(&mark);
+        let title = gtk::Label::new(Some(&row.title));
+        title.add_css_class("focus-calendar-title");
+        title.set_xalign(0.0);
+        title.set_hexpand(true);
+        title.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        line.append(&title);
+        if !row.location.is_empty() {
+            let place = gtk::Label::new(Some(&row.location));
+            place.add_css_class("dim-label");
+            place.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            line.append(&place);
+        }
+        let calendar = gtk::Label::new(Some(&row.calendar_name));
+        calendar.add_css_class("dim-label");
+        calendar.add_css_class("focus-calendar-name");
+        line.append(&calendar);
+        let when = gtk::Label::new(Some(&row.when));
+        when.add_css_class("focus-results-date");
+        when.set_xalign(1.0);
+        line.append(&when);
+        let click = gtk::GestureClick::new();
+        let feed = self.feed.clone();
+        click.connect_pressed(move |_, _, _, _| feed.input(Input::ResultsPoint(at)));
+        line.add_controller(click);
+        line
+    }
+}
+
 /// Never a dead end: each looser search that finds something is a row, numbered with the key that
 /// runs it; the focused one carries the ring, since Return runs it.
 pub struct NoResultsPage {

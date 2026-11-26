@@ -235,6 +235,7 @@ pub enum ResultsTab {
     Conversations,
     Files,
     People,
+    Events,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

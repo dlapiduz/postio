@@ -70,8 +70,8 @@ pub use postio_ui::capture::{Mode as CaptureMode, Pick as CapturePick};
 pub use postio_ui::digest::{Page as DigestPage, Schedule as RuleSchedule};
 pub use postio_ui::search_view::FilePreview;
 pub use results::{
-    Chip, DatePresetView, FileCard, FileCopy, FilePurpose, FilesHeader, FilterButton, LabelPill,
-    MatchCard, MonthBar, NoResultsView, PersonRow, PopoverRow, PopoverView, QueryView,
+    Chip, DatePresetView, EventRow, FileCard, FileCopy, FilePurpose, FilesHeader, FilterButton,
+    LabelPill, MatchCard, MonthBar, NoResultsView, PersonRow, PopoverRow, PopoverView, QueryView,
     QuickLookView, RelaxationView, ResultGroup, ResultRow, ResultSplice, ResultsTabView,
     ResultsView, SaveView, TermEdit, file_copies,
 };
@@ -92,6 +92,7 @@ pub struct Capabilities {
     pub reading_pane: bool,
     pub stacking: bool,
     pub contacts_view: bool,
+    pub calendar: bool,
 }
 
 impl Policy {
@@ -103,6 +104,7 @@ impl Policy {
                 reading_pane: linux,
                 stacking: linux,
                 contacts_view: true,
+                calendar: linux,
             },
         }
     }
@@ -241,7 +243,6 @@ pub enum Input {
     ContactsPoint(u32),
     CalendarPoint(usize),
     WindowFocused(Window),
-    CalendarFilterTyped(String),
     EventEditorTyped {
         field: postio_ui::calendar::editor::EditorField,
         text: String,
@@ -474,7 +475,6 @@ pub enum Intent {
     Calendar(Box<calendar::CalendarView>),
     CalendarWindow(bool),
     PresentWindow(Window),
-    CalendarFocusFilter,
     ContactsRows {
         first: u32,
         count: u32,
@@ -761,6 +761,7 @@ impl Request {
             Request::QuickLookMatches { .. } => Some(Lane::Matches),
             Request::Files { .. } => Some(Lane::Files),
             Request::People { .. } => Some(Lane::People),
+            Request::EventSearch { .. } => Some(Lane::Events),
             Request::Relaxations { .. } => Some(Lane::Relaxations),
             Request::Facets { .. } => Some(Lane::Facets),
             Request::Suggest { .. } => Some(Lane::Suggest),
@@ -1270,7 +1271,6 @@ impl FocusController {
                 | Reply::ContactsOverview(_)
                 | Reply::AgendaPage { .. }
                 | Reply::EventDetail { .. }
-                | Reply::EventSearch { .. }
                 | Reply::ContactsPage { .. }
                 | Reply::ContactsFiltered { .. }
                 | Reply::ContactCard { .. }
@@ -1295,6 +1295,7 @@ impl FocusController {
                 | Reply::ResultsPassages { .. }
                 | Reply::Files { .. }
                 | Reply::People { .. }
+                | Reply::EventSearch { .. }
                 | Reply::AttachmentCopy { .. }
                 | Reply::QuickLookMatches { .. }
                 | Reply::Facets { .. }
@@ -1509,10 +1510,6 @@ impl FocusController {
             }
             Input::ContactsFilterTyped(text) => {
                 let steps = self.contacts_filter_typed(text);
-                self.effects(steps)
-            }
-            Input::CalendarFilterTyped(text) => {
-                let steps = self.calendar_filter_typed(text);
                 self.effects(steps)
             }
             Input::EventEditorTyped { field, text } => {
@@ -2304,9 +2301,9 @@ impl FocusController {
             | Reply::ContactPosition { .. }
             | Reply::ContactMergeOf(_)
             | Reply::ContactSeen(_)) => self.contacts_reply(reply),
-            reply @ (Reply::AgendaPage { .. }
-            | Reply::EventDetail { .. }
-            | Reply::EventSearch { .. }) => self.calendar_reply(reply),
+            reply @ (Reply::AgendaPage { .. } | Reply::EventDetail { .. }) => {
+                self.calendar_reply(reply)
+            }
             Reply::ContactSuggestions(answer) => self.contacts_suggestions_read(answer),
             Reply::FoundMessage { message, row } => self.link_found(message, row, rows),
             Reply::ThreadOf { message, thread } => self.walk_followed(message, thread),

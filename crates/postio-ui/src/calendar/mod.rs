@@ -145,8 +145,38 @@ pub fn empty_line(range: &str) -> String {
     format!("Nothing on {range}.")
 }
 
-pub fn nothing_found(words: &str) -> String {
-    format!("No events match \u{201c}{words}\u{201d}.")
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FoundEvent {
+    pub when: String,
+    pub title: String,
+    pub location: String,
+    pub calendar_name: String,
+    pub colour: Option<String>,
+    pub accessible: String,
+}
+
+pub fn found_event<Z: TimeZone>(entry: &AgendaEntry, today: NaiveDate, zone: &Z) -> FoundEvent {
+    let day = local_day(entry.start, zone);
+    let date = match (day - today).num_days() {
+        0 => "Today".to_owned(),
+        1 => "Tomorrow".to_owned(),
+        _ if day.year() == today.year() => day.format("%a %-d %b").to_string(),
+        _ => day.format("%a %-d %b %Y").to_string(),
+    };
+    let when = format!("{date} \u{b7} {}", time_label(entry, zone));
+    let mut accessible = vec![entry.title.clone(), when.clone()];
+    if !entry.location.is_empty() {
+        accessible.push(entry.location.clone());
+    }
+    accessible.push(calendar_words(&entry.calendar_name));
+    FoundEvent {
+        accessible: accessible.join(", "),
+        when,
+        title: entry.title.clone(),
+        location: entry.location.clone(),
+        calendar_name: entry.calendar_name.clone(),
+        colour: entry.colour.clone(),
+    }
 }
 
 pub fn ignored_hint(keywords: &[String]) -> Option<String> {

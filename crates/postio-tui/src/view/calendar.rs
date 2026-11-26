@@ -13,23 +13,14 @@ use crate::theme::{Role, Theme};
 use crate::view::fit;
 use crate::view::hit::{Hits, Target};
 
-pub fn strip(frame: &mut Frame, area: Rect, view: &CalendarView, typing: bool, theme: &Theme) {
-    let mut spans = vec![
+pub fn strip(frame: &mut Frame, area: Rect, theme: &Theme) {
+    let spans = vec![
         Span::styled(
             " Calendar",
             theme.style(Role::Text).add_modifier(Modifier::BOLD),
         ),
         Span::styled("  Agenda", theme.style(Role::Dim)),
     ];
-    if typing || !view.filter.is_empty() {
-        spans.push(Span::styled(
-            format!("   / {}", SafeText::new(&view.filter).as_str()),
-            theme.style(if typing { Role::Focus } else { Role::Text }),
-        ));
-    }
-    if let Some(hint) = &view.hint {
-        spans.push(Span::styled(format!("   {hint}"), theme.style(Role::Dim)));
-    }
     frame.render_widget(Line::from(spans), area);
 }
 

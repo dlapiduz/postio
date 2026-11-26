@@ -15,6 +15,7 @@ pub fn policy() -> Policy {
             reading_pane: true,
             stacking: false,
             contacts_view: false,
+            calendar: true,
         },
     }
 }

@@ -1,13 +1,14 @@
-use crate::search_support::{asks, shown};
+use crate::search_support::{List, asks, results_view, settle, shown};
 use chrono::{DateTime, Duration, Local, TimeZone, Utc};
 use postio_config::paths::Platform;
 use postio_core::CommandId;
 use postio_focus::{
-    CalendarView, Effect, FocusController, Input, Intent, NoRows, Placement, Policy, Reply,
-    Request, SurfaceKind,
+    BarMode, CalendarView, Effect, FocusController, Input, Intent, NoRows, Placement, Policy,
+    Reply, Request, SurfaceKind,
 };
 use postio_model::calendar::{AgendaAnchor, AgendaEntry, EditScope, EventDetail, EventStatus};
 use postio_model::ids::{CalendarId, EventId};
+use postio_search::results::ResultsTab;
 use postio_ui::calendar::AgendaRow;
 use postio_ui::calendar::editor::EditorField;
 use postio_ui::keymap::KeyContext;
@@ -265,47 +266,196 @@ fn an_empty_range_says_so() {
     assert_eq!(view.cursor, None);
 }
 
-#[test]
-fn slash_searches_events_names_what_it_ignored_and_escape_brings_the_agenda_back() {
-    let (mut focus, _) = opened();
+fn events_asked(effects: &[Effect]) -> (postio_focus::Ticket, String, u64) {
+    asks(effects)
+        .into_iter()
+        .find_map(|(ticket, request)| match request {
+            Request::EventSearch { text, stamp, .. } => Some((ticket, text, stamp)),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("the events are searched: {effects:?}"))
+}
 
-    assert!(shown(&run(&mut focus, CommandId::Search)).contains(&Intent::CalendarFocusFilter));
-    let asked = focus.handle_on(
-        Input::CalendarFilterTyped("dentist has:attachment".to_owned()),
-        &NoRows,
-    );
-    let asks = asks(&asked);
-    let [(ticket, Request::EventSearch { text, stamp, .. })] = &asks[..] else {
-        panic!("the search is asked: {asked:?}");
-    };
-    let (ticket, stamp) = (*ticket, *stamp);
-    assert_eq!(text, "dentist has:attachment");
-    let found = frame(&focus.handle_on(
+fn events_found(
+    focus: &mut FocusController,
+    effects: &[Effect],
+    found: Vec<AgendaEntry>,
+    ignored: &[&str],
+) -> Vec<Effect> {
+    let (ticket, _, stamp) = events_asked(effects);
+    focus.handle_on(
         Input::Reply(
             ticket,
             Reply::EventSearch {
                 stamp,
                 answer: Ok((
-                    vec![entry(4, local(26, 11), "Dentist")],
-                    vec!["has".to_owned()],
+                    found,
+                    ignored.iter().map(|word| (*word).to_owned()).collect(),
                 )),
+            },
+        ),
+        &NoRows,
+    )
+}
+
+fn searched(focus: &mut FocusController, words: &str) -> Vec<Effect> {
+    let _ = run(focus, CommandId::Search);
+    let _ = focus.handle_on(
+        Input::Typed {
+            text: words.to_owned(),
+        },
+        &NoRows,
+    );
+    run(focus, CommandId::ShowAllResults)
+}
+
+fn events_tab(view: &postio_focus::ResultsView) -> postio_focus::ResultsTabView {
+    view.tabs
+        .iter()
+        .find(|tab| tab.tab == ResultsTab::Events)
+        .cloned()
+        .unwrap_or_else(|| panic!("an Events tab: {:?}", view.tabs))
+}
+
+#[test]
+fn slash_in_calendar_opens_the_command_bar_and_escape_comes_back_to_the_agenda() {
+    let (mut focus, _) = opened();
+
+    let effects = run(&mut focus, CommandId::Search);
+    assert!(
+        shown(&effects).iter().any(|intent| matches!(
+            intent,
+            Intent::OpenBar {
+                mode: BarMode::Search,
+                ..
+            }
+        )),
+        "the one search box: {effects:?}"
+    );
+    assert!(
+        !shown(&effects).contains(&Intent::CloseSurface(SurfaceKind::Calendar)),
+        "the agenda stays under the bar"
+    );
+    assert_eq!(focus.key_context(), KeyContext::Search);
+
+    let effects = run(&mut focus, CommandId::Back);
+    assert!(shown(&effects).contains(&Intent::CloseSurface(SurfaceKind::Bar)));
+    assert_eq!(focus.key_context(), KeyContext::Calendar);
+}
+
+#[test]
+fn a_search_from_calendar_shows_its_events_and_return_opens_one_in_calendar() {
+    let (mut focus, _) = opened();
+    let dentist = entry(4, local(26, 11), "Dentist");
+
+    let effects = searched(&mut focus, "dentist has:attachment");
+    assert!(
+        shown(&effects).contains(&Intent::CloseSurface(SurfaceKind::Calendar)),
+        "the results take the main window, as from mail"
+    );
+    assert_eq!(events_asked(&effects).1, "dentist has:attachment");
+    let effects = events_found(&mut focus, &effects, vec![dentist.clone()], &["has"]);
+    let view = results_view(&effects).expect("the results drawn");
+    let tab = events_tab(&view);
+    assert!(
+        tab.selected,
+        "searched from Calendar, its events come first"
+    );
+    assert_eq!(tab.count, "1");
+    assert_eq!(view.cursor, Some(0));
+    assert!(
+        view.sub_line
+            .contains("has: means nothing for an event, so it narrows nothing"),
+        "{}",
+        view.sub_line
+    );
+    let row = focus.result_event(0).expect("the event listed");
+    assert_eq!(row.title, "Dentist");
+    assert_eq!(row.when, "Thu 26 Nov \u{b7} 11:00");
+    assert!(row.focused);
+    assert!(focus.result_event(1).is_none());
+
+    let effects = run(&mut focus, CommandId::OpenMessage);
+    assert!(frame(&effects).is_some(), "Calendar opens");
+    let (_, anchor, _, _) = page_asked(&effects);
+    assert_eq!(
+        anchor,
+        AgendaAnchor::From(local(26, 0)),
+        "on the event's day"
+    );
+    let (ticket, stamp) = asks(&effects)
+        .into_iter()
+        .find_map(|(ticket, request)| match request {
+            Request::EventDetail { cursor, stamp } if cursor == dentist.cursor() => {
+                Some((ticket, stamp))
+            }
+            _ => None,
+        })
+        .expect("the event itself is read");
+    let shown_event = frame(&focus.handle_on(
+        Input::Reply(
+            ticket,
+            Reply::EventDetail {
+                stamp,
+                answer: Ok(Some(Box::new(detail_of(dentist, false)))),
             },
         ),
         &NoRows,
     ))
     .expect("redrawn");
-    assert_eq!(ringed(&found), "Dentist");
-    assert_eq!(found.filter, "dentist has:attachment");
-    assert_eq!(
-        found.hint.as_deref(),
-        Some("has: means nothing for an event, so it narrows nothing")
-    );
+    assert_eq!(shown_event.open.expect("the event shown").title, "Dentist");
 
-    let back = frame(&run(&mut focus, CommandId::Back)).expect("redrawn");
-    assert_eq!(back.filter, "");
-    assert_eq!(ringed(&back), "Review", "the agenda is back where it was");
+    let _ = run(&mut focus, CommandId::Back);
     let effects = run(&mut focus, CommandId::Back);
     assert!(shown(&effects).contains(&Intent::CloseSurface(SurfaceKind::Calendar)));
+    assert_eq!(
+        focus.key_context(),
+        KeyContext::Results,
+        "back where the event was found"
+    );
+}
+
+#[test]
+fn a_mail_search_counts_its_events_on_a_tab_of_their_own() {
+    let rows = List::of(3);
+    let mut focus = linux();
+
+    let effects = searched(&mut focus, "atlas");
+    let effects = settle(&mut focus, effects, &rows);
+    let effects = events_found(
+        &mut focus,
+        &effects,
+        vec![entry(9, local(27, 10), "Atlas review")],
+        &[],
+    );
+    let view = results_view(&effects).expect("the results drawn");
+    assert!(view.tabs[0].selected, "from mail, the threads come first");
+    let tab = events_tab(&view);
+    assert!(!tab.selected);
+    assert_eq!(tab.count, "1");
+    assert_eq!(tab.key.as_deref(), Some("ctrl+4"));
+
+    let view = results_view(&run(&mut focus, CommandId::ResultsEvents)).expect("redrawn");
+    assert!(events_tab(&view).selected);
+    assert_eq!(view.rows, 1);
+    assert!(view.groups.is_empty(), "a list, not month groups");
+}
+
+#[test]
+fn when_mail_finds_nothing_and_an_event_matches_the_event_is_shown() {
+    let rows = List::of(3);
+    let mut focus = linux();
+
+    let effects = searched(&mut focus, "subject:v4");
+    let effects = settle(&mut focus, effects, &rows);
+    let effects = events_found(
+        &mut focus,
+        &effects,
+        vec![entry(9, local(27, 10), "Plan v4")],
+        &[],
+    );
+    let view = results_view(&effects).expect("the results drawn");
+    assert!(events_tab(&view).selected, "not a page of nothing");
 }
 
 #[test]

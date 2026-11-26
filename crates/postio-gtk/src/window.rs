@@ -1830,6 +1830,7 @@ impl FocusWindow {
             | CommandId::ResultsConversations
             | CommandId::ResultsFiles
             | CommandId::ResultsPeople
+            | CommandId::ResultsEvents
             | CommandId::GoToFolders
             | CommandId::GoToInbox
             | CommandId::GoToFiltered
@@ -2303,11 +2304,6 @@ impl FocusWindow {
                 }
             }
             Intent::PresentWindow(_) => self.present(),
-            Intent::CalendarFocusFilter => {
-                if let Some(view) = self.calendar() {
-                    view.focus_filter();
-                }
-            }
             Intent::ContactsRows { .. } => {
                 if let Some(view) = self.contacts() {
                     view.show_rows();
@@ -4315,7 +4311,16 @@ impl FocusWindow {
     }
 
     fn show_mail(&self) {
-        self.imp().body.set_visible_child_name(MAIL);
+        let imp = self.imp();
+        let results = imp.results.borrow().clone();
+        if let Some(results) =
+            results.filter(|_| self.pane().is_some_and(|pane| pane.feed().in_results()))
+        {
+            imp.body.set_visible_child_name(RESULTS);
+            results.focus();
+            return;
+        }
+        imp.body.set_visible_child_name(MAIL);
         self.focus_list();
     }
 
@@ -5408,18 +5413,9 @@ impl FocusWindow {
         keys.connect_key_pressed(glib::clone!(
             #[weak(rename_to = window)]
             self,
-            #[weak]
-            agenda,
             #[upgrade_or]
             glib::Propagation::Proceed,
-            move |_, key, _, state| {
-                if (agenda.filter().has_focus() || agenda.filter().focus_child().is_some())
-                    && !matches!(key, gdk::Key::Escape)
-                {
-                    return glib::Propagation::Proceed;
-                }
-                window.handle_key(key, state)
-            }
+            move |_, key, _, state| window.handle_key(key, state)
         ));
         host.add_controller(keys);
         host.connect_is_active_notify(glib::clone!(
@@ -6003,6 +5999,11 @@ impl FocusWindow {
             Region::Reader
         } else if digest.is_some() {
             Region::Dialog
+        } else if bar
+            .as_ref()
+            .is_some_and(|bar| within(&bar.widget().clone().upcast()))
+        {
+            Region::Search
         } else if let Some(calendar) = self.calendar().or_else(|| {
             self.calendar_window_agenda().filter(|_| {
                 self.pane().is_some_and(|pane| {
@@ -6026,11 +6027,6 @@ impl FocusWindow {
                 .any(|widget| widget.type_().name() == "AdwToastWidget")
         }) {
             Region::Other
-        } else if bar
-            .as_ref()
-            .is_some_and(|bar| within(&bar.widget().clone().upcast()))
-        {
-            Region::Search
         } else if self
             .pane()
             .is_some_and(|pane| within(pane.widget().upcast_ref()))

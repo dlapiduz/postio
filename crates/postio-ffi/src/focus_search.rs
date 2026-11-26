@@ -246,6 +246,7 @@ pub enum ResultsTabFfi {
     Conversations,
     Files,
     People,
+    Events,
 }
 
 impl From<ResultsTabFfi> for postio_search::results::ResultsTab {
@@ -254,6 +255,7 @@ impl From<ResultsTabFfi> for postio_search::results::ResultsTab {
             ResultsTabFfi::Conversations => Self::Conversations,
             ResultsTabFfi::Files => Self::Files,
             ResultsTabFfi::People => Self::People,
+            ResultsTabFfi::Events => Self::Events,
         }
     }
 }
@@ -265,6 +267,7 @@ impl From<postio_search::results::ResultsTab> for ResultsTabFfi {
             ResultsTab::Conversations => ResultsTabFfi::Conversations,
             ResultsTab::Files => ResultsTabFfi::Files,
             ResultsTab::People => ResultsTabFfi::People,
+            ResultsTab::Events => ResultsTabFfi::Events,
         }
     }
 }

@@ -833,6 +833,14 @@ static SPECS: &[CommandSpec] = &[
         ..BASE
     },
     CommandSpec {
+        id: CommandId::ResultsEvents,
+        title: "Show events",
+        default_binding: "mod+4",
+        contexts: Context::Results.as_set(),
+        requires: FOCUS_GRAPHICAL_MAIL,
+        ..BASE
+    },
+    CommandSpec {
         id: CommandId::FilterFrom,
         title: "Filter by sender",
         default_binding: "alt+f",
@@ -2456,7 +2464,6 @@ pub fn title_in(id: CommandId, context: Context) -> &'static str {
         CommandId::Delete if calendar => "Delete event",
         CommandId::AcceptInvite if calendar => "Accept",
         CommandId::DeclineInvite if calendar => "Decline",
-        CommandId::Search if calendar => "Search events",
         _ => get(id).title,
     }
 }
@@ -2607,6 +2614,7 @@ pub fn offered_on(action: ActionId, platform: Platform) -> bool {
                         | C::SaveEvent
                         | C::SaveAndSendEvent
                         | C::EmailAttendees
+                        | C::ResultsEvents
                 ),
                 Platform::Apple
             )
@@ -2662,8 +2670,9 @@ mod tests {
     use crate::Scope;
     use postio_config::paths::Platform;
 
-    const NOT_ON_THE_MAC: [CommandId; 19] = [
+    const NOT_ON_THE_MAC: [CommandId; 20] = [
         CommandId::DarkenMessage,
+        CommandId::ResultsEvents,
         CommandId::DetachComposer,
         CommandId::NextScope,
         CommandId::GoToCalendar,

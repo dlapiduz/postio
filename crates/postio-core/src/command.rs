@@ -230,6 +230,7 @@ commands! {
     ResultsConversations => "results_threads",
     ResultsFiles => "results_files",
     ResultsPeople => "results_people",
+    ResultsEvents => "results_events",
     FilterFrom => "filter_from",
     FilterTo => "filter_to",
     FilterDate => "filter_date",

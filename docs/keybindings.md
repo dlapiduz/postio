@@ -103,6 +103,7 @@ command from inside a text field.
 | `ctrl+1` | Show threads | Search results (not the terminal) |  | `results_threads` |
 | `ctrl+2` | Show files | Search results (not the terminal) |  | `results_files` |
 | `ctrl+3` | Show people | Search results (not the terminal) |  | `results_people` |
+| `ctrl+4` | Show events | Search results (not the terminal) |  | `results_events` |
 | `alt+f` | Filter by sender | Search results (not the terminal) |  | `filter_from` |
 | `alt+t` | Filter by recipient | Search results (not the terminal) |  | `filter_to` |
 | `alt+d` | Filter by date | Search results (not the terminal) |  | `filter_date` |

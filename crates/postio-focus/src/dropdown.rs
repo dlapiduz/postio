@@ -148,6 +148,7 @@ pub enum Lane {
     Latest,
     Files,
     People,
+    Events,
 }
 
 pub(crate) const TOP_HITS: u32 = 4;

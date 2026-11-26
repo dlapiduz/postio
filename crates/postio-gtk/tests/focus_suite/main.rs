@@ -163,8 +163,8 @@ const CASES: &[(&str, fn())] = &[
         calendar_pop_out::calendar_popped_out_at_quit_reopens_in_its_own_window as fn(),
     ),
     (
-        "calendar::slash_searches_events_and_escape_brings_the_agenda_back",
-        calendar::slash_searches_events_and_escape_brings_the_agenda_back as fn(),
+        "calendar::slash_in_calendar_finds_an_event_and_return_opens_it_there",
+        calendar::slash_in_calendar_finds_an_event_and_return_opens_it_there as fn(),
     ),
     (
         "calendar::c_types_a_new_event_and_mod_s_puts_it_in_the_agenda",
