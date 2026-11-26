@@ -250,6 +250,7 @@ pub fn over_results(mut view: FooterView, keymap: &Keymap) -> FooterView {
 fn thread_note(keymap: &Keymap) -> String {
     let keys: Vec<&str> = [
         CommandId::Archive,
+        CommandId::Delete,
         CommandId::Snooze,
         CommandId::AddLabel,
         CommandId::Move,
@@ -435,6 +436,24 @@ mod tests {
             assert!(
                 note.chars().count() <= 36,
                 "the note shares a line with six keys and must fit beside them: {note}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_note_names_every_verb_that_takes_the_thread_from_a_message() {
+        let keymap = Keymap::defaults();
+        let note = footer(window(), &about(6, 3), keymap)
+            .note
+            .expect("a note below a row");
+        for verb in [CommandId::Archive, CommandId::Delete, CommandId::Snooze] {
+            assert_eq!(target(window(), verb), Scope::Thread(T));
+            let key = keymap.binding(verb).expect("bound");
+            assert!(
+                note.split(" act on")
+                    .next()
+                    .is_some_and(|keys| keys.split(", ").any(|said| said == key)),
+                "{verb:?}'s {key} missing from {note}"
             );
         }
     }

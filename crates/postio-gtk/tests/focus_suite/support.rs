@@ -603,15 +603,26 @@ impl Fixture {
     }
 
     pub async fn thread_of(&self, subject: &str, count: usize, minutes: i64) -> Vec<MessageId> {
+        let authors = vec![("Ada Moreno", "ada@example.com"); count];
+        self.thread_by(subject, &authors, minutes).await
+    }
+
+    pub async fn thread_by(
+        &self,
+        subject: &str,
+        authors: &[(&str, &str)],
+        minutes: i64,
+    ) -> Vec<MessageId> {
+        let count = authors.len();
         let connection = self.database.connect().await.expect("a connection");
         static THREADS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let thread = THREADS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let mut previous: Option<postio_model::RfcMessageId> = None;
         let mut ids = Vec::new();
-        for n in 1..=count {
+        for (n, (name, address)) in (1..=count).zip(authors) {
             let at = now() - Duration::minutes(minutes + 60 * (count - n) as i64);
             let mut message = Message::new(self.account.id, self.inbox, at);
-            message.from = vec![EmailAddress::new(Some("Ada Moreno"), "ada@example.com")];
+            message.from = vec![EmailAddress::new(Some(*name), *address)];
             message.subject = Some(if n == 1 {
                 subject.to_owned()
             } else {

@@ -134,7 +134,7 @@ struct Applied {
     /// Empty for a bulk unit, which knows how many it touched and not which.
     messages: Vec<MessageId>,
     count: usize,
-    rows: Option<usize>,
+    rows: Option<Chosen>,
     removed: Vec<(MailboxId, Vec<MessageId>)>,
     /// The list showing it must reload, or an undone archive would not reappear until the next
     /// sync.
@@ -154,14 +154,23 @@ struct Applied {
     surfaced: bool,
 }
 
-fn conversations<'a>(messages: impl Iterator<Item = &'a Message>) -> usize {
-    messages
+#[derive(Clone, Copy)]
+struct Chosen {
+    rows: usize,
+    holding: usize,
+}
+
+fn conversations<'a>(messages: impl Iterator<Item = &'a Message>) -> Chosen {
+    let mut holding = 0;
+    let rows = messages
+        .inspect(|_| holding += 1)
         .map(|message| match message.thread_id {
             Some(thread) => (Some(thread), None),
             None => (None, Some(message.id)),
         })
         .collect::<std::collections::BTreeSet<_>>()
-        .len()
+        .len();
+    Chosen { rows, holding }
 }
 
 #[derive(Clone)]
@@ -1539,7 +1548,7 @@ impl Actions {
             UndoEntry::bulk(applied.kind, applied.count, applied.inverse)
         };
         let entry = match applied.rows {
-            Some(rows) if !entry.is_bulk() => entry.acting_on(rows),
+            Some(rows) if !entry.is_bulk() => entry.acting_on(rows.rows, rows.holding),
             _ => entry,
         };
         self.record_undo(entry, applied.lasts, events).await;
@@ -3374,6 +3383,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn deleting_a_thread_counts_the_thread_and_its_messages() {
+        let world = world().await;
+        let (_, thread) = threaded(&world, "d1", &[], 1).await;
+        let _ = threaded(&world, "d2", &["d1"], 2).await;
+        let _ = threaded(&world, "d3", &["d1", "d2"], 3).await;
+        world
+            .run(Command::Delete {
+                target: MessageTarget::Threads(vec![thread]),
+            })
+            .await
+            .expect("delete");
+        assert_eq!(
+            completion(&world.drained().await).await,
+            Some(("Deleted 1 thread (3 messages)", true)),
+        );
+    }
+
+    #[tokio::test]
     async fn a_multi_select_archive_is_one_coalesced_undo_entry() {
         let world = world().await;
         let mut messages: Vec<MessageId> = Vec::new();
@@ -3509,8 +3536,8 @@ mod tests {
         assert_eq!(world.queued().await.len(), 2);
         assert_eq!(
             completion(&world.drained().await).await,
-            Some(("Archived 1 message", true)),
-            "one conversation was archived, and the toast counts what was chosen"
+            Some(("Archived 1 thread (2 messages)", true)),
+            "one conversation was chosen, and both its messages went"
         );
 
         world.run(Command::Undo).await.expect("undo");
@@ -3523,7 +3550,7 @@ mod tests {
         }
         assert_eq!(
             undone(&world.drained().await),
-            Some("Archived 1 message, undone".to_owned()),
+            Some("Archived 1 thread (2 messages), undone".to_owned()),
             "and says it was undone, not that it was archived"
         );
     }

@@ -920,14 +920,15 @@ fn the_footer_s_keycaps_and_note_are_the_keymaps_not_the_designs() {
     };
     let reply = keymap.binding(CommandId::Reply).expect("reply is bound");
     assert_eq!(key_of(&footer, "reply to this").as_deref(), Some(reply));
-    let [archive, snooze, label, mv] = [
+    let [archive, delete, snooze, label, mv] = [
         CommandId::Archive,
+        CommandId::Delete,
         CommandId::Snooze,
         CommandId::AddLabel,
         CommandId::Move,
     ]
     .map(|id| keymap.binding(id).expect("bound").to_owned());
-    let note = format!("{archive}, {snooze}, {label}, {mv} act on the thread");
+    let note = format!("{archive}, {delete}, {snooze}, {label}, {mv} act on the thread");
     assert_eq!(footer.note.as_deref(), Some(note.as_str()));
     assert_ne!(
         footer.note.as_deref(),
