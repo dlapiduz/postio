@@ -423,6 +423,9 @@ impl AgendaView {
             notes.set_selectable(true);
             self.card.append(&notes);
         }
+        let room = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        room.set_vexpand(true);
+        self.card.append(&room);
         let keys = gtk::Box::new(gtk::Orientation::Horizontal, S2);
         keys.set_margin_top(S2);
         for hint in self.open_keys.borrow().iter() {
@@ -432,6 +435,19 @@ impl AgendaView {
             ));
         }
         self.card.append(&keys);
+        let (width, height) = self
+            .root
+            .root()
+            .map_or((0, 0), |window| (window.width(), window.height()));
+        if width > 0 && height > 0 {
+            let below = self.footer.widget().height();
+            self.card.set_margin_bottom(below);
+            let room = self.shell.height() - below - 2 * postio_widgets::widgets::space::S4;
+            self.card.set_size_request(
+                postio_ui::focus_dialog::dialog_width(width),
+                postio_ui::focus_dialog::dialog_height(height).min(room.max(0)),
+            );
+        }
         self.card.set_visible(true);
         self.card.set_focusable(true);
         self.card.grab_focus();
