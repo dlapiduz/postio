@@ -82,6 +82,7 @@ mod settings_privacy;
 mod settings_sync;
 mod settings_unsubscribe;
 mod small_widgets;
+mod source_headers;
 mod storyboard_chain_delivery;
 mod storyboard_outline;
 mod storyboard_reach;
@@ -981,6 +982,11 @@ const CASES: &[(&str, fn())] = &[
     (
         "small_widgets::the_blocked_images_notice_counts_and_elides",
         small_widgets::the_blocked_images_notice_counts_and_elides as fn(),
+    ),
+    (
+        "source_headers::a_long_header_value_wraps_under_its_own_column_not_under_the_names",
+        source_headers::a_long_header_value_wraps_under_its_own_column_not_under_the_names
+            as fn(),
     ),
     (
         "checkrow::showing_the_files_value_is_not_changing_it",

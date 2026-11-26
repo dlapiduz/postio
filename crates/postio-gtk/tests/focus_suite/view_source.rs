@@ -41,7 +41,10 @@ pub fn v_opens_the_source_on_verification_and_the_digits_pick_its_tabs() {
         support::keys(&window, &["2"]);
         assert!(crate::settle_until(async || on(&window, Tab::Headers)).await);
         assert!(
-            source.text_of(Tab::Headers).contains("Subject: Budget"),
+            source
+                .text_of(Tab::Headers)
+                .lines()
+                .any(|line| line.split_whitespace().eq(["Subject:", "Budget"])),
             "{}",
             source.text_of(Tab::Headers)
         );

@@ -107,6 +107,7 @@ impl SourceDialog {
         let verification = gtk::Box::new(gtk::Orientation::Vertical, space::S6);
         verification.add_css_class("postio-source-verification");
         let headers = text_view("Headers");
+        headers.set_monospace(false);
         let raw = text_view("Raw source");
         let stack = gtk::Stack::new();
         stack.set_transition_type(gtk::StackTransitionType::None);
@@ -444,43 +445,75 @@ fn tag(buffer: &gtk::TextBuffer, name: &str, build: impl FnOnce(&gtk::TextTag)) 
 fn draw_headers(text: &gtk::TextView, view: &SourceView) {
     let buffer = text.buffer();
     buffer.set_text("");
-    let name = tag(&buffer, "name", |tag| tag.set_weight(700));
+    let column = name_column_px(text, view);
+    let name = tag(&buffer, "name", |tag| {
+        tag.set_weight(700);
+        tag.set_family(Some("monospace"));
+    });
     let quiet = tag(&buffer, "quiet", |tag| tag.set_scale(0.9));
+    let row = tag(&buffer, "hanging", |_| {});
+    row.set_left_margin(column);
+    row.set_indent(-column);
+    let mut stops = gtk::pango::TabArray::new(1, true);
+    stops.set_tab(0, gtk::pango::TabAlign::Left, column);
+    row.set_tabs(Some(&stops));
+    let under = tag(&buffer, "under", |_| {});
+    under.set_left_margin(column);
+    let hop = tag(&buffer, "hop", |tag| tag.set_left_margin(space::S6));
     let mut end = buffer.end_iter();
     if let Some(note) = &view.headers.note {
         buffer.insert_with_tags(&mut end, &format!("{note}\n\n"), &[&quiet]);
     }
     if !view.headers.hops.is_empty() {
         buffer.insert_with_tags(&mut end, "Received, newest first\n", &[&name]);
-        for hop in &view.headers.hops {
-            let mut line = String::from("  ");
-            if let Some(from) = &hop.from {
+        for each in &view.headers.hops {
+            let mut line = String::new();
+            if let Some(from) = &each.from {
                 line.push_str(&format!("from {from} "));
             }
-            if let Some(by) = &hop.by {
+            if let Some(by) = &each.by {
                 line.push_str(&format!("by {by}"));
             }
-            if let Some(at) = &hop.at {
+            if let Some(at) = &each.at {
                 line.push_str(&format!(" · {at}"));
             }
-            if let Some(delay) = &hop.delay {
+            if let Some(delay) = &each.delay {
                 line.push_str(&format!(" · {delay} after the hop before"));
             }
             line.push('\n');
-            buffer.insert(&mut end, &line);
+            buffer.insert_with_tags(&mut end, &line, &[&hop]);
         }
         buffer.insert(&mut end, "\n");
     }
-    for row in &view.headers.rows {
-        if let Some(boundary) = &row.boundary_above {
+    for header in &view.headers.rows {
+        if let Some(boundary) = &header.boundary_above {
             buffer.insert_with_tags(&mut end, &format!("──── {boundary}\n"), &[&quiet]);
         }
-        buffer.insert_with_tags(&mut end, &format!("{}: ", row.name), &[&name]);
-        buffer.insert(&mut end, &format!("{}\n", row.value));
-        if let Some(raw) = &row.raw {
-            buffer.insert_with_tags(&mut end, &format!("    as written: {raw}\n"), &[&quiet]);
+        buffer.insert_with_tags(&mut end, &format!("{}:", header.name), &[&name, &row]);
+        buffer.insert_with_tags(&mut end, &format!("\t{}\n", header.value), &[&row]);
+        if let Some(raw) = &header.raw {
+            buffer.insert_with_tags(&mut end, &format!("as written: {raw}\n"), &[&quiet, &under]);
         }
     }
+}
+
+fn name_column_px(text: &gtk::TextView, view: &SourceView) -> i32 {
+    let widest = view
+        .headers
+        .rows
+        .iter()
+        .map(|row| format!("{}:", row.name))
+        .max_by_key(|name| name.chars().count())
+        .unwrap_or_default();
+    let width = |sample: &str| {
+        let layout = text.create_pango_layout(Some(sample));
+        let mut font = text.pango_context().font_description().unwrap_or_default();
+        font.set_family("monospace");
+        font.set_weight(gtk::pango::Weight::Bold);
+        layout.set_font_description(Some(&font));
+        layout.pixel_size().0
+    };
+    width(&widest).min(width(&"M".repeat(30))) + space::S4
 }
 
 fn draw_raw(text: &gtk::TextView, view: &SourceView) -> Vec<Fold> {
