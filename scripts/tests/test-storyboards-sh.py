@@ -30,10 +30,16 @@ from __future__ import annotations
 
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+import patience  # noqa: E402  -- enabled by the sys.path line above
 
 HERE = Path(__file__).resolve().parent.parent
 SCRIPT = HERE / "storyboards.sh"
@@ -79,7 +85,8 @@ def setup(tmp: Path) -> dict[str, str]:
     (repo / "scripts").mkdir(parents=True)
     shutil.copy(SCRIPT, repo / "scripts" / "storyboards.sh")
     wrap = repo / "scripts" / "test-headless.sh"
-    wrap.write_text('#!/usr/bin/env bash\nexec "$@"\n')
+    wrap.write_text('#!/usr/bin/env bash\necho "headless $1" >> "$FAKE_LOG"\n'
+                    '[ "$1" = --own ] && shift\nexec "$@"\n')
     wrap.chmod(0o755)
     catalogue = repo / "storyboards"
     for path in (
@@ -134,6 +141,14 @@ def run(ctx: dict, *args: str, **extra_env: str) -> subprocess.CompletedProcess:
         capture_output=True,
         text=True,
     )
+
+
+def alive(pid: int) -> bool:
+    try:
+        state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+    except (FileNotFoundError, IndexError):
+        return False
+    return state != "Z"
 
 
 def log_lines(ctx: dict) -> list[str]:
@@ -211,6 +226,37 @@ def main() -> int:
         expect("jobs", order[:2] == ["start", "start"], f"the runners overlap: {order}")
         result = run(ctx, "run", "--jobs", "2", RUNNER_EXIT="1")
         expect("jobs", result.returncode == 1, f"the worst shard's exit, got {result.returncode}")
+
+        expect("jobs", all(l == "headless --own" for l in lines if l.startswith("headless")),
+               f"each runner's compositor ends with it: {[l for l in lines if l.startswith('headless')]}")
+
+        for signame, code in (("SIGTERM", 143), ("SIGINT", 130)):
+            print(f"case: a storyboards.sh stopped by {signame} takes its runners with it")
+            Path(ctx["log"]).write_text("")
+            env = dict(ctx["env"], RUNNER_SLEEP="60")
+            child = subprocess.Popen(["bash", "scripts/storyboards.sh", "run", "--jobs", "2"],
+                                     cwd=ctx["repo"], env=env,
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            started: list[int] = []
+            end = time.monotonic() + 20 * patience.patience()
+            while time.monotonic() < end and len(started) < 2:
+                started = [int(l.split()[1]) for l in log_lines(ctx) if l.startswith("start ")]
+                time.sleep(0.05)
+            expect("stopped", len(started) == 2, f"two runners started: {started}")
+            child.send_signal(getattr(signal, signame))
+            try:
+                status = child.wait(timeout=10 * patience.patience())
+            except subprocess.TimeoutExpired:
+                child.kill()
+                status = None
+            expect("stopped", status == code, f"exit {status}, wanted {code}")
+            end = time.monotonic() + 10 * patience.patience()
+            while time.monotonic() < end and any(alive(pid) for pid in started):
+                time.sleep(0.05)
+            left = [pid for pid in started if alive(pid)]
+            expect("stopped", not left, f"runners outlived storyboards.sh: {left}")
+            for pid in left:
+                os.kill(pid, signal.SIGKILL)
 
         print("case: an --only that matches nothing says so and fails")
         result = run(ctx, "run", "--only", "nowhere/*")

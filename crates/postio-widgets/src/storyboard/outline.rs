@@ -10,11 +10,25 @@ const OUTLINE: gdk::RGBA = gdk::RGBA::new(1.0, 0.17, 0.84, 1.0);
 const BORDER: f32 = 3.0;
 const CAPTION_PAD: f32 = 4.0;
 
+// GTK's transform for a popover's widget runs through its anchor, not where the popup is shown.
+fn keyboard_bounds(window: &gtk::Window) -> Option<graphene::Rect> {
+    let target = keyboard_target(window);
+    if let Some(popover) = target.native().and_downcast::<gtk::Popover>() {
+        let origin = crate::capture::popover_origin(window, &popover)?;
+        return Some(
+            target
+                .compute_bounds(&popover)?
+                .offset_r(origin.x(), origin.y()),
+        );
+    }
+    target.compute_bounds(window)
+}
+
 /// Falls back to the window alone, caption in its corner, when the keyboard is on nothing with
 /// bounds.
 /// Panics where a plain capture would.
 pub fn outlined(window: &gtk::Window, region_name: &str) -> gdk::Texture {
-    let bounds = keyboard_target(window).compute_bounds(window);
+    let bounds = keyboard_bounds(window);
     let layout = window.create_pango_layout(Some(region_name));
     let (_, text) = layout.pixel_extents();
     let plate_height = text.height() as f32 + 2.0 * CAPTION_PAD;
@@ -50,7 +64,7 @@ pub fn outlined_with_window(
 ) -> gdk::Texture {
     let main = crate::capture::texture_now(window).expect("a picture of the window");
     let second = crate::capture::texture_now(other).expect("a picture of the second window");
-    let bounds = keyboard_target(other).compute_bounds(other);
+    let bounds = keyboard_bounds(other);
     let layout = window.create_pango_layout(Some(region_name));
     let (_, text) = layout.pixel_extents();
     let plate_height = text.height() as f32 + 2.0 * CAPTION_PAD;

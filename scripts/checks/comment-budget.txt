@@ -35,5 +35,5 @@ postio-tui 496
 postio-ui 1667
 postio-vault 16
 postio-vcard 12
-postio-widgets 2231
+postio-widgets 2230
 postio-workspace-hack 7
