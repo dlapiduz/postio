@@ -176,8 +176,10 @@ be shown or hidden per calendar.
 - On start, a missed reminder from the last 12 hours shows once: "While
   Postio was closed: Standup at 09:30."
 
-**D9. Calendar search is the one query language.** `/` in Calendar searches
-events, as `/` searches mail:
+**D9. One search finds mail and events.** The command bar is the one search
+box, in Calendar as in mail, on the one `/` (Q7). What is typed searches
+mail and events together, from either place, and an event among the results
+opens the event. Over events:
 
 - free text matches the title, location, notes and attendee names;
 - `after:` and `before:` bound the time;
@@ -277,6 +279,20 @@ was settled with `/ux-architect`. The rules allow a second window when it is
   the main window's X does. On the Mac, `cmd+w` and `cmd+q` already mean
   this.
 
+### Session 2026-11-26 (the maintainer, after the first review)
+
+- **Q6. How does an opened event appear?**
+  → **B.** In the open message's dialog: the same frame, sized from the
+  window and not from the event, over the dimmed agenda. One pattern for
+  everything opened over a list.
+- **Q7. Two search boxes in Calendar?**
+  → Calendar behaves as the mail window does: the command bar is the one
+  search, with the one `/`, and it finds mail and events alike from either
+  place. Calendar's own search field goes (D9).
+- **Q8. The storyboard runner films the main window only.**
+  → Accepted for now; the pop-out steps rest on their checks. The runner
+  learns the second window later (#2242).
+
 ## The surface
 
 ### Agenda
@@ -305,7 +321,7 @@ was settled with `/ux-architect`. The rules allow a second window when it is
 
 ### The open event
 
-The one dialog shows:
+The open message's dialog (Q6), its frame from the window, shows:
 
 - the title, time and zone, and repeat as words ("Every weekday until 18
   Dec");
@@ -718,8 +734,7 @@ its size.
   calendars, it is a second calendar backend behind the same trait, filed
   then.
 - Tasks (VTODO) are out of scope. They are kept intact and not shown.
-- Event search is the one query language over event fields (D9). Mail search
-  does not return events.
+- Search is one query language over mail and events together (D9, Q7).
 - Sharing calendars, managing other people's access and booking pages are
   out of scope.
 - The terminal draws Agenda and the open event in character cells. Day and
