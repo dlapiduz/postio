@@ -84,6 +84,11 @@ pub fn a_long_header_value_wraps_under_its_own_column_not_under_the_names() {
         "a value this long wraps in a 720 px window"
     );
     let wrapped_x = text.iter_location(&value).x();
+    assert_eq!(
+        name_x,
+        text.left_margin(),
+        "a header's name starts at the tab's edge, with no blank column before it"
+    );
     assert!(
         value_x > name_x,
         "the value starts in its own column, right of the name ({value_x} vs {name_x})"

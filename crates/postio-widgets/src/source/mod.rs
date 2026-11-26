@@ -452,7 +452,6 @@ fn draw_headers(text: &gtk::TextView, view: &SourceView) {
     });
     let quiet = tag(&buffer, "quiet", |tag| tag.set_scale(0.9));
     let row = tag(&buffer, "hanging", |_| {});
-    row.set_left_margin(column);
     row.set_indent(-column);
     let mut stops = gtk::pango::TabArray::new(1, true);
     stops.set_tab(0, gtk::pango::TabAlign::Left, column);
