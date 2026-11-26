@@ -533,6 +533,7 @@ async fn classify_inner(
     let rules = Corrections(focus.filter.clone());
     let messages = MessageRepository::new(connection);
     let mut tally = Tally::new();
+    let mut own = None;
     let inboxes = ThreadRepository::new(connection).unified_inboxes().await?;
     for (account, inbox) in inboxes {
         let identities = match AccountRepository::new(connection).get(account).await? {
@@ -577,6 +578,19 @@ async fn classify_inner(
             let outcomes = filing.outcomes(connection, &filed).await?;
             for (filed, outcome) in filed.iter().zip(&outcomes) {
                 tally.filing(filed.message.id, outcome);
+                if outcome.filter.is_none() && outcome.hold.is_none() {
+                    let in_the_table =
+                        filed.message.from.iter().any(|from| {
+                            postio_classify::Rules::senders(&rules).find(from).is_some()
+                        });
+                    tally.unfiled(filed.message, in_the_table);
+                    if let Some(reason) =
+                        postio_classify::at_filing(filed, &Unguarded, &rules).filter
+                    {
+                        let guard = guard_of(connection, &rules, filed, &mut own).await?;
+                        tally.kept(filed.message.id, reason.kind, guard);
+                    }
+                }
                 let asked = BodyMessage {
                     filed: *filed,
                     identities: &identities,
@@ -601,6 +615,74 @@ async fn classify_inner(
         }
     }
     Ok(tally.render())
+}
+
+async fn guard_of(
+    connection: &postio_storage::Checkout,
+    rules: &Corrections,
+    filed: &postio_sync::FiledMessage<'_>,
+    own: &mut Option<std::collections::BTreeSet<String>>,
+) -> Result<&'static str, postio_storage::Error> {
+    use postio_storage::repository::{
+        CorrespondentRepository, IdentityRepository, ThreadRepository,
+    };
+    let Some(thread) = filed.thread else {
+        return Ok("no conversation");
+    };
+    let senders = &filed.message.from;
+    if senders.is_empty() {
+        return Ok("no sender");
+    }
+    if senders.iter().any(|sender| rules.0.never_filters(sender)) {
+        return Ok("never filter");
+    }
+    if own.is_none() {
+        *own = Some(
+            IdentityRepository::new(connection)
+                .own_addresses()
+                .await?
+                .iter()
+                .filter_map(postio_model::EmailAddress::domain)
+                .map(str::to_ascii_lowercase)
+                .collect(),
+        );
+    }
+    let domains = own.as_ref().expect("read above");
+    if senders.iter().any(|sender| {
+        sender
+            .domain()
+            .is_some_and(|domain| domains.contains(&domain.to_ascii_lowercase()))
+    }) {
+        return Ok("own domain");
+    }
+    if !CorrespondentRepository::new(connection)
+        .written_to(senders)
+        .await?
+        .is_empty()
+    {
+        return Ok("wrote to");
+    }
+    if ThreadRepository::new(connection).took_part(thread).await? {
+        return Ok("took part");
+    }
+    Ok("none")
+}
+
+struct Unguarded;
+
+impl postio_classify::Facts for Unguarded {
+    fn wrote_to(&self, _: &postio_model::EmailAddress) -> bool {
+        false
+    }
+    fn took_part(&self, _: postio_model::ThreadId) -> bool {
+        false
+    }
+    fn own_domain(&self, _: &postio_model::EmailAddress) -> bool {
+        false
+    }
+    fn never_filter(&self, _: &postio_model::EmailAddress) -> bool {
+        false
+    }
 }
 
 struct Corrections(postio_config::FocusFilter);

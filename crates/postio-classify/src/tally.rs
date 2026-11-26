@@ -18,6 +18,9 @@ pub struct Tally {
     not_considered: usize,
     no_body: usize,
     marked: BTreeMap<(&'static str, &'static str), Vec<MessageId>>,
+    unfiled: BTreeMap<&'static str, usize>,
+    together: BTreeMap<String, usize>,
+    kept: BTreeMap<(&'static str, &'static str), Vec<MessageId>>,
 }
 
 impl Tally {
@@ -39,6 +42,48 @@ impl Tally {
                 .or_default()
                 .push(id);
         }
+    }
+
+    pub fn unfiled(&mut self, message: &postio_model::Message, in_the_table: bool) {
+        use postio_model::promoted::{AUTO_SUBMITTED, BULK_SENDER, PRECEDENCE};
+        let mut signs = Vec::new();
+        match message.promoted {
+            None => signs.push("headers not fetched"),
+            Some(promoted) => {
+                if promoted.unsubscribe_offered {
+                    signs.push("unsubscribe offered");
+                }
+                for (bits, sign) in [
+                    (PRECEDENCE, "precedence"),
+                    (AUTO_SUBMITTED, "auto-submitted"),
+                    (BULK_SENDER, "bulk sender"),
+                ] {
+                    if promoted.automation & bits != 0 {
+                        signs.push(sign);
+                    }
+                }
+            }
+        }
+        if message.list_id.is_some() {
+            signs.push("list-id");
+        }
+        if in_the_table {
+            signs.push("in the senders table");
+        }
+        if signs.is_empty() {
+            signs.push("no sign");
+        }
+        *self.together.entry(signs.join(" + ")).or_default() += 1;
+        for sign in signs {
+            *self.unfiled.entry(sign).or_default() += 1;
+        }
+    }
+
+    pub fn kept(&mut self, id: MessageId, reason: crate::ReasonKind, guard: &'static str) {
+        self.kept
+            .entry((reason.as_str(), guard))
+            .or_default()
+            .push(id);
     }
 
     /// `None` with a guard that asks is a body this machine does not hold.
@@ -80,6 +125,18 @@ impl Tally {
             ids(&mut out, group);
         }
         let _ = writeln!(out, "left in the inbox {}", self.examined - filed - held);
+        for (sign, count) in &self.unfiled {
+            let _ = writeln!(out, "  {sign} {count}");
+        }
+        for (signs, count) in &self.together {
+            let _ = writeln!(out, "  together: {signs} {count}");
+        }
+        let kept: usize = self.kept.values().map(Vec::len).sum();
+        let _ = writeln!(out, "kept by a guard {kept}");
+        for ((reason, guard), group) in &self.kept {
+            let _ = write!(out, "  {reason} {guard} {}:", group.len());
+            ids(&mut out, group);
+        }
         let _ = write!(out, "considered {}:", self.considered.len());
         ids(&mut out, &self.considered);
         let _ = write!(out, "noticed {}:", self.noticed.len());
@@ -216,6 +273,54 @@ mod tests {
         assert!(text.contains("  todo notice 1: 8\n"), "{text}");
         assert!(text.contains("  question detector 1: 4\n"), "{text}");
         assert!(text.contains("  todo model 1: 6\n"), "{text}");
+    }
+
+    #[test]
+    fn mail_left_in_the_inbox_is_counted_by_what_its_headers_say() {
+        let mut tally = Tally::new();
+        let at = chrono::DateTime::<chrono::Utc>::UNIX_EPOCH;
+        let account = postio_model::AccountId::new(1);
+        let inbox = postio_model::MailboxId::new(1);
+        let backlog = postio_model::Message::new(account, inbox, at);
+        let mut list = postio_model::Message::new(account, inbox, at);
+        list.list_id = Some("news.example.org".into());
+        list.promoted = Some(postio_model::promoted::PromotedHeaders {
+            unsubscribe_offered: true,
+            automation: postio_model::promoted::PRECEDENCE_BULK,
+        });
+        let mut plain = postio_model::Message::new(account, inbox, at);
+        plain.promoted = Some(postio_model::promoted::PromotedHeaders::default());
+
+        tally.unfiled(&backlog, false);
+        tally.unfiled(&list, true);
+        tally.unfiled(&plain, false);
+        let text = tally.render();
+
+        for line in [
+            "  headers not fetched 1\n",
+            "  list-id 1\n",
+            "  unsubscribe offered 1\n",
+            "  precedence 1\n",
+            "  in the senders table 1\n",
+            "  no sign 1\n",
+            "  together: unsubscribe offered + precedence + list-id + in the senders table 1\n",
+        ] {
+            assert!(text.contains(line), "{line:?} in {text}");
+        }
+    }
+
+    #[test]
+    fn mail_a_guard_kept_is_counted_by_the_reason_it_escaped_and_the_guard() {
+        let mut tally = Tally::new();
+        tally.kept(id(4), ReasonKind::Promotion, "took part");
+        tally.kept(id(6), ReasonKind::Promotion, "took part");
+        tally.kept(id(7), ReasonKind::Notification, "wrote to");
+
+        let text = tally.render();
+
+        assert!(text.contains("kept by a guard 3\n"), "{text}");
+        assert!(text.contains("  promotion took part 2: 4 6\n"), "{text}");
+        assert!(text.contains("  notification wrote to 1: 7\n"), "{text}");
     }
 
     #[test]
