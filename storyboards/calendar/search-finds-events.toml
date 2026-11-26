@@ -1,0 +1,53 @@
+# The command bar is the one search, in Calendar as in mail (spec 017 D9,
+# Q7). `/` in Calendar opens it over the agenda, and what is typed searches
+# mail and events together. Searched from Calendar, the results open on
+# their Events tab; Return on an event opens Calendar on it with the event
+# shown, as a mail result opens its message, and two Escapes climb back to
+# the results it was found in.
+apps   = ["focus"]
+source = { kind = "spec", ref = "specs/017-calendar D9" }
+seed   = "small"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+key     = "g"
+
+[[step]]
+id      = "agenda"
+key     = "e"
+check   = { view = "calendar", app.focus.calendar.view = "agenda" }
+expect  = "Agenda fills the main window. Its strip says Calendar and Agenda and holds no search field of its own: the command bar at the top is the one search."
+
+[[step]]
+id      = "bar"
+key     = "/"
+check   = { overlay.kind = "finder", keyboard.region = "search" }
+expect  = "The command bar opens over the agenda, the same box with the same placeholder as in mail, the keyboard in it. The agenda stays under it."
+
+[[step]]
+type    = "dentist"
+check   = { overlay.kind = "finder", keyboard.region = "search" }
+
+[[step]]
+id      = "found"
+command = "show_all_results"
+check   = { overlay.kind = "none", keyboard.region = "results", app.focus.results.tab = "Events" }
+expect  = "The main window is the results for “dentist”. The tabs read Threads, Files, People and Events with their counts, Events selected because the search began in Calendar. One row, ringed: Dentist, Harbour Street clinic, On this computer, and when, “Today · 17:00”. The heading counts “1 event”."
+
+[[step]]
+id      = "opened"
+key     = "Return"
+check   = { view = "calendar", app.focus.calendar.open = true }
+expect  = "Calendar opens on the event's day and the Dentist event is shown in the one dialog over the dimmed agenda, as Return in the agenda shows it."
+
+[[step]]
+key     = "Escape"
+check   = { view = "calendar", app.focus.calendar.open = false }
+expect  = "The dialog closes on the agenda, Dentist ringed."
+
+[[step]]
+key     = "Escape"
+check   = { keyboard.region = "results", app.focus.results.tab = "Events" }
+expect  = "Back on the results the event was found in, on the Events tab, Dentist still ringed."

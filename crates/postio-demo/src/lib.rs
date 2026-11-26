@@ -643,6 +643,9 @@ async fn calendar_demo(connection: &postio_storage::Connection, today: DateTime<
     let calendars = CalendarRepository::new(connection);
     let local = calendars.local().await.expect("On this computer").id;
     let midnight = today.with_timezone(&Local).date_naive();
+    postio_index::events::ensure(connection)
+        .await
+        .expect("the events' index");
     for (n, (title, day, minute, length, place)) in EVENTS.into_iter().enumerate() {
         let start = Local
             .from_local_datetime(
@@ -693,6 +696,17 @@ async fn calendar_demo(connection: &postio_storage::Connection, today: DateTime<
             )
             .await
             .expect("its occurrence");
+        postio_index::events::index_event(
+            connection,
+            event,
+            &postio_index::events::EventDocument {
+                title: title.to_owned(),
+                location: place.to_owned(),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("its search words");
     }
 }
 
