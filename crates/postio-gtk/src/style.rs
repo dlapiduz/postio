@@ -138,7 +138,7 @@ mod tests {
             || rule.starts_with(".focus-new-reply-banner ")
             || rule.starts_with(".focus-older-reply ")
             || rule.starts_with(".focus-forward-card-selected ")
-            || rule.starts_with(".focus-outline-current ")
+            || rule.starts_with(".focus-outline-cursor ")
             || rule == ".focus-thread-dot { color }"
             || rule.contains(".focus-marker")
             || rule.contains(".focus-has-action:checked")
