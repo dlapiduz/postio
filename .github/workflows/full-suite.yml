@@ -16,10 +16,10 @@ permissions:
   contents: read
   actions: read
 
-# By commit, so a label change cannot cancel the suite running on it; a push has a new sha and
-# supersedes. A change to another label runs in a group of its own and cancels nothing.
+# By commit: a push has a new sha and supersedes. Every event gives the same verdict, so a label
+# change that restarts a running suite costs time but never a wrong answer.
 concurrency:
-  group: full-suite-${{ github.event.pull_request.head.sha || github.sha }}${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'full-suite' && format('-{0}', github.run_id) || '' }}
+  group: full-suite-${{ github.event.pull_request.head.sha || github.sha }}
   cancel-in-progress: true
 
 jobs:
@@ -34,12 +34,8 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           LABELLED: ${{ contains(github.event.pull_request.labels.*.name, 'full-suite') }}
-          OTHER_LABEL: ${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'full-suite' }}
         run: |
-          if [ "$OTHER_LABEL" = true ]; then
-            echo "Another label changed; the verdict this commit already has stands."
-            echo "run=false" >> "$GITHUB_OUTPUT"
-          elif [ "$EVENT" = workflow_dispatch ] || [ "$LABELLED" = true ]; then
+          if [ "$EVENT" = workflow_dispatch ] || [ "$LABELLED" = true ]; then
             echo "Requested ($EVENT) -- running the full suite on this ref."
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
@@ -55,10 +51,10 @@ jobs:
     if: needs.requested.outputs.run == 'true'
     uses: ./.github/workflows/nightly.yml
 
-  # Renamed when another label changed: a run under the required name would replace the verdict a
-  # real run gave this commit, and a skip reads as a pass.
+  # Always this name, on every event: required checks are read from the workflow's latest run on a
+  # commit, so a run that renamed it left the check missing and the pull request blocked.
   result:
-    name: ${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'full-suite' && 'Full suite on request (label change)' || 'Full suite on request' }}
+    name: Full suite on request
     needs: [requested, suite]
     if: always()
     runs-on: ubuntu-latest
