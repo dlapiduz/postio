@@ -231,17 +231,6 @@ jobs:
           echo "tooling self-tests: $answer"
           printf '%s\n' "$files" | sed 's/^/  changed: /'
 
-      # `test-issue-land-no-tests.py` needs nextest, and `prereq.py` makes a missing one fail under
-      # CI. Cached on the script's hash.
-      - name: Cache cargo-nextest
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cargo/bin/cargo-nextest
-          key: ${{ runner.os }}-cargo-nextest-${{ hashFiles('scripts/install-nextest.sh') }}
-
-      - name: Install cargo-nextest
-        run: scripts/install-nextest.sh
-
       - name: Prove the tooling still holds itself up
         if: steps.tooling.outputs.run == 'yes'
         run: |
@@ -447,8 +436,8 @@ jobs:
         uses: ./.github/actions/build-cache-save
 
   # Per changed crate with `--no-deps`: the workspace doc build is the 23-minute job #833 removed.
-  # The flags are `nightly.yml`'s `doc` job's and `issue-land.sh`'s `run_rustdoc`; change one,
-  # change all three.
+  # The flags are `nightly.yml`'s `doc` job's; change one,
+  # change both.
   # It runs on pushes to `main` only so the build cache gets written (#1710).
   rustdoc:
     name: Rustdoc links

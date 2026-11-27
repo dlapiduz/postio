@@ -1,27 +1,13 @@
 #!/usr/bin/env python3
-"""Self-test for the landing's test tier: which tests a landing runs, and
-which it leaves to the pull request.
+"""Self-test for the landing's gates: what a landing checks locally, and what
+it leaves to the pull request.
 
-The default tier has been cut twice. #847 cut it from every changed crate's
-integration suites to the workspace's unit tests, when the suites had become
-minutes each on a shared workstation. 2026-10-23 cut it again, to the unit
-tests of the crates the branch changed, when the pull request's checks came
-down from a 35-minute median to about five: a landing waits for those checks
-anyway, and they run the workspace's units, every crate's test targets under
-clippy, the suites a vocabulary change breaks, and the doctests. What a
-landing proves locally is what a red check would cost a round trip to learn.
+A landing costs at most five minutes of the agent's time (CLAUDE.md), so it
+runs rustfmt, the invariants and one clippy call over the changed crates'
+targets, which type-checks their tests too. Tests, doctests and rustdoc are
+the pull request's (`ci.yml`: Tests, Rustdoc links); the full suite and the
+frontends run on `main` after the merge.
 
-Two directions are pinned here: the landing runs the changed crates' units and
-their doctests; it runs neither the integration suites nor the whole workspace.
-
-**This does not make unit tests sufficient.** CI runs the sanity tier on every
-pull request, and the full suite and the frontends on `main` after every
-merge, with merges locked while it is red. That is what
-makes leaning on the fast tier safe, because the bugs this project ships are
-layers that each pass and are not joined up -- the Reader was built, tested
-and never mounted -- and unit tests are exactly the tier that cannot see them.
-
-Usage: scripts/tests/test-issue-land-tiers.py
 Exit status: 0 all cases behaved, 1 otherwise.
 """
 
@@ -117,7 +103,7 @@ def workspace_toml(members: tuple[str, ...]) -> str:
 
 
 def world(base: Path) -> tuple[Path, Path]:
-    """A sandbox whose branch changes one crate, `postio-core`."""
+    """A sandbox whose branch changes `postio-core` and `postio-widgets`."""
     root = base / "repo"
     stub_dir = base / "stub"
     (stub_dir / "bin").mkdir(parents=True)
@@ -167,11 +153,12 @@ def world(base: Path) -> tuple[Path, Path]:
     git("push", "-q", "origin", "main", cwd=root)
 
     git("checkout", "-q", "-b", "issue-1-tiers", cwd=root)
-    (root / "crates" / "postio-core" / "src" / "lib.rs").write_text(
-        "// an ordinary change\n", encoding="utf-8"
-    )
+    for crate in ("postio-core", "postio-widgets"):
+        (root / "crates" / crate / "src" / "lib.rs").write_text(
+            "// an ordinary change\n", encoding="utf-8"
+        )
     git("add", "-A", cwd=root)
-    git("commit", "-q", "-m", "touch postio-core", cwd=root)
+    git("commit", "-q", "-m", "touch postio-core and postio-widgets", cwd=root)
     return root, stub_dir
 
 
@@ -190,49 +177,11 @@ def land(root: Path, stub_dir: Path, *extra: str) -> subprocess.CompletedProcess
     )
 
 
-def test_runs(calls: str) -> list[str]:
-    """Every call that runs tests, under whichever runner the host has:
-    `cargo test ...` or `cargo nextest run ...`."""
+def cargo_runs(calls: str, *verbs: str) -> list[str]:
     return [
-        line
-        for line in calls.splitlines()
-        if line.startswith("cargo ")
-        and (" test " in f" {line} " or " nextest run " in f" {line} ")
+        line for line in calls.splitlines()
+        if line.startswith("cargo ") and any(f" {verb} " in f" {line} " for verb in verbs)
     ]
-
-
-def unit_runs(calls: str) -> list[str]:
-    """The default tier: the changed crates' units, `--lib -p <crate>`."""
-    return [
-        line for line in test_runs(calls)
-        if " --lib " in f" {line} " and " -p " in f" {line} "
-    ]
-
-
-def suite_runs(calls: str) -> list[str]:
-    """The integration suites -- the runs that cost binaries to link: a test
-    run that is neither `--lib` nor `--doc`, over a crate or the workspace.
-
-    `--doc` is deliberately not one of them. A doctest run compiles the
-    examples in a crate's own docs and links no test binary, which is why
-    #1440 put it in the default tier; counting it here would make the tier
-    look expensive for something that is nearly free, and would make this
-    self-test fail on the very change it is meant to describe.
-    """
-    return [
-        line for line in test_runs(calls)
-        if " --lib " not in f" {line} " and " --doc " not in f" {line} "
-    ]
-
-
-def workspace_runs(calls: str) -> list[str]:
-    """Any test run over the whole workspace, units included. Those are the
-    pull request's since 2026-10-23 (`ci.yml`, Tests)."""
-    return [line for line in test_runs(calls) if "--workspace" in line]
-
-
-def doctest_runs(calls: str) -> list[str]:
-    return [line for line in test_runs(calls) if " --doc " in f" {line} "]
 
 
 def main() -> int:
@@ -240,36 +189,30 @@ def main() -> int:
         base = Path(directory)
 
         root, stub_dir = world(base / "default")
-        land(root, stub_dir)
+        result = land(root, stub_dir)
         calls = (stub_dir / "calls").read_text(encoding="utf-8")
-        units = unit_runs(calls)
+        clippy = cargo_runs(calls, "clippy")
         case(
-            "a landing runs the unit tests of the crate it changed",
-            any("-p postio-core" in line for line in units),
-            f"no `--lib -p postio-core` run (cargo test or nextest run) in:\n{calls}",
+            "a landing runs one clippy call",
+            len(clippy) == 1,
+            f"exit {result.returncode}, clippy calls {clippy} in:\n{calls}",
+        )
+        call = clippy[0] if clippy else ""
+        case(
+            "over every crate it changed, their tests included, warnings denied",
+            "-p postio-core" in call and "-p postio-widgets" in call
+            and "--all-targets" in call and "-D warnings" in call,
+            call,
         )
         case(
-            "and only of the crates it changed",
-            not any("postio-gtk" in line or "postio-widgets" in line for line in units),
-            f"a crate the branch did not touch had its units run:\n{units}",
+            "and no crate it left alone",
+            "postio-gtk" not in call,
+            call,
         )
         case(
-            "and does not run the integration suites",
-            not suite_runs(calls),
-            "a default landing still paid for the integration binaries, which "
-            f"is the cost #847 removed:\n{suite_runs(calls)}",
-        )
-        case(
-            "and does not run the whole workspace",
-            not workspace_runs(calls),
-            "a default landing ran a workspace-wide tier; that is the pull "
-            f"request's job since 2026-10-23:\n{workspace_runs(calls)}",
-        )
-
-        case(
-            "a default landing runs the doctests for a crate it changed",
-            any("-p postio-core" in line for line in doctest_runs(calls)),
-            f"no `cargo test --doc -p postio-core` in:\n{calls}",
+            "a landing runs no tests, doctests or rustdoc; the pull request does",
+            not cargo_runs(calls, "test", "nextest", "doc"),
+            f"{cargo_runs(calls, 'test', 'nextest', 'doc')}",
         )
 
     for failure in FAILURES:

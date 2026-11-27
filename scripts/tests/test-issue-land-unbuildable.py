@@ -254,11 +254,7 @@ def main() -> int:
         )
         case(
             "on a host with GTK the gates still ran over the crate",
-            "clippy -p postio-gtk" in calls
-            and any(
-                "--lib" in line and "-p postio-gtk" in line
-                for line in calls.splitlines()
-            ),
+            "clippy -p postio-gtk" in calls,
             f"the gates were skipped on a host that can run them:\n{calls}",
         )
 
