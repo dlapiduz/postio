@@ -11,14 +11,12 @@ anyway, and they run the workspace's units, every crate's test targets under
 clippy, the suites a vocabulary change breaks, and the doctests. What a
 landing proves locally is what a red check would cost a round trip to learn.
 
-Three directions are pinned here, and the last matters as much as the first:
-the default runs the changed crates' units and their doctests; it runs
-neither the integration suites nor the whole workspace; and `--full` still
-runs the suites. A "fast" default that had quietly stopped running them under
-`--full` too would be indistinguishable from this change working.
+Two directions are pinned here: the landing runs the changed crates' units and
+their doctests; it runs neither the integration suites nor the whole workspace.
 
 **This does not make unit tests sufficient.** CI runs the sanity tier on every
-pull request and the full suite on `main` after every merge. That is what
+pull request, and the full suite and the frontends on `main` after every
+merge, with merges locked while it is red. That is what
 makes leaning on the fast tier safe, because the bugs this project ships are
 layers that each pass and are not joined up -- the Reader was built, tested
 and never mounted -- and unit tests are exactly the tier that cannot see them.
@@ -272,15 +270,6 @@ def main() -> int:
             "a default landing runs the doctests for a crate it changed",
             any("-p postio-core" in line for line in doctest_runs(calls)),
             f"no `cargo test --doc -p postio-core` in:\n{calls}",
-        )
-
-        root, stub_dir = world(base / "full")
-        land(root, stub_dir, "--full")
-        calls = (stub_dir / "calls").read_text(encoding="utf-8")
-        case(
-            "--full runs the changed crate's integration suites",
-            any("-p postio-core" in line for line in suite_runs(calls)),
-            f"`--full` ran no per-crate suites at all:\n{calls}",
         )
 
     for failure in FAILURES:

@@ -36,6 +36,10 @@ FAILURES: list[str] = []
 
 CARGO_STUB = """#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$STUB_DIR/calls"
+if [ -n "${STUB_REPORT:-}" ]; then
+    mkdir -p "$(dirname "$STUB_REPORT")"
+    printf '%s\\n' "$*" > "$STUB_REPORT"
+fi
 
 # The first run, whichever scope it asked for: the whole workspace for a
 # release, or one crate for the pull-request job that runs the widget
@@ -175,6 +179,18 @@ def main() -> int:
             "no package means the whole workspace, which is what a release wants",
             "--workspace" in calls,
             f"the default scope was not the workspace:\n{calls}",
+        )
+
+    with tempfile.TemporaryDirectory() as directory:
+        stub_dir = stub(Path(directory))
+        target = Path(directory) / "target"
+        report = target / "nextest" / "ci" / "junit.xml"
+        run(stub_dir, env={"CARGO_TARGET_DIR": str(target), "STUB_REPORT": str(report)})
+        kept = report.with_name("junit-run.xml")
+        case(
+            "the whole run's report survives the retries that rewrite it",
+            kept.exists() and "--no-fail-fast" in kept.read_text(),
+            f"{kept}: {kept.read_text() if kept.exists() else 'missing'}",
         )
 
     with tempfile.TemporaryDirectory() as directory:

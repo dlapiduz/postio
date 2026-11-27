@@ -17,7 +17,7 @@ git worktree list
 
 An `in-progress` issue with a worktree under `~/src/postio-worktrees/issue-<n>` is live work. Leave it alone.
 
-A quiet claim is not a stale one: a session can spend hours reading, waiting on CI or running a suite with no commit. Treat a claim as abandoned only after **a day or more** with no worktree, no branch and no commits:
+A quiet claim is not a stale one: a session can spend hours reading or running a suite with no commit. Treat a claim as abandoned only after **a day or more** with no worktree, no branch and no commits:
 
 ```bash
 scripts/issue-release.sh --stale        # a day or more; the safe default

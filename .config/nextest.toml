@@ -59,22 +59,7 @@ slow-timeout = { period = "60s", terminate-after = 8 }
 [profile.ci.junit]
 path = "junit.xml"
 
-# Everything, measurements included. `nightly.yml`'s full-suite job runs this; `all()` is a filter
-# an `-E` narrows.
-# The quarantine: cases that flake under the shared compositor on PRs that never touch them, each
-# with its issue and date.
-# A retry here is a loan, not a fix; the entry leaves when the case is repaired, and the steward
-# asks after old ones.
-#
-#   marked_rows::a_selected_marked_row_shows_its_check_not_its_dot   4x  #1800, 2026-10-23
-#   unsubscribe::the_setting_makes_the_one_action_delete              3x  #1800, 2026-10-23
-#   unsubscribe::leaving_a_list_offers_one_action_on_a_toast_and_ignoring_it_keeps_the_mail
-#                                                                      2x  #1800, 2026-10-23
-#   row_menu::a_right_click_on_a_row_offers_its_verbs_with_their_keys 1x  #1800, 2026-10-23
-[[profile.ci.overrides]]
-filter = 'binary(focus_suite) & (test(=marked_rows::a_selected_marked_row_shows_its_check_not_its_dot) | test(=unsubscribe::the_setting_makes_the_one_action_delete) | test(=unsubscribe::leaving_a_list_offers_one_action_on_a_toast_and_ignoring_it_keeps_the_mail) | test(=row_menu::a_right_click_on_a_row_offers_its_verbs_with_their_keys))'
-retries = 1
-
+# Everything, measurements included; `all()` is a filter an `-E` narrows.
 [profile.nightly]
 # A bench's clock, not the merge path's: `cache_pressure` seeds 400,000 messages and takes ~393s on
 # an idle workstation.
@@ -109,6 +94,25 @@ slow-timeout = { period = "120s", terminate-after = 6 }
 default-filter = 'not ((package(postio-storage) & test(/^measurement::cache_pressure::/)) + (binary(focus_suite) & (test(/^every_command::/) | test(/^storyboard_catalogue::/))))'
 # One red crate must not hide the rest of an unwatched report or a release gate.
 fail-fast = false
+
+# Read by `scripts/ci-test-budget.py`, which holds the frontends' merge-path cases to their budget
+# (`nightly.yml`).
+[profile.ci-full.junit]
+path = "junit.xml"
+
+# The quarantine: cases that flake under the shared compositor on runs that never touch them, each
+# with its issue and date.
+# A retry here is a loan, not a fix; the entry leaves when the case is repaired, and the steward
+# asks after old ones.
+#
+#   marked_rows::a_selected_marked_row_shows_its_check_not_its_dot   4x  #1800, 2026-10-23
+#   unsubscribe::the_setting_makes_the_one_action_delete              3x  #1800, 2026-10-23
+#   unsubscribe::leaving_a_list_offers_one_action_on_a_toast_and_ignoring_it_keeps_the_mail
+#                                                                      2x  #1800, 2026-10-23
+#   row_menu::a_right_click_on_a_row_offers_its_verbs_with_their_keys 1x  #1800, 2026-10-23
+[[profile.ci-full.overrides]]
+filter = 'binary(focus_suite) & (test(=marked_rows::a_selected_marked_row_shows_its_check_not_its_dot) | test(=unsubscribe::the_setting_makes_the_one_action_delete) | test(=unsubscribe::leaving_a_list_offers_one_action_on_a_toast_and_ignoring_it_keeps_the_mail) | test(=row_menu::a_right_click_on_a_row_offers_its_verbs_with_their_keys))'
+retries = 1
 
 # The accessibility sweep stalls on shared runners while opening the composer's editor WebView
 # (#1677). A stall is killed at two minutes and retried; `test-with-flake-retry.sh` only retries

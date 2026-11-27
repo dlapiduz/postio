@@ -50,14 +50,7 @@ def main() -> int:
         fail(f"run_doctests no longer passes --doc: {body.group(1).strip()!r}")
         problems += 1
 
-    full_branch = source.index('echo "--- test (full)')
-    default_branch = source.index(
-        "        # The default tier: the unit tests of the crates this branch changed"
-    )
-    if default_branch < full_branch:
-        fail("the branches moved; this test is reading the wrong halves")
-        return 1
-    default = source[default_branch:]
+    default = source[source.index("    # The default tier:"):]
 
     if "run_doctests" not in default:
         fail(

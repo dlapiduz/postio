@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """A crate with no tests must not fail the landing gate (#1308).
 
-`issue-land.sh` runs the unit tests of every crate a branch changed (and,
-under `--full`, their integration suites). `postio-bench` has no tests and is
+`issue-land.sh` runs the unit tests of every crate a branch changed.
+`postio-bench` has no tests and is
 not supposed to have any — it is bench targets, and `bench.yml` compiles them
 nightly and deliberately times nothing. nextest exits **4** when a run selects
 nothing, and the gate read that as a failure:
