@@ -17,10 +17,10 @@ The loop of `specs/008-storyboards` (contracts/review.md): a Claude agent review
 
 ```bash
 scripts/storyboards.sh lint
-scripts/storyboards.sh run --changed     # the storyboards this branch added or changed
+scripts/storyboards.sh run --changed
 ```
 
-An existing storyboard your change affects but did not edit is filmed with `--only <path>` as well. Never film the whole catalogue here: it takes hours on a workstation, CI plays it after the merge, and a bare `run` refuses. A failing run is yours to fix before any reviewer sees it. `not covered` and `not applicable` are counted and shown, not failures.
+`--changed` films the storyboards the branch added or changed; add `--only <path>` for one your change affects but did not edit. Never the whole catalogue: it takes hours here, and CI plays it after the merge. A failing run is yours to fix before any reviewer sees it. `not covered` and `not applicable` are counted, not failures.
 
 ## 2. Film the base
 
@@ -28,7 +28,7 @@ An existing storyboard your change affects but did not edit is filmed with `--on
 scripts/storyboards.sh base
 ```
 
-(Until `base` exists, tasks T066/T067, skip this; every run is reviewed as new.) The page shows base and branch side by side; a storyboard for the defect you fixed is red there.
+The page shows base and branch side by side; a storyboard for the defect you fixed is red there.
 
 ## 3. Bundle and launch the reviewer
 
@@ -40,7 +40,7 @@ scripts/storyboards.sh tool prompt Design/review/<branch>/bundle --list   # batc
 scripts/storyboards.sh tool prompt Design/review/<branch>/bundle --batch 1 > /tmp/…/prompt-1.md
 ```
 
-Launch **one `ux-reviewer` agent per batch, fresh, never a fork**, at most four at once, each given **exactly** its prompt file's contents. Add no context and do not explain the change: the reviewer judges what a person would see, and your account is what it must not have (FR-018). If the `ux-reviewer` type is unavailable, use a general-purpose agent on Opus whose prompt is `.claude/agents/ux-reviewer.md`'s body followed by the prompt file, verbatim.
+Launch **one `ux-reviewer` agent per batch, fresh, never a fork**, at most four at once, each given **exactly** its prompt file's contents. Add no context: the reviewer judges what a person sees, never your account of the change (FR-018). If the `ux-reviewer` type is unavailable, use a general-purpose agent on Opus whose prompt is `.claude/agents/ux-reviewer.md`'s body followed by the prompt file, verbatim.
 
 With several batches each reviewer writes `verdicts.N.json`; then:
 
@@ -66,7 +66,7 @@ For each `fail` and each finding of severity `blocker` or `wrong`:
   - Do not change a storyboard's expectation to argue with a frame unless it was wrong about the *product*, and then say so in the commit.
 - **Or contest it**: an entry in `Design/review/<branch>/bundle/contests.toml` (`[[contest]]`, `ref = "<storyboard>/<step>/<app>/<variant>"`, `reason`). The maintainer settles contests; you cannot drop one.
 
-`polish` findings may stay open; they are listed. `question`s always go to the maintainer.
+`polish` findings may stay open. `question`s always go to the maintainer.
 
 ## 6. The page
 
@@ -74,7 +74,7 @@ For each `fail` and each finding of severity `blocker` or `wrong`:
 scripts/storyboards.sh page --open
 ```
 
-`summary.md` beside it is text only, first line `storyboards-key: …`; it goes on the PR (`issue-land.sh` puts it in the body, or comments it on an existing PR). Frames never go on a PR. If the maintainer is away from the workstation, offer to publish the page privately, never by default.
+`summary.md` beside it is text only, first line `storyboards-key: …`; it goes on the PR (`issue-land.sh` puts it in the body, or comments it on an existing PR). Frames never go on a PR. Away from the workstation, offer to publish the page privately, never by default.
 
 ## When the maintainer rejects an interaction
 
@@ -94,4 +94,4 @@ Launch the reviewer as in step 3. **Every `must_fail` storyboard must be failed 
 
 ## What the reviewer will not flag (the runner does it on purpose)
 
-Boxes for CJK and emoji (embedded fonts only), the magenta keyboard outline and caption, dates as of 2 June 2026 (frozen clock), no animation. The prompt says so; do not "fix" them.
+Boxes for CJK and emoji (embedded fonts only), the magenta keyboard outline and caption, dates as of 2 June 2026 (frozen clock), no animation. Do not "fix" them.
