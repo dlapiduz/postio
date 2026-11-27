@@ -30,7 +30,7 @@ scripts/issue-claim.sh --fresh | --cold | --reuse
 - Claim from inside the worktree you just landed: it moves that tree to the new issue and keeps the build warm. If that would strand a dirty tree or unlanded commits, it says so and seeds a fresh tree.
 - *No ready issues*: stop and say so. Do not hunt the backlog.
 
-**Small issues can share a branch.** Claim each extra by hand: `gh issue edit <n> --add-assignee @me --add-label in-progress` and `mkdir ~/.cache/postio/claims/issue-<n>`. Give each its own commits and `Refs:`, land once, then `gh issue close <n> -c "Landed with #<anchor>"` and `rmdir` its lock.
+**Small issues can share a branch.** Claim each extra by hand: `gh issue edit <n> --add-assignee @me --add-label in-progress` and `mkdir ~/.cache/postio/claims/issue-<n>`. Give each its own commits and `Refs:`, land once with `--closes <n>,<m>` so the PR closes them all, then `rmdir` their locks.
 
 **Interdependent issues get a feature branch** when one-at-a-time landing would leave `main` half-migrated.
 - Claim each with `--base feature/<x>`; the base is recorded in the worktree and the landing follows it.
@@ -55,19 +55,20 @@ Stay in the worktree; everything is allowed in it (`git add -A`, `cargo fmt --al
 
 ```bash
 scripts/issue-land.sh --detach                # the ordinary landing
-scripts/issue-land.sh --detach --full-suite   # new feature or big change: CI runs the nightly on the PR
+scripts/issue-land.sh --detach --closes 12,34 # a batch: the PR closes these too
 scripts/issue-land.sh --detach --refs-only    # this PR does not finish the issue
 scripts/issue-land.sh --detach --wip          # push a branch, no PR yet
 scripts/issue-land.sh --detach --no-merge     # PR for a human first; say why
 ```
 
-It formats, runs clippy, the unit tests of what you changed and `scripts/check.sh`, commits, rebases on the base, pushes, opens a PR that closes the issue and arms auto-merge. PRs land **squashed**.
-- `--full` (integration suites locally) needs a specific reason; run the suites your diff touches yourself instead.
-- The script names a high-risk diff (seeded mail or fixtures, `postio-focus`, storage migrations, `postio-sync`, 3+ crates) and the rule that matched; `--full-suite` is yours to ask for. The full suite runs on `main` after the merge regardless.
+**A landing costs you at most five minutes.** It formats, runs clippy, your crates' units and `scripts/check.sh` (a 300 s budget), commits, rebases, pushes, opens a PR closing the issue and arms auto-merge. PRs land **squashed**.
+- Then report the PR number; never wait on CI. PR checks run unattended; the full suite and the frontends run on `main` after each merge.
+- While `main` is red only a `fixes-nightly` PR merges.
+- A watchdog stops a landing stuck past 20 minutes and names the phase (`--status`).
 
 **Opening a PR by hand** (from a host that cannot build a crate the branch touches) skips the gates, so run what the host can: `scripts/check.sh`, the suites you touched, `scripts/doc-check.sh` (rustdoc under CI's flags). Then `gh pr merge <n> --auto --squash`.
 
-**A red PR is yours**: the next claim and `/steward` both report it; `scripts/issue-claim.sh --resume <n>` returns you to it. A failure in code you did not touch is probably someone else's: reproduce it alone and search the issues before re-running. For a suspected flake, `scripts/flake-check.sh -p <crate> --test <suite> <test>` runs it idle and under load.
+**A red PR is yours**: the next claim and `/steward` both report it; `scripts/issue-claim.sh --resume <n>` brings you back. A failure in code you did not touch is probably someone else's: reproduce it alone and search the issues before re-running. For a suspected flake, `scripts/flake-check.sh -p <crate> --test <suite> <test>` runs it idle and under load.
 
 ## 4. Is it reachable?
 
@@ -75,7 +76,7 @@ If the issue built a surface (widget, command, view), check a person can reach i
 
 ## 5. Finish and keep going
 
-When the landing returns, claim the next issue from the same worktree; do not ask whether to continue. Stop only when nothing is ready, a decision is the maintainer's, or context is nearly gone, and land or commit first.
+Once the PR is open, claim the next issue from the same worktree; do not ask whether to continue. Stop only when nothing is ready, a decision is the maintainer's, or context is nearly gone, and land or commit first.
 
 ```bash
 scripts/issue-release.sh <n>              # only when you stop
