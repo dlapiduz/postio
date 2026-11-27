@@ -290,8 +290,8 @@ def unscoped_rustfmt(command: str, haystack: str) -> str | None:
 # command.
 # A lease, not a lock: a dead session must not strand a worktree.
 
-# Generous: a session waiting on a backgrounded `issue-land.sh --full` makes no calls for 20+
-# minutes (#412).
+# Generous: a session waiting on a backgrounded landing can make no calls for 20 minutes, the
+# landing's watchdog (#412).
 CLAIM_LEASE = 45 * 60
 
 # How stale the owner's stamp must be before it is rewritten, to avoid a write per command.
