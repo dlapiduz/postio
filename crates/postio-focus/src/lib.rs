@@ -1656,7 +1656,10 @@ impl FocusController {
         steps.extend(self.show_empty());
         let mut effects = self.effects(steps);
         if self.surfaces.has(SurfaceKind::Message) {
-            let steps = self.walk_after(&effects, rows);
+            let mut steps = self.walk_after(&effects, rows);
+            if !self.verbs.restored() {
+                steps.extend(self.cursor_to_walk(rows));
+            }
             effects.extend(self.effects(steps));
         }
         // A landing that did not move the cursor may still be the first with its row read, so the

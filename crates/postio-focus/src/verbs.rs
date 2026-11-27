@@ -79,6 +79,14 @@ impl Verbs {
         self.restoring.is_some()
     }
 
+    pub(crate) fn restoring_rows(&self) -> Option<Vec<MessageId>> {
+        Some(self.restoring.as_ref()?.rows.clone())
+    }
+
+    pub(crate) fn restored(&self) -> bool {
+        self.restored
+    }
+
     pub(crate) fn take_restored(&mut self) -> bool {
         std::mem::take(&mut self.restored)
     }

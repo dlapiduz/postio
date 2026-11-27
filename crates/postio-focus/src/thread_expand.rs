@@ -404,6 +404,7 @@ impl FocusController {
             Some(view) => self.walk_read(thread, view),
             None => self.walk_gone(thread),
         });
+        steps.extend(self.cursor_to_walk(rows));
         steps.extend(self.thread_read(thread, view, raw, rows));
         steps
     }
