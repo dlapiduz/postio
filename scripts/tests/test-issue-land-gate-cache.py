@@ -3,14 +3,13 @@
 
 Long commands on this workstation get killed sometimes (documented in
 docs/archive/engineering-notes.md), and every killed `issue-land.sh` retry used to
-re-run the whole gate chain -- clippy and the full per-crate test suite,
-minutes each -- against a tree that had not changed a byte since the gates
+re-run the whole gate chain -- minutes each -- against a tree that had not changed a byte since the gates
 last went green. Landing #109 paid the app crate's gates three times that way.
 
 So the script records `git write-tree` (the staged tree's content hash --
 staging already happens before the gates, #270) plus the crate list after
 the gates pass, in the worktree's own git dir. A later run whose staged
-tree and crate list match exactly skips clippy and the per-crate tests,
+tree and crate list match exactly skips clippy,
 loudly; `check.sh` still runs (it is seconds). Any content change -- an
 edit, what `cargo fmt` itself rewrites, a rebase, a toolchain bump
 (rust-toolchain.toml is tracked) -- changes the hash and the gates run in
@@ -159,9 +158,7 @@ def main() -> int:
         )
         case(
             "and prints how long each gate phase took",
-            re.search(r"^\[timing\] clippy dummy: \d+s$", output, re.MULTILINE)
-            is not None
-            and re.search(r"^\[timing\] unit tests: \d+s$", output, re.MULTILINE)
+            re.search(r"^\[timing\] clippy: \d+s$", output, re.MULTILINE)
             is not None,
             f"no [timing] lines for the crate's gates\n{output}",
         )

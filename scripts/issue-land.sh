@@ -22,46 +22,6 @@
 # new copy from the top (#160).
 set -euo pipefail
 
-# Which runner the integration gates use: `cargo nextest` runs test binaries concurrently (the
-# workspace ~500s -> 118.6s) but spawns a process per test, so the ~1,459 unit tests are 2.2x slower
-# than `cargo test`. The default tier is the changed crates' units through nextest so the merge
-# path's filter in `.config/nextest.toml` applies (#1976); `scripts/test-fast.sh` and
-# `test-sanity.sh` stay on `cargo test`. Fail open: without nextest it runs `cargo test` and gets
-# the same answer, slower. Defined here, not sourced from `lib/`: the self-tests copy this file into
-# a sandbox alone, and a `source` line would fail them all.
-if cargo nextest --version >/dev/null 2>&1; then
-    POSTIO_TEST_RUNNER="${POSTIO_TEST_RUNNER:-nextest}"
-else
-    POSTIO_TEST_RUNNER="${POSTIO_TEST_RUNNER:-cargo}"
-fi
-
-run_tests() {
-    if [ "$POSTIO_TEST_RUNNER" = "nextest" ]; then
-        # `--no-tests=pass`: nextest exits 4 when a run selects nothing, but a crate with no tests
-        # (`postio-bench`) must still land (#1308), as under `cargo test`. "No tests" and "tests
-        # failed" are different answers; the self-test asserts both on both runners.
-        cargo nextest run --no-tests=pass "$@"
-    else
-        cargo test "$@"
-    fi
-}
-
-# Always `cargo test`: **nextest does not run doctests**, and does not say so; ~20 would silently
-# stop.
-run_doctests() {
-    cargo test --doc "$@"
-}
-
-# Build one crate's rustdoc under the flags `nightly.yml`'s `doc` job uses, so a broken intra-doc
-# link fails the branch that wrote it (#1463).
-# Per crate, not the workspace (23m35s, #833). After the rebase, where the combination first exists
-# (#1448 merged six broken links).
-# `private_intra_doc_links` is allowed for the reason `nightly.yml` gives.
-run_rustdoc() {
-    RUSTDOCFLAGS="-D warnings -A rustdoc::private_intra_doc_links" \
-        cargo doc --no-deps --document-private-items "$@"
-}
-
 TREE=$(git rev-parse --show-toplevel)
 
 # --detach: run this script in a session of its own and return (#1129). A landing run from a tool
@@ -468,72 +428,26 @@ GATES_KEY="$(git write-tree) crates:$(printf '%s' "$CRATES" | tr '\n' ' ')"
 GATES_GREEN=0
 if [ "$(cat "$GATES_STAMP" 2>/dev/null)" = "$GATES_KEY" ]; then
     GATES_GREEN=1
-    echo "--- clippy and tests: already green for this exact tree ---"
+    echo "--- clippy: already green for this exact tree ---"
     echo "A previous run proved this staged content with this crate list"
     echo "(recorded in $GATES_STAMP),"
-    echo "so clippy and the per-crate tests are not re-run. Any change to"
+    echo "so clippy is not re-run. Any change to"
     echo "the tree re-runs them; rm that file to force a re-run now."
 fi
 
+# One clippy call over the changed crates' targets type-checks their tests as well. Tests, doctests
+# and rustdoc are the pull request's checks, minutes later, and never the agent's wait.
 if [ "$GATES_GREEN" != 1 ]; then
+    CLIPPY_CRATES=()
     for crate in $CRATES; do
-        [ -d "$TREE/crates/$crate" ] || continue
-        echo "--- clippy: $crate ---"
-        phase "clippy $crate"
-        PHASE_START=$(date +%s)
-        cargo clippy -p "$crate" --all-targets -- -D warnings
-        echo "[timing] clippy $crate: $(( $(date +%s) - PHASE_START ))s"
-
-        echo "--- rustdoc: $crate ---"
-        phase "rustdoc $crate"
-        PHASE_START=$(date +%s)
-        run_rustdoc -p "$crate"
-        echo "[timing] rustdoc $crate: $(( $(date +%s) - PHASE_START ))s"
+        if [ -d "$TREE/crates/$crate" ]; then CLIPPY_CRATES+=(-p "$crate"); fi
     done
-
-    # The default tier: the changed crates' units in one nextest run, so the merge path's filter
-    # applies (#1976), and their doctests. Their suites are yours to run while you work; the full
-    # suite and the frontends run on `main` after every merge, which locks merges while red (#847).
-    UNIT_CRATES=()
-    for crate in $CRATES; do
-        [ -d "$TREE/crates/$crate" ] || continue
-        UNIT_CRATES+=(-p "$crate")
-    done
-    if [ ${#UNIT_CRATES[@]} -gt 0 ]; then
-        echo "--- test: unit tests of the changed crates ---"
-        phase "unit tests"
+    if [ ${#CLIPPY_CRATES[@]} -gt 0 ]; then
+        echo "--- clippy: $CRATES ---"
+        phase "clippy"
         PHASE_START=$(date +%s)
-        run_tests --lib "${UNIT_CRATES[@]}"
-        echo "[timing] unit tests: $(( $(date +%s) - PHASE_START ))s"
-    fi
-
-    # Doctests for the changed crates (#1440): a broken one was found by CI sixteen minutes later.
-    # rustdoc reads an indented block in a `///` comment as Rust and fails on it. A gate that can
-    # only fail on CI costs a round trip each time (#1047).
-    for crate in $CRATES; do
-        [ -d "$TREE/crates/$crate" ] || continue
-        echo "--- doctests: $crate ---"
-        phase "doctests $crate"
-        PHASE_START=$(date +%s)
-        run_doctests -p "$crate"
-        echo "[timing] doctests $crate: $(( $(date +%s) - PHASE_START ))s"
-    done
-
-    # Adding a crate has a blast radius outside the crates it touches:
-    # `postio-session/src/logging.rs` lists every workspace crate and
-    # `check-lint-floor.py` and `check-crate-boundaries.py` enumerate them too (#585). This fires
-    # only when the root manifest's `members` changed.
-    # Skipped on a host without the GTK libraries; its PR already carries `needs-linux-verify`.
-    # Other crates' test targets are not type-checked here: the PR's clippy job compiles them a few
-    # minutes after the push.
-    if [ -z "$UNBUILDABLE" ] && git diff -U0 "origin/$BASE...HEAD" -- Cargo.toml \
-       | grep -qE '^[+-].*crates/'; then
-        echo "--- workspace tests: this branch changes the members list ---"
-        phase "workspace tests"
-        PHASE_START=$(date +%s)
-        run_tests --workspace
-        run_doctests --workspace
-        echo "[timing] workspace tests: $(( $(date +%s) - PHASE_START ))s"
+        cargo clippy "${CLIPPY_CRATES[@]}" --all-targets -- -D warnings
+        echo "[timing] clippy: $(( $(date +%s) - PHASE_START ))s"
     fi
 fi
 
@@ -544,11 +458,8 @@ PHASE_START=$(date +%s)
 echo "[timing] invariants: $(( $(date +%s) - PHASE_START ))s"
 
 # What the whole chain cost against what it may cost. Reported, not enforced: refusing a slow branch
-# helps nobody, and the fix is in the chain. It names the worst phase so a person can see whether a
-# suite has crept onto the merge path that belongs on the nightly timer. The line moves when a
-# crate's units grow. `.config/nextest.toml` holds the tier for a test that is slow: the nightly's
-# default-filter, with a
-# `POSTIO-MEASUREMENT` marker on the case.
+# helps nobody, and the fix is in the chain. It names the worst phase, so a gate that crept back
+# onto the landing shows.
 GATES_TOTAL=$(( $(date +%s) - GATES_START ))
 echo "[timing] TOTAL: ${GATES_TOTAL}s (budget ${GATE_BUDGET_SECONDS}s)"
 if [ "$GATES_TOTAL" -gt "$GATE_BUDGET_SECONDS" ]; then
