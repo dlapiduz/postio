@@ -1954,11 +1954,18 @@ impl FocusController {
                 Some(steps)
             }
             CommandId::NextMessage | CommandId::PrevMessage => {
-                let by = if id == CommandId::NextMessage { 1 } else { -1 };
-                let (mut steps, moved) = self.cursor.step(by, rows);
-                if moved && let Some(at) = self.cursor.position() {
-                    steps.extend(self.open_at(at, rows));
-                }
+                let next = match self.cursor.position() {
+                    Some(at) if id == CommandId::NextMessage => {
+                        surfaces::readable_toward(rows, at + 1, 1)
+                    }
+                    Some(at) => surfaces::readable_toward(rows, at, -1),
+                    None => surfaces::readable_toward(rows, 0, 1),
+                };
+                let Some(next) = next else {
+                    return Some(Vec::new());
+                };
+                let mut steps = self.cursor.place(next, rows);
+                steps.extend(self.open_at(next, rows));
                 Some(steps)
             }
             CommandId::FirstMessage | CommandId::LastMessage => {

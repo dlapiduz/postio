@@ -6,6 +6,10 @@
 #
 # The window is not closed and reopened between messages: one message gives
 # way to the next, and a newsletter on paper does not widen the window.
+#
+# The small demo's second row is a digest, which the window does not open
+# over a message: `j` and `k` step past it, as a removal's step-on does, so
+# the open message and the cursor's row never disagree (#2244).
 apps   = ["focus"]
 source = { kind = "flow", ref = "j steps the list without resizing" }
 
@@ -13,25 +17,33 @@ source = { kind = "flow", ref = "j steps the list without resizing" }
 wait    = { until = { cursor.index = 0 } }
 
 [[step]]
+id      = "open"
 command = "open_message"
 settle  = { until = { view = "reader" } }
 check   = { view = "reader", cursor.index = 0 }
 expect  = "The first row's message is open."
 
 [[step]]
+id      = "past-the-digest"
 command = "next_message"
 settle  = { watch_ms = 400 }
-check   = { view = "reader", keyboard.region = "reader", cursor.index = 1 }
-expect  = "The second row's message is shown in the same window, at the same size; the list's cursor moved to the second row behind it."
+check   = { view = "reader", keyboard.region = "reader", cursor.index = 2, reading.id = { changed = true } }
+expect  = "The next message is shown in the same window, at the same size: the digest in the second row is stepped past, and the list's cursor is on the third row, the message the window shows, with the footer naming its sender."
 
 [[step]]
 command = "next_message"
 settle  = { watch_ms = 400 }
-check   = { view = "reader", cursor.index = 2 }
-expect  = "And the third: still the same window, the same width, the position line counting on."
+check   = { view = "reader", cursor.index = 3, reading.id = { changed = true } }
+expect  = "And the next: still the same window, the same width, the position line counting on."
 
 [[step]]
 command = "prev_message"
 settle  = { watch_ms = 400 }
-check   = { view = "reader", cursor.index = 1 }
+check   = { view = "reader", cursor.index = 2, reading.id = { same_as = "past-the-digest" } }
 expect  = "k steps back the same way."
+
+[[step]]
+command = "prev_message"
+settle  = { watch_ms = 400 }
+check   = { view = "reader", cursor.index = 0, reading.id = { same_as = "open" } }
+expect  = "And past the digest again, back to the first message: the window never showed one message over another's row."
