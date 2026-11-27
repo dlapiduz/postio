@@ -46,7 +46,12 @@ expect  = "Return merges into the kept record and the last group follows; the co
 id      = "undo"
 command = "undo"
 check   = { notice.tone = "success" }
-expect  = "z, as the sheet's foot teaches, takes the merge back with the sheet still up: the toast says it was undone, and the records are apart again in the list behind."
+expect  = "z, as the sheet's foot teaches, takes the merge back with the sheet still up: the toast says it was undone, the records are apart again in the list behind, and the group is back in the queue: the counter says two sets are left, as the strip does."
+
+[[step]]
+id      = "again"
+command = "contact_show_mail"
+expect  = "Return merges the group on screen once more, and the one the undo brought back follows: one set left, in the counter and the strip."
 
 [[step]]
 id      = "last"
@@ -65,7 +70,10 @@ check = { app.focus.contacts.merge = "2 sets left" }
 check = { notice.undo = true, app.focus.contacts.merge = "1 set left" }
 
 [app.focus.step.undo]
-check = { notice.tone = "success", app.focus.contacts.merge = "1 set left" }
+check = { notice.tone = "success", app.focus.contacts.merge = "2 sets left" }
+
+[app.focus.step.again]
+check = { app.focus.contacts.merge = "1 set left" }
 
 [app.focus.step.last]
 check = { app.focus.contacts.merge = { absent = true } }

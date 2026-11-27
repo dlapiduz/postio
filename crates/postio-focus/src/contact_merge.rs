@@ -141,7 +141,36 @@ impl FocusController {
         vec![Step::Ask(Request::ContactMergeOf(contacts.marks.clone()))]
     }
 
+    pub(crate) fn merge_queue_asked(&self) -> Vec<Step> {
+        let Some(sheet) = self
+            .contacts
+            .as_ref()
+            .and_then(|contacts| contacts.merge.as_ref())
+            .filter(|sheet| !sheet.manual)
+        else {
+            return Vec::new();
+        };
+        let first = sheet.groups[0].people.iter().map(|p| p.id).collect();
+        vec![Step::Ask(Request::ContactReview { first })]
+    }
+
     pub(crate) fn contacts_review_read(&mut self, groups: Vec<MergeGroup>) -> Vec<Step> {
+        let ids = |group: &MergeGroup| group.people.iter().map(|p| p.id).collect::<Vec<_>>();
+        if let Some(sheet) = self
+            .contacts
+            .as_mut()
+            .and_then(|contacts| contacts.merge.as_mut())
+            .filter(|sheet| !sheet.manual)
+        {
+            if groups.is_empty() {
+                return self.merge_advance_to(Vec::new());
+            }
+            if ids(&groups[0]) != ids(&sheet.groups[0]) {
+                sheet.kept = 0;
+            }
+            sheet.groups = groups;
+            return self.draw_contact_merge();
+        }
         if groups.is_empty() || self.contacts.is_none() {
             return Vec::new();
         }
@@ -274,6 +303,17 @@ impl FocusController {
             steps.extend(self.verbs.post(command));
         }
         steps
+    }
+
+    fn merge_advance_to(&mut self, groups: Vec<MergeGroup>) -> Vec<Step> {
+        if let Some(sheet) = self
+            .contacts
+            .as_mut()
+            .and_then(|contacts| contacts.merge.as_mut())
+        {
+            sheet.groups = groups;
+        }
+        self.merge_advance()
     }
 
     fn merge_advance(&mut self) -> Vec<Step> {

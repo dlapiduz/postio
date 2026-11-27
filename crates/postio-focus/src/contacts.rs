@@ -623,6 +623,7 @@ impl FocusController {
         let total = contacts.tab_total();
         contacts.window.renew(total);
         steps.push(Step::Show(Intent::ContactsRows { first: 0, count: 0 }));
+        steps.extend(self.merge_queue_asked());
         steps
     }
 }

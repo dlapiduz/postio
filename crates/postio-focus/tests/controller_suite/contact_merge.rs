@@ -666,3 +666,41 @@ fn the_list_keeps_its_rows_while_a_change_is_read_again() {
         "and the page is read again without the view asking: {effects:?}"
     );
 }
+
+#[test]
+fn a_change_under_the_sheet_reads_the_queue_again_keeping_the_group_shown() {
+    let mut focus = mac();
+    review(&mut focus);
+    let _ = run(&mut focus, CommandId::ContactShowMail);
+    let changed = focus.handle_on(
+        Input::Event(postio_core::Event::ContactsChanged {
+            names_changed: true,
+        }),
+        &NoRows,
+    );
+    let ticket = asks(&changed)
+        .into_iter()
+        .find_map(|(ticket, request)| match request {
+            Request::ContactReview { first } => {
+                assert_eq!(first, [ContactId::new(3), ContactId::new(4)], "Ben's first");
+                Some(ticket)
+            }
+            _ => None,
+        })
+        .expect("the undo's group may be back: the queue is read again");
+    let mut back = queue();
+    back.rotate_left(1);
+    let _ = run(&mut focus, CommandId::NextMessage);
+    let effects = focus.handle_on(Input::Reply(ticket, Reply::ContactReview(back)), &NoRows);
+    let view = sheet(&effects).expect("redrawn");
+    assert_eq!(
+        view.cards[0].name, "Ben Adeyemi",
+        "the group on screen stays"
+    );
+    assert!(view.cards[1].kept, "with the record chosen to keep");
+    assert_eq!(
+        view.position.as_deref(),
+        Some("2 sets left"),
+        "the undone merge's group is counted again, as the strip counts it"
+    );
+}
