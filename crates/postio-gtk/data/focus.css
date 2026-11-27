@@ -2604,15 +2604,18 @@ button.postio-button-ghost.focus-thread-menu-entry {
 .focus-outline-row {
   padding: 0 var(--postio-space-2);
   border-radius: var(--postio-radius-lg);
-  border: 1px solid transparent;
 }
 
+/* The ring is where the keyboard is, the row Return shows, as the list
+   cursor's is (FR-091); the message on screen keeps a fill, so a filter
+   that hides it still leaves a ring (#2246). */
 .focus-outline-cursor {
-  background-color: var(--postio-selected-bg);
+  outline: 2px solid var(--postio-accent);
+  outline-offset: -2px;
 }
 
 .focus-outline-current {
-  border-color: var(--postio-accent);
+  background-color: var(--postio-selected-bg);
 }
 
 .focus-outline-unread {

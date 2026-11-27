@@ -6569,6 +6569,9 @@ impl FocusWindow {
                     "focus.outline.cursor".to_owned(),
                     serde_json::json!(outline.cursor()),
                 );
+                if let Some(ring) = outline.ringed() {
+                    app.insert("focus.outline.ring".to_owned(), serde_json::json!(ring));
+                }
                 app.insert(
                     "focus.outline.filtering".to_owned(),
                     serde_json::json!(outline.filtering()),

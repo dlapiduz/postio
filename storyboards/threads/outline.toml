@@ -11,6 +11,9 @@
 # puts the keyboard in the field and typing narrows the rows. Down moves, `u`
 # goes to the first unread of the rows shown, and `Return` shows that
 # message and closes the outline: the window is on it, ringed in the bar.
+# The accent ring is the outline's cursor, the row Return shows, as the
+# list's is; the message on screen keeps a fill. Filtered away from the one
+# shown, a row is still ringed (#2246).
 apps   = ["focus"]
 source = { kind = "spec", ref = "specs/013-focus-threads US5" }
 seed   = "threads"
@@ -29,8 +32,8 @@ expect  = "Harbor opens on message 5 of 6."
 [[step]]
 id      = "outline"
 command = "thread_outline"
-check   = { app.focus.outline.open = true, app.focus.outline.rows = 6, app.focus.outline.cursor = 4, app.focus.outline.hint = "↑↓ move · ↩ show it · u first unread", app.focus.footer.title = { absent = true } }
-expect  = "A 440-wide popover lists six messages, message 5 ringed, a filter field and a chip with a count for each person, and a hint line: arrows move, Return shows it, u first unread. The window's footer under it is not drawn: its r, f and e do nothing here (#2227)."
+check   = { app.focus.outline.open = true, app.focus.outline.rows = 6, app.focus.outline.cursor = 4, app.focus.outline.ring = 4, app.focus.outline.hint = "↑↓ move · ↩ show it · u first unread", app.focus.footer.title = { absent = true } }
+expect  = "A 440-wide popover lists six messages, message 5 ringed and filled as the one shown, a filter field and a chip with a count for each person, and a hint line: arrows move, Return shows it, u first unread. The window's footer under it is not drawn: its r, f and e do nothing here (#2227)."
 
 [[step]]
 id      = "filter"
@@ -40,13 +43,13 @@ expect  = "The keyboard is in the filter field. The hint line no longer offers u
 
 [[step]]
 type    = "ben"
-check   = { app.focus.outline.rows = 2 }
-expect  = "Only Ben's two messages are listed; the chips still count the whole thread."
+check   = { app.focus.outline.rows = 2, app.focus.outline.cursor = 0, app.focus.outline.ring = 0 }
+expect  = "Only Ben's two messages are listed; the chips still count the whole thread. Message 5 is not among them, so the accent ring is on the first row listed, the one Return would show (#2246)."
 
 [[step]]
 id      = "down"
 key     = "Down"
-check   = { app.focus.outline.cursor = 1 }
+check   = { app.focus.outline.cursor = 1, app.focus.outline.ring = 1 }
 expect  = "The ring moves one row down."
 
 [[step]]

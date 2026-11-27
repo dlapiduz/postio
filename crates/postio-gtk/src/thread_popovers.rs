@@ -438,4 +438,17 @@ impl OutlinePopover {
     pub fn cursor(&self) -> usize {
         self.shown.borrow().cursor
     }
+
+    pub fn ringed(&self) -> Option<usize> {
+        let mut child = self.rows.first_child();
+        let mut at = 0;
+        while let Some(row) = child {
+            if row.has_css_class("focus-outline-cursor") {
+                return Some(at);
+            }
+            child = row.next_sibling();
+            at += 1;
+        }
+        None
+    }
 }
