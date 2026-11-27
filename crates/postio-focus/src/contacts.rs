@@ -82,11 +82,18 @@ impl Contacts {
         }
     }
 
+    fn drawn(&self, index: u32) -> Option<&ContactListRow> {
+        match &self.filtered {
+            Some(rows) => rows.get(index as usize),
+            None => self.window.drawn(index),
+        }
+    }
+
     fn before(&self, index: u32) -> Option<String> {
         if index == 0 {
             return None;
         }
-        if let Some(row) = self.row(index - 1) {
+        if let Some(row) = self.drawn(index - 1) {
             return Some(row.sort_key.clone());
         }
         index
@@ -153,6 +160,9 @@ impl FocusController {
 
     pub(crate) fn contacts_command(&mut self, id: CommandId, rows: &dyn Rows) -> Option<Vec<Step>> {
         let contacts = self.contacts.as_mut()?;
+        if id == CommandId::Undo && contacts.edit.is_none() {
+            return None;
+        }
         if contacts.merge.is_some() {
             return match id {
                 CommandId::Back => Some(self.contact_merge_later()),
@@ -300,13 +310,21 @@ impl FocusController {
     }
 
     fn contacts_restart(&mut self) -> Vec<Step> {
+        self.contacts_restart_as(false)
+    }
+
+    fn contacts_restart_as(&mut self, renew: bool) -> Vec<Step> {
         let stamp = self.stamp();
         let Some(contacts) = self.contacts.as_mut() else {
             return Vec::new();
         };
         contacts.filtered = None;
         contacts.befores.clear();
-        contacts.window.reset(contacts.tab_total());
+        if renew && contacts.filter.trim().is_empty() {
+            contacts.window.renew(contacts.tab_total());
+        } else {
+            contacts.window.reset(contacts.tab_total());
+        }
         contacts.cursor = (contacts.total() > 0).then_some(0);
         contacts.card = None;
         contacts.card_for = None;
@@ -394,7 +412,7 @@ impl FocusController {
 
     pub fn contacts_row(&self, index: u32) -> Option<RowView> {
         let contacts = self.contacts.as_ref()?;
-        let row = contacts.row(index)?;
+        let row = contacts.drawn(index)?;
         let before = contacts.before(index);
         let mut view = words::row(row, before.as_deref(), self.bar.now());
         view.marked = contacts.marks.contains(&row.id);
@@ -402,6 +420,23 @@ impl FocusController {
     }
 
     pub fn contacts_wanted(&mut self, index: u32) -> Vec<Effect> {
+        let steps = self.contacts_page_asked(index);
+        self.effects(steps)
+    }
+
+    fn contacts_renewed_asked(&mut self) -> Vec<Step> {
+        let pages = self
+            .contacts
+            .as_ref()
+            .map(|contacts| contacts.window.renewing())
+            .unwrap_or_default();
+        pages
+            .into_iter()
+            .flat_map(|page| self.contacts_page_asked(page * PAGE_SIZE))
+            .collect()
+    }
+
+    fn contacts_page_asked(&mut self, index: u32) -> Vec<Step> {
         let Some(contacts) = self.contacts.as_mut() else {
             return Vec::new();
         };
@@ -427,7 +462,7 @@ impl FocusController {
             stamp: contacts.window.generation(),
             page,
         };
-        self.effects(vec![Step::Ask(request)])
+        vec![Step::Ask(request)]
     }
 
     pub fn contacts_card(&self) -> Option<CardView> {
@@ -485,11 +520,13 @@ impl FocusController {
         if first || contacts.filtered.is_none() && contacts.window.total() != contacts.tab_total() {
             // The restart puts the cursor on the first row; an import's new
             // person is where it goes instead.
-            let mut steps = self.contacts_restart();
+            let mut steps = self.contacts_restart_as(!first);
+            steps.extend(self.contacts_renewed_asked());
             steps.extend(self.contacts_go_to_import());
             return steps;
         }
         let mut steps = self.draw_contacts();
+        steps.extend(self.contacts_renewed_asked());
         steps.extend(self.contacts_go_to_import());
         steps
     }
@@ -584,7 +621,7 @@ impl FocusController {
         let mut steps = vec![Step::Ask(Request::ContactsOverview)];
         contacts.befores.clear();
         let total = contacts.tab_total();
-        contacts.window.reset(total);
+        contacts.window.renew(total);
         steps.push(Step::Show(Intent::ContactsRows { first: 0, count: 0 }));
         steps
     }

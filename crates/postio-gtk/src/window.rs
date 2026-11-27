@@ -6223,6 +6223,12 @@ impl FocusWindow {
                 );
             }
         }
+        if let Some(position) = self.contacts().and_then(|view| view.merge_position()) {
+            app.insert(
+                "focus.contacts.merge".to_owned(),
+                serde_json::json!(position),
+            );
+        }
         if let Some(pane) = self.pane() {
             app.insert(
                 "focus.list.scroll".to_owned(),

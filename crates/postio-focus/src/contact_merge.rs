@@ -11,18 +11,16 @@ use crate::{FocusController, Intent, Request};
 #[derive(Debug)]
 pub(crate) struct MergeSheet {
     groups: Vec<MergeGroup>,
-    of: usize,
     kept: usize,
     manual: bool,
 }
 
 impl MergeSheet {
     fn view(&self, controller: &FocusController) -> postio_ui::contact_merge::MergeSheetView {
-        let position = (!self.manual).then(|| (self.of - self.groups.len(), self.of));
         postio_ui::contact_merge::view(
             &self.groups[0],
             self.kept,
-            position,
+            (!self.manual).then_some(self.groups.len()),
             controller.bar.keymap(),
             controller.bar.now(),
             None,
@@ -147,10 +145,8 @@ impl FocusController {
         if groups.is_empty() || self.contacts.is_none() {
             return Vec::new();
         }
-        let of = groups.len();
         self.merge_open(MergeSheet {
             groups,
-            of,
             kept: 0,
             manual: false,
         })
@@ -165,7 +161,6 @@ impl FocusController {
         }
         self.merge_open(MergeSheet {
             groups: vec![group],
-            of: 1,
             kept: 0,
             manual: true,
         })

@@ -194,7 +194,7 @@ fn g_w_reads_the_queue_and_opens_the_sheet_on_its_first_group() {
     let effects = review(&mut focus);
     let view = sheet(&effects).expect("the sheet is drawn");
     assert_eq!(view.title, "These 2 look like the same person");
-    assert_eq!(view.position.as_deref(), Some("1 of 2"));
+    assert_eq!(view.position.as_deref(), Some("2 sets left"));
     assert_eq!(view.cards.iter().filter(|c| c.kept).count(), 1);
     assert_eq!(view.cards[0].name, "Ada Moreno");
 }
@@ -251,7 +251,11 @@ fn return_merges_into_the_kept_record_and_shows_the_next_group() {
     assert_eq!(name, "Ada Moreno");
     let next = sheet(&effects).expect("the next group is drawn");
     assert_eq!(next.cards[0].name, "Ben Adeyemi");
-    assert_eq!(next.position.as_deref(), Some("2 of 2"));
+    assert_eq!(
+        next.position.as_deref(),
+        Some("1 set left"),
+        "the count shrinks as the strip's does"
+    );
 
     let effects = run(&mut focus, CommandId::ContactShowMail);
     assert_eq!(posted(&effects).len(), 1);
@@ -597,5 +601,68 @@ fn the_cursor_reaches_the_imported_person_when_the_new_counts_come_last() {
         focus.contacts_cursor(),
         Some(3),
         "the cursor is on the imported person, not where the restart put it"
+    );
+}
+
+#[test]
+fn undo_under_the_sheet_is_the_apps_undo() {
+    let mut focus = mac();
+    review(&mut focus);
+    let _ = run(&mut focus, CommandId::ContactShowMail);
+    let effects = run(&mut focus, CommandId::Undo);
+    assert_eq!(
+        posted(&effects),
+        [Command::Undo],
+        "the foot's \"Undo with z\" takes the merge back"
+    );
+    assert!(
+        sheet(&run(&mut focus, CommandId::NextMessage)).is_some(),
+        "the sheet stays up on the next group"
+    );
+}
+
+#[test]
+fn the_list_keeps_its_rows_while_a_change_is_read_again() {
+    let mut focus = mac();
+    review(&mut focus);
+    let shown_before = focus.contacts_row(0).map(|row| row.name);
+    assert!(shown_before.is_some(), "the first person is drawn");
+    let _ = run(&mut focus, CommandId::ContactShowMail);
+    let changed = focus.handle_on(
+        Input::Event(postio_core::Event::ContactsChanged {
+            names_changed: true,
+        }),
+        &NoRows,
+    );
+    assert_eq!(
+        focus.contacts_row(0).map(|row| row.name),
+        shown_before,
+        "the old rows are drawn while the change is read, never a blank list"
+    );
+    let ticket = asks(&changed)
+        .into_iter()
+        .find_map(|(ticket, request)| {
+            matches!(request, Request::ContactsOverview).then_some(ticket)
+        })
+        .expect("the counts are read again");
+    let mut merged = overview(None);
+    merged.total -= 1;
+    for (_, count) in &mut merged.tabs {
+        *count = count.saturating_sub(1);
+    }
+    let effects = focus.handle_on(
+        Input::Reply(ticket, Reply::ContactsOverview(Ok(merged))),
+        &NoRows,
+    );
+    assert_eq!(
+        focus.contacts_row(0).map(|row| row.name),
+        shown_before,
+        "one person fewer still draws the old rows until the page lands"
+    );
+    assert!(
+        asks(&effects)
+            .iter()
+            .any(|(_, request)| matches!(request, Request::ContactsPage { page: 0, .. })),
+        "and the page is read again without the view asking: {effects:?}"
     );
 }

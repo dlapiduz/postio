@@ -427,8 +427,7 @@ impl ContactsView {
         match index {
             Some(at) if at < self.model.n_items() => {
                 self.selection.set_selected(at);
-                // A row already on screen stays put: marking it, or rows refreshing under it, must
-                // not move the list.
+                // A row on screen stays put: a mark or a refresh under it must not move the list.
                 if !self.row_on_screen(at) {
                     self.list.scroll_to(at, gtk::ListScrollFlags::NONE, None);
                 }
@@ -676,6 +675,10 @@ impl ContactsView {
 
     pub fn has_form(&self) -> bool {
         self.form.borrow().is_some()
+    }
+
+    pub fn merge_position(&self) -> Option<String> {
+        self.merge.borrow().as_ref().and_then(merge::position)
     }
 
     pub fn merge_texts(&self) -> Vec<String> {

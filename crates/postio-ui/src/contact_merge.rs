@@ -32,7 +32,7 @@ pub struct MergeResult {
 pub struct MergeSheetView {
     pub title: String,
     pub subtitle: String,
-    /// "2 of 5" in the queue; `None` for records chosen by hand.
+    /// "2 sets left" in the queue; `None` for records chosen by hand.
     pub position: Option<String>,
     pub cards: Vec<MergeCard>,
     pub why_title: String,
@@ -98,7 +98,7 @@ fn result_of(keeper: &Contact, others: &[&Contact]) -> Contact {
 pub fn view(
     group: &MergeGroup,
     kept: usize,
-    position: Option<(usize, usize)>,
+    left: Option<usize>,
     keymap: &Keymap,
     now: DateTime<Local>,
     synced_with: Option<&str>,
@@ -190,7 +190,9 @@ pub fn view(
         title: format!("These {} look like the same person", number_word(group.people.len())),
         subtitle: "Merging keeps every address, so mail from any of them shows as one person. Nothing is deleted from your mail."
             .to_owned(),
-        position: position.map(|(at, of)| format!("{} of {of}", at + 1)),
+        position: left.map(|left| {
+            format!("{left} {} left", if left == 1 { "set" } else { "sets" })
+        }),
         cards,
         why_title: "Why we think so".to_owned(),
         evidence: group.evidence.clone(),
@@ -258,10 +260,12 @@ mod tests {
 
     #[test]
     fn the_sheet_says_how_many_and_what_it_keeps() {
-        let sheet = view(&group(), 0, Some((0, 2)), &keymap(), now(), None);
+        let sheet = view(&group(), 0, Some(2), &keymap(), now(), None);
         assert_eq!(sheet.title, "These 3 look like the same person");
         assert!(sheet.subtitle.starts_with("Merging keeps every address"));
-        assert_eq!(sheet.position.as_deref(), Some("1 of 2"));
+        assert_eq!(sheet.position.as_deref(), Some("2 sets left"));
+        let last = view(&group(), 0, Some(1), &keymap(), now(), None);
+        assert_eq!(last.position.as_deref(), Some("1 set left"));
         assert_eq!(sheet.why_title, "Why we think so");
         assert_eq!(sheet.evidence, ["The same signature on all three"]);
     }
