@@ -38,7 +38,7 @@ pub struct MergeSheetViewFfi {
     /// "These 3 look like the same person".
     pub title: String,
     pub subtitle: String,
-    /// "1 of 3", none for records chosen by hand.
+    /// "2 sets left", none for records chosen by hand.
     pub position: Option<String>,
     pub cards: Vec<MergeCardFfi>,
     /// "Why we think so".

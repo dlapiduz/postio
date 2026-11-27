@@ -3,7 +3,8 @@
 # button, 364 wide, titled “Save as a saved search”. A Name field holds a
 # name made from the query (“Atlas budget from Ada”), the terms are small
 # read-only chips, and three switches follow: Pin to saved searches (on,
-# “Appears at the top of search as ⌥N”, the next free number), Notify
+# “Appears at the top of search as ⌥N”, the next free number, or, with
+# ⌥1–4 taken, says it is listed after them with no key), Notify
 # when new mail matches (off, “A quiet badge, not a banner”), and Keep
 # the date rolling (off, saying what each way means for this query's
 # date). Cancel, or Save ↩.
@@ -34,12 +35,12 @@ check   = { keyboard.region = "results" }
 [[step]]
 id      = "popover"
 command = "save_search"
-expect  = "⌘S opens the Save popover under Save search: “Save as a saved search”, Name “Atlas budget from Ada” with the field focused, the chips “from:Ada Moreno”, “after:2026-03-07” and “atlas budget”, Pin on with “Appears at the top of search as ⌥…”, Notify off, Keep the date rolling off with “Off: always since 7 March. On: always the last … days”, then Cancel and Save ↩."
+expect  = "⌘S opens the Save popover under Save search: “Save as a saved search”, Name “Atlas budget from Ada” with the field focused, the chips “from:Ada Moreno”, “after:2026-03-07” and “atlas budget”, Pin on with “Listed after ⌥1–4 in search, with no key” (the search seed pins four already), Notify off, Keep the date rolling off with “Off: always since 7 March. On: always the last … days”, then Cancel and Save ↩."
 
 [[step]]
 key     = "Return"
-check   = { keyboard.region = "results" }
-expect  = "Return saves it: the popover goes, a toast says it was saved, and the results are as they were."
+check   = { keyboard.region = "results", notice.tone = "info" }
+expect  = "Return saves it: the popover goes, a toast confirms it was saved, in the plain tone of a confirmation, not a warning's (#2245), and the results are as they were."
 
 # From the results / edits their query (FR-021), so the empty dropdown is
 # reached from the inbox.
@@ -50,4 +51,4 @@ check   = { overlay.kind = "none", keyboard.region = "list" }
 [[step]]
 command = "search"
 check   = { overlay.kind = "finder", keyboard.region = "search" }
-expect  = "From the inbox, the empty dropdown lists the new saved search among Saved searches, last, with its count and its ⌥ number."
+expect  = "From the inbox, the empty dropdown lists the new saved search among Saved searches, last, with its count and no ⌥ number, after the four that have one, as the popover said."

@@ -177,7 +177,14 @@ impl SplicedList {
         let before = now + removed - added;
         let was = splice.anchor < before && splice.children > 0;
         let is = splice.anchor < now && splice.children > 0;
-        if was != is || (position <= splice.anchor && position + removed > splice.anchor) {
+        let takes_anchor = position <= splice.anchor && position + removed > splice.anchor;
+        if was && takes_anchor && added == 0 {
+            // Its children go with the thread's row in one change, or the view loses its scroll.
+            self.imp().splice.set(None);
+            self.imp().children.borrow_mut().clear();
+            self.mark_anchor(None);
+            self.items_changed(position, removed + splice.children, 0);
+        } else if was != is || takes_anchor {
             // The anchor's own row, or whether it is there at all, moved: the rest is told as one
             // change over everything until the controller says where the thread went.
             let drawn_before = before + if was { splice.children } else { 0 };

@@ -213,10 +213,13 @@ impl ListPane {
         self.view.add_controller(click);
     }
 
-    /// Held there while the rows settle: the cursor has gone to the first row, and GTK would bring
-    /// that row into view without its heading.
+    /// Held there while rows settle, so GTK shows the first row with its heading; the view's anchor
+    /// moves too, or rows put in above the row it last scrolled to push the list down (#2238).
     pub fn to_top(&self) {
         self.pinned.set(true);
+        if self.view.model().is_some_and(|model| model.n_items() > 0) {
+            self.view.scroll_to(0, gtk::ListScrollFlags::NONE, None);
+        }
         self.scrolled.vadjustment().set_value(0.0);
     }
 

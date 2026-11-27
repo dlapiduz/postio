@@ -186,6 +186,32 @@ impl FocusController {
         }
     }
 
+    pub(crate) fn cursor_to_walk(&mut self, rows: &dyn Rows) -> Vec<Step> {
+        if !self.surfaces.has(SurfaceKind::Message) || self.surfaces.origin() != Origin::List {
+            return Vec::new();
+        }
+        let Some(thread) = self.walk.as_ref().map(|walk| walk.view.thread) else {
+            return Vec::new();
+        };
+        if self
+            .cursor
+            .row(rows)
+            .is_some_and(|row| row.threads.first() == Some(&thread))
+        {
+            return Vec::new();
+        }
+        let Some((at, row)) = rows
+            .position_of_thread(thread)
+            .and_then(|at| Some((at, rows.facts(at)?.id)))
+        else {
+            return Vec::new();
+        };
+        if let Some(walk) = self.walk.as_mut() {
+            walk.row = row;
+        }
+        self.cursor.place(at, rows)
+    }
+
     pub(crate) fn walk_read(&mut self, thread: ThreadId, view: &ThreadView) -> Vec<Step> {
         match self.walk_asked.filter(|asked| asked.thread == thread) {
             Some(opening) if self.surfaces.reading() == Some(opening.shown) => {

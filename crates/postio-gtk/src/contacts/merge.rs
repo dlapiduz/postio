@@ -49,6 +49,7 @@ fn sheet_plate(sheet: &MergeSheetView, hooks: &MergeHooks) -> gtk::Box {
     if let Some(position) = &sheet.position {
         let place = gtk::Label::new(Some(position));
         place.add_css_class("dim-label");
+        place.add_css_class(POSITION);
         top.append(&place);
     }
     let subtitle = gtk::Label::new(Some(&sheet.subtitle));
@@ -208,4 +209,23 @@ fn foot_button(
 
 pub fn texts(sheet: &gtk::Widget) -> Vec<String> {
     super::view::texts_of(sheet)
+}
+
+const POSITION: &str = "focus-merge-position";
+
+pub fn position(sheet: &gtk::Widget) -> Option<String> {
+    let mut stack = vec![sheet.clone()];
+    while let Some(widget) = stack.pop() {
+        if let Some(label) = widget.downcast_ref::<gtk::Label>()
+            && label.has_css_class(POSITION)
+        {
+            return Some(label.text().to_string());
+        }
+        let mut child = widget.first_child();
+        while let Some(next) = child {
+            child = next.next_sibling();
+            stack.push(next);
+        }
+    }
+    None
 }

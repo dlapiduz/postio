@@ -886,10 +886,16 @@ fn mod_s_saves_the_bars_query() {
         key: Some("from-ada-invoice".to_owned()),
     })));
     let intents = shown(&effects);
-    assert!(intents.contains(&Intent::Toast {
-        text: postio_ui::focus_target::search_saved("from:ada invoice"),
-        kind: ToastKind::Notice,
-    }));
+    assert!(
+        intents.contains(&Intent::Toast {
+            text: postio_ui::focus_target::search_saved("from:ada invoice"),
+            kind: ToastKind::Completed {
+                undoable: false,
+                seconds: None,
+            },
+        }),
+        "a confirmation, not a warning's notice: {intents:?}"
+    );
     assert!(
         shown(&effects)
             .iter()

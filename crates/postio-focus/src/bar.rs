@@ -1047,7 +1047,10 @@ impl FocusController {
                             .unwrap_or_default();
                         let mut steps = vec![Step::Show(Intent::Toast {
                             text: postio_ui::focus_target::search_saved(said),
-                            kind: crate::ToastKind::Notice,
+                            kind: crate::ToastKind::Completed {
+                                undoable: false,
+                                seconds: None,
+                            },
                         })];
                         if let (Some(key), true) =
                             (saved.key, saving.as_ref().is_some_and(|save| save.notify))
