@@ -749,7 +749,13 @@ pub const SAVE_TITLE: &str = "Save as a saved search";
 pub const SAVE_NAME: &str = "Name";
 pub const SAVE_PIN: &str = "Pin to saved searches";
 pub const SAVE_PIN_NOTE: &str = "Appears at the top of search as";
-pub const SAVE_PIN_NOTE_NO_KEY: &str = "Appears at the top of search";
+
+pub fn save_pin_note_no_key(taken: Option<&str>) -> String {
+    match taken {
+        Some(keys) => format!("Listed after {keys} in search, with no key"),
+        None => "Listed in search, with no key".to_owned(),
+    }
+}
 pub const SAVE_NOTIFY: &str = "Notify when new mail matches";
 pub const SAVE_NOTIFY_NOTE: &str = "A quiet badge, not a banner";
 pub const SAVE_ROLLING: &str = "Keep the date rolling";

@@ -700,6 +700,40 @@ fn checking_a_person_previews_live_and_esc_restores_the_query_exactly() {
 }
 
 #[test]
+fn a_preview_draws_its_bars_to_the_scale_the_results_had() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let effects = search(&mut focus, "atlas budget", &rows);
+    let effects = settle(&mut focus, effects, &rows);
+    let before = results_view(&effects).expect("the results").months;
+    let view = open_popover(&mut focus, FilterKind::From, &rows);
+    let effects = focus.handle_on(
+        Input::PopoverToggle {
+            token: view.rows[0].token,
+            exclude: false,
+        },
+        &rows,
+    );
+    let effects = settle(&mut focus, effects, &rows);
+    let after = results_view(&effects).expect("the preview").months;
+    let pairs: Vec<(u64, u64, f64, f64)> = before
+        .iter()
+        .zip(&after)
+        .map(|(was, is)| (was.conversations, is.conversations, was.height, is.height))
+        .collect();
+    assert!(
+        pairs.iter().any(|(was, is, _, _)| is < was),
+        "the preview narrowed some month: {pairs:?}"
+    );
+    assert!(
+        pairs
+            .iter()
+            .all(|(was, is, then, now)| now <= then && (is >= was || now < then)),
+        "no bar grows, and a month that lost threads is drawn shorter: {pairs:?}"
+    );
+}
+
+#[test]
 fn return_keeps_the_previewed_query() {
     let rows = List::of(3);
     let mut focus = mac();
@@ -2033,6 +2067,28 @@ fn cmd_s_opens_the_save_popover_named_from_the_query() {
         asked(&effects).is_empty(),
         "nothing is written until Save: {:?}",
         asked(&effects)
+    );
+}
+
+#[test]
+fn with_every_saved_search_key_taken_the_pin_says_where_the_search_goes() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let saved = |key: &str| postio_ui::saved_search::SavedSearch {
+        key: key.to_owned(),
+        name: key.to_owned(),
+        query: format!("subject:{key}"),
+        notify: false,
+    };
+    let four = ["a", "b", "c", "d"].map(saved).to_vec();
+    let _ = focus.handle(Input::SavedSearches(four));
+    screen_twelve(&mut focus, &rows);
+    let effects = run(&mut focus, CommandId::SaveSearch, &rows);
+    let view = save_popover(&effects).flatten().expect("the Save popover");
+    assert_eq!(view.pin_key, None, "no fifth key");
+    assert_eq!(
+        view.pin_note, "Listed after alt+1\u{2013}4 in search, with no key",
+        "a fifth pinned search is listed last, not at the top"
     );
 }
 
