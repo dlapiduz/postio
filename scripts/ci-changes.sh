@@ -29,7 +29,7 @@ fi
 # fixtures.
 # `macos/` and the scripts that build and bundle the application are picked up by `MACOS` instead
 # (#666).
-NOT_RUST='^(docs/|Design/|\.claude/|macos/|README\.md$|CLAUDE\.md$|[^/]*\.md$|\.gitmessage$|\.gitignore$|LICENSE|mise\.toml$|\.github/workflows/(hooks|pages|audit|bench|fuzz|mutants|nightly|release|full-suite)\.yml$|scripts/(tests/|checks/|macos-[a-z]*\.sh$|ffi-bindgen\.sh$|issue-[a-z-]*\.sh$|test-(fast|sanity|headless|with-flake-retry)\.sh$|wait-for-checks\.sh$|full-suite-crates\.sh$|ci-(changes|tooling-needed|frontends-gate)\.sh|risk-of-diff\.sh$|coverage\.sh$|coverage-floors\.json$|check\.sh$|cross-check\.sh$|fuzz(-seed)?\.sh$|mutants\.sh$|release-bump\.py$|report-advisory-failure\.sh$|run-isolated\.sh$|install-local\.sh$|lib/((ready-labels|require-gh)\.sh|ffi-closure\.py)$))'
+NOT_RUST='^(docs/|Design/|\.claude/|macos/|README\.md$|CLAUDE\.md$|[^/]*\.md$|\.gitmessage$|\.gitignore$|LICENSE|mise\.toml$|\.github/workflows/(hooks|pages|audit|bench|fuzz|mutants|nightly|release|full-suite)\.yml$|scripts/(tests/|checks/|macos-[a-z]*\.sh$|ffi-bindgen\.sh$|issue-[a-z-]*\.sh$|test-(fast|sanity|headless|with-flake-retry)\.sh$|wait-for-checks\.sh$|ci-(changes|tooling-needed)\.sh|coverage\.sh$|coverage-floors\.json$|check\.sh$|cross-check\.sh$|fuzz(-seed)?\.sh$|mutants\.sh$|release-bump\.py$|report-advisory-failure\.sh$|run-isolated\.sh$|install-local\.sh$|lib/((ready-labels|require-gh)\.sh|ffi-closure\.py)$))'
 DOCS='^(docs/|README\.md$|\.github/workflows/ci\.yml$)'
 # What obliges the macOS runner beyond a Rust build: `macos/**` except prose, and the scripts that
 # build, test and bundle the app.

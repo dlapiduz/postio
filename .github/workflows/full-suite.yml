@@ -1,7 +1,7 @@
 name: Full suite on request
 
-# The nightly's whole run on a pull request, when asked: label it `full-suite`, or
-# `scripts/issue-land.sh --detach --full-suite`.
+# The nightly's whole run on a pull request, when the maintainer labels it `full-suite`; agents never
+# do, because the full suite runs on `main` after every merge.
 # `Full suite on request` is required: it passes in seconds without the label, and with it only if
 # the full suite does.
 # Its own workflow, since label events would re-run all of ci.yml and a skipped re-run can mask a
@@ -16,8 +16,10 @@ permissions:
   contents: read
   actions: read
 
+# By commit, so a label change cannot cancel the suite running on it; a push has a new sha and
+# supersedes. A change to another label runs in a group of its own and cancels nothing.
 concurrency:
-  group: full-suite-${{ github.ref }}
+  group: full-suite-${{ github.event.pull_request.head.sha || github.sha }}${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'full-suite' && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: true
 
 jobs:
@@ -32,8 +34,12 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           LABELLED: ${{ contains(github.event.pull_request.labels.*.name, 'full-suite') }}
+          OTHER_LABEL: ${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'full-suite' }}
         run: |
-          if [ "$EVENT" = workflow_dispatch ] || [ "$LABELLED" = true ]; then
+          if [ "$OTHER_LABEL" = true ]; then
+            echo "Another label changed; the verdict this commit already has stands."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          elif [ "$EVENT" = workflow_dispatch ] || [ "$LABELLED" = true ]; then
             echo "Requested ($EVENT) -- running the full suite on this ref."
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
@@ -49,8 +55,10 @@ jobs:
     if: needs.requested.outputs.run == 'true'
     uses: ./.github/workflows/nightly.yml
 
+  # Renamed when another label changed: a run under the required name would replace the verdict a
+  # real run gave this commit, and a skip reads as a pass.
   result:
-    name: Full suite on request
+    name: ${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'full-suite' && 'Full suite on request (label change)' || 'Full suite on request' }}
     needs: [requested, suite]
     if: always()
     runs-on: ubuntu-latest

@@ -71,6 +71,15 @@ def main() -> int:
         r = run(REPORT.format(slow="0.1", dead="0.1"), "0.05", tmp)
         case("a skipped case is never judged",
              "held_out" not in r.stderr, r.stderr[:200])
+        listed = tmp / "listed"
+        listed.write_text("postio-host tests::quick\npostio-host tests::waits_on_a_timer\n")
+        (tmp / "junit.xml").write_text(REPORT.format(slow="14.2", dead="20.0"))
+        r = patience.run([sys.executable, str(SCRIPT), "--only", str(listed), str(tmp / "junit.xml"), "10"],
+                           capture_output=True, text=True, timeout=60)
+        case("--only judges the listed cases",
+             r.returncode == 1 and "tests::waits_on_a_timer" in r.stderr, f"exit {r.returncode}: {r.stderr[:200]}")
+        case("and no other",
+             "died_at_its_deadline" not in r.stderr, r.stderr[:300])
         r = patience.run([sys.executable, str(SCRIPT), str(tmp / "missing.xml"), "10"],
                            capture_output=True, text=True, timeout=60)
         case("a missing report is a configuration error, not a pass",

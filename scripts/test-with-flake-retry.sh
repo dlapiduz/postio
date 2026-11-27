@@ -47,6 +47,10 @@ cargo nextest run ${SCOPE[@]+"${SCOPE[@]}"} ${SELECT[@]+"${SELECT[@]}"} \
     --profile "$PROFILE" --no-fail-fast ${FILTER[@]+"${FILTER[@]}"} 2>&1 | tee "$LOG"
 STATUS="${PIPESTATUS[0]}"
 
+# Each retry below rewrites the profile's report; the budget step reads the whole run's.
+REPORT="${CARGO_TARGET_DIR:-target}/nextest/$PROFILE/junit.xml"
+[ -f "$REPORT" ] && cp "$REPORT" "${REPORT%.xml}-run.xml"
+
 if [ "$STATUS" -eq 0 ]; then
     exit 0
 fi
