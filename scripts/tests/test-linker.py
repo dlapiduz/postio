@@ -25,7 +25,7 @@ Exit status: 0 all cases behaved, 1 otherwise.
 
 from __future__ import annotations
 
-import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -62,6 +62,9 @@ def fakes(root: Path, system: str, *, mold: bool = False, cc_status: int = 0) ->
         path = bin_dir / name
         path.write_text(text, encoding="utf-8")
         path.chmod(0o755)
+    # PATH holds only this directory, so a host's own mold cannot answer `command -v mold`.
+    for name in ("bash", "basename"):
+        (bin_dir / name).symlink_to(shutil.which(name))
     return bin_dir
 
 
@@ -71,12 +74,12 @@ def link(root: Path, system: str, args: list[str], *, env: dict[str, str] | None
     log = root / "log"
     log.touch()
     environment = {
-        "PATH": f"{bin_dir}:/usr/bin:/bin",
+        "PATH": str(bin_dir),
         "POSTIO_TEST_LOG": str(log),
         "HOME": str(root),
     }
     environment.update(env or {})
-    result = subprocess.run(["bash", str(LINKER), *args], env=environment,
+    result = subprocess.run([str(bin_dir / "bash"), str(LINKER), *args], env=environment,
                             capture_output=True, text=True)
     return result.returncode, log.read_text(encoding="utf-8").splitlines()
 
