@@ -17,10 +17,10 @@ The loop of `specs/008-storyboards` (contracts/review.md): a Claude agent review
 
 ```bash
 scripts/storyboards.sh lint
-scripts/storyboards.sh run
+scripts/storyboards.sh run --changed     # the storyboards this branch added or changed
 ```
 
-A failing run is yours to fix before any reviewer sees it. `not covered` and `not applicable` are counted and shown, not failures.
+An existing storyboard your change affects but did not edit is filmed with `--only <path>` as well. Never film the whole catalogue here: it takes hours on a workstation, CI plays it after the merge, and a bare `run` refuses. A failing run is yours to fix before any reviewer sees it. `not covered` and `not applicable` are counted and shown, not failures.
 
 ## 2. Film the base
 

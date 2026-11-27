@@ -13,7 +13,8 @@
 #
 # Usage
 # -----
-#   scripts/storyboards.sh run   [--only <glob>] [--no-frames] [--delivery chain|direct]
+#   scripts/storyboards.sh run   --changed | --only <glob> | --all | --calibration
+#                                [--no-frames] [--delivery chain|direct]
 #                                [--jobs <n>]      # runners side by side (default: half the cores, at most 4)
 #                                [--variants]      # every variant each storyboard asks for
 #                                [--calibration]   # play only the reviewer's calibration set
@@ -30,10 +31,12 @@
 # postio-gtk's `storyboard` example (specs/007-postio-focus T265), and
 # there is no other to choose.
 #
-# `--only` matches a storyboard's path under storyboards/ without `.toml`:
-# `--only 'list/*'`, `--only search/escape-leaves-search`. Calibration
-# storyboards (the reviewer's own test set) and gap lists are never played
-# by `run`.
+# `--changed` plays the storyboards this branch added or changed since its
+# merge-base, committed or not. `--only` matches a storyboard's path under
+# storyboards/ without `.toml`: `--only 'list/*'`. The whole catalogue takes
+# hours on a workstation, so a bare `run` refuses there unless `--all` (CI
+# plays it in minutes). Calibration storyboards and gap lists are never
+# played by `run`.
 #
 # Runs go to Design/review/<branch>/runs/ (gitignored), the branch's `/`
 # turned into `-`. Every window is opened on the private headless
@@ -49,7 +52,7 @@ cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 CATALOGUE="$ROOT/storyboards"
 
-usage() { sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { awk 'NR > 1 && /^set /{exit} NR > 1' "$0" | sed 's/^# \{0,1\}//'; }
 
 COMMAND="${1:-}"
 [ -n "$COMMAND" ] || { usage; exit 2; }
@@ -60,7 +63,9 @@ if [ "$COMMAND" = tool ]; then
     set --
 fi
 
-ONLY=""""
+ONLY=""
+ALL=0
+CHANGED=0
 OPEN=0
 CALIBRATION=0
 ACCEPTANCE=""
@@ -69,6 +74,8 @@ RUNNER_ARGS=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --only)      ONLY="${2:?--only needs a pattern}"; shift 2 ;;
+        --all)       ALL=1; shift ;;
+        --changed)   CHANGED=1; shift ;;
         --no-frames) RUNNER_ARGS+=(--no-frames); shift ;;
         --variants)  RUNNER_ARGS+=(--variants); shift ;;
         --delivery)  RUNNER_ARGS+=(--delivery "${2:?--delivery needs chain or direct}"); shift 2 ;;
@@ -151,8 +158,27 @@ use_helper() {
     return 0
 }
 
+base_sha() {
+    local based
+    based=$(cat "$(git rev-parse --git-dir)/postio-base" 2>/dev/null || echo main)
+    git merge-base HEAD "origin/$based" 2>/dev/null \
+        || { echo "storyboards.sh: no merge-base with origin/$based -- fetch first" >&2; return 2; }
+}
+
+# Paths under storyboards/ the branch touched against its merge-base, the working tree included.
+changed_storyboards() {
+    local sha
+    sha=$(base_sha) || return 2
+    { git diff --name-only "$sha" -- storyboards; git ls-files --others --exclude-standard -- storyboards; } \
+        | sed "s|^|$ROOT/|"
+}
+
 selected() {
-    local file relative
+    local file relative changed=""
+    if [ "$CHANGED" = 1 ]; then
+        changed=$(changed_storyboards) || return 2
+        [ -n "$changed" ] || return 0
+    fi
     {
         if [ "$CALIBRATION" = 1 ]; then
             find "$CATALOGUE/calibration" -name '*.toml'
@@ -164,9 +190,9 @@ selected() {
         relative="${file#"$CATALOGUE"/}"
         relative="${relative%.toml}"
         # shellcheck disable=SC2053 -- a glob, deliberately
-        if [ -z "$ONLY" ] || [[ "$relative" == $ONLY ]]; then
-            echo "$file"
-        fi
+        if [ -n "$ONLY" ] && [[ "$relative" != $ONLY ]]; then continue; fi
+        if [ "$CHANGED" = 1 ] && ! grep -Fxq "$file" <<<"$changed"; then continue; fi
+        echo "$file"
     done
 }
 
@@ -217,9 +243,19 @@ run_shards() {
 run_command() {
     local bin code files file
     files=()
+    if [ -z "$ONLY" ] && [ "$ALL" = 0 ] && [ "$CHANGED" = 0 ] && [ "$CALIBRATION" = 0 ] \
+        && [ "${CI:-}" != true ]; then
+        echo "storyboards.sh: the whole catalogue takes hours here. Film what you changed with" \
+            "--changed, or --only '<glob>'; --all if you mean every storyboard." >&2
+        exit 2
+    fi
+    [ "$CHANGED" = 0 ] || base_sha >/dev/null || exit 2
     # A read loop, not `mapfile`: macOS ships bash 3.2, which has none.
     while IFS= read -r file; do files+=("$file"); done < <(selected)
-    if [ "${#files[@]}" -eq 0 ]; then
+    if [ "${#files[@]}" -eq 0 ] && [ "$CHANGED" = 1 ]; then
+        echo "storyboards.sh: this branch changes no storyboard; --only '<glob>' films one anyway" >&2
+        exit 2
+    elif [ "${#files[@]}" -eq 0 ]; then
         echo "storyboards.sh: no storyboard matches '${ONLY:-*}'" >&2
         exit 2
     fi
@@ -302,10 +338,8 @@ key_command() {
 # `.cargo/config.toml`, #1818), with a reflink copy of this tree's build output (#1101).
 # Runs are cached by base commit; a storyboard replays only when its file changed.
 base_command() {
-    local based sha tree cache bin file name hash marker files=()
-    based=$(cat "$(git rev-parse --git-dir)/postio-base" 2>/dev/null || echo main)
-    sha=$(git merge-base HEAD "origin/$based" 2>/dev/null) \
-        || { echo "storyboards.sh: no merge-base with origin/$based -- fetch first" >&2; exit 2; }
+    local sha tree cache bin file name hash marker files=()
+    sha=$(base_sha) || exit 2
     tree="${STORYBOARD_BASE_DIR:-$(dirname "$ROOT")/.storyboard-base}/$(basename "$ROOT")"
     if [ -d "$ROOT/target/storyboard-base/tree" ]; then
         git worktree remove --force "$ROOT/target/storyboard-base/tree" 2>/dev/null \
