@@ -25,6 +25,12 @@ pub(crate) struct Expansion {
     pub(crate) probe: Probe,
 }
 
+#[derive(Debug)]
+pub(crate) struct Folded {
+    expansion: Expansion,
+    child: Option<u32>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum Probe {
     #[default]
@@ -527,6 +533,7 @@ impl FocusController {
             anchor: at,
             children: self.child_views(&view),
         }));
+        self.folded = None;
         self.expansion = Some(Expansion {
             thread,
             anchor,
@@ -622,13 +629,17 @@ impl FocusController {
     }
 
     fn fold_gone(&mut self, raw: &dyn Rows) -> Vec<Step> {
-        let Some(expansion) = &self.expansion else {
+        let Some(expansion) = self.expansion.take() else {
             return Vec::new();
         };
         let old = expansion.splice(expansion.at);
         let position = self.cursor.position();
         let at = expansion.at;
-        self.expansion = None;
+        let child = match position.map(|position| old.slot(position)) {
+            Some(Slot::Child { index, .. }) => Some(index),
+            _ => None,
+        };
+        self.folded = Some(Folded { expansion, child });
         let mut steps = vec![Step::Show(Intent::Unsplice { anchor: at })];
         if let Some(position) = position {
             let next = if position < at {
@@ -649,6 +660,47 @@ impl FocusController {
             }
         }
         steps
+    }
+
+    pub(crate) fn unfold_restored(
+        &mut self,
+        raw: &dyn Rows,
+        restored: &[MessageId],
+    ) -> Option<(Vec<Step>, Option<u32>)> {
+        let folded = self.folded.take_if(|folded| {
+            restored.iter().any(|id| {
+                *id == folded.expansion.anchor
+                    || folded.expansion.view.members.iter().any(|m| m.id == *id)
+            })
+        })?;
+        if self.expansion.is_some() {
+            return None;
+        }
+        let Some((at, anchor)) = locate(raw, folded.expansion.anchor, &folded.expansion.view)
+        else {
+            self.folded = Some(folded);
+            return None;
+        };
+        let expansion = Expansion {
+            anchor,
+            at,
+            focused: None,
+            reads: 0,
+            probe: Probe::Idle,
+            ..folded.expansion
+        };
+        let children = self.child_views(&expansion.view);
+        let cursor = folded
+            .child
+            .map(|index| expansion.splice(at).display(Slot::Child { row: at, index }));
+        self.expansion = Some(expansion);
+        Some((
+            vec![Step::Show(Intent::Splice {
+                anchor: at,
+                children,
+            })],
+            cursor,
+        ))
     }
 
     fn probe_anchor(&mut self) -> Vec<Step> {

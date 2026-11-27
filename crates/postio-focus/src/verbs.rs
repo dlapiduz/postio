@@ -353,7 +353,12 @@ impl Verbs {
         }
     }
 
-    pub(crate) fn landed(&mut self, cursor: &mut Cursor, rows: &dyn Rows) -> Vec<Step> {
+    pub(crate) fn landed(
+        &mut self,
+        cursor: &mut Cursor,
+        rows: &dyn Rows,
+        child: Option<u32>,
+    ) -> Vec<Step> {
         let Some(mut restoring) = self.restoring.take() else {
             return Vec::new();
         };
@@ -365,7 +370,7 @@ impl Verbs {
         match found {
             Some(position) => {
                 self.restored = true;
-                let mut steps = cursor.place(position, rows);
+                let mut steps = cursor.place(child.unwrap_or(position), rows);
                 if restoring.at_top {
                     steps.push(Step::Show(Intent::ListToTop));
                 }

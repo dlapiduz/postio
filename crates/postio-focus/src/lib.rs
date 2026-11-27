@@ -996,6 +996,7 @@ pub struct FocusController {
     results: Option<results::Results>,
     history: history::History,
     expansion: Option<thread_expand::Expansion>,
+    folded: Option<thread_expand::Folded>,
     pending: Option<thread_expand::Pending>,
     /// The row is not opened again for showing a message other than its own.
     opened_from: Option<(MessageId, MessageId)>,
@@ -1043,6 +1044,7 @@ impl FocusController {
             results: None,
             history: history::History::default(),
             expansion: None,
+            folded: None,
             pending: None,
             opened_from: None,
             walk: None,
@@ -1632,10 +1634,18 @@ impl FocusController {
     pub fn landed(&mut self, rows: &dyn Rows, opened: bool) -> Vec<Effect> {
         let raw = rows;
         let mut steps = self.expansion_followed(rows);
+        let unfolded = self
+            .verbs
+            .restoring_rows()
+            .and_then(|restored| self.unfold_restored(raw, &restored));
+        let child = unfolded.and_then(|(unfold, child)| {
+            steps.extend(unfold);
+            child
+        });
         let through = self.through(rows);
         let rows: &dyn Rows = through.as_ref().map_or(rows, |through| through);
         steps.extend(self.cursor.landed(rows, opened));
-        steps.extend(self.verbs.landed(&mut self.cursor, rows));
+        steps.extend(self.verbs.landed(&mut self.cursor, rows, child));
         match self.surfaces.landed(rows) {
             Some(surfaces::Landing::Open(index)) => {
                 steps.extend(self.cursor.place(index, rows));
@@ -1998,8 +2008,12 @@ impl FocusController {
                     .or_else(|| self.hit_facts(reading))?;
                 let mut steps = self.verbs.command_on(id, &row)?;
                 if self.leaves_the_list(id)
-                    && let Some(at) = position
+                    && let Some(mut at) = position
                 {
+                    // The whole thread goes: the next row lands where the thread's own row was.
+                    while at > 0 && rows.is_child(at) {
+                        at -= 1;
+                    }
                     steps.push(self.surfaces.step_past(at, row.id));
                 }
                 Some(steps)
@@ -2152,6 +2166,7 @@ impl FocusController {
     /// The caller opens the place and names it with `note_place`.
     pub fn leave_list(&mut self) -> Vec<Effect> {
         self.expansion = None;
+        self.folded = None;
         let mut steps = self.cursor.leave(self.feed.total());
         steps.push(feed::Step::Show(Intent::SingleHeading(None)));
         self.effects(steps)
@@ -2167,6 +2182,7 @@ impl FocusController {
 
     pub fn open(&mut self, scope: ListScope) -> Vec<Effect> {
         self.expansion = None;
+        self.folded = None;
         self.cursor.opening();
         let request = self.feed.open(scope);
         vec![Effect::Ask(self.ticket(), request)]
@@ -2238,6 +2254,7 @@ impl FocusController {
                 feed::Step::Ask(request) => Effect::Ask(self.ticket(), request),
                 feed::Step::Open(scope) => {
                     self.expansion = None;
+                    self.folded = None;
                     self.cursor.opening();
                     let request = self.feed.open(scope);
                     Effect::Ask(self.ticket(), request)

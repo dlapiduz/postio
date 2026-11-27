@@ -6223,6 +6223,12 @@ impl FocusWindow {
                 );
             }
         }
+        if let Some(pane) = self.pane() {
+            app.insert(
+                "focus.list.scroll".to_owned(),
+                serde_json::json!(pane.widget().vadjustment().value().round() as i64),
+            );
+        }
         app.insert(
             "focus.keyboard.on_control".to_owned(),
             serde_json::json!(focus.as_ref().is_some_and(|widget| {
