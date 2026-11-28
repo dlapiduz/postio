@@ -46,7 +46,7 @@ is a guard and says so.
 ## Phase 1: Setup
 
 - [ ] T001 [P] Write `storyboards/compose/native-list-keys.toml`, `native-undo-runs.toml` and `native-paste.toml` from US3's scenarios. **Guards:** green on the WebView on `main`; say so in their headers, and run with `scripts/storyboards.sh`
-- [ ] T002 [P] Write `scripts/checks/check-no-browser-engine.py` and its self-test in `scripts/tests/`. It fails if `Cargo.toml`, `Cargo.lock` or `flatpak/*.json` name `webkit6`, `webkit2gtk` or `WebKitGTK`, except the reader allowlist if any. **Red:** the self-test names `webkit6` in `crates/postio-widgets/Cargo.toml` on `main`. **Do not wire it into `scripts/check.sh` yet** (T040 does)
+- [x] T002 [P] Write `scripts/checks/check-no-browser-engine.py` and its self-test in `scripts/tests/`. It fails if `Cargo.toml`, `Cargo.lock` or `flatpak/*.json` name `webkit6`, `webkit2gtk` or `WebKitGTK`, except the reader allowlist if any. **Red:** the self-test names `webkit6` in `crates/postio-widgets/Cargo.toml` on `main`. **Do not wire it into `scripts/check.sh` yet** (T040 does)
 - [x] T003 [P] Comment on #2215 with the spec's path, the order of the phases and Q1 to Q3, so the maintainer can answer there
 
 ---
