@@ -217,21 +217,22 @@ debug = 0
 [profile.dev.package."*"]
 opt-level = 2
 
-# Turso from Postio's fork (branch postio-0.8.4-tantivy-0.27): v0.8.4 plus fuzzy and prefix word
-# expansion in the full-text index, on tantivy 0.27 so zstd is 0.14 (0.26's 0.13 is named by
-# RUSTSEC-2026-0391, -0398, -0403). Every query search runs is quoted and parses as upstream. It
-# names `TursoVecInExt::new_in` in full where Rust 1.100's `Vec::new_in` would win. Every turso
-# crate comes from one commit.
+# Turso from Postio's fork, maintained by Forklift: the Fork Release v0.8.4-fork.1 is v0.8.4 plus
+# fuzzy and prefix word expansion in the full-text index, on tantivy 0.27 so zstd is 0.14 (0.26's
+# 0.13 is named by RUSTSEC-2026-0391, -0398, -0403). Every query search runs is quoted and parses as
+# upstream. It names `TursoVecInExt::new_in` in full where Rust 1.100's `Vec::new_in` would win.
+# The release notes on GitHub list each Patch and why it is carried. Every turso crate comes from
+# one tag; a Fork Release tag never moves, and Cargo.lock pins its commit.
 [patch.crates-io]
-turso = { git = "https://github.com/dlapiduz/turso", rev = "fa342b793f8a8b006da570fb6bca6196cb65dacc" }
-turso_core = { git = "https://github.com/dlapiduz/turso", rev = "fa342b793f8a8b006da570fb6bca6196cb65dacc" }
-turso_ext = { git = "https://github.com/dlapiduz/turso", rev = "fa342b793f8a8b006da570fb6bca6196cb65dacc" }
-turso_macros = { git = "https://github.com/dlapiduz/turso", rev = "fa342b793f8a8b006da570fb6bca6196cb65dacc" }
-turso_parser = { git = "https://github.com/dlapiduz/turso", rev = "fa342b793f8a8b006da570fb6bca6196cb65dacc" }
-turso_sdk_kit = { git = "https://github.com/dlapiduz/turso", rev = "fa342b793f8a8b006da570fb6bca6196cb65dacc" }
-turso_sdk_kit_macros = { git = "https://github.com/dlapiduz/turso", rev = "fa342b793f8a8b006da570fb6bca6196cb65dacc" }
-turso_sync_engine = { git = "https://github.com/dlapiduz/turso", rev = "fa342b793f8a8b006da570fb6bca6196cb65dacc" }
-turso_sync_sdk_kit = { git = "https://github.com/dlapiduz/turso", rev = "fa342b793f8a8b006da570fb6bca6196cb65dacc" }
+turso = { git = "https://github.com/dlapiduz/turso", tag = "v0.8.4-fork.1" }
+turso_core = { git = "https://github.com/dlapiduz/turso", tag = "v0.8.4-fork.1" }
+turso_ext = { git = "https://github.com/dlapiduz/turso", tag = "v0.8.4-fork.1" }
+turso_macros = { git = "https://github.com/dlapiduz/turso", tag = "v0.8.4-fork.1" }
+turso_parser = { git = "https://github.com/dlapiduz/turso", tag = "v0.8.4-fork.1" }
+turso_sdk_kit = { git = "https://github.com/dlapiduz/turso", tag = "v0.8.4-fork.1" }
+turso_sdk_kit_macros = { git = "https://github.com/dlapiduz/turso", tag = "v0.8.4-fork.1" }
+turso_sync_engine = { git = "https://github.com/dlapiduz/turso", tag = "v0.8.4-fork.1" }
+turso_sync_sdk_kit = { git = "https://github.com/dlapiduz/turso", tag = "v0.8.4-fork.1" }
 
 blitz-dom = { path = "vendor/blitz-dom" }
 blitz-paint = { path = "vendor/blitz-paint" }
