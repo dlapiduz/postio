@@ -29,6 +29,10 @@ pub use patch::PatchStats;
 
 const COALESCE: Duration = Duration::from_millis(700);
 
+type ChangedHandler = Box<dyn Fn(&Document)>;
+
+type FormatWatcher = Box<dyn Fn(FormatState)>;
+
 pub struct NativeSurface {
     inner: Rc<Inner>,
 }
@@ -44,9 +48,9 @@ pub(crate) struct Inner {
     coalesce: Duration,
     patching: Cell<bool>,
     stats: Cell<PatchStats>,
-    changed: RefCell<Vec<Box<dyn Fn(&Document)>>>,
+    changed: RefCell<Vec<ChangedHandler>>,
     format: Cell<FormatState>,
-    format_watchers: RefCell<Vec<Box<dyn Fn(FormatState)>>>,
+    format_watchers: RefCell<Vec<FormatWatcher>>,
     source: Rc<dyn BlobSource>,
     pending: RefCell<Vec<input::Pending>>,
     quote_folded: Cell<bool>,
@@ -97,7 +101,6 @@ impl NativeSurface {
         &self.inner.view
     }
 
-    /// What the last patch did to the buffer, for the counts that gate typing (FR-014).
     pub fn last_patch(&self) -> PatchStats {
         self.inner.stats.get()
     }
@@ -106,7 +109,6 @@ impl NativeSurface {
         self.inner.selection_now()
     }
 
-    /// Runs one intent as a key or a command would, through the same path.
     pub fn dispatch(&self, intent: EditIntent) -> bool {
         self.inner.dispatch(intent)
     }
@@ -183,7 +185,6 @@ impl Inner {
         self.reflect();
     }
 
-    /// Called on every caret move and edit; the watchers hear only a change.
     pub(super) fn reflect(&self) {
         let state =
             postio_ui::editor::format::format_state(&self.document.borrow(), &self.selection_now());
@@ -217,9 +218,6 @@ fn start_of(document: &Document) -> Selection {
         .unwrap_or_default()
 }
 
-/// A reply or a fresh draft needs somewhere to type above everything that holds no caret. A line
-/// that is only a break is WebKit's empty line (`<p><br></p>`, which `quoted_reply` writes so the
-/// WebView keeps it): here it is an empty line, or typing would land before an invisible break.
 fn editable(mut document: Document) -> Document {
     fn unbreak(blocks: &mut [postio_body::Block]) {
         for block in blocks {

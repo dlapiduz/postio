@@ -20,8 +20,6 @@ fn list(text: &str) -> Document {
     }
 }
 
-/// The view's own input method, fed key events as a compositor would; with GTK's simple context,
-/// Ctrl+Shift+U then hex is a real preedit with no input-method daemon.
 struct Ime {
     im: gtk::IMContext,
 }
@@ -68,8 +66,6 @@ impl Ime {
     }
 }
 
-/// Chosen before any view exists: switching a live view's context left the Wayland one's callbacks
-/// pointing at a destroyed widget, which crashed the process at teardown under load.
 fn simple_input_method() {
     if let Some(settings) = gtk::Settings::default() {
         settings.set_gtk_im_module(Some("gtk-im-context-simple"));

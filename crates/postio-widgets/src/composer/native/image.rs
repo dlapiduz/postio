@@ -1,13 +1,8 @@
-//! Objects in the text: an inline image is a picture of its blob's bytes, resolved here and never
-//! through a scheme or a URL; a rule and a remote image's chip are widgets at their anchors.
-
 use gtk::prelude::*;
 use postio_body::Run;
 
 use super::Inner;
 
-/// Anchors every object run in `range` that is still a bare U+FFFC, which is what a patch inserts.
-/// Returns how many it made.
 pub(super) fn anchor(inner: &Inner, range: std::ops::Range<u32>) -> u32 {
     let objects: Vec<(u32, Run)> = inner
         .projection

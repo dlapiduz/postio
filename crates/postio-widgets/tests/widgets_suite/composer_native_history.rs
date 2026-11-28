@@ -6,7 +6,6 @@ use postio_widgets::composer::native::NativeSurface;
 use postio_widgets::composer::surface::ComposerSurface;
 use postio_widgets::storyboard::deliver::drain;
 
-/// The run's window is the surface's; a window no test outlasts, or none, makes it exact.
 fn surface(coalesce: Duration, text: &str) -> NativeSurface {
     let surface = NativeSurface::with_coalesce(std::rc::Rc::new(|_: &str| None), coalesce);
     surface.load(Document::from_text(text));

@@ -989,9 +989,6 @@ mod subset {
     }
 }
 
-/// The editable dialect's contract, held by the document now that no browser writes the draft:
-/// what the composer writes is markup `parse` reads back to the same document, in the subset's
-/// own elements and attributes only.
 #[test]
 fn the_composer_dialect_is_what_to_html_writes() {
     let document = every_shape();

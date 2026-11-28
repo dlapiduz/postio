@@ -1,7 +1,3 @@
-//! The three doors into the buffer (research R4): keys in the capture phase, text through the
-//! buffer's `insert-text`, and deletions through `delete-range`. Each becomes an intent; the
-//! buffer itself is never let through, so the patch is its only writer.
-
 use std::rc::Rc;
 
 use gtk::glib;
@@ -92,9 +88,8 @@ pub(super) fn wire(inner: &Rc<Inner>) {
     super::preedit::wire(inner);
 }
 
-/// Text and deletions the view makes arrive inside its own handlers, an input method's commit
-/// among them: writing the buffer there re-enters the input method, which crashed GTK. So they
-/// queue, in order, and run before the next event.
+/// Writing the buffer inside its own handlers re-enters an input method's commit, which crashed
+/// GTK, so text and deletions queue in order and run before the next event.
 pub(super) enum Pending {
     Typed {
         at: DocPosition,
@@ -150,7 +145,6 @@ impl Inner {
         }
     }
 
-    /// True when the key did something; a Tab that did nothing lets the focus move.
     fn key(&self, edit: KeyEdit) -> bool {
         if edit == KeyEdit::SplitBlock
             && let Some(conversion) = self.conversion(Typed::Enter)
@@ -160,9 +154,6 @@ impl Inner {
         self.dispatch(edit.intent())
     }
 
-    /// Text that arrives at once (a storyboard, a dropped string) is typed a character at a time,
-    /// so a Markdown sequence in it converts as it would under a person's fingers. An input
-    /// method's commit is one insert.
     fn typed(&self, at: DocPosition, text: &str, committed: bool) {
         let now = self.selection_now();
         let selection = if now.is_collapsed() && now.head == at {
@@ -187,7 +178,6 @@ impl Inner {
         }
     }
 
-    /// The caret's line as the matcher reads it, from the buffer: it is the projection of the line.
     fn conversion(&self, typed: Typed) -> Option<postio_body::Conversion> {
         let selection = self.selection_now();
         if !selection.is_collapsed() {

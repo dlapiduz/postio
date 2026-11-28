@@ -145,7 +145,6 @@ pub enum Preset {
     Locked,
     AgentsShared,
     Vault,
-    /// The composer on spec 015's native surface, until step 4 makes it the only one.
     NativeComposer,
 }
 

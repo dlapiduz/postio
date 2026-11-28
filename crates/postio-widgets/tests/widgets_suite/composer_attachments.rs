@@ -66,8 +66,6 @@ pub fn attaching_shows_the_row_and_removing_cleans_it_up() {
          the message would attach beside it instead of landing in it: \
          {targets:?}"
     );
-    // A native text view also has its own target for dragged text; what matters is that each
-    // place has one that takes files.
     for place in ["composer", "body"] {
         assert!(
             targets

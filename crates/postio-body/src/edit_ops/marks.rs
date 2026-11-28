@@ -203,8 +203,6 @@ pub(super) fn with(mut marks: MarkSet, mark: Mark, on: bool) -> MarkSet {
     marks
 }
 
-/// The marks a toolbar shows: what the next typed text gets at a caret, and what every character
-/// of a range has.
 pub fn marks_in_force(document: &Document, selection: &Selection) -> MarkSet {
     if selection.is_collapsed() {
         if let Some(marks) = &selection.marks {

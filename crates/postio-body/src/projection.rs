@@ -67,8 +67,6 @@ pub struct LineStyle {
     pub quote_depth: u32,
 }
 
-/// A buffer edit: delete `delete`, insert `insert` at its start, then retag `restyle`, which is in
-/// the new buffer's offsets.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Patch {
     pub delete: Range<u32>,
@@ -319,9 +317,6 @@ impl Projection {
         })
     }
 
-    /// Replaces the changed blocks' units and returns the buffer edit that turns this projection's
-    /// text into the new one: only what differs inside the range is deleted and inserted, and
-    /// `restyle` is the range's new extent, the one to retag.
     pub fn patch(&mut self, changed: BlockRange, document: &Document) -> Patch {
         let (start, old_end, new_end) = (
             changed.start as usize,

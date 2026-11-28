@@ -1,10 +1,5 @@
-//! The formatting a toolbar lights for a caret or a selection, from the document: one rule for
-//! every surface, so GTK and the Mac light the same toggles.
-
 use postio_body::{Document, HeadingLevel, ListKind, Selection, block_context, marks_in_force};
 
-/// `bold` is true when the selection is inside `Strong`, not when a mode is armed: there are no
-/// modes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FormatState {
     pub bold: bool,

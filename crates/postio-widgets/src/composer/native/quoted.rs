@@ -1,6 +1,3 @@
-//! The reply quote (Q2 = A): a read-only plain-text range, tinted, one unit the caret cannot
-//! enter, folded to its first lines until the person opens it.
-
 use std::rc::Rc;
 
 use gtk::prelude::*;
@@ -34,7 +31,6 @@ pub(super) fn wire(inner: &Rc<Inner>) {
     inner.view.add_controller(click);
 }
 
-/// Where the fold hides the quote's text: everything after its first lines.
 pub(super) fn hidden(text: &str) -> Option<u32> {
     let mut seen = 0;
     for (index, c) in text.chars().enumerate() {

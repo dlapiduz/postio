@@ -88,7 +88,6 @@ impl Selection {
     }
 }
 
-/// What holds a caret: its block's kind and the nearest list and quote around it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BlockContext {
     pub heading: Option<crate::HeadingLevel>,

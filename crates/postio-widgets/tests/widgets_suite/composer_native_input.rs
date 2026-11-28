@@ -62,8 +62,6 @@ impl Shown {
             .to_string()
     }
 
-    /// The buffer is always the projection of the record: anything else is a write that bypassed
-    /// the patch.
     pub fn assert_in_step(&self) {
         assert_eq!(self.text(), project(&self.surface.document(), None).text());
     }

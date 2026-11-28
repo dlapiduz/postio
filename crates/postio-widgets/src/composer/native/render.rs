@@ -1,6 +1,3 @@
-//! How the projection is drawn: one tag per mark and per line kind, applied from the projection's
-//! runs and lines over the range a patch touched, never over the whole buffer.
-
 use std::ops::Range;
 
 use gtk::prelude::*;
@@ -76,8 +73,6 @@ pub(super) fn tags() -> gtk::TextTagTable {
     table
 }
 
-/// Clears and reapplies every tag over the top-level blocks that overlap `range`; returns how many
-/// tags it applied.
 pub(super) fn retag(inner: &Inner, range: Range<u32>) -> u32 {
     let buffer = &inner.buffer;
     let projection = inner.projection.borrow();

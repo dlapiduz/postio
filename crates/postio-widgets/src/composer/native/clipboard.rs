@@ -1,6 +1,3 @@
-//! Copy carries the document's own fragment, never the buffer's drawn bullets; paste and drop
-//! arrive through `parse`, so what lands is what the subset can hold (FR-007).
-
 use std::rc::Rc;
 
 use gtk::prelude::*;
@@ -53,7 +50,6 @@ impl Inner {
     }
 }
 
-/// Asynchronous, like every clipboard read; the caret it lands at is the one when it arrives.
 fn paste(inner: &Rc<Inner>) {
     let clipboard = inner.view.clipboard();
     let weak = Rc::downgrade(inner);
@@ -93,7 +89,6 @@ fn paste(inner: &Rc<Inner>) {
     });
 }
 
-/// Each line a paragraph, as the WebView pasted plain text.
 fn lines(text: &str) -> Document {
     Document {
         blocks: text

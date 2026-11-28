@@ -1,6 +1,3 @@
-//! What the composer asks of its editing surface, so the WebView and the native text view are one
-//! seam and the composer cannot reach past it.
-
 use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::OnceLock;
@@ -11,8 +8,6 @@ use postio_body::{ContentId, Document};
 
 use crate::reader::BlobSource;
 
-/// Which surface a composer edits on: the WebView until spec 015's step 4 makes the native one the
-/// only one. A developer switch, read once: `POSTIO_NATIVE_COMPOSER=1`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SurfaceKind {
     Web,
@@ -65,28 +60,23 @@ pub trait ComposerSurface {
     fn load(&self, document: Document);
     fn document(&self) -> Document;
     fn connect_changed(&self, handler: Box<dyn Fn(&Document)>);
-    /// Called only on change, never per keystroke.
     fn connect_format_state(&self, handler: Box<dyn Fn(FormatState)>);
     fn undo(&self);
     fn redo(&self);
     fn can_undo(&self) -> bool;
     fn format(&self, format: Format);
-    /// Anything but http, https and mailto is refused rather than dropped by a later parse.
     fn create_link(&self, href: &str) -> bool;
     fn insert_image(&self, content_id: &ContentId, alt: &str);
     fn place_caret_start(&self);
     fn place_caret_end(&self);
     fn flow_in(&self, probes: Vec<(&'static str, gtk::Widget)>);
-    /// `None` when there is no caret, or it is in a carried quote.
     fn caret(&self, done: Box<dyn FnOnce(Option<DocPosition>)>);
-    /// One edit on the record, the caret at `at`.
     fn show_at(&self, document: Document, at: Option<&DocPosition>);
     fn warm(&self);
     fn is_warm(&self) -> bool;
     fn test_type(&self, text: &str);
     fn test_caret(&self) -> Option<DocPosition>;
     fn test_select(&self, nth: u32, from: u32, to: u32);
-    /// The WebView's script; a native surface runs none and answers empty.
     fn test_eval(&self, script: &str) -> String;
 }
 

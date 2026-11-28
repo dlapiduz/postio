@@ -81,7 +81,6 @@ fn splice(blocks: &mut Vec<Block>, at: DocPosition, cells: Vec<Cell>) -> Option<
     Outcome::at(DocPosition::new(at.path, at.offset + added), Join::New)
 }
 
-/// What a copy carries: the selected part of the document, ends cut as a range delete cuts them.
 pub fn slice(document: &Document, selection: &Selection) -> Document {
     let (start, end) = (selection.start(), selection.end());
     let mut blocks =

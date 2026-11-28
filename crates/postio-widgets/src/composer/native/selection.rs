@@ -1,6 +1,3 @@
-//! A bullet, a number and the reply quote have no document position, so a caret the toolkit puts
-//! there (a click, Home) is moved to the text the projection says it means.
-
 use std::rc::Rc;
 
 use gtk::prelude::*;

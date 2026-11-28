@@ -13,7 +13,6 @@ pub(crate) fn surface(document: Document) -> NativeSurface {
     surface
 }
 
-/// The tags at the first character of `needle`, as the view would draw it.
 pub(crate) fn tags_at(surface: &NativeSurface, needle: &str) -> Vec<String> {
     let buffer = surface.view().buffer();
     let text = buffer.slice(&buffer.start_iter(), &buffer.end_iter(), true);

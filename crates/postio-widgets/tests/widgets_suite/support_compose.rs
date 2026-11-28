@@ -8,7 +8,6 @@ use postio_core::{ActionId, CommandId, Context, Frontend, Keymap};
 use postio_ui::keymap::{KeyContext, Outcome, Resolver};
 use postio_widgets::composer::{Composer, ComposerHost, Field};
 
-/// The first widget under `widget` with `class`, depth first.
 pub fn find(widget: &gtk::Widget, class: &str) -> Option<gtk::Widget> {
     if widget.has_css_class(class) {
         return Some(widget.clone());
@@ -117,7 +116,6 @@ pub mod composer {
         window.install_composer()
     }
 
-    /// A composer on the native surface, the developer switch aside.
     pub fn install_native(window: &Window) -> Composer {
         surface::test_choose(Some(surface::SurfaceKind::Native));
         let composer = window.install_composer();

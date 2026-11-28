@@ -1,6 +1,3 @@
-//! The draft's undo is the document's history (ADR 0004 Q5), never the buffer's; the surface
-//! owns only the clock that ends a typing run (research R6).
-
 use std::time::Instant;
 
 use postio_body::{Applied, EditStep, Selection};

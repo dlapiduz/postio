@@ -1,12 +1,7 @@
-//! The keys a native composer surface owns: structural editing, which is no registry command and
-//! must never shadow one (the composer owns Tab, #494). Every command is a registry id.
-
 use postio_body::{EditIntent, Unit};
 
 use crate::keymap::Chord;
 
-/// Tab and Shift+Tab are `Indent` and `Outdent` in a list; elsewhere they change nothing and the
-/// focus moves on.
 pub const EDITING_KEYS: &[(&str, KeyEdit)] = &[
     ("Return", KeyEdit::SplitBlock),
     ("shift+Return", KeyEdit::InsertBreak),
@@ -41,7 +36,6 @@ impl KeyEdit {
         }
     }
 
-    /// A Tab that changes nothing is not taken, so the focus moves as it does in any field.
     pub fn falls_through(self) -> bool {
         matches!(self, KeyEdit::Indent | KeyEdit::Outdent)
     }

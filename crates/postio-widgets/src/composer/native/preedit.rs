@@ -1,6 +1,3 @@
-//! An input method's composition is drawn by the view and never reaches the buffer (research R3);
-//! the surface only records that one is open, which is what `apply` refuses intents on.
-
 use std::rc::Rc;
 
 use gtk::prelude::*;
