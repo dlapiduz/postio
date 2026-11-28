@@ -5,6 +5,7 @@ mod input;
 mod patch;
 mod preedit;
 mod render;
+mod selection;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -79,6 +80,7 @@ impl NativeSurface {
             pending: RefCell::new(Vec::new()),
         });
         input::wire(&inner);
+        selection::wire(&inner);
         NativeSurface { inner }
     }
 

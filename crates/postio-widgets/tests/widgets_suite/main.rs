@@ -25,6 +25,7 @@ mod composer_inline_image;
 mod composer_markdown;
 mod composer_markdown_source;
 mod composer_native_basic;
+mod composer_native_caret;
 mod composer_native_ime;
 mod composer_native_input;
 mod composer_native_patch;
@@ -107,6 +108,22 @@ mod widgets_css;
 const IGNORED: &[&str] = &[];
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "composer_native_caret::a_caret_on_a_bullet_lands_on_the_items_text",
+        composer_native_caret::a_caret_on_a_bullet_lands_on_the_items_text as fn(),
+    ),
+    (
+        "composer_native_caret::home_skips_the_bullet_and_end_stays_on_the_text",
+        composer_native_caret::home_skips_the_bullet_and_end_stays_on_the_text as fn(),
+    ),
+    (
+        "composer_native_caret::a_click_in_the_reply_quote_lands_after_it",
+        composer_native_caret::a_click_in_the_reply_quote_lands_after_it as fn(),
+    ),
+    (
+        "composer_native_caret::a_selection_keeps_its_place_across_a_patch_of_another_block",
+        composer_native_caret::a_selection_keeps_its_place_across_a_patch_of_another_block as fn(),
+    ),
     (
         "composer_native_ime::a_cjk_composition_in_a_list_item_is_one_commit_and_one_undo",
         composer_native_ime::a_cjk_composition_in_a_list_item_is_one_commit_and_one_undo as fn(),
