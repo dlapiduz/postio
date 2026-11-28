@@ -124,7 +124,7 @@ is a guard and says so.
 **Blocked on**: T045 (every native case green) and the maintainer's go-ahead after trying `POSTIO_NATIVE_COMPOSER=1`. **One commit** (FR-020).
 
 - [ ] T048 [US5] **Red:** `scripts/checks/check-no-browser-engine.py` from T002 is wired into `scripts/check.sh` in this commit and fails until the rest of the task is done. **Green, in one commit:** delete `editor.rs`'s bridge, the three handlers, every `evaluate_javascript` call, `scheme.rs`, `web_process.rs`, `warm()` and `composer_warm.rs`, `editable_dialect.rs`, `editor_bridge.rs`, `editor_profile.rs`, `editor_teardown.rs`, and `webkit6` from `crates/postio-widgets/Cargo.toml` and the flatpak manifest; make the native surface the default and delete the switch. Each deleted test case carries a `scripts/test-removal-check.sh` verdict in the commit body
-- [ ] T049 [US5] **Red:** the dialect contract as a `postio-body` unit test: markup `parse` accepts is what `to_html` writes, in `body_suite/document.rs` (was `editable_dialect.rs`'s job). **Green:** it should already hold; this is a guard, made before T048's deletion lands
+- [x] T049 [US5] **Red:** the dialect contract as a `postio-body` unit test: markup `parse` accepts is what `to_html` writes, in `body_suite/document.rs` (was `editable_dialect.rs`'s job). **Green:** it should already hold; this is a guard, made before T048's deletion lands
 - [ ] T050 [US5] Remove the composer's rows from the egress log's allowlist (#151) and add one case: no composer code path creates a socket or loads a URL
 - [ ] T051 [US5] **Land step 4.** Title `refactor(widgets): one composer surface, no browser engine`. **Q1 = B:** `editor.js` and `EDITOR_SCRIPT` stay for the Mac until Phase 6
 
