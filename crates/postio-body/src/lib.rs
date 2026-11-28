@@ -18,6 +18,7 @@ pub mod narrow;
 pub mod outgoing;
 pub mod own_text;
 pub mod parse;
+pub mod position;
 pub mod quote;
 pub mod reader_view;
 pub mod replying;
@@ -34,6 +35,7 @@ pub use narrow::{Lost, Narrowed, narrow};
 pub use outgoing::{harden, message_body, render};
 pub use own_text::{own_line, own_text};
 pub use parse::parse;
+pub use position::{DocPosition, Selection};
 pub use quote::{fold_html_quotes, text_to_html};
 pub use replying::{
     Placement, Presentation, Quoted, apply_signature, forwarded, quote_of, quoted_reply, requote,
