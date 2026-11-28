@@ -1,3 +1,4 @@
+mod apply;
 mod document;
 mod edit;
 mod formatting_wire;
