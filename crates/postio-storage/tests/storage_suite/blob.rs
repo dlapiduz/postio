@@ -268,8 +268,7 @@ fn a_fetch_still_being_written_survives_the_debris_purge() {
 }
 
 #[test]
-fn debris_from_an_earlier_start_with_the_same_pid_is_purged() {
-    // A Flatpak sandbox can give every start the same pid.
+fn debris_from_an_earlier_start_under_the_same_sandbox_pid_is_purged() {
     let (_directory, store) = store();
     let orphan = store
         .temporary_directory()

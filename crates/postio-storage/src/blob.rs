@@ -201,8 +201,7 @@ impl BlobStore {
         path_of(&self.root, id)
     }
 
-    /// Call on start: a power cut during a fetch leaves a `.part` file nothing finishes. Files this
-    /// process is still writing are kept, so the purge may run beside a sync that is fetching.
+    /// Removes `.part` debris of earlier runs, never a fetch this process is still writing.
     pub fn purge_temporary(&self) -> Result<usize> {
         let entries = read_dir(&self.temporary)?;
         let mut purged = 0;
@@ -709,8 +708,6 @@ struct TemporaryBlob {
 }
 
 impl TemporaryBlob {
-    // Not the pid alone: inside a Flatpak sandbox every start can have the same pid, and debris
-    // named like this process's own would never be purged.
     fn prefix() -> &'static str {
         static PREFIX: std::sync::OnceLock<String> = std::sync::OnceLock::new();
         PREFIX.get_or_init(|| {
