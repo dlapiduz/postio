@@ -19,6 +19,10 @@ command = "back"
 context = "list"
 reason  = "nothing to go back from: no selection, no search, no filter"
 [[gap]]
+command = "create_folder"
+context = "list"
+reason  = "bound, and the controller has no arm for it until #2272 asks for the name"
+[[gap]]
 command = "darken_message"
 context = "list"
 reason  = "bound, and act() has no arm for it; darkening a message is Classic's reader"

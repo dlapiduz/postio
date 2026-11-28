@@ -40,6 +40,7 @@ pub enum UndoKind {
     RetriedSend,
     CancelledSend,
     MapMailboxRole,
+    CreateFolder,
     JoinContacts,
     ContactArrival,
     ContactAddress,
@@ -94,6 +95,7 @@ impl UndoKind {
             // Says where the message went, so the person knows the reply was not thrown away.
             UndoKind::CancelledSend => "Send cancelled \u{2014} back in Drafts".to_owned(),
             UndoKind::MapMailboxRole => "Changed a folder's role".to_owned(),
+            UndoKind::CreateFolder => "Created a folder".to_owned(),
             UndoKind::JoinContacts => "Merged contacts".to_owned(),
             UndoKind::ContactArrival => "Changed where mail arrives".to_owned(),
             UndoKind::ContactAddress => "Added an address".to_owned(),

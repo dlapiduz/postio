@@ -140,6 +140,7 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
 
         C::Reply | C::ReplyAll | C::Forward => Some(M::Message),
         C::Archive | C::Delete | C::Move => Some(M::Message),
+        C::CreateFolder => Some(M::Go),
         C::Flag | C::ToggleRead | C::AddLabel => Some(M::Message),
         C::Snooze | C::Unsnooze => Some(M::Message),
         C::OpenMessage => Some(M::Message),

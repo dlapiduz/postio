@@ -9,6 +9,7 @@ mod checkup;
 mod cid_scoping;
 mod classify_report;
 mod correlation;
+mod create_folder;
 mod damaged_body_reading;
 mod drag_reclaim;
 mod event_fanout;

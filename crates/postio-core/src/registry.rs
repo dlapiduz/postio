@@ -1602,6 +1602,14 @@ static SPECS: &[CommandSpec] = &[
         ..BASE
     },
     CommandSpec {
+        id: CommandId::CreateFolder,
+        title: "New folder",
+        default_binding: "F7",
+        contexts: ctx(&[Context::List, Context::Sidebar]),
+        recovery: Recovery::Undo,
+        ..BASE
+    },
+    CommandSpec {
         id: CommandId::NextScope,
         title: "Next scope",
         default_binding: "g n",

@@ -133,7 +133,8 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::PickerChoose4
         | C::PickerTypeDate
         | C::PickerToggle
-        | C::PickerConfirm => Some(G::Act),
+        | C::PickerConfirm
+        | C::CreateFolder => Some(G::Act),
 
         C::AcceptInvite | C::DeclineInvite | C::TentativeInvite => Some(G::Invites),
 
