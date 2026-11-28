@@ -11,18 +11,16 @@ use crate::{FocusController, Intent, Request};
 #[derive(Debug)]
 pub(crate) struct MergeSheet {
     groups: Vec<MergeGroup>,
-    of: usize,
     kept: usize,
     manual: bool,
 }
 
 impl MergeSheet {
     fn view(&self, controller: &FocusController) -> postio_ui::contact_merge::MergeSheetView {
-        let position = (!self.manual).then(|| (self.of - self.groups.len(), self.of));
         postio_ui::contact_merge::view(
             &self.groups[0],
             self.kept,
-            position,
+            (!self.manual).then_some(self.groups.len()),
             controller.bar.keymap(),
             controller.bar.now(),
             None,
@@ -143,14 +141,41 @@ impl FocusController {
         vec![Step::Ask(Request::ContactMergeOf(contacts.marks.clone()))]
     }
 
+    pub(crate) fn merge_queue_asked(&self) -> Vec<Step> {
+        let Some(sheet) = self
+            .contacts
+            .as_ref()
+            .and_then(|contacts| contacts.merge.as_ref())
+            .filter(|sheet| !sheet.manual)
+        else {
+            return Vec::new();
+        };
+        let first = sheet.groups[0].people.iter().map(|p| p.id).collect();
+        vec![Step::Ask(Request::ContactReview { first })]
+    }
+
     pub(crate) fn contacts_review_read(&mut self, groups: Vec<MergeGroup>) -> Vec<Step> {
+        let ids = |group: &MergeGroup| group.people.iter().map(|p| p.id).collect::<Vec<_>>();
+        if let Some(sheet) = self
+            .contacts
+            .as_mut()
+            .and_then(|contacts| contacts.merge.as_mut())
+            .filter(|sheet| !sheet.manual)
+        {
+            if groups.is_empty() {
+                return self.merge_advance_to(Vec::new());
+            }
+            if ids(&groups[0]) != ids(&sheet.groups[0]) {
+                sheet.kept = 0;
+            }
+            sheet.groups = groups;
+            return self.draw_contact_merge();
+        }
         if groups.is_empty() || self.contacts.is_none() {
             return Vec::new();
         }
-        let of = groups.len();
         self.merge_open(MergeSheet {
             groups,
-            of,
             kept: 0,
             manual: false,
         })
@@ -165,7 +190,6 @@ impl FocusController {
         }
         self.merge_open(MergeSheet {
             groups: vec![group],
-            of: 1,
             kept: 0,
             manual: true,
         })
@@ -279,6 +303,17 @@ impl FocusController {
             steps.extend(self.verbs.post(command));
         }
         steps
+    }
+
+    fn merge_advance_to(&mut self, groups: Vec<MergeGroup>) -> Vec<Step> {
+        if let Some(sheet) = self
+            .contacts
+            .as_mut()
+            .and_then(|contacts| contacts.merge.as_mut())
+        {
+            sheet.groups = groups;
+        }
+        self.merge_advance()
     }
 
     fn merge_advance(&mut self) -> Vec<Step> {

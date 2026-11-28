@@ -14,25 +14,53 @@ use postio_ui::thread_outline::{OutlineView, ThreadMenuView};
 
 pub(crate) struct List {
     muted: Vec<Option<u32>>,
+    split: Option<(MessageId, ThreadId)>,
+}
+
+impl List {
+    fn below_split(&self, position: u32) -> Option<u32> {
+        match self.split {
+            Some(_) => position.checked_sub(1),
+            None => Some(position),
+        }
+    }
 }
 
 impl Rows for List {
     fn len(&self) -> u32 {
-        self.muted.len() as u32
+        self.muted.len() as u32 + u32::from(self.split.is_some())
     }
     fn facts(&self, position: u32) -> Option<RowFacts> {
-        (position < self.len()).then(|| RowFacts {
-            id: MessageId::new(100 + i64::from(position)),
+        if position >= self.len() {
+            return None;
+        }
+        let Some(at) = self.below_split(position) else {
+            let (id, thread) = self.split?;
+            return Some(RowFacts {
+                id,
+                digest: false,
+                threads: vec![thread],
+                writes: false,
+            });
+        };
+        Some(RowFacts {
+            id: MessageId::new(100 + i64::from(at)),
             digest: false,
-            threads: vec![ThreadId::new(500 + i64::from(position))],
+            threads: vec![ThreadId::new(500 + i64::from(at))],
             writes: false,
         })
     }
     fn position_of(&self, message: MessageId) -> Option<u32> {
+        if self.split.is_some_and(|(id, _)| id == message) {
+            return Some(0);
+        }
         let at = message.get() - 100;
-        (0..self.len() as i64).contains(&at).then_some(at as u32)
+        (0..self.muted.len() as i64)
+            .contains(&at)
+            .then_some(at as u32 + u32::from(self.split.is_some()))
     }
     fn row(&self, position: u32) -> Option<FocusRow> {
+        let position = self.below_split(position)?;
         let muted = *self.muted.get(position as usize)?;
         let mut summary = lone(MessageSummary {
             id: MessageId::new(100 + i64::from(position)),
@@ -95,6 +123,7 @@ fn focus() -> FocusController {
 fn list() -> List {
     List {
         muted: vec![None, None],
+        split: None,
     }
 }
 
@@ -786,4 +815,68 @@ fn a_message_that_no_longer_exists_is_gone_as_before() {
     let effects = answer_thread_of(&mut focus, &rows, ticket, asked, None);
     assert_eq!(opened_message(&effects), Some(member_id(old, 5)));
     assert!(notice(&effects).is_some(), "{effects:?}");
+}
+
+fn cursor_at(effects: &[Effect]) -> Option<u32> {
+    shown(effects)
+        .into_iter()
+        .rev()
+        .find_map(|intent| match intent {
+            Intent::Cursor { position, .. } => Some(position),
+            _ => None,
+        })
+}
+
+fn split_from_the_window(landed_first: bool) -> (FocusController, List, Vec<Effect>) {
+    let (mut focus, rows) = window();
+    let (old, new) = (ThreadId::new(500), split_thread());
+    let after = List {
+        split: Some((member_id(old, 5), new)),
+        ..list()
+    };
+    let _ = focus.handle_on(Input::ThreadMenuPick(CommandId::SplitThread), &rows);
+    let mut effects = Vec::new();
+    if landed_first {
+        effects.extend(focus.landed(&after, false));
+    }
+    let ticket = change(&mut focus, &after, old);
+    let read = read_back(
+        &mut focus,
+        ticket,
+        old,
+        Some(only(old, old, &[0, 1, 2, 3])),
+        &after,
+    );
+    let (ticket, asked) = thread_asked(&read).expect("asks where the message went");
+    let read = answer_thread_of(&mut focus, &after, ticket, asked, Some(new));
+    let (ticket, _) = read_asked(&read).expect("reads the new thread");
+    let two = only(new, old, &[4, 5]);
+    effects.extend(read_back(&mut focus, ticket, new, Some(two), &after));
+    if !landed_first {
+        effects.extend(focus.landed(&after, false));
+    }
+    (focus, after, effects)
+}
+
+#[test]
+fn a_split_from_the_window_takes_the_list_cursor_to_the_new_thread() {
+    for landed_first in [true, false] {
+        let (mut focus, after, effects) = split_from_the_window(landed_first);
+        assert_eq!(
+            cursor_at(&effects),
+            Some(0),
+            "the cursor is on the new thread's row (list landed first: {landed_first}): {effects:?}"
+        );
+        assert_eq!(focus.reading(), Some(member_id(ThreadId::new(500), 4)));
+        let _ = run(&mut focus, CommandId::Back, &after);
+        let row = focus
+            .cursor()
+            .and_then(|at| after.facts(at))
+            .map(|row| row.threads);
+        assert_eq!(
+            row,
+            Some(vec![split_thread()]),
+            "Esc returns to the thread the message now belongs to"
+        );
+    }
 }

@@ -19,7 +19,7 @@ gh pr list --state open
 git worktree list
 ```
 
-**A quiet claim is not stale.** Sessions spend hours reading, waiting on CI or running suites with no visible artefact. Abandoned means **a day or more** with no worktree, branch or commits, and even then check the issue's timeline first. Releasing live work is far worse than leaving a label up a day. `scripts/issue-release.sh --stale` applies this rule.
+**A quiet claim is not stale.** Sessions spend hours reading or running suites with no visible artefact. Abandoned means **a day or more** with no worktree, branch or commits, and even then check the issue's timeline first. Releasing live work is far worse than leaving a label up a day. `scripts/issue-release.sh --stale` applies this rule.
 
 **Stuck PRs are yours to chase.** Landings arm auto-merge and move on (#1107), so a failing check, a conflict with main or a green PR nobody armed has nobody in front of it.
 

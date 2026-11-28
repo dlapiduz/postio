@@ -13,8 +13,8 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
-  # Called by `full-suite.yml` (`issue-land.sh --full-suite`); reused so there is one definition of
-  # what the nightly runs.
+  # Called by `full-suite.yml` (a PR the maintainer labels `full-suite`); reused so there is one
+  # definition of what the nightly runs.
   # The inputs narrow a call to a subset (`scripts/ci-nightly-rerun.py` builds the filter); with
   # none it is the whole nightly.
   workflow_call:
@@ -189,8 +189,8 @@ jobs:
         run: scripts/install-nextest.sh
 
       # Every test in the workspace, integration binaries and measurements included. This job is the
-      # first reader of the integration suites (the PR run is the sanity tier), so `ci.yml`'s
-      # `nightly` job goes red on every PR while it fails (#847). `--profile ci-full` runs the
+      # first reader of the integration suites and the frontends (the PR run is the sanity tier), so
+      # `ci.yml`'s `nightly` job goes red on every PR while it fails (#847). `--profile ci-full` runs the
       # measurement files `profile.default` holds off the merge path (#1450), with fail-fast off.
       # `cache_pressure` is the one test no shared runner runs: it asserts a larger cache is
       # measurably faster, a timing CLAUDE.md does not ask of a shared runner, and it timed out at
@@ -228,6 +228,17 @@ jobs:
           POSTIO_NEXTEST_FILTER="$(cat "$RUNNER_TEMP/filter")" \
             dbus-run-session -- scripts/test-with-flake-retry.sh "$PROFILE" "" "${select[@]}"
 
+      # The frontends' merge-path cases get the 20 s a GTK window may take (`ci.yml` holds the rest
+      # to 10 s); only what `profile.ci` selects, since the measurements beside them are slow on
+      # purpose. The retries rewrite the report, so this reads the whole run's.
+      - name: Every frontend test under its budget
+        if: ${{ !cancelled() && (!inputs.only || contains(format(' {0} ', inputs.only), ' tests ')) }}
+        run: |
+          dbus-run-session -- cargo nextest list -p postio-gtk -p postio-widgets --profile ci \
+            --message-format oneline > "$RUNNER_TEMP/frontend-merge-path"
+          scripts/ci-test-budget.py --only "$RUNNER_TEMP/frontend-merge-path" \
+            "target/nextest/${{ inputs.profile || 'ci-full' }}/junit-run.xml" 20
+
       - name: Keep the failed tests for the pull requests that follow
         if: ${{ failure() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -250,8 +261,8 @@ jobs:
   # minutes. `profile.ci-storyboards` selects what `profile.ci-full` holds out;
   # `check-measurement-tier.py` keeps the two in step.
   #
-  # The test binary, built once for the four shards, which restore the `build-app` cache that ci.yml
-  # keeps warm on `main` and save none.
+  # The test binary, built once for the four shards, which compile nothing. This job keeps the
+  # `build-app` cache warm, writing it from `main`.
   storyboards-build:
     name: Build the storyboard passes
     needs: changed
@@ -295,6 +306,10 @@ jobs:
           path: ${{ runner.temp }}/storyboard-tests.tar.zst
           retention-days: 1
           if-no-files-found: error
+
+      - name: Save the build cache
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/build-cache-save
 
   storyboards:
     name: Storyboard passes (${{ matrix.shard }}/4)

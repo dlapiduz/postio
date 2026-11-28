@@ -465,6 +465,7 @@ pub(crate) struct Popover {
     own: Option<u64>,
     filter: String,
     words: String,
+    opened_over_tallest: u64,
 }
 
 struct Offer {
@@ -1921,24 +1922,36 @@ impl Results {
         })
     }
 
-    fn month_bars(&self) -> Vec<MonthBar> {
-        let Some(frame) = self.frame.as_ref() else {
-            return Vec::new();
-        };
-        let (after, before) = self.dates();
+    fn months_drawn(&self) -> Option<(&[postio_search::facets::MonthCount; 12], bool)> {
+        let frame = self.frame.as_ref()?;
         let undated = self
             .undated
             .as_ref()
             .filter(|(query, _, _)| *query == undated_query(&self.parsed));
-        let (months, capped) = undated.map_or(
+        Some(undated.map_or(
             (&frame.facets.months, frame.facets.capped),
             |(_, months, capped)| (months, *capped),
-        );
-        let tallest = months
-            .iter()
-            .map(|month| month.conversations)
-            .max()
+        ))
+    }
+
+    fn tallest_month(&self) -> u64 {
+        self.months_drawn()
+            .and_then(|(months, _)| months.iter().map(|month| month.conversations).max())
             .unwrap_or(0)
+    }
+
+    fn month_bars(&self) -> Vec<MonthBar> {
+        let Some((months, capped)) = self.months_drawn() else {
+            return Vec::new();
+        };
+        let (after, before) = self.dates();
+        let tallest = self
+            .tallest_month()
+            .max(
+                self.popover
+                    .as_ref()
+                    .map_or(0, |popover| popover.opened_over_tallest),
+            )
             .max(1);
         months
             .iter()
@@ -2937,7 +2950,9 @@ impl FocusController {
             pin_note: if pin_key.is_some() {
                 words::SAVE_PIN_NOTE.to_owned()
             } else {
-                words::SAVE_PIN_NOTE_NO_KEY.to_owned()
+                let taken =
+                    postio_ui::hints::run(self.bar.keymap(), &postio_ui::command_bar::SAVED, "");
+                words::save_pin_note_no_key(taken.as_ref().map(|hint| hint.key.as_str()))
             },
             pin_key,
             notify: false,
@@ -3424,6 +3439,7 @@ impl FocusController {
         let Some(results) = self.results.as_mut() else {
             return steps;
         };
+        let tallest = results.tallest_month();
         results.popover = Some(Popover {
             kind,
             before,
@@ -3431,6 +3447,7 @@ impl FocusController {
             own,
             filter: String::new(),
             words: String::new(),
+            opened_over_tallest: tallest,
         });
         steps.push(Step::Show(Intent::Query(self.query_view())));
         steps.extend(self.draw_popover());

@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Prove the shared-tree guard denies what it must and allows what it must."""
+import atexit
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -145,7 +147,10 @@ for cmd in ALLOW:
 
 # A private worktree is exempt. Compare by path: `.../postio-worktrees/issue-27` is a string prefix
 # of `.../postio`.
-os.makedirs(WORKTREE, exist_ok=True)
+# The guard knows worktrees by this real path, so the directory is made there and removed after.
+if not os.path.isdir(WORKTREE):
+    os.makedirs(WORKTREE)
+    atexit.register(shutil.rmtree, WORKTREE, ignore_errors=True)
 
 for cmd in ["git add -A", "git stash", "cargo fmt --all", "git reset --hard"]:
     got = decide(cmd, cwd=WORKTREE)
@@ -452,7 +457,7 @@ with tempfile.TemporaryDirectory(
     claims += 1
     print(f"  {'ok  ' if ok else 'FAIL'} whose since starts when it took it -> {mine.since()!r}")
 
-    # Not while the owner is merely waiting on a backgrounded `issue-land.sh --full` (#412).
+    # Not while the owner is merely waiting on a backgrounded landing (#412).
     mine.backdate(20 * 60)
     claim_case(
         "a patient owner's claim holds",
@@ -563,7 +568,7 @@ LOOP_DENY = [
     "cd ~/src/postio-worktrees/issue-27 && cargo test --workspace",
     "scripts/issue-land.sh",
     "scripts/issue-land.sh -m 'feat(gtk): x'",
-    "cd ~/src/postio-worktrees/issue-27 && scripts/issue-land.sh --full",
+    "cd ~/src/postio-worktrees/issue-27 && scripts/issue-land.sh --refs-only",
     "nohup scripts/issue-land.sh > land.log 2>&1 &",
     "git commit --no-verify -m 'x'",
     "git commit -n -m 'x'",

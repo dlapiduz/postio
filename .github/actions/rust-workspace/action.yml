@@ -35,7 +35,7 @@ inputs:
     default: "build"
   build-cache:
     description: >
-      "false" for a job that compiles nothing: the frontend test shards run
+      "false" for a job that compiles nothing: the storyboard shards run
       binaries another job built and shipped, and restoring a gigabyte of
       target/ they will never read is the one cost the shards were made to
       avoid. The registry goes with it; nothing there is needed to run.

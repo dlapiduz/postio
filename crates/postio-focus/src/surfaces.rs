@@ -438,17 +438,13 @@ impl Surfaces {
 
     pub(crate) fn landed(&mut self, rows: &dyn Rows) -> Option<Landing> {
         let stepping = self.stepping.take()?;
-        // The row is still there: the archive has not reached the list, and
-        // the next landing is waited for -- until the timer gives up.
+        // Not gone from the list yet: wait for the next landing, until the timer gives up.
         if rows.position_of(stepping.message).is_some() {
             self.stepping = Some(stepping);
             return None;
         }
-        let unread_or_message = |at: &u32| rows.facts(*at).is_none_or(|row| !row.digest);
         let from = stepping.index.min(rows.len().saturating_sub(1));
-        let next = (from..rows.len())
-            .find(unread_or_message)
-            .or_else(|| (0..from).rev().find(unread_or_message));
+        let next = readable_toward(rows, from, 1).or_else(|| readable_toward(rows, from, -1));
         match next {
             Some(index) => Some(Landing::Open(index)),
             None => {
@@ -462,6 +458,15 @@ impl Surfaces {
 pub(crate) enum Landing {
     Open(u32),
     Close,
+}
+
+pub(crate) fn readable_toward(rows: &dyn Rows, from: u32, by: i32) -> Option<u32> {
+    let readable = |at: &u32| rows.facts(*at).is_none_or(|row| !row.digest);
+    if by > 0 {
+        (from..rows.len()).find(readable)
+    } else {
+        (0..from).rev().find(readable)
+    }
 }
 
 fn reader_verb(id: CommandId) -> Option<ReaderVerb> {

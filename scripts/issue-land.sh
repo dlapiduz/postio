@@ -6,62 +6,21 @@
 #   scripts/issue-land.sh -m "feat(gtk): teach the list to do the thing"
 #   scripts/issue-land.sh                       # tree already committed; -m not needed
 #   scripts/issue-land.sh -m "..." --wip        # push without opening a PR
-#   scripts/issue-land.sh -m "..." --no-merge   # open the PR, do not wait
+#   scripts/issue-land.sh -m "..." --no-merge   # open the PR, do not arm auto-merge
 #   scripts/issue-land.sh --gates-only          # run the checks, commit nothing
-#   scripts/issue-land.sh --full                # integration suites too, not just units
 #   scripts/issue-land.sh --refs-only           # Refs, not Closes: the issue is not done yet
+#   scripts/issue-land.sh --closes 12,34        # a batch: the PR closes these too
 #   scripts/issue-land.sh --title "feat(x): y"  # the PR's title, when the first commit's is not it
-#   scripts/issue-land.sh --full-suite          # CI runs the whole nightly on the PR too
-# # (implied by a toolchain/mise/.cargo/flatpak change: scripts/risk-of-diff.sh)
 #   scripts/issue-land.sh --detach [args]       # the same, in a process no tool call can kill
 #   scripts/issue-land.sh --status              # what the detached run did, or is doing
 #
 # -m is only for uncommitted work: the ordinary case is a clean tree with commits already on it
 # (#120).
-# By default it waits for CI and merges: a PR nobody merges goes stale and the issue stays open.
+# By default it arms auto-merge and returns: the PR's checks run unattended, and the full suite and
+# the frontends run on main after the merge.
 # It rebases the tree it lives in, so when the rebase brings in new landing machinery it execs the
 # new copy from the top (#160).
 set -euo pipefail
-
-# Which runner the integration gates use: `cargo nextest` runs test binaries concurrently (the
-# workspace ~500s -> 118.6s) but spawns a process per test, so the ~1,459 unit tests are 2.2x slower
-# than `cargo test`. The default tier is the changed crates' units through nextest so the merge
-# path's filter in `.config/nextest.toml` applies (#1976); `scripts/test-fast.sh` and
-# `test-sanity.sh` stay on `cargo test`. Fail open: without nextest it runs `cargo test` and gets
-# the same answer, slower. Defined here, not sourced from `lib/`: the self-tests copy this file into
-# a sandbox alone, and a `source` line would fail them all.
-if cargo nextest --version >/dev/null 2>&1; then
-    POSTIO_TEST_RUNNER="${POSTIO_TEST_RUNNER:-nextest}"
-else
-    POSTIO_TEST_RUNNER="${POSTIO_TEST_RUNNER:-cargo}"
-fi
-
-run_tests() {
-    if [ "$POSTIO_TEST_RUNNER" = "nextest" ]; then
-        # `--no-tests=pass`: nextest exits 4 when a run selects nothing, but a crate with no tests
-        # (`postio-bench`) must still land (#1308), as under `cargo test`. "No tests" and "tests
-        # failed" are different answers; the self-test asserts both on both runners.
-        cargo nextest run --no-tests=pass "$@"
-    else
-        cargo test "$@"
-    fi
-}
-
-# Always `cargo test`: **nextest does not run doctests**, and does not say so; ~20 would silently
-# stop.
-run_doctests() {
-    cargo test --doc "$@"
-}
-
-# Build one crate's rustdoc under the flags `nightly.yml`'s `doc` job uses, so a broken intra-doc
-# link fails the branch that wrote it (#1463).
-# Per crate, not the workspace (23m35s, #833). After the rebase, where the combination first exists
-# (#1448 merged six broken links).
-# `private_intra_doc_links` is allowed for the reason `nightly.yml` gives.
-run_rustdoc() {
-    RUSTDOCFLAGS="-D warnings -A rustdoc::private_intra_doc_links" \
-        cargo doc --no-deps --document-private-items "$@"
-}
 
 TREE=$(git rev-parse --show-toplevel)
 
@@ -82,7 +41,7 @@ case " $* " in
         else
             echo "finished, log: $LAND_LOG"
         fi
-        grep -E '^\[timing\]|^issue:|^crates:|https://github.com/|^merged\.|auto-merge|MERGE DID NOT|Checks failed|hit a conflict|^Refusing|^error|^issue-land exit' "$LAND_LOG" || true
+        grep -E '^\[timing\]|^issue:|^crates:|https://github.com/|^merged\.|auto-merge|MERGE DID NOT|Checks failed|hit a conflict|^Refusing|^error|^watchdog|^issue-land exit' "$LAND_LOG" || true
         echo "--- last lines ---"
         tail -n 5 "$LAND_LOG"
         # A full disk fails a gate as a compile error or SIGBUS, never as itself (#1428, #1460); say
@@ -141,27 +100,68 @@ REEXEC_LIMIT="${POSTIO_LAND_REEXEC_LIMIT:-2}"
 # Kept whole: the handover re-runs this script with exactly what this run was asked for.
 ORIGINAL_ARGS=("$@")
 
-# What the gate chain may cost, in seconds: four minutes, set deliberately (it had grown to nine on
-# a wide change).
-# Over budget is a warning, not a refusal; the number is printed every landing so a suite creeping
-# onto the merge path is visible.
-GATE_BUDGET_SECONDS=240
+# A landing costs an agent at most five minutes, and the gate chain is most of it. Over budget is a
+# warning, not a refusal; the number is printed every landing so a suite creeping onto the merge
+# path is visible.
+GATE_BUDGET_SECONDS=300
 
-MSG=""; WIP=0; GATES_ONLY=0; MERGE=1; FULL=0; WAIT=0; REFS_ONLY=0; FULL_SUITE=0; TITLE_ARG=""
+MSG=""; WIP=0; GATES_ONLY=0; MERGE=1; WAIT=0; REFS_ONLY=0; TITLE_ARG=""; CLOSES=""
 while [ $# -gt 0 ]; do
     case "$1" in
         -m|--message) MSG="$2"; shift 2 ;;
         --wip)        WIP=1;    shift ;;
         --gates-only) GATES_ONLY=1; shift ;;
         --no-merge)   MERGE=0;      shift ;;
-        --full)       FULL=1;       shift ;;
         --wait)       WAIT=1;       shift ;;
         --refs-only)  REFS_ONLY=1;  shift ;;
-        --full-suite) FULL_SUITE=1; shift ;;
         --title)      TITLE_ARG="$2"; shift 2 ;;
+        --closes)     [ $# -ge 2 ] || { echo "--closes needs issue numbers: --closes 12,34" >&2; exit 2; }
+                      CLOSES="$2"; shift 2 ;;
+        --full|--full-suite)
+            echo "$1 is gone: the full suite and the frontends run on main after every merge, and" >&2
+            echo "a red main lets only a fixes-nightly PR merge. Land without it." >&2
+            exit 2 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done
+# Checked before the gates: the body is written once, when the PR opens, because editing it later
+# restarts the PR's workflows.
+if [ -n "$CLOSES" ] && ! printf '%s' "$CLOSES" | grep -qE '^#?[0-9]+(,#?[0-9]+)*$'; then
+    echo "--closes takes issue numbers separated by commas (--closes 12,34), not '$CLOSES'." >&2
+    exit 2
+fi
+CLOSES_LINES=$(printf '%s' "$CLOSES" | tr ',' '\n' | sed -n 's/^#*\([0-9][0-9]*\)$/Closes #\1/p')
+
+# A landing that runs past this is stuck, not slow: one ran 2 days and 10 hours unnoticed. The
+# watchdog names the phase and stops every process under this one. `exec` keeps the pid, so a
+# handover keeps the first watchdog. 0 turns it off.
+WATCHDOG_SECONDS="${POSTIO_LAND_WATCHDOG_SECONDS:-1200}"
+LAND_PHASE="$(git rev-parse --absolute-git-dir)/postio-land.phase"
+phase() { printf '%s\n' "$1" > "$LAND_PHASE"; }
+phase "start"
+if [ "$WATCHDOG_SECONDS" != 0 ] && [ -z "${POSTIO_LAND_WATCHDOG_PID:-}" ]; then
+    bash -c '
+        main=$1; limit=$2; phase_file=$3; waited=0
+        # Watched by parentage, not `kill -0`: an exited landing stays a zombie until its caller
+        # reaps it, and a caller reading this pipe to its end waits on this loop.
+        while [ "$(ps -o ppid= -p $$ 2>/dev/null | tr -d " ")" = "$main" ]; do
+            sleep 1; waited=$((waited + 1))
+            [ "$waited" -ge "$limit" ] || continue
+            echo "watchdog: this landing ran past ${limit}s, in phase: $(cat "$phase_file" 2>/dev/null)." >&2
+            echo "watchdog: stopping it and everything it started. Look at that phase, then land again." >&2
+            # Listed before any dies, so reparenting hides none; the landing first, so it cannot
+            # start its next phase when a gate dies under it.
+            victims=$(ps -A -o pid= -o ppid= | awk -v root="$main" -v me="$$" "
+                { kids[\$2] = kids[\$2] \" \" \$1 }
+                END { n = 1; q[1] = root
+                      for (i = 1; i <= n; i++) { c = split(kids[q[i]], k, \" \")
+                          for (j = 1; j <= c; j++) if (k[j] != me) q[++n] = k[j] }
+                      for (i = 1; i <= n; i++) print q[i] }")
+            kill -TERM $victims 2>/dev/null
+            exit 0
+        done' issue-land-watchdog "$$" "$WATCHDOG_SECONDS" "$LAND_PHASE" &
+    export POSTIO_LAND_WATCHDOG_PID=$!
+fi
 
 # Free space before a gate can run out of it: a full disk fails as a compile error or SIGBUS on
 # every session at once (#1428, #1460).
@@ -173,6 +173,7 @@ DISK_FLOOR_GB="${POSTIO_LAND_DISK_FLOOR_GB:-4}"
 # filled the disk twice in a day).
 # The reaper keeps anything uncommitted, recent or unlanded. POSTIO_LAND_REAP=0 skips it.
 REAPER="$(dirname "${BASH_SOURCE[0]}")/worktree-reap.sh"
+phase "reaping finished worktrees"
 if [ "${POSTIO_LAND_REAP:-1}" = 1 ] && [ -x "$REAPER" ]; then
     timeout 120 "$REAPER" --reap 2>/dev/null | grep -E '^(dropped|removed) ' || true
 fi
@@ -290,6 +291,7 @@ fetch_base() {
 
 # Everything below compares against the base, so fetch it: the crate list, PR body and rebase read
 # whatever the last fetch left.
+phase "fetching origin/$BASE"
 fetch_base
 
 # The crates that changed, so the gates run over those; CI proves the workspace.
@@ -382,6 +384,7 @@ WORK_WAS_COMMITTED=0
 # This worktree is private, so formatting the whole thing is safe; in the shared checkout it would
 # reach into other sessions' files.
 echo "--- rustfmt ---"
+phase "rustfmt"
 PHASE_START=$(date +%s)
 cargo fmt --all
 echo "[timing] rustfmt: $(( $(date +%s) - PHASE_START ))s"
@@ -421,109 +424,42 @@ fi
 # an edit, rebase, `cargo fmt` rewrite or toolchain bump invalidates it. The invariants (`check.sh`,
 # seconds) still run every time.
 GATES_STAMP="$(git rev-parse --git-dir)/postio-gates-green"
-GATES_KEY="$(git write-tree) tier:$FULL crates:$(printf '%s' "$CRATES" | tr '\n' ' ')"
+GATES_KEY="$(git write-tree) crates:$(printf '%s' "$CRATES" | tr '\n' ' ')"
 GATES_GREEN=0
 if [ "$(cat "$GATES_STAMP" 2>/dev/null)" = "$GATES_KEY" ]; then
     GATES_GREEN=1
-    echo "--- clippy and tests: already green for this exact tree ---"
+    echo "--- clippy: already green for this exact tree ---"
     echo "A previous run proved this staged content with this crate list"
     echo "(recorded in $GATES_STAMP),"
-    echo "so clippy and the per-crate tests are not re-run. Any change to"
+    echo "so clippy is not re-run. Any change to"
     echo "the tree re-runs them; rm that file to force a re-run now."
 fi
 
+# One clippy call over the changed crates' targets type-checks their tests as well. Tests, doctests
+# and rustdoc are the pull request's checks, minutes later, and never the agent's wait.
 if [ "$GATES_GREEN" != 1 ]; then
+    CLIPPY_CRATES=()
     for crate in $CRATES; do
-        [ -d "$TREE/crates/$crate" ] || continue
-        echo "--- clippy: $crate ---"
-        PHASE_START=$(date +%s)
-        cargo clippy -p "$crate" --all-targets -- -D warnings
-        echo "[timing] clippy $crate: $(( $(date +%s) - PHASE_START ))s"
-
-        echo "--- rustdoc: $crate ---"
-        PHASE_START=$(date +%s)
-        run_rustdoc -p "$crate"
-        echo "[timing] rustdoc $crate: $(( $(date +%s) - PHASE_START ))s"
+        if [ -d "$TREE/crates/$crate" ]; then CLIPPY_CRATES+=(-p "$crate"); fi
     done
-
-    # The test tier: by default the changed crates' unit tests through nextest (so the merge path's
-    # filter applies); `--full` adds their integration suites. The default was cut twice (#847,
-    # 2026-10-23) because the pull request's checks prove the combination, and a landing waits for
-    # them anyway; locally it proves only what is cheap: formatting, clippy and rustdoc on the
-    # crates touched, their units and doctests, and the invariants. This is safe only because the
-    # checks run on every PR and the full suite on `main` after every merge: layers that each pass
-    # and are not joined up are what unit tests cannot see. If the pull-request suite ever goes
-    # away, this default goes back with it (#847).
-    if [ "$FULL" = 1 ]; then
-        for crate in $CRATES; do
-            [ -d "$TREE/crates/$crate" ] || continue
-            echo "--- test (full): $crate ---"
-            # Headless without asking: `.cargo/config.toml`'s runner puts every test binary on a
-            # compositor of its own.
-            PHASE_START=$(date +%s)
-            run_tests -p "$crate"
-            # The nextest path does not run doctests, so they are asked for by name.
-            run_doctests -p "$crate"
-            echo "[timing] test $crate: $(( $(date +%s) - PHASE_START ))s"
-        done
-    else
-        # The default tier: the unit tests of the crates this branch changed, in one invocation (one
-        # dependency graph, binaries side by side). Through nextest so the merge path's filter
-        # applies (#1976). Every changed crate is buildable here (#555); a branch that changes no
-        # crate runs no Rust, and the pull request's checks are the judge.
-        UNIT_CRATES=()
-        for crate in $CRATES; do
-            [ -d "$TREE/crates/$crate" ] || continue
-            UNIT_CRATES+=(-p "$crate")
-        done
-        if [ ${#UNIT_CRATES[@]} -gt 0 ]; then
-            echo "--- test: unit tests of the changed crates (--full for their suites) ---"
-            PHASE_START=$(date +%s)
-            run_tests --lib "${UNIT_CRATES[@]}"
-            echo "[timing] unit tests: $(( $(date +%s) - PHASE_START ))s"
-        fi
-
-        # Doctests for the changed crates (#1440): they used to run only under `--full`, so a broken
-        # one was found by CI sixteen minutes later.
-        # rustdoc reads an indented block in a `///` comment as Rust and fails on it. A gate that
-        # can only fail on CI costs a round trip each time (#1047).
-        for crate in $CRATES; do
-            [ -d "$TREE/crates/$crate" ] || continue
-            echo "--- doctests: $crate ---"
-            PHASE_START=$(date +%s)
-            run_doctests -p "$crate"
-            echo "[timing] doctests $crate: $(( $(date +%s) - PHASE_START ))s"
-        done
-    fi
-
-    # Adding a crate has a blast radius outside the crates it touches:
-    # `postio-session/src/logging.rs` lists every workspace crate and
-    # `check-lint-floor.py` and `check-crate-boundaries.py` enumerate them too (#585). This fires
-    # only when the root manifest's `members` changed.
-    # Skipped on a host without the GTK libraries; its PR already carries `needs-linux-verify`.
-    # Other crates' test targets are not type-checked here: the PR's clippy job compiles them a few
-    # minutes after the push.
-    if [ -z "$UNBUILDABLE" ] && git diff -U0 "origin/$BASE...HEAD" -- Cargo.toml \
-       | grep -qE '^[+-].*crates/'; then
-        echo "--- workspace tests: this branch changes the members list ---"
+    if [ ${#CLIPPY_CRATES[@]} -gt 0 ]; then
+        echo "--- clippy: $CRATES ---"
+        phase "clippy"
         PHASE_START=$(date +%s)
-        run_tests --workspace
-        run_doctests --workspace
-        echo "[timing] workspace tests: $(( $(date +%s) - PHASE_START ))s"
+        cargo clippy "${CLIPPY_CRATES[@]}" --all-targets -- -D warnings
+        echo "[timing] clippy: $(( $(date +%s) - PHASE_START ))s"
     fi
 fi
 
 echo "--- repository invariants ---"
+phase "invariants"
 PHASE_START=$(date +%s)
 "$TREE/scripts/check.sh"
 echo "[timing] invariants: $(( $(date +%s) - PHASE_START ))s"
 
 # What the whole chain cost against what it may cost. Reported, not enforced: refusing a slow branch
-# helps nobody, and the fix is in the chain. It names the worst phase so a person can see whether a
-# suite has crept onto the merge path that belongs on the nightly timer. The line moves when a
-# crate's units grow. `.config/nextest.toml` holds the tier for a test that is slow: the nightly's
-# default-filter, with a
-# `POSTIO-MEASUREMENT` marker on the case.
+# helps nobody, and the fix is in the chain. It names the worst phase, so a gate that crept back
+# onto the landing shows.
 GATES_TOTAL=$(( $(date +%s) - GATES_START ))
 echo "[timing] TOTAL: ${GATES_TOTAL}s (budget ${GATE_BUDGET_SECONDS}s)"
 if [ "$GATES_TOTAL" -gt "$GATE_BUDGET_SECONDS" ]; then
@@ -611,6 +547,7 @@ fi
 BEHIND=$(git rev-list --count "HEAD..origin/$BASE")
 if [ "$BEHIND" -gt 0 ]; then
     echo "$BASE moved $BEHIND commit(s) while you worked; rebasing onto it"
+    phase "rebasing onto origin/$BASE"
     BEFORE_HEAD=$(git rev-parse HEAD)
     BEFORE_SCRIPTS=$(git rev-parse "HEAD:scripts" 2>/dev/null || echo none)
     if ! git rebase "origin/$BASE"; then
@@ -648,8 +585,7 @@ if [ "$BEHIND" -gt 0 ]; then
             ${ORIGINAL_ARGS[@]+"${ORIGINAL_ARGS[@]}"}
     fi
 
-    echo "the gates above ran on the previous base -- CI is what checks the"
-    echo "combination, which is why this waits for it."
+    echo "the gates above ran on the previous base; the PR's checks prove the combination."
 fi
 
 # Leased force, not a plain push: the script rebases onto origin/$BASE, so the second push of a
@@ -660,6 +596,7 @@ fi
 # rejected three green first pushes as "stale info" (#860). A plain push of a branch the remote has
 # never seen cannot clobber anything, and if somebody creates it in the window it is rejected as
 # non-fast-forward.
+phase "pushing $BRANCH"
 if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
     git push -u --force-with-lease origin "$BRANCH"
 else
@@ -716,9 +653,14 @@ fi
 # The state of the PR for this head branch, not its existence: `gh pr view` resolves the most recent
 # PR in any state, and a reused branch name resolves to somebody else's merged PR, so adopting it
 # merges nothing and reports success (#312).
+phase "opening the PR"
 PR_STATE=$(gh pr view --json state -q .state 2>/dev/null || echo "")
 if [ "$PR_STATE" = "OPEN" ]; then
     echo "PR already open for $BRANCH; the push updated it."
+    if [ -n "$CLOSES_LINES" ]; then
+        echo "warning: --closes is written only when the PR opens; its body is left alone, since" >&2
+        echo "         an edit restarts its checks. Close those issues by hand after the merge." >&2
+    fi
     # It may have been opened against a different base; merging on that mismatch puts the work on a
     # branch nobody chose, so stop.
     OPEN_BASE=$(gh pr view --json baseRefName -q .baseRefName 2>/dev/null || echo "")
@@ -759,6 +701,8 @@ else
         SPEC=$(git log "origin/$BASE..HEAD" --format=%b \
             | sed -n 's|^Refs: \(specs/[0-9][0-9]*-[a-z0-9-]*\).*|\1|p' | sort | uniq -c | sort -rn | awk 'NR==1 {print $2}')
         CLOSES_LINE="Refs: ${SPEC:-the spec this branch implements} — spec-driven work: its \`tasks.md\` is the queue and its \`spec.md\` the acceptance, so there is no issue to close."
+    elif [ "$SMALL" = 1 ] && [ -n "$CLOSES_LINES" ]; then
+        CLOSES_LINE=""
     elif [ "$SMALL" = 1 ]; then
         # Said out loud so a reviewer does not look for the issue this PR forgot to name.
         CLOSES_LINE="No issue: a small fix, made on the spot rather than filed (CLAUDE.md, \"Say it where it persists\")."
@@ -770,7 +714,8 @@ else
     gh pr create --base "$BASE" --head "$BRANCH" --title "$TITLE" --body "$(cat <<BODY
 $(git log "origin/$BASE..HEAD" --format='- %s')
 
-$CLOSES_LINE
+$CLOSES_LINE${CLOSES_LINE:+${CLOSES_LINES:+
+}}$CLOSES_LINES
 ${VERIFY_NOTE:+
 > [!WARNING]
 > $VERIFY_NOTE}
@@ -788,34 +733,6 @@ BODY
 fi
 URL=$(gh pr view --json url -q .url)
 echo "$URL"
-
-# `--full-suite`: the nightly's whole run on this PR (.github/workflows/full-suite.yml); the label
-# asks, and the required `Full suite on request` check then passes only if that run does. Added with
-# this session's own token, since a label the workflow token adds triggers nothing. Asked for by the
-# author, never added automatically for a risky diff: that made 8 of 20 PRs wait 40 to 135 minutes
-# (2026-10-23). The risk is still named. The exception is the build environment (toolchain pin,
-# mise.toml, .cargo/config.toml, flatpak/*.json), which no author can judge from the diff;
-# `risk-of-diff.sh` says so on its third line.
-if [ "$FULL_SUITE" = 0 ]; then
-    RISK=$(git diff --name-only "origin/$BASE...HEAD" | scripts/risk-of-diff.sh || true)
-    if [ "$(printf '%s\n' "$RISK" | sed -n 3p)" = full-suite ]; then
-        FULL_SUITE=1
-        echo "note: this diff changes the build environment ($(printf '%s\n' "$RISK" | sed -n 2p));"
-        echo "      landing it as --full-suite without being asked."
-    elif [ "$(printf '%s\n' "$RISK" | sed -n 1p)" = high ]; then
-        echo "note: this diff is high risk ($(printf '%s\n' "$RISK" | sed -n 2p))."
-        echo "      \`--full-suite\` runs the nightly on the PR before it merges; ask for it"
-        echo "      when the default tier does not give you confidence in this change."
-    fi
-fi
-if [ "$FULL_SUITE" = 1 ]; then
-    if gh pr edit "$URL" --add-label full-suite >/dev/null; then
-        echo "full suite requested: labelled full-suite; CI runs the nightly on this PR."
-    else
-        echo "warning: could not label the PR full-suite; add it by hand:" >&2
-        echo "    gh pr edit $URL --add-label full-suite" >&2
-    fi
-fi
 
 # The storyboard review on a PR that was already open: its body is not rewritten, so a current
 # summary arrives as a comment and a missing or stale one as a labelled warning.
@@ -927,6 +844,7 @@ arm_auto_merge() {
     done
 }
 
+phase "arming auto-merge"
 AUTO_MERGE_ALLOWED=$(gh api "repos/{owner}/{repo}" --jq .allow_auto_merge 2>/dev/null || true)
 if [ "$WAIT" != 1 ] && [ "$AUTO_MERGE_ALLOWED" = "true" ]; then
     echo
@@ -939,6 +857,7 @@ fi
 # repository cannot set any on a free private plan, so it would merge before CI started.
 echo
 echo "--- waiting for checks ---"
+phase "waiting for the PR's checks (--wait)"
 # Not inline: this step decides whether an unreviewed commit reaches main, so it has its own test
 # (scripts/tests/test-wait-for-checks.py).
 # It exits non-zero when a check failed or one was due and never registered; both mean do not merge.
@@ -950,6 +869,7 @@ fi
 # `main`, which is checked out in the shared checkout, and `gh pr merge` reports failure after the
 # merge went through (#167). `issue-release.sh` deletes the local branch; only the remote copy is
 # left here.
+phase "merging"
 gh pr merge --squash
 
 # Believe it only after checking: `gh pr merge` exits 0 when the PR was already merged, so the

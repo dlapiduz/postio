@@ -6442,6 +6442,18 @@ impl FocusWindow {
                 );
             }
         }
+        if let Some(position) = self.contacts().and_then(|view| view.merge_position()) {
+            app.insert(
+                "focus.contacts.merge".to_owned(),
+                serde_json::json!(position),
+            );
+        }
+        if let Some(pane) = self.pane() {
+            app.insert(
+                "focus.list.scroll".to_owned(),
+                serde_json::json!(pane.widget().vadjustment().value().round() as i64),
+            );
+        }
         app.insert(
             "focus.keyboard.on_control".to_owned(),
             serde_json::json!(focus.as_ref().is_some_and(|widget| {
@@ -6785,6 +6797,9 @@ impl FocusWindow {
                     "focus.outline.cursor".to_owned(),
                     serde_json::json!(outline.cursor()),
                 );
+                if let Some(ring) = outline.ringed() {
+                    app.insert("focus.outline.ring".to_owned(), serde_json::json!(ring));
+                }
                 app.insert(
                     "focus.outline.filtering".to_owned(),
                     serde_json::json!(outline.filtering()),

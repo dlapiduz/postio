@@ -317,13 +317,13 @@ mod tests {
     }
 }
 
-/// The Contacts list's paging window: resident and pending pages, and the generation a
-/// delivered page belongs to. Owns the rows, bounded by `crate::list::CACHE_PAGES`.
+/// The Contacts list's paging window; owns the rows, bounded by `crate::list::CACHE_PAGES`.
 #[derive(Debug, Default)]
 pub struct ContactsWindow {
     generation: u64,
     total: u32,
     pages: std::collections::HashMap<u32, Vec<ContactListRow>>,
+    stale: std::collections::HashMap<u32, Vec<ContactListRow>>,
     order: std::collections::VecDeque<u32>,
     pending: std::collections::HashSet<u32>,
 }
@@ -352,12 +352,36 @@ impl ContactsWindow {
     /// Starts the list over at `total` rows; returns the new generation, which requests carry so
     /// stale answers can be told apart.
     pub fn reset(&mut self, total: u32) -> u64 {
+        let generation = self.renew(total);
+        self.stale.clear();
+        generation
+    }
+
+    /// As `reset`, but `drawn` gives each page's old rows until the page is read again.
+    pub fn renew(&mut self, total: u32) -> u64 {
         self.generation += 1;
         self.total = total;
-        self.pages.clear();
+        self.stale.extend(self.pages.drain());
         self.order.clear();
         self.pending.clear();
         self.generation
+    }
+
+    pub fn renewing(&self) -> Vec<u32> {
+        let mut pages: Vec<u32> = self.stale.keys().copied().collect();
+        pages.sort_unstable();
+        pages
+    }
+
+    pub fn drawn(&self, index: u32) -> Option<&ContactListRow> {
+        if index >= self.total {
+            return None;
+        }
+        self.peek(index).or_else(|| {
+            self.stale
+                .get(&(index / crate::list::PAGE_SIZE))
+                .and_then(|rows| rows.get((index % crate::list::PAGE_SIZE) as usize))
+        })
     }
 
     pub fn total(&self) -> u32 {
@@ -398,6 +422,7 @@ impl ContactsWindow {
             return Delivered::Stale;
         }
         self.pending.remove(&page);
+        self.stale.remove(&page);
         let start = page * crate::list::PAGE_SIZE;
         let positions = start..start + rows.len() as u32;
         self.pages.insert(page, rows);
@@ -588,6 +613,28 @@ mod window_tests {
             Slot::Loading { request: Some(0) },
             "the first page was evicted, and is asked for again"
         );
+    }
+
+    #[test]
+    fn a_renewed_window_draws_its_old_rows_until_each_page_lands() {
+        let mut window = ContactsWindow::default();
+        let generation = window.reset(120);
+        let _ = window.row_at(0);
+        let _ = window.deliver(generation, 0, page(0, PAGE_SIZE), 120);
+        let renewed = window.renew(119);
+        assert_eq!(window.peek(0), None, "the page is read again");
+        assert_eq!(
+            window.drawn(0).map(|row| row.name.as_str()),
+            Some("Person 0"),
+            "and drawn as it was meanwhile"
+        );
+        assert_eq!(window.row_at(0), Slot::Loading { request: Some(0) });
+        let mut fresh = page(0, PAGE_SIZE);
+        fresh[0].name = "Merged".to_owned();
+        let _ = window.deliver(renewed, 0, fresh, 119);
+        assert_eq!(window.drawn(0).map(|row| row.name.as_str()), Some("Merged"));
+        window.reset(3);
+        assert_eq!(window.drawn(0), None, "a reset draws nothing old");
     }
 }
 

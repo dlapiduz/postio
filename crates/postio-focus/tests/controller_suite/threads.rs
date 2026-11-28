@@ -1312,3 +1312,71 @@ fn the_footer_names_the_cursors_row_once_its_page_arrives() {
     let footer = footer_of(&effects).expect("the footer, once the row is read");
     assert_eq!(footer.title, "Harbor API draft v3 \u{b7} 6 messages");
 }
+
+fn reading_child(child: usize) -> (FocusController, List, ThreadId) {
+    let harbor = ThreadId::new(500);
+    let next = ThreadId::new(501);
+    let rows = List::of(&[6, 2, 1])
+        .with_row(0, member_id(harbor, 5), harbor, 6)
+        .with_row(1, member_id(next, 1), next, 2);
+    let mut focus = focus();
+    let _ = focus.open(postio_model::ListScope::Focus(
+        postio_model::FocusScope::Inbox,
+    ));
+    let _ = focus.landed(&rows, true);
+    let effects = run(&mut focus, CommandId::ExpandThread, &rows);
+    let (ticket, thread) = read_asked(&effects).expect("a read");
+    let _ = answer(&mut focus, ticket, view(thread, 6, 0, false), &rows);
+    for _ in 0..=child {
+        let _ = run(&mut focus, CommandId::NextMessage, &rows);
+    }
+    let effects = run(&mut focus, CommandId::OpenMessage, &rows);
+    assert_eq!(opened_message(&effects), Some(member_id(harbor, child)));
+    (focus, rows, harbor)
+}
+
+#[test]
+fn deleting_an_expanded_thread_from_its_child_goes_on_to_the_row_that_took_its_place() {
+    for child in [5, 2] {
+        let (mut focus, rows, harbor) = reading_child(child);
+        let _ = run(&mut focus, CommandId::Delete, &rows);
+        let effects = focus.landed(&rows.without(harbor), false);
+        assert_eq!(
+            (opened_message(&effects), focus.cursor()),
+            (Some(member_id(ThreadId::new(501), 1)), Some(0)),
+            "from child {child}: the row below Harbor's children, now where Harbor was: {:?}",
+            shown(&effects)
+        );
+    }
+}
+
+#[test]
+fn undoing_the_delete_expands_the_thread_again_with_the_cursor_on_the_child() {
+    let (mut focus, rows, harbor) = reading_child(5);
+    let _ = run(&mut focus, CommandId::Delete, &rows);
+    let rest = rows.without(harbor);
+    let effects = focus.landed(&rest, false);
+    let (ticket, next) = read_asked(&effects).expect("the next row's thread is walked");
+    let _ = answer(&mut focus, ticket, view(next, 2, 0, false), &rest);
+    let _ = focus.handle_on(
+        Input::Event(Event::UndoPerformed {
+            description: "Deleted 1 thread (6 messages)".into(),
+        }),
+        &rows,
+    );
+    let effects = focus.landed(&rows, false);
+    let (anchor, children) = splice_of(&effects).expect("Harbor is expanded again");
+    assert_eq!((anchor, children.len()), (0, 6));
+    assert_eq!(
+        focus.cursor(),
+        Some(6),
+        "on the child the window was opened from: {:?}",
+        shown(&effects)
+    );
+    assert!(
+        focus.take_restored(),
+        "the window goes back to what came back"
+    );
+    let effects = focus.handle_on(Input::Follow, &rows);
+    assert_eq!(opened_message(&effects), Some(member_id(harbor, 5)));
+}

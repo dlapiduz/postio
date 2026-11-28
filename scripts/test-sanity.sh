@@ -6,7 +6,7 @@
 #
 #   scripts/test-fast.sh    between edits    the crates you changed, --lib
 #   scripts/test-sanity.sh  before landing   the whole workspace, --lib
-#   scripts/issue-land.sh --full   when you want the integration suites too
+#   cargo nextest run -p <crate> --test <suite>   the integration suites you touched
 #
 # # Why this tier exists
 #
@@ -81,5 +81,5 @@ fi
 
 echo
 echo "sanity tier passed in $(( $(date +%s) - STARTED ))s."
-echo "It proves the units, not the wiring: scripts/issue-land.sh --full runs"
-echo "the integration suites, and CI runs them on every pull request."
+echo "It proves the units, not the wiring: \`cargo nextest run -p <crate> --test <suite>\`"
+echo "runs the suites you touched, and the full suite runs on main after every merge."

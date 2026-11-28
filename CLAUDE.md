@@ -13,16 +13,15 @@ scripts/issue-land.sh --detach          # gates, commit, push, PR, auto-merge
 scripts/issue-land.sh --status          # what the landing did
 ```
 
-`/issue` has the rest (claim flags, batching small issues, feature branches,
-red PRs, releasing a claim).
+`/issue` has claim flags, batches, feature branches and releases.
 
 - **Keep going.** Stop only when nothing is ready, when a decision is the
   maintainer's (label `needs-maintainer`, comment the question and options),
-  or when context is nearly gone. Commit as you go.
+  or context is nearly gone. Commit as you go.
 - **Spec-driven work** (`specs/<nnn>-<name>/`, after `/speckit-specify` and
   `/speckit-plan`) runs on `feature/<name>`: one commit per task ending
   `Refs: specs/<nnn>-<name>` and the task id, landed with
-  `issue-land.sh --detach --full-suite --title '…'`. No issue per task.
+  `issue-land.sh --detach --title '…'`. No issue per task.
 - A change too small for an issue: branch `fix/`, `docs/` or `chore/<slug>`.
 
 ## Tests
@@ -34,8 +33,7 @@ re-broken fix. An issue is done when its acceptance is covered by tests.
 |---|---|---|
 | fast | `scripts/test-fast.sh` | between edits |
 | suite | `cargo nextest run -p <crate> --test <suite> [case]` | what you touched |
-| landing | `issue-land.sh` | always |
-| CI | everything, nightly; on the PR with `--full-suite` | features, migrations, cross-crate changes |
+| main | full suite and frontends | after each merge, unattended |
 
 - **Each layer asserts its own question (ADR 0049).** A behaviour's branches
   are tested once, in a rule crate or the controller (`postio-focus`). Each
@@ -52,10 +50,11 @@ re-broken fix. An issue is done when its acceptance is covered by tests.
   `MailBackend` mock and the `.eml` corpus (`/add-fixture`).
 - Logs: `POSTIO_LOG` (an `EnvFilter`), not `RUST_LOG`.
 
-**Landing.** A CI failure on your PR is yours (`issue-claim.sh --resume
-<n>`); a failure in code you did not touch is probably someone else's, so
-search the issues first. While `main`'s latest run is red only the PR
-labelled `fixes-nightly` merges.
+**Landing costs at most five minutes.** `issue-land.sh` runs the cheap gates,
+pushes, opens the PR and arms auto-merge. Report the PR number and stop or
+claim the next issue; never wait on CI. A red PR check is yours
+(`issue-claim.sh --resume <n>`); a failure outside your diff is probably
+someone else's. While `main` is red only a `fixes-nightly` PR merges.
 
 ## What the code must do
 

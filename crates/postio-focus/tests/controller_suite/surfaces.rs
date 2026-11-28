@@ -746,3 +746,54 @@ fn dismissing_the_marker_in_the_message_is_for_the_message() {
         "the open message, not the selected first row"
     );
 }
+
+fn cursor_at(effects: &[Effect]) -> Option<u32> {
+    shown(effects)
+        .into_iter()
+        .rev()
+        .find_map(|intent| match intent {
+            Intent::Cursor { position, .. } => Some(position),
+            _ => None,
+        })
+}
+
+#[test]
+fn j_in_the_message_steps_past_a_digest_to_the_next_message_and_k_back() {
+    let mut rows = List::of(4, &[]);
+    rows.rows[1].digest = true;
+    for mut focus in [linux(), mac()] {
+        let _ = reading(&mut focus, &rows);
+        let effects = run(&mut focus, CommandId::NextMessage, &rows);
+        assert_eq!(
+            (opened(&effects), cursor_at(&effects)),
+            (Some(MessageId::new(102)), Some(2)),
+            "the window and the cursor go on to the message past the digest: {:?}",
+            shown(&effects)
+        );
+        let effects = run(&mut focus, CommandId::PrevMessage, &rows);
+        assert_eq!(
+            (opened(&effects), cursor_at(&effects)),
+            (Some(MessageId::new(100)), Some(0)),
+            "and k steps back past it: {:?}",
+            shown(&effects)
+        );
+        assert_eq!(focus.key_context(), KeyContext::Reader, "still reading");
+    }
+}
+
+#[test]
+fn j_in_the_message_with_only_digests_below_stays_on_the_message() {
+    let mut rows = List::of(3, &[]);
+    rows.rows[1].digest = true;
+    rows.rows[2].digest = true;
+    let mut focus = linux();
+    let _ = reading(&mut focus, &rows);
+    let effects = run(&mut focus, CommandId::NextMessage, &rows);
+    assert_eq!(
+        (opened(&effects), cursor_at(&effects)),
+        (None, None),
+        "no message below: nothing moves {:?}",
+        shown(&effects)
+    );
+    assert_eq!(focus.reading(), Some(MessageId::new(100)));
+}
