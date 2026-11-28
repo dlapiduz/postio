@@ -34,7 +34,37 @@ family keeps each under a screen, and lets `body_suite/apply.rs` mirror it.
 exhaustiveness is the property we want from the compiler when spec 014
 widens `Document`.
 
-## R3 — Where GTK keeps preedit **Spike**
+## R3 — Where GTK keeps preedit **Spike: passed (2026-11-29)**
+
+**Verdict: pass, with no change to D3 or D4.** GTK keeps preedit in the
+layout, never in the buffer; its commit arrives as the buffer's
+`insert-text`, which the surface stops and turns into one intent; a patch
+of another block leaves a composition open; Escape commits nothing. The
+gate (FR-008) is open for Phase 4.
+
+**Evidence** (`widgets_suite/spike_preedit.rs`, GTK 4.22.5 on the headless
+compositor). The view's own input method is reached through its key
+controller (`EventControllerKey::im_context`), set to GTK's simple context,
+and fed real key events with `IMContext::filter_key`, so the path is the
+one a person's input method takes. Ctrl+Shift+U then `65e5` (U+65E5, 日)
+into a list item of `project(doc)`:
+
+| Step | View's `preedit-changed` | Buffer | `insert-text` seen |
+|---|---|---|---|
+| Ctrl+Shift+U | `u` | `before\n• a`, unchanged | none |
+| `6`, `5`, `e`, `5` | `u6`, `u65`, `u65E`, `u65E5` | unchanged | none |
+| Space | `` (cleared) | unchanged: emission stopped | `日`, then ` ` |
+| Ctrl+Shift+U, `65`, a patch of the first line, `e5`, Space | `u65` survives the patch | first line patched only | `日`, then ` ` |
+| Ctrl+Shift+U, `65e5`, Escape | `` | unchanged | none |
+
+So the interception is `insert-text` (and `delete-range`) stopped on the
+user path, not the input method's `commit`, which the view keeps private.
+The space that ends a hex entry is committed after the character: the
+surface sees two inserts, one a composition's commit and one typing.
+The spike is kept as a guard until T034 asserts the same on the real
+surface, and is deleted in that commit.
+
+The expectation it tested:
 
 **Expectation.** `GtkTextView` handles the `preedit-changed` signal of its
 `GtkIMContext` by setting a preedit string on the text layout (Pango
