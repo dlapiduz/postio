@@ -35,13 +35,13 @@ pub use document::{
 pub use edit::{EditHistory, EditStep, Undone};
 pub use edit_ops::{
     Applied, BlockKind, BlockRange, Conversion, ConversionKind, EditIntent, Edited, Join, Mark,
-    MarkSet, Unit, apply, slice,
+    MarkSet, Unit, apply, marks_in_force, slice,
 };
 pub use narrow::{Lost, Narrowed, narrow};
 pub use outgoing::{harden, message_body, render};
 pub use own_text::{own_line, own_text};
 pub use parse::parse;
-pub use position::{DocPosition, Selection};
+pub use position::{BlockContext, DocPosition, Selection, block_context};
 pub use projection::{Line, LineKind, LineStyle, Patch, Preedit, Projection, Run, project};
 pub use quote::{fold_html_quotes, text_to_html};
 pub use replying::{

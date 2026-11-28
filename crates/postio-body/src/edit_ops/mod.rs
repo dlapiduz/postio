@@ -11,6 +11,7 @@ pub(crate) mod tree;
 
 pub use convert::{Conversion, ConversionKind};
 pub use flat::MarkSet;
+pub use marks::marks_in_force;
 pub use paste::slice;
 
 use crate::document::{Block, ContentId, Document, HeadingLevel, Href};

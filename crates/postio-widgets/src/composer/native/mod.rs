@@ -152,6 +152,8 @@ impl Inner {
         *self.selection.borrow_mut() = applied.selection.clone();
         if changed {
             self.notify();
+        } else {
+            self.reflect();
         }
         changed || applied.selection != before
     }
@@ -202,9 +204,23 @@ impl Inner {
     }
 
     fn notify(&self) {
-        let document = self.document.borrow();
-        for handler in self.changed.borrow().iter() {
-            handler(&document);
+        {
+            let document = self.document.borrow();
+            for handler in self.changed.borrow().iter() {
+                handler(&document);
+            }
+        }
+        self.reflect();
+    }
+
+    /// Called on every caret move and edit; the watchers hear only a change.
+    pub(super) fn reflect(&self) {
+        let state =
+            postio_ui::editor::format::format_state(&self.document.borrow(), &self.selection_now());
+        if self.format.replace(state) != state {
+            for watcher in self.format_watchers.borrow().iter() {
+                watcher(state);
+            }
         }
     }
 

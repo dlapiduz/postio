@@ -48,17 +48,7 @@ pub(super) fn build(source: Rc<dyn BlobSource>) -> Rc<dyn ComposerSurface> {
     }
 }
 
-/// `bold` is true when the selection is inside `Strong`, not when a mode is armed: there are no
-/// modes.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct FormatState {
-    pub bold: bool,
-    pub italic: bool,
-    pub heading_1: bool,
-    pub bullet_list: bool,
-    pub numbered_list: bool,
-    pub quote_block: bool,
-}
+pub use postio_ui::editor::format::FormatState;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Format {

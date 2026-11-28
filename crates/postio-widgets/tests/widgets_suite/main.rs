@@ -27,6 +27,7 @@ mod composer_markdown_source;
 mod composer_native_basic;
 mod composer_native_caret;
 mod composer_native_clipboard;
+mod composer_native_format;
 mod composer_native_image;
 mod composer_native_ime;
 mod composer_native_input;
@@ -111,6 +112,10 @@ mod widgets_css;
 const IGNORED: &[&str] = &[];
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "composer_native_format::the_toolbar_lights_what_the_caret_is_in",
+        composer_native_format::the_toolbar_lights_what_the_caret_is_in as fn(),
+    ),
     (
         "composer_native_quote::the_quote_is_read_only_and_typing_into_it_changes_nothing",
         composer_native_quote::the_quote_is_read_only_and_typing_into_it_changes_nothing as fn(),

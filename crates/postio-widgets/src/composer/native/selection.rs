@@ -21,6 +21,7 @@ pub(super) fn wire(inner: &Rc<Inner>) {
         if *mark != insert && *mark != bound {
             return;
         }
+        inner.reflect();
         let offset = iter.offset() as u32;
         let landed = {
             let projection = inner.projection.borrow();

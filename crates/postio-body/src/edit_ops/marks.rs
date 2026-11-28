@@ -4,7 +4,7 @@ use super::flat::{Atom, Cell, MarkSet};
 use super::text::{collapse, typing_marks};
 use super::tree;
 use super::{Join, Mark, Outcome};
-use crate::document::{Block, ContentId, Href};
+use crate::document::{Block, ContentId, Document, Href};
 use crate::position::{DocPosition, Selection, block_at};
 
 pub(super) fn toggle(
@@ -201,4 +201,35 @@ pub(super) fn with(mut marks: MarkSet, mark: Mark, on: bool) -> MarkSet {
         Mark::Code => marks.code = on,
     }
     marks
+}
+
+/// The marks a toolbar shows: what the next typed text gets at a caret, and what every character
+/// of a range has.
+pub fn marks_in_force(document: &Document, selection: &Selection) -> MarkSet {
+    if selection.is_collapsed() {
+        if let Some(marks) = &selection.marks {
+            return marks.clone();
+        }
+        return tree::cells(&document.blocks, &selection.head.path)
+            .map(|cells| MarkSet::clone(&typing_marks(&cells, selection.head.offset as usize)))
+            .unwrap_or_default();
+    }
+    let mut chars = covered(&document.blocks, selection)
+        .into_iter()
+        .flat_map(|(path, from, to)| {
+            tree::cells(&document.blocks, &path).unwrap_or_default()[from..to].to_vec()
+        })
+        .filter(|cell| matches!(cell.atom, Atom::Char(_)));
+    let Some(first) = chars.next() else {
+        return MarkSet::default();
+    };
+    chars.fold(MarkSet::clone(&first.marks), |common, cell| MarkSet {
+        strong: common.strong && cell.marks.strong,
+        emphasis: common.emphasis && cell.marks.emphasis,
+        strikethrough: common.strikethrough && cell.marks.strikethrough,
+        code: common.code && cell.marks.code,
+        link: common
+            .link
+            .filter(|link| cell.marks.link.as_ref() == Some(link)),
+    })
 }
