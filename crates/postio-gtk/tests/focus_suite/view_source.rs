@@ -168,7 +168,18 @@ pub fn signed_mark() {
             .await,
             "a good signature over the whole message says Signed"
         );
-        window.reading().expect("open").press_mark();
+        let reading = window.reading().expect("open");
+        assert_eq!(
+            reading.mark_key().as_deref(),
+            Some("V"),
+            "the mark is a control, so it carries its key"
+        );
+        let gap = reading.mark_gap_after_sender().expect("both drawn");
+        assert!(
+            (0.0..=12.0).contains(&gap),
+            "the mark follows the sender, not the date: {gap} px after it"
+        );
+        reading.press_mark();
         assert!(
             crate::settle_until(async || on(&window, Tab::Verification)).await,
             "the mark opens Verification"

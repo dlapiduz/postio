@@ -946,6 +946,14 @@ impl OpenMessage {
         self.header_card.mark_shown()
     }
 
+    pub fn mark_key(&self) -> Option<String> {
+        self.header_card.mark_key()
+    }
+
+    pub fn mark_gap_after_sender(&self) -> Option<f32> {
+        self.header_card.mark_gap_after_sender()
+    }
+
     pub fn press_mark(&self) {
         self.run(CommandId::ViewSource);
     }
@@ -974,6 +982,8 @@ impl OpenMessage {
             }
         }
         self.reader.set_keymap(keymap);
+        self.header_card
+            .set_mark_key(hints::key(keymap, CommandId::ViewSource).as_deref());
         // Its keys are part of its width.
         self.row_width.set(None);
         for (holder, command) in [
