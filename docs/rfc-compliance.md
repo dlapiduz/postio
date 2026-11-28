@@ -202,8 +202,7 @@ the fix is upstream, that is why; 1.0 closed most of the delimiter-placement
 gap ([#899](https://github.com/dlapiduz/postio/issues/899)) and reads around a
 damaged base64 or quoted-printable body instead of handing it back encoded.
 What 1.0.1 still got wrong is fixed in Postio's own fork
-([dlapiduz/mail-parser](https://github.com/dlapiduz/mail-parser), maintained by
-Forklift; root `Cargo.toml`'s `[patch]`), not upstream.
+([dlapiduz/mail-parser](https://github.com/dlapiduz/mail-parser)), not upstream.
 
 ### Verdicts
 
