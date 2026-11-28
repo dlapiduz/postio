@@ -3,6 +3,7 @@
 
 mod input;
 mod patch;
+mod preedit;
 mod render;
 
 use std::cell::{Cell, RefCell};
@@ -41,6 +42,7 @@ pub(crate) struct Inner {
     format: Cell<FormatState>,
     format_watchers: RefCell<Vec<Box<dyn Fn(FormatState)>>>,
     source: Rc<dyn BlobSource>,
+    pending: RefCell<Vec<input::Pending>>,
 }
 
 impl NativeSurface {
@@ -74,6 +76,7 @@ impl NativeSurface {
             format: Cell::new(FormatState::default()),
             format_watchers: RefCell::new(Vec::new()),
             source,
+            pending: RefCell::new(Vec::new()),
         });
         input::wire(&inner);
         NativeSurface { inner }
@@ -167,6 +170,9 @@ impl Inner {
     }
 
     fn step(&self, back: bool) {
+        if self.composing() {
+            return;
+        }
         let undone = {
             let mut document = self.document.borrow_mut();
             let mut history = self.history.borrow_mut();

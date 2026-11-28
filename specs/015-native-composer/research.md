@@ -61,8 +61,10 @@ So the interception is `insert-text` (and `delete-range`) stopped on the
 user path, not the input method's `commit`, which the view keeps private.
 The space that ends a hex entry is committed after the character: the
 surface sees two inserts, one a composition's commit and one typing.
-The spike is kept as a guard until T034 asserts the same on the real
-surface, and is deleted in that commit.
+T034 asserts the first, second and fourth rows on the real surface. The
+third stays in the spike as its guard: on the real surface `apply` refuses
+every intent while a composition is open, so no path of its own patches
+another block mid-preedit, and the claim is the widget's, not the surface's.
 
 The expectation it tested:
 

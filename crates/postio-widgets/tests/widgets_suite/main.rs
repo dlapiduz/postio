@@ -25,6 +25,7 @@ mod composer_inline_image;
 mod composer_markdown;
 mod composer_markdown_source;
 mod composer_native_basic;
+mod composer_native_ime;
 mod composer_native_input;
 mod composer_native_patch;
 mod composer_native_render;
@@ -106,6 +107,14 @@ mod widgets_css;
 const IGNORED: &[&str] = &[];
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "composer_native_ime::a_cjk_composition_in_a_list_item_is_one_commit_and_one_undo",
+        composer_native_ime::a_cjk_composition_in_a_list_item_is_one_commit_and_one_undo as fn(),
+    ),
+    (
+        "composer_native_ime::escape_cancels_a_composition_and_the_document_is_untouched",
+        composer_native_ime::escape_cancels_a_composition_and_the_document_is_untouched as fn(),
+    ),
     (
         "composer_native_input::typed_text_goes_through_the_engine_not_the_buffer",
         composer_native_input::typed_text_goes_through_the_engine_not_the_buffer as fn(),

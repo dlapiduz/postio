@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use gtk::glib;
 use gtk::prelude::*;
-use postio_body::{EditIntent, Selection};
+use postio_body::{DocPosition, EditIntent, Selection};
 use postio_ui::editor::keys::{KeyEdit, key_edit};
 use postio_ui::editor::markdown::{Typed, conversion_before};
 
@@ -21,7 +21,7 @@ pub(super) fn wire(inner: &Rc<Inner>) {
             return glib::Propagation::Proceed;
         };
         // An open composition owns its keys: Return or Escape is the input method's to commit.
-        if inner.selection.borrow().preedit.is_some() {
+        if inner.composing() {
             return glib::Propagation::Proceed;
         }
         let key = match key {
@@ -51,7 +51,19 @@ pub(super) fn wire(inner: &Rc<Inner>) {
                 return;
             }
             buffer.stop_signal_emission_by_name("insert-text");
-            inner.typed(location.offset() as u32, text);
+            let at = inner
+                .projection
+                .borrow()
+                .position_of(location.offset() as u32);
+            let committed = inner.composing();
+            enqueue(
+                &inner,
+                Pending::Typed {
+                    at,
+                    text: text.to_owned(),
+                    committed,
+                },
+            );
         });
 
     let weak = Rc::downgrade(inner);
@@ -73,20 +85,71 @@ pub(super) fn wire(inner: &Rc<Inner>) {
                 )
             };
             if !range.is_collapsed() {
-                inner.dispatch_at(range, EditIntent::DeleteForward(postio_body::Unit::Char));
+                enqueue(&inner, Pending::Deleted(range));
             }
         });
 
-    let weak = Rc::downgrade(inner);
-    inner.view.connect_preedit_changed(move |_, preedit| {
-        if let Some(inner) = weak.upgrade() {
-            inner.selection.borrow_mut().preedit =
-                (!preedit.is_empty()).then(|| preedit.to_owned());
-        }
-    });
+    super::preedit::wire(inner);
+}
+
+/// Text and deletions the view makes arrive inside its own handlers, an input method's commit
+/// among them: writing the buffer there re-enters the input method, which crashed GTK. So they
+/// queue, in order, and run before the next event.
+pub(super) enum Pending {
+    Typed {
+        at: DocPosition,
+        text: String,
+        committed: bool,
+    },
+    Deleted(Selection),
+}
+
+fn enqueue(inner: &Rc<Inner>, item: Pending) {
+    let mut pending = inner.pending.borrow_mut();
+    if let (
+        Some(Pending::Typed { at, text, .. }),
+        Pending::Typed {
+            at: next,
+            text: more,
+            ..
+        },
+    ) = (pending.last_mut(), &item)
+        && at == next
+    {
+        text.push_str(more);
+        return;
+    }
+    let first = pending.is_empty();
+    pending.push(item);
+    drop(pending);
+    if first {
+        let weak = Rc::downgrade(inner);
+        glib::idle_add_local_full(glib::Priority::HIGH, move || {
+            if let Some(inner) = weak.upgrade() {
+                inner.flush();
+            }
+            glib::ControlFlow::Break
+        });
+    }
 }
 
 impl Inner {
+    fn flush(&self) {
+        let items = std::mem::take(&mut *self.pending.borrow_mut());
+        for item in items {
+            match item {
+                Pending::Typed {
+                    at,
+                    text,
+                    committed,
+                } => self.typed(at, &text, committed),
+                Pending::Deleted(range) => {
+                    self.dispatch_at(range, EditIntent::DeleteForward(postio_body::Unit::Char));
+                }
+            }
+        }
+    }
+
     /// True when the key did something; a Tab that did nothing lets the focus move.
     fn key(&self, edit: KeyEdit) -> bool {
         if edit == KeyEdit::SplitBlock
@@ -97,15 +160,14 @@ impl Inner {
         self.dispatch(edit.intent())
     }
 
-    fn typed(&self, offset: u32, text: &str) {
-        let at = self.projection.borrow().position_of(offset);
+    fn typed(&self, at: DocPosition, text: &str, committed: bool) {
         let now = self.selection_now();
         let selection = if now.is_collapsed() && now.head == at {
             now
         } else {
             Selection::caret(at)
         };
-        let intent = if selection.preedit.is_some() {
+        let intent = if committed {
             EditIntent::CommitPreedit(text.to_owned())
         } else {
             EditIntent::Insert(text.to_owned())

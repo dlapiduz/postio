@@ -13,3 +13,4 @@ Read before touching widgets, CSS or key handling. `/gtk-design` has the rest.
 - **`GtkListView` builds about 205 rows ahead.** Use 1,000 or more test rows to tell recycling from none.
 - **An app-priority CSS provider resolves `prefers-color-scheme` against its own setting.** `postio_gtk::style::install` keeps it in step with `AdwStyleManager`.
 - **A second window's focus is `Feed::focused_window`, not `is_active`**, which lags headless. Storyboards film the main window only (#2242).
+- **Writing a `GtkTextBuffer` from inside its `insert-text` re-enters the input method on a commit, and GTK crashes.** Stop the emission, queue the edit and run it from a high-priority idle (`composer/native/input.rs`).
