@@ -197,7 +197,9 @@ pub(super) fn split_block(blocks: &mut Vec<Block>, selection: &Selection) -> Opt
         Owner::Item { list, item } if index == 0 => {
             if len == 0 && siblings == 1 {
                 let moved = if lists::is_nested(blocks, &list) {
-                    lists::outdent_item(blocks, &list, item)?
+                    let mut path = lists::outdent_item(blocks, &list, item)?;
+                    path.push(0);
+                    path
                 } else {
                     lists::lift_items(blocks, &list, item, item)?
                 };
@@ -237,7 +239,7 @@ pub(super) fn split_block(blocks: &mut Vec<Block>, selection: &Selection) -> Opt
 
 /// Cuts the leaf at the caret and returns the right half as a new block: a heading split inside
 /// its text stays a heading, and the line after a heading's end is a paragraph.
-fn split_off(blocks: &mut Vec<Block>, at: &DocPosition) -> Option<Block> {
+pub(super) fn split_off(blocks: &mut Vec<Block>, at: &DocPosition) -> Option<Block> {
     let block = tree::block_mut(blocks, &at.path)?;
     let mut cells = super::flat::of_block(block)?;
     let right_cells = cells.split_off((at.offset as usize).min(cells.len()));

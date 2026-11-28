@@ -47,7 +47,7 @@ pub(super) fn lift_items(
 }
 
 /// A nested item moves to its parent's list, after the item that held it; the items after it in
-/// its list become its own nested list.
+/// its list become its own nested list. Returns the item's new list path and index.
 pub(super) fn outdent_item(blocks: &mut Vec<Block>, list: &[u32], item: usize) -> Option<Vec<u32>> {
     let (holder, index) = tree::split(list)?;
     let (outer, outer_item) = tree::split(holder)?;
@@ -72,12 +72,12 @@ pub(super) fn outdent_item(blocks: &mut Vec<Block>, list: &[u32], item: usize) -
         landed -= 1;
     }
     let mut path = outer;
-    path.extend([landed as u32, 0]);
-    tree::first_unit(blocks, path)
+    path.push(landed as u32);
+    Some(path)
 }
 
 /// An item moves under the item before it, joining that item's nested list of the same kind when
-/// it ends with one. The first item has nothing to move under.
+/// it ends with one. The first item has nothing to move under. Returns as `outdent_item` does.
 pub(super) fn indent_item(blocks: &mut Vec<Block>, list: &[u32], item: usize) -> Option<Vec<u32>> {
     if item == 0 {
         return None;
@@ -96,7 +96,7 @@ pub(super) fn indent_item(blocks: &mut Vec<Block>, list: &[u32], item: usize) ->
             kind: nested,
             items: nested_items,
         }) if nested.is_ordered() == kind.is_ordered() => {
-            path.extend([held - 1, nested_items.len() as u32, 0]);
+            path.extend([held - 1, nested_items.len() as u32]);
             nested_items.push(moved);
         }
         _ => {
@@ -104,14 +104,14 @@ pub(super) fn indent_item(blocks: &mut Vec<Block>, list: &[u32], item: usize) ->
                 crate::document::ListKind::Ordered { .. } => crate::document::ListKind::NUMBERED,
                 bullet => bullet,
             };
-            path.extend([held, 0, 0]);
+            path.extend([held, 0]);
             under.blocks.push(Block::List {
                 kind: nested,
                 items: vec![moved],
             });
         }
     }
-    tree::first_unit(blocks, path)
+    Some(path)
 }
 
 /// A child leaves its quote: before it when first, after it when last, else the quote splits.

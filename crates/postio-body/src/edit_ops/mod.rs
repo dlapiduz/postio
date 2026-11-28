@@ -2,6 +2,7 @@
 //! selection and an intent. Nothing mutates a composer's text but the patch of `apply`'s result
 //! (ADR 0039); the surfaces decide nothing this module can.
 
+mod blocks;
 pub(crate) mod flat;
 mod lists;
 mod marks;
@@ -10,7 +11,7 @@ pub(crate) mod tree;
 
 pub use flat::MarkSet;
 
-use crate::document::{Block, ContentId, Document, Href};
+use crate::document::{Block, ContentId, Document, HeadingLevel, Href};
 use crate::position::{DocPosition, Selection};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -31,6 +32,23 @@ pub enum EditIntent {
         content_id: ContentId,
         alt: String,
     },
+    /// At the caret's block or each block of the selection; on again is off.
+    ToggleBlock(BlockKind),
+    /// Tab in a list item: under the item before it. A first item cannot.
+    Indent,
+    /// Shift+Tab: a level out, and out of the list from the top level.
+    Outdent,
+    InsertRule,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BlockKind {
+    Heading(HeadingLevel),
+    BulletList,
+    NumberedList,
+    TaskList,
+    Quote,
+    CodeBlock,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -196,5 +214,9 @@ fn run(blocks: &mut Vec<Block>, selection: &Selection, intent: EditIntent) -> Op
         EditIntent::InsertImage { content_id, alt } => {
             marks::insert_image(blocks, selection, content_id, alt)
         }
+        EditIntent::ToggleBlock(kind) => blocks::toggle(blocks, selection, kind),
+        EditIntent::Indent => blocks::indent(blocks, selection),
+        EditIntent::Outdent => blocks::outdent(blocks, selection),
+        EditIntent::InsertRule => blocks::insert_rule(blocks, selection),
     }
 }

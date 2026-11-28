@@ -599,3 +599,168 @@ fn an_image_goes_in_at_the_caret_as_one_character() {
     );
     assert_eq!(edited.selection, caret(&[0], 2));
 }
+
+#[test]
+fn a_heading_toggles_on_at_each_level_and_off_again() {
+    use postio_body::BlockKind;
+    for level in [HeadingLevel::One, HeadingLevel::Two, HeadingLevel::Three] {
+        let on = apply(
+            &doc(vec![p("Plan")]),
+            &caret(&[0], 2),
+            EditIntent::ToggleBlock(BlockKind::Heading(level)),
+        );
+        assert_eq!(on.document, doc(vec![h(level, "Plan")]));
+        assert_eq!(on.selection, caret(&[0], 2));
+        let off = apply(
+            &on.document,
+            &on.selection,
+            EditIntent::ToggleBlock(BlockKind::Heading(level)),
+        );
+        assert_eq!(off.document, doc(vec![p("Plan")]), "{level:?} toggles off");
+    }
+    let other = apply(
+        &doc(vec![h(HeadingLevel::One, "Plan")]),
+        &caret(&[0], 0),
+        EditIntent::ToggleBlock(BlockKind::Heading(HeadingLevel::Two)),
+    );
+    assert_eq!(
+        other.document,
+        doc(vec![h(HeadingLevel::Two, "Plan")]),
+        "another level replaces it"
+    );
+}
+
+#[test]
+fn a_list_wraps_the_selected_blocks_and_toggles_off_to_paragraphs() {
+    use postio_body::BlockKind;
+    let on = apply(
+        &doc(vec![p("a"), p("b"), p("c")]),
+        &span((&[0], 0), (&[1], 1)),
+        EditIntent::ToggleBlock(BlockKind::BulletList),
+    );
+    assert_eq!(on.document, doc(vec![bullets(&["a", "b"]), p("c")]));
+    assert_eq!(on.selection, span((&[0, 0, 0], 0), (&[0, 1, 0], 1)));
+    let off = apply(
+        &on.document,
+        &on.selection,
+        EditIntent::ToggleBlock(BlockKind::BulletList),
+    );
+    assert_eq!(off.document, doc(vec![p("a"), p("b"), p("c")]));
+}
+
+#[test]
+fn a_numbered_toggle_in_a_bulleted_list_renumbers_the_list() {
+    use postio_body::BlockKind;
+    let edited = apply(
+        &doc(vec![bullets(&["a", "b"])]),
+        &caret(&[0, 1, 0], 0),
+        EditIntent::ToggleBlock(BlockKind::NumberedList),
+    );
+    assert_eq!(
+        edited.document,
+        doc(vec![ol(vec![li(vec![p("a")]), li(vec![p("b")])])])
+    );
+    let off = apply(
+        &edited.document,
+        &edited.selection,
+        EditIntent::ToggleBlock(BlockKind::NumberedList),
+    );
+    assert_eq!(off.document, doc(vec![ol(vec![li(vec![p("a")])]), p("b")]));
+}
+
+#[test]
+fn a_quote_wraps_the_block_and_toggles_off() {
+    use postio_body::BlockKind;
+    let on = apply(
+        &doc(vec![p("said")]),
+        &caret(&[0], 1),
+        EditIntent::ToggleBlock(BlockKind::Quote),
+    );
+    assert_eq!(on.document, doc(vec![Block::Quote(vec![p("said")])]));
+    assert_eq!(on.selection, caret(&[0, 0], 1));
+    let off = apply(
+        &on.document,
+        &on.selection,
+        EditIntent::ToggleBlock(BlockKind::Quote),
+    );
+    assert_eq!(off.document, doc(vec![p("said")]));
+    assert_eq!(off.selection, caret(&[0], 1));
+}
+
+#[test]
+fn tab_nests_an_item_under_the_one_before_and_shift_tab_takes_it_back() {
+    let start = doc(vec![bullets(&["a", "b", "c"])]);
+    let nested = apply(&start, &caret(&[0, 1, 0], 1), EditIntent::Indent);
+    assert_eq!(
+        nested.document,
+        doc(vec![ul(vec![
+            li(vec![p("a"), bullets(&["b"])]),
+            li(vec![p("c")])
+        ])])
+    );
+    assert_eq!(nested.selection, caret(&[0, 0, 1, 0, 0], 1));
+    let again = apply(&nested.document, &caret(&[0, 1, 0], 0), EditIntent::Indent);
+    assert_eq!(
+        again.document,
+        doc(vec![ul(vec![li(vec![p("a"), bullets(&["b", "c"])])])]),
+        "a second item joins the nested list"
+    );
+    let back = apply(&nested.document, &nested.selection, EditIntent::Outdent);
+    assert_eq!(back.document, start);
+    assert_eq!(back.selection, caret(&[0, 1, 0], 1));
+}
+
+#[test]
+fn a_first_item_cannot_indent_and_shift_tab_at_the_top_leaves_the_list() {
+    let start = doc(vec![bullets(&["a", "b"])]);
+    let refused = apply(&start, &caret(&[0, 0, 0], 0), EditIntent::Indent);
+    assert_eq!(refused.document, start);
+    assert!(refused.changed.is_empty());
+    let out = apply(&start, &caret(&[0, 1, 0], 1), EditIntent::Outdent);
+    assert_eq!(out.document, doc(vec![bullets(&["a"]), p("b")]));
+    assert_eq!(out.selection, caret(&[1], 1));
+    let not_a_list = apply(&doc(vec![p("a")]), &caret(&[0], 0), EditIntent::Indent);
+    assert!(
+        not_a_list.changed.is_empty(),
+        "Tab outside a list moves the focus instead"
+    );
+}
+
+#[test]
+fn shift_tab_on_a_nested_item_carries_the_items_after_it() {
+    let edited = apply(
+        &doc(vec![ul(vec![li(vec![p("a"), bullets(&["b", "c"])])])]),
+        &caret(&[0, 0, 1, 0, 0], 0),
+        EditIntent::Outdent,
+    );
+    assert_eq!(
+        edited.document,
+        doc(vec![ul(vec![
+            li(vec![p("a")]),
+            li(vec![p("b"), bullets(&["c"])])
+        ])])
+    );
+    assert_eq!(edited.selection, caret(&[0, 1, 0], 0));
+}
+
+#[test]
+fn a_rule_goes_after_the_text_with_a_line_for_the_caret() {
+    let at_end = apply(
+        &doc(vec![p("abc")]),
+        &caret(&[0], 3),
+        EditIntent::InsertRule,
+    );
+    assert_eq!(at_end.document, doc(vec![p("abc"), Block::Rule, p("")]));
+    assert_eq!(at_end.selection, caret(&[2], 0));
+    let empty = apply(
+        &doc(vec![p(""), p("next")]),
+        &caret(&[0], 0),
+        EditIntent::InsertRule,
+    );
+    assert_eq!(
+        empty.document,
+        doc(vec![Block::Rule, p("next")]),
+        "an empty line becomes the rule"
+    );
+    assert_eq!(empty.selection, caret(&[1], 0));
+}

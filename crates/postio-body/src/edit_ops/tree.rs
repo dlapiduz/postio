@@ -95,10 +95,6 @@ pub(crate) fn is_leaf(block: &Block) -> bool {
     )
 }
 
-pub(crate) fn is_atomic(block: &Block) -> bool {
-    matches!(block, Block::Rule | Block::Quoted(_) | Block::Table(_))
-}
-
 pub(crate) fn cells(blocks: &[Block], path: &[u32]) -> Option<Vec<Cell>> {
     flat::of_block(block_at(blocks, path)?)
 }
