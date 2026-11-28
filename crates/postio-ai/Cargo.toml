@@ -12,7 +12,7 @@ repository.workspace = true
 chrono = { workspace = true, features = ["std"] }
 # HTTP/1.1 framing over a loopback port or local socket (R16). `client` only, TLS off, so nothing
 # can speak to another machine.
-io-http = { version = "0.8", default-features = false, features = ["client"] }
+io-http = { version = "0.9", default-features = false, features = ["std"] }
 postio-classify.workspace = true
 postio-config.workspace = true
 postio-model.workspace = true

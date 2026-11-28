@@ -226,8 +226,8 @@ impl ImapSession {
         let response = self.raw(COMPRESS_COMMAND).await;
         let response = response.map_err(|error| self.command_error("COMPRESS", error))?;
         if !response
-            .lines()
-            .any(|line| line.starts_with(COMPRESS_TAG_OK))
+            .iter()
+            .any(|line| line.starts_with(COMPRESS_TAG_OK.as_bytes()))
         {
             tracing::debug!(endpoint = %self.endpoint, "the server declined COMPRESS DEFLATE");
             return Ok(());

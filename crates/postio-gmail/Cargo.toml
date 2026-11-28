@@ -17,7 +17,7 @@ chrono = { workspace = true }
 
 # No TLS features: connections open on the workspace's own cancellable pimalaya-stream, like the
 # JMAP adapter.
-io-gmail = { version = "0.9", default-features = false, features = ["client"] }
+io-gmail = { version = "0.10", default-features = false, features = ["std"] }
 pimalaya-stream = { workspace = true }
 
 postio-account = { version = "0.6.2", path = "../postio-account", default-features = false }

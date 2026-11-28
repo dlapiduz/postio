@@ -54,7 +54,7 @@ icu_provider = { version = "2", default-features = false, features = ["alloc", "
 idna = { version = "1" }
 inout-6f8ce4dd05d13bba = { package = "inout", version = "0.2", default-features = false, features = ["block-padding"] }
 inout-c65f7effa3be6d31 = { package = "inout", version = "0.1", default-features = false, features = ["block-padding"] }
-io-http = { version = "0.8", default-features = false, features = ["rustls-ring"] }
+io-http = { version = "0.9", default-features = false, features = ["rustls-ring"] }
 itertools = { version = "0.14" }
 lazy_static = { version = "1", default-features = false, features = ["spin_no_std"] }
 libc = { version = "0.2" }
@@ -169,7 +169,7 @@ icu_provider = { version = "2", default-features = false, features = ["alloc", "
 idna = { version = "1" }
 inout-6f8ce4dd05d13bba = { package = "inout", version = "0.2", default-features = false, features = ["block-padding"] }
 inout-c65f7effa3be6d31 = { package = "inout", version = "0.1", default-features = false, features = ["block-padding"] }
-io-http = { version = "0.8", default-features = false, features = ["rustls-ring"] }
+io-http = { version = "0.9", default-features = false, features = ["rustls-ring"] }
 itertools = { version = "0.14" }
 lazy_static = { version = "1", default-features = false, features = ["spin_no_std"] }
 libc = { version = "0.2" }

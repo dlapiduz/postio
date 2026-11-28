@@ -42,15 +42,15 @@ chrono = { workspace = true, features = ["serde", "std"] }
 # io-http's coroutines for the token POST and metadata GET, since `io-pim-discovery` has no
 # POST-capable one (ADR 0006 Q3).
 # `default-features = false`: its `rustls-ring` feature already turns on `io-http/client`.
-io-http = { version = "0.8", default-features = false }
-io-imap = { version = "0.11.2", default-features = false, features = ["client"], optional = true }
+io-http = { version = "0.9", default-features = false, features = ["std"] }
+io-imap = { version = "0.12.0", default-features = false, features = ["client", "std"], optional = true }
 # The OAuth 2.0 wire core (#537). `client` is only the random generators; HTTP stays on this crate's
 # cancellable transport, because io-oauth's client wrapper consumes the status the
 # 200-with-error-body shim in `exchange.rs` needs. The DNS wire format for the MX query (#94):
 # `io-pim-discovery` publishes no MX lookup of its own.
 domain = { version = "0.12", default-features = false, features = ["alloc", "std", "unstable-new"] }
-io-oauth = { version = "0.7", default-features = false, features = ["client"] }
-io-pim-discovery = { version = "0.13", default-features = false, features = ["autoconfig", "rfc6186", "rfc6764", "rfc8414", "rustls-ring"] }
+io-oauth = { version = "0.8", default-features = false, features = ["client"] }
+io-pim-discovery = { version = "0.15", default-features = false, features = ["autoconfig", "rfc6186", "rfc6764", "rfc8414", "rustls-ring"] }
 io-sasl = { workspace = true, optional = true }
 oo7 = "0.7.1"
 
@@ -82,7 +82,7 @@ toml = { workspace = true }
 tempfile = { workspace = true }
 # For the commands `postio-account` does not wrap yet (QRESYNC SELECT, ENABLE, STORE, COPY, APPEND),
 # driven by `tests/imap_loopback.rs`.
-io-imap = { version = "0.11.2", default-features = false, features = ["client"] }
+io-imap = { version = "0.12.0", default-features = false, features = ["client", "std"] }
 postio-account = { path = ".", features = ["maildir", "test-corpus", "test-server"] }
 postio-model = { path = "../postio-model", features = ["test-corpus"] }
 postio-test-support.workspace = true

@@ -40,7 +40,7 @@ mod manifest {
             .find(|line| line.trim_start().starts_with("io-http ="))
             .expect("postio-ai frames HTTP with io-http");
         assert!(line.contains("default-features = false"), "{line}");
-        assert!(line.contains(r#"features = ["client"]"#), "{line}");
+        assert!(line.contains(r#"features = ["std"]"#), "{line}");
         for other in [
             "pimalaya-stream",
             "rustls",

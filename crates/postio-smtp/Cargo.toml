@@ -14,7 +14,7 @@ io-sasl = { workspace = true }
 # Address types are `ToStatic`; turning a parsed borrowed `&str` into the `'static` the session
 # keeps needs the trait in scope.
 bounded-static = "0.8"
-io-smtp = { version = "0.9", default-features = false, features = ["client"] }
+io-smtp = { version = "0.10", default-features = false, features = ["client", "std"] }
 # IDNA for RFC 6531's easy half: a non-ASCII domain is punycoded. `io-smtp` has no module for 6531,
 # so the conversion is ours (#922).
 idna = "1.1.0"
