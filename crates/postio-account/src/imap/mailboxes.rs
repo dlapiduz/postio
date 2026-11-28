@@ -84,8 +84,8 @@ pub async fn create_mailbox(
     })
     .await
     // Ids and outcomes only -- never the folder name a server rejected.
-    .inspect(|()| tracing::info!("created a folder for a mailbox role"))
-    .inspect_err(|error| tracing::warn!(%error, "cannot create a folder for a mailbox role"))
+    .inspect(|()| tracing::info!("created a folder"))
+    .inspect_err(|error| tracing::warn!(%error, "cannot create a folder"))
 }
 
 async fn list_with(

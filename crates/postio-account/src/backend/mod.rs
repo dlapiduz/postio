@@ -63,8 +63,8 @@ pub trait MailBackend: Send + Sync + fmt::Debug {
     async fn list_mailboxes(&self, filter: &MailboxFilter) -> BackendResult<Vec<MailboxSummary>>;
 
     /// Idempotent: an already-existing mailbox is success, since two clients may race.
-    /// Called only by discovery, for a reserved role that resolves to no folder. A refusal is
-    /// `Rejected` so it is recorded and not retried every pass.
+    /// Called by discovery for a reserved role that resolves to no folder, and by the drainer for a
+    /// folder the person made (ADR 0050). A refusal is `Rejected` so it is not retried.
     /// No default implementation: `Ok(())` would report success for nothing, and an error would let
     /// a backend forget to answer.
     async fn create_mailbox(&self, path: &str) -> BackendResult<()>;

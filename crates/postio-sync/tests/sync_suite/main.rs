@@ -5,6 +5,7 @@ mod calendar;
 mod concurrent_writers;
 mod connect;
 mod correspondents;
+mod create_folder;
 mod cross_account_move;
 mod discover;
 mod drafts;

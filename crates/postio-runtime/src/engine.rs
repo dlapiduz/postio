@@ -50,6 +50,7 @@ pub struct DrainSummary {
     pub uncertain: Vec<String>,
     pub needs_resync: Vec<MailboxId>,
     pub thread_arrivals: postio_sync::threaded::ThreadArrivals,
+    pub mailboxes_changed: bool,
 }
 
 impl DrainSummary {
@@ -1995,6 +1996,7 @@ async fn run_drain(parts: &EngineParts, store: &Store) -> Result<DrainSummary, S
             .collect(),
         needs_resync: report.needs_resync.clone(),
         thread_arrivals: report.thread_arrivals.clone(),
+        mailboxes_changed: report.mailboxes_changed,
     })
 }
 
@@ -3202,6 +3204,9 @@ async fn announce_drain(parts: &EngineParts, outcome: &Result<DrainSummary, Engi
                     account,
                     mailbox: *mailbox,
                 });
+            }
+            if summary.mailboxes_changed {
+                events.emit(Event::MailboxesChanged { account });
             }
             for (thread, members_added) in summary.thread_arrivals.clone().into_threads() {
                 events.emit(Event::ThreadChanged {

@@ -712,8 +712,13 @@ CREATE INDEX idx_markers_dismissed ON markers (dismissed_at, message_id);
     },
     Migration {
         from: stamp(0xe35a_090e),
-        to: FINGERPRINT,
+        to: stamp(0x9364_970d),
         statements: include_str!("schema/signatures.sql"),
+    },
+    Migration {
+        from: stamp(0x9364_970d),
+        to: FINGERPRINT,
+        statements: "ALTER TABLE mailboxes ADD COLUMN pending_create INTEGER NOT NULL DEFAULT 0;",
     },
 ];
 
@@ -1378,7 +1383,10 @@ CREATE TABLE mailboxes (
     -- A mailbox the user has told the backfill to leave alone (ADR 0016).
     backfill_excluded  INTEGER NOT NULL DEFAULT 0,
     signature_id       INTEGER REFERENCES signatures(id) ON DELETE SET NULL,
-    last_synced_at     INTEGER
+    last_synced_at     INTEGER,
+    -- Created here and not yet on the server (ADR 0050): discovery must not
+    -- retire it, and a move into it waits for its create.
+    pending_create     INTEGER NOT NULL DEFAULT 0
 );
 
 -- Focus's markers (spec 007): what a conversation's row calls out, at most

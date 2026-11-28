@@ -1040,3 +1040,76 @@ async fn a_created_folder_is_named_after_its_role_whatever_the_provider() {
          Principle VII forbids"
     );
 }
+
+async fn a_folder_made_here(
+    connection: &Connection,
+    account: &Account,
+    path: &str,
+) -> postio_model::MailboxId {
+    let mut folder = postio_model::Mailbox::new(account.id, path, Some('/'));
+    folder.role = MailboxRole::Regular;
+    folder.pending_create = true;
+    MailboxRepository::new(connection)
+        .create(&mut folder)
+        .await
+        .expect("the pending folder")
+}
+
+#[tokio::test]
+async fn a_folder_made_here_survives_a_listing_that_does_not_name_it_yet() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let account = an_account(&connection).await;
+    let folder = a_folder_made_here(&connection, &account, "Receipts").await;
+
+    let report = discover(
+        &connection,
+        &a_server().await,
+        account.id,
+        &RoleOverrides::default(),
+    )
+    .await
+    .expect("discover");
+
+    let after = MailboxRepository::new(&connection)
+        .get(folder)
+        .await
+        .expect("get")
+        .expect("the folder");
+    assert!(
+        after.selectable && after.pending_create,
+        "a reconnect that drains, then lists before the create is through, must not retire it"
+    );
+    assert_eq!(report.vanished, 0, "{report:?}");
+}
+
+#[tokio::test]
+async fn a_listing_that_names_a_folder_made_here_settles_it() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let account = an_account(&connection).await;
+    let folder = a_folder_made_here(&connection, &account, "Receipts").await;
+    let backend = MockBackend::builder()
+        .mailbox(MockMailbox::new("INBOX"))
+        .mailbox(MockMailbox::new("Receipts"))
+        .build();
+    backend.connect().await.expect("connect");
+
+    discover(&connection, &backend, account.id, &RoleOverrides::default())
+        .await
+        .expect("discover");
+
+    let after = MailboxRepository::new(&connection)
+        .get(folder)
+        .await
+        .expect("get")
+        .expect("the folder");
+    assert!(
+        !after.pending_create,
+        "the server has it, whoever created it"
+    );
+    assert_eq!(
+        after.id, folder,
+        "the row the person made, not a second one"
+    );
+}

@@ -95,6 +95,7 @@ fn sample_mailbox() -> Mailbox {
         last_synced_at: Some(at(2_000)),
         signature_id: Some(SignatureId::new(5)),
         backfill_excluded: false,
+        pending_create: false,
     }
 }
 
