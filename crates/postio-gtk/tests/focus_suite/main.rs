@@ -774,6 +774,11 @@ const CASES: &[(&str, fn())] = &[
         "view_source::save_as_eml_writes_the_bytes_the_store_holds",
         view_source::save_as_eml_writes_the_bytes_the_store_holds as fn(),
     ),
+    (
+        "view_source::mod_c_copies_the_selection_and_copies_every_byte_when_nothing_is_selected",
+        view_source::mod_c_copies_the_selection_and_copies_every_byte_when_nothing_is_selected
+            as fn(),
+    ),
     ("view_source::signed_mark", view_source::signed_mark as fn()),
     (
         "view_source::accepting_from_the_source_is_a_button_and_its_notice_shows_over_the_source",

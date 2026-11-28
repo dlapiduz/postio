@@ -263,6 +263,23 @@ impl SourceDialog {
         self.inner.view.borrow().raw.bytes.clone()
     }
 
+    /// The text selected on the current tab, as shown (a folded part copies as its fold line);
+    /// `None` when nothing is, which makes mod+c copy every byte instead.
+    pub fn selection(&self) -> Option<String> {
+        let inner = &self.inner;
+        let selected = match inner.tab.get() {
+            Tab::Verification => selected_label(inner.verification.upcast_ref()),
+            Tab::Headers => selected_text(&inner.headers),
+            Tab::Raw => selected_text(&inner.raw),
+        };
+        selected.filter(|text| !text.is_empty())
+    }
+
+    /// Selects the first match of `needle` on the current tab, as Find does; false when there is none.
+    pub fn select(&self, needle: &str) -> bool {
+        self.inner.search(needle, false)
+    }
+
     pub fn find(&self) {
         self.inner.find.set_visible(true);
         self.inner.find.grab_focus();
@@ -341,14 +358,14 @@ impl Inner {
         }
     }
 
-    fn search(&self, needle: &str, onward: bool) {
+    fn search(&self, needle: &str, onward: bool) -> bool {
         let text = match self.tab.get() {
             Tab::Headers => &self.headers,
             Tab::Raw => &self.raw,
-            Tab::Verification => return,
+            Tab::Verification => return false,
         };
         if needle.is_empty() {
-            return;
+            return false;
         }
         let buffer = text.buffer();
         let mut from = buffer.iter_at_mark(&buffer.get_insert());
@@ -359,11 +376,13 @@ impl Inner {
         let found = from
             .forward_search(needle, flags, None)
             .or_else(|| buffer.start_iter().forward_search(needle, flags, None));
-        if let Some((start, end)) = found {
-            buffer.select_range(&start, &end);
-            let mut start = start;
-            text.scroll_to_iter(&mut start, 0.1, false, 0.0, 0.0);
-        }
+        let Some((start, end)) = found else {
+            return false;
+        };
+        buffer.select_range(&start, &end);
+        let mut start = start;
+        text.scroll_to_iter(&mut start, 0.1, false, 0.0, 0.0);
+        true
     }
 }
 
@@ -549,6 +568,35 @@ fn all_text(text: &gtk::TextView) -> String {
     buffer
         .text(&buffer.start_iter(), &buffer.end_iter(), false)
         .to_string()
+}
+
+fn selected_text(text: &gtk::TextView) -> Option<String> {
+    let buffer = text.buffer();
+    let (start, end) = buffer.selection_bounds()?;
+    Some(buffer.text(&start, &end, false).to_string())
+}
+
+fn selected_label(widget: &gtk::Widget) -> Option<String> {
+    if let Some(label) = widget.downcast_ref::<gtk::Label>() {
+        let (start, end) = label.selection_bounds()?;
+        let (from, to) = (start.min(end), start.max(end));
+        return Some(
+            label
+                .text()
+                .chars()
+                .skip(usize::try_from(from).ok()?)
+                .take(usize::try_from(to - from).ok()?)
+                .collect(),
+        );
+    }
+    let mut child = widget.first_child();
+    while let Some(next) = child {
+        if let Some(text) = selected_label(&next) {
+            return Some(text);
+        }
+        child = next.next_sibling();
+    }
+    None
 }
 
 fn collect_labels(widget: &gtk::Widget, out: &mut Vec<String>) {

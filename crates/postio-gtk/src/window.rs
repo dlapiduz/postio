@@ -5408,6 +5408,10 @@ impl FocusWindow {
         match verb {
             SourceVerb::Tab(tab) => dialog.show_tab(tab),
             SourceVerb::Copy => {
+                if let Some(selected) = dialog.selection() {
+                    self.clipboard().set_text(&selected);
+                    return;
+                }
                 let bytes = dialog.bytes();
                 if !bytes.is_empty() {
                     self.clipboard().set_text(&String::from_utf8_lossy(&bytes));

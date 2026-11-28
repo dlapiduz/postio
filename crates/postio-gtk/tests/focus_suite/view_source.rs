@@ -264,3 +264,48 @@ pub fn accepting_from_the_source_is_a_button_and_its_notice_shows_over_the_sourc
         );
     });
 }
+
+pub fn mod_c_copies_the_selection_and_copies_every_byte_when_nothing_is_selected() {
+    use gtk::prelude::*;
+    crate::gtk_case(async {
+        let fixture = Fixture::empty().await;
+        let (message, _) = fixture.file_from_ada("Budget", "The numbers.", 5).await;
+        fixture
+            .write_body(message, "The numbers are attached.")
+            .await;
+        fixture.write_raw(message, RAW).await;
+        let (window, _client) = fixture.open().await;
+        support::rows_shown(&window, 1).await;
+        support::keys(&window, &["j", "V"]);
+        assert!(crate::settle_until(async || on(&window, Tab::Verification)).await);
+        support::keys(&window, &["3"]);
+        assert!(crate::settle_until(async || on(&window, Tab::Raw)).await);
+        let source = window.source().expect("open");
+        assert!(source.select("Subject: Budget"), "the Raw tab has the line");
+        let copied = async || {
+            let clipboard = gdk::Display::default().expect("a display").clipboard();
+            clipboard.set_text("something else");
+            support::press(&window, "c", gdk::ModifierType::CONTROL_MASK);
+            let text = std::rc::Rc::new(std::cell::RefCell::new(None));
+            let slot = text.clone();
+            clipboard.read_text_async(None::<&gtk::gio::Cancellable>, move |result| {
+                *slot.borrow_mut() = Some(result.ok().flatten().map(|s| s.to_string()));
+            });
+            assert!(crate::settle_until(async || text.borrow().is_some()).await);
+            text.take().flatten()
+        };
+        assert_eq!(
+            copied().await.as_deref(),
+            Some("Subject: Budget"),
+            "mod+c with a line selected copies that line, not the message"
+        );
+
+        support::keys(&window, &["2"]);
+        assert!(crate::settle_until(async || on(&window, Tab::Headers)).await);
+        assert_eq!(
+            copied().await.as_deref(),
+            Some(String::from_utf8_lossy(RAW).as_ref()),
+            "with nothing selected, mod+c copies every byte"
+        );
+    });
+}
