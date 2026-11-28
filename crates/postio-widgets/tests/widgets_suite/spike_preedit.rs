@@ -38,6 +38,9 @@ fn text(view: &gtk::TextView) -> String {
 }
 
 fn spike() -> Spike {
+    if let Some(settings) = gtk::Settings::default() {
+        settings.set_gtk_im_module(Some("gtk-im-context-simple"));
+    }
     let view = gtk::TextView::new();
     let buffer = view.buffer();
     buffer.set_enable_undo(false);
@@ -74,9 +77,6 @@ fn spike() -> Spike {
         .filter_map(|c| c.downcast::<gtk::EventControllerKey>().ok())
         .find_map(|keys| keys.im_context())
         .expect("the view's own input method");
-    if let Some(multi) = im.downcast_ref::<gtk::IMMulticontext>() {
-        multi.set_context_id(Some("gtk-im-context-simple"));
-    }
     Spike {
         window,
         view,
