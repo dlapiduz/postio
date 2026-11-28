@@ -188,7 +188,7 @@ fn same_at(level: Level, a: &MarkSet, b: &MarkSet) -> bool {
     }
 }
 
-/// A code block's text as cells, so one set of text edits serves every leaf.
+/// A code block's text as cells, a newline a break, so one set of text edits serves every leaf.
 pub(crate) fn of_block(block: &Block) -> Option<Vec<Cell>> {
     match block {
         Block::Paragraph(inlines) | Block::Heading { inlines, .. } => Some(flatten(inlines)),
@@ -197,7 +197,11 @@ pub(crate) fn of_block(block: &Block) -> Option<Vec<Cell>> {
             Some(
                 text.chars()
                     .map(|c| Cell {
-                        atom: Atom::Char(c),
+                        atom: if c == '\n' {
+                            Atom::Break
+                        } else {
+                            Atom::Char(c)
+                        },
                         marks: plain.clone(),
                     })
                     .collect(),

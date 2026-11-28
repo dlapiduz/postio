@@ -1047,3 +1047,339 @@ fn one_undo_after_a_conversion_gives_back_the_typed_characters() {
         "and the caret after the typed marker"
     );
 }
+
+/// xorshift64*: a fixed seed per case, so a failure reproduces and nothing reads a clock.
+struct Rng(u64);
+
+impl Rng {
+    fn next(&mut self) -> u64 {
+        self.0 ^= self.0 >> 12;
+        self.0 ^= self.0 << 25;
+        self.0 ^= self.0 >> 27;
+        self.0.wrapping_mul(0x2545_F491_4F6C_DD1D)
+    }
+
+    fn below(&mut self, n: usize) -> usize {
+        (self.next() % n.max(1) as u64) as usize
+    }
+
+    fn pick<'a, T>(&mut self, items: &'a [T]) -> &'a T {
+        &items[self.below(items.len())]
+    }
+}
+
+const WORDS: &[&str] = &["ada", "milk", "日本", "🙂", "x", "plan", "go"];
+
+fn gen_inlines(rng: &mut Rng) -> Vec<Inline> {
+    let mut out: Vec<Inline> = Vec::new();
+    for index in 0..rng.below(4) {
+        let mut word = rng.pick(WORDS).to_string();
+        if index > 0 {
+            word.insert(0, ' ');
+        }
+        let inline = match rng.below(7) {
+            0 => strong(&word),
+            1 => Inline::Emphasis(vec![t(&word)]),
+            2 => Inline::Code(word),
+            3 => Inline::Link {
+                href: href(),
+                inlines: vec![t(&word)],
+            },
+            4 if index > 0 => Inline::Break,
+            _ => t(&word),
+        };
+        out.push(inline);
+    }
+    tidy(out)
+}
+
+/// Joins neighbours that are one run, as the editor writes them.
+fn tidy(inlines: Vec<Inline>) -> Vec<Inline> {
+    let mut out: Vec<Inline> = Vec::new();
+    for inline in inlines {
+        match (out.last_mut(), inline) {
+            (Some(Inline::Text(a)), Inline::Text(b)) | (Some(Inline::Code(a)), Inline::Code(b)) => {
+                a.push_str(&b)
+            }
+            (Some(Inline::Strong(a)), Inline::Strong(b))
+            | (Some(Inline::Emphasis(a)), Inline::Emphasis(b)) => {
+                a.extend(b);
+                *a = tidy(std::mem::take(a));
+            }
+            (
+                Some(Inline::Link { href: a, inlines }),
+                Inline::Link {
+                    href: b,
+                    inlines: more,
+                },
+            ) if *a == b => {
+                inlines.extend(more);
+                *inlines = tidy(std::mem::take(inlines));
+            }
+            (_, inline) => out.push(inline),
+        }
+    }
+    out
+}
+
+fn gen_block(rng: &mut Rng, depth: u32) -> Block {
+    let leafy = depth >= 2;
+    match rng.below(if leafy { 3 } else { 9 }) {
+        0 | 1 => Block::Paragraph(gen_inlines(rng)),
+        2 => Block::Heading {
+            level: *rng.pick(&[HeadingLevel::One, HeadingLevel::Two, HeadingLevel::Three]),
+            inlines: gen_inlines(rng),
+        },
+        3 | 4 => {
+            let items = (0..1 + rng.below(3))
+                .map(|_| {
+                    let mut blocks = vec![Block::Paragraph(gen_inlines(rng))];
+                    if rng.below(3) == 0 {
+                        blocks.push(gen_block(rng, depth + 1));
+                    }
+                    li(blocks)
+                })
+                .collect();
+            let kind = *rng.pick(&[ListKind::Bullet, ListKind::NUMBERED]);
+            Block::List { kind, items }
+        }
+        5 => Block::Quote(
+            (0..1 + rng.below(2))
+                .map(|_| gen_block(rng, depth + 1))
+                .collect(),
+        ),
+        6 => Block::Rule,
+        7 => quoted(),
+        _ => Block::Code {
+            language: None,
+            text: "let a = 1;\nb()".to_owned(),
+        },
+    }
+}
+
+fn gen_document(rng: &mut Rng) -> Document {
+    let mut blocks = vec![Block::Paragraph(gen_inlines(rng))];
+    blocks.extend((0..rng.below(6)).map(|_| gen_block(rng, 0)));
+    doc(blocks)
+}
+
+fn gen_position(rng: &mut Rng, document: &Document) -> DocPosition {
+    let lines: Vec<_> = postio_body::project(document).lines().collect();
+    let line = rng.pick(&lines);
+    DocPosition::new(line.path.clone(), rng.below(line.len as usize + 1) as u32)
+}
+
+fn gen_intent(rng: &mut Rng) -> EditIntent {
+    use postio_body::{BlockKind, Conversion, ConversionKind, Mark};
+    let marks = [
+        Mark::Strong,
+        Mark::Emphasis,
+        Mark::Strikethrough,
+        Mark::Code,
+    ];
+    let kinds = [
+        BlockKind::Heading(HeadingLevel::Two),
+        BlockKind::BulletList,
+        BlockKind::NumberedList,
+        BlockKind::TaskList,
+        BlockKind::Quote,
+        BlockKind::CodeBlock,
+    ];
+    let units = [Unit::Char, Unit::Word, Unit::Line];
+    match rng.below(14) {
+        0 => EditIntent::Insert(rng.pick(&["a", " ", "日本", "\n", "🙂b"]).to_string()),
+        1 => EditIntent::DeleteBackward(*rng.pick(&units)),
+        2 => EditIntent::DeleteForward(*rng.pick(&units)),
+        3 => EditIntent::SplitBlock,
+        4 => EditIntent::InsertBreak,
+        5 => EditIntent::ToggleMark(*rng.pick(&marks)),
+        6 => EditIntent::SetLink(if rng.below(2) == 0 {
+            Some(href())
+        } else {
+            None
+        }),
+        7 => EditIntent::InsertImage {
+            content_id: postio_body::ContentId::parse("cat@example.com").unwrap(),
+            alt: "a cat".into(),
+        },
+        8 => EditIntent::ToggleBlock(*rng.pick(&kinds)),
+        9 => EditIntent::Indent,
+        10 => EditIntent::Outdent,
+        11 => EditIntent::InsertRule,
+        12 => EditIntent::Paste(gen_document(rng)),
+        _ => EditIntent::Convert(Conversion {
+            trigger_len: rng.below(4) as u32,
+            kind: rng
+                .pick(&[
+                    ConversionKind::Rule,
+                    ConversionKind::Quote,
+                    ConversionKind::Heading(HeadingLevel::One),
+                    ConversionKind::List(ListKind::Bullet),
+                    ConversionKind::Wrap {
+                        marks: vec![Mark::Strong],
+                        marker_len: 1,
+                    },
+                ])
+                .clone(),
+        }),
+    }
+}
+
+/// What the editor may hand on: no empty containers, and inlines in the form `parse` writes.
+fn assert_well_formed(blocks: &[Block], context: &str) {
+    for block in blocks {
+        match block {
+            Block::Paragraph(inlines) | Block::Heading { inlines, .. } => {
+                assert_inlines(inlines, context)
+            }
+            Block::List { items, .. } => {
+                assert!(!items.is_empty(), "an empty list: {context}");
+                for item in items {
+                    assert!(!item.blocks.is_empty(), "an empty item: {context}");
+                    assert_well_formed(&item.blocks, context);
+                }
+            }
+            Block::Quote(children) => {
+                assert!(!children.is_empty(), "an empty quote: {context}");
+                assert_well_formed(children, context);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn assert_inlines(inlines: &[Inline], context: &str) {
+    for pair in inlines.windows(2) {
+        let same = match (&pair[0], &pair[1]) {
+            (Inline::Text(_), Inline::Text(_))
+            | (Inline::Code(_), Inline::Code(_))
+            | (Inline::Strong(_), Inline::Strong(_))
+            | (Inline::Emphasis(_), Inline::Emphasis(_))
+            | (Inline::Strikethrough(_), Inline::Strikethrough(_)) => true,
+            (Inline::Link { href: a, .. }, Inline::Link { href: b, .. }) => a == b,
+            _ => false,
+        };
+        assert!(
+            !same,
+            "two neighbours that are one run: {pair:?} in {context}"
+        );
+    }
+    for inline in inlines {
+        match inline {
+            Inline::Text(text) | Inline::Code(text) => {
+                assert!(!text.is_empty(), "empty text: {context}")
+            }
+            Inline::Strong(inner)
+            | Inline::Emphasis(inner)
+            | Inline::Strikethrough(inner)
+            | Inline::Link { inlines: inner, .. } => {
+                assert!(!inner.is_empty(), "an empty mark: {context}");
+                assert_inlines(inner, context);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Whitespace at a run's edge and an empty paragraph are editing state `parse` narrows away, so
+/// the round trip is asserted where neither occurs.
+fn settled(document: &Document) -> bool {
+    !document.to_html().contains("<p></p>")
+        && !document.to_html().contains("  ")
+        && !document.to_html().contains("> ")
+        && !document.to_html().contains(" <")
+}
+
+#[test]
+fn every_intent_over_generated_documents_keeps_the_contract() {
+    let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
+    let mut round_trips = 0;
+    for case in 0..4000 {
+        let document = gen_document(&mut rng);
+        let anchor = gen_position(&mut rng, &document);
+        let head = if rng.below(3) == 0 {
+            gen_position(&mut rng, &document)
+        } else {
+            anchor.clone()
+        };
+        let selection = Selection::range(anchor, head);
+        let intent = gen_intent(&mut rng);
+        let context = format!("case {case}: {intent:?} at {selection:?} in {document:?}");
+        let edited = apply(&document, &selection, intent);
+
+        assert!(
+            edited.selection.is_valid_in(&edited.document),
+            "an invalid caret: {context}"
+        );
+        let range = edited.changed;
+        let (start, old_end, new_end) = (
+            range.start as usize,
+            range.old_end as usize,
+            range.new_end as usize,
+        );
+        assert_eq!(
+            document.blocks[..start],
+            edited.document.blocks[..start],
+            "before the range: {context}"
+        );
+        assert_eq!(
+            document.blocks[old_end..],
+            edited.document.blocks[new_end..],
+            "after the range: {context}"
+        );
+        if old_end > start && new_end > start {
+            assert_ne!(
+                document.blocks[start], edited.document.blocks[start],
+                "the range is not tight: {context}"
+            );
+        }
+        assert_well_formed(&edited.document.blocks[start..new_end], &context);
+        if settled(&edited.document) {
+            round_trips += 1;
+            assert_eq!(
+                postio_body::parse(&edited.document.to_html()),
+                edited.document,
+                "the round trip: {context}"
+            );
+        }
+    }
+    assert!(
+        round_trips > 400,
+        "the round trip was asserted {round_trips} times"
+    );
+}
+
+#[test]
+fn an_edit_in_the_middle_of_ten_thousand_blocks_touches_one() {
+    let mut document = doc((0..10_000).map(|n| p(&format!("line {n}"))).collect());
+    let original = document.clone();
+    for (intent, most) in [
+        (EditIntent::Insert("x".into()), 1),
+        (EditIntent::SplitBlock, 2),
+        (EditIntent::DeleteBackward(Unit::Char), 1),
+        (EditIntent::ToggleMark(postio_body::Mark::Strong), 1),
+    ] {
+        let mut working = document.clone();
+        let at = span((&[5000], 0), (&[5000], 4));
+        let applied = working.edit(&at, intent.clone());
+        let range = applied.changed;
+        assert!(
+            applied.replaced.len() <= 1 && (range.new_end - range.start) as usize <= most,
+            "{intent:?} reached {range:?}"
+        );
+        assert_eq!(working.blocks[..5000], original.blocks[..5000]);
+        assert_eq!(
+            working.blocks[range.new_end as usize..],
+            original.blocks[range.old_end as usize..]
+        );
+    }
+    let applied = document.edit(&caret(&[5000], 4), EditIntent::SplitBlock);
+    assert_eq!(
+        (
+            applied.changed.start,
+            applied.changed.old_end,
+            applied.changed.new_end
+        ),
+        (5000, 5001, 5002)
+    );
+}

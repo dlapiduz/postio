@@ -23,7 +23,6 @@ pub(super) fn insert(
         Join::New
     };
     let at = collapse(blocks, selection);
-    let code = matches!(block_at(blocks, &at.path), Some(Block::Code { .. }));
     let offset = at.offset as usize;
     let stored = selection.marks.clone().map(Rc::new);
     let added = tree::edit_cells(blocks, &at.path, |cells| {
@@ -31,7 +30,7 @@ pub(super) fn insert(
         let new: Vec<Cell> = typed
             .chars()
             .map(|c| Cell {
-                atom: if c == '\n' && !code {
+                atom: if c == '\n' {
                     Atom::Break
                 } else {
                     Atom::Char(c)
@@ -168,14 +167,12 @@ fn prune_block(block: &mut Block, start: End<'_>, end: End<'_>) {
 
 pub(super) fn insert_break(blocks: &mut Vec<Block>, selection: &Selection) -> Option<Outcome> {
     let at = collapse(blocks, selection);
-    let code = matches!(block_at(blocks, &at.path), Some(Block::Code { .. }));
     let offset = at.offset as usize;
     tree::edit_cells(blocks, &at.path, |cells| {
-        let atom = if code { Atom::Char('\n') } else { Atom::Break };
         cells.insert(
             offset,
             Cell {
-                atom,
+                atom: Atom::Break,
                 marks: Rc::default(),
             },
         );
@@ -201,7 +198,7 @@ pub(super) fn split_block(blocks: &mut Vec<Block>, selection: &Selection) -> Opt
                     path.push(0);
                     path
                 } else {
-                    lists::lift_items(blocks, &list, item, item)?
+                    lists::lift_items(blocks, &list, item, item, &[0])?
                 };
                 return Outcome::at(DocPosition::new(moved, 0), Join::New);
             }
@@ -325,7 +322,7 @@ fn join_backward(blocks: &mut Vec<Block>, at: &DocPosition) -> Option<Outcome> {
     if index == 0 {
         return match tree::owner(blocks, &parent)? {
             Owner::Item { list, item: 0 } => {
-                let moved = lists::lift_items(blocks, &list, 0, 0)?;
+                let moved = lists::lift_items(blocks, &list, 0, 0, &[0])?;
                 Outcome::at(DocPosition::new(moved, 0), Join::New)
             }
             Owner::Item { list, item } => merge_into_previous_item(blocks, &list, item),
@@ -405,7 +402,7 @@ fn is_space(cell: &Cell) -> bool {
 }
 
 fn is_break(cell: &Cell) -> bool {
-    matches!(cell.atom, Atom::Break | Atom::Char('\n'))
+    matches!(cell.atom, Atom::Break)
 }
 
 fn word_start(cells: &[Cell], offset: usize) -> usize {

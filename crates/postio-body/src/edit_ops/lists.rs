@@ -10,12 +10,14 @@ pub(super) fn is_nested(blocks: &[Block], list: &[u32]) -> bool {
         .is_some_and(|owner| matches!(owner, tree::Owner::Item { .. }))
 }
 
-/// Items `from..=to` leave their list as plain blocks; the items after them stay a list.
+/// Items `from..=to` leave their list as plain blocks; the items after them stay a list. `tail` is
+/// a path within item `from` (its block index, then deeper), returned as that block's new path.
 pub(super) fn lift_items(
     blocks: &mut Vec<Block>,
     list: &[u32],
     from: usize,
     to: usize,
+    tail: &[u32],
 ) -> Option<Vec<u32>> {
     let (parent, index) = tree::split(list)?;
     let Block::List { kind, items } = tree::block_mut(blocks, list)? else {
@@ -43,7 +45,10 @@ pub(super) fn lift_items(
     if !after.is_empty() {
         siblings.insert(at, Block::List { kind, items: after });
     }
-    tree::first_unit(blocks, tree::join(parent, first))
+    let (&block, deeper) = tail.split_first()?;
+    let mut path = tree::join(parent, first + block as usize);
+    path.extend_from_slice(deeper);
+    Some(path)
 }
 
 /// A nested item moves to its parent's list, after the item that held it; the items after it in

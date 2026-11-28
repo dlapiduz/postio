@@ -26,7 +26,11 @@ pub(super) fn paste(
             at,
             text.chars()
                 .map(|c| Cell {
-                    atom: Atom::Char(c),
+                    atom: if c == '\n' {
+                        Atom::Break
+                    } else {
+                        Atom::Char(c)
+                    },
                     marks: Default::default(),
                 })
                 .collect(),

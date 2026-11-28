@@ -169,3 +169,15 @@ child widgets. Verify with `focus_suite/a11y_sweep.rs`, adding the composer.
 signature and reply machinery. The draft store (`body_html`,
 `body_markdown`), autosave and resume. The registry's `Composer` context
 (spec 014 widens it, not this spec).
+
+## R13 — What a valid edited document is (found building T013)
+
+**Finding.** `contracts/edit-intent.md` guarantee 1, `parse(to_html(d)) == d`,
+cannot hold for every result: a trailing space while typing, a double space
+and an empty paragraph after Enter are editing state, and `parse` collapses
+and drops them by design (its whitespace rules keep the round trip of
+*written* mail stable). So the property test asserts guarantee 1 where the
+result holds no such state (`settled`), and asserts structure everywhere:
+no empty list, item or quote, and inlines in the form `parse` writes (no two
+neighbours that are one run, no empty mark). Over 4 000 generated cases it
+found two real bugs, each fixed in the same commit.

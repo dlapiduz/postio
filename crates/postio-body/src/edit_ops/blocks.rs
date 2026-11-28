@@ -1,7 +1,6 @@
 //! Block kinds at the caret's block or each block of the selection: headings, code, lists and
 //! quotes toggled on and off, list items moved a level, and a rule put in.
 
-use super::flat::Atom;
 use super::lists;
 use super::text::{collapse, split_off};
 use super::tree::{self, Owner};
@@ -40,7 +39,7 @@ fn retype(blocks: &mut Vec<Block>, selection: &Selection, kind: BlockKind) -> Op
         .all(|path| block_at(blocks, path).is_some_and(is));
     for path in &leaves {
         let block = tree::block_mut(blocks, path)?;
-        let mut cells = super::flat::of_block(block)?;
+        let cells = super::flat::of_block(block)?;
         let mut next = match (off, kind) {
             (true, _) => Block::Paragraph(Vec::new()),
             (false, BlockKind::Heading(level)) => Block::Heading {
@@ -52,13 +51,6 @@ fn retype(blocks: &mut Vec<Block>, selection: &Selection, kind: BlockKind) -> Op
                 text: String::new(),
             },
         };
-        if matches!(block, Block::Code { .. }) {
-            for cell in &mut cells {
-                if cell.atom == Atom::Char('\n') {
-                    cell.atom = Atom::Break;
-                }
-            }
-        }
         super::flat::set_block(&mut next, &cells);
         *block = next;
     }
@@ -99,10 +91,9 @@ fn toggle_list(blocks: &mut Vec<Block>, selection: &Selection, kind: BlockKind) 
                 Some((same, last)) if same == list => last,
                 _ => item,
             };
-            let first_block = start.path.len() == list.len() + 2;
-            let landed = lists::lift_items(blocks, &list, item, last)?;
-            let offset = if first_block { start.offset } else { 0 };
-            return Outcome::at(DocPosition::new(landed, offset), Join::New);
+            let tail = start.path[list.len() + 1..].to_vec();
+            let landed = lists::lift_items(blocks, &list, item, last, &tail)?;
+            return Outcome::at(DocPosition::new(landed, start.offset), Join::New);
         }
         let Block::List { kind: have, items } = tree::block_mut(blocks, &list)? else {
             return None;
@@ -220,10 +211,9 @@ pub(super) fn outdent(blocks: &mut Vec<Block>, selection: &Selection) -> Option<
         path.extend_from_slice(&start.path[list.len() + 1..]);
         return Outcome::at(DocPosition::new(path, start.offset), Join::New);
     }
-    let first_block = start.path.len() == list.len() + 2;
-    let landed = lists::lift_items(blocks, &list, item, item)?;
-    let offset = if first_block { start.offset } else { 0 };
-    Outcome::at(DocPosition::new(landed, offset), Join::New)
+    let tail = start.path[list.len() + 1..].to_vec();
+    let landed = lists::lift_items(blocks, &list, item, item, &tail)?;
+    Outcome::at(DocPosition::new(landed, start.offset), Join::New)
 }
 
 /// A rule after the caret's text, with a block after it for the caret; an empty block becomes the
