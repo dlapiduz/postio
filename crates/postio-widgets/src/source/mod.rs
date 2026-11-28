@@ -263,8 +263,6 @@ impl SourceDialog {
         self.inner.view.borrow().raw.bytes.clone()
     }
 
-    /// The text selected on the current tab, as shown (a folded part copies as its fold line);
-    /// `None` when nothing is, which makes mod+c copy every byte instead.
     pub fn selection(&self) -> Option<String> {
         let inner = &self.inner;
         let selected = match inner.tab.get() {
@@ -275,7 +273,6 @@ impl SourceDialog {
         selected.filter(|text| !text.is_empty())
     }
 
-    /// Selects the first match of `needle` on the current tab, as Find does; false when there is none.
     pub fn select(&self, needle: &str) -> bool {
         self.inner.search(needle, false)
     }
