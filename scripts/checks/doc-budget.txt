@@ -82,6 +82,6 @@ docs/gotchas/signatures.md 218
 docs/gotchas/store.md 785
 docs/gotchas/sync.md 341
 docs/gotchas/tests.md 771
-docs/mcp.md 1347
+docs/mcp.md 1392
 docs/rfc-compliance.md 6470
 macos/CLAUDE.md 982
