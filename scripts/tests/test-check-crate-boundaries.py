@@ -129,6 +129,8 @@ def build_fixture(
         "candle-core",
         "reqwest",
         "io-http",
+        "rsa",
+        "crypto-bigint",
     ):
         write_crate(root, "vendor", banned)
     return root / "Cargo.toml"
@@ -685,6 +687,40 @@ def main() -> int:
                 extract_deps='postio-search = { path = "../postio-search" }\n',
             ),
             expected_status=0,
+        )
+
+        # Secret-key crates whose advisories deny.toml ignores for verification only: reached only
+        # through postio-signature, which holds no secret key.
+        check_case(
+            "postio-signature may stand on rsa and crypto-bigint",
+            build_fixture(
+                tmp_path / "signature-rsa",
+                signature_deps=(
+                    'rsa = { path = "../../vendor/rsa" }\n'
+                    'crypto-bigint = { path = "../../vendor/crypto-bigint" }\n'
+                ),
+                session_deps='postio-signature = { path = "../postio-signature" }\n',
+            ),
+            expected_status=0,
+        )
+        check_case(
+            "postio-session gains rsa directly",
+            build_fixture(
+                tmp_path / "session-rsa",
+                session_deps='rsa = { path = "../../vendor/rsa" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-session", "rsa", "postio-signature"),
+        )
+        check_case(
+            "postio-vault reaches crypto-bigint through another crate",
+            build_fixture(
+                tmp_path / "vault-bigint",
+                vault_deps='helper = { path = "../helper" }\n',
+                helper_deps='crypto-bigint = { path = "../../vendor/crypto-bigint" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-vault", "crypto-bigint", "helper"),
         )
 
         check_case(

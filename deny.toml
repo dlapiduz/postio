@@ -39,6 +39,12 @@ ignore = [
     # directly and more arrive through dependencies, so leaving it is a
     # migration (to jiff or time), not a version bump.
     { id = "RUSTSEC-2026-0543", reason = "unmaintained notice for chrono; no patched release, no vulnerability; leaving it is a migration" },
+    # rsa (Marvin) and crypto-bigint 0.5 leak *secret* keys through timing.
+    # They arrive only through rPGP in postio-signature, which verifies with
+    # public keys and holds no secret; check-crate-boundaries.py keeps them
+    # there. Revisit both before Postio decrypts or signs.
+    { id = "RUSTSEC-2023-0071", reason = "rsa timing leaks secret keys; postio-signature only verifies with public keys, confined by check-crate-boundaries.py" },
+    { id = "RUSTSEC-2026-0387", reason = "crypto-bigint 0.5 timing leaks secrets; postio-signature only verifies with public keys, confined by check-crate-boundaries.py" },
 ]
 
 [licenses]
