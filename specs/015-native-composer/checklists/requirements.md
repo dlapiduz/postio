@@ -12,7 +12,7 @@
 
 ## Requirement Completeness
 
-- [x] No `[NEEDS CLARIFICATION]` markers; open decisions are Q1 to Q3, each with options and a recommendation
+- [x] No `[NEEDS CLARIFICATION]` markers; Q1 to Q3 answered by the maintainer on 2026-11-28 (spec Clarifications)
 - [x] Requirements are testable (each FR names a case or a count)
 - [x] Success criteria are measurable
 - [x] Edge cases identified (preedit, quoted blocks, selections across blocks, prefixes)

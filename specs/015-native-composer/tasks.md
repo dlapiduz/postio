@@ -15,7 +15,7 @@ Tick a box in the commit that finishes it.
 **Commits** on this branch end with `Refs: specs/015-native-composer` and the
 task ids, for example `Refs: specs/015-native-composer T009 T010`. Never
 write a closing keyword. Land with
-`scripts/issue-land.sh --detach --full-suite --title '<what the branch does>'`
+`scripts/issue-land.sh --detach --title '<what the branch does>'`
 after the phases marked **Land**.
 
 **Tests are required** (constitution IV). Each task names what is seen
@@ -47,7 +47,7 @@ is a guard and says so.
 
 - [ ] T001 [P] Write `storyboards/compose/native-list-keys.toml`, `native-undo-runs.toml` and `native-paste.toml` from US3's scenarios. **Guards:** green on the WebView on `main`; say so in their headers, and run with `scripts/storyboards.sh`
 - [ ] T002 [P] Write `scripts/checks/check-no-browser-engine.py` and its self-test in `scripts/tests/`. It fails if `Cargo.toml`, `Cargo.lock` or `flatpak/*.json` name `webkit6`, `webkit2gtk` or `WebKitGTK`, except the reader allowlist if any. **Red:** the self-test names `webkit6` in `crates/postio-widgets/Cargo.toml` on `main`. **Do not wire it into `scripts/check.sh` yet** (T040 does)
-- [ ] T003 [P] Comment on #2215 with the spec's path, the order of the phases and Q1 to Q3, so the maintainer can answer there
+- [x] T003 [P] Comment on #2215 with the spec's path, the order of the phases and Q1 to Q3, so the maintainer can answer there
 
 ---
 
@@ -89,7 +89,7 @@ is a guard and says so.
 - [ ] T025 [P] [US2] **Red:** an `ffi_suite` case in `crates/postio-ffi/tests/` for a new `EditorDoc` object (holds a `Document`; `apply(intent) -> EditedFfi`; `project()`; `html()`): the table of T006 to T011 over the FFI, equal to the Rust result. **Green:** `crates/postio-ffi/src/editor_doc.rs` and the UniFFI records. Mac session
 - [ ] T026 [P] [US2] **Red:** Swift cases in `macos/Tests/PostioKitTests/` for the host half: the coordinator answers a `postioIntent` message with `EditedFfi` and the block patch, using a fake `EditorDoc`. **Green:** `macos/Sources/PostioAppKit/ComposeEditor.swift`. The Mac stays on `WKWebView` until Phase 6. Mac session
 - [ ] T027 [US2] Run T001's storyboards on both frontends and `/ux-review`: no behaviour change
-- [ ] T028 [US2] **Land step 2.** `--full-suite`, title `refactor(widgets,ui): composer edits go through apply`. Per-family commits (T020 to T023) mean a revert takes one family
+- [ ] T028 [US2] **Land step 2.** Title `refactor(widgets,ui): composer edits go through apply`. Per-family commits (T020 to T023) mean a revert takes one family
 
 ---
 
@@ -115,7 +115,7 @@ is a guard and says so.
 - [ ] T044 [US3] **Red:** the performance case `composer_native_counts.rs`: 5 000 words, a keystroke clones one block and does a constant number of buffer operations and tag applications (FR-014, SC-003); the open is under 500 ms to a focused caret with no web process (a count of children). **Green:** fix what the counts show
 - [ ] T045 [US3] **The suites.** Parametrise `composer_*.rs` and `editor_*.rs` over both surfaces, record each file's verdict in `research.md` R7 (port, moved down, or delete in step 4), and make the native column green. A "moved down" verdict means its case already exists in `body_suite` or `postio-ui`
 - [ ] T046 [US3] Run T001's three storyboards on the native surface, and write `storyboards/compose/native-spellcheck.toml` and `native-screen-reader.toml` for the new behaviour, **red on `main`**, then green. Run the PNG loop at 1440 × 900 and 1024 × 768, light and dark, and `/ux-review`
-- [ ] T047 [US3] **Land step 3.** `--full-suite`, title `feat(widgets): a native composer surface beside the WebView`. Nothing user-visible: the switch is off
+- [ ] T047 [US3] **Land step 3.** Title `feat(widgets): a native composer surface beside the WebView`. Nothing user-visible: the switch is off
 
 ---
 
@@ -126,7 +126,7 @@ is a guard and says so.
 - [ ] T048 [US5] **Red:** `scripts/checks/check-no-browser-engine.py` from T002 is wired into `scripts/check.sh` in this commit and fails until the rest of the task is done. **Green, in one commit:** delete `editor.rs`'s bridge, the three handlers, every `evaluate_javascript` call, `scheme.rs`, `web_process.rs`, `warm()` and `composer_warm.rs`, `editable_dialect.rs`, `editor_bridge.rs`, `editor_profile.rs`, `editor_teardown.rs`, and `webkit6` from `crates/postio-widgets/Cargo.toml` and the flatpak manifest; make the native surface the default and delete the switch. Each deleted test case carries a `scripts/test-removal-check.sh` verdict in the commit body
 - [ ] T049 [US5] **Red:** the dialect contract as a `postio-body` unit test: markup `parse` accepts is what `to_html` writes, in `body_suite/document.rs` (was `editable_dialect.rs`'s job). **Green:** it should already hold; this is a guard, made before T048's deletion lands
 - [ ] T050 [US5] Remove the composer's rows from the egress log's allowlist (#151) and add one case: no composer code path creates a socket or loads a URL
-- [ ] T051 [US5] **Land step 4.** `--full-suite`, title `refactor(widgets): one composer surface, no browser engine`. **Q1 = B:** `editor.js` and `EDITOR_SCRIPT` stay for the Mac until Phase 6
+- [ ] T051 [US5] **Land step 4.** Title `refactor(widgets): one composer surface, no browser engine`. **Q1 = B:** `editor.js` and `EDITOR_SCRIPT` stay for the Mac until Phase 6
 
 ---
 
@@ -140,7 +140,7 @@ is a guard and says so.
 - [ ] T057 [US4] Draw the blocks, `NSTextAttachment` images and the reply quote per Q2, with the system spell-check and VoiceOver defaults. Tests first for what the model decides; screens with `scripts/macos-shot.sh`
 - [ ] T058 [US4] **Red:** `ComposeCommandsTests` for the surface answering every composer registry id it claims. **Green:** wire `ComposeCommands.handled` to the intents
 - [ ] T059 [US4] **Delete, one commit:** `WKWebView` and `WebKit` from `ComposeEditor.swift`, `editorScript()` from `crates/postio-ffi/src/session.rs`, `crates/postio-ui/data/editor.js`, `EDITOR_SCRIPT`, `editor_script()`, `editor/document.rs`'s CSP and the old handler, `postioEdited` and `postioIntent` from the host. `check-no-browser-engine.py` extends to `macos/` (`import WebKit` in the composer is a failure). The reader's own `WebKit` use, if any, is out of this check (it is Blitz on Linux and `MessageBodyView` on the Mac; the check names its allowlist)
-- [ ] T060 [US4] **Land step 6.** `--full-suite`, title `feat(macos): the Mac composes on NSTextView`
+- [ ] T060 [US4] **Land step 6.** Title `feat(macos): the Mac composes on NSTextView`
 
 ---
 
@@ -162,7 +162,7 @@ is a guard and says so.
 - [ ] T072 [US6] ⛔ 014 Delimiter-row sequence, table picker, cell navigation; draw the grid; PNG loop and `/ux-review`. The table `apply` arms (014 T056) land first, here: each pinned linear in its block, cases first. (014 T056, T066)
 - [ ] T073 [US6] ⛔ 014 `paste_markdown` on the native surface. (014 T067)
 - [ ] T074 [US6] ⛔ 014 The remote image chip drawn inline, pressing `attach_remote_image`. (014 T068)
-- [ ] T075 [US6] ⛔ 014 Assert no FR-029 refusal remains. Land with `--full-suite`. (014 T069)
+- [ ] T075 [US6] ⛔ 014 Assert no FR-029 refusal remains. Land it. (014 T069)
 
 ---
 

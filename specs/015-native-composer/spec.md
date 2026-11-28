@@ -4,8 +4,8 @@
 
 **Created**: 2026-11-22
 
-**Status**: Draft. Open questions for the maintainer are at the end; none
-blocks Phase 1 (step 1 of ADR 0039)
+**Status**: Approved by the maintainer on 2026-11-28, with the
+recommendations to Q1-Q3 (Clarifications)
 
 **Input**: Issue #2215, "Build ADR 0039's native composer over the
 document". The maintainer decided on 2026-11-22 that spec 014's rich editing
@@ -128,6 +128,14 @@ Taken without asking, on the evidence:
 | C3 | Does the reply quote (`Block::Quoted`) become editable? | No. It is opaque to the caret: one atomic unit, deleted whole, as spec 014 FR-025 already draws it. How it is drawn is Q2. |
 | C4 | Do autosave, resume and send change? | No. They read `Document`, which was always the record. |
 | C5 | A new crate? | No. `postio-body` gains modules, `postio-ui` gains the key-to-intent rules, `postio-widgets` gains the surface. |
+
+The maintainer's answers, 2026-11-28:
+
+| # | Question | Answer |
+|---|---|---|
+| Q1 | When does the Mac move to `NSTextView`? | B: after step 3, with the deletion split per platform (D7). The Linux app drops `webkit6` first; `editor.js` stays until the Mac moves. |
+| Q2 | How is the reply quote drawn? | A for step 3: a read-only plain-text projection in an atomic, tinted range with a fold. B, an embedded reader view, is tried as a spike inside Phase 4 for the maintainer to see. |
+| Q3 | Is `libspelling` in step 3? | A, gated on its spike (FR-019) and on the Flatpak runtime shipping it; otherwise B, its own task after step 4. |
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -457,49 +465,3 @@ See `data-model.md`: `DocPosition`, `Selection`, `EditIntent`, `Edited`,
   waits and Phases 2 to 6 are unaffected (D6).
 - The Mac phases need a Mac. This branch is written on Linux, so Phase 6
   runs from a Mac session (`macos/CLAUDE.md`).
-
-## Open questions for the maintainer
-
-None blocks Phase 1 or 2. Q1 blocks Phase 6's shape, Q2 and Q3 block Phase 4.
-
-**Q1. When does the Mac move, and what does that do to deleting the
-bridge?** The Mac already composes on `WKWebView`, with the same
-`editor.js`.
-
-- **A. With step 3.** One engineer-pass, but the GTK deletion waits for the
-  Mac, and a Mac session is needed in the middle of the critical path.
-- **B. After step 3, with the deletion split per platform** (D7). The Linux
-  app drops `webkit6` first. `editor.js` stays until the Mac moves.
-- **C. After everything.** Simplest to sequence; the Mac keeps a browser
-  engine in compose for an unbounded time and "done" is not met.
-
-*Recommendation: B.* It keeps GTK's gate independent, lets the Mac wait for
-a Mac session, and still ends with no engine anywhere (US5).
-
-**Q2. How is the reply quote drawn in the native surface?** A `Quoted`
-block holds rich content (tables, colours) that a text view cannot draw.
-
-- **A. A read-only plain-text projection** (`to_text` of the quote) in an
-  atomic, tinted range with a fold. Simple; a rich quote looks plainer
-  than it does today.
-- **B. An embedded reader view** (`postio-render`, Blitz) in a
-  `GtkTextChildAnchor`. Same look as today; a second embedded surface in the
-  composer, and a third falsifier for the spike (does it size and scroll
-  inside a text view).
-- **C. A chip only**, "Quoted message", with Expand opening the reader
-  (spec 014 FR-025's shape in the source view).
-
-*Recommendation: A for step 3, with B tried as a spike inside Phase 4.* The
-decision is partly visual, so the maintainer should see both.
-
-**Q3. Is `libspelling` in scope for step 3?** It adds a system dependency
-(flatpak manifest, CI packages) and ADR 0039's second falsifier.
-
-- **A. In step 3**, gated on its spike (FR-019).
-- **B. After step 4**, as its own task, so the surface lands without a new
-  dependency.
-- **C. Not at all**, spell-check stays absent.
-
-*Recommendation: A, but only if the flatpak runtime ships it; otherwise B.*
-Spell-check is the one thing the WebView route never gave us, and the ADR
-counts it a gain.
