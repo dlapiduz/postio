@@ -28,6 +28,7 @@ mod composer_native_a11y;
 mod composer_native_basic;
 mod composer_native_caret;
 mod composer_native_clipboard;
+mod composer_native_css;
 mod composer_native_format;
 mod composer_native_history;
 mod composer_native_image;
@@ -114,6 +115,10 @@ mod widgets_css;
 const IGNORED: &[&str] = &[];
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "composer_native_css::a_scheme_change_restyles_and_keeps_the_caret_and_the_history",
+        composer_native_css::a_scheme_change_restyles_and_keeps_the_caret_and_the_history as fn(),
+    ),
     (
         "composer_native_a11y::the_body_is_a_named_text_box_with_gtks_accessible_text",
         composer_native_a11y::the_body_is_a_named_text_box_with_gtks_accessible_text as fn(),

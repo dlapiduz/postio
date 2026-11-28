@@ -593,6 +593,16 @@ button.postio-icon-button.postio-recipient-chip-remove {
   padding: 0;
 }
 
+/* ── The native composer's body (`composer::native`, spec 015) ──────
+   A text view draws its own ground and ink from these, so a scheme change
+   is a restyle of the same buffer: the caret and the undo history stay
+   (spec 002 FR-075). The WebView needed probes for the same colours. */
+textview.postio-editor-view,
+textview.postio-editor-view text {
+  background-color: var(--postio-surface);
+  color: var(--postio-ink);
+}
+
 /* ── The flowing reader's ground (`Reader::flow_in`, specs/007 T203) ── */
 /* A probe, not a surface: the body view reads this widget's `color` as the
    ground of the column the message flows in, since the renderer has no GTK
