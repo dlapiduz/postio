@@ -1,0 +1,55 @@
+# The native composer's list keys (spec 015 US3, scenario 1): `- ` starts a
+# bulleted list, Enter makes the next item, Tab nests it under the one
+# before and Shift+Tab takes it back out, and Enter in an empty item leaves
+# the list. The bullets are drawn, never written into the draft.
+#
+# On the native surface by its preset until spec 015's step 4 makes it the
+# only one. The WebView it replaces cannot play this: a synthesised key
+# never reaches WebKit's page, so these keys are new to the films.
+apps   = ["focus"]
+source = { kind = "spec", ref = "specs/015-native-composer US3" }
+preset = "native-composer"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+check   = { cursor.index = 0 }
+
+[[step]]
+command = "reply"
+check   = { composer.open = true, keyboard.field = "body", keyboard.typing = true }
+expect  = "A reply opens with the caret in the body, above the quote."
+
+[[step]]
+type    = "- milk"
+check   = { keyboard.field = "body", app.focus.composer.marks = "bullet_list", app.focus.compose.typed = "- milk" }
+expect  = "The `- ` became a bullet drawn at the start of the line, and milk is the first item. The toolbar's bulleted list is lit."
+
+[[step]]
+key     = "Return"
+check   = { keyboard.field = "body", app.focus.composer.marks = "bullet_list" }
+expect  = "A second bullet, empty, with the caret after it."
+
+[[step]]
+type    = "oat"
+check   = { app.focus.compose.typed = "- milk\n- oat" }
+expect  = "oat is the second item."
+
+[[step]]
+key     = "Tab"
+check   = { keyboard.field = "body", app.focus.composer.marks = "bullet_list" }
+expect  = "oat moves in under milk: its bullet is the hollow one of a nested list, indented a step. The keyboard stays in the body."
+
+[[step]]
+key     = "shift+Tab"
+check   = { keyboard.field = "body", app.focus.compose.typed = "- milk\n- oat" }
+expect  = "oat comes back out to the first level, its bullet solid again."
+
+[[step]]
+key     = "Return"
+check   = { keyboard.field = "body", app.focus.composer.marks = "bullet_list" }
+expect  = "A third, empty item."
+
+[[step]]
+key     = "Return"
+check   = { keyboard.field = "body", app.focus.composer.marks = "" }
+expect  = "Enter in the empty item leaves the list: the caret is on an ordinary line under it, with no bullet, and the list toggle goes out."
