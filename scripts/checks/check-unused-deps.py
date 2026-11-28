@@ -46,7 +46,7 @@ def main() -> int:
             "  a dependency nothing uses goes unnoticed on this machine."
         )
         return 0
-    # Not `vendor/` (upstream crates with a patch queue; machete ignores the workspace `exclude`),
+    # Not `vendor/` (upstream code, should any be carried in-tree; machete reads no `exclude`),
     # and not the workspace-hack, whose dependencies are unused by design (ADR 0047).
     paths = sorted(
         p.name

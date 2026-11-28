@@ -139,4 +139,10 @@ allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 # Cargo.toml's `[patch]` -- an upstream release plus fuzzy and prefix expansion in the
 # full-text index, which upstream has not merged (turso#8359); the comment
 # above that `[patch]` names which release. ADR 0037 says why.
-allow-git = ["https://github.com/dlapiduz/turso"]
+# The same decision for Blitz and mail-parser (2026-11-28, the maintainer's): their patches moved
+# from `vendor/` and `patches/` into Forklift Forks of their own, pinned the same way.
+allow-git = [
+    "https://github.com/dlapiduz/turso",
+    "https://github.com/dlapiduz/blitz",
+    "https://github.com/dlapiduz/mail-parser",
+]

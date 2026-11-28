@@ -40,7 +40,6 @@ members = [
     "crates/postio-vcard",
     "crates/postio-contact-sync",
 ]
-exclude = ["vendor"]
 
 # What a bare `cargo build` compiles: everything except `postio-ffi`, whose `uniffi` `cli` feature
 # pulls `uniffi_bindgen`, `clap` and `cargo_metadata` (#1306).
@@ -234,6 +233,16 @@ turso_sdk_kit_macros = { git = "https://github.com/dlapiduz/turso", tag = "v0.8.
 turso_sync_engine = { git = "https://github.com/dlapiduz/turso", tag = "v0.8.4-fork.1" }
 turso_sync_sdk_kit = { git = "https://github.com/dlapiduz/turso", tag = "v0.8.4-fork.1" }
 
-blitz-dom = { path = "vendor/blitz-dom" }
-blitz-paint = { path = "vendor/blitz-paint" }
-mail-parser = { path = "vendor/mail-parser" }
+# Blitz and mail-parser from Postio's forks, maintained by Forklift like Turso's: each Fork Release
+# is the release Postio pins plus Postio's patches to it, and its notes on GitHub list each patch
+# and why. main-92b11f1-fork.1 is Blitz 0.3.0-beta.4 (92b11f1, the commit crates.io's release was
+# built from) plus three; main-a56d5f1-fork.1 is mail-parser 1.0.1 (a56d5f1, which upstream did not
+# tag) plus one. Blitz's crates depend on one another by path inside its repository, so every Blitz
+# crate Postio builds comes from the one tag: one from crates.io beside them would be a second type.
+blitz-dom = { git = "https://github.com/dlapiduz/blitz", tag = "main-92b11f1-fork.1" }
+blitz-html = { git = "https://github.com/dlapiduz/blitz", tag = "main-92b11f1-fork.1" }
+blitz-paint = { git = "https://github.com/dlapiduz/blitz", tag = "main-92b11f1-fork.1" }
+blitz-traits = { git = "https://github.com/dlapiduz/blitz", tag = "main-92b11f1-fork.1" }
+stylo_taffy = { git = "https://github.com/dlapiduz/blitz", tag = "main-92b11f1-fork.1" }
+debug_timer = { git = "https://github.com/dlapiduz/blitz", tag = "main-92b11f1-fork.1" }
+mail-parser = { git = "https://github.com/dlapiduz/mail-parser", tag = "main-a56d5f1-fork.1" }

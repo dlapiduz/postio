@@ -102,7 +102,10 @@ jobs:
 """)
     write(root / "flatpak/app.json", json.dumps({"runtime": "org.gnome.Platform", "runtime-version": "50"}))
     write(root / "flatpak/tui.json", json.dumps({"runtime": "org.freedesktop.Platform", "runtime-version": "25.08"}))
-    write(root / "patches/blitz/upstream.toml", 'version = "0.3.0-beta.4"\n')
+    # Not a workspace member here, so the crate survey leaves it alone: only its Blitz pin is read.
+    write(root / "crates/postio-render/Cargo.toml",
+          '[package]\nname = "postio-render"\n[dependencies]\n'
+          'blitz-dom = { version = "=0.3.0-beta.4", default-features = false }\n')
 
     f = survey.fixture_name
     web = lambda u: f("https://" + u)

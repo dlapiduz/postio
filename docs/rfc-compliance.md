@@ -201,8 +201,9 @@ Parsing is `mail-parser`, reviewed against 0.11.8 and moved to 1.0.0 on
 the fix is upstream, that is why; 1.0 closed most of the delimiter-placement
 gap ([#899](https://github.com/dlapiduz/postio/issues/899)) and reads around a
 damaged base64 or quoted-printable body instead of handing it back encoded.
-What 1.0.1 still got wrong is fixed in Postio's own patch queue
-(`patches/mail-parser/`, built from `vendor/mail-parser`), not upstream.
+What 1.0.1 still got wrong is fixed in Postio's own fork
+([dlapiduz/mail-parser](https://github.com/dlapiduz/mail-parser), maintained by
+Forklift; root `Cargo.toml`'s `[patch]`), not upstream.
 
 ### Verdicts
 
@@ -215,7 +216,7 @@ What 1.0.1 still got wrong is fixed in Postio's own patch queue
 | **2045 §6.8** base64 | Illegal characters, bad padding | **Compliant, with a named exception:** a damaged payload (bytes outside the alphabet, a bad final quantum) is decoded around the damage, as a reader would, and sets `encoding_problems`. The degradation is right — the words arrive — but see the gap below on where that flag goes. |
 | **2045 §6.2, §6.8** `8bit` / `binary` | Not encoded | **Compliant.** Both arrive as their own bytes. |
 | **2045 §6.4** unknown `Content-Transfer-Encoding` | Treat as `application/octet-stream` | **Compliant, with a named exception:** shown verbatim as text instead, and **not** flagged. Recorded on [#901](https://github.com/dlapiduz/postio/issues/901) as the second half of that fix. |
-| **2046 §5.1.1** Delimiter placement | `CRLF "--" boundary`, then only whitespace to the end of the line | **Compliant** ([#899](https://github.com/dlapiduz/postio/issues/899)). `mail-parser` 1.0 matches `--boundary` only at the start of a line, so a body quoting one mid-line is kept whole; `patches/mail-parser/0001` makes the rest of the line count, so `--boundary and more` or `--boundary--x` is body text too. `multipart-boundary-quoted-in-body.eml` carries all three. Where no delimiter at the start of a line ends a part, the parser falls back to one found mid-line (a sender that wrote `text--boundary--`); that can cut a truncated delivery short, and it sets `encoding_problems` so it is said rather than shown as whole ([#287](https://github.com/dlapiduz/postio/issues/287)). |
+| **2046 §5.1.1** Delimiter placement | `CRLF "--" boundary`, then only whitespace to the end of the line | **Compliant** ([#899](https://github.com/dlapiduz/postio/issues/899)). `mail-parser` 1.0 matches `--boundary` only at the start of a line, so a body quoting one mid-line is kept whole; Postio's mail-parser Fork makes the rest of the line count, so `--boundary and more` or `--boundary--x` is body text too. `multipart-boundary-quoted-in-body.eml` carries all three. Where no delimiter at the start of a line ends a part, the parser falls back to one found mid-line (a sender that wrote `text--boundary--`); that can cut a truncated delivery short, and it sets `encoding_problems` so it is said rather than shown as whole ([#287](https://github.com/dlapiduz/postio/issues/287)). |
 | **2046 §5.1.1** Unusable boundary | Missing or unrecognisable ⇒ treat the entity as `text/plain` | **Compliant.** All three spellings (absent, empty, never appears) fall back to the entity's own content as the text body; the container is never offered as an attachment. Was a gap ([#900](https://github.com/dlapiduz/postio/issues/900)). |
 | **2046 §5.1.1** Preamble and epilogue | Not part of any body | **Compliant.** `multipart-alternative.eml` carries both so it cannot regress unnoticed. |
 | **2046 §5.1** Transport padding | Whitespace after a delimiter is not part of it | **Compliant.** |

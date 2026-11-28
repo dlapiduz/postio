@@ -446,7 +446,9 @@ def survey_flatpak(src: Source, root: Path) -> list[dict]:
 
 
 def survey_blitz(src: Source, root: Path) -> dict:
-    pin = tomllib.loads((root / "patches/blitz/upstream.toml").read_text())["version"]
+    # Blitz builds from a Forklift Fork Release of the release postio-render pins with `=`.
+    dep = tomllib.loads((root / "crates/postio-render/Cargo.toml").read_text())["dependencies"]["blitz-dom"]
+    pin = (dep if isinstance(dep, str) else dep["version"]).lstrip("=")
     return compare("blitz-dom", pin, lambda: latest_stable(src, "blitz-dom", _is_prerelease(pin)))
 
 
@@ -491,7 +493,7 @@ def render(report: dict) -> str:
     block("Tool pins", report["tools"])
     block("GitHub Actions", report["actions"])
     block("Flatpak runtimes", report["flatpak"])
-    block("Blitz (vendored)", [report["blitz"]])
+    block("Blitz (Forklift Fork)", [report["blitz"]])
     return "\n".join(lines) + "\n"
 
 
