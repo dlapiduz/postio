@@ -58,7 +58,7 @@ impl Shown {
     pub fn text(&self) -> String {
         let buffer = self.surface.view().buffer();
         buffer
-            .text(&buffer.start_iter(), &buffer.end_iter(), false)
+            .slice(&buffer.start_iter(), &buffer.end_iter(), true)
             .to_string()
     }
 

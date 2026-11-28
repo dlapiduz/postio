@@ -27,6 +27,7 @@ mod composer_markdown_source;
 mod composer_native_basic;
 mod composer_native_caret;
 mod composer_native_clipboard;
+mod composer_native_image;
 mod composer_native_ime;
 mod composer_native_input;
 mod composer_native_patch;
@@ -109,6 +110,14 @@ mod widgets_css;
 const IGNORED: &[&str] = &[];
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "composer_native_image::an_inline_image_is_a_picture_of_its_blob_at_its_place",
+        composer_native_image::an_inline_image_is_a_picture_of_its_blob_at_its_place as fn(),
+    ),
+    (
+        "composer_native_image::an_inserted_image_is_anchored_and_one_backspace_takes_it_whole",
+        composer_native_image::an_inserted_image_is_anchored_and_one_backspace_takes_it_whole as fn(),
+    ),
     (
         "composer_native_clipboard::hostile_html_pastes_narrowed",
         composer_native_clipboard::hostile_html_pastes_narrowed as fn(),

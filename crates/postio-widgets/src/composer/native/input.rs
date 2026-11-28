@@ -192,7 +192,7 @@ impl Inner {
         let to = self
             .buffer
             .iter_at_offset((line.text_start + line.len) as i32);
-        let text = self.buffer.text(&from, &to, true);
+        let text = self.buffer.slice(&from, &to, true);
         conversion_before(&text, selection.head.offset as usize, typed)
     }
 }

@@ -4,7 +4,7 @@
 use gtk::prelude::*;
 use postio_body::Patch;
 
-use super::{Inner, render};
+use super::{Inner, image, render};
 
 /// Buffer operations and tag applications one patch made: bounded per keystroke (FR-014).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -32,6 +32,7 @@ pub(super) fn apply(inner: &Inner, patch: &Patch) -> PatchStats {
         stats.inserted = patch.insert.chars().count() as u32;
         stats.operations += 1;
     }
+    stats.operations += 2 * image::anchor(inner, patch.restyle.clone());
     stats.tags = render::retag(inner, patch.restyle.clone());
     inner.patching.set(false);
     stats

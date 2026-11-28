@@ -2,6 +2,7 @@
 //! Nothing writes its buffer but the patch of `apply`'s result (ADR 0039).
 
 mod clipboard;
+mod image;
 mod input;
 mod patch;
 mod preedit;
