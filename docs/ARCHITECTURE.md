@@ -39,6 +39,7 @@ graph TD
         search["<b>postio-search</b><br/>query parser · highlighter · facets<br/><i>pure — no SQL, no toolkit</i>"]
         body["<b>postio-body</b><br/>Document · HTML subset · quoting · sanitising<br/><i>owns ammonia — both directions</i>"]
         model["<b>postio-model</b><br/>domain types · JWZ threading"]
+        signature["<b>postio-signature</b><br/>OpenPGP · S/MIME · keyring files<br/><i>pure leaf · no unsafe</i>"]
     end
 
     focus["<b>postio-focus</b><br/>the Focus controller: cursor · surfaces · keys · intents<br/><i>no I/O · ADR 0045</i>"]
@@ -83,6 +84,7 @@ graph TD
     host --> client
     host --> ai
     host --> calendar
+    host --> signature
     host --> vault
     client --> core
     session --> runtime
@@ -121,11 +123,11 @@ graph TD
 
     classDef pure fill:#eef3f8,stroke:#5980a6,color:#1c2b3a
     classDef guard stroke-dasharray:4 3,stroke:#5980a6
-    class model,search,calendar pure
+    class model,search,calendar,signature pure
     class core,app,focus,session,client,tui,mcp,widgets,classify,ai,vault,dav guard
 ```
 
-Arrows are "depends on" and each is a real direct dependency. Omitted:
+Arrows are direct dependencies. Omitted:
 `postio-session`'s edges to most leaves (it is the composition root), edges
 implied by a longer path, and `postio-workspace-hack`, which every crate
 depends on and which has no code (ADR 0047).
@@ -155,6 +157,7 @@ depends on and which has no code (ADR 0047).
 | `postio-classify` | Filter, hold, mark, in layers. No send path, no network. |
 | `postio-calendar` | Events, recurrence, edits, merges, invitations. Pure leaf. |
 | `postio-dav` | CalDAV behind one trait (`io-webdav`), and its fake. |
+| `postio-signature` | Signature verdicts from the bytes, keys and anchors handed in; GnuPG's keyring formats. Pure leaf. |
 | `postio-ai` | Asks the user's own model, on this computer. No send path, no store, no model. |
 | `postio-vault` | Appends Markdown to an Obsidian vault. Files only. |
 | `postio-render` | The memory-safe reading renderer (ADR 0042). |
@@ -181,7 +184,8 @@ the check does not walk into `postio-workspace-hack`.
   (`postio-host`, `postio-session`, `postio-runtime`, `postio-storage`,
   `postio-sync`) or app (ADR 0043).
 - `postio-classify` takes no send path or network crate (ADR 0009).
-  `postio-calendar` takes no store engine, toolkit, async runtime or network.
+  `postio-calendar` and `postio-signature` take no store engine, toolkit,
+  async runtime or network.
 - `postio-dav` takes no store or toolkit; `postio-sync` names no WebDAV library.
 - `postio-ai` takes no send path, store, toolkit, inference engine or HTTP
   client but `io-http`; its endpoint can only name this computer.
@@ -196,9 +200,9 @@ the check does not walk into `postio-workspace-hack`.
   probing `pkg-config`, not `uname`. The GTK crates are the portable half's
   exclusion set (`postio-gtk`, `postio-widgets`).
 
-One app opens the store at a time (ADR 0041). Each runs `postio-host` in its
-own process; the first to start holds the store. An agent reaches the holder
-over its private agent socket instead of opening the store.
+One app opens the store at a time (ADR 0041): each runs `postio-host` in its
+own process, and the first holds the store. An agent reaches the holder over
+its private socket.
 
 **Verb scope** is decided in one place: `postio_ui::scope::target` resolves
 whether a key acts on a message or a thread, and `scope::footer` says so. No
@@ -216,7 +220,7 @@ does not name.
 The numbered sections are cited from code; each is one line and a home.
 
 1. **§1.** Commands down, events up; the UI never awaits the network. Store write, enqueue, emit, repaint; `postio-core::bridge` is the only place the tokio half meets the UI loop, over unbounded channels. (constitution I.)
-2. **§2.** The registry is the source of truth for every command surface; a command not in it does not exist. (constitution II, ADR 0002 (the extension-command layer is removed).)
+2. **§2.** The registry is the source of truth for every command surface; a command not in it does not exist. (constitution II, ADR 0002.)
 3. **§3.** Command ids are a file format: `[keys]` in `config.toml` is keyed by them. (constitution II.)
 4. **§4.** Selection is a predicate, not a list, and not the cursor. (constitution II.)
 5. **§5.** Undo replays inverses through the same machinery as the original action. (`postio-core`.)
@@ -226,7 +230,7 @@ The numbered sections are cited from code; each is one line and a home.
 9. **§9.** The crate boundaries are enforced, not encouraged (the Boundaries section above). (constitution VII, ADR 0041, ADR 0043, ADR 0047.)
 10. **§10.** Design tokens are generated from `Design/_ds` into `postio_ui::tokens` and checked in; drift tests fail on a stale copy. Colour comes from libadwaita's named colours. (`postio-ui`.)
 11. **§11.** Privacy is a feature, not a setting. Script never touches message content, in either direction. (constitution VI, ADR 0042, ADR 0010.)
-12. **§12.** No AI inside Postio; a user-run local model is optional. (constitution (Additional Constraints), ADR 0009.)
+12. **§12.** No AI inside Postio; a user-run local model is optional. (constitution, ADR 0009.)
 13. **§13.** The composer's document (`postio_body::Document`) is not the toolkit's buffer; each platform's editor is a view over it. Sanitisation is bidirectional. (ADR 0004, ADR 0039.)
 14. **§14.** Content identity is distinct from mailbox identity. (ADR 0046.)
 

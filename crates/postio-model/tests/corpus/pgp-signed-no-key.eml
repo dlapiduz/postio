@@ -1,0 +1,29 @@
+Message-ID: <pgp-signed-no-key@example.com>
+Date: Thu, 05 Mar 2026 09:00:00 +0000
+From: Lin Okafor <lin@example.org>
+To: Grace Example <grace@example.net>
+Subject: Signed: towpath closure
+MIME-Version: 1.0
+Content-Type: multipart/signed; micalg=pgp-sha256;
+	protocol="application/pgp-signature"; boundary="=_sig_nokey_3e2"
+
+This is an OpenPGP/MIME signed message (RFC 3156).
+--=_sig_nokey_3e2
+Content-Type: text/plain; charset=utf-8
+
+Signed by a key that is on no computer but the one that made it.
+
+Lin
+--=_sig_nokey_3e2
+Content-Type: application/pgp-signature; name="signature.asc"
+Content-Description: OpenPGP digital signature
+Content-Disposition: attachment; filename="signature.asc"
+
+-----BEGIN PGP SIGNATURE-----
+
+iHUEABYIAB0WIQQM2pds7XVEJWlmID3LErpwHHubgAUCaalGEAAKCRDLErpwHHub
+gGkNAP4nP3A8qReL6bC9UqHBcD1awrsKTvYOt87DmBVobYbnNwEAr7Gk7sEeufBT
+BcfxDHIkxLx30Xd0Yq/aMErscW9w3QQ=
+=DKvF
+-----END PGP SIGNATURE-----
+--=_sig_nokey_3e2--

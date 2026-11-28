@@ -397,6 +397,9 @@ impl Host {
             .map(postio_session::mailbox_roles_at)
             .unwrap_or_default();
         let storage_ceiling = config_path.and_then(postio_session::storage_ceiling_at);
+        let gnupg_keyring = config_path
+            .and_then(|path| postio_config::Config::load_from_path(path).ok())
+            .is_some_and(|config| config.signatures.gnupg_keyring);
 
         let host = Host::start(database, blobs, |wiring| {
             wiring
@@ -404,6 +407,7 @@ impl Host {
                 .with_backfill(postio_session::backfill_policy(&sync_config))
                 .with_watch(postio_session::watch_policy(&sync_config))
                 .with_storage_ceiling(storage_ceiling)
+                .with_gnupg_keyring(gnupg_keyring)
                 .with_auto_empty(postio_core::retention::AutoEmpty {
                     junk_days: sync_config.empty_junk_after_days,
                     trash_days: sync_config.empty_trash_after_days,
@@ -1646,6 +1650,58 @@ impl Inner {
                 Ok(bytes) => Resp::RawSource(bytes),
                 Err(reason) => Resp::Failed(postio_model::listing::StoreError::new(reason)),
             },
+            Req::SourceView { message, offline } => {
+                let engine = if offline {
+                    None
+                } else {
+                    self.engine_for_message(message).await
+                };
+                let absent = match (offline, &engine) {
+                    (true, _) => postio_ui::source::RawState::Offline,
+                    (false, None) => postio_ui::source::RawState::Unreachable,
+                    (false, Some(_)) => postio_ui::source::RawState::Fetching,
+                };
+                match source::view(&self.wiring.database, &self.wiring.blobs, message, absent).await
+                {
+                    Ok(opened) => {
+                        if opened.fetch
+                            && let Some(engine) = engine
+                        {
+                            tokio::spawn(async move {
+                                if let Err(error) = engine.request_whole_message(message).await {
+                                    tracing::warn!(
+                                        message = message.get(),
+                                        cause = %error.message(),
+                                        "the source fetch was not queued"
+                                    );
+                                }
+                            });
+                        }
+                        Resp::SourceView(Box::new(opened.view))
+                    }
+                    Err(reason) => Resp::Failed(postio_model::listing::StoreError::new(reason)),
+                }
+            }
+            Req::ImportKeys(from) => match self.import_keys(from).await {
+                Ok(imported) => Resp::Imported(imported),
+                Err(reason) => Resp::Failed(postio_model::listing::StoreError::new(reason)),
+            },
+            Req::GnupgKeyring { on } => match self.write_gnupg_switch(on) {
+                Err(reason) => Resp::Failed(postio_model::listing::StoreError::new(reason)),
+                Ok(()) => match gnupg::sync(
+                    &self.wiring.database,
+                    &self.wiring.blobs,
+                    gnupg::home_of_this_user().as_deref(),
+                    on,
+                )
+                .await
+                {
+                    Ok(state) => Resp::GnupgKeyring(state),
+                    Err(error) => {
+                        Resp::Failed(postio_model::listing::StoreError::new(error.to_string()))
+                    }
+                },
+            },
             Req::DigestLikeThis(message) => focus::like_this(self, message)
                 .await
                 .map_or_else(Resp::Failed, Resp::DigestLikeThis),
@@ -1766,6 +1822,77 @@ impl Inner {
 
     /// UIDs and mailbox paths are scoped to an account: another engine can fetch unrelated bytes
     /// under the same identity.
+    async fn import_keys(
+        &self,
+        from: postio_client::protocol::ImportFrom,
+    ) -> Result<postio_ui::source::Imported, String> {
+        use postio_client::protocol::ImportFrom;
+        use postio_storage::repository::KeySource;
+        let (database, blobs) = (&self.wiring.database, &self.wiring.blobs);
+        let failed = |error: postio_storage::Error| error.to_string();
+        match from {
+            ImportFrom::File(path) => {
+                let bytes = tokio::fs::read(&path)
+                    .await
+                    .map_err(|error| format!("Postio couldn't read that file: {error}"))?;
+                postio_session::signature::import_keys(
+                    database,
+                    blobs,
+                    &bytes,
+                    KeySource::File,
+                    None,
+                )
+                .await
+                .map_err(failed)
+            }
+            ImportFrom::Message(message) => {
+                let engine = self.engine_for_message(message).await;
+                let mut total = postio_ui::source::Imported::default();
+                for part in parts::read_message(database, message)
+                    .await?
+                    .attachments
+                    .iter()
+                    .filter(|part| {
+                        postio_ui::reader::parts::is_key(&part.mime_type, part.filename.as_deref())
+                    })
+                {
+                    let bytes =
+                        parts::part_bytes(database, blobs, engine.clone(), None, message, part.id)
+                            .await?;
+                    let imported = postio_session::signature::import_keys(
+                        database,
+                        blobs,
+                        &bytes,
+                        KeySource::Attachment,
+                        Some(message),
+                    )
+                    .await
+                    .map_err(failed)?;
+                    total.keys += imported.keys;
+                    for address in imported.addresses {
+                        if !total.addresses.contains(&address) {
+                            total.addresses.push(address);
+                        }
+                    }
+                }
+                Ok(total)
+            }
+        }
+    }
+
+    fn write_gnupg_switch(&self, on: bool) -> Result<(), String> {
+        let Some(path) = self.config_path.lock().expect("never poisoned").clone() else {
+            return Ok(());
+        };
+        let text = std::fs::read_to_string(&path).unwrap_or_default();
+        match postio_config::signatures::set_gnupg_keyring(&text, on) {
+            Ok(Some(written)) => postio_config::save::write_atomically(&path, &written)
+                .map_err(|error| error.to_string()),
+            Ok(None) => Ok(()),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
     async fn engine_for_message(
         &self,
         message: postio_model::MessageId,
@@ -2380,17 +2507,20 @@ impl Transport for Local {
     }
 }
 
+pub mod anchors;
 pub use postio_session::calendar;
 pub mod compose;
 pub mod contacts;
 pub mod export;
 mod focus;
+pub mod gnupg;
 pub mod maintenance;
 pub mod notify;
 pub mod parts;
 pub mod reading;
 pub mod search;
 pub mod settings;
+pub mod source;
 pub mod startup;
 pub mod threads;
 

@@ -24,7 +24,7 @@ crates/postio-ffi/tests/ffi_suite/thread_document.rs 8
 crates/postio-gtk/tests/focus_suite/bar.rs 7
 crates/postio-gtk/tests/focus_suite/capture.rs 1
 crates/postio-gtk/tests/focus_suite/compose.rs 3
-crates/postio-gtk/tests/focus_suite/contacts.rs 4
+crates/postio-gtk/tests/focus_suite/contacts.rs 5
 crates/postio-gtk/tests/focus_suite/cursor.rs 1
 crates/postio-gtk/tests/focus_suite/digest.rs 1
 crates/postio-gtk/tests/focus_suite/drafts.rs 1
@@ -38,7 +38,7 @@ crates/postio-gtk/tests/focus_suite/selection.rs 1
 crates/postio-gtk/tests/focus_suite/settings.rs 7
 crates/postio-gtk/tests/focus_suite/state.rs 3
 crates/postio-gtk/tests/focus_suite/treatments.rs 2
-crates/postio-gtk/tests/packaging.rs 12
+crates/postio-gtk/tests/packaging.rs 13
 crates/postio-tui/src/app/find.rs 9
 crates/postio-tui/tests/tui_suite/focus_engine.rs 2
 crates/postio-widgets/src/reader/view.rs 10

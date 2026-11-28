@@ -253,6 +253,26 @@ pub fn only(root: &impl gtk::prelude::IsA<gtk::Widget>, class: &str) -> gtk::Wid
     found.remove(0)
 }
 
+pub fn buttons(widget: &impl gtk::prelude::IsA<gtk::Widget>) -> Vec<gtk::Button> {
+    use gtk::prelude::*;
+    let mut found = Vec::new();
+    let mut stack = vec![widget.as_ref().clone()];
+    while let Some(widget) = stack.pop() {
+        if !widget.is_mapped() {
+            continue;
+        }
+        if let Some(button) = widget.downcast_ref::<gtk::Button>() {
+            found.push(button.clone());
+        }
+        let mut child = widget.first_child();
+        while let Some(next) = child {
+            child = next.next_sibling();
+            stack.push(next);
+        }
+    }
+    found
+}
+
 pub fn texts(widget: &impl gtk::prelude::IsA<gtk::Widget>) -> Vec<String> {
     use gtk::prelude::*;
     let mut said = Vec::new();
@@ -585,6 +605,42 @@ impl Fixture {
         );
         self.write_raw(message, raw.as_bytes()).await;
         message
+    }
+
+    pub async fn write_verdict(&self, message: MessageId, status: &str) {
+        let connection = self.database.connect().await.expect("a connection");
+        postio_storage::repository::KeyRepository::new(&connection)
+            .put_verdict(
+                message,
+                &postio_storage::repository::VerdictRow {
+                    format: "pgp_mime".to_owned(),
+                    scope: "whole".to_owned(),
+                    status: status.to_owned(),
+                    reason: None,
+                    fingerprint: Some("AAAA".to_owned()),
+                    checked_at: 1,
+                },
+            )
+            .await
+            .expect("a verdict");
+    }
+
+    pub async fn write_key(&self, address: &str, fingerprint: &str) {
+        let connection = self.database.connect().await.expect("a connection");
+        postio_storage::repository::KeyRepository::new(&connection)
+            .record(&postio_storage::repository::NewKey {
+                fingerprint,
+                kind: postio_storage::repository::KeyKind::OpenPgp,
+                keyblock: b"keyblock bytes",
+                primary_uid: None,
+                revoked: false,
+                addresses: &[postio_model::EmailAddress::new(None::<String>, address)],
+                source: postio_storage::repository::KeySource::Gnupg,
+                message: None,
+                at: 1,
+            })
+            .await
+            .expect("a key");
     }
 
     pub async fn write_raw(&self, message: MessageId, raw: &[u8]) {
@@ -1438,4 +1494,23 @@ pub async fn rows_shown(window: &postio_gtk::window::FocusWindow, count: usize) 
         crate::settle_until(async || subjects(window).len() == count).await,
         "the inbox never reached {count} rows"
     );
+}
+
+pub fn source_dialog(keymap: &postio_core::Keymap) -> adw::Dialog {
+    let view = postio_ui::source::view(postio_ui::source::SourceInput {
+        subject: "x",
+        from: &[],
+        headers: None,
+        envelope: None,
+        raw: Some(b"From: a@example.com\r\n\r\nx".to_vec()),
+        raw_state: postio_ui::source::RawState::Here,
+        body: postio_ui::source::BodyState::Here,
+        provider: None,
+        sent_by_you: false,
+        account: "Work",
+        signature: None,
+    });
+    postio_widgets::source::SourceDialog::new(view, keymap, |_| {})
+        .dialog()
+        .clone()
 }

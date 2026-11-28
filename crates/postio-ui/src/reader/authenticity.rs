@@ -116,14 +116,292 @@ pub fn warning<T: AsRef<str>>(
     (!parts.is_empty()).then(|| parts.join(" "))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Signature {
+    pub status: String,
+    pub reason: Option<String>,
+    pub scope: String,
+    pub signer: Option<String>,
+    pub accepted: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum Mark {
+    Signed,
+    SignedAccepted,
+}
+
+impl Mark {
+    pub fn label(self) -> &'static str {
+        match self {
+            Mark::Signed => "Signed",
+            Mark::SignedAccepted => "Signed · accepted",
+        }
+    }
+
+    pub fn accessible_name(self, address: &str) -> String {
+        match self {
+            Mark::Signed => "Signed. Open verification".to_owned(),
+            Mark::SignedAccepted => {
+                format!("Signed with the key you accepted for {address}. Open verification")
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct HeaderAuthenticity {
+    pub warning: Option<String>,
+    pub mark: Option<Mark>,
+}
+
+pub fn header<T: AsRef<str>>(
+    headers: &Headers,
+    from: &[EmailAddress],
+    trusted: &[T],
+    signature: Option<&Signature>,
+) -> HeaderAuthenticity {
+    let mut lines: Vec<String> = warning(headers, from, trusted).into_iter().collect();
+    let mut mark = None;
+    if let Some(signature) = signature {
+        let address = from.first().map_or("", |sender| sender.address.as_str());
+        match (signature.status.as_str(), signature.scope.as_str()) {
+            ("bad", _) if signature.reason.as_deref() == Some("address_mismatch") => {
+                lines.push(format!(
+                    "Signed with a certificate for a different address than {address}."
+                ));
+            }
+            ("bad", _) => {
+                lines.push("The signature on this message does not match its content.".to_owned());
+            }
+            ("revoked", _) => {
+                lines.push("This message was signed with a key that has been revoked.".to_owned())
+            }
+            ("good", "whole") => match &signature.accepted {
+                Some(accepted) if Some(accepted) == signature.signer.as_ref() => {
+                    mark = Some(Mark::SignedAccepted);
+                }
+                Some(_) => lines.push(format!(
+                    "Signed with a different key than the one you accepted for {address}."
+                )),
+                None => mark = Some(Mark::Signed),
+            },
+            _ => {}
+        }
+    }
+    HeaderAuthenticity {
+        warning: (!lines.is_empty()).then(|| lines.join(" ")),
+        mark,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Method {
+    Spf,
+    Dkim,
+    Dmarc,
+    Arc,
+    Other(String),
+}
+
+impl Method {
+    fn named(name: &str) -> Method {
+        match name {
+            "spf" => Method::Spf,
+            "dkim" => Method::Dkim,
+            "dmarc" => Method::Dmarc,
+            "arc" => Method::Arc,
+            other => Method::Other(other.to_owned()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Alignment {
+    Aligned,
+    NotAligned,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MethodResult {
+    pub method: Method,
+    pub result: String,
+    pub domain: Option<String>,
+    pub selector: Option<String>,
+    pub policy: Option<String>,
+    pub aligned: Alignment,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthReport {
+    pub authserv_id: String,
+    pub trusted: bool,
+    pub position: usize,
+    pub arc_instance: Option<u32>,
+    pub results: Vec<MethodResult>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArcSet {
+    pub instance: u32,
+    pub sealer: String,
+    pub cv: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Verification {
+    pub provider: Option<AuthReport>,
+    pub provider_headers: usize,
+    pub not_believed: Vec<AuthReport>,
+    pub arc: Vec<ArcSet>,
+}
+
+pub fn verification<T: AsRef<str>>(
+    headers: &Headers,
+    from: &[EmailAddress],
+    trusted: &[T],
+) -> Verification {
+    let from_domain = from
+        .first()
+        .and_then(EmailAddress::domain)
+        .map(str::to_ascii_lowercase);
+    let from_domain = from_domain.as_deref();
+    let mut out = Verification::default();
+    for (position, value) in headers
+        .get_all("Authentication-Results")
+        .into_iter()
+        .enumerate()
+    {
+        let Some(parsed) = parse(value) else { continue };
+        let ours = trusts(trusted, &parsed.authserv_id);
+        out.provider_headers += usize::from(ours);
+        let believed = ours && out.provider.is_none();
+        let report = parsed.report(position, believed, None, from_domain);
+        if believed {
+            out.provider = Some(report);
+        } else {
+            out.not_believed.push(report);
+        }
+    }
+    for (position, value) in headers
+        .get_all("ARC-Authentication-Results")
+        .into_iter()
+        .enumerate()
+    {
+        let (instance, rest) = arc_instance(value);
+        if let Some(parsed) = parse(rest) {
+            out.not_believed
+                .push(parsed.report(position, false, instance, from_domain));
+        }
+    }
+    out.arc = headers
+        .get_all("ARC-Seal")
+        .into_iter()
+        .filter_map(|value| {
+            let tags = tags(value);
+            Some(ArcSet {
+                instance: tags.get("i")?.parse().ok()?,
+                sealer: tags.get("d")?.to_ascii_lowercase(),
+                cv: tags.get("cv").map(|cv| cv.to_ascii_lowercase()),
+            })
+        })
+        .collect();
+    out.arc.sort_by_key(|set| set.instance);
+    out
+}
+
+fn arc_instance(value: &str) -> (Option<u32>, &str) {
+    match value.split_once(';') {
+        Some((head, rest)) => match head.trim().strip_prefix("i=") {
+            Some(n) => (n.trim().parse().ok(), rest),
+            None => (None, value),
+        },
+        None => (None, value),
+    }
+}
+
+fn tags(value: &str) -> std::collections::BTreeMap<String, String> {
+    value
+        .split(';')
+        .filter_map(|tag| tag.split_once('='))
+        .map(|(key, value)| {
+            (
+                key.trim().to_ascii_lowercase(),
+                value.split_whitespace().collect::<String>(),
+            )
+        })
+        .collect()
+}
+
+fn aligned(domain: Option<&str>, from: Option<&str>) -> Alignment {
+    match (domain, from) {
+        (Some(domain), Some(from)) => {
+            if organisational(domain) == organisational(from) {
+                Alignment::Aligned
+            } else {
+                Alignment::NotAligned
+            }
+        }
+        _ => Alignment::Unknown,
+    }
+}
+
+fn organisational(host: &str) -> String {
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    psl::domain(host.as_bytes())
+        .and_then(|domain| std::str::from_utf8(domain.as_bytes()).ok())
+        .map(str::to_owned)
+        .unwrap_or(host)
+}
+
 #[derive(Debug)]
 struct Result {
     method: String,
     result: String,
     properties: Vec<(String, String)>,
+    comment: String,
 }
 
 impl Result {
+    fn report(&self, from: Option<&str>) -> MethodResult {
+        let method = Method::named(&self.method);
+        let domain = match method {
+            Method::Dkim => self.property("header.d").or(self.property("header.i")),
+            Method::Dmarc => self.property("header.from"),
+            Method::Spf => self
+                .property("smtp.mailfrom")
+                .or(self.property("smtp.helo")),
+            _ => None,
+        }
+        .map(|value| value.rsplit('@').next().unwrap_or(value).to_owned());
+        let selector = (method == Method::Dkim)
+            .then(|| self.property("header.s").map(str::to_owned))
+            .flatten();
+        let policy = (method == Method::Dmarc)
+            .then(|| {
+                self.properties
+                    .iter()
+                    .find(|(key, _)| key.starts_with("policy."))
+                    .map(|(_, value)| value.clone())
+                    .or_else(|| {
+                        self.comment
+                            .split(|c: char| c.is_whitespace() || c == ',')
+                            .find_map(|word| word.strip_prefix("p="))
+                            .map(str::to_ascii_lowercase)
+                    })
+            })
+            .flatten();
+        MethodResult {
+            aligned: aligned(domain.as_deref(), from),
+            method,
+            result: self.result.clone(),
+            domain,
+            selector,
+            policy,
+        }
+    }
+
     fn property(&self, key: &str) -> Option<&str> {
         self.properties
             .iter()
@@ -138,17 +416,34 @@ struct Parsed {
     results: Vec<Result>,
 }
 
+impl Parsed {
+    fn report(
+        &self,
+        position: usize,
+        trusted: bool,
+        arc_instance: Option<u32>,
+        from: Option<&str>,
+    ) -> AuthReport {
+        AuthReport {
+            authserv_id: self.authserv_id.clone(),
+            trusted,
+            position,
+            arc_instance,
+            results: self.results.iter().map(|r| r.report(from)).collect(),
+        }
+    }
+}
+
 fn parse(value: &str) -> Option<Parsed> {
-    let value = strip_comments(value);
-    let mut sections = value.split(';');
-    let authserv_id = sections
-        .next()?
+    let mut sections = sections(value).into_iter();
+    let (head, _) = sections.next()?;
+    let authserv_id = head
         .split_whitespace()
         .next()?
         .trim_end_matches('.')
         .to_ascii_lowercase();
     let results = sections
-        .filter_map(|section| {
+        .filter_map(|(section, comment)| {
             let mut words = section.split_whitespace();
             let (method, result) = words.next()?.split_once('=')?;
             let method = method.split('/').next()?.to_ascii_lowercase();
@@ -165,6 +460,7 @@ fn parse(value: &str) -> Option<Parsed> {
                 method,
                 result: result.to_ascii_lowercase(),
                 properties,
+                comment,
             })
         })
         .collect();
@@ -174,15 +470,29 @@ fn parse(value: &str) -> Option<Parsed> {
     })
 }
 
-fn strip_comments(value: &str) -> String {
+fn sections(value: &str) -> Vec<(String, String)> {
     let mut depth = 0usize;
-    let mut out = String::with_capacity(value.len());
+    let mut out = vec![(String::new(), String::new())];
     for c in value.chars() {
+        let (text, comment) = out.last_mut().expect("never empty");
         match c {
-            '(' => depth += 1,
-            ')' => depth = depth.saturating_sub(1),
-            _ if depth == 0 => out.push(c),
-            _ => {}
+            '(' => {
+                if depth > 0 {
+                    comment.push(c);
+                }
+                depth += 1;
+            }
+            ')' => {
+                depth = depth.saturating_sub(1);
+                if depth > 0 {
+                    comment.push(c);
+                } else {
+                    comment.push(' ');
+                }
+            }
+            _ if depth > 0 => comment.push(c),
+            ';' => out.push((String::new(), String::new())),
+            _ => text.push(c),
         }
     }
     out
@@ -358,5 +668,318 @@ mod tests {
         ] {
             assert_eq!(impersonation(&named(name, address)), None, "{name}");
         }
+    }
+
+    fn from(address: &str) -> Vec<EmailAddress> {
+        vec![EmailAddress::new(None::<String>, address)]
+    }
+
+    fn report(values: &[(&str, &str)], sender: &str) -> Verification {
+        let mut headers = Headers::new();
+        for (name, value) in values {
+            headers.push(*name, *value);
+        }
+        verification(&headers, &from(sender), &["mx.example.net"])
+    }
+
+    const TWO_DKIM: &str = "mx.example.net; dkim=pass header.d=example.com header.s=s2026 header.b=b3du; \
+        dkim=pass header.d=esp.example header.s=esp1; spf=pass smtp.mailfrom=bounce-7731@bounce.esp.example; \
+        dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=example.com";
+
+    #[test]
+    fn each_method_names_its_domain_selector_and_policy() {
+        let seen = report(
+            &[("Authentication-Results", TWO_DKIM)],
+            "billing@example.com",
+        );
+        let provider = seen.provider.expect("the provider's header");
+        assert_eq!(provider.authserv_id, "mx.example.net");
+        assert!(provider.trusted);
+        type Row<'a> = (
+            Method,
+            &'a str,
+            Option<&'a str>,
+            Option<&'a str>,
+            Option<&'a str>,
+        );
+        let rows: Vec<Row> = provider
+            .results
+            .iter()
+            .map(|r| {
+                (
+                    r.method.clone(),
+                    r.result.as_str(),
+                    r.domain.as_deref(),
+                    r.selector.as_deref(),
+                    r.policy.as_deref(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                (
+                    Method::Dkim,
+                    "pass",
+                    Some("example.com"),
+                    Some("s2026"),
+                    None
+                ),
+                (
+                    Method::Dkim,
+                    "pass",
+                    Some("esp.example"),
+                    Some("esp1"),
+                    None
+                ),
+                (Method::Spf, "pass", Some("bounce.esp.example"), None, None),
+                (
+                    Method::Dmarc,
+                    "pass",
+                    Some("example.com"),
+                    None,
+                    Some("reject")
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn alignment_is_relaxed_to_the_organisational_domain() {
+        let value = "mx.example.net; dkim=pass header.d=mail.example.com; dkim=pass header.d=esp.example; \
+            spf=pass smtp.helo=out.example.com; dkim=neutral";
+        let seen = report(&[("Authentication-Results", value)], "ada@news.example.com");
+        let aligned: Vec<Alignment> = seen
+            .provider
+            .expect("trusted")
+            .results
+            .iter()
+            .map(|r| r.aligned)
+            .collect();
+        assert_eq!(
+            aligned,
+            [
+                Alignment::Aligned,
+                Alignment::NotAligned,
+                Alignment::Aligned,
+                Alignment::Unknown
+            ]
+        );
+    }
+
+    #[test]
+    fn arc_sets_are_named_by_instance_and_never_believed() {
+        let seen = report(
+            &[
+                (
+                    "Authentication-Results",
+                    "mx.example.net; arc=pass (i=2) header.oldest-pass=1",
+                ),
+                (
+                    "ARC-Seal",
+                    "i=2; a=rsa-sha256; cv=pass; d=relay.example.org; s=a; b=eA==",
+                ),
+                (
+                    "ARC-Authentication-Results",
+                    "i=2; mx.relay.example.org; dmarc=pass header.from=example.com",
+                ),
+                (
+                    "ARC-Seal",
+                    "i=1; a=rsa-sha256; t=1; cv=none; d=lists.example.org; s=arc; b=eA==",
+                ),
+                (
+                    "ARC-Authentication-Results",
+                    "i=1; mx.lists.example.org; dkim=pass header.d=example.com",
+                ),
+            ],
+            "ada@example.com",
+        );
+        assert_eq!(
+            seen.arc,
+            [
+                ArcSet {
+                    instance: 1,
+                    sealer: "lists.example.org".into(),
+                    cv: Some("none".into())
+                },
+                ArcSet {
+                    instance: 2,
+                    sealer: "relay.example.org".into(),
+                    cv: Some("pass".into())
+                },
+            ]
+        );
+        let doubted: Vec<(&str, Option<u32>)> = seen
+            .not_believed
+            .iter()
+            .map(|r| (r.authserv_id.as_str(), r.arc_instance))
+            .collect();
+        assert_eq!(
+            doubted,
+            [
+                ("mx.relay.example.org", Some(2)),
+                ("mx.lists.example.org", Some(1))
+            ]
+        );
+        let arc = &seen.provider.expect("trusted").results[0];
+        assert_eq!(
+            (arc.method.clone(), arc.result.as_str()),
+            (Method::Arc, "pass")
+        );
+    }
+
+    #[test]
+    fn the_trusted_header_is_the_topmost_of_the_providers_and_the_rest_are_not_believed() {
+        let fail = "mx.example.net; dmarc=fail header.from=example.org";
+        let forged = "mx.example.net; dmarc=pass header.from=example.org";
+        let other = "relay.example.com; dmarc=pass header.from=example.org";
+        let seen = report(
+            &[
+                ("Authentication-Results", other),
+                ("Authentication-Results", fail),
+                ("Authentication-Results", forged),
+            ],
+            "ada@example.org",
+        );
+        let provider = seen.provider.expect("trusted");
+        assert_eq!(
+            (provider.position, provider.results[0].result.as_str()),
+            (1, "fail")
+        );
+        assert_eq!(seen.provider_headers, 2, "the provider stamped twice");
+        let doubted: Vec<(usize, bool)> = seen
+            .not_believed
+            .iter()
+            .map(|r| (r.position, r.trusted))
+            .collect();
+        assert_eq!(doubted, [(0, false), (2, false)]);
+        assert_eq!(
+            verdict(
+                &headers(&[other, fail, forged]),
+                &from("ada@example.org"),
+                &["mx.example.net"]
+            ),
+            Verdict::Failed,
+            "the verdict reads the same header the report trusts"
+        );
+    }
+
+    #[test]
+    fn no_provider_header_trusts_nothing_and_doubts_everything() {
+        let seen = report(
+            &[("Authentication-Results", TWO_DKIM)],
+            "billing@example.com",
+        );
+        assert!(seen.provider.is_some());
+        let mut headers = Headers::new();
+        headers.push("Authentication-Results", TWO_DKIM);
+        let none: [&str; 0] = [];
+        let seen = verification(&headers, &from("billing@example.com"), &none);
+        assert!(seen.provider.is_none());
+        assert_eq!(seen.not_believed.len(), 1);
+    }
+
+    fn signed(status: &str, scope: &str) -> Signature {
+        Signature {
+            status: status.to_owned(),
+            reason: None,
+            scope: scope.to_owned(),
+            signer: Some("AAAA".to_owned()),
+            accepted: None,
+        }
+    }
+
+    fn mark_of(signature: Option<Signature>) -> HeaderAuthenticity {
+        header(
+            &Headers::new(),
+            &from("ada@example.com"),
+            &["mx.example.net"],
+            signature.as_ref(),
+        )
+    }
+
+    #[test]
+    fn the_header_table_one_row_at_a_time() {
+        let different =
+            "Signed with a different key than the one you accepted for ada@example.com.";
+        let accepted = |key: &str| Signature {
+            accepted: Some(key.to_owned()),
+            ..signed("good", "whole")
+        };
+        for (signature, mark, warning) in [
+            (None, None, None),
+            (Some(signed("good", "whole")), Some(Mark::Signed), None),
+            (Some(accepted("AAAA")), Some(Mark::SignedAccepted), None),
+            (Some(accepted("BBBB")), None, Some(different)),
+            (Some(signed("good", "part")), None, None),
+            (Some(signed("good", "inline")), None, None),
+            (
+                Some(signed("bad", "whole")),
+                None,
+                Some("The signature on this message does not match its content."),
+            ),
+            (
+                Some(signed("revoked", "whole")),
+                None,
+                Some("This message was signed with a key that has been revoked."),
+            ),
+            (Some(signed("cant_check", "whole")), None, None),
+            (Some(signed("not_here_yet", "whole")), None, None),
+        ] {
+            let said = mark_of(signature.clone());
+            assert_eq!(
+                (said.mark, said.warning.as_deref()),
+                (mark, warning),
+                "{signature:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_domain_warning_comes_first_and_the_mark_stands_beside_it() {
+        let mut headers = Headers::new();
+        headers.push(
+            "Authentication-Results",
+            "mx.example.net; dmarc=fail header.from=example.com",
+        );
+        let said = header(
+            &headers,
+            &from("ada@example.com"),
+            &["mx.example.net"],
+            Some(&signed("bad", "whole")),
+        );
+        assert_eq!(
+            said.warning.as_deref(),
+            Some(
+                "This message failed sender verification: it may not be from example.com. \
+                 The signature on this message does not match its content."
+            )
+        );
+        let good = header(
+            &headers,
+            &from("ada@example.com"),
+            &["mx.example.net"],
+            Some(&signed("good", "whole")),
+        );
+        assert_eq!(
+            good.mark,
+            Some(Mark::Signed),
+            "the mark is about the content, the line about the domain"
+        );
+        assert!(good.warning.is_some());
+    }
+
+    #[test]
+    fn the_mark_says_its_words_and_its_accessible_name() {
+        assert_eq!(Mark::Signed.label(), "Signed");
+        assert_eq!(Mark::SignedAccepted.label(), "Signed · accepted");
+        assert_eq!(
+            Mark::Signed.accessible_name("ada@example.com"),
+            "Signed. Open verification"
+        );
+        assert_eq!(
+            Mark::SignedAccepted.accessible_name("ada@example.com"),
+            "Signed with the key you accepted for ada@example.com. Open verification"
+        );
     }
 }

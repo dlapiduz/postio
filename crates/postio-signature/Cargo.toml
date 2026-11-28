@@ -1,0 +1,40 @@
+[package]
+name = "postio-signature"
+description = "Message signatures checked on this computer: where a signature is, and whether it is good, from bytes and keys alone."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Pinned exactly: a signature engine moving under the policy layer is a decision. Default features
+# off drops bzip2's C (spec 016 research S1).
+pgp = { version = "=0.21.1", default-features = false }
+# Byte-faithful spans of each part, which the signed bytes are cut from (spec 016 research S1).
+mime-rs = { version = "=0.2.1", default-features = false, features = ["parser"] }
+base64 = { workspace = true }
+# rPGP's own: an RSA key's size, and S/MIME's RSA signatures.
+rsa = { version = "0.9.10", default-features = false, features = ["std", "sha2"] }
+# S/MIME, all pure Rust; webpki ships no crypto of its own here, so the algorithms are RustCrypto's
+# (spec 016 research S2).
+cms = { version = "0.2.3", default-features = false, features = ["std"] }
+x509-cert = { version = "0.2.5", default-features = false, features = ["std"] }
+der = { version = "0.7.10", features = ["std", "pem"] }
+sha2 = { version = "0.10.9", default-features = false, features = ["oid"] }
+p256 = { version = "0.13.2", default-features = false, features = ["ecdsa", "std"] }
+p384 = { version = "0.13.1", default-features = false, features = ["ecdsa", "std"] }
+webpki = { package = "rustls-webpki", version = "0.103.17", default-features = false, features = ["alloc"] }
+pki-types = { package = "rustls-pki-types", version = "1.16.0", default-features = false, features = ["alloc"] }
+postio-workspace-hack.workspace = true
+
+[dev-dependencies]
+postio-model = { workspace = true, features = ["test-corpus"] }
+
+[lints]
+workspace = true
+
+# mime-rs's library is named `mime`, which cargo-machete cannot match to the package.
+[package.metadata.cargo-machete]
+ignored = ["mime-rs"]

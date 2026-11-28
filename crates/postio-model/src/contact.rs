@@ -505,6 +505,17 @@ pub struct ContactCardRead {
     pub files: Vec<FileChip>,
     pub issues: Vec<IssueRead>,
     pub address_notes: Vec<crate::contact_form::AddressNote>,
+    pub keys: Vec<CardKey>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CardKey {
+    pub fingerprint: String,
+    pub sources: Vec<String>,
+    pub address: String,
+    pub first_seen: i64,
+    pub revoked: bool,
+    pub accepted: bool,
 }
 
 /// `before` is the sort key of the row before the first, which says whether the first starts a new

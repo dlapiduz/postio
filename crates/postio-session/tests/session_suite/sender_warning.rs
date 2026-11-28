@@ -1,6 +1,14 @@
 use chrono::Utc;
 use postio_model::{Account, EmailAddress, Message};
-use postio_session::reading::sender_warning;
+use postio_session::reading::authenticity;
+
+async fn sender_warning(
+    connection: &postio_storage::Checkout,
+    row: &postio_model::Message,
+    headers: Option<&str>,
+) -> Option<String> {
+    authenticity(connection, row, headers).await.warning
+}
 use postio_storage::repository::AccountRepository;
 use postio_storage::test_support;
 

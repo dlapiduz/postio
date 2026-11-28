@@ -580,6 +580,7 @@ pub fn open_message(app: &mut App, message: MessageId, to: Vec<EmailAddress>, bo
             message,
             row,
             warning: None,
+            mark: None,
         },
     );
     update(
@@ -920,6 +921,22 @@ pub fn summary_of(cites: &[(&str, &str, i64)]) -> postio_model::summary::DigestS
         messages: 14,
         senders: 6,
     }
+}
+
+pub fn source_view(raw: &[u8]) -> postio_ui::source::SourceView {
+    postio_ui::source::view(postio_ui::source::SourceInput {
+        subject: "Harbor",
+        from: &[],
+        headers: None,
+        envelope: None,
+        raw: Some(raw.to_vec()),
+        raw_state: postio_ui::source::RawState::Here,
+        body: postio_ui::source::BodyState::Here,
+        provider: None,
+        sent_by_you: false,
+        account: "Work",
+        signature: None,
+    })
 }
 
 #[cfg(test)]

@@ -38,6 +38,7 @@ pub enum Category {
     BrokenReferences,
     MailingList,
     Pgp,
+    Signature,
     RemoteContent,
     Calendar,
     /// A bounce: `multipart/report` with a `message/delivery-status` part.
@@ -72,6 +73,7 @@ impl Category {
         Category::BrokenReferences,
         Category::MailingList,
         Category::Pgp,
+        Category::Signature,
         Category::RemoteContent,
         Category::Calendar,
         Category::DeliveryStatus,
@@ -104,6 +106,7 @@ impl Category {
             Category::BrokenReferences => "broken-references",
             Category::MailingList => "mailing-list",
             Category::Pgp => "pgp",
+            Category::Signature => "signature",
             Category::RemoteContent => "remote-content",
             Category::Calendar => "calendar",
             Category::DeliveryStatus => "delivery-status",
@@ -222,10 +225,16 @@ corpus! {
         "Ordinary mail with two attachments, one of them a PDF with Content-Description and disposition parameters.",
     "attachment-rfc2231-filename": [MultipartMixed, Attachment, EncodedWord] =>
         "Three spellings of a non-ASCII filename: RFC 2231 continuations, charset'language form, and encoded-word abuse.",
+    "auth-results-arc-list": [PlainText, MailingList, Signature] =>
+        "A list re-signed the mail and sealed an ARC set: DKIM passes only for the list's domain, and the sender's own failed.",
     "auth-results-forged-lower": [PlainText, Hostile] =>
         "The receiving server's failing Authentication-Results above a passing one the sender wrote: only the topmost counts.",
+    "auth-results-two-dkim": [PlainText, Signature] =>
+        "Two passing DKIM signatures, one aligned with From and one by the sending service, which is not.",
     "auth-results-verified": [PlainText] =>
         "A receiving server's Authentication-Results with DKIM, SPF and DMARC all passing: nothing to warn about.",
+    "autocrypt-header": [PlainText, Signature] =>
+        "An unsigned message whose Autocrypt header carries corpus key A for its From address.",
     "bounce-delivery-status": [DeliveryStatus, MultipartMixed, PlainText] =>
         "A Postfix bounce: multipart/report with message/delivery-status and the original message embedded as message/rfc822.",
     "broken-references": [BrokenReferences, Threading, PlainText] =>
@@ -384,12 +393,44 @@ corpus! {
         "mixed > alternative > related, three levels deep, with an inline image and a trailing attachment.",
     "pgp-encrypted": [Pgp, MultipartMixed] =>
         "PGP/MIME multipart/encrypted: the version part plus an armoured OpenPGP blob.",
+    "pgp-inline-signed": [PlainText, Pgp, Signature] =>
+        "An inline cleartext signature by corpus key A, with a dash-escaped line.",
+    "pgp-key-attached": [MultipartMixed, Attachment, Pgp, Signature] =>
+        "Corpus key A attached as application/pgp-keys, offered as Import key.",
     "pgp-signed": [Pgp, MultipartMixed, PlainText] =>
         "PGP/MIME multipart/signed with micalg=pgp-sha256; the signed part must be preserved byte-exactly.",
+    "pgp-signed-good": [Pgp, Signature, PlainText] =>
+        "PGP/MIME signed by corpus key A over SHA-256: good against keys/ada-a.asc.",
+    "pgp-signed-list-footer": [Pgp, Signature, MultipartMixed, NestedMultipart, MailingList] =>
+        "A list wrapped the good signed part in multipart/mixed and added an unsigned footer: only part of the message is signed.",
+    "pgp-signed-no-key": [Pgp, Signature, PlainText] =>
+        "Signed by a key that was never exported: no key for it exists anywhere.",
+    "pgp-signed-other-key": [Pgp, Signature, PlainText] =>
+        "The good fixture's text from the same address, signed by corpus key B (RSA 3072, SHA-512).",
+    "pgp-signed-qp": [Pgp, Signature, QuotedPrintable] =>
+        "A quoted-printable signed part with soft breaks: the signature covers the encoded form.",
+    "pgp-signed-reencoded": [Pgp, Signature, Base64] =>
+        "The quoted-printable fixture's signature over the same text re-encoded as base64: bad.",
+    "pgp-signed-sha1": [Pgp, Signature, PlainText] =>
+        "Signed by corpus key B over SHA-1, which is no longer safe: never good.",
+    "pgp-signed-tampered-body": [Pgp, Signature, PlainText] =>
+        "The good fixture with one body byte changed after signing: bad.",
+    "pgp-signed-tampered-header": [Pgp, Signature, PlainText] =>
+        "The good fixture with its signed part's transfer-encoding header changed: bad.",
     "plain-text-flowed-reply": [PlainText, Threading] =>
         "text/plain with format=flowed and delsp=yes, quoting its parent — reflowing and quote detection.",
     "plain-text-simple": [PlainText, Threading] =>
         "The smallest realistic message: 7bit us-ascii, a signature delimiter, nothing unusual.",
+    "smime-signed-address-mismatch": [Signature, PlainText] =>
+        "S/MIME signed by a certificate for grace@example.net, sent From ada@example.com.",
+    "smime-signed-expired": [Signature, PlainText] =>
+        "S/MIME signed by a certificate that expired in 2021, chaining to keys/smime/root.der.",
+    "smime-signed-good": [Signature, PlainText] =>
+        "S/MIME signed over SHA-256 by ada@example.com's certificate: good against keys/smime/root.der.",
+    "smime-signed-tampered": [Signature, PlainText] =>
+        "The good S/MIME message with one word of the signed body changed after signing.",
+    "smime-signed-unknown-anchor": [Signature, PlainText] =>
+        "S/MIME signed by a certificate that chains only to keys/smime/stranger.der, never an anchor.",
     "thread-archive-1-parent": [Threading, ThreadingRules, PlainText] =>
         "Archive pair, parent: belongs in the Inbox; its reply is filed in Archive.",
     "thread-archive-2-reply": [Threading, ThreadingRules, PlainText] =>

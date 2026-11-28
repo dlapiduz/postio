@@ -55,7 +55,7 @@ pub use account::{
 pub use address::EmailAddress;
 pub use attachment::{Attachment, Disposition};
 pub use contact::{
-    AddressMove, CARD_RECENT, Contact, ContactAddress, ContactCardRead, ContactDetail,
+    AddressMove, CARD_RECENT, CardKey, Contact, ContactAddress, ContactCardRead, ContactDetail,
     ContactGlance, ContactKind, ContactListRow, ContactSource, ContactState, ContactStats,
     ContactTab, ContactView, ContactsOverview, ContactsPageRead, FileChip, IssueRead, JoinReceipt,
     JoinSuggestion, KindSignals, KindSource, MergeGroup, OpenItem, OpenSide, PersonEdit,

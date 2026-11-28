@@ -61,7 +61,7 @@ The invariants (see docs/ARCHITECTURE.md; CLAUDE.md, "What the code must do"):
     0043), and it reaches mail only through ``postio-client``.
   * ``postio-classify`` must not link anything that sends mail or reaches the
     network (``specs/007-postio-focus`` FR-132, ADR 0009), and
-    ``postio-calendar`` must stay a pure leaf.
+    ``postio-calendar`` and ``postio-signature`` must stay pure leaves.
   * ``postio-ai``, the client for the person's own model, must not link a
     send path, another HTTP client, the store engine, a toolkit, or an
     inference engine: it frames HTTP to this computer with ``io-http`` and
@@ -177,6 +177,21 @@ INTERFACE_DIRECT = [
     "io-imap",
 ]
 
+# Crates only their owner may bring in: every other member must not reach them except through it.
+# rsa and crypto-bigint 0.5 carry timing advisories that leak secret keys (RUSTSEC-2023-0071,
+# RUSTSEC-2026-0387); deny.toml ignores them because postio-signature only verifies.
+CONFINED: dict[str, dict[str, object]] = {
+    "postio-signature": {
+        "crates": ["rsa", "crypto-bigint"],
+        "why": (
+            "rsa and crypto-bigint 0.5 can leak a secret key through timing, and "
+            "deny.toml ignores their advisories only because postio-signature "
+            "verifies with public keys and holds no secret. Code that decrypts or "
+            "signs must not pick them up silently; revisit the ignores first."
+        ),
+    },
+}
+
 RULES: dict[str, dict[str, object]] = {
     "postio-widgets": {
         "banned": [
@@ -258,6 +273,27 @@ RULES: dict[str, dict[str, object]] = {
             "postio-calendar is a pure leaf (specs/007-postio-focus research "
             "R9): it parses an invitation and writes a reply, and needs no "
             "store, no toolkit, no runtime and no network to do either"
+        ),
+    },
+    "postio-signature": {
+        "banned": [
+            "turso",
+            "turso_core",
+            "rusqlite",
+            "libsqlite3-sys",
+            "gtk4",
+            "gtk4-sys",
+            "libadwaita",
+            "libadwaita-sys",
+            "tokio",
+            "async-std",
+            *NETWORK_CRATES,
+        ],
+        "edges": "product",
+        "why": (
+            "postio-signature is a pure leaf (specs/016-message-authenticity "
+            "plan, crate placement): it parses OpenPGP packets and MIME a "
+            "sender chose, and needs no store, toolkit, runtime or network"
         ),
     },
     "postio-dav": {
@@ -926,14 +962,20 @@ def dep_kind_label(kinds: set[str | None]) -> str:
 
 
 def find_violations(
-    meta: dict, crate: str, banned: set[str], own_dev: bool = True, direct_only: bool = False
+    meta: dict,
+    crate: str,
+    banned: set[str],
+    own_dev: bool = True,
+    direct_only: bool = False,
+    through: frozenset[str] = frozenset(),
 ) -> dict[str, list[tuple[str, str]]]:
     """Breadth-first search of `crate`'s dependency closure.
 
     ``own_dev`` walks the guarded crate's own dev-dependencies too; a rule
     with ``"edges": "product"`` turns it off, to guard only what ships.
     ``direct_only`` looks at the guarded crate's own dependencies and stops
-    there: a rule's ``"direct"`` list.
+    there: a rule's ``"direct"`` list. ``through`` names crates the walk does
+    not enter, so a banned crate reached only through them is allowed.
 
     Returns ``{banned_crate_name: shortest_path}`` where a path is a list of
     ``(crate_name, edge_kind)`` pairs starting at the guarded crate itself.
@@ -980,7 +1022,7 @@ def find_violations(
             if pkg is None:
                 continue
             name = pkg["name"]
-            if name == WORKSPACE_HACK:
+            if name == WORKSPACE_HACK or name in through:
                 continue
             next_path = path + [(name, dep_kind_label(kinds))]
 
@@ -1060,6 +1102,26 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             print(f"  why this matters:     {rule['why']}", file=sys.stderr)
+
+    names = {pkg["id"]: pkg["name"] for pkg in meta["packages"]}
+    members = sorted(names[pid] for pid in meta.get("workspace_members", []) if pid in names)
+    for owner, rule in CONFINED.items():
+        confined = set(rule["crates"])  # type: ignore[arg-type]
+        for member in members:
+            if member in (owner, WORKSPACE_HACK):
+                continue
+            violations = find_violations(meta, member, confined, through=frozenset({owner}))
+            for name, path in sorted(violations.items()):
+                failed = True
+                print(
+                    f"\ncrate-boundary violation: `{member}` reaches `{name}` other than "
+                    f"through `{owner}`",
+                    file=sys.stderr,
+                )
+                print(f"  how:                  {format_path(path)}", file=sys.stderr)
+                print(f"  why this matters:     {rule['why']}", file=sys.stderr)
+        if not failed:
+            print(f"ok: only {owner} brings in {', '.join(sorted(confined))}")
 
     if failed:
         print(

@@ -64,7 +64,7 @@ command from inside a text field.
 | `ctrl+shift+o` or `alt+o` | Reader view | List, thread, reader |  | `toggle_reader_view` |
 | `alt+d` | Darken this message | List, thread, reader (not the terminal) |  | `darken_message` |
 | `O` | Show original or app colours | Reader (not the terminal) |  | `switch_treatment` |
-| `ctrl+f` | Find in message | List, thread, reader |  | `find_in_message` |
+| `ctrl+f` | Find in message | List, thread, reader, source |  | `find_in_message` |
 | `ctrl+g` or `F3` | Next match | List, thread, reader |  | `find_next` |
 | `ctrl+shift+g` or `shift+F3` | Previous match | List, thread, reader |  | `find_previous` |
 | `ctrl+plus` or `ctrl+equal` or `ctrl+KP_Add` | Zoom in | List, thread, reader (not the terminal) |  | `zoom_in` |
@@ -87,7 +87,7 @@ command from inside a text field.
 | `Y` | Decline invitation | List, thread, reader, calendar, calendar window | Undo briefly | `decline_invite` |
 | `d` | Digest rule… | List, thread, reader, digest |  | `digest_rule` |
 | `D` | Stop digesting this sender | Reader, digest | Undoable | `stop_digesting_sender` |
-| `V` | View source | List, thread, reader |  | `view_source` |
+| `V` | Source and verification | List, thread, reader |  | `view_source` |
 | `A` | Open attachment or link… | List, thread, reader |  | `open_attachment_or_link` |
 | `-` | Dismiss marker | List, thread, reader | Undoable | `dismiss_marker` |
 | `.` | More actions | Reader |  | `more_actions` |
@@ -213,6 +213,15 @@ command from inside a text field.
 | `5` | Reason 5 | Filtered view |  | `filtered_tab_5` |
 | `6` | Reason 6 | Filtered view |  | `filtered_tab_6` |
 | `7` | Reason 7 | Filtered view |  | `filtered_tab_7` |
+| `1` | Verification | Source |  | `source_tab_verification` |
+| `2` | Headers | Source |  | `source_tab_headers` |
+| `3` | Raw | Source |  | `source_tab_raw` |
+| `ctrl+c` | Copy all | Source |  | `copy_source` |
+| `ctrl+s` | Save as .eml… | Source |  | `save_source` |
+| `Return` | Show | Source |  | `unfold_part` |
+| `a` | Accept this key | Source | Undoable | `accept_key` |
+| `x` | Forget this key | Source | Undoable | `forget_key` |
+| `i` | Import key… | Source |  | `import_key` |
 | `F` | Filter what is in the inbox… | List | Undoable | `sweep_inbox` |
 | `T` | Capture a task… | List, thread, reader, capture sheet |  | `capture_task` |
 | `N` | Capture a note… | List, thread, reader, capture sheet |  | `capture_note` |

@@ -65,6 +65,7 @@ def build_fixture(
     focus_dev_deps: str = "",
     classify_deps: str = "",
     calendar_deps: str = "",
+    signature_deps: str = "",
     ai_deps: str = "",
     vault_deps: str = "",
     storyboard_deps: str = "",
@@ -92,6 +93,7 @@ def build_fixture(
         write_crate(root, "crates", "postio-gtk", focus_deps, focus_dev_deps)
     write_crate(root, "crates", "postio-classify", classify_deps)
     write_crate(root, "crates", "postio-calendar", calendar_deps)
+    write_crate(root, "crates", "postio-signature", signature_deps)
     write_crate(root, "crates", "postio-ai", ai_deps)
     write_crate(root, "crates", "postio-vault", vault_deps)
     write_crate(root, "crates", "postio-storyboard", storyboard_deps)
@@ -127,6 +129,8 @@ def build_fixture(
         "candle-core",
         "reqwest",
         "io-http",
+        "rsa",
+        "crypto-bigint",
     ):
         write_crate(root, "vendor", banned)
     return root / "Cargo.toml"
@@ -453,6 +457,15 @@ def main() -> int:
             must_mention=("postio-calendar", "tokio"),
         )
         check_case(
+            "postio-signature gains an async runtime",
+            build_fixture(
+                tmp_path / "signature-tokio",
+                signature_deps='tokio = { path = "../../vendor/tokio" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-signature", "tokio"),
+        )
+        check_case(
             "an app binary gains an inference engine",
             build_fixture(
                 tmp_path / "focus-direct-candle",
@@ -674,6 +687,40 @@ def main() -> int:
                 extract_deps='postio-search = { path = "../postio-search" }\n',
             ),
             expected_status=0,
+        )
+
+        # Secret-key crates whose advisories deny.toml ignores for verification only: reached only
+        # through postio-signature, which holds no secret key.
+        check_case(
+            "postio-signature may stand on rsa and crypto-bigint",
+            build_fixture(
+                tmp_path / "signature-rsa",
+                signature_deps=(
+                    'rsa = { path = "../../vendor/rsa" }\n'
+                    'crypto-bigint = { path = "../../vendor/crypto-bigint" }\n'
+                ),
+                session_deps='postio-signature = { path = "../postio-signature" }\n',
+            ),
+            expected_status=0,
+        )
+        check_case(
+            "postio-session gains rsa directly",
+            build_fixture(
+                tmp_path / "session-rsa",
+                session_deps='rsa = { path = "../../vendor/rsa" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-session", "rsa", "postio-signature"),
+        )
+        check_case(
+            "postio-vault reaches crypto-bigint through another crate",
+            build_fixture(
+                tmp_path / "vault-bigint",
+                vault_deps='helper = { path = "../helper" }\n',
+                helper_deps='crypto-bigint = { path = "../../vendor/crypto-bigint" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-vault", "crypto-bigint", "helper"),
         )
 
         check_case(

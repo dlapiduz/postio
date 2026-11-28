@@ -522,6 +522,14 @@ impl OpenMessage {
                 }
             }
         });
+        page.header_card.connect_mark({
+            let weak = weak.clone();
+            move || {
+                if let Some(page) = weak.upgrade() {
+                    page.run(CommandId::ViewSource);
+                }
+            }
+        });
         for (button, command) in [(up, CommandId::PrevMessage), (down, CommandId::NextMessage)] {
             let weak = weak.clone();
             button.connect_clicked(move |_| {
@@ -934,6 +942,22 @@ impl OpenMessage {
         self.handler.replace(Some(Rc::new(handler)));
     }
 
+    pub fn mark_shown(&self) -> Option<String> {
+        self.header_card.mark_shown()
+    }
+
+    pub fn mark_key(&self) -> Option<String> {
+        self.header_card.mark_key()
+    }
+
+    pub fn mark_gap_after_sender(&self) -> Option<f32> {
+        self.header_card.mark_gap_after_sender()
+    }
+
+    pub fn press_mark(&self) {
+        self.run(CommandId::ViewSource);
+    }
+
     fn run(&self, command: CommandId) {
         let handler = self.handler.borrow().clone();
         if let Some(handler) = handler {
@@ -958,6 +982,8 @@ impl OpenMessage {
             }
         }
         self.reader.set_keymap(keymap);
+        self.header_card
+            .set_mark_key(hints::key(keymap, CommandId::ViewSource).as_deref());
         // Its keys are part of its width.
         self.row_width.set(None);
         for (holder, command) in [
@@ -1087,6 +1113,33 @@ impl OpenMessage {
         self.settled.set(None);
         self.arm_dwell(message);
         self.load(message, generation);
+    }
+
+    pub fn header_changed(&self, message: MessageId) {
+        if !self.is_open() || self.shown.get() != Some(message) {
+            return;
+        }
+        let client = self.client.clone();
+        let header_card = Rc::clone(&self.header_card);
+        let shown = Rc::clone(&self.shown);
+        glib::spawn_future_local(async move {
+            // POSTIO-GLIB-SAFE: a client call is a oneshot receive (ADR 0041).
+            let Ok(mut read) = client.readings(vec![message], false).await else {
+                return;
+            };
+            let Some(reading) = read.pop().filter(|_| shown.get() == Some(message)) else {
+                return;
+            };
+            header_card.set_warning(reading.authenticity.warning.as_deref());
+            header_card.set_mark(
+                reading.authenticity.mark,
+                reading
+                    .row
+                    .as_ref()
+                    .and_then(|row| row.from.first())
+                    .map_or("", |from| from.address.as_str()),
+            );
+        });
     }
 
     /// Only the open message is read, never the list. Same generation, nothing cleared first and
@@ -1451,8 +1504,16 @@ impl OpenMessage {
                 );
                 // A message is read once, and its warning rides the same reading as the header it
                 // belongs under (#1928).
-                header_card.set_warning(reading.sender_warning.as_deref());
-                reader.set_sender_warning(reading.sender_warning.as_deref());
+                header_card.set_warning(reading.authenticity.warning.as_deref());
+                header_card.set_mark(
+                    reading.authenticity.mark,
+                    reading
+                        .row
+                        .as_ref()
+                        .and_then(|row| row.from.first())
+                        .map_or("", |from| from.address.as_str()),
+                );
+                reader.set_sender_warning(reading.authenticity.warning.as_deref());
             }
             let sender = reading
                 .row
@@ -1938,7 +1999,6 @@ fn remote_fetch(
 
 type Inline = Rc<RefCell<std::collections::HashMap<String, (Vec<u8>, String)>>>;
 
-/// Without the angle brackets a `Content-ID` header wears, in any case.
 fn cid_key(content_id: &str) -> String {
     content_id
         .trim()

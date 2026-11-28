@@ -82,6 +82,7 @@ mod settings_privacy;
 mod settings_sync;
 mod settings_unsubscribe;
 mod small_widgets;
+mod source_headers;
 mod spike_preedit;
 mod storyboard_chain_delivery;
 mod storyboard_outline;
@@ -719,6 +720,10 @@ const CASES: &[(&str, fn())] = &[
         settings_privacy::allowed_senders_render_as_rows_and_hide_when_there_are_none as fn(),
     ),
     (
+        "settings_privacy::the_gnupg_switch_writes_the_config_asks_the_host_and_shows_what_it_read",
+        settings_privacy::the_gnupg_switch_writes_the_config_asks_the_host_and_shows_what_it_read as fn(),
+    ),
+    (
         "settings_privacy::revoking_a_sender_removes_its_row_and_persists",
         settings_privacy::revoking_a_sender_removes_its_row_and_persists as fn(),
     ),
@@ -990,6 +995,11 @@ const CASES: &[(&str, fn())] = &[
     (
         "small_widgets::the_blocked_images_notice_counts_and_elides",
         small_widgets::the_blocked_images_notice_counts_and_elides as fn(),
+    ),
+    (
+        "source_headers::a_long_header_value_wraps_under_its_own_column_not_under_the_names",
+        source_headers::a_long_header_value_wraps_under_its_own_column_not_under_the_names
+            as fn(),
     ),
     (
         "checkrow::showing_the_files_value_is_not_changing_it",

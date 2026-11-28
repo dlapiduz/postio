@@ -29,6 +29,7 @@ postio-contact-sync.workspace = true
 postio-runtime.workspace = true
 postio-search.workspace = true
 postio-session.workspace = true
+postio-signature.workspace = true
 postio-storage.workspace = true
 postio-sync.workspace = true
 postio-ui.workspace = true
@@ -40,6 +41,7 @@ tracing = { workspace = true }
 postio-workspace-hack.workspace = true
 
 [dev-dependencies]
+base64 = { workspace = true }
 postio-ai = { workspace = true, features = ["test-support"] }
 tracing-subscriber = { workspace = true, features = ["fmt", "env-filter"] }
 postio-smtp.workspace = true
@@ -49,4 +51,5 @@ serde-xml-rs = { workspace = true }
 postio-test-support.workspace = true
 postio-demo.workspace = true
 tempfile = { workspace = true }
+turso = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }

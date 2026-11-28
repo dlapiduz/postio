@@ -26,6 +26,7 @@ pub struct Member {
     pub cc: Vec<SafeText>,
     /// Ordinary mail has none (#1928).
     pub warning: Option<SafeText>,
+    pub mark: Option<postio_ui::reader::authenticity::Mark>,
 }
 
 impl Member {
@@ -45,6 +46,7 @@ impl Member {
             to: Vec::new(),
             cc: Vec::new(),
             warning: None,
+            mark: None,
         }
     }
 
@@ -58,7 +60,12 @@ impl Member {
     }
 
     /// The header as the store has it; every field of it came from a sender.
-    pub fn address(&mut self, row: &postio_model::Message, warning: Option<&str>) {
+    pub fn address(
+        &mut self,
+        row: &postio_model::Message,
+        warning: Option<&str>,
+        mark: Option<postio_ui::reader::authenticity::Mark>,
+    ) {
         let safe = |people: &[postio_model::EmailAddress]| -> Vec<_> {
             people
                 .iter()
@@ -74,6 +81,7 @@ impl Member {
         self.cc = safe(&row.cc);
         self.parts = row.attachments.clone();
         self.warning = warning.map(SafeText::new);
+        self.mark = mark;
     }
 
     pub fn attachments(&self) -> Vec<&postio_model::Attachment> {

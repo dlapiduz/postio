@@ -67,7 +67,7 @@ pub fn every_closable_surface_has_the_same_x_at_the_right() {
         keys.close();
         crate::settle();
 
-        let source = postio_gtk::source::dialog(b"From: a@example.com\r\n\r\nx", &window.keymap());
+        let source = support::source_dialog(&window.keymap());
         source.present(Some(&window));
         assert!(
             crate::settle_until(async || support::with_class(&source, "postio-close-button")

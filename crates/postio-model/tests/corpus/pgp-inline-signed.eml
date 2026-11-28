@@ -1,0 +1,24 @@
+Message-ID: <pgp-inline-signed@example.com>
+Date: Thu, 05 Mar 2026 09:00:00 +0000
+From: Ada Moreno <ada@example.com>
+To: Grace Example <grace@example.net>
+Subject: Inline signed: sluice inspection
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA256
+
+The sluice inspection is moved to Friday.
+
+- - This line starts with a dash, so the armour escapes it.
+
+Ada
+-----BEGIN PGP SIGNATURE-----
+
+iHUEARYIAB0WIQTo35mHUT7PR+hIegYZnBGUbTZwXQUCaalGEAAKCRAZnBGUbTZw
+XaB+AQDLJC/83gfP4zZqq7blhU5eSLRb9xABS4f4xgFxkDJ/CgEA/iCmCMvHk06j
+f4EimiNOc1BmWR6v5uTDvV6yV+EAZQI=
+=WVVv
+-----END PGP SIGNATURE-----

@@ -16,7 +16,8 @@
         "--talk-name=org.freedesktop.Notifications",
         "--filesystem=xdg-data/postio:create",
         "--filesystem=xdg-config/postio:create",
-        "--filesystem=xdg-download"
+        "--filesystem=xdg-download",
+        "--filesystem=~/.gnupg:ro"
     ],
     "build-options": {
         "append-path": "/usr/lib/sdk/rust-stable/bin",

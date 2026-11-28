@@ -486,12 +486,17 @@ pub fn document(app: &App, theme: &Theme, width: u16, now: DateTime<Local>) -> D
         Some(address) => SafeText::new(address).as_str().to_owned(),
         None => member.from.as_str().to_owned(),
     };
-    let room = usize::from(width).saturating_sub(6 + date.width() + 2);
+    let mark = member
+        .mark
+        .map(|mark| format!("  {}", mark.label()))
+        .unwrap_or_default();
+    let room = usize::from(width).saturating_sub(6 + date.width() + mark.width() + 2);
     let from = fit(&from, room);
-    let gap = usize::from(width).saturating_sub(6 + from.width() + date.width());
+    let gap = usize::from(width).saturating_sub(6 + from.width() + mark.width() + date.width());
     rows.plain(Line::from(vec![
         label("From"),
         Span::styled(from, text),
+        Span::styled(mark, dim),
         Span::raw(" ".repeat(gap)),
         Span::styled(date, dim),
     ]));
@@ -866,8 +871,18 @@ pub fn draw(
     }
     right.push(Span::styled("✕", text));
     let right_width = width_of(&right);
-    let title = if app.raw().is_some() {
-        "Raw source".to_owned()
+    let title = if let Some(raw) = app.raw() {
+        postio_ui::source::Tab::ALL
+            .iter()
+            .zip(["1", "2", "3"])
+            .map(|(tab, key)| {
+                if *tab == raw.tab {
+                    format!("[{}] {key}", tab.title())
+                } else {
+                    format!("{} {key}", tab.title())
+                }
+            })
+            .fold("Source".to_owned(), |title, tab| format!("{title} · {tab}"))
     } else {
         match row {
             Some(row) if !row.subject.as_str().trim().is_empty() => row.subject.as_str().to_owned(),
@@ -1206,10 +1221,14 @@ mod tests {
     }
 
     fn opened(size: (u16, u16)) -> App {
-        opened_warning(size, None)
+        opened_warning(size, None, None)
     }
 
-    fn opened_warning(size: (u16, u16), warning: Option<&str>) -> App {
+    fn opened_warning(
+        size: (u16, u16),
+        warning: Option<&str>,
+        mark: Option<postio_ui::reader::authenticity::Mark>,
+    ) -> App {
         let mut app = inbox(size);
         enter_thread(&mut app, &[1, 2, 3, 4, 5, 6]);
         let mut row = header(&app, MessageId::new(6));
@@ -1227,6 +1246,7 @@ mod tests {
                 message: MessageId::new(6),
                 row,
                 warning: warning.map(str::to_owned),
+                mark,
             },
         );
         update(
@@ -1239,6 +1259,23 @@ mod tests {
     }
 
     #[test]
+    fn a_signed_message_says_signed_after_the_sender_as_a_quiet_word() {
+        use postio_ui::reader::authenticity::Mark;
+        let drawn = screen(
+            120,
+            36,
+            &opened_warning((120, 36), None, Some(Mark::SignedAccepted)),
+        );
+        let from = drawn
+            .lines()
+            .find(|line| line.contains("From"))
+            .unwrap_or_else(|| panic!("a From line:\n{drawn}"));
+        assert!(from.contains("Signed · accepted"), "{from}");
+        let plain = screen(120, 36, &opened_warning((120, 36), None, None));
+        assert!(!plain.contains("Signed"), "ordinary mail says nothing");
+    }
+
+    #[test]
     fn a_sender_warning_is_a_quiet_line_under_the_header_and_ordinary_mail_has_none() {
         let said = "This message failed sender verification: it may not be from example.org.";
         let ordinary = screen(120, 36, &opened((120, 36)));
@@ -1246,7 +1283,7 @@ mod tests {
             !ordinary.contains("sender verification"),
             "nothing to say, nothing said:\n{ordinary}"
         );
-        let drawn = screen(120, 36, &opened_warning((120, 36), Some(said)));
+        let drawn = screen(120, 36, &opened_warning((120, 36), Some(said), None));
         let lines = lines_of(&drawn);
         let at = lines
             .iter()
@@ -1262,7 +1299,7 @@ mod tests {
             "the body is still here:\n{drawn}"
         );
 
-        let narrow = screen(60, 36, &opened_warning((60, 36), Some(said)));
+        let narrow = screen(60, 36, &opened_warning((60, 36), Some(said), None));
         assert!(narrow.contains("example.org."), "the end of it:\n{narrow}");
     }
 
@@ -1587,11 +1624,32 @@ mod tests {
             &mut app,
             Input::Source {
                 message: MessageId::new(6),
-                raw: Ok(b"From: lena@example.com\r\nSubject: Harbor\x1b[2J\r\n\r\nbody".to_vec()),
+                view: Ok(crate::test_support::source_view(
+                    b"From: lena@example.com\r\nSubject: Harbor\x1b[2J\r\n\r\nbody",
+                )),
             },
         );
         let drawn = screen(120, 36, &app);
-        assert!(drawn.contains("Raw source"), "{drawn}");
+        assert!(
+            drawn.contains("Source · [Verification] 1 · Headers 2 · Raw 3"),
+            "{drawn}"
+        );
+        assert!(
+            drawn.contains(
+                postio_ui::source::NOT_CHECKED_HERE
+                    .split('.')
+                    .next()
+                    .unwrap_or_default()
+            ),
+            "{drawn}"
+        );
+        update(&mut app, press('2'));
+        let drawn = screen(120, 36, &app);
+        assert!(drawn.contains("[Headers] 2"), "{drawn}");
+        assert!(drawn.contains("Subject: Harbor"), "{drawn}");
+        update(&mut app, press('3'));
+        let drawn = screen(120, 36, &app);
+        assert!(drawn.contains("[Raw] 3"), "{drawn}");
         assert!(drawn.contains("From: lena@example.com"), "{drawn}");
         assert!(!drawn.contains('\u{1b}'), "made safe: {drawn:?}");
         update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
@@ -1600,6 +1658,30 @@ mod tests {
             "back to the message"
         );
         assert_eq!(app.front(), crate::app::Front::Reader);
+    }
+
+    #[test]
+    fn i_on_the_source_imports_the_attached_keys_and_says_what_it_kept() {
+        let mut app = opened((120, 36));
+        update(&mut app, press('V'));
+        let effects = update(&mut app, press('i'));
+        assert!(
+            effects.contains(&Effect::ImportKeys(MessageId::new(6))),
+            "{effects:?}"
+        );
+        update(
+            &mut app,
+            Input::Imported(Ok(postio_ui::source::Imported {
+                keys: 1,
+                addresses: vec!["lena@example.com".to_owned()],
+            })),
+        );
+        assert_eq!(app.notice(), Some("Imported 1 key for lena@example.com."));
+        update(
+            &mut app,
+            Input::Imported(Ok(postio_ui::source::Imported::default())),
+        );
+        assert_eq!(app.notice(), Some(postio_ui::source::NO_KEY_ATTACHED));
     }
 
     #[test]

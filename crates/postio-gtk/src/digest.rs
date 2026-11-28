@@ -860,7 +860,7 @@ impl DigestWindow {
                 );
                 window
                     .reader
-                    .set_sender_warning(reading.sender_warning.as_deref());
+                    .set_sender_warning(reading.authenticity.warning.as_deref());
             }
             let sender = reading
                 .row

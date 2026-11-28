@@ -6,6 +6,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+const CARD_KEY_ROWS: u32 = 64;
+
 use chrono::Utc;
 use postio_model::card::{ImportSummary, Member, ParsedCard, ParsedGroup, ParsedPerson};
 use postio_model::{
@@ -1026,7 +1028,71 @@ impl ContactRepository<'_> {
             files,
             issues,
             address_notes: self.address_notes(person).await?,
+            keys: self.card_keys(&owned).await?,
         }))
+    }
+
+    async fn card_keys(&self, owned: &[i64]) -> Result<Vec<postio_model::CardKey>> {
+        if owned.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut bound: Vec<turso::Value> =
+            owned.iter().map(|id| turso::Value::Integer(*id)).collect();
+        bound.push(turso::Value::Integer(i64::from(CARD_KEY_ROWS)));
+        let rows: Vec<(String, String, Option<String>, i64, bool, bool)> = sql::all_unbounded(
+            self.connection,
+            &Self::explain_card_keys(owned.len()),
+            bound,
+            |row| {
+                Ok((
+                    row.col(0)?,
+                    row.col(1)?,
+                    row.col(2)?,
+                    row.col(3)?,
+                    row.col::<i64>(4)? != 0,
+                    row.col::<Option<i64>>(5)?.is_some(),
+                ))
+            },
+        )
+        .await?;
+        let mut keys: Vec<postio_model::CardKey> = Vec::new();
+        for (fingerprint, address, source, first_seen, revoked, accepted) in rows {
+            let same = keys
+                .last_mut()
+                .filter(|key| key.fingerprint == fingerprint && key.address == address);
+            match same {
+                Some(key) => key.sources.extend(source),
+                None => keys.push(postio_model::CardKey {
+                    fingerprint,
+                    sources: source.into_iter().collect(),
+                    address,
+                    first_seen,
+                    revoked,
+                    accepted,
+                }),
+            }
+        }
+        Ok(keys)
+    }
+
+    pub fn explain_card_keys(addresses: usize) -> String {
+        let ids = (1..=addresses.max(1))
+            .map(|n| format!("?{n}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let limit = addresses.max(1) + 1;
+        format!(
+            "SELECT k.fingerprint, a.address, s.source, k.first_seen, k.revoked, c.accepted_at
+               FROM public_key_addresses pa
+               JOIN public_keys k ON k.fingerprint = pa.fingerprint
+               JOIN addresses a ON a.id = pa.address_id
+               LEFT JOIN public_key_sources s ON s.fingerprint = pa.fingerprint
+               LEFT JOIN contact_accepted_keys c ON c.address_id = pa.address_id
+                                                AND c.fingerprint = pa.fingerprint
+              WHERE pa.address_id IN ({ids})
+              ORDER BY k.first_seen, k.fingerprint, a.address, s.source
+              LIMIT ?{limit}"
+        )
     }
 
     pub fn explain_card_recent(addresses: usize) -> [String; 2] {
@@ -3311,6 +3377,7 @@ impl ContactRepository<'_> {
             files: Vec::new(),
             issues: Vec::new(),
             address_notes: notes.clone(),
+            keys: Vec::new(),
         };
         Ok(Some(postio_model::ContactForm::of(&card, &notes)))
     }

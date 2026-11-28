@@ -454,21 +454,25 @@ impl Evictable {
 }
 
 async fn evictable(connection: &Connection) -> Result<Vec<Evictable>> {
-    let mut out = sql::all(
-        connection,
-        "SELECT id, raw_blob_id FROM messages
-          WHERE raw_blob_id IS NOT NULL
-          ORDER BY received_at ASC, id ASC",
-        (),
-        |row| {
-            Ok(Evictable {
-                reference: Reference::RawSource,
-                blob: BlobId::new(row.col::<String>(1)?),
+    let raw = |signed: bool| {
+        let sql = format!(
+            "SELECT id, raw_blob_id FROM messages
+              WHERE raw_blob_id IS NOT NULL
+                AND coalesce(lower(content_type), '') {} ({SIGNED_TYPES})
+              ORDER BY received_at ASC, id ASC",
+            if signed { "IN" } else { "NOT IN" }
+        );
+        async move {
+            sql::all(connection, &sql, (), |row| {
+                Ok(Evictable {
+                    reference: Reference::RawSource,
+                    blob: BlobId::new(row.col::<String>(1)?),
+                })
             })
-        },
-    )
-    .await?;
-
+            .await
+        }
+    };
+    let mut out = raw(false).await?;
     out.extend(
         sql::all(
             connection,
@@ -486,9 +490,12 @@ async fn evictable(connection: &Connection) -> Result<Vec<Evictable>> {
         )
         .await?,
     );
-
+    out.extend(raw(true).await?);
     Ok(out)
 }
+
+const SIGNED_TYPES: &str = "'multipart/signed', 'multipart/encrypted', 'application/pkcs7-mime', \
+                            'application/x-pkcs7-mime', 'application/pkcs7-signature'";
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct EvictionReport {

@@ -195,6 +195,9 @@ impl Req {
             Req::SaveAccount { .. } => "SaveAccount",
             Req::SweepPreview => "SweepPreview",
             Req::RawSource(_) => "RawSource",
+            Req::SourceView { .. } => "SourceView",
+            Req::GnupgKeyring { .. } => "GnupgKeyring",
+            Req::ImportKeys(_) => "ImportKeys",
             Req::Surfaced => "Surfaced",
             Req::DigestPreview { .. } => "DigestPreview",
             Req::DigestSummary(_) => "DigestSummary",
@@ -1686,6 +1689,44 @@ impl Client {
             Req::RawSource(message),
             "the message's source",
             only!(Resp::RawSource),
+        )
+        .await
+    }
+
+    pub async fn source_view(
+        &self,
+        message: MessageId,
+        offline: bool,
+    ) -> Result<postio_ui::source::SourceView, StoreError> {
+        self.read(
+            Req::SourceView { message, offline },
+            "the message's source",
+            only!(Resp::SourceView),
+        )
+        .await
+        .map(|view| *view)
+    }
+
+    pub async fn gnupg_keyring(
+        &self,
+        on: bool,
+    ) -> Result<postio_ui::settings::GnupgKeyring, StoreError> {
+        self.read(
+            Req::GnupgKeyring { on },
+            "the GnuPG keyring",
+            only!(Resp::GnupgKeyring),
+        )
+        .await
+    }
+
+    pub async fn import_keys(
+        &self,
+        from: crate::protocol::ImportFrom,
+    ) -> Result<postio_ui::source::Imported, StoreError> {
+        self.read(
+            Req::ImportKeys(from),
+            "the key import",
+            only!(Resp::Imported),
         )
         .await
     }

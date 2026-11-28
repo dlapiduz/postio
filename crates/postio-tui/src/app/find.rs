@@ -421,9 +421,12 @@ mod tests {
             &mut app,
             Input::Source {
                 message: MessageId::new(1),
-                raw: Ok(b"From: lena@example.org\nSubject: Survey\n\nthe Harbor\n".to_vec()),
+                view: Ok(crate::test_support::source_view(
+                    b"From: lena@example.org\nSubject: Survey\n\nthe Harbor\n",
+                )),
             },
         );
+        update(&mut app, press('3'));
         update(&mut app, ctrl('f'));
         type_text(&mut app, "harbor");
         assert!(

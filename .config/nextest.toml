@@ -46,6 +46,11 @@ test-group = 'compositor-seat'
 filter = 'binary(runtime_suite) & test(/^sync_wave::/)'
 threads-required = 4
 
+# Migrating every recorded schema takes ~150 s alone and ran past 240 s in a full run.
+[[profile.default.overrides]]
+filter = 'binary(storage_suite) & test(=migrations::every_recorded_schema_is_migrated_in_place_to_head)'
+threads-required = 4
+
 [profile.ci]
 fail-fast = false
 

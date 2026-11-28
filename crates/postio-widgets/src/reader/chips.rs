@@ -57,7 +57,9 @@ impl Chips {
         let mut any = false;
         for node in tree(root, parts).into_iter().filter(Node::is_leaf) {
             // The body parts are already on screen; a chip for the text being read is noise.
-            if node.mime.starts_with("text/") && node.filename.is_none() {
+            if (node.mime.starts_with("text/") && node.filename.is_none())
+                || !postio_ui::reader::parts::listed_as_attachment(&node.mime)
+            {
                 continue;
             }
             self.row.append(&self.chip(node));

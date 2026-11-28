@@ -468,3 +468,38 @@ never = ["Pinned@Example.org", "@lists.example.net", "not an address"]
     assert!(!never("news@a.lists.example.net"), "nor one under it");
     assert!(!never("not an address"));
 }
+
+#[test]
+fn the_gnupg_keyring_is_off_until_turned_on() {
+    let config = postio_config::Config::from_toml_str("").expect("an empty config parses");
+    assert!(
+        !config.signatures.gnupg_keyring,
+        "reading ~/.gnupg is asked for, never assumed"
+    );
+    let on = postio_config::Config::from_toml_str("[signatures]\ngnupg_keyring = true\n")
+        .expect("the switch parses");
+    assert!(on.signatures.gnupg_keyring);
+}
+
+#[test]
+fn turning_the_keyring_on_writes_one_key_and_keeps_the_rest_of_the_file() {
+    let text = "# mine\n[ui]\ndensity = \"compact\"\n";
+    let written = postio_config::signatures::set_gnupg_keyring(text, true)
+        .expect("written")
+        .expect("a change");
+    assert!(
+        written.starts_with("# mine\n[ui]\ndensity = \"compact\"\n"),
+        "{written}"
+    );
+    assert!(
+        postio_config::Config::from_toml_str(&written)
+            .expect("parses")
+            .signatures
+            .gnupg_keyring
+    );
+    assert_eq!(
+        postio_config::signatures::set_gnupg_keyring(&written, true).expect("read"),
+        None,
+        "already on"
+    );
+}

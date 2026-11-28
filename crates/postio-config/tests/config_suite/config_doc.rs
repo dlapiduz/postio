@@ -88,7 +88,7 @@ const ENTRIES: &[Entry] = &[
         path: "sync.max_inline_bytes",
         kind: "integer",
         default: "262144",
-        description: "The largest inline part fetched with the message's text rather than left on the payload axis. A `cid:` image under this size arrives with the body, so HTML mail reads correctly offline; `0` turns the rule off.",
+        description: "The largest inline part fetched with the message's text. A `cid:` image under this size arrives with the body, so HTML mail reads offline; `0` turns this off.",
     },
     Entry {
         path: "sync.initial_sync_messages",
@@ -150,12 +150,10 @@ const ENTRIES: &[Entry] = &[
         path: "compose.editor",
         kind: "string",
         default: "\"\"",
-        description: "Which editor the compose window's hand-off opens the draft in: an \
-                      application by name (`\"BBEdit\"`), a bundle identifier \
-                      (`\"com.apple.TextEdit\"`), or a path. Empty means whatever the \
-                      desktop already opens a text file with. A program that needs a \
-                      terminal -- `vim`, `nano` -- cannot be opened by either frontend, \
-                      and Postio says so rather than appearing to do nothing.",
+        description: "The editor a draft is handed to: an application name (`\"BBEdit\"`), \
+                      a bundle identifier (`\"com.apple.TextEdit\"`) or a path. Empty means \
+                      the desktop's text editor. A terminal program (`vim`) cannot be opened, \
+                      and Postio says so.",
     },
     Entry {
         path: "tui.preview",
@@ -175,7 +173,7 @@ const ENTRIES: &[Entry] = &[
         path: "tui.colors",
         kind: "table",
         default: "{}",
-        description: "Colour overrides for the terminal frontend, by role: `text`, `dim`, \
+        description: "Terminal colours by role: `text`, `dim`, \
                        `accent`, `selection`, `focus`, `unread`, `flagged`, `link`, `quote`, \
                        `code`, `error`, `warning`, `success`. A value is a colour name, a \
                        palette number or `#rrggbb`. `NO_COLOR` overrides every one.",
@@ -326,6 +324,13 @@ const ENTRIES: &[Entry] = &[
         default: "unset",
         description: "A folder of project notes, relative to the vault and inside it, besides \
                        the notes whose frontmatter says `type: project`.",
+    },
+    Entry {
+        path: "signatures.gnupg_keyring",
+        kind: "bool",
+        default: "false",
+        description: "Check signatures with your GnuPG keyring's public keys, read-only. \
+                       Postio never runs `gpg`.",
     },
 ];
 

@@ -289,7 +289,7 @@ impl Session {
         FocusReaderDocumentFfi {
             notice,
             caveat: decode_caveat(encoding_problems).map(str::to_owned),
-            sender_warning: reading.sender_warning.clone(),
+            sender_warning: reading.authenticity.warning.clone(),
             unsubscribe,
             render_mode: treated
                 .and_then(|treated| render_mode_words(treated, remembered))

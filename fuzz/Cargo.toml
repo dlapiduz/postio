@@ -24,6 +24,7 @@ libfuzzer-sys = "0.4"
 postio-model = { path = "../crates/postio-model" }
 postio-body = { path = "../crates/postio-body" }
 postio-search = { path = "../crates/postio-search" }
+postio-signature = { path = "../crates/postio-signature" }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 # Only the property tests read the `.eml` corpus; the fuzz binaries are built
@@ -60,6 +61,20 @@ bench = false
 [[bin]]
 name = "parse_query"
 path = "fuzz_targets/parse_query.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "verify_signature"
+path = "fuzz_targets/verify_signature.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "read_keyring"
+path = "fuzz_targets/read_keyring.rs"
 test = false
 doc = false
 bench = false

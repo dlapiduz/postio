@@ -15,6 +15,8 @@ use crate::view::open as draw;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Raw {
     pub message: MessageId,
+    pub view: Option<postio_ui::source::SourceView>,
+    pub tab: postio_ui::source::Tab,
     pub text: Option<SafeText>,
     pub back_to: usize,
 }
@@ -410,6 +412,10 @@ impl App {
                 | C::FindPrevious
                 | C::SwitchTreatment
                 | C::ViewSource
+                | C::SourceTabVerification
+                | C::SourceTabHeaders
+                | C::SourceTabRaw
+                | C::ImportKey
                 | C::MoreActions
                 | C::NextInConversation
                 | C::PrevInConversation
@@ -483,7 +489,6 @@ impl App {
             ReaderVerb::NextMatch => self.match_step(true),
             ReaderVerb::PrevMatch => self.match_step(false),
             ReaderVerb::SwitchTreatment => self.view_original(),
-            ReaderVerb::ViewSource => self.view_source(),
             ReaderVerb::ShowMore => self.more_actions(),
             // The rest are said only for a message with no thread to step through.
             _ => Vec::new(),
@@ -495,10 +500,11 @@ impl App {
         message: MessageId,
         row: &postio_model::Message,
         warning: Option<&str>,
+        mark: Option<postio_ui::reader::authenticity::Mark>,
     ) -> Vec<Effect> {
         match self.reading.as_mut().map(|reading| &mut reading.shown) {
             Some(shown) if shown.id == message => {
-                shown.address(row, warning);
+                shown.address(row, warning, mark);
                 vec![Effect::Redraw]
             }
             _ => Vec::new(),
@@ -539,6 +545,27 @@ impl App {
         })]
     }
 
+    pub(super) fn show_source_intent(&mut self, intent: Intent) -> Vec<Effect> {
+        match intent {
+            Intent::OpenSource { message, tab, .. } => self.open_source(message, tab),
+            Intent::Source(postio_focus::SourceVerb::Tab(tab)) => self.source_tab(tab),
+            Intent::Source(postio_focus::SourceVerb::Import) => self
+                .open
+                .raw
+                .as_ref()
+                .map(|raw| vec![Effect::ImportKeys(raw.message)])
+                .unwrap_or_default(),
+            Intent::Source(postio_focus::SourceVerb::Find) => self.open_find(),
+            Intent::CloseSurface(SurfaceKind::Source) => {
+                if let Some(raw) = self.open.raw.take() {
+                    self.reader_top = raw.back_to;
+                }
+                vec![Effect::Redraw]
+            }
+            _ => Vec::new(),
+        }
+    }
+
     pub(super) fn view_source(&mut self) -> Vec<Effect> {
         let Some(message) = self
             .reading
@@ -548,8 +575,14 @@ impl App {
         else {
             return Vec::new();
         };
+        self.open_source(message, postio_ui::source::Tab::Verification)
+    }
+
+    fn open_source(&mut self, message: MessageId, tab: postio_ui::source::Tab) -> Vec<Effect> {
         self.open.raw = Some(Raw {
             message,
+            view: None,
+            tab,
             text: None,
             back_to: self.reader_top,
         });
@@ -560,15 +593,16 @@ impl App {
     pub(super) fn source_read(
         &mut self,
         message: MessageId,
-        read: Result<Vec<u8>, String>,
+        read: Result<postio_ui::source::SourceView, String>,
     ) -> Vec<Effect> {
         if self.open.raw.as_ref().map(|raw| raw.message) != Some(message) {
             return Vec::new();
         }
         match read {
-            Ok(bytes) => {
+            Ok(view) => {
                 if let Some(raw) = self.open.raw.as_mut() {
-                    raw.text = Some(SafeText::new(&String::from_utf8_lossy(&bytes)));
+                    raw.text = Some(SafeText::new(&postio_ui::source::text(&view, raw.tab)));
+                    raw.view = Some(view);
                 }
                 vec![Effect::Redraw]
             }
@@ -577,6 +611,19 @@ impl App {
                 self.say(&reason)
             }
         }
+    }
+
+    pub(super) fn source_tab(&mut self, tab: postio_ui::source::Tab) -> Vec<Effect> {
+        let Some(raw) = self.open.raw.as_mut() else {
+            return Vec::new();
+        };
+        raw.tab = tab;
+        raw.text = raw
+            .view
+            .as_ref()
+            .map(|view| SafeText::new(&postio_ui::source::text(view, tab)));
+        self.reader_top = 0;
+        vec![Effect::Redraw]
     }
 
     pub(super) fn offer_choices(&mut self) -> Vec<Effect> {

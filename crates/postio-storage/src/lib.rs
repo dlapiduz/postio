@@ -49,6 +49,7 @@ pub mod blob;
 pub mod body_codec;
 pub mod error;
 pub mod key;
+pub mod keyboxd;
 mod perm;
 pub mod repository;
 pub mod schema;
