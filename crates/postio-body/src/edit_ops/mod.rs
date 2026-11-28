@@ -3,6 +3,7 @@
 //! (ADR 0039); the surfaces decide nothing this module can.
 
 mod blocks;
+mod convert;
 pub(crate) mod flat;
 mod lists;
 mod marks;
@@ -10,6 +11,7 @@ mod paste;
 mod text;
 pub(crate) mod tree;
 
+pub use convert::{Conversion, ConversionKind};
 pub use flat::MarkSet;
 
 use crate::document::{Block, ContentId, Document, HeadingLevel, Href};

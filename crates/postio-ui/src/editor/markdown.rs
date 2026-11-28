@@ -100,6 +100,7 @@ const fn row(
 
 use Marker::{Literal, Ordered};
 use Trigger::{LineComplete, LinePrefix, WordComplete, Wrapping};
+use postio_body::{Conversion, ConversionKind, HeadingLevel, Href, ListKind, Mark, Task};
 
 /// Longest marker first within each trigger: a recogniser checking `*` before `**` never sees `**`.
 pub const SEQUENCES: &[Sequence] = &[
@@ -209,10 +210,354 @@ pub fn bridged() -> impl Iterator<Item = (&'static str, &'static str, Trigger)> 
         })
 }
 
+/// What the person just did at the caret: a sequence of `LinePrefix` and `Wrapping` rows ends with
+/// a typed character, a `LineComplete` row with Enter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Typed {
+    Text,
+    Enter,
+}
+
+/// The conversion the text before the caret asks for, if any: `block_text` is the caret's block
+/// as characters, a line break as `\n` (or U+2028), and `caret` counts characters. The first
+/// matching row of [`SEQUENCES`] wins, which is why longer markers are listed first.
+pub fn conversion_before(block_text: &str, caret: usize, typed: Typed) -> Option<Conversion> {
+    let before: String = block_text
+        .chars()
+        .take(caret)
+        .map(|c| match c {
+            '\u{a0}' => ' ',
+            '\u{2028}' => '\n',
+            other => other,
+        })
+        .collect();
+    let complete = caret >= block_text.chars().count();
+    SEQUENCES
+        .iter()
+        .find_map(|sequence| match (sequence.trigger, typed) {
+            (LinePrefix, Typed::Text) => line_prefix(sequence, &before),
+            (Wrapping, Typed::Text) => wrapping(sequence, &before),
+            (LineComplete, Typed::Enter) if complete => line_complete(sequence, &before),
+            _ => None,
+        })
+}
+
+fn chars(text: &str) -> u32 {
+    text.chars().count() as u32
+}
+
+fn line_prefix(sequence: &Sequence, before: &str) -> Option<Conversion> {
+    let marker = before.strip_suffix(' ')?;
+    if !sequence.marker.matches(marker) {
+        return None;
+    }
+    let kind = match sequence.commands {
+        ["bullet_list"] => ConversionKind::List(ListKind::Bullet),
+        ["numbered_list"] => {
+            let digits = &marker[..marker.len() - 1];
+            ConversionKind::List(ListKind::Ordered {
+                start: digits.parse().ok()?,
+            })
+        }
+        ["quote_block"] => ConversionKind::Quote,
+        ["task_list"] => ConversionKind::Task(Task::Open),
+        ["task_list", "toggle_task"] => ConversionKind::Task(Task::Done),
+        [heading] => ConversionKind::Heading(heading_level(heading)?),
+        _ => return None,
+    };
+    Some(Conversion {
+        trigger_len: chars(before),
+        kind,
+    })
+}
+
+fn heading_level(command: &str) -> Option<HeadingLevel> {
+    HeadingLevel::from_digit(command.strip_prefix("heading_")?.parse().ok()?)
+}
+
+fn wrapping(sequence: &Sequence, before: &str) -> Option<Conversion> {
+    match sequence.marker {
+        Literal(marker) => {
+            let marks = sequence
+                .commands
+                .iter()
+                .map(|command| match *command {
+                    "bold" => Some(Mark::Strong),
+                    "italic" => Some(Mark::Emphasis),
+                    "strikethrough" => Some(Mark::Strikethrough),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>()?;
+            wrapped(before, marker, marks)
+        }
+        Marker::BacktickRun => {
+            let run = before.chars().rev().take_while(|c| *c == '`').count();
+            wrapped(before, &"`".repeat(run.max(1)), vec![Mark::Code])
+        }
+        Marker::Link => {
+            let inner = before.strip_suffix(')')?;
+            let middle = inner.rfind("](")?;
+            let href = Href::parse(&inner[middle + 2..])?;
+            let open = inner[..middle].rfind('[')?;
+            let label = &inner[open + 1..middle];
+            if label.is_empty() || label.contains(']') {
+                return None;
+            }
+            let trigger = &before[open..];
+            Some(Conversion {
+                trigger_len: chars(trigger),
+                kind: ConversionKind::Link {
+                    href,
+                    label: (1, chars(label)),
+                },
+            })
+        }
+        Marker::AngleLink => {
+            let inner = before.strip_suffix('>')?;
+            let open = inner.rfind('<')?;
+            let address = &inner[open + 1..];
+            if address.is_empty() || address.contains(char::is_whitespace) || !address.contains(':')
+            {
+                return None;
+            }
+            let href = Href::parse(address)?;
+            Some(Conversion {
+                trigger_len: chars(&before[open..]),
+                kind: ConversionKind::Link {
+                    href,
+                    label: (1, chars(address)),
+                },
+            })
+        }
+        _ => None,
+    }
+}
+
+/// `**loudly**` and not `*loudly*` inside it: both runs must be exactly the marker's length, or
+/// the first of two closing asterisks would close an italic run.
+fn wrapped(before: &str, marker: &str, marks: Vec<Mark>) -> Option<Conversion> {
+    let character = marker.chars().next()?;
+    let width = marker.chars().count();
+    let inner = before.strip_suffix(marker)?;
+    if inner.ends_with(character) {
+        return None;
+    }
+    let mut search = inner;
+    let open = loop {
+        let at = search.rfind(marker)?;
+        let run_before = inner[..at]
+            .chars()
+            .rev()
+            .take_while(|c| *c == character)
+            .count();
+        let run_after = inner[at + marker.len()..]
+            .chars()
+            .take_while(|c| *c == character)
+            .count();
+        if run_before == 0 && run_after == 0 {
+            break at;
+        }
+        search = &inner[..at];
+    };
+    let content = &inner[open + marker.len()..];
+    if content.is_empty() || content.contains(marker) {
+        return None;
+    }
+    Some(Conversion {
+        trigger_len: chars(content) + 2 * width as u32,
+        kind: ConversionKind::Wrap {
+            marks,
+            marker_len: width as u32,
+        },
+    })
+}
+
+fn line_complete(sequence: &Sequence, before: &str) -> Option<Conversion> {
+    let (above, line) = match before.rsplit_once('\n') {
+        Some((above, line)) => (Some(above), line),
+        None => (None, before),
+    };
+    if !sequence.marker.matches(line) {
+        return None;
+    }
+    let lone = above.is_none();
+    let kind = match (sequence.commands, lone) {
+        (["heading_1"], false) => ConversionKind::Setext(HeadingLevel::One),
+        (["heading_2", "divider"], false) => ConversionKind::Setext(HeadingLevel::Two),
+        (["heading_2", "divider"] | ["divider"], true) => ConversionKind::Rule,
+        (["code_block"], true) => {
+            let info = line.trim_start_matches(['`', '~']).trim();
+            ConversionKind::CodeBlock(postio_body::Language::parse(info))
+        }
+        _ => return None,
+    };
+    let trigger_len = match kind {
+        ConversionKind::Setext(_) => chars(line) + 1,
+        _ => chars(line),
+    };
+    Some(Conversion { trigger_len, kind })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use postio_core::{CommandId, Context, registry};
+
+    fn names(kind: &ConversionKind, commands: &[&str]) -> bool {
+        let mark = |mark: &Mark| match mark {
+            Mark::Strong => "bold",
+            Mark::Emphasis => "italic",
+            Mark::Strikethrough => "strikethrough",
+            Mark::Code => "inline_code",
+        };
+        match kind {
+            ConversionKind::Heading(level) => commands == [format!("heading_{}", level.digit())],
+            ConversionKind::List(ListKind::Bullet) => commands == ["bullet_list"],
+            ConversionKind::List(ListKind::Ordered { .. }) => commands == ["numbered_list"],
+            ConversionKind::Task(Task::Open) => commands == ["task_list"],
+            ConversionKind::Task(Task::Done) => commands == ["task_list", "toggle_task"],
+            ConversionKind::Quote => commands == ["quote_block"],
+            ConversionKind::Rule => commands.contains(&"divider"),
+            ConversionKind::Setext(level) => {
+                commands.contains(&format!("heading_{}", level.digit()).as_str())
+            }
+            ConversionKind::CodeBlock(_) => commands == ["code_block"],
+            ConversionKind::Wrap { marks, .. } => {
+                marks.iter().map(mark).collect::<Vec<_>>() == commands
+            }
+            ConversionKind::Link { .. } => commands == ["insert_link"],
+        }
+    }
+
+    /// Rows whose surface is spec 014's held half (autolinks, tables): matched there, not here.
+    fn later(sequence: &Sequence) -> bool {
+        matches!(sequence.marker, Marker::Autolink | Marker::DelimiterRow)
+    }
+
+    fn example(sequence: &Sequence) -> (String, Typed) {
+        match (sequence.marker, sequence.trigger) {
+            (Literal(marker), Wrapping) => (format!("{marker}word{marker}"), Typed::Text),
+            (Literal(marker), LinePrefix) => (format!("{marker} "), Typed::Text),
+            (Ordered, _) => ("3. ".to_owned(), Typed::Text),
+            (Literal(marker), LineComplete) if sequence.commands[0].starts_with("heading") => {
+                (format!("Title\n{marker}"), Typed::Enter)
+            }
+            (Literal(marker), LineComplete) => (marker.to_owned(), Typed::Enter),
+            (Marker::Fence, _) => ("```rust".to_owned(), Typed::Enter),
+            (Marker::DelimiterRow, _) => ("|---|---|".to_owned(), Typed::Enter),
+            (Marker::BacktickRun, _) => ("`f()`".to_owned(), Typed::Text),
+            (Marker::Link, _) => ("[site](https://example.com/)".to_owned(), Typed::Text),
+            (Marker::AngleLink, _) => ("<https://example.com/>".to_owned(), Typed::Text),
+            (Marker::Autolink, _) => ("https://example.com/ ".to_owned(), Typed::Text),
+            (marker, trigger) => panic!("no example for {marker:?} {trigger:?}"),
+        }
+    }
+
+    #[test]
+    fn every_row_of_the_table_converts_to_what_it_names() {
+        for sequence in SEQUENCES {
+            let (text, typed) = example(sequence);
+            let caret = text.chars().count();
+            match conversion_before(&text, caret, typed) {
+                Some(conversion) => {
+                    assert!(
+                        names(&conversion.kind, sequence.commands),
+                        "{text:?} became {conversion:?}, not {:?}",
+                        sequence.commands
+                    );
+                    assert!(conversion.trigger_len as usize <= caret);
+                }
+                None => assert!(later(sequence), "{text:?} ({sequence:?}) converted nothing"),
+            }
+        }
+    }
+
+    fn kind(text: &str, typed: Typed) -> Option<ConversionKind> {
+        conversion_before(text, text.chars().count(), typed).map(|c| c.kind)
+    }
+
+    #[test]
+    fn the_longest_marker_wins_and_a_half_closed_one_waits() {
+        assert_eq!(
+            kind("**x**", Typed::Text),
+            Some(ConversionKind::Wrap {
+                marks: vec![Mark::Strong],
+                marker_len: 2
+            })
+        );
+        assert_eq!(
+            kind("***x***", Typed::Text),
+            Some(ConversionKind::Wrap {
+                marks: vec![Mark::Strong, Mark::Emphasis],
+                marker_len: 3
+            })
+        );
+        assert_eq!(
+            kind("**loudly*", Typed::Text),
+            None,
+            "the first of two closing asterisks"
+        );
+        assert_eq!(
+            kind("****", Typed::Text),
+            None,
+            "four asterisks are not a request"
+        );
+    }
+
+    #[test]
+    fn a_wrapping_trigger_is_only_the_wrapped_words() {
+        let conversion = conversion_before("say **hi**", 10, Typed::Text).unwrap();
+        assert_eq!(conversion.trigger_len, 6);
+    }
+
+    #[test]
+    fn a_line_prefix_is_only_at_the_start_of_its_block() {
+        assert_eq!(kind("a - ", Typed::Text), None);
+        assert_eq!(
+            kind("-\u{a0}", Typed::Text),
+            Some(ConversionKind::List(ListKind::Bullet))
+        );
+        assert_eq!(
+            kind("7) ", Typed::Text),
+            Some(ConversionKind::List(ListKind::Ordered { start: 7 })),
+            "the number is the list's start"
+        );
+    }
+
+    #[test]
+    fn a_line_complete_sequence_waits_for_enter_at_the_end_of_its_line() {
+        assert_eq!(kind("---", Typed::Text), None);
+        assert_eq!(kind("---", Typed::Enter), Some(ConversionKind::Rule));
+        assert_eq!(
+            kind("Title\u{2028}---", Typed::Enter),
+            Some(ConversionKind::Setext(HeadingLevel::Two))
+        );
+        assert_eq!(
+            conversion_before("---x", 3, Typed::Enter),
+            None,
+            "the caret is not at the end"
+        );
+        assert_eq!(
+            kind("```rust", Typed::Enter),
+            Some(ConversionKind::CodeBlock(postio_body::Language::parse(
+                "rust"
+            )))
+        );
+    }
+
+    #[test]
+    fn a_link_names_its_label_inside_the_trigger() {
+        let conversion =
+            conversion_before("see [the site](https://example.com/)", 36, Typed::Text).unwrap();
+        assert_eq!(conversion.trigger_len, 32);
+        assert_eq!(
+            conversion.kind,
+            ConversionKind::Link {
+                href: Href::parse("https://example.com/").unwrap(),
+                label: (1, 8)
+            }
+        );
+    }
 
     #[test]
     fn every_sequence_reaches_a_formatting_command_and_nothing_else() {
