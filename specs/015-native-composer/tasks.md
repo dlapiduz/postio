@@ -168,7 +168,7 @@ is a guard and says so.
 
 ## Phase 8: Polish
 
-- [ ] T076 [P] Amend ADR 0039: status "Built", the spike's outcome, the signature deviation (D1), the Mac having shipped compose before it, and Q1 to Q3's answers. No parallel ADR for this spec (CLAUDE.md)
+- [x] T076 [P] Amend ADR 0039: status "Built", the spike's outcome, the signature deviation (D1), the Mac having shipped compose before it, and Q1 to Q3's answers. No parallel ADR for this spec (CLAUDE.md)
 - [ ] T077 [P] Update `docs/ARCHITECTURE.md` (`postio-body`'s `apply` and `project`; `postio-widgets`'s native surface; no `webkit6`) and remove the WebKit composer gotchas from `docs/gotchas.md`; add the native surface's traps found along the way
 - [ ] T078 [P] Update `docs/PRODUCT.md` §10 for what is no longer held, and the reply quote's look if Q2 chose A
 - [ ] T079 Run `quickstart.md` end to end, then `scripts/target-sweep.py`. Close #2215 with the final PR's `Closes` line
