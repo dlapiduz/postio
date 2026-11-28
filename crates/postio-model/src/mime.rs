@@ -129,7 +129,7 @@ impl std::error::Error for Unparseable {}
 /// bytes are not kept (ADR 0020), so the store stamps each body with its version
 /// (`messages.body_parsed_with`) and backfill fetches again the rows an older version got wrong. 1:
 /// lenient quoted-printable. 2: `mail-parser` 1.0, reading around damaged transfer encodings. 3: a
-/// delimiter line holds only whitespace after the boundary (`patches/mail-parser/0001`, #899), and
+/// delimiter line holds only whitespace after the boundary (Postio's mail-parser Fork, #899), and
 /// a guessed structure carries the caveat (#287).
 pub const PARSER_VERSION: u32 = 3;
 

@@ -20,6 +20,6 @@ from the contract.
 | `transactional-shipping-notice` | match |
 
 The one mismatch the engine evaluation found (`html-newsletter`, 88.8%) was
-Blitz's collapsed-border grid, upstream #504. It is patched in-tree
-(`patches/blitz/0001-collapsed-borders-only-where-they-are-drawn.patch`,
+Blitz's collapsed-border grid, upstream #504. It is patched in Postio's Blitz
+Fork (dlapiduz/blitz, "Collapsed table borders: each edge in its own colour";
 research R1), and with it the newsletter reaches 98.4%.

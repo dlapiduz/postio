@@ -22,10 +22,10 @@ members = [
 ]
 waits_on = "the whole stack: bump them in one change, when each has a release that accepts the others"
 
-# The text and SVG stack the vendored Blitz (`vendor/blitz-*`) is built on.
-# Blitz's own manifest names these versions, and `postio-render` shares them
-# with it, so they cannot move ahead of it. `patches/blitz/upstream.toml`
-# names the Blitz release we start from. The blitz-* and anyrender* crates are
+# The text and SVG stack Blitz (Postio's Forklift Fork, dlapiduz/blitz) is
+# built on. Blitz's own manifest names these versions, and `postio-render`
+# shares them with it, so they cannot move ahead of it. `postio-render`'s
+# `=` pin on blitz-dom names the Blitz release the Fork carries. The blitz-* and anyrender* crates are
 # pinned `=` to that same release in `postio-render`.
 [[group]]
 name = "blitz-stack"
@@ -34,7 +34,7 @@ members = [
     "blitz-dom", "blitz-html", "blitz-paint", "blitz-traits",
     "anyrender", "anyrender_vello_cpu",
 ]
-waits_on = "a Blitz release that moves them (compare patches/blitz/upstream.toml with the latest blitz-dom)"
+waits_on = "a Blitz release that moves them (compare postio-render's blitz-dom pin with the latest blitz-dom)"
 
 # HTML parsing. Blitz and htmd both build on these, and postio-body hands
 # their trees to each other.

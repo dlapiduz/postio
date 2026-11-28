@@ -16,7 +16,7 @@ test-hooks = []
 # `net` and `system-fonts` are off (research R3): no network crate, and no fontconfig (C reading a
 # message's codepoints) on the content path.
 # `scripts/checks/check-renderer-is-memory-safe.py` holds the graph to that; blitz builds from
-# `vendor/`.
+# Postio's Forklift Fork (root Cargo.toml's `[patch]`).
 blitz-dom = { version = "=0.3.0-beta.4", default-features = false, features = ["floats", "svg"] }
 blitz-html = { version = "=0.3.0-beta.4", default-features = false }
 blitz-paint = { version = "=0.3.0-beta.4", default-features = false, features = ["svg"] }
