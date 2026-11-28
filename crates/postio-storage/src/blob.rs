@@ -201,13 +201,17 @@ impl BlobStore {
         path_of(&self.root, id)
     }
 
-    /// Call on start: a power cut during a fetch leaves a `.part` file nothing finishes.
+    /// Call on start: a power cut during a fetch leaves a `.part` file nothing finishes. Files this
+    /// process is still writing are kept, so the purge may run beside a sync that is fetching.
     pub fn purge_temporary(&self) -> Result<usize> {
         let entries = read_dir(&self.temporary)?;
         let mut purged = 0;
         for entry in entries {
             let path = entry.path();
-            if path.is_file() && std::fs::remove_file(&path).is_ok() {
+            if path.is_file()
+                && !TemporaryBlob::is_ours(&path)
+                && std::fs::remove_file(&path).is_ok()
+            {
                 purged += 1;
             }
         }
@@ -705,11 +709,30 @@ struct TemporaryBlob {
 }
 
 impl TemporaryBlob {
+    // Not the pid alone: inside a Flatpak sandbox every start can have the same pid, and debris
+    // named like this process's own would never be purged.
+    fn prefix() -> &'static str {
+        static PREFIX: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        PREFIX.get_or_init(|| {
+            let started = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos();
+            format!("{}-{started}-", std::process::id())
+        })
+    }
+
+    fn is_ours(path: &Path) -> bool {
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with(Self::prefix()))
+    }
+
     fn create(directory: &Path) -> Result<Self> {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let path = directory.join(format!(
-            "{}-{}.part",
-            std::process::id(),
+            "{}{}.part",
+            Self::prefix(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         // `publish` renames this file and keeps its mode, so the published blob gets the mode it is
