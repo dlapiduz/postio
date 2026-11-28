@@ -86,6 +86,7 @@ async fn run(connection: &Connection, query: &str, aware: bool) -> Vec<MessageId
         parsed = parsed.contact_aware();
     }
     let request = SearchRequest {
+        mailboxes: None,
         account: AccountScope::Unified,
         query: &parsed,
         scope: Scope::AllMail,

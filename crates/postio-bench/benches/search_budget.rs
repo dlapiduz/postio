@@ -188,6 +188,7 @@ async fn run(query: &str, limit: u32) -> Duration {
     let connection = corpus.database.connect().await.expect("checkout");
     let parsed = parse(query, now().date_naive());
     let request = SearchRequest {
+        mailboxes: None,
         account: AccountScope::Account(corpus.account_id),
         query: &parsed,
         scope: Scope::AllMail,
@@ -207,6 +208,7 @@ async fn run_facets(query: &str) -> Duration {
     let connection = corpus.database.connect().await.expect("checkout");
     let parsed = parse(query, now().date_naive());
     let request = SearchRequest {
+        mailboxes: None,
         account: AccountScope::Account(corpus.account_id),
         query: &parsed,
         scope: Scope::AllMail,
@@ -348,6 +350,7 @@ async fn run_multi_account(query: &str, account: AccountScope) -> Duration {
     let connection = corpus.database.connect().await.expect("checkout");
     let parsed = parse(query, now().date_naive());
     let request = SearchRequest {
+        mailboxes: None,
         account,
         query: &parsed,
         scope: Scope::AllMail,

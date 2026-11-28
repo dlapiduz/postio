@@ -89,6 +89,7 @@ async fn world() -> World {
 async fn messages(world: &World, text: &str) -> BTreeSet<MessageId> {
     let query = parse(text, today());
     let request = SearchRequest {
+        mailboxes: None,
         account: AccountScope::Unified,
         query: &query,
         scope: Scope::AllMail,

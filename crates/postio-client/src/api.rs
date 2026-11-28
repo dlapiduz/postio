@@ -148,6 +148,8 @@ impl Req {
             Req::InlineImage { .. } => "InlineImage",
             Req::AttachRemoteImage { .. } => "AttachRemoteImage",
             Req::Search(_) => "Search",
+            Req::SearchPage { .. } => "SearchPage",
+            Req::MailStats { .. } => "MailStats",
             Req::SearchHits { .. } => "SearchHits",
             Req::Facets { .. } => "Facets",
             Req::Conversations { .. } => "Conversations",
@@ -1251,6 +1253,52 @@ impl Client {
     ) -> Result<Option<crate::protocol::Found>, StoreError> {
         self.read(Req::Search(search), "a search", only!(Resp::Found))
             .await
+    }
+
+    pub async fn search_page(
+        &self,
+        account: postio_model::AccountScope,
+        query: String,
+        mailboxes: Vec<postio_model::MailboxId>,
+        newest_first: bool,
+        offset: u32,
+        limit: u32,
+    ) -> Result<Option<postio_search::results::SearchPage>, StoreError> {
+        self.read(
+            Req::SearchPage {
+                account,
+                query,
+                mailboxes,
+                newest_first,
+                offset,
+                limit,
+            },
+            "a page of a search",
+            only!(Resp::SearchPage),
+        )
+        .await
+    }
+
+    pub async fn mail_stats(
+        &self,
+        account: postio_model::AccountScope,
+        query: String,
+        mailboxes: Vec<postio_model::MailboxId>,
+        group_by: postio_search::results::GroupBy,
+        groups: u32,
+    ) -> Result<Option<postio_search::results::MailStats>, StoreError> {
+        self.read(
+            Req::MailStats {
+                account,
+                query,
+                mailboxes,
+                group_by,
+                groups,
+            },
+            "counts of a search",
+            only!(Resp::Stats),
+        )
+        .await
     }
 
     pub async fn search_hits(

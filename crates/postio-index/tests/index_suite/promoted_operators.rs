@@ -34,6 +34,7 @@ async fn found(connection: &Connection, account: AccountId, text: &str) -> BTree
     search(
         connection,
         &SearchRequest {
+            mailboxes: None,
             account: AccountScope::Account(account),
             query: &query,
             scope: Scope::AllMail,

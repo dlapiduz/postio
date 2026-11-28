@@ -79,6 +79,7 @@ async fn searched(connection: &Connection, query: &str) -> BTreeSet<MessageId> {
     search(
         connection,
         &SearchRequest {
+            mailboxes: None,
             account: AccountScope::Unified,
             query: &parsed,
             scope: Scope::AllMail,

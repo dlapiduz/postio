@@ -20,6 +20,7 @@ async fn hits(fixture: &Fixture, account: AccountId, query: &str) -> Vec<Message
     search(
         &connection,
         &SearchRequest {
+            mailboxes: None,
             account: AccountScope::Account(account),
             query: &parsed,
             scope: Scope::AllMail,

@@ -232,6 +232,21 @@ pub enum Req {
     /// The ask itself marks the session open, so ask once per process.
     RecoverDraft(AccountId),
     Search(Search),
+    SearchPage {
+        account: postio_model::AccountScope,
+        query: String,
+        mailboxes: Vec<MailboxId>,
+        newest_first: bool,
+        offset: u32,
+        limit: u32,
+    },
+    MailStats {
+        account: postio_model::AccountScope,
+        query: String,
+        mailboxes: Vec<MailboxId>,
+        group_by: postio_search::results::GroupBy,
+        groups: u32,
+    },
     SearchHits {
         account: postio_model::AccountScope,
         query: postio_search::ParsedQuery,
@@ -571,6 +586,8 @@ pub enum Resp {
     RemoteImage(Result<postio_model::Attachment, postio_ui::compose::RemoteRefusal>),
     Bytes(Option<Vec<u8>>),
     Found(Option<Found>),
+    SearchPage(Option<postio_search::results::SearchPage>),
+    Stats(Option<postio_search::results::MailStats>),
     Hits(Option<Box<Hits>>),
     Facets(Option<postio_search::facets::Facets>),
     Conversations(Option<Box<Conversations>>),

@@ -42,6 +42,7 @@ async fn a_word_with_a_date_filter_seeks_each_hit_by_its_content() {
         let query = parse(text, today);
         for order in [ResultOrder::Relevance, ResultOrder::Newest] {
             let request = SearchRequest {
+                mailboxes: None,
                 account: AccountScope::Account(account.id),
                 query: &query,
                 scope: Scope::AllMail,

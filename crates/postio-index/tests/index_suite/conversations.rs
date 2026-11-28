@@ -851,6 +851,7 @@ async fn gtk_search_does_not_reach_attachment_contents() {
     let found = postio_index::executor::search(
         &connection,
         &postio_index::SearchRequest {
+            mailboxes: None,
             account: AccountScope::Unified,
             query: &parsed,
             scope: postio_search::facets::Scope::AllMail,
