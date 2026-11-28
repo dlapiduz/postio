@@ -902,3 +902,86 @@ async fn holding_mail_moves_focus_s_total_marks_and_rows_together() {
         "and never the held conversation"
     );
 }
+
+async fn threaded(
+    database: &test_support::TempStore,
+    account: AccountId,
+    inbox: MailboxId,
+    rfc: &str,
+    references: &[&str],
+) -> (postio_model::MessageId, postio_model::ThreadId) {
+    let connection = database.connect().await.expect("a connection");
+    let mut message = postio_model::Message::new(account, inbox, chrono::Utc::now());
+    message.rfc_message_id = Some(postio_model::RfcMessageId::new(format!(
+        "<{rfc}@example.com>"
+    )));
+    message.references = references
+        .iter()
+        .map(|id| postio_model::RfcMessageId::new(format!("<{id}@example.com>")))
+        .collect();
+    message.in_reply_to = message.references.last().cloned();
+    message.subject = Some("Re: Harbor API".to_owned());
+    let id = postio_storage::repository::MessageRepository::new(&connection)
+        .create(&mut message)
+        .await
+        .expect("a message");
+    let thread = postio_storage::repository::ThreadingRepository::new(&connection, account)
+        .thread(&message)
+        .await
+        .expect("threaded")
+        .thread_id;
+    (id, thread)
+}
+
+#[tokio::test]
+async fn a_split_and_its_undo_move_the_count_of_every_list() {
+    let (store, account, inbox, database) = store(200, 4).await;
+    let (_, original) = threaded(&database, account, inbox, "root", &[]).await;
+    let (reply, _) = threaded(&database, account, inbox, "reply", &["root"]).await;
+    let scopes = [FOCUS, ListScope::Unified, ListScope::Mailbox(inbox)];
+    let mut before = Vec::new();
+    for scope in scopes {
+        before.push(
+            store
+                .thread_page(request(scope, 0, 20))
+                .await
+                .expect("a page")
+                .total,
+        );
+    }
+    let connection = database.connect().await.expect("a connection");
+    let threads = postio_storage::repository::ThreadRepository::new(&connection);
+    let split = threads.split(reply).await.expect("split");
+
+    for (scope, before) in scopes.into_iter().zip(before.iter().copied()) {
+        let total = store
+            .thread_page(request(scope, 0, 20))
+            .await
+            .expect("a page")
+            .total;
+        assert_eq!(total, before + 1, "{scope:?} counts the split-off thread");
+        let mut seen = 0;
+        while seen < total {
+            let page = store
+                .thread_page(request(scope, seen, 20))
+                .await
+                .expect("a page");
+            assert!(
+                !page.rows.is_empty(),
+                "{scope:?} serves row {seen} of {total}"
+            );
+            seen += page.rows.len() as u32;
+        }
+        assert_eq!(seen, total, "{scope:?}'s walk serves its total");
+    }
+
+    threads.unsplit(split, original).await.expect("unsplit");
+    for (scope, before) in scopes.into_iter().zip(before) {
+        let total = store
+            .thread_page(request(scope, 0, 20))
+            .await
+            .expect("a page")
+            .total;
+        assert_eq!(total, before, "{scope:?} counts the undo of the split");
+    }
+}

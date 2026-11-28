@@ -15,7 +15,8 @@
 # message 5, and the replies to it, into a thread of their own: the list
 # behind has two threads where there was one, and the toast offers Undo.
 # The list's cursor follows the message to its new thread, so Esc returns to
-# the row of the conversation the window showed (#2240).
+# the row of the conversation the window showed (#2240). The list grows by
+# the new thread's row and keeps its last one, as the strip counts (#2259).
 apps   = ["focus"]
 source = { kind = "spec", ref = "specs/013-focus-threads US5" }
 seed   = "threads"
@@ -23,7 +24,7 @@ design = "04-thread-menu"
 
 [[step]]
 wait    = { until = { cursor.index = 0 } }
-check   = { keyboard.region = "list", cursor.subject = "Re: Harbor API draft v3" }
+check   = { keyboard.region = "list", cursor.subject = "Re: Harbor API draft v3", rows.count = 10, app.focus.strip.counts = "10 · 4 unread" }
 
 [[step]]
 id      = "open"
@@ -46,11 +47,11 @@ expect  = "The menu is gone and the window is on the same message."
 [[step]]
 id      = "split"
 command = "split_thread"
-settle  = { until = { cursor.index = 0 } }
-check   = { notice.undo = true, view = "reader", cursor.index = 0 }
-expect  = "Message 5 and the replies to it leave Harbor for a thread of their own. The toast says so and offers Undo; the list behind the window has two threads where there was one, and its cursor is on the new one, the top row, which the window now shows (#2240)."
+settle  = { until = { cursor.index = 0, rows.count = 11 } }
+check   = { notice.undo = true, view = "reader", cursor.index = 0, rows.count = 11, app.focus.strip.counts = "11 · 4 unread" }
+expect  = "Message 5 and the replies to it leave Harbor for a thread of their own. The toast says so and offers Undo; the list behind the window has two threads where there was one, and its cursor is on the new one, the top row, which the window now shows (#2240). The list has one row more, as the strip counts, and its last row, Gateway defaults, is still drawn (#2259)."
 
 [[step]]
 command = "back"
-check   = { view = "list", keyboard.region = "list", cursor.index = 0 }
-expect  = "Esc closes the window onto the new thread's row, the conversation the message now belongs to, not Harbor's old row further down."
+check   = { view = "list", keyboard.region = "list", cursor.index = 0, rows.count = 11 }
+expect  = "Esc closes the window onto the new thread's row, the conversation the message now belongs to, not Harbor's old row further down. Eleven rows, the last Gateway defaults, with no gap under them."
