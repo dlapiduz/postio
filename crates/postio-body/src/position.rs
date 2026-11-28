@@ -35,11 +35,14 @@ impl DocPosition {
 
 /// `marks` is what the next typed text gets when the person toggled a mark with nothing selected;
 /// `None` follows the text on the caret's left. A surface that moves the caret drops it.
+/// `preedit` is an input method's uncommitted text at the head: while it is set, nothing but its
+/// commit or cancel edits the document.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Selection {
     pub anchor: DocPosition,
     pub head: DocPosition,
     pub marks: Option<crate::MarkSet>,
+    pub preedit: Option<String>,
 }
 
 impl Selection {
@@ -48,6 +51,7 @@ impl Selection {
             anchor: at.clone(),
             head: at,
             marks: None,
+            preedit: None,
         }
     }
 
@@ -56,6 +60,7 @@ impl Selection {
             anchor,
             head,
             marks: None,
+            preedit: None,
         }
     }
 
@@ -81,6 +86,16 @@ impl Selection {
 
     pub fn is_valid_in(&self, document: &Document) -> bool {
         self.anchor.is_valid_in(document) && self.head.is_valid_in(document)
+    }
+
+    /// The hole to project, when an input method is composing.
+    pub fn composing(&self) -> Option<crate::projection::Preedit> {
+        self.preedit
+            .as_ref()
+            .map(|text| crate::projection::Preedit {
+                at: self.head.clone(),
+                text: text.clone(),
+            })
     }
 }
 

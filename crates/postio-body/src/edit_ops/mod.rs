@@ -47,6 +47,9 @@ pub enum EditIntent {
     Paste(Document),
     /// Always its own undo step, so one undo gives back the typed characters.
     Convert(Conversion),
+    /// The input method's text, as `Insert`, as one undo step; the preedit goes.
+    CommitPreedit(String),
+    CancelPreedit,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -159,7 +162,12 @@ impl Document {
             join: Join::New,
             replaced: Vec::new(),
         };
-        if !selection.is_valid_in(self) {
+        let composing = selection.preedit.is_some();
+        let preedit_intent = matches!(
+            intent,
+            EditIntent::CommitPreedit(_) | EditIntent::CancelPreedit
+        );
+        if !selection.is_valid_in(self) || composing && !preedit_intent {
             return unchanged(selection);
         }
         let (lo, hi) = reach(self, selection, &intent);
@@ -198,6 +206,13 @@ impl Document {
     }
 }
 
+fn without_preedit(selection: &Selection) -> Selection {
+    Selection {
+        preedit: None,
+        ..selection.clone()
+    }
+}
+
 /// The top-level blocks an intent may touch: the selection's, and a neighbour for a merge.
 fn reach(document: &Document, selection: &Selection, intent: &EditIntent) -> (usize, usize) {
     let (start, end) = (selection.start(), selection.end());
@@ -231,5 +246,16 @@ fn run(blocks: &mut Vec<Block>, selection: &Selection, intent: EditIntent) -> Op
         EditIntent::InsertRule => blocks::insert_rule(blocks, selection),
         EditIntent::Paste(pasted) => paste::paste(blocks, selection, pasted),
         EditIntent::Convert(conversion) => convert::convert(blocks, selection, conversion),
+        EditIntent::CommitPreedit(text) => {
+            let committed = text::insert(blocks, &without_preedit(selection), &text)?;
+            Some(Outcome {
+                join: Join::New,
+                ..committed
+            })
+        }
+        EditIntent::CancelPreedit => Some(Outcome {
+            selection: without_preedit(selection),
+            join: Join::New,
+        }),
     }
 }

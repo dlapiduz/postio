@@ -42,12 +42,19 @@ pub enum Run {
     },
     /// The newline between two lines.
     Separator,
+    /// Text an input method has not committed: in the buffer, never in the document.
+    Preedit {
+        len: u32,
+    },
 }
 
 impl Run {
     pub fn len(&self) -> u32 {
         match self {
-            Run::Text { len, .. } | Run::Prefix { len, .. } | Run::Atomic { len, .. } => *len,
+            Run::Text { len, .. }
+            | Run::Prefix { len, .. }
+            | Run::Atomic { len, .. }
+            | Run::Preedit { len } => *len,
             Run::Break | Run::Image { .. } | Run::RemoteImage { .. } | Run::Separator => 1,
         }
     }
@@ -88,7 +95,8 @@ pub struct LineStyle {
     pub quote_depth: u32,
 }
 
-/// One block with text, in buffer offsets. `start` includes the prefix; `text_start` does not.
+/// One block with text, in buffer offsets. `start` includes the prefix; `text_start` does not;
+/// `len` includes a preedit in the line.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Line {
     pub path: Vec<u32>,
@@ -98,11 +106,20 @@ pub struct Line {
     pub style: LineStyle,
 }
 
+/// Uncommitted input-method text at a caret, for a toolkit that keeps it in its buffer (AppKit's
+/// marked text). GTK draws preedit in the layout, so it projects with none.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Preedit {
+    pub at: DocPosition,
+    pub text: String,
+}
+
 /// One unit per top-level block, so a patch replaces units and shifts only the starts after them.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Projection {
     units: Vec<Unit>,
     starts: Vec<u32>,
+    preedit: Option<Preedit>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -120,13 +137,41 @@ struct UnitLine {
     text_start: u32,
     len: u32,
     style: LineStyle,
+    /// The preedit's document offset and length, when it is in this line.
+    hole: Option<(u32, u32)>,
 }
 
-pub fn project(document: &Document) -> Projection {
-    let units = document.blocks.iter().map(unit_of).collect();
+impl UnitLine {
+    fn buffer_len(&self) -> u32 {
+        self.len + self.hole.map_or(0, |(_, len)| len)
+    }
+
+    fn to_buffer(&self, offset: u32) -> u32 {
+        match self.hole {
+            Some((at, len)) if offset > at => offset + len,
+            _ => offset,
+        }
+    }
+
+    fn to_document(&self, relative: u32) -> u32 {
+        match self.hole {
+            Some((at, len)) if relative > at => relative.saturating_sub(len).max(at),
+            _ => relative,
+        }
+    }
+}
+
+pub fn project(document: &Document, preedit: Option<&Preedit>) -> Projection {
+    let units = document
+        .blocks
+        .iter()
+        .enumerate()
+        .map(|(top, block)| unit_of(block, top, preedit))
+        .collect();
     let mut projection = Projection {
         units,
         starts: Vec::new(),
+        preedit: preedit.cloned(),
     };
     projection.restart(0);
     projection
@@ -184,9 +229,9 @@ impl Projection {
         if let Some(line) = self.units[unit]
             .lines
             .iter()
-            .find(|line| line.text_start + line.len >= relative)
+            .find(|line| line.text_start + line.buffer_len() >= relative)
         {
-            let into = relative.saturating_sub(line.text_start);
+            let into = line.to_document(relative.saturating_sub(line.text_start));
             return self.position(unit, line, into);
         }
         let after = (unit + 1..self.units.len()).find_map(|u| {
@@ -219,7 +264,7 @@ impl Projection {
         {
             Ok(found) => {
                 let line = &unit.lines[found];
-                start + line.text_start + position.offset.min(line.len)
+                start + line.text_start + line.to_buffer(position.offset.min(line.len))
             }
             Err(_) => start,
         }
@@ -246,6 +291,10 @@ impl Projection {
             }
         }
         units
+    }
+
+    pub fn preedit(&self) -> Option<&Preedit> {
+        self.preedit.as_ref()
     }
 
     fn position(&self, unit: usize, line: &UnitLine, offset: u32) -> DocPosition {
@@ -294,7 +343,7 @@ impl Projection {
                     path,
                     start: start + line.start,
                     text_start: start + line.text_start,
-                    len: line.len,
+                    len: line.buffer_len(),
                     style: line.style,
                 }
             })
@@ -319,6 +368,7 @@ impl Projection {
 struct UnitBuilder {
     unit: Unit,
     tail: Vec<u32>,
+    preedit: Option<(Vec<u32>, u32, String)>,
 }
 
 impl UnitBuilder {
@@ -341,8 +391,13 @@ struct Context {
     quote_depth: u32,
 }
 
-fn unit_of(block: &Block) -> Unit {
-    let mut builder = UnitBuilder::default();
+fn unit_of(block: &Block, top: usize, preedit: Option<&Preedit>) -> Unit {
+    let mut builder = UnitBuilder {
+        preedit: preedit
+            .filter(|p| p.at.top() == top && !p.text.is_empty())
+            .map(|p| (p.at.path[1..].to_vec(), p.at.offset, p.text.clone())),
+        ..UnitBuilder::default()
+    };
     block_into(&mut builder, block, Context::default(), None);
     builder.unit
 }
@@ -426,12 +481,30 @@ fn leaf_into(out: &mut UnitBuilder, block: &Block, context: Context, prefix: Opt
         _ => LineKind::Paragraph,
     };
     let cells = flat::of_block(block).unwrap_or_default();
+    let hole = match &out.preedit {
+        Some((tail, at, text)) if *tail == out.tail => {
+            Some(((*at as usize).min(cells.len()), text.clone()))
+        }
+        _ => None,
+    };
     let mut index = 0;
-    while index < cells.len() {
-        let cell = &cells[index];
+    while index <= cells.len() {
+        if let Some((at, text)) = &hole
+            && *at == index
+        {
+            let len = text.chars().count() as u32;
+            out.push(text, len, Run::Preedit { len });
+        }
+        let Some(cell) = cells.get(index) else {
+            break;
+        };
+        let stop = match &hole {
+            Some((at, _)) if *at > index => *at,
+            _ => cells.len(),
+        };
         match &cell.atom {
             Atom::Char(_) => {
-                let run = cells[index..]
+                let run = cells[index..stop]
                     .iter()
                     .take_while(|next| {
                         matches!(next.atom, Atom::Char(_)) && next.marks == cell.marks
@@ -485,6 +558,7 @@ fn leaf_into(out: &mut UnitBuilder, block: &Block, context: Context, prefix: Opt
             list_depth: context.list_depth,
             quote_depth: context.quote_depth,
         },
+        hole: hole.map(|(at, text)| (at as u32, text.chars().count() as u32)),
     });
 }
 

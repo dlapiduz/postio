@@ -65,7 +65,7 @@ is a guard and says so.
 - [x] T011 [US1] **Red:** cases for `Convert(Conversion)`: each sequence becomes its block or mark in one call, `Join::New`, and one `EditHistory::undo` restores the literal characters (FR-006). **Green:** `edit_ops/convert.rs`
 - [x] T012 [US1] **Red:** extend `crates/postio-body/src/edit.rs`'s cases: `EditStep` carries `selection_before` and `selection_after`; `record` with `Join::Run` amends, `Join::New` starts a step; undo returns both document and selection. **Green:** change `EditHistory` accordingly (`amend` keeps its meaning)
 - [x] T013 [US1] **Red:** write the property test in `body_suite/apply.rs`: for generated documents, selections and intents, the result satisfies `contracts/edit-intent.md` guarantees 1 to 3, and a 10 000-block document edited in the middle reports a `changed` range of at most two blocks with the outside equal (FR-003, a count, no clock). **Green:** fix what it finds
-- [ ] T014 [US1] **Red:** cases for the preedit hole: while a `Preedit` is set, every intent but `CommitPreedit`/`CancelPreedit` returns `unchanged`; a preedit update leaves the document equal; `project` shows the hole as a `Preedit` run that `position_of` never returns (FR-005, invariant 4). **Green:** `Projection` preedit and `apply`'s refusal
+- [x] T014 [US1] **Red:** cases for the preedit hole: while a `Preedit` is set, every intent but `CommitPreedit`/`CancelPreedit` returns `unchanged`; a preedit update leaves the document equal; `project` shows the hole as a `Preedit` run that `position_of` never returns (FR-005, invariant 4). **Green:** `Projection` preedit and `apply`'s refusal
 
 ### The spike gate (FR-008)
 

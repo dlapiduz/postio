@@ -1,7 +1,7 @@
 use postio_body::projection::{AtomicKind, LINE_BREAK, OBJECT, PrefixKind};
 use postio_body::{
-    Block, ContentId, DocPosition, Document, HeadingLevel, Inline, LineKind, ListItem, ListKind,
-    Run, project, quote_of,
+    Block, ContentId, DocPosition, Document, EditHistory, EditIntent, EditStep, HeadingLevel,
+    Inline, LineKind, ListItem, ListKind, Preedit, Run, Selection, apply, project, quote_of,
 };
 
 fn text(s: &str) -> Inline {
@@ -98,7 +98,7 @@ fn every_position(document: &Document) -> Vec<DocPosition> {
 
 #[test]
 fn the_buffer_reads_as_the_document_with_its_prefixes_drawn() {
-    let projection = project(&sample());
+    let projection = project(&sample(), None);
     assert_eq!(
         projection.text(),
         format!(
@@ -134,7 +134,7 @@ fn the_buffer_reads_as_the_document_with_its_prefixes_drawn() {
 
 #[test]
 fn each_line_knows_its_kind_and_depths() {
-    let styles: Vec<_> = project(&sample())
+    let styles: Vec<_> = project(&sample(), None)
         .lines()
         .map(|line| {
             (
@@ -164,7 +164,7 @@ fn each_line_knows_its_kind_and_depths() {
 #[test]
 fn every_position_survives_the_trip_through_the_buffer() {
     let document = sample();
-    let projection = project(&document);
+    let projection = project(&document, None);
     let positions = every_position(&document);
     assert_eq!(
         positions.len(),
@@ -183,7 +183,7 @@ fn every_position_survives_the_trip_through_the_buffer() {
 
 #[test]
 fn every_buffer_offset_lands_on_the_nearest_text() {
-    let projection = project(&sample());
+    let projection = project(&sample(), None);
     let text: Vec<char> = projection.text().chars().collect();
     let lines: Vec<_> = projection.lines().collect();
     for offset in 0..=text.len() as u32 {
@@ -211,7 +211,7 @@ fn every_buffer_offset_lands_on_the_nearest_text() {
 
 #[test]
 fn a_bullet_has_no_position_of_its_own() {
-    let projection = project(&sample());
+    let projection = project(&sample(), None);
     let line = projection.lines().nth(1).unwrap();
     assert_eq!(line.text_start - line.start, 2, "the bullet and its space");
     for offset in line.start..line.text_start {
@@ -224,7 +224,7 @@ fn a_bullet_has_no_position_of_its_own() {
 
 #[test]
 fn the_reply_quote_sends_the_caret_past_it() {
-    let projection = project(&sample());
+    let projection = project(&sample(), None);
     let text = projection.text();
     let inside = text.find("Earlier").unwrap();
     let offset = text[..inside].chars().count() as u32 + 3;
@@ -233,9 +233,12 @@ fn the_reply_quote_sends_the_caret_past_it() {
 
 #[test]
 fn utf16_counts_what_appkit_counts() {
-    let projection = project(&Document {
-        blocks: vec![para("日本"), para("🙂a")],
-    });
+    let projection = project(
+        &Document {
+            blocks: vec![para("日本"), para("🙂a")],
+        },
+        None,
+    );
     assert_eq!(projection.utf16_of(2), 2, "a CJK character is one unit");
     assert_eq!(
         projection.utf16_of(3),
@@ -248,8 +251,92 @@ fn utf16_counts_what_appkit_counts() {
 
 #[test]
 fn an_empty_document_has_one_place_to_be() {
-    let projection = project(&Document::new());
+    let projection = project(&Document::new(), None);
     assert_eq!(projection.text(), "");
     assert_eq!(projection.position_of(0), DocPosition::default());
     assert_eq!(projection.offset_of(&DocPosition::new([0], 0)), 0);
+}
+
+fn list(text: &str) -> Document {
+    Document {
+        blocks: vec![
+            para("before"),
+            Block::List {
+                kind: ListKind::Bullet,
+                items: vec![item(text)],
+            },
+        ],
+    }
+}
+
+#[test]
+fn a_preedit_is_a_hole_in_the_buffer_with_no_place_in_the_document() {
+    let document = list("ab");
+    let at = DocPosition::new([1, 0, 0], 1);
+    let preedit = Preedit {
+        at: at.clone(),
+        text: "にほ".to_owned(),
+    };
+    let projection = project(&document, Some(&preedit));
+    assert_eq!(projection.text(), "before\n\u{2022} aにほb");
+    assert!(
+        projection
+            .runs()
+            .any(|(_, run)| *run == Run::Preedit { len: 2 })
+    );
+    let hole = projection.offset_of(&at);
+    for offset in hole..=hole + 2 {
+        assert_eq!(
+            projection.position_of(offset),
+            at,
+            "offset {offset} is the hole's anchor"
+        );
+    }
+    assert_eq!(
+        projection.position_of(hole + 3),
+        DocPosition::new([1, 0, 0], 2)
+    );
+    for position in every_position(&document) {
+        let offset = projection.offset_of(&position);
+        assert_eq!(projection.position_of(offset), position, "around the hole");
+    }
+}
+
+#[test]
+fn while_composing_nothing_but_the_commit_or_the_cancel_edits() {
+    let document = list("a");
+    let composing = Selection {
+        preedit: Some("にほ".to_owned()),
+        ..Selection::caret(DocPosition::new([1, 0, 0], 1))
+    };
+    for intent in [
+        EditIntent::Insert("x".into()),
+        EditIntent::SplitBlock,
+        EditIntent::DeleteBackward(postio_body::Unit::Char),
+        EditIntent::ToggleMark(postio_body::Mark::Strong),
+        EditIntent::Indent,
+        EditIntent::Paste(Document::from_text("y")),
+    ] {
+        let edited = apply(&document, &composing, intent.clone());
+        assert_eq!(edited.document, document, "{intent:?} during a preedit");
+        assert_eq!(edited.selection, composing, "and the preedit is kept");
+    }
+    let cancelled = apply(&document, &composing, EditIntent::CancelPreedit);
+    assert_eq!(cancelled.document, document);
+    assert_eq!(cancelled.selection.preedit, None);
+    let committed = apply(
+        &document,
+        &composing,
+        EditIntent::CommitPreedit("日本".into()),
+    );
+    assert_eq!(committed.document, list("a日本"));
+    assert_eq!(
+        committed.selection,
+        Selection::caret(DocPosition::new([1, 0, 0], 3))
+    );
+    assert_eq!(
+        committed.join,
+        postio_body::Join::New,
+        "a commit is its own undo step"
+    );
 }

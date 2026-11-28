@@ -1164,7 +1164,7 @@ fn gen_document(rng: &mut Rng) -> Document {
 }
 
 fn gen_position(rng: &mut Rng, document: &Document) -> DocPosition {
-    let lines: Vec<_> = postio_body::project(document).lines().collect();
+    let lines: Vec<_> = postio_body::project(document, None).lines().collect();
     let line = rng.pick(&lines);
     DocPosition::new(line.path.clone(), rng.below(line.len as usize + 1) as u32)
 }
