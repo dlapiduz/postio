@@ -2494,12 +2494,23 @@ async fn a_pass_that_failed_is_not_announced_as_a_completed_sync() {
     })
     .await;
     assert!(first_done.is_ok(), "the first pass never said it finished");
-    let _ = announced(&events);
     backend.fail_all(Fault::Rejected("no".to_owned()));
+    engine
+        .retry_now()
+        .await
+        .expect("a job no wave answers beside its lanes is served once every lane settled");
+    let _ = announced(&events);
 
     engine.sync(mailbox.id).await.expect_err("the pass failed");
 
     let seen = announced(&events);
+    assert!(
+        seen.iter().any(|event| matches!(
+            event,
+            Event::MailboxSyncChanged { mailbox: failed, failure: Some(_), .. } if *failed == mailbox.id
+        )),
+        "the second pass never failed the folder: {seen:?}"
+    );
     assert!(
         !seen.iter().any(|event| matches!(
             event,

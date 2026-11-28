@@ -246,6 +246,41 @@ fn a_temporary_file_left_by_a_crash_is_purged_and_never_served() {
     assert!(!orphan.exists());
 }
 
+#[test]
+fn a_fetch_still_being_written_survives_the_debris_purge() {
+    let (_directory, store) = store();
+    let mut writer = store.writer().expect("a writer");
+    writer
+        .write(b"Subject: on the wire\r\n\r\nhalf")
+        .expect("a chunk");
+
+    let purged = store.purge_temporary().expect("purge");
+    writer.write(b" and the rest").expect("the next chunk");
+    let id = writer
+        .finish()
+        .expect("a fetch the purge ran beside still lands");
+
+    assert_eq!(purged, 0, "a live fetch is not debris");
+    assert_eq!(
+        store.get(&id).expect("read"),
+        b"Subject: on the wire\r\n\r\nhalf and the rest"
+    );
+}
+
+#[test]
+fn debris_from_an_earlier_start_under_the_same_sandbox_pid_is_purged() {
+    let (_directory, store) = store();
+    let orphan = store
+        .temporary_directory()
+        .join(format!("{}-1-0.part", std::process::id()));
+    std::fs::write(&orphan, b"half a message").expect("write a leftover temp file");
+
+    let purged = store.purge_temporary().expect("purge");
+
+    assert_eq!(purged, 1);
+    assert!(!orphan.exists());
+}
+
 async fn database() -> postio_storage::test_support::TempStore {
     let database = postio_storage::test_support::temp().await;
     let connection = database.connect().await.expect("checkout");
