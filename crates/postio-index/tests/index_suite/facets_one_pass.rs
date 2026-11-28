@@ -341,6 +341,7 @@ async fn a_match_past_the_cap_makes_every_count_a_floor() {
     let gtk = postio_index::search(
         &connection,
         &postio_index::SearchRequest {
+            mailboxes: None,
             account: postio_model::AccountScope::Account(account.id),
             query: &query,
             scope: postio_search::facets::Scope::AllMail,

@@ -235,6 +235,7 @@ pub struct SearchRequest<'a> {
     /// A constraint the query text never carries: switching scope must not mean editing what was
     /// typed.
     pub scope: Scope,
+    pub mailboxes: Option<&'a [postio_model::MailboxId]>,
     pub limit: u32,
     /// `Newest` takes the recency-ordered fetch and skips the re-rank, so the answer is exactly a
     /// mailbox's own order (#499).
@@ -884,6 +885,11 @@ impl Plan {
                   WHERE enabled = 1 AND pending_deletion = 0)"
                     .to_string(),
             ),
+        }
+        if let Some(mailboxes) = request.mailboxes {
+            conditions.push("m.mailbox_id IN (SELECT value FROM json_each(?))".to_string());
+            let ids: Vec<String> = mailboxes.iter().map(|id| id.get().to_string()).collect();
+            params.push(turso::Value::Text(format!("[{}]", ids.join(","))));
         }
         let account = request.account;
         let mut has_match = false;
@@ -1607,6 +1613,16 @@ fn filter_condition(filter: &Filter, people: bool) -> (String, Vec<turso::Value>
                     ),
                     Vec::new(),
                 ),
+                State::Replied => {
+                    let sent = own_sent();
+                    (
+                        format!(
+                            "(m.id IN ({sent}) OR m.thread_id IN ({}))",
+                            replied_threads(&sent)
+                        ),
+                        Vec::new(),
+                    )
+                }
             }
         }
         Filter::After(date) => (
@@ -1723,8 +1739,34 @@ fn id_set(filter: &Filter, people: bool) -> Option<(String, Vec<turso::Value>)> 
             "SELECT message_id FROM markers WHERE dismissed_at IS NULL".to_string(),
             Vec::new(),
         ),
+        Filter::Is(postio_search::query::State::Replied) => {
+            let sent = own_sent();
+            (
+                format!(
+                    "SELECT m.id AS message_id FROM messages m \
+                      WHERE m.thread_id IN ({}) UNION {sent}",
+                    replied_threads(&sent)
+                ),
+                Vec::new(),
+            )
+        }
         _ => return None,
     })
+}
+
+fn own_sent() -> String {
+    format!(
+        "SELECT r.message_id FROM recipients r \
+          WHERE r.kind = 'from' AND r.address_id IN \
+                (SELECT a.id FROM addresses a WHERE a.address_normalized IN ({OWN_ADDRESSES}))"
+    )
+}
+
+fn replied_threads(own_sent: &str) -> String {
+    format!(
+        "SELECT o.thread_id FROM messages o \
+          WHERE o.id IN ({own_sent}) AND o.thread_id IS NOT NULL"
+    )
 }
 
 const FROM_KINDS: &str = "'from'";
@@ -1999,6 +2041,7 @@ mod tests {
 
         let query = postio_search::parse("invoice", at(0).date_naive());
         let request = SearchRequest {
+            mailboxes: None,
             account: AccountScope::Account(postio_model::AccountId::new(1)),
             query: &query,
             scope: postio_search::facets::Scope::AllMail,
@@ -2078,6 +2121,7 @@ mod tests {
         ] {
             let query = postio_search::parse(text, at(0).date_naive());
             let request = SearchRequest {
+                mailboxes: None,
                 account: AccountScope::Account(account.id),
                 query: &query,
                 scope: postio_search::facets::Scope::AllMail,

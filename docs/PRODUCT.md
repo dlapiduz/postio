@@ -188,8 +188,10 @@ subject:invoice -in:archive
 ```
 
 `from:` `to:` `subject:` `in:` `list:` `filename:` `has:attach` `is:unread`
-`is:read` `is:flagged` `is:bulk` `is:automated` `before:` `after:` `larger:`
-`smaller:` `account:` `with:` `group:` `header:`
+`is:read` `is:flagged` `is:bulk` `is:automated` `is:replied` `before:` `after:`
+`larger:` `smaller:` `account:` `with:` `group:` `header:`
+
+- **`is:replied`** is a thread you wrote in, from any client.
 
 - **Braces take any of several values:** `from:{ada tomas}`,
   `label:{"Q3 close" atlas}`, `-from:{ada tomas}` (neither). Two clauses still

@@ -30,6 +30,7 @@ async fn results_for(
 ) -> postio_search::SearchResults {
     let query = parse(typed, at(12).date_naive());
     let request = SearchRequest {
+        mailboxes: None,
         account: AccountScope::Account(account.id),
         query: &query,
         scope: Scope::AllMail,

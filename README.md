@@ -318,8 +318,8 @@ subject:invoice -in:archive is:unread
 ```
 
 `from:` `to:` `subject:` `in:` `list:` `filename:` `has:attach` `is:unread`
-`is:read` `is:flagged` `before:` `after:` `larger:` `smaller:` `account:`
-`group:` `header:` `body:`
+`is:read` `is:flagged` `is:replied` `before:` `after:` `larger:` `smaller:`
+`account:` `group:` `header:` `body:`
 
 A search covers every folder except drafts, junk and trash; `in:trash` (or
 `in:junk`, `in:drafts`) reaches those when you mean them.

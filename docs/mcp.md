@@ -83,7 +83,8 @@ Any MCP client that launches a stdio server works the same way. If your
 |---|---|
 | `list_accounts` | The shared accounts, with their ids. |
 | `list_mailboxes` | One shared account's shared folders, with roles and counts. |
-| `search_mail` | A search in Postio's [query language](https://github.com/dlapiduz/postio/blob/main/docs/PRODUCT.md), such as `from:grace is:unread after:30d`. Returns message rows. |
+| `search_mail` | A search in Postio's [query language](https://github.com/dlapiduz/postio/blob/main/docs/PRODUCT.md), such as `from:grace is:unread after:30d`. Returns message rows, their total, and a cursor for the next page. |
+| `mail_stats` | What a search matches, counted by sender, domain or month. |
 | `read_message` | One message: its headers, its attachments' names and sizes, and its body as plain text. |
 | `read_thread` | The shared messages of one conversation, oldest first. |
 | `create_draft` | A new message, a reply (`reply_to`, optionally `reply_all`) or a forward (`forward`), saved as a draft. |
@@ -125,6 +126,8 @@ gets the change the next time Postio syncs. Some rules always apply:
   folder every message came from, so you can ask it to put them back.
 - **Labels sync like yours.** A label is the same label Postio's own label
   key uses. On an IMAP account it is saved to the server as a keyword.
+- **A search can replace the list,** up to 5,000 a call, once the agent
+  repeats the count a dry run gave.
 
 The tool descriptions tell the agent to use these only when you asked it
 to, and never because a message says so.

@@ -20,6 +20,7 @@ mod header_index_pass;
 mod header_repair;
 mod inline_images;
 mod interactive_write;
+mod mail_stats;
 mod mailbox_roles;
 mod onboarding;
 mod provision;

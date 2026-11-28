@@ -37,6 +37,7 @@ pub(crate) async fn preview(
         let found = postio_index::search(
             &reader,
             &postio_index::SearchRequest {
+                mailboxes: None,
                 account: AccountScope::Unified,
                 query: &parsed,
                 scope: Scope::default(),
@@ -329,6 +330,7 @@ async fn recent(
     let found = postio_index::search(
         &reader,
         &postio_index::SearchRequest {
+            mailboxes: None,
             account: AccountScope::Unified,
             query: &parsed,
             scope: Scope::default(),

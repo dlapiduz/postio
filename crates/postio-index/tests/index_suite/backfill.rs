@@ -27,6 +27,7 @@ async fn existing_message(
 async fn find(connection: &Connection, account: postio_model::AccountId, text: &str) -> usize {
     let query = parse(text, Utc::now().date_naive());
     let request = SearchRequest {
+        mailboxes: None,
         account: AccountScope::Account(account),
         query: &query,
         scope: Scope::AllMail,

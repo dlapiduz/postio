@@ -61,6 +61,7 @@ async fn seen(connection: &Connection, account: &postio_model::Account, query: &
     let mut seen = None;
     for order in [ResultOrder::Relevance, ResultOrder::Newest] {
         let request = SearchRequest {
+            mailboxes: None,
             account: AccountScope::Account(account.id),
             query: &parsed,
             scope: Scope::AllMail,
@@ -175,6 +176,7 @@ async fn a_message_copied_into_a_second_folder_is_one_hit() {
     let refinements = facets(
         &connection,
         &SearchRequest {
+            mailboxes: None,
             account: AccountScope::Account(account.id),
             query: &parsed,
             scope: Scope::AllMail,
@@ -200,6 +202,7 @@ async fn a_message_copied_into_a_second_folder_is_one_hit() {
     let results = search(
         &connection,
         &SearchRequest {
+            mailboxes: None,
             account: AccountScope::Account(account.id),
             query: &parsed,
             scope: Scope::AllMail,
@@ -306,6 +309,7 @@ async fn a_copy_costs_no_statement() {
         for query in ["nebula", "survey from:ada", "from:ada"] {
             let parsed = parse(query, today());
             let request = SearchRequest {
+                mailboxes: None,
                 account: AccountScope::Account(account.id),
                 query: &parsed,
                 scope: Scope::AllMail,

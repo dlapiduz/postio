@@ -92,6 +92,7 @@ async fn run(
 ) -> Vec<postio_model::MessageId> {
     let parsed = parse(query, at(12).date_naive());
     let request = SearchRequest {
+        mailboxes: None,
         account,
         query: &parsed,
         scope,

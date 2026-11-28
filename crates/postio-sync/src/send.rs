@@ -64,6 +64,7 @@ pub(crate) struct SendJob {
     labels: Vec<(LabelId, String)>,
     /// When the "remind if no reply" reminder falls due, set as the sent copy is filed.
     remind_at: Option<chrono::DateTime<Utc>>,
+    answers: Option<MessageId>,
 }
 
 pub(crate) enum ResolvedSend {
@@ -235,6 +236,10 @@ pub(crate) async fn resolve(
         drafts_copy,
         labels,
         remind_at: draft.remind_at,
+        answers: parent
+            .as_ref()
+            .filter(|parent| parent.account_id == account.id)
+            .map(|parent| parent.id),
     })))
 }
 
@@ -275,7 +280,49 @@ pub(crate) async fn send(
     {
         save_who_was_written_to(connection, job.account, copy).await;
     }
+    if matches!(outcome, Outcome::Applied) {
+        mark_answered(connection, job).await;
+    }
     outcome
+}
+
+async fn mark_answered(connection: &Connection, job: &SendJob) {
+    let Some(parent) = job.answers else {
+        return;
+    };
+    if let Err(error) = answer(connection, job.account, parent).await {
+        tracing::warn!(%error, "could not mark a replied-to message answered");
+    }
+}
+
+async fn answer(
+    connection: &Connection,
+    account: AccountId,
+    parent: MessageId,
+) -> postio_storage::Result<()> {
+    let messages = MessageRepository::new(connection);
+    let Some(message) = messages.get(parent).await? else {
+        return Ok(());
+    };
+    if message.flags.contains(&Flag::Answered) {
+        return Ok(());
+    }
+    let mut flags = message.flags.clone();
+    flags.insert(Flag::Answered);
+    messages
+        .set_flags(parent, &flags, FlagSource::Local)
+        .await?;
+    OperationQueueRepository::new(connection)
+        .enqueue(
+            account,
+            OperationTarget::Message(parent),
+            &Operation::SetFlags {
+                flags: FlagSet::from_iter([Flag::Answered]),
+            },
+            Utc::now(),
+        )
+        .await?;
+    Ok(())
 }
 
 async fn submit(

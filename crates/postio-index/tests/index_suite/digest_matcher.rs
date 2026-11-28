@@ -123,6 +123,7 @@ async fn by_executor(
     search(
         connection,
         &SearchRequest {
+            mailboxes: None,
             account: AccountScope::Account(corpus.account),
             query,
             scope: Scope::AllMail,

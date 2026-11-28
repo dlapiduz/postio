@@ -69,6 +69,7 @@ pub(super) async fn counts(
     let mut plans = Vec::with_capacity(queries.len());
     for (index, query) in queries.iter().enumerate() {
         let plan = Plan::build_sets(&SearchRequest {
+            mailboxes: None,
             account,
             query,
             scope: Scope::AllMail,

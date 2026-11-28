@@ -1,4 +1,5 @@
 mod app_socket;
+mod at_scale;
 mod audit;
 mod drafts;
 mod harness;
