@@ -244,3 +244,18 @@ pub fn a_composer_command_reaches_its_intent() {
         }
     );
 }
+
+pub fn a_replys_blank_line_takes_a_list_that_leaves_on_an_empty_item() {
+    let shown = shown(postio_body::quoted_reply(
+        &postio_body::quote_of(None, "Earlier words", "quote"),
+        "On Monday Ada wrote:",
+    ));
+    shown.at(&[0], 0);
+    shown.type_text("- milk");
+    shown.press(gdk::Key::Return, NONE);
+    shown.press(gdk::Key::Return, NONE);
+    let blocks = shown.surface.document().blocks;
+    assert_eq!(blocks[0], bullets(&["milk"]), "no break hides in the item");
+    assert_eq!(blocks[1], p(""), "Enter in the empty item left the list");
+    shown.assert_in_step();
+}

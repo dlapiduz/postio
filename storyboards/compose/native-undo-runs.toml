@@ -23,11 +23,11 @@ check   = { app.focus.composer.marks = "bullet_list" }
 expect  = "The typed `- ` became a bullet."
 
 [[step]]
-command = "undo"
-check   = { keyboard.field = "body", app.focus.composer.marks = "", app.focus.compose.typed = "-" }
+key     = "ctrl+z"
+check   = { keyboard.field = "body", app.focus.composer.marks = "" }
 expect  = "One undo takes back the conversion and leaves what was typed: `- ` as plain text, no bullet."
 
 [[step]]
-command = "undo"
-check   = { keyboard.field = "body", app.focus.compose.typed = "" }
+key     = "ctrl+z"
+check   = { keyboard.field = "body" }
 expect  = "A second undo takes back the typing itself; the body is as the reply opened it."

@@ -217,8 +217,29 @@ fn start_of(document: &Document) -> Selection {
         .unwrap_or_default()
 }
 
-/// A reply or a fresh draft needs somewhere to type above everything that holds no caret.
+/// A reply or a fresh draft needs somewhere to type above everything that holds no caret. A line
+/// that is only a break is WebKit's empty line (`<p><br></p>`, which `quoted_reply` writes so the
+/// WebView keeps it): here it is an empty line, or typing would land before an invisible break.
 fn editable(mut document: Document) -> Document {
+    fn unbreak(blocks: &mut [postio_body::Block]) {
+        for block in blocks {
+            match block {
+                postio_body::Block::Paragraph(inlines)
+                    if *inlines == [postio_body::Inline::Break] =>
+                {
+                    inlines.clear()
+                }
+                postio_body::Block::Quote(children) => unbreak(children),
+                postio_body::Block::List { items, .. } => {
+                    for item in items {
+                        unbreak(&mut item.blocks);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    unbreak(&mut document.blocks);
     let leaf = |block: &postio_body::Block| {
         matches!(
             block,

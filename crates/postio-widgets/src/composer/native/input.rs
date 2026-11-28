@@ -160,6 +160,9 @@ impl Inner {
         self.dispatch(edit.intent())
     }
 
+    /// Text that arrives at once (a storyboard, a dropped string) is typed a character at a time,
+    /// so a Markdown sequence in it converts as it would under a person's fingers. An input
+    /// method's commit is one insert.
     fn typed(&self, at: DocPosition, text: &str, committed: bool) {
         let now = self.selection_now();
         let selection = if now.is_collapsed() && now.head == at {
@@ -167,14 +170,20 @@ impl Inner {
         } else {
             Selection::caret(at)
         };
-        let intent = if committed {
-            EditIntent::CommitPreedit(text.to_owned())
-        } else {
-            EditIntent::Insert(text.to_owned())
-        };
-        self.dispatch_at(selection, intent);
-        if let Some(conversion) = self.conversion(Typed::Text) {
-            self.dispatch(EditIntent::Convert(conversion));
+        if committed {
+            self.dispatch_at(selection, EditIntent::CommitPreedit(text.to_owned()));
+            return;
+        }
+        let mut selection = Some(selection);
+        for c in text.chars() {
+            let intent = EditIntent::Insert(c.to_string());
+            match selection.take() {
+                Some(first) => self.dispatch_at(first, intent),
+                None => self.dispatch(intent),
+            };
+            if let Some(conversion) = self.conversion(Typed::Text) {
+                self.dispatch(EditIntent::Convert(conversion));
+            }
         }
     }
 

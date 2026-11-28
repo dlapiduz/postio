@@ -117,6 +117,11 @@ const IGNORED: &[&str] = &[];
 
 const CASES: &[(&str, fn())] = &[
     (
+        "composer_native_input::a_replys_blank_line_takes_a_list_that_leaves_on_an_empty_item",
+        composer_native_input::a_replys_blank_line_takes_a_list_that_leaves_on_an_empty_item
+            as fn(),
+    ),
+    (
         "composer_native_counts::a_keystroke_in_five_thousand_words_touches_one_block",
         composer_native_counts::a_keystroke_in_five_thousand_words_touches_one_block as fn(),
     ),
