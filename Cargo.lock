@@ -605,6 +605,7 @@ dependencies = [
 [[package]]
 name = "blitz-dom"
 version = "0.3.0-beta.4"
+source = "git+https://github.com/dlapiduz/blitz?tag=main-92b11f1-fork.1#c390b8dfeb9f8cc29e7a1bf5a7543c41d629cf38"
 dependencies = [
  "app_units",
  "atomic_refcell",
@@ -649,8 +650,7 @@ dependencies = [
 [[package]]
 name = "blitz-html"
 version = "0.3.0-beta.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eddd638e05f3f3efb9f2d37f0406e7834ea023727e1678524488aa70eb639615"
+source = "git+https://github.com/dlapiduz/blitz?tag=main-92b11f1-fork.1#c390b8dfeb9f8cc29e7a1bf5a7543c41d629cf38"
 dependencies = [
  "blitz-dom",
  "blitz-traits",
@@ -661,6 +661,7 @@ dependencies = [
 [[package]]
 name = "blitz-paint"
 version = "0.3.0-beta.4"
+source = "git+https://github.com/dlapiduz/blitz?tag=main-92b11f1-fork.1#c390b8dfeb9f8cc29e7a1bf5a7543c41d629cf38"
 dependencies = [
  "anyrender",
  "anyrender_svg",
@@ -682,8 +683,7 @@ dependencies = [
 [[package]]
 name = "blitz-traits"
 version = "0.3.0-beta.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d339c3ff7fe8bed623e27695a4c15dd1ec8faa9bf9158b7475bf180280e4018c"
+source = "git+https://github.com/dlapiduz/blitz?tag=main-92b11f1-fork.1#c390b8dfeb9f8cc29e7a1bf5a7543c41d629cf38"
 dependencies = [
  "atomic_refcell",
  "bitflags",
@@ -1744,8 +1744,7 @@ dependencies = [
 [[package]]
 name = "debug_timer"
 version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da220af51a1a335e9a930beaaef53d261e41ea9eecfb3d973a3ddae1a7284b9c"
+source = "git+https://github.com/dlapiduz/blitz?tag=main-92b11f1-fork.1#c390b8dfeb9f8cc29e7a1bf5a7543c41d629cf38"
 
 [[package]]
 name = "der"
@@ -4216,6 +4215,7 @@ dependencies = [
 [[package]]
 name = "mail-parser"
 version = "1.0.1"
+source = "git+https://github.com/dlapiduz/mail-parser?tag=main-a56d5f1-fork.1#769dc691ec17e1793ce2a0203c1553b35541689e"
 dependencies = [
  "encodify",
  "encoding_rs",
@@ -7948,8 +7948,7 @@ dependencies = [
 [[package]]
 name = "stylo_taffy"
 version = "0.3.0-beta.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d932deb3145f9e1c4159d09237f7999a29632fba9125896abb364dab080e0c0"
+source = "git+https://github.com/dlapiduz/blitz?tag=main-92b11f1-fork.1#c390b8dfeb9f8cc29e7a1bf5a7543c41d629cf38"
 dependencies = [
  "bitflags",
  "stylo",

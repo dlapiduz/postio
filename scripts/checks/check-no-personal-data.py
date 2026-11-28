@@ -56,9 +56,6 @@ SKIP_PATHS = (
     "site/assets/fonts/",
     # Rendered PNG screenshots: binary bytes decoded as UTF-8 can coincidentally spell an address.
     "site/assets/img/",
-    # Upstream crates exactly as released (`scripts/vendor-patches.sh verify`) carry upstream's own
-    # addresses; `patches/` is scanned.
-    "vendor/",
 )
 ALLOW_EXACT = {
     "noreply@anthropic.com",
