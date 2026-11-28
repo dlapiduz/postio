@@ -50,7 +50,7 @@ fn the_binary_speaks_mcp_on_stdin_and_stdout() {
     let tools = ask(json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})).expect("answered");
     assert_eq!(
         tools["result"]["tools"].as_array().map(Vec::len),
-        Some(10),
+        Some(11),
         "{tools}"
     );
     let accounts = ask(json!({

@@ -21,6 +21,7 @@ fn the_tools_are_reads_a_draft_and_the_organizing_verbs() {
         "list_accounts",
         "list_mailboxes",
         "search_mail",
+        "mail_stats",
         "read_message",
         "read_thread",
         "create_draft",
