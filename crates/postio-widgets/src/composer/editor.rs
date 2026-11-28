@@ -9,7 +9,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use postio_body::markdown::DocPosition;
-use postio_body::{Document, EditHistory, parse};
+use postio_body::{Document, EditHistory, EditStep, Join, Selection, parse};
 use webkit6::prelude::*;
 
 use super::scheme;
@@ -500,17 +500,29 @@ impl Editor {
     }
 
     pub fn undo(&self) {
-        let Some(document) = self.state.history.borrow_mut().undo() else {
-            return;
-        };
-        self.show(document);
+        let mut document = self.state.document.borrow().clone();
+        if self
+            .state
+            .history
+            .borrow_mut()
+            .undo(&mut document)
+            .is_some()
+        {
+            self.show(document);
+        }
     }
 
     pub fn redo(&self) {
-        let Some(document) = self.state.history.borrow_mut().redo() else {
-            return;
-        };
-        self.show(document);
+        let mut document = self.state.document.borrow().clone();
+        if self
+            .state
+            .history
+            .borrow_mut()
+            .redo(&mut document)
+            .is_some()
+        {
+            self.show(document);
+        }
     }
 
     pub fn can_undo(&self) -> bool {
@@ -537,12 +549,10 @@ impl Editor {
     /// written there (FR-028).
     pub fn show_at(&self, document: Document, at: Option<&DocPosition>) {
         let before = self.state.document.borrow().clone();
-        if before != document {
-            self.state
-                .history
-                .borrow_mut()
-                .record(before, document.clone());
-        }
+        self.state
+            .history
+            .borrow_mut()
+            .record(snapshot_step(&before, &document), Join::New);
         self.state.last_edit.set(None);
         let marked = at.map_or_else(
             || document.clone(),
@@ -574,6 +584,11 @@ impl Editor {
     }
 }
 
+/// The DOM has no caret in document terms, so a step's selections are the document's start.
+fn snapshot_step(before: &Document, after: &Document) -> EditStep {
+    EditStep::between(before, after, Selection::default(), Selection::default())
+}
+
 /// A free function over the shared state: the script-message handler holds only the `Rc`, so
 /// dropping the editor drops the state once WebKit lets go.
 fn absorb(state: &Rc<EditorState>, html: &str) {
@@ -582,16 +597,19 @@ fn absorb(state: &Rc<EditorState>, html: &str) {
         .last_edit
         .get()
         .is_some_and(|last| now.duration_since(last) < state.coalesce);
-    absorb_with(state, html, within_run);
+    if !within_run {
+        state.history.borrow_mut().seal();
+    }
+    absorb_with(state, html, Join::Run);
 }
 
 /// A markdown conversion must be something one undo can return to (FR-070): coalescing it into the
 /// typing run would make undo take back the whole sentence.
 fn absorb_as_new_step(state: &Rc<EditorState>, html: &str) {
-    absorb_with(state, html, false);
+    absorb_with(state, html, Join::New);
 }
 
-fn absorb_with(state: &Rc<EditorState>, html: &str, within_run: bool) {
+fn absorb_with(state: &Rc<EditorState>, html: &str, join: Join) {
     let after = parse(html);
     let before = state.document.borrow().clone();
     if after == before {
@@ -599,10 +617,10 @@ fn absorb_with(state: &Rc<EditorState>, html: &str, within_run: bool) {
     }
 
     {
-        let mut history = state.history.borrow_mut();
-        if !(within_run && history.amend(after.clone())) {
-            history.record(before, after.clone());
-        }
+        state
+            .history
+            .borrow_mut()
+            .record(snapshot_step(&before, &after), join);
     }
     state.last_edit.set(Some(Instant::now()));
 

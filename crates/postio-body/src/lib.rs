@@ -32,7 +32,7 @@ pub use document::{
     Alignment, Block, Cell, ContentId, Document, HeadingLevel, Href, Inline, Language, ListItem,
     ListKind, Table, Task, WebHref, editor_image_src,
 };
-pub use edit::{EditHistory, EditStep};
+pub use edit::{EditHistory, EditStep, Undone};
 pub use edit_ops::{
     Applied, BlockKind, BlockRange, Conversion, ConversionKind, EditIntent, Edited, Join, Mark,
     MarkSet, Unit, apply,

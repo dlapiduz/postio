@@ -1025,7 +1025,25 @@ fn one_undo_after_a_conversion_gives_back_the_typed_characters() {
         },
     );
     let mut history = postio_body::EditHistory::new();
-    history.record(doc(vec![p("say ")]), literal.clone());
-    history.record(literal.clone(), edited.document);
-    assert_eq!(history.undo(), Some(literal));
+    let typed = |before: &Document, after: &Document| {
+        postio_body::EditStep::between(before, after, caret(&[0], 4), caret(&[0], 10))
+    };
+    history.record(typed(&doc(vec![p("say ")]), &literal), Join::Run);
+    history.record(
+        postio_body::EditStep::between(
+            &literal,
+            &edited.document,
+            caret(&[0], 10),
+            edited.selection.clone(),
+        ),
+        edited.join,
+    );
+    let mut current = edited.document.clone();
+    let undone = history.undo(&mut current).unwrap();
+    assert_eq!(current, literal);
+    assert_eq!(
+        undone.selection,
+        caret(&[0], 10),
+        "and the caret after the typed marker"
+    );
 }
