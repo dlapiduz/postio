@@ -59,13 +59,32 @@ struct CountedFolder {
 struct Witness {
     messages: u32,
     mod_seq: Option<u64>,
+    splits: Splits,
 }
 
-fn witness_of(mailbox: &Mailbox) -> Witness {
+fn witness_of(mailbox: &Mailbox, splits: Splits) -> Witness {
     Witness {
         messages: mailbox.counts.total,
         mod_seq: mailbox.highest_mod_seq.map(|seq| seq.get()),
+        splits,
     }
+}
+
+type Splits = (i64, i64, i64);
+
+/// A split regroups messages without moving one, so no folder's counts witness it (#2259).
+async fn splits_witness(connection: &Checkout) -> Result<Splits, postio_storage::Error> {
+    let splits = postio_storage::sql::first(
+        connection,
+        "SELECT -1, count(*), coalesce(max(split_at), 0) FROM thread_splits",
+        (),
+        |row| {
+            use postio_storage::sql::RowExt as _;
+            Ok((row.col(0)?, row.col(1)?, row.col(2)?))
+        },
+    )
+    .await?;
+    Ok(splits.unwrap_or((-1, 0, 0)))
 }
 
 /// A thread count is a correlated subquery (786 ms on a 60,907-message Archive), so what matters is
@@ -107,7 +126,10 @@ async fn inbox_witness(connection: &Checkout) -> Result<UnifiedWitness, postio_s
              ON m.account_id = a.id AND m.role = 'inbox'
            LEFT JOIN sync_state s ON s.mailbox_id = m.id
           WHERE a.enabled = 1 AND a.pending_deletion = 0 AND m.selectable = 1
-          ORDER BY m.id",
+         UNION ALL
+         SELECT -1, (SELECT count(*) FROM thread_splits),
+                (SELECT coalesce(max(split_at), 0) FROM thread_splits)
+          ORDER BY 1",
         (),
         |row| {
             use postio_storage::sql::RowExt as _;
@@ -117,9 +139,8 @@ async fn inbox_witness(connection: &Checkout) -> Result<UnifiedWitness, postio_s
     .await
 }
 
-/// The unified witness plus one row for what Focus holds back: holding mail moves no folder, so a
-/// count kept against folder state alone would outlive the rows it counted, and the seek marks with
-/// it (spec 007).
+/// The unified witness plus a row for what Focus holds back, which moves no folder: a count kept
+/// on folder state alone would outlive its rows and seek marks (spec 007).
 async fn focus_witness(connection: &Checkout) -> Result<UnifiedWitness, postio_storage::Error> {
     postio_storage::sql::all(
         connection,
@@ -131,6 +152,9 @@ async fn focus_witness(connection: &Checkout) -> Result<UnifiedWitness, postio_s
          UNION ALL
          SELECT 0, (SELECT count(*) FROM digest_holds),
                 (SELECT count(*) FROM digest_deliveries WHERE archived_at IS NOT NULL)
+         UNION ALL
+         SELECT -1, (SELECT count(*) FROM thread_splits),
+                (SELECT coalesce(max(split_at), 0) FROM thread_splits)
           ORDER BY 1",
         (),
         |row| {
@@ -207,11 +231,12 @@ async fn counted_total(
         FOLDERS_COUNTED.fetch_add(1, Ordering::Relaxed);
         return threads.count_of(query).await;
     };
+    let splits = splits_witness(connection).await?;
     let witness = MailboxRepository::new(connection)
         .get(mailbox)
         .await?
         .as_ref()
-        .map(witness_of);
+        .map(|mailbox| witness_of(mailbox, splits));
 
     // Subtract what the app said left this folder (an archive moved the witness) instead of paying
     // the count again (#1607); taken out of the queue before any await.
