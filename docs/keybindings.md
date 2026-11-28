@@ -191,6 +191,7 @@ command from inside a text field.
 | `r` | Rebuild search index | Account list |  | `rebuild_account_index` |
 | `m` | Set as default account | Account list |  | `set_default_account` |
 | `M` | Map mailbox role | Account list | Undoable | `map_mailbox_role` |
+| `F7` | New folder | List, folder list | Undoable | `create_folder` |
 | `g n` | Next scope | List, folder list |  | `next_scope` |
 | `F5` | Refresh | List, thread, reader |  | `refresh` |
 | `Page_Down` or `space` | Scroll reading pane down | List, thread, reader |  | `scroll_reader_down` |

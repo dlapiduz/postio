@@ -372,6 +372,11 @@ commands! {
         role: Option<MailboxRole> = None,
         path: Option<String> = None,
     } => "map_mailbox_role",
+    CreateFolder {
+        account: Option<AccountId> = None,
+        parent: Option<MailboxId> = None,
+        name: Option<String> = None,
+    } => "create_folder",
     /// Cycling because a keystroke has no argument to carry a scope; the sidebar's rows name one
     /// directly.
     NextScope => "next_scope",
@@ -587,6 +592,9 @@ commands! {
     UnsweepInbox {
         target: MessageTarget,
     } => SweepInbox,
+    DiscardFolder {
+        mailbox: MailboxId,
+    } => CreateFolder,
     DeleteEvent {
         event: EventTarget,
         scope: Option<EditScope>,

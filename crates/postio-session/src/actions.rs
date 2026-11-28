@@ -61,6 +61,7 @@ pub const WIRED: &[CommandId] = &[
     CommandId::CancelSend,
     CommandId::Undo,
     CommandId::MapMailboxRole,
+    CommandId::CreateFolder,
     CommandId::RestoreFiltered,
     CommandId::AcceptKey,
     CommandId::ForgetKey,
@@ -392,6 +393,15 @@ impl Actions {
             Command::MarkSent { draft } => vec![self.mark_sent(*draft).await?],
             Command::RetrySend { draft } => vec![self.retry_send(*draft).await?],
             Command::CancelSend { draft } => vec![self.cancel_send(*draft).await?],
+            Command::CreateFolder {
+                account,
+                parent,
+                name,
+            } => vec![
+                self.create_folder(*account, *parent, name.as_deref())
+                    .await?,
+            ],
+            Command::DiscardFolder { mailbox } => vec![self.discard_folder(*mailbox).await?],
             Command::MapMailboxRole {
                 account,
                 role,
@@ -1888,6 +1898,129 @@ impl Actions {
                 role: Some(role),
                 path: previous,
             }],
+        })
+    }
+
+    async fn create_folder(
+        &self,
+        account: Option<AccountId>,
+        parent: Option<MailboxId>,
+        name: Option<&str>,
+    ) -> Result<Applied, CommandError> {
+        let Some(account) = account else {
+            return Err(CommandError::rejected("Pick an account first"));
+        };
+        let Some(name) = name.map(str::trim).filter(|name| !name.is_empty()) else {
+            return Err(CommandError::rejected("A new folder needs a name"));
+        };
+        let (mut connection, _permit) = self.connect().await?;
+        let transaction = connection.transaction().await.map_err(store_failure)?;
+        let mailboxes = MailboxRepository::new(&transaction);
+        let existing = mailboxes
+            .list_for_account(account)
+            .await
+            .map_err(store_failure)?;
+        let parent_row = match parent {
+            None => None,
+            Some(id) => Some(
+                existing
+                    .iter()
+                    .find(|mailbox| mailbox.id == id)
+                    .ok_or_else(|| CommandError::rejected("This account has no such folder"))?,
+            ),
+        };
+        let delimiter = parent_row
+            .and_then(|parent| parent.delimiter)
+            .or_else(|| {
+                existing
+                    .iter()
+                    .find(|mailbox| mailbox.role == MailboxRole::Inbox)
+                    .and_then(|inbox| inbox.delimiter)
+            })
+            .unwrap_or('/');
+        if name.contains(delimiter) {
+            return Err(CommandError::rejected(format!(
+                "A folder's name cannot hold \"{delimiter}\""
+            )));
+        }
+        if parent_row.is_none() && MailboxRole::guess_from_name(name).is_special() {
+            return Err(CommandError::rejected("That name is a special folder's"));
+        }
+        let path = match parent_row {
+            Some(parent) => format!("{}{delimiter}{name}", parent.path),
+            None => name.to_owned(),
+        };
+        if existing
+            .iter()
+            .any(|mailbox| mailbox.path.eq_ignore_ascii_case(&path))
+        {
+            return Err(CommandError::rejected("There is a folder by that name"));
+        }
+        let mut folder = postio_model::Mailbox::new(account, &path, Some(delimiter));
+        folder.role = MailboxRole::Regular;
+        folder.parent_id = parent;
+        folder.pending_create = true;
+        let id = mailboxes.create(&mut folder).await.map_err(store_failure)?;
+        OperationQueueRepository::new(&transaction)
+            .enqueue(
+                account,
+                OperationTarget::Mailbox(id),
+                &Operation::CreateMailbox { mailbox: id },
+                now(),
+            )
+            .await
+            .map_err(store_failure)?;
+        transaction.commit().await.map_err(store_failure)?;
+        Ok(Applied {
+            rows: None,
+            lasts: None,
+            surfaced: false,
+            account,
+            kind: UndoKind::CreateFolder,
+            count: 1,
+            messages: Vec::new(),
+            removed: Vec::new(),
+            arrived: None,
+            reloaded: Vec::new(),
+            changed: Vec::new(),
+            mailboxes_changed: true,
+            contacts_changed: None,
+            inverse: vec![Command::DiscardFolder { mailbox: id }],
+        })
+    }
+
+    async fn discard_folder(&self, mailbox: MailboxId) -> Result<Applied, CommandError> {
+        let (connection, _permit) = self.connect().await?;
+        let mailboxes = MailboxRepository::new(&connection);
+        let folder = mailboxes
+            .get(mailbox)
+            .await
+            .map_err(store_failure)?
+            .ok_or_else(|| CommandError::rejected("That folder is gone already"))?;
+        if !folder.pending_create {
+            return Err(CommandError::rejected(
+                "The server has that folder now, so undo cannot take it away",
+            ));
+        }
+        if folder.counts.total > 0 {
+            return Err(CommandError::rejected("Move its mail out first"));
+        }
+        mailboxes.delete(mailbox).await.map_err(store_failure)?;
+        Ok(Applied {
+            rows: None,
+            lasts: None,
+            surfaced: false,
+            account: folder.account_id,
+            kind: UndoKind::CreateFolder,
+            count: 1,
+            messages: Vec::new(),
+            removed: Vec::new(),
+            arrived: None,
+            reloaded: Vec::new(),
+            changed: Vec::new(),
+            mailboxes_changed: true,
+            contacts_changed: None,
+            inverse: Vec::new(),
         })
     }
 

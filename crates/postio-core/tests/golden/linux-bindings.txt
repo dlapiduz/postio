@@ -144,6 +144,7 @@ update_credential	c
 rebuild_account_index	r
 set_default_account	m
 map_mailbox_role	M
+create_folder	F7
 next_scope	g n
 refresh	F5
 scroll_reader_down	Page_Down | space
