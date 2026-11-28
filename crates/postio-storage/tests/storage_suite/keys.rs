@@ -204,3 +204,88 @@ async fn a_contacts_card_lists_their_keys_with_sources_and_acceptance() {
         "grace's key is not ada's"
     );
 }
+
+#[tokio::test]
+async fn forgetting_a_key_takes_its_sources_and_addresses_with_it() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.unwrap();
+    let keys = KeyRepository::new(&connection);
+    let grace = EmailAddress::new(None::<String>, "grace@example.net");
+    let addresses = [grace.clone(), ada()];
+    keys.record(&key("AAAA", KeySource::Autocrypt, &addresses, 100))
+        .await
+        .unwrap();
+    keys.record(&key("AAAA", KeySource::File, &addresses, 200))
+        .await
+        .unwrap();
+    keys.record(&key("BBBB", KeySource::File, &[ada()], 300))
+        .await
+        .unwrap();
+
+    let (held, named) = keys.key("AAAA").await.unwrap().expect("held");
+    assert_eq!(
+        (held.first_seen, held.last_seen, named),
+        (
+            100,
+            200,
+            vec!["ada@example.com".to_owned(), "grace@example.net".to_owned()]
+        )
+    );
+
+    keys.forget("AAAA").await.unwrap();
+    assert_eq!(keys.key("AAAA").await.unwrap(), None);
+    assert!(keys.sources("AAAA").await.unwrap().is_empty());
+    assert!(keys.for_address(&grace).await.unwrap().is_empty());
+    let left: Vec<String> = keys
+        .for_address(&ada())
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|key| key.fingerprint)
+        .collect();
+    assert_eq!(left, ["BBBB"], "only the forgotten key goes");
+}
+
+#[tokio::test]
+async fn a_senders_signed_messages_are_theirs_that_carry_a_verdict() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.unwrap();
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let messages = postio_storage::repository::MessageRepository::new(&connection);
+    let keys = KeyRepository::new(&connection);
+    let verdict = VerdictRow {
+        format: "pgp_mime".to_owned(),
+        scope: "whole".to_owned(),
+        status: "good".to_owned(),
+        reason: None,
+        fingerprint: Some("AAAA".to_owned()),
+        checked_at: 500,
+    };
+    let mut ids = Vec::new();
+    for (sender, signed) in [
+        (ada(), true),
+        (ada(), false),
+        (EmailAddress::new(None::<String>, "grace@example.net"), true),
+        (ada(), true),
+    ] {
+        let mut message = postio_model::Message::new(account.id, inbox, chrono::Utc::now());
+        message.from = vec![sender];
+        let id = messages.create(&mut message).await.unwrap();
+        if signed {
+            keys.put_verdict(id, &verdict).await.unwrap();
+        }
+        ids.push(id);
+    }
+
+    assert_eq!(
+        keys.signed_messages_from(&ada()).await.unwrap(),
+        [ids[0], ids[3]],
+        "not ada's unsigned message, and not grace's signed one"
+    );
+    assert!(
+        keys.signed_messages_from(&EmailAddress::new(None::<String>, "lin@example.org"))
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}

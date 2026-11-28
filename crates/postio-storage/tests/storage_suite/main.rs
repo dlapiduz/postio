@@ -45,6 +45,7 @@ mod focus_inbox;
 mod focus_plans;
 mod glib_main_context;
 mod header_refresh_keeps_body;
+mod keyboxd;
 mod keys;
 mod labels;
 mod list_mail;
