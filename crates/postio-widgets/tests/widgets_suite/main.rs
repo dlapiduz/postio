@@ -25,6 +25,7 @@ mod composer_inline_image;
 mod composer_markdown;
 mod composer_markdown_source;
 mod composer_native_basic;
+mod composer_native_render;
 mod composer_recipient_select;
 mod composer_recipients;
 mod composer_remote_image;
@@ -103,6 +104,14 @@ mod widgets_css;
 const IGNORED: &[&str] = &[];
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "composer_native_render::each_block_and_mark_is_drawn_by_its_tag",
+        composer_native_render::each_block_and_mark_is_drawn_by_its_tag as fn(),
+    ),
+    (
+        "composer_native_render::the_reply_quote_is_one_unit_no_caret_enters",
+        composer_native_render::the_reply_quote_is_one_unit_no_caret_enters as fn(),
+    ),
     (
         "composer_native_basic::the_native_surface_holds_the_document_it_was_given",
         composer_native_basic::the_native_surface_holds_the_document_it_was_given as fn(),
