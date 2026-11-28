@@ -35,7 +35,7 @@ pub use document::{
 pub use edit::{EditHistory, EditStep, Undone};
 pub use edit_ops::{
     Applied, BlockKind, BlockRange, Conversion, ConversionKind, EditIntent, Edited, Join, Mark,
-    MarkSet, Unit, apply,
+    MarkSet, Unit, apply, slice,
 };
 pub use narrow::{Lost, Narrowed, narrow};
 pub use outgoing::{harden, message_body, render};

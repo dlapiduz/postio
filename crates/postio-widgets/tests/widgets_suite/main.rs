@@ -26,6 +26,7 @@ mod composer_markdown;
 mod composer_markdown_source;
 mod composer_native_basic;
 mod composer_native_caret;
+mod composer_native_clipboard;
 mod composer_native_ime;
 mod composer_native_input;
 mod composer_native_patch;
@@ -108,6 +109,22 @@ mod widgets_css;
 const IGNORED: &[&str] = &[];
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "composer_native_clipboard::hostile_html_pastes_narrowed",
+        composer_native_clipboard::hostile_html_pastes_narrowed as fn(),
+    ),
+    (
+        "composer_native_clipboard::plain_text_pastes_a_paragraph_per_line",
+        composer_native_clipboard::plain_text_pastes_a_paragraph_per_line as fn(),
+    ),
+    (
+        "composer_native_clipboard::cut_then_paste_gives_the_marks_back",
+        composer_native_clipboard::cut_then_paste_gives_the_marks_back as fn(),
+    ),
+    (
+        "composer_native_clipboard::a_copy_carries_no_drawn_bullet",
+        composer_native_clipboard::a_copy_carries_no_drawn_bullet as fn(),
+    ),
     (
         "composer_native_caret::a_caret_on_a_bullet_lands_on_the_items_text",
         composer_native_caret::a_caret_on_a_bullet_lands_on_the_items_text as fn(),

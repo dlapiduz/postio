@@ -1,6 +1,7 @@
 //! The composer's native surface: a `GtkTextView` over `postio_body::project`, never the record.
 //! Nothing writes its buffer but the patch of `apply`'s result (ADR 0039).
 
+mod clipboard;
 mod input;
 mod patch;
 mod preedit;
@@ -81,6 +82,7 @@ impl NativeSurface {
         });
         input::wire(&inner);
         selection::wire(&inner);
+        clipboard::wire(&inner);
         NativeSurface { inner }
     }
 

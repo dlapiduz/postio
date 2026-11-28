@@ -1396,3 +1396,19 @@ fn an_edit_in_the_middle_of_ten_thousand_blocks_touches_one() {
         (5000, 5001, 5002)
     );
 }
+
+#[test]
+fn a_copy_is_the_selected_part_of_the_document() {
+    let start = doc(vec![
+        p("before"),
+        bullets(&["one", "two"]),
+        Block::Paragraph(vec![strong("bold"), t(" tail")]),
+    ]);
+    let copied = postio_body::slice(&start, &span((&[1, 1, 0], 1), (&[2], 2)));
+    assert_eq!(
+        copied,
+        doc(vec![bullets(&["wo"]), Block::Paragraph(vec![strong("bo")])])
+    );
+    let inside = postio_body::slice(&start, &span((&[2], 1), (&[2], 3)));
+    assert_eq!(inside, doc(vec![Block::Paragraph(vec![strong("ol")])]));
+}
