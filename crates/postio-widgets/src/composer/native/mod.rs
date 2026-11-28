@@ -6,6 +6,7 @@ mod image;
 mod input;
 mod patch;
 mod preedit;
+mod quoted;
 mod render;
 mod selection;
 
@@ -46,6 +47,7 @@ pub(crate) struct Inner {
     format_watchers: RefCell<Vec<Box<dyn Fn(FormatState)>>>,
     source: Rc<dyn BlobSource>,
     pending: RefCell<Vec<input::Pending>>,
+    quote_folded: Cell<bool>,
 }
 
 impl NativeSurface {
@@ -80,10 +82,12 @@ impl NativeSurface {
             format_watchers: RefCell::new(Vec::new()),
             source,
             pending: RefCell::new(Vec::new()),
+            quote_folded: Cell::new(true),
         });
         input::wire(&inner);
         selection::wire(&inner);
         clipboard::wire(&inner);
+        quoted::wire(&inner);
         NativeSurface { inner }
     }
 

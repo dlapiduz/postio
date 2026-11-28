@@ -31,6 +31,7 @@ mod composer_native_image;
 mod composer_native_ime;
 mod composer_native_input;
 mod composer_native_patch;
+mod composer_native_quote;
 mod composer_native_render;
 mod composer_recipient_select;
 mod composer_recipients;
@@ -110,6 +111,18 @@ mod widgets_css;
 const IGNORED: &[&str] = &[];
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "composer_native_quote::the_quote_is_read_only_and_typing_into_it_changes_nothing",
+        composer_native_quote::the_quote_is_read_only_and_typing_into_it_changes_nothing as fn(),
+    ),
+    (
+        "composer_native_quote::backspace_after_the_quote_removes_it_whole_and_undo_gives_it_back",
+        composer_native_quote::backspace_after_the_quote_removes_it_whole_and_undo_gives_it_back as fn(),
+    ),
+    (
+        "composer_native_quote::the_quote_opens_folded_to_its_first_lines",
+        composer_native_quote::the_quote_opens_folded_to_its_first_lines as fn(),
+    ),
     (
         "composer_native_image::an_inline_image_is_a_picture_of_its_blob_at_its_place",
         composer_native_image::an_inline_image_is_a_picture_of_its_blob_at_its_place as fn(),

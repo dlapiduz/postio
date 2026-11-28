@@ -50,9 +50,16 @@ pub(super) fn tags() -> gtk::TextTagTable {
         .name("prefix")
         .editable(false)
         .build());
+    let tint = gtk::gdk::RGBA::new(0.5, 0.5, 0.5, 0.12);
     add(gtk::TextTag::builder()
         .name("quoted")
         .editable(false)
+        .paragraph_background_rgba(&tint)
+        .left_margin(INDENT / 2)
+        .build());
+    add(gtk::TextTag::builder()
+        .name("quote-folded")
+        .invisible(true)
         .build());
     add(gtk::TextTag::builder().name("rule").editable(false).build());
     for depth in 1..=6 {
@@ -111,7 +118,22 @@ pub(super) fn retag(inner: &Inner, range: Range<u32>) -> u32 {
                 tag("prefix", at, to);
             }
             Run::Atomic { kind, .. } => match kind {
-                AtomicKind::Quoted | AtomicKind::Table => tag("quoted", at, to),
+                AtomicKind::Quoted => {
+                    tag("quoted", at, to);
+                    if inner.quote_folded.get() {
+                        let text: String = buffer
+                            .slice(
+                                &buffer.iter_at_offset(at as i32),
+                                &buffer.iter_at_offset(to as i32),
+                                true,
+                            )
+                            .into();
+                        if let Some(from) = super::quoted::hidden(&text) {
+                            tag("quote-folded", at + from, to);
+                        }
+                    }
+                }
+                AtomicKind::Table => tag("quoted", at, to),
                 AtomicKind::Rule => tag("rule", at, to),
             },
             _ => {}

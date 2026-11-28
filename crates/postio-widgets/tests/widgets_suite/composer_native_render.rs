@@ -16,7 +16,7 @@ pub(crate) fn surface(document: Document) -> NativeSurface {
 /// The tags at the first character of `needle`, as the view would draw it.
 pub(crate) fn tags_at(surface: &NativeSurface, needle: &str) -> Vec<String> {
     let buffer = surface.view().buffer();
-    let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false);
+    let text = buffer.slice(&buffer.start_iter(), &buffer.end_iter(), true);
     let at = text
         .find(needle)
         .unwrap_or_else(|| panic!("{needle:?} is not in {text:?}"));
