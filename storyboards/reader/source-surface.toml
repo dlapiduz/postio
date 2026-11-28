@@ -6,7 +6,7 @@
 # Headers and Raw, and the raw bytes become the Raw tab. Nothing in it is a
 # link and nothing is rendered.
 apps   = ["focus"]
-proof  = "open"
+proof  = "pinned"
 # The fifth row is refiled as a list message whose raw bytes and header block are here.
 seed   = "source"
 source = { kind = "flow", ref = "specs/016-message-authenticity US1, US2" }
