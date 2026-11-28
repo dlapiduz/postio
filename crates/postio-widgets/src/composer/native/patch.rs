@@ -9,6 +9,8 @@ use super::{Inner, image, render};
 /// Buffer operations and tag applications one patch made: bounded per keystroke (FR-014).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PatchStats {
+    /// Top-level blocks the edit rewrote.
+    pub blocks: u32,
     pub deleted: u32,
     pub inserted: u32,
     pub operations: u32,

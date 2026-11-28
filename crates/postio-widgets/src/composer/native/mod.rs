@@ -154,7 +154,10 @@ impl Inner {
             .borrow_mut()
             .patch(changed, &self.document.borrow());
         let stats = patch::apply(self, &patch);
-        self.stats.set(stats);
+        self.stats.set(PatchStats {
+            blocks: changed.new_end - changed.start,
+            ..stats
+        });
     }
 
     fn place(&self, selection: &Selection) {

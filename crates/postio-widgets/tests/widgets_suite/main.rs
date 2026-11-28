@@ -28,6 +28,7 @@ mod composer_native_a11y;
 mod composer_native_basic;
 mod composer_native_caret;
 mod composer_native_clipboard;
+mod composer_native_counts;
 mod composer_native_css;
 mod composer_native_format;
 mod composer_native_history;
@@ -115,6 +116,14 @@ mod widgets_css;
 const IGNORED: &[&str] = &[];
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "composer_native_counts::a_keystroke_in_five_thousand_words_touches_one_block",
+        composer_native_counts::a_keystroke_in_five_thousand_words_touches_one_block as fn(),
+    ),
+    (
+        "composer_native_counts::a_long_draft_opens_with_no_web_process",
+        composer_native_counts::a_long_draft_opens_with_no_web_process as fn(),
+    ),
     (
         "composer_native_css::a_scheme_change_restyles_and_keeps_the_caret_and_the_history",
         composer_native_css::a_scheme_change_restyles_and_keeps_the_caret_and_the_history as fn(),
