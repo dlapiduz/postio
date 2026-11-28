@@ -25,8 +25,9 @@ pub(super) fn insert(
     let at = collapse(blocks, selection);
     let code = matches!(block_at(blocks, &at.path), Some(Block::Code { .. }));
     let offset = at.offset as usize;
+    let stored = selection.marks.clone().map(Rc::new);
     let added = tree::edit_cells(blocks, &at.path, |cells| {
-        let marks = typing_marks(cells, offset);
+        let marks = stored.unwrap_or_else(|| typing_marks(cells, offset));
         let new: Vec<Cell> = typed
             .chars()
             .map(|c| Cell {

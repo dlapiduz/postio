@@ -190,3 +190,34 @@ fn remove_at(blocks: &mut Vec<Block>, path: &[u32]) {
         siblings.remove(index);
     }
 }
+
+/// Every leaf path in the top-level blocks `range`, in reading order.
+pub(crate) fn leaves(blocks: &[Block], range: std::ops::Range<usize>) -> Vec<Vec<u32>> {
+    fn visit(block: &Block, path: &mut Vec<u32>, out: &mut Vec<Vec<u32>>) {
+        match block {
+            Block::Quote(children) => {
+                for (index, child) in children.iter().enumerate() {
+                    path.push(index as u32);
+                    visit(child, path, out);
+                    path.pop();
+                }
+            }
+            Block::List { items, .. } => {
+                for (item, held) in items.iter().enumerate() {
+                    for (index, child) in held.blocks.iter().enumerate() {
+                        path.extend([item as u32, index as u32]);
+                        visit(child, path, out);
+                        path.truncate(path.len() - 2);
+                    }
+                }
+            }
+            leaf if is_leaf(leaf) => out.push(path.clone()),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    for top in range.start..range.end.min(blocks.len()) {
+        visit(&blocks[top], &mut vec![top as u32], &mut out);
+    }
+    out
+}

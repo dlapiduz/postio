@@ -4,12 +4,13 @@
 
 pub(crate) mod flat;
 mod lists;
+mod marks;
 mod text;
 pub(crate) mod tree;
 
 pub use flat::MarkSet;
 
-use crate::document::{Block, Document};
+use crate::document::{Block, ContentId, Document, Href};
 use crate::position::{DocPosition, Selection};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -22,6 +23,22 @@ pub enum EditIntent {
     SplitBlock,
     /// Shift+Enter.
     InsertBreak,
+    /// Over a range, on unless every character has it; at a caret, for the next typed text.
+    ToggleMark(Mark),
+    /// `None` unlinks.
+    SetLink(Option<Href>),
+    InsertImage {
+        content_id: ContentId,
+        alt: String,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mark {
+    Strong,
+    Emphasis,
+    Strikethrough,
+    Code,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -174,5 +191,10 @@ fn run(blocks: &mut Vec<Block>, selection: &Selection, intent: EditIntent) -> Op
         EditIntent::DeleteForward(unit) => text::delete_forward(blocks, selection, unit),
         EditIntent::SplitBlock => text::split_block(blocks, selection),
         EditIntent::InsertBreak => text::insert_break(blocks, selection),
+        EditIntent::ToggleMark(mark) => marks::toggle(blocks, selection, mark),
+        EditIntent::SetLink(href) => marks::set_link(blocks, selection, href),
+        EditIntent::InsertImage { content_id, alt } => {
+            marks::insert_image(blocks, selection, content_id, alt)
+        }
     }
 }

@@ -432,3 +432,170 @@ fn an_invalid_selection_changes_nothing() {
     );
     assert!(edited.changed.is_empty());
 }
+
+fn strong(s: &str) -> Inline {
+    Inline::Strong(vec![t(s)])
+}
+
+fn href() -> Href {
+    Href::parse("https://example.com/").unwrap()
+}
+
+#[test]
+fn bold_over_part_of_a_block_and_again_gives_the_block_back() {
+    use postio_body::Mark;
+    let start = doc(vec![p("hello world")]);
+    let range = span((&[0], 0), (&[0], 5));
+    let once = apply(&start, &range, EditIntent::ToggleMark(Mark::Strong));
+    assert_eq!(
+        once.document,
+        doc(vec![Block::Paragraph(vec![strong("hello"), t(" world")])])
+    );
+    assert_eq!(
+        once.selection, range,
+        "the selection stays on what was made bold"
+    );
+    assert_eq!(once.join, Join::New);
+    let twice = apply(&once.document, &range, EditIntent::ToggleMark(Mark::Strong));
+    assert_eq!(twice.document, start);
+}
+
+#[test]
+fn a_mark_over_a_partly_marked_range_covers_all_of_it() {
+    use postio_body::Mark;
+    let edited = apply(
+        &doc(vec![Block::Paragraph(vec![strong("ab"), t("cd")])]),
+        &span((&[0], 1), (&[0], 3)),
+        EditIntent::ToggleMark(Mark::Strong),
+    );
+    assert_eq!(
+        edited.document,
+        doc(vec![Block::Paragraph(vec![strong("abc"), t("d")])])
+    );
+}
+
+#[test]
+fn a_mark_across_blocks_marks_each_blocks_covered_part() {
+    use postio_body::Mark;
+    let edited = apply(
+        &doc(vec![bullets(&["ab"]), p("cd")]),
+        &span((&[0, 0, 0], 1), (&[1], 1)),
+        EditIntent::ToggleMark(Mark::Emphasis),
+    );
+    let em = |s: &str| Inline::Emphasis(vec![t(s)]);
+    assert_eq!(
+        edited.document,
+        doc(vec![
+            ul(vec![li(vec![Block::Paragraph(vec![t("a"), em("b")])])]),
+            Block::Paragraph(vec![em("c"), t("d")]),
+        ])
+    );
+}
+
+#[test]
+fn inline_code_over_a_range_is_one_code_run() {
+    use postio_body::Mark;
+    let edited = apply(
+        &doc(vec![p("call f() now")]),
+        &span((&[0], 5), (&[0], 8)),
+        EditIntent::ToggleMark(Mark::Code),
+    );
+    assert_eq!(
+        edited.document,
+        doc(vec![Block::Paragraph(vec![
+            t("call "),
+            Inline::Code("f()".into()),
+            t(" now")
+        ])])
+    );
+}
+
+#[test]
+fn a_mark_at_a_caret_is_for_the_next_typed_text() {
+    use postio_body::Mark;
+    let start = doc(vec![p("a")]);
+    let toggled = apply(
+        &start,
+        &caret(&[0], 1),
+        EditIntent::ToggleMark(Mark::Strong),
+    );
+    assert_eq!(toggled.document, start, "nothing to mark yet");
+    assert!(toggled.selection.marks.as_ref().is_some_and(|m| m.strong));
+    let typed = apply(
+        &toggled.document,
+        &toggled.selection,
+        EditIntent::Insert("b".into()),
+    );
+    assert_eq!(
+        typed.document,
+        doc(vec![Block::Paragraph(vec![t("a"), strong("b")])])
+    );
+}
+
+#[test]
+fn a_link_is_set_over_a_range_and_removed_from_the_caret_inside_it() {
+    let linked = apply(
+        &doc(vec![p("see the site")]),
+        &span((&[0], 8), (&[0], 12)),
+        EditIntent::SetLink(Some(href())),
+    );
+    let link = Inline::Link {
+        href: href(),
+        inlines: vec![t("site")],
+    };
+    assert_eq!(
+        linked.document,
+        doc(vec![Block::Paragraph(vec![t("see the "), link])])
+    );
+    let unlinked = apply(
+        &linked.document,
+        &caret(&[0], 10),
+        EditIntent::SetLink(None),
+    );
+    assert_eq!(unlinked.document, doc(vec![p("see the site")]));
+}
+
+#[test]
+fn a_link_at_a_caret_outside_any_link_types_its_address() {
+    let edited = apply(
+        &doc(vec![p("at ")]),
+        &caret(&[0], 3),
+        EditIntent::SetLink(Some(href())),
+    );
+    assert_eq!(
+        edited.document,
+        doc(vec![Block::Paragraph(vec![
+            t("at "),
+            Inline::Link {
+                href: href(),
+                inlines: vec![t("https://example.com/")]
+            }
+        ])])
+    );
+    assert_eq!(edited.selection, caret(&[0], 23));
+}
+
+#[test]
+fn an_image_goes_in_at_the_caret_as_one_character() {
+    let content_id = postio_body::ContentId::parse("cat@example.com").unwrap();
+    let edited = apply(
+        &doc(vec![p("ab")]),
+        &caret(&[0], 1),
+        EditIntent::InsertImage {
+            content_id: content_id.clone(),
+            alt: "a cat".into(),
+        },
+    );
+    assert_eq!(
+        edited.document,
+        doc(vec![Block::Paragraph(vec![
+            t("a"),
+            Inline::Image {
+                content_id,
+                alt: "a cat".into()
+            },
+            t("b")
+        ])])
+    );
+    assert_eq!(edited.selection, caret(&[0], 2));
+}

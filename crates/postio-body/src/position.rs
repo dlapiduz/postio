@@ -33,10 +33,13 @@ impl DocPosition {
     }
 }
 
+/// `marks` is what the next typed text gets when the person toggled a mark with nothing selected;
+/// `None` follows the text on the caret's left. A surface that moves the caret drops it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Selection {
     pub anchor: DocPosition,
     pub head: DocPosition,
+    pub marks: Option<crate::MarkSet>,
 }
 
 impl Selection {
@@ -44,11 +47,16 @@ impl Selection {
         Selection {
             anchor: at.clone(),
             head: at,
+            marks: None,
         }
     }
 
     pub fn range(anchor: DocPosition, head: DocPosition) -> Self {
-        Selection { anchor, head }
+        Selection {
+            anchor,
+            head,
+            marks: None,
+        }
     }
 
     pub fn is_collapsed(&self) -> bool {

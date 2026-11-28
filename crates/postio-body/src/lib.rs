@@ -33,7 +33,7 @@ pub use document::{
     ListKind, Table, Task, WebHref, editor_image_src,
 };
 pub use edit::{EditHistory, EditStep};
-pub use edit_ops::{Applied, BlockRange, EditIntent, Edited, Join, MarkSet, Unit, apply};
+pub use edit_ops::{Applied, BlockRange, EditIntent, Edited, Join, Mark, MarkSet, Unit, apply};
 pub use narrow::{Lost, Narrowed, narrow};
 pub use outgoing::{harden, message_body, render};
 pub use own_text::{own_line, own_text};
