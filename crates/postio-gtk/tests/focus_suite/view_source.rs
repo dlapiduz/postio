@@ -300,12 +300,14 @@ pub fn mod_c_copies_the_selection_and_copies_every_byte_when_nothing_is_selected
             "mod+c with a line selected copies that line, not the message"
         );
 
-        support::keys(&window, &["2"]);
-        assert!(crate::settle_until(async || on(&window, Tab::Headers)).await);
-        assert_eq!(
-            copied().await.as_deref(),
-            Some(String::from_utf8_lossy(RAW).as_ref()),
-            "with nothing selected, mod+c copies every byte"
-        );
+        for (key, tab) in [("2", Tab::Headers), ("1", Tab::Verification)] {
+            support::keys(&window, &[key]);
+            assert!(crate::settle_until(async || on(&window, tab)).await);
+            assert_eq!(
+                copied().await.as_deref(),
+                Some(String::from_utf8_lossy(RAW).as_ref()),
+                "with nothing selected on {tab:?}, mod+c copies every byte"
+            );
+        }
     });
 }

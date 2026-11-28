@@ -266,7 +266,7 @@ impl SourceDialog {
     pub fn selection(&self) -> Option<String> {
         let inner = &self.inner;
         let selected = match inner.tab.get() {
-            Tab::Verification => selected_label(inner.verification.upcast_ref()),
+            Tab::Verification => focused_label_selection(inner.verification.upcast_ref()),
             Tab::Headers => selected_text(&inner.headers),
             Tab::Raw => selected_text(&inner.raw),
         };
@@ -573,8 +573,11 @@ fn selected_text(text: &gtk::TextView) -> Option<String> {
     Some(buffer.text(&start, &end, false).to_string())
 }
 
-fn selected_label(widget: &gtk::Widget) -> Option<String> {
+fn focused_label_selection(widget: &gtk::Widget) -> Option<String> {
     if let Some(label) = widget.downcast_ref::<gtk::Label>() {
+        if !label.has_focus() {
+            return None;
+        }
         let (start, end) = label.selection_bounds()?;
         let (from, to) = (start.min(end), start.max(end));
         return Some(
@@ -588,7 +591,7 @@ fn selected_label(widget: &gtk::Widget) -> Option<String> {
     }
     let mut child = widget.first_child();
     while let Some(next) = child {
-        if let Some(text) = selected_label(&next) {
+        if let Some(text) = focused_label_selection(&next) {
             return Some(text);
         }
         child = next.next_sibling();
