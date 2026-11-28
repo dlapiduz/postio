@@ -1,6 +1,3 @@
-//! Moving list items and quote children between containers: out of a list, out a level, out of a
-//! quote. Each returns the path of the first text the move leaves the caret on.
-
 use super::tree;
 use crate::document::{Block, ListItem};
 
@@ -10,8 +7,6 @@ pub(super) fn is_nested(blocks: &[Block], list: &[u32]) -> bool {
         .is_some_and(|owner| matches!(owner, tree::Owner::Item { .. }))
 }
 
-/// Items `from..=to` leave their list as plain blocks; the items after them stay a list. `tail` is
-/// a path within item `from` (its block index, then deeper), returned as that block's new path.
 pub(super) fn lift_items(
     blocks: &mut Vec<Block>,
     list: &[u32],
@@ -51,8 +46,6 @@ pub(super) fn lift_items(
     Some(path)
 }
 
-/// A nested item moves to its parent's list, after the item that held it; the items after it in
-/// its list become its own nested list. Returns the item's new list path and index.
 pub(super) fn outdent_item(blocks: &mut Vec<Block>, list: &[u32], item: usize) -> Option<Vec<u32>> {
     let (holder, index) = tree::split(list)?;
     let (outer, outer_item) = tree::split(holder)?;
@@ -81,8 +74,6 @@ pub(super) fn outdent_item(blocks: &mut Vec<Block>, list: &[u32], item: usize) -
     Some(path)
 }
 
-/// An item moves under the item before it, joining that item's nested list of the same kind when
-/// it ends with one. The first item has nothing to move under. Returns as `outdent_item` does.
 pub(super) fn indent_item(blocks: &mut Vec<Block>, list: &[u32], item: usize) -> Option<Vec<u32>> {
     if item == 0 {
         return None;
@@ -119,7 +110,6 @@ pub(super) fn indent_item(blocks: &mut Vec<Block>, list: &[u32], item: usize) ->
     Some(path)
 }
 
-/// A child leaves its quote: before it when first, after it when last, else the quote splits.
 pub(super) fn leave_quote(
     blocks: &mut Vec<Block>,
     quote: &[u32],
@@ -162,7 +152,6 @@ pub(super) fn lift_children(
     tree::first_unit(blocks, tree::join(parent, first))
 }
 
-/// The list and item holding the block at `path`, nearest first.
 pub(super) fn enclosing_item(blocks: &[Block], path: &[u32]) -> Option<(Vec<u32>, usize)> {
     let mut at = tree::split(path)?.0.to_vec();
     loop {

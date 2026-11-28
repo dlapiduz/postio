@@ -1,6 +1,4 @@
-//! The editing algebra: every change a person makes to a draft, as a function of the document, the
-//! selection and an intent. Nothing mutates a composer's text but the patch of `apply`'s result
-//! (ADR 0039); the surfaces decide nothing this module can.
+//! Nothing mutates a composer's text but the patch of `apply`'s result (ADR 0039).
 
 mod blocks;
 mod convert;
@@ -19,35 +17,20 @@ use crate::position::{DocPosition, Selection};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EditIntent {
-    /// Typed or committed text; a newline is a line break.
     Insert(String),
     DeleteBackward(Unit),
     DeleteForward(Unit),
-    /// Enter.
     SplitBlock,
-    /// Shift+Enter.
     InsertBreak,
-    /// Over a range, on unless every character has it; at a caret, for the next typed text.
     ToggleMark(Mark),
-    /// `None` unlinks.
     SetLink(Option<Href>),
-    InsertImage {
-        content_id: ContentId,
-        alt: String,
-    },
-    /// At the caret's block or each block of the selection; on again is off.
+    InsertImage { content_id: ContentId, alt: String },
     ToggleBlock(BlockKind),
-    /// Tab in a list item: under the item before it. A first item cannot.
     Indent,
-    /// Shift+Tab: a level out, and out of the list from the top level.
     Outdent,
     InsertRule,
-    /// Already narrowed: paste and drop go through [`crate::parse`] first, so hostile markup
-    /// cannot reach the draft.
     Paste(Document),
-    /// Always its own undo step, so one undo gives back the typed characters.
     Convert(Conversion),
-    /// The input method's text, as `Insert`, as one undo step; the preedit goes.
     CommitPreedit(String),
     CancelPreedit,
 }
@@ -77,8 +60,6 @@ pub enum Unit {
     Line,
 }
 
-/// Top-level blocks `start..old_end` of the input became `start..new_end` of the output; every
-/// block outside is equal to the input's. Empty when nothing changed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BlockRange {
     pub start: u32,
@@ -92,7 +73,6 @@ impl BlockRange {
     }
 }
 
-/// Whether the step may extend the open undo step. The surface owns the clock that ends a run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Join {
     Run,
@@ -118,7 +98,6 @@ impl Edited {
     }
 }
 
-/// An edit made in place: what [`apply`] reports, and the blocks it replaced, for the history.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Applied {
     pub selection: Selection,
@@ -127,7 +106,6 @@ pub struct Applied {
     pub replaced: Vec<Block>,
 }
 
-/// Pure and total: an intent that does not apply returns the input with an empty range.
 pub fn apply(document: &Document, selection: &Selection, intent: EditIntent) -> Edited {
     let mut next = document.clone();
     let applied = next.edit(selection, intent);
@@ -154,7 +132,6 @@ impl Outcome {
 }
 
 impl Document {
-    /// [`apply`] without copying the blocks it leaves alone, for a surface on a long draft.
     pub fn edit(&mut self, selection: &Selection, intent: EditIntent) -> Applied {
         let unchanged = |selection: &Selection| Applied {
             selection: selection.clone(),
@@ -213,7 +190,6 @@ fn without_preedit(selection: &Selection) -> Selection {
     }
 }
 
-/// The top-level blocks an intent may touch: the selection's, and a neighbour for a merge.
 fn reach(document: &Document, selection: &Selection, intent: &EditIntent) -> (usize, usize) {
     let (start, end) = (selection.start(), selection.end());
     let mut lo = start.top();

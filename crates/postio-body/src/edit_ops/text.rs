@@ -1,5 +1,3 @@
-//! Typing, deleting and splitting: the intents a keystroke makes inside or between blocks.
-
 use std::rc::Rc;
 
 use super::flat::{Atom, Cell, MarkSet};
@@ -45,7 +43,6 @@ pub(super) fn insert(
     Outcome::at(DocPosition::new(at.path, at.offset + added), join)
 }
 
-/// The left neighbour's marks continue; a link continues only between two of its characters.
 pub(super) fn typing_marks(cells: &[Cell], offset: usize) -> Rc<MarkSet> {
     let right = cells.get(offset);
     match offset.checked_sub(1).and_then(|left| cells.get(left)) {
@@ -66,7 +63,6 @@ pub(super) fn typing_marks(cells: &[Cell], offset: usize) -> Rc<MarkSet> {
     }
 }
 
-/// Deletes a range selection; the caret is where it started.
 pub(super) fn collapse(blocks: &mut Vec<Block>, selection: &Selection) -> DocPosition {
     let (start, end) = (selection.start().clone(), selection.end().clone());
     if start != end {
@@ -75,8 +71,6 @@ pub(super) fn collapse(blocks: &mut Vec<Block>, selection: &Selection) -> DocPos
     start
 }
 
-/// Removes everything between the two positions and joins what is left of the end's block onto
-/// the start's. A reply quote or a rule inside the range goes whole.
 pub(super) fn delete_range(blocks: &mut Vec<Block>, start: &DocPosition, end: &DocPosition) {
     if start.path == end.path {
         tree::edit_cells(blocks, &start.path, |cells| {
@@ -109,7 +103,6 @@ fn deeper(end: End<'_>) -> End<'_> {
     end.map(|(path, offset)| (&path[1..], offset))
 }
 
-/// Keeps what is before `start` and after `end` in this container; `None` is unbounded.
 fn prune(blocks: &mut Vec<Block>, start: End<'_>, end: End<'_>) {
     let lo = start
         .and_then(|(path, _)| path.first())
@@ -234,8 +227,6 @@ pub(super) fn split_block(blocks: &mut Vec<Block>, selection: &Selection) -> Opt
     }
 }
 
-/// Cuts the leaf at the caret and returns the right half as a new block: a heading split inside
-/// its text stays a heading, and the line after a heading's end is a paragraph.
 pub(super) fn split_off(blocks: &mut Vec<Block>, at: &DocPosition) -> Option<Block> {
     let block = tree::block_mut(blocks, &at.path)?;
     let mut cells = super::flat::of_block(block)?;
@@ -314,8 +305,6 @@ pub(super) fn delete_forward(
     Outcome::at(at, join)
 }
 
-/// Backspace at the start of a block: merge into what precedes it, take a list item or a quote
-/// child out of its container, or remove the rule or reply quote before it whole.
 fn join_backward(blocks: &mut Vec<Block>, at: &DocPosition) -> Option<Outcome> {
     let (parent, index) = tree::split(&at.path)?;
     let parent = parent.to_vec();
@@ -367,8 +356,6 @@ fn merge_into_previous_item(blocks: &mut Vec<Block>, list: &[u32], item: usize) 
     Outcome::at(DocPosition::new(target, joined), Join::New)
 }
 
-/// Delete at the end of a block: the next block's text joins this one; a rule or reply quote after
-/// it goes whole.
 fn join_forward(blocks: &mut Vec<Block>, at: &DocPosition) -> Option<Outcome> {
     let (parent, index) = tree::split(&at.path)?;
     let parent = parent.to_vec();

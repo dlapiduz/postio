@@ -37,8 +37,6 @@ fn text(view: &gtk::TextView) -> String {
         .to_string()
 }
 
-/// A bare view over the projection, with typed text stopped before it reaches the buffer and kept
-/// for the engine, as the native surface will.
 fn spike() -> Spike {
     let view = gtk::TextView::new();
     let buffer = view.buffer();
@@ -92,7 +90,6 @@ fn spike() -> Spike {
 use gtk::glib;
 
 impl Spike {
-    /// A key into the view's own input method, as the compositor would deliver it.
     fn key(&self, key: gdk::Key, state: gdk::ModifierType) -> bool {
         let display = self.view.display();
         let surface = self

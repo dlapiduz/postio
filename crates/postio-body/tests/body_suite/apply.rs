@@ -1048,7 +1048,6 @@ fn one_undo_after_a_conversion_gives_back_the_typed_characters() {
     );
 }
 
-/// xorshift64*: a fixed seed per case, so a failure reproduces and nothing reads a clock.
 struct Rng(u64);
 
 impl Rng {
@@ -1093,7 +1092,6 @@ fn gen_inlines(rng: &mut Rng) -> Vec<Inline> {
     tidy(out)
 }
 
-/// Joins neighbours that are one run, as the editor writes them.
 fn tidy(inlines: Vec<Inline>) -> Vec<Inline> {
     let mut out: Vec<Inline> = Vec::new();
     for inline in inlines {
@@ -1225,7 +1223,6 @@ fn gen_intent(rng: &mut Rng) -> EditIntent {
     }
 }
 
-/// What the editor may hand on: no empty containers, and inlines in the form `parse` writes.
 fn assert_well_formed(blocks: &[Block], context: &str) {
     for block in blocks {
         match block {
@@ -1281,8 +1278,6 @@ fn assert_inlines(inlines: &[Inline], context: &str) {
     }
 }
 
-/// Whitespace at a run's edge and an empty paragraph are editing state `parse` narrows away, so
-/// the round trip is asserted where neither occurs.
 fn settled(document: &Document) -> bool {
     !document.to_html().contains("<p></p>")
         && !document.to_html().contains("  ")

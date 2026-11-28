@@ -210,17 +210,12 @@ pub fn bridged() -> impl Iterator<Item = (&'static str, &'static str, Trigger)> 
         })
 }
 
-/// What the person just did at the caret: a sequence of `LinePrefix` and `Wrapping` rows ends with
-/// a typed character, a `LineComplete` row with Enter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Typed {
     Text,
     Enter,
 }
 
-/// The conversion the text before the caret asks for, if any: `block_text` is the caret's block
-/// as characters, a line break as `\n` (or U+2028), and `caret` counts characters. The first
-/// matching row of [`SEQUENCES`] wins, which is why longer markers are listed first.
 pub fn conversion_before(block_text: &str, caret: usize, typed: Typed) -> Option<Conversion> {
     let before: String = block_text
         .chars()
@@ -333,8 +328,6 @@ fn wrapping(sequence: &Sequence, before: &str) -> Option<Conversion> {
     }
 }
 
-/// `**loudly**` and not `*loudly*` inside it: both runs must be exactly the marker's length, or
-/// the first of two closing asterisks would close an italic run.
 fn wrapped(before: &str, marker: &str, marks: Vec<Mark>) -> Option<Conversion> {
     let character = marker.chars().next()?;
     let width = marker.chars().count();
@@ -429,7 +422,6 @@ mod tests {
         }
     }
 
-    /// Rows whose surface is spec 014's held half (autolinks, tables): matched there, not here.
     fn later(sequence: &Sequence) -> bool {
         matches!(sequence.marker, Marker::Autolink | Marker::DelimiterRow)
     }

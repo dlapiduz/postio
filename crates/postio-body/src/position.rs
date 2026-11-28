@@ -1,6 +1,3 @@
-//! Where a caret is in a `Document`: a block path and a character offset, never a widget's offset.
-//! Characters are Unicode scalar values; each frontend converts at its edge.
-
 use crate::document::{Block, Document, Inline};
 
 /// `path` is a block index, then for each list entered an item index and a block index within the
@@ -19,13 +16,10 @@ impl DocPosition {
         }
     }
 
-    /// The index in `Document::blocks`; 0 for the empty path.
     pub fn top(&self) -> usize {
         self.path.first().map_or(0, |&top| top as usize)
     }
 
-    /// True when the path names a block with text (a paragraph, heading or code block) and the
-    /// offset is within it. A reply quote, a rule, a table and an image's alt hold no position.
     pub fn is_valid_in(&self, document: &Document) -> bool {
         block_at(&document.blocks, &self.path)
             .and_then(text_len)
@@ -33,10 +27,6 @@ impl DocPosition {
     }
 }
 
-/// `marks` is what the next typed text gets when the person toggled a mark with nothing selected;
-/// `None` follows the text on the caret's left. A surface that moves the caret drops it.
-/// `preedit` is an input method's uncommitted text at the head: while it is set, nothing but its
-/// commit or cancel edits the document.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Selection {
     pub anchor: DocPosition,
@@ -88,7 +78,6 @@ impl Selection {
         self.anchor.is_valid_in(document) && self.head.is_valid_in(document)
     }
 
-    /// The hole to project, when an input method is composing.
     pub fn composing(&self) -> Option<crate::projection::Preedit> {
         self.preedit
             .as_ref()
@@ -118,7 +107,6 @@ pub(crate) fn block_at<'a>(blocks: &'a [Block], path: &[u32]) -> Option<&'a Bloc
     }
 }
 
-/// `None` for a block that holds no caret.
 pub(crate) fn text_len(block: &Block) -> Option<u32> {
     match block {
         Block::Paragraph(inlines) | Block::Heading { inlines, .. } => Some(inlines_len(inlines)),
@@ -127,7 +115,6 @@ pub(crate) fn text_len(block: &Block) -> Option<u32> {
     }
 }
 
-/// A break, an image and a remote image are one character each.
 pub(crate) fn inlines_len(inlines: &[Inline]) -> u32 {
     inlines
         .iter()

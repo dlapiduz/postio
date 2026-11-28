@@ -584,7 +584,6 @@ impl Editor {
     }
 }
 
-/// The DOM has no caret in document terms, so a step's selections are the document's start.
 fn snapshot_step(before: &Document, after: &Document) -> EditStep {
     EditStep::between(before, after, Selection::default(), Selection::default())
 }

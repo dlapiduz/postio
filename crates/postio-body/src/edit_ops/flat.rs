@@ -1,11 +1,7 @@
-//! A block's inlines as one cell per character, which is the form an edit at an offset needs.
-//! `build` nests marks in one fixed order, so an edited block always comes back in normal form.
-
 use std::rc::Rc;
 
 use crate::document::{Block, ContentId, Href, Inline, WebHref};
 
-/// The marks in force on one character. `link` is the outermost when rebuilt.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct MarkSet {
     pub strong: bool,
@@ -188,7 +184,6 @@ fn same_at(level: Level, a: &MarkSet, b: &MarkSet) -> bool {
     }
 }
 
-/// A code block's text as cells, a newline a break, so one set of text edits serves every leaf.
 pub(crate) fn of_block(block: &Block) -> Option<Vec<Cell>> {
     match block {
         Block::Paragraph(inlines) | Block::Heading { inlines, .. } => Some(flatten(inlines)),
@@ -211,7 +206,6 @@ pub(crate) fn of_block(block: &Block) -> Option<Vec<Cell>> {
     }
 }
 
-/// The inverse of [`of_block`]; a code block keeps characters and breaks only.
 pub(crate) fn set_block(block: &mut Block, cells: &[Cell]) {
     match block {
         Block::Paragraph(inlines) | Block::Heading { inlines, .. } => *inlines = build(cells),

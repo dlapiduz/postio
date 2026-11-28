@@ -1,12 +1,10 @@
-//! Editing undo over the document, not a widget: a step is a `Document` change every surface can
-//! produce (ADR 0004 Q5), held as the top-level blocks it replaced so a step costs what it changed.
-//! Separate from `postio_core::undo`, the mail undo bound to `u`; this one is `Ctrl+Z`.
+//! Ctrl+Z over the document, not a widget (ADR 0004 Q5), and apart from `postio_core::undo`, the
+//! mail undo bound to `u`.
 
 use crate::document::{Block, Document};
 use crate::edit_ops::{Applied, BlockRange, Join};
 use crate::position::Selection;
 
-/// Blocks `at..at + before.len()` became `at..at + after.len()`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EditStep {
     pub at: u32,
@@ -17,7 +15,6 @@ pub struct EditStep {
 }
 
 impl EditStep {
-    /// The step an in-place [`Document::edit`] made; `document` is the edited one.
     pub fn of(applied: &Applied, document: &Document, selection_before: Selection) -> Self {
         let range = applied.changed;
         EditStep {
@@ -29,7 +26,6 @@ impl EditStep {
         }
     }
 
-    /// For a surface that sees whole documents: the blocks between their common ends.
     pub fn between(
         before: &Document,
         after: &Document,
@@ -60,7 +56,6 @@ impl EditStep {
     }
 }
 
-/// What an undo or redo did to the document it was handed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Undone {
     pub selection: Selection,
@@ -82,9 +77,6 @@ impl EditHistory {
         Self::default()
     }
 
-    /// `Join::Run` extends the newest step while the run is open and the step covers the same
-    /// blocks; anything else starts a step. A no-op is not a step, or autosave ticks would fill the
-    /// stack. Recording drops the redo stack.
     pub fn record(&mut self, step: EditStep, join: Join) {
         if step.is_empty() {
             return;
@@ -111,7 +103,6 @@ impl EditHistory {
         self.open = join == Join::Run;
     }
 
-    /// Ends the typing run, so the next `Join::Run` starts a step: the surface's clock says when.
     pub fn seal(&mut self) {
         self.open = false;
     }

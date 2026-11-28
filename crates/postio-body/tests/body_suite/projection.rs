@@ -67,7 +67,6 @@ fn chars(inlines: &[Inline]) -> u32 {
         .sum()
 }
 
-/// Every position the document holds, read from the document itself, not from the projection.
 fn every_position(document: &Document) -> Vec<DocPosition> {
     fn walk(blocks: &[Block], path: &mut Vec<u32>, out: &mut Vec<DocPosition>) {
         for (index, block) in blocks.iter().enumerate() {
@@ -340,7 +339,6 @@ fn while_composing_nothing_but_the_commit_or_the_cancel_edits() {
         "a commit is its own undo step"
     );
 }
-/// Spike A of the gate (FR-008): what a surface does through a composition, with no window.
 #[test]
 fn cjk_preedit_into_a_list_item() {
     let document = list("a");

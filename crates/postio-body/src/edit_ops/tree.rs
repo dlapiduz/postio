@@ -1,6 +1,3 @@
-//! Walking a document by `DocPosition` paths: a list adds an item and a block index, a quote one
-//! child index. A container path names a `Vec<Block>`; a block path is a container path plus one.
-
 use crate::document::{Block, ListItem};
 use crate::edit_ops::flat::{self, Cell};
 use crate::position::block_at;
@@ -41,7 +38,6 @@ pub(crate) fn block_mut<'a>(blocks: &'a mut Vec<Block>, path: &[u32]) -> Option<
     container_mut(blocks, parent)?.get_mut(index)
 }
 
-/// The container path and the index in it.
 pub(crate) fn split(path: &[u32]) -> Option<(&[u32], usize)> {
     let (&last, parent) = path.split_last()?;
     Some((parent, last as usize))
@@ -53,7 +49,6 @@ pub(crate) fn join(parent: &[u32], index: usize) -> Vec<u32> {
     path
 }
 
-/// What holds a container.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Owner {
     Top,
@@ -99,7 +94,6 @@ pub(crate) fn cells(blocks: &[Block], path: &[u32]) -> Option<Vec<Cell>> {
     flat::of_block(block_at(blocks, path)?)
 }
 
-/// Runs `change` on the leaf's cells and writes them back; `None` when `path` is not a leaf.
 pub(crate) fn edit_cells<R>(
     blocks: &mut Vec<Block>,
     path: &[u32],
@@ -112,7 +106,6 @@ pub(crate) fn edit_cells<R>(
     Some(out)
 }
 
-/// The first unit a caret reaches entering `path` from the front: a leaf or an atomic block.
 pub(crate) fn first_unit(blocks: &[Block], path: Vec<u32>) -> Option<Vec<u32>> {
     let mut path = path;
     loop {
@@ -141,7 +134,6 @@ pub(crate) fn last_unit(blocks: &[Block], path: Vec<u32>) -> Option<Vec<u32>> {
     }
 }
 
-/// Removes the block and every container left empty by it, so a list never holds an empty item.
 pub(crate) fn remove_block(blocks: &mut Vec<Block>, path: &[u32]) -> Option<Block> {
     let (parent, index) = split(path)?;
     let siblings = container_mut(blocks, parent)?;
@@ -187,7 +179,6 @@ fn remove_at(blocks: &mut Vec<Block>, path: &[u32]) {
     }
 }
 
-/// Every leaf path in the top-level blocks `range`, in reading order.
 pub(crate) fn leaves(blocks: &[Block], range: std::ops::Range<usize>) -> Vec<Vec<u32>> {
     fn visit(block: &Block, path: &mut Vec<u32>, out: &mut Vec<Vec<u32>>) {
         match block {
@@ -212,8 +203,9 @@ pub(crate) fn leaves(blocks: &[Block], range: std::ops::Range<usize>) -> Vec<Vec
         }
     }
     let mut out = Vec::new();
-    for top in range.start..range.end.min(blocks.len()) {
-        visit(&blocks[top], &mut vec![top as u32], &mut out);
+    let end = range.end.min(blocks.len());
+    for (top, block) in blocks.iter().enumerate().take(end).skip(range.start) {
+        visit(block, &mut vec![top as u32], &mut out);
     }
     out
 }

@@ -1,6 +1,3 @@
-//! Paste and drop: a document already narrowed by `parse`, spliced at the caret. Inline content
-//! joins the caret's block; blocks go between its halves.
-
 use super::flat::{self, Atom, Cell};
 use super::text::{collapse, split_off};
 use super::tree;

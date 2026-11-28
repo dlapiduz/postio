@@ -10,12 +10,10 @@ fn at(offset: u32) -> Selection {
     Selection::caret(DocPosition::new([0], offset))
 }
 
-/// A whole-document change, as a surface that only sees snapshots records it.
 fn step(before: &str, after: &str) -> EditStep {
     EditStep::between(&doc(before), &doc(after), at(0), at(after.len() as u32))
 }
 
-/// Undoes into `current` and says what it became.
 fn undo(history: &mut EditHistory, current: &mut Document) -> Option<Document> {
     history.undo(current).map(|_| current.clone())
 }

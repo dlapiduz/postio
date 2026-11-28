@@ -1,7 +1,3 @@
-//! What a native text view holds: the document drawn as text, and the map between a buffer offset
-//! and a `DocPosition`. Bullets, numbers and the reply quote are output here, never stored.
-//! Pure, so the falsifier of ADR 0039 (does the caret map hold?) is tested without a window.
-
 use std::ops::Range;
 
 use crate::document::{Block, ContentId, Document, HeadingLevel, ListKind, Task, WebHref};
@@ -10,42 +6,20 @@ use crate::position::DocPosition;
 
 /// A list break inside a paragraph, which a text view lays out as a new line of the same paragraph.
 pub const LINE_BREAK: char = '\u{2028}';
-/// Where an image, a remote image's chip or a rule's widget is anchored.
 pub const OBJECT: char = '\u{FFFC}';
 
 static SEPARATOR: Run = Run::Separator;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Run {
-    Text {
-        len: u32,
-        marks: MarkSet,
-    },
+    Text { len: u32, marks: MarkSet },
     Break,
-    Image {
-        content_id: ContentId,
-        alt: String,
-    },
-    RemoteImage {
-        href: WebHref,
-        alt: String,
-    },
-    /// A list item's bullet, number or box and the space after it; no document position.
-    Prefix {
-        kind: PrefixKind,
-        len: u32,
-    },
-    /// One unit the caret cannot enter, deleted whole.
-    Atomic {
-        kind: AtomicKind,
-        len: u32,
-    },
-    /// The newline between two lines.
+    Image { content_id: ContentId, alt: String },
+    RemoteImage { href: WebHref, alt: String },
+    Prefix { kind: PrefixKind, len: u32 },
+    Atomic { kind: AtomicKind, len: u32 },
     Separator,
-    /// Text an input method has not committed: in the buffer, never in the document.
-    Preedit {
-        len: u32,
-    },
+    Preedit { len: u32 },
 }
 
 impl Run {
@@ -66,10 +40,7 @@ impl Run {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PrefixKind {
-    /// `depth` counts from 1 for a top-level list.
-    Bullet {
-        depth: u32,
-    },
+    Bullet { depth: u32 },
     Number(u32),
     Task(Task),
 }
@@ -95,8 +66,6 @@ pub struct LineStyle {
     pub quote_depth: u32,
 }
 
-/// One block with text, in buffer offsets. `start` includes the prefix; `text_start` does not;
-/// `len` includes a preedit in the line.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Line {
     pub path: Vec<u32>,
@@ -106,15 +75,12 @@ pub struct Line {
     pub style: LineStyle,
 }
 
-/// Uncommitted input-method text at a caret, for a toolkit that keeps it in its buffer (AppKit's
-/// marked text). GTK draws preedit in the layout, so it projects with none.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Preedit {
     pub at: DocPosition,
     pub text: String,
 }
 
-/// One unit per top-level block, so a patch replaces units and shifts only the starts after them.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Projection {
     units: Vec<Unit>,
@@ -137,7 +103,6 @@ struct UnitLine {
     text_start: u32,
     len: u32,
     style: LineStyle,
-    /// The preedit's document offset and length, when it is in this line.
     hole: Option<(u32, u32)>,
 }
 
@@ -200,7 +165,6 @@ impl Projection {
         out
     }
 
-    /// Every run with its buffer start, the newlines between top-level blocks included.
     pub fn runs(&self) -> impl Iterator<Item = (u32, &Run)> + '_ {
         self.runs_of(0..self.units.len())
     }
@@ -209,7 +173,6 @@ impl Projection {
         self.lines_of(0..self.units.len())
     }
 
-    /// The runs of the top-level blocks that overlap `range`, whole.
     pub fn runs_in(&self, range: Range<u32>) -> impl Iterator<Item = (u32, &Run)> + '_ {
         self.runs_of(self.units_over(range))
     }
@@ -218,8 +181,6 @@ impl Projection {
         self.lines_of(self.units_over(range))
     }
 
-    /// Total: an offset in a prefix or an atomic unit lands at the start of the next text, or at
-    /// the end of the last when nothing follows.
     pub fn position_of(&self, offset: u32) -> DocPosition {
         if self.units.is_empty() {
             return DocPosition::default();
@@ -251,7 +212,6 @@ impl Projection {
         after.or_else(before).unwrap_or_default()
     }
 
-    /// A position the document does not hold maps to the start of its top-level block.
     pub fn offset_of(&self, position: &DocPosition) -> u32 {
         let Some(unit) = self.units.get(position.top()) else {
             return self.len();
@@ -270,7 +230,6 @@ impl Projection {
         }
     }
 
-    /// AppKit counts UTF-16 units where GTK counts characters.
     pub fn utf16_of(&self, offset: u32) -> u32 {
         let mut left = offset as usize;
         let mut units = 0;
@@ -350,7 +309,6 @@ impl Projection {
         })
     }
 
-    /// Recomputes the starts from unit `from` on: linear in the blocks after it, never in text.
     fn restart(&mut self, from: usize) {
         self.starts.truncate(from);
         let mut at = match (from.checked_sub(1), self.starts.last()) {

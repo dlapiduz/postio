@@ -1,6 +1,3 @@
-//! Block kinds at the caret's block or each block of the selection: headings, code, lists and
-//! quotes toggled on and off, list items moved a level, and a rule put in.
-
 use super::lists;
 use super::text::{collapse, split_off};
 use super::tree::{self, Owner};
@@ -22,7 +19,6 @@ pub(super) fn toggle(
     }
 }
 
-/// Every leaf of the selection becomes `kind`, or a paragraph when all of them already are.
 fn retype(blocks: &mut Vec<Block>, selection: &Selection, kind: BlockKind) -> Option<Outcome> {
     let (start, end) = (selection.start(), selection.end());
     let leaves: Vec<Vec<u32>> = tree::leaves(blocks, start.top()..end.top() + 1)
@@ -110,7 +106,6 @@ fn toggle_list(blocks: &mut Vec<Block>, selection: &Selection, kind: BlockKind) 
     wrap_in(blocks, selection, kind)
 }
 
-/// Wraps the selection's blocks in a list or a quote, whatever holds them now.
 pub(super) fn wrap_in(
     blocks: &mut Vec<Block>,
     selection: &Selection,
@@ -151,8 +146,6 @@ fn toggle_quote(blocks: &mut Vec<Block>, selection: &Selection) -> Option<Outcom
     wrap_in(blocks, selection, BlockKind::Quote)
 }
 
-/// Replaces the selection's sibling blocks in the caret's container with one block built from
-/// them; `inner` is the path step from the new block to the block that was at `offset` in it.
 fn wrap(
     blocks: &mut Vec<Block>,
     selection: &Selection,
@@ -216,8 +209,6 @@ pub(super) fn outdent(blocks: &mut Vec<Block>, selection: &Selection) -> Option<
     Outcome::at(DocPosition::new(landed, start.offset), Join::New)
 }
 
-/// A rule after the caret's text, with a block after it for the caret; an empty block becomes the
-/// rule.
 pub(super) fn insert_rule(blocks: &mut Vec<Block>, selection: &Selection) -> Option<Outcome> {
     let at = collapse(blocks, selection);
     let (parent, index) = tree::split(&at.path)?;

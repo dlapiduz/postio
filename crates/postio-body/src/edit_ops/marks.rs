@@ -1,6 +1,3 @@
-//! Marks over a selection: bold, italic, strikethrough, inline code, links, and images placed
-//! inline. A code block holds no marks, so it is skipped.
-
 use std::rc::Rc;
 
 use super::flat::{Atom, Cell, MarkSet};
@@ -57,8 +54,6 @@ pub(super) fn toggle(
     })
 }
 
-/// Over a range, links or unlinks it; at a caret, changes or removes the link the caret is in, or
-/// types the address as its own link.
 pub(super) fn set_link(
     blocks: &mut Vec<Block>,
     selection: &Selection,
@@ -146,7 +141,6 @@ pub(super) fn insert_image(
     Outcome::at(DocPosition::new(at.path, at.offset + 1), Join::New)
 }
 
-/// The cells a range covers in each leaf it touches, code blocks left out.
 fn covered(blocks: &[Block], selection: &Selection) -> Vec<(Vec<u32>, usize, usize)> {
     let (start, end) = (selection.start(), selection.end());
     tree::leaves(blocks, start.top()..end.top() + 1)
