@@ -340,3 +340,86 @@ fn while_composing_nothing_but_the_commit_or_the_cancel_edits() {
         "a commit is its own undo step"
     );
 }
+/// Spike A of the gate (FR-008): what a surface does through a composition, with no window.
+#[test]
+fn cjk_preedit_into_a_list_item() {
+    let document = list("a");
+    let caret = DocPosition::new([1, 0, 0], 1);
+    let before = project(&document, None);
+    let mut selection = Selection::caret(caret.clone());
+    for update in ["に", "にほ", "にほん"] {
+        selection.preedit = Some(update.to_owned());
+        let projection = project(&document, selection.composing().as_ref());
+        assert_eq!(
+            projection.text(),
+            format!("before\n\u{2022} a{update}"),
+            "the hole shows {update}"
+        );
+        let hole = projection.offset_of(&caret);
+        assert_eq!(hole, before.offset_of(&caret), "the caret's offset holds");
+        assert_eq!(
+            projection.position_of(hole + 1),
+            caret,
+            "inside the hole is no place"
+        );
+        for position in every_position(&document) {
+            assert_eq!(
+                projection.offset_of(&position)
+                    - u32::from(position > caret) * update.chars().count() as u32,
+                before.offset_of(&position),
+                "every other offset is the buffer's, shifted only after the hole"
+            );
+        }
+    }
+    let committed = apply(
+        &document,
+        &selection,
+        EditIntent::CommitPreedit("日本語".into()),
+    );
+    assert_eq!(committed.document, list("a日本語"));
+    let after = project(
+        &committed.document,
+        committed.selection.composing().as_ref(),
+    );
+    assert_eq!(after.text(), "before\n\u{2022} a日本語");
+    assert_eq!(
+        after.position_of(after.offset_of(&committed.selection.head)),
+        DocPosition::new([1, 0, 0], 4)
+    );
+
+    let typed = apply(
+        &committed.document,
+        &committed.selection,
+        EditIntent::Insert("!".into()),
+    );
+    assert_eq!(typed.document, list("a日本語!"));
+
+    let mut history = EditHistory::new();
+    history.record(
+        EditStep::between(
+            &document,
+            &committed.document,
+            selection.clone(),
+            committed.selection.clone(),
+        ),
+        committed.join,
+    );
+    history.record(
+        EditStep::between(
+            &committed.document,
+            &typed.document,
+            committed.selection.clone(),
+            typed.selection.clone(),
+        ),
+        typed.join,
+    );
+    let mut current = typed.document.clone();
+    history.undo(&mut current).unwrap();
+    assert_eq!(
+        current, committed.document,
+        "the typing after it is its own step"
+    );
+    let undone = history.undo(&mut current).unwrap();
+    assert_eq!(current, document, "one undo takes the whole commit");
+    assert_eq!(undone.selection.head, caret);
+}

@@ -69,7 +69,7 @@ is a guard and says so.
 
 ### The spike gate (FR-008)
 
-- [ ] T015 [US1] **Spike A, pure.** Write `body_suite/projection.rs`'s `cjk_preedit_into_a_list_item`: a list item "a", then updates "に", "にほ", "にほん", commit "日本語" and one `Insert`, one undo. At each step assert the document and the offset to position map. Red until T014 is done; then green. This is a guard that the model holds
+- [x] T015 [US1] **Spike A, pure.** Write `body_suite/projection.rs`'s `cjk_preedit_into_a_list_item`: a list item "a", then updates "に", "にほ", "にほん", commit "日本語" and one `Insert`, one undo. At each step assert the document and the offset to position map. Red until T014 is done; then green. This is a guard that the model holds
 - [ ] T016 [US1] **Spike B, the widget.** Write `crates/postio-widgets/tests/widgets_suite/spike_preedit.rs`, a throwaway: a bare `GtkTextView` over `project(doc)`, driven by emitting `preedit-changed` and `commit` on its `GtkIMContext`, with `insert-text` blocked on the user path. Record in `research.md` R3, with the evidence (buffer text at each step, whether `insert-text` fired, whether a patch of another block cancels the preedit, Escape). Display tests live in `tests/` (CLAUDE.md)
 - [ ] T017 [US1] **Gate decision.** Write the verdict at the top of `research.md` R3: pass, pass with a change to D3 or D4 (say which), or fail. A fail stops here: amend ADR 0039 in a PR and wait for the maintainer. A pass deletes `spike_preedit.rs` (its claims are now in T034's real case) or keeps it as a guard, and the choice is recorded
 - [ ] T018 [US1] **Land step 1.** Run `quickstart.md` §1, then `scripts/issue-land.sh --detach --title 'feat(body,ui): the edit algebra over the document'`. The WebView composer is unchanged
