@@ -24,6 +24,7 @@ mod composer_host;
 mod composer_inline_image;
 mod composer_markdown;
 mod composer_markdown_source;
+mod composer_native_a11y;
 mod composer_native_basic;
 mod composer_native_caret;
 mod composer_native_clipboard;
@@ -113,6 +114,14 @@ mod widgets_css;
 const IGNORED: &[&str] = &[];
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "composer_native_a11y::the_body_is_a_named_text_box_with_gtks_accessible_text",
+        composer_native_a11y::the_body_is_a_named_text_box_with_gtks_accessible_text as fn(),
+    ),
+    (
+        "composer_native_a11y::every_formatting_command_on_the_toolbar_has_a_name",
+        composer_native_a11y::every_formatting_command_on_the_toolbar_has_a_name as fn(),
+    ),
     (
         "composer_native_history::a_typing_run_is_one_step_and_undo_puts_the_caret_back",
         composer_native_history::a_typing_run_is_one_step_and_undo_puts_the_caret_back as fn(),

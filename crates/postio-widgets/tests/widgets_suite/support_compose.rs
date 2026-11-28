@@ -8,6 +8,21 @@ use postio_core::{ActionId, CommandId, Context, Frontend, Keymap};
 use postio_ui::keymap::{KeyContext, Outcome, Resolver};
 use postio_widgets::composer::{Composer, ComposerHost, Field};
 
+/// The first widget under `widget` with `class`, depth first.
+pub fn find(widget: &gtk::Widget, class: &str) -> Option<gtk::Widget> {
+    if widget.has_css_class(class) {
+        return Some(widget.clone());
+    }
+    let mut child = widget.first_child();
+    while let Some(current) = child {
+        if let Some(found) = find(&current, class) {
+            return Some(found);
+        }
+        child = current.next_sibling();
+    }
+    None
+}
+
 pub fn settle() {
     while glib::MainContext::default().iteration(false) {}
 }

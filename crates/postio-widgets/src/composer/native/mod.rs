@@ -1,6 +1,7 @@
 //! The composer's native surface: a `GtkTextView` over `postio_body::project`, never the record.
 //! Nothing writes its buffer but the patch of `apply`'s result (ADR 0039).
 
+mod a11y;
 mod clipboard;
 mod history;
 mod image;
@@ -66,7 +67,7 @@ impl NativeSurface {
         view.set_hexpand(true);
         view.set_vexpand(true);
         view.add_css_class("postio-editor-view");
-        view.update_property(&[gtk::accessible::Property::Label("Message body")]);
+        a11y::name_view(&view);
         let inner = Rc::new(Inner {
             view,
             buffer,

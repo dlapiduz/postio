@@ -1,5 +1,6 @@
 use crate::support_compose::Window;
 use crate::support_compose::composer;
+use crate::support_compose::find;
 use crate::support_compose::settle;
 use crate::support_compose::{app, fonts, style};
 use gtk::gdk;
@@ -43,20 +44,6 @@ fn html_only_message(from_domain: &str, link_host: &str) -> Message {
         )),
     };
     message
-}
-
-fn find(widget: &gtk::Widget, class: &str) -> Option<gtk::Widget> {
-    if widget.has_css_class(class) {
-        return Some(widget.clone());
-    }
-    let mut child = widget.first_child();
-    while let Some(current) = child {
-        if let Some(found) = find(&current, class) {
-            return Some(found);
-        }
-        child = current.next_sibling();
-    }
-    None
 }
 
 fn notice(composer: &postio_widgets::composer::Composer) -> gtk::Label {

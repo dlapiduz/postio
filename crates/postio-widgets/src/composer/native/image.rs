@@ -58,19 +58,20 @@ fn widget(inner: &Inner, run: &Run) -> gtk::Widget {
             {
                 picture.set_paintable(Some(&texture));
             }
-            picture.update_property(&[gtk::accessible::Property::Label(alt)]);
+            super::a11y::name_object(&picture, if alt.is_empty() { "Image" } else { alt });
             picture.upcast()
         }
         Run::RemoteImage { alt, href } => {
             let words = if alt.is_empty() { href.as_str() } else { alt };
             let chip = gtk::Label::new(Some(&format!("Image: {words}")));
             chip.add_css_class("postio-compose-remote-image");
+            super::a11y::name_object(&chip, &format!("Image not downloaded: {words}"));
             chip.upcast()
         }
         _ => {
             let rule = gtk::Separator::new(gtk::Orientation::Horizontal);
             rule.set_size_request(480, -1);
-            rule.update_property(&[gtk::accessible::Property::Label("Divider")]);
+            super::a11y::name_object(&rule, "Divider");
             rule.upcast()
         }
     }
