@@ -161,7 +161,21 @@ Disposition of today's files in `crates/postio-widgets/tests/widgets_suite/`
 The full list is `ls widgets_suite/composer_*.rs widgets_suite/editor_*.rs`;
 T045 records a verdict for each.
 
-## R8 — Spell-check **Spike**
+## R8 — Spell-check **Spike: Q3 goes to B (2026-11-29)**
+
+**Outcome.** Q3's condition fails before the adapter can be tried: the
+Flatpak runtime (`org.gnome.Platform//51`) ships enchant
+(`libenchant-2.so.2`) but not libspelling, so the app would have to bundle
+it as a module of its own, and this machine has the library without its
+headers (`libspelling-0.4.10` installed, `libspelling-devel` not), so the
+`libspelling` crate cannot build here without a system package the
+maintainer installs. Per Q3 = B, spell-check becomes its own task after
+step 4: bundle libspelling in the Flatpak manifest, add the build
+dependency to CI's runner, then run the patch-survival case below. The
+native surface ships without it, which costs nothing counted: the WebView
+never enabled it either.
+
+The question the spike was to answer:
 
 ADR 0039's second falsifier: does `SpellingTextBufferAdapter` cope with a
 buffer patched by the surface instead of edited in place? Patch operations
