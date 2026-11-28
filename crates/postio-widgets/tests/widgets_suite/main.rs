@@ -28,6 +28,7 @@ mod composer_native_basic;
 mod composer_native_caret;
 mod composer_native_clipboard;
 mod composer_native_format;
+mod composer_native_history;
 mod composer_native_image;
 mod composer_native_ime;
 mod composer_native_input;
@@ -112,6 +113,18 @@ mod widgets_css;
 const IGNORED: &[&str] = &[];
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "composer_native_history::a_typing_run_is_one_step_and_undo_puts_the_caret_back",
+        composer_native_history::a_typing_run_is_one_step_and_undo_puts_the_caret_back as fn(),
+    ),
+    (
+        "composer_native_history::past_the_runs_window_every_keystroke_is_a_step",
+        composer_native_history::past_the_runs_window_every_keystroke_is_a_step as fn(),
+    ),
+    (
+        "composer_native_history::a_conversion_is_its_own_step_after_the_run_that_typed_it",
+        composer_native_history::a_conversion_is_its_own_step_after_the_run_that_typed_it as fn(),
+    ),
     (
         "composer_native_format::the_toolbar_lights_what_the_caret_is_in",
         composer_native_format::the_toolbar_lights_what_the_caret_is_in as fn(),

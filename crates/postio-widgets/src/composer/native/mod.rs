@@ -2,6 +2,7 @@
 //! Nothing writes its buffer but the patch of `apply`'s result (ADR 0039).
 
 mod clipboard;
+mod history;
 mod image;
 mod input;
 mod patch;
@@ -133,19 +134,7 @@ impl Inner {
         let applied = self.document.borrow_mut().edit(&before, intent);
         let changed = !applied.changed.is_empty();
         if changed {
-            let step = EditStep::of(&applied, &self.document.borrow(), before.clone());
-            let now = Instant::now();
-            let mut history = self.history.borrow_mut();
-            if self
-                .last_edit
-                .get()
-                .is_none_or(|last| now.duration_since(last) >= self.coalesce)
-            {
-                history.seal();
-            }
-            history.record(step, applied.join);
-            self.last_edit.set(Some(now));
-            drop(history);
+            self.record(&applied, before.clone());
             self.repaint(applied.changed);
         }
         self.place(&applied.selection);
@@ -178,29 +167,6 @@ impl Inner {
         self.patching.set(true);
         self.buffer.select_range(&head, &anchor);
         self.patching.set(false);
-    }
-
-    fn step(&self, back: bool) {
-        if self.composing() {
-            return;
-        }
-        let undone = {
-            let mut document = self.document.borrow_mut();
-            let mut history = self.history.borrow_mut();
-            if back {
-                history.undo(&mut document)
-            } else {
-                history.redo(&mut document)
-            }
-        };
-        let Some(undone) = undone else {
-            return;
-        };
-        self.last_edit.set(None);
-        self.repaint(undone.changed);
-        self.place(&undone.selection);
-        *self.selection.borrow_mut() = undone.selection;
-        self.notify();
     }
 
     fn notify(&self) {
