@@ -7,6 +7,7 @@
 pub mod autolink;
 pub mod document;
 pub mod edit;
+mod edit_ops;
 pub mod flowed;
 pub mod forward;
 #[cfg(feature = "test-golden")]
@@ -19,6 +20,7 @@ pub mod outgoing;
 pub mod own_text;
 pub mod parse;
 pub mod position;
+pub mod projection;
 pub mod quote;
 pub mod reader_view;
 pub mod replying;
@@ -31,11 +33,13 @@ pub use document::{
     ListKind, Table, Task, WebHref, editor_image_src,
 };
 pub use edit::{EditHistory, EditStep};
+pub use edit_ops::MarkSet;
 pub use narrow::{Lost, Narrowed, narrow};
 pub use outgoing::{harden, message_body, render};
 pub use own_text::{own_line, own_text};
 pub use parse::parse;
 pub use position::{DocPosition, Selection};
+pub use projection::{Line, LineKind, LineStyle, Projection, Run, project};
 pub use quote::{fold_html_quotes, text_to_html};
 pub use replying::{
     Placement, Presentation, Quoted, apply_signature, forwarded, quote_of, quoted_reply, requote,
