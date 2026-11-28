@@ -115,7 +115,7 @@ is a guard and says so.
 - [x] T044 [US3] **Red:** the performance case `composer_native_counts.rs`: 5 000 words, a keystroke clones one block and does a constant number of buffer operations and tag applications (FR-014, SC-003); the open is under 500 ms to a focused caret with no web process (a count of children). **Green:** fix what the counts show
 - [x] T045 [US3] **The suites.** Parametrise `composer_*.rs` and `editor_*.rs` over both surfaces, record each file's verdict in `research.md` R7 (port, moved down, or delete in step 4), and make the native column green. A "moved down" verdict means its case already exists in `body_suite` or `postio-ui`
 - [ ] T046 [US3] Run T001's three storyboards on the native surface, and write `storyboards/compose/native-spellcheck.toml` and `native-screen-reader.toml` for the new behaviour, **red on `main`**, then green. Run the PNG loop at 1440 × 900 and 1024 × 768, light and dark, and `/ux-review`
-- [ ] T047 [US3] **Land step 3.** Title `feat(widgets): a native composer surface beside the WebView`. Nothing user-visible: the switch is off
+- [x] T047 [US3] **Land step 3.** Title `feat(widgets): a native composer surface beside the WebView`. Nothing user-visible: the switch is off
 
 ---
 
