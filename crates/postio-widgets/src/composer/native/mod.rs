@@ -320,9 +320,17 @@ impl ComposerSurface for NativeSurface {
         done(self.test_caret());
     }
 
-    fn show_at(&self, document: Document, _at: Option<&SourcePosition>) {
+    fn show_at(&self, document: Document, at: Option<&SourcePosition>) {
         let before = self.inner.document.borrow().clone();
-        let at = start_of(&document);
+        let at = at
+            .map(|at| {
+                Selection::caret(postio_body::DocPosition::new(
+                    at.path.iter().map(|&i| i as u32).collect::<Vec<_>>(),
+                    at.offset as u32,
+                ))
+            })
+            .filter(|at| at.is_valid_in(&document))
+            .unwrap_or_else(|| start_of(&document));
         self.inner.history.borrow_mut().record(
             EditStep::between(&before, &document, self.inner.selection_now(), at.clone()),
             postio_body::Join::New,
@@ -338,9 +346,11 @@ impl ComposerSurface for NativeSurface {
     }
 
     fn test_type(&self, text: &str) {
-        self.inner
-            .buffer
-            .insert_interactive_at_cursor(text, self.inner.view.is_editable());
+        let buffer = &self.inner.buffer;
+        buffer.select_range(&buffer.start_iter(), &buffer.end_iter());
+        buffer.delete_selection(true, true);
+        buffer.insert_interactive_at_cursor(text, true);
+        self.inner.flush();
     }
 
     fn test_caret(&self) -> Option<SourcePosition> {
@@ -351,7 +361,23 @@ impl ComposerSurface for NativeSurface {
         })
     }
 
-    fn test_select(&self, _nth: u32, _from: u32, _to: u32) {}
+    fn test_select(&self, nth: u32, from: u32, to: u32) {
+        let start = self
+            .inner
+            .projection
+            .borrow()
+            .runs()
+            .filter(|(_, run)| matches!(run, postio_body::Run::Text { .. }))
+            .nth(nth as usize)
+            .map(|(at, _)| at);
+        if let Some(start) = start {
+            let buffer = &self.inner.buffer;
+            buffer.select_range(
+                &buffer.iter_at_offset((start + to) as i32),
+                &buffer.iter_at_offset((start + from) as i32),
+            );
+        }
+    }
 
     fn test_eval(&self, _script: &str) -> String {
         String::new()

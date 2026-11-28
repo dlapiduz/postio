@@ -134,7 +134,7 @@ fn enqueue(inner: &Rc<Inner>, item: Pending) {
 }
 
 impl Inner {
-    fn flush(&self) {
+    pub(super) fn flush(&self) {
         let items = std::mem::take(&mut *self.pending.borrow_mut());
         for item in items {
             match item {
