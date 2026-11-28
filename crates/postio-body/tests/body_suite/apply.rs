@@ -842,3 +842,190 @@ fn hostile_markup_arrives_narrowed() {
         "no script, no remote image, no link to code"
     );
 }
+
+fn convert(
+    start: Document,
+    at: Selection,
+    trigger_len: u32,
+    kind: postio_body::ConversionKind,
+) -> Edited {
+    let edited = apply(
+        &start,
+        &at,
+        EditIntent::Convert(postio_body::Conversion { trigger_len, kind }),
+    );
+    assert_eq!(edited.join, Join::New, "a conversion is its own undo step");
+    edited
+}
+
+#[test]
+fn a_line_prefix_becomes_its_block_in_one_call() {
+    use postio_body::{ConversionKind as K, Task};
+    let cases: Vec<(&str, K, Vec<Block>, Selection)> = vec![
+        (
+            "- ",
+            K::List(ListKind::Bullet),
+            vec![bullets(&[""])],
+            caret(&[0, 0, 0], 0),
+        ),
+        (
+            "3. ",
+            K::List(ListKind::Ordered { start: 3 }),
+            vec![Block::List {
+                kind: ListKind::Ordered { start: 3 },
+                items: vec![li(vec![p("")])],
+            }],
+            caret(&[0, 0, 0], 0),
+        ),
+        (
+            "- [x] ",
+            K::Task(Task::Done),
+            vec![ul(vec![ListItem::task(Task::Done, vec![p("")])])],
+            caret(&[0, 0, 0], 0),
+        ),
+        (
+            "# ",
+            K::Heading(HeadingLevel::One),
+            vec![h(HeadingLevel::One, "")],
+            caret(&[0], 0),
+        ),
+        (
+            "> ",
+            K::Quote,
+            vec![Block::Quote(vec![p("")])],
+            caret(&[0, 0], 0),
+        ),
+    ];
+    for (typed, kind, blocks, at) in cases {
+        let len = typed.chars().count() as u32;
+        let edited = convert(doc(vec![p(typed)]), caret(&[0], len), len, kind);
+        assert_eq!(edited.document, doc(blocks), "{typed:?}");
+        assert_eq!(edited.selection, at, "{typed:?}");
+    }
+}
+
+#[test]
+fn a_prefix_inside_a_list_of_its_kind_stays_typed() {
+    let start = doc(vec![bullets(&["- "])]);
+    let edited = convert(
+        start.clone(),
+        caret(&[0, 0, 0], 2),
+        2,
+        postio_body::ConversionKind::List(ListKind::Bullet),
+    );
+    assert_eq!(edited.document, start);
+}
+
+#[test]
+fn a_wrapped_word_becomes_marked_and_the_next_text_is_not() {
+    let edited = convert(
+        doc(vec![p("say **hi**")]),
+        caret(&[0], 10),
+        6,
+        postio_body::ConversionKind::Wrap {
+            marks: vec![postio_body::Mark::Strong],
+            marker_len: 2,
+        },
+    );
+    assert_eq!(
+        edited.document,
+        doc(vec![Block::Paragraph(vec![t("say "), strong("hi")])])
+    );
+    assert_eq!(edited.selection.head, DocPosition::new([0], 6));
+    let typed = apply(
+        &edited.document,
+        &edited.selection,
+        EditIntent::Insert(" x".into()),
+    );
+    assert_eq!(
+        typed.document,
+        doc(vec![Block::Paragraph(vec![
+            t("say "),
+            strong("hi"),
+            t(" x")
+        ])]),
+        "the bold run is closed"
+    );
+}
+
+#[test]
+fn a_typed_link_becomes_its_label_linked() {
+    let typed = "see [site](https://example.com/)";
+    let edited = convert(
+        doc(vec![p(typed)]),
+        caret(&[0], 32),
+        28,
+        postio_body::ConversionKind::Link {
+            href: href(),
+            label: (1, 4),
+        },
+    );
+    assert_eq!(
+        edited.document,
+        doc(vec![Block::Paragraph(vec![
+            t("see "),
+            Inline::Link {
+                href: href(),
+                inlines: vec![t("site")]
+            }
+        ])])
+    );
+    assert_eq!(edited.selection.head, DocPosition::new([0], 8));
+}
+
+#[test]
+fn a_line_complete_sequence_becomes_a_rule_a_code_block_or_a_heading_over_its_line() {
+    use postio_body::ConversionKind as K;
+    let rule = convert(doc(vec![p("---")]), caret(&[0], 3), 3, K::Rule);
+    assert_eq!(rule.document, doc(vec![Block::Rule, p("")]));
+    assert_eq!(rule.selection, caret(&[1], 0));
+
+    let rust = postio_body::Language::parse("rust");
+    let code = convert(
+        doc(vec![p("```rust")]),
+        caret(&[0], 7),
+        7,
+        K::CodeBlock(rust.clone()),
+    );
+    assert_eq!(
+        code.document,
+        doc(vec![Block::Code {
+            language: rust,
+            text: String::new()
+        }])
+    );
+
+    let setext = convert(
+        doc(vec![Block::Paragraph(vec![
+            t("Title"),
+            Inline::Break,
+            t("==="),
+        ])]),
+        caret(&[0], 9),
+        4,
+        K::Setext(HeadingLevel::One),
+    );
+    assert_eq!(
+        setext.document,
+        doc(vec![h(HeadingLevel::One, "Title"), p("")])
+    );
+    assert_eq!(setext.selection, caret(&[1], 0));
+}
+
+#[test]
+fn one_undo_after_a_conversion_gives_back_the_typed_characters() {
+    let literal = doc(vec![p("say **hi**")]);
+    let edited = convert(
+        literal.clone(),
+        caret(&[0], 10),
+        6,
+        postio_body::ConversionKind::Wrap {
+            marks: vec![postio_body::Mark::Strong],
+            marker_len: 2,
+        },
+    );
+    let mut history = postio_body::EditHistory::new();
+    history.record(doc(vec![p("say ")]), literal.clone());
+    history.record(literal.clone(), edited.document);
+    assert_eq!(history.undo(), Some(literal));
+}

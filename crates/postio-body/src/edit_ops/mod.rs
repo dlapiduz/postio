@@ -45,6 +45,8 @@ pub enum EditIntent {
     /// Already narrowed: paste and drop go through [`crate::parse`] first, so hostile markup
     /// cannot reach the draft.
     Paste(Document),
+    /// Always its own undo step, so one undo gives back the typed characters.
+    Convert(Conversion),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -163,10 +165,13 @@ impl Document {
         let (lo, hi) = reach(self, selection, &intent);
         let before = self.blocks[lo..hi].to_vec();
         let old_len = self.blocks.len();
-        let Some(outcome) = run(&mut self.blocks, selection, intent) else {
+        let outcome = run(&mut self.blocks, selection, intent);
+        let new_hi = (hi + self.blocks.len()).saturating_sub(old_len);
+        let Some(outcome) = outcome else {
+            // A rule may refuse after a first step, so a refusal restores what it reached.
+            self.blocks.splice(lo..new_hi, before);
             return unchanged(selection);
         };
-        let new_hi = (hi + self.blocks.len()).saturating_sub(old_len);
         let after = &self.blocks[lo..new_hi];
         let prefix = before.iter().zip(after).take_while(|(a, b)| a == b).count();
         let room = before.len().min(after.len()) - prefix;
@@ -225,5 +230,6 @@ fn run(blocks: &mut Vec<Block>, selection: &Selection, intent: EditIntent) -> Op
         EditIntent::Outdent => blocks::outdent(blocks, selection),
         EditIntent::InsertRule => blocks::insert_rule(blocks, selection),
         EditIntent::Paste(pasted) => paste::paste(blocks, selection, pasted),
+        EditIntent::Convert(conversion) => convert::convert(blocks, selection, conversion),
     }
 }

@@ -79,7 +79,7 @@ fn list_kind(kind: BlockKind) -> ListKind {
     }
 }
 
-fn is_kind(list: &Block, kind: BlockKind) -> bool {
+pub(super) fn is_kind(list: &Block, kind: BlockKind) -> bool {
     let Block::List { kind: have, items } = list else {
         return false;
     };
@@ -116,6 +116,18 @@ fn toggle_list(blocks: &mut Vec<Block>, selection: &Selection, kind: BlockKind) 
         }
         return Some(keep(selection));
     }
+    wrap_in(blocks, selection, kind)
+}
+
+/// Wraps the selection's blocks in a list or a quote, whatever holds them now.
+pub(super) fn wrap_in(
+    blocks: &mut Vec<Block>,
+    selection: &Selection,
+    kind: BlockKind,
+) -> Option<Outcome> {
+    if kind == BlockKind::Quote {
+        return wrap(blocks, selection, Block::Quote, |offset| vec![offset]);
+    }
     let task = (kind == BlockKind::TaskList).then_some(Task::Open);
     wrap(
         blocks,
@@ -145,7 +157,7 @@ fn toggle_quote(blocks: &mut Vec<Block>, selection: &Selection) -> Option<Outcom
         let landed = lists::lift_children(blocks, &quote, child, last)?;
         return Outcome::at(DocPosition::new(landed, start.offset), Join::New);
     }
-    wrap(blocks, selection, Block::Quote, |offset| vec![offset])
+    wrap_in(blocks, selection, BlockKind::Quote)
 }
 
 /// Replaces the selection's sibling blocks in the caret's container with one block built from
