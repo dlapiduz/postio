@@ -21,7 +21,7 @@
 CLAUDE.md 951
 docs/ARCHITECTURE.md 1182
 docs/PERFORMANCE.md 840
-docs/PRODUCT.md 4302
+docs/PRODUCT.md 4312
 docs/config.md 2650
 docs/decisions/0001-imap-library.md 304
 docs/decisions/0002-extensible-command-vocabulary.md 331

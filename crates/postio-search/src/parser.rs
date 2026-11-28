@@ -191,6 +191,7 @@ fn operator(negated: bool, field: Field, raw: &str, today: NaiveDate) -> TokenKi
             "flagged" | "starred" | "star" => filter(Filter::Is(State::Flagged)),
             "bulk" => filter(Filter::Is(State::Bulk)),
             "automated" => filter(Filter::Is(State::Automated)),
+            "replied" => filter(Filter::Is(State::Replied)),
             _ => partial(value),
         },
         Field::After => match parse_date(&value, today) {

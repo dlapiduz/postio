@@ -1181,6 +1181,7 @@ pub fn relaxation_line(
                 State::Flagged => "flagged",
                 State::Bulk => "bulk",
                 State::Automated => "automated",
+                State::Replied => "replied",
             }),
             _ => remove(&token.raw),
         },

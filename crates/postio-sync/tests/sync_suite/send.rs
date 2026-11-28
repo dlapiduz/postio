@@ -2222,3 +2222,105 @@ async fn a_draft_with_no_remind_if_no_reply_sets_no_reminder() {
         None
     );
 }
+
+async fn reply_to_a_parent(
+    script: SmtpScript,
+) -> (
+    Vec<postio_storage::repository::QueuedOperation>,
+    postio_model::Message,
+) {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, _sent) = account_with_sent(&connection).await;
+    let inbox = test_support::mailbox(&connection, &account, "INBOX")
+        .await
+        .id;
+    let messages = MessageRepository::new(&connection);
+    let mut parent = postio_model::Message::new(account.id, inbox, at(8));
+    parent.subject = Some("Harbour plan".to_owned());
+    parent.rfc_message_id = Some(postio_model::RfcMessageId::new("plan@example.invalid"));
+    parent.from = vec![EmailAddress::new(None::<String>, "grace@example.net")];
+    parent.flags = [postio_model::Flag::Seen].into_iter().collect();
+    let parent_id = messages.create(&mut parent).await.expect("the parent");
+
+    let mut draft = a_draft(&account, "grace@example.net");
+    draft.in_reply_to = Some(parent_id);
+    let backend = MockBackend::builder()
+        .mailbox(MockMailbox::new("Sent"))
+        .build();
+    backend.connect().await.expect("connect");
+    let draft_id = DraftRepository::new(&connection)
+        .save(&mut draft)
+        .await
+        .expect("save draft");
+    OperationQueueRepository::new(&connection)
+        .enqueue(
+            account.id,
+            OperationTarget::Draft(draft_id),
+            &Operation::Send { draft: draft_id },
+            at(9),
+        )
+        .await
+        .expect("enqueue");
+    let tokens = a_password_source(&account).await;
+    let connector = ScriptedConnector::new(script);
+    let blobs = TempBlobs::new();
+    drain_one(
+        &connection,
+        &backend,
+        SmtpContext {
+            connector: &connector,
+            tokens: &tokens,
+            blobs: &blobs.store,
+        },
+        account.id,
+    )
+    .await;
+    let queued = OperationQueueRepository::new(&connection)
+        .pending(account.id, at(12))
+        .await
+        .expect("the queue");
+    let parent = messages.get(parent_id).await.expect("get").expect("there");
+    (queued, parent)
+}
+
+fn tells_the_server_it_was_answered(
+    queued: &[postio_storage::repository::QueuedOperation],
+    parent: &postio_model::Message,
+) -> bool {
+    queued.iter().any(|operation| {
+        operation.target == OperationTarget::Message(parent.id)
+            && matches!(
+                &operation.operation,
+                Operation::SetFlags { flags } if flags.contains(&postio_model::Flag::Answered)
+            )
+    })
+}
+
+#[tokio::test]
+async fn a_delivered_reply_marks_what_it_answers_and_tells_the_server() {
+    let (queued, parent) = reply_to_a_parent(accepting_script()).await;
+    assert!(
+        parent.flags.contains(&postio_model::Flag::Answered),
+        "every other client shows the replied arrow from \\Answered: {:?}",
+        parent.flags
+    );
+    assert!(
+        parent.flags.contains(&postio_model::Flag::Seen),
+        "the mark is added, never a replacement for the flags it had"
+    );
+    assert!(
+        tells_the_server_it_was_answered(&queued, &parent),
+        "the server is told like any flag: {queued:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_refused_reply_leaves_what_it_answers_unmarked() {
+    let (queued, parent) = reply_to_a_parent(script_replying_to_rcpt("550 no such user")).await;
+    assert!(
+        !parent.flags.contains(&postio_model::Flag::Answered),
+        "nothing was delivered, so nothing was answered"
+    );
+    assert!(!tells_the_server_it_was_answered(&queued, &parent));
+}

@@ -157,6 +157,7 @@ pub enum State {
     Flagged,
     Bulk,
     Automated,
+    Replied,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -490,6 +491,7 @@ fn spell_one(filter: &Filter) -> String {
                 State::Flagged => "flagged",
                 State::Bulk => "bulk",
                 State::Automated => "automated",
+                State::Replied => "replied",
             }
         ),
         Filter::After(date) => format!("after:{}", date.format("%Y-%m-%d")),
@@ -713,6 +715,7 @@ mod tests {
             Filter::Is(State::Flagged),
             Filter::Is(State::Bulk),
             Filter::Is(State::Automated),
+            Filter::Is(State::Replied),
             Filter::After(day(2026, 7, 1)),
             Filter::Before(day(2025, 12, 31)),
             Filter::Larger(1024 * 1024),

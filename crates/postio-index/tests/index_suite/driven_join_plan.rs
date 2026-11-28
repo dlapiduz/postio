@@ -333,12 +333,26 @@ async fn the_walk_reads_its_people_labels_and_files_from_the_row() {
         )
         .await;
     }
+    file(
+        &connection,
+        &account,
+        inbox,
+        Mail {
+            from: "test",
+            subject: "Re: quarterly figures",
+            ago: Duration::days(9),
+            ..Mail::default()
+        },
+    )
+    .await;
 
     for text in [
         "quarterly",
         "has:attachment",
         "quarterly from:ada",
         "from:ada",
+        "is:replied",
+        "quarterly is:replied",
     ] {
         let query = parse(text, today());
         let request = ConversationRequest {

@@ -74,6 +74,13 @@ fn is_bulk_and_is_automated_are_states_of_their_own() {
 }
 
 #[test]
+fn is_replied_is_a_state_of_its_own_and_its_prefix_stays_partial() {
+    assert_eq!(filters("is:replied"), vec![Filter::Is(State::Replied)]);
+    assert_eq!(filters("is:Replied"), vec![Filter::Is(State::Replied)]);
+    assert_eq!(filters("is:repl"), Vec::<Filter>::new());
+}
+
+#[test]
 fn is_starred_is_accepted_as_a_synonym_for_flagged() {
     assert_eq!(filters("is:starred"), vec![Filter::Is(State::Flagged)]);
 }
